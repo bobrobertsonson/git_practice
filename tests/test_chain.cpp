@@ -158,8 +158,8 @@ TEST_CASE("Alignment: B lags A by 23 and is inverted", "[chain][align]") {
   REQUIRE(info.alignDelay[0] == 23);
   REQUIRE(info.alignDelay[1] == 0);
   REQUIRE(info.alignMode == AlignMode::Auto);
-  REQUIRE(info.latencySamples == 23);
-  REQUIRE(chain->latencySamples() == 23);
+  REQUIRE(info.latencySamples == 0);  // alignment delay is not processing latency
+  REQUIRE(chain->latencySamples() == 0);
 
   const auto x = noise(20000, 11, 0.3f);
   const auto y = render(*chain, x, 256);
@@ -235,7 +235,7 @@ TEST_CASE("Alignment: auto, manual and off modes", "[chain][align]") {
   auto delayB = build(m);
   REQUIRE(delayB->info().alignDelay[1] == 5);
   REQUIRE(delayB->info().alignDelay[0] == 0);
-  REQUIRE(delayB->latencySamples() == 5);
+  REQUIRE(delayB->latencySamples() == 0);
   {
     // out = 0.5 * x + 0.5 * (-x delayed by 23+5)
     const auto y = render(*delayB, x, 128);
@@ -302,12 +302,13 @@ TEST_CASE("Latency compensation re-aligns paths (test-only latency stub)", "[cha
   REQUIRE(c3->latencySamples() == 100);
   REQUIRE(maxAbsDiff(render(*c3, x, 256), delayed(x, 100)) <= 1e-6);
 
-  // Latency and alignment add: stub 100 on A plus B lagging 23 -> A (delayed 100, B comp 100).
+  // Latency and alignment are separate: stub 100 on A plus B lagging 23 -> A (delayed 100, B comp 100).
   json l = mk("linear_identity.nam", "linear_neg1_at_23.nam");
   l["paths"]["a"]["blocks"] = json::array({{{"id", "s1"}, {"type", "test.latency"}, {"latency", 100}}});
   auto c4 = build(l);
   REQUIRE(c4->info().align.delaySamplesB == -23);
-  REQUIRE(c4->latencySamples() == 123);
+  REQUIRE(c4->latencySamples() == 100);  // stub latency only; the 23 is alignDelay
+  REQUIRE(c4->info().alignDelay[0] == 23);
   REQUIRE(maxAbsDiff(render(*c4, x, 256), delayed(x, 123)) <= 1e-5);
 
   // A bypassed block contributes no latency and is not processed.

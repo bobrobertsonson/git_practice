@@ -23,7 +23,8 @@ bool operator==(const GateParams&, const GateParams&);
 bool operator==(const EqBand&, const EqBand&);
 
 struct CaptureSource {
-  std::string provider, id, url, title, creator, license;  // all required when `source` is given
+  std::string provider, id;                       // required when `source` is given
+  std::string modelId, url, title, creator, license;  // optional ("" = absent)
   bool operator==(const CaptureSource&) const = default;
 };
 

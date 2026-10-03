@@ -251,10 +251,11 @@ Capture parseCapture(const json& j, const std::string& path, const fs::path& bas
     CaptureSource src;
     src.provider = s->requireString("provider");
     src.id = s->requireString("id");
-    src.url = s->requireString("url");
-    src.title = s->requireString("title");
-    src.creator = s->requireString("creator");
-    src.license = s->requireString("license");
+    src.url = s->string("url", "");
+    src.title = s->string("title", "");
+    src.creator = s->string("creator", "");
+    src.license = s->string("license", "");
+    src.modelId = s->string("modelId", "");
     s->finish();
     c.source = src;
   }
@@ -265,9 +266,14 @@ Capture parseCapture(const json& j, const std::string& path, const fs::path& bas
 nlohmann::json toJson(const Capture& c) {
   json j = {{"file", c.file}};
   if (!c.sha256.empty()) j["sha256"] = c.sha256;
-  if (c.source)
-    j["source"] = {{"provider", c.source->provider}, {"id", c.source->id}, {"url", c.source->url},
-                   {"title", c.source->title}, {"creator", c.source->creator}, {"license", c.source->license}};
+  if (c.source) {
+    json s = {{"provider", c.source->provider}, {"id", c.source->id}};
+    const std::pair<const char*, const std::string*> opt[] = {{"modelId", &c.source->modelId}, {"url", &c.source->url},
+        {"title", &c.source->title}, {"creator", &c.source->creator}, {"license", &c.source->license}};
+    for (const auto& [k, v] : opt)
+      if (!v->empty()) s[k] = *v;
+    j["source"] = s;
+  }
   return j;
 }
 

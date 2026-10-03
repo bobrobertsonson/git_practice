@@ -49,7 +49,7 @@ struct ChainInfo {
   std::array<int, 2> pathLatency{};      // sum of block latencies (+ own cab in perPath mode)
   std::array<int, 2> compensationDelay{};  // delay added so the shorter path meets the longer
   std::array<int, 2> alignDelay{};       // delay added by alignment (only one of A/B is non-zero)
-  int latencySamples = 0;                // total DI -> output delay reported to the host
+  int latencySamples = 0;                // processing latency reported to the host (excludes alignDelay)
   AlignMode alignMode = AlignMode::Auto;
   AlignResult align;                     // the values in effect (resolved for auto)
   bool liveCompatible = false;           // cab.mode == shared
@@ -66,9 +66,9 @@ struct ChainInfo {
 //   -> blend -> [shared cab] -> post EQ -> bus comp -> output gain
 // where `delay` is the latency compensation plus the alignment delay.
 //
-// Latency accounting: latencySamples() = max(pathLatency + comp + alignDelay) over the paths
-// (+ shared cab latency) = max(pathLatencyA, pathLatencyB) + |delaySamplesB|. Alignment delay
-// is counted because it is real delay between the DI and the output.
+// Latency accounting: latencySamples() = max(pathLatencyA, pathLatencyB) (+ shared cab latency):
+// processing latency only. The alignment delay (up to +-maxLagMs) is treated as part of the tone,
+// like mic distance, and is reported separately as ChainInfo::alignDelay.
 //
 // Threading: ctor/prepare()/reset()/resolveAlignment()/info() are not RT-safe. Only process() is.
 class Chain {

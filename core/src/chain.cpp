@@ -202,8 +202,8 @@ void Chain::applyAlignment(const AlignResult& r) {
   path_[1].alignDelay = std::max(0, r.delaySamplesB);
   for (auto& p : path_) p.delay.setDelaySamples(p.compDelay + p.alignDelay);
   blendB_ = static_cast<float>(preset_.blend) * (r.invertB ? -1.0f : 1.0f);
-  const int total = std::max(path_[0].latency + path_[0].compDelay + path_[0].alignDelay,
-                             path_[1].latency + path_[1].compDelay + path_[1].alignDelay);
+  // Processing latency only; the alignment delay is part of the tone and is reported separately.
+  const int total = std::max(path_[0].latency, path_[1].latency);
   latency_ = total + (cabShared_ ? cabShared_->latencySamples() : 0);
 }
 

@@ -125,7 +125,7 @@ TEST_CASE("Preset: round trip parse(toJson(p)) == p", "[preset]") {
     j["paths"]["a"]["blocks"][0]["inputGainDb"] = 1.5;
     j["paths"]["a"]["blocks"][0]["normalizeLoudness"] = true;
     j["paths"]["a"]["blocks"][0]["model"]["sha256"] = std::string(64, 'A');
-    j["paths"]["a"]["blocks"][0]["model"]["source"] = {{"provider", "tone3000"}, {"id", "1"}, {"url", "https://x"},
+    j["paths"]["a"]["blocks"][0]["model"]["source"] = {{"provider", "tone3000"}, {"id", "1"}, {"modelId", "m7"}, {"url", "https://x"},
                                                        {"title", "T"}, {"creator", "c"}, {"license", "CC-BY-4.0"}};
     j["paths"]["a"]["blocks"].push_back({{"id", "a2"}, {"type", "eq"}, {"bands", json::array({{{"type", "peak"}, {"freq", 900.0}, {"gainDb", 2.0}, {"q", 1.1}}})}});
     j["align"] = {{"mode", "manual"}, {"maxLagMs", 2.5}, {"delaySamplesB", -7}, {"invertB", true}};
@@ -147,6 +147,16 @@ TEST_CASE("Preset: round trip parse(toJson(p)) == p", "[preset]") {
     j2["paths"]["a"]["blocks"][1]["bands"][0]["gainDb"] = 2.5;
     REQUIRE_FALSE(parsePreset(j2, "/base") == p);
   }
+}
+
+TEST_CASE("Preset: minimal source (provider + id) is accepted and round-trips", "[preset]") {
+  json j = minimal();
+  j["paths"]["a"]["blocks"][0]["model"]["source"] = {{"provider", "tone3000"}, {"id", "42"}, {"modelId", "v2"}};
+  const Preset p = parsePreset(j, "/base");
+  const auto& s = *static_cast<const NamBlockParams&>(*p.a.blocks[0].params).model.source;
+  REQUIRE(s.modelId == "v2");
+  REQUIRE(s.license.empty());
+  REQUIRE(parsePreset(toJson(p), "/base") == p);
 }
 
 TEST_CASE("Preset errors carry the JSON path", "[preset]") {
@@ -181,6 +191,8 @@ TEST_CASE("Preset errors carry the JSON path", "[preset]") {
     j = minimal(); j["paths"]["a"]["blocks"].push_back({{"id", "a2"}, {"type", "eq"}}); requireErrorAt(j, "paths.a.blocks[1].bands");
     j = minimal(); j["paths"]["a"]["blocks"][0]["model"]["source"] = {{"provider", "tone3000"}};
     requireErrorAt(j, "paths.a.blocks[0].model.source.id");
+    j = minimal(); j["paths"]["a"]["blocks"][0]["model"]["source"] = {{"provider", "tone3000"}, {"id", "9"}, {"extra", 1}};
+    requireErrorAt(j, "paths.a.blocks[0].model.source.extra");
   }
   SECTION("out of range / invalid values") {
     json j = minimal(); j["blend"] = 1.5; requireErrorAt(j, "blend");
