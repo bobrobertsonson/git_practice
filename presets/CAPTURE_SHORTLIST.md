@@ -1,13 +1,22 @@
 # TONE3000 capture shortlist (favorite these)
 
-Candidate pool for the matcher, chosen to cover a wide range of tones per slot. Found via
-web search of tone3000.com; the pages could not be opened from the build environment, so
-**check each page before favoriting**:
-- Amp slots need **amp-only / DI** captures (no cab). Skip "full rig" / cab-included models.
-- Pedal slots need **pedal-only** captures.
-- If a pack mixes boosted and unboosted models, the unboosted ones fit the body amp slot
-  (Sawblade adds the boost as its own block); boosted ones are still useful as references.
-- Note the license on each page; it travels with the preset.
+**Quality rule (lead): newer and well reviewed only.**
+- Newer = NAM **A2** and **calibrated** captures (A2 is the current architecture, launched
+  2025), or the most recent uploads of a given piece of gear.
+- Well reviewed = high favorites/downloads on the tone page, and good comments.
+- Ratings and upload dates were **not visible** from the build environment (TONE3000 was
+  blocked), so this list is a pre-filter only. Tier 1 = confirmed A2/calibrated in search
+  results. Tier 2 = unconfirmed: check its date, A2 badge and favorites/downloads on the
+  page, and **only favorite it if it passes**.
+- Once API access works, `sawblade-t3k` enforces the rule automatically (phase 1.5).
+
+## Tier 1 — confirmed A2 / calibrated
+- [Bogner Uberschall MKII Ultra High Gain A2](https://www.tone3000.com/tones/bogner-uberschall-mkii-ultra-high-gain-a2-69300) — body amp
+- [6505+ A2 Testing (Amp Head) — @ampspedalspickups](https://www.tone3000.com/tones/6505-a2-testing-amp-head-68829) — body amp
+- [6505+ Gain Range Pack (High Gain)](https://www.tone3000.com/tones/6505-gain-range-pack-high-gain-29230) — body amp (calibrated per search)
+- [Mesa 90s Dual Rectifier RI — Red Modern (34 DI + 34 full rig, calibrated A2)](https://www.tone3000.com/tones/mesa-90s-dual-rectifier-ri-red-modern-full-rig-87866) — body amp: use the **DI** models only
+
+## Tier 2 — check date, A2 badge and ratings before favoriting
 
 ## Saw path — HM-2-style pedal (slot `pedal`)
 - [Boss HM-2 — @v24x](https://www.tone3000.com/tones/boss-hm-2-29576)

@@ -55,6 +55,19 @@ by **reviewer**. Uses the `tonerender` CLI as a subprocess (pybind11 comes in ph
    refresh → retry, 429 backoff, pagination, deprecation header logging, download with
    Bearer header, cache hit, `resolve` rewriting a preset. Token file permissions 0600.
 
+## A2 — Candidate quality filter (lead rule: newer + well reviewed only)
+
+`sawblade-t3k pull` builds the candidate pool from favorites plus the free-tier `trending`
+and `latest` lists, then filters. Defaults (configurable, recorded in the pool manifest):
+- architecture **A2** preferred; A1 only if no A2 model exists for the tone;
+- **calibrated** models preferred;
+- created/updated within the last 18 months (by the API's date fields);
+- popularity at or above the 75th percentile of favorites/downloads within the same gear
+  type across the fetched set, with an absolute floor; tones without counts are excluded;
+- amp tones must be amp-only/DI (no cab); "full rig" models excluded from slot candidates.
+First task: inspect the real Tone/Model JSON and map these rules onto the actual fields;
+report any rule the API can't support instead of guessing.
+
 ## B — Tone check (`match/sawblade_match/tonecheck/`)
 
 Goal: an objective report of how a rendered preset compares to `docs/TONE_TARGETS.md`
