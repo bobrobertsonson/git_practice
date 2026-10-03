@@ -1,16 +1,18 @@
 # Sawblade design B2 - procedural "STOCKHOLM SYNDROME" pedal renders
 
-`pedal_b2.py` builds the pedal entirely procedurally in Blender (Cycles): geometry, shader
-nodes, the OLED pixel font and the top-face artwork (numpy/Pillow, "Swedish crust" stencil:
-oversized stencilled saw blade, overspray, drips, xerox grain, torn tape, mis-registered
-second ink, scratched-through paint) are all generated at build time.
-No downloaded models, textures or HDRIs.
+All renders are built entirely procedurally in Blender (Cycles): geometry, shader nodes, tolex grain, the OLED
+pixel font and the crust-stencil face artwork (numpy/Pillow: stencilled motifs, overspray, drips, xerox grain,
+torn tape, mis-registered second ink, scratched-through paint). No downloaded models, textures or HDRIs.
 
-| mode    | output           | size            |
-|---------|------------------|-----------------|
-| `hero`  | `hero_3q.png`    | 1600x1200       |
-| `ortho` | `top_ortho.png`  | 1200x1800       |
-| `strip` | `knob_strip.png` | 128x8192 (64 frames of 128x128, JUCE filmstrip) |
+| script              | piece                                            | art motif / inks                          | outputs (`--out`)                                  |
+|---------------------|--------------------------------------------------|-------------------------------------------|----------------------------------------------------|
+| `pedal_b2.py`       | STOCKHOLM SYNDROME pedal, 120x190x55 mm          | saw blade; orange + bone                  | `stockholm_hero_3q.png` 1600x1200, `stockholm_ortho.png` 1200x1800, `stockholm_knob_strip.png` 128x8192 |
+| `pedal_tighten.py`  | TIGHTEN boost pedal, 100x150x42 mm               | vise jaws + barbed wire; steel blue + bone| `tighten_hero_3q.png`, `tighten_ortho.png` 1000x1500 |
+| `amp_saw.py`        | SAW amp head, 600x260x250 mm                     | jawbone teeth + cogs; rust orange + bone  | `saw_hero_3q.png`, `saw_ortho.png` 1600x700 (front panel) |
+| `amp_body.py`       | BODY amp head, same construction                 | anvil + hammer + chains; blood red + bone | `body_hero_3q.png`, `body_ortho.png` 1600x700 |
+
+`common.py` holds the shared toolkit (materials, knob/toggle/footswitch/LED/OLED/jewel parts, artwork generator,
+lighting/camera rig and the `run(spec)` driver); each piece script only defines its layout, motif and spec.
 
 ## Run
 
@@ -18,10 +20,11 @@ Tested with the `bpy` wheel **4.2.0** on Python 3.11 (CPU, 3 threads, OpenImageD
 
     python3.11 -m venv /path/outside/repo/venv
     /path/outside/repo/venv/bin/pip install bpy==4.2.0 numpy pillow
-    /path/outside/repo/venv/bin/python design/render/pedal_b2.py --mode all --out /path/outside/repo/out
+    /path/outside/repo/venv/bin/python design/render/amp_saw.py --mode all --out /path/outside/repo/out
 
-`--scale 40` renders a 40% preview, `--samples N` overrides sampling, `--dump-art` writes
-only the artwork channel PNG, `--font-dir` sets the font cache (default `~/.cache/pedal_b2_fonts`).
+`--mode hero|ortho|strip|all` (strip only for `pedal_b2.py`), `--scale 40` renders a 40% preview,
+`--samples N` overrides sampling (default 40), `--dump-art` writes only the artwork channel PNG,
+`--font-dir` sets the font cache (default `~/.cache/pedal_b2_fonts`).
 
 **Renders go outside the repo** (`--out`); do not commit PNGs here.
 
