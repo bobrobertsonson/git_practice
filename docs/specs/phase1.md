@@ -139,6 +139,8 @@ Deliver:
    - `ChainResources loadResources(const Preset&, double sampleRate)` (load-time/background):
      builds every block via the registry (loading NAM models), loads IRs, verifies optional `sha256` (implement SHA-256 or vendor a
      small public-domain one), collects warnings.
+   - Never call `Convolver::setIr()` or `NamBlock` load/`reset()` on an object the audio thread
+     is using; build replacements off-thread and hand them over (SwapSlot in the plugin).
    - `Chain(const Preset&, ChainResources&&)`; `prepare(spec)`; `process(const float* in,
      float* out, int n) noexcept` implementing the signal graph in `CLAUDE.md`.
    - Latency: per-path latency = sum of block latencies (+ per-path cab when `perPath`);
