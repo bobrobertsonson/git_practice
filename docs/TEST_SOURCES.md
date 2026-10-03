@@ -5,10 +5,9 @@ current terms before relying on an entry). Goal: DI guitars + the finished mix o
 performance, across heavy styles (see docs/specs/phase3_3_generalize.md part D).
 
 **Licence reality:** almost all of these are licensed for *personal / educational mixing
-practice*. Sawblade is a commercial product, so: use only for internal evaluation, never
-commit or ship the audio, never train exported models or ship presets derived from them, and
-get written permission before any R&D use the terms don't clearly allow (Cambridge-MT
-explicitly asks research users to contact the contributors).
+practice*. Sawblade is a personal, non-commercial project (not for sale), which fits those
+terms for private evaluation. Still: never commit or redistribute the audio, and don't share
+presets or exports tuned on it as if they were the artist's tone.
 
 ## Free
 
@@ -31,7 +30,7 @@ a Heartache", Megadeth "Symphony of Destruction" on ReampZone) — provenance an
 
 | Source | Artists (examples) | DI guitars? | Price | Notes |
 |---|---|---|---|---|
-| Nail The Mix (URM Academy) | August Burns Red "Coordinates" (DI for every guitar), Suicide Silence "Unanswered" (guitar DIs), Humanity's Last Breath "Labyrinthian" (DIs), Slaves (guitar DIs), Meshuggah "Monstrocity", Lamb of God "Redneck", Gojira, Periphery, Architects "Gone With The Wind", Emmure "Flag Of The Beast", Devin Townsend "Genesis" | yes on the songs marked; verify others | $19.99/month (first month $1) | best fit: raw DIs + the commercially released mix of the same performance. Terms are for mixing education → ask URM about R&D use (possible partnership). |
+| Nail The Mix (URM Academy) | August Burns Red "Coordinates" (DI for every guitar), Suicide Silence "Unanswered" (guitar DIs), Humanity's Last Breath "Labyrinthian" (DIs), Slaves (guitar DIs), Meshuggah "Monstrocity", Lamb of God "Redneck", Gojira, Periphery, Architects "Gone With The Wind", Emmure "Flag Of The Beast", Devin Townsend "Genesis" | yes on the songs marked; verify others | $19.99/month (first month $1) | best fit: raw DIs + the commercially released mix of the same performance. Terms are for personal mixing education; private evaluation fits. |
 | Periphery official stems (*Periphery IV: Hail Stan*, *Periphery V*) | Periphery | stems, not DIs | paid | usable as guitar-only references, not as DI input |
 | Devin Townsend *Contain Us* box set | "Bend It Like Bender", "Juular" stems | stems | box set | reference only |
 | Daybreak Studio "Procedurally Generated Metal Multitracks Vol. 1" | not a band | DI for all guitars | from $10 | synthetic/producer material |
