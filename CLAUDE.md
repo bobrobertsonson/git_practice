@@ -29,7 +29,8 @@ tight high-gain "body" path. See `docs/TONE_TARGETS.md`.
 core/      C++ DSP library (no JUCE GUI deps). Namespace `sawblade`.
 plugin/    JUCE plugin (phase 2+).
 cli/       `tonerender` offline renderer.
-match/     Python matching engine; binds core via pybind11 (later phase).
+match/     Python: TONE3000 client, tone check, calibration, matcher.
+bindings/  pybind11 module `sawblade_core` (CMake option SAWBLADE_BUILD_PYTHON).
 tests/     Catch2 unit + golden tests; fixtures in tests/fixtures, goldens in tests/golden.
 docs/      Specs, schema, tone targets.
 third_party/  Vendored files only when FetchContent is impossible (record license).
