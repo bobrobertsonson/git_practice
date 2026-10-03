@@ -31,6 +31,7 @@ separation = [
 sawblade-t3k = "sawblade_match.t3k.cli:main"
 sawblade-tonecheck = "sawblade_match.tonecheck.cli:main"
 sawblade-calibrate = "sawblade_match.calibrate.cli:main"
+sawblade-match = "sawblade_match.matcher.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["sawblade_match*"]

@@ -190,3 +190,47 @@ by more than the tolerance are "contradicted": listed with evidence, left unchan
 choose it). Method 1 is installed with `pip install -e 'match[separation]' -c match/constraints-separation.txt`
 (the constraints file pins the resolved transitive set; the PyPI linux torch wheel also pulls ~2.5 GB of CUDA
 libraries although inference runs on CPU). The real-demucs test runs only with `SAWBLADE_TEST_DEMUCS=1`.
+
+## Matcher (`sawblade-match`, phase 3.2)
+
+```
+sawblade-match --di Guitar_L.wav [--di-r Guitar_R.wav] --ref REF.mp3 --pool ~/.cache/sawblade/captures/pool_manifest.json
+               [--matched left|right|mono] [--offset-ms N] [--ref-channel auto|side|left|right|mid] [--ref-section A:B ...]
+               [--stems-dir DIR] [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 3] [--threads 4]
+python -m sawblade_match.matcher.known_answer --pool ... --di Guitar_L.wav --out DIR [--seed 1]   # acceptance (a), real captures
+```
+
+Needs the built `sawblade_core` (see "Core bindings"; set `SAWBLADE_CORE_DIR` to pin a build) and a pool whose captures are
+downloaded (`sawblade-t3k pull`): only downloaded, commercially licensed models are candidates. Slots: pedals titled
+"HM-2" -> path A pedal; other pedals (plus "none") -> path B boost; amps -> both amp slots (saw amp sampling prefers
+low/medium-gain titles, no hard filter); cabs -> one shared IR (live-compatible).
+
+* **Reference**: `--ref-channel auto` uses a cached htdemucs `other` stem (`testdata/stems/`, from `sawblade-calibrate`) if
+  present, else the side channel `(L-R)/2` (output level is then set +3 dB, two uncorrelated hard-panned guitars). With
+  `--matched left` the reference is a time-aligned pair with the DI (cover mix: 190 ms L / 175 ms R by default): the LTAS
+  target is the matching segment of the side channel and a multi-resolution STFT term is added against that mix channel; the
+  DI->mix offset is refined to the sample by cross-correlating the rendered excerpt with the mix channel (envelope, then
+  band-limited PHAT waveform correlation) and re-measured on the final full-length renders (reported in `result.json`).
+* **Stage 1** (one guitar-dominant excerpt, 6 s, chosen from DI activity): each A pair (HM-2, saw amp) and B pair (boost or
+  none, body amp) is rendered once through the C++ core; because the chain after the NAMs is linear, every A x B combination
+  is scored from band cross-spectra without another render (blend grid 0.15..0.85), top pairs get an auto-align probe and the
+  full loss, and the best are re-scored with every cab IR. If the pair product exceeds the budget a seeded random subset of
+  pairs is rendered (default 200 A, 150 B pairs). **Stage 2**: seeded CMA-ES (own implementation, `matcher/cma.py`) on the
+  top-K combos, blocks linear -> NAM gains -> linear. **Stage 3**: full-length renders with the real chain (preset, DI L and R),
+  `sawblade-tonecheck` on the best and on the starter preset, clip guard (full-length peak <= -1 dBFS).
+* **Loss** weights are documented in `matcher/loss.py` (A-weighted LTAS error after level-offset removal x1, buzz x0.5/dB,
+  lowDecay x2 per dB/ms, STFT x0.25/dB for matched pairs, EQ-gain regulariser x0.02/dB). Smaller total NAM size wins within
+  0.3 dB; combos that clip at the matched level are rejected.
+* **Not searched**: gate (fixed from the DI noise floor +4 dB, hold 40 ms, release 150 ms, range -50 dB), A pre-EQ (HP 90 Hz,
+  as the starter), bus comp (off), alignment (resolved once per combo then written as `manual`).
+* **Determinism**: `--seed` seeds subset sampling and CMA-ES; thread-pool results are order-independent. All seeds are in
+  `result.json`.
+* **Output** (`--out`, default `~/.cache/sawblade/match_runs/<timestamp>`, never in the repo): `best.preset.resolved.json`
+  (absolute capture paths + TONE3000 `source` ids/modelIds), `best.preset.json` (portable file names), `alt1..5`,
+  `result.json` (loss breakdown, captures, offsets, before/after, plan, timings), `tonecheck/*` (report.json/png + rule table),
+  `render_*.wav`, `listen/*.wav|mp3` (L/R DIs panned, peak-normalised to -1 dBFS; the normalisation gain is in result.json).
+  Exported/derived models from TONE3000 captures are for the user's own use only.
+
+Cost model: one 4-NAM render runs at ~0.6x real time per core. The default budget (stage 1: 350 path-pair renders of a 6.5 s
+excerpt; stage 2: 3 combos x ~130 NAM-gain evaluations + ~1500 cheap linear evaluations; stage 3: 3 full-length renders)
+targets <= 45 min on 4 cores; `--budget` scales every count (e.g. `--budget 0.1` for a quick check).
