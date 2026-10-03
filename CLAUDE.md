@@ -39,11 +39,23 @@ third_party/  Vendored files only when FetchContent is impossible (record licens
 
 ```
 DI → input gain → gate (keyed on DI) → split
-   Path A "Saw":  pre-EQ → pedal NAM → low/med-gain amp NAM → path EQ → level
-   Path B "Body": pre-EQ → boost NAM (optional) → high-gain amp NAM → path EQ → level
+   Path A "Saw":  pre-EQ → [blocks: pedal NAM → low/med-gain amp NAM] → path EQ → level
+   Path B "Body": pre-EQ → [blocks: boost NAM (optional) → high-gain amp NAM] → path EQ → level
 → latency compensation → auto polarity + delay align → blend
 → cab IR(s) (shared, or per-path before the sum) → post EQ → bus comp → output gain
 ```
+
+Each path's middle section is a **modular chain of typed blocks** built through a block
+registry (`nam`, `eq` in phase 1). Future modeled recreations of real pedals are new block
+types; every type declares its latency and whether it is NAM-trainable.
+
+## Roadmap (beyond phase 1)
+
+- Phase 2: JUCE plugin (AU/VST3) on top of core; the user designs the UI — engineering builds
+  to their design; mockups are reference only.
+- Modular pedal chain: modeled recreations of real pedals as block types (DSP models, not
+  captures); UI names use generic descriptors, not trademarks, unless licensed.
+- Matching engine (`match/`), NAM export, AAX.
 
 ## Hard rules
 

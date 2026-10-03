@@ -77,7 +77,7 @@ Deliver:
 
 ## T2 — NAM block, IR convolution, lock-free swap
 
-1. **NamBlock** (`nam_block.h`): `static std::unique_ptr<NamBlock> load(path, NamStageConfig)`
+1. **NamBlock** (`nam_block.h`): `static std::unique_ptr<NamBlock> load(path, NamBlockConfig)`
    (load-time; uses `nam::get_dsp`), exposes `expectedSampleRate()`, `loudnessDb()` (optional),
    metadata (name, gear_type, modeled_by). `prepare()` calls the model's `Reset(sr, maxBlock)`
    with prewarm. `process()` applies inputGain → model → outputGain (+ loudness
@@ -127,15 +127,20 @@ Deliver:
    `nlohmann::json toJson(const Preset&)`, `Preset loadPresetFile(path)`.
    Strict: unknown keys, wrong types, missing required fields, out-of-range values, and
    `version` > 1 all throw `PresetError` whose message contains the JSON path
-   (e.g. `paths.a.stages[1].model.file`). Defaults per schema. Paths resolved relative to
+   (e.g. `paths.a.blocks[1].model.file`). Defaults per schema. Paths resolved relative to
    the preset file.
 2. **Chain** (`chain.h`):
+   - **Block registry** (`block_registry.h`): maps a block `type` string to a factory
+     producing a `Processor` plus static traits `{ bool namTrainable; }`. Register `nam` and
+     `eq` in phase 1. Each path's chain is built by iterating its `blocks` through the
+     registry — no `if (type == "nam")` branching in `Chain`. This is the extension point
+     for future modeled pedals; keep it small (no plugin loading, no params system yet).
    - `ChainResources loadResources(const Preset&, double sampleRate)` (load-time/background):
-     loads NAM models and IRs, verifies optional `sha256` (implement SHA-256 or vendor a
+     builds every block via the registry (loading NAM models), loads IRs, verifies optional `sha256` (implement SHA-256 or vendor a
      small public-domain one), collects warnings.
    - `Chain(const Preset&, ChainResources&&)`; `prepare(spec)`; `process(const float* in,
      float* out, int n) noexcept` implementing the signal graph in `CLAUDE.md`.
-   - Latency: per-path latency = sum of stage latencies (+ per-path cab when `perPath`);
+   - Latency: per-path latency = sum of block latencies (+ per-path cab when `perPath`);
      shorter path delayed to match; `latencySamples()` = total chain latency.
    - Alignment: `AlignResult resolveAlignment()` (not RT; uses the deterministic probe per
      schema; resets all state afterwards). `auto` mode is resolved during `prepare()`;
@@ -147,6 +152,8 @@ Deliver:
    - `ChainInfo info()`: latency per path/total, resolved alignment, `liveCompatible`,
      `exportExactness`, warnings (incl. busComp release > 150 ms "not NAM-trainable").
 3. Tests:
+   - Registry: unknown block `type` → `PresetError` naming the path; duplicate block `id` → error;
+     an `eq` block mid-chain behaves identically to the same bands in path `eq`.
    - Preset: example from the schema doc parses; round-trip `parse(toJson(p)) == p`; one test
      per error class asserting the JSON path appears in the message.
    - Alignment: path A uses a Linear identity model; path B uses a Linear model whose IR is
@@ -183,7 +190,7 @@ Deliver:
    - `ir_a.wav` (48 k, ~200 ms decaying filtered noise), `ir_b.wav` (44.1 k, different
      spectrum — exercises resampling).
    - Linear `.nam` fixtures from T2; example NAM models from T2.
-   - Presets: `golden_shared.json` (gate on, A = [wavenet, lstm]-style two stages,
+   - Presets: `golden_shared.json` (gate on, A = [wavenet, lstm] two nam blocks,
      B = [linear boost, wavenet], auto align, shared cab ir_a, post EQ, bus comp on),
      `golden_perpath.json` (per-path IRs ir_a/ir_b, align manual).
 3. Golden tests: render each golden preset via the library entry point used by the CLI;

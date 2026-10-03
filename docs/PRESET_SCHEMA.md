@@ -56,19 +56,45 @@ Gate is never part of any NAM export.
   "role": "saw",                 // "saw" | "body" (informational; UI + matcher hints)
   "enabled": true,               // disabled path outputs silence (still latency-compensated)
   "preEq": [ EqBand, ... ],      // default []
-  "stages": [ NamStage, ... ],   // 0..4 stages, processed in order
-  "eq": [ EqBand, ... ],         // path EQ after the stages, default []
+  "blocks": [ Block, ... ],      // 0..8 blocks, processed in order (the pedal chain)
+  "eq": [ EqBand, ... ],         // path EQ after the blocks, default []
   "levelDb": 0.0,                // path output trim before blend
   "invert": false                // manual polarity flip (applied before auto-align)
 }
 ```
 Conventional layout: path A = `[pedal, amp]`, path B = `[boost?, amp]`.
 
-### NamStage
+### Block (modular chain element)
+
+Every block shares these fields; the rest depend on `type`:
 
 ```jsonc
 {
-  "slot": "pedal",               // "pedal" | "boost" | "amp"
+  "id": "a1",            // required; unique within the preset; stable handle for UI/automation
+  "type": "nam",         // required; key into the block registry
+  "slot": "pedal",       // optional label: "pedal" | "boost" | "amp" | "fx" (UI + matcher hint)
+  "bypass": false
+}
+```
+
+Block types in v1:
+
+| `type` | Purpose | Type-specific fields |
+|---|---|---|
+| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below |
+| `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` |
+
+Unknown `type` values are a parse error in v1. Future types (modeled pedal recreations, e.g.
+`"type": "pedal.hm"` with `"params": { ... }` and `"modelVersion": 1`) are added to the
+registry without changing this schema's shape. Each registered type declares in code:
+latency, and whether it is **NAM-trainable** (time-based effects — delay, reverb,
+modulation, long-release dynamics — are not; the export phase refuses or bypasses them).
+
+### NamBlock (`type: "nam"`)
+
+```jsonc
+{
+  "id": "a1", "type": "nam", "slot": "pedal",
   "bypass": false,
   "inputGainDb": 0.0,            // into the model
   "outputGainDb": 0.0,           // after the model
@@ -180,12 +206,12 @@ Feed-forward, peak detector, soft knee. Release > 150 ms is flagged in the repor
   "paths": {
     "a": { "role": "saw",
            "preEq": [ { "type": "highPass", "freq": 60, "q": 0.707 } ],
-           "stages": [ { "slot": "pedal", "model": { "file": "hm2.nam" } },
-                       { "slot": "amp",   "model": { "file": "jcm_lowgain.nam" } } ],
+           "blocks": [ { "id": "a1", "type": "nam", "slot": "pedal", "model": { "file": "hm2.nam" } },
+                       { "id": "a2", "type": "nam", "slot": "amp",   "model": { "file": "jcm_lowgain.nam" } } ],
            "eq": [ { "type": "lowPass", "freq": 8000, "q": 0.707 } ] },
     "b": { "role": "body",
-           "stages": [ { "slot": "boost", "model": { "file": "ts808.nam" } },
-                       { "slot": "amp",   "model": { "file": "5150.nam" } } ] }
+           "blocks": [ { "id": "b1", "type": "nam", "slot": "boost", "model": { "file": "ts808.nam" } },
+                       { "id": "b2", "type": "nam", "slot": "amp",   "model": { "file": "5150.nam" } } ] }
   },
   "align": { "mode": "auto" },
   "blend": 0.55,
