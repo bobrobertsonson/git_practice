@@ -54,9 +54,9 @@ Deliver:
    16 bands configured before `prepare()`; disabled bands skipped. Expose
    `double magnitudeDb(double freqHz) const` (analytic, from coefficients) for tests and UI.
 5. **Gate** (`gate.h`): per schema — peak envelope (0.1 ms attack / 10 ms release one-pole),
-   open at `thresholdDb`, close at `thresholdDb - hysteresisDb` after `holdMs`, gain ramps
-   linearly in dB? → No: smooth gain with one-pole toward target using attack/release time
-   constants; closed gain = `rangeDb`. Gate has `processKeyed(const float* key, float* io, n)`
+   open at `thresholdDb`, close at `thresholdDb - hysteresisDb` after `holdMs`; gain is
+   smoothed by a one-pole toward its target using the attack/release time constants;
+   closed gain = `rangeDb`. Gate has `processKeyed(const float* key, float* io, n)`
    (key = DI) and `process()` = self-keyed.
 6. **Gain** and **DelayLine** (`delay.h`): integer delay, max set in `prepare`, settable delay
    ≤ max without allocation.
@@ -149,12 +149,12 @@ Deliver:
 3. Tests:
    - Preset: example from the schema doc parses; round-trip `parse(toJson(p)) == p`; one test
      per error class asserting the JSON path appears in the message.
-   - Alignment: path B = path A with Linear models where B's model is a pure delay of 23
-     samples (Linear IR with a single 1 at index 23) and inverted (−1) → auto gives
-     `delaySamplesB == -23`... define sign carefully: resolved values must make the blended
-     output of identical-content paths sum constructively: with blend 0.5 the aligned output
-     equals path A's output within 1e-5 (after the alignment delay). Also test no-op (0, false)
-     on identical paths and the ±maxLag window (offset beyond the window is not found).
+   - Alignment: path A uses a Linear identity model; path B uses a Linear model whose IR is
+     a single −1 at index 23 (B lags A by 23 samples and is inverted). Auto-align must
+     resolve `delaySamplesB == -23` (A is delayed by 23 to meet B) and `invertB == true`.
+     With blend 0.5 the chain output equals path A's output delayed by 23 samples within
+     1e-5 (paths sum constructively). Also: identical paths → (0, false); an offset beyond
+     ±`maxLagMs` is not found (result stays within the window).
    - Latency compensation: a test-only Processor stub reporting latency N in one path proves
      paths are re-aligned and `latencySamples()` is reported correctly.
    - Blend 0 = only A, 1 = only B (bit-exact vs a single-path render).
