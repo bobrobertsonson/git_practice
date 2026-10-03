@@ -110,13 +110,14 @@ modulation, long-release dynamics — are not; the export phase refuses or bypas
 {
   "file": "captures/hm2_maxed.nam",   // required
   "sha256": "…",                      // optional; if present, verified at load (mismatch = error)
-  "source": {                         // optional for local files, required for TONE3000 assets
+  "source": {                         // optional; if present, provider + id are required
     "provider": "tone3000",
-    "id": "12345",
-    "url": "https://www.tone3000.com/tones/…",
-    "title": "HM-2 both knobs max",
-    "creator": "someuser",
-    "license": "CC-BY-4.0"            // exactly as published on TONE3000
+    "id": "12345",                    // TONE3000 tone id
+    "modelId": "67890",               // optional: which model variant (size/architecture) of the tone
+    "url": "https://www.tone3000.com/tones/…",   // optional (filled by `sawblade-t3k resolve`)
+    "title": "HM-2 both knobs max",              // optional (filled by resolver)
+    "creator": "someuser",                       // optional (filled by resolver)
+    "license": "CC-BY-4.0"                       // optional (filled by resolver), exactly as published
   }
 }
 ```
@@ -194,7 +195,8 @@ Feed-forward, peak detector, soft knee. Release > 150 ms is flagged in the repor
 
 - `liveCompatible` = `cab.mode == "shared"`.
 - `exportExactness`: `{ "withCab": true, "noCab": liveCompatible }`.
-- `latencySamples` per path and total.
+- `latencySamples` per path and total: processing latency only (alignment delay is part of
+  the tone and reported separately as `alignDelay`).
 - `align.resolved`: `{ delaySamplesB, invertB, peakCorrelation }`.
 
 ## Example
