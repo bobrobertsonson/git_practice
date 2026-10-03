@@ -44,3 +44,25 @@ Caveats:
   post-EQ/level offset and must not try to reproduce limiting in the NAM chain.
 
 The user's YouTube link could not be fetched (blocked; also against YouTube's terms).
+
+## `testdata/reference/barbaric_pleasures_original.mp3` — Gatecreeper original (north star)
+
+MP3 192 kbps, 44.1 kHz stereo, 175.6 s, peak +0.25 dBFS (inter-sample overs from mastering),
+RMS −12.5 dBFS (mastered loud). Full mix incl. vocals, bass, drums. Different performance
+from the DIs — compare spectra/statistics only, never time-aligned.
+
+First look (lead, 1/3-oct LTAS of the whole mix, normalized to 1 kHz):
+
+| Region | Original | Cover mix |
+|---|---|---|
+| 125–315 Hz | 0 … +12 dB | +15 … +26 dB |
+| 500–1250 Hz | ≈ flat, +0 … +2.6 dB (broad mid plateau) | +0 … +6.5 dB |
+| 1.6–2.5 kHz | −5 dB | +1 … +2 dB |
+| 3.15–5 kHz | −9 … −13 dB | −2 … −7 dB |
+
+The original is mid-forward (plateau ≈ 500 Hz–1.25 kHz, falling from 1.6 kHz) with far
+less low/low-mid than the cover. This challenges the TONE_TARGETS hypotheses "dip at
+500–800 Hz" and "peak at 1–2 kHz" — but whole-mix LTAS includes vocals, bass, drums and
+mastering, so it is not a guitar-only measurement. Calibrate the targets in the tone-check
+phase using guitar-dominant sections (e.g. intro/instrumental passages) before changing the
+rules.
