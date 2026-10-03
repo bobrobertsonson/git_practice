@@ -52,6 +52,11 @@ and the `tonerender` CLI tests (which run the built binary).
 ## Render with `tonerender`
 
 ```
+# runnable on a fresh checkout (in-repo fixtures):
+./build/cli/tonerender --preset tests/fixtures/presets/golden_shared.json \
+    --in tests/fixtures/di_riff.wav --out out.wav --report out.json
+
+# factory presets need their TONE3000 captures first (see presets/README.md and match/README.md):
 ./build/cli/tonerender --preset presets/chainsaw_body.json --in my_di.wav --out out.wav --report out.json
 ```
 
