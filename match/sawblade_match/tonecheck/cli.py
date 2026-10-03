@@ -66,16 +66,8 @@ def _analysis_json(a: Analysis) -> dict:
     }
 
 
-def check_audio(name: str, wav: Path, di_path: Path | None, refs: Sequence[tuple[Path, str]], targets: dict,
-                out_dir: Path, tonerender_report: dict | None = None, preset: Path | None = None,
-                targets_path: Path | None = None) -> dict:
-    """``refs``: (path, channel) pairs; each gets its own section under ``references``."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    x, fs = read_mono(wav, "mid")
-    di = read_mono(di_path) if di_path else None
-    a = analyze(x, fs, targets, di=di)
-    results = evaluate_rules(a.groups, targets["rules"])
-    gapm = a.metrics["gapNoiseDb"]
+def gap_rule(gapm: dict) -> dict:
+    """gapNoiseDb <= -60 as a rule row (no tolerance); n/a when the metric is null."""
     gap = gapm["value"]
     row = {"id": "gap_noise", "expr": "gapNoiseDb <= -60", "group": "gapNoiseDb", "op": "<=",
            "threshold": GATE_NOISE_TARGET_DB, "toleranceDb": 0.0,
@@ -85,7 +77,19 @@ def check_audio(name: str, wav: Path, di_path: Path | None, refs: Sequence[tuple
     else:
         row.update(value=round(gap, 3), margin=round(GATE_NOISE_TARGET_DB - gap, 3),
                    status="pass" if gap <= GATE_NOISE_TARGET_DB else "fail")
-    results.append(row)
+    return row
+
+
+def check_audio(name: str, wav: Path, di_path: Path | None, refs: Sequence[tuple[Path, str]], targets: dict,
+                out_dir: Path, tonerender_report: dict | None = None, preset: Path | None = None,
+                targets_path: Path | None = None) -> dict:
+    """``refs``: (path, channel) pairs; each gets its own section under ``references``."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    x, fs = read_mono(wav, "mid")
+    di = read_mono(di_path) if di_path else None
+    a = analyze(x, fs, targets, di=di)
+    results = evaluate_rules(a.groups, targets["rules"])
+    results.append(gap_rule(a.metrics["gapNoiseDb"]))
     report = {
         "schema": "sawblade.tonecheck_report", "version": 2, "name": name,
         "randomness": "none (analysis is deterministic; no seeds)",
@@ -220,8 +224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"{Path(r['preset']).stem:<28}{r['overall']:<10}{r['pass']:>3}{r['marginal']:>3}{r['fail']:>3}"
                       f"{r['buzz']:>8.3f}{t:>10}{_f(r['gapNoiseDb'], '.1f'):>8}{e:>10}")
         return 0
-    except (RenderError, ValueError, OSError) as e:
-        print(f"error: {e}", file=sys.stderr)
+    except (RenderError, ValueError, OSError, RuntimeError) as e:  # RuntimeError: soundfile.LibsndfileError
+        print("error: " + " ".join(str(e).split()), file=sys.stderr)
         return 3
 
 

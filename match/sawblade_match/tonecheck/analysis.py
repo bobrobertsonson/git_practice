@@ -165,7 +165,9 @@ def gap_noise_db(out: np.ndarray, di: np.ndarray | None, fs: int) -> dict:
     """Output RMS in the DI's gap frames relative to the output's active RMS.
 
     Gap frames: 50 ms frames where the DI level is within 6 dB of its own noise floor (5th-percentile
-    frame level). Fewer than 1 % qualifying frames (or no DI) -> value None with a reason. Output and DI
+    frame level). Value None with a reason when there is no DI, when fewer than 1 % of frames qualify
+    ("no gaps"), or when the floor is within 10 dB of the median active DI frame ("no clear gaps": a steady
+    DI has no real gaps to measure). Output and DI
     are compared frame by frame (render output has the DI's length, advanced by the chain latency)."""
     if di is None:
         return {"value": None, "reason": "no DI supplied (gap frames are located on the DI)"}
@@ -178,6 +180,11 @@ def gap_noise_db(out: np.ndarray, di: np.ndarray | None, fs: int) -> dict:
     res = {"diNoiseFloorDb": floor, "gapFrameFraction": float(gaps.mean())}
     if gaps.mean() < 0.01:
         return {**res, "value": None, "reason": "no gaps"}
+    _, di_active, _ = activity_mask(di, fs)
+    median_active = float(np.median(di_db[di_active]))
+    res["diMedianActiveDb"] = median_active
+    if median_active - floor < 10.0:
+        return {**res, "value": None, "reason": "no clear gaps"}
     _, active, _ = activity_mask(out, fs)
     gap = _db(np.mean(10 ** (out_db[gaps] / 10.0)))
     act = _db(np.mean(10 ** (out_db[active] / 10.0)))
@@ -236,8 +243,12 @@ def detect_onsets(di: np.ndarray, fs: int = ANALYSIS_RATE) -> np.ndarray:
     lvl = _db(np.sum(mag * mag, axis=0))
     ok = lvl[np.minimum(peaks, len(lvl) - 1)] >= np.percentile(lvl, 95) - GATE_WINDOW_DB
     peaks = peaks[ok]
-    # frame k of the STFT is centred at t[k]; the flux peak lags the true onset by ~half a window
-    return np.maximum(t[peaks] - 0.5 * nper / fs * 0.5, 0.0)
+    # Heuristic time correction (+5.3 ms): a frame centred at t already "sees" a new note once the window
+    # end passes it, i.e. up to half a window (512 samples) before the onset, and the flux peaks about a
+    # quarter window (256 samples = the hop = 5.3 ms at 48 kHz) early. Adding that quarter window brings the
+    # estimate to within about +-5 ms of the true onset on synthetic plucks (tested to 10 ms), negligible
+    # against the 10 ms envelope and the [-10, +60] ms peak search that follows.
+    return t[peaks] + (nper / 4) / fs
 
 
 def _stats(vals, key):

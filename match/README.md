@@ -97,7 +97,8 @@ sawblade-tonecheck --audio OUT.wav [--di DI.wav] [--ref ...]  # analyse an alrea
 
 Implements `docs/tone_targets.json` exactly (LTAS 1/3-oct, activity gate, band groups, rules with tolerances,
 metrics). Outputs `report.json` + `report.png` (+ `render.wav`, `tonerender_report.json`). Exit 0 whenever the
-analysis ran (rule failures do not change the exit code), 3 on render/analysis error.
+analysis ran (rule failures do not change the exit code), 3 on render/analysis error, including a missing or
+unreadable `--audio`/`--ref`/`--di` (one-line `error:` message, no traceback).
 
 Method notes: audio is analysed at 48 kHz; Welch segments are used when >= 80 % of their samples are in
 active frames; band power integrates the PSD over IEC band edges with fractional edge bins. `lowTightnessMs`:
@@ -117,3 +118,11 @@ active output RMS; null / rule status `n/a` when fewer than 1 % of frames qualif
 (dB/ms) of the 80-160 Hz envelope over [peak+5 ms, min(peak+35 ms, next onset)] (>= 15 ms, else censored); the
 causal band-pass transient makes it read ~10-25 % shallower than the true decay, so compare presets, not
 absolute values.
+
+Details: the tonerender binary is looked up as `--tonerender`, then `$SAWBLADE_TONERENDER`, then
+`build/cli/tonerender` / `build-lead/cli/tonerender` under the current directory (run from the repo root); the
+targets file likewise (`--targets`, `$SAWBLADE_TARGETS`, `docs/tone_targets.json` under the current directory).
+There is no package-relative fallback. Onset times from the spectral flux are shifted by +5.3 ms (a quarter of the
+1024-sample window: the flux peaks about that long before the true onset); accuracy about +-5 ms. `gapNoiseDb`
+is also null ("no clear gaps", rule `n/a`) when the DI's noise floor is within 10 dB of its median active frame
+level, i.e. a steady DI with no real gaps.
