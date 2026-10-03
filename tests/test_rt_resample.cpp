@@ -72,9 +72,9 @@ double toneGainDb(double from, double to, double f, double fOut, double amp = 0.
   const auto n = static_cast<std::size_t>(from * 0.5);
   const auto x = sine(f, from, n, amp);
   const auto y = runRt(r, x, {512});
-  // Whole number of 10 ms periods (integer cycles of every multiple of 100 Hz): no leakage of the
+  // Whole number of 20 ms periods (integer cycles of every multiple of 50 Hz): no leakage of the
   // strong in-band tone into the alias/image measurement.
-  const auto per = static_cast<std::size_t>(to / 100.0);
+  const auto per = static_cast<std::size_t>(to / 50.0);  // 20 ms: integer cycles of every multiple of 50 Hz
   const std::size_t i0 = ((y.size() / 4 + per - 1) / per) * per;
   const std::size_t i1 = i0 + ((y.size() - i0 - y.size() / 8) / per) * per;
   return toDb(toneAmplitude(y, fOut, to, i0, i1) / amp);
@@ -177,13 +177,32 @@ TEST_CASE("RtResampler frequency response vs the offline spec", "[rtresample][re
     lines.emplace_back(buf);
     return worst;
   };
-  // Each entry: input tone f and the frequency at which its alias / image lands in the output.
-  auto stopband = [&](double from, double to, std::initializer_list<std::pair<double, double>> tones) {
-    double worst = -1000.0;
-    for (const auto& [f, fa] : tones) worst = std::max(worst, toneGainDb(from, to, f, fa));
+
+  // Dense stopband sweep, 10 Hz steps (downsampling; 50 Hz for upsampling images). Downsampling: every tone from the stopband edge (1.04 x the
+  // output Nyquist) up to the input Nyquist, measured where it folds to. Upsampling: every in-band
+  // tone whose image (from - f) lies in the stopband, measured where the image lands.
+  auto fold = [](double f, double to) {
+    double a = std::fmod(f, to);
+    return a > 0.5 * to ? to - a : a;
+  };
+  auto stopSweep = [&](double from, double to) {
+    const double nyq = 0.5 * std::min(from, to);
+    double worst = -1000.0, worstAt = 0.0;
+    int count = 0;
+    auto one = [&](double f, double fa) {
+      const double g = toneGainDb(from, to, f, fa);
+      ++count;
+      if (g > worst) worst = g, worstAt = f;
+    };
+    if (to <= from) {
+      for (double f = std::ceil(1.04 * nyq / 10.0) * 10.0; f < 0.5 * from - 10.0; f += 10.0) one(f, fold(f, to));
+    } else {
+      const double hi = std::min(0.9 * nyq, from - 1.04 * nyq);
+      for (double f = 1000.0; f <= hi; f += 50.0) one(f, fold(from - f, to));
+    }
     worstStop = std::max(worstStop, worst);
-    char buf[160];
-    std::snprintf(buf, sizeof buf, "stopband %6.0f -> %6.0f Hz: worst alias/image %.1f dB", from, to, worst);
+    char buf[200];
+    std::snprintf(buf, sizeof buf, "stopband %6.0f -> %6.0f Hz: %d tones, worst alias/image %.1f dB (tone %.0f Hz)", from, to, count, worst, worstAt);
     lines.emplace_back(buf);
     return worst;
   };
@@ -191,16 +210,14 @@ TEST_CASE("RtResampler frequency response vs the offline spec", "[rtresample][re
   // 44.1 <-> 48 kHz: 20 kHz passband (spec: within 0.05 dB), stopband from 22.9 kHz (48 -> 44.1).
   CHECK(passband(44100, 48000, {50, 1000, 5000, 10000, 15000, 18000, 19800, 20000}) < 0.05);
   CHECK(passband(48000, 44100, {50, 1000, 5000, 10000, 15000, 18000, 19800, 20000}) < 0.05);
-  CHECK(stopband(48000, 44100, {{22950, 21150}, {23200, 20900}, {23600, 20500}, {23999, 20101}}) < -90.0);
-  // Upsampling: images at (from - f), folded into the output band.
-  CHECK(stopband(44100, 48000, {{5000, 8900}, {15000, 18900}, {19000, 22900}}) < -90.0);
-  // 96 -> 48 kHz: passband to 0.9 of 24 kHz, stopband from 1.04 * 24 kHz.
+  CHECK(stopSweep(48000, 44100) < -90.0);
+  CHECK(stopSweep(44100, 48000) < -90.0);
   CHECK(passband(96000, 48000, {100, 5000, 12000, 18000, 21000, 21500}) < 0.05);
-  CHECK(stopband(96000, 48000, {{25000, 23000}, {28000, 20000}, {35000, 13000}, {47000, 1000}}) < -90.0);
+  CHECK(stopSweep(96000, 48000) < -90.0);
   CHECK(passband(48000, 96000, {100, 5000, 12000, 18000, 21000, 21500}) < 0.05);
-  CHECK(stopband(48000, 96000, {{3000, 45000}, {10000, 38000}, {20000, 28000}}) < -90.0);
+  CHECK(stopSweep(48000, 96000) < -90.0);
   CHECK(passband(88200, 48000, {100, 5000, 12000, 18000, 21000, 21500}) < 0.05);
-  CHECK(stopband(88200, 48000, {{25000, 23000}, {30000, 18000}, {43000, 5000}}) < -90.0);
+  CHECK(stopSweep(88200, 48000) < -90.0);
 
   for (const auto& l : lines) WARN(l);
   WARN("worst passband deviation " << worstPass << " dB, worst stopband " << worstStop << " dB");
@@ -236,6 +253,34 @@ TEST_CASE("RtResampler latency is constant and the integer-delay helper is exact
       CHECK(num % ratio.M == 0);
       CHECK(q.phaseOffset() >= 0);
       CHECK(q.phaseOffset() < ratio.M);
+    }
+  }
+}
+
+TEST_CASE("RtResampler: every phase offset 0..M-1 works (including s > L)", "[rtresample][latency]") {
+  // Regression: with s > L the first outputs' whole kernel lies before the stream start; the tap
+  // count used to underflow and the converter read far outside its buffer.
+  const RatePair pairs[] = {{48000, 44100}, {48000, 22050}, {48000, 11025}, {48000, 8000}, {48000, 16000},
+                            {44100, 48000}, {48000, 96000}, {96000, 48000}, {48000, 32000}};
+  for (const auto& p : pairs) {
+    CAPTURE(p.from, p.to);
+    RtResampler r = make(p.from, p.to, 700);
+    const auto ratio = r.ratio();
+    const std::size_t k0 = 300;
+    std::vector<float> x(2200, 0.0f);
+    x[k0] = 1.0f;
+    for (std::int64_t s = 0; s < ratio.M; ++s) {
+      r.setPhaseOffset(s);
+      const auto y = runRt(r, x, {700, 33, 1});
+      REQUIRE(y.size() > 100);
+      bool finite = true;
+      for (float v : y) finite = finite && std::isfinite(v);
+      REQUIRE(finite);
+      const auto peak = static_cast<double>(std::max_element(y.begin(), y.end(), [](float a, float b) { return std::fabs(a) < std::fabs(b); }) - y.begin());
+      const double expected = (static_cast<double>(k0) + r.delayInputSamples()) * static_cast<double>(ratio.L) / static_cast<double>(ratio.M);
+      REQUIRE(std::fabs(peak - expected) <= 0.5 + 1e-9);
+      // The first outputs (kernel entirely before the stream) are exactly zero.
+      REQUIRE(y[0] == 0.0f);
     }
   }
 }

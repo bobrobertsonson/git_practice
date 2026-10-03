@@ -63,6 +63,7 @@ void EngineLoader::run() {
     out.id = id;
     out.hostRate = req.hostRate;
     out.maxBlock = req.maxBlock;
+    out.wanted = req.wanted;
     std::unique_ptr<Engine> engine;
     try {
       engine = Engine::build(req.preset, req.hostRate, req.maxBlock);
@@ -94,6 +95,7 @@ void EngineLoader::run() {
       out.modelRate = engine->modelRate();
       out.info = engine->chainInfo();
       out.presetName = engine->presetName();
+      if (out.built && req.beforePublish) req.beforePublish();
       std::shared_ptr<Engine> shared = std::move(engine);
       owned_.push_back(shared);
       slot_.publish(std::make_unique<EngineRef>(EngineRef{std::move(shared)}));
@@ -115,6 +117,15 @@ void EngineLoader::collect() {
   slot_.collectGarbage();  // frees the retired slot nodes (their shared_ptr references)
   // An engine nobody else references (the audio thread has finished fading it out, or it was
   // superseded before being picked up) is destroyed here. The newest is always kept.
+  //
+  // Why use_count() == 1 is a sound gate: a new reference to an engine can only be made by copying
+  // an existing one. The only copiers are this thread (which does not copy owned_ entries) and the
+  // audio thread, which copies exclusively from the EngineRef node that is current in the SwapSlot
+  // (and moves its own cur_/fading_ around). Once the loader's reference is the only one left, no
+  // slot node (pending, current or retired) and no audio-thread member refers to the engine any
+  // more, so nothing can acquire a reference again and the count cannot rise. A stale (non-1)
+  // reading only delays destruction to a later pass; the audio thread never holds the last
+  // reference because this vector always holds one.
   for (std::size_t i = 0; i + 1 < owned_.size();) {
     if (owned_[i].use_count() == 1)
       owned_.erase(owned_.begin() + static_cast<std::ptrdiff_t>(i));

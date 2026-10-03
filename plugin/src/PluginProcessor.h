@@ -98,6 +98,7 @@ class SawbladeProcessor : public juce::AudioProcessor {
   ParamValues readParams() const noexcept;
   void writeParams(const ParamValues& v);
   void submit(bool fallbackToInit);
+  void commit(const Preset& p);
   void onOutcome(const EngineLoader::Outcome& o);
 
   juce::AudioProcessorValueTreeState apvts_;
@@ -108,6 +109,7 @@ class SawbladeProcessor : public juce::AudioProcessor {
   Preset preset_;
   Status status_;
   std::uint64_t lastSubmitted_ = 0;
+  std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed
 
   double hostRate_ = 0.0;
   int maxBlock_ = 0;

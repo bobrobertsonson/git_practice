@@ -175,3 +175,41 @@ TEST_CASE("Chain live params: setLiveParams and process allocate nothing", "[cha
   }
   CHECK(guard.count() == 0);
 }
+
+TEST_CASE("Chain live params: a post-EQ ramp is bit-identical for any block size", "[chain][live]") {
+  const auto x = sine(900.0, kFs, 9000, 0.3);
+  std::vector<float> ref;
+  for (const int block : {1, 7, 64, 512, 100000}) {
+    CAPTURE(block);
+    auto c = build(mk(0.5), 512);
+    LiveParams p = c->liveParams();
+    p.postEqGainDb[0] = 12.0;
+    p.postEqGainDb[1] = -9.0;
+    c->setLiveParams(p);
+    const auto y = run(*c, x, {block});
+    if (ref.empty()) ref = y;
+    CHECK(y == ref);
+  }
+  // A second ramp started mid-stream, at the same sample position, is also invariant.
+  std::vector<float> ref2;
+  for (const int block : {1, 7, 64, 512}) {
+    CAPTURE(block);
+    auto c = build(mk(0.5), 512);
+    std::vector<float> y(x.size());
+    LiveParams p = c->liveParams();
+    p.postEqGainDb[0] = 6.0;
+    c->setLiveParams(p);
+    for (std::size_t pos = 0; pos < x.size();) {
+      if (pos == 4032) {  // 4032 is a multiple of every block size used except 7: split there
+        p.postEqGainDb[0] = -6.0;
+        c->setLiveParams(p);
+      }
+      std::size_t n = std::min<std::size_t>(static_cast<std::size_t>(block), x.size() - pos);
+      if (pos < 4032 && pos + n > 4032) n = 4032 - pos;
+      c->process(x.data() + pos, y.data() + pos, static_cast<int>(n));
+      pos += n;
+    }
+    if (ref2.empty()) ref2 = y;
+    CHECK(y == ref2);
+  }
+}

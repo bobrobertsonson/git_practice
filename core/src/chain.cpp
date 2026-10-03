@@ -465,24 +465,33 @@ void Chain::setLiveParams(const LiveParams& p) noexcept {
 void Chain::processPostEq(float* w, int n) noexcept {
   if (eqRamping_ == 0) {
     postEq_.process(w, n);
+    eqCounter_ += static_cast<std::uint64_t>(n);
     return;
   }
-  for (int pos = 0; pos < n; pos += kEqSubBlock) {
-    const int len = std::min(kEqSubBlock, n - pos);
-    for (std::size_t i = 0; i < eqRamp_.size(); ++i) {
-      EqRamp& r = eqRamp_[i];
-      if (r.remaining <= 0) continue;
-      if (r.remaining <= len) {
-        r.cur = r.target;
-        r.remaining = 0;
-        --eqRamping_;
-      } else {
-        r.cur += r.step * len;
-        r.remaining -= len;
+  // The redesign grid is absolute (multiples of kEqSubBlock of the running sample counter), so the
+  // result does not depend on how the host splits the stream into blocks.
+  int pos = 0;
+  while (pos < n) {
+    const int phase = static_cast<int>(eqCounter_ % static_cast<std::uint64_t>(kEqSubBlock));
+    if (phase == 0) {
+      for (std::size_t i = 0; i < eqRamp_.size(); ++i) {
+        EqRamp& r = eqRamp_[i];
+        if (r.remaining <= 0) continue;
+        if (r.remaining <= kEqSubBlock) {
+          r.cur = r.target;
+          r.remaining = 0;
+          --eqRamping_;
+        } else {
+          r.cur += r.step * kEqSubBlock;
+          r.remaining -= kEqSubBlock;
+        }
+        postEq_.setBandGainDb(static_cast<int>(i), r.cur);
       }
-      postEq_.setBandGainDb(static_cast<int>(i), r.cur);
     }
+    const int len = std::min(n - pos, kEqSubBlock - phase);
     postEq_.process(w + pos, len);
+    eqCounter_ += static_cast<std::uint64_t>(len);
+    pos += len;
   }
 }
 

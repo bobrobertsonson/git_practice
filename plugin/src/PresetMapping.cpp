@@ -96,7 +96,10 @@ std::string presetToStateJson(const Preset& p) {
   namespace fs = std::filesystem;
   nlohmann::json j = toJson(p);
   auto absolutise = [](nlohmann::json& capture, const Capture& c) {
-    if (!c.resolvedPath.empty()) capture["file"] = fs::absolute(c.resolvedPath).string();
+    if (c.resolvedPath.empty()) return;
+    std::error_code ec;  // absolute() throws if the working directory no longer exists
+    const fs::path a = fs::absolute(c.resolvedPath, ec);
+    capture["file"] = (ec ? c.resolvedPath : a).string();
   };
   const PathPreset* paths[2] = {&p.a, &p.b};
   const char* names[2] = {"a", "b"};

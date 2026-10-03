@@ -162,7 +162,9 @@ int RtResampler::process(const float* in, int nIn, float* out) noexcept {
     const std::int64_t start = base + 1 - reach_;  // global index of the first tap
     const float* w = table_.data() + phase * taps;
     std::size_t i0 = 0;
-    if (start < bufBase) i0 = static_cast<std::size_t>(bufBase - start);  // before the stream start: zeros
+    // Taps before the stream start read zeros. With a phase offset s > L the whole kernel can lie
+    // before it (i0 would exceed taps): clamp, the output is then exactly 0.
+    if (start < bufBase) i0 = std::min(static_cast<std::size_t>(bufBase - start), taps);
     const float* x = buf_.data() + (start + static_cast<std::int64_t>(i0) - bufBase);
     w += i0;
     const std::size_t cnt = taps - i0;

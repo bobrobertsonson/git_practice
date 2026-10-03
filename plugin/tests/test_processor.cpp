@@ -524,3 +524,91 @@ TEST_CASE("Processor: an engine swap cross-fades without a dropout", "[processor
     CHECK_FALSE(h.nonFinite);
   }
 }
+
+TEST_CASE("Processor: engines published during a fade wait; the fade is never cut short", "[processor][swap][rt]") {
+  TempDir t;
+  const fs::path a = writeIdentityPreset(t.dir, "idA", 0), b = writeIdentityPreset(t.dir, "idB", 0);
+  const fs::path c = writeIdentityPreset(t.dir, "idC", 0), d = writeIdentityPreset(t.dir, "idD", 0);
+  Host h(48000.0, 256);
+  h.load(a);
+  const std::vector<float> in(256, 0.25f);
+  std::vector<float> out(256), all;
+  auto block = [&] {
+    h.process(in.data(), out.data(), 256);
+    all.insert(all.end(), out.begin(), out.end());
+  };
+  for (int i = 0; i < 20; ++i) block();  // steady
+  const std::size_t from = all.size();
+  h.load(b);
+  block();  // the fade A -> B starts (30 ms = 5.6 blocks)
+  block();
+  h.load(c);  // two more publishes while the fade is running
+  h.load(d);
+  for (int i = 0; i < 40; ++i) block();
+  // Equal-power fade of identical DC: |d out/d sample| <= 0.25 * sqrt(2) * (pi/2) / 1440 per sample.
+  // A restarted fade (the old bug) would step by ~0.1.
+  double maxStep = 0.0;
+  for (std::size_t i = from + 1; i < all.size(); ++i) maxStep = std::max(maxStep, static_cast<double>(std::fabs(all[i] - all[i - 1])));
+  CHECK(maxStep < 0.25 * 1.4143 * 1.5708 / 1440.0 * 1.5);
+  CHECK(all.back() == Catch::Approx(0.25).epsilon(1e-4));
+  CHECK(h.p.status().presetName == "idD");
+  CHECK(h.allocs == 0);
+}
+
+TEST_CASE("Processor: a failed load changes neither parameters nor state", "[processor][state]") {
+  TempDir t;
+  Host h(48000.0, 512);
+  h.load(writeIdentityPreset(t.dir, "good", 0));
+  h.setParam(kBlend, 0.3);
+  h.setParam(kInputGain, 2.0);
+  juce::MemoryBlock before;
+  h.p.getStateInformation(before);
+
+  json j = json::parse(std::ifstream(t.dir / "good.json"));
+  j["name"] = "broken";
+  j["blend"] = 0.9;
+  j["input"] = {{"gainDb", -7.0}};
+  j["paths"]["a"]["blocks"][0]["model"]["file"] = (t.dir / "missing.nam").string();
+  std::string err;
+  REQUIRE(h.p.loadPresetJson(j.dump(), t.dir, &err));
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(h.p.status().error.empty());
+  // The message names the file once, without repeating a JSON path prefix.
+  const std::string msg = h.p.status().error;
+  CHECK(msg.find("missing.nam") != std::string::npos);
+  CHECK(msg.find("missing.nam") == msg.rfind("missing.nam"));
+  CHECK(h.param(kBlend) == Catch::Approx(0.3).margin(1e-6));
+  CHECK(h.param(kInputGain) == Catch::Approx(2.0).margin(1e-6));
+  juce::MemoryBlock after;
+  h.p.getStateInformation(after);
+  CHECK(after == before);
+  CHECK(h.p.status().presetName == "good");
+}
+
+TEST_CASE("Processor: state can be saved and restored after the working directory is deleted", "[processor][state]") {
+  TempDir t;
+  Host h(48000.0, 512);
+  h.load(writeIdentityPreset(t.dir, "good", 0));
+  std::error_code ec;
+  const fs::path original = fs::current_path();
+  const fs::path gone = t.dir / "cwd";
+  fs::create_directories(gone);
+  fs::current_path(gone);
+  fs::remove_all(gone, ec);
+  juce::MemoryBlock s;
+  bool threw = false;
+  try {
+    h.p.getStateInformation(s);
+    SawbladeProcessor q;
+    q.setStateInformation(s.getData(), static_cast<int>(s.getSize()));
+    q.setRateAndBufferSizeDetails(48000.0, 256);
+    q.prepareToPlay(48000.0, 256);
+    CHECK(q.status().error.empty());
+    CHECK(q.status().presetName == "good");
+  } catch (...) {
+    threw = true;
+  }
+  fs::current_path(original);
+  CHECK_FALSE(threw);
+  CHECK(s.getSize() > 0);
+}

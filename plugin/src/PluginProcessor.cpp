@@ -102,16 +102,35 @@ SlotBands SawbladeProcessor::postEqSlots() const {
 }
 
 void SawbladeProcessor::loadPreset(Preset preset) {
-  Preset c = clampedToParams(std::move(preset));
-  const ParamValues v = paramsFromPreset(c);
+  auto c = std::make_shared<const Preset>(clampedToParams(std::move(preset)));
+  bool buildNow;
   {
     std::lock_guard<std::mutex> lk(mutex_);
-    preset_ = c;
-    status_.presetName = c.name;
+    wanted_ = c;
     status_.error.clear();
+    buildNow = hostRate_ > 0.0;
   }
-  writeParams(v);  // the engine's baseline (built from `c`) equals these values
-  submit(/*fallbackToInit=*/false);
+  // Nothing is committed (preset_, parameters, state) until the engine for it has been built: a
+  // failed load leaves the previous preset and parameter values intact, and the running engine
+  // is not nudged towards values it will never get.
+  if (buildNow) {
+    submit(/*fallbackToInit=*/false);
+  } else {
+    commit(*c);  // not prepared yet: nothing to build; prepareToPlay() will
+    std::lock_guard<std::mutex> lk(mutex_);
+    wanted_.reset();
+  }
+}
+
+// Makes `p` the current preset and writes its values into the parameters (its engine's baseline
+// equals them). Called from the loader thread right before the engine is published, or directly.
+void SawbladeProcessor::commit(const Preset& p) {
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    preset_ = p;
+    status_.presetName = p.name;
+  }
+  writeParams(paramsFromPreset(p));
 }
 
 bool SawbladeProcessor::loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error) {
@@ -148,21 +167,40 @@ void SawbladeProcessor::getStateInformation(juce::MemoryBlock& dest) {
 void SawbladeProcessor::setStateInformation(const void* data, int size) {
   if (data == nullptr || size <= 0) return;
   const std::string s(static_cast<const char*>(data), static_cast<std::size_t>(size));
-  loadPresetJson(s, std::filesystem::current_path());
+  // Capture paths in a saved state are absolute; the base only matters for hand-edited relative ones.
+  // (current_path() throws if the working directory was deleted: use the error_code overload.)
+  std::error_code ec;
+  std::filesystem::path base = std::filesystem::current_path(ec);
+  if (ec) base = std::filesystem::path("/");
+  loadPresetJson(s, base);
 }
 
 // --- loader -------------------------------------------------------------------------------------
 void SawbladeProcessor::submit(bool fallbackToInit) {
   if (hostRate_ <= 0.0) return;  // not prepared yet: prepareToPlay() will build
   EngineLoader::Request r;
-  r.preset = presetWithParams(false);
+  std::shared_ptr<const Preset> wanted;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    wanted = wanted_;
+    status_.loading = true;
+  }
+  if (wanted) {
+    // A user-requested preset that is not committed yet: build that one (a rebuild for a new rate
+    // must not drop a load that is still in flight).
+    r.preset = *wanted;
+    r.wanted = wanted;
+    r.beforePublish = [this, wanted] {
+      commit(*wanted);
+      std::lock_guard<std::mutex> lk(mutex_);
+      if (wanted_ == wanted) wanted_.reset();
+    };
+  } else {
+    r.preset = presetWithParams(false);
+  }
   r.hostRate = hostRate_;
   r.maxBlock = maxBlock_;
   r.fallbackToInit = fallbackToInit;
-  {
-    std::lock_guard<std::mutex> lk(mutex_);
-    status_.loading = true;
-  }
   const std::uint64_t id = loader_->submit(std::move(r));
   std::lock_guard<std::mutex> lk(mutex_);
   lastSubmitted_ = id;
@@ -180,6 +218,7 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     status_.loading = false;
     status_.error = o.error;
   }
+  if (!o.built && !o.superseded && o.wanted && wanted_ == o.wanted) wanted_.reset();  // failed: keep the previous preset
   if (o.published) {
     status_.latencySamples = o.latencySamples;
     status_.hostRate = o.hostRate;
@@ -223,7 +262,9 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
   // Adopt a newly published engine; the one it replaces fades out. (A stale-rate engine is never
   // used or faded.)
-  if (EngineRef* ref = slot_.current(); ref != nullptr && ref->engine.get() != cur_.get()) {
+  // While fading nothing is adopted: engines published meanwhile coalesce in the slot (the newest
+  // wins) and are adopted when the fade has finished, so a fade is never cut short or restarted.
+  if (EngineRef* ref = fading_ ? nullptr : slot_.current(); ref != nullptr && ref->engine.get() != cur_.get()) {
     fading_ = std::move(cur_);
     cur_ = ref->engine;
     fadePos_ = 0;

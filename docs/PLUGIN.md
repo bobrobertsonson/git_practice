@@ -88,7 +88,9 @@ the new one. Both engines run on the same input during the fade; the fade buffer
 engine, so it can keep the outgoing engine alive, and the loader keeps its own reference to every
 engine it publishes and frees one only once nothing else holds it (so the last reference is never
 dropped on the audio thread). The new engine starts with fresh state and its own latency, and the two
-engines are not time-aligned; coherent material can swell by up to +3 dB at the fade midpoint.
+engines are not time-aligned (their latencies differ), so the two signals can add coherently (up to +3 dB
+at the fade midpoint) or partially cancel (a dip, in the worst case of opposite phase a deep one);
+the measured test case (identical presets) stays within 0 to +2.9 dB.
 
 ### Parameters (APVTS) and the preset
 
@@ -140,19 +142,31 @@ underruns (a counter is exposed and tested to stay 0). Everything is preallocate
 `process()` takes any block size up to the prepared maximum, `Engine` splits larger ones.
 
 Achieved response (`tests/test_rt_resample.cpp`, "frequency response" test; the offline spec is
-passband within 0.05 dB to 20 kHz at 44.1<->48 kHz and stopband >= 90 dB):
+passband within 0.05 dB to 20 kHz at 44.1<->48 kHz and stopband >= 90 dB). The stopband is a dense
+sweep: every tone from the stopband edge (1.04 x the lower Nyquist) to the input Nyquist in 10 Hz steps
+when downsampling, and every in-band tone whose image lands in the stopband (50 Hz steps) when
+upsampling. The worst point is always at the stopband edge:
 
-| conversion | passband worst abs gain | stopband worst alias/image |
+| conversion | passband worst abs gain | stopband worst alias/image (dense sweep) |
 |---|---|---|
-| 44.1 -> 48 kHz (to 20 kHz) | 0.0044 dB | -107.2 dB |
-| 48 -> 44.1 kHz (to 20 kHz; tones 22.95..24 kHz fold to 21.15..20.1 kHz) | 0.0044 dB | -100.7 dB |
-| 96 -> 48 kHz (to 21.5 kHz) | 0.0001 dB | -108.1 dB |
-| 48 -> 96 kHz (to 21.5 kHz) | 0.0001 dB | -111.0 dB |
-| 88.2 -> 48 kHz (to 21.5 kHz) | 0.0001 dB | -107.8 dB |
+| 44.1 -> 48 kHz (to 20 kHz) | 0.0044 dB | -104.2 dB |
+| 48 -> 44.1 kHz (to 20 kHz) | 0.0044 dB | -97.1 dB (22.935 kHz, 5 Hz scan; -99.6 dB at 10 Hz steps) |
+| 96 -> 48 kHz (to 21.5 kHz) | 0.0001 dB | -95.6 dB (24.96 kHz) |
+| 48 -> 96 kHz (to 21.5 kHz) | 0.0001 dB | -104.0 dB |
+| 88.2 -> 48 kHz (to 21.5 kHz) | 0.0001 dB | -95.7 dB (24.96 kHz) |
+
+Worst case over everything: about -95.6 dB, 5.6 dB better than the 90 dB spec. (An earlier, sparse
+version of this table quoted -100 to -111 dB because it sampled a handful of tones away from the edge.)
 
 Output equals the offline converter's output on the delayed input to within 2e-6 (float
 coefficients vs double) for 11 rate pairs. Kernel sizes: 92 taps (44.1->48, 48->96), 100 taps
 (48->44.1), 182 taps (96->48); one dot product per output sample.
+
+A regression found in review: with the output converter's phase offset `s > L` (model rate above host
+rate, i.e. 44.1 kHz and lower hosts) the first outputs' whole kernel lies before the stream start;
+the tap count underflowed and `process()` read outside its buffer. It is fixed (the count is clamped,
+the output there is exactly 0) and covered by a sweep of every `s` in `0..M-1` and of every chain
+latency `C = 0..2M` for host rates 8000 to 192000 with 48 kHz models.
 
 ### Editor
 

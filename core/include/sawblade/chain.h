@@ -198,6 +198,7 @@ class Chain {
   };
   std::array<EqRamp, ParametricEq::kMaxBands> eqRamp_{};
   int eqRamping_ = 0;  // number of bands with remaining > 0
+  std::uint64_t eqCounter_ = 0;  // post-EQ samples processed: the 32-sample redesign grid is absolute
   AlignResult align_;
   int latency_ = 0;
   int maxBlock_ = 0;

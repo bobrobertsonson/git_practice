@@ -37,7 +37,7 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
     if (mr.ambiguous) throw std::runtime_error("NAM blocks expect different sample rates (" + mr.listing + ")");
     if (mr.hz) modelRate = *mr.hz;
   } catch (const CaptureError& ce) {
-    throw std::runtime_error(ce.jsonPath() + ": " + ce.what());
+    throw std::runtime_error(ce.what());  // the message already names the file
   }
   e->resampling_ = std::fabs(modelRate - hostRate) > 1e-6;
   ChainResources res = loadResources(preset, modelRate, &cache);

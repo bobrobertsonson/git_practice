@@ -95,6 +95,31 @@ TEST_CASE("Engine: reported latency equals the measured impulse delay", "[engine
   }
 }
 
+TEST_CASE("Engine: every chain latency C = 0..2M at low and odd host rates", "[engine][latency]") {
+  // Regression: the output converter's phase offset s (chosen from C) can exceed L when the model
+  // rate is above the host rate; that used to read outside the converter's buffer (crash) for ~7%
+  // of C values at 44.1 kHz and for any C at 22.05 kHz and below.
+  for (const double host : {8000.0, 11025.0, 16000.0, 22050.0, 32000.0, 44100.0, 88200.0, 96000.0, 192000.0}) {
+    const auto M = RtResampler::ratioFor(48000.0, host).M;  // the output converter's M
+    int cases = 0;
+    for (int C = 0; C <= 2 * static_cast<int>(M); ++C) {
+      CAPTURE(host, C);
+      auto e = Engine::build(identityPreset(C), host, 512);
+      REQUIRE(e->latency().chainModelSamples == C);
+      const int T = e->latencySamples();
+      const int k0 = 400;
+      std::vector<float> x(static_cast<std::size_t>(k0 + T + 900), 0.0f), y;
+      x[static_cast<std::size_t>(k0)] = 1.0f;
+      runEngine(*e, x, y, randomSizes(static_cast<unsigned>(C + 1), 23, 700));
+      const auto peak = std::max_element(y.begin(), y.end(), [](float a, float b) { return std::fabs(a) < std::fabs(b); }) - y.begin();
+      REQUIRE(peak - k0 == T);
+      REQUIRE(e->underruns() == 0);
+      ++cases;
+    }
+    WARN("host " << host << ": " << cases << " chain latencies checked (M = " << M << ")");
+  }
+}
+
 TEST_CASE("Engine: 44.1 kHz host with 48 kHz models - latency breakdown", "[engine][latency]") {
   auto e = Engine::build(identityPreset(0), 44100.0, 512);
   const auto& l = e->latency();

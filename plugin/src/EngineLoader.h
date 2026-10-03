@@ -42,6 +42,13 @@ class EngineLoader {
     // If the build fails, publish a pass-through engine at this rate instead of keeping the
     // previous engine (used when the host rate changed: the old engine would be at the wrong rate).
     bool fallbackToInit = false;
+    // Identifies the user-requested preset this build is for (null for rebuilds of the current
+    // one); echoed in the Outcome.
+    std::shared_ptr<const Preset> wanted;
+    // Runs on the worker thread right before a successfully built engine is published (not for
+    // the fallback engine): the processor commits the preset and its parameter values here, so
+    // nothing changes if the build fails.
+    std::function<void()> beforePublish;
   };
 
   struct Outcome {
@@ -55,6 +62,7 @@ class EngineLoader {
     int maxBlock = 0;
     ChainInfo info;
     std::string presetName;
+    std::shared_ptr<const Preset> wanted;
   };
   // Called on the worker thread after the outcome is known (and after publishing).
   using Callback = std::function<void(const Outcome&)>;
