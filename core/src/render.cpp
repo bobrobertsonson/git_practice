@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 
+#include "sawblade/capture_cache.h"
 #include "sawblade/nam_block.h"
 #include "sawblade/resample.h"
 
@@ -69,7 +70,7 @@ struct NamRate {
 
 // Training rates of the NAM blocks that will actually run (not bypassed, on an enabled path).
 // Models without a recorded rate are rate-agnostic and do not take part.
-std::vector<NamRate> probeNamRates(const Preset& p) {
+std::vector<NamRate> probeNamRates(const Preset& p, CaptureCache* cache) {
   std::vector<NamRate> out;
   const PathPreset* paths[2] = {&p.a, &p.b};
   const char* names[2] = {"paths.a", "paths.b"};
@@ -80,13 +81,20 @@ std::vector<NamRate> probeNamRates(const Preset& p) {
       const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get());
       if (!nam || b.bypass) continue;
       const std::string where = JsonObject::index(std::string(names[k]) + ".blocks", i);
-      std::unique_ptr<NamBlock> m;
+      const std::string filePath = where + ".model.file";
+      double hz = -1.0;
       try {
-        m = NamBlock::load(nam->model.resolvedPath, NamBlockConfig{});
+        if (cache) {
+          hz = cache->namModel(nam->model, filePath)->expectedSampleRate();
+        } else {
+          hz = NamBlock::load(nam->model.resolvedPath, NamBlockConfig{})->expectedSampleRate();
+        }
+      } catch (const CaptureError& e) {
+        throw RenderError(RenderErrorKind::Io, e.what(), e.jsonPath());
       } catch (const std::exception& e) {
-        throw RenderError(RenderErrorKind::Io, e.what());
+        throw RenderError(RenderErrorKind::Io, e.what(), filePath);
       }
-      if (m->expectedSampleRate() > 0.0) out.push_back({where + " (" + b.id + ")", m->expectedSampleRate()});
+      if (hz > 0.0) out.push_back({where + " (" + b.id + ")", hz});
     }
   }
   return out;
@@ -132,7 +140,7 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
     if (!(rate >= 1000.0 && rate <= 768000.0))
       throw RenderError(RenderErrorKind::Preset, "render rate must be in 1000..768000 Hz");
   } else {
-    const std::vector<NamRate> rates = probeNamRates(preset);
+    const std::vector<NamRate> rates = probeNamRates(preset, opts.cache);
     if (!rates.empty()) {
       rate = rates.front().hz;
       bool agree = true;
@@ -160,16 +168,20 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
   // Chain construction and prepare) is a Preset error; loading files is Io.
   std::unique_ptr<Chain> chain;
   try {
-    ChainResources res = loadResources(preset, rate);
+    ChainResources res = loadResources(preset, rate, opts.cache);
     try {
       chain = std::make_unique<Chain>(preset, std::move(res));
+    } catch (const PresetError& e) {
+      throw RenderError(RenderErrorKind::Preset, e.what(), e.jsonPath());
     } catch (const std::exception& e) {
       throw RenderError(RenderErrorKind::Preset, e.what());
     }
   } catch (const RenderError&) {
     throw;
   } catch (const PresetError& e) {
-    throw RenderError(RenderErrorKind::Preset, e.what());
+    throw RenderError(RenderErrorKind::Preset, e.what(), e.jsonPath());
+  } catch (const CaptureError& e) {
+    throw RenderError(RenderErrorKind::Io, e.what(), e.jsonPath());
   } catch (const std::exception& e) {
     throw RenderError(RenderErrorKind::Io, e.what());
   }

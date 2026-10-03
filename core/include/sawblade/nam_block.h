@@ -28,6 +28,31 @@ struct NamMetadata {
   std::string modeledBy;
 };
 
+// A parsed .nam file (architecture config, weights, metadata): immutable and shareable between
+// threads. Building a NamBlock from it skips the file read and JSON parse; every block gets its
+// own independent DSP state. Used by CaptureCache.
+class NamModel {
+ public:
+  // Throws std::runtime_error (message contains the path) like NamBlock::load.
+  static std::shared_ptr<const NamModel> load(const std::filesystem::path& path);
+  ~NamModel();
+  NamModel(const NamModel&) = delete;
+  NamModel& operator=(const NamModel&) = delete;
+
+  double expectedSampleRate() const noexcept { return expectedRate_; }  // <= 0: unknown
+  std::optional<double> loudnessDb() const noexcept { return loudness_; }
+  const NamMetadata& metadata() const noexcept { return meta_; }
+
+ private:
+  friend class NamBlock;
+  NamModel();
+  struct Data;
+  std::unique_ptr<Data> data_;
+  double expectedRate_ = -1.0;
+  std::optional<double> loudness_;
+  NamMetadata meta_{};
+};
+
 // One Neural Amp Modeler capture (NeuralAmpModelerCore, float samples) as a Processor:
 //   process(): inputGain -> model -> outputGain (+ loudness normalization).
 //
@@ -44,6 +69,8 @@ class NamBlock : public Processor {
   // Throws std::runtime_error (message contains the path) if the file cannot be loaded or the
   // model is not mono-in/mono-out.
   static std::unique_ptr<NamBlock> load(const std::filesystem::path& path, const NamBlockConfig& cfg);
+  // Instantiates a fresh block (own state) from an already parsed model. Bit-identical to load(path).
+  static std::unique_ptr<NamBlock> load(const NamModel& model, const NamBlockConfig& cfg);
 
   ~NamBlock() override;
   NamBlock(const NamBlock&) = delete;

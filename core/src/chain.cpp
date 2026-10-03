@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <stdexcept>
 
+#include "sawblade/capture_cache.h"
 #include "sawblade/ir.h"
 
 namespace sawblade {
@@ -13,12 +14,22 @@ namespace {
 double dbToLin(double db) { return std::pow(10.0, db / 20.0); }
 
 std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, double sr, bool normalize,
-                                   std::vector<std::string>& warnings) {
-  verifyCapture(c, path + ".file");
-  IrData ir = loadIr(c.resolvedPath, sr, normalize);
-  for (const auto& w : ir.warnings) warnings.push_back(path + ": " + w);
+                                   std::vector<std::string>& warnings, CaptureCache* cache) {
+  const std::string filePath = path + ".file";
+  std::shared_ptr<const IrData> ir;
+  if (cache) {
+    ir = cache->ir(c, filePath, sr, normalize);
+  } else {
+    verifyCapture(c, filePath);
+    try {
+      ir = std::make_shared<const IrData>(loadIr(c.resolvedPath, sr, normalize));
+    } catch (const std::exception& e) {
+      throw CaptureError(filePath, e.what());
+    }
+  }
+  for (const auto& w : ir->warnings) warnings.push_back(path + ": " + w);
   auto conv = std::make_unique<Convolver>();
-  conv->setIr(ir.samples);
+  conv->setIr(ir->samples);
   return conv;
 }
 
@@ -54,7 +65,7 @@ std::vector<float> makeProbe(double sr) {
 
 }  // namespace
 
-ChainResources loadResources(const Preset& p, double sr) {
+ChainResources loadResources(const Preset& p, double sr, CaptureCache* cache) {
   ChainResources res;
   res.sampleRate = sr;
   const PathPreset* paths[2] = {&p.a, &p.b};
@@ -65,7 +76,7 @@ ChainResources loadResources(const Preset& p, double sr) {
       const std::string jp = JsonObject::index(std::string(names[k]) + ".blocks", i);
       const BlockType* t = BlockRegistry::instance().find(blocks[i].type);
       if (!t) throw std::runtime_error(jp + ".type: unknown block type \"" + blocks[i].type + "\"");
-      BlockBuildContext ctx{sr, &res.warnings, jp};
+      BlockBuildContext ctx{sr, &res.warnings, jp, cache};
       LoadedBlock lb;
       lb.id = blocks[i].id;
       lb.type = blocks[i].type;
@@ -76,10 +87,10 @@ ChainResources loadResources(const Preset& p, double sr) {
     }
   }
   if (p.cab.mode == CabMode::Shared) {
-    res.cabShared = loadCab(p.cab.ir, "cab.ir", sr, p.cab.normalize, res.warnings);
+    res.cabShared = loadCab(p.cab.ir, "cab.ir", sr, p.cab.normalize, res.warnings, cache);
   } else {
-    res.cabA = loadCab(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings);
-    res.cabB = loadCab(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings);
+    res.cabA = loadCab(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings, cache);
+    res.cabB = loadCab(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings, cache);
   }
   return res;
 }

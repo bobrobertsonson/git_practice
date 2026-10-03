@@ -22,19 +22,74 @@ std::string metaString(const nlohmann::json& m, const char* key) {
 
 NamBlock::~NamBlock() = default;
 
+struct NamModel::Data {
+  nam::dspData data;
+};
+
+NamModel::NamModel() = default;
+NamModel::~NamModel() = default;
+
+namespace {
+
+struct Facts {
+  double expectedRate = -1.0;
+  std::optional<double> loudness;
+  NamMetadata meta;
+};
+
+// Shared by both load paths: validates the DSP and reads its facts.
+Facts inspect(const nam::DSP* dsp, const nam::dspData& data) {
+  if (!dsp) throw std::runtime_error("model could not be created");
+  if (dsp->NumInputChannels() != 1 || dsp->NumOutputChannels() != 1)
+    throw std::runtime_error("only mono (1-in/1-out) models are supported");
+  Facts f;
+  f.expectedRate = dsp->GetExpectedSampleRate();
+  if (dsp->HasLoudness()) f.loudness = dsp->GetLoudness();
+  f.meta.name = metaString(data.metadata, "name");
+  f.meta.gearType = metaString(data.metadata, "gear_type");
+  f.meta.modeledBy = metaString(data.metadata, "modeled_by");
+  return f;
+}
+
+}  // namespace
+
+std::shared_ptr<const NamModel> NamModel::load(const std::filesystem::path& path) {
+  std::shared_ptr<NamModel> m(new NamModel());
+  try {
+    m->data_ = std::make_unique<Data>();
+    auto dsp = nam::get_dsp(path, m->data_->data);
+    const Facts f = inspect(dsp.get(), m->data_->data);
+    m->expectedRate_ = f.expectedRate;
+    m->loudness_ = f.loudness;
+    m->meta_ = f.meta;
+  } catch (const std::exception& e) {
+    throw std::runtime_error("NAM load error (" + path.string() + "): " + e.what());
+  }
+  return m;
+}
+
+std::unique_ptr<NamBlock> NamBlock::load(const NamModel& model, const NamBlockConfig& cfg) {
+  std::unique_ptr<NamBlock> b(new NamBlock());
+  nam::dspData copy = model.data_->data;  // get_dsp may consume its argument
+  b->dsp_ = nam::get_dsp(copy);
+  b->expectedRate_ = model.expectedRate_;
+  b->loudness_ = model.loudness_;
+  b->meta_ = model.meta_;
+  if (!b->dsp_) throw std::runtime_error("NAM model could not be instantiated");
+  b->cfg_ = cfg;
+  b->updateGains();
+  return b;
+}
+
 std::unique_ptr<NamBlock> NamBlock::load(const std::filesystem::path& path, const NamBlockConfig& cfg) {
   std::unique_ptr<NamBlock> b(new NamBlock());
   try {
     nam::dspData data;
     b->dsp_ = nam::get_dsp(path, data);
-    if (!b->dsp_) throw std::runtime_error("model could not be created");
-    if (b->dsp_->NumInputChannels() != 1 || b->dsp_->NumOutputChannels() != 1)
-      throw std::runtime_error("only mono (1-in/1-out) models are supported");
-    b->expectedRate_ = b->dsp_->GetExpectedSampleRate();
-    if (b->dsp_->HasLoudness()) b->loudness_ = b->dsp_->GetLoudness();
-    b->meta_.name = metaString(data.metadata, "name");
-    b->meta_.gearType = metaString(data.metadata, "gear_type");
-    b->meta_.modeledBy = metaString(data.metadata, "modeled_by");
+    const Facts f = inspect(b->dsp_.get(), data);
+    b->expectedRate_ = f.expectedRate;
+    b->loudness_ = f.loudness;
+    b->meta_ = f.meta;
   } catch (const std::exception& e) {
     throw std::runtime_error("NAM load error (" + path.string() + "): " + e.what());
   }

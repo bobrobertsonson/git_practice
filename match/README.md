@@ -126,3 +126,37 @@ There is no package-relative fallback. Onset times from the spectral flux are sh
 1024-sample window: the flux peaks about that long before the true onset); accuracy about +-5 ms. `gapNoiseDb`
 is also null ("no clear gaps", rule `n/a`) when the DI's noise floor is within 10 dB of its median active frame
 level, i.e. a steady DI with no real gaps.
+
+## Core bindings (`sawblade_core`, phase 3.1)
+
+The C++ renderer as a Python extension: the same `renderPreset` path as `tonerender` (bit-identical output),
+plus a `CaptureCache` that loads each NAM model / IR once. Spec: `docs/specs/phase3_matcher.md` 3.1.
+
+Build (off by default; needs Python headers, pybind11 is fetched, pinned) from the repo root:
+
+```
+cmake -S . -B build-py -G Ninja -DCMAKE_BUILD_TYPE=Release -DSAWBLADE_BUILD_PYTHON=ON \
+      -DPython_EXECUTABLE=$PWD/match/.venv/bin/python
+cmake --build build-py            # also builds tonerender, used by the bit-identity tests
+ctest --test-dir build-py         # C++ suite + the python_bindings pytest run
+```
+
+The module lands in `build-py/python/sawblade_core.<abi>.so`. `sawblade_match.core` finds it: already
+importable (`PYTHONPATH`/installed), else `$SAWBLADE_CORE_DIR`, else `<repo>/build-py|build|build-lead/python`.
+Use the same interpreter for building and running (the ABI tag is part of the file name).
+
+```python
+from sawblade_match.core import render, CaptureCache, PresetError, RenderIOError
+
+cache = CaptureCache()                       # share between renders and threads
+y, report = render(preset_dict_or_json, di_float32, 48000, base_dir="presets", cache=cache)
+# render_rate="auto"|Hz, out_rate="input"|"render", block=256; report = tonerender --report JSON
+# (latencySamples, pathLatency, renderRate, timings, warnings, ...). cache.hits / cache.misses / len(cache).
+```
+
+The GIL is released while rendering, so renders from several Python threads run in parallel (a thread pool
+sharing one `CaptureCache` is the intended use). The cache keeps parsed models and IRs, not DSP state: each
+render still builds fresh NAM state, so changing blend, levels, EQ or NAM gains costs no reload. Entries are
+keyed by file path + SHA-256 (re-hashed only when size/mtime change); a preset `sha256` is checked on every use.
+Errors: `PresetError` (a `ValueError`) and `RenderIOError` (an `OSError`), both with `.json_path`.
+`pytest match/tests/test_core_bindings.py` skips itself when the module is not built.

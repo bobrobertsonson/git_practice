@@ -11,6 +11,8 @@
 
 namespace sawblade {
 
+class CaptureCache;
+
 // Static, per-type facts. Time-based effects (delay, reverb, modulation, long-release dynamics)
 // are not NAM-trainable; the export phase refuses or bypasses them.
 struct BlockTraits {
@@ -21,6 +23,7 @@ struct BlockBuildContext {
   double sampleRate = 0.0;
   std::vector<std::string>* warnings = nullptr;  // loaders append human-readable warnings
   std::string jsonPath;                          // e.g. "paths.a.blocks[1]" for error messages
+  CaptureCache* cache = nullptr;                 // optional: reuse parsed captures across loads
 };
 
 struct BlockType {

@@ -1,0 +1,63 @@
+"""Loader for the ``sawblade_core`` extension module (C++ renderer, built with pybind11).
+
+The extension is built by CMake (``-DSAWBLADE_BUILD_PYTHON=ON``, see match/README.md) into
+``<build dir>/python``. It is found, in order:
+
+1. already importable (``PYTHONPATH`` or installed);
+2. ``$SAWBLADE_CORE_DIR`` (a directory holding the built module);
+3. ``<repo>/build-py/python``, ``<repo>/build/python``, ``<repo>/build-lead/python``.
+
+Usage::
+
+    from sawblade_match.core import render, CaptureCache
+"""
+from __future__ import annotations
+
+import importlib
+import os
+import sys
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[3]
+_SEARCH = ("build-py", "build", "build-lead")
+
+_BUILD_HELP = (
+    "sawblade_core is not built. From the repo root:\n"
+    "  cmake -S . -B build-py -G Ninja -DCMAKE_BUILD_TYPE=Release -DSAWBLADE_BUILD_PYTHON=ON \\\n"
+    "        -DPython_EXECUTABLE=$PWD/match/.venv/bin/python\n"
+    "  cmake --build build-py --target sawblade_py\n"
+    "or point SAWBLADE_CORE_DIR (or PYTHONPATH) at the directory containing sawblade_core*.so."
+)
+
+
+def _candidate_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    env = os.environ.get("SAWBLADE_CORE_DIR")
+    if env:
+        dirs.append(Path(env))
+    dirs.extend(_REPO / d / "python" for d in _SEARCH)
+    return dirs
+
+
+def _import():
+    try:
+        return importlib.import_module("sawblade_core")
+    except ImportError as first:
+        for d in _candidate_dirs():
+            if d.is_dir() and any(d.glob("sawblade_core*")):
+                sys.path.insert(0, str(d))
+                try:
+                    return importlib.import_module("sawblade_core")
+                except ImportError:
+                    sys.path.remove(str(d))
+        raise ImportError(f"{first}\n{_BUILD_HELP}") from first
+
+
+_core = _import()
+
+render = _core.render
+CaptureCache = _core.CaptureCache
+PresetError = _core.PresetError
+RenderIOError = _core.RenderIOError
+
+__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError"]

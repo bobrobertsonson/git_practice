@@ -354,12 +354,12 @@ nlohmann::json toJson(const Preset& p) {
 
 void verifyCapture(const Capture& c, const std::string& jsonPath) {
   if (!fs::exists(c.resolvedPath))
-    throw std::runtime_error(jsonPath + ": file not found: " + c.resolvedPath.string());
+    throw CaptureError(jsonPath, jsonPath + ": file not found: " + c.resolvedPath.string());
   if (c.sha256.empty()) return;
   const std::string got = sha256File(c.resolvedPath);
   if (got != c.sha256)
-    throw std::runtime_error(jsonPath + ": sha256 mismatch for " + c.resolvedPath.string() + " (expected " + c.sha256 +
-                             ", got " + got + ")");
+    throw CaptureError(jsonPath, jsonPath + ": sha256 mismatch for " + c.resolvedPath.string() + " (expected " +
+                                     c.sha256 + ", got " + got + ")");
 }
 
 Preset loadPresetFile(const fs::path& path) {

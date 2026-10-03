@@ -13,6 +13,7 @@ exact commits. Headers are exposed as `SYSTEM`; third-party code is compiled wit
 | PFFFT (marton78/pffft) | `aa16fd3db58de4ba5dae8b0438440bb9da46b6fa` (v1.1.0-58) | BSD-style (FFTPACK/Pommier; see `LICENSE.txt` in the repo) | FFT for the partitioned convolver (T2). Float-only C sources (SIMD auto-selected by the library) `pffft.c` + `pffft_common.c` only. |
 | SHA-256 | Written for Sawblade (`core/src/sha256.cpp`, FIPS 180-4; nothing vendored) | n/a (project code) | Capture `sha256` verification (T3). Verified against the FIPS test vectors in `tests/test_preset.cpp`. |
 | dr_wav (mackron/dr_libs) | `dfe8377631000664666519fdb83da193fd8037f4` | Public domain or MIT-0 (choice) | WAV read/write (`core/src/wav_io.cpp`; implementation TU `core/src/dr_wav_impl.cpp`). |
+| pybind11 | v3.0.4, `d03662f0984f652b60e7ddce53d3868002275197` (pybind/pybind11) | BSD-3-Clause | Python bindings (`bindings/python`, module `sawblade_core`). Fetched only with `-DSAWBLADE_BUILD_PYTHON=ON` (off by default); headers exposed as `SYSTEM`. |
 
 ## Python (match/)
 

@@ -77,3 +77,15 @@ if(SAWBLADE_BUILD_TESTS)
   FetchContent_MakeAvailable(Catch2)
   list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 endif()
+
+# --- pybind11 (Python bindings only; SAWBLADE_BUILD_PYTHON) ---------------------------------
+# Pass -DPython_EXECUTABLE=<python> to pick the interpreter (match/.venv/bin/python).
+if(SAWBLADE_BUILD_PYTHON)
+  find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
+  set(PYBIND11_FINDPYTHON ON)
+  FetchContent_Declare(pybind11
+    GIT_REPOSITORY https://github.com/pybind/pybind11.git
+    GIT_TAG        d03662f0984f652b60e7ddce53d3868002275197 # v3.0.4
+    SYSTEM)
+  FetchContent_MakeAvailable(pybind11)
+endif()
