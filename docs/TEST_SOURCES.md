@@ -36,6 +36,31 @@ a Heartache", Megadeth "Symphony of Destruction" on ReampZone) — provenance an
 | Daybreak Studio "Procedurally Generated Metal Multitracks Vol. 1" | not a band | DI for all guitars | from $10 | synthetic/producer material |
 | Chernobyl Audio metal multitracks | various styles | raw DI guitars | paid | producer material |
 
+## Death metal and chainsaw-adjacent sessions (researched 2026-10-03)
+
+Nail The Mix sessions (raw multitracks from the band's own session; guitar DIs are
+common on NTM but **check each session's track list before relying on it**):
+
+| Band / song | Style | Mixer | Why it matters |
+|---|---|---|---|
+| Bloodbath "Zombie Inferno" (2022) | Swedish death, HM-2-style buzzsaw | Lawrence Mackrory | best chainsaw-family pair available |
+| At The Gates "The Chasm" (2018) | Swedish melodic death | Russ Russell | melodic_death profile |
+| Decapitated "One Eyed Nation" / "Just a Cigarette" | tech / modern death | Daniel Bergstrand / David Castillo | us/modern death, tight single path |
+| Dyscarnate "Iron Strengthens Iron" | UK death / groove | Jacob Hansen | groove death |
+| Amon Amarth "Twilight of the Thunder God" | melodic death | Jens Bogren | melodic_death |
+| Converge "I Can Tell You About Pain" | metallic hardcore (Kurt Ballou, GodCity) | Kurt Ballou | blended guitar tones (JMP + Sparrow's Sons + room); same producer lineage as Nails / Black Breath / Harm's Way |
+| High On Fire, The Haunted, Septicflesh | sludge / thrash / symphonic death | various | secondary |
+
+Free:
+- Hollow Ground "Ill Fate" (Cambridge-MT): death metal, growls + blast beats; forum posts
+  confirm guitar DI files. Free start for death metal DI input.
+- Cambridge-MT Decypher "Unseen" (melodic death), Cnoc An Tursa (black/folk).
+- EOL Studios free death metal / metalcore multitracks ("Anxiety", 2026) — DI status unverified.
+
+Not found: any official multitracks/DIs for Rotten Sound, Harm's Way, Black Breath, Nails,
+Entombed, Dismember. For these the plan is **reference mix only** (user supplies mp3s of the
+released songs) + the user's own DIs, matched against the reference.
+
 ## Priority for Sawblade validation (user, 2026-10-03: death metal over deathcore)
 1. Death metal DI→mix pairs first: Swedish/HM-2 (have Gatecreeper), US/Florida style,
    cavernous, melodic. Cambridge-MT Decypher "Unseen" (melodic death) is the free start.
