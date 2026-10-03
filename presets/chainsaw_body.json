@@ -1,0 +1,150 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Chainsaw + Body",
+  "notes": "Default north-star blend (live-compatible). HM-2-style saw into a low-gain amp, blended with a boosted modern high-gain body. Body slightly forward for tightness; complementary EQ: body dips 1.6 kHz so the saw's rasp owns it. Values are starting hypotheses (see docs/TONE_TARGETS.md).",
+  "gate": {
+    "enabled": true,
+    "thresholdDb": -55.0,
+    "hysteresisDb": 6.0,
+    "attackMs": 0.5,
+    "holdMs": 20.0,
+    "releaseMs": 60.0,
+    "rangeDb": -90.0
+  },
+  "paths": {
+    "a": {
+      "role": "saw",
+      "preEq": [
+        {
+          "type": "highPass",
+          "freq": 90,
+          "q": 0.707
+        }
+      ],
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "nam",
+          "slot": "pedal",
+          "model": {
+            "file": "captures/saw_pedal_hm2_maxed.nam"
+          }
+        },
+        {
+          "id": "a2",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "captures/saw_amp_lowgain.nam"
+          },
+          "normalizeLoudness": true
+        }
+      ],
+      "eq": [
+        {
+          "type": "peak",
+          "freq": 120,
+          "gainDb": -3.0,
+          "q": 1.0
+        },
+        {
+          "type": "peak",
+          "freq": 3200,
+          "gainDb": -2.0,
+          "q": 2.0
+        },
+        {
+          "type": "lowPass",
+          "freq": 7000,
+          "q": 0.707
+        }
+      ],
+      "levelDb": 0.0
+    },
+    "b": {
+      "role": "body",
+      "blocks": [
+        {
+          "id": "b1",
+          "type": "nam",
+          "slot": "boost",
+          "model": {
+            "file": "captures/body_boost_ts_tight.nam"
+          }
+        },
+        {
+          "id": "b2",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "captures/body_amp_highgain.nam"
+          },
+          "normalizeLoudness": true
+        }
+      ],
+      "eq": [
+        {
+          "type": "peak",
+          "freq": 250,
+          "gainDb": -2.0,
+          "q": 1.2
+        },
+        {
+          "type": "peak",
+          "freq": 1600,
+          "gainDb": -2.0,
+          "q": 1.0
+        },
+        {
+          "type": "lowPass",
+          "freq": 8000,
+          "q": 0.707
+        }
+      ],
+      "levelDb": 0.0
+    }
+  },
+  "align": {
+    "mode": "auto",
+    "maxLagMs": 5.0
+  },
+  "blend": 0.55,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "captures/cab_4x12_v30.wav"
+    },
+    "enabled": true
+  },
+  "postEq": [
+    {
+      "type": "highPass",
+      "freq": 75,
+      "q": 0.707
+    },
+    {
+      "type": "peak",
+      "freq": 1300,
+      "gainDb": 1.5,
+      "q": 1.0
+    },
+    {
+      "type": "lowPass",
+      "freq": 9000,
+      "q": 0.707
+    }
+  ],
+  "busComp": {
+    "enabled": true,
+    "thresholdDb": -14.0,
+    "ratio": 2.0,
+    "kneeDb": 6.0,
+    "attackMs": 15.0,
+    "releaseMs": 80.0,
+    "makeupDb": 1.0
+  },
+  "output": {
+    "gainDb": -3.0
+  }
+}

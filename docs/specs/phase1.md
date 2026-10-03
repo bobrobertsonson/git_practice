@@ -203,4 +203,6 @@ Deliver:
 4. CLI tests (CTest): runs the binary on the golden preset → exit 0, output WAV exists and
    matches golden ≤ 1e-4, report JSON parses and contains `liveCompatible`; bad preset → exit 3;
    missing input → exit 4.
-5. `README.md`: what Sawblade is, build, test, run `tonerender`, regenerate goldens.
+5. Factory presets: a test parses every `presets/*.json` with `parsePreset` (no resource
+   loading — their captures are not in the repo) and asserts no error.
+6. `README.md`: what Sawblade is, build, test, run `tonerender`, regenerate goldens.
