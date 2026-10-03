@@ -160,3 +160,19 @@ render still builds fresh NAM state, so changing blend, levels, EQ or NAM gains 
 keyed by file path + SHA-256 (re-hashed only when size/mtime change); a preset `sha256` is checked on every use.
 Errors: `PresetError` (a `ValueError`) and `RenderIOError` (an `OSError`), both with `.json_path`.
 `pytest match/tests/test_core_bindings.py` skips itself when the module is not built.
+
+## Calibrate tone targets (`sawblade-calibrate`, phase 2A)
+
+```
+sawblade-calibrate [--original ...mp3] [--cover-mix ...mp3] [--di-l ...wav] [--di-r ...wav]   # defaults: testdata/ paths
+                   [--sections 0:12,95:110] [--no-separation] [--stems-dir testdata/stems]
+                   [--score RENDER.wav ...] [--targets docs/tone_targets.json] [--out DIR]
+```
+
+Measures guitar-dominant audio of the original and the cover mix with the tonecheck analysis and writes
+`tone_targets.proposed.json`, `calibration_report.md`, `calibration.json` and PNGs to `--out`. It never
+modifies `docs/tone_targets.json`. Method 1 (stems) needs `pip install -e 'match[separation]'` (demucs
+`htdemucs` + torch; weights are downloaded from dl.fbaipublicfiles.com on first use); if that is not
+possible the report says `unavailable: <reason>` and the run continues with method 2 (section selection;
+heuristics documented in `sawblade_match/calibrate/sections.py`). The original's vocal exclusion is not
+reliable for growled vocals: prefer `--sections`. Proposal policy: `sawblade_match/calibrate/propose.py`.
