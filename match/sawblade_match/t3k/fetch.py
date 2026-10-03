@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from .cache import Cache, CacheEntry, ext_for
+from .licenses import check_license
 from .client import ARCH_A1, ARCH_A2, ARCH_CUSTOM, T3KClient
 from .types import Model, Tone
 
@@ -42,8 +43,10 @@ def list_candidates(client: T3KClient, tone: Tone) -> tuple[str, list[Model]] | 
 
 def ensure_capture(client: T3KClient, cache: Cache, tone: Tone, model: Model) -> CacheEntry:
     """Return the cached capture, downloading it first on a miss."""
+    check_license(tone.license, f"tone {tone.id}")
     hit = cache.get(tone.id, model.id)
     if hit:
+        check_license(hit.tone.get("license"), f"cached tone {tone.id}")
         return hit
     ext = ext_for(tone)
     path = cache.path_for(tone.id, model.id, ext)

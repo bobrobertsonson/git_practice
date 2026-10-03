@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ids import require_id
+
 
 def _uid(v):
     """User ids are documented as int but the live API returns UUID strings; accept both."""
@@ -83,7 +85,7 @@ class Tone:
             return int(d.get(k) or 0)
 
         return cls(
-            id=int(d["id"]),
+            id=int(require_id(d["id"], "tone id")),
             title=str(d.get("title") or ""),
             gear=str(d.get("gear") or ""),
             format=str(d.get("format") or ""),
@@ -121,8 +123,8 @@ class Model:
     def from_json(cls, d: dict[str, Any]) -> "Model":
         av = d.get("architecture_version")
         return cls(
-            id=int(d["id"]),
-            tone_id=int(d.get("tone_id") or 0),
+            id=int(require_id(d["id"], "model id")),
+            tone_id=int(require_id(d.get("tone_id") or 0, "tone id")),
             name=str(d.get("name") or ""),
             size=str(d.get("size") or ""),
             model_url=str(d["model_url"]),

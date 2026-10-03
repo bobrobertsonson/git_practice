@@ -67,6 +67,13 @@ sawblade-t3k resolve presets/chainsaw_body.json [--first-model]   # -> presets/c
 * Cache: `~/.cache/sawblade/captures/<tone_id>/<model_id>.<nam|wav>` + `meta.json` (override with
   `SAWBLADE_CACHE_DIR`). Files are sha256-verified on every hit.
 
+### License policy
+
+Sawblade is commercial, so only tones licensed `t3k`, `cc-by`, `cc-by-sa`, `cc-by-nd` or `cco` are used.
+`cc-by-nc*` (reason `non_commercial_license:<lic>`) and unknown/empty licenses (`unknown_license:<lic>`) are
+excluded from the pool even if favorited, and `resolve`/downloads refuse them (also on cache hits). There is
+no override flag.
+
 ### `--search` (opt-in, commercial)
 
 `pull --search "query"` adds `tones/search` results to the pool. That endpoint is outside TONE3000's

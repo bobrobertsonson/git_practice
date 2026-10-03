@@ -24,7 +24,7 @@ PRESET = {
 
 @pytest.fixture
 def world(api):
-    t1 = tone_json(200, gear="amp", title="Resolved Amp", user="carol", license="cc-by-nc")
+    t1 = tone_json(200, gear="amp", title="Resolved Amp", user="carol", license="cc-by-sa")
     t1["user"]["display_name"] = "Carol Verified"
     api.add_tone(t1, [model_json(2001, 200, size="lite"), model_json(2002, 200, size="standard")])
     t2 = tone_json(300, gear="pedal", title="Pedal", user="dave", license="t3k")
@@ -43,7 +43,7 @@ def test_resolve_rewrites_preset(make_client, world, tmp_path):
     assert m1["sha256"] == hashlib.sha256(b"FILE-2001").hexdigest()
     assert m1["source"] == {"provider": "tone3000", "id": "200", "modelId": "2001",
                             "url": "https://www.tone3000.com/tones/tone-200", "title": "Resolved Amp",
-                            "creator": "Carol Verified", "license": "cc-by-nc"}
+                            "creator": "Carol Verified", "license": "cc-by-sa"}
     m3 = preset["paths"]["a"]["blocks"][2]["model"]           # no modelId + --first-model -> first
     assert m3["source"]["modelId"] == "3001" and m3["file"].endswith("300/3001.nam")
     assert m3["source"]["creator"] == "dave" and m3["source"]["license"] == "t3k"
@@ -189,3 +189,59 @@ def test_cli_search_flag_warns(cli_env, api, tmp_path, capsys):
     assert cli.main(["pull", "--search", "plexi", "--no-trending", "--no-latest", "--no-download",
                      "--cache-dir", str(tmp_path / "cc"), "--manifest", str(tmp_path / "m.json")]) == 0
     assert "commercial agreement" in capsys.readouterr().err
+
+
+def _nc_world(api, lic="cc-by-nc"):
+    t = tone_json(800, gear="amp", license=lic)
+    api.add_tone(t, [model_json(8001, 800)])
+    return {"m": {"file": "x", "source": {"provider": "tone3000", "id": "800", "modelId": "8001"}}}
+
+
+@pytest.mark.parametrize("lic", ["cc-by-nc", "cc-by-nc-sa", "cc-by-nc-nd", "weird"])
+def test_resolve_refuses_disallowed_license_without_download(make_client, api, tmp_path, lic):
+    from sawblade_match.t3k.errors import T3KError
+    p = _nc_world(api, lic)
+    with pytest.raises(T3KError, match="refused"):
+        resolve_preset(make_client(), Cache(tmp_path / "c"), p)
+    assert not api.requests("download") and not (tmp_path / "c" / "800").exists()
+
+
+def test_resolve_refuses_disallowed_license_on_cache_hit(make_client, api, tmp_path):
+    from sawblade_match.t3k.errors import T3KError
+    import json as _json
+    cache = Cache(tmp_path / "c")
+    p = _nc_world(api, "cc-by")
+    resolve_preset(make_client(), cache, p)
+    meta = cache.read_meta(800)
+    meta["tone"]["license"] = "cc-by-nc"          # e.g. the tone's license was changed upstream
+    (cache.tone_dir(800) / "meta.json").write_text(_json.dumps(meta))
+    n = len(api.calls)
+    p2 = {"m": {"file": "x", "source": {"provider": "tone3000", "id": "800", "modelId": "8001"}}}
+    with pytest.raises(T3KError, match="non_commercial"):
+        resolve_preset(make_client(), cache, p2)
+    assert len(api.calls) == n
+
+
+@pytest.mark.parametrize("bad", ["../..", "12/../3", "abc", "", "-1", "1.5"])
+def test_resolve_rejects_non_numeric_ids(make_client, api, tmp_path, bad):
+    from sawblade_match.t3k.errors import T3KError
+    for src in ({"provider": "tone3000", "id": bad or " "}, {"provider": "tone3000", "id": "5", "modelId": bad or " "}):
+        with pytest.raises(T3KError, match="invalid"):
+            resolve_preset(make_client(), Cache(tmp_path / "c"), {"m": {"file": "x", "source": src}})
+    assert not api.calls
+
+
+def test_cache_paths_reject_traversal(tmp_path):
+    from sawblade_match.t3k.errors import T3KError
+    with pytest.raises(T3KError):
+        Cache(tmp_path).path_for("../x", 1, "nam")
+
+
+def test_resolve_output_equal_to_input_refused(make_client, world, tmp_path):
+    from sawblade_match.t3k.errors import T3KError
+    from sawblade_match.t3k.resolve import resolve_file
+    p = tmp_path / "preset.json"
+    p.write_text(json.dumps(PRESET))
+    with pytest.raises(T3KError, match="equals the input"):
+        resolve_file(make_client(), Cache(tmp_path / "c"), p, tmp_path / "." / "preset.json", True)
+    assert json.loads(p.read_text()) == PRESET and not world.calls

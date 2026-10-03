@@ -17,7 +17,8 @@ from urllib.parse import urlparse
 import httpx
 
 from .auth import DEFAULT_BASE_URL, TokenManager
-from .errors import ApiError, RateLimitedError, ReauthRequired
+from .errors import ApiError, RateLimitedError, ReauthRequired, T3KError
+from .ids import require_id
 from .types import Model, Tone, User
 
 log = logging.getLogger("sawblade.t3k")
@@ -126,6 +127,9 @@ class T3KClient:
                             urlparse(url).path, attempt, self.max_retries, delay)
                 self._sleep(delay)
                 continue
+            if 300 <= resp.status_code < 400:   # unfollowed/unfollowable redirect: never treat as data
+                resp.close()
+                raise ApiError(resp.status_code, "unexpected redirect")
             if resp.status_code == 401:
                 resp.close()
                 raise ReauthRequired("API rejected the token after refresh; run `sawblade-t3k login`")
@@ -201,15 +205,17 @@ class T3KClient:
         return [Tone.from_json(d) for d in body.get("data") or []]
 
     def get_tone(self, tone_id: int | str, architecture: str = ARCH_A2) -> Tone:
+        tone_id = require_id(tone_id, "tone id")
         # architecture only affects models_count; per-arch counts are always returned.
         return Tone.from_json(self._get_json(f"/api/v1/tones/{tone_id}", {"architecture": architecture}))
 
     def get_model(self, model_id: int | str) -> Model:
+        model_id = require_id(model_id, "model id")
         return Model.from_json(self._get_json(f"/api/v1/models/{model_id}"))
 
     def list_models(self, tone_id: int | str, architecture: str) -> list[Model]:
         """Models of a tone. ``architecture`` is mandatory: omitting it returns the legacy A1 set."""
-        params = {"tone_id": tone_id, "architecture": architecture}
+        params = {"tone_id": require_id(tone_id, "tone id"), "architecture": architecture}
         return [Model.from_json(d) for d in self._paginate("/api/v1/models", params, page_size=300)]
 
     def search(self, query: str = "", *, gears: str | None = None, format: str | None = None,
@@ -235,15 +241,20 @@ class T3KClient:
     def download_model(self, model_url: str, dest: Path) -> str:
         """Stream ``model_url`` to ``dest`` (temp file + rename). Returns the sha256 hex digest.
 
-        The Bearer token is only attached for the TONE3000 host (httpx also drops it on
-        cross-origin redirects), so a foreign model_url can never receive it.
+        Only https URLs are accepted. The Bearer token is attached only when the URL's host is the
+        API host (httpx also drops it on cross-origin redirects), so a foreign or redirected URL can
+        never receive it. A redirect body is never written to disk.
         """
         dest = Path(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        authed = urlparse(model_url).netloc in ("", self._host)
+        url = self._url(model_url)
+        u = urlparse(url)
+        if u.scheme != "https":
+            raise T3KError("refusing to download from a non-https model_url")
+        authed = u.netloc == self._host and self.base_url.startswith("https://")
         if not authed:
             log.warning("model_url host differs from API host; fetching without credentials")
-        resp = self._send("GET", self._url(model_url), None, stream=True, search=False, authed=authed)
+        resp = self._send("GET", url, None, stream=True, search=False, authed=authed)
         h = hashlib.sha256()
         fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.")
         try:

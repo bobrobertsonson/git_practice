@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .ids import require_id
 from .types import Model, Tone
 
 FORMAT_EXT = {"nam": "nam", "ir": "wav"}
@@ -54,10 +55,10 @@ class Cache:
         self.root = Path(root) if root else default_cache_root()
 
     def tone_dir(self, tone_id: int | str) -> Path:
-        return self.root / str(tone_id)
+        return self.root / require_id(tone_id, "tone id")
 
     def path_for(self, tone_id: int | str, model_id: int | str, ext: str) -> Path:
-        return self.tone_dir(tone_id) / f"{model_id}.{ext}"
+        return self.tone_dir(tone_id) / f"{require_id(model_id, 'model id')}.{ext}"
 
     def _meta_path(self, tone_id: int | str) -> Path:
         return self.tone_dir(tone_id) / "meta.json"

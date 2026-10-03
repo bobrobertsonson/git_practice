@@ -14,6 +14,22 @@ exact commits. Headers are exposed as `SYSTEM`; third-party code is compiled wit
 | SHA-256 | Written for Sawblade (`core/src/sha256.cpp`, FIPS 180-4; nothing vendored) | n/a (project code) | Capture `sha256` verification (T3). Verified against the FIPS test vectors in `tests/test_preset.cpp`. |
 | dr_wav (mackron/dr_libs) | `dfe8377631000664666519fdb83da193fd8037f4` | Public domain or MIT-0 (choice) | WAV read/write (`core/src/wav_io.cpp`; implementation TU `core/src/dr_wav_impl.cpp`). |
 
+## Python (match/)
+
+Pinned in `match/pyproject.toml`; installed with pip into `match/.venv` (not vendored).
+
+| Name | Version | License | Use |
+|------|---------|---------|-----|
+| httpx | 0.28.1 | BSD-3-Clause | TONE3000 API client |
+| numpy | 2.4.6 | BSD-3-Clause (wheel also bundles 0BSD, MIT, Zlib, CC0-1.0 components) | Quality filter percentiles; matching engine |
+| scipy | 1.17.1 | BSD-3-Clause | Matching engine (later phases) |
+| soundfile | 0.14.0 | BSD-3-Clause (links libsndfile, LGPL-2.1+, dynamically via the wheel) | WAV I/O |
+| matplotlib | 3.11.2 | Matplotlib License (PSF-based, BSD-compatible) | Tone-check plots (later phases) |
+| pytest | 9.1.1 | MIT | Tests only |
+| respx | 0.23.1 | BSD-3-Clause | Tests only (fake HTTP API) |
+
+Transitive dependencies are not listed; audit them before any binary redistribution.
+
 ## Test fixtures
 
 | File | Source | License | Use |

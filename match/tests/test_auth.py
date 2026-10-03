@@ -150,3 +150,27 @@ def test_not_logged_in(store):
 
 def test_session_repr_hides_tokens():
     assert "SECRET" not in repr(Session("SECRET-a", "SECRET-r", 1.0))
+
+
+def test_save_chmods_existing_sawblade_dir(tmp_path):
+    d = tmp_path / "sawblade"
+    d.mkdir(mode=0o755)
+    d.chmod(0o755)
+    TokenStore(d / "t.json").save(Session("a", "r", 1.0))
+    assert stat.S_IMODE(d.stat().st_mode) == 0o700
+
+
+def test_save_does_not_chmod_unrelated_existing_dir(tmp_path):
+    d = tmp_path / "shared"
+    d.mkdir()
+    d.chmod(0o755)
+    TokenStore(d / "t.json").save(Session("a", "r", 1.0))
+    assert stat.S_IMODE(d.stat().st_mode) == 0o755
+
+
+def test_poll_survives_transient_errors(respx_mock):
+    clock = FakeClock()
+    respx_mock.post(TOKEN_URL).mock(side_effect=[
+        httpx.ConnectError("x"), httpx.Response(503), httpx.Response(200, json=tokens())])
+    s = poll_for_session(http(), "cid", request_device_code_obj(), sleep=clock.sleep, now=clock, mono=clock)
+    assert s.access_token == "a1"

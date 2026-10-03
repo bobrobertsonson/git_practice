@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from .cache import Cache
 from .client import T3KClient
 from .errors import T3KError
+from .ids import require_id
+from .licenses import check_license
 from .fetch import ensure_capture, list_candidates
 
 
@@ -29,12 +33,15 @@ def _captures(node: Any, path: str = "") -> list[tuple[str, dict]]:
 
 def resolve_capture(client: T3KClient, cache: Cache, cap: dict, first_model: bool = False) -> None:
     src = cap["source"]
-    tone_id = str(src["id"])
-    model_id = str(src["modelId"]) if src.get("modelId") is not None else None
+    tone_id = require_id(src["id"], "source.id")
+    model_id = require_id(src["modelId"], "source.modelId") if src.get("modelId") is not None else None
 
     entry = cache.get(tone_id, model_id) if model_id else None
-    if entry is None:
+    if entry is not None:
+        check_license(entry.tone.get("license"), f"cached tone {tone_id}")
+    else:
         tone = client.get_tone(tone_id)
+        check_license(tone.license, f"tone {tone_id}")
         if model_id:
             model = client.get_model(model_id)
             if model.tone_id and model.tone_id != tone.id:
@@ -80,7 +87,20 @@ def default_output(preset_path: Path) -> Path:
 def resolve_file(client: T3KClient, cache: Cache, preset_path: Path, out_path: Path | None = None,
                  first_model: bool = False) -> list[str]:
     preset_path = Path(preset_path)
+    dest = Path(out_path or default_output(preset_path))
+    if dest.resolve() == preset_path.resolve():
+        raise T3KError("output path equals the input preset; refusing to overwrite it")
     preset = json.loads(preset_path.read_text())
     done = resolve_preset(client, cache, preset, first_model)
-    Path(out_path or default_output(preset_path)).write_text(json.dumps(preset, indent=2) + "\n")
+    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(preset, indent=2) + "\n")
+        os.replace(tmp, dest)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
     return done

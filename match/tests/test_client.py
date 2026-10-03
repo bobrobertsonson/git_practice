@@ -191,3 +191,42 @@ def test_transport_error_retried_with_backoff(respx_mock, make_client, clock):
     respx_mock.get(f"{BASE}/api/v1/user").mock(side_effect=[
         httpx.ConnectError("boom"), httpx.Response(200, json={"id": 1, "username": "u"})])
     assert client.get_user().id == 1 and clock.sleeps == [1.0]
+
+
+def _redirect_client(store, clock, **kw):
+    from sawblade_match.t3k.auth import TokenManager
+    from sawblade_match.t3k.client import T3KClient
+    http = httpx.Client(base_url=BASE, timeout=5, follow_redirects=True)     # as in production
+    tm = TokenManager("cid", http, store, now=clock)
+    tm.set_session(Session(SECRET_ACCESS, SECRET_REFRESH, clock() + 3600))
+    return T3KClient(tm, BASE, http=http, sleep=clock.sleep, clock=clock, **kw)
+
+
+def test_cross_host_redirect_drops_bearer_and_saves_file(respx_mock, store, clock, tmp_path):
+    client = _redirect_client(store, clock)
+    first = respx_mock.get(f"{BASE}/api/v1/models/1/download").respond(
+        302, headers={"Location": "https://api.tone3000.com/s/x.nam"})
+    second = respx_mock.get("https://api.tone3000.com/s/x.nam").respond(200, content=b"NAMDATA")
+    sha = client.download_model(f"{BASE}/api/v1/models/1/download", tmp_path / "x" / "1.nam")
+    assert first.calls[0].request.headers["authorization"] == f"Bearer {SECRET_ACCESS}"
+    assert "authorization" not in second.calls[0].request.headers
+    assert (tmp_path / "x" / "1.nam").read_bytes() == b"NAMDATA"
+    assert sha == hashlib.sha256(b"NAMDATA").hexdigest()
+
+
+def test_non_https_model_url_refused(respx_mock, make_client, tmp_path):
+    from sawblade_match.t3k.errors import T3KError
+    client = make_client()
+    with pytest.raises(T3KError, match="non-https"):
+        client.download_model("http://t3k.test/api/v1/models/1/download", tmp_path / "a.nam")
+    assert not respx_mock.calls
+
+
+def test_unfollowed_redirect_is_error_and_writes_nothing(respx_mock, make_client, tmp_path):
+    from sawblade_match.t3k.errors import ApiError
+    client = make_client()      # test client does not follow redirects
+    respx_mock.get(f"{BASE}/api/v1/models/1/download").respond(302, content=b"<html>moved</html>",
+                                                              headers={"Location": "https://elsewhere/x"})
+    with pytest.raises(ApiError, match="redirect"):
+        client.download_model(f"{BASE}/api/v1/models/1/download", tmp_path / "a.nam")
+    assert not (tmp_path / "a.nam").exists()

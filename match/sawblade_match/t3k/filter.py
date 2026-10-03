@@ -18,6 +18,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from .licenses import license_problem
 from .types import Tone
 
 DAYS_PER_MONTH = 30.4375
@@ -120,6 +121,11 @@ def evaluate(
         if wanted is not None and d.slot not in wanted:
             d.reasons.append(f"slot_not_requested:{d.slot}")
             continue
+
+        # license (hard rule, no favorites bypass)
+        lp = license_problem(t.license)
+        if lp:
+            d.reasons.append(lp)
 
         # architecture / models
         if t.format == "nam":

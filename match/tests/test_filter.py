@@ -191,3 +191,19 @@ def test_search_is_opt_in(make_client, api):
     assert not api.requests("search")
     _, src = collect(client, search_query="plexi")
     assert len(api.requests("search")) == 1 and src[9] == ["search"]
+
+
+def test_license_allowlist_no_favorites_bypass():
+    cfg = FilterConfig(min_favorites=0, min_downloads=0, keep_favorites_below_floor=True,
+                       favorites_bypass_recency=True)
+    allowed = ["t3k", "cc-by", "cc-by-sa", "cc-by-nd", "cco"]
+    bad = {"cc-by-nc": "non_commercial_license:cc-by-nc", "cc-by-nc-sa": "non_commercial_license:cc-by-nc-sa",
+           "cc-by-nc-nd": "non_commercial_license:cc-by-nc-nd", "": "unknown_license:",
+           "gpl-3": "unknown_license:gpl-3"}
+    js = [tone_json(600 + i, license=lic, fav=99999, dl=999999) for i, lic in enumerate(allowed)]
+    js += [tone_json(700 + i, license=lic, fav=99999, dl=999999) for i, lic in enumerate(bad)]
+    ds, _ = run(js, favorited={j["id"] for j in js}, cfg=cfg)
+    for i in range(len(allowed)):
+        assert ds[600 + i].status == "included", allowed[i]
+    for i, (lic, reason) in enumerate(bad.items()):
+        assert ds[700 + i].status == "excluded" and reason in ds[700 + i].reasons, lic

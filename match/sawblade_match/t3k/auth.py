@@ -72,7 +72,11 @@ class TokenStore:
             return None
 
     def save(self, s: Session) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        parent = self.path.parent
+        created = not parent.exists()
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if created or parent.name == "sawblade":   # never chmod an arbitrary pre-existing directory
+            os.chmod(parent, 0o700)
         fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".t3k_tokens.")
         try:
             os.fchmod(fd, 0o600)
@@ -138,12 +142,25 @@ def poll_for_session(
     """Poll the token endpoint per RFC 8628 until approved, denied or expired."""
     interval = dc.interval
     deadline = mono() + dc.expires_in
+    transient = 0
     while True:
         sleep(interval)
         if mono() > deadline:
             raise DeviceFlowError("device code expired; run login again")
-        r = http.post("/api/v1/oauth/token", data={
-            "grant_type": DEVICE_GRANT, "device_code": dc.device_code, "client_id": client_id})
+        try:
+            r = http.post("/api/v1/oauth/token", data={
+                "grant_type": DEVICE_GRANT, "device_code": dc.device_code, "client_id": client_id})
+        except httpx.TransportError:
+            transient += 1
+            if transient > 5:
+                raise
+            continue
+        if r.status_code in (502, 503, 504):
+            transient += 1
+            if transient > 5:
+                raise DeviceFlowError(f"token endpoint unavailable (HTTP {r.status_code})")
+            continue
+        transient = 0
         if r.status_code == 200:
             return Session.from_token_response(r.json(), now())
         err, desc = _error_of(r)
