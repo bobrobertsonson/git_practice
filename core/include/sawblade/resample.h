@@ -19,6 +19,10 @@ constexpr double kResampleStopbandDb = 99.0;  // design attenuation, used to siz
 // The default output length of resample(): round(n * toRate / fromRate).
 std::size_t resampledLength(std::size_t n, double fromRate, double toRate);
 
+// Edges: the signal is treated as zero outside its extent (correct for IRs and for DIs that start
+// and end in silence). A signal that starts or ends mid-note gets the filter's step response there,
+// within about 45 input samples of each end.
+//
 // Returns `in` unchanged (bit-identical) when fromRate == toRate. Throws std::invalid_argument for
 // non-positive or non-finite rates.
 std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate);

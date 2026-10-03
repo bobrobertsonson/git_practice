@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "latency_stub.h"
 #include "sawblade/render.h"
 #include "sawblade/resample.h"
 #include "test_util.h"
@@ -408,4 +409,44 @@ TEST_CASE("CLI: 44.1 kHz input through the 48 kHz WaveNet fixture", "[resample][
   // Explicit rates: a forced rate the model cannot run at is a preset error.
   REQUIRE(runCli(base + " --render-rate 48000", t / "err.txt") == 0);
   REQUIRE(runCli(base + " --render-rate 44100", t / "err.txt") == 3);
+}
+
+TEST_CASE("Render: latency trim happens at the render rate with a 44.1 kHz input", "[resample][render]") {
+  test::registerLatencyStub();
+  json j = identityPreset();
+  j["paths"]["a"]["blocks"] = json::array({{{"id", "s1"}, {"type", "test.latency"}, {"latency", 100}}});
+  const auto x = multiSine(30001, 44100.0);
+  const RenderResult r = renderPreset(parsePreset(j, kPresetDir), mono(x, 44100.0));
+  REQUIRE(r.renderRate == 48000.0);
+  REQUIRE(r.info.latencySamples == 100);
+  REQUIRE(r.samples.size() == x.size());
+  double worst = 0.0;
+  for (std::size_t i = 500; i < x.size() - 500; ++i) worst = std::max(worst, std::fabs(static_cast<double>(r.samples[i]) - x[i]));
+  INFO("max diff " << worst);
+  REQUIRE(worst < 1e-3);
+}
+
+TEST_CASE("Resample: unity DC gain for every phase", "[resample]") {
+  struct R { double from, to; };
+  for (const R d : {R{44100.0, 48000.0}, R{48000.0, 44100.0}, R{44100.0, 96000.0}, R{44100.0, 47999.37}}) {
+    const std::vector<float> x(20000, 1.0f);
+    const auto y = resample(x, d.from, d.to);
+    double worst = 0.0;
+    for (std::size_t i = 300; i + 300 < y.size(); ++i) worst = std::max(worst, std::fabs(static_cast<double>(y[i]) - 1.0));
+    INFO(d.from << " -> " << d.to << ": max |y-1| = " << worst);
+    REQUIRE(worst < 1e-6);
+  }
+}
+
+TEST_CASE("Render: an out-of-range render rate is a Preset error", "[resample][render][errors]") {
+  for (const double rate : {999.0, 768001.0}) {
+    RenderOptions o;
+    o.renderRate = rate;
+    try {
+      renderPreset(identity(), mono(noise(1000, 1), 48000.0), o);
+      FAIL("expected RenderError");
+    } catch (const RenderError& e) {
+      REQUIRE(e.kind() == RenderErrorKind::Preset);
+    }
+  }
 }

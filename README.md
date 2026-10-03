@@ -70,7 +70,8 @@ tonerender --preset P.json --in DI.wav --out OUT.wav [--block N=256] [--report R
   non-bypassed NAM blocks must agree, else exit 3 naming them; with none, the input rate). The
   input is resampled to it with a Kaiser-windowed sinc (passband flat within 0.05 dB to 20 kHz at
   44.1 <-> 48 kHz, stopband >= 90 dB, linear phase, no delay) and, unless `--out-rate render`,
-  back to the input rate. Equal rates involve no resampling. IRs are resampled at load.
+  back to the input rate. Signals are treated as zero outside their extent; a DI that starts or
+  ends mid-note gets the filter's step response at the edges. Equal rates involve no resampling. IRs are resampled at load.
 - Output: float32 mono WAV at the input rate, same length as the input, advanced by the chain's
   reported processing latency (`latencySamples`). The auto/manual alignment delay is part of
   the tone and stays in the audio; it is reported as `alignDelay`.

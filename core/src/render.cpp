@@ -130,7 +130,7 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
   if (opts.renderRate) {
     rate = *opts.renderRate;
     if (!(rate >= 1000.0 && rate <= 768000.0))
-      throw RenderError(RenderErrorKind::Io, "render rate must be in 1000..768000 Hz");
+      throw RenderError(RenderErrorKind::Preset, "render rate must be in 1000..768000 Hz");
   } else {
     const std::vector<NamRate> rates = probeNamRates(preset);
     if (!rates.empty()) {
