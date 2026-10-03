@@ -76,6 +76,18 @@ types; every type declares its latency and whether it is NAM-trainable.
   independent of processing block size (within float tolerance documented per test).
 - No scope creep: implement what the spec asks; propose extras in the report instead.
 
+## Capture licensing (TONE3000)
+
+- Every capture keeps its `license`. Never use `cc-by-nc*` (non-commercial) captures; Sawblade
+  is commercial. Licenses seen: `t3k`, `cc-by`, `cc-by-sa`, `cc-by-nc`, `cc-by-nc-sa`,
+  `cc-by-nd`, `cc-by-nc-nd`, `cco`.
+- TONE3000 Terms: no redistribution of tones, and no commercial distribution of content
+  accessed through the platform without written permission from the content owner **and**
+  TONE3000. So: never commit or bundle capture files; presets reference TONE3000 tone ids
+  and fetch through the API. **Exported NAM models trained from TONE3000 captures are for
+  the user's own use only** until the commercial agreement explicitly covers derived exports.
+- Never use or store the `t3k_cs_…` secret key; only the publishable key + user OAuth tokens.
+
 ## Build & test
 
 ```
