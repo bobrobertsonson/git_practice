@@ -59,7 +59,7 @@ def art(font):
                         words=[("SAW", 0, -55, 205, 0.0), ("100W CRUST HEAD", 0, 120, 220, 0)],
                         tapes=[(-120, 108, 90, 14, -3), (230, -112, 70, 13, 6), (40, -4, 55, 11, -8)], seed=21)
 
-SPEC = amp_spec('saw', art, '#ff6a1a', '#e8e4d8', ["HM-2w SAW", "std · A2 · 48k"])
+SPEC = amp_spec('saw', art, '#ff6a1a', '#e8e4d8', ["JCM800 2203 · CRUNCH", "std · A2 · 48k"])
 
 if __name__ == '__main__':
     run(SPEC)

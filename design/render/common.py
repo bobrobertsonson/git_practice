@@ -440,10 +440,16 @@ FONT = {
  '8': "01110 10001 10001 01110 10001 10001 01110", 'k': "10000 10000 10010 10100 11000 10100 10010",
  'B': "11110 10001 10001 11110 10001 10001 11110", 'O': "01110 10001 10001 10001 10001 10001 01110",
  'D': "11110 10001 10001 10001 10001 10001 11110", 'Y': "10001 10001 01010 00100 00100 00100 00100",
+ 'J': "00111 00010 00010 00010 00010 10010 01100", '0': "01110 10001 10011 10101 11001 10001 01110",
+ '3': "11110 00001 00001 01110 00001 00001 11110", '5': "11111 10000 11110 00001 00001 10001 01110",
+ '1': "00100 01100 00100 00100 00100 00100 01110", 'R': "11110 10001 10001 11110 10100 10010 10001",
+ 'U': "10001 10001 10001 10001 10001 10001 01110", 'E': "11111 10000 10000 11110 10000 10000 11111",
+ 'V': "10001 10001 10001 10001 10001 01010 00100",
  ' ': "00000 " * 6 + "00000",
 }
 
-def oled_image(lines, W=98, H=28):
+def oled_image(lines, W=None, H=28):
+    W = W or max(98, 6 * max(len(l) for l in lines) + 8)
     px = np.zeros((H, W), np.float32)
     ys = (4, 16)
     for ln, y0 in zip(lines, ys):
@@ -860,7 +866,7 @@ def build_jewel(x, y, mats, s=1.0):
     gl = plane('jewel_glow', 46, 46, [mats['glow']])
     gl.location = (0, 0, 0.04 * MM); gl.parent = root; gl.visible_shadow = False
     root.scale = (s, s, s)
-    pl = bpy.data.lights.new('jewel_pt', 'POINT'); pl.energy = 0.5; pl.color = (1, 0.25, 0.05); pl.shadow_soft_size = 0.004
+    pl = bpy.data.lights.new('jewel_pt', 'POINT'); pl.energy = 0.5; pl.color = (1, 0.06, 0.02); pl.shadow_soft_size = 0.004
     po = bpy.data.objects.new('jewel_pt', pl); bpy.context.scene.collection.objects.link(po)
     po.location = (x * MM, y * MM, (Z + 12 * s) * MM); po.parent = None
     return root
@@ -1032,7 +1038,7 @@ def run(spec):
     ortho_res, k, center, strip(bool)"""
     global W_, L_, H_, Z
     ap = argparse.ArgumentParser()
-    ap.add_argument('--mode', default='all', choices=['hero', 'ortho', 'strip', 'all'])
+    ap.add_argument('--mode', default='all', choices=['hero', 'ortho', 'strip', 'open', 'all'])
     ap.add_argument('--out', required=True)
     ap.add_argument('--scale', type=int, default=100)
     ap.add_argument('--samples', type=int, default=0)
@@ -1050,7 +1056,7 @@ def run(spec):
         rgba = spec['art'](font)
         Image.fromarray((rgba[..., :3] * 255).astype(np.uint8)).save(os.path.join(a.out, spec['name'] + '_art_channels.png'))
         return
-    modes = ['hero', 'ortho'] + (['strip'] if spec.get('strip') else []) if a.mode == 'all' else [a.mode]
+    modes = spec.get('modes', ['hero', 'ortho'] + (['strip'] if spec.get('strip') else [])) if a.mode == 'all' else [a.mode]
     for mode in modes:
         t0 = time.time()
         bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -1064,38 +1070,47 @@ def run(spec):
             white=mat_ink('inlay_white', hexcol('#e8e4d8'), 0.45),
             led_on=mat_emit('led_on', spec.get('led_rgb', (1.0, 0.20, 0.0, 1)), 6.0), led_off=mat_led_off('led_off', hexcol(spec.get('led_off', '#5a1c05'))),
             led_red_on=mat_emit('led_red_on', (1.0, 0.02, 0.01, 1), 9.0), led_red_off=mat_led_off('led_red_off', (0.22, 0.01, 0.008, 1)),
-            jewel=mat_emit('jewel', (1.0, 0.10, 0.02, 1), 4.0), leather=mat_tolex(),
+            jewel=mat_emit('jewel', spec.get('jewel_rgb', (1.0, 0.10, 0.02, 1)), 4.0), rubber=mat_black_anodised('rubber'), paper=mat_paper('cone_paper', hexcol('#6b4a2c')), paper_dark=mat_paper('dust_cap', hexcol('#3a2616')), label=mat_ink('spk_label', hexcol('#d9d2b8'), 0.6), label_ink=mat_ink('spk_label_ink', (0.01, 0.01, 0.01, 1), 0.6), mic_black=mat_black_anodised('mic_black'), mic_mesh=mat_mesh_grey(), baffle=mat_baffle(), art=art, leather=mat_tolex(),
             glow=mat_glow_decal((1.0, 0.07, 0.03, 1), 0.6), glass=mat_glass_overlay(), glass_black=mat_black_anodised('oled_well'),
             slot=mat_ink('slot', (0.01, 0.01, 0.01, 1), 0.6))
-        mats['oled'] = mat_oled_display(oled_image(spec.get('oled_lines', ["HM-2w CHAINSAW", "std · A2 · 48k"])), 98, 28)
+        oimg = oled_image(spec.get('oled_lines', ["HM-2w CHAINSAW", "std · A2 · 48k"]))
+        mats['oled'] = mat_oled_display(oimg, oimg.size[0], 28)
         k = spec.get('k', 1.0)
+        root = None
+        if kind in ('pedal', 'cab'):
+            pass
         if kind == 'pedal':
             build_enclosure(mats['powder'], W_, L_, H_, r=spec.get('corner', 7.0), bev=spec.get('bevel', 1.0), nb=5)
             root = None
-        else:
+        elif kind == 'head':
             bw, bd, bh = spec['body']
             tol = mat_tolex()
             body = build_enclosure(tol, bw, bd, bh, r=6.0, bev=3.0, nb=5, name='tolex_body')
             body.rotation_euler = (0, 0, 0)
             build_head_extras(bw, bd, bh, mats)
+            build_head_details(bw, bd, bh, mats)
             root = empty('face_root', 0, -bd / 2 + H_ - 0.5, bh / 2)
             root.rotation_euler = (math.pi / 2, 0, 0)
             before = set(bpy.data.objects)
             build_enclosure(mats['powder'], W_ - 1.0, L_ - 1.0, H_, r=3.0, bev=0.8, nb=4, name='faceplate')
-        knobs = spec['populate'](mats, mode)
+            piping_loop(W_ / 2 + 1.5, L_ / 2 + 1.5, 6.0, 3.5, 2.6, mats['black'])
+        if kind == 'cab':
+            knobs = spec['build'](mats, mode); root = None
+        else:
+            knobs = spec['populate'](mats, mode)
         if root is not None:
             for ob in list(bpy.data.objects):
                 if ob not in before and ob is not root and ob.parent is None and ob.type != 'CAMERA':
                     ob.parent = root
         setup_world(); build_backdrop(k)
-        samples = a.samples or {'hero': 40, 'ortho': 40, 'strip': 16}[mode]
-        res = {'hero': (1600, 1200), 'ortho': spec.get('ortho_res', (1200, 1800)), 'strip': (128, 128)}[mode]
+        samples = a.samples or {'hero': 40, 'ortho': 40, 'strip': 16, 'open': 40}[mode]
+        res = {'hero': (1600, 1200), 'ortho': spec.get('ortho_res', (1200, 1800)), 'strip': (128, 128), 'open': spec.get('ortho_res', (1200, 1800))}[mode]
         setup_render(res, a.scale, samples, adaptive=(mode != 'strip'))
         if mode == 'strip':
             make_camera(dict(kind='ortho', loc=(0, 0, 0.5), ortho_scale=0.039))
         else:
             make_camera(spec['hero'] if mode == 'hero' else spec['ortho'])
-        build_lights(k, spec.get('center', (0, 0, 0.03)), front=(mode == 'ortho' and kind == 'head'))
+        build_lights(k, spec.get('center', (0, 0, 0.03)), front=(mode in ('ortho', 'open') and kind in ('head', 'cab')))
         tag = spec['name']
         if mode == 'strip':
             fd = os.path.join(a.out, 'strip_frames'); os.makedirs(fd, exist_ok=True)
@@ -1109,8 +1124,214 @@ def run(spec):
                 sheet.paste(Image.open(os.path.join(fd, 'f_%02d.png' % i)).convert('RGB'), (0, 128 * i))
             sheet.save(os.path.join(a.out, tag + '_knob_strip.png'))
         else:
-            render_to(os.path.join(a.out, '%s_%s.png' % (tag, 'hero_3q' if mode == 'hero' else 'ortho')))
+            render_to(os.path.join(a.out, spec.get('fnames', {}).get(mode, '%s_%s.png' % (tag, 'hero_3q' if mode == 'hero' else 'ortho'))))
         print('[render] %s %s done in %.1fs (samples=%d)' % (tag, mode, time.time() - t0, samples))
+
+
+
+
+# ----------------------------------------------------------------- real-cab details (corner caps, piping, stitching, speakers, mic)
+def tube_path(name, pts, r, mat, closed=True, ns=8, ref=(0, 0, 1), angle=60):
+    """tube swept along a 3D polyline (mm)."""
+    P = [Vector(p) for p in pts]
+    n = len(P)
+    bm = bmesh.new()
+    rings = []
+    for i in range(n):
+        a = P[(i - 1) % n] if (closed or i > 0) else P[i]
+        b = P[(i + 1) % n] if (closed or i < n - 1) else P[i]
+        t = (b - a).normalized()
+        rv = Vector(ref)
+        if abs(t.dot(rv)) > 0.95:
+            rv = Vector((0, 1, 0))
+        n1 = t.cross(rv).normalized(); n2 = t.cross(n1).normalized()
+        ring = []
+        for k in range(ns):
+            ang = 2 * math.pi * k / ns
+            q = P[i] + n1 * (r * math.cos(ang)) + n2 * (r * math.sin(ang))
+            ring.append(bm.verts.new((q.x * MM, q.y * MM, q.z * MM)))
+        rings.append(ring)
+    last = n if closed else n - 1
+    for i in range(last):
+        a, b = rings[i], rings[(i + 1) % n]
+        for k in range(ns):
+            j = (k + 1) % ns
+            bm.faces.new((a[k], a[j], b[j], b[k]))
+    return finish_bm(bm, name, [mat], angle)
+
+def stitch_line(name, p0, p1, nrm, mat, pitch=6.5, length=3.6, w=0.9, h=0.45):
+    """dashed thread stitching along a seam (mm, world coordinates); nrm = surface normal."""
+    p0, p1, nrm = Vector(p0), Vector(p1), Vector(nrm).normalized()
+    d = p1 - p0; L = d.length; t = d.normalized()
+    s = t.cross(nrm).normalized()
+    bm = bmesh.new()
+    cnt = int(L / pitch)
+    for i in range(cnt + 1):
+        c = p0 + t * (i * pitch)
+        vs = []
+        for sz in (-1, 1):
+            for sy in (-1, 1):
+                for sx in (-1, 1):
+                    q = c + t * (sx * length / 2) + s * (sy * w / 2) + nrm * (sz * h / 2 + h / 2 - 0.1)
+                    vs.append(bm.verts.new((q.x * MM, q.y * MM, q.z * MM)))
+        # vs index = sz*4 + sy*2 + sx  (with -1/1 mapped 0/1)
+        for f in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)):
+            bm.faces.new([vs[k] for k in f])
+    return finish_bm(bm, name, [mat], angle=50)
+
+def corner_caps(bw, bd, bh, mats, front=True, size=28.0):
+    """chrome-satin corner protectors at the body corners (mm)."""
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            if sy < 0 and not front:
+                continue
+            for zc in (1, -1):
+                cx = sx * (bw / 2 - size / 2 + 1.6); cy = sy * (bd / 2 - size / 2 + 1.6)
+                cz = size / 2 - 1.6 if zc > 0 else bh - size / 2 + 1.6
+                cap = rbox('corner_cap', size, size, size, 2.0, [mats['chrome_sat']], z0=-size / 2, seg=3)
+                cap.location = (cx * MM, cy * MM, cz * MM)
+                m = cap.modifiers.new('b', 'BEVEL'); m.width = 2.2 * MM; m.segments = 3; m.limit_method = 'ANGLE'
+
+def build_head_details(bw, bd, bh, mats):
+    thread = mat_ink('thread', (0.12, 0.115, 0.10, 1), 0.8)
+    corner_caps(bw, bd, bh, mats, front=False, size=26.0)
+    stitch_line('st_top', (-(bw / 2 - 18), -bd / 2 + 16, bh), (bw / 2 - 18, -bd / 2 + 16, bh), (0, 0, 1), thread)
+    stitch_line('st_top_b', (-(bw / 2 - 18), bd / 2 - 16, bh), (bw / 2 - 18, bd / 2 - 16, bh), (0, 0, 1), thread)
+    for sx in (-1, 1):
+        stitch_line('st_side', (sx * bw / 2, -bd / 2 + 16, 18), (sx * bw / 2, -bd / 2 + 16, bh - 18), (sx, 0, 0), thread)
+        stitch_line('st_side_t', (sx * bw / 2 - sx * 18, -bd / 2 + 60, bh), (sx * bw / 2 - sx * 18, bd / 2 - 60, bh), (0, 0, 1), thread)
+
+def piping_loop(hx, hy, r_corner, z, rt, mat, name='piping'):
+    pts = [(x, y, z) for x, y in rrect(hx, hy, r_corner, 8)]
+    return tube_path(name, pts, rt, mat, closed=True, ns=8)
+
+def mat_baffle():
+    s = M('baffle')
+    tc = s.n('ShaderNodeTexCoord')
+    n = s.noise(900, 3, 0.6, (tc, 'Object'))
+    bump = s.n('ShaderNodeBump'); bump.inputs['Strength'].default_value = 0.2; bump.inputs['Distance'].default_value = 0.0002
+    s.l(n, 'Fac', bump, 'Height')
+    b = s.bsdf(Base_Color=(0.008, 0.008, 0.009, 1), Roughness=0.7, Specular_IOR_Level=0.2)
+    s.l(bump, 'Normal', b, 'Normal')
+    return s.m
+
+def mat_paper(name, col, rough=0.8):
+    s = M(name)
+    tc = s.n('ShaderNodeTexCoord')
+    fib = s.noise(3500, 5, 0.7, (tc, 'Object'), dist=1.5)
+    mc = s.n('ShaderNodeMix', data_type='RGBA')
+    mc.inputs['A'].default_value = tuple(c * 0.55 for c in col[:3]) + (1,)
+    mc.inputs['B'].default_value = col
+    s.l(fib, 'Fac', mc, 'Factor')
+    bump = s.n('ShaderNodeBump'); bump.inputs['Strength'].default_value = 0.5; bump.inputs['Distance'].default_value = 0.0002
+    s.l(fib, 'Fac', bump, 'Height')
+    b = s.bsdf(Roughness=rough, Specular_IOR_Level=0.2, Sheen_Weight=0.25)
+    s.l(mc, 'Result', b, 'Base Color'); s.l(bump, 'Normal', b, 'Normal')
+    return s.m
+
+def mat_mesh_grey(name='mic_mesh'):
+    s = M(name)
+    tc = s.n('ShaderNodeTexCoord')
+    wv = s.n('ShaderNodeTexWave', wave_type='BANDS', bands_direction='X')
+    wv.inputs['Scale'].default_value = 2600
+    wv2 = s.n('ShaderNodeTexWave', wave_type='BANDS', bands_direction='Y')
+    wv2.inputs['Scale'].default_value = 2600
+    s.l(tc, 'Object', wv, 'Vector'); s.l(tc, 'Object', wv2, 'Vector')
+    h = s.math('ADD', (wv, 'Fac'), (wv2, 'Fac'))
+    bump = s.n('ShaderNodeBump'); bump.inputs['Strength'].default_value = 0.9; bump.inputs['Distance'].default_value = 0.0003
+    s.l(h, 'Value', bump, 'Height')
+    b = s.bsdf(Base_Color=(0.42, 0.43, 0.45, 1), Metallic=1.0, Roughness=0.38)
+    s.l(bump, 'Normal', b, 'Normal')
+    return s.m
+
+def mat_grille(art, W, H, ink_a_hex, ink_b_hex, pitch=1.6):
+    """woven dark salt-and-pepper cloth; stencil paint (art R/G) sits on the thread crests so the weave shows through."""
+    s = M('grille_cloth')
+    tc = s.n('ShaderNodeTexCoord')
+    sc_ = 2 * math.pi / (pitch * MM)
+    wx = s.n('ShaderNodeTexWave', wave_type='BANDS', bands_direction='X'); wx.inputs['Scale'].default_value = sc_ / 2
+    wy = s.n('ShaderNodeTexWave', wave_type='BANDS', bands_direction='Y'); wy.inputs['Scale'].default_value = sc_ / 2
+    s.l(tc, 'Object', wx, 'Vector'); s.l(tc, 'Object', wy, 'Vector')
+    # over/under checker so the weave reads as cloth, not stripes
+    ck = s.n('ShaderNodeTexChecker'); ck.inputs['Scale'].default_value = 1.0 / (pitch * MM) / 2.0
+    s.l(tc, 'Object', ck, 'Vector')
+    weave = s.math('ADD', s.math('MULTIPLY', (wx, 'Fac'), (ck, 'Fac')), s.math('MULTIPLY', (wy, 'Fac'), s.math('SUBTRACT', 1.0, (ck, 'Fac'))))
+    # salt-and-pepper per thread cell
+    sc2 = s.n('ShaderNodeVectorMath', operation='SCALE'); sc2.inputs['Scale'].default_value = 1.0 / (pitch * MM)
+    s.l(tc, 'Object', sc2, 0)
+    fl = s.n('ShaderNodeVectorMath', operation='FLOOR'); s.l(sc2, 'Vector', fl, 0)
+    wn = s.n('ShaderNodeTexWhiteNoise', noise_dimensions='3D'); s.l(fl, 'Vector', wn, 'Vector')
+    salt = s.ramp((wn, 'Value'), ((0.80, 0.0), (0.84, 1.0)))
+    pep = s.ramp((wn, 'Value'), ((0.10, 1.0), (0.16, 0.0)))
+    base = s.math('ADD', 0.010, s.math('SUBTRACT', s.math('MULTIPLY', (salt, 'Color'), 0.07), s.math('MULTIPLY', (pep, 'Color'), 0.006)))
+    base = s.math('MULTIPLY', (base, 'Value'), s.math('ADD', 0.6, s.math('MULTIPLY', (weave, 'Value'), 0.8)))
+    cloth = s.n('ShaderNodeCombineXYZ')
+    for sk in 'XYZ': s.l(base, 'Value', cloth, sk)
+    # paint
+    mp = s.n('ShaderNodeMapping')
+    mp.inputs['Scale'].default_value = (1 / (W * MM), 1 / (H * MM), 1); mp.inputs['Location'].default_value = (0.5, 0.5, 0)
+    s.l(tc, 'Object', mp, 'Vector')
+    tex = s.n('ShaderNodeTexImage'); tex.image = art; tex.interpolation = 'Linear'; tex.extension = 'CLIP'
+    s.l(mp, 'Vector', tex, 'Vector')
+    sp = s.n('ShaderNodeSeparateColor'); s.l(tex, 'Color', sp, 'Color')
+    crest = s.ramp((weave, 'Value'), ((0.15, 0.45), (0.75, 1.0)))
+    pa = s.math('MULTIPLY', (sp, 'Red'), (crest, 'Color'), clamp=True)
+    pb = s.math('MULTIPLY', (sp, 'Green'), (crest, 'Color'), clamp=True)
+    c1 = s.n('ShaderNodeMix', data_type='RGBA'); s.l(cloth, 'Vector', c1, 'A')
+    c1.inputs['B'].default_value = tuple(c * 0.75 for c in hexcol(ink_a_hex)[:3]) + (1,)
+    s.l(pa, 'Value', c1, 'Factor')
+    c2 = s.n('ShaderNodeMix', data_type='RGBA'); s.l(c1, 'Result', c2, 'A')
+    c2.inputs['B'].default_value = tuple(c * 0.62 for c in hexcol(ink_b_hex)[:3]) + (1,)
+    s.l(pb, 'Value', c2, 'Factor')
+    bump = s.n('ShaderNodeBump'); bump.inputs['Strength'].default_value = 0.9; bump.inputs['Distance'].default_value = 0.0006
+    s.l(weave, 'Value', bump, 'Height')
+    b = s.bsdf(Roughness=0.92, Specular_IOR_Level=0.1, Sheen_Weight=0.35, Sheen_Roughness=0.6)
+    s.l(c2, 'Result', b, 'Base Color'); s.l(bump, 'Normal', b, 'Normal')
+    return s.m
+
+def build_speaker(cx, cy, z0, mats, label="V-30 TYPE 16 OHM"):
+    """generic 12-inch driver in local panel coordinates; z0 = baffle front face (mm)."""
+    root = empty('speaker', cx, cy, z0)
+    parts = []
+    flange = lathe('spk_flange', [(143, 0), (163, 0), (163, 2.2), (143, 2.2), (143, 0)], [mats['black']], 128, 40)
+    parts.append(flange)
+    for k in range(8):                                   # mounting bolts
+        a = 2 * math.pi * (k + 0.5) / 8
+        bolt = lathe('bolt', [(0, 2.2), (3.4, 2.2), (3.4, 3.4), (0, 3.4)], [mats['chrome_dark']], 12, 50)
+        bolt.location = (math.cos(a) * 153 * MM, math.sin(a) * 153 * MM, 0); parts.append(bolt)
+    sur = [(142, -0.5), (140.5, 1.8), (136, 3.2), (131, 1.8), (128.5, -0.5)]
+    surround = lathe('spk_surround', sur, [mats['rubber']], 128, 40)
+    cone = [(128.5, -0.5)]
+    for r in np.arange(126.0, 35.0, -2.0):
+        t = (128 - r) / 92.0
+        cone.append((float(r), -1.0 - 48.0 * t ** 0.9 + 0.8 * math.sin((128 - r) * 0.5)))
+    cone.append((34.0, -49.5))
+    cone_o = lathe('spk_cone', cone, [mats['paper']], 128, 30)
+    cap = [(34.0, -49.5), (33.5, -46.0)]
+    for r in np.linspace(32.0, 0.0, 12):
+        cap.append((float(r), -46.0 + 11.0 * (1 - (r / 34.0) ** 2) ** 0.8))
+    cap_o = lathe('spk_dustcap', cap, [mats['paper_dark']], 64, 60)
+    parts += [surround, cone_o, cap_o]
+    lab = rbox('spk_label', 46, 9, 0.3, 1.0, [mats['label']], z0=2.2, seg=2)
+    lab.location = (0, -153 * MM, 0)
+    parts.append(lab)
+    tx = add_text(label, 2.6, 0, -153, mats['label_ink'], extrude=0.05)
+    tx.location = (0, -153 * MM, 2.6 * MM)
+    parts.append(tx)
+    for p in parts: p.parent = root
+    return root
+
+def build_mic(mats):
+    """generic unbranded dynamic instrument mic (grey mesh head, black body), axis along local +Z, tip at z=0."""
+    prof_head = [(0, 0.0), (6.5, 0.0), (9.4, 0.8), (10.0, 3.0), (10.0, 18.0), (9.0, 20.0), (7.6, 21.0)]
+    head = lathe('mic_head', prof_head, [mats['mic_mesh']], 48, 50)
+    ring = lathe('mic_ring', [(7.6, 21.0), (10.6, 21.0), (10.6, 24.0), (7.6, 24.0), (7.6, 21.0)], [mats['chrome_sat']], 48, 50)
+    body_prof = [(7.4, 24.0), (7.8, 30.0), (8.0, 70.0), (7.8, 110.0), (7.6, 150.0), (7.8, 168.0), (9.0, 172.0), (0, 172.0)]
+    body = lathe('mic_body', body_prof, [mats['mic_black']], 48, 40)
+    tail = lathe('mic_tail', [(9.0, 172.0), (9.4, 174.0), (9.4, 190.0), (6.0, 194.0), (0, 194.0)], [mats['mic_black']], 48, 40)
+    root = empty('mic', 0, 0, 0)
+    for p in (head, ring, body, tail): p.parent = root
+    return root
 
 
 # ----------------------------------------------------------------- amp head control panel (shared by SAW and BODY)
@@ -1141,8 +1362,8 @@ def populate_amp(mats, mode):
             h = build_screw(sx * 285.0, sy * 118.0, mats); h.scale = (2.2,) * 3
     return knobs
 
-def amp_spec(name, art, ink_a, ink_b, oled_lines, ink_gain=0.45, led_rgb=(1.0, 0.2, 0.0, 1), led_off='#5a1c05'):
-    return dict(
+def amp_spec(name, art, ink_a, ink_b, oled_lines, ink_gain=0.45, led_rgb=(1.0, 0.2, 0.0, 1), led_off='#5a1c05', jewel_rgb=(1.0, 0.10, 0.02, 1)):
+    return dict(jewel_rgb=jewel_rgb, 
         name=name, kind='head', plate=(600.0, 260.0, 8.0), body=(600.0, 250.0, 260.0), art=art, ink_a=ink_a, ink_b=ink_b,
         populate=populate_amp, oled_lines=oled_lines, ink_gain=ink_gain, led_rgb=led_rgb, led_off=led_off,
         k=3.2, center=(0, 0, 0.13),

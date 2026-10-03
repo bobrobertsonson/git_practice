@@ -82,8 +82,8 @@ def art(font):
                         words=[("BODY", -185, -62, 175, 1.5), ("HEAVY DUTY BODY WORK", 0, 119, 215, 0)],
                         tapes=[(-110, 112, 80, 13, 3), (250, -105, 60, 12, -7), (120, 14, 70, 12, 5)], tally=[(-285, 6)], seed=33)
 
-SPEC = amp_spec('body', art, '#b3121a', '#e8e4d8', ["HM-2w BODY", "std · A2 · 48k"],
-                ink_gain=1.0, led_rgb=(1.0, 0.04, 0.03, 1), led_off='#3a0507')
+SPEC = amp_spec('body', art, '#b3121a', '#e8e4d8', ["5150III IVORY · RED", "std · A2 · 48k"],
+                ink_gain=1.0, led_rgb=(1.0, 0.04, 0.03, 1), led_off='#3a0507', jewel_rgb=(1.0, 0.0, 0.004, 1))
 
 if __name__ == '__main__':
     run(SPEC)
