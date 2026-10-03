@@ -30,13 +30,14 @@ mix (guitars + bass + drums), from the same cover project as the DIs above.
 | DI | Best mix channel | Offset of DI within mix | Peak corr vs. median |
 |---|---|---|---|
 | Guitar_L | left | ≈ +190 ms | 0.168 vs 0.011 |
-| Guitar_R | right | ≈ +175 ms | 0.074 vs 0.010 |
+| Guitar_R | right | ≈ +175 ms (coarse; refined ≈ +192 ms) | 0.074 vs 0.010 |
 
 So the guitars are double-tracked and panned hard L/R, and the mix's tone is exactly what
 these DIs became. This is a known-answer target for the matcher.
 
 Caveats:
-- 5 ms resolution; refine to sample accuracy before any per-note/time-aligned comparison
+- Refined by the matcher (full-length renders vs mix, PHAT): L 8466 smp = 191.97 ms, R 8468 smp = 192.02 ms at 44.1 kHz; ±~1 ms between renders because amp phase moves the peak.
+- 5 ms resolution in the table above; refine to sample accuracy before any per-note/time-aligned comparison
   (the L/R offsets may genuinely differ by ~15 ms or the estimate may be coarse).
 - The mix contains bass and drums: compare in guitar-dominant bands / sections, or use
   per-band LTAS differences rather than the absolute rules. MP3 192k: ignore > 16 kHz.
