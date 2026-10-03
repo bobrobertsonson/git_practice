@@ -15,6 +15,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(SAWBLADE_BUILD_TESTS "Build the Catch2 test suite" ON)
+option(SAWBLADE_BUILD_PLUGIN "Build the JUCE plugin (VST3, AU on macOS, Standalone) and its headless tests. JUCE 8 is AGPLv3 or commercial: a commercial licence is required before distribution" OFF)
 
 # Warnings-as-errors apply to Sawblade targets only: link this interface target into them.
 # Third-party targets never link it and expose their headers as SYSTEM.
@@ -33,4 +34,8 @@ add_subdirectory(cli)
 if(SAWBLADE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
+endif()
+
+if(SAWBLADE_BUILD_PLUGIN)
+  add_subdirectory(plugin)
 endif()
