@@ -1,5 +1,5 @@
 """
-Sawblade design B2 - "CHAINSAW" boutique pedal, procedural Blender (Cycles) scene.
+Sawblade design B2 - "STOCKHOLM SYNDROME" boutique pedal, procedural Blender (Cycles) scene.
 
 Fully procedural: every mesh, texture and the OLED font are generated here
 (no downloaded models, textures or HDRIs).  Only Blender's built-in font is used.
@@ -180,40 +180,77 @@ class M:
         return n
 
 
-def mat_powder():
+def mat_powder(art):
     s = M('powder_coat')
     tc = s.n('ShaderNodeTexCoord')
     geo = s.n('ShaderNodeNewGeometry')
     sep = s.n('ShaderNodeSeparateXYZ')
     s.l(geo, 'Normal', sep, 'Vector')
     nz = (sep, 'Z')
-    # edge-wear: strongest mid-bevel (normal tilted ~45deg), patchy via noise
+    # edge wear: strongest mid-bevel (normal tilted ~45deg), patchy via noise
     t = s.math('MULTIPLY', s.math('MULTIPLY', nz, s.math('SUBTRACT', 1.0, nz)), 4.0)
-    ramp1 = s.ramp((t, 'Value'), ((0.45, 0.0), (0.8, 1.0)))
+    ramp1 = s.ramp((t, 'Value'), ((0.40, 0.0), (0.75, 1.0)))
     patch = s.noise(900, 4, 0.6, (tc, 'Object'))
     patch2 = s.noise(90, 3, 0.55, (tc, 'Object'))
     mix = s.math('ADD', (patch, 'Fac'), (patch2, 'Fac'))
-    pr = s.ramp((mix, 'Value'), ((1.02, 0.0), (1.2, 1.0)))
+    pr = s.ramp((mix, 'Value'), ((0.98, 0.0), (1.16, 1.0)))
     wear = s.math('MULTIPLY', (ramp1, 'Color'), (pr, 'Color'), clamp=True)
-    # roughness: blotchy + fine
+    # --- top-face artwork (planar projection from object space) ---
+    mp = s.n('ShaderNodeMapping')
+    mp.inputs['Scale'].default_value = (1 / (W_ * MM), 1 / (L_ * MM), 1)
+    mp.inputs['Location'].default_value = (0.5, 0.5, 0)
+    s.l(tc, 'Object', mp, 'Vector')
+    tex = s.n('ShaderNodeTexImage'); tex.image = art
+    tex.interpolation = 'Linear'; tex.extension = 'CLIP'
+    s.l(mp, 'Vector', tex, 'Vector')
+    sc = s.n('ShaderNodeSeparateColor'); s.l(tex, 'Color', sc, 'Color')
+    topm = s.math('MULTIPLY', s.math('SUBTRACT', nz, 0.985, clamp=True), 66.0, clamp=True)
+    ink_o = s.math('MULTIPLY', (sc, 'Red'), topm, clamp=True)
+    ink_g = s.math('MULTIPLY', (sc, 'Green'), topm, clamp=True)
+    reveal = s.math('MULTIPLY', (sc, 'Blue'), topm, clamp=True)
+    wear2 = s.math('MAXIMUM', (wear, 'Value'), (reveal, 'Value'))
+    ink_any = s.math('MAXIMUM', (ink_o, 'Value'), (ink_g, 'Value'))
+    # roughness: blotchy smudges + streaks + fine grain
     n_big = s.noise(40, 2, 0.5, (tc, 'Object'))
     n_fine = s.noise(2600, 2, 0.6, (tc, 'Object'))
-    rr = s.math('ADD', 0.52, s.math('MULTIPLY', s.math('SUBTRACT', (n_big, 'Fac'), 0.5), 0.35))
+    streak_m = s.n('ShaderNodeMapping'); streak_m.inputs['Scale'].default_value = (2.0, 70.0, 2.0)
+    s.l(tc, 'Object', streak_m, 'Vector')
+    streak = s.noise(18, 3, 0.55, (streak_m, 'Vector'))
+    rr = s.math('ADD', 0.50, s.math('MULTIPLY', s.math('SUBTRACT', (n_big, 'Fac'), 0.5), 0.40))
+    rr = s.math('ADD', rr, s.math('MULTIPLY', s.math('SUBTRACT', (streak, 'Fac'), 0.5), 0.22))
     rr = s.math('ADD', rr, s.math('MULTIPLY', s.math('SUBTRACT', (n_fine, 'Fac'), 0.5), 0.25))
-    mixc = s.n('ShaderNodeMix', data_type='RGBA')
-    mixc.inputs['A'].default_value = (0.019, 0.019, 0.020, 1)
-    mixc.inputs['B'].default_value = (0.62, 0.63, 0.65, 1)
-    s.l(wear, 'Value', mixc, 'Factor')
-    rw = s.math('ADD', rr, s.math('MULTIPLY', (wear, 'Value'), -0.25))
+    rr = s.math('ADD', rr, s.math('MULTIPLY', (ink_any, 'Value'), 0.18))
+    rw = s.math('ADD', rr, s.math('MULTIPLY', (wear2, 'Value'), -0.3))
+    # colour: coat -> orange -> bone -> raw aluminium
+    c1 = s.n('ShaderNodeMix', data_type='RGBA')
+    c1.inputs['A'].default_value = (0.019, 0.019, 0.020, 1)
+    c1.inputs['B'].default_value = tuple(c * 0.45 for c in hexcol('#ff6a1a')[:3]) + (1,)
+    s.l(ink_o, 'Value', c1, 'Factor')
+    c2 = s.n('ShaderNodeMix', data_type='RGBA')
+    s.l(c1, 'Result', c2, 'A')
+    c2.inputs['B'].default_value = tuple(c * 0.62 for c in hexcol('#e8e4d8')[:3]) + (1,)
+    s.l(ink_g, 'Value', c2, 'Factor')
+    c3 = s.n('ShaderNodeMix', data_type='RGBA')
+    s.l(c2, 'Result', c3, 'A')
+    c3.inputs['B'].default_value = (0.62, 0.63, 0.65, 1)
+    s.l(wear2, 'Value', c3, 'Factor')
+    # micro texture: orange-peel + fine grain, plus paint thickness from the artwork
+    peel = s.noise(520, 3, 0.55, (tc, 'Object'))
+    hh = s.math('ADD', s.math('MULTIPLY', (peel, 'Fac'), 0.6), s.math('MULTIPLY', (n_fine, 'Fac'), 0.4))
     bump = s.n('ShaderNodeBump')
-    bump.inputs['Strength'].default_value = 0.12
-    bump.inputs['Distance'].default_value = 0.0002
-    s.l(n_fine, 'Fac', bump, 'Height')
-    b = s.bsdf(Metallic=0.0, Specular_IOR_Level=0.2)
-    s.l(mixc, 'Result', b, 'Base Color')
-    s.l(wear, 'Value', b, 'Metallic')
+    bump.inputs['Strength'].default_value = 0.30
+    bump.inputs['Distance'].default_value = 0.00025
+    s.l(hh, 'Value', bump, 'Height')
+    bump2 = s.n('ShaderNodeBump')
+    bump2.inputs['Strength'].default_value = 0.6
+    bump2.inputs['Distance'].default_value = 0.00008
+    s.l(ink_any, 'Value', bump2, 'Height')
+    s.l(bump, 'Normal', bump2, 'Normal')
+    b = s.bsdf(Metallic=0.0, Specular_IOR_Level=0.10)
+    s.l(c3, 'Result', b, 'Base Color')
+    s.l(wear2, 'Value', b, 'Metallic')
     s.l(rw, 'Value', b, 'Roughness')
-    s.l(bump, 'Normal', b, 'Normal')
+    s.l(bump2, 'Normal', b, 'Normal')
     return s.m
 
 def mat_chrome(name='chrome', rough=0.06):
@@ -428,6 +465,219 @@ def oled_image(lines, W=98, H=28):
     return img
 
 
+# ----------------------------------------------------------------- procedural top-face artwork
+# "Swedish crust" stencil: giant stencilled saw blade, overspray, drips, xerox grain,
+# torn tape, mis-registered second ink, scratched-through paint.
+# Channels (Non-Color): R = burnt-orange ink, G = bone ink, B = paint scratched to raw aluminium.
+S = 14                                   # texture pixels per mm
+AW, AH = int(W_ * S), int(L_ * S)
+FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/blackopsone/BlackOpsOne-Regular.ttf"
+
+def fetch_font(cache_dir):
+    """Black Ops One (SIL OFL 1.1) is fetched at run time and never committed."""
+    path = os.path.join(cache_dir, "BlackOpsOne-Regular.ttf")
+    if os.path.exists(path):
+        return path
+    try:
+        import ssl, urllib.request
+        ca = "/root/.ccr/ca-bundle.crt"
+        ctx = ssl.create_default_context(cafile=ca) if os.path.exists(ca) else None
+        os.makedirs(cache_dir, exist_ok=True)
+        with urllib.request.urlopen(FONT_URL, timeout=30, context=ctx) as r, open(path, "wb") as f:
+            f.write(r.read())
+        return path
+    except Exception as e:
+        print("[pedal_b2] stencil font fetch failed (%s); falling back to PIL default" % e)
+        return None
+
+def make_artwork(font_path, layout, seed=7):
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
+    rng = np.random.default_rng(seed)
+    P = lambda x, y: ((x + W_ / 2) * S, (L_ / 2 - y) * S)
+
+    def blur(a, r):
+        return np.asarray(Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8)).filter(
+            ImageFilter.GaussianBlur(r)), dtype=np.float32) / 255.0
+
+    def noise(sigma):
+        b = blur(rng.random((AH, AW), dtype=np.float32), sigma)
+        return (b - b.min()) / (b.max() - b.min() + 1e-9)
+
+    def arr(img):
+        return np.asarray(img, dtype=np.float32) / 255.0
+
+    def rough(m, r, amt, n):                          # rough, photocopied edges
+        return np.clip((blur(m, r) - 0.5) * 3.0 + 0.5 + (n - 0.5) * amt, 0, 1) > 0.5
+
+    n_fine = noise(1.2); n_mid = noise(5.0); n_big = noise(40)
+
+    # --- stencilled blade (orange) ----------------------------------------------------
+    O = Image.new('L', (AW, AH), 0); d = ImageDraw.Draw(O)
+    cx, cy = P(16, -6)
+    def pol(a, r): return (cx + r * S * math.cos(math.radians(a)), cy - r * S * math.sin(math.radians(a)))
+    pts = []
+    nt = 16
+    for t in range(nt):
+        a0 = t * 360 / nt
+        pts += [pol(a0, 78), pol(a0 + 2, 91)]
+        pts += [pol(a0 + 2 + 18 * u, 91 - 13 * u ** 0.6) for u in np.linspace(0.1, 1.0, 7)]
+    d.polygon(pts, fill=255)
+    d.ellipse((cx - 70 * S, cy - 70 * S, cx + 70 * S, cy + 70 * S), fill=0)       # gullet ring
+    for ro, ri in ((60, 53), (41, 37), (25, 21), (9, 6)):
+        d.ellipse((cx - ro * S, cy - ro * S, cx + ro * S, cy + ro * S), fill=255)
+        d.ellipse((cx - ri * S, cy - ri * S, cx + ri * S, cy + ri * S), fill=0)
+    d.ellipse((cx - 2.5 * S, cy - 2.5 * S, cx + 2.5 * S, cy + 2.5 * S), fill=255)
+    for rr_, ra, rb in ((87, 66, 92), (60, 50, 64), (41, 34, 45), (25, 18, 29), (9, 3, 12)):   # stencil bridges
+        for k in range(5):
+            a = rng.uniform(0, 360)
+            d.line((*pol(a, ra), *pol(a, rb)), fill=0, width=int(rng.uniform(0.9, 1.5) * S))
+    # bridges through the toothed band, radial
+    for k in range(6):
+        a = k * 60 + 17
+        d.line((*pol(a, 71), *pol(a, 93)), fill=0, width=int(1.1 * S))
+    layer_o = arr(O)
+
+    # --- wordmark (bone) with orange mis-registered twin -------------------------------
+    f = None
+    def mkfont(sz):
+        return ImageFont.truetype(font_path, sz) if font_path else ImageFont.load_default()
+    def line_mask(text, cy_mm, width_mm, rot):
+        sz = 200
+        fo = mkfont(sz)
+        bb = fo.getbbox(text)
+        sz = int(sz * width_mm * S / (bb[2] - bb[0]))
+        fo = mkfont(sz); bb = fo.getbbox(text)
+        im = Image.new('L', (bb[2] - bb[0] + 20, bb[3] - bb[1] + 20), 0)
+        ImageDraw.Draw(im).text((10 - bb[0], 10 - bb[1]), text, fill=255, font=fo)
+        im = im.rotate(rot, expand=True, resample=Image.BICUBIC)
+        full = Image.new('L', (AW, AH), 0)
+        x, y = P(0, cy_mm)
+        full.paste(im, (int(x - im.width / 2), int(y - im.height / 2)))
+        return arr(full)
+    w1 = line_mask("STOCKHOLM", 85, 100, 2.2)
+    w2 = line_mask("SYNDROME", 73.2, 88, 2.2)
+    word = np.maximum(w1, w2)
+    dx, dy = int(1.0 * S), int(0.7 * S)
+    word_o = np.roll(np.roll(word, dx, axis=1), dy, axis=0)           # sloppy registration
+
+    # --- clear zones (keep controls + labels legible) ------------------------------------
+    C = Image.new('L', (AW, AH), 0); dc = ImageDraw.Draw(C)
+    for (x, y, rr_) in layout['circles']:
+        px_, py_ = P(x, y); dc.ellipse((px_ - rr_ * S, py_ - rr_ * S, px_ + rr_ * S, py_ + rr_ * S), fill=255)
+    for (x, y, w, h) in layout['rects']:
+        px_, py_ = P(x, y); dc.rectangle((px_ - w / 2 * S, py_ - h / 2 * S, px_ + w / 2 * S, py_ + h / 2 * S), fill=255)
+    clear = blur(arr(C), 1.2 * S)
+    clear = np.clip(clear * 1.6, 0, 1)
+
+    # --- orange: rough edges, xerox drop-outs, overspray, drips --------------------------
+    mo = rough(layer_o, 2.2, 0.8, n_fine).astype(np.float32)
+    mo *= (0.15 + 0.85 * (n_mid > 0.30)).astype(np.float32) * (n_big * 0.5 + 0.7).clip(0, 1)
+    mo *= (1 - 0.88 * clear)
+    # drips from lower edges
+    edge = (mo[:-1] > 0.5) & (mo[1:] < 0.5)
+    ys, xs = np.nonzero(edge)
+    sel = rng.random(len(ys)) < 0.0016
+    D = Image.new('L', (AW, AH), 0); dd = ImageDraw.Draw(D)
+    for y, x in zip(ys[sel], xs[sel]):
+        ln = int(rng.uniform(1.0, 9.0) * S); w = int(rng.uniform(0.2, 0.45) * S) + 1
+        dd.line((x, y, x, y + ln), fill=255, width=w)
+        dd.ellipse((x - w * 0.9, y + ln - w * 0.6, x + w * 0.9, y + ln + w * 1.1), fill=255)
+    mo = np.maximum(mo, arr(D) * (1 - 0.9 * clear) * 0.95)
+    # overspray halo
+    halo = blur(mo, 2.4 * S)
+    dots = rng.random((AH, AW), dtype=np.float32) < (halo ** 1.4) * 0.55
+    mo = np.maximum(mo, dots.astype(np.float32) * (1 - mo) * 0.85 * (1 - 0.9 * clear))
+    mo *= (0.82 + 0.18 * n_fine)
+    word_o_r = rough(word_o, 2.5, 1.0, noise(1.0)).astype(np.float32) * (0.2 + 0.8 * (n_mid > 0.2))
+    mo = np.maximum(mo, word_o_r * 0.95)
+
+    # --- bone: wordmark, tape residue, halftone borders, tally marks, xerox speckle -----------
+    mg = rough(word, 2.0, 0.9, n_fine).astype(np.float32) * (0.12 + 0.88 * (noise(3.0) > 0.36))
+    G = Image.new('L', (AW, AH), 0); dg = ImageDraw.Draw(G)
+    for (x, y, w, h, rot) in ((-47, 91, 44, 8, -33), (48, -91, 40, 8, -30), (53, 4, 36, 7.5, 84)):
+        pts = []
+        px_, py_ = P(x, y)
+        hw, hh = w / 2 * S, h / 2 * S
+        edge_pts = [(-hw, -hh)]
+        for t in np.linspace(-hw, hw, 40):
+            edge_pts.append((t, -hh + rng.uniform(-0.1, 0.1) * S))
+        edge_pts.append((hw + rng.uniform(0, 0.8) * S, -hh))
+        for yy in np.linspace(-hh, hh, 6):
+            edge_pts.append((hw + rng.uniform(-0.4, 0.5) * S, yy))
+        for t in np.linspace(hw, -hw, 40):
+            edge_pts.append((t, hh + rng.uniform(-0.1, 0.1) * S))
+        for yy in np.linspace(hh, -hh, 6):
+            edge_pts.append((-hw + rng.uniform(-0.5, 0.4) * S, yy))
+        ca, sa = math.cos(math.radians(rot)), math.sin(math.radians(rot))
+        dg.polygon([(px_ + u * ca + v * sa, py_ - (u * sa - v * ca)) for u, v in edge_pts], fill=150)
+    tape = arr(G) * (1 - 0.8 * clear) * (0.55 + 0.45 * n_mid)
+    mg = np.maximum(mg, tape)
+    # tally marks between the footswitches
+    T = Image.new('L', (AW, AH), 0); dt = ImageDraw.Draw(T)
+    for grp in range(2):
+        x0, y0 = P(-9 + grp * 10, -80)
+        for k in range(4):
+            dt.line((x0 + k * 0.9 * S, y0 - 3.5 * S, x0 + k * 0.9 * S + rng.uniform(-3, 3), y0 + 3.5 * S), fill=255, width=int(0.28 * S) + 1)
+        dt.line((x0 - 0.6 * S, y0 + 2.4 * S, x0 + 3.5 * S, y0 - 2.4 * S), fill=255, width=int(0.28 * S) + 1)
+    mg = np.maximum(mg, rough(arr(T), 1.5, 0.8, n_fine).astype(np.float32) * 0.9)
+    # halftone gradient borders (photocopy edge): top and bottom
+    yy, xx = np.mgrid[0:AH, 0:AW].astype(np.float32)
+    u = (xx + yy) * 0.7071; v = (yy - xx) * 0.7071
+    cell = 7.0
+    fu = (u / cell) % 1 - 0.5; fv = (v / cell) % 1 - 0.5
+    dist = np.sqrt(fu ** 2 + fv ** 2)
+    ymm = L_ / 2 - yy / S
+    g = np.clip((ymm - 88.5) / 6.5, 0, 1) + np.clip((-91.0 - ymm) / 3.5, 0, 1)
+    ht = (dist < 0.62 * np.sqrt(np.clip(g, 0, 1))).astype(np.float32) * 0.8
+    ht *= (1 - 0.8 * clear)
+    mg = np.maximum(mg, ht)
+    # xerox speckle
+    mg = np.maximum(mg, ((n_fine > 0.83) & (rng.random((AH, AW)) < 0.8)).astype(np.float32) * (n_big > 0.5) * 0.5 * (1 - 0.9 * clear))
+    mg *= (0.86 + 0.14 * n_fine)
+
+    # --- scratches / chips: raw aluminium ---------------------------------------------------
+    B = Image.new('L', (AW, AH), 0); db = ImageDraw.Draw(B)
+    for k in range(110):
+        if rng.random() < 0.45:                       # near an edge
+            side = rng.integers(0, 4); t = rng.random(); off = rng.exponential(1.3) * S
+            if side == 0: x, y = t * AW, off
+            elif side == 1: x, y = t * AW, AH - off
+            elif side == 2: x, y = off, t * AH
+            else: x, y = AW - off, t * AH
+        else:
+            x, y = rng.random() * AW, rng.random() * AH
+        a = rng.uniform(0, 2 * math.pi)
+        for seg in range(rng.integers(1, 4)):
+            ln = rng.uniform(0.8, 12) * S
+            nx, ny = x + ln * math.cos(a), y + ln * math.sin(a)
+            db.line((x, y, nx, ny), fill=int(rng.uniform(90, 230)), width=int(rng.uniform(1, 2.2)))
+            x, y = nx, ny; a += rng.normal(0, 0.5)
+    for k in range(70):                               # chips on edges / corners
+        side = rng.integers(0, 4); t = rng.random(); off = rng.exponential(0.8) * S
+        if side == 0: x, y = t * AW, off
+        elif side == 1: x, y = t * AW, AH - off
+        elif side == 2: x, y = off, t * AH
+        else: x, y = AW - off, t * AH
+        r = rng.uniform(0.25, 1.3) * S
+        pts = [(x + r * rng.uniform(0.4, 1.2) * math.cos(a), y + r * rng.uniform(0.4, 1.2) * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 8, endpoint=False)]
+        db.polygon(pts, fill=255)
+    mb = blur(arr(B), 0.6) * (0.5 + 0.5 * (n_mid > 0.2))
+
+    out = np.zeros((AH, AW, 4), np.float32)
+    out[..., 0] = np.clip(mo, 0, 1)
+    out[..., 1] = np.clip(mg, 0, 1)
+    out[..., 2] = np.clip(mb, 0, 1)
+    out[..., 3] = 1.0
+    return out
+
+def art_to_image(rgba):
+    img = bpy.data.images.new('top_art', AW, AH, alpha=True, float_buffer=False)
+    img.colorspace_settings.name = 'Non-Color'
+    img.pixels.foreach_set(np.ascontiguousarray(rgba[::-1]).ravel())        # Blender rows start at the bottom
+    img.update()
+    return img
+
+
 # ----------------------------------------------------------------- parts
 def build_enclosure(m_body):
     R, bev, nb = 7.0, 1.3, 5
@@ -453,68 +703,6 @@ def build_enclosure(m_body):
     bm.faces.new(rings[0][::-1])
     # recompute: profile order must be bottom->top
     return finish_bm(bm, 'enclosure', [m_body], angle=40)
-
-def ink_flat(name, bm, mat, thick=0.09):
-    """flat printed shape -> raised ink (mm)."""
-    ob = finish_bm(bm, name, [mat], smooth=False)
-    mod = ob.modifiers.new('ink', 'SOLIDIFY')
-    mod.thickness = thick * MM
-    mod.offset = 1
-    ob.location.z = (Z + 0.01) * MM
-    return ob
-
-def stroke(bm, pts, width, closed=True):
-    n = len(pts)
-    w = width / 2
-    left, right = [], []
-    for i in range(n):
-        p0 = Vector(pts[(i - 1) % n]); p1 = Vector(pts[i]); p2 = Vector(pts[(i + 1) % n])
-        if not closed and i == 0: p0 = p1 - (p2 - p1)
-        if not closed and i == n - 1: p2 = p1 + (p1 - p0)
-        d1 = (p1 - p0).normalized(); d2 = (p2 - p1).normalized()
-        n1 = Vector((-d1.y, d1.x)); n2 = Vector((-d2.y, d2.x))
-        nm = (n1 + n2)
-        if nm.length < 1e-6: nm = n1
-        nm.normalize()
-        sc = max(0.5, nm.dot(n1))
-        off = nm * (w / sc)
-        left.append(bm.verts.new(((p1.x + off.x) * MM, (p1.y + off.y) * MM, 0)))
-        right.append(bm.verts.new(((p1.x - off.x) * MM, (p1.y - off.y) * MM, 0)))
-    for i in range(n if closed else n - 1):
-        j = (i + 1) % n
-        bm.faces.new((left[i], left[j], right[j], right[i]))
-
-def saw_blade(cx, cy, mat, scale=1.0):
-    bm = bmesh.new()
-    r_root, r_tip = 10.2 * scale, 12.4 * scale
-    pts = []
-    for t in range(8):
-        a0 = t * 45.0
-        pts.append((a0, r_root))
-        pts.append((a0 + 3.0, r_tip))
-        for k in range(1, 9):
-            u = k / 8
-            pts.append((a0 + 3.0 + 36.0 * u, r_tip - (r_tip - r_root) * u ** 0.65))
-        pts.append((a0 + 42.0, r_root))
-        pts.append((a0 + 44.0, r_root))
-    P = [(r * math.cos(math.radians(a)), r * math.sin(math.radians(a))) for a, r in pts]
-    # drop near-duplicate points
-    Q = [P[0]]
-    for p in P[1:]:
-        if (Vector(p) - Vector(Q[-1])).length > 0.08:
-            Q.append(p)
-    stroke(bm, Q, 0.7 * scale)
-    stroke(bm, circle_pts(8.4 * scale, 96), 0.45 * scale)
-    stroke(bm, circle_pts(7.5 * scale, 96), 0.30 * scale)
-    stroke(bm, circle_pts(4.0 * scale, 64), 0.45 * scale)
-    stroke(bm, circle_pts(2.0 * scale, 48), 0.60 * scale)
-    for i in range(4):                              # little vent slots
-        a = math.radians(45 + 90 * i)
-        for da in (-1,):
-            pass
-    ob = ink_flat('saw_logo', bm, mat)
-    ob.location.x, ob.location.y = cx * MM, cy * MM
-    return ob
 
 def add_text(body, size, x, y, mat, width=None, rot=0.0, extrude=0.06, embolden=0.0, sx=1.0):
     cu = bpy.data.curves.new('t_' + body, 'FONT')
@@ -618,16 +806,23 @@ def build_toggle(x, y, tilt, mats):
     return root
 
 def build_footswitch(x, y, mats):
+    """Flatter boutique stomp cap: knurled satin-chrome barrel, ridged brushed top, hex nut."""
     root = empty('footswitch', x, y, Z)
-    nut = prism('fs_nut', circle_pts(12.6, 6, math.pi / 6), 0, 2.2, [mats['chrome']], 40)
+    nut = prism('fs_nut', circle_pts(11.9, 6, math.pi / 6), 0, 2.2, [mats['chrome']], 40)
     mod = nut.modifiers.new('b', 'BEVEL'); mod.width = 0.5 * MM; mod.segments = 3; mod.limit_method = 'ANGLE'
-    prof = [(0, 2.0), (11.0, 2.0), (11.0, 5.5)]
-    for k in range(1, 19):                      # smooth elliptical dome (avoids faceted reflections)
-        t = math.pi / 2 * k / 18
-        prof.append((11.0 * math.cos(t) ** 0.8 if k < 18 else 0.0, 5.5 + 9.6 * math.sin(t) ** 0.9))
-    dome = lathe('fs_dome', prof, [mats['chrome']], 96, 60)
-    # smoother dome: add intermediate points through bevel-like profile
-    for p in (nut, dome): p.parent = root
+    N = 90
+    star = []
+    for i in range(2 * N):
+        a = math.pi * i / N
+        r = 11.0 if i % 2 == 0 else 10.65
+        star.append((r * math.cos(a), r * math.sin(a)))
+    barrel = prism('fs_barrel', star, 2.0, 8.6, [mats['chrome_sat']], angle=50)
+    prof = [(0, 9.45)]
+    for r in np.linspace(0.8, 9.2, 28):               # concentric ridges
+        prof.append((float(r), 9.45 + 0.17 * abs(math.sin(math.pi * r / 1.05)) - 0.01 * r))
+    prof += [(9.7, 9.35), (10.3, 9.15), (10.85, 8.8), (11.0, 8.5), (11.0, 8.3)]
+    top = lathe('fs_top', prof, [mats['chrome_sat']], 96, 38)
+    for p in (nut, barrel, top): p.parent = root
     return root
 
 def build_led(x, y, lit, mats):
@@ -764,7 +959,7 @@ def make_camera(mode, strip_center=None):
     bpy.context.scene.camera = co
     if mode == 'hero':
         cam.lens = 85
-        co.location = (0.27, -0.42, 0.59)
+        co.location = (0.20, -0.44, 0.59)
         tgt = empty('tgt', 0, -8, Z)
         cam.dof.use_dof = True
         cam.dof.focus_object = tgt
@@ -789,17 +984,34 @@ def build_lights(mode):
     softbox('rim', 0.14, 0.9, (0.50, 0.55, 0.28), c, 70.0, (1.0, 0.97, 0.95), gradient=False)
     softbox('rim2', 0.14, 0.9, (-0.55, 0.40, 0.25), c, 30.0, (0.95, 0.97, 1.0), gradient=False)
     softbox('fill', 0.8, 0.8, (0.6, -0.5, 0.25), c, 0.9, (0.95, 0.97, 1.0))
-    softbox('top', 0.9, 0.9, (0.0, 0.0, 0.95), (0, 0, 0), 1.3, (1, 0.98, 0.95))
+    softbox('top', 0.9, 0.9, (0.0, 0.0, 0.95), (0, 0, 0), 0.8, (1, 0.98, 0.95))
 
 
 # ----------------------------------------------------------------- scene
-KNOBS = [("LOW", -36, 38, 0.95), ("HIGH", 0, 38, 0.92), ("DIST", 36, 38, 0.80),
-         ("IN GAIN", -36, -6, 0.50), ("OUT", 0, -6, 0.55), ("MIX", 36, -6, 1.00)]
+KNOBS = [("LOW", -36, 26, 0.95), ("HIGH", 0, 26, 0.92), ("DIST", 36, 26, 0.80),
+         ("IN GAIN", -36, -15, 0.50), ("OUT", 0, -15, 0.55), ("MIX", 36, -15, 1.00)]
+LABEL_DY = -18.0
+TOGGLE_Y, TOGGLE_LABEL_Y = -47.5, -58.5
+FOOT_Y, FOOT_LED_Y = -80.0, -64.5
+OLED_Y = 56.0
 
-def build_scene(mode):
+def art_layout():
+    circles = [(x, y, 19.5) for _, x, y, _ in KNOBS]
+    circles += [(x, TOGGLE_Y, 11.0) for x in (-36, 0, 36)]
+    circles += [(x, FOOT_Y, 14.5) for x in (-30, 30)]
+    circles += [(x, FOOT_LED_Y, 6.0) for x in (-30, 30)]
+    circles += [(sx * 53.2, sy * 88.2, 4.0) for sx in (-1, 1) for sy in (-1, 1)]
+    rects = [(x, y + LABEL_DY, 20, 5.5) for _, x, y, _ in KNOBS]
+    rects += [(x, TOGGLE_LABEL_Y, 14, 5.5) for x in (-36, 0, 36)]
+    rects += [(0, OLED_Y, 68, 25)]
+    return dict(circles=circles, rects=rects)
+
+def build_scene(mode, font_dir):
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    art = art_to_image(make_artwork(fetch_font(font_dir), art_layout()))
     mats = dict(
-        powder=mat_powder(), chrome=mat_chrome(), chrome_dark=mat_chrome('chrome_dark', 0.25),
+        powder=mat_powder(art), chrome=mat_chrome(), chrome_dark=mat_chrome('chrome_dark', 0.25),
+        chrome_sat=mat_chrome('chrome_satin', 0.22),
         alu=mat_alu_brushed(), black=mat_black_anodised(),
         white=mat_ink('inlay_white', hexcol('#e8e4d8'), 0.45),
         led_on=mat_emit('led_on', (1.0, 0.20, 0.0, 1), 6.0),
@@ -809,11 +1021,10 @@ def build_scene(mode):
         glow=mat_glow_decal((1.0, 0.07, 0.03, 1), 0.6),
         glass=mat_glass_overlay(), glass_black=mat_black_anodised('oled_well'),
         slot=mat_ink('slot', (0.01, 0.01, 0.01, 1), 0.6))
-    mats['oled'] = mat_oled_display(oled_image(["HM-2w CHAINSAW", "std · A2 · 48k"]), 98, 28)
+    mats['oled'] = mat_oled_display(oled_image(["HM-2w CHAINSAW", "std \u00b7 A2 \u00b7 48k"]), 98, 28)
     enc = build_enclosure(mats['powder'])
     setup_world()
     build_backdrop()
-    ink_o = mat_ink('print_orange', tuple(c * 0.55 for c in hexcol('#ff6a1a')[:3]) + (1,), 0.55)
     ink_w = mat_ink('print_white', hexcol('#e8e4d8'), 0.5)
     knobs = []
     if mode == 'strip':
@@ -821,18 +1032,16 @@ def build_scene(mode):
     else:
         for name, x, y, v in KNOBS:
             knobs.append(Knob(name, x, y, v, mats))
-            add_text(name, 3.4, x, y - 20.8, ink_w, embolden=0.03)
+            add_text(name, 3.4, x, y + LABEL_DY, ink_w, embolden=0.03)
         for (nm, x, tilt) in (("SLOT", -36, 20), ("SIZE", 0, 0), ("NORM", 36, -20)):
-            build_toggle(x, -43, tilt, mats)
-            add_text(nm, 3.4, x, -54.0, ink_w, embolden=0.03)
-        build_footswitch(-30, -78, mats); build_footswitch(30, -78, mats)
-        build_led(-30, -60.5, True, mats); build_led(30, -60.5, False, mats)
+            build_toggle(x, TOGGLE_Y, tilt, mats)
+            add_text(nm, 3.4, x, TOGGLE_LABEL_Y, ink_w, embolden=0.03)
+        build_footswitch(-30, FOOT_Y, mats); build_footswitch(30, FOOT_Y, mats)
+        build_led(-30, FOOT_LED_Y, True, mats); build_led(30, FOOT_LED_Y, False, mats)
         for sx in (-1, 1):
             for sy in (-1, 1):
                 build_screw(sx * 53.2, sy * 88.2, mats)
-        build_oled(mats, 0, 62)
-        saw_blade(-38, 79, ink_o)
-        add_text("CHAINSAW", 11.5, 14, 79, ink_o, width=64, extrude=0.09, embolden=0.12)
+        build_oled(mats, 0, OLED_Y)
     return knobs
 
 def render_to(path):
@@ -846,12 +1055,19 @@ def main():
     ap.add_argument('--scale', type=int, default=100)
     ap.add_argument('--samples', type=int, default=0)
     ap.add_argument('--frames', type=int, default=64)
+    ap.add_argument('--font-dir', default=os.path.join(os.path.expanduser('~'), '.cache', 'pedal_b2_fonts'))
+    ap.add_argument('--dump-art', action='store_true', help='only write the top-face artwork PNG to --out')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
+    if a.dump_art:
+        from PIL import Image
+        rgba = make_artwork(fetch_font(a.font_dir), art_layout())
+        Image.fromarray((rgba[..., :3] * 255).astype(np.uint8)).save(os.path.join(a.out, 'art_channels.png'))
+        return
     modes = ['hero', 'ortho', 'strip'] if a.mode == 'all' else [a.mode]
     for mode in modes:
         t0 = time.time()
-        knobs = build_scene(mode)
+        knobs = build_scene(mode, a.font_dir)
         samples = a.samples or {'hero': 48, 'ortho': 40, 'strip': 16}[mode]
         setup_render(mode, a.scale, samples)
         make_camera(mode, (0, 0))
