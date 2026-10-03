@@ -137,6 +137,21 @@ void ParametricEq::process(float* io, int numSamples) noexcept {
   for (int k = 0; k < numActive_; ++k) filters_[static_cast<std::size_t>(k)].process(io, numSamples);
 }
 
+void ParametricEq::setBandGainDb(int bandIndex, double gainDb) noexcept {
+  if (bandIndex < 0 || bandIndex >= numBands_ || !std::isfinite(gainDb)) return;
+  EqBand& b = bands_[static_cast<std::size_t>(bandIndex)];
+  if (b.type == EqType::HighPass || b.type == EqType::LowPass) return;
+  b.gainDb = gainDb;
+  if (!b.enabled) return;
+  int k = 0;  // index of this band among the enabled ones
+  for (int i = 0; i < bandIndex; ++i)
+    if (bands_[static_cast<std::size_t>(i)].enabled) ++k;
+  try {
+    filters_[static_cast<std::size_t>(k)].setCoeffs(designBiquad(b, sampleRate_));
+  } catch (...) {  // the band was validated in configure()/prepare(); keep the old filter regardless
+  }
+}
+
 double ParametricEq::magnitudeDb(double freqHz) const {
   double db = 0.0;
   for (int k = 0; k < numActive_; ++k)

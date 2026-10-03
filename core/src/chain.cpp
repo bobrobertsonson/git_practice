@@ -75,13 +75,27 @@ ChainResources loadResources(const Preset& p, double sr) {
       res.blocks[static_cast<std::size_t>(k)].push_back(std::move(lb));
     }
   }
-  if (p.cab.mode == CabMode::Shared) {
+  if (!p.cab.enabled) {
+    // A disabled cab is never used (Chain ignores it): do not require its IR to exist.
+  } else if (p.cab.mode == CabMode::Shared) {
     res.cabShared = loadCab(p.cab.ir, "cab.ir", sr, p.cab.normalize, res.warnings);
   } else {
     res.cabA = loadCab(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings);
     res.cabB = loadCab(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings);
   }
   return res;
+}
+
+LiveParams LiveParams::fromPreset(const Preset& p) {
+  LiveParams l;
+  l.inputGainDb = p.inputGainDb;
+  l.outputGainDb = p.outputGainDb;
+  l.gateThresholdDb = p.gate.thresholdDb;
+  l.blend = p.blend;
+  l.levelDbA = p.a.levelDb;
+  l.levelDbB = p.b.levelDb;
+  for (std::size_t i = 0; i < p.postEq.size() && i < l.postEqGainDb.size(); ++i) l.postEqGainDb[i] = p.postEq[i].gainDb;
+  return l;
 }
 
 Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset), res_(std::move(resources)) {
@@ -132,6 +146,9 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
   compOn_ = preset_.busComp.enabled;
   blendA_ = static_cast<float>(1.0 - preset_.blend);
   blendB_ = static_cast<float>(preset_.blend);
+  blendCurA_ = blendA_;
+  blendCurB_ = blendB_;
+  live_ = LiveParams::fromPreset(preset_);
 
   warnings_ = res_.warnings;
   for (std::size_t k = 0; k < 2; ++k) {
@@ -155,6 +172,7 @@ void Chain::prepare(const ProcessSpec& spec) {
                              std::to_string(res_.sampleRate) + ")");
   if (spec.maxBlockSize < 1) throw std::runtime_error("Chain::prepare: maxBlockSize must be >= 1");
   maxBlock_ = spec.maxBlockSize;
+  rampSamples_ = std::max(1, static_cast<int>(std::llround(kLiveRampMs * 0.001 * spec.sampleRate)));
   const auto nb = static_cast<std::size_t>(maxBlock_);
   work_.assign(nb, 0.0f);
   bufA_.assign(nb, 0.0f);
@@ -206,7 +224,9 @@ void Chain::applyAlignment(const AlignResult& r) {
   path_[0].alignDelay = std::max(0, -r.delaySamplesB);
   path_[1].alignDelay = std::max(0, r.delaySamplesB);
   for (auto& p : path_) p.delay.setDelaySamples(p.compDelay + p.alignDelay);
-  blendB_ = static_cast<float>(preset_.blend) * (r.invertB ? -1.0f : 1.0f);
+  blendB_ = static_cast<float>(live_.blend) * (r.invertB ? -1.0f : 1.0f);
+  blendCurB_ = blendB_;
+  blendRamp_ = 0;
   // Processing latency only; the alignment delay is part of the tone and is reported separately.
   const int total = std::max(path_[0].latency, path_[1].latency);
   latency_ = total + (cabShared_ ? cabShared_->latencySamples() : 0);
@@ -341,6 +361,70 @@ void Chain::renderPath(Path& p, float* io, int n) noexcept {
   p.delay.process(io, n);
 }
 
+void Chain::setLiveParams(const LiveParams& p) noexcept {
+  if (!prepared_) return;
+  const auto lin = [](double db) { return static_cast<float>(std::pow(10.0, db / 20.0)); };
+  if (p.inputGainDb != live_.inputGainDb) inGain_.rampToLinear(lin(p.inputGainDb), rampSamples_);
+  if (p.outputGainDb != live_.outputGainDb) outGain_.rampToLinear(lin(p.outputGainDb), rampSamples_);
+  const double lv[2] = {p.levelDbA, p.levelDbB};
+  const double old[2] = {live_.levelDbA, live_.levelDbB};
+  const PathPreset* pp[2] = {&preset_.a, &preset_.b};
+  for (std::size_t k = 0; k < 2; ++k)
+    if (lv[k] != old[k]) path_[k].level.rampToLinear((pp[k]->invert ? -1.0f : 1.0f) * lin(lv[k]), rampSamples_);
+  if (p.gateThresholdDb != live_.gateThresholdDb && std::isfinite(p.gateThresholdDb)) {
+    GateParams g = gate_.params();
+    g.thresholdDb = p.gateThresholdDb;
+    gate_.setParams(g);
+  }
+  if (p.blend != live_.blend) {
+    if (blendRamp_ <= 0) {  // otherwise continue from the current (mid-ramp) value
+      blendCurA_ = blendA_;
+      blendCurB_ = blendB_;
+    }
+    blendA_ = static_cast<float>(1.0 - p.blend);
+    blendB_ = static_cast<float>(p.blend) * (align_.invertB ? -1.0f : 1.0f);
+    blendStepA_ = (blendA_ - blendCurA_) / static_cast<float>(rampSamples_);
+    blendStepB_ = (blendB_ - blendCurB_) / static_cast<float>(rampSamples_);
+    blendRamp_ = rampSamples_;
+  }
+  for (std::size_t i = 0; i < p.postEqGainDb.size(); ++i) {
+    if (p.postEqGainDb[i] == live_.postEqGainDb[i] || !std::isfinite(p.postEqGainDb[i])) continue;
+    EqRamp& r = eqRamp_[i];
+    if (r.remaining <= 0) {
+      r.cur = live_.postEqGainDb[i];
+      ++eqRamping_;
+    }
+    r.target = p.postEqGainDb[i];
+    r.step = (r.target - r.cur) / static_cast<double>(rampSamples_);
+    r.remaining = rampSamples_;
+  }
+  live_ = p;
+}
+
+void Chain::processPostEq(float* w, int n) noexcept {
+  if (eqRamping_ == 0) {
+    postEq_.process(w, n);
+    return;
+  }
+  for (int pos = 0; pos < n; pos += kEqSubBlock) {
+    const int len = std::min(kEqSubBlock, n - pos);
+    for (std::size_t i = 0; i < eqRamp_.size(); ++i) {
+      EqRamp& r = eqRamp_[i];
+      if (r.remaining <= 0) continue;
+      if (r.remaining <= len) {
+        r.cur = r.target;
+        r.remaining = 0;
+        --eqRamping_;
+      } else {
+        r.cur += r.step * len;
+        r.remaining -= len;
+      }
+      postEq_.setBandGainDb(static_cast<int>(i), r.cur);
+    }
+    postEq_.process(w + pos, len);
+  }
+}
+
 void Chain::process(const float* in, float* out, int n) noexcept {
   if (!prepared_) {
     if (in != out) std::copy(in, in + n, out);
@@ -366,10 +450,27 @@ void Chain::processChunk(const float* in, float* out, int n) noexcept {
   std::copy(w, w + n, b);
   renderPath(path_[0], a, n);
   renderPath(path_[1], b, n);
+  int i = 0;
+  if (blendRamp_ > 0) {
+    const int r = std::min(blendRamp_, n);
+    float ca = blendCurA_, cb = blendCurB_;
+    for (; i < r; ++i) {
+      ca += blendStepA_;
+      cb += blendStepB_;
+      w[i] = ca * a[i] + cb * b[i];
+    }
+    blendRamp_ -= r;
+    if (blendRamp_ == 0) {
+      ca = blendA_;
+      cb = blendB_;
+    }
+    blendCurA_ = ca;
+    blendCurB_ = cb;
+  }
   const float ga = blendA_, gb = blendB_;
-  for (int i = 0; i < n; ++i) w[i] = ga * a[i] + gb * b[i];
+  for (; i < n; ++i) w[i] = ga * a[i] + gb * b[i];
   if (cabShared_) cabShared_->process(w, n);
-  postEq_.process(w, n);
+  processPostEq(w, n);
   if (compOn_) comp_.process(w, n);
   outGain_.process(w, n);
   std::copy(w, w + n, out);

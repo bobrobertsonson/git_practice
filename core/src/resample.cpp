@@ -10,8 +10,8 @@
 namespace sawblade {
 namespace {
 
-constexpr double kCutoffOfNyquist = 0.97;      // -6 dB point, relative to min(from,to)/2
-constexpr double kTransitionOfNyquist = 0.14;  // pass edge .. stop edge, relative to min(from,to)/2
+constexpr double kCutoffOfNyquist = kResampleCutoffOfNyquist;          // -6 dB point, relative to min(from,to)/2
+constexpr double kTransitionOfNyquist = kResampleTransitionOfNyquist;  // pass edge .. stop edge, same reference
 constexpr std::uint64_t kMaxPhases = 8192;      // beyond this the kernel is evaluated per output sample
 
 double besselI0(double x) {
