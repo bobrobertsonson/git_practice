@@ -8,6 +8,9 @@ endif()
 add_library(sawblade_core STATIC
   src/eq.cpp
   src/gate.cpp
+  src/convolver.cpp
+  src/ir.cpp
+  src/nam_block.cpp
   src/delay.cpp
   src/wav_io.cpp)
 add_library(sawblade::core ALIAS sawblade_core)
@@ -15,6 +18,8 @@ target_include_directories(sawblade_core PUBLIC include)
 target_compile_features(sawblade_core PUBLIC cxx_std_20)
 target_link_libraries(sawblade_core
   PUBLIC  sawblade_dr_wav
-  PRIVATE sawblade_warnings)
-# T2 adds: nam_core, pffft_lib. T3 adds: sawblade_json. (Targets already declared in
-# cmake/Dependencies.cmake; link them here when the code that needs them lands.)
+  PRIVATE sawblade_warnings pffft_lib
+          # NAM registers its architectures (WaveNet, LSTM, Linear, ...) from static initializers in
+          # otherwise-unreferenced objects, so the archive must be linked whole or they are dropped.
+          "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>")
+# T3 adds: sawblade_json (declared in cmake/Dependencies.cmake).
