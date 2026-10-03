@@ -22,15 +22,23 @@ by **reviewer**. Uses the `tonerender` CLI as a subprocess (pybind11 comes in ph
 - Log the `X-Tone3000-Deprecations` header when present.
 - Attribution: store title, creator, license, tone URL for every capture (preset `source`).
 
-## Credentials in the cloud container
+## Credentials in the cloud container (device flow — verified against tone3000.com/api)
 
-- Secrets (environment variables): `TONE3000_CLIENT_ID`, `TONE3000_REFRESH_TOKEN`.
-- Refresh tokens may rotate: on refresh, persist the newest token to
-  `~/.config/sawblade/t3k_tokens.json` (mode 0600) and prefer it over the env seed.
-  Warn clearly when the env seed is stale and the user must update the secret.
-- `sawblade-t3k login` runs on the **user's own machine**: PKCE (S256) + `state`,
-  localhost redirect `http://localhost:3001/callback` (must be registered on the key),
-  prints the refresh token with instructions to paste it into the environment secret.
+- Login uses the **OAuth 2.0 Device Authorization Grant** (RFC 8628), built for headless
+  boxes: `POST /api/v1/oauth/device_authorization` (form or JSON: `client_id`, optional
+  `scope`, default `read`) → show the user code + `https://www.tone3000.com/activate` →
+  poll `POST /api/v1/oauth/token` at the returned interval, handling `authorization_pending`,
+  `slow_down`, `expired_token`, `access_denied`. No redirect URI or PKCE in this flow (the
+  server rejects them).
+- Session = `{access_token, refresh_token, expires_in, token_type}`; refresh with
+  `grant_type=refresh_token` (+ `client_id`) ~60 s before expiry, one refresh at a time,
+  retry once on 401; 400/401 on refresh = session over → tell the user to re-login.
+- Secrets: `TONE3000_CLIENT_ID` (publishable `t3k_pub_…` key) required. Optional
+  `TONE3000_REFRESH_TOKEN` seed so a fresh container skips the device login.
+- Persist the newest tokens to `~/.config/sawblade/t3k_tokens.json` (0600) and prefer them over
+  the env seed. Containers are ephemeral, so `sawblade-t3k login` prints the refresh token
+  once with a note that the user may save it as the `TONE3000_REFRESH_TOKEN` secret.
+- Never print access tokens; never log Authorization headers.
 
 ## A — TONE3000 client + capture cache (`match/sawblade_match/t3k/`)
 
@@ -43,7 +51,7 @@ by **reviewer**. Uses the `tonerender` CLI as a subprocess (pybind11 comes in ph
 3. `cache.py`: `~/.cache/sawblade/captures/<tone_id>/<model_id>.<nam|wav>` plus
    `meta.json` (tone + model JSON, sha256, fetched_at). Cache hits never hit the network.
 4. CLI `sawblade-t3k`:
-   - `login` (above); `whoami`;
+   - `login` (device flow, above); `whoami`;
    - `pull --favorites [--gear amp|pedal|ir ...]` → downloads into the cache, prints a table;
    - `resolve PRESET.json [-o OUT.json]` → for every capture whose `source.provider ==
      "tone3000"` with `id` (+ optional `modelId`), fetch into the cache, set `file` to the
@@ -57,16 +65,22 @@ by **reviewer**. Uses the `tonerender` CLI as a subprocess (pybind11 comes in ph
 
 ## A2 — Candidate quality filter (lead rule: newer + well reviewed only)
 
-`sawblade-t3k pull` builds the candidate pool from favorites plus the free-tier `trending`
-and `latest` lists, then filters. Defaults (configurable, recorded in the pool manifest):
-- architecture **A2** preferred; A1 only if no A2 model exists for the tone;
-- **calibrated** models preferred;
-- created/updated within the last 18 months (by the API's date fields);
-- popularity at or above the 75th percentile of favorites/downloads within the same gear
-  type across the fetched set, with an absolute floor; tones without counts are excluded;
-- amp tones must be amp-only/DI (no cab); "full rig" models excluded from slot candidates.
-First task: inspect the real Tone/Model JSON and map these rules onto the actual fields;
-report any rule the API can't support instead of guessing.
+`sawblade-t3k pull` builds the candidate pool from `tones/favorited` (always included, the
+user's own picks) plus the free-tier `trending` and `latest` lists, then filters using the real
+Tone fields (`published_at`, `updated_at`, `downloads_count`, `favorites_count`,
+`a2_models_count`, `a1_models_count`, `gear`, `license`, `user.is_verified`). Defaults
+(configurable, recorded in the pool manifest):
+- `a2_models_count > 0` preferred; A1 only if a tone has no A2 models (query models with
+  `architecture=2` first, then `1`);
+- `published_at` (fallback `updated_at`) within the last 18 months;
+- popularity: `favorites_count` and `downloads_count` at or above the 75th percentile within
+  the same `gear` across the fetched set, with absolute floors (configurable); favorited
+  tones bypass the popularity floor but are flagged when below it;
+- slot fit by `gear`: pedal slots ← `pedal`; amp slots ← `amp` (amp-only); IRs ← `cab`
+  (format ir). `amp-cab` ("full rig") tones are excluded from slot candidates and kept only as
+  references.
+- `calibrated` is only a catalog filter in the docs (not a Model field) — record it if the
+  JSON exposes it, otherwise skip.
 
 ## B — Tone check (`match/sawblade_match/tonecheck/`)
 
