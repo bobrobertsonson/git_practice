@@ -5,60 +5,12 @@
 #include <numbers>
 #include <stdexcept>
 
+#include "sawblade/resample.h"
 #include "sawblade/wav_io.h"
 
 namespace sawblade {
-namespace {
-
-double besselI0(double x) {
-  double sum = 1.0, term = 1.0;
-  const double q = x * x / 4.0;
-  for (int k = 1; k < 200; ++k) {
-    term *= q / (static_cast<double>(k) * k);
-    sum += term;
-    if (term < 1e-18 * sum) break;
-  }
-  return sum;
-}
-
-double sinc(double x) {
-  if (std::fabs(x) < 1e-12) return 1.0;
-  const double px = std::numbers::pi * x;
-  return std::sin(px) / px;
-}
-
-constexpr int kHalfTaps = 64;    // input-sample taps per side at unity cutoff
-constexpr double kKaiserBeta = 9.0;
-
-}  // namespace
-
 std::vector<float> resampleSinc(const std::vector<float>& in, double fromRate, double toRate) {
-  if (!(fromRate > 0.0) || !(toRate > 0.0)) throw std::invalid_argument("resampleSinc: invalid rate");
-  if (fromRate == toRate || in.empty()) return in;
-
-  const double step = fromRate / toRate;                 // input samples per output sample
-  const double fc = std::min(1.0, toRate / fromRate);    // cutoff relative to input Nyquist
-  const double halfWidth = kHalfTaps / fc;               // kernel half width in input samples
-  const double invI0 = 1.0 / besselI0(kKaiserBeta);
-  const auto outLen = static_cast<std::size_t>(std::ceil(static_cast<double>(in.size()) / step));
-  const long long inLen = static_cast<long long>(in.size());
-
-  std::vector<float> out(outLen);
-  for (std::size_t j = 0; j < outLen; ++j) {
-    const double t = static_cast<double>(j) * step;
-    const long long lo = std::max<long long>(0, static_cast<long long>(std::ceil(t - halfWidth)));
-    const long long hi = std::min<long long>(inLen - 1, static_cast<long long>(std::floor(t + halfWidth)));
-    double acc = 0.0;
-    for (long long k = lo; k <= hi; ++k) {
-      const double d = static_cast<double>(k) - t;
-      const double r = d / halfWidth;
-      if (r <= -1.0 || r >= 1.0) continue;
-      const double w = besselI0(kKaiserBeta * std::sqrt(1.0 - r * r)) * invI0;
-      acc += static_cast<double>(in[static_cast<std::size_t>(k)]) * fc * sinc(fc * d) * w;
-    }
-    out[j] = static_cast<float>(acc);
-  }
-  return out;
+  return resample(in, fromRate, toRate, ResampleProfile::Ir);
 }
 
 void normalizeL2(std::vector<float>& ir) {

@@ -30,8 +30,18 @@ class RenderError : public std::runtime_error {
   RenderErrorKind kind_;
 };
 
+enum class OutRate {
+  Input,  // convert the rendered audio back to the input rate (default)
+  Render  // keep the render rate
+};
+
 struct RenderOptions {
   int blockSize = 256;                      // processing block size, 1..65536
+  // Render rate. none = auto: the rate the preset's NAM models were trained at (all non-bypassed
+  // NAM blocks on enabled paths with a known rate must agree, else RenderError Preset naming the
+  // blocks); a preset with no such blocks renders at the input rate.
+  std::optional<double> renderRate;
+  OutRate outRate = OutRate::Input;
   std::optional<double> normalizePeakDbfs;  // scale the output so its peak equals this; none by default
 };
 
@@ -48,21 +58,29 @@ struct CaptureAttribution {
 
 struct RenderResult {
   std::string presetName;
-  double sampleRate = 0.0;
+  double sampleRate = 0.0;     // rate of `samples` (== outputRate)
+  double inputRate = 0.0;
+  double renderRate = 0.0;     // the rate the chain ran at; info.* latencies are in samples at this rate
+  double outputRate = 0.0;
   int blockSize = 0;
-  std::vector<float> samples;  // mono, same length as the input, advanced by info.latencySamples
+  // Mono. Length N (the input length) when outputRate == inputRate, else round(N * out / in).
+  // Advanced by info.latencySamples (at the render rate); resampling adds no delay.
+  std::vector<float> samples;
   ChainInfo info;
   SignalStats input, output;   // output stats are after normalization
   double normalizeGainDb = 0.0;
   double prepareSeconds = 0.0;  // chain prepare() incl. NAM prewarm and the alignment probe
   double renderSeconds = 0.0;   // wall time of the process() loop only
+  double resampleSeconds = 0.0;  // wall time of the input and output sample-rate conversions
   double realTimeFactor = 0.0;  // renderSeconds / (input duration); < 1 is faster than real time
   std::vector<std::string> warnings;  // chain + render warnings
   std::vector<CaptureAttribution> captures;  // every capture that has `source`
 };
 
-// Renders `in` (mono; extra channels are dropped with a warning) through `preset`. The output is
-// the same length as the input and latency-compensated: advanced by Chain::latencySamples() (the
+// Renders `in` (mono; extra channels are dropped with a warning) through `preset`. If the render
+// rate differs from the input rate the input is resampled (resample.h) before and the result
+// after the chain; equal rates involve no resampling (bit-identical). The output is
+// the same length as the input (at the output rate) and latency-compensated: advanced by Chain::latencySamples() (the
 // tail is flushed with zeros). The alignment delay is part of the tone and stays in the audio.
 // Throws RenderError.
 RenderResult renderPreset(const Preset& preset, const AudioFile& in, const RenderOptions& opts = {});

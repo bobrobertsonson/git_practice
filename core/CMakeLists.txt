@@ -9,6 +9,7 @@ add_library(sawblade_core STATIC
   src/eq.cpp
   src/gate.cpp
   src/convolver.cpp
+  src/resample.cpp
   src/ir.cpp
   src/nam_block.cpp
   src/delay.cpp

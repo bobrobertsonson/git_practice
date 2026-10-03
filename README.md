@@ -62,14 +62,20 @@ and the `tonerender` CLI tests (which run the built binary).
 
 ```
 tonerender --preset P.json --in DI.wav --out OUT.wav [--block N=256] [--report R.json] [--normalize-peak dBFS]
+           [--render-rate auto|HZ] [--out-rate input|render]
 ```
 
 - Input: mono WAV (16/24/32-bit PCM or float; stereo uses the left channel, with a warning).
-  Models must match the input's sample rate (NAM models are usually 48 kHz); IRs are resampled.
+  `--render-rate auto` (default) renders at the NAM models' training rate (usually 48 kHz; all
+  non-bypassed NAM blocks must agree, else exit 3 naming them; with none, the input rate). The
+  input is resampled to it with a Kaiser-windowed sinc (passband flat within 0.05 dB to 20 kHz at
+  44.1 <-> 48 kHz, stopband >= 90 dB, linear phase, no delay) and, unless `--out-rate render`,
+  back to the input rate. Equal rates involve no resampling. IRs are resampled at load.
 - Output: float32 mono WAV at the input rate, same length as the input, advanced by the chain's
   reported processing latency (`latencySamples`). The auto/manual alignment delay is part of
   the tone and stays in the audio; it is reported as `alignDelay`.
-- Report (`--report`): preset name, rate, block size, latency per path and total,
+- Report (`--report`): preset name, `inputRate`/`renderRate`/`outputRate` (latencies are in samples
+  at the render rate), block size, latency per path and total,
   compensation and alignment delays, the resolved alignment (`delaySamplesB`, `invertB`,
   `peakCorrelation`), `liveCompatible`, export exactness, input/output peak and RMS (dBFS),
   render time and `realTimeFactor` (render time / audio duration; below 1 is faster than real
@@ -77,7 +83,7 @@ tonerender --preset P.json --in DI.wav --out OUT.wav [--block N=256] [--report R
   has a `source`.
 - Exit codes: `0` ok, `2` usage error, `3` preset error (invalid preset, including values only
   invalid at the render rate, such as an EQ band at or above 0.49 x fs or a NAM sample-rate
-  mismatch), `4` I/O or model load error (missing file, unreadable WAV, bad `.nam`, hash mismatch).
+  mismatch with a forced `--render-rate`), `4` I/O or model load error (missing file, unreadable WAV, bad `.nam`, hash mismatch).
   Errors go to stderr.
 
 Rendering is deterministic: the same preset and input give bit-identical output, independent of

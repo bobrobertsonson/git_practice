@@ -234,18 +234,23 @@ TEST_CASE("Render: semantic preset errors map to Preset, I/O and model load erro
   } catch (const RenderError& e) {
     REQUIRE_THAT(std::string(e.what()), ContainsSubstring("postEq"));
   }
-  // The same band is fine at 96 kHz.
-  REQUIRE_NOTHROW(renderPreset(pe, mono(x, 96000.0)));
+  // The same band is fine when rendering at 96 kHz (a forced render rate; auto would pick the 48 kHz
+  // of the NAM models).
+  RenderOptions at96;
+  at96.renderRate = 96000.0;
+  REQUIRE_NOTHROW(renderPreset(pe, mono(x, 96000.0), at96));
   // ... and an eq *block* band reports its block path.
   json eqBlock = presetJson();
   eqBlock["paths"]["a"]["blocks"] = json::array({{{"id", "e1"}, {"type", "eq"}, {"bands", json::array({{{"type", "lowPass"}, {"freq", 30000.0}}})}}});
   REQUIRE(kindOf([&] { renderPreset(parsePreset(eqBlock, kPresetDir), mono(x, 44100.0)); }) == RenderErrorKind::Preset);
 
-  // NAM sample-rate mismatch (the model is 48 kHz): surfaces in prepare().
+  // NAM sample-rate mismatch (the model is 48 kHz) with a forced render rate: surfaces in prepare().
   json nam = presetJson();
   nam["paths"]["a"]["blocks"][0]["model"]["file"] = "../nam/wavenet.nam";
   const Preset pn = parsePreset(nam, kPresetDir);
-  REQUIRE(kindOf([&] { renderPreset(pn, mono(x, 44100.0)); }) == RenderErrorKind::Preset);
+  RenderOptions force44;
+  force44.renderRate = 44100.0;
+  REQUIRE(kindOf([&] { renderPreset(pn, mono(x, 44100.0), force44); }) == RenderErrorKind::Preset);
 
   // Missing model / IR file, and a model that is not a NAM file: Io.
   json missing = presetJson();
@@ -323,6 +328,10 @@ TEST_CASE("CLI: exit codes", "[cli]") {
     REQUIRE(runCli(good + " --block 0", err) == 2);
     REQUIRE(runCli(good + " --block abc", err) == 2);
     REQUIRE(runCli(good + " --normalize-peak", err) == 2);
+    REQUIRE(runCli(good + " --render-rate", err) == 2);
+    REQUIRE(runCli(good + " --render-rate fast", err) == 2);
+    REQUIRE(runCli(good + " --render-rate 10", err) == 2);
+    REQUIRE(runCli(good + " --out-rate both", err) == 2);
     REQUIRE_THAT(slurp(err), ContainsSubstring("usage"));
     REQUIRE(runCli("--help", err) == 0);
   }
@@ -344,10 +353,12 @@ TEST_CASE("CLI: exit codes", "[cli]") {
     REQUIRE(runCli("--preset " + q(t / "eq.json") + " --in " + q(kDi) + " --out " + q(t / "o.wav"), err) == 3);
     REQUIRE_THAT(slurp(err), ContainsSubstring("postEq"));
   }
-  SECTION("NAM sample-rate mismatch -> 3") {
+  SECTION("NAM sample-rate mismatch with a forced --render-rate -> 3") {
     const fs::path di44 = t / "di44.wav";
     writeWavFloat32(di44, 44100.0, noise(4410, 9));
-    REQUIRE(runCli("--preset " + q(kPresetDir / "golden_shared.json") + " --in " + q(di44) + " --out " + q(t / "o.wav"), err) == 3);
+    REQUIRE(runCli("--preset " + q(kPresetDir / "golden_shared.json") + " --in " + q(di44) + " --out " + q(t / "o.wav") +
+                       " --render-rate 44100",
+                   err) == 3);
     REQUIRE_THAT(slurp(err), ContainsSubstring("sample rate"));
   }
   SECTION("missing input -> 4") {

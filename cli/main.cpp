@@ -17,9 +17,13 @@ constexpr int kExitOk = 0, kExitUsage = 2, kExitPreset = 3, kExitIo = 4;
 void usage(std::ostream& os) {
   os << "usage: tonerender --preset P.json --in DI.wav --out OUT.wav [--block N=256]\n"
         "                  [--report R.json] [--normalize-peak dBFS]\n"
+        "                  [--render-rate auto|HZ] [--out-rate input|render]\n"
         "\n"
-        "Renders a mono DI through a Sawblade preset. Output: float32 mono WAV at the input rate,\n"
-        "same length as the input, advanced by the chain's reported latency.\n"
+        "Renders a mono DI through a Sawblade preset. Output: float32 mono WAV, advanced by the\n"
+        "chain's reported latency; at the input rate and length unless --out-rate render.\n"
+        "--render-rate auto (default): the NAM models' training rate (they must agree, else exit 3);\n"
+        "  the input is resampled to it and, by default, the result back to the input rate.\n"
+        "  With no NAM blocks, auto renders at the input rate. A number forces that rate in Hz.\n"
         "exit codes: 0 ok, 2 usage, 3 preset error, 4 I/O or model error\n";
 }
 
@@ -50,7 +54,21 @@ std::string parseArgs(int argc, char** argv, Args& a) {
       return true;
     };
     std::string v;
-    if (k == "--preset" || k == "--in" || k == "--out" || k == "--report" || k == "--block" || k == "--normalize-peak") {
+    if (k == "--render-rate") {
+      if (!value(v)) return "missing value for " + k;
+      if (v == "auto") {
+        a.opts.renderRate.reset();
+      } else {
+        double d = 0.0;
+        if (!parseNumber(v, d) || d < 1000.0 || d > 768000.0) return "--render-rate must be auto or a rate in 1000..768000 Hz";
+        a.opts.renderRate = d;
+      }
+    } else if (k == "--out-rate") {
+      if (!value(v)) return "missing value for " + k;
+      if (v == "input") a.opts.outRate = sawblade::OutRate::Input;
+      else if (v == "render") a.opts.outRate = sawblade::OutRate::Render;
+      else return "--out-rate must be input or render";
+    } else if (k == "--preset" || k == "--in" || k == "--out" || k == "--report" || k == "--block" || k == "--normalize-peak") {
       if (!value(v)) return "missing value for " + k;
       if (k == "--preset") a.preset = v;
       else if (k == "--in") a.in = v;

@@ -3,7 +3,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <limits>
+#include <optional>
+
+#include "sawblade/nam_block.h"
+#include "sawblade/resample.h"
 
 namespace sawblade {
 namespace {
@@ -57,6 +62,42 @@ const char* alignModeName(AlignMode m) {
 // -infinity (digital silence) is not representable in JSON: report null.
 nlohmann::json dbOrNull(double db) { return std::isfinite(db) ? nlohmann::json(db) : nlohmann::json(nullptr); }
 
+struct NamRate {
+  std::string where;
+  double hz;
+};
+
+// Training rates of the NAM blocks that will actually run (not bypassed, on an enabled path).
+// Models without a recorded rate are rate-agnostic and do not take part.
+std::vector<NamRate> probeNamRates(const Preset& p) {
+  std::vector<NamRate> out;
+  const PathPreset* paths[2] = {&p.a, &p.b};
+  const char* names[2] = {"paths.a", "paths.b"};
+  for (int k = 0; k < 2; ++k) {
+    if (!paths[k]->enabled) continue;
+    for (std::size_t i = 0; i < paths[k]->blocks.size(); ++i) {
+      const Block& b = paths[k]->blocks[i];
+      const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get());
+      if (!nam || b.bypass) continue;
+      const std::string where = JsonObject::index(std::string(names[k]) + ".blocks", i);
+      std::unique_ptr<NamBlock> m;
+      try {
+        m = NamBlock::load(nam->model.resolvedPath, NamBlockConfig{});
+      } catch (const std::exception& e) {
+        throw RenderError(RenderErrorKind::Io, e.what());
+      }
+      if (m->expectedSampleRate() > 0.0) out.push_back({where + " (" + b.id + ")", m->expectedSampleRate()});
+    }
+  }
+  return out;
+}
+
+std::string hzString(double hz) {
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "%g", hz);
+  return buf;
+}
+
 double secondsSince(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -71,7 +112,7 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
 
   RenderResult r;
   r.presetName = preset.name;
-  r.sampleRate = in.sampleRate;
+  r.inputRate = in.sampleRate;
   r.blockSize = opts.blockSize;
   r.captures = attributions(preset);
 
@@ -84,11 +125,42 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
     r.warnings.push_back("input has " + std::to_string(in.channels) + " channels; using the first (left) channel");
   r.input = measure(x);
 
+  // Render rate.
+  double rate = in.sampleRate;
+  if (opts.renderRate) {
+    rate = *opts.renderRate;
+    if (!(rate >= 1000.0 && rate <= 768000.0))
+      throw RenderError(RenderErrorKind::Io, "render rate must be in 1000..768000 Hz");
+  } else {
+    const std::vector<NamRate> rates = probeNamRates(preset);
+    if (!rates.empty()) {
+      rate = rates.front().hz;
+      bool agree = true;
+      for (const auto& nr : rates) agree = agree && nr.hz == rate;
+      if (!agree) {
+        std::string msg = "NAM blocks expect different sample rates, so --render-rate auto is ambiguous (";
+        for (std::size_t i = 0; i < rates.size(); ++i)
+          msg += (i ? ", " : "") + rates[i].where + ": " + hzString(rates[i].hz) + " Hz";
+        throw RenderError(RenderErrorKind::Preset, msg + "); set an explicit render rate");
+      }
+    }
+  }
+  r.renderRate = rate;
+  r.outputRate = opts.outRate == OutRate::Render ? rate : in.sampleRate;
+  r.sampleRate = r.outputRate;
+
+  if (rate != in.sampleRate) {
+    const auto tr = std::chrono::steady_clock::now();
+    x = resample(x, in.sampleRate, rate);
+    r.resampleSeconds += secondsSince(tr);
+  }
+  const std::size_t renderFrames = x.size();
+
   // Stage-based error mapping: anything wrong with the preset's own values (parse is done already;
   // Chain construction and prepare) is a Preset error; loading files is Io.
   std::unique_ptr<Chain> chain;
   try {
-    ChainResources res = loadResources(preset, in.sampleRate);
+    ChainResources res = loadResources(preset, rate);
     try {
       chain = std::make_unique<Chain>(preset, std::move(res));
     } catch (const std::exception& e) {
@@ -104,10 +176,10 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
 
   auto t0 = std::chrono::steady_clock::now();
   try {
-    chain->prepare({in.sampleRate, opts.blockSize});
+    chain->prepare({rate, opts.blockSize});
   } catch (const std::exception& e) {
     throw RenderError(RenderErrorKind::Preset,
-                      std::string("preset cannot be prepared at ") + std::to_string(in.sampleRate) + " Hz: " + e.what());
+                      std::string("preset cannot be prepared at ") + hzString(rate) + " Hz: " + e.what());
   }
   r.prepareSeconds = secondsSince(t0);
   r.info = chain->info();
@@ -115,7 +187,7 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
   // Process N + latency samples (zeros after the input flush the tail) and drop the first
   // `latency` outputs, so the output is advanced by exactly the reported processing latency.
   const auto latency = static_cast<std::size_t>(chain->latencySamples());
-  std::vector<float> buf(frames + latency, 0.0f);
+  std::vector<float> buf(renderFrames + latency, 0.0f);
   std::copy(x.begin(), x.end(), buf.begin());
   t0 = std::chrono::steady_clock::now();
   for (std::size_t pos = 0; pos < buf.size(); pos += static_cast<std::size_t>(opts.blockSize)) {
@@ -123,8 +195,14 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
     chain->process(buf.data() + pos, buf.data() + pos, n);
   }
   r.renderSeconds = secondsSince(t0);
-  r.realTimeFactor = r.renderSeconds / (static_cast<double>(frames) / in.sampleRate);
+  r.realTimeFactor = r.renderSeconds / (static_cast<double>(renderFrames) / rate);
   r.samples.assign(buf.begin() + static_cast<std::ptrdiff_t>(latency), buf.end());
+
+  if (rate != r.outputRate) {
+    const auto tr = std::chrono::steady_clock::now();
+    r.samples = resample(r.samples, rate, r.outputRate, resampledLength(frames, in.sampleRate, r.outputRate));
+    r.resampleSeconds += secondsSince(tr);
+  }
 
   if (opts.normalizePeakDbfs) {
     const double peak = std::pow(10.0, measure(r.samples).peakDbfs / 20.0);
@@ -185,7 +263,10 @@ nlohmann::json reportJson(const RenderResult& r) {
   auto stats = [](const SignalStats& s) { return json{{"peakDbfs", dbOrNull(s.peakDbfs)}, {"rmsDbfs", dbOrNull(s.rmsDbfs)}}; };
   return {
       {"preset", r.presetName},
-      {"sampleRate", r.sampleRate},
+      {"sampleRate", r.sampleRate},  // rate of the output file (== outputRate)
+      {"inputRate", r.inputRate},
+      {"renderRate", r.renderRate},  // latency fields below are in samples at this rate
+      {"outputRate", r.outputRate},
       {"blockSize", r.blockSize},
       {"frames", r.samples.size()},
       {"latencySamples", i.latencySamples},
@@ -203,6 +284,7 @@ nlohmann::json reportJson(const RenderResult& r) {
       {"normalizeGainDb", r.normalizeGainDb},
       {"prepareSeconds", r.prepareSeconds},
       {"renderSeconds", r.renderSeconds},
+      {"resampleSeconds", r.resampleSeconds},
       {"realTimeFactor", r.realTimeFactor},
       {"warnings", r.warnings},
       {"captures", caps},
