@@ -57,13 +57,21 @@ def derive_profile(base: dict, ref_sig: np.ndarray, basis: str, ref_name: str, r
             new["rules"][i]["expr"] = row["derivedExpr"]
             new["rules"][i]["derivedFrom"] = {"was": rule["expr"], "statusOnReference": cur["status"]}
         table.append(row)
+    base_id = base.get("id", "docs/tone_targets.json")
     new["schema"] = "sawblade.profile"
     new["version"] = 1
     new["id"] = f"derived:{ref_name}"
+    new["name"] = f"derived:{ref_name}"
+    new["calibrated"] = "reference-derived"          # explicit: independent of the base profile's own flag
+    new["notes"] = [f"Rule offsets are measured from the reference's isolated guitars ({basis}); rules the reference "
+                    "passes are unchanged, the others loosened (never tightened).",
+                    f"Rule 'why' texts and the report-only 'metrics' definitions are inherited from {base_id}."]
     new["status"] = (f"reference-derived (loosen-only) from {ref_name} [{basis}], rule skeleton "
                      f"{base.get('id', base.get('source', 'base'))}")
     new["provenance"] = {"kind": "reference-derived", "reference": ref_name, "basis": basis,
-                         "baseProfile": base.get("id", "docs/tone_targets.json"), "policy": "loosen-only",
+                         "baseProfile": base_id, "policy": "loosen-only",
+                         "rulesOffsets": "measured from the reference's guitars",
+                         "metrics": f"inherited priors from {base_id} (report-only, not measured here)",
                          "referenceGroupsDbRe1k": {k: round(float(v), 2) for k, v in groups.items()}}
     return new, table
 

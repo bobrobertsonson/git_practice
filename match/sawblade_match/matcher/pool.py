@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ..t3k.cache import Cache, default_cache_root
 from ..t3k.licenses import check_license
-from .classify import classify
+from .classify import AMP_CLASSES, PEDAL_CLASSES, classify
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,11 @@ def load_pool(manifest: str | Path, cache_root: Path | None = None) -> Pool:
             entry = cache.get(t["tone_id"], md["id"])
             if entry is None:      # not downloaded (or sha mismatch): not a candidate
                 continue
-            kind = classify(gear, t["title"], md.get("name", ""))
+            kind = md.get("classOverride") or t.get("classOverride") or classify(gear, t["title"], md.get("name", ""))
+            allowed = {"pedal": PEDAL_CLASSES, "amp": AMP_CLASSES, "cab": ("cab",)}[gear]
+            if kind not in allowed:
+                raise ValueError(f"tone {t['tone_id']} model {md['id']}: classOverride {kind!r} not valid for gear "
+                                 f"{gear!r} (one of {', '.join(allowed)})")
             label = (md.get("size") or entry.model.get("size") or "").lower()
             if not label:
                 lm = re.search(r"\b(feather|lite|xstandard|custom)\b", md.get("name", ""), re.I)
@@ -133,20 +137,8 @@ def default_cab(cabs: list[Capture]) -> Capture:
 
 
 def starter_choice(pool: Pool) -> dict[str, Capture | None]:
-    """Captures substituted into presets/chainsaw_body.json for the 'before' measurement (a hand-made starter shape:
-    saw pedal / saw amp / boost / body amp / cab). saw pedal: first ``distortion`` class capture whose name suggests
-    maxed settings, else the first distortion, else the first pedal; saw amp: lowest gain class (low < medium < unknown
-    < high), first in manifest order; boost: first ``drive`` capture with 'ts' in the title, else the first drive;
-    body amp: first 'high'-class 5150/6505 amp, else the first 'high' class; cab: default_cab."""
-    def first(lst, pred):
-        return next((c for c in lst if pred(c)), None)
-    dist = [c for c in pool.pedals if c.kind == "distortion"] or pool.pedals
-    drive = [c for c in pool.pedals if c.kind == "drive"] or pool.pedals
-    hm2 = first(dist, lambda c: re.search(r"full|l-10|max", c.name, re.I)) or dist[0]
-    rank = {"low": 0, "medium": 1, "unknown": 2, "high": 3}
-    saw = min(pool.amps, key=lambda c: (rank[gain_class(c.title, c.name)], pool.amps.index(c)))
-    boost = first(drive, lambda c: "ts" in c.title.lower()) or drive[0]
-    body = (first(pool.amps, lambda c: re.search(r"5150|5153|6505", c.title + c.name, re.I)
-                  and gain_class(c.title, c.name) == "high")
-            or first(pool.amps, lambda c: gain_class(c.title, c.name) == "high") or pool.amps[-1])
-    return {"hm2": hm2, "saw_amp": saw, "boost": boost, "body_amp": body, "cab": default_cab(pool.cabs)}
+    """Generic starter baseline (class-agnostic, nothing style- or gear-specific): the first amp and the first cab of the
+    pool, no pedals, flat EQ. Needs only one amp and one cab; every pedal class may be missing."""
+    if not pool.amps or not pool.cabs:
+        raise ValueError("the pool needs at least one amp and one cab")
+    return {"amp": pool.amps[0], "cab": pool.cabs[0]}

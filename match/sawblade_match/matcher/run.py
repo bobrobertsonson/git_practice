@@ -137,19 +137,16 @@ def portable(preset: dict) -> dict:
     return p
 
 
-def starter_preset(starter_json: Path, pool: Pool, gate: dict) -> tuple[dict, dict]:
-    """presets/chainsaw_body.json with pool captures substituted into its five capture slots and the matcher's fixed
-    gate; every other value (EQs, blend, bus comp, output gain) is the starter's own."""
-    p = json.loads(Path(starter_json).read_text())
+def starter_preset(pool: Pool, gate: dict) -> tuple[dict, dict]:
+    """Generic starter baseline: first amp + first cab, no pedals, no EQ, the matcher's fixed gate (the 'before' of the
+    before/after numbers and the render used for the first offset refinement)."""
     ch = starter_choice(pool)
-    p["paths"]["a"]["blocks"][0]["model"] = ch["hm2"].block_model()
-    p["paths"]["a"]["blocks"][1]["model"] = ch["saw_amp"].block_model()
-    p["paths"]["b"]["blocks"][0]["model"] = ch["boost"].block_model()
-    p["paths"]["b"]["blocks"][1]["model"] = ch["body_amp"].block_model()
-    p["cab"]["ir"] = ch["cab"].block_model()
-    p["gate"] = gate
-    p["name"] = "Starter (chainsaw_body.json) with pool captures"
-    return p, {k: (v.key, v.title, v.name) for k, v in ch.items() if v}
+    combo = Combo((), ch["amp"], None, None, ch["cab"])
+    p = build_preset(combo, Space.for_combo(combo).default(), gate=gate, align=manual_align(),
+                     name="Generic starter baseline (first amp + first cab)")
+    p["paths"]["a"]["eq"] = []
+    p["postEq"] = []
+    return p, {"kind": "generic starter baseline", **{k: (v.key, v.title, v.name) for k, v in ch.items()}}
 
 
 def caps_summary(combo: Combo) -> dict:
@@ -171,8 +168,10 @@ def pick_output_gain(y_peak: float, offset_db: float, level_offset_db: float) ->
 
 def choose(cands: list[Scored]) -> Scored:
     """Selection (spec 3.3): lowest loss among finite, non-clipping candidates; within OCCAM_DB of it the simplest
-    topology (single < single2 < blend); within that topology, within SIZE_TIE_DB of its best the lighter model set
-    by size category (manifest size / name label, then 10 % byte buckets); equal categories -> lower loss."""
+    topology (single < single2 < blend); within that topology, within SIZE_TIE_DB of *that topology's best* the lighter
+    model set by size category (manifest size / name label, then 10 % byte buckets); equal categories -> lower loss.
+    The size window is relative to the best candidate of the chosen topology, not of the whole field, so the result can be
+    at most OCCAM_DB + SIZE_TIE_DB = 0.15 dB above the global best."""
     cands = [c for c in cands if np.isfinite(c.loss)]
     if not cands:
         raise ValueError("no candidate with a finite loss")
@@ -260,11 +259,9 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                     "randomness": f"numpy default_rng(seed={cfg.seed}) for subset sampling and CMA-ES (seed + block)"}
 
     # ---- starter ("before") on the excerpt, which also gives the coarse offset refinement its render -----------------
-    starter_p, starter_caps = starter_preset(_starter_path(), pool, gate)
-    result["starter"] = {"captures": starter_caps}
-    starter_p["align"] = {"mode": "auto", "maxLagMs": 5.0}
+    starter_p, starter_caps = starter_preset(pool, gate)
+    result["starter"] = {"label": "generic starter baseline", "captures": starter_caps}
     y_st, rep_st = eng.render(starter_p, ex.x)
-    result["starter"]["alignResolved"] = rep_st["align"]["resolved"]
 
     def offset_from(y_full_excerpt, label):
         search = int(0.25 * RATE) if ref.offset_given else int(3.0 * RATE)     # unknown offset: +-3 s, then refined
@@ -544,10 +541,6 @@ def _listening(out: Path, renders: dict, cfg, log) -> dict:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
-
-
-def _starter_path() -> Path:
-    return _repo_root() / "presets" / "chainsaw_body.json"
 
 
 def _targets_path() -> Path:

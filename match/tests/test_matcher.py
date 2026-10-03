@@ -272,11 +272,26 @@ def test_derived_profile_loosens_only_failed_rules():
     prof, table = derive_profile(base, x, "side", "noise")
     g = analyze(x, 48000, base).groups
     assert any(r["statusOnReference"] != "pass" for r in table)
+    from sawblade_match.tonecheck.rules import parse_expr
+    changed = 0
     for r, old, new in zip(table, base["rules"], prof["rules"]):
         if r["statusOnReference"] == "pass":
             assert new["expr"] == old["expr"]                  # passes: untouched (loosen-only)
+        eo, en = parse_expr(old["expr"]), parse_expr(new["expr"])
+        assert (eo.lhs, eo.op, eo.rhs) == (en.lhs, en.op, en.rhs)
+        if new["expr"] != old["expr"]:
+            changed += 1
+            assert (en.offset >= eo.offset) if eo.op == "<=" else (en.offset <= eo.offset), (old["expr"], new["expr"])
+    assert changed >= 1
     assert all(r["status"] in ("pass", "marginal") for r in evaluate_rules(g, prof["rules"]))   # reference passes
     assert prof["schema"] == "sawblade.profile" and prof["provenance"]["kind"] == "reference-derived"
+    # the label is explicit and independent of the base profile
+    other = derive_profile(load_profile("us_death"), x, "side", "noise")[0]
+    for q in (prof, other):
+        assert q["calibrated"] == "reference-derived" and q["name"] == "derived:noise"
+        assert q["provenance"]["rulesOffsets"].startswith("measured") and "inherited priors" in q["provenance"]["metrics"]
+    assert prof["notes"] != base["notes"] and prof["provenance"]["baseProfile"] == "swedish_death_hm2"
+    assert other["provenance"]["baseProfile"] == "us_death"
     # the original-style signal keeps the v2 rules (no change when everything already passes)
     prof2, t2 = derive_profile(prof, x, "side", "noise")
     assert [r["expr"] for r in prof2["rules"]] == [r["expr"] for r in prof["rules"]]
@@ -617,6 +632,47 @@ def test_profiles_are_flagged_and_loadable():
         p = load_profile(pid)
         assert p["schema"] == "sawblade.profile" and p["id"] == pid and p["calibrated"] is cal.get(pid, False)
         assert len(p["rules"]) == 10
+        if p["provenance"]["kind"] == "hypothesis":
+            assert p["provenance"]["calibration"] is None
     base, g = load_profile("swedish_death_hm2"), load_profile("chainsaw_grind")
     assert [r["expr"] for r in g["rules"]] == [r["expr"] for r in base["rules"]]
     assert all(a["toleranceDb"] > b["toleranceDb"] for a, b in zip(g["rules"], base["rules"]))   # loosened only
+
+
+def test_class_override_in_manifest(tmp_path):
+    mp = _fake_cache(tmp_path)
+    m = json.loads(mp.read_text())
+    m["tones"][1]["classOverride"] = "fuzz"                 # tone 2 (HM-2 title) is declared a fuzz
+    mp.write_text(json.dumps(m))
+    p = load_pool(mp)
+    assert {c.key: c.kind for c in p.pedals} == {"2/20": "fuzz", "3/30": "drive"}
+    m["tones"][1]["classOverride"] = "amp_low"
+    mp.write_text(json.dumps(m))
+    with pytest.raises(ValueError, match="classOverride"):
+        load_pool(mp)
+
+
+def test_generic_starter_needs_only_one_amp_and_one_cab(tmp_path):
+    from sawblade_match.matcher.pool import starter_choice
+    from sawblade_match.matcher.run import starter_preset
+    full = fixture_pool()
+    assert starter_choice(full)["amp"].key == full.amps[0].key and starter_choice(full)["cab"].key == full.cabs[0].key
+    with pytest.raises(ValueError):
+        starter_choice(Pool([], [], full.cabs))
+    pool = Pool([], full.amps[:1], full.cabs[:1])           # no pedals at all
+    p, caps = starter_preset(pool, gate_preset(-60.0))
+    assert caps["kind"] == "generic starter baseline"
+    assert p["paths"]["a"]["eq"] == [] and p["postEq"] == [] and len(p["paths"]["a"]["blocks"]) == 1
+    core.render(p, np.zeros(2048, np.float32), 48000.0)
+    # the whole run works on such a pool
+    from sawblade_match.matcher.reference import load_reference
+    x, fs = sf.read(FIX / "di_riff.wav", dtype="float32")
+    di = tmp_path / "di.wav"
+    sf.write(str(di), x, fs, subtype="FLOAT")
+    refwav = tmp_path / "ref.wav"
+    sf.write(str(refwav), x * 0.4, fs, subtype="FLOAT")
+    cfg = Config(di=di, ref=load_reference(refwav, channel="mid"), pool=pool, out=tmp_path / "out", seed=1,
+                 excerpt_s=2.0, threads=2, write_audio=False,
+                 plan=mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=2, gens_gain=1, gens_final=1))
+    res = run_match(cfg, Log())
+    assert res["starter"]["label"] == "generic starter baseline" and res["best"]["topology"] == "single"

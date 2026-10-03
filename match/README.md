@@ -205,7 +205,7 @@ python -m sawblade_match.matcher.recall --run RUN_DIR --di ... --ref ... [--matc
 Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a build) and a pool whose captures are downloaded
 (`sawblade-t3k pull`): only downloaded, commercially licensed models are candidates.
 
-* **Slots are gear classes, not titles** (`matcher/classify.py`): pedals are `drive`, `distortion` (HM-2/chainsaw, RAT, DS-1, MT-2...),
+* **Slots are gear classes, not titles** (`matcher/classify.py`; to override a capture's class add `"classOverride": "fuzz"` (any valid class of its gear) to its tone or model entry in `pool_manifest.json`): pedals are `drive`, `distortion` (HM-2/chainsaw, RAT, DS-1, MT-2...),
   `fuzz`, `preamp` or `pedal_unknown`; amps `amp_low`/`amp_high`; `cab`. Every pedal slot may be "none" and accepts any pedal
   (unknown ones included); every amp slot accepts any amp. Profiles never choose gear: the HM-2 is just a `distortion` capture.
 * **Three topologies**, all with one shared cab (live-compatible): `single` [pedal?] -> amp; `single2` pedal1 -> pedal2 -> amp;
@@ -226,7 +226,7 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   see `result.json` of `matcher.recall` runs; N >= 6 keeps the best combo for the original, N = 9 (what the automatic rule picks at
   the cap) recall@10 is 1.0 single / 0.8 blend there and 0.9 / 0.4 for the cover mix. **Stage 2**: seeded CMA-ES (own
   implementation) per topology, blocks linear -> NAM gains -> linear. **Stage 3**: full-length L/R renders with the real chain,
-  `sawblade-tonecheck` against the profile on the best and on the starter, clip guard on max(L, R).
+  `sawblade-tonecheck` against the profile on the best and on the **generic starter baseline** (first amp + first cab of the pool, no pedals, no EQ; class-agnostic, it is also the render used for the first offset refinement and the 'before' numbers), clip guard on max(L, R).
 * **Loss** weights are in `matcher/loss.py` (A-weighted LTAS error after level-offset removal x1, buzz x0.5/dB, lowDecay x2 per
   dB/ms, STFT x0.25/dB for matched pairs, EQ-gain regulariser x0.02/dB). **Not searched**: gate (DI floor measured on the gate's
   own peak envelope +4 dB, hold 40 ms, release 150 ms, range -50 dB), bus comp (off), alignment (probed once per blend combo,
