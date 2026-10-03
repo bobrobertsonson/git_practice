@@ -15,7 +15,8 @@ from sawblade_match.tonecheck.rules import evaluate_rules, load_targets, parse_e
 FS = 48000
 SEED = 20261003
 REPO = Path(__file__).resolve().parents[2]
-TARGETS = load_targets(REPO / "docs" / "tone_targets.json")
+LIVE_TARGETS = REPO / "docs" / "tone_targets.json"
+TARGETS = load_targets(Path(__file__).parent / "fixtures" / "tone_targets_v1.json")   # frozen v1
 
 
 # --- synthetic material -----------------------------------------------------------------------------
@@ -332,14 +333,14 @@ def test_cli_end_to_end_synthetic(tmp_path, capsys):
     sf.write(tmp_path / "R.wav", di_r.astype(np.float32), FS)
     smoke = tmp_path / "smoke.wav"
     sf.write(smoke, guitar(10 * FS, 5).astype(np.float32), FS)
-    tfile = REPO / "docs" / "tone_targets.json"
-    before = tfile.read_bytes()
+    tfile = Path(__file__).parent / "fixtures" / "tone_targets_v1.json"
+    before = LIVE_TARGETS.read_bytes()
     out = tmp_path / "out"
     rc = cli.main(["--original", str(orig), "--cover-mix", str(cm), "--di-l", str(tmp_path / "L.wav"),
                    "--di-r", str(tmp_path / "R.wav"), "--no-separation", "--score", str(smoke),
                    "--targets", str(tfile), "--out", str(out), "--stems-dir", str(tmp_path / "stems")])
     assert rc == 0
-    assert tfile.read_bytes() == before                                  # never touches the committed targets
+    assert LIVE_TARGETS.read_bytes() == before                                  # never touches the committed targets
     prop = json.loads((out / "tone_targets.proposed.json").read_text())
     assert prop["schema"] == "sawblade.tone_targets" and prop["calibration"]["basis"] == "original/side"
     assert prop["calibration"]["policy"] == "loosen-only"
@@ -356,6 +357,19 @@ def test_cli_end_to_end_synthetic(tmp_path, capsys):
         assert r["status"] == "pass" or r["id"] in contra
 
 
+def test_live_targets_file_is_schema_valid():
+    t = load_targets(LIVE_TARGETS)                       # only parses; thresholds are not asserted here
+    assert t["rules"] and all(parse_expr(r["expr"]) for r in t["rules"])
+    evaluate_rules({g: 0.0 for g in t["analysis"]["bandGroups"]}, t["rules"])
+
+
 def test_cli_missing_input_exit_3(tmp_path, capsys):
     rc = cli.main(["--original", str(tmp_path / "nope.mp3"), "--out", str(tmp_path / "o")])
     assert rc == 3 and "error:" in capsys.readouterr().err
+
+
+def test_measure_no_onsets_reports_na():
+    x = guitar(8 * FS, 3)
+    m = measure("x", x, TARGETS, no_onsets=True)
+    assert m.metrics["lowTightnessMs"]["valueMs"] is None and m.metrics["lowDecayDbPerMs"]["value"] is None
+    assert "no onset source" in m.metrics["lowTightnessMs"]["note"] and m.metrics["buzz"]["value"] > 0

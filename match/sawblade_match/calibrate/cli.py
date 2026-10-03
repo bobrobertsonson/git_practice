@@ -96,6 +96,9 @@ def run(a: argparse.Namespace) -> int:
         availability[f"{ref} / stems (method 1)"] = f"ran ({MODEL} 'other' stem, seed {SEED}, {'cached' if s.cached else 'fresh'}: {s.path})"
         results[f"{ref}/stems"] = measure(f"{ref}/stems", _stem_mono48(s), targets, source=str(s.path), spread=True)
 
+    csel = cover_guitar_frames(mix_l, mix_r, di_l, di_r)
+    di_onsets = np.sort(np.concatenate([A.detect_onsets(d) + csel.info['offsetsS'][t] for t, d in (('L', di_l), ('R', di_r))]))
+
     # method 3: side channel (L-R)/2 - hard-panned double-tracked guitars survive, centred bass/kick/snare/vocal cancel
     for ref, src in (("original", P["original"]), ("cover", P["cover_mix"])):
         l, r = _mono48(src, "left"), _mono48(src, "right")
@@ -104,7 +107,10 @@ def run(a: argparse.Namespace) -> int:
         mid_rms = float(np.sqrt(np.mean((0.5 * (l[:n_] + r[:n_])) ** 2)))
         ratio = 20 * np.log10(max(float(np.sqrt(np.mean(side ** 2))), 1e-12) / max(mid_rms, 1e-12))
         try:
-            results[f"{ref}/side"] = measure(f"{ref}/side", side, targets, source="(L-R)/2", spread=True)
+            # low-end metrics need note onsets: cover = both DIs' onsets shifted by the measured offsets;
+            # original has no DI -> reported n/a
+            results[f"{ref}/side"] = measure(f"{ref}/side", side, targets, source="(L-R)/2", spread=True,
+                                             onsets=di_onsets if ref == "cover" else None, no_onsets=ref != "cover")
             availability[f"{ref} / side (method 3)"] = f"ran ((L-R)/2, activity gate; side/mid RMS {ratio:+.1f} dB)"
         except ValueError as e:
             availability[f"{ref} / side (method 3)"] = f"unavailable: side channel unusable (mono file?): {e}"
@@ -125,7 +131,6 @@ def run(a: argparse.Namespace) -> int:
             "treat the original/sections numbers as a hypothesis or pass --sections with hand-picked ranges.")
         notes.append("original/sections used the automatic vocal-exclusion heuristic, which is not reliable "
                      "(see selection details); prefer --sections or the stems method.")
-    csel = cover_guitar_frames(mix_l, mix_r, di_l, di_r)
     n = min(len(mix_l), len(mix_r))
     results["cover/sections"] = measure("cover/sections", cover_mid[:n], targets, mask=csel.sample_mask(n),
                                         source="mix mid, selected frames", spread=True)

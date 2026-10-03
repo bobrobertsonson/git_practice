@@ -15,7 +15,7 @@ from sawblade_match.tonecheck.rules import classify, evaluate_rules, load_target
 
 FS = 48000
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TARGETS = load_targets(REPO_ROOT / "docs" / "tone_targets.json")
+TARGETS = load_targets(Path(__file__).parent / "fixtures" / "tone_targets_v1.json")   # frozen v1
 SEED = 12345
 
 
@@ -216,7 +216,7 @@ def test_audio_mode_writes_report(tmp_path):
     wav = tmp_path / "x.wav"
     sf.write(wav, x, FS, subtype="FLOAT")
     rc = cli.main(["--audio", str(wav), "--ref", str(wav), "--ref-channel", "left", "--out", str(tmp_path / "o"),
-                   "--targets", str(REPO_ROOT / "docs/tone_targets.json")])
+                   "--targets", str(Path(__file__).parent / "fixtures" / "tone_targets_v1.json")])
     assert rc == 0
     rep = json.loads((tmp_path / "o" / "report.json").read_text())
     assert {r["id"] for r in rep["rules"]} >= {r["id"] for r in TARGETS["rules"]}
@@ -233,7 +233,7 @@ def _tonerender():
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
-    monkeypatch.setenv("SAWBLADE_TARGETS", str(REPO_ROOT / "docs/tone_targets.json"))
+    monkeypatch.setenv("SAWBLADE_TARGETS", str(Path(__file__).parent / "fixtures" / "tone_targets_v1.json"))
     tr = _tonerender()
     if tr:
         monkeypatch.setenv("SAWBLADE_TONERENDER", str(tr))

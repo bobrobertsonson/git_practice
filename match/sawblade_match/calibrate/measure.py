@@ -51,10 +51,11 @@ def _chunk_spread(x: np.ndarray, mask: np.ndarray, targets: dict, chunk_s: float
 
 
 def measure(label: str, x48: np.ndarray, targets: dict, mask: np.ndarray | None = None,
-            onsets: np.ndarray | None = None, source: str = "", spread: bool = False) -> Measured:
+            onsets: np.ndarray | None = None, source: str = "", spread: bool = False,
+            no_onsets: bool = False) -> Measured:
     """``x48``: mono at 48 kHz. ``mask``: per-sample bool of frames to keep (None: tonecheck activity gate).
     ``onsets``: note onsets (s) for lowTightnessMs / lowDecayDbPerMs; default: detected on ``x48`` itself,
-    restricted to the kept frames. They are measured on the same signal's 80-160 Hz envelope (stems: the
+    restricted to the kept frames (``no_onsets``: report n/a). They are measured on the same signal's 80-160 Hz envelope (stems: the
     guitar stem; sections: the mix, which still contains bass/kick under the kept frames - a caveat)."""
     warnings: list[str] = []
     if mask is None:
@@ -65,6 +66,14 @@ def measure(label: str, x48: np.ndarray, targets: dict, mask: np.ndarray | None 
     fr, psd, nseg = A.ltas_psd(x48, A.ANALYSIS_RATE, mask, warnings)
     absdb, rel = A.band_levels_db(fr, psd)
     groups = A.group_levels(rel, targets["analysis"]["bandGroups"])
+    if no_onsets:      # no reliable onset source (e.g. the side signal of a reference without DIs)
+        note = "n/a: no onset source"
+        none = {"nOnsets": 0, "nMeasured": 0, "nCensored": 0, "note": note}
+        metrics = {"buzz": {"value": A.buzz_flatness(fr, psd)}, "lowTightnessMs": {"valueMs": None, **none},
+                   "lowDecayDbPerMs": {"value": None, **none}, "crestFactorDb": {"value": A.crest_factor_db(x48, mask)}}
+        return Measured(label, absdb, rel, list(A.NOMINAL_CENTRES), groups, evaluate_rules(groups, targets["rules"]),
+                        metrics, nseg, frac, float(mask.sum() / A.ANALYSIS_RATE), warnings,
+                        _chunk_spread(x48, mask, targets) if spread else None, source)
     if onsets is None:
         onsets = A.detect_onsets(x48, A.ANALYSIS_RATE)
     keep = np.array([bool(mask[min(len(mask) - 1, int(t * A.ANALYSIS_RATE))]) for t in onsets], dtype=bool)
