@@ -551,3 +551,79 @@ def test_finders_have_no_package_relative_fallback(tmp_path, monkeypatch):
         find_targets()
     monkeypatch.setenv("SAWBLADE_TARGETS", "x.json")
     assert str(find_targets()) == "x.json"
+
+
+# --- review follow-ups ------------------------------------------------------------------------------
+def _oracle_peak_index(out, t0, fs=FS):
+    """Envelope peak the decay metric uses for an onset at t0 (80-160 Hz BP4, 10 ms mean square)."""
+    sos = signal.butter(4, (80.0, 160.0), btype="bandpass", fs=fs, output="sos")
+    y = signal.sosfilt(sos, out)
+    k = int(0.010 * fs)
+    env = np.convolve(y * y, np.ones(k) / k, mode="same")
+    a, b = int(max(0, (t0 - 0.010) * fs)), int((t0 + 0.060) * fs)
+    return a + int(np.argmax(env[a:b]))
+
+
+@pytest.mark.parametrize("margin_ms,measured", [(-1.0, 1), (+1.0, 2)])
+def test_low_decay_minimum_window_is_15_ms(monkeypatch, margin_ms, measured):
+    # one burst at 0.5 s; a second (fake) onset so that the first onset's slope window
+    # [peak+5 ms, next onset] is 15 ms -/+ 1 ms long. Under 15 ms: censored; over: measured.
+    n = 3 * FS
+    tt = np.arange(n - int(0.5 * FS)) / FS
+    out = np.zeros(n)
+    out[int(0.5 * FS):] = np.exp(-tt / 0.1) * np.sin(2 * np.pi * 120.0 * tt)
+    pk = _oracle_peak_index(out, 0.5)
+    nxt = pk + int((0.005 + 0.015 + margin_ms / 1000) * FS)
+    monkeypatch.setattr(A, "detect_onsets", lambda d, fs=FS: np.array([0.5, nxt / FS]))
+    _, d = A.low_end_decay(np.zeros(n), out, FS)
+    assert d["nOnsets"] == 2 and d["nMeasured"] == measured and d["nCensored"] == 2 - measured
+
+
+def test_summarize_exactly_one_fail():
+    s = summarize([{"status": "pass"}, {"status": "fail"}, {"status": "n/a"}])
+    assert s == {"pass": 1, "marginal": 0, "fail": 1, "n/a": 1, "overall": "fail"}
+    assert summarize([{"status": "fail"}])["overall"] == "fail"
+
+
+def _noise_plucks(onsets, tau, seed, dur=8.0, floor=1e-4, amp=0.3):
+    n = int(dur * FS)
+    rng = np.random.default_rng(seed)
+    di = floor * rng.standard_normal(n)
+    for o in onsets:
+        i = int(o * FS)
+        di[i:] += amp * np.exp(-np.arange(n - i) / FS / tau) * rng.standard_normal(n - i)
+    return di
+
+
+def _match_onsets(det, truth, tol=0.015):
+    det, tp = list(det), 0
+    for t in truth:
+        near = [d for d in det if abs(d - t) <= tol]
+        if near:
+            tp += 1
+            det.remove(min(near, key=lambda d: abs(d - t)))
+    return tp
+
+
+@pytest.mark.parametrize("tau", [0.03, 0.05, 0.1])
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_no_spurious_onsets_in_noisy_decays(tau, seed):
+    # regression: 5 noise plucks with a 30 ms decay used to give 10-12 onsets (flux peaks in the noisy tail)
+    truth = [0.5, 2.0, 3.5, 5.0, 6.5]
+    det = A.detect_onsets(_noise_plucks(truth, tau, seed), FS)
+    assert len(det) == 5
+    assert _match_onsets(det, truth) == 5
+
+
+def test_onset_precision_recall_on_synthetic_set():
+    # before the minimum-rise check: precision 0.545, recall 1.0 on this set (220 detections for 120 plucks)
+    truth = [0.5, 2.0, 3.5, 5.0, 6.5]
+    tp = nd = nt = 0
+    for tau in (0.03, 0.05, 0.1, 0.15):
+        for seed in (1, 2, 3):
+            for amp in (0.3, 0.05):
+                det = A.detect_onsets(_noise_plucks(truth, tau, seed, amp=amp), FS)
+                tp += _match_onsets(det, truth)
+                nd += len(det)
+                nt += len(truth)
+    assert tp / nd >= 0.97 and tp / nt >= 0.97

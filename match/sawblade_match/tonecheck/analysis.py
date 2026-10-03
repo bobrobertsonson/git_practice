@@ -27,6 +27,9 @@ FRAME_S = 0.050
 GATE_WINDOW_DB = 30.0
 SEG_ACTIVE_FRACTION = 0.8
 DB_FLOOR = -200.0
+ONSET_MIN_RISE_DB = 6.0   # level rise required of an onset (see detect_onsets)
+ONSET_RISE_BEFORE = 4     # STFT frames (hop 256) looked back / forward when measuring the rise
+ONSET_RISE_AFTER = 3
 
 # IEC 61260 nominal centres 25 Hz .. 12.5 kHz (the contract's bands); exact centres are base-10 thirds.
 NOMINAL_CENTRES = [25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000,
@@ -227,7 +230,8 @@ def detect_onsets(di: np.ndarray, fs: int = ANALYSIS_RATE) -> np.ndarray:
     STFT 1024/256 Hann, 50 Hz..6 kHz, log-magnitude (dB, floored 70 dB under the peak), half-wave
     rectified frame-to-frame difference summed over bins. Peaks must exceed (0.5 s running median +
     4 x robust scale), be >= 80 ms apart, and occur in frames within 30 dB of the DI's 95th-percentile
-    level (so hum/hiss flux between notes is ignored)."""
+    level (so hum/hiss flux between notes is ignored). Finally each peak must be a real level rise:
+    max level over the next 3 frames minus min over the previous 4 frames >= 6 dB."""
     nper, hop = 1024, 256
     f, t, Z = signal.stft(di, fs, window="hann", nperseg=nper, noverlap=nper - hop, boundary=None, padded=False)
     sel = (f >= 50) & (f <= 6000)
@@ -243,6 +247,15 @@ def detect_onsets(di: np.ndarray, fs: int = ANALYSIS_RATE) -> np.ndarray:
     lvl = _db(np.sum(mag * mag, axis=0))
     ok = lvl[np.minimum(peaks, len(lvl) - 1)] >= np.percentile(lvl, 95) - GATE_WINDOW_DB
     peaks = peaks[ok]
+    # Minimum-rise check: a real onset raises the 50 Hz-6 kHz level by >= ONSET_MIN_RISE_DB over the frames
+    # just before it. Fluctuations of the log-spectrum inside a decaying noisy tail produce flux peaks
+    # without any level rise (the old detector reported ~2 spurious onsets per 30-50 ms-decay pluck).
+    rise_ok = []
+    for p in peaks:
+        before = lvl[max(0, p - ONSET_RISE_BEFORE):p]
+        after = lvl[p:p + ONSET_RISE_AFTER]
+        rise_ok.append(before.size > 0 and after.max() - before.min() >= ONSET_MIN_RISE_DB)
+    peaks = peaks[np.array(rise_ok, dtype=bool)] if len(peaks) else peaks
     # Heuristic time correction (+5.3 ms): a frame centred at t already "sees" a new note once the window
     # end passes it, i.e. up to half a window (512 samples) before the onset, and the flux peaks about a
     # quarter window (256 samples = the hop = 5.3 ms at 48 kHz) early. Adding that quarter window brings the
@@ -260,7 +273,7 @@ def _stats(vals, key):
 
 def low_end_decay(di: np.ndarray, out: np.ndarray, fs: int = ANALYSIS_RATE,
                   band: tuple[float, float] = (80.0, 160.0), drop_db: float = 20.0,
-                  max_decay_s: float = 2.0) -> tuple[dict, dict]:
+                  max_decay_s: float = 2.0, onsets: np.ndarray | None = None) -> tuple[dict, dict]:
     """Returns (lowTightnessMs, lowDecayDbPerMs) metrics, both from DI onsets and the output's 80-160 Hz band.
 
     Output is band-passed (Butterworth 4, causal), squared and smoothed with a 10 ms moving average
@@ -269,8 +282,9 @@ def low_end_decay(di: np.ndarray, out: np.ndarray, fs: int = ANALYSIS_RATE,
     * lowTightnessMs: median time from that peak to the first -``drop_db`` crossing. Onsets whose decay is
       cut off by the next onset (or ``max_decay_s``) are censored (excluded, counted).
     * lowDecayDbPerMs: linear-regression slope (dB/ms, negative = decaying) of the envelope over
-      [peak+5 ms, min(peak+35 ms, next onset)]; windows shorter than 15 ms are censored."""
-    onsets = detect_onsets(di, fs)
+      [peak+5 ms, min(peak+35 ms, next onset)]; windows shorter than 15 ms are censored.
+    ``onsets`` (seconds, sorted) overrides the detection on ``di`` (used by the calibration tool)."""
+    onsets = detect_onsets(di, fs) if onsets is None else np.asarray(onsets, dtype=float)
     sos = signal.butter(4, band, btype="bandpass", fs=fs, output="sos")
     y = signal.sosfilt(sos, out)
     k = int(0.010 * fs)
