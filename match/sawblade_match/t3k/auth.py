@@ -64,7 +64,9 @@ class TokenStore:
     def load(self) -> Session | None:
         try:
             d = json.loads(self.path.read_text())
-            return Session(d["access_token"], d["refresh_token"], float(d["expires_at"]),
+            # Our format has expires_at; the lead's login script writes obtained_at + expires_in.
+            exp = float(d["expires_at"]) if "expires_at" in d else float(d["obtained_at"]) + float(d["expires_in"])
+            return Session(d["access_token"], d["refresh_token"], exp,
                            d.get("token_type", "bearer"), d.get("scope"))
         except (FileNotFoundError, KeyError, ValueError):
             return None

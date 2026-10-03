@@ -17,7 +17,7 @@ from .client import T3KClient
 from .errors import T3KError
 from .filter import FilterConfig
 from .pool import build_pool, write_manifest
-from .resolve import resolve_file
+from .resolve import default_output, resolve_file
 
 GEAR_TO_SLOT = {"amp": "amp", "pedal": "pedal", "ir": "cab", "cab": "cab"}
 
@@ -105,7 +105,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     done = resolve_file(make_client(), Cache(Path(args.cache_dir) if args.cache_dir else None),
                         Path(args.preset), Path(args.output) if args.output else None,
                         prefer_size=args.prefer_size)
-    dest = args.output or args.preset
+    dest = args.output or default_output(Path(args.preset))
     print(f"Resolved {len(done)} capture(s) -> {dest}")
     for p in done:
         print(f"  {p}")
@@ -140,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("resolve", help="fill capture file/sha256/source in a preset")
     r.add_argument("preset")
-    r.add_argument("-o", "--output", help="output path (default: rewrite PRESET in place)")
+    r.add_argument("-o", "--output", help="output path (default: <name>.resolved.json next to PRESET)")
     r.add_argument("--cache-dir")
     r.add_argument("--prefer-size", default="standard")
     r.set_defaults(fn=cmd_resolve)
@@ -157,6 +157,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return args.fn(args)
     except T3KError as e:
         print(f"error: {e}", file=sys.stderr)
+        return 1
+    except httpx.HTTPError as e:
+        print(f"error: network failure: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
 
 

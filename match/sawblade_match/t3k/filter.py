@@ -25,8 +25,8 @@ DAYS_PER_MONTH = 30.4375
 class FilterConfig:
     max_age_months: float = 18.0
     popularity_percentile: float = 75.0
-    min_favorites: int = 10          # absolute floors (applied on top of the percentile)
-    min_downloads: int = 200
+    min_favorites: int = 100         # absolute floors (lead-set; applied on top of the percentile)
+    min_downloads: int = 1000
     allow_a1_fallback: bool = True
     prefer_size: str = "standard"
     favorites_bypass_recency: bool = False   # spec: only the popularity floor is bypassed

@@ -42,9 +42,9 @@ when present, win over the env seed). Access tokens and Authorization headers ar
 sawblade-t3k whoami
 sawblade-t3k pull [--favorites] [--gear amp pedal ir] [--no-trending] [--no-latest]
                   [--no-download] [--manifest pool.json] [--cache-dir DIR]
-                  [--max-age-months 18] [--percentile 75] [--min-favorites 10] [--min-downloads 200]
+                  [--max-age-months 18] [--percentile 75] [--min-favorites 100] [--min-downloads 1000]
                   [--prefer-size standard] [--no-a1-fallback] [--favorites-bypass-recency]
-sawblade-t3k resolve presets/chainsaw_body.json -o presets/chainsaw_body.resolved.json
+sawblade-t3k resolve presets/chainsaw_body.json   # -> presets/chainsaw_body.resolved.json
 ```
 
 * `pull` builds the candidate pool from **favorited** (always) + **trending** + **latest**, applies the
@@ -54,7 +54,7 @@ sawblade-t3k resolve presets/chainsaw_body.json -o presets/chainsaw_body.resolve
   `<cache>/pool_manifest.json` (decisions and reasons for every tone, including exclusions).
 * `resolve` finds every capture whose `source.provider == "tone3000"` (needs `source.id`, optional
   `source.modelId`), fetches it (cache hit = no network), and sets `file` (absolute cache path),
-  `sha256`, `source.modelId`, `url`, `title`, `creator`, `license`. Without `-o` the preset is rewritten in place.
+  `sha256`, `source.modelId`, `url`, `title`, `creator`, `license`. Output goes to `<name>.resolved.json` next to the input (or `-o`); the input is never modified. Resolved presets contain machine-specific absolute paths and are git-ignored (`*.resolved.json`).
 * Cache: `~/.cache/sawblade/captures/<tone_id>/<model_id>.<nam|wav>` + `meta.json` (override with
   `SAWBLADE_CACHE_DIR`). Files are sha256-verified on every hit.
 

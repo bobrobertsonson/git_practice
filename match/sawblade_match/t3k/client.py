@@ -95,7 +95,17 @@ class T3KClient:
                 token = self.tokens.get_access_token()
                 headers["Authorization"] = f"Bearer {token}"
             req = self._http.build_request(method, url, params=params, headers=headers)
-            resp = self._http.send(req, stream=stream)
+            try:
+                resp = self._http.send(req, stream=stream)
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as e:
+                if attempt >= self.max_retries:
+                    raise
+                delay = min(self.backoff_base_s * (2 ** attempt), self.backoff_max_s)
+                attempt += 1
+                log.warning("transport error (%s) from %s; retry %d/%d in %.1fs", type(e).__name__,
+                            urlparse(url).path, attempt, self.max_retries, delay)
+                self._sleep(delay)
+                continue
             self._log_deprecations(resp)
             if resp.status_code == 401 and authed and not refreshed:
                 resp.close()

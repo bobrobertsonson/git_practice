@@ -64,10 +64,16 @@ def resolve_preset(client: T3KClient, cache: Cache, preset: dict, prefer_size: s
     return [p for p, _ in caps]
 
 
+def default_output(preset_path: Path) -> Path:
+    """`<name>.resolved.json` next to the input (resolved presets hold machine-specific paths)."""
+    p = Path(preset_path)
+    return p.with_name(p.stem + ".resolved.json")
+
+
 def resolve_file(client: T3KClient, cache: Cache, preset_path: Path, out_path: Path | None = None,
                  prefer_size: str = "standard") -> list[str]:
     preset_path = Path(preset_path)
     preset = json.loads(preset_path.read_text())
     done = resolve_preset(client, cache, preset, prefer_size)
-    Path(out_path or preset_path).write_text(json.dumps(preset, indent=2) + "\n")
+    Path(out_path or default_output(preset_path)).write_text(json.dumps(preset, indent=2) + "\n")
     return done

@@ -109,6 +109,26 @@ def test_cli_login_whoami_resolve(cli_env, respx_mock, api, world, tmp_path, cap
     assert res["paths"]["a"]["blocks"][0]["model"]["sha256"]
     assert SECRET_ACCESS not in capsys.readouterr().out
 
+    # default output: <name>.resolved.json next to the input; input never rewritten
+    assert cli.main(["resolve", str(p), "--cache-dir", str(tmp_path / "cc")]) == 0
+    assert json.loads(p.read_text()) == PRESET
+    assert json.loads((tmp_path / "preset.resolved.json").read_text()) == res
+
+
+def test_cache_meta_stores_creator_username(make_client, world, tmp_path):
+    cache = Cache(tmp_path / "cache")
+    resolve_preset(make_client(), cache, json.loads(json.dumps(PRESET)))
+    assert cache.read_meta(200)["creatorUsername"] == "carol"
+
+
+def test_store_reads_lead_login_format(tmp_path):
+    from sawblade_match.t3k.auth import TokenStore
+    p = tmp_path / "t.json"
+    p.write_text(json.dumps({"access_token": "a", "refresh_token": "r", "expires_in": 3600,
+                             "token_type": "bearer", "scope": "read", "obtained_at": 1000.0}))
+    s = TokenStore(p).load()
+    assert s.expires_at == 4600.0 and s.refresh_token == "r"
+
 
 def test_cli_pull_writes_manifest_and_table(cli_env, api, tmp_path, capsys):
     cli_env.parent.mkdir(parents=True)

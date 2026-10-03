@@ -9,9 +9,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _uid(v):
+    """User ids are documented as int but the live API returns UUID strings; accept both."""
+    if isinstance(v, int) or v is None:
+        return v or 0
+    return int(v) if str(v).isdigit() else str(v)
+
+
 @dataclass(frozen=True)
 class EmbeddedUser:
-    id: int
+    id: int | str
     username: str
     display_name: str | None = None
     is_verified: bool = False
@@ -26,7 +33,7 @@ class EmbeddedUser:
     def from_json(cls, d: dict[str, Any] | None) -> "EmbeddedUser":
         d = d or {}
         return cls(
-            id=int(d.get("id", 0) or 0),
+            id=_uid(d.get("id")),
             username=str(d.get("username") or ""),
             display_name=d.get("display_name"),
             is_verified=bool(d.get("is_verified", False)),
@@ -36,14 +43,14 @@ class EmbeddedUser:
 
 @dataclass(frozen=True)
 class User:
-    id: int
+    id: int | str
     username: str
     display_name: str | None
     raw: dict[str, Any] = field(repr=False, compare=False, default_factory=dict)
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> "User":
-        return cls(int(d["id"]), str(d.get("username") or ""), d.get("display_name"), d)
+        return cls(_uid(d["id"]), str(d.get("username") or ""), d.get("display_name"), d)
 
 
 @dataclass(frozen=True)

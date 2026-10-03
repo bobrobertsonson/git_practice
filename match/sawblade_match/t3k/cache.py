@@ -97,6 +97,7 @@ class Cache:
     def put_meta(self, tone: Tone, model: Model, path: Path, sha256: str, *, chosen: bool = True) -> None:
         meta = self.read_meta(tone.id)
         meta["tone"] = tone.raw
+        meta["creatorUsername"] = tone.user.username
         meta.setdefault("models", {})[str(model.id)] = {
             "model": model.raw,
             "sha256": sha256,

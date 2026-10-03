@@ -184,3 +184,10 @@ def test_no_token_or_auth_header_in_logs(respx_mock, make_client, api, store, ca
     text = caplog.text + out.out + out.err
     for secret in ("SECRET", "Bearer", "authorization", "Authorization"):
         assert secret not in text, secret
+
+
+def test_transport_error_retried_with_backoff(respx_mock, make_client, clock):
+    client = make_client()
+    respx_mock.get(f"{BASE}/api/v1/user").mock(side_effect=[
+        httpx.ConnectError("boom"), httpx.Response(200, json={"id": 1, "username": "u"})])
+    assert client.get_user().id == 1 and clock.sleeps == [1.0]

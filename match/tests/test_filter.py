@@ -129,10 +129,10 @@ def test_build_pool_manifest_end_to_end(respx_mock, make_client, api, tmp_path):
     pop2 = tone_json(101, gear="amp", fav=10, dl=100)           # low pop, not favorited
     fav_low = tone_json(102, gear="amp", fav=1, dl=1)           # low pop, favorited -> kept + flagged
     rig = tone_json(103, gear="amp-cab", fav=999, dl=9999)
-    ir = tone_json(104, gear="cab", fmt="ir", a2=0, fav=50, dl=900, title="V30 IR")
+    ir = tone_json(104, gear="cab", fmt="ir", a2=0, fav=150, dl=2000, title="V30 IR")
     api.favorited = [fav_low, rig]
     api.trending = {"amp": [good, pop2], "pedal": [], "cab": [ir]}
-    api.latest = [tone_json(105, gear="pedal", fav=40, dl=800, a2=0, a1=1)]
+    api.latest = [tone_json(105, gear="pedal", fav=140, dl=1800, a2=0, a1=1)]
     for t in (good, fav_low, ir, api.latest[0]):
         arch = "1" if t["a2_models_count"] == 0 else "2"
         api.add_tone(t, [model_json(t["id"] * 10, t["id"], size="lite", arch=arch),
