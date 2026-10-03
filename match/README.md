@@ -85,3 +85,26 @@ free tier: **a commercial agreement with TONE3000 is required before shipping an
 100 requests/min client-side token bucket; 429 and 502/503/504 are retried with exponential backoff
 (honouring `Retry-After`); a 401 triggers one refresh + retry. The `X-Tone3000-Deprecations` response header is
 logged at WARNING. Use `-v` for INFO logs.
+
+## Tone check (`sawblade-tonecheck`, phase 1.5 part B)
+
+```
+sawblade-tonecheck PRESET.json --di DI.wav [--ref REF.wav] [--ref-channel left|right|mid] [--out DIR]
+                   [--tonerender PATH] [--targets docs/tone_targets.json]
+sawblade-tonecheck --presets a.json b.json --di DI.wav       # batch: DIR/<preset>/ + DIR/summary.json
+sawblade-tonecheck --audio OUT.wav [--di DI.wav] [--ref ...]  # analyse an already-rendered file
+```
+
+Implements `docs/tone_targets.json` exactly (LTAS 1/3-oct, activity gate, band groups, rules with tolerances,
+metrics). Outputs `report.json` + `report.png` (+ `render.wav`, `tonerender_report.json`). Exit 0 whenever the
+analysis ran (rule failures do not change the exit code), 3 on render/analysis error.
+
+Method notes: audio is analysed at 48 kHz; Welch segments are used when >= 80 % of their samples are in
+active frames; band power integrates the PSD over IEC band edges with fractional edge bins. `lowTightnessMs`:
+spectral-flux onsets (STFT 1024/256, 50 Hz-6 kHz, log-magnitude) on the DI, then for each onset the time for the
+output's 80-160 Hz energy envelope (Butterworth-4 band-pass, 10 ms mean-square, dB) to fall 20 dB from its peak in
+[t-10, t+60] ms; onsets cut off by the next onset (or 2 s) are censored and excluded (counts reported).
+`buzz` is flatness of the active-segment mean PSD over 1-3 kHz. `gapNoiseDb` is also reported as rule
+`gap_noise` (<= -60, no tolerance). `--ref`: per-band LTAS difference (both normalised to 1 kHz) and
+A-weighted error = sqrt(sum(w d^2)/sum(w)), w = 10^(A(fc)/10), bands 80 Hz-8 kHz. Analysis is deterministic
+(no random processes).

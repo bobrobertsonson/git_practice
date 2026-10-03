@@ -23,6 +23,7 @@ dev = [
 
 [project.scripts]
 sawblade-t3k = "sawblade_match.t3k.cli:main"
+sawblade-tonecheck = "sawblade_match.tonecheck.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["sawblade_match*"]
