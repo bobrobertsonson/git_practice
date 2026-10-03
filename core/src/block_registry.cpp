@@ -42,7 +42,7 @@ std::unique_ptr<Processor> createEq(const Block& b, const BlockBuildContext& ctx
   try {
     eq->configure(ctx.sampleRate, p.bands);
   } catch (const std::invalid_argument& e) {
-    throw std::runtime_error(ctx.jsonPath + ".bands: " + e.what());
+    throw PresetError(ctx.jsonPath + ".bands", e.what());  // semantic: depends on the render rate
   }
   return eq;
 }

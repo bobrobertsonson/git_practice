@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "alloc_guard.h"
+#include "latency_stub.h"
 #include "sawblade/chain.h"
 #include "sawblade/nam_block.h"
 #include "sawblade/sha256.h"
@@ -26,57 +27,6 @@ namespace {
 
 constexpr double kFs = 48000.0;
 const fs::path kPresets = fs::path(SAWBLADE_FIXTURES_DIR) / "presets";
-
-// ---- test-only block type: a Processor that really delays by N samples and reports N --------
-struct LatencyParams : BlockParams {
-  int latency = 0;
-  bool equals(const BlockParams& o) const override {
-    const auto* p = dynamic_cast<const LatencyParams*>(&o);
-    return p && p->latency == latency;
-  }
-  json toJson() const override { return {{"latency", latency}}; }
-};
-
-class LatencyStub : public Processor {
- public:
-  explicit LatencyStub(int n) : n_(n) {}
-  void prepare(const ProcessSpec&) override { buf_.assign(static_cast<std::size_t>(n_) + 1, 0.0f); w_ = 0; }
-  void reset() override { std::fill(buf_.begin(), buf_.end(), 0.0f); w_ = 0; }
-  void process(float* io, int n) noexcept override {
-    const int size = static_cast<int>(buf_.size());
-    for (int i = 0; i < n; ++i) {
-      buf_[static_cast<std::size_t>(w_)] = io[i];
-      int r = w_ - n_;
-      if (r < 0) r += size;
-      io[i] = buf_[static_cast<std::size_t>(r)];
-      if (++w_ == size) w_ = 0;
-    }
-  }
-  int latencySamples() const noexcept override { return n_; }
-
- private:
-  int n_;
-  std::vector<float> buf_;
-  int w_ = 0;
-};
-
-void registerStub() {
-  static const bool once = [] {
-    BlockType t;
-    t.traits.namTrainable = false;  // pretend it is a time-based effect
-    t.parse = [](JsonObject& o, const fs::path&) -> std::shared_ptr<const BlockParams> {
-      auto p = std::make_shared<LatencyParams>();
-      p->latency = o.requireInteger("latency", 0, 10000);
-      return p;
-    };
-    t.create = [](const Block& b, const BlockBuildContext&) -> std::unique_ptr<Processor> {
-      return std::make_unique<LatencyStub>(static_cast<const LatencyParams&>(*b.params).latency);
-    };
-    BlockRegistry::instance().add("test.latency", std::move(t));
-    return true;
-  }();
-  (void)once;
-}
 
 // ---- helpers --------------------------------------------------------------------------------
 json namBlock(const std::string& id, const std::string& file) {
@@ -270,7 +220,7 @@ TEST_CASE("Alignment: a silent or disabled path skips alignment with a warning",
 }
 
 TEST_CASE("Latency compensation re-aligns paths (test-only latency stub)", "[chain][latency]") {
-  registerStub();
+  registerLatencyStub();
   const auto x = noise(10000, 15, 0.3f);
   json j = mk("linear_identity.nam", "linear_identity.nam");
   j["paths"]["a"]["blocks"] = json::array({{{"id", "s1"}, {"type", "test.latency"}, {"latency", 100}}});
@@ -330,7 +280,7 @@ TEST_CASE("Latency compensation re-aligns paths (test-only latency stub)", "[cha
 }
 
 TEST_CASE("Warnings: non-NAM-trainable blocks and long bus-comp release", "[chain][info]") {
-  registerStub();
+  registerLatencyStub();
   auto has = [](const ChainInfo& i, const std::string& s) {
     return std::any_of(i.warnings.begin(), i.warnings.end(), [&](const std::string& w) { return w.find(s) != std::string::npos; });
   };
@@ -612,6 +562,53 @@ TEST_CASE("Chain: process() does not allocate", "[chain][alloc]") {
     REQUIRE(g.count() == 0);
     for (float v : y) REQUIRE(std::isfinite(v));
   }
+}
+
+TEST_CASE("Chain: process() does not allocate with latency compensation, a bypassed block and inverted align", "[chain][alloc]") {
+  registerLatencyStub();
+  json j = mk("linear_identity.nam", "linear_neg1_at_23.nam");
+  // A: latency stub (100 samples) + identity.  B: a bypassed WaveNet, then the -1 @ 23 model.
+  j["paths"]["a"]["blocks"] = json::array({{{"id", "s1"}, {"type", "test.latency"}, {"latency", 100}}, namBlock("a1", "linear_identity.nam")});
+  json bypassed = namBlock("b0", "wavenet.nam");
+  bypassed["bypass"] = true;
+  j["paths"]["b"]["blocks"] = json::array({bypassed, namBlock("b1", "linear_neg1_at_23.nam")});
+  auto chain = build(j, 512);
+  const ChainInfo info = chain->info();
+  REQUIRE(info.compensationDelay[1] == 100);  // nonzero compensation delay on the path without the stub
+  REQUIRE(info.pathLatency[1] == 0);          // the bypassed block adds no latency
+  REQUIRE(info.align.invertB);
+  REQUIRE(info.align.delaySamplesB == -23);
+  REQUIRE(chain->latencySamples() == 100);
+
+  auto x = noise(6000, 41, 0.3f);
+  std::vector<float> y(1000);
+  const int sizes[] = {512, 1, 64, 480, 7, 128, 300, 33, 512, 256, 100, 2, 1000};
+  {
+    AllocGuard g;
+    std::size_t pos = 0;
+    for (int n : sizes) {
+      chain->process(x.data() + pos, y.data(), n);
+      pos += static_cast<std::size_t>(n);
+    }
+    REQUIRE(g.count() == 0);
+  }
+  for (float v : y) REQUIRE(std::isfinite(v));
+  // Sanity: the chain still does what it should (constructive sum, delayed by 100 + 23).
+  chain->reset();
+  REQUIRE(maxAbsDiff(render(*chain, x, 256), delayed(x, 123)) <= 1e-5);
+}
+
+TEST_CASE("Chain: reset() before prepare() is a harmless no-op", "[chain]") {
+  const Preset p = parsePreset(mk("wavenet.nam", "lstm.nam"), kPresets);
+  Chain c(p, loadResources(p, kFs));
+  REQUIRE_NOTHROW(c.reset());
+  c.reset();
+  c.prepare({kFs, 128});
+  const auto x = noise(4000, 42, 0.3f);
+  const auto y = render(c, x, 128);
+  Chain fresh(p, loadResources(p, kFs));
+  fresh.prepare({kFs, 128});
+  REQUIRE(maxAbsDiff(render(fresh, x, 128), y) == 0.0);  // identical to a chain that was never reset
 }
 
 TEST_CASE("Chain: output is independent of block size", "[chain][blocksize]") {

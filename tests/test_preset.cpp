@@ -167,6 +167,19 @@ TEST_CASE("Preset errors carry the JSON path", "[preset]") {
     j = minimal(); j["paths"]["a"]["blocks"][0]["bogus"] = 1; requireErrorAt(j, "paths.a.blocks[0].bogus");
     j = minimal(); j["gate"] = {{"thresh", -5}}; requireErrorAt(j, "gate.thresh");
     j = minimal(); j["cab"]["irA"] = {{"file", "x"}}; requireErrorAt(j, "cab.irA");  // shared mode
+    j = minimal(); j["input"] = {{"gainDb", 1.0}, {"bogus", 1}}; requireErrorAt(j, "input.bogus");
+    j = minimal(); j["output"] = {{"bogus", 1}}; requireErrorAt(j, "output.bogus");
+    j = minimal(); j["align"] = {{"mode", "auto"}, {"bogus", 1}}; requireErrorAt(j, "align.bogus");
+    j = minimal(); j["busComp"] = {{"enabled", true}, {"bogus", 1}}; requireErrorAt(j, "busComp.bogus");
+    j = minimal(); j["cab"]["bogus"] = 1; requireErrorAt(j, "cab.bogus");
+    j = minimal(); j["postEq"] = json::array({{{"type", "peak"}, {"freq", 100.0}, {"bogus", 1}}}); requireErrorAt(j, "postEq[0].bogus");
+    j = minimal(); j["paths"]["c"] = json::object(); requireErrorAt(j, "paths.c");
+    j = minimal();
+    j["paths"]["a"]["blocks"].push_back({{"id", "a2"}, {"type", "eq"}, {"bands", json::array()}, {"bogus", 1}});
+    requireErrorAt(j, "paths.a.blocks[1].bogus");
+    j = minimal();
+    j["paths"]["a"]["blocks"].push_back({{"id", "a2"}, {"type", "eq"}, {"bands", json::array({{{"type", "peak"}, {"freq", 100.0}, {"bogus", 1}}})}});
+    requireErrorAt(j, "paths.a.blocks[1].bands[0].bogus");  // band object inside an eq block
   }
   SECTION("wrong types") {
     json j = minimal(); j["blend"] = "half"; requireErrorAt(j, "blend");

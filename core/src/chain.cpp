@@ -94,11 +94,16 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
       throw std::runtime_error("ChainResources does not match the preset's blocks");
     p.blocks = std::move(res_.blocks[k]);
     p.enabled = pp[k]->enabled;
+    const std::string pathName = k == 0 ? "paths.a" : "paths.b";
     try {
       p.preEq.configure(sr, pp[k]->preEq);
+    } catch (const std::invalid_argument& e) {
+      throw PresetError(pathName + ".preEq", e.what());
+    }
+    try {
       p.eq.configure(sr, pp[k]->eq);
     } catch (const std::invalid_argument& e) {
-      throw std::runtime_error(std::string(k == 0 ? "paths.a" : "paths.b") + ": " + e.what());
+      throw PresetError(pathName + ".eq", e.what());
     }
     p.level.setGainLinear(static_cast<float>((pp[k]->invert ? -1.0 : 1.0) * dbToLin(pp[k]->levelDb)));
     for (const auto& lb : p.blocks)
@@ -107,7 +112,7 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
   try {
     postEq_.configure(sr, preset_.postEq);
   } catch (const std::invalid_argument& e) {
-    throw std::runtime_error(std::string("postEq: ") + e.what());
+    throw PresetError("postEq", e.what());
   }
   if (preset_.cab.enabled) {
     if (preset_.cab.mode == CabMode::Shared) {
@@ -224,7 +229,10 @@ void Chain::resetAll() {
   }
 }
 
-void Chain::reset() { resetAll(); }
+void Chain::reset() {
+  if (!prepared_) return;  // nothing to clear; blocks (e.g. NAM) are not reset-safe before prepare()
+  resetAll();
+}
 
 AlignResult Chain::resolveAlignment() {
   if (!prepared_) throw std::logic_error("Chain::resolveAlignment requires prepare()");
@@ -235,7 +243,10 @@ AlignResult Chain::resolveAlignment() {
     return result;
   }
   const double sr = res_.sampleRate;
-  const int maxLag = static_cast<int>(std::llround(preset_.align.maxLagMs * sr / 1000.0));
+  // The scan needs maxLag < probe length (the schema caps maxLagMs at 50, far below the 1 s probe);
+  // clamp defensively so corr() can never index out of range.
+  const int maxLag = std::min(static_cast<int>(std::llround(preset_.align.maxLagMs * sr / 1000.0)),
+                              static_cast<int>(std::llround(kProbeSeconds * sr)) - 1);
 
   // Measure with latency compensation only (no alignment delay), gate bypassed, at the blend point.
   const int savedDelay[2] = {path_[0].compDelay + path_[0].alignDelay, path_[1].compDelay + path_[1].alignDelay};
