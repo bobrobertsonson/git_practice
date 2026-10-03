@@ -4,8 +4,14 @@ JUCE guitar plugin (AU/VST3 now, AAX later) that builds **blended high-gain chai
 TONE3000 NAM captures, matches them to a reference song, and exports the result as a
 trainable NAM model for live loader pedals.
 
-North-star tone: Gatecreeper-style — an HM-2-style "chainsaw" path blended with a thick,
+First north-star tone: Gatecreeper-style — an HM-2-style "chainsaw" path blended with a thick,
 tight high-gain "body" path. See `docs/TONE_TARGETS.md`.
+
+**Scope requirement (user): Sawblade must work for ANY heavy tone** — death metal (HM-2 and
+not), thrash, black metal, doom/sludge/stoner (fuzz), metalcore/djent, hardcore/crust,
+grind, nu-metal, modern prog. Nothing in the matcher, targets or pool may be hard-wired to
+Gatecreeper or the HM-2; Gatecreeper is the first test case, not the product. Single-path
+tones (no blend) must be as well supported as blends.
 
 ## Roles and model routing
 
