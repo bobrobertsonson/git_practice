@@ -251,3 +251,75 @@ def test_gil_is_released_while_rendering(di):
         t.join()
     # A render that held the GIL would let the spinner advance by ~0 for the whole call.
     assert progressed > 100 * dt
+
+
+# ---- input validation / robustness (follow-ups) ---------------------------------------------------
+def test_rejects_channels_first_and_integer_audio(di):
+    x, sr = di
+    t = preset_text("golden_shared")
+    with pytest.raises(ValueError, match=r"channels-first.*\.T"):
+        core.render(t, np.stack([x[:100], x[:100]]).reshape(1, -1), sr, base_dir=PRESETS)
+    for dt in (np.int16, np.int32, np.uint8):
+        with pytest.raises(ValueError, match="float audio"):
+            core.render(t, (x[:100] * 1000).astype(dt), sr, base_dir=PRESETS)
+    # (frames, 1) and (frames, 2) stay valid
+    core.render(t, x[:2000, None], sr, base_dir=PRESETS)
+
+
+def test_rejects_bool_block_and_low_sample_rate(di):
+    x, sr = di
+    t = preset_text("golden_shared")
+    for bad in (True, False, 256.0, "256"):
+        with pytest.raises(ValueError):
+            core.render(t, x[:100], sr, base_dir=PRESETS, block=bad)
+    for bad in (True, 999.0, 0, -48000, float("nan"), "48000"):
+        with pytest.raises(ValueError):
+            core.render(t, x[:100], bad, base_dir=PRESETS)
+
+
+def test_failed_load_then_fixed_file_retries(di, tmp_path):
+    import shutil
+
+    x, sr = di
+    x = x[:5000]
+    nam = tmp_path / "m.nam"
+    p = json.loads(preset_text("golden_shared"))
+    p["paths"]["a"]["blocks"][0]["model"]["file"] = str(nam)
+    cache = core.CaptureCache()
+    nam.write_text("not a nam file")
+    with pytest.raises(core.RenderIOError) as ei:
+        core.render(p, x, sr, base_dir=PRESETS, cache=cache)
+    assert ei.value.json_path == "paths.a.blocks[0].model.file"
+    shutil.copy(REPO / "tests/fixtures/nam/wavenet.nam", nam)  # fixed
+    y, _ = core.render(p, x, sr, base_dir=PRESETS, cache=cache)
+    ref, _ = core.render(p, x, sr, base_dir=PRESETS)
+    assert np.array_equal(y, ref)
+
+
+def test_clear_during_inflight_renders(di):
+    x, sr = di
+    x = x[:96000]
+    p = json.loads(preset_text("golden_shared"))
+    ref, _ = core.render(p, x, sr, base_dir=PRESETS)
+    cache = core.CaptureCache()
+    stop = threading.Event()
+
+    def clearer():
+        while not stop.is_set():
+            cache.clear()
+            time.sleep(0.01)
+
+    t = threading.Thread(target=clearer)
+    t.start()
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            outs = list(pool.map(lambda _: core.render(p, x, sr, base_dir=PRESETS, cache=cache)[0], range(8)))
+    finally:
+        stop.set()
+        t.join()
+    assert all(np.array_equal(o, ref) for o in outs)
+
+
+def test_numpy_scalars_accepted(di):
+    x, sr = di
+    core.render(preset_text("golden_shared"), x[:2000], np.int64(sr), base_dir=PRESETS, block=np.int64(64))

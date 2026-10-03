@@ -55,16 +55,29 @@ nlohmann::json presetToJson(const py::object& preset) {
   return j;
 }
 
-py::tuple render(const py::object& preset, const py::array_t<float, py::array::c_style | py::array::forcecast>& audio,
-                 double sampleRate, const py::object& renderRate, const std::string& outRate, int block,
+py::tuple render(const py::object& preset, const py::array& audioIn, const py::object& sampleRateArg,
+                 const py::object& renderRate, const std::string& outRate, const py::object& blockArg,
                  const py::object& baseDir, CaptureCache* cache) {
-  if (!(std::isfinite(sampleRate) && sampleRate > 0.0)) throw py::value_error("sample_rate must be positive");
+  if (py::isinstance<py::bool_>(sampleRateArg) || py::isinstance<py::str>(sampleRateArg) ||
+      !(PyNumber_Check(sampleRateArg.ptr())))
+    throw py::value_error("sample_rate must be a number (Hz)");
+  const double sampleRate = sampleRateArg.cast<double>();
+  if (!(std::isfinite(sampleRate) && sampleRate >= 1000.0)) throw py::value_error("sample_rate must be a rate in Hz, >= 1000");
+  if (py::isinstance<py::bool_>(blockArg) || !PyIndex_Check(blockArg.ptr()))
+    throw py::value_error("block must be an integer in 1..65536");
+  const auto block = py::cast<long long>(py::reinterpret_steal<py::object>(PyNumber_Index(blockArg.ptr())));
   if (block < 1 || block > 65536) throw py::value_error("block must be in 1..65536");
+  if (audioIn.dtype().kind() != 'f')
+    throw py::value_error("audio must be a floating-point array (expects float audio in [-1, 1]); convert integer PCM first");
+  if (audioIn.ndim() == 2 && audioIn.shape(0) == 1 && audioIn.shape(1) > 1)
+    throw py::value_error("audio has shape (1, N): 2-D audio is (frames, channels), so this looks channels-first; pass audio.T or audio[0]");
+  const auto audio = py::array_t<float, py::array::c_style | py::array::forcecast>::ensure(audioIn);
+  if (!audio) throw py::value_error("audio could not be converted to float32");
   if (audio.ndim() != 1 && audio.ndim() != 2)
     throw py::value_error("audio must be 1-D (mono) or 2-D (frames, channels)");
   if (audio.size() == 0) throw py::value_error("audio is empty");
   RenderOptions opts;
-  opts.blockSize = block;
+  opts.blockSize = static_cast<int>(block);
   opts.renderRate = parseRenderRate(renderRate);
   if (outRate == "input") opts.outRate = OutRate::Input;
   else if (outRate == "render") opts.outRate = OutRate::Render;
@@ -151,13 +164,16 @@ PYBIND11_MODULE(sawblade_core, m) {
         R"doc(Render mono audio through a Sawblade preset (same code path as tonerender; bit-identical).
 
 preset       JSON text (str) or a dict following docs/PRESET_SCHEMA.md.
-audio        float32 array, 1-D mono or (frames, channels) (first channel used, with a warning).
-sample_rate  rate of `audio` in Hz.
+audio        floating-point array (converted to float32; integer dtypes are rejected), 1-D mono or
+             (frames, channels) (first channel used, with a warning). A (1, N) array is rejected as
+             probably channels-first: pass audio.T.
+sample_rate  rate of `audio` in Hz (>= 1000).
 render_rate  "auto" (the NAM models' training rate) or a rate in Hz.
 out_rate     "input" (default; same length and rate as the input) or "render".
 block        processing block size, 1..65536 (output does not depend on it).
 base_dir     directory relative capture paths resolve against (default: the current directory).
-cache        optional CaptureCache.
+cache        optional CaptureCache. Its invalidation is stat-gated (file size + mtime): an edit that keeps
+             both unchanged is served stale; cache.clear() forces a reload.
 
 Returns (samples: float32 ndarray, report: dict). The report is the tonerender --report JSON
 (latencySamples, pathLatency, renderRate, timings, warnings, ...). The GIL is released while

@@ -157,7 +157,7 @@ y, report = render(preset_dict_or_json, di_float32, 48000, base_dir="presets", c
 The GIL is released while rendering, so renders from several Python threads run in parallel (a thread pool
 sharing one `CaptureCache` is the intended use). The cache keeps parsed models and IRs, not DSP state: each
 render still builds fresh NAM state, so changing blend, levels, EQ or NAM gains costs no reload. Entries are
-keyed by file path + SHA-256 (re-hashed only when size/mtime change); a preset `sha256` is checked on every use.
+keyed by file path + SHA-256 (re-hashed only when size/mtime change, so a same-size edit with preserved mtime is served stale; `cache.clear()` forces a reload); a preset `sha256` is checked on every use.
 Errors: `PresetError` (a `ValueError`) and `RenderIOError` (an `OSError`), both with `.json_path`.
 `pytest match/tests/test_core_bindings.py` skips itself when the module is not built.
 
@@ -166,7 +166,7 @@ Errors: `PresetError` (a `ValueError`) and `RenderIOError` (an `OSError`), both 
 ```
 sawblade-calibrate [--original ...mp3] [--cover-mix ...mp3] [--di-l ...wav] [--di-r ...wav]   # defaults: testdata/ paths
                    [--sections 0:12,95:110] [--no-separation] [--stems-dir testdata/stems]
-                   [--score RENDER.wav ...] [--targets docs/tone_targets.json] [--out DIR]
+                   [--score RENDER.wav ...] [--targets docs/tone_targets.json] [--out DIR] [--policy loosen-only|tighten]
 ```
 
 Measures guitar-dominant audio of the original and the cover mix with the tonecheck analysis and writes
@@ -185,3 +185,8 @@ signal. Side is the proposal **basis** whenever stems are unavailable (stems > s
 `--policy loosen-only` (default) changes a rule only when the basis original fails/marginally passes it;
 `--policy tighten` sets every threshold to the original +- tolerance (spec behaviour). Rules the original fails
 by more than the tolerance are "contradicted": listed with evidence, left unchanged in `rules`.
+
+`--out` defaults to `~/.cache/sawblade/calibration` (outside the repo; `calibration_out/` is also git-ignored if you
+choose it). Method 1 is installed with `pip install -e 'match[separation]' -c match/constraints-separation.txt`
+(the constraints file pins the resolved transitive set; the PyPI linux torch wheel also pulls ~2.5 GB of CUDA
+libraries although inference runs on CPU). The real-demucs test runs only with `SAWBLADE_TEST_DEMUCS=1`.

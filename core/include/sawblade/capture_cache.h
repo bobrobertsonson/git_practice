@@ -24,7 +24,9 @@ namespace sawblade {
 // Keying: entries are per file path (absolute, lexically normalized) and carry the file's SHA-256.
 // Every lookup re-validates the entry cheaply with the file's size + mtime; if either changed the
 // file is re-hashed and, when the hash differs, all data derived from the old content is dropped
-// (so an edited file is never served stale, and an unchanged file is never re-read). A preset's
+// (so an edited file is not served stale, and an unchanged file is never re-read). The check is
+// stat-gated: an edit that keeps both size and mtime (e.g. same-size rewrite with the mtime
+// restored) is NOT noticed and is served stale; clear() forces a reload. A preset's
 // own `sha256`, when present, is checked against the content hash on every lookup, exactly as
 // verifyCapture does (same error text).
 //
