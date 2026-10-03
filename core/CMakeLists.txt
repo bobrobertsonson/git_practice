@@ -10,6 +10,7 @@ add_library(sawblade_core STATIC
   src/gate.cpp
   src/convolver.cpp
   src/resample.cpp
+  src/rt_resample.cpp
   src/ir.cpp
   src/nam_block.cpp
   src/delay.cpp

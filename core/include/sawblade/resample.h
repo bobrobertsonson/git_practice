@@ -15,6 +15,10 @@ namespace sawblade {
 // the kernel per output sample.
 constexpr double kResampleKaiserBeta = 10.0;
 constexpr double kResampleStopbandDb = 99.0;  // design attenuation, used to size the kernel
+// Cutoff (-6 dB point) and transition width, both relative to the lower Nyquist. Shared with the
+// real-time resampler (rt_resample.h) so both converters have the same frequency response.
+constexpr double kResampleCutoffOfNyquist = 0.97;
+constexpr double kResampleTransitionOfNyquist = 0.14;
 
 // The default output length of resample(): round(n * toRate / fromRate).
 std::size_t resampledLength(std::size_t n, double fromRate, double toRate);

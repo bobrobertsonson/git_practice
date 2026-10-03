@@ -4,6 +4,16 @@ All dependencies are fetched with CMake FetchContent (`cmake/Dependencies.cmake`
 exact commits. Headers are exposed as `SYSTEM`; third-party code is compiled without our
 `-Werror` warning set.
 
+> ### LICENSING GATE: JUCE 8 (plugin only)
+>
+> **JUCE 8 is dual-licensed: AGPLv3 or a commercial JUCE licence. Sawblade is a commercial
+> product, so a JUCE commercial licence is required before any plugin binary (VST3, AU,
+> Standalone, AAX) is distributed or shipped to anyone outside the project.** Development builds
+> for internal use are fine. JUCE is only fetched and built with `-DSAWBLADE_BUILD_PLUGIN=ON`
+> (default OFF); the core library, `tonerender` and the Catch2 suite contain no JUCE code, and
+> `core/` must stay JUCE-free. Under the AGPLv3 option the whole plugin would have to be
+> distributed under the AGPLv3 with its source. Decision owner: lead/user (see `docs/specs/phase2_plugin.md`).
+
 | Name | Version / pin | License | Use |
 |------|---------------|---------|-----|
 | NeuralAmpModelerCore | `0b3d3c97b0859a3a8c92a8628c4dd89a25eb5842` (sdatkinson) | MIT | `NAM/*.cpp` built into static lib `nam_core` with `NAM_SAMPLE_FLOAT` and `NAM_ENABLE_A2_FAST`; its tools and submodules are not built or fetched. Used by `NamBlock` (T2). |
@@ -11,9 +21,16 @@ exact commits. Headers are exposed as `SYSTEM`; third-party code is compiled wit
 | nlohmann/json | v3.11.3, `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03` | MIT | Preset parsing (T3) and NAM model JSON. NAM core includes it as `"json.hpp"`, so `single_include/nlohmann` is also on the include path. NAM core vendors 3.12.0; it builds fine against 3.11.3. |
 | Catch2 | v3.7.1, `9827c148c397289df17d3967692619a198032a24` | BSL-1.0 | Unit/golden tests. Tests only. |
 | PFFFT (marton78/pffft) | `aa16fd3db58de4ba5dae8b0438440bb9da46b6fa` (v1.1.0-58) | BSD-style (FFTPACK/Pommier; see `LICENSE.txt` in the repo) | FFT for the partitioned convolver (T2). Float-only C sources (SIMD auto-selected by the library) `pffft.c` + `pffft_common.c` only. |
+| JUCE | 8.0.15, `91ad83ae34a81e0833b1a2b0866f54846370ae53` (release tag `8.0.15`, github.com/juce-framework/JUCE; shallow fetch of the pinned commit) | **AGPLv3 or commercial (every module we link declares `AGPLv3/Commercial`). A commercial licence is required before distribution; see the gate above.** Bundled third-party code inside JUCE (VST3 SDK, FreeType/HarfBuzz/SheenBidi, LV2 libraries, ...) has its own licences and must be audited before any redistribution. | Plugin only (`SAWBLADE_BUILD_PLUGIN=ON`): AudioProcessor, parameters (APVTS), editor, VST3 / AU / Standalone wrappers. Modules used: juce_audio_processors, juce_gui_basics, juce_data_structures, juce_events, juce_audio_utils (Standalone), juce_audio_plugin_client, and their dependencies. Not used by `core/`, `cli/` or `match/`. |
 | SHA-256 | Written for Sawblade (`core/src/sha256.cpp`, FIPS 180-4; nothing vendored) | n/a (project code) | Capture `sha256` verification (T3). Verified against the FIPS test vectors in `tests/test_preset.cpp`. |
 | dr_wav (mackron/dr_libs) | `dfe8377631000664666519fdb83da193fd8037f4` | Public domain or MIT-0 (choice) | WAV read/write (`core/src/wav_io.cpp`; implementation TU `core/src/dr_wav_impl.cpp`). |
 | pybind11 | v3.0.4, `d03662f0984f652b60e7ddce53d3868002275197` (pybind/pybind11) | BSD-3-Clause | Python bindings (`bindings/python`, module `sawblade_core`). Fetched only with `-DSAWBLADE_BUILD_PYTHON=ON` (off by default); headers exposed as `SYSTEM`. |
+
+## Development tools (external, never linked or distributed)
+
+| Name | Version | License | Use |
+|------|---------|---------|-----|
+| pluginval (Tracktion) | v1.0.4 | GPL-3.0 (check the repository's `LICENSE`) | Dev tool, not linked or shipped. Optional VST3 validation: build it yourself and pass `-DSAWBLADE_PLUGINVAL_EXECUTABLE=...` (see `docs/PLUGIN.md`). Not fetched by our CMake. |
 
 ## Python (match/)
 

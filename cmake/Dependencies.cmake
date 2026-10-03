@@ -78,6 +78,19 @@ if(SAWBLADE_BUILD_TESTS)
   list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 endif()
 
+# --- JUCE 8 (plugin only; SAWBLADE_BUILD_PLUGIN) ---------------------------------------------
+# LICENSING GATE: JUCE 8 is AGPLv3 or commercial. Sawblade is commercial, so a JUCE commercial
+# licence is required before distributing any plugin binary. Development builds are fine.
+# See docs/THIRD_PARTY.md.
+if(SAWBLADE_BUILD_PLUGIN)
+  FetchContent_Declare(juce
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG        91ad83ae34a81e0833b1a2b0866f54846370ae53 # 8.0.15 (release tag)
+    GIT_SHALLOW    ON
+    SYSTEM)
+  FetchContent_MakeAvailable(juce)
+endif()
+
 # --- pybind11 (Python bindings only; SAWBLADE_BUILD_PYTHON) ---------------------------------
 # Pass -DPython_EXECUTABLE=<python> to pick the interpreter (match/.venv/bin/python).
 if(SAWBLADE_BUILD_PYTHON)

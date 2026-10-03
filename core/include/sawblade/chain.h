@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,28 @@ struct ChainResources {
 // instead of being read again; the result is bit-identical to the uncached load.
 ChainResources loadResources(const Preset& preset, double sampleRate, CaptureCache* cache = nullptr);
 
+// The rate a model is assumed to run at when it records none (NAM convention: 48 kHz).
+constexpr double kAssumedNamSampleRate = 48000.0;
+
+struct NamRateProbe {
+  std::string where;  // "paths.a.blocks[0] (id)"
+  double hz = 0.0;    // recorded training rate, or kAssumedNamSampleRate
+  bool recorded = true;
+};
+
+// Training rates of the NAM blocks that will actually run (not bypassed, on an enabled path). A
+// model that records no rate counts as kAssumedNamSampleRate. Loads the models (through `cache`
+// if given). Throws CaptureError (JSON path of the `file` member) if a model cannot be loaded.
+// Shared by tonerender's `--render-rate auto` and the plugin so both pick the same rate.
+std::vector<NamRateProbe> probeNamRates(const Preset& preset, CaptureCache* cache = nullptr);
+
+struct ModelRate {
+  std::optional<double> hz;  // the common rate; none if no NAM block runs or they disagree
+  bool ambiguous = false;    // blocks disagree
+  std::string listing;       // when ambiguous: "paths.a.blocks[0] (a1): 48000 Hz, ..."
+};
+ModelRate commonModelRate(const std::vector<NamRateProbe>& probes);
+
 struct AlignResult {
   int delaySamplesB = 0;  // +n delays B, -n delays A by n
   bool invertB = false;
@@ -64,6 +87,22 @@ struct ChainInfo {
   std::vector<std::string> warnings;
 };
 
+// The continuous controls that can change while the chain runs, without rebuilding it (the
+// plugin's parameters). Defaults come from the preset (LiveParams::fromPreset).
+struct LiveParams {
+  double inputGainDb = 0.0;
+  double outputGainDb = 0.0;
+  double gateThresholdDb = -55.0;  // only audible when the preset's gate is enabled
+  double blend = 0.5;              // 0 = path A only, 1 = path B only
+  double levelDbA = 0.0;
+  double levelDbB = 0.0;
+  // Gain (dB) of each band of the preset's postEq, by band index (gain-less bands ignore it).
+  std::array<double, ParametricEq::kMaxBands> postEqGainDb{};
+
+  static LiveParams fromPreset(const Preset& p);
+  bool operator==(const LiveParams&) const = default;
+};
+
 // The two-path signal graph of CLAUDE.md:
 //   in -> input gain -> gate (keyed on the DI) -> split
 //     path: pre-EQ -> blocks -> path EQ -> level(+invert) -> [perPath cab] -> delay
@@ -74,7 +113,14 @@ struct ChainInfo {
 // processing latency only. The alignment delay (up to +-maxLagMs) is treated as part of the tone,
 // like mic distance, and is reported separately as ChainInfo::alignDelay.
 //
-// Threading: ctor/prepare()/reset()/resolveAlignment()/info() are not RT-safe. Only process() is.
+// Live parameters: setLiveParams() changes the LiveParams controls in place (no model reload, no
+// allocation). Gains and the blend are smoothed with sample-accurate linear ramps over
+// kLiveRampMs; post-EQ band gains ramp in dB, redesigning the band every kEqSubBlock samples.
+// The gate threshold moves immediately (it is a state-machine threshold, not an audio gain).
+// The alignment (resolved at prepare()) is not re-resolved when levels change.
+//
+// Threading: ctor/prepare()/reset()/resolveAlignment()/info() are not RT-safe. process() and
+// setLiveParams() are (call both from the audio thread, or otherwise serialise them).
 class Chain {
  public:
   Chain(const Preset& preset, ChainResources&& resources);  // throws std::runtime_error on mismatches
@@ -91,6 +137,12 @@ class Chain {
   void process(const float* in, float* out, int n) noexcept;
 
   int latencySamples() const noexcept { return latency_; }
+
+  static constexpr double kLiveRampMs = 20.0;
+  static constexpr int kEqSubBlock = 32;
+  // RT-safe. Only changed fields act, so calling this every block with the same values is cheap.
+  void setLiveParams(const LiveParams& p) noexcept;
+  const LiveParams& liveParams() const noexcept { return live_; }
 
   // Measures the alignment with the deterministic probe (see chain.cpp for the exact recipe),
   // at the blend point, gate bypassed, current latency compensation, no alignment delay.
@@ -121,6 +173,7 @@ class Chain {
   void processChunk(const float* in, float* out, int n) noexcept;
   void renderPath(Path& p, float* io, int n) noexcept;
   void applyAlignment(const AlignResult& r);
+  void processPostEq(float* w, int n) noexcept;
   void resetAll();
 
   Preset preset_;
@@ -133,7 +186,19 @@ class Chain {
   ParametricEq postEq_;
   BusCompressor comp_;
   bool compOn_ = false;
-  float blendA_ = 0.5f, blendB_ = 0.5f;
+  float blendA_ = 0.5f, blendB_ = 0.5f;        // targets (blendB_ carries the alignment polarity)
+  float blendCurA_ = 0.5f, blendCurB_ = 0.5f;  // current values while ramping
+  float blendStepA_ = 0.0f, blendStepB_ = 0.0f;
+  int blendRamp_ = 0;                          // samples left in the blend ramp
+  LiveParams live_;
+  int rampSamples_ = 1;
+  struct EqRamp {
+    double cur = 0.0, target = 0.0, step = 0.0;
+    int remaining = 0;  // samples
+  };
+  std::array<EqRamp, ParametricEq::kMaxBands> eqRamp_{};
+  int eqRamping_ = 0;  // number of bands with remaining > 0
+  std::uint64_t eqCounter_ = 0;  // post-EQ samples processed: the 32-sample redesign grid is absolute
   AlignResult align_;
   int latency_ = 0;
   int maxBlock_ = 0;

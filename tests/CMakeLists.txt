@@ -17,6 +17,8 @@ add_executable(sawblade_tests
   test_chain.cpp
   test_render.cpp
   test_resample.cpp
+  test_rt_resample.cpp
+  test_chain_live.cpp
   test_capture_cache.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain

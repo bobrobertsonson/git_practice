@@ -23,7 +23,8 @@ void usage(std::ostream& os) {
         "chain's reported latency; at the input rate and length unless --out-rate render.\n"
         "--render-rate auto (default): the NAM models' training rate (they must agree, else exit 3);\n"
         "  the input is resampled to it and, by default, the result back to the input rate.\n"
-        "  With no NAM blocks, auto renders at the input rate. A number forces that rate in Hz.\n"
+        "  A model that records no rate counts as 48 kHz. With no NAM blocks, auto renders at the input\n"
+        "  rate. A number forces that rate in Hz.\n"
         "exit codes: 0 ok, 2 usage, 3 preset error, 4 I/O or model error\n";
 }
 

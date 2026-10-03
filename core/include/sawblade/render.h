@@ -45,8 +45,9 @@ class CaptureCache;  // capture_cache.h
 struct RenderOptions {
   int blockSize = 256;                      // processing block size, 1..65536
   // Render rate. none = auto: the rate the preset's NAM models were trained at (all non-bypassed
-  // NAM blocks on enabled paths with a known rate must agree, else RenderError Preset naming the
-  // blocks); a preset with no such blocks renders at the input rate.
+  // NAM blocks on enabled paths must agree, else RenderError Preset naming the blocks; a model that
+  // records no rate counts as 48 kHz, kAssumedNamSampleRate, the NAM convention); a preset with no
+  // NAM blocks renders at the input rate.
   std::optional<double> renderRate;
   OutRate outRate = OutRate::Input;
   std::optional<double> normalizePeakDbfs;  // scale the output so its peak equals this; none by default

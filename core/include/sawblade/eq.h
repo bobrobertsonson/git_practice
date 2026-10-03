@@ -60,6 +60,11 @@ class ParametricEq : public Processor {
   void reset() override;
   void process(float* io, int numSamples) noexcept override;
 
+  // RT-safe: changes the gain of band `bandIndex` (index into the configured bands) and
+  // redesigns only that band's filter, keeping its state. No effect for out-of-range indices,
+  // non-finite gains, disabled bands or HighPass/LowPass bands (which have no gain).
+  void setBandGainDb(int bandIndex, double gainDb) noexcept;
+
   // Combined analytic response (sum of enabled bands' dB) at the configured sample rate.
   double magnitudeDb(double freqHz) const;
 

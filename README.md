@@ -23,6 +23,7 @@ DI -> input gain -> gate (keyed on DI) -> split
 |---|---|
 | `core/` | DSP library `sawblade_core` (namespace `sawblade`, no JUCE): EQ, gate, NAM block, convolver, chain, preset model, offline renderer |
 | `cli/` | `tonerender` |
+| `plugin/` | JUCE plugin (optional, `SAWBLADE_BUILD_PLUGIN`): engine, processor, parameters, editor, headless tests |
 | `tests/` | Catch2 tests, fixtures (`tests/fixtures`), golden renders (`tests/golden`), fixture generator (`tests/tools`) |
 | `presets/` | Starter factory presets (captures are not in the repo, see `presets/README.md`) |
 | `docs/` | Preset schema (`PRESET_SCHEMA.md`), specs, third-party licenses (`THIRD_PARTY.md`) |
@@ -48,6 +49,18 @@ ctest --test-dir build --output-on-failure
 
 This runs the unit tests, the allocation-counting real-time safety tests, the golden renders
 and the `tonerender` CLI tests (which run the built binary).
+
+## Plugin (optional, JUCE 8)
+
+The VST3 / Standalone plugin (AU on macOS) is built with `-DSAWBLADE_BUILD_PLUGIN=ON` (default OFF;
+fetches JUCE). **JUCE 8 is AGPLv3 or commercial: a JUCE commercial licence is required before the
+plugin is distributed** (`docs/THIRD_PARTY.md`). Build, threading model, latency accounting, the
+real-time resampler and the headless tests are described in `docs/PLUGIN.md`.
+
+```
+cmake -S . -B build-plugin -G Ninja -DCMAKE_BUILD_TYPE=Release -DSAWBLADE_BUILD_PLUGIN=ON
+cmake --build build-plugin && ctest --test-dir build-plugin --output-on-failure
+```
 
 ## Render with `tonerender`
 
