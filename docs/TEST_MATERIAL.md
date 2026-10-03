@@ -19,6 +19,28 @@ Implications:
 - The −40 dB floor (hum/hiss between notes) is a realistic gate test.
 - Render L and R separately through the same preset and pan hard L/R for listening.
 
-Reference: the user's YouTube link (the song) cannot be fetched from the build environment
-(blocked; downloading YouTube audio also conflicts with its terms). Supply reference audio as
-a file (your cover's mix, or a purchased/owned copy of the original) in `testdata/reference/`.
+## `testdata/reference/barbaric_pleasures_cover_mix.mp3` — the cover's finished mix
+
+MP3 192 kbps, 44.1 kHz stereo, 177.9 s, peak −1.2 dBFS, RMS −18.1 dBFS. Full instrumental
+mix (guitars + bass + drums), from the same cover project as the DIs above.
+
+**It is a matched pair with the DIs** (lead analysis, onset-pattern cross-correlation,
+300 Hz–4 kHz, 5 ms hop, ±5 s search):
+
+| DI | Best mix channel | Offset of DI within mix | Peak corr vs. median |
+|---|---|---|---|
+| Guitar_L | left | ≈ +190 ms | 0.168 vs 0.011 |
+| Guitar_R | right | ≈ +175 ms | 0.074 vs 0.010 |
+
+So the guitars are double-tracked and panned hard L/R, and the mix's tone is exactly what
+these DIs became. This is a known-answer target for the matcher.
+
+Caveats:
+- 5 ms resolution; refine to sample accuracy before any per-note/time-aligned comparison
+  (the L/R offsets may genuinely differ by ~15 ms or the estimate may be coarse).
+- The mix contains bass and drums: compare in guitar-dominant bands / sections, or use
+  per-band LTAS differences rather than the absolute rules. MP3 192k: ignore > 16 kHz.
+- Mix bus processing (EQ/compression/limiting) is baked in; the matcher must allow a
+  post-EQ/level offset and must not try to reproduce limiting in the NAM chain.
+
+The user's YouTube link could not be fetched (blocked; also against YouTube's terms).
