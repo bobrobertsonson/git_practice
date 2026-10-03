@@ -627,3 +627,28 @@ def test_onset_precision_recall_on_synthetic_set():
                 nd += len(det)
                 nt += len(truth)
     assert tp / nd >= 0.97 and tp / nt >= 0.97
+
+
+# --- onset minimum-rise edges ------------------------------------------------------------------------------
+def _bed_with_pluck(rise_db, seed=7, dur=4.0, t0=2.0):
+    """Steady noise bed plus one pluck whose initial power is (10^(rise/10) - 1) x the bed's."""
+    n = int(dur * FS)
+    rng = np.random.default_rng(seed)
+    x = 0.05 * rng.standard_normal(n)
+    i = int(t0 * FS)
+    amp = 0.05 * np.sqrt(10 ** (rise_db / 10) - 1)
+    x[i:] += amp * np.exp(-np.arange(n - i) / FS / 0.08) * rng.standard_normal(n - i)
+    return x
+
+
+def _has_onset_near(det, t, tol=0.02):
+    return bool(np.any(np.abs(np.asarray(det) - t) <= tol))
+
+
+def test_onset_min_rise_edges():
+    assert A.ONSET_MIN_RISE_DB == 6.0
+    # ~4 dB rise: below the 6 dB check -> suppressed; ~9 dB: kept (3 seeds each)
+    for seed in (7, 8, 9):
+        assert not _has_onset_near(A.detect_onsets(_bed_with_pluck(4.0, seed), FS), 2.0)
+        assert not _has_onset_near(A.detect_onsets(_bed_with_pluck(5.0, seed), FS), 2.0)   # just under the 6 dB check
+        assert _has_onset_near(A.detect_onsets(_bed_with_pluck(9.0, seed), FS), 2.0)

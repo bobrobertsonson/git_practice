@@ -443,25 +443,42 @@ def test_cover_di_onsets_offset_sign_and_low_end_decay():
     assert np.max(np.abs(wrong[::2] - (np.array(plucks) + off))) > 0.3
 
 
-# --- onset minimum-rise edges (tonecheck) --------------------------------------------------------------------
-def _bed_with_pluck(rise_db, seed=7, dur=4.0, t0=2.0):
-    """Steady noise bed plus one pluck whose initial power is (10^(rise/10) - 1) x the bed's."""
-    n = int(dur * FS)
-    rng = np.random.default_rng(seed)
-    x = 0.05 * rng.standard_normal(n)
-    i = int(t0 * FS)
-    amp = 0.05 * np.sqrt(10 ** (rise_db / 10) - 1)
-    x[i:] += amp * np.exp(-np.arange(n - i) / FS / 0.08) * rng.standard_normal(n - i)
-    return x
+def _write_synthetic_inputs(tmp_path):
+    mix, _, _ = make_original(40.0)
+    mix_l, mix_r, di_l, di_r, *_ = make_cover(40.0)
+    paths = {"orig": tmp_path / "orig.wav", "cover": tmp_path / "cover.wav", "L": tmp_path / "L.wav", "R": tmp_path / "R.wav"}
+    sf.write(paths["orig"], np.stack([mix + 0.5 * guitar(len(mix), 98), mix + 0.5 * guitar(len(mix), 99)], axis=1).astype(np.float32), FS)
+    sf.write(paths["cover"], np.stack([mix_l, mix_r], axis=1).astype(np.float32), FS)
+    sf.write(paths["L"], di_l.astype(np.float32), FS)
+    sf.write(paths["R"], di_r.astype(np.float32), FS)
+    return paths
 
 
-def _has_onset_near(det, t, tol=0.02):
-    return bool(np.any(np.abs(np.asarray(det) - t) <= tol))
+def test_cli_passes_shifted_di_onsets_to_cover_side_only(tmp_path, monkeypatch):
+    paths = _write_synthetic_inputs(tmp_path)
+    calls = {}
+    real = cli.measure
+
+    def spy(label, *a, **k):
+        calls[label] = k
+        return real(label, *a, **k)
+    monkeypatch.setattr(cli, "measure", spy)
+    rc = cli.main(["--original", str(paths["orig"]), "--cover-mix", str(paths["cover"]), "--di-l", str(paths["L"]),
+                   "--di-r", str(paths["R"]), "--no-separation", "--targets",
+                   str(Path(__file__).parent / "fixtures" / "tone_targets_v1.json"), "--out", str(tmp_path / "o"),
+                   "--stems-dir", str(tmp_path / "stems")])
+    assert rc == 0
+    # expected: the run's own offsets and the DIs as the CLI reads them (float32 wav -> float64, 48 kHz)
+    cover, _ = sf.read(str(paths["cover"]), dtype="float64", always_2d=True)
+    l, r = cover[:, 0], cover[:, 1]
+    di_l = sf.read(str(paths["L"]), dtype="float64")[0]
+    di_r = sf.read(str(paths["R"]), dtype="float64")[0]
+    offs = S.cover_guitar_frames(l, r, di_l, di_r).info["offsetsS"]
+    expected = CH.cover_di_onsets(di_l, di_r, offs)
+    assert len(expected) > 0
+    got = calls["cover/side"]["onsets"]
+    assert got is not None and np.array_equal(got, expected)
+    assert calls["original/side"].get("no_onsets") is True and calls["original/side"].get("onsets") is None
+    assert not calls["cover/side"].get("no_onsets")
 
 
-def test_onset_min_rise_edges():
-    assert A.ONSET_MIN_RISE_DB == 6.0
-    # ~4 dB rise: below the 6 dB check -> suppressed; ~9 dB: kept (3 seeds each)
-    for seed in (7, 8, 9):
-        assert not _has_onset_near(A.detect_onsets(_bed_with_pluck(4.0, seed), FS), 2.0)
-        assert _has_onset_near(A.detect_onsets(_bed_with_pluck(9.0, seed), FS), 2.0)
