@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--excerpt-s", type=float, default=6.0, help="screening/optimisation excerpt length (<= 8 s)")
     p.add_argument("--excerpt-window", type=_section, metavar="A:B", help="explicit excerpt window in DI seconds")
-    p.add_argument("--top-k", type=int, default=3, help="combos refined by CMA-ES")
+    p.add_argument("--top-k", type=int, default=4, help="combos refined by CMA-ES")
     p.add_argument("--threads", type=int, default=4)
     p.add_argument("--targets", help="docs/tone_targets.json")
     p.add_argument("--no-audio", action="store_true", help="skip the listening WAV/MP3")

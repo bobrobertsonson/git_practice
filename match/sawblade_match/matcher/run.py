@@ -45,11 +45,15 @@ class Plan:
     pop_gain: int = 8
 
     @staticmethod
-    def from_budget(budget: float, top_k: int = 3) -> "Plan":
+    def from_budget(budget: float, top_k: int = 4) -> "Plan":
+        """Budget 1.0: the full A (HM-2 x amp) and B (boost/none x amp) pair product of the current pool (410 / 300 pairs)
+        is rendered; smaller budgets draw seeded random subsets. Measured on the 4-core dev box: 14 min for a 3-combo plan
+        at 200/150 pairs (lightly loaded), 44 min for 410/300 pairs + 5 combos under a load average of 10 (shared
+        with other jobs); the default (full pairs, 4 combos, fewer NAM-gain generations) is ~20 min unloaded."""
         b = max(budget, 0.01)
         g = lambda n, lo: max(lo, int(round(n * min(b, 3.0))))
-        return Plan(cap_a=g(200, 3), cap_b=g(150, 3), n_rescore=g(40, 3), n_cab=g(10, 2), top_k=top_k,
-                    gens_linear=g(30, 3), gens_gain=g(8, 2), gens_final=g(20, 2))
+        return Plan(cap_a=g(410, 3), cap_b=g(300, 3), n_rescore=g(60, 3), n_cab=g(15, 2), top_k=top_k,
+                    gens_linear=g(40, 3), gens_gain=g(8, 2), gens_final=g(20, 2))
 
 
 @dataclass
@@ -62,7 +66,7 @@ class Config:
     budget: float = 1.0
     seed: int = 0
     excerpt_s: float = 6.0
-    top_k: int = 3
+    top_k: int = 4
     threads: int = 4
     targets: Path | None = None
     window_s: tuple[float, float] | None = None
