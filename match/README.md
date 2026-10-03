@@ -108,3 +108,12 @@ output's 80-160 Hz energy envelope (Butterworth-4 band-pass, 10 ms mean-square, 
 `gap_noise` (<= -60, no tolerance). `--ref`: per-band LTAS difference (both normalised to 1 kHz) and
 A-weighted error = sqrt(sum(w d^2)/sum(w)), w = 10^(A(fc)/10), bands 80 Hz-8 kHz. Analysis is deterministic
 (no random processes).
+
+Addenda: `--ref`/`--ref-channel` repeat (one channel value for all refs, or one per ref); `report.json`
+has a `references` list and `report.png` one overlay + difference panel per ref. `gapNoiseDb` is measured on
+the DI's gap frames (50 ms frames within 6 dB of the DI's 5th-percentile level), output RMS there relative to
+active output RMS; null / rule status `n/a` when fewer than 1 % of frames qualify or no DI is given;
+`diNoiseFloorDb` reports that floor (dBFS) for gate calibration. `lowDecayDbPerMs` is the regression slope
+(dB/ms) of the 80-160 Hz envelope over [peak+5 ms, min(peak+35 ms, next onset)] (>= 15 ms, else censored); the
+causal band-pass transient makes it read ~10-25 % shallower than the true decay, so compare presets, not
+absolute values.

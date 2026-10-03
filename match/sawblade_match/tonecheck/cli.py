@@ -66,25 +66,32 @@ def _analysis_json(a: Analysis) -> dict:
     }
 
 
-def check_audio(name: str, wav: Path, di_path: Path | None, ref_path: Path | None, targets: dict,
+def check_audio(name: str, wav: Path, di_path: Path | None, refs: Sequence[tuple[Path, str]], targets: dict,
                 out_dir: Path, tonerender_report: dict | None = None, preset: Path | None = None,
-                targets_path: Path | None = None, ref_channel: str = "mid") -> dict:
+                targets_path: Path | None = None) -> dict:
+    """``refs``: (path, channel) pairs; each gets its own section under ``references``."""
     out_dir.mkdir(parents=True, exist_ok=True)
     x, fs = read_mono(wav, "mid")
     di = read_mono(di_path) if di_path else None
     a = analyze(x, fs, targets, di=di)
     results = evaluate_rules(a.groups, targets["rules"])
-    gap = a.metrics["gapNoiseDb"]["value"]
-    gm = gap - GATE_NOISE_TARGET_DB  # <= -60 required: margin = -60 - gap
-    results.append({"id": "gap_noise", "expr": "gapNoiseDb <= -60", "group": "gapNoiseDb", "op": "<=",
-                    "value": round(gap, 3), "threshold": GATE_NOISE_TARGET_DB, "margin": round(-gm, 3),
-                    "toleranceDb": 0.0, "status": "pass" if gap <= GATE_NOISE_TARGET_DB else "fail",
-                    "why": "metric target from tone_targets.json (no tolerance given)"})
+    gapm = a.metrics["gapNoiseDb"]
+    gap = gapm["value"]
+    row = {"id": "gap_noise", "expr": "gapNoiseDb <= -60", "group": "gapNoiseDb", "op": "<=",
+           "threshold": GATE_NOISE_TARGET_DB, "toleranceDb": 0.0,
+           "why": "metric target from tone_targets.json (no tolerance given)"}
+    if gap is None:
+        row.update(value=None, margin=None, status="n/a", reason=gapm.get("reason"))
+    else:
+        row.update(value=round(gap, 3), margin=round(GATE_NOISE_TARGET_DB - gap, 3),
+                   status="pass" if gap <= GATE_NOISE_TARGET_DB else "fail")
+    results.append(row)
     report = {
-        "schema": "sawblade.tonecheck_report", "version": 1, "name": name,
+        "schema": "sawblade.tonecheck_report", "version": 2, "name": name,
         "randomness": "none (analysis is deterministic; no seeds)",
         "inputs": {"preset": str(preset) if preset else None, "audio": str(wav),
-                   "di": str(di_path) if di_path else None, "ref": str(ref_path) if ref_path else None, "refChannel": ref_channel if ref_path else None,
+                   "di": str(di_path) if di_path else None,
+                   "refs": [{"path": str(p), "channel": ch} for p, ch in refs],
                    "targets": str(targets_path) if targets_path else None,
                    "targetsStatus": targets.get("status")},
         "rates": {"audioInputHz": fs, "analysisHz": 48000,
@@ -95,45 +102,53 @@ def check_audio(name: str, wav: Path, di_path: Path | None, ref_path: Path | Non
         "rules": results,
         **_analysis_json(a),
     }
-    refcmp = None
-    if ref_path:
-        rx, rfs = read_mono(ref_path, ref_channel)
+    cmps = []
+    report["references"] = []
+    for rp, ch in refs:
+        rx, rfs = read_mono(rp, ch)
         ra = analyze(rx, rfs, targets)
-        refcmp = compare_to_reference(a, ra)
-        report["reference"] = {
-            "path": str(ref_path), "analysis": _analysis_json(ra),
-            "ltasDiffDb": [_r(v, 2) for v in refcmp["diff_db"]],
-            "aWeightedErrorDb": _r(refcmp["aWeightedErrorDb"], 3),
-            "unweightedRmsErrorDb": _r(refcmp["unweightedRmsErrorDb"], 3),
-            "meanDiffDb": _r(refcmp["meanDiffDb"], 3),
+        cmp = compare_to_reference(a, ra)
+        cmp["name"] = f"{rp.stem} ({ch})"
+        cmps.append(cmp)
+        report["references"].append({
+            "path": str(rp), "channel": ch, "analysis": _analysis_json(ra),
+            "ltasDiffDb": [_r(v, 2) for v in cmp["diff_db"]],
+            "aWeightedErrorDb": _r(cmp["aWeightedErrorDb"], 3),
+            "unweightedRmsErrorDb": _r(cmp["unweightedRmsErrorDb"], 3),
+            "meanDiffDb": _r(cmp["meanDiffDb"], 3),
             "rulesOnReference": evaluate_rules(ra.groups, targets["rules"]),
-        }
+        })
     if tonerender_report is not None:
         report["tonerender"] = tonerender_report
     (out_dir / "report.json").write_text(json.dumps(report, indent=2))
     make_plot(out_dir / "report.png", f"{name}  [{report['summary']['overall']}]", a.centres, a.rel_db,
-              a.groups, targets["analysis"]["bandGroups"], results, ref=refcmp)
+              a.groups, targets["analysis"]["bandGroups"], results, refs=cmps)
     return report
 
 
+def _f(v, fmt):
+    return "n/a" if v is None else format(v, fmt)
+
+
 def format_table(report: dict) -> str:
-    lines = [f"{report['name']}: {report['summary']['overall'].upper()} "
-             f"(pass {report['summary']['pass']}, marginal {report['summary']['marginal']}, "
-             f"fail {report['summary']['fail']})",
+    s = report["summary"]
+    lines = [f"{report['name']}: {s['overall'].upper()} (pass {s['pass']}, marginal {s['marginal']}, "
+             f"fail {s['fail']}, n/a {s['n/a']})",
              f"{'rule':<20}{'expr':<26}{'value':>8}{'thresh':>8}{'margin':>8}{'tol':>5}  status"]
     for r in report["rules"]:
-        lines.append(f"{r['id']:<20}{r['expr']:<26}{r['value']:>8.1f}{r['threshold']:>8.1f}"
-                     f"{r['margin']:>+8.1f}{r['toleranceDb']:>5.1f}  {r['status']}")
+        lines.append(f"{r['id']:<20}{r['expr']:<26}{_f(r['value'], '8.1f'):>8}{r['threshold']:>8.1f}"
+                     f"{_f(r['margin'], '+8.1f'):>8}{r['toleranceDb']:>5.1f}  {r['status']}"
+                     + (f" ({r['reason']})" if r.get("reason") else ""))
     m = report["metrics"]
-    lt = m["lowTightnessMs"].get("valueMs")
-    lines.append(f"buzz {m['buzz']['value']:.3f} | lowTightnessMs {'n/a' if lt is None else f'{lt:.0f}'} | "
-                 f"crest {m['crestFactorDb']['value']:.1f} dB | LRA "
-                 f"{'n/a' if m['loudnessRangeLU']['value'] is None else format(m['loudnessRangeLU']['value'], '.1f')} LU | "
-                 f"gap {m['gapNoiseDb']['value']:.1f} dB")
-    if "reference" in report:
-        lines.append(f"vs reference: A-weighted error {report['reference']['aWeightedErrorDb']:.2f} dB "
-                     f"(unweighted {report['reference']['unweightedRmsErrorDb']:.2f}, "
-                     f"mean diff {report['reference']['meanDiffDb']:+.2f})")
+    lines.append(f"buzz {m['buzz']['value']:.3f} | lowTightnessMs {_f(m['lowTightnessMs'].get('valueMs'), '.0f')}"
+                 f" | lowDecayDbPerMs {_f(m['lowDecayDbPerMs'].get('value'), '.3f')}"
+                 f" | crest {m['crestFactorDb']['value']:.1f} dB | LRA {_f(m['loudnessRangeLU']['value'], '.1f')} LU"
+                 f" | gap {_f(m['gapNoiseDb']['value'], '.1f')} dB"
+                 f" | DI floor {_f(m.get('diNoiseFloorDb', {}).get('value'), '.1f')} dBFS")
+    for ref in report["references"]:
+        lines.append(f"vs {Path(ref['path']).name} ({ref['channel']}): A-weighted error "
+                     f"{ref['aWeightedErrorDb']:.2f} dB (unweighted {ref['unweightedRmsErrorDb']:.2f}, "
+                     f"mean diff {ref['meanDiffDb']:+.2f})")
     return "\n".join(lines)
 
 
@@ -143,8 +158,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--presets", nargs="+", help="batch mode: several preset JSONs")
     p.add_argument("--audio", help="analyse this already-rendered WAV instead of rendering")
     p.add_argument("--di", help="DI WAV (render input; onset source for lowTightnessMs)")
-    p.add_argument("--ref", help="reference WAV (need not be time-aligned)")
-    p.add_argument("--ref-channel", choices=["left", "right", "mid"], default="mid", help="reference channel (default mid)")
+    p.add_argument("--ref", action="append", default=[], help="reference audio (repeatable; need not be time-aligned)")
+    p.add_argument("--ref-channel", action="append", choices=["left", "right", "mid"], default=[],
+                   help="reference channel: one value for all refs, or one per --ref (default mid)")
     p.add_argument("--out", default="tonecheck_out", help="output directory (default ./tonecheck_out)")
     p.add_argument("--tonerender", help="tonerender binary (default build/cli/tonerender, then build-lead/cli/tonerender)")
     p.add_argument("--targets", help="targets JSON (default docs/tone_targets.json)")
@@ -159,11 +175,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         targets_path = find_targets(a.targets)
         targets = load_targets(targets_path)
         di = Path(a.di) if a.di else None
-        ref = Path(a.ref) if a.ref else None
+        chans = a.ref_channel or ["mid"]
+        if len(chans) not in (1, len(a.ref)) and a.ref:
+            p.error("--ref-channel: give one value or one per --ref")
+        refs = [(Path(r), chans[i] if len(chans) > 1 else chans[0]) for i, r in enumerate(a.ref)]
         if a.audio:
             if a.preset or a.presets:
                 p.error("--audio analyses a rendered file; do not pass presets")
-            rep = check_audio(Path(a.audio).stem, Path(a.audio), di, ref, targets, out, targets_path=targets_path, ref_channel=a.ref_channel)
+            rep = check_audio(Path(a.audio).stem, Path(a.audio), di, refs, targets, out, targets_path=targets_path)
             print(format_table(rep))
             return 0
         presets = [Path(s) for s in (a.presets or ([a.preset] if a.preset else []))]
@@ -179,26 +198,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             odir.mkdir(parents=True, exist_ok=True)
             wav = odir / "render.wav"
             trep = render(tr, pr, di, wav, odir / "tonerender_report.json")
-            rep = check_audio(pr.stem, wav, di, ref, targets, odir, trep, pr, targets_path, a.ref_channel)
+            rep = check_audio(pr.stem, wav, di, refs, targets, odir, trep, pr, targets_path)
             print(format_table(rep) + "\n")
             row = {"preset": str(pr), "overall": rep["summary"]["overall"],
-                   "pass": rep["summary"]["pass"], "marginal": rep["summary"]["marginal"],
+                   "pass": rep["summary"]["pass"], "na": rep["summary"]["n/a"], "marginal": rep["summary"]["marginal"],
                    "fail": rep["summary"]["fail"], "failedRules": [r["id"] for r in rep["rules"] if r["status"] == "fail"],
                    "marginalRules": [r["id"] for r in rep["rules"] if r["status"] == "marginal"],
                    "buzz": rep["metrics"]["buzz"]["value"],
                    "lowTightnessMs": rep["metrics"]["lowTightnessMs"].get("valueMs"),
+                   "lowDecayDbPerMs": rep["metrics"]["lowDecayDbPerMs"].get("value"),
                    "gapNoiseDb": rep["metrics"]["gapNoiseDb"]["value"],
-                   "aWeightedErrorDb": rep.get("reference", {}).get("aWeightedErrorDb"),
+                   "aWeightedErrorDb": {r["path"]: r["aWeightedErrorDb"] for r in rep["references"]},
                    "report": str(odir / "report.json")}
             rows.append(row)
         if batch:
             (out / "summary.json").write_text(json.dumps({"presets": rows}, indent=2))
-            print(f"{'preset':<28}{'overall':<10}{'P':>3}{'M':>3}{'F':>3}{'buzz':>8}{'tight ms':>10}{'gap dB':>8}{'A-err':>8}")
+            print(f"{'preset':<28}{'overall':<10}{'P':>3}{'M':>3}{'F':>3}{'buzz':>8}{'tight ms':>10}{'gap dB':>8}{'A-err':>10}")
             for r in rows:
                 t = "n/a" if r["lowTightnessMs"] is None else f"{r['lowTightnessMs']:.0f}"
-                e = "-" if r["aWeightedErrorDb"] is None else f"{r['aWeightedErrorDb']:.2f}"
+                e = ",".join(f"{v:.2f}" for v in r["aWeightedErrorDb"].values()) or "-"
                 print(f"{Path(r['preset']).stem:<28}{r['overall']:<10}{r['pass']:>3}{r['marginal']:>3}{r['fail']:>3}"
-                      f"{r['buzz']:>8.3f}{t:>10}{r['gapNoiseDb']:>8.1f}{e:>8}")
+                      f"{r['buzz']:>8.3f}{t:>10}{_f(r['gapNoiseDb'], '.1f'):>8}{e:>10}")
         return 0
     except (RenderError, ValueError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)

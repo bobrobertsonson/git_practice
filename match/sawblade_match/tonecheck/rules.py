@@ -61,7 +61,7 @@ def evaluate_rules(groups_db: dict[str, float], rules: list[dict]) -> list[dict]
 
 
 def summarize(results: list[dict]) -> dict:
-    counts = {"pass": 0, "marginal": 0, "fail": 0}
+    counts = {"pass": 0, "marginal": 0, "fail": 0, "n/a": 0}
     for r in results:
         counts[r["status"]] += 1
     overall = "fail" if counts["fail"] else ("marginal" if counts["marginal"] else "pass")

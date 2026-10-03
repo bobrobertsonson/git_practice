@@ -30,8 +30,8 @@ def allowed_intervals(groups_db: dict, rules: list[dict]) -> dict[str, tuple[flo
     return {k: (v[0], v[1]) for k, v in iv.items()}
 
 
-def make_plot(path, title: str, centres, rel_db, groups_db, groups_def, results, ref=None) -> None:
-    nrows = 2 if ref else 1
+def make_plot(path, title: str, centres, rel_db, groups_db, groups_def, results, refs=()) -> None:
+    nrows = 1 + len(refs)
     fig, axes = plt.subplots(nrows, 1, figsize=(10, 4.6 * nrows), squeeze=False)
     ax = axes[0, 0]
     ivs = allowed_intervals(groups_db, _rules_from(results, groups_db))
@@ -45,31 +45,32 @@ def make_plot(path, title: str, centres, rel_db, groups_db, groups_def, results,
         ax.hlines(groups_db[name], a, b, colors="k", lw=2)
         ax.text(np.sqrt(a * b), 13, name, ha="center", fontsize=8)
     ax.semilogx(centres, rel_db, "o-", color="#1565c0", label="output")
-    if ref:
-        ax.semilogx(centres, ref["rel_db"], "s--", color="#8e24aa", label="reference")
+    palette = ["#8e24aa", "#00897b", "#6d4c41", "#f9a825"]
+    for k, ref in enumerate(refs):
+        ax.semilogx(centres, ref["rel_db"], "s--", color=palette[k % 4], label=f"ref: {ref['name']}")
     ax.set_ylim(lo_plot, 15)
     ax.set_xlim(22, 15000)
     ax.set_ylabel("dB re 1 kHz band")
     ax.set_title(title)
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(loc="lower left")
-    fails = [r for r in results if r["status"] != "pass"]
+    fails = [r for r in results if r["status"] in ("marginal", "fail")]
     if fails:
         ax.text(0.99, 0.02, "\n".join(f"{r['status']}: {r['id']} ({r['margin']:+.1f} dB)" for r in fails),
                 transform=ax.transAxes, ha="right", va="bottom", fontsize=7,
                 color="#c62828", family="monospace")
-    if ref:
-        ax2 = axes[1, 0]
-        d = ref["diff_db"]
-        ax2.semilogx(centres, d, "o-", color="#e65100")
+    for k, ref in enumerate(refs):
+        ax2 = axes[1 + k, 0]
+        ax2.semilogx(centres, ref["diff_db"], "o-", color="#e65100")
         ax2.axhline(0, color="k", lw=0.8)
         ax2.axvspan(80, 8000, color="#9e9e9e", alpha=0.1)
         ax2.set_xlim(22, 15000)
-        ax2.set_ylabel("output - reference (dB)")
-        ax2.set_xlabel("1/3-octave centre (Hz)")
-        ax2.set_title(f"A-weighted error 80 Hz-8 kHz: {ref['aWeightedErrorDb']:.2f} dB RMS")
+        ax2.set_ylabel("output - ref (dB)")
+        ax2.set_title(f"vs {ref['name']}: A-weighted error 80 Hz-8 kHz {ref['aWeightedErrorDb']:.2f} dB RMS")
         ax2.grid(True, which="both", alpha=0.3)
-    else:
+        if k == len(refs) - 1:
+            ax2.set_xlabel("1/3-octave centre (Hz)")
+    if not refs:
         ax.set_xlabel("1/3-octave centre (Hz)")
     fig.tight_layout()
     fig.savefig(path, dpi=110)

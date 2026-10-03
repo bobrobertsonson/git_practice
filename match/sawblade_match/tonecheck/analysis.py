@@ -155,15 +155,33 @@ def crest_factor_db(x: np.ndarray, mask: np.ndarray) -> float:
     return float(_db(np.max(np.abs(a)) ** 2) - _db(np.mean(a * a)))
 
 
-def gap_noise_db(x: np.ndarray, fs: int) -> float:
-    """Power-mean RMS of the quietest 5 % of 50 ms frames relative to the active RMS."""
-    rms_db, _ = frame_rms_db(x, fs)
-    _, frames, _ = activity_mask(x, fs)
-    order = np.sort(rms_db)
-    k = max(1, int(np.ceil(0.05 * len(order))))
-    gap = _db(np.mean(10 ** (order[:k] / 10.0)))
-    act = _db(np.mean(10 ** (rms_db[frames] / 10.0)))
-    return float(gap - act)
+def di_noise_floor_db(di: np.ndarray, fs: int) -> float:
+    """DI noise floor: 5th-percentile 50 ms frame level (dBFS, mean-square)."""
+    rms_db, _ = frame_rms_db(di, fs)
+    return float(np.percentile(rms_db, 5))
+
+
+def gap_noise_db(out: np.ndarray, di: np.ndarray | None, fs: int) -> dict:
+    """Output RMS in the DI's gap frames relative to the output's active RMS.
+
+    Gap frames: 50 ms frames where the DI level is within 6 dB of its own noise floor (5th-percentile
+    frame level). Fewer than 1 % qualifying frames (or no DI) -> value None with a reason. Output and DI
+    are compared frame by frame (render output has the DI's length, advanced by the chain latency)."""
+    if di is None:
+        return {"value": None, "reason": "no DI supplied (gap frames are located on the DI)"}
+    n = min(len(out), len(di))
+    out, di = out[:n], di[:n]
+    di_db, _ = frame_rms_db(di, fs)
+    out_db, _ = frame_rms_db(out, fs)
+    floor = float(np.percentile(di_db, 5))
+    gaps = di_db <= floor + 6.0
+    res = {"diNoiseFloorDb": floor, "gapFrameFraction": float(gaps.mean())}
+    if gaps.mean() < 0.01:
+        return {**res, "value": None, "reason": "no gaps"}
+    _, active, _ = activity_mask(out, fs)
+    gap = _db(np.mean(10 ** (out_db[gaps] / 10.0)))
+    act = _db(np.mean(10 ** (out_db[active] / 10.0)))
+    return {**res, "value": float(gap - act)}
 
 
 # --- EBU R128 loudness range ---------------------------------------------------------------------
@@ -222,48 +240,66 @@ def detect_onsets(di: np.ndarray, fs: int = ANALYSIS_RATE) -> np.ndarray:
     return np.maximum(t[peaks] - 0.5 * nper / fs * 0.5, 0.0)
 
 
-def low_tightness_ms(di: np.ndarray, out: np.ndarray, fs: int = ANALYSIS_RATE,
-                     band: tuple[float, float] = (80.0, 160.0), drop_db: float = 20.0,
-                     max_decay_s: float = 2.0) -> dict:
-    """Median time for the output's 80-160 Hz band energy to fall ``drop_db`` after DI onsets.
+def _stats(vals, key):
+    if not vals:
+        return {key: None, "p25": None, "p75": None}
+    return {key: float(np.median(vals)), "p25": float(np.percentile(vals, 25)),
+            "p75": float(np.percentile(vals, 75))}
+
+
+def low_end_decay(di: np.ndarray, out: np.ndarray, fs: int = ANALYSIS_RATE,
+                  band: tuple[float, float] = (80.0, 160.0), drop_db: float = 20.0,
+                  max_decay_s: float = 2.0) -> tuple[dict, dict]:
+    """Returns (lowTightnessMs, lowDecayDbPerMs) metrics, both from DI onsets and the output's 80-160 Hz band.
 
     Output is band-passed (Butterworth 4, causal), squared and smoothed with a 10 ms moving average
     (energy envelope, dB). For each DI onset the reference is the envelope peak in [t-10 ms, t+60 ms]
-    (covers filter delay and the render's alignment delay); the decay time is the first -``drop_db``
-    crossing after it. Onsets whose decay is cut off by the next onset (or ``max_decay_s``) are
-    censored and excluded from the median (counted)."""
+    (covers filter delay and the render's alignment delay).
+    * lowTightnessMs: median time from that peak to the first -``drop_db`` crossing. Onsets whose decay is
+      cut off by the next onset (or ``max_decay_s``) are censored (excluded, counted).
+    * lowDecayDbPerMs: linear-regression slope (dB/ms, negative = decaying) of the envelope over
+      [peak+5 ms, min(peak+35 ms, next onset)]; windows shorter than 15 ms are censored."""
     onsets = detect_onsets(di, fs)
     sos = signal.butter(4, band, btype="bandpass", fs=fs, output="sos")
     y = signal.sosfilt(sos, out)
     k = int(0.010 * fs)
     env = np.convolve(y * y, np.ones(k) / k, mode="same")
     env_db = _db(env)
-    times = []
+    times, slopes = [], []
     for i, t0 in enumerate(onsets):
         a = int(max(0, (t0 - 0.010) * fs))
         b = int((t0 + 0.060) * fs)
         if b >= len(env_db):
             continue
         pk = a + int(np.argmax(env_db[a:b]))
-        end = len(env_db) if i + 1 >= len(onsets) else int((onsets[i + 1] - 0.020) * fs)
-        end = min(end, pk + int(max_decay_s * fs))
+        nxt = len(env_db) if i + 1 >= len(onsets) else int(onsets[i + 1] * fs)
+        end = min(nxt - int(0.020 * fs), pk + int(max_decay_s * fs)) if i + 1 < len(onsets) else \
+            min(len(env_db), pk + int(max_decay_s * fs))
         seg = env_db[pk:end]
         below = np.nonzero(seg <= env_db[pk] - drop_db)[0]
-        if below.size == 0:
-            continue
-        j = below[0]
-        # linear interpolation of the crossing
-        if j > 0:
-            y0, y1 = seg[j - 1], seg[j]
-            target = env_db[pk] - drop_db
-            frac = (y0 - target) / max(y0 - y1, 1e-12)
-            j = j - 1 + frac
-        times.append(1000.0 * j / fs)
+        if below.size:
+            j = below[0]
+            if j > 0:
+                y0, y1 = seg[j - 1], seg[j]
+                frac = (y0 - (env_db[pk] - drop_db)) / max(y0 - y1, 1e-12)
+                j = j - 1 + frac
+            times.append(1000.0 * j / fs)
+        s0, s1 = pk + int(0.005 * fs), min(pk + int(0.035 * fs), nxt, len(env_db))
+        if (s1 - s0) >= int(0.015 * fs):
+            tt = 1000.0 * np.arange(s1 - s0) / fs
+            slopes.append(float(np.polyfit(tt, env_db[s0:s1], 1)[0]))
     n = len(onsets)
-    return {"valueMs": float(np.median(times)) if times else None, "nOnsets": int(n),
-            "nMeasured": len(times), "nCensored": int(n - len(times)),
-            "p25Ms": float(np.percentile(times, 25)) if times else None,
-            "p75Ms": float(np.percentile(times, 75)) if times else None}
+    t = _stats(times, "valueMs")
+    tight = {"valueMs": t["valueMs"], "nOnsets": int(n), "nMeasured": len(times),
+             "nCensored": int(n - len(times)), "p25Ms": t["p25"], "p75Ms": t["p75"]}
+    d = _stats(slopes, "value")
+    decay = {"value": d["value"], "p25": d["p25"], "p75": d["p75"], "nOnsets": int(n),
+             "nMeasured": len(slopes), "nCensored": int(n - len(slopes))}
+    return tight, decay
+
+
+def low_tightness_ms(di, out, fs=ANALYSIS_RATE, **kw) -> dict:
+    return low_end_decay(di, out, fs, **kw)[0]
 
 
 # --- whole-signal analysis --------------------------------------------------------------------------
@@ -292,13 +328,17 @@ def analyze(x: np.ndarray, fs: int, targets: dict, di: tuple[np.ndarray, int] | 
         "buzz": {"value": buzz_flatness(freqs, psd)},
         "crestFactorDb": {"value": crest_factor_db(xa, mask)},
         "loudnessRangeLU": {"value": loudness_range_lu(xa)},
-        "gapNoiseDb": {"value": gap_noise_db(xa, ANALYSIS_RATE)},
     }
-    if di is not None:
-        dia = to_analysis_rate(di[0], di[1])
-        metrics["lowTightnessMs"] = low_tightness_ms(dia, xa)
+    dia = to_analysis_rate(di[0], di[1]) if di is not None else None
+    metrics["gapNoiseDb"] = gap_noise_db(xa, dia, ANALYSIS_RATE)
+    if dia is not None:
+        metrics["diNoiseFloorDb"] = {"value": di_noise_floor_db(dia, ANALYSIS_RATE),
+                                     "note": "5th-percentile 50 ms DI frame level (dBFS); use to calibrate gate thresholds"}
+        metrics["lowTightnessMs"], metrics["lowDecayDbPerMs"] = low_end_decay(dia, xa)
     else:
-        metrics["lowTightnessMs"] = {"valueMs": None, "note": "no DI supplied (onsets are detected on the DI)"}
+        note = "no DI supplied (onsets are detected on the DI)"
+        metrics["lowTightnessMs"] = {"valueMs": None, "note": note}
+        metrics["lowDecayDbPerMs"] = {"value": None, "note": note}
     for name, m in targets.get("metrics", {}).items():
         if name in metrics:
             metrics[name]["def"] = m["def"]

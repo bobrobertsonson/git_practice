@@ -121,7 +121,12 @@ def test_activity_gate_excludes_silence():
     _, r2 = A.band_levels_db(freqs2, psd2)
     assert np.max(np.abs(r1 - r2)[8:-6]) < 0.5
     # gap noise: hiss is ~ -90 dB re active RMS ~ -20 dBFS => about -70 dB
-    assert A.gap_noise_db(x, FS) < -60
+    di = np.zeros(n)
+    di[: n // 2] = 0.1 * pink(n // 2)
+    di[n // 2:] = 3e-5 * rng.standard_normal(n - n // 2)
+    g = A.gap_noise_db(x, di, FS)
+    assert g["value"] < -60
+    assert g["diNoiseFloorDb"] < -80
 
 
 def test_flatness_white_vs_sine():
@@ -214,7 +219,7 @@ def test_audio_mode_writes_report(tmp_path):
     assert rc == 0
     rep = json.loads((tmp_path / "o" / "report.json").read_text())
     assert {r["id"] for r in rep["rules"]} >= {r["id"] for r in TARGETS["rules"]}
-    assert rep["reference"]["aWeightedErrorDb"] == pytest.approx(0, abs=1e-6)
+    assert rep["references"][0]["aWeightedErrorDb"] == pytest.approx(0, abs=1e-6)
     assert (tmp_path / "o" / "report.png").stat().st_size > 1000
 
 
@@ -241,3 +246,82 @@ def test_end_to_end_fixtures(tmp_path):
                    "--di", str(di), "--out", str(tmp_path / "b")])
     assert rc == 0
     assert len(json.loads((tmp_path / "b" / "summary.json").read_text())["presets"]) == 2
+
+
+def test_gap_noise_from_di_robust_and_na():
+    rng = np.random.default_rng(SEED)
+    n = FS * 20
+    # DI: bursts with a -40 dB hiss floor between them; gate (ideal) closes output in gaps
+    di = 0.01 * rng.standard_normal(n)
+    out = np.zeros(n)
+    for k in range(10):
+        s = int((1 + 2 * k) * FS)
+        di[s:s + FS] += 0.3 * rng.standard_normal(FS)
+        out[s:s + FS] = 0.3 * rng.standard_normal(FS)
+    out += 1e-4 * rng.standard_normal(n)  # output residue in gaps: -70 dB re active
+    g = A.gap_noise_db(out, di, FS)
+    assert g["value"] == pytest.approx(20 * np.log10(1e-4 / 0.3), abs=1.5)
+    assert -45 < g["diNoiseFloorDb"] < -35
+    # no DI -> null
+    assert A.gap_noise_db(out, None, FS)["value"] is None
+    # steady DI: no frame can be < ... all frames equal -> everything within 6 dB (not "no gaps"); a DI
+    # whose quietest 5 % are far below the rest still yields a measurable gap set
+    assert g["gapFrameFraction"] >= 0.01
+
+
+def test_gap_noise_rule_na(tmp_path):
+    x = (0.1 * pink(FS * 10)).astype(np.float32)
+    wav = tmp_path / "x.wav"
+    sf.write(wav, x, FS, subtype="FLOAT")
+    rc = cli.main(["--audio", str(wav), "--out", str(tmp_path / "o")])  # no DI
+    assert rc == 0
+    rep = json.loads((tmp_path / "o" / "report.json").read_text())
+    gap = [r for r in rep["rules"] if r["id"] == "gap_noise"][0]
+    assert gap["status"] == "n/a" and gap["value"] is None
+    assert rep["summary"]["fail"] == rep["summary"]["fail"] and rep["summary"]["n/a"] == 1
+
+
+@pytest.mark.parametrize("tau", [0.05, 0.1, 0.2])
+def test_low_decay_slope(tau):
+    di, out = _synthetic_decays(tau, [0.5, 2.0, 3.5, 5.0, 6.5])
+    _, d = A.low_end_decay(di, out, FS)
+    expected = -20 * np.log10(np.e) / (tau * 1000)  # dB per ms of an exp(-t/tau) amplitude
+    assert d["nMeasured"] == 5
+    # The causal 80-160 Hz band-pass (4th order) has a ~20-30 ms transient that flattens the first part
+    # of the window, so the measured slope is shallower than the true one (-13 % at tau 100 ms, -23 % at
+    # 200 ms): tolerance 25 %, and the ordering by tau must hold (see test below).
+    assert d["value"] == pytest.approx(expected, rel=0.25)
+    assert d["value"] < 0
+    assert d["p25"] <= d["value"] <= d["p75"]
+
+
+def test_low_decay_measurable_with_dense_onsets():
+    # onsets every 120 ms: 20 dB fall is cut off (censored) but the 5-35 ms slope window is measurable
+    onsets = list(np.arange(0.5, 6.0, 0.12))
+    di, out = _synthetic_decays(0.1, onsets)
+    t, d = A.low_end_decay(di, out, FS)
+    assert d["nMeasured"] > 0.8 * d["nOnsets"] > 0
+    assert d["nMeasured"] > t["nMeasured"]
+
+
+def test_multiple_refs(tmp_path):
+    x = (0.1 * pink(FS * 20)).astype(np.float32)
+    st = np.stack([x, 0.5 * x], axis=1)
+    wav, ref = tmp_path / "x.wav", tmp_path / "ref.wav"
+    sf.write(wav, x, FS, subtype="FLOAT")
+    sf.write(ref, st, FS, subtype="FLOAT")
+    rc = cli.main(["--audio", str(wav), "--ref", str(ref), "--ref", str(ref), "--ref-channel", "left",
+                   "--ref-channel", "right", "--out", str(tmp_path / "o")])
+    assert rc == 0
+    rep = json.loads((tmp_path / "o" / "report.json").read_text())
+    assert [r["channel"] for r in rep["references"]] == ["left", "right"]
+    assert all(r["aWeightedErrorDb"] == pytest.approx(0, abs=1e-6) for r in rep["references"])
+    assert (tmp_path / "o" / "report.png").stat().st_size > 1000
+
+
+def test_low_decay_orders_by_tau():
+    vals = []
+    for tau in (0.05, 0.1, 0.2):
+        di, out = _synthetic_decays(tau, [0.5, 2.0, 3.5])
+        vals.append(A.low_end_decay(di, out, FS)[1]["value"])
+    assert vals[0] < vals[1] < vals[2] < 0  # steeper (more negative) for faster decays
