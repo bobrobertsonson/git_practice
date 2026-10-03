@@ -36,9 +36,10 @@ a Heartache", Megadeth "Symphony of Destruction" on ReampZone) — provenance an
 | Daybreak Studio "Procedurally Generated Metal Multitracks Vol. 1" | not a band | DI for all guitars | from $10 | synthetic/producer material |
 | Chernobyl Audio metal multitracks | various styles | raw DI guitars | paid | producer material |
 
-## Priority for Sawblade validation
-1. Nail The Mix sessions with confirmed guitar DIs (ABR, Suicide Silence, HLB, Slaves) + buy the
-   released track → true DI→mix pairs from signed bands across metalcore/deathcore/djent.
-2. Cambridge-MT metal sessions (Cnoc An Tursa, Decypher, Dark Ride) → free DI sessions; no
-   official mix, so use for known-answer tests and as DI input against north-star songs.
-3. User's own non-HM-2 DIs (they offered) + their mixes.
+## Priority for Sawblade validation (user, 2026-10-03: death metal over deathcore)
+1. Death metal DI→mix pairs first: Swedish/HM-2 (have Gatecreeper), US/Florida style,
+   cavernous, melodic. Cambridge-MT Decypher "Unseen" (melodic death) is the free start.
+2. Nail The Mix: only worth a month if its catalogue has death metal sessions with guitar
+   DIs (check before subscribing); the ABR / Suicide Silence / HLB sessions are deathcore /
+   metalcore and are deferred.
+3. User's own DIs playing death metal riffs + north-star reference songs per substyle.
