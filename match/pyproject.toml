@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sawblade-match"
+version = "0.1.0"
+description = "Sawblade matching engine: TONE3000 client, capture cache, quality filter"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx==0.28.1",
+  "numpy==2.4.6",
+  "scipy==1.17.1",
+  "soundfile==0.14.0",
+  "matplotlib==3.11.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "respx==0.23.1",
+]
+
+[project.scripts]
+sawblade-t3k = "sawblade_match.t3k.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sawblade_match*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
