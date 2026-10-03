@@ -219,9 +219,9 @@ low/medium-gain titles, no hard filter); cabs -> one shared IR (live-compatible)
   top-K combos, blocks linear -> NAM gains -> linear. **Stage 3**: full-length renders with the real chain (preset, DI L and R),
   `sawblade-tonecheck` on the best and on the starter preset, clip guard (full-length peak <= -1 dBFS).
 * **Loss** weights are documented in `matcher/loss.py` (A-weighted LTAS error after level-offset removal x1, buzz x0.5/dB,
-  lowDecay x2 per dB/ms, STFT x0.25/dB for matched pairs, EQ-gain regulariser x0.02/dB). Smaller total NAM size wins within
-  0.3 dB; combos that clip at the matched level are rejected.
-* **Not searched**: gate (fixed from the DI noise floor +4 dB, hold 40 ms, release 150 ms, range -50 dB), A pre-EQ (HP 90 Hz,
+  lowDecay x2 per dB/ms, STFT x0.25/dB for matched pairs, EQ-gain regulariser x0.02/dB). Within 0.05 dB the lighter model set wins
+  (manifest size / name label category, then 10 % byte buckets; same category -> lower loss); combos that clip at the matched level are rejected.
+* **Not searched**: gate (fixed: DI floor measured on the gate's own peak envelope (0.1/10 ms follower, 5th percentile of 20 ms frames) +4 dB, hold 40 ms, release 150 ms, range -50 dB), A pre-EQ (HP 90 Hz,
   as the starter), bus comp (off), alignment (resolved once per combo then written as `manual`).
 * **Determinism**: `--seed` seeds subset sampling and CMA-ES; thread-pool results are order-independent. All seeds are in
   `result.json`.

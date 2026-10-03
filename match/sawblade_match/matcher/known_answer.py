@@ -16,12 +16,11 @@ import numpy as np
 import soundfile as sf
 
 from ..core import render
-from ..tonecheck.analysis import di_noise_floor_db
 from .engine import Engine, RATE, to48
 from .excerpt import select_excerpt
 from .pool import default_cab, load_pool
 from .reference import load_reference
-from .run import Config, Log, Plan, caps_summary, run_match
+from .run import Config, Log, Plan, caps_summary, gate_envelope_floor_db, run_match
 from .space import Combo, Space, build_preset, gate_preset
 
 TOLERANCE_DB = 0.5
@@ -59,7 +58,7 @@ def main(argv=None) -> int:
     s0, s1, _ = select_excerpt(x, fs, a.section_s, stride_s=1.0)
     di = out / "di_section.wav"
     sf.write(str(di), x[s0:s1], fs, subtype="FLOAT")
-    gate = gate_preset(di_noise_floor_db(to48(x[s0:s1], fs).astype(np.float64), RATE))
+    gate = gate_preset(gate_envelope_floor_db(to48(x[s0:s1], fs), RATE))
     eng = Engine(gate, a.threads)
     combo, v, preset, align = hidden_preset(pool, a.seed, gate, eng)
     log(f"hidden: {json.dumps(caps_summary(combo))[:600]}")

@@ -288,12 +288,35 @@ def test_pick_output_gain_and_choose():
     assert g == pytest.approx(13.0) and not clipped
     assert pick_output_gain(0.5, -20.0, 0.0)[1]            # +20 dB on a 0.5 peak clips
     pool = fixture_pool()
+    from dataclasses import replace
     big = Combo(pool.hm2[0], pool.amps[0], None, pool.amps[1], pool.cabs[0])
-    small = Combo(pool.hm2[1], pool.amps[2], None, pool.amps[2], pool.cabs[0])
+    small = Combo(replace(pool.hm2[1], size_label="lite"), replace(pool.amps[2], size_label="lite"), None,
+                  replace(pool.amps[2], size_label="lite"), pool.cabs[0])
+    twin = Combo(pool.hm2[0], pool.amps[0], None, pool.amps[1], pool.cabs[1])    # same size category as ``big``
     mk = lambda c, l, clipped=False: Scored(c, l, 0.5, manual_align(), None, "refined", {"clipped": clipped})
-    assert choose([mk(big, 1.0), mk(small, 1.2)]).combo is small          # within 0.3 dB -> smaller models
-    assert choose([mk(big, 1.0), mk(small, 1.5)]).combo is big
+    assert choose([mk(big, 1.0), mk(small, 1.04)]).combo is small         # within 0.05 dB -> lighter category
+    assert choose([mk(big, 1.0), mk(small, 1.2)]).combo is big            # outside the tolerance -> lower loss
+    assert choose([mk(big, 1.03), mk(twin, 1.0)]).combo is twin           # same category -> lower loss
     assert choose([mk(big, 1.0, clipped=True), mk(small, 1.4)]).combo is small   # clipping rejected
+
+
+def test_gate_floor_uses_peak_envelope():
+    from sawblade_match.matcher.run import gate_envelope_floor_db
+    fs = 48000
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal(fs * 4) * 0.01            # noise: RMS -40 dBFS
+    x[fs:2 * fs] += rng.standard_normal(fs) * 0.3     # playing
+    f = gate_envelope_floor_db(x, fs)
+    assert -40 < f < -20                                # peak envelope of noise sits well above its RMS
+    assert gate_envelope_floor_db(x, fs) == f
+
+
+def test_size_rank_orders_categories():
+    pool = fixture_pool()
+    from dataclasses import replace
+    a = pool.amps[0]
+    assert replace(a, size_label="feather").size_rank < replace(a, size_label="lite").size_rank \
+        < replace(a, size_label="standard").size_rank < replace(a, size_label="xstandard").size_rank
 
 
 def test_known_answer_recovery_fixtures(tmp_path):
@@ -305,8 +328,8 @@ def test_known_answer_recovery_fixtures(tmp_path):
     di = tmp_path / "di.wav"
     sf.write(str(di), x, fs, subtype="FLOAT")
     floor_gate = gate_preset(-60.0)
-    from sawblade_match.tonecheck.analysis import di_noise_floor_db
-    gate = gate_preset(di_noise_floor_db(to48(x, fs).astype(np.float64), 48000))
+    from sawblade_match.matcher.run import gate_envelope_floor_db
+    gate = gate_preset(gate_envelope_floor_db(to48(x, fs), 48000))
     hid, _ = core.render(build_preset(combo, v, gate=gate, align=Engine(gate).probe_align(combo, v)), x, fs)
     refwav = tmp_path / "hidden.wav"
     sf.write(str(refwav), hid, fs, subtype="FLOAT")

@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+
+import numpy as np
 from pathlib import Path
 
 from ..t3k.cache import Cache, default_cache_root
@@ -29,6 +31,17 @@ class Capture:
     creator: str
     url: str
     kind: str = ""       # hm2 | boost | amp | cab
+    arch: str = ""       # manifest architecture_version ("1"/"2")
+    size_label: str = "" # manifest size, else lite/feather/xstandard/standard parsed from the model name
+
+    @property
+    def size_rank(self) -> tuple[int, int]:
+        """(category rank, +-10 % byte bucket): smaller is lighter. Category: feather < lite < standard < xstandard
+        < custom/unknown-large (label from the manifest ``size`` or the model name; default standard). Bytes are bucketed
+        in 10 % steps so near-equal files tie."""
+        order = {"feather": 0, "lite": 1, "standard": 2, "xstandard": 3, "custom": 4}
+        lab = (self.size_label or "standard").lower()
+        return order.get(lab, 2), int(np.log(max(self.size_bytes, 1)) / np.log(1.1))
 
     @property
     def key(self) -> str:
@@ -96,9 +109,14 @@ def load_pool(manifest: str | Path, cache_root: Path | None = None) -> Pool:
                 kind = "hm2" if "hm-2" in t["title"].lower() else "boost"
             else:
                 kind = gear
+            label = (md.get("size") or entry.model.get("size") or "").lower()
+            if not label:
+                m = re.search(r"\b(feather|lite|xstandard|custom)\b", md.get("name", ""), re.I)
+                label = m.group(1).lower() if m else "standard"
             cap = Capture(int(t["tone_id"]), int(md["id"]), t["title"], md.get("name", ""), gear,
                           str(entry.path), entry.sha256, entry.path.stat().st_size, t.get("license", ""),
-                          t.get("creator") or t.get("creator_username") or "", t.get("url", ""), kind)
+                          t.get("creator") or t.get("creator_username") or "", t.get("url", ""), kind,
+                          str(md.get("architecture_version") or ""), label)
             {"hm2": pool.hm2, "boost": pool.boost, "amp": pool.amps, "cab": pool.cabs}[kind].append(cap)
     return pool
 

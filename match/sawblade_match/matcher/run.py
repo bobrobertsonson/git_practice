@@ -12,7 +12,6 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from ..tonecheck.analysis import di_noise_floor_db
 from ..tonecheck.cli import check_audio, format_table
 from ..tonecheck.rules import load_targets
 from . import loss as L
@@ -26,7 +25,7 @@ from .space import Combo, Space, build_preset, gate_preset, manual_align
 
 CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level output exceeds it is "clipping"
 CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-length peak is below this
-SIZE_TIE_DB = 0.3         # prefer the smaller model set within this much total loss
+SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
 
 
 @dataclass
@@ -83,6 +82,23 @@ class Log:
         line = f"[{time.time() - self.t0:7.1f}s] {msg}"
         self.lines.append(line)
         print(line, flush=True)
+
+
+def gate_envelope_floor_db(x: np.ndarray, fs: int) -> float:
+    """DI noise floor as the gate sees it: 5th percentile of the mean level (dB) of 20 ms frames of the gate's peak
+    envelope detector (peak follower, 0.1 ms attack / 10 ms release; docs/PRESET_SCHEMA.md). Analysis only."""
+    a_c = float(np.exp(-1.0 / (0.0001 * fs)))
+    r_c = float(np.exp(-1.0 / (0.010 * fs)))
+    ax = np.abs(np.asarray(x, dtype=np.float64))
+    env = np.empty_like(ax)
+    e = 0.0
+    for i, v in enumerate(ax.tolist()):
+        e = a_c * e + (1 - a_c) * v if v > e else r_c * e + (1 - r_c) * v
+        env[i] = e
+    n = int(round(0.020 * fs))
+    nf = len(env) // n
+    lvl = 20 * np.log10(np.maximum(env[: nf * n].reshape(nf, n).mean(axis=1), 1e-10))
+    return float(np.percentile(lvl, 5))
 
 
 def _sha(p) -> str:
@@ -142,11 +158,12 @@ def pick_output_gain(y_peak: float, offset_db: float, level_offset_db: float) ->
 
 
 def choose(cands: list[Scored]) -> Scored:
-    """Lowest loss among non-clipping candidates; within SIZE_TIE_DB of it, the smallest total NAM size."""
+    """Lowest loss among non-clipping candidates; within SIZE_TIE_DB of it, the lighter model set by size category
+    (manifest size / name label, then 10 % byte buckets); equal categories -> lower loss."""
     ok = [c for c in cands if not c.extra.get("clipped")] or cands
     best = min(ok, key=lambda c: c.loss)
     near = [c for c in ok if c.loss <= best.loss + SIZE_TIE_DB]
-    return min(near, key=lambda c: (c.combo.model_bytes(), c.loss))
+    return min(near, key=lambda c: (c.combo.size_rank()[0], c.combo.size_rank()[1], c.loss))
 
 
 def encode_mp3(wav: Path, mp3: Path, log) -> bool:
@@ -197,9 +214,9 @@ def run_match(cfg: Config, log=None) -> dict:
     if di_x.ndim > 1:
         di_x = di_x[:, 0]
     di48 = to48(di_x, di_fs)
-    floor = di_noise_floor_db(di48.astype(np.float64), RATE)
+    floor = gate_envelope_floor_db(di48, RATE)
     gate = gate_preset(floor)
-    log(f"DI noise floor {floor:.1f} dBFS -> gate {gate}")
+    log(f"DI floor on the gate's peak envelope {floor:.1f} dBFS -> gate {gate}")
     eng = Engine(gate, cfg.threads)
     try:
         return _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start)

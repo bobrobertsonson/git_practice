@@ -50,6 +50,11 @@ class Combo:
     def model_bytes(self) -> int:
         return sum(c.size_bytes for c in (self.hm2, self.saw_amp, self.boost, self.body_amp) if c)
 
+    def size_rank(self) -> tuple[int, int]:
+        """Sum of the capture size ranks (category, 10 % byte bucket): lighter model sets sort first."""
+        r = [c.size_rank for c in (self.hm2, self.saw_amp, self.boost, self.body_amp) if c]
+        return sum(x[0] for x in r), sum(x[1] for x in r)
+
 
 @dataclass(frozen=True)
 class P:
