@@ -26,6 +26,10 @@ struct GateParams {
 // Not a "hard" gate in the allocation sense: all processing is allocation-free.
 class Gate : public Processor {
  public:
+  // Fixed envelope detector time constants (schema v1).
+  static constexpr double kEnvAttackMs = 0.1;
+  static constexpr double kEnvReleaseMs = 10.0;
+
   void setParams(const GateParams& p) noexcept;  // call before prepare(), or between blocks
   const GateParams& params() const noexcept { return params_; }
 

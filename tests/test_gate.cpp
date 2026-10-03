@@ -56,42 +56,77 @@ TEST_CASE("Gate passes a loud signal at unity after attack", "[gate]") {
   for (std::size_t i = ms(50); i < x.size(); ++i) REQUIRE(y[i] == x[i]);
 }
 
-TEST_CASE("Gate closes to rangeDb after the key drops", "[gate]") {
-  GateParams p;
-  Gate g = makeGate(p);
-  // Open on a signal just above threshold, then drop to -80 dBFS. (A louder pre-drop level
-  // adds the 10 ms envelope's fall time on top of hold + 5 * release.)
-  std::vector<float> key = tone(-45.0, ms(200));
-  const std::size_t dropAt = key.size();
-  const auto low = tone(-80.0, ms(600));
-  key.insert(key.end(), low.begin(), low.end());
-  const auto gain = gainTrace(g, key);
+namespace {
 
-  REQUIRE(std::fabs(dbOf(gain[dropAt - 1])) < 0.1);  // was open
-  const std::size_t deadline = dropAt + ms(p.holdMs + 5.0 * p.releaseMs);
-  REQUIRE(std::fabs(dbOf(gain[deadline]) - p.rangeDb) <= 1.0);
-  REQUIRE(std::fabs(dbOf(gain.back()) - p.rangeDb) <= 1.0);
+// Time for the envelope (peak follower, release tau = kEnvReleaseMs) to fall from peakDb to
+// the close threshold derived from the params.
+double envFallMs(const GateParams& p, double peakDb) {
+  const double peakLin = dbfsToPeak(peakDb);
+  const double closeLin = dbfsToPeak(p.thresholdDb - p.hysteresisDb);
+  return Gate::kEnvReleaseMs * std::log(peakLin / closeLin);
+}
+
+}  // namespace
+
+TEST_CASE("Gate closes to rangeDb after the key drops", "[gate]") {
+  for (const double preDb : {-45.0, -20.0}) {
+    DYNAMIC_SECTION("pre-drop level " << preDb << " dBFS") {
+      GateParams p;
+      Gate g = makeGate(p);
+      std::vector<float> key = tone(preDb, ms(300));
+      const std::size_t dropAt = key.size();
+      const auto low = tone(-80.0, ms(800));
+      key.insert(key.end(), low.begin(), low.end());
+      const auto gain = gainTrace(g, key);
+
+      REQUIRE(std::fabs(dbOf(gain[dropAt - 1])) < 0.1);  // still open one sample before the drop
+      // Envelope fall time + hold + 5 release time constants. The envelope is slightly below the
+      // tone's peak at the drop, so it crosses the close threshold marginally early: the bound
+      // is conservative and needs no extra margin.
+      const double boundMs = envFallMs(p, preDb) + p.holdMs + 5.0 * p.releaseMs;
+      const std::size_t deadline = dropAt + ms(boundMs);
+      REQUIRE(std::fabs(dbOf(gain[deadline]) - p.rangeDb) <= 1.0);
+      REQUIRE(std::fabs(dbOf(gain.back()) - p.rangeDb) <= 1.0);
+    }
+  }
 }
 
 TEST_CASE("Gate hysteresis keeps it open between close and open thresholds", "[gate]") {
-  GateParams p;  // threshold -55, hysteresis 6 => closes below -61
-  Gate g = makeGate(p);
-  std::vector<float> key = tone(-30.0, ms(100));  // open it
-  // Alternate 5 ms bursts at threshold+1 dB and threshold-3 dB for 1 s.
-  const std::size_t burst = ms(5);
-  for (int k = 0; k < 200; ++k) {
-    const auto b = tone(k % 2 == 0 ? p.thresholdDb + 1.0 : p.thresholdDb - 3.0, burst);
-    key.insert(key.end(), b.begin(), b.end());
+  // Open at -55, close below -61. Hold is ~0 so only hysteresis can keep the gate open through
+  // 50 ms stretches at threshold - 3 dB (long enough to decay the 10 ms envelope well below
+  // the open threshold, but not below the close threshold).
+  auto run = [](double hysteresisDb) {
+    GateParams p;
+    p.holdMs = 0.0;
+    p.hysteresisDb = hysteresisDb;
+    Gate g = makeGate(p);
+    std::vector<float> key = tone(-30.0, ms(100));  // open it
+    for (int k = 0; k < 10; ++k) {
+      const auto hi = tone(p.thresholdDb + 1.0, ms(10));
+      const auto lo = tone(p.thresholdDb - 3.0, ms(50));
+      key.insert(key.end(), hi.begin(), hi.end());
+      key.insert(key.end(), lo.begin(), lo.end());
+    }
+    return gainTrace(g, key);
+  };
+
+  SECTION("hysteresis 6 dB: stays open") {
+    const auto gain = run(6.0);
+    for (std::size_t i = ms(50); i < gain.size(); ++i) REQUIRE(std::fabs(dbOf(gain[i])) < 0.1);
   }
-  const auto gain = gainTrace(g, key);
-  for (std::size_t i = ms(50); i < gain.size(); ++i) REQUIRE(std::fabs(dbOf(gain[i])) < 0.1);
+  SECTION("negative control, hysteresis 0 dB: closes") {
+    const auto gain = run(0.0);
+    const auto minGain = *std::min_element(gain.begin() + static_cast<std::ptrdiff_t>(ms(50)), gain.end());
+    REQUIRE(dbOf(minGain) < -3.0);
+  }
 }
 
 TEST_CASE("Gate honours hold", "[gate]") {
   GateParams p;
-  p.holdMs = 20.0;
+  p.holdMs = 50.0;
   Gate g = makeGate(p);
-  std::vector<float> key = tone(-45.0, ms(100));
+  constexpr double kPreDb = -45.0;
+  std::vector<float> key = tone(kPreDb, ms(300));
   const std::size_t dropAt = key.size();
   const auto low = tone(-90.0, ms(400));
   key.insert(key.end(), low.begin(), low.end());
@@ -104,9 +139,13 @@ TEST_CASE("Gate honours hold", "[gate]") {
     if (i >= dropAt && !g.isOpen() && closedAt == 0) closedAt = i;
   }
   REQUIRE(closedAt != 0);
-  // Still open (and passing at unity) at hold - 1 ms after the drop.
-  REQUIRE(closedAt - dropAt >= ms(p.holdMs - 1.0));
-  REQUIRE(std::fabs(dbOf(io[dropAt + ms(p.holdMs - 1.0)])) < 0.1);
+  const double fallMs = envFallMs(p, kPreDb);
+  // Open (unity) 1 ms before envelope fall + hold has elapsed; closed by a few ms after it.
+  // (The envelope sits marginally below the tone peak at the drop, so closing can come a
+  // fraction of a ms early; the 1 ms / 3 ms windows absorb that.)
+  REQUIRE(closedAt - dropAt >= ms(fallMs + p.holdMs - 1.0));
+  REQUIRE(std::fabs(dbOf(io[dropAt + ms(fallMs + p.holdMs - 1.0)])) < 0.1);
+  REQUIRE(closedAt - dropAt <= ms(fallMs + p.holdMs + 3.0));
 }
 
 TEST_CASE("Gate disabled is bit-transparent; reset closes it", "[gate]") {

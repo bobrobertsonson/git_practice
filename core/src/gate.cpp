@@ -6,8 +6,6 @@
 namespace sawblade {
 namespace {
 
-constexpr double kEnvAttackMs = 0.1;
-constexpr double kEnvReleaseMs = 10.0;
 constexpr double kSettleDb = 1e-4;  // snap to target within this many dB
 
 double onePoleCoeff(double ms, double fs) {
@@ -25,8 +23,8 @@ void Gate::setParams(const GateParams& p) noexcept {
 }
 
 void Gate::updateCoefficients() noexcept {
-  envAtk_ = onePoleCoeff(kEnvAttackMs, sampleRate_);
-  envRel_ = onePoleCoeff(kEnvReleaseMs, sampleRate_);
+  envAtk_ = onePoleCoeff(Gate::kEnvAttackMs, sampleRate_);
+  envRel_ = onePoleCoeff(Gate::kEnvReleaseMs, sampleRate_);
   gainAtk_ = onePoleCoeff(params_.attackMs, sampleRate_);
   gainRel_ = onePoleCoeff(params_.releaseMs, sampleRate_);
   openLin_ = dbToLin(params_.thresholdDb);
