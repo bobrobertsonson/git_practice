@@ -35,18 +35,8 @@ bool isInteger(double v) { return std::fabs(v - std::round(v)) < 1e-9 && v >= 1.
 
 class Kernel {
  public:
-  Kernel(double fromRate, double toRate, ResampleProfile profile) {
-    if (profile == ResampleProfile::Ir) {
-      // Legacy IR design (phase 1, T2), kept bit-for-bit in behaviour so IR loading and the golden
-      // renders do not change: beta 9, 64 input taps per side at the cutoff, cutoff at the lower
-      // Nyquist, no per-phase renormalisation.
-      beta_ = 9.0;
-      fc_ = std::min(1.0, toRate / fromRate);
-      half_ = 64.0 / fc_;
-      normalize_ = false;
-    } else {
-      init(fromRate, toRate);
-    }
+  Kernel(double fromRate, double toRate) {
+    init(fromRate, toRate);
     reach_ = static_cast<long long>(std::ceil(half_));
     taps_ = static_cast<std::size_t>(2 * reach_ + 2);
     invI0_ = 1.0 / besselI0(beta_);
@@ -76,39 +66,35 @@ class Kernel {
       w[i] = v;
       sum += v;
     }
-    if (!normalize_) return;
     const double g = 1.0 / sum;
     for (std::size_t i = 0; i < taps_; ++i) w[i] *= g;
   }
 
  private:
-  double beta_ = kResampleKaiserBeta;
+  const double beta_ = kResampleKaiserBeta;
   double fc_ = 1.0, half_ = 1.0, invI0_ = 1.0;
-  bool normalize_ = true;
   long long reach_ = 0;
   std::size_t taps_ = 0;
 };
 
 }  // namespace
 
-std::size_t resampledLength(std::size_t n, double fromRate, double toRate, ResampleProfile profile) {
+std::size_t resampledLength(std::size_t n, double fromRate, double toRate) {
   if (!(fromRate > 0.0) || !(toRate > 0.0) || !std::isfinite(fromRate) || !std::isfinite(toRate))
     throw std::invalid_argument("resample: invalid rate");
-  const double len = static_cast<double>(n) * toRate / fromRate;
-  return static_cast<std::size_t>(profile == ResampleProfile::Ir ? std::ceil(len) : std::llround(len));
+  return static_cast<std::size_t>(std::llround(static_cast<double>(n) * toRate / fromRate));
 }
 
-std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate, ResampleProfile profile) {
-  return resample(in, fromRate, toRate, resampledLength(in.size(), fromRate, toRate, profile), profile);
+std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate) {
+  return resample(in, fromRate, toRate, resampledLength(in.size(), fromRate, toRate));
 }
 
-std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate, std::size_t outLen,
-                            ResampleProfile profile) {
+std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate, std::size_t outLen) {
   if (!(fromRate > 0.0) || !(toRate > 0.0) || !std::isfinite(fromRate) || !std::isfinite(toRate))
     throw std::invalid_argument("resample: invalid rate");
   if (fromRate == toRate || in.empty()) return in;
 
-  const Kernel kernel(fromRate, toRate, profile);
+  const Kernel kernel(fromRate, toRate);
   const std::size_t taps = kernel.taps();
   const long long off = kernel.firstOffset();
   const auto inLen = static_cast<long long>(in.size());

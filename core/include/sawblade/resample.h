@@ -16,23 +16,14 @@ namespace sawblade {
 constexpr double kResampleKaiserBeta = 10.0;
 constexpr double kResampleStopbandDb = 99.0;  // design attenuation, used to size the kernel
 
-enum class ResampleProfile {
-  Audio,  // the design above; output length round(N * out / in)
-  Ir      // the phase-1 IR design (beta 9, 64 taps per side, unity cutoff, ceil length), kept so
-          // loaded IRs and the golden renders do not change
-};
-
-// The default output length of resample(): round(n * toRate / fromRate) (ceil for Profile::Ir).
-std::size_t resampledLength(std::size_t n, double fromRate, double toRate,
-                            ResampleProfile profile = ResampleProfile::Audio);
+// The default output length of resample(): round(n * toRate / fromRate).
+std::size_t resampledLength(std::size_t n, double fromRate, double toRate);
 
 // Returns `in` unchanged (bit-identical) when fromRate == toRate. Throws std::invalid_argument for
 // non-positive or non-finite rates.
-std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate,
-                            ResampleProfile profile = ResampleProfile::Audio);
+std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate);
 
 // As above with an explicit output length (used to convert back to exactly the original length).
-std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate, std::size_t outLen,
-                            ResampleProfile profile = ResampleProfile::Audio);
+std::vector<float> resample(const std::vector<float>& in, double fromRate, double toRate, std::size_t outLen);
 
 }  // namespace sawblade

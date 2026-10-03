@@ -10,7 +10,7 @@
 
 namespace sawblade {
 std::vector<float> resampleSinc(const std::vector<float>& in, double fromRate, double toRate) {
-  return resample(in, fromRate, toRate, ResampleProfile::Ir);
+  return resample(in, fromRate, toRate);
 }
 
 void normalizeL2(std::vector<float>& ir) {
