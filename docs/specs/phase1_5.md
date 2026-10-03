@@ -79,6 +79,9 @@ Tone fields (`published_at`, `updated_at`, `downloads_count`, `favorites_count`,
 - slot fit by `gear`: pedal slots ← `pedal`; amp slots ← `amp` (amp-only); IRs ← `cab`
   (format ir). `amp-cab` ("full rig") tones are excluded from slot candidates and kept only as
   references.
+- Model size: when a tone offers the same capture in several sizes (e.g. "Standard" and
+  "Custom"/larger), prefer the smallest size whose tone matches (lower CPU for the plugin
+  and loader pedals); record the size/name in the manifest.
 - `calibrated` is only a catalog filter in the docs (not a Model field) — record it if the
   JSON exposes it, otherwise skip.
 
