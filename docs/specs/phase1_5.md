@@ -82,6 +82,17 @@ Tone fields (`published_at`, `updated_at`, `downloads_count`, `favorites_count`,
 - `calibrated` is only a catalog filter in the docs (not a Model field) — record it if the
   JSON exposes it, otherwise skip.
 
+## T5 — Sample-rate handling in tonerender (C++, dsp-engineer; before B)
+
+Real DIs arrive at 44.1 kHz; NAM captures are 48 kHz. `tonerender` gets
+`--render-rate auto|<Hz>` (default `auto` = the NAM models' expected rate; all models must
+agree, else exit 3): input resampled to the render rate with a high-quality offline
+resampler (reuse/extend `resampleSinc` from ir.cpp; passband flat ±0.05 dB to 20 kHz at
+44.1↔48, stopband ≥ 90 dB), rendered, then resampled back to the input rate unless
+`--out-rate render`. IRs already resample at load. Tests: 1 kHz sine through an identity
+chain 44.1→48→44.1 within 0.05 dB and with no alias above −90 dB; length preserved; report
+records both rates. (Plugin-side real-time resampling is a phase-2 design item.)
+
 ## B — Tone check (`match/sawblade_match/tonecheck/`)
 
 Goal: an objective report of how a rendered preset compares to `docs/TONE_TARGETS.md`
@@ -106,6 +117,6 @@ Goal: an objective report of how a rendered preset compares to `docs/TONE_TARGET
 
 ## Inputs the user provides
 
-- A real DI recording of the riff style (≥ 30 s, 48 kHz, peaking around −6 dBFS), and
+- Real DIs: `testdata/gatecreeper_cover/Guitar_L.wav` / `Guitar_R.wav` (see docs/TEST_MATERIAL.md) — the default tone-check material; and
   optionally a reference song clip (isolated or stem-separated guitars preferred).
 - Favorited candidate captures on TONE3000 per the shopping list in `presets/README.md`.
