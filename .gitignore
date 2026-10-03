@@ -9,3 +9,5 @@ __pycache__/
 .pytest_cache/
 *.resolved.json
 testdata/
+.claude/worktrees/
+calibration_out/

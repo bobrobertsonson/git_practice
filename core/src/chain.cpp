@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <stdexcept>
 
+#include "sawblade/capture_cache.h"
 #include "sawblade/ir.h"
+#include "sawblade/nam_block.h"
 
 namespace sawblade {
 namespace {
@@ -13,12 +16,22 @@ namespace {
 double dbToLin(double db) { return std::pow(10.0, db / 20.0); }
 
 std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, double sr, bool normalize,
-                                   std::vector<std::string>& warnings) {
-  verifyCapture(c, path + ".file");
-  IrData ir = loadIr(c.resolvedPath, sr, normalize);
-  for (const auto& w : ir.warnings) warnings.push_back(path + ": " + w);
+                                   std::vector<std::string>& warnings, CaptureCache* cache) {
+  const std::string filePath = path + ".file";
+  std::shared_ptr<const IrData> ir;
+  if (cache) {
+    ir = cache->ir(c, filePath, sr, normalize);
+  } else {
+    verifyCapture(c, filePath);
+    try {
+      ir = std::make_shared<const IrData>(loadIr(c.resolvedPath, sr, normalize));
+    } catch (const std::exception& e) {
+      throw CaptureError(filePath, e.what());
+    }
+  }
+  for (const auto& w : ir->warnings) warnings.push_back(path + ": " + w);
   auto conv = std::make_unique<Convolver>();
-  conv->setIr(ir.samples);
+  conv->setIr(ir->samples);
   return conv;
 }
 
@@ -54,7 +67,7 @@ std::vector<float> makeProbe(double sr) {
 
 }  // namespace
 
-ChainResources loadResources(const Preset& p, double sr) {
+ChainResources loadResources(const Preset& p, double sr, CaptureCache* cache) {
   ChainResources res;
   res.sampleRate = sr;
   const PathPreset* paths[2] = {&p.a, &p.b};
@@ -65,7 +78,7 @@ ChainResources loadResources(const Preset& p, double sr) {
       const std::string jp = JsonObject::index(std::string(names[k]) + ".blocks", i);
       const BlockType* t = BlockRegistry::instance().find(blocks[i].type);
       if (!t) throw std::runtime_error(jp + ".type: unknown block type \"" + blocks[i].type + "\"");
-      BlockBuildContext ctx{sr, &res.warnings, jp};
+      BlockBuildContext ctx{sr, &res.warnings, jp, cache};
       LoadedBlock lb;
       lb.id = blocks[i].id;
       lb.type = blocks[i].type;
@@ -78,12 +91,60 @@ ChainResources loadResources(const Preset& p, double sr) {
   if (!p.cab.enabled) {
     // A disabled cab is never used (Chain ignores it): do not require its IR to exist.
   } else if (p.cab.mode == CabMode::Shared) {
-    res.cabShared = loadCab(p.cab.ir, "cab.ir", sr, p.cab.normalize, res.warnings);
+    res.cabShared = loadCab(p.cab.ir, "cab.ir", sr, p.cab.normalize, res.warnings, cache);
   } else {
-    res.cabA = loadCab(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings);
-    res.cabB = loadCab(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings);
+    res.cabA = loadCab(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings, cache);
+    res.cabB = loadCab(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings, cache);
   }
   return res;
+}
+
+std::vector<NamRateProbe> probeNamRates(const Preset& p, CaptureCache* cache) {
+  std::vector<NamRateProbe> out;
+  const PathPreset* paths[2] = {&p.a, &p.b};
+  const char* names[2] = {"paths.a", "paths.b"};
+  for (int k = 0; k < 2; ++k) {
+    if (!paths[k]->enabled) continue;
+    for (std::size_t i = 0; i < paths[k]->blocks.size(); ++i) {
+      const Block& b = paths[k]->blocks[i];
+      const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get());
+      if (!nam || b.bypass) continue;
+      const std::string where = JsonObject::index(std::string(names[k]) + ".blocks", i);
+      const std::string filePath = where + ".model.file";
+      double hz = -1.0;
+      try {
+        if (cache) {
+          hz = cache->namModel(nam->model, filePath)->expectedSampleRate();
+        } else {
+          hz = NamBlock::load(nam->model.resolvedPath, NamBlockConfig{})->expectedSampleRate();
+        }
+      } catch (const CaptureError&) {
+        throw;
+      } catch (const std::exception& e) {
+        throw CaptureError(filePath, e.what());
+      }
+      out.push_back({where + " (" + b.id + ")", hz > 0.0 ? hz : kAssumedNamSampleRate, hz > 0.0});
+    }
+  }
+  return out;
+}
+
+ModelRate commonModelRate(const std::vector<NamRateProbe>& probes) {
+  ModelRate r;
+  if (probes.empty()) return r;
+  const double hz = probes.front().hz;
+  for (const auto& p : probes)
+    if (p.hz != hz) r.ambiguous = true;
+  if (!r.ambiguous) {
+    r.hz = hz;
+    return r;
+  }
+  char buf[32];
+  for (std::size_t i = 0; i < probes.size(); ++i) {
+    std::snprintf(buf, sizeof buf, "%g", probes[i].hz);
+    r.listing += (i ? ", " : "") + probes[i].where + ": " + buf + " Hz" + (probes[i].recorded ? "" : " (assumed)");
+  }
+  return r;
 }
 
 LiveParams LiveParams::fromPreset(const Preset& p) {

@@ -353,7 +353,7 @@ TEST_CASE("Render: NAM blocks that disagree on the sample rate are an error nami
   }
 }
 
-TEST_CASE("Render: auto rate falls back to the input rate without rate-bearing NAM blocks", "[resample][render]") {
+TEST_CASE("Render: auto rate: input rate without NAM blocks, 48 kHz for models with no recorded rate", "[resample][render]") {
   const auto x = noise(3000, 4);
   json eqOnly = identityPreset();
   for (const char* path : {"a", "b"})
@@ -363,7 +363,7 @@ TEST_CASE("Render: auto rate falls back to the input rate without rate-bearing N
   REQUIRE(r.outputRate == 44100.0);
   REQUIRE(r.resampleSeconds == 0.0);
 
-  // A model that records no sample rate is rate-agnostic and does not constrain auto.
+  // A model that records no sample rate counts as 48 kHz (NAM convention), like the plugin.
   TempDir t;
   std::string nam = slurp(kFixtures / "nam" / "linear_identity.nam");
   const auto pos = nam.find(",\"sample_rate\":48000");
@@ -373,7 +373,8 @@ TEST_CASE("Render: auto rate falls back to the input rate without rate-bearing N
   json agnostic = absolute(identityPreset());
   agnostic["paths"]["a"]["blocks"][0]["model"]["file"] = (t / "norate.nam").string();
   agnostic["paths"]["b"]["blocks"][0]["model"]["file"] = (t / "norate.nam").string();
-  REQUIRE(renderPreset(parsePreset(agnostic, kPresetDir), mono(x, 44100.0)).renderRate == 44100.0);
+  REQUIRE(renderPreset(parsePreset(agnostic, kPresetDir), mono(x, 44100.0)).renderRate == 48000.0);
+  REQUIRE(probeNamRates(parsePreset(agnostic, kPresetDir)).front().recorded == false);
 }
 
 TEST_CASE("CLI: 44.1 kHz input through the 48 kHz WaveNet fixture", "[resample][cli]") {

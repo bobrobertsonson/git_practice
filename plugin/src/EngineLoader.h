@@ -16,12 +16,22 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <memory>
 #include <thread>
+#include <vector>
 
 #include "Engine.h"
 #include "sawblade/swap_slot.h"
 
 namespace sawblade::plugin {
+
+// What travels through the SwapSlot. The audio thread copies the shared_ptr when it adopts an
+// engine so it can keep the outgoing engine alive for the cross-fade; the loader keeps its own
+// reference to every engine it published and only frees one once nothing else holds it, so the
+// last reference is never dropped on the audio thread.
+struct EngineRef {
+  std::shared_ptr<Engine> engine;
+};
 
 class EngineLoader {
  public:
@@ -49,7 +59,7 @@ class EngineLoader {
   // Called on the worker thread after the outcome is known (and after publishing).
   using Callback = std::function<void(const Outcome&)>;
 
-  EngineLoader(SwapSlot<Engine>& slot, Callback onOutcome);
+  EngineLoader(SwapSlot<EngineRef>& slot, Callback onOutcome);
   ~EngineLoader();
   EngineLoader(const EngineLoader&) = delete;
   EngineLoader& operator=(const EngineLoader&) = delete;
@@ -68,7 +78,7 @@ class EngineLoader {
   void run();
   static Request initRequest(const Request& like);
 
-  SwapSlot<Engine>& slot_;
+  SwapSlot<EngineRef>& slot_;
   Callback callback_;
   std::mutex m_;
   std::condition_variable cv_, doneCv_;
@@ -76,6 +86,8 @@ class EngineLoader {
   std::uint64_t pendingId_ = 0, nextId_ = 0, doneId_ = 0;
   bool busy_ = false, stop_ = false;
   std::atomic<std::uint64_t> builds_{0};
+  std::vector<std::shared_ptr<Engine>> owned_;  // worker thread only; see EngineRef
+  void collect();
   std::thread thread_;  // last: started after everything above is constructed
 };
 

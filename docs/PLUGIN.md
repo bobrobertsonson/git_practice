@@ -58,7 +58,9 @@ host in (mono, or stereo summed (L+R)/2)
 
 `Engine` (`plugin/src/Engine.*`, JUCE-free) is one preset's `Chain` plus the real-time rate
 conversion. The models run at their training rate (all non-bypassed NAM blocks on enabled paths
-must agree, same rule as `tonerender --render-rate auto`; no recorded rate means the host rate).
+must agree; a model that records no rate counts as 48 kHz, the NAM convention; no NAM blocks means the
+host rate). `probeNamRates` / `commonModelRate` in `core/chain.h` implement this once for both the
+plugin and `tonerender --render-rate auto`.
 If that differs from the host rate the two `RtResampler`s are inserted; otherwise there are none.
 
 ### Threading model
@@ -80,9 +82,13 @@ so the latency the host reads right afterwards is right; if that build fails it 
 pass-through engine rather than leave one of the wrong rate running. Parameter changes never
 rebuild anything.
 
-On a swap the new engine starts from silence (its filter/NAM state is fresh and its resampler
-history is empty), so a preset change produces a short dropout of about the engine's latency. A
-cross-fade is a possible later refinement (needs the old engine kept alive for a few ms).
+On a swap the audio thread cross-fades (equal power, 30 ms, `kFadeSeconds`) from the outgoing engine to
+the new one. Both engines run on the same input during the fade; the fade buffer is preallocated. The
+`SwapSlot` carries an `EngineRef` (a `shared_ptr`): the audio thread copies it when it adopts an
+engine, so it can keep the outgoing engine alive, and the loader keeps its own reference to every
+engine it publishes and frees one only once nothing else holds it (so the last reference is never
+dropped on the audio thread). The new engine starts with fresh state and its own latency, and the two
+engines are not time-aligned; coherent material can swell by up to +3 dB at the fade midpoint.
 
 ### Parameters (APVTS) and the preset
 

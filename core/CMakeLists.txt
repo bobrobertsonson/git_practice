@@ -20,6 +20,7 @@ add_library(sawblade_core STATIC
   src/preset_reader.cpp
   src/preset.cpp
   src/block_registry.cpp
+  src/capture_cache.cpp
   src/chain.cpp
   src/render.cpp)
 add_library(sawblade::core ALIAS sawblade_core)

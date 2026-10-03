@@ -4,7 +4,7 @@
 
 namespace sawblade::plugin {
 
-EngineLoader::EngineLoader(SwapSlot<Engine>& slot, Callback onOutcome) : slot_(slot), callback_(std::move(onOutcome)) {
+EngineLoader::EngineLoader(SwapSlot<EngineRef>& slot, Callback onOutcome) : slot_(slot), callback_(std::move(onOutcome)) {
   thread_ = std::thread([this] { run(); });
 }
 
@@ -50,7 +50,7 @@ void EngineLoader::run() {
       if (stop_) return;
       if (!pending_) {
         lk.unlock();
-        slot_.collectGarbage();
+        collect();
         continue;
       }
       req = std::move(*pending_);
@@ -94,11 +94,13 @@ void EngineLoader::run() {
       out.modelRate = engine->modelRate();
       out.info = engine->chainInfo();
       out.presetName = engine->presetName();
-      slot_.publish(std::move(engine));
+      std::shared_ptr<Engine> shared = std::move(engine);
+      owned_.push_back(shared);
+      slot_.publish(std::make_unique<EngineRef>(EngineRef{std::move(shared)}));
       out.published = true;
       builds_.fetch_add(1);
     }
-    slot_.collectGarbage();
+    collect();
     if (callback_) callback_(out);
     {
       std::lock_guard<std::mutex> lk(m_);
@@ -106,6 +108,18 @@ void EngineLoader::run() {
       busy_ = false;
     }
     doneCv_.notify_all();
+  }
+}
+
+void EngineLoader::collect() {
+  slot_.collectGarbage();  // frees the retired slot nodes (their shared_ptr references)
+  // An engine nobody else references (the audio thread has finished fading it out, or it was
+  // superseded before being picked up) is destroyed here. The newest is always kept.
+  for (std::size_t i = 0; i + 1 < owned_.size();) {
+    if (owned_[i].use_count() == 1)
+      owned_.erase(owned_.begin() + static_cast<std::ptrdiff_t>(i));
+    else
+      ++i;
   }
 }
 

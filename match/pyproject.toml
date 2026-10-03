@@ -20,10 +20,18 @@ dev = [
   "pytest==9.1.1",
   "respx==0.23.1",
 ]
+# Method 1 of sawblade-calibrate (stem separation). Weights are fetched at first use from dl.fbaipublicfiles.com.
+separation = [
+  "demucs==4.0.1",
+  "torch==2.5.1",
+  "torchaudio==2.5.1",
+]
 
 [project.scripts]
 sawblade-t3k = "sawblade_match.t3k.cli:main"
 sawblade-tonecheck = "sawblade_match.tonecheck.cli:main"
+sawblade-calibrate = "sawblade_match.calibrate.cli:main"
+sawblade-match = "sawblade_match.matcher.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["sawblade_match*"]

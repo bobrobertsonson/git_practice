@@ -16,6 +16,9 @@ endif()
 
 option(SAWBLADE_BUILD_TESTS "Build the Catch2 test suite" ON)
 option(SAWBLADE_BUILD_PLUGIN "Build the JUCE plugin (VST3, AU on macOS, Standalone) and its headless tests. JUCE 8 is AGPLv3 or commercial: a commercial licence is required before distribution" OFF)
+# Python bindings (module `sawblade_core`, see bindings/python and match/README.md). Off by default
+# so the normal build neither needs Python nor fetches pybind11.
+option(SAWBLADE_BUILD_PYTHON "Build the sawblade_core Python extension module" OFF)
 
 # Warnings-as-errors apply to Sawblade targets only: link this interface target into them.
 # Third-party targets never link it and expose their headers as SYSTEM.
@@ -38,4 +41,9 @@ endif()
 
 if(SAWBLADE_BUILD_PLUGIN)
   add_subdirectory(plugin)
+endif()
+
+# After enable_testing() so the python_bindings ctest entry registers.
+if(SAWBLADE_BUILD_PYTHON)
+  add_subdirectory(bindings/python)
 endif()

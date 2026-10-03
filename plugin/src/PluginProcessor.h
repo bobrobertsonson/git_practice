@@ -57,6 +57,9 @@ class SawbladeProcessor : public juce::AudioProcessor {
   void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
   using juce::AudioProcessor::processBlock;
   bool supportsDoublePrecisionProcessing() const override { return false; }
+  // Equal-power cross-fade between the outgoing and the new engine on a swap.
+  static constexpr double kFadeSeconds = 0.030;
+
   double getTailLengthSeconds() const override { return 0.0; }
   bool acceptsMidi() const override { return false; }
   bool producesMidi() const override { return false; }
@@ -110,7 +113,14 @@ class SawbladeProcessor : public juce::AudioProcessor {
   int maxBlock_ = 0;
   std::vector<float> mono_;
 
-  SwapSlot<Engine> slot_;                  // declared before loader_: the loader is destroyed first
+  // Audio-thread state: the engine in use and, for kFadeSeconds after a swap, the outgoing one.
+  // Neither reference is ever the last one (the loader keeps its own), so dropping them on the
+  // audio thread frees nothing.
+  std::shared_ptr<Engine> cur_, fading_;
+  int fadePos_ = 0, fadeLen_ = 0;
+  std::vector<float> fadeBuf_;
+
+  SwapSlot<EngineRef> slot_;                  // declared before loader_: the loader is destroyed first
   std::unique_ptr<EngineLoader> loader_;
 };
 

@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 
+#include "sawblade/capture_cache.h"
 #include "sawblade/nam_block.h"
 #include "sawblade/resample.h"
 
@@ -62,36 +63,6 @@ const char* alignModeName(AlignMode m) {
 // -infinity (digital silence) is not representable in JSON: report null.
 nlohmann::json dbOrNull(double db) { return std::isfinite(db) ? nlohmann::json(db) : nlohmann::json(nullptr); }
 
-struct NamRate {
-  std::string where;
-  double hz;
-};
-
-// Training rates of the NAM blocks that will actually run (not bypassed, on an enabled path).
-// Models without a recorded rate are rate-agnostic and do not take part.
-std::vector<NamRate> probeNamRates(const Preset& p) {
-  std::vector<NamRate> out;
-  const PathPreset* paths[2] = {&p.a, &p.b};
-  const char* names[2] = {"paths.a", "paths.b"};
-  for (int k = 0; k < 2; ++k) {
-    if (!paths[k]->enabled) continue;
-    for (std::size_t i = 0; i < paths[k]->blocks.size(); ++i) {
-      const Block& b = paths[k]->blocks[i];
-      const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get());
-      if (!nam || b.bypass) continue;
-      const std::string where = JsonObject::index(std::string(names[k]) + ".blocks", i);
-      std::unique_ptr<NamBlock> m;
-      try {
-        m = NamBlock::load(nam->model.resolvedPath, NamBlockConfig{});
-      } catch (const std::exception& e) {
-        throw RenderError(RenderErrorKind::Io, e.what());
-      }
-      if (m->expectedSampleRate() > 0.0) out.push_back({where + " (" + b.id + ")", m->expectedSampleRate()});
-    }
-  }
-  return out;
-}
-
 std::string hzString(double hz) {
   char buf[32];
   std::snprintf(buf, sizeof buf, "%g", hz);
@@ -132,18 +103,16 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
     if (!(rate >= 1000.0 && rate <= 768000.0))
       throw RenderError(RenderErrorKind::Preset, "render rate must be in 1000..768000 Hz");
   } else {
-    const std::vector<NamRate> rates = probeNamRates(preset);
-    if (!rates.empty()) {
-      rate = rates.front().hz;
-      bool agree = true;
-      for (const auto& nr : rates) agree = agree && nr.hz == rate;
-      if (!agree) {
-        std::string msg = "NAM blocks expect different sample rates, so --render-rate auto is ambiguous (";
-        for (std::size_t i = 0; i < rates.size(); ++i)
-          msg += (i ? ", " : "") + rates[i].where + ": " + hzString(rates[i].hz) + " Hz";
-        throw RenderError(RenderErrorKind::Preset, msg + "); set an explicit render rate");
-      }
+    ModelRate mr;
+    try {
+      mr = commonModelRate(probeNamRates(preset, opts.cache));
+    } catch (const CaptureError& e) {
+      throw RenderError(RenderErrorKind::Io, e.what(), e.jsonPath());
     }
+    if (mr.ambiguous)
+      throw RenderError(RenderErrorKind::Preset, "NAM blocks expect different sample rates, so --render-rate auto is ambiguous (" +
+                                                     mr.listing + "); set an explicit render rate");
+    if (mr.hz) rate = *mr.hz;
   }
   r.renderRate = rate;
   r.outputRate = opts.outRate == OutRate::Render ? rate : in.sampleRate;
@@ -160,16 +129,20 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
   // Chain construction and prepare) is a Preset error; loading files is Io.
   std::unique_ptr<Chain> chain;
   try {
-    ChainResources res = loadResources(preset, rate);
+    ChainResources res = loadResources(preset, rate, opts.cache);
     try {
       chain = std::make_unique<Chain>(preset, std::move(res));
+    } catch (const PresetError& e) {
+      throw RenderError(RenderErrorKind::Preset, e.what(), e.jsonPath());
     } catch (const std::exception& e) {
       throw RenderError(RenderErrorKind::Preset, e.what());
     }
   } catch (const RenderError&) {
     throw;
   } catch (const PresetError& e) {
-    throw RenderError(RenderErrorKind::Preset, e.what());
+    throw RenderError(RenderErrorKind::Preset, e.what(), e.jsonPath());
+  } catch (const CaptureError& e) {
+    throw RenderError(RenderErrorKind::Io, e.what(), e.jsonPath());
   } catch (const std::exception& e) {
     throw RenderError(RenderErrorKind::Io, e.what());
   }

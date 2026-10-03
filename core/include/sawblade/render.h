@@ -23,11 +23,16 @@ enum class RenderErrorKind {
 
 class RenderError : public std::runtime_error {
  public:
-  RenderError(RenderErrorKind kind, const std::string& message) : std::runtime_error(message), kind_(kind) {}
+  RenderError(RenderErrorKind kind, const std::string& message, std::string jsonPath = {})
+      : std::runtime_error(message), kind_(kind), jsonPath_(std::move(jsonPath)) {}
   RenderErrorKind kind() const noexcept { return kind_; }
+  // JSON path of the offending preset member when known (PresetError path, or the `file` member of
+  // a capture that failed to load); empty otherwise. what() is unchanged by it.
+  const std::string& jsonPath() const noexcept { return jsonPath_; }
 
  private:
   RenderErrorKind kind_;
+  std::string jsonPath_;
 };
 
 enum class OutRate {
@@ -35,14 +40,20 @@ enum class OutRate {
   Render  // keep the render rate
 };
 
+class CaptureCache;  // capture_cache.h
+
 struct RenderOptions {
   int blockSize = 256;                      // processing block size, 1..65536
   // Render rate. none = auto: the rate the preset's NAM models were trained at (all non-bypassed
-  // NAM blocks on enabled paths with a known rate must agree, else RenderError Preset naming the
-  // blocks); a preset with no such blocks renders at the input rate.
+  // NAM blocks on enabled paths must agree, else RenderError Preset naming the blocks; a model that
+  // records no rate counts as 48 kHz, kAssumedNamSampleRate, the NAM convention); a preset with no
+  // NAM blocks renders at the input rate.
   std::optional<double> renderRate;
   OutRate outRate = OutRate::Input;
   std::optional<double> normalizePeakDbfs;  // scale the output so its peak equals this; none by default
+  // Optional, non-owning (must outlive the call; thread-safe, may be shared by concurrent renders):
+  // NAM models and IRs are taken from it instead of being re-read. Output is bit-identical.
+  CaptureCache* cache = nullptr;
 };
 
 struct SignalStats {

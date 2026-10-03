@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,8 @@
 #include "sawblade/processor.h"
 
 namespace sawblade {
+
+class CaptureCache;
 
 // A built block plus the static facts the Chain needs (it never inspects the block `type`).
 struct LoadedBlock {
@@ -36,8 +39,32 @@ struct ChainResources {
 
 // Load-time. Builds every block through the BlockRegistry, loads IRs (resampled to
 // `sampleRate`), verifies optional sha256 hashes. Throws std::runtime_error (JSON path or file
-// in the message) on I/O, hash or model errors.
-ChainResources loadResources(const Preset& preset, double sampleRate);
+// in the message) on I/O, hash or model errors; those are CaptureError (carrying the JSON path
+// of the capture's `file`). With a `cache`, NAM models and IRs are taken from / added to it
+// instead of being read again; the result is bit-identical to the uncached load.
+ChainResources loadResources(const Preset& preset, double sampleRate, CaptureCache* cache = nullptr);
+
+// The rate a model is assumed to run at when it records none (NAM convention: 48 kHz).
+constexpr double kAssumedNamSampleRate = 48000.0;
+
+struct NamRateProbe {
+  std::string where;  // "paths.a.blocks[0] (id)"
+  double hz = 0.0;    // recorded training rate, or kAssumedNamSampleRate
+  bool recorded = true;
+};
+
+// Training rates of the NAM blocks that will actually run (not bypassed, on an enabled path). A
+// model that records no rate counts as kAssumedNamSampleRate. Loads the models (through `cache`
+// if given). Throws CaptureError (JSON path of the `file` member) if a model cannot be loaded.
+// Shared by tonerender's `--render-rate auto` and the plugin so both pick the same rate.
+std::vector<NamRateProbe> probeNamRates(const Preset& preset, CaptureCache* cache = nullptr);
+
+struct ModelRate {
+  std::optional<double> hz;  // the common rate; none if no NAM block runs or they disagree
+  bool ambiguous = false;    // blocks disagree
+  std::string listing;       // when ambiguous: "paths.a.blocks[0] (a1): 48000 Hz, ..."
+};
+ModelRate commonModelRate(const std::vector<NamRateProbe>& probes);
 
 struct AlignResult {
   int delaySamplesB = 0;  // +n delays B, -n delays A by n

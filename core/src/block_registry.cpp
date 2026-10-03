@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "sawblade/capture_cache.h"
 #include "sawblade/eq.h"
 #include "sawblade/nam_block.h"
 
@@ -21,12 +22,18 @@ std::shared_ptr<const BlockParams> parseNam(JsonObject& o, const std::filesystem
 
 std::unique_ptr<Processor> createNam(const Block& b, const BlockBuildContext& ctx) {
   const auto& p = static_cast<const NamBlockParams&>(*b.params);
-  verifyCapture(p.model, ctx.jsonPath + ".model.file");
+  const std::string filePath = ctx.jsonPath + ".model.file";
   NamBlockConfig cfg;
   cfg.inputGainDb = p.inputGainDb;
   cfg.outputGainDb = p.outputGainDb;
   cfg.normalizeLoudness = p.normalizeLoudness;
-  return NamBlock::load(p.model.resolvedPath, cfg);  // bypass is handled by the Chain
+  if (ctx.cache) return NamBlock::load(*ctx.cache->namModel(p.model, filePath), cfg);  // bypass: see Chain
+  verifyCapture(p.model, filePath);
+  try {
+    return NamBlock::load(p.model.resolvedPath, cfg);  // bypass is handled by the Chain
+  } catch (const std::exception& e) {
+    throw CaptureError(filePath, e.what());
+  }
 }
 
 std::shared_ptr<const BlockParams> parseEq(JsonObject& o, const std::filesystem::path&) {

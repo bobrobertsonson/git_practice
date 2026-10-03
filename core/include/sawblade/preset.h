@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -123,8 +124,21 @@ nlohmann::json toJson(const Preset& p);
 // bad content (including invalid JSON) and std::runtime_error if the file cannot be read.
 Preset loadPresetFile(const std::filesystem::path& path);
 
+// A capture (NAM model or IR) could not be found, verified or loaded. what() is the full message
+// (unchanged from a plain std::runtime_error); jsonPath() is the preset path of the offending
+// `file` member, e.g. "paths.a.blocks[0].model.file".
+class CaptureError : public std::runtime_error {
+ public:
+  CaptureError(std::string jsonPath, const std::string& message)
+      : std::runtime_error(message), path_(std::move(jsonPath)) {}
+  const std::string& jsonPath() const noexcept { return path_; }
+
+ private:
+  std::string path_;
+};
+
 // Load-time check of a capture: the file exists and, if `sha256` is set, hashes to it. Throws
-// std::runtime_error with the JSON path in the message.
+// CaptureError (a std::runtime_error) with the JSON path in the message.
 void verifyCapture(const Capture& c, const std::string& jsonPath);
 
 // Shared parse helpers (used by block-type parse hooks).

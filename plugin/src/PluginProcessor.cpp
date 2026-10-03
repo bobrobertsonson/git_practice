@@ -45,6 +45,7 @@ SawbladeProcessor::SawbladeProcessor()
     paramObj_[static_cast<std::size_t>(i)] = apvts_.getParameter(id);
   }
   mono_.assign(kMinChunk, 0.0f);
+  fadeBuf_.assign(kMinChunk, 0.0f);
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
 }
 
@@ -198,6 +199,8 @@ void SawbladeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   hostRate_ = sampleRate;
   maxBlock_ = std::max(1, samplesPerBlock);
   if (static_cast<int>(mono_.size()) < kMinChunk) mono_.assign(kMinChunk, 0.0f);
+  if (fadeBuf_.size() != mono_.size()) fadeBuf_.assign(mono_.size(), 0.0f);
+  fadeLen_ = std::max(1, static_cast<int>(std::lround(kFadeSeconds * sampleRate)));
   {
     // Hosts may call prepareToPlay again with unchanged settings: the running engine is still
     // right (it handles any block size), so there is nothing to rebuild.
@@ -218,12 +221,25 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
   const int numOut = std::min(getTotalNumOutputChannels(), buffer.getNumChannels());
   if (n <= 0 || numOut <= 0) return;
 
-  Engine* engine = slot_.current();
-  if (engine != nullptr && engine->hostRate() != hostRate_) engine = nullptr;  // stale rate: pass through
-  if (engine != nullptr) engine->setParams(readParams());
+  // Adopt a newly published engine; the one it replaces fades out. (A stale-rate engine is never
+  // used or faded.)
+  if (EngineRef* ref = slot_.current(); ref != nullptr && ref->engine.get() != cur_.get()) {
+    fading_ = std::move(cur_);
+    cur_ = ref->engine;
+    fadePos_ = 0;
+  }
+  if (fading_ && (fading_->hostRate() != hostRate_ || cur_->hostRate() != hostRate_)) fading_.reset();
+  Engine* engine = cur_ && cur_->hostRate() == hostRate_ ? cur_.get() : nullptr;
+  if (engine == nullptr) fading_.reset();
+  if (engine != nullptr) {
+    const ParamValues pv = readParams();
+    engine->setParams(pv);
+    if (fading_) fading_->setParams(pv);
+  }
 
   const int chunk = static_cast<int>(mono_.size());
   float* mono = mono_.data();
+  float* old = fadeBuf_.data();
   for (int pos = 0; pos < n; pos += chunk) {
     const int len = std::min(chunk, n - pos);
     if (numIn <= 0) {
@@ -235,7 +251,21 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
       const float* r = buffer.getReadPointer(1) + pos;
       for (int i = 0; i < len; ++i) mono[i] = 0.5f * (l[i] + r[i]);
     }
+    if (fading_) {
+      std::memcpy(old, mono, static_cast<std::size_t>(len) * sizeof(float));
+      fading_->process(old, old, len);
+    }
     if (engine != nullptr) engine->process(mono, mono, len);
+    if (fading_) {
+      constexpr float kHalfPi = 1.57079632679489662f;
+      const float inv = kHalfPi / static_cast<float>(fadeLen_);
+      for (int i = 0; i < len && fadePos_ + i < fadeLen_; ++i) {
+        const float th = (static_cast<float>(fadePos_ + i) + 0.5f) * inv;
+        mono[i] = old[i] * std::cos(th) + mono[i] * std::sin(th);
+      }
+      fadePos_ += len;
+      if (fadePos_ >= fadeLen_) fading_.reset();
+    }
     for (int ch = 0; ch < numOut; ++ch) std::memcpy(buffer.getWritePointer(ch) + pos, mono, static_cast<std::size_t>(len) * sizeof(float));
   }
   for (int ch = numOut; ch < buffer.getNumChannels(); ++ch) buffer.clear(ch, 0, n);

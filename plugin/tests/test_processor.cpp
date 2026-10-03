@@ -477,3 +477,50 @@ TEST_CASE("Processor: stereo input is summed to mono, output is dual mono", "[pr
   bad.outputBuses.add(juce::AudioChannelSet::stereo());
   CHECK_FALSE(h.p.checkBusesLayoutSupported(bad));
 }
+
+TEST_CASE("Processor: an engine swap cross-fades without a dropout", "[processor][swap][rt]") {
+  TempDir t;
+  const fs::path a = writeIdentityPreset(t.dir, "identA", 0);
+  const fs::path b = writeIdentityPreset(t.dir, "identB", 0);
+  for (const double rate : {44100.0, 48000.0}) {
+    CAPTURE(rate);
+    Host h(rate, 256);
+    h.load(a);
+    const int win = static_cast<int>(rate * 0.010);  // 10 ms RMS windows
+    std::size_t n = 0;
+    std::vector<double> windowRms;
+    std::vector<float> acc;
+    auto run = [&](double seconds) {
+      const auto total = static_cast<std::size_t>(rate * seconds);
+      std::vector<float> in(256), out(256);
+      for (std::size_t done = 0; done < total; done += 256) {
+        for (std::size_t i = 0; i < 256; ++i)
+          in[i] = static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 1000.0 * static_cast<double>(n + i) / rate));
+        h.process(in.data(), out.data(), 256);
+        n += 256;
+        acc.insert(acc.end(), out.begin(), out.end());
+        while (static_cast<int>(acc.size()) >= win) {
+          windowRms.push_back(rms(acc.data(), static_cast<std::size_t>(win)));
+          acc.erase(acc.begin(), acc.begin() + win);
+        }
+      }
+    };
+    run(0.5);
+    const std::size_t steadyEnd = windowRms.size();
+    const double steady = windowRms.back();
+    h.load(b);  // publishes a second engine; the next block starts the fade
+    run(0.3);
+    REQUIRE(windowRms.size() > steadyEnd + 20);
+    double lo = 1e9, hi = 0.0;
+    for (std::size_t i = steadyEnd; i < windowRms.size(); ++i) {
+      lo = std::min(lo, windowRms[i]);
+      hi = std::max(hi, windowRms[i]);
+    }
+    WARN("rate " << rate << ": swap window RMS " << toDb(lo / steady) << " .. " << toDb(hi / steady) << " dB re steady");
+    CHECK(toDb(lo / steady) > -3.0);
+    CHECK(toDb(hi / steady) < 3.0);
+    CHECK(h.allocs == 0);
+    if (LockGuard::enabled()) CHECK(h.locks == 0);
+    CHECK_FALSE(h.nonFinite);
+  }
+}

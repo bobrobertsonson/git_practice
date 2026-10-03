@@ -23,10 +23,13 @@ reference-song analysis in the matching phase; treat them as priors, not facts.
 | < 60 Hz | rolled off (≥ 12 dB below 100 Hz band) | avoid flub; leaves room for bass |
 | 80–150 Hz | strong, controlled "thump" | weight of palm mutes |
 | 200–400 Hz | controlled, not scooped out | body; mud lives here if too strong |
-| 500–800 Hz | slight dip relative to 1–2 kHz | lets the saw peak read |
+| 500–800 Hz | level with 1–2 kHz (±2.5 dB) — **calibrated v2**: the original has a broad mid plateau, not a dip | HM-2 mid push |
 | 1–2 kHz | prominent peak / plateau | HM-2-style "chainsaw" rasp |
 | 3–5 kHz | present but not harsh | pick attack, articulation |
-| > 7 kHz | rolled off steeply | removes fizz |
+| > 7 kHz | ≥ 10.5 dB below the saw band (**calibrated v2**) | removes fizz |
+
+Calibration v2 (2026-10-03): measured on the original's side channel; see
+`docs/tone_targets.json` → `calibration`. Other rows remain priors.
 
 ## Dynamic / feel targets
 

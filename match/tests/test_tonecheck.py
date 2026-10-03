@@ -15,7 +15,7 @@ from sawblade_match.tonecheck.rules import classify, evaluate_rules, load_target
 
 FS = 48000
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TARGETS = load_targets(REPO_ROOT / "docs" / "tone_targets.json")
+TARGETS = load_targets(Path(__file__).parent / "fixtures" / "tone_targets_v1.json")   # frozen v1
 SEED = 12345
 
 
@@ -216,7 +216,7 @@ def test_audio_mode_writes_report(tmp_path):
     wav = tmp_path / "x.wav"
     sf.write(wav, x, FS, subtype="FLOAT")
     rc = cli.main(["--audio", str(wav), "--ref", str(wav), "--ref-channel", "left", "--out", str(tmp_path / "o"),
-                   "--targets", str(REPO_ROOT / "docs/tone_targets.json")])
+                   "--targets", str(Path(__file__).parent / "fixtures" / "tone_targets_v1.json")])
     assert rc == 0
     rep = json.loads((tmp_path / "o" / "report.json").read_text())
     assert {r["id"] for r in rep["rules"]} >= {r["id"] for r in TARGETS["rules"]}
@@ -233,7 +233,7 @@ def _tonerender():
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
-    monkeypatch.setenv("SAWBLADE_TARGETS", str(REPO_ROOT / "docs/tone_targets.json"))
+    monkeypatch.setenv("SAWBLADE_TARGETS", str(Path(__file__).parent / "fixtures" / "tone_targets_v1.json"))
     tr = _tonerender()
     if tr:
         monkeypatch.setenv("SAWBLADE_TONERENDER", str(tr))
@@ -551,3 +551,104 @@ def test_finders_have_no_package_relative_fallback(tmp_path, monkeypatch):
         find_targets()
     monkeypatch.setenv("SAWBLADE_TARGETS", "x.json")
     assert str(find_targets()) == "x.json"
+
+
+# --- review follow-ups ------------------------------------------------------------------------------
+def _oracle_peak_index(out, t0, fs=FS):
+    """Envelope peak the decay metric uses for an onset at t0 (80-160 Hz BP4, 10 ms mean square)."""
+    sos = signal.butter(4, (80.0, 160.0), btype="bandpass", fs=fs, output="sos")
+    y = signal.sosfilt(sos, out)
+    k = int(0.010 * fs)
+    env = np.convolve(y * y, np.ones(k) / k, mode="same")
+    a, b = int(max(0, (t0 - 0.010) * fs)), int((t0 + 0.060) * fs)
+    return a + int(np.argmax(env[a:b]))
+
+
+@pytest.mark.parametrize("margin_ms,measured", [(-1.0, 1), (+1.0, 2)])
+def test_low_decay_minimum_window_is_15_ms(monkeypatch, margin_ms, measured):
+    # one burst at 0.5 s; a second (fake) onset so that the first onset's slope window
+    # [peak+5 ms, next onset] is 15 ms -/+ 1 ms long. Under 15 ms: censored; over: measured.
+    n = 3 * FS
+    tt = np.arange(n - int(0.5 * FS)) / FS
+    out = np.zeros(n)
+    out[int(0.5 * FS):] = np.exp(-tt / 0.1) * np.sin(2 * np.pi * 120.0 * tt)
+    pk = _oracle_peak_index(out, 0.5)
+    nxt = pk + int((0.005 + 0.015 + margin_ms / 1000) * FS)
+    monkeypatch.setattr(A, "detect_onsets", lambda d, fs=FS: np.array([0.5, nxt / FS]))
+    _, d = A.low_end_decay(np.zeros(n), out, FS)
+    assert d["nOnsets"] == 2 and d["nMeasured"] == measured and d["nCensored"] == 2 - measured
+
+
+def test_summarize_exactly_one_fail():
+    s = summarize([{"status": "pass"}, {"status": "fail"}, {"status": "n/a"}])
+    assert s == {"pass": 1, "marginal": 0, "fail": 1, "n/a": 1, "overall": "fail"}
+    assert summarize([{"status": "fail"}])["overall"] == "fail"
+
+
+def _noise_plucks(onsets, tau, seed, dur=8.0, floor=1e-4, amp=0.3):
+    n = int(dur * FS)
+    rng = np.random.default_rng(seed)
+    di = floor * rng.standard_normal(n)
+    for o in onsets:
+        i = int(o * FS)
+        di[i:] += amp * np.exp(-np.arange(n - i) / FS / tau) * rng.standard_normal(n - i)
+    return di
+
+
+def _match_onsets(det, truth, tol=0.015):
+    det, tp = list(det), 0
+    for t in truth:
+        near = [d for d in det if abs(d - t) <= tol]
+        if near:
+            tp += 1
+            det.remove(min(near, key=lambda d: abs(d - t)))
+    return tp
+
+
+@pytest.mark.parametrize("tau", [0.03, 0.05, 0.1])
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_no_spurious_onsets_in_noisy_decays(tau, seed):
+    # regression: 5 noise plucks with a 30 ms decay used to give 10-12 onsets (flux peaks in the noisy tail)
+    truth = [0.5, 2.0, 3.5, 5.0, 6.5]
+    det = A.detect_onsets(_noise_plucks(truth, tau, seed), FS)
+    assert len(det) == 5
+    assert _match_onsets(det, truth) == 5
+
+
+def test_onset_precision_recall_on_synthetic_set():
+    # before the minimum-rise check: precision 0.545, recall 1.0 on this set (220 detections for 120 plucks)
+    truth = [0.5, 2.0, 3.5, 5.0, 6.5]
+    tp = nd = nt = 0
+    for tau in (0.03, 0.05, 0.1, 0.15):
+        for seed in (1, 2, 3):
+            for amp in (0.3, 0.05):
+                det = A.detect_onsets(_noise_plucks(truth, tau, seed, amp=amp), FS)
+                tp += _match_onsets(det, truth)
+                nd += len(det)
+                nt += len(truth)
+    assert tp / nd >= 0.97 and tp / nt >= 0.97
+
+
+# --- onset minimum-rise edges ------------------------------------------------------------------------------
+def _bed_with_pluck(rise_db, seed=7, dur=4.0, t0=2.0):
+    """Steady noise bed plus one pluck whose initial power is (10^(rise/10) - 1) x the bed's."""
+    n = int(dur * FS)
+    rng = np.random.default_rng(seed)
+    x = 0.05 * rng.standard_normal(n)
+    i = int(t0 * FS)
+    amp = 0.05 * np.sqrt(10 ** (rise_db / 10) - 1)
+    x[i:] += amp * np.exp(-np.arange(n - i) / FS / 0.08) * rng.standard_normal(n - i)
+    return x
+
+
+def _has_onset_near(det, t, tol=0.02):
+    return bool(np.any(np.abs(np.asarray(det) - t) <= tol))
+
+
+def test_onset_min_rise_edges():
+    assert A.ONSET_MIN_RISE_DB == 6.0
+    # ~4 dB rise: below the 6 dB check -> suppressed; ~9 dB: kept (3 seeds each)
+    for seed in (7, 8, 9):
+        assert not _has_onset_near(A.detect_onsets(_bed_with_pluck(4.0, seed), FS), 2.0)
+        assert not _has_onset_near(A.detect_onsets(_bed_with_pluck(5.0, seed), FS), 2.0)   # just under the 6 dB check
+        assert _has_onset_near(A.detect_onsets(_bed_with_pluck(9.0, seed), FS), 2.0)

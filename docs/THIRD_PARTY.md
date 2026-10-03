@@ -24,12 +24,13 @@ exact commits. Headers are exposed as `SYSTEM`; third-party code is compiled wit
 | JUCE | 8.0.15, `91ad83ae34a81e0833b1a2b0866f54846370ae53` (release tag `8.0.15`, github.com/juce-framework/JUCE; shallow fetch of the pinned commit) | **AGPLv3 or commercial (every module we link declares `AGPLv3/Commercial`). A commercial licence is required before distribution; see the gate above.** Bundled third-party code inside JUCE (VST3 SDK, FreeType/HarfBuzz/SheenBidi, LV2 libraries, ...) has its own licences and must be audited before any redistribution. | Plugin only (`SAWBLADE_BUILD_PLUGIN=ON`): AudioProcessor, parameters (APVTS), editor, VST3 / AU / Standalone wrappers. Modules used: juce_audio_processors, juce_gui_basics, juce_data_structures, juce_events, juce_audio_utils (Standalone), juce_audio_plugin_client, and their dependencies. Not used by `core/`, `cli/` or `match/`. |
 | SHA-256 | Written for Sawblade (`core/src/sha256.cpp`, FIPS 180-4; nothing vendored) | n/a (project code) | Capture `sha256` verification (T3). Verified against the FIPS test vectors in `tests/test_preset.cpp`. |
 | dr_wav (mackron/dr_libs) | `dfe8377631000664666519fdb83da193fd8037f4` | Public domain or MIT-0 (choice) | WAV read/write (`core/src/wav_io.cpp`; implementation TU `core/src/dr_wav_impl.cpp`). |
+| pybind11 | v3.0.4, `d03662f0984f652b60e7ddce53d3868002275197` (pybind/pybind11) | BSD-3-Clause | Python bindings (`bindings/python`, module `sawblade_core`). Fetched only with `-DSAWBLADE_BUILD_PYTHON=ON` (off by default); headers exposed as `SYSTEM`. |
 
 ## Development tools (external, never linked or distributed)
 
 | Name | Version | License | Use |
 |------|---------|---------|-----|
-| pluginval (Tracktion) | v1.0.4 | GPL-3.0 (check the repository's `LICENSE`) | Optional VST3 validation: build it yourself and pass `-DSAWBLADE_PLUGINVAL_EXECUTABLE=...` (see `docs/PLUGIN.md`). Not fetched by our CMake. |
+| pluginval (Tracktion) | v1.0.4 | GPL-3.0 (check the repository's `LICENSE`) | Dev tool, not linked or shipped. Optional VST3 validation: build it yourself and pass `-DSAWBLADE_PLUGINVAL_EXECUTABLE=...` (see `docs/PLUGIN.md`). Not fetched by our CMake. |
 
 ## Python (match/)
 
@@ -44,6 +45,18 @@ Pinned in `match/pyproject.toml`; installed with pip into `match/.venv` (not ven
 | matplotlib | 3.11.2 | Matplotlib License (PSF-based, BSD-compatible) | Tone-check plots (later phases) |
 | pytest | 9.1.1 | MIT | Tests only |
 | respx | 0.23.1 | BSD-3-Clause | Tests only (fake HTTP API) |
+
+### Optional: `match[separation]` (calibration method 1, `sawblade-calibrate`)
+
+Install only on a developer machine (`pip install -e 'match[separation]' -c match/constraints-separation.txt`). Nothing
+here is bundled with, or required by, the plugin.
+
+| Name | Version | License | Use |
+|------|---------|---------|-----|
+| demucs | 4.0.1 | MIT (facebookresearch/demucs) | Stem separation of the reference mixes (htdemucs "other" stem ~ guitars). Pulls dora-search, julius, lameenc, openunmix, einops, omegaconf, ... (see the constraints file). |
+| torch | 2.5.1 | BSD-3-Clause (wheel bundles NVIDIA CUDA libraries under their own licenses; run on CPU) | Demucs inference |
+| torchaudio | 2.5.1 | BSD-2-Clause | Demucs dependency |
+| htdemucs weights (`955717e8-8726e21a.th`) | htdemucs | Released with the Demucs repository (MIT); a separate weights licence is not stated - confirm before any redistribution | Downloaded at first use by `demucs.pretrained.get_model` from `https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/` into `~/.cache/torch/hub/checkpoints/`. Not committed, not redistributed. Used only to measure reference audio. |
 
 Transitive dependencies are not listed; audit them before any binary redistribution.
 
