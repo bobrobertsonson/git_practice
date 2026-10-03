@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 from .cache import Cache
 from .client import T3KClient
-from .fetch import choose_model, ensure_capture
+from .fetch import ensure_capture, list_candidates
 from .filter import Decision, FilterConfig, config_dict, evaluate
 from .types import Tone
 
@@ -60,7 +60,7 @@ def decision_to_json(d: Decision) -> dict[str, Any]:
         "a1_models_count": t.a1_models_count, "a2_models_count": t.a2_models_count,
         "irs_count": t.irs_count, "sources": d.sources, "slot": d.slot, "status": d.status,
         "reasons": d.reasons, "flags": d.flags, "thresholds": d.thresholds,
-        "chosen_model": d.chosen_model, "cached_path": d.cached_path, "sha256": d.sha256,
+        "models": d.models, "downloads": d.downloads,
     }
     if "calibrated" in t.raw:  # only recorded if the JSON exposes it (it is not a documented field)
         out["calibrated"] = t.raw["calibrated"]
@@ -77,6 +77,7 @@ def build_pool(
     latest: bool = True,
     search_query: str | None = None,
     download: bool = True,
+    max_models_per_tone: int = 3,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
@@ -87,18 +88,18 @@ def build_pool(
     for d in decisions:
         if d.status != "included":
             continue
-        picked = choose_model(client, d.tone, cfg.prefer_size)
-        if picked is None:
+        found = list_candidates(client, d.tone)
+        if found is None:
             d.status = "excluded"
             d.reasons.append("no_models_returned")
             continue
-        model, arch = picked
-        d.chosen_model = {"id": model.id, "name": model.name, "size": model.size,
-                          "architecture_version": model.architecture_version,
-                          "architecture_queried": arch}
-        if download:
-            entry = ensure_capture(client, cache, d.tone, model)
-            d.cached_path, d.sha256 = str(entry.path), entry.sha256
+        arch, models = found
+        d.models = [{"id": m.id, "name": m.name, "architecture_version": m.architecture_version,
+                     "size": m.size, "architecture_queried": arch} for m in models]
+        if download:  # cap per tone so 168-IR packs are not bulk-downloaded
+            for m in models[:max_models_per_tone]:
+                e = ensure_capture(client, cache, d.tone, m)
+                d.downloads.append({"model_id": m.id, "path": str(e.path), "sha256": e.sha256})
 
     counts: dict[str, int] = {}
     for d in decisions:
@@ -108,6 +109,7 @@ def build_pool(
         "version": 1,
         "generated_at": now.isoformat(timespec="seconds"),
         "config": config_dict(cfg),
+        "max_models_per_tone": max_models_per_tone,
         "slots": slots,
         "sources": {"favorited": True, "trending": trending, "latest": latest,
                     "search": search_query if search_query is not None else False},

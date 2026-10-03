@@ -35,7 +35,7 @@ def world(api):
 def test_resolve_rewrites_preset(make_client, world, tmp_path):
     cache = Cache(tmp_path / "cache")
     preset = json.loads(json.dumps(PRESET))
-    done = resolve_preset(make_client(), cache, preset)
+    done = resolve_preset(make_client(), cache, preset, first_model=True)
     assert done == ["paths.a.blocks[0].model", "paths.a.blocks[2].model"]
 
     m1 = preset["paths"]["a"]["blocks"][0]["model"]
@@ -44,8 +44,8 @@ def test_resolve_rewrites_preset(make_client, world, tmp_path):
     assert m1["source"] == {"provider": "tone3000", "id": "200", "modelId": "2001",
                             "url": "https://www.tone3000.com/tones/tone-200", "title": "Resolved Amp",
                             "creator": "Carol Verified", "license": "cc-by-nc"}
-    m3 = preset["paths"]["a"]["blocks"][2]["model"]           # no modelId -> standard size chosen
-    assert m3["source"]["modelId"] == "3002" and m3["file"].endswith("300/3002.nam")
+    m3 = preset["paths"]["a"]["blocks"][2]["model"]           # no modelId + --first-model -> first
+    assert m3["source"]["modelId"] == "3001" and m3["file"].endswith("300/3001.nam")
     assert m3["source"]["creator"] == "dave" and m3["source"]["license"] == "t3k"
     assert preset["paths"]["a"]["blocks"][1]["model"] == {"file": "captures/local.nam"}   # untouched
     assert preset["cab"]["ir"]["file"] == "captures/cab.wav"                              # other provider
@@ -54,12 +54,29 @@ def test_resolve_rewrites_preset(make_client, world, tmp_path):
 
 def test_resolve_second_run_is_offline(make_client, world, tmp_path):
     cache = Cache(tmp_path / "cache")
-    resolve_preset(make_client(), cache, json.loads(json.dumps(PRESET)))
+    once = json.loads(json.dumps(PRESET))
+    resolve_preset(make_client(), cache, once, first_model=True)
     n = len(world.calls)
-    again = json.loads(json.dumps(PRESET))
-    resolve_preset(make_client(), cache, again)             # tone 300 has no modelId: remembered choice
+    resolve_preset(make_client(), cache, once)          # every capture now has modelId and is cached
     assert len(world.calls) == n
-    assert again["paths"]["a"]["blocks"][2]["model"]["source"]["modelId"] == "3002"
+
+
+def test_resolve_ambiguous_models_fails_with_listing(make_client, world, tmp_path):
+    from sawblade_match.t3k.errors import T3KError
+    p = {"m": {"file": "x", "source": {"provider": "tone3000", "id": "300"}}}
+    with pytest.raises(T3KError) as e:
+        resolve_preset(make_client(), Cache(tmp_path / "c"), p)
+    msg = str(e.value)
+    assert "3001 (m3001)" in msg and "3002 (m3002)" in msg and "--first-model" in msg
+    assert "sha256" not in p["m"] and not (tmp_path / "c" / "300").exists()
+
+
+def test_resolve_single_model_tone_needs_no_modelid(make_client, world, tmp_path):
+    t = tone_json(500, gear="amp")
+    world.add_tone(t, [model_json(5001, 500)])
+    p = {"m": {"file": "x", "source": {"provider": "tone3000", "id": "500"}}}
+    resolve_preset(make_client(), Cache(tmp_path / "c"), p)
+    assert p["m"]["source"]["modelId"] == "5001" and p["m"]["file"].endswith("500/5001.nam")
 
 
 def test_resolve_rejects_model_of_other_tone(make_client, world, tmp_path):
@@ -103,21 +120,23 @@ def test_cli_login_whoami_resolve(cli_env, respx_mock, api, world, tmp_path, cap
     p = tmp_path / "preset.json"
     p.write_text(json.dumps(PRESET))
     o = tmp_path / "out.json"
-    assert cli.main(["resolve", str(p), "-o", str(o), "--cache-dir", str(tmp_path / "cc")]) == 0
+    assert cli.main(["resolve", str(p), "-o", str(o), "--cache-dir", str(tmp_path / "cc")]) == 1
+    assert "3001 (m3001)" in capsys.readouterr().err and not o.exists()   # ambiguous tone 300
+    assert cli.main(["resolve", str(p), "-o", str(o), "--cache-dir", str(tmp_path / "cc"), "--first-model"]) == 0
     assert json.loads(p.read_text()) == PRESET                         # input untouched with -o
     res = json.loads(o.read_text())
     assert res["paths"]["a"]["blocks"][0]["model"]["sha256"]
     assert SECRET_ACCESS not in capsys.readouterr().out
 
     # default output: <name>.resolved.json next to the input; input never rewritten
-    assert cli.main(["resolve", str(p), "--cache-dir", str(tmp_path / "cc")]) == 0
+    assert cli.main(["resolve", str(p), "--cache-dir", str(tmp_path / "cc"), "--first-model"]) == 0
     assert json.loads(p.read_text()) == PRESET
     assert json.loads((tmp_path / "preset.resolved.json").read_text()) == res
 
 
 def test_cache_meta_stores_creator_username(make_client, world, tmp_path):
     cache = Cache(tmp_path / "cache")
-    resolve_preset(make_client(), cache, json.loads(json.dumps(PRESET)))
+    resolve_preset(make_client(), cache, json.loads(json.dumps(PRESET)), first_model=True)
     assert cache.read_meta(200)["creatorUsername"] == "carol"
 
 
@@ -135,7 +154,7 @@ def test_cli_pull_writes_manifest_and_table(cli_env, api, tmp_path, capsys):
     from sawblade_match.t3k.auth import Session, TokenStore
     import time
     TokenStore(cli_env).save(Session(SECRET_ACCESS, "r", time.time() + 3600))
-    t = tone_json(400, gear="amp", fav=50, dl=900, title="Pull Amp")
+    t = tone_json(400, gear="amp", fav=150, dl=2000, title="Pull Amp")
     api.favorited = [t]
     api.add_tone(t, [model_json(4001, 400)])
     # published_at is relative to the real clock in the CLI, so make the fixture recent

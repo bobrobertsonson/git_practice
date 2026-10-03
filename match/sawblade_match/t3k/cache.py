@@ -90,11 +90,7 @@ class Cache:
         return CacheEntry(int(tone_id), int(model_id), path, m["sha256"], meta.get("tone", {}),
                           m.get("model", {}), m.get("fetched_at", ""))
 
-    def default_model_id(self, tone_id: int | str) -> str | None:
-        """Model last chosen for this tone (lets `resolve` run offline without a modelId)."""
-        return self.read_meta(tone_id).get("chosen_model_id")
-
-    def put_meta(self, tone: Tone, model: Model, path: Path, sha256: str, *, chosen: bool = True) -> None:
+    def put_meta(self, tone: Tone, model: Model, path: Path, sha256: str) -> None:
         meta = self.read_meta(tone.id)
         meta["tone"] = tone.raw
         meta["creatorUsername"] = tone.user.username
@@ -104,6 +100,4 @@ class Cache:
             "file": path.name,
             "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
-        if chosen:
-            meta["chosen_model_id"] = str(model.id)
         self._write_meta(tone.id, meta)

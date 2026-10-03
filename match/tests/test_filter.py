@@ -33,8 +33,16 @@ def amps():
     ]
 
 
+def test_default_is_absolute_floors_only():
+    ds, th = run(amps())          # floors 100 favs / 1000 downloads, no percentile
+    assert th["amp"]["favorites"] == 100 and "favorites_percentile_value" not in th["amp"]
+    assert {i for i, d in ds.items() if d.status == "included"} == {1, 2}
+    assert ds[3].reasons[0].startswith("below_popularity")
+
+
 def test_popularity_uses_75th_percentile_within_gear():
-    ds, th = run(amps() + [tone_json(50, gear="pedal", fav=5, dl=10)])
+    ds, th = run(amps() + [tone_json(50, gear="pedal", fav=5, dl=10)],
+                 cfg=FilterConfig(popularity_percentile=75, min_favorites=10, min_downloads=200))
     p75f = np.percentile([200, 120, 80, 60, 40, 30, 3], 75)   # 100.0
     assert th["amp"]["favorites"] == p75f
     assert [i for i in range(1, 8) if ds[i].status == "included"] == [1, 2]
@@ -53,8 +61,11 @@ def test_absolute_floor_overrides_low_percentile():
     assert [i for i, d in ds.items() if d.status == "included"] == [1, 2, 3]
 
 
-def test_favorited_bypasses_popularity_but_is_flagged():
+def test_favorited_below_floor_excluded_unless_opted_in():
     ds, _ = run(amps(), favorited={7, 3})
+    assert ds[7].status == "excluded" and ds[3].status == "excluded"
+    assert ds[7].reasons[0].startswith("below_popularity")
+    ds, _ = run(amps(), favorited={7, 3}, cfg=FilterConfig(keep_favorites_below_floor=True))
     assert ds[7].status == "included" and "below_popularity_floor" in ds[7].flags
     assert ds[3].status == "included" and "below_popularity_floor" in ds[3].flags
     assert ds[1].flags == []                                  # passing tone: no flag
@@ -78,7 +89,7 @@ def test_recency_18_months_published_fallback_updated():
 
 
 def test_a2_preferred_a1_only_fallback_and_none():
-    free = FilterConfig(min_favorites=0, min_downloads=0, popularity_percentile=0)
+    free = FilterConfig(min_favorites=0, min_downloads=0)
     both = tone_json(20, a2=2, a1=3)
     a1only = tone_json(21, a2=0, a1=2)
     none = tone_json(22, a2=0, a1=0, custom_models_count=4)
@@ -86,13 +97,12 @@ def test_a2_preferred_a1_only_fallback_and_none():
     assert ds[20].architecture == "2" and ds[20].flags == []
     assert ds[21].architecture == "1" and ds[21].flags == ["a1_only"] and ds[21].status == "included"
     assert ds[22].status == "excluded" and ds[22].reasons == ["no_a2_models"]
-    ds, _ = run([a1only], cfg=FilterConfig(min_favorites=0, min_downloads=0, popularity_percentile=0,
-                                           allow_a1_fallback=False))
+    ds, _ = run([a1only], cfg=FilterConfig(min_favorites=0, min_downloads=0, allow_a1_fallback=False))
     assert ds[21].reasons == ["a1_fallback_disabled"]
 
 
 def test_slot_fit_by_gear():
-    free = FilterConfig(min_favorites=0, min_downloads=0, popularity_percentile=0)
+    free = FilterConfig(min_favorites=0, min_downloads=0)
     js = [tone_json(30, gear="pedal"), tone_json(31, gear="amp"), tone_json(32, gear="amp-cab"),
           tone_json(33, gear="cab", fmt="ir", a2=0), tone_json(34, gear="cab", fmt="nam"),
           tone_json(35, gear="outboard"), tone_json(36, gear="space"), tone_json(37, gear="experimental"),
@@ -107,7 +117,7 @@ def test_slot_fit_by_gear():
 
 
 def test_gear_restriction_to_slots():
-    free = FilterConfig(min_favorites=0, min_downloads=0, popularity_percentile=0)
+    free = FilterConfig(min_favorites=0, min_downloads=0)
     ds, _ = run([tone_json(30, gear="pedal"), tone_json(31, gear="amp")], cfg=free, gears=["amp"])
     assert ds[31].status == "included" and ds[30].reasons == ["slot_not_requested:pedal"]
 
@@ -127,45 +137,50 @@ def test_parse_ts_variants():
 def test_build_pool_manifest_end_to_end(respx_mock, make_client, api, tmp_path):
     good = tone_json(100, gear="amp", fav=300, dl=5000, title="Good Amp", user="bob", license="cc-by-sa")
     pop2 = tone_json(101, gear="amp", fav=10, dl=100)           # low pop, not favorited
-    fav_low = tone_json(102, gear="amp", fav=1, dl=1)           # low pop, favorited -> kept + flagged
+    fav_low = tone_json(102, gear="amp", fav=1, dl=1)           # low pop, favorited
     rig = tone_json(103, gear="amp-cab", fav=999, dl=9999)
     ir = tone_json(104, gear="cab", fmt="ir", a2=0, fav=150, dl=2000, title="V30 IR")
     api.favorited = [fav_low, rig]
     api.trending = {"amp": [good, pop2], "pedal": [], "cab": [ir]}
     api.latest = [tone_json(105, gear="pedal", fav=140, dl=1800, a2=0, a1=1)]
-    for t in (good, fav_low, ir, api.latest[0]):
-        arch = "1" if t["a2_models_count"] == 0 else "2"
-        api.add_tone(t, [model_json(t["id"] * 10, t["id"], size="lite", arch=arch),
-                         model_json(t["id"] * 10 + 1, t["id"], size="standard", arch=arch)])
+    api.add_tone(good, [model_json(1000 + i, 100, arch="2") for i in range(5)])   # 5 models
+    api.add_tone(fav_low, [model_json(1020, 102)])
+    api.add_tone(ir, [model_json(1040 + i, 104, arch=None) for i in range(168)])
+    api.add_tone(api.latest[0], [model_json(1050, 105, arch="1")])
     for t in (pop2, rig):
         api.add_tone(t, [])
-    client = make_client()
     cache = Cache(tmp_path / "c")
-    m = build_pool(client, cache, FilterConfig(), now=NOW)
+    m = build_pool(make_client(), cache, FilterConfig(), now=NOW)
     out = tmp_path / "pool.json"
     write_manifest(m, out)
     m = json.loads(out.read_text())
 
     inc = {t["tone_id"]: t for t in m["tones"]}
-    assert set(inc) == {100, 102, 104, 105}
+    assert set(inc) == {100, 104, 105}
     g = inc[100]
     assert (g["title"], g["creator"], g["license"], g["gear"], g["slot"]) == ("Good Amp", "bob", "cc-by-sa", "amp", "amp")
     assert g["url"].endswith("tone-100") and g["published_at"] and g["favorites_count"] == 300
-    assert g["chosen_model"]["id"] == 1001 and g["chosen_model"]["size"] == "standard"
-    assert g["chosen_model"]["architecture_queried"] == "2"
-    assert g["sha256"] and g["cached_path"].endswith("100/1001.nam") and "favorited" not in g["sources"]
-    assert inc[102]["flags"] == ["below_popularity_floor"] and inc[102]["sources"] == ["favorited"]
-    assert inc[104]["cached_path"].endswith("104/1041.wav")
-    assert inc[105]["flags"] == ["a1_only"] and inc[105]["chosen_model"]["architecture_queried"] == "1"
+    # manifest lists ALL models as candidates; downloads are capped at 3 per tone
+    assert [x["id"] for x in g["models"]] == [1000, 1001, 1002, 1003, 1004]
+    assert {"id", "name", "architecture_version"} <= set(g["models"][0])
+    assert [x["model_id"] for x in g["downloads"]] == [1000, 1001, 1002]
+    assert g["downloads"][0]["path"].endswith("100/1000.nam") and g["downloads"][0]["sha256"]
+    assert len(inc[104]["models"]) == 168 and len(inc[104]["downloads"]) == 3
+    assert inc[104]["downloads"][0]["path"].endswith("104/1040.wav")
+    assert inc[105]["flags"] == ["a1_only"] and inc[105]["models"][0]["architecture_queried"] == "1"
     assert [t["tone_id"] for t in m["references"]] == [103]
     ex = {t["tone_id"]: t for t in m["excluded"]}
-    assert set(ex) == {101} and ex[101]["reasons"][0].startswith("below_popularity")
-    assert m["config"]["max_age_months"] == 18 and "amp" in m["popularity_thresholds"]
-    assert m["sources"]["search"] is False
-    # only included tones were downloaded (FakeApi also asserts every models query had `architecture`)
+    assert set(ex) == {101, 102} and ex[102]["reasons"][0].startswith("below_popularity")
+    assert m["config"]["popularity_percentile"] is None and m["max_models_per_tone"] == 3
     downloaded = sorted(int(r.url.path.split("/")[-2]) for r in api.requests("download"))
-    assert downloaded == [1001, 1021, 1041, 1051]
+    assert downloaded == [1000, 1001, 1002, 1040, 1041, 1042, 1050]
     assert not (tmp_path / "c" / "101").exists() and not (tmp_path / "c" / "103").exists()
+
+    m2 = build_pool(make_client(), Cache(tmp_path / "c2"), FilterConfig(keep_favorites_below_floor=True),
+                    download=False, max_models_per_tone=1, now=NOW)
+    assert {t["tone_id"] for t in m2["tones"]} == {100, 102, 104, 105}
+    assert [t for t in m2["tones"] if t["tone_id"] == 102][0]["flags"] == ["below_popularity_floor"]
+    assert all(t["downloads"] == [] for t in m2["tones"])
 
 
 def test_search_is_opt_in(make_client, api):

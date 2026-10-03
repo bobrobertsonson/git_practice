@@ -41,20 +41,29 @@ when present, win over the env seed). Access tokens and Authorization headers ar
 ```
 sawblade-t3k whoami
 sawblade-t3k pull [--favorites] [--gear amp pedal ir] [--no-trending] [--no-latest]
-                  [--no-download] [--manifest pool.json] [--cache-dir DIR]
-                  [--max-age-months 18] [--percentile 75] [--min-favorites 100] [--min-downloads 1000]
-                  [--prefer-size standard] [--no-a1-fallback] [--favorites-bypass-recency]
-sawblade-t3k resolve presets/chainsaw_body.json   # -> presets/chainsaw_body.resolved.json
+                  [--no-download] [--max-models-per-tone 3] [--manifest pool.json] [--cache-dir DIR]
+                  [--max-age-months 18] [--min-favorites 100] [--min-downloads 1000]
+                  [--popularity-percentile P] [--keep-favorites-below-floor]
+                  [--no-a1-fallback] [--favorites-bypass-recency]
+sawblade-t3k resolve presets/chainsaw_body.json [--first-model]   # -> presets/chainsaw_body.resolved.json
 ```
 
-* `pull` builds the candidate pool from **favorited** (always) + **trending** + **latest**, applies the
-  quality filter (A2 preferred, <= 18 months old, >= per-gear 75th-percentile favorites/downloads with
-  absolute floors; favorited tones bypass the popularity floor but are flagged; `amp-cab` rigs are
-  references only), downloads the chosen model of each survivor into the cache and writes
-  `<cache>/pool_manifest.json` (decisions and reasons for every tone, including exclusions).
+* `pull` builds the candidate pool from **favorited** (always fetched) + **trending** + **latest** and
+  applies the quality filter: A2 preferred (A1 only if no A2 models), <= 18 months old (favorites too),
+  and absolute popularity floors (>= 100 favorites and >= 1000 downloads). `--popularity-percentile P`
+  additionally requires the per-gear Pth percentile (off by default). Favorited tones below the floors are
+  excluded with a reason unless `--keep-favorites-below-floor` (then kept and flagged). `amp-cab` rigs are
+  references only. The manifest `<cache>/pool_manifest.json` records every decision and reason and lists
+  **all** models of each included tone (id, name, architecture_version) as separate candidates: models within
+  a tone are usually different settings (gain, channel, boost), so choosing one is a tone decision left to the
+  matcher. When downloading, at most `--max-models-per-tone N` (default 3, API order) models per tone are
+  fetched, so a 168-IR pack is not bulk-downloaded; `--no-download` fetches none.
 * `resolve` finds every capture whose `source.provider == "tone3000"` (needs `source.id`, optional
   `source.modelId`), fetches it (cache hit = no network), and sets `file` (absolute cache path),
-  `sha256`, `source.modelId`, `url`, `title`, `creator`, `license`. Output goes to `<name>.resolved.json` next to the input (or `-o`); the input is never modified. Resolved presets contain machine-specific absolute paths and are git-ignored (`*.resolved.json`).
+  `sha256`, `source.modelId`, `url`, `title`, `creator`, `license`. With no `modelId`: if the tone has exactly one
+  model it is used; otherwise `resolve` fails (exit 1) listing the model ids and names, unless `--first-model`
+  is given. Output goes to `<name>.resolved.json` next to the input (or `-o`); the input is never modified.
+  Resolved presets contain machine-specific absolute paths and are git-ignored (`*.resolved.json`).
 * Cache: `~/.cache/sawblade/captures/<tone_id>/<model_id>.<nam|wav>` + `meta.json` (override with
   `SAWBLADE_CACHE_DIR`). Files are sha256-verified on every hit.
 

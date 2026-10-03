@@ -27,24 +27,20 @@ def architecture_order(tone: Tone) -> list[str]:
     return [ARCH_A1, ARCH_CUSTOM]
 
 
-def pick_model(models: list[Model], prefer_size: str = "standard") -> Model | None:
-    """Preferred size if present, else the first model (API order = owner-set position)."""
-    for m in models:
-        if m.size == prefer_size:
-            return m
-    return models[0] if models else None
+def list_candidates(client: T3KClient, tone: Tone) -> tuple[str, list[Model]] | None:
+    """ALL models of the tone for the most-preferred architecture that has any (A2, then A1).
 
-
-def choose_model(client: T3KClient, tone: Tone, prefer_size: str = "standard") -> tuple[Model, str] | None:
+    Models within a tone are usually different settings (gain, channel, boost), so choosing
+    among them is a tone decision left to the matcher/user, not made here.
+    """
     for arch in architecture_order(tone):
-        m = pick_model(client.list_models(tone.id, arch), prefer_size)
-        if m is not None:
-            return m, arch
+        ms = client.list_models(tone.id, arch)
+        if ms:
+            return arch, ms
     return None
 
 
-def ensure_capture(client: T3KClient, cache: Cache, tone: Tone, model: Model, *,
-                   chosen: bool = True) -> CacheEntry:
+def ensure_capture(client: T3KClient, cache: Cache, tone: Tone, model: Model) -> CacheEntry:
     """Return the cached capture, downloading it first on a miss."""
     hit = cache.get(tone.id, model.id)
     if hit:
@@ -52,7 +48,7 @@ def ensure_capture(client: T3KClient, cache: Cache, tone: Tone, model: Model, *,
     ext = ext_for(tone)
     path = cache.path_for(tone.id, model.id, ext)
     digest = client.download_model(model.model_url, path)
-    cache.put_meta(tone, model, path, digest, chosen=chosen)
+    cache.put_meta(tone, model, path, digest)
     entry = cache.get(tone.id, model.id)
     assert entry is not None
     log.info("cached %s (tone %s model %s)", Path(entry.path).name, tone.id, model.id)

@@ -79,22 +79,24 @@ def _table(rows: list[list[str]], header: list[str]) -> None:
 def cmd_pull(args: argparse.Namespace) -> int:
     cfg = FilterConfig(max_age_months=args.max_age_months, popularity_percentile=args.percentile,
                        min_favorites=args.min_favorites, min_downloads=args.min_downloads,
-                       allow_a1_fallback=not args.no_a1_fallback, prefer_size=args.prefer_size,
-                       favorites_bypass_recency=args.favorites_bypass_recency)
+                       allow_a1_fallback=not args.no_a1_fallback,
+                       favorites_bypass_recency=args.favorites_bypass_recency,
+                       keep_favorites_below_floor=args.keep_favorites_below_floor)
     slots = sorted({GEAR_TO_SLOT[g] for g in args.gear}) if args.gear else ["pedal", "amp", "cab"]
     cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
     if args.search is not None:
         print("NOTE: --search uses tones/search, which requires a commercial agreement with TONE3000 "
               "before shipping.", file=sys.stderr)
     m = build_pool(make_client(), cache, cfg, slots=slots, trending=not args.no_trending,
-                   latest=not args.no_latest, search_query=args.search, download=not args.no_download)
+                   latest=not args.no_latest, search_query=args.search, download=not args.no_download,
+                   max_models_per_tone=args.max_models_per_tone)
     out = Path(args.manifest) if args.manifest else cache.root / "pool_manifest.json"
     write_manifest(m, out)
     rows = [[str(t["tone_id"]), t["slot"], t["title"][:40], t["creator"], t["license"],
              f'{t["favorites_count"]}/{t["downloads_count"]}',
-             str((t["chosen_model"] or {}).get("architecture_queried", "-")),
+             f'{len(t["models"])}m/{len(t["downloads"])}dl',
              ",".join(t["flags"])] for t in m["tones"]]
-    _table(rows, ["tone", "slot", "title", "creator", "license", "fav/dl", "arch", "flags"])
+    _table(rows, ["tone", "slot", "title", "creator", "license", "fav/dl", "models", "flags"])
     c = m["counts"]
     print(f"\n{c.get('included', 0)} included, {c.get('reference', 0)} reference, "
           f"{c.get('excluded', 0)} excluded. Manifest: {out}")
@@ -104,7 +106,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
 def cmd_resolve(args: argparse.Namespace) -> int:
     done = resolve_file(make_client(), Cache(Path(args.cache_dir) if args.cache_dir else None),
                         Path(args.preset), Path(args.output) if args.output else None,
-                        prefer_size=args.prefer_size)
+                        first_model=args.first_model)
     dest = args.output or default_output(Path(args.preset))
     print(f"Resolved {len(done)} capture(s) -> {dest}")
     for p in done:
@@ -130,11 +132,16 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--manifest", help="manifest path (default: <cache>/pool_manifest.json)")
     q.add_argument("--cache-dir")
     q.add_argument("--max-age-months", type=float, default=FilterConfig.max_age_months)
-    q.add_argument("--percentile", type=float, default=FilterConfig.popularity_percentile)
+    q.add_argument("--popularity-percentile", "--percentile", dest="percentile", type=float, default=None,
+                   metavar="P", help="opt-in: also require per-gear percentile P (default: floors only)")
     q.add_argument("--min-favorites", type=int, default=FilterConfig.min_favorites)
     q.add_argument("--min-downloads", type=int, default=FilterConfig.min_downloads)
     q.add_argument("--no-a1-fallback", action="store_true")
-    q.add_argument("--prefer-size", default=FilterConfig.prefer_size)
+    q.add_argument("--keep-favorites-below-floor", action="store_true",
+                   help="keep (and flag) favorited tones below the popularity floors")
+    q.add_argument("--max-models-per-tone", type=int, default=3,
+                   help="when downloading, fetch at most N models per tone (default 3; the manifest "
+                        "always lists all models)")
     q.add_argument("--favorites-bypass-recency", action="store_true")
     q.set_defaults(fn=cmd_pull)
 
@@ -142,7 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("preset")
     r.add_argument("-o", "--output", help="output path (default: <name>.resolved.json next to PRESET)")
     r.add_argument("--cache-dir")
-    r.add_argument("--prefer-size", default="standard")
+    r.add_argument("--first-model", action="store_true",
+                   help="if a tone has several models and no source.modelId, use the first instead of failing")
     r.set_defaults(fn=cmd_resolve)
     return p
 

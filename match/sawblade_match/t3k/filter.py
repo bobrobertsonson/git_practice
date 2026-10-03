@@ -5,8 +5,10 @@ Rules (all thresholds configurable and recorded in the pool manifest):
     amp-cab ("full rig") is never a slot candidate, only a reference.
   * architecture: A2 preferred; A1 only when the tone has no A2 models.
   * recency: published_at (fallback updated_at) within `max_age_months`.
-  * popularity: favorites_count and downloads_count >= max(per-gear percentile over the fetched
-    set, absolute floor). Favorited tones bypass the popularity floor but are flagged.
+  * popularity: favorites_count and downloads_count >= absolute floors (default 100 / 1000). An
+    optional per-gear percentile over the fetched set (`popularity_percentile`, default off) raises
+    the bar. Favorited tones below the bar are excluded unless `keep_favorites_below_floor`
+    (then kept and flagged).
 """
 from __future__ import annotations
 
@@ -24,12 +26,12 @@ DAYS_PER_MONTH = 30.4375
 @dataclass
 class FilterConfig:
     max_age_months: float = 18.0
-    popularity_percentile: float = 75.0
+    popularity_percentile: float | None = None   # opt-in
     min_favorites: int = 100         # absolute floors (lead-set; applied on top of the percentile)
     min_downloads: int = 1000
     allow_a1_fallback: bool = True
-    prefer_size: str = "standard"
-    favorites_bypass_recency: bool = False   # spec: only the popularity floor is bypassed
+    favorites_bypass_recency: bool = False
+    keep_favorites_below_floor: bool = False
 
 
 @dataclass
@@ -42,9 +44,8 @@ class Decision:
     flags: list[str] = field(default_factory=list)
     architecture: str | None = None   # preferred architecture ("2"/"1") for NAM tones
     thresholds: dict[str, float] = field(default_factory=dict)
-    chosen_model: dict[str, Any] | None = None
-    cached_path: str | None = None
-    sha256: str | None = None
+    models: list[dict[str, Any]] = field(default_factory=list)   # ALL candidate models of the tone
+    downloads: list[dict[str, Any]] = field(default_factory=list)  # {model_id, path, sha256}
 
     @property
     def favorited(self) -> bool:
@@ -80,15 +81,13 @@ def popularity_thresholds(tones: Iterable[Tone], cfg: FilterConfig) -> dict[str,
         by_gear.setdefault(t.gear, []).append(t)
     out = {}
     for gear, ts in by_gear.items():
-        pf = float(np.percentile([t.favorites_count for t in ts], cfg.popularity_percentile))
-        pd = float(np.percentile([t.downloads_count for t in ts], cfg.popularity_percentile))
-        out[gear] = {
-            "favorites": max(pf, float(cfg.min_favorites)),
-            "downloads": max(pd, float(cfg.min_downloads)),
-            "favorites_percentile_value": pf,
-            "downloads_percentile_value": pd,
-            "n": len(ts),
-        }
+        fav, dl = float(cfg.min_favorites), float(cfg.min_downloads)
+        out[gear] = {"favorites": fav, "downloads": dl, "n": len(ts)}
+        if cfg.popularity_percentile is not None:
+            pf = float(np.percentile([t.favorites_count for t in ts], cfg.popularity_percentile))
+            pd = float(np.percentile([t.downloads_count for t in ts], cfg.popularity_percentile))
+            out[gear].update(favorites=max(pf, fav), downloads=max(pd, dl),
+                             favorites_percentile_value=pf, downloads_percentile_value=pd)
     return out
 
 
@@ -150,7 +149,7 @@ def evaluate(
         if t.downloads_count < th["downloads"]:
             low.append(f"downloads {t.downloads_count} < {th['downloads']:g}")
         if low:
-            if d.favorited:
+            if d.favorited and cfg.keep_favorites_below_floor:
                 d.flags.append("below_popularity_floor")
             else:
                 d.reasons.append("below_popularity:" + "; ".join(low))

@@ -8,7 +8,7 @@ from typing import Any
 from .cache import Cache
 from .client import T3KClient
 from .errors import T3KError
-from .fetch import choose_model, ensure_capture
+from .fetch import ensure_capture, list_candidates
 
 
 def _captures(node: Any, path: str = "") -> list[tuple[str, dict]]:
@@ -27,10 +27,10 @@ def _captures(node: Any, path: str = "") -> list[tuple[str, dict]]:
     return out
 
 
-def resolve_capture(client: T3KClient, cache: Cache, cap: dict, prefer_size: str = "standard") -> None:
+def resolve_capture(client: T3KClient, cache: Cache, cap: dict, first_model: bool = False) -> None:
     src = cap["source"]
     tone_id = str(src["id"])
-    model_id = str(src["modelId"]) if src.get("modelId") is not None else cache.default_model_id(tone_id)
+    model_id = str(src["modelId"]) if src.get("modelId") is not None else None
 
     entry = cache.get(tone_id, model_id) if model_id else None
     if entry is None:
@@ -40,11 +40,18 @@ def resolve_capture(client: T3KClient, cache: Cache, cap: dict, prefer_size: str
             if model.tone_id and model.tone_id != tone.id:
                 raise T3KError(f"model {model_id} belongs to tone {model.tone_id}, not {tone.id}")
         else:
-            picked = choose_model(client, tone, prefer_size)
-            if picked is None:
+            found = list_candidates(client, tone)
+            if found is None:
                 raise T3KError(f"tone {tone_id} has no usable models")
-            model = picked[0]
-        entry = ensure_capture(client, cache, tone, model, chosen=True)
+            models = found[1]
+            if len(models) > 1 and not first_model:
+                listing = "; ".join(f"{m.id} ({m.name})" for m in models[:20])
+                more = f" (+{len(models) - 20} more)" if len(models) > 20 else ""
+                raise T3KError(
+                    f"tone {tone_id} ({tone.title!r}) has {len(models)} models and the preset names none. "
+                    f"Set source.modelId to one of: {listing}{more}. (Or pass --first-model.)")
+            model = models[0]
+        entry = ensure_capture(client, cache, tone, model)
     t = entry.tone
     cap["file"] = str(entry.path)
     cap["sha256"] = entry.sha256
@@ -56,11 +63,11 @@ def resolve_capture(client: T3KClient, cache: Cache, cap: dict, prefer_size: str
     src["license"] = t.get("license", src.get("license"))
 
 
-def resolve_preset(client: T3KClient, cache: Cache, preset: dict, prefer_size: str = "standard") -> list[str]:
+def resolve_preset(client: T3KClient, cache: Cache, preset: dict, first_model: bool = False) -> list[str]:
     """Rewrite ``preset`` in place; returns the JSON paths of the captures that were resolved."""
     caps = _captures(preset)
     for _, cap in caps:
-        resolve_capture(client, cache, cap, prefer_size)
+        resolve_capture(client, cache, cap, first_model)
     return [p for p, _ in caps]
 
 
@@ -71,9 +78,9 @@ def default_output(preset_path: Path) -> Path:
 
 
 def resolve_file(client: T3KClient, cache: Cache, preset_path: Path, out_path: Path | None = None,
-                 prefer_size: str = "standard") -> list[str]:
+                 first_model: bool = False) -> list[str]:
     preset_path = Path(preset_path)
     preset = json.loads(preset_path.read_text())
-    done = resolve_preset(client, cache, preset, prefer_size)
+    done = resolve_preset(client, cache, preset, first_model)
     Path(out_path or default_output(preset_path)).write_text(json.dumps(preset, indent=2) + "\n")
     return done
