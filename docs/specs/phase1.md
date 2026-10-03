@@ -25,7 +25,8 @@ reviewed before the next starts.
   public:
     virtual ~Processor() = default;
     virtual void prepare(const ProcessSpec&) = 0;   // may allocate
-    virtual void reset() noexcept = 0;              // clears state, no allocation
+    virtual void reset() = 0;                       // clears state; NOT RT-safe (may allocate,
+                                                    // e.g. NAM prewarm) — call off the audio thread
     virtual void process(float* io, int numSamples) noexcept = 0; // RT-safe, n <= maxBlockSize
     virtual int latencySamples() const noexcept { return 0; }
   };
