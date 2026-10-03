@@ -235,3 +235,68 @@ Cost model: one 4-NAM render runs at ~0.6x real time per core. The default plan 
 excerpt; stage 2: 5 combos x ~72 NAM-gain evaluations + ~1700 cheap linear evaluations; stage 3: 3 full-length renders)
 measured 19.6 min (cover mix) and 24.6 min (original) on 4 cores at a load average of ~7, with the box shared (44 min in an earlier
 run at load ~10); `--budget` scales every count (`--budget 0.1` for a quick check).
+
+## NAM export (`sawblade-export`, phase 4)
+
+```
+pip install -e 'match[export]' -c match/constraints-export.txt     # neural-amp-modeler 0.13.0; torch stays 2.5.1 (CPU)
+sawblade-export PRESET.resolved.json [--mode nocab|withcab] [--size feather|lite|standard] [--epochs N] [--max-minutes M]
+                [--seed 0] [--signal-seed 1] [--threads 4] [--allow-inexact] [--target-esr E] [--out DIR] [--name STEM]
+                [--di Guitar_L.wav] [--no-validate]
+```
+
+Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.resolved.json`. Default output
+`~/.cache/sawblade/exports/<name>-<mode>-<size>-<timestamp>/` (never the repo): `<name>-<mode>-<size>.nam`, `<name>-nocab.ir.wav`
+(nocab), `export_report.json`, `validation_renders/*.wav`, `listen/ab_original_then_export.{wav,mp3}`. Exit 0 = done, 2 = refused
+(message on stderr), 3 = error. Exported models are derived from TONE3000 captures: **personal use only**.
+
+* **Modes.** `nocab` (default; needs `cab.mode == "shared"`): the model is everything from input gain to the blend, plus the
+  output gain; the shared cab IR and the post EQ are *folded* into one IR (below). Requires the bus comp **off** (it sits after the cab
+  and is nonlinear): otherwise refused, or with `--allow-inexact` dropped and the error it introduces shows up in the validation
+  (the reference keeps the comp). `perPath` presets: `nocab` is refused with "only the with-cab export is exact for studio blends"
+  (not overridable). `withcab` always works (cab, post EQ and bus comp are in the model); a bus comp with release > 150 ms is
+  refused there.
+* **Never trained.** The gate is always bypassed in the training chain and reported (with its original settings) in
+  `export_report.json -> plan.bypassed`. Non-bypassed blocks that are not NAM-trainable (unknown type, or the core's
+  `namTrainable == false` trait, detected from the core's render warnings) are refused. Captures with a `cc-by-nc*` licence are refused.
+* **Folding (nocab).** The IR written next to the model is `cab IR (*) post-EQ impulse response`, obtained by rendering a unit impulse
+  through the core's own `cab -> post EQ` (empty paths, blend 0): so IR loading, resampling to 48 kHz, the 2 s truncation and the L2
+  normalisation are exactly the chain's, and the latency is already trimmed. Trailing samples below -120 dB (re. peak) are cut. The
+  output gain is *not* in the IR: it is a scalar before the cab and is part of the model's target level. **Load the IR without
+  loudness/peak normalisation** (mono WAV, 48 kHz, 32-bit float; a loader that normalises or resamples changes the level/tone).
+  `levels` (RMS/peak of the training input/output) are in the report and the `.nam`; `input_level_dbu`/`output_level_dbu` are left
+  empty (digital chain, no analog reference).
+* **Training signal** (`export/signal.py`, `SIGNAL_VERSION 1`, seeded by `--signal-seed`, sha256 recorded). 48 kHz mono, 187.7 s train +
+  32 s held-out validation, no gates/reverb/delay/compression: 1 s silence; pink-noise level steps (-48..-12 dBFS RMS, 40 Hz-10 kHz);
+  white-noise steps (-45..-12); log sweeps up/down 30 Hz-12 kHz at -24/-12/-3 dBFS peak; then 135 s of synthetic chord-like plucks
+  (additive 24-partial tones with inharmonic stretch, pick-noise burst, palm-mute / ringing / tremolo phrases, root A1-A3, power
+  chords/octaves/tritones, velocities -30..-1 dBFS, overlapping ring-outs). Blocks are separated by 0.4 s of silence. The validation
+  segment uses its own random streams (pink steps, a sweep, 4 phrases, a 1.2 s silent gap). The target is the chain rendered by the
+  core at 48 kHz (`sawblade_core.render`, latency trimmed) and cached in `~/.cache/sawblade/export_cache/` (key: preset hash, signal
+  hash, core build) so a second size reuses it.
+* **Trainer API path.** `nam.train.core.train` only accepts NAM's own standard input files (hash-matched, blip latency calibration)
+  and imports `tkinter`; Sawblade drives the trainer's lower layers instead (`nam.data.Dataset` from arrays, `NormalizeJointDatasetOutput`
+  -18 dBFS with the export hook that restores the level, `LightningModule` + `pytorch_lightning.Trainer` on CPU, `net.export` with
+  `other_metadata`), using the trainer's shipped default recipe (ESR validation loss, MR-STFT 5e-4, Adam 4e-3, ExponentialLR 0.994).
+  `tkinter` is stubbed when absent. See `export/train.py`. Sizes are the community A1 WaveNets (two layer arrays, 10 dilations
+  1..512, kernel 3, Tanh): feather 8/4 channels (3 637 params), lite 12/6 (7 903 params), standard 16/8 (13 801 params);
+  receptive field 4093. **A2:** 0.13.0 trains a packed A2 WaveNet by default (`PackedWaveNet`, `export_container`; the core is built
+  with `NAM_ENABLE_A2_FAST`); that path is available in the pin but not enabled here, A1 being what loader pedals play.
+* **Determinism.** Everything is seeded (`--seed`: model init + batch order; `--signal-seed`). CPU training repeats bit-for-bit for the
+  same seed, thread count, machine and library versions (smoke test); it is not guaranteed across thread counts/BLAS builds. The `.nam`
+  carries a date stamp, so its bytes differ between runs.
+* **Metadata** (`.nam` `metadata`): `name`, `modeled_by: "Sawblade"`, `gear_type` (`pedal_amp` for nocab, `amp_pedal_cab` for withcab),
+  `tone_type: hi_gain`, `training.validation_esr`, NAM's own `loudness`/`gain`, and `sawblade`: preset name + sha256 (canonical JSON without
+  machine paths), export mode, exactness, bypassed items, seeds, signal hash, levels, IR file name, the full attribution list (title,
+  creator, licence, TONE3000 URL, roles) and `licenceNote`: "Derived from TONE3000 captures; personal use only unless permitted by the
+  creators and TONE3000."
+* **Validation** (skip with `--no-validate`). The reference is the original chain with only the gate bypassed (what can be trained). The
+  held-out segment and a 10 s guitar-dominant excerpt of the cover DI (`testdata/gatecreeper_cover/Guitar_L.wav`, excerpt chosen by the
+  matcher's `select_excerpt`, 0.5 s pre-roll dropped) go through (a) the original chain and (b) a preset whose single `nam` block is the
+  exported model, with the exported IR (not re-normalised) as the cab for `nocab`; both via `sawblade_core` (this proves the `.nam`
+  loads in the core's `NamBlock`, the plugin's engine). Metrics: ESR (broadband, level-sensitive) and the A-weighted 1/3-octave LTAS
+  error (tonecheck's `--ref` definition: bands 80 Hz-8 kHz, both spectra normalised at 1 kHz). The DI excerpt is also compared with the
+  *gated* original. Acceptance for `standard`: ESR <= 0.02 on the held-out segment and LTAS error <= 0.5 dB on the DI excerpt; the
+  report states `accepted` honestly (other sizes are reported, not judged).
+* **Listening file.** `listen/ab_original_then_export.mp3`: the DI excerpt through the original chain, 0.8 s gap, then the export
+  (RMS-matched to the original; the gain is in the report). The gate is bypassed in both.

@@ -17,6 +17,7 @@ from scipy import signal as sps
 
 from sawblade_match.export import plan as P
 from sawblade_match.export import signal as S
+from sawblade_match.tonecheck.rules import load_targets
 
 try:
     from sawblade_match.core import CaptureCache
@@ -190,6 +191,34 @@ def test_fold_with_cab_disabled_is_post_eq_only(shared, cache):
     assert info["cabEnabled"] is False and info["samples"] < 9600
 
 
+def test_validation_harness_is_exact_for_a_perfect_model(shared, cache, tmp_path):
+    """Known answer: if the 'exported model' is the chain's own NAM, model + folded IR must reproduce the chain
+    (ESR ~ -100 dB), through the same export_check_preset / compare_signals path the real validation uses."""
+    from sawblade_match.export import validate as V
+    nam = (PRESETS.parent / "nam" / "wavenet.nam").resolve()
+    p = copy.deepcopy(shared)
+    p["paths"] = {"a": {"role": "saw", "blocks": [{"id": "a1", "type": "nam", "model": {"file": str(nam)}}],
+                        "levelDb": -2.0}, "b": {"role": "body", "enabled": False, "blocks": []}}
+    p["blend"] = 0.0
+    p["align"] = {"mode": "off"}
+    p["cab"]["ir"]["file"] = str((PRESETS.parent / "ir" / "ir_a.wav").resolve())
+    pl = P.make_plan(p, "nocab")
+    h, _ = C.fold_cab_post_eq(p, PRESETS, cache)
+    ir = tmp_path / "ir.wav"
+    sf.write(ir, h, 48000, subtype="FLOAT")
+    # the model-side chain also holds the path level / output gain; the 'model' here is the NAM, so move them into
+    # the check preset the way a trained model would carry them
+    chk = V.export_check_preset(nam, ir, tmp_path)
+    chk["paths"]["a"]["levelDb"] = -2.0
+    chk["output"] = copy.deepcopy(p["output"])
+    rng = np.random.default_rng(2)
+    x = (0.2 * rng.standard_normal(36000)).astype(np.float32)
+    targets = load_targets(V.targets_path())
+    res, ref, out = V.compare_signals("t", x, 48000, P.reference_preset(p, pl), PRESETS, chk, cache, targets, drop=4800)
+    assert res["esr"] < 1e-9, res["esr"]                                     # -90 dB
+    assert res["ltas"]["aWeightedErrorDb"] < 0.01
+
+
 # ---------------------------------------------------------------- metadata / attribution
 
 def test_attribution_and_sawblade_block(shared):
@@ -253,6 +282,22 @@ def test_signal_content_and_levels():
 def test_default_signal_is_at_least_three_minutes():
     a, v, info = S.generate()
     assert info["trainSeconds"] >= 180.0 and info["validSeconds"] >= 20.0
+
+
+# ---------------------------------------------------------------- trainer configuration (no training)
+
+def test_train_config_defaults_and_architectures():
+    from sawblade_match.export import train as T
+    c = T.TrainConfig(size="lite").resolved()
+    assert c.epochs == T.DEFAULT_EPOCHS["lite"] and c.max_minutes == T.DEFAULT_MAX_MINUTES["lite"]
+    assert 0.8 <= c.lr_gamma <= 0.994 and abs(c.lr_gamma ** c.epochs - 0.05) < 1e-6      # anneals to 5 %
+    assert T.TrainConfig(size="standard", epochs=1000).resolved().lr_gamma == 0.994      # the trainer's own recipe
+    assert T.TrainConfig(size="feather", lr_gamma=0.9).resolved().lr_gamma == 0.9
+    for size, (c1, h1, c2) in T.SIZES.items():
+        a, b = T.wavenet_config(size)["layers_configs"]
+        assert (a["channels"], a["head"]["out_channels"], b["channels"], b["input_size"]) == (c1, h1, c2, c1)
+        assert h1 == c2 and b["head"]["out_channels"] == 1                              # array-1 head feeds array 2
+    assert T.TrainConfig().size == "standard"                                           # default size
 
 
 # ---------------------------------------------------------------- CLI

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 import time
 import types
@@ -33,6 +34,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+# The training box is usually shared with other jobs: spinning OpenMP workers collapse (>5x slower epochs) as soon as one
+# of them is descheduled, so wait passively.  Effective only if torch has not been imported yet (the CLI guarantees that).
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 
 NAM_PIN = "0.13.0"
 RATE = 48000
@@ -93,11 +98,16 @@ class TrainConfig:
     batch_size: int = BATCH
     ny: int = NY
     target_esr: float | None = None      # optional early stop on validation ESR
+    lr_gamma: float | None = None        # ExponentialLR gamma per epoch; None = anneal to ~5 % of lr over the epochs
 
     def resolved(self) -> "TrainConfig":
         c = copy.copy(self)
         c.epochs = self.epochs if self.epochs is not None else DEFAULT_EPOCHS[self.size]
         c.max_minutes = self.max_minutes if self.max_minutes is not None else DEFAULT_MAX_MINUTES[self.size]
+        if c.lr_gamma is None:
+            # The trainer's recipe (gamma 0.994) assumes ~100s of epochs.  On a CPU budget of a few dozen epochs the
+            # learning rate would barely decay (validation ESR then plateaus noisily), so decay to 5 % by the last epoch.
+            c.lr_gamma = float(min(0.994, max(0.8, 0.05 ** (1.0 / max(c.epochs, 1)))))
         return c
 
 
@@ -133,6 +143,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
     torch.set_num_threads(max(1, int(cfg.threads)))
     pl.seed_everything(cfg.seed, workers=True)
     mcfg = model_config(cfg.size)
+    mcfg["lr_scheduler"]["kwargs"]["gamma"] = cfg.lr_gamma
     model = lm.LightningModule.init_from_config(copy.deepcopy(mcfg))
     rf = model.net.receptive_field
     n_params = int(sum(p.numel() for p in model.parameters()))
@@ -189,9 +200,10 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
     if not ckpt.best_model_path:
         raise RuntimeError("training stopped before the first validation pass (time cap too small?)")
     done = len(history)
-    stopped = ("target_esr" if cfg.target_esr is not None and history and history[-1]["valEsr"] <= cfg.target_esr
-               else "max_time" if trainer.current_epoch + 1 < cfg.epochs and done < cfg.epochs and
-               wall >= cfg.max_minutes * 60 - 5 else "max_epochs")
+    if cfg.target_esr is not None and history and history[-1]["valEsr"] <= cfg.target_esr:
+        stopped = "target_esr"
+    else:
+        stopped = "max_epochs" if done >= cfg.epochs else "max_time"
 
     best = lm.LightningModule.load_from_checkpoint(ckpt.best_model_path, **lm.LightningModule.parse_config(
         copy.deepcopy(mcfg)))
@@ -210,7 +222,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
                        receptive_field=int(rf), history=history,
                        config={"size": cfg.size, "epochs": cfg.epochs, "maxMinutes": cfg.max_minutes, "seed": cfg.seed,
                                "threads": cfg.threads, "batchSize": batch, "ny": cfg.ny,
-                               "targetEsr": cfg.target_esr, "net": wavenet_config(cfg.size),
+                               "targetEsr": cfg.target_esr, "lrGamma": cfg.lr_gamma, "net": wavenet_config(cfg.size),
                                "recipe": {k: mcfg[k] for k in ("loss", "optimizer", "lr_scheduler")},
                                "namVersion": NAM_PIN, "torch": torch.__version__,
                                "outputNormalisationDbfs": TARGET_RMS_DBFS})

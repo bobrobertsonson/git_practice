@@ -16,6 +16,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--size", choices=("feather", "lite", "standard"), default="standard", help="A1 WaveNet size")
     p.add_argument("--epochs", type=int, default=None, help="max epochs (default per size: see README)")
     p.add_argument("--max-minutes", type=float, default=None, help="training wall-time cap (default per size)")
+    p.add_argument("--lr-gamma", type=float, default=None,
+                   help="ExponentialLR gamma per epoch (default: decay to 5%% of the learning rate over --epochs)")
     p.add_argument("--seed", type=int, default=0, help="training seed (model init + batch order)")
     p.add_argument("--signal-seed", type=int, default=1, help="seed of the training-signal generator")
     p.add_argument("--threads", type=int, default=4, help="torch CPU threads")
@@ -37,7 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rep = run_export(args.preset, mode=args.mode, size=args.size, out=args.out, name=args.name,
                          allow_inexact=args.allow_inexact, epochs=args.epochs, max_minutes=args.max_minutes,
                          seed=args.seed, threads=args.threads, di=args.di, validate=not args.no_validate,
-                         signal_seed=args.signal_seed, target_esr=args.target_esr, keep_scratch=args.keep_scratch,
+                         signal_seed=args.signal_seed, target_esr=args.target_esr, lr_gamma=args.lr_gamma, keep_scratch=args.keep_scratch,
                          log=lambda m: print(m, flush=True))
     except ExportRefused as e:
         print(f"refused: {e}", file=sys.stderr)
