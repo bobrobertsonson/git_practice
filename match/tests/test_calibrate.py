@@ -205,7 +205,7 @@ def test_calibrated_offset_margin_equals_tolerance_rounded_outward():
 
 def test_proposal_original_passes_everything_and_contradictions_are_listed_not_changed():
     g = groups_from_diffs(dipMid=1.0)          # dipMid above saw: contradicts "dipMid <= saw - 2" (tol 1.5)
-    prop, table, contra = P.propose(TARGETS, g, "original/sections")
+    prop, table, contra = P.propose(TARGETS, g, "original/sections", policy="tighten")
     assert [c["id"] for c in contra] == ["saw_over_dip"]
     by = {r["id"]: r for r in prop["rules"]}
     assert by["saw_over_dip"]["expr"] == "dipMid <= saw - 2"                       # unchanged
@@ -222,10 +222,45 @@ def test_proposal_original_passes_everything_and_contradictions_are_listed_not_c
     json.dumps(prop)
 
 
+def test_loosen_only_changes_only_marginal_rules_and_lists_failures():
+    # thump - saw = +5.3: thump_controlled (<= saw + 4, tol 2) is marginal; dipMid - saw = +0.7: saw_over_dip fails
+    g = groups_from_diffs(thump=5.3, dipMid=0.7, saw=0.0)
+    prop, table, contra = P.propose(TARGETS, g, "original/side")             # default policy
+    assert prop["calibration"]["policy"] == "loosen-only"
+    by = {r["id"]: r for r in table}
+    assert by["thump_controlled"]["decision"] == "calibrated" and by["thump_controlled"]["proposedExpr"] == "thump <= saw + 7.5"
+    assert [c["id"] for c in contra] == ["saw_over_dip"]
+    for r in table:                                    # everything the original passes is untouched
+        if r["currentStatusOnBasis"] == "pass":
+            assert r["proposedExpr"] == r["currentExpr"] and r["decision"] == "unchanged"
+    new = {r["id"]: r["expr"] for r in prop["rules"]}
+    assert new["thump_present"] == "thump >= saw - 6" and new["saw_over_dip"] == "dipMid <= saw - 2"
+    st = P.consistency_check(prop, g)
+    assert all(v == "pass" for k, v in st.items() if k != "saw_over_dip")
+    with pytest.raises(ValueError):
+        P.propose(TARGETS, g, "x", policy="nope")
+
+
+def test_side_channel_isolates_hard_panned_guitars():
+    n = 20 * FS
+    g_l, g_r = guitar(n, 31), guitar(n, 32)
+    centre = np.zeros(n)
+    rng = np.random.default_rng(SEED)
+    for k, t in enumerate(np.arange(0.5, 19.0, 0.5)):
+        add(centre, kick(int(0.4 * FS)) if k % 2 == 0 else snare(int(0.3 * FS), rng), t)
+    centre += 0.3 * np.sin(2 * np.pi * 70 * np.arange(n) / FS)                   # bass
+    side = 0.5 * ((g_l + centre) - (g_r + centre))
+    m = measure("side", side, TARGETS)
+    known = A.analyze(0.5 * (g_l - g_r), FS, TARGETS)
+    c = np.array(A.NOMINAL_CENTRES)
+    band = (c >= 25) & (c <= 4000)
+    assert np.max(np.abs((m.rel_db - known.rel_db)[band])) < 0.01                # centred content cancels exactly
+
+
 def test_proposal_does_not_mutate_input_and_is_deterministic():
     before = json.dumps(TARGETS, sort_keys=True)
-    a, _, _ = P.propose(TARGETS, groups_from_diffs(), "x")
-    b, _, _ = P.propose(TARGETS, groups_from_diffs(), "x")
+    a, _, _ = P.propose(TARGETS, groups_from_diffs(), "x", policy="tighten")
+    b, _, _ = P.propose(TARGETS, groups_from_diffs(), "x", policy="tighten")
     assert json.dumps(TARGETS, sort_keys=True) == before
     assert a == b
 
@@ -290,7 +325,7 @@ def test_cli_end_to_end_synthetic(tmp_path, capsys):
     mix, _, _ = make_original(40.0)
     mix_l, mix_r, di_l, di_r, *_ = make_cover(40.0)
     orig = tmp_path / "orig.wav"
-    sf.write(orig, np.stack([mix, mix], axis=1).astype(np.float32), FS)
+    sf.write(orig, np.stack([mix + 0.5 * guitar(len(mix), 98), mix + 0.5 * guitar(len(mix), 99)], axis=1).astype(np.float32), FS)
     cm = tmp_path / "cover.wav"
     sf.write(cm, np.stack([mix_l, mix_r], axis=1).astype(np.float32), FS)
     sf.write(tmp_path / "L.wav", di_l.astype(np.float32), FS)
@@ -306,14 +341,16 @@ def test_cli_end_to_end_synthetic(tmp_path, capsys):
     assert rc == 0
     assert tfile.read_bytes() == before                                  # never touches the committed targets
     prop = json.loads((out / "tone_targets.proposed.json").read_text())
-    assert prop["schema"] == "sawblade.tone_targets" and prop["calibration"]["basis"] == "original/sections"
+    assert prop["schema"] == "sawblade.tone_targets" and prop["calibration"]["basis"] == "original/side"
+    assert prop["calibration"]["policy"] == "loosen-only"
     md = (out / "calibration_report.md").read_text()
     assert "unavailable: disabled with --no-separation" in md and "Smoke render scored" in md
     for f in ("ltas_original_vs_cover.png", "thresholds_current_vs_proposed.png", "calibration.json"):
         assert (out / f).stat().st_size > 0
     # the proposal loads as a targets file and the original's sections pass every non-contradicted rule
     cal = json.loads((out / "calibration.json").read_text())
-    groups = cal["results"]["original/sections"]["groupsDb"]
+    assert {"original/side", "cover/side", "original/sections", "cover/sections"} <= set(cal["results"])
+    groups = cal["results"]["original/side"]["groupsDb"]
     contra = {c["id"] for c in cal["contradicted"]}
     for r in evaluate_rules(groups, prop["rules"]):
         assert r["status"] == "pass" or r["id"] in contra

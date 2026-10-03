@@ -13,7 +13,7 @@ from ..tonecheck.rules import evaluate_rules, parse_expr  # noqa: E402
 from .measure import Measured  # noqa: E402
 from .propose import measured_diff  # noqa: E402
 
-METHOD_COLOUR = {"stems": "#1565c0", "sections": "#e65100"}
+METHOD_COLOUR = {"stems": "#1565c0", "sections": "#e65100", "side": "#6a1b9a"}
 REF_STYLE = {"original": "-", "cover": "--"}
 
 

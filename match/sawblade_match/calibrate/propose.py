@@ -1,13 +1,16 @@
 """Threshold proposal: calibrate the rule thresholds to the original's guitar levels.
 
-Policy (spec): for every rule ``lhs OP rhs + c`` the new offset ``c`` is chosen so that the original's
+Policy ``tighten`` (the spec's literal behaviour): for every rule ``lhs OP rhs + c`` the new offset ``c`` is chosen so that the original's
 guitars *pass with ~ the rule's tolerance as margin*:
 
     <=  rules:  c = ceil2((lhs - rhs) + tol)      (lhs sits ``tol`` dB below the threshold)
     >=  rules:  c = floor2((lhs - rhs) - tol)     (lhs sits ``tol`` dB above the threshold)
 
 ``ceil2``/``floor2`` round outwards to 0.5 dB, so the margin is >= tol and < tol + 0.5. A rule is
-*contradicted* when the original **fails** the current rule on the basis measurement (violates it by more
+Policy ``loosen-only`` (default): a threshold changes only when the basis original is *marginal* on the
+current rule (calibrated with the same formula); rules it passes keep their current expression.
+
+A rule is *contradicted* when the original **fails** the current rule on the basis measurement (violates it by more
 than its tolerance): that is evidence against the rule itself, not a calibration, so it is NOT changed in the
 proposal's ``rules``; it is listed under ``calibration.contradictedRules`` with the measured values and the
 calibrated replacement the lead may adopt.
@@ -20,6 +23,7 @@ import math
 from ..tonecheck.rules import classify, evaluate_rules, parse_expr
 
 STEP_DB = 0.5
+POLICIES = ("loosen-only", "tighten")
 
 
 def measured_diff(rule: dict, groups: dict[str, float]) -> float:
@@ -47,11 +51,13 @@ def calibrated_offset(rule: dict, groups: dict[str, float]) -> float:
 
 def propose(targets: dict, basis_groups: dict[str, float], basis_name: str,
             other_groups: dict[str, dict[str, float]] | None = None,
-            provenance: dict | None = None) -> tuple[dict, list[dict], list[dict]]:
+            provenance: dict | None = None, policy: str = "loosen-only") -> tuple[dict, list[dict], list[dict]]:
     """Return (proposed targets JSON, rule table, contradicted rules).
 
     ``basis_groups``: the original's group levels (method ``basis_name``) that the thresholds are set from;
     ``other_groups``: other methods' group levels, shown as evidence (status of the *current* rule on each)."""
+    if policy not in POLICIES:
+        raise ValueError(f"unknown policy {policy!r}")
     other_groups = other_groups or {}
     new = copy.deepcopy(targets)
     table, contradicted = [], []
@@ -61,6 +67,8 @@ def propose(targets: dict, basis_groups: dict[str, float], basis_name: str,
         d = measured_diff(rule, basis_groups)
         cur = evaluate_rules(basis_groups, [rule])[0]
         c_new = calibrated_offset(rule, basis_groups)
+        if policy == "loosen-only" and cur["status"] == "pass":
+            c_new = e.offset
         new_expr = format_expr(e.lhs, e.op, e.rhs, c_new)
         row = {"id": rule["id"], "currentExpr": rule["expr"], "proposedExpr": new_expr,
                "measuredDiffDb": round(d, 2), "currentStatusOnBasis": cur["status"],
@@ -81,9 +89,11 @@ def propose(targets: dict, basis_groups: dict[str, float], basis_name: str,
             new["rules"][i]["calibration"] = {"was": rule["expr"], "measuredDiffDb": round(d, 2), "marginDb": tol}
         table.append(row)
     new["version"] = int(targets.get("version", 1)) + 1
-    new["status"] = (f"PROPOSAL (not adopted) - thresholds calibrated on the original's guitars, basis: {basis_name}; "
+    new["status"] = (f"PROPOSAL (not adopted) - {policy} thresholds calibrated on the original's guitars, basis: {basis_name}; "
                      f"{len(contradicted)} rule(s) contradicted by the data are left unchanged")
-    new["calibration"] = {"basis": basis_name, "policy": "original passes every non-contradicted rule with ~toleranceDb margin",
+    pol = ("only rules the basis original fails/marginally passes are changed; the original then passes with ~toleranceDb margin"
+           if policy == "loosen-only" else "every non-contradicted rule is set so the original passes with ~toleranceDb margin")
+    new["calibration"] = {"basis": basis_name, "policy": policy, "policyDescription": pol,
                           "contradictedRules": contradicted, **(provenance or {})}
     return new, table, contradicted
 

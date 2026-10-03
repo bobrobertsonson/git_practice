@@ -176,3 +176,12 @@ modifies `docs/tone_targets.json`. Method 1 (stems) needs `pip install -e 'match
 possible the report says `unavailable: <reason>` and the run continues with method 2 (section selection;
 heuristics documented in `sawblade_match/calibrate/sections.py`). The original's vocal exclusion is not
 reliable for growled vocals: prefer `--sections`. Proposal policy: `sawblade_match/calibrate/propose.py`.
+
+Method 3 (side channel, always runs): `(L - R) / 2` of the stereo reference, analysed with the tonecheck activity
+gate. Assumption: both guitars are double-tracked and hard-panned while bass, kick, snare and lead vocal are
+centred, so centred content cancels. Failure modes: any guitar that is centred (or a mono guitar layer) is
+cancelled too, and wide stereo reverbs, stereo-miked cymbals/toms and stereo synth/ambience stay in the side
+signal. Side is the proposal **basis** whenever stems are unavailable (stems > side > sections).
+`--policy loosen-only` (default) changes a rule only when the basis original fails/marginally passes it;
+`--policy tighten` sets every threshold to the original +- tolerance (spec behaviour). Rules the original fails
+by more than the tolerance are "contradicted": listed with evidence, left unchanged in `rules`.

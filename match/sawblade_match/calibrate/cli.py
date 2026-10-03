@@ -96,6 +96,19 @@ def run(a: argparse.Namespace) -> int:
         availability[f"{ref} / stems (method 1)"] = f"ran ({MODEL} 'other' stem, seed {SEED}, {'cached' if s.cached else 'fresh'}: {s.path})"
         results[f"{ref}/stems"] = measure(f"{ref}/stems", _stem_mono48(s), targets, source=str(s.path), spread=True)
 
+    # method 3: side channel (L-R)/2 - hard-panned double-tracked guitars survive, centred bass/kick/snare/vocal cancel
+    for ref, src in (("original", P["original"]), ("cover", P["cover_mix"])):
+        l, r = _mono48(src, "left"), _mono48(src, "right")
+        n_ = min(len(l), len(r))
+        side = 0.5 * (l[:n_] - r[:n_])
+        mid_rms = float(np.sqrt(np.mean((0.5 * (l[:n_] + r[:n_])) ** 2)))
+        ratio = 20 * np.log10(max(float(np.sqrt(np.mean(side ** 2))), 1e-12) / max(mid_rms, 1e-12))
+        try:
+            results[f"{ref}/side"] = measure(f"{ref}/side", side, targets, source="(L-R)/2", spread=True)
+            availability[f"{ref} / side (method 3)"] = f"ran ((L-R)/2, activity gate; side/mid RMS {ratio:+.1f} dB)"
+        except ValueError as e:
+            availability[f"{ref} / side (method 3)"] = f"unavailable: side channel unusable (mono file?): {e}"
+
     # method 2: sections
     osel = original_guitar_frames(orig, ranges=ranges)
     results["original/sections"] = measure("original/sections", orig, targets, mask=osel.sample_mask(len(orig)),
@@ -122,17 +135,19 @@ def run(a: argparse.Namespace) -> int:
         f"per DI {csel.info['perDi']}. {_fmt_ranges(csel)}")
 
     # proposal from the original
-    basis = "original/stems" if "original/stems" in results else "original/sections"
+    basis = next(k for k in ("original/stems", "original/side", "original/sections") if k in results)
     basis_m = results[basis]
     others = {k: v.groups for k, v in results.items() if k.startswith("original/") and k != basis}
     if basis != "original/stems":
-        notes.append("method 1 (stems) unavailable for the original: the proposal is based on method 2 only.")
+        notes.append("method 1 (stems) unavailable for the original: the proposal is based on "
+                     + ("method 3 (side channel)." if basis == "original/side" else "method 2 only."))
+    notes.append(f"proposal policy: {a.policy}")
     prov = {"inputs": {k: str(v) for k, v in P.items()}, "targetsFile": str(targets_path),
             "methods": {k: availability.get(f"{k.split('/')[0]} / stems (method 1)") for k in results if k.endswith("/stems")},
-            "sectionsArg": a.sections, "randomness": f"none (demucs: seed {SEED}, shifts=0)",
+            "sectionsArg": a.sections, "policy": a.policy, "randomness": f"none (demucs: seed {SEED}, shifts=0)",
             "referenceMetrics": {k: _json_safe({m: v.metrics[m] for m in ("buzz", "lowTightnessMs", "lowDecayDbPerMs")})
                                  for k, v in results.items()}}
-    proposed, table, contradicted = propose(targets, basis_m.groups, basis, others, prov)
+    proposed, table, contradicted = propose(targets, basis_m.groups, basis, others, prov, a.policy)
     (out / "tone_targets.proposed.json").write_text(json.dumps(proposed, indent=2))
 
     # smoke render(s) under current vs proposed
@@ -177,6 +192,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-separation", action="store_true", help="skip method 1 (demucs)")
     p.add_argument("--score", action="append", default=[], metavar="WAV",
                    help="rendered audio to score under current and proposed targets (repeatable)")
+    p.add_argument("--policy", choices=["loosen-only", "tighten"], default="loosen-only",
+                   help="loosen-only (default): change only rules the basis original fails/marginally passes; "
+                        "tighten: set every threshold to the original +- tolerance")
     p.add_argument("--targets", help="current targets JSON (default docs/tone_targets.json)")
     p.add_argument("--out", default="calibration_out")
     return p
