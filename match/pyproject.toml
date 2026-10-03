@@ -27,11 +27,19 @@ separation = [
   "torchaudio==2.5.1",
 ]
 
+# NAM export (phase 4): the NAM trainer. torch is shared with the separation extra (2.5.1, CPU is enough).
+# Install with: pip install -e 'match[export]' -c match/constraints-export.txt
+export = [
+  "neural-amp-modeler==0.13.0",
+  "torch==2.5.1",
+]
+
 [project.scripts]
 sawblade-t3k = "sawblade_match.t3k.cli:main"
 sawblade-tonecheck = "sawblade_match.tonecheck.cli:main"
 sawblade-calibrate = "sawblade_match.calibrate.cli:main"
 sawblade-match = "sawblade_match.matcher.cli:main"
+sawblade-export = "sawblade_match.export.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["sawblade_match*"]
