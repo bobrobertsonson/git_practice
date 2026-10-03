@@ -1,18 +1,22 @@
 """Threshold proposal: calibrate the rule thresholds to the original's guitar levels.
 
-Policy ``tighten`` (the spec's literal behaviour): for every rule ``lhs OP rhs + c`` the new offset ``c`` is chosen so that the original's
-guitars *pass with ~ the rule's tolerance as margin*:
+For a rule ``lhs OP rhs + c`` the calibrated offset ``c`` makes the original's guitars *pass with ~ the rule's
+tolerance as margin*:
 
     <=  rules:  c = ceil2((lhs - rhs) + tol)      (lhs sits ``tol`` dB below the threshold)
     >=  rules:  c = floor2((lhs - rhs) - tol)     (lhs sits ``tol`` dB above the threshold)
 
-``ceil2``/``floor2`` round outwards to 0.5 dB, so the margin is >= tol and < tol + 0.5. A rule is
-Policy ``loosen-only`` (default): a threshold changes only when the basis original is *marginal* on the
-current rule (calibrated with the same formula); rules it passes keep their current expression.
+``ceil2``/``floor2`` round outwards to 0.5 dB, so the margin is >= tol and < tol + 0.5.
 
-A rule is *contradicted* when the original **fails** the current rule on the basis measurement (violates it by more
-than its tolerance): that is evidence against the rule itself, not a calibration, so it is NOT changed in the
-proposal's ``rules``; it is listed under ``calibration.contradictedRules`` with the measured values and the
+Policies (``policy`` argument / ``--policy``):
+* ``loosen-only`` (default): only a rule the basis original passes *marginally* is recalibrated with the formula
+  above; rules it passes keep their current expression.
+* ``tighten`` (the spec's literal behaviour): every non-contradicted rule is recalibrated, which also
+  tightens rules the original passes with a large margin.
+
+A rule is *contradicted* when the original **fails** the current rule on the basis measurement (violates it by
+more than its tolerance): that is evidence against the rule itself, not a calibration, so it is NOT changed in
+the proposal's ``rules``; it is listed under ``calibration.contradictedRules`` with the measured values and the
 calibrated replacement the lead may adopt.
 """
 from __future__ import annotations

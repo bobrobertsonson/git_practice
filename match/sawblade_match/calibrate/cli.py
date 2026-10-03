@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Sequence
 
 import numpy as np
+import soundfile as sf
 
 from ..tonecheck import analysis as A
 from ..tonecheck.render import find_targets
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import report as R
+from .channels import cover_di_onsets, mid_channel, side_channel
 from .measure import Measured, measure
 from .propose import propose
 from .sections import (Selection, cover_guitar_frames, original_guitar_frames, parse_ranges)
@@ -26,8 +28,15 @@ DEFAULTS = {
 }
 
 
-def _mono48(path, channel: str) -> np.ndarray:
-    x, fs = A.read_mono(path, channel)
+def _stereo48(path) -> tuple[np.ndarray, np.ndarray]:
+    """Decode a file once; (left, right) at 48 kHz (a mono file gives the same signal twice)."""
+    x, fs = sf.read(str(path), dtype="float64", always_2d=True)
+    l, r = x[:, 0], x[:, min(1, x.shape[1] - 1)]
+    return A.to_analysis_rate(l, fs), A.to_analysis_rate(r, fs)
+
+
+def _mono48(path) -> np.ndarray:
+    x, fs = A.read_mono(path, "left")
     return A.to_analysis_rate(x, fs)
 
 
@@ -74,10 +83,11 @@ def run(a: argparse.Namespace) -> int:
             raise ValueError(f"missing input {k}: {p}")
     ranges = parse_ranges(a.sections) if a.sections else None
 
-    orig = _mono48(P["original"], "mid")
-    mix_l, mix_r = _mono48(P["cover_mix"], "left"), _mono48(P["cover_mix"], "right")
-    cover_mid = 0.5 * (mix_l[: min(len(mix_l), len(mix_r))] + mix_r[: min(len(mix_l), len(mix_r))])
-    di_l, di_r = _mono48(P["di_l"], "left"), _mono48(P["di_r"], "left")
+    orig_l, orig_r = _stereo48(P["original"])
+    orig = mid_channel(orig_l, orig_r)
+    mix_l, mix_r = _stereo48(P["cover_mix"])
+    cover_mid = mid_channel(mix_l, mix_r)
+    di_l, di_r = _mono48(P["di_l"]), _mono48(P["di_r"])
 
     results: dict[str, Measured] = {}
     availability: dict[str, str] = {}
@@ -97,14 +107,13 @@ def run(a: argparse.Namespace) -> int:
         results[f"{ref}/stems"] = measure(f"{ref}/stems", _stem_mono48(s), targets, source=str(s.path), spread=True)
 
     csel = cover_guitar_frames(mix_l, mix_r, di_l, di_r)
-    di_onsets = np.sort(np.concatenate([A.detect_onsets(d) + csel.info['offsetsS'][t] for t, d in (('L', di_l), ('R', di_r))]))
+    di_onsets = cover_di_onsets(di_l, di_r, csel.info['offsetsS'])
 
     # method 3: side channel (L-R)/2 - hard-panned double-tracked guitars survive, centred bass/kick/snare/vocal cancel
     for ref, src in (("original", P["original"]), ("cover", P["cover_mix"])):
-        l, r = _mono48(src, "left"), _mono48(src, "right")
-        n_ = min(len(l), len(r))
-        side = 0.5 * (l[:n_] - r[:n_])
-        mid_rms = float(np.sqrt(np.mean((0.5 * (l[:n_] + r[:n_])) ** 2)))
+        l, r = (orig_l, orig_r) if ref == "original" else (mix_l, mix_r)
+        side = side_channel(l, r)
+        mid_rms = float(np.sqrt(np.mean(mid_channel(l, r) ** 2)))
         ratio = 20 * np.log10(max(float(np.sqrt(np.mean(side ** 2))), 1e-12) / max(mid_rms, 1e-12))
         try:
             # low-end metrics need note onsets: cover = both DIs' onsets shifted by the measured offsets;
@@ -201,7 +210,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="loosen-only (default): change only rules the basis original fails/marginally passes; "
                         "tighten: set every threshold to the original +- tolerance")
     p.add_argument("--targets", help="current targets JSON (default docs/tone_targets.json)")
-    p.add_argument("--out", default="calibration_out")
+    p.add_argument("--out", default=str(Path.home() / ".cache" / "sawblade" / "calibration"),
+                   help="output directory (default ~/.cache/sawblade/calibration, outside the repo)")
     return p
 
 

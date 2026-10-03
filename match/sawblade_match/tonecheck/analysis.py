@@ -231,7 +231,12 @@ def detect_onsets(di: np.ndarray, fs: int = ANALYSIS_RATE) -> np.ndarray:
     rectified frame-to-frame difference summed over bins. Peaks must exceed (0.5 s running median +
     4 x robust scale), be >= 80 ms apart, and occur in frames within 30 dB of the DI's 95th-percentile
     level (so hum/hiss flux between notes is ignored). Finally each peak must be a real level rise:
-    max level over the next 3 frames minus min over the previous 4 frames >= 6 dB."""
+    max level over the next 3 frames minus min over the previous 4 frames >= 6 dB.
+
+    Known recall limit of that check: a note that re-picks a still-ringing string, so that its level is less
+    than ~6 dB above the lowest level of the preceding ~20 ms (a rise of ~4 dB is suppressed, ~9 dB is kept; pinned
+    in the tests), is not detected. Dense legato/ringing passages can therefore be under-counted; the
+    price is the removal of the spurious onsets inside noisy decays."""
     nper, hop = 1024, 256
     f, t, Z = signal.stft(di, fs, window="hann", nperseg=nper, noverlap=nper - hop, boundary=None, padded=False)
     sel = (f >= 50) & (f <= 6000)

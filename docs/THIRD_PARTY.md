@@ -29,6 +29,18 @@ Pinned in `match/pyproject.toml`; installed with pip into `match/.venv` (not ven
 | pytest | 9.1.1 | MIT | Tests only |
 | respx | 0.23.1 | BSD-3-Clause | Tests only (fake HTTP API) |
 
+### Optional: `match[separation]` (calibration method 1, `sawblade-calibrate`)
+
+Install only on a developer machine (`pip install -e 'match[separation]' -c match/constraints-separation.txt`). Nothing
+here is bundled with, or required by, the plugin.
+
+| Name | Version | License | Use |
+|------|---------|---------|-----|
+| demucs | 4.0.1 | MIT (facebookresearch/demucs) | Stem separation of the reference mixes (htdemucs "other" stem ~ guitars). Pulls dora-search, julius, lameenc, openunmix, einops, omegaconf, ... (see the constraints file). |
+| torch | 2.5.1 | BSD-3-Clause (wheel bundles NVIDIA CUDA libraries under their own licenses; run on CPU) | Demucs inference |
+| torchaudio | 2.5.1 | BSD-2-Clause | Demucs dependency |
+| htdemucs weights (`955717e8-8726e21a.th`) | htdemucs | Released with the Demucs repository (MIT); a separate weights licence is not stated - confirm before any redistribution | Downloaded at first use by `demucs.pretrained.get_model` from `https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/` into `~/.cache/torch/hub/checkpoints/`. Not committed, not redistributed. Used only to measure reference audio. |
+
 Transitive dependencies are not listed; audit them before any binary redistribution.
 
 ## Test fixtures

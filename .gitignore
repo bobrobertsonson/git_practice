@@ -10,3 +10,4 @@ __pycache__/
 *.resolved.json
 testdata/
 .claude/worktrees/
+calibration_out/

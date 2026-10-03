@@ -309,6 +309,9 @@ def test_separation_download_failure_reports_unavailable(monkeypatch, tmp_path):
 
 
 def test_separation_real_model_if_available(tmp_path):
+    import os
+    if os.environ.get("SAWBLADE_TEST_DEMUCS") != "1":
+        pytest.skip("set SAWBLADE_TEST_DEMUCS=1 to run the real demucs model (downloads/loads ~80 MB weights)")
     pytest.importorskip("demucs")
     src = tmp_path / "x.wav"
     rng = np.random.default_rng(SEED)
@@ -352,6 +355,12 @@ def test_cli_end_to_end_synthetic(tmp_path, capsys):
     cal = json.loads((out / "calibration.json").read_text())
     assert {"original/side", "cover/side", "original/sections", "cover/sections"} <= set(cal["results"])
     groups = cal["results"]["original/side"]["groupsDb"]
+    # low-end metrics: cover/side uses DI onsets (non-null), original/side has no onset source (n/a)
+    cm, om = cal["results"]["cover/side"]["metrics"], cal["results"]["original/side"]["metrics"]
+    assert cm["lowTightnessMs"]["nOnsets"] > 0 and cm["lowDecayDbPerMs"]["value"] is not None
+    assert om["lowTightnessMs"]["valueMs"] is None and om["lowDecayDbPerMs"]["value"] is None
+    assert "no onset source" in om["lowDecayDbPerMs"]["note"]
+    assert cal["results"]["cover/side"]["selectedFraction"] < 0.99          # side activity gate applied
     contra = {c["id"] for c in cal["contradicted"]}
     for r in evaluate_rules(groups, prop["rules"]):
         assert r["status"] == "pass" or r["id"] in contra
@@ -373,3 +382,86 @@ def test_measure_no_onsets_reports_na():
     m = measure("x", x, TARGETS, no_onsets=True)
     assert m.metrics["lowTightnessMs"]["valueMs"] is None and m.metrics["lowDecayDbPerMs"]["value"] is None
     assert "no onset source" in m.metrics["lowTightnessMs"]["note"] and m.metrics["buzz"]["value"] > 0
+
+
+# --- channels: side channel and DI onsets (review items) -------------------------------------------------
+from sawblade_match.calibrate import channels as CH  # noqa: E402
+
+
+def test_side_channel_formula_and_centred_cancellation():
+    n = 10 * FS
+    g_l, g_r = guitar(n, 41), guitar(n, 42)
+    centre = 0.5 * np.sin(2 * np.pi * 60 * np.arange(n) / FS) + kick(n)
+    l, r = g_l + centre, g_r + centre
+    side = CH.side_channel(l, r)
+    assert np.allclose(side, 0.5 * (l - r))
+    assert np.allclose(side, 0.5 * (g_l - g_r), atol=1e-12)               # centred content cancels
+    assert np.allclose(CH.mid_channel(l, r), 0.5 * (l + r))
+    assert len(CH.side_channel(l[:100], r)) == 100                        # shorter channel wins
+
+
+def test_side_activity_gating_matters():
+    # side signal = guitar bursts + a low hum between them. The activity gate drops the hum frames; an all-true
+    # mask (the mutant) keeps them and visibly changes the sub-band level.
+    n = 20 * FS
+    t = np.arange(n) / FS
+    burst = ((t % 2.0) < 0.8).astype(float)
+    x = guitar(n, 51, 0.1) * burst + 3.5e-3 * np.sin(2 * np.pi * 45 * t) * (1 - burst)
+    gated = measure("g", x, TARGETS)
+    ungated = measure("u", x, TARGETS, mask=np.ones(n, dtype=bool))
+    assert gated.selected_fraction < 0.5 and ungated.selected_fraction == 1.0
+    assert abs(gated.groups["sub"] - ungated.groups["sub"]) > 3.0
+
+
+def test_cover_di_onsets_offset_sign_and_low_end_decay():
+    n = 6 * FS
+    di = 1e-4 * np.random.default_rng(SEED).standard_normal(n)
+    plucks = [1.0, 2.5, 4.0]
+    for p in plucks:
+        i = int(p * FS)
+        di[i:i + FS // 2] += 0.3 * np.exp(-np.arange(FS // 2) / FS / 0.1) * np.random.default_rng(int(p * 10)).standard_normal(FS // 2)
+    off = 0.190
+    on = CH.cover_di_onsets(di, di, {"L": off, "R": off})
+    assert len(on) == 2 * len(plucks)
+    assert np.max(np.abs(on[::2] - (np.array(plucks) + off))) < 0.010     # onset at DI time t -> t + offset
+    # the mix's 120 Hz tail starts at t + offset: right sign finds it, wrong sign does not
+    tau = 0.1
+    out = np.zeros(n)
+    for p in plucks:
+        i = int((p + off) * FS)
+        m = int(0.6 * FS)                                                  # each note rings 0.6 s, then silence
+        out[i:i + m] += np.exp(-np.arange(m) / FS / tau) * np.sin(2 * np.pi * 120 * np.arange(m) / FS)
+    good = np.unique(np.round(on, 4))
+    t_ok, d_ok = A.low_end_decay(np.zeros(n), out, FS, onsets=good)
+    expected = 1000 * tau * np.log(10)
+    assert t_ok["nMeasured"] >= 2 and t_ok["valueMs"] == pytest.approx(expected, rel=0.15)
+    bad = np.array(plucks) - off                                           # wrong sign: onsets in the silence before the notes
+    t_bad, _ = A.low_end_decay(np.zeros(n), out, FS, onsets=bad)
+    assert t_bad["nMeasured"] == 0
+    # wrong sign applied through the helper: -offset instead of +offset also lands off the notes
+    wrong = CH.cover_di_onsets(di, di, {"L": -off, "R": -off})
+    assert np.max(np.abs(wrong[::2] - (np.array(plucks) + off))) > 0.3
+
+
+# --- onset minimum-rise edges (tonecheck) --------------------------------------------------------------------
+def _bed_with_pluck(rise_db, seed=7, dur=4.0, t0=2.0):
+    """Steady noise bed plus one pluck whose initial power is (10^(rise/10) - 1) x the bed's."""
+    n = int(dur * FS)
+    rng = np.random.default_rng(seed)
+    x = 0.05 * rng.standard_normal(n)
+    i = int(t0 * FS)
+    amp = 0.05 * np.sqrt(10 ** (rise_db / 10) - 1)
+    x[i:] += amp * np.exp(-np.arange(n - i) / FS / 0.08) * rng.standard_normal(n - i)
+    return x
+
+
+def _has_onset_near(det, t, tol=0.02):
+    return bool(np.any(np.abs(np.asarray(det) - t) <= tol))
+
+
+def test_onset_min_rise_edges():
+    assert A.ONSET_MIN_RISE_DB == 6.0
+    # ~4 dB rise: below the 6 dB check -> suppressed; ~9 dB: kept (3 seeds each)
+    for seed in (7, 8, 9):
+        assert not _has_onset_near(A.detect_onsets(_bed_with_pluck(4.0, seed), FS), 2.0)
+        assert _has_onset_near(A.detect_onsets(_bed_with_pluck(9.0, seed), FS), 2.0)
