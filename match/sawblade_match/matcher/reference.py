@@ -65,7 +65,8 @@ def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path |
         stem = find_stem(path, stems_dir)
         if stem is not None:
             sx, sfs = _read(stem)
-            sig, basis = to48(sx.mean(axis=1), sfs), f"stem:{stem.name}"
+            # mean of two hard-panned uncorrelated guitars has the same power as the side channel -> same +3 dB
+            sig, basis, off_db = to48(sx.mean(axis=1), sfs), f"stem:{stem.name}", SIDE_POWER_TO_GUITAR_DB
             notes.append("htdemucs 'other' stem used as the guitar isolation")
         else:
             channel = "side" if stereo else "mid"
@@ -116,8 +117,10 @@ def make_excerpt(di48: np.ndarray, length_s: float, lead_s: float = 0.5, window:
     if window is None:
         a, b, info = select_excerpt(di48, RATE, length_s)
         if ref is not None and ref.matched_sig is not None:      # the matched segment must exist in the reference
-            while b + ref.offset_samples + RATE > len(ref.matched_sig) and a > 0:
+            while b + ref.offset_samples + RATE > len(ref.matched_sig) and a >= RATE:
                 a, b = a - RATE, b - RATE
+            if b + ref.offset_samples > len(ref.matched_sig):
+                raise ValueError("the reference is too short for the DI excerpt at this offset")
     else:
         (a, b), info = window, {"note": "explicit window"}
     lead = min(int(lead_s * RATE), a)

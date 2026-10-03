@@ -175,6 +175,20 @@ def test_offset_refinement_sample_accurate(true):
     assert r["fineAccepted"]
 
 
+def test_offset_phat_corrects_a_skewed_envelope():
+    """The reference's envelope is tilted (rising gain ramp inside each burst), which biases the envelope correlation by
+    a few ms; the waveform (PHAT) step must land on the true offset and with the right sign (both directions)."""
+    fs = 48000
+    x = _bursts(seed=5)
+    for true in (9100, 9700):
+        ref = np.zeros(len(x) + 30000)
+        ramp = np.exp(np.arange(len(x)) % int(0.35 * fs) / (0.12 * fs))     # gain grows through each 350 ms period
+        ref[true:true + len(x)] = x * ramp
+        ref += np.random.default_rng(6).standard_normal(len(ref)) * 0.01
+        r = offset.refine_offset(x[fs:5 * fs], ref, fs, coarse=9400, start=fs)
+        assert r["fineAccepted"] and r["offset"] == true, (true, r)
+
+
 def test_offset_refinement_coarse_only_when_waveforms_unrelated():
     fs = 48000
     x = _bursts()
@@ -266,7 +280,8 @@ def test_preset_emission_is_schema_valid_via_cpp_parser():
     core.render(p2, np.zeros(2048, np.float32), 48000.0)
 
 
-def test_emulation_equals_full_render():
+@pytest.mark.parametrize("align", [(0, False), (7, False), (-9, True), (5, True)])
+def test_emulation_equals_full_render(align):
     pool = fixture_pool()
     combo, sp, v = hidden(pool)
     x, fs = sf.read(FIX / "di_riff.wav", dtype="float32")
@@ -274,7 +289,8 @@ def test_emulation_equals_full_render():
     gate = gate_preset(-60.0)
     eng = Engine(gate, 2)
     try:
-        align = eng.probe_align(combo, v)
+        assert eng.probe_align(combo, v)["mode"] == "manual"
+        align = manual_align(*align)
         ca, cb = eng.core(combo, v, "a", x), eng.core(combo, v, "b", x)
         em = eng.emulate(combo, v, ca, cb, align)
         full, _ = eng.render(build_preset(combo, v, gate=gate, align=align), x)
@@ -298,6 +314,8 @@ def test_pick_output_gain_and_choose():
     assert choose([mk(big, 1.0), mk(small, 1.2)]).combo is big            # outside the tolerance -> lower loss
     assert choose([mk(big, 1.03), mk(twin, 1.0)]).combo is twin           # same category -> lower loss
     assert choose([mk(big, 1.0, clipped=True), mk(small, 1.4)]).combo is small   # clipping rejected
+    assert choose([mk(big, float("nan")), mk(small, 2.0)]).combo is small          # non-finite loss dropped
+    assert choose([mk(small, float("inf")), mk(big, 3.0)]).combo is big
 
 
 def test_gate_floor_uses_peak_envelope():
@@ -368,13 +386,21 @@ def test_determinism_with_seed(tmp_path):
     plan = Plan(cap_a=4, cap_b=4, n_rescore=3, n_cab=1, top_k=1, gens_linear=3, gens_gain=2, gens_final=2,
                 pop_linear=8, pop_gain=4)
     outs = []
-    for k in range(2):
+    for k, seed in enumerate((3, 3, 4)):
         ref = load_reference(refwav, channel="mid")
-        cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / f"o{k}", seed=3, excerpt_s=2.0, threads=2, plan=plan,
+        cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / f"o{k}", seed=seed, excerpt_s=2.0, threads=2, plan=plan,
                      write_audio=False, targets=REPO / "docs" / "tone_targets.json")
         outs.append(run_match(cfg, Log()))
-    a, b = outs
+    a, b, c = outs
     assert a["best"]["params"] == b["best"]["params"]
     assert a["best"]["loss"] == b["best"]["loss"]
     assert a["best"]["captures"] == b["best"]["captures"]
     assert a["seed"] == 3 and "seed=3" in a["randomness"]
+    assert a["best"]["breakdown"]["stft"] is None and a["starter"]["excerptLoss"]["stft"] is None   # unmatched
+    # a different seed changes something observable (subset sampling in stage 1 and the CMA-ES streams)
+    assert c["seed"] == 4
+    assert (a["stage1"]["sampledA"], a["stage1"]["sampledB"]) != (c["stage1"]["sampledA"], c["stage1"]["sampledB"])
+    assert a["stage1"]["sampledA"] == b["stage1"]["sampledA"]
+    assert (a["stage1"]["screenTop"] != c["stage1"]["screenTop"] or a["best"]["params"] != c["best"]["params"]
+            or a["best"]["loss"] != c["best"]["loss"])
+    assert a["best"]["params"] != c["best"]["params"]

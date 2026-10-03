@@ -44,7 +44,7 @@ class Plan:
     pop_gain: int = 8
 
     @staticmethod
-    def from_budget(budget: float, top_k: int = 4) -> "Plan":
+    def from_budget(budget: float, top_k: int = 5) -> "Plan":
         """Budget 1.0: the full A (HM-2 x amp) and B (boost/none x amp) pair product of the current pool (410 / 300 pairs)
         is rendered; smaller budgets draw seeded random subsets. Measured on the 4-core dev box: 14 min for a 3-combo plan
         at 200/150 pairs (lightly loaded), 44 min for 410/300 pairs + 5 combos under a load average of 10 (shared
@@ -65,7 +65,7 @@ class Config:
     budget: float = 1.0
     seed: int = 0
     excerpt_s: float = 6.0
-    top_k: int = 4
+    top_k: int = 5
     threads: int = 4
     targets: Path | None = None
     window_s: tuple[float, float] | None = None
@@ -160,6 +160,9 @@ def pick_output_gain(y_peak: float, offset_db: float, level_offset_db: float) ->
 def choose(cands: list[Scored]) -> Scored:
     """Lowest loss among non-clipping candidates; within SIZE_TIE_DB of it, the lighter model set by size category
     (manifest size / name label, then 10 % byte buckets); equal categories -> lower loss."""
+    cands = [c for c in cands if np.isfinite(c.loss)]
+    if not cands:
+        raise ValueError("no candidate with a finite loss")
     ok = [c for c in cands if not c.extra.get("clipped")] or cands
     best = min(ok, key=lambda c: c.loss)
     near = [c for c in ok if c.loss <= best.loss + SIZE_TIE_DB]
@@ -287,7 +290,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         g, clipped = pick_output_gain(float(np.max(np.abs(y))), r.offset_db, ref.level_offset_db)
         refined.append(Scored(s.combo, r.total, v["blend"], s.align, r, "refined",
                               {"params": v, "outputGainDb": g, "clipped": clipped, "info": info}))
-    unrefined = ranked[plan.top_k:plan.top_k + max(0, 5 - plan.top_k)]
+    unrefined = [c for c in ranked[plan.top_k:plan.top_k + max(0, 5 - plan.top_k)] if np.isfinite(c.loss)]
+    refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
     best = choose(refined)
     result["stage2Seconds"] = time.time() - t_start - t1
@@ -312,21 +316,21 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         return name, y, fs, rep
 
     renders = {n: (y, fs, rep) for n, y, fs, rep in eng.map(full_render, list(full_jobs.items()))}
-    y_best, fs_out, rep_best = renders["best_L"]
-    peak = float(np.max(np.abs(y_best)))
+    peaks = {n: float(np.max(np.abs(renders[n][0]))) for n in renders if n.startswith("best")}
+    peak = max(peaks.values())
+    best.extra["fullLengthPeakDbfs"] = {n: float(20 * np.log10(max(p, 1e-12))) for n, p in peaks.items()}
     if peak >= 10 ** (CLIP_GUARD_DBFS / 20):
         cut = 20 * np.log10(10 ** (CLIP_GUARD_DBFS / 20) / peak)
         gain_db += cut
         final["output"]["gainDb"] = float(gain_db)
-        for n in renders:
-            if n.startswith("best"):
-                y, fs, rep = renders[n]
-                renders[n] = ((y * 10 ** (cut / 20)).astype(np.float32), fs, rep)
-        log(f"clip guard: full-length peak {20 * np.log10(peak):.1f} dBFS -> output gain lowered by {-cut:.1f} dB")
+        for n in peaks:
+            y, fs, rep = renders[n]
+            renders[n] = ((y * 10 ** (cut / 20)).astype(np.float32), fs, rep)
+        log(f"clip guard: full-length peak (max of L/R) {20 * np.log10(peak):.1f} dBFS -> output gain lowered by {-cut:.1f} dB")
         best.extra["clipGuardDb"] = float(cut)
-        y_best = renders["best_L"][0]
-    best.extra["fullLengthPeakDbfs"] = float(20 * np.log10(max(float(np.max(np.abs(y_best))), 1e-12)))
-    result["clipped"] = bool(np.max(np.abs(y_best)) >= 1.0)
+    best.extra["fullLengthPeakAfterGuardDbfs"] = {n: float(20 * np.log10(max(float(np.max(np.abs(renders[n][0]))), 1e-12)))
+                                                  for n in peaks}
+    result["clipped"] = bool(max(float(np.max(np.abs(renders[n][0]))) for n in peaks) >= 1.0)
 
     targets_path = cfg.targets or _targets_path()
     targets = load_targets(targets_path)
@@ -352,7 +356,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     log(f"A-weighted error vs {Path(refs[0][0]).name}: before {result['before'][0]['aWeightedErrorDb']:.2f} dB, "
         f"after {result['after'][0]['aWeightedErrorDb']:.2f} dB")
 
-    # final sample-accurate offsets on the full-length renders
+    # final offsets (+-1 ms) on the full-length renders
     if ref.matched_sig is not None:
         fin = {}
         try:
@@ -390,6 +394,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result["best"] = {**_scored_json(best), "params": v, "outputGainDb": gain_db, "preset": "best.preset.resolved.json"}
     result["best"]["captures"] = caps_summary(best.combo)
     result["best"]["fullLengthPeakDbfs"] = best.extra["fullLengthPeakDbfs"]
+    result["best"]["fullLengthPeakAfterGuardDbfs"] = best.extra["fullLengthPeakAfterGuardDbfs"]
     result["best"]["clipGuardDb"] = best.extra.get("clipGuardDb", 0.0)
     result["candidatesStage2"] = [_scored_json(c) for c in refined]
     result["listening"] = {}

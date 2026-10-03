@@ -196,7 +196,7 @@ libraries although inference runs on CPU). The real-demucs test runs only with `
 ```
 sawblade-match --di Guitar_L.wav [--di-r Guitar_R.wav] --ref REF.mp3 --pool ~/.cache/sawblade/captures/pool_manifest.json
                [--matched left|right|mono] [--offset-ms N] [--ref-channel auto|side|left|right|mid] [--ref-section A:B ...]
-               [--stems-dir DIR] [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 4] [--threads 4]
+               [--stems-dir DIR] [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 5] [--threads 4]
 python -m sawblade_match.matcher.known_answer --pool ... --di Guitar_L.wav --out DIR [--seed 1]   # acceptance (a), real captures
 ```
 
@@ -209,7 +209,7 @@ low/medium-gain titles, no hard filter); cabs -> one shared IR (live-compatible)
   present, else the side channel `(L-R)/2` (output level is then set +3 dB, two uncorrelated hard-panned guitars). With
   `--matched left` the reference is a time-aligned pair with the DI (cover mix: 190 ms L / 175 ms R by default): the LTAS
   target is the matching segment of the side channel and a multi-resolution STFT term is added against that mix channel; the
-  DI->mix offset is refined to the sample by cross-correlating the rendered excerpt with the mix channel (envelope, then
+  DI->mix offset is refined (about +-1 ms; distorted renders vs a mix are not guaranteed sample-exact) by cross-correlating the rendered excerpt with the mix channel (envelope, then
   band-limited PHAT waveform correlation) and re-measured on the final full-length renders (reported in `result.json`).
 * **Stage 1** (one guitar-dominant excerpt, 6 s, chosen from DI activity): each A pair (HM-2, saw amp) and B pair (boost or
   none, body amp) is rendered once through the C++ core; because the chain after the NAMs is linear, every A x B combination

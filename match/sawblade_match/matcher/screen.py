@@ -107,7 +107,8 @@ class Screener:
         A, B = pair_lists(self.pool, cap_a, cap_b, self.rng)
         full = (len(self.pool.hm2) * len(self.pool.amps)) * ((len(self.pool.boost) + 1) * len(self.pool.amps))
         self.stats.update(pairsA=len(A), pairsB=len(B), comboProductNoCab=full, combosScored=len(A) * len(B),
-                          cabs=len(self.pool.cabs))
+                          cabs=len(self.pool.cabs),
+                          sampledA=[[h.key, a.key] for h, a in A], sampledB=[[b.key if b else None, a.key] for b, a in B])
         self.log(f"stage1: rendering {len(A)} A-pairs + {len(B)} B-pairs "
                  f"(full product {full:,} combos x {len(self.pool.cabs)} cabs; screening {len(A) * len(B):,})")
 

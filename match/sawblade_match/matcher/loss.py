@@ -184,4 +184,6 @@ def evaluate(out: np.ndarray, tgt: Target, eq_gains_db: np.ndarray | None = None
         total += W_DECAY * decay
     if stft is not None:
         total += W_STFT * stft
+    if not np.isfinite(total):
+        total = np.inf          # non-finite renders are never selected
     return LossResult(float(total), ltas, buzz, decay, stft, reg, off)

@@ -1,4 +1,4 @@
-"""Refine a coarse DI->mix offset to sample accuracy by cross-correlating a rendered DI against the mix channel."""
+"""Refine a coarse DI->mix offset to roughly +-1 ms (sample resolution, not guaranteed sample-exact for distorted renders) by cross-correlating a rendered DI against the mix channel."""
 from __future__ import annotations
 
 import numpy as np
