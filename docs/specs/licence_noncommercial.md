@@ -22,3 +22,9 @@ both touch match/.
 - Unit tests: nc licences accepted, unknown rejected, nc flag propagates to manifest,
   export metadata note and report.
 - Full match test suite green; no other behaviour change.
+
+## Also (docs, after the in-flight work lands)
+7. docs/THIRD_PARTY.md, docs/PLUGIN.md, docs/specs/phase2_plugin.md: replace "Sawblade is
+   commercial → JUCE commercial licence required" with: personal builds need nothing; giving
+   binaries to anyone requires either the AGPLv3 (publish the source) or the free JUCE
+   Personal/Starter licence — decide before sharing.
