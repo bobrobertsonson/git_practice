@@ -129,7 +129,7 @@ void ParametricEq::prepare(const ProcessSpec& spec) {
   reset();
 }
 
-void ParametricEq::reset() noexcept {
+void ParametricEq::reset() {
   for (auto& f : filters_) f.reset();
 }
 

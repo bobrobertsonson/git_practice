@@ -14,7 +14,7 @@ class Gain : public Processor {
   float gainLinear() const noexcept { return gain_; }
 
   void prepare(const ProcessSpec&) override {}
-  void reset() noexcept override {}
+  void reset() override {}
   void process(float* io, int numSamples) noexcept override {
     const float g = gain_;
     for (int i = 0; i < numSamples; ++i) io[i] *= g;
@@ -39,7 +39,7 @@ class DelayLine : public Processor {
   int delaySamples() const noexcept { return delay_; }
 
   void prepare(const ProcessSpec& spec) override;
-  void reset() noexcept override;
+  void reset() override;
   void process(float* io, int numSamples) noexcept override;
 
  private:

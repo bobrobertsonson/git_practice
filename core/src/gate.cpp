@@ -38,7 +38,7 @@ void Gate::prepare(const ProcessSpec& spec) {
   reset();
 }
 
-void Gate::reset() noexcept {
+void Gate::reset() {
   env_ = 0.0;
   open_ = false;
   holdCount_ = 0;

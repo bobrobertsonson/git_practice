@@ -25,7 +25,7 @@ namespace sawblade {
 // trade-off of uniform partitioning; a non-uniform scheme would smooth it (not needed in phase 1).
 //
 // setIr() allocates (call it off the audio thread, then hand the object over e.g. via
-// SwapSlot). prepare()/reset()/process() never allocate. With no IR set, the convolver passes
+// SwapSlot). prepare()/reset()/process() do not allocate in this implementation (only process() is contractually RT-safe). With no IR set, the convolver passes
 // audio through unchanged.
 class Convolver : public Processor {
  public:
@@ -42,7 +42,7 @@ class Convolver : public Processor {
   void setIr(const std::vector<float>& ir);
 
   void prepare(const ProcessSpec& spec) override;  // host block size is irrelevant to the design
-  void reset() noexcept override;
+  void reset() override;
   void process(float* io, int numSamples) noexcept override;
   int latencySamples() const noexcept override { return 0; }
 

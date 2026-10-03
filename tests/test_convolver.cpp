@@ -121,9 +121,36 @@ TEST_CASE("Convolver process performs no allocations", "[convolver][alloc]") {
       AllocGuard g;
       for (int rep = 0; rep < 4; ++rep)
         for (const int n : sizes) c.process(buf.data(), n);
+      // reset() is checked here as an implementation property, not an interface contract.
       c.reset();
       allocs = g.count();
     }
     REQUIRE(allocs == 0);
+  }
+}
+
+TEST_CASE("Convolver reproduces long IRs through every partition", "[convolver]") {
+  // Impulse in -> IR out exercises every partition and the frequency-domain delay line wraparound.
+  for (const std::size_t len : {96000u, 128u * 400u + 1u}) {
+    const std::vector<float> ir = noise(len, 55, 0.5f);
+    double l1 = 0.0;
+    for (float v : ir) l1 += std::fabs(v);
+    std::vector<float> x(len + 1000, 0.0f);
+    x[0] = 1.0f;
+    Convolver c;
+    c.setIr(ir);
+    for (const int block : {1, 512}) {
+      DYNAMIC_SECTION("len " << len << " block " << block) {
+        c.prepare({48000.0, block});
+        const auto y = runBlocks(c, x, block);
+        double maxErr = 0.0;
+        for (std::size_t i = 0; i < y.size(); ++i) {
+          const double expect = i < len ? ir[i] : 0.0;
+          maxErr = std::max(maxErr, std::fabs(static_cast<double>(y[i]) - expect));
+        }
+        INFO("max error " << maxErr << " bound " << 1e-5 * l1);
+        REQUIRE(maxErr <= 1e-5 * l1);
+      }
+    }
   }
 }

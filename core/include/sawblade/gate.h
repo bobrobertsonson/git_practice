@@ -34,7 +34,7 @@ class Gate : public Processor {
   const GateParams& params() const noexcept { return params_; }
 
   void prepare(const ProcessSpec& spec) override;
-  void reset() noexcept override;
+  void reset() override;
 
   // Self-keyed.
   void process(float* io, int numSamples) noexcept override { processKeyed(io, io, numSamples); }

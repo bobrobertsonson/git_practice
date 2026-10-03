@@ -189,6 +189,7 @@ TEST_CASE("Gate process performs no allocations", "[gate][alloc]") {
       g.process(buf.data(), n);
       g.processKeyed(key.data(), buf.data(), n);
     }
+    // reset() is checked here as an implementation property, not an interface contract.
     g.reset();
     allocs = guard.count();
   }

@@ -13,7 +13,7 @@ void DelayLine::prepare(const ProcessSpec&) {
   write_ = 0;
 }
 
-void DelayLine::reset() noexcept {
+void DelayLine::reset() {
   std::fill(buf_.begin(), buf_.end(), 0.0f);
   write_ = 0;
 }

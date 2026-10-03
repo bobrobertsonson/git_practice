@@ -55,6 +55,7 @@ TEST_CASE("DelayLine clamps, resets and can change delay without allocating", "[
         d.setDelaySamples((k++ * 5) % 33);
         d.process(buf.data(), n);
       }
+    // reset() is checked here as an implementation property, not an interface contract.
     d.reset();
     allocs = g.count();
   }

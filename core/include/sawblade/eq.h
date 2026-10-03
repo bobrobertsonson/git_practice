@@ -57,7 +57,7 @@ class ParametricEq : public Processor {
   void configure(double sampleRate, std::span<const EqBand> bands);
 
   void prepare(const ProcessSpec& spec) override;
-  void reset() noexcept override;
+  void reset() override;
   void process(float* io, int numSamples) noexcept override;
 
   // Combined analytic response (sum of enabled bands' dB) at the configured sample rate.

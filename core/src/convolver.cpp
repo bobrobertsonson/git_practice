@@ -126,7 +126,7 @@ void Convolver::setIr(const std::vector<float>& ir) {
 
 void Convolver::prepare(const ProcessSpec&) { reset(); }
 
-void Convolver::reset() noexcept { impl_->clearState(); }
+void Convolver::reset() { impl_->clearState(); }
 
 void Convolver::process(float* io, int numSamples) noexcept {
   Impl& s = *impl_;

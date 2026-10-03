@@ -163,6 +163,7 @@ TEST_CASE("EQ process performs no allocations", "[eq][alloc]") {
   {
     AllocGuard g;
     for (const int n : sizes) eq.process(buf.data(), n);
+    // reset() is checked here as an implementation property, not an interface contract.
     eq.reset();
     allocs = g.count();
   }

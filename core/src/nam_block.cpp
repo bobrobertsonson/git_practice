@@ -61,12 +61,9 @@ void NamBlock::prepare(const ProcessSpec& spec) {
   scratchOut_.assign(static_cast<std::size_t>(maxBlock_), 0.0f);
 }
 
-void NamBlock::reset() noexcept {
+void NamBlock::reset() {
   if (maxBlock_ <= 0) return;
-  try {
-    dsp_->ResetAndPrewarm(sampleRate_, maxBlock_);
-  } catch (...) {
-  }
+  dsp_->ResetAndPrewarm(sampleRate_, maxBlock_);
 }
 
 void NamBlock::process(float* io, int numSamples) noexcept {

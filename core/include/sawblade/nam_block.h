@@ -58,7 +58,7 @@ class NamBlock : public Processor {
   // Throws std::runtime_error if spec.sampleRate != expectedSampleRate() and the model cannot
   // run at arbitrary rates. Resets the model and prewarms it.
   void prepare(const ProcessSpec& spec) override;
-  void reset() noexcept override;
+  void reset() override;
   void process(float* io, int numSamples) noexcept override;
 
  private:
