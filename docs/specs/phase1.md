@@ -143,7 +143,8 @@ Deliver:
    - Latency: per-path latency = sum of block latencies (+ per-path cab when `perPath`);
      shorter path delayed to match; `latencySamples()` = total chain latency.
    - Alignment: `AlignResult resolveAlignment()` (not RT; uses the deterministic probe per
-     schema; resets all state afterwards). `auto` mode is resolved during `prepare()`;
+     schema, measured at the blend point — includes per-path IRs in `perPath` mode; resets
+     all state afterwards). `auto` mode is resolved during `prepare()`;
      positive `delaySamplesB` delays B, negative delays A; `invertB` flips B; max lag
      buffer sized from `maxLagMs`.
    - Blend linear per schema; disabled path contributes silence; cab `shared` vs `perPath`;

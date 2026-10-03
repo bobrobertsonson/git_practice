@@ -150,7 +150,9 @@ different latency calibration, pedal phase shifts, etc.).
 ```
 - `auto`: before rendering, a fixed deterministic probe (documented in code: 1.0 s, seed 1,
   white noise at −18 dBFS, band-passed 80 Hz–5 kHz) is run through both paths
-  *pre-cab, post path-EQ, gate bypassed*. The lag maximizing |cross-correlation| within
+  *post path-EQ, gate bypassed, at the blend point* — i.e. pre-cab in `shared` mode, but
+  including each path's own IR in `perPath` mode (different IRs carry different mic/onset
+  delays, which must be aligned too). The lag maximizing |cross-correlation| within
   ±`maxLagMs` sets `delaySamplesB`; a negative peak sets `invertB = true`. The resolved
   values are written to the render report (and in the plugin, back into the preset as
   `manual`, so a preset always replays identically).
