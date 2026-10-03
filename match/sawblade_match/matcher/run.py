@@ -46,9 +46,8 @@ class Plan:
     @staticmethod
     def from_budget(budget: float, top_k: int = 5) -> "Plan":
         """Budget 1.0: the full A (HM-2 x amp) and B (boost/none x amp) pair product of the current pool (410 / 300 pairs)
-        is rendered; smaller budgets draw seeded random subsets. Measured on the 4-core dev box: 14 min for a 3-combo plan
-        at 200/150 pairs (lightly loaded), 44 min for 410/300 pairs + 5 combos under a load average of 10 (shared
-        with other jobs); the default (full pairs, 4 combos, fewer NAM-gain generations) is ~20 min unloaded."""
+        is rendered; smaller budgets draw seeded random subsets. Measured on the 4-core dev box (load ~7, shared): 19.6 and 24.6 min
+        for the default 5-combo plan; 44 min once at load ~10. Counts, not wall-clock, so results stay deterministic."""
         b = max(budget, 0.01)
         g = lambda n, lo: max(lo, int(round(n * min(b, 3.0))))
         return Plan(cap_a=g(410, 3), cap_b=g(300, 3), n_rescore=g(60, 3), n_cab=g(15, 2), top_k=top_k,

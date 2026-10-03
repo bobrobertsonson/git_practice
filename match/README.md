@@ -231,7 +231,7 @@ low/medium-gain titles, no hard filter); cabs -> one shared IR (live-compatible)
   `render_*.wav`, `listen/*.wav|mp3` (L/R DIs panned, peak-normalised to -1 dBFS; the normalisation gain is in result.json).
   Exported/derived models from TONE3000 captures are for the user's own use only.
 
-Cost model: one 4-NAM render runs at ~0.6x real time per core. The default budget (stage 1: 710 path-pair renders of a 6.5 s
-excerpt; stage 2: 4 combos x ~72 NAM-gain evaluations + ~1700 cheap linear evaluations; stage 3: 3 full-length renders)
-is ~20 min on 4 unloaded cores (14 min for a smaller plan, 44 min for the 5-combo plan with the box at load 10); `--budget` scales every count (e.g. `--budget 0.1` for a
-quick check, 0.05 ~ 4 min).
+Cost model: one 4-NAM render runs at ~0.6x real time per core. The default plan (stage 1: ~700 path-pair renders of a 6.5 s
+excerpt; stage 2: 5 combos x ~72 NAM-gain evaluations + ~1700 cheap linear evaluations; stage 3: 3 full-length renders)
+measured 19.6 min (cover mix) and 24.6 min (original) on 4 cores at a load average of ~7, with the box shared (44 min in an earlier
+run at load ~10); `--budget` scales every count (`--budget 0.1` for a quick check).
