@@ -228,6 +228,9 @@ TEST_CASE("Processor: state round trip is the preset JSON", "[processor][state]"
   // Restore into a fresh processor (as a host does on session load), possibly before prepareToPlay.
   SawbladeProcessor b;
   b.setStateInformation(s1.getData(), static_cast<int>(s1.getSize()));
+  // Parameters are restored synchronously (hosts and pluginval read them right away).
+  CHECK(b.parameters().getRawParameterValue("blend")->load() == Catch::Approx(0.3f).margin(1e-4));
+  CHECK(b.parameters().getRawParameterValue("inputGain")->load() == Catch::Approx(3.25f).margin(1e-4));
   b.setRateAndBufferSizeDetails(48000.0, 512);
   b.prepareToPlay(48000.0, 512);
   REQUIRE(b.waitForLoader());

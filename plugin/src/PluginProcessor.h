@@ -78,8 +78,12 @@ class SawbladeProcessor : public juce::AudioProcessor {
   // and the engine built on the loader thread. Return false (and set *error) if parsing failed;
   // load failures that only show up while building are reported through status().error.
   bool loadPresetFile(const std::filesystem::path& file, std::string* error = nullptr);
-  bool loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error = nullptr);
+  bool loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error = nullptr,
+                      bool restore = false);
   void loadPreset(Preset preset);
+  // Host-driven state restore: the preset and its parameter values are applied immediately (hosts
+  // and validators read the parameters right after setStateInformation); the engine follows.
+  void restorePreset(Preset preset);
 
   // The preset with the current parameter values written into it (what getStateInformation saves).
   Preset currentPreset() const;

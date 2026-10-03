@@ -122,6 +122,17 @@ void SawbladeProcessor::loadPreset(Preset preset) {
   }
 }
 
+void SawbladeProcessor::restorePreset(Preset preset) {
+  const Preset c = clampedToParams(std::move(preset));
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    wanted_.reset();
+    status_.error.clear();
+  }
+  commit(c);
+  submit(/*fallbackToInit=*/false);  // builds the committed preset (no pending "wanted")
+}
+
 // Makes `p` the current preset and writes its values into the parameters (its engine's baseline
 // equals them). Called from the loader thread right before the engine is published, or directly.
 void SawbladeProcessor::commit(const Preset& p) {
@@ -133,11 +144,15 @@ void SawbladeProcessor::commit(const Preset& p) {
   writeParams(paramsFromPreset(p));
 }
 
-bool SawbladeProcessor::loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error) {
+bool SawbladeProcessor::loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error,
+                                       bool restore) {
   try {
     nlohmann::json j = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
     if (j.is_discarded()) throw PresetError("", "invalid JSON");
-    loadPreset(parsePreset(j, baseDir));
+    if (restore)
+      restorePreset(parsePreset(j, baseDir));
+    else
+      loadPreset(parsePreset(j, baseDir));
     return true;
   } catch (const std::exception& e) {
     if (error) *error = e.what();
@@ -172,7 +187,7 @@ void SawbladeProcessor::setStateInformation(const void* data, int size) {
   std::error_code ec;
   std::filesystem::path base = std::filesystem::current_path(ec);
   if (ec) base = std::filesystem::path("/");
-  loadPresetJson(s, base);
+  loadPresetJson(s, base, nullptr, /*restore=*/true);
 }
 
 // --- loader -------------------------------------------------------------------------------------
