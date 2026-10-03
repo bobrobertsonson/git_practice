@@ -28,7 +28,7 @@ endif()
 include(cmake/Dependencies.cmake)
 
 add_subdirectory(core)
-# Slots for later tasks (T4): add_subdirectory(cli)
+add_subdirectory(cli)
 
 if(SAWBLADE_BUILD_TESTS)
   enable_testing()

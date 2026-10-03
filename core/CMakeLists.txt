@@ -18,7 +18,8 @@ add_library(sawblade_core STATIC
   src/preset_reader.cpp
   src/preset.cpp
   src/block_registry.cpp
-  src/chain.cpp)
+  src/chain.cpp
+  src/render.cpp)
 add_library(sawblade::core ALIAS sawblade_core)
 target_include_directories(sawblade_core PUBLIC include)
 target_compile_features(sawblade_core PUBLIC cxx_std_20)
