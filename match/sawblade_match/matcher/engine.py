@@ -22,7 +22,7 @@ import numpy as np
 from scipy import signal
 
 from .. import core as _core
-from .space import A_PREEQ, Combo, build_preset, manual_align, path_blocks, path_eq, post_eq
+from .space import Combo, build_preset, chain_blocks, manual_align, path_blocks, path_eq, post_eq
 
 RATE = 48000
 
@@ -70,30 +70,32 @@ class Engine:
     def _disabled(role: str) -> dict:
         return {"role": role, "enabled": False, "blocks": []}
 
-    def core_preset(self, combo: Combo, v: dict, path: str) -> dict:
-        p = self._base(combo.cab, blend=0.0 if path == "a" else 1.0, cab_enabled=False, gate=self.gate)
-        if path == "a":
-            p["paths"] = {"a": {"role": "saw", "preEq": copy.deepcopy(A_PREEQ), "blocks": path_blocks(combo, v, "a")},
-                          "b": self._disabled("body")}
-        else:
-            p["paths"] = {"a": self._disabled("saw"), "b": {"role": "body", "blocks": path_blocks(combo, v, "b")}}
+    def chain_preset(self, blocks: list[dict], cab, path: str = "a") -> dict:
+        p = self._base(cab, blend=0.0 if path == "a" else 1.0, cab_enabled=False, gate=self.gate)
+        live = {"role": "saw" if path == "a" else "body", "blocks": blocks}
+        p["paths"] = {"a": live, "b": self._disabled("body")} if path == "a" else \
+            {"a": self._disabled("saw"), "b": live}
         return p
 
     def linear_preset(self, cab, v: dict, path: str) -> dict:
         p = self._base(cab, blend=0.0 if path == "a" else 1.0, cab_enabled=True, gate=None, post=post_eq(v))
         live = {"role": "saw" if path == "a" else "body", "blocks": [], "eq": path_eq(v, path),
-                "levelDb": float(v["levelA" if path == "a" else "levelB"])}
+                "levelDb": float(v.get("levelA" if path == "a" else "levelB", 0.0))}
         p["paths"] = {"a": live, "b": self._disabled("body")} if path == "a" else \
             {"a": self._disabled("saw"), "b": live}
         return p
 
     # ---- stages -------------------------------------------------------------------------------------------------
-    def core(self, combo: Combo, v: dict, path: str, x: np.ndarray) -> np.ndarray:
-        """NAM core of one path: gate -> blocks (A also pre-EQ) at 48 kHz. Same length as ``x``."""
-        y, rep = self.render(self.core_preset(combo, v, path), x)
+    def core_blocks(self, blocks: list[dict], cab, x: np.ndarray) -> np.ndarray:
+        """NAM core of one chain (gate -> blocks) at 48 kHz; ``cab`` only fills the (disabled) cab slot."""
+        y, rep = self.render(self.chain_preset(blocks, cab, "a"), x)
         if rep.get("latencySamples", 0):
             raise RuntimeError("path latency != 0 is not supported by the matcher emulation yet")
         return y
+
+    def core(self, combo: Combo, v: dict, path: str, x: np.ndarray) -> np.ndarray:
+        """NAM core of one path of a combo. Same length as ``x``."""
+        return self.core_blocks(path_blocks(combo, v, path), combo.cab, x)
 
     def linear(self, cab, v: dict, path: str, sig: np.ndarray) -> np.ndarray:
         y, _ = self.render(self.linear_preset(cab, v, path), sig)
@@ -102,6 +104,8 @@ class Engine:
     def probe_align(self, combo: Combo, v: dict) -> dict:
         """One-time auto-align probe for a discrete combo (tiny render; the probe signal is internal to the renderer).
         Returns the manual-align dict to use from then on (``align.resolved`` of the report)."""
+        if combo.topology != "blend":
+            return manual_align(0, False)
         p = build_preset(combo, v, gate=None, align={"mode": "auto", "maxLagMs": 5.0})
         _, rep = self.render(p, np.zeros(2048, np.float32))
         r = rep["align"]["resolved"]
@@ -118,8 +122,10 @@ class Engine:
             a = np.concatenate([np.zeros(-n, a.dtype), a[:n]])
         return ((1.0 - blend) * a + blend * b).astype(np.float32)
 
-    def emulate(self, combo: Combo, v: dict, core_a: np.ndarray, core_b: np.ndarray, align: dict) -> np.ndarray:
-        """Output of the full chain from the two cores (output gain not applied)."""
+    def emulate(self, combo: Combo, v: dict, core_a: np.ndarray, core_b: np.ndarray | None, align: dict) -> np.ndarray:
+        """Output of the full chain from the core(s) (output gain not applied)."""
         a = self.linear(combo.cab, v, "a", core_a)
+        if combo.topology != "blend":
+            return a
         b = self.linear(combo.cab, v, "b", core_b)
         return self.mix(a, b, v["blend"], align)

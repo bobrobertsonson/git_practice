@@ -25,6 +25,7 @@ class Reference:
     matched_sig: np.ndarray | None = None   # 48 kHz channel time-aligned (up to ``offset``) with the DI
     matched_channel: str | None = None
     offset_samples: int = 0         # coarse DI-within-ref offset (48 kHz samples)
+    offset_given: bool = False      # False: unknown, searched in a wide window and refined
     sections: list[tuple[float, float]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -84,8 +85,8 @@ def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path |
         col = {"left": 0, "right": 1, "mono": 0}[matched]
         ref.matched_sig = to48(x[:, min(col, x.shape[1] - 1)], fs)
         ref.matched_channel = matched
-        default = {"left": 190.0, "right": 175.0}.get(matched, 0.0)   # docs/TEST_MATERIAL.md
-        ref.offset_samples = int(round((default if offset_ms is None else offset_ms) * RATE / 1000))
+        ref.offset_given = offset_ms is not None
+        ref.offset_samples = int(round((offset_ms or 0.0) * RATE / 1000))
     if sections:
         ref.sections = list(sections)
         if matched:

@@ -1,7 +1,7 @@
 """Candidate pool: read ``pool_manifest.json`` and the capture cache, keep only downloaded captures.
 
-Slots (by gear): pedals whose title contains "HM-2" -> ``hm2`` (path A pedal); other pedals -> ``boost``
-(path B, optional); amps -> both ``saw_amp`` and ``body_amp``; cabs -> shared ``cab``.
+Slots are typed by gear class (classify.py), never by title filters: pedals (any class, or none), amps (any class) and
+cabs (shared IR).
 Licenses were filtered by ``sawblade-t3k pull``; they are re-checked here (never non-commercial).
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..t3k.cache import Cache, default_cache_root
 from ..t3k.licenses import check_license
+from .classify import classify
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class Capture:
     license: str
     creator: str
     url: str
-    kind: str = ""       # hm2 | boost | amp | cab
+    kind: str = ""       # gear class (classify.py): drive | distortion | fuzz | preamp | pedal_unknown | amp_low | amp_high | cab
     arch: str = ""       # manifest architecture_version ("1"/"2")
     size_label: str = "" # manifest size, else lite/feather/xstandard/standard parsed from the model name
 
@@ -57,13 +58,18 @@ class Capture:
 
 @dataclass
 class Pool:
-    hm2: list[Capture] = field(default_factory=list)
-    boost: list[Capture] = field(default_factory=list)
+    pedals: list[Capture] = field(default_factory=list)
     amps: list[Capture] = field(default_factory=list)
     cabs: list[Capture] = field(default_factory=list)
 
     def counts(self) -> dict:
-        return {"hm2": len(self.hm2), "boost": len(self.boost), "amps": len(self.amps), "cabs": len(self.cabs)}
+        out = {"pedals": len(self.pedals), "amps": len(self.amps), "cabs": len(self.cabs)}
+        for c in (*self.pedals, *self.amps):
+            out[c.kind] = out.get(c.kind, 0) + 1
+        return out
+
+    def of_class(self, cls: str) -> list[Capture]:
+        return [c for c in (*self.pedals, *self.amps, *self.cabs) if c.kind == cls]
 
 
 _GAIN_NUM = re.compile(r"gain[\s_\-:]*0?(\d{1,2})\b", re.I)
@@ -105,19 +111,16 @@ def load_pool(manifest: str | Path, cache_root: Path | None = None) -> Pool:
             entry = cache.get(t["tone_id"], md["id"])
             if entry is None:      # not downloaded (or sha mismatch): not a candidate
                 continue
-            if gear == "pedal":
-                kind = "hm2" if "hm-2" in t["title"].lower() else "boost"
-            else:
-                kind = gear
+            kind = classify(gear, t["title"], md.get("name", ""))
             label = (md.get("size") or entry.model.get("size") or "").lower()
             if not label:
-                m = re.search(r"\b(feather|lite|xstandard|custom)\b", md.get("name", ""), re.I)
-                label = m.group(1).lower() if m else "standard"
+                lm = re.search(r"\b(feather|lite|xstandard|custom)\b", md.get("name", ""), re.I)
+                label = lm.group(1).lower() if lm else "standard"
             cap = Capture(int(t["tone_id"]), int(md["id"]), t["title"], md.get("name", ""), gear,
                           str(entry.path), entry.sha256, entry.path.stat().st_size, t.get("license", ""),
                           t.get("creator") or t.get("creator_username") or "", t.get("url", ""), kind,
                           str(md.get("architecture_version") or ""), label)
-            {"hm2": pool.hm2, "boost": pool.boost, "amp": pool.amps, "cab": pool.cabs}[kind].append(cap)
+            {"pedal": pool.pedals, "amp": pool.amps, "cab": pool.cabs}[gear].append(cap)
     return pool
 
 
@@ -130,17 +133,19 @@ def default_cab(cabs: list[Capture]) -> Capture:
 
 
 def starter_choice(pool: Pool) -> dict[str, Capture | None]:
-    """Captures substituted into presets/chainsaw_body.json for the 'before' measurement.
-
-    hm2: first HM-2 model whose name suggests maxed settings (FULL / 10 / MAX) else first; saw amp: lowest
-    gain class (low < medium < unknown < high), first in manifest order; boost: first pedal with 'TS' in the
-    title else first boost; body amp: first 'high'-class 5150/6505 amp else the first 'high' class; cab: default_cab."""
+    """Captures substituted into presets/chainsaw_body.json for the 'before' measurement (a hand-made starter shape:
+    saw pedal / saw amp / boost / body amp / cab). saw pedal: first ``distortion`` class capture whose name suggests
+    maxed settings, else the first distortion, else the first pedal; saw amp: lowest gain class (low < medium < unknown
+    < high), first in manifest order; boost: first ``drive`` capture with 'ts' in the title, else the first drive;
+    body amp: first 'high'-class 5150/6505 amp, else the first 'high' class; cab: default_cab."""
     def first(lst, pred):
         return next((c for c in lst if pred(c)), None)
-    hm2 = first(pool.hm2, lambda c: re.search(r"full|l-10|max", c.name, re.I)) or pool.hm2[0]
+    dist = [c for c in pool.pedals if c.kind == "distortion"] or pool.pedals
+    drive = [c for c in pool.pedals if c.kind == "drive"] or pool.pedals
+    hm2 = first(dist, lambda c: re.search(r"full|l-10|max", c.name, re.I)) or dist[0]
     rank = {"low": 0, "medium": 1, "unknown": 2, "high": 3}
     saw = min(pool.amps, key=lambda c: (rank[gain_class(c.title, c.name)], pool.amps.index(c)))
-    boost = first(pool.boost, lambda c: "ts" in c.title.lower()) or (pool.boost[0] if pool.boost else None)
+    boost = first(drive, lambda c: "ts" in c.title.lower()) or drive[0]
     body = (first(pool.amps, lambda c: re.search(r"5150|5153|6505", c.title + c.name, re.I)
                   and gain_class(c.title, c.name) == "high")
             or first(pool.amps, lambda c: gain_class(c.title, c.name) == "high") or pool.amps[-1])

@@ -18,7 +18,8 @@ FIX = REPO / "tests" / "fixtures"
 
 
 def cap(path: Path, tone: int, model: int, kind: str, title="T", name="m") -> Capture:
-    gear = {"hm2": "pedal", "boost": "pedal", "amp": "amp", "cab": "cab"}[kind]
+    gear = {"drive": "pedal", "distortion": "pedal", "fuzz": "pedal", "amp_low": "amp", "amp_high": "amp",
+            "cab": "cab"}[kind]
     from sawblade_match.t3k.cache import sha256_file
     return Capture(tone, model, title, name, gear, str(path), sha256_file(path), path.stat().st_size, "cc-by", "me",
                    f"https://example/{tone}", kind)
@@ -80,9 +81,11 @@ def test_weights_documented():
 
 # ---- search space -------------------------------------------------------------------------------------------------------
 def test_space_roundtrip_and_bounds():
-    for has_boost in (True, False):
-        sp = Space(has_boost)
-        assert len(sp.indices("gain")) == (4 if has_boost else 3)
+    for shape, n_gain in (((1, 1), 4), ((0, 0), 2), ((1, None), 2), ((2, None), 3), ((0, None), 1)):
+        sp = Space(shape)
+        assert len(sp.indices("gain")) == n_gain
+        assert ("blend" in sp.idx) == (shape[1] is not None)
+        assert ("b.f0" in sp.idx) == (shape[1] is not None)
         d = sp.default()
         u = sp.encode(d)
         back = sp.decode(u)
@@ -91,11 +94,29 @@ def test_space_roundtrip_and_bounds():
         lo, hi = sp.decode(np.zeros(len(sp))), sp.decode(np.ones(len(sp)))
         for p in sp.params:
             assert lo[p.name] == pytest.approx(p.lo) and hi[p.name] == pytest.approx(p.hi)
-        assert sp.decode(np.full(len(sp), 7.0))["blend"] == pytest.approx(0.95)   # clipped into the box
-    sp = Space(True)
+        if shape[1] is not None:
+            assert sp.decode(np.full(len(sp), 7.0))["blend"] == pytest.approx(0.95)   # clipped into the box
+    sp = Space((1, 1))
     assert 0.0 < sp.encode({"a.f0": 200.0})[sp.idx["a.f0"]] < 1.0
     assert sp.decode(sp.encode({"gain.a.amp": -12.0}))["gain.a.amp"] == pytest.approx(-12.0)
     assert len(sp.eq_gains(sp.default())) == 9
+    assert len(Space((1, None)).eq_gains(Space((1, None)).default())) == 6
+
+
+def test_classifier_is_gear_class_not_title_filter():
+    from sawblade_match.matcher.classify import classify
+    assert classify("pedal", "Boss HM-2", "x") == "distortion"
+    assert classify("pedal", "ProCo RAT 2", "x") == "distortion"
+    assert classify("pedal", "Ibanez TS808", "x") == "drive"
+    assert classify("pedal", "Electro-Harmonix Big Muff", "x") == "fuzz"
+    assert classify("pedal", "Dallas Rangemaster", "x") == "fuzz"
+    assert classify("pedal", "BOOST PEDAL PACK", "TECH 21 SANSAMP") == "preamp"      # the model name wins
+    assert classify("pedal", "BOOST PEDAL PACK", "FORTIN GRIND") == "drive"          # then the title
+    assert classify("pedal", "Mystery box", "thing") == "pedal_unknown"
+    assert classify("amp", "EVH 5150iii", "Red") == "amp_high"
+    assert classify("amp", "Marshall", "Clean") == "amp_low"
+    assert classify("amp", "Orange Rockerverb", "x") == "amp_high"
+    assert classify("cab", "anything", "x") == "cab"
 
 
 def test_gain_class():
@@ -225,10 +246,40 @@ def _fake_cache(tmp_path: Path):
 
 def test_load_pool_slots_downloaded_only_and_licenses(tmp_path):
     p = load_pool(_fake_cache(tmp_path))
-    assert [c.key for c in p.hm2] == ["2/20"]
-    assert [c.key for c in p.boost] == ["3/30"]
+    assert sorted(c.key for c in p.pedals) == ["2/20", "3/30"]       # no title filter: any pedal is a pedal candidate
+    assert {c.key: c.kind for c in p.pedals} == {"2/20": "distortion", "3/30": "drive"}
     assert sorted(c.key for c in p.amps) == ["1/10", "1/11"]       # nc amp excluded, undownloaded models skipped
     assert [c.key for c in p.cabs] == ["4/40"]
+    assert p.counts()["distortion"] == 1 and p.counts()["drive"] == 1
+
+
+# ---- profiles (no C++ needed) -----------------------------------------------------------------------------------------------------
+def test_swedish_profile_matches_tone_targets_v2():
+    from sawblade_match.matcher.profile import load_profile
+    prof = load_profile("swedish_death_hm2")
+    v2 = json.loads((REPO / "docs" / "tone_targets.json").read_text())
+    assert prof["schema"] == "sawblade.profile" and prof["id"] == "swedish_death_hm2"
+    assert prof["rules"] == v2["rules"] and prof["analysis"] == v2["analysis"] and prof["metrics"] == v2["metrics"]
+
+
+def test_derived_profile_loosens_only_failed_rules():
+    from sawblade_match.matcher.profile import derive_profile, load_profile
+    from sawblade_match.tonecheck.analysis import analyze
+    from sawblade_match.tonecheck.rules import evaluate_rules
+    base = load_profile("swedish_death_hm2")
+    # a spectrally flat noise "reference": fails several HM-2 rules (e.g. no sub roll-off, fizz rule)
+    x = np.random.default_rng(0).standard_normal(48000 * 6) * 0.05
+    prof, table = derive_profile(base, x, "side", "noise")
+    g = analyze(x, 48000, base).groups
+    assert any(r["statusOnReference"] != "pass" for r in table)
+    for r, old, new in zip(table, base["rules"], prof["rules"]):
+        if r["statusOnReference"] == "pass":
+            assert new["expr"] == old["expr"]                  # passes: untouched (loosen-only)
+    assert all(r["status"] in ("pass", "marginal") for r in evaluate_rules(g, prof["rules"]))   # reference passes
+    assert prof["schema"] == "sawblade.profile" and prof["provenance"]["kind"] == "reference-derived"
+    # the original-style signal keeps the v2 rules (no change when everything already passes)
+    prof2, t2 = derive_profile(prof, x, "side", "noise")
+    assert [r["expr"] for r in prof2["rules"]] == [r["expr"] for r in prof["rules"]]
 
 
 # ---- presets / emulation (need the C++ core) ----------------------------------------------------------------------------------------
@@ -242,42 +293,68 @@ from sawblade_match.matcher.screen import Scored                    # noqa: E402
 def fixture_pool() -> Pool:
     n = lambda f: FIX / "nam" / f
     i = lambda f: FIX / "ir" / f
-    hm2 = [cap(n("wavenet.nam"), 1, 1, "hm2", "HM-2 a"), cap(n("lstm.nam"), 1, 2, "hm2", "HM-2 b")]
-    amps = [cap(n("lstm.nam"), 2, 3, "amp", "Amp lstm"), cap(n("wavenet.nam"), 2, 4, "amp", "Amp wavenet"),
-            cap(n("linear_identity.nam"), 2, 5, "amp", "Amp lin")]
-    boost = [cap(n("linear_identity_loud24.nam"), 3, 6, "boost", "TS")]
+    pedals = [cap(n("wavenet.nam"), 1, 1, "distortion", "Dist a"), cap(n("lstm.nam"), 1, 2, "distortion", "Dist b"),
+              cap(n("linear_identity_loud24.nam"), 3, 6, "drive", "Drive")]
+    amps = [cap(n("lstm.nam"), 2, 3, "amp_high", "Amp lstm"), cap(n("wavenet.nam"), 2, 4, "amp_high", "Amp wavenet"),
+            cap(n("linear_identity.nam"), 2, 5, "amp_low", "Amp lin")]
     cabs = [cap(i("ir_a.wav"), 4, 7, "cab", "cab a"), cap(i("ir_b.wav"), 4, 8, "cab", "cab b")]
-    return Pool(hm2, boost, amps, cabs)
+    return Pool(pedals, amps, cabs)
 
 
-def hidden(pool: Pool):
-    combo = Combo(pool.hm2[1], pool.amps[1], pool.boost[0], pool.amps[0], pool.cabs[1])
-    sp = Space(True)
+def mkplan(**kw) -> Plan:
+    d = dict(cap_pairs=100, n_rescore=6, n_rescore_single=6, n_cab=2, n_cab_single=2,
+             top_k={"blend": 1, "single": 0, "single2": 0}, gens_linear=3, gens_gain=2, gens_final=2,
+             pop_linear=8, pop_gain=4)
+    d.update(kw)
+    return Plan(**d)
+
+
+def hidden(pool: Pool, topology: str = "blend"):
+    p = pool.pedals
+    if topology == "blend":
+        combo = Combo((p[1],), pool.amps[1], (p[2],), pool.amps[0], pool.cabs[1])
+    elif topology == "single2":
+        combo = Combo((p[2], p[0]), pool.amps[0], None, None, pool.cabs[1])
+    else:
+        combo = Combo((p[0],), pool.amps[1], None, None, pool.cabs[1])
+    sp = Space.for_combo(combo)
     v = sp.default()
-    v.update({"blend": 0.4, "levelB": -2.0, "a.g1": 4.0, "b.g2": -3.0, "post.g1": 2.0, "gain.a.pedal": 3.0})
+    if topology == "blend":
+        v.update({"a.g1": 4.0, "post.g1": 2.0, "blend": 0.4, "levelB": -2.0, "b.g2": -3.0, "gain.a.0": 3.0})
+    else:
+        v.update({"post.g1": 1.5})          # screening uses default parameters, so keep the hidden one close to them
     return combo, sp, v
 
 
 def test_preset_emission_is_schema_valid_via_cpp_parser():
     pool = fixture_pool()
+    for topo in ("blend", "single", "single2"):
+        combo, sp, v = hidden(pool, topo)
+        assert combo.topology == topo
+        preset = build_preset(combo, v, gate=gate_preset(-50.0), align=manual_align(2, False))
+        y, rep = core.render(preset, np.zeros(2048, np.float32), 48000.0)           # strict parse + render
+        assert rep["liveCompatible"] is True and len(y) == 2048
+        assert preset["cab"]["mode"] == "shared"
+        assert all(b["type"] == "nam" for p in preset["paths"].values() for b in p["blocks"])   # nothing non-trainable
+        n_nam = sum(len(p["blocks"]) for p in preset["paths"].values())
+        assert n_nam == len(combo.nams())
+        if topo != "blend":
+            assert preset["paths"]["b"]["enabled"] is False and preset["blend"] == 0.0
     combo, sp, v = hidden(pool)
     preset = build_preset(combo, v, gate=gate_preset(-50.0), align=manual_align(2, False))
-    y, rep = core.render(preset, np.zeros(2048, np.float32), 48000.0)           # strict parse + render
-    assert rep["liveCompatible"] is True and len(y) == 2048
-    assert preset["cab"]["mode"] == "shared"
     src = preset["paths"]["a"]["blocks"][0]["model"]["source"]
     assert src["provider"] == "tone3000" and src["id"] == "1" and src["modelId"] == "2"
-    assert all(b["type"] == "nam" for p in preset["paths"].values() for b in p["blocks"])   # nothing non-trainable
     bad = json.loads(json.dumps(preset))
     bad["paths"]["a"]["blocks"][0]["bogus"] = 1
     with pytest.raises(ValueError):
         core.render(bad, np.zeros(2048, np.float32), 48000.0)
     port = portable(preset)
     assert port["cab"]["ir"]["file"] == "captures/4_8.wav" and "sha256" not in port["cab"]["ir"]
-    # no boost variant also valid
-    combo2 = Combo(combo.hm2, combo.saw_amp, None, combo.body_amp, combo.cab)
-    p2 = build_preset(combo2, Space(False).default(), gate=None, align=manual_align())
+    # pedal slots allow "none" on either path
+    combo2 = Combo((), combo.a_amp, (), combo.b_amp, combo.cab)
+    p2 = build_preset(combo2, Space.for_combo(combo2).default(), gate=None, align=manual_align())
     core.render(p2, np.zeros(2048, np.float32), 48000.0)
+    assert len(p2["paths"]["a"]["blocks"]) == 1
 
 
 @pytest.mark.parametrize("align", [(0, False), (7, False), (-9, True), (5, True)])
@@ -299,16 +376,34 @@ def test_emulation_equals_full_render(align):
         eng.close()
 
 
+@pytest.mark.parametrize("topo", ["single", "single2"])
+def test_emulation_equals_full_render_single_topologies(topo):
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool, topo)
+    x, fs = sf.read(FIX / "di_riff.wav", dtype="float32")
+    x = to48(x, fs)[:48000 * 2]
+    gate = gate_preset(-60.0)
+    eng = Engine(gate, 2)
+    try:
+        ca = eng.core(combo, v, "a", x)
+        em = eng.emulate(combo, v, ca, None, manual_align())
+        full, _ = eng.render(build_preset(combo, v, gate=gate, align=manual_align()), x)
+        assert np.max(np.abs(full - em)) < 1e-5 * max(1.0, np.max(np.abs(full)))
+    finally:
+        eng.close()
+
+
 def test_pick_output_gain_and_choose():
     g, clipped = pick_output_gain(0.1, offset_db=-10.0, level_offset_db=3.0)
     assert g == pytest.approx(13.0) and not clipped
     assert pick_output_gain(0.5, -20.0, 0.0)[1]            # +20 dB on a 0.5 peak clips
     pool = fixture_pool()
     from dataclasses import replace
-    big = Combo(pool.hm2[0], pool.amps[0], None, pool.amps[1], pool.cabs[0])
-    small = Combo(replace(pool.hm2[1], size_label="lite"), replace(pool.amps[2], size_label="lite"), None,
-                  replace(pool.amps[2], size_label="lite"), pool.cabs[0])
-    twin = Combo(pool.hm2[0], pool.amps[0], None, pool.amps[1], pool.cabs[1])    # same size category as ``big``
+    p, a = pool.pedals, pool.amps
+    big = Combo((p[0],), a[0], (), a[1], pool.cabs[0])
+    small = Combo((replace(p[1], size_label="lite"),), replace(a[2], size_label="lite"), (),
+                  replace(a[2], size_label="lite"), pool.cabs[0])
+    twin = Combo((p[0],), a[0], (), a[1], pool.cabs[1])    # same size category as ``big``
     mk = lambda c, l, clipped=False: Scored(c, l, 0.5, manual_align(), None, "refined", {"clipped": clipped})
     assert choose([mk(big, 1.0), mk(small, 1.04)]).combo is small         # within 0.05 dB -> lighter category
     assert choose([mk(big, 1.0), mk(small, 1.2)]).combo is big            # outside the tolerance -> lower loss
@@ -316,6 +411,21 @@ def test_pick_output_gain_and_choose():
     assert choose([mk(big, 1.0, clipped=True), mk(small, 1.4)]).combo is small   # clipping rejected
     assert choose([mk(big, float("nan")), mk(small, 2.0)]).combo is small          # non-finite loss dropped
     assert choose([mk(small, float("inf")), mk(big, 3.0)]).combo is big
+
+
+def test_choose_prefers_simplest_topology_within_occam_tolerance():
+    pool = fixture_pool()
+    p, a = pool.pedals, pool.amps
+    blend = Combo((p[0],), a[0], (), a[1], pool.cabs[0])
+    single = Combo((p[0],), a[0], None, None, pool.cabs[0])
+    single2 = Combo((p[0], p[1]), a[0], None, None, pool.cabs[0])
+    mk = lambda c, l: Scored(c, l, 0.5, manual_align(), None, "refined", {})
+    assert choose([mk(blend, 1.0), mk(single, 1.09)]).combo is single           # 0.09 dB worse -> simpler wins
+    assert choose([mk(blend, 1.0), mk(single, 1.11)]).combo is blend            # beyond 0.1 dB
+    assert choose([mk(blend, 1.0), mk(single2, 1.05), mk(single, 1.08)]).combo is single
+    assert choose([mk(blend, 1.0), mk(single2, 1.05)]).combo is single2
+    assert [c for c in (blend, single, single2)].__len__() == 3
+    assert (blend.topology, single.topology, single2.topology) == ("blend", "single", "single2")
 
 
 def test_gate_floor_uses_peak_envelope():
@@ -337,70 +447,176 @@ def test_size_rank_orders_categories():
         < replace(a, size_label="standard").size_rank < replace(a, size_label="xstandard").size_rank
 
 
-def test_known_answer_recovery_fixtures(tmp_path):
-    """Hidden preset from fixture captures -> reference = its render of the DI; the matcher must come within 0.5 dB
-    A-weighted of the hidden preset (whose own error against the reference is 0)."""
+def _setup_known(tmp_path, topo):
+    from sawblade_match.matcher.run import gate_envelope_floor_db
+    from sawblade_match.matcher.reference import load_reference
     pool = fixture_pool()
-    combo, sp, v = hidden(pool)
+    combo, sp, v = hidden(pool, topo)
     x, fs = sf.read(FIX / "di_riff.wav", dtype="float32")
     di = tmp_path / "di.wav"
     sf.write(str(di), x, fs, subtype="FLOAT")
-    floor_gate = gate_preset(-60.0)
-    from sawblade_match.matcher.run import gate_envelope_floor_db
     gate = gate_preset(gate_envelope_floor_db(to48(x, fs), 48000))
     hid, _ = core.render(build_preset(combo, v, gate=gate, align=Engine(gate).probe_align(combo, v)), x, fs)
     refwav = tmp_path / "hidden.wav"
     sf.write(str(refwav), hid, fs, subtype="FLOAT")
-    from sawblade_match.matcher.reference import load_reference
     ref = load_reference(refwav, channel="mid", matched="mono", offset_ms=0.0)
-    plan = Plan(cap_a=6, cap_b=6, n_rescore=6, n_cab=2, top_k=1, gens_linear=40, gens_gain=8, gens_final=25,
-                pop_linear=16, pop_gain=8)
+    return pool, combo, di, ref
+
+
+def test_known_answer_recovery_fixtures(tmp_path):
+    """Hidden preset from fixture captures -> reference = its render of the DI; the matcher must come within 0.5 dB
+    A-weighted of the hidden preset (whose own error against the reference is 0)."""
+    pool, combo, di, ref = _setup_known(tmp_path, "blend")
+    plan = mkplan(top_k={"blend": 1, "single": 0, "single2": 0}, gens_linear=40, gens_gain=8, gens_final=25,
+                  pop_linear=16, pop_gain=8)
     cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=7, excerpt_s=2.0, threads=2, plan=plan,
-                 write_audio=False, targets=REPO / "docs" / "tone_targets.json", refine_offsets=False)
+                 write_audio=False, refine_offsets=False)
     res = run_match(cfg, Log())
     after = res["after"][0]["aWeightedErrorDb"]
     before = res["before"][0]["aWeightedErrorDb"]
     assert after < 0.5, (before, after)
     assert after <= before
-    # outputs
     out = tmp_path / "out"
-    for name in ("best.preset.resolved.json", "best.preset.json", "result.json", "tonecheck/best_L/report.json"):
+    for name in ("best.preset.resolved.json", "best.preset.json", "result.json", "tonecheck/best_L/report.json",
+                 "profile.derived.json"):
         assert (out / name).exists(), name
     best = json.loads((out / "best.preset.resolved.json").read_text())
-    for blk in best["paths"]["a"]["blocks"] + best["paths"]["b"]["blocks"]:
-        assert blk["model"]["source"]["provider"] == "tone3000" and blk["model"]["source"]["modelId"]
+    for pth in best["paths"].values():
+        for blk in pth["blocks"]:
+            assert blk["model"]["source"]["provider"] == "tone3000" and blk["model"]["source"]["modelId"]
     assert best["cab"]["mode"] == "shared"
     core.render(best, np.zeros(2048, np.float32), 48000.0)
+    # size category recorded for every candidate and capture
+    caps = res["best"]["captures"]
+    assert all(c is None or c["sizeCategory"] == "standard" for c in caps.values())
+    assert all("sizeRank" in c and "topology" in c for c in res["candidatesStage2"])
+    assert res["best"]["topology"] in ("single", "single2", "blend")
+    assert res["profile"]["kind"] == "derived"
+
+
+def test_single_path_known_answer_is_found_as_single(tmp_path):
+    """A tone that is a single path [pedal] -> amp must be found as a single path (Occam), with all topologies reported."""
+    pool, combo, di, ref = _setup_known(tmp_path, "single")
+    plan = mkplan(top_k={"blend": 1, "single": 2, "single2": 1}, gens_linear=30, gens_gain=6, gens_final=20,
+                  pop_linear=16, pop_gain=8, n2_pedals=3, n2_amps=3, n_rescore_single=12, n_cab_single=12)
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=5, excerpt_s=2.0, threads=2, plan=plan,
+                 write_audio=False, refine_offsets=False)
+    res = run_match(cfg, Log())
+    assert set(res["topologies"]) == {"single", "single2", "blend"}
+    assert res["best"]["topology"] == "single"
+    assert res["after"][0]["aWeightedErrorDb"] < 0.5
+    best = json.loads((tmp_path / "out" / "best.preset.resolved.json").read_text())
+    assert best["paths"]["b"]["enabled"] is False
+
+
+def test_prescreen_keeps_top_per_class_and_is_deterministic():
+    from sawblade_match.matcher.prescreen import auto_n
+    assert auto_n(4, 2, 800) == 9 and auto_n(1, 1, 10) >= 1
+    n = auto_n(4, 2, 800)
+    assert (4 * n + 1) * (2 * n) <= 800 < (4 * (n + 1) + 1) * (2 * (n + 1))
+
+
+def test_prescreen_runs_and_respects_class_quota(tmp_path):
+    from sawblade_match.matcher.prescreen import prescreen
+    from sawblade_match.matcher.reference import build_target, load_reference, make_excerpt
+    pool, combo, di, ref = _setup_known(tmp_path, "blend")
+    x, fs = sf.read(di, dtype="float32")
+    ex = make_excerpt(to48(x, fs), 2.0)
+    tgt = build_target(ref, ex)
+    eng = Engine(None, 2)
+    try:
+        kp, ka, info = prescreen(eng, pool, ex, tgt, pool.cabs[0], 1, lambda *_: None)
+        kp2, ka2, _ = prescreen(eng, pool, ex, tgt, pool.cabs[0], 1, lambda *_: None)
+    finally:
+        eng.close()
+    assert [c.key for c in kp] == [c.key for c in kp2] and [c.key for c in ka] == [c.key for c in ka2]
+    assert len(kp) == 2 and len(ka) == 2                  # one per class: drive, distortion | amp_low, amp_high
+    assert {c.kind for c in kp} == {"drive", "distortion"} and {c.kind for c in ka} == {"amp_low", "amp_high"}
+    assert info["nPerClass"] == 1 and len(info["proxyAmps"]) == 2
+
+
+def test_forced_prescreen_trims_the_pair_search(tmp_path):
+    pool, combo, di, ref = _setup_known(tmp_path, "blend")
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=1, excerpt_s=2.0, threads=2,
+                 plan=mkplan(prescreen_n=1), write_audio=False, refine_offsets=False)
+    res = run_match(cfg, Log())
+    st = res["stage1"]
+    assert st["fullPairs"] == 12 and st["pairsRendered"] == 6 and st["prescreen"]["appliedToBlendSingle"]
 
 
 def test_determinism_with_seed(tmp_path):
     pool = fixture_pool()
-    combo, sp, v = hidden(pool)
     x, fs = sf.read(FIX / "di_riff.wav", dtype="float32")
     di = tmp_path / "di.wav"
     sf.write(str(di), x, fs, subtype="FLOAT")
     from sawblade_match.matcher.reference import load_reference
-    ref_x = x * 0.5
     refwav = tmp_path / "ref.wav"
-    sf.write(str(refwav), ref_x, fs, subtype="FLOAT")
-    plan = Plan(cap_a=4, cap_b=4, n_rescore=3, n_cab=1, top_k=1, gens_linear=3, gens_gain=2, gens_final=2,
-                pop_linear=8, pop_gain=4)
-    outs = []
-    for k, seed in enumerate((3, 3, 4)):
+    sf.write(str(refwav), x * 0.5, fs, subtype="FLOAT")
+
+    def go(tag, seed, **plan_kw):
         ref = load_reference(refwav, channel="mid")
-        cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / f"o{k}", seed=seed, excerpt_s=2.0, threads=2, plan=plan,
-                     write_audio=False, targets=REPO / "docs" / "tone_targets.json")
-        outs.append(run_match(cfg, Log()))
-    a, b, c = outs
-    assert a["best"]["params"] == b["best"]["params"]
-    assert a["best"]["loss"] == b["best"]["loss"]
+        cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / tag, seed=seed, excerpt_s=2.0, threads=2,
+                     plan=mkplan(**plan_kw), write_audio=False)
+        return run_match(cfg, Log())
+
+    # subsampled pair search: pre-screen leaves 6 pairs, cap 4
+    a, b, c = go("a", 3, cap_pairs=4), go("b", 3, cap_pairs=4), go("c", 4, cap_pairs=4)
+    assert a["best"]["params"] == b["best"]["params"] and a["best"]["loss"] == b["best"]["loss"]
     assert a["best"]["captures"] == b["best"]["captures"]
     assert a["seed"] == 3 and "seed=3" in a["randomness"]
     assert a["best"]["breakdown"]["stft"] is None and a["starter"]["excerptLoss"]["stft"] is None   # unmatched
-    # a different seed changes something observable (subset sampling in stage 1 and the CMA-ES streams)
     assert c["seed"] == 4
-    assert (a["stage1"]["sampledA"], a["stage1"]["sampledB"]) != (c["stage1"]["sampledA"], c["stage1"]["sampledB"])
-    assert a["stage1"]["sampledA"] == b["stage1"]["sampledA"]
-    assert (a["stage1"]["screenTop"] != c["stage1"]["screenTop"] or a["best"]["params"] != c["best"]["params"]
-            or a["best"]["loss"] != c["best"]["loss"])
+    assert a["stage1"]["pairsRendered"] == 4
+    assert a["stage1"]["sampledPairs"] == b["stage1"]["sampledPairs"]
+    assert a["stage1"]["sampledPairs"] != c["stage1"]["sampledPairs"]           # subset sampling follows the seed
     assert a["best"]["params"] != c["best"]["params"]
+    # no subsampling at all: only the CMA-ES streams differ between seeds (kills a "CMA seed ignored" mutant)
+    d, e = go("d", 3), go("e", 4)
+    assert d["stage1"]["pairsRendered"] == d["stage1"]["fullPairs"] == 12
+    assert d["best"]["captures"] == e["best"]["captures"]             # same discrete choice, deterministic screening
+    assert d["best"]["params"] != e["best"]["params"]
+
+
+def test_listening_stereo_with_di_r(tmp_path):
+    """--di-r path: L and R renders are hard-panned into one stereo file with a single peak-normalising gain."""
+    from sawblade_match.matcher.run import _listening
+    fs = 44100
+    rng = np.random.default_rng(0)
+    yl = (rng.standard_normal(fs) * 0.1).astype(np.float32)
+    yr = (rng.standard_normal(fs - 7) * 0.05).astype(np.float32)        # R can be a little shorter
+    cfg = Config(di=tmp_path / "x", ref=None, pool=None, out=tmp_path)
+    info = _listening(tmp_path, {"best_L": (yl, fs, {}), "best_R": (yr, fs, {})}, cfg, lambda *_: None)
+    st, rate = sf.read(info["wav"], dtype="float32")
+    assert rate == fs and st.shape == (fs - 7, 2) and "cover_guitars_L-R" in info["wav"]
+    g = 10 ** (info["normalisationGainDb"] / 20)
+    assert np.max(np.abs(st)) == pytest.approx(10 ** (-1 / 20), abs=1e-3)
+    assert np.allclose(st[:, 0], yl[:fs - 7] * g, atol=2e-6) and np.allclose(st[:, 1], yr * g, atol=2e-6)
+    assert np.corrcoef(st[:, 0], st[:, 1])[0, 1] < 0.2                  # not a mono copy
+    assert Path(info.get("mp3", info["wav"])).exists()
+    # without R: mono-in-both
+    info2 = _listening(tmp_path, {"best_L": (yl, fs, {})}, cfg, lambda *_: None)
+    st2, _ = sf.read(info2["wav"], dtype="float32")
+    assert np.array_equal(st2[:, 0], st2[:, 1])
+
+
+def test_di_r_end_to_end_writes_stereo(tmp_path):
+    pool, combo, di, ref = _setup_known(tmp_path, "single")
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=1, excerpt_s=2.0, threads=2, plan=mkplan(top_k={"blend": 0, "single": 1, "single2": 0}),
+                 di_r=di, write_audio=True, refine_offsets=False)
+    res = run_match(cfg, Log())
+    st, _ = sf.read(res["listening"]["wav"], dtype="float32")
+    assert st.ndim == 2 and st.shape[1] == 2
+    assert set(res["best"]["fullLengthPeakDbfs"]) == {"best_L", "best_R"}
+
+
+def test_profiles_are_flagged_and_loadable():
+    from sawblade_match.matcher.profile import load_profile
+    cal = {"swedish_death_hm2": True}
+    for pid in ("swedish_death_hm2", "chainsaw_grind", "chainsaw_hardcore", "chainsaw_crust", "us_death",
+                "cavernous_death", "melodic_death"):
+        p = load_profile(pid)
+        assert p["schema"] == "sawblade.profile" and p["id"] == pid and p["calibrated"] is cal.get(pid, False)
+        assert len(p["rules"]) == 10
+    base, g = load_profile("swedish_death_hm2"), load_profile("chainsaw_grind")
+    assert [r["expr"] for r in g["rules"]] == [r["expr"] for r in base["rules"]]
+    assert all(a["toleranceDb"] > b["toleranceDb"] for a, b in zip(g["rules"], base["rules"]))   # loosened only

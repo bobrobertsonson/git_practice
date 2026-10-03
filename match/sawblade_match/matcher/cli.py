@@ -29,16 +29,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stems-dir", help="directory with sawblade-calibrate stems (default testdata/stems)")
     p.add_argument("--matched", choices=["left", "right", "mono"],
                    help="the reference is a matched pair with --di (time-aligned STFT term vs this channel)")
-    p.add_argument("--offset-ms", type=float, help="coarse DI offset within the reference (default 190 left / 175 right)")
+    p.add_argument("--offset-ms", type=float, help="coarse DI offset within the reference (default: unknown, searched within +-3 s and refined)")
     p.add_argument("--pool", required=True, help="pool_manifest.json from sawblade-t3k pull (captures must be downloaded)")
     p.add_argument("--out", help="output directory (default ~/.cache/sawblade/match_runs/<timestamp>)")
-    p.add_argument("--budget", type=float, default=1.0, help="work scale (default 1.0 = full pair screening, 5 refined combos)")
+    p.add_argument("--budget", type=float, default=1.0, help="work scale (default 1.0: all pedal x amp pairs of the current pool)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--excerpt-s", type=float, default=6.0, help="screening/optimisation excerpt length (<= 8 s)")
     p.add_argument("--excerpt-window", type=_section, metavar="A:B", help="explicit excerpt window in DI seconds")
-    p.add_argument("--top-k", type=int, default=5, help="combos refined by CMA-ES")
+    p.add_argument("--top-k", type=int, default=3,
+                   help="combos refined by CMA-ES: N blend, min(N,2) single, 1 two-pedal (default 3)")
+    p.add_argument("--prescreen", type=int, metavar="N",
+                   help="force the per-capture pre-screen, keeping the top N of every gear class (default: automatic, "
+                        "only when the pair product exceeds the pair cap)")
+    p.add_argument("--profile", default="derived",
+                   help="guardrail profile: 'derived' (default, from the reference's guitars), a profile id in profiles/, or a path")
+    p.add_argument("--base-profile", default="swedish_death_hm2", help="rule skeleton for --profile derived")
     p.add_argument("--threads", type=int, default=4)
-    p.add_argument("--targets", help="docs/tone_targets.json")
+    p.add_argument("--targets", help="(deprecated alias) path of the base profile / tone-targets file")
     p.add_argument("--no-audio", action="store_true", help="skip the listening WAV/MP3")
     return p
 
@@ -53,7 +60,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ref = load_reference(a.ref, channel=a.ref_channel, stems_dir=Path(a.stems_dir) if a.stems_dir else None,
                              matched=a.matched, offset_ms=a.offset_ms, sections=a.ref_section)
         cfg = Config(di=Path(a.di), ref=ref, pool=pool, out=out, di_r=Path(a.di_r) if a.di_r else None,
-                     budget=a.budget, seed=a.seed, excerpt_s=a.excerpt_s, top_k=a.top_k, threads=a.threads,
+                     budget=a.budget, seed=a.seed, excerpt_s=a.excerpt_s, top_k=a.top_k, prescreen_n=a.prescreen, profile=a.profile,
+                     base_profile=a.base_profile, threads=a.threads,
                      targets=Path(a.targets) if a.targets else None, window_s=a.excerpt_window,
                      write_audio=not a.no_audio)
         run_match(cfg, Log())

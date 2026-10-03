@@ -13,45 +13,54 @@ import numpy as np
 import soundfile as sf
 
 from ..tonecheck.cli import check_audio, format_table
-from ..tonecheck.rules import load_targets
+from ..tonecheck.analysis import analyze
+from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
 from .engine import RATE, Engine, to48
 from .offset import refine_offset
 from .pool import Capture, Pool, default_cab, starter_choice
+from .profile import DEFAULT_BASE, derive_profile, load_profile, profile_path, save_profile
 from .reference import Reference, build_target, make_excerpt
 from .refine import refine_combo
-from .screen import Scored, Screener
-from .space import Combo, Space, build_preset, gate_preset, manual_align
+from .screen import Scored, Screener, TOPOLOGIES
+from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manual_align
 
 CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level output exceeds it is "clipping"
 CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-length peak is below this
+OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
 
 
 @dataclass
 class Plan:
-    """Work plan scaled by ``--budget`` (1.0 = default, sized for <= 45 min on 4 cores with ~0.6x real time per
-    4-NAM render per core). Counts, not wall-clock, so results are deterministic."""
-    cap_a: int
-    cap_b: int
-    n_rescore: int
-    n_cab: int
-    top_k: int
+    """Work plan scaled by ``--budget`` (1.0 = default). Counts, not wall-clock, so results are deterministic.
+    The default renders every (pedal-or-none, amp) pair of the current pool (19 x 37 = 703) when it fits ``cap_pairs``;
+    bigger pools are trimmed by the per-capture pre-screen first (prescreen.py), then by seeded random sampling."""
+    cap_pairs: int
+    n_rescore: int            # blend candidates re-scored with the full loss
+    n_rescore_single: int     # single / single2 candidates re-scored
+    n_cab: int                # blend candidates that get a cab sweep
+    n_cab_single: int
+    top_k: dict               # CMA-ES refined combos per topology
     gens_linear: int
     gens_gain: int
     gens_final: int
     pop_linear: int = 16
     pop_gain: int = 8
+    prescreen_n: int | None = None     # None: automatic (only when the pair product exceeds cap_pairs)
+    prescreen_n2: int = 4              # per-class pre-screen N used for the single2 pedal/amp subset
+    n2_pedals: int = 6
+    n2_amps: int = 8
 
     @staticmethod
-    def from_budget(budget: float, top_k: int = 5) -> "Plan":
-        """Budget 1.0: the full A (HM-2 x amp) and B (boost/none x amp) pair product of the current pool (410 / 300 pairs)
-        is rendered; smaller budgets draw seeded random subsets. Measured on the 4-core dev box (load ~7, shared): 19.6 and 24.6 min
-        for the default 5-combo plan; 44 min once at load ~10. Counts, not wall-clock, so results stay deterministic."""
+    def from_budget(budget: float, top_k: int = 3, prescreen_n: int | None = None) -> "Plan":
         b = max(budget, 0.01)
         g = lambda n, lo: max(lo, int(round(n * min(b, 3.0))))
-        return Plan(cap_a=g(410, 3), cap_b=g(300, 3), n_rescore=g(60, 3), n_cab=g(15, 2), top_k=top_k,
-                    gens_linear=g(40, 3), gens_gain=g(8, 2), gens_final=g(20, 2))
+        return Plan(cap_pairs=g(800, 6), n_rescore=g(60, 3), n_rescore_single=g(40, 3), n_cab=g(15, 2),
+                    n_cab_single=g(8, 2),
+                    top_k={"blend": top_k, "single": min(top_k, 2), "single2": min(top_k, 1)},
+                    gens_linear=g(40, 3), gens_gain=g(8, 2), gens_final=g(20, 2), prescreen_n=prescreen_n,
+                    n2_pedals=g(6, 2), n2_amps=g(8, 2))
 
 
 @dataclass
@@ -64,7 +73,10 @@ class Config:
     budget: float = 1.0
     seed: int = 0
     excerpt_s: float = 6.0
-    top_k: int = 5
+    top_k: int = 3
+    prescreen_n: int | None = None
+    profile: str = "derived"
+    base_profile: str = DEFAULT_BASE
     threads: int = 4
     targets: Path | None = None
     window_s: tuple[float, float] | None = None
@@ -144,8 +156,9 @@ def caps_summary(combo: Combo) -> dict:
     out = {}
     for slot, c in combo.captures().items():
         out[slot] = None if c is None else {"toneId": c.tone_id, "modelId": c.model_id, "title": c.title,
-                                            "model": c.name, "license": c.license, "creator": c.creator,
-                                            "sizeBytes": c.size_bytes}
+                                            "model": c.name, "class": c.kind, "license": c.license,
+                                            "creator": c.creator, "sizeBytes": c.size_bytes,
+                                            "sizeCategory": c.size_label or "standard", "architecture": c.arch}
     return out
 
 
@@ -157,15 +170,20 @@ def pick_output_gain(y_peak: float, offset_db: float, level_offset_db: float) ->
 
 
 def choose(cands: list[Scored]) -> Scored:
-    """Lowest loss among non-clipping candidates; within SIZE_TIE_DB of it, the lighter model set by size category
-    (manifest size / name label, then 10 % byte buckets); equal categories -> lower loss."""
+    """Selection (spec 3.3): lowest loss among finite, non-clipping candidates; within OCCAM_DB of it the simplest
+    topology (single < single2 < blend); within that topology, within SIZE_TIE_DB of its best the lighter model set
+    by size category (manifest size / name label, then 10 % byte buckets); equal categories -> lower loss."""
     cands = [c for c in cands if np.isfinite(c.loss)]
     if not cands:
         raise ValueError("no candidate with a finite loss")
     ok = [c for c in cands if not c.extra.get("clipped")] or cands
     best = min(ok, key=lambda c: c.loss)
-    near = [c for c in ok if c.loss <= best.loss + SIZE_TIE_DB]
-    return min(near, key=lambda c: (c.combo.size_rank()[0], c.combo.size_rank()[1], c.loss))
+    near = [c for c in ok if c.loss <= best.loss + OCCAM_DB]
+    rank = min(TOPOLOGY_RANK[c.topology] for c in near)
+    same = [c for c in near if TOPOLOGY_RANK[c.topology] == rank]
+    top = min(c.loss for c in same)
+    tie = [c for c in same if c.loss <= top + SIZE_TIE_DB]
+    return min(tie, key=lambda c: (c.combo.size_rank()[0], c.combo.size_rank()[1], c.loss))
 
 
 def encode_mp3(wav: Path, mp3: Path, log) -> bool:
@@ -205,11 +223,11 @@ def run_match(cfg: Config, log=None) -> dict:
     t_start = time.time()
     out = Path(cfg.out)
     out.mkdir(parents=True, exist_ok=True)
-    plan = cfg.plan or Plan.from_budget(cfg.budget, cfg.top_k)
+    plan = cfg.plan or Plan.from_budget(cfg.budget, cfg.top_k, cfg.prescreen_n)
     rng = np.random.default_rng(cfg.seed)
     ref, pool = cfg.ref, cfg.pool
-    if not (pool.hm2 and pool.amps and pool.cabs):
-        raise ValueError(f"pool needs HM-2 pedals, amps and cabs, got {pool.counts()}")
+    if not (pool.amps and pool.cabs):
+        raise ValueError(f"pool needs amps and cabs, got {pool.counts()}")
     log(f"pool {pool.counts()} seed {cfg.seed} budget {cfg.budget} plan {plan}")
 
     di_x, di_fs = sf.read(str(cfg.di), dtype="float32")
@@ -227,7 +245,6 @@ def run_match(cfg: Config, log=None) -> dict:
 
 
 def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start):
-    sp_b, sp_nb = Space(True), Space(False)
     cab0 = default_cab(pool.cabs)
     window = None if cfg.window_s is None else (int(cfg.window_s[0] * RATE), int(cfg.window_s[1] * RATE))
     ex = make_excerpt(di48, cfg.excerpt_s, window=window, ref=ref)
@@ -250,8 +267,9 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result["starter"]["alignResolved"] = rep_st["align"]["resolved"]
 
     def offset_from(y_full_excerpt, label):
+        search = int(0.25 * RATE) if ref.offset_given else int(3.0 * RATE)     # unknown offset: +-3 s, then refined
         return refine_offset(ex.trim(y_full_excerpt), ref.matched_sig.astype(np.float64), RATE, ref.offset_samples,
-                             start=ex.start)
+                             start=ex.start, search=search)
 
     if ref.matched_sig is not None and cfg.refine_offsets:
         r = offset_from(y_st, "starter")
@@ -262,6 +280,21 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         if r["envPeakRatio"] >= 2.0:
             ref.offset_samples = r["offset"]
     tgt = build_target(ref, ex)
+    # ---- profile: guardrail rules (the reference LTAS stays the target) ----------------------------------------------
+    base = load_profile(cfg.targets and str(cfg.targets) or cfg.base_profile)
+    if cfg.profile == "derived":
+        profile, ptable = derive_profile(base, ref.ltas_sig, ref.basis, ref.name)
+        save_profile(profile, out / "profile.derived.json")
+        result["profile"] = {"id": profile["id"], "kind": "derived", "base": base.get("id", "docs/tone_targets.json"),
+                             "changes": ptable, "file": "profile.derived.json"}
+        log("profile: derived from the reference; rules changed vs base: " +
+            (", ".join(f"{r['id']} ({r['baseExpr']} -> {r['derivedExpr']})" for r in ptable
+                       if r["derivedExpr"] != r["baseExpr"]) or "none"))
+    else:
+        profile = load_profile(cfg.profile)
+        result["profile"] = {"id": profile.get("id", cfg.profile), "kind": "fixed"}
+    result["profile"]["baseRulesStatusOnReference"] = {r["id"]: r["statusOnReference"] for r in ptable} \
+        if cfg.profile == "derived" else None
     result["referenceTarget"] = {"buzzDb": tgt.ref.buzz_db, "lowDecayDbPerMs": tgt.ref.decay,
                                  "onsetsMeasured": tgt.ref.n_onsets}
     before_ex = L.evaluate(ex.trim(y_st), tgt, None)
@@ -269,35 +302,52 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     log(f"starter on excerpt: loss {before_ex.total:.3f} (ltas {before_ex.ltas:.2f} dB)")
 
     # ---- stage 1 -----------------------------------------------------------------------------------------------------
-    scr = Screener(eng, pool, sp_b, sp_nb, ex, tgt, cab0, rng, log)
-    ranked = scr.run(plan.cap_a, plan.cap_b, plan.n_rescore, plan.n_cab, plan.top_k)
-    result["stage1"] = {**scr.stats, "top": [_scored_json(s) for s in ranked[:10]]}
+    scr = Screener(eng, pool, ex, tgt, cab0, rng, plan, log)
+    ranked = scr.run()
+    result["stage1"] = {**scr.stats, "top": {t: [_scored_json(s) for s in lst[:30]] for t, lst in ranked.items()}}
     t1 = time.time() - t_start
 
     # ---- stage 2 -----------------------------------------------------------------------------------------------------
     refined: list[Scored] = []
-    for k, s in enumerate(ranked[:plan.top_k]):
-        log(f"stage2 [{k + 1}/{plan.top_k}] {_names(s.combo)} (screen loss {s.loss:.3f})")
-        sp = sp_b if s.combo.boost is not None else sp_nb
-        v0 = sp.default()
-        v0["blend"] = s.blend
-        v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + k * 10,
-                                  gens_linear=plan.gens_linear, pop_linear=plan.pop_linear, gens_gain=plan.gens_gain,
-                                  pop_gain=plan.pop_gain, gens_final=plan.gens_final, log=log)
-        ca = eng.core(s.combo, v, "a", ex.x); cb = eng.core(s.combo, v, "b", ex.x)
-        y = ex.trim(eng.emulate(s.combo, v, ca, cb, s.align))
-        g, clipped = pick_output_gain(float(np.max(np.abs(y))), r.offset_db, ref.level_offset_db)
-        refined.append(Scored(s.combo, r.total, v["blend"], s.align, r, "refined",
-                              {"params": v, "outputGainDb": g, "clipped": clipped, "info": info}))
-    unrefined = [c for c in ranked[plan.top_k:plan.top_k + max(0, 5 - plan.top_k)] if np.isfinite(c.loss)]
+    unrefined: list[Scored] = []
+    for topo in TOPOLOGIES:
+        lst = ranked.get(topo, [])
+        kk = plan.top_k.get(topo, 0)
+        unrefined += lst[kk:kk + 2]
+        for k, s in enumerate(lst[:kk]):
+            log(f"stage2 {topo} [{k + 1}/{kk}] {s.combo.describe()} (screen loss {s.loss:.3f})")
+            sp = Space.for_combo(s.combo)
+            v0 = sp.default()
+            if "blend" in v0:
+                v0["blend"] = s.blend
+            v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + len(refined) * 10,
+                                      gens_linear=plan.gens_linear, pop_linear=plan.pop_linear,
+                                      gens_gain=plan.gens_gain, pop_gain=plan.pop_gain, gens_final=plan.gens_final,
+                                      log=log)
+            ca = eng.core(s.combo, v, "a", ex.x)
+            cb = eng.core(s.combo, v, "b", ex.x) if s.combo.topology == "blend" else None
+            y = ex.trim(eng.emulate(s.combo, v, ca, cb, s.align))
+            g, clipped = pick_output_gain(float(np.max(np.abs(y))), r.offset_db, ref.level_offset_db)
+            guard = _guardrails(y, profile)
+            refined.append(Scored(s.combo, r.total, v.get("blend", 0.0), s.align, r, "refined",
+                                  {"params": v, "outputGainDb": g, "clipped": clipped, "info": info,
+                                   "guardrails": guard}))
+    unrefined = sorted([c for c in unrefined if np.isfinite(c.loss)], key=lambda c: c.loss)
     refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
     best = choose(refined)
     result["stage2Seconds"] = time.time() - t_start - t1
-    log(f"selected: {_names(best.combo)} loss {best.loss:.3f}")
+    result["topologies"] = {}
+    for topo in TOPOLOGIES:
+        c = [x for x in refined if x.topology == topo]
+        if c:
+            b = min(c, key=lambda x: x.loss)
+            result["topologies"][topo] = {"loss": b.loss, "captures": caps_summary(b.combo), "blend": b.blend,
+                                          "breakdown": b.result.as_dict(), "guardrails": b.extra.get("guardrails")}
+    log("topology bests: " + ", ".join(f"{t} {d['loss']:.3f}" for t, d in result["topologies"].items()))
+    log(f"selected: {best.combo.describe()} loss {best.loss:.3f}")
 
     # ---- stage 3: full-length verification ----------------------------------------------------------------------
-    sp = sp_b if best.combo.boost is not None else sp_nb
     v = best.extra["params"]
     gain_db = best.extra["outputGainDb"]
     final = build_preset(best.combo, v, gate=gate, align=best.align, output_db=gain_db,
@@ -331,8 +381,9 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                                                   for n in peaks}
     result["clipped"] = bool(max(float(np.max(np.abs(renders[n][0]))) for n in peaks) >= 1.0)
 
-    targets_path = cfg.targets or _targets_path()
-    targets = load_targets(targets_path)
+    targets = profile
+    targets_path = out / "profile.derived.json" if cfg.profile == "derived" else profile_path(cfg.profile)
+    v2_rules = base["rules"]
     tc_dir = out / "tonecheck"
     refs = _tonecheck_refs(ref, out, cfg)
     reports = {}
@@ -349,7 +400,10 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                                "aWeightedErrorVsRefs": [{"ref": x["path"], "channel": x["channel"],
                                                          "aWeightedErrorDb": x["aWeightedErrorDb"],
                                                          "meanDiffDb": x["meanDiffDb"]} for x in r["references"]],
-                               "metrics": r["metrics"]} for n, r in reports.items()}
+                               "metrics": r["metrics"],
+                               "baseProfileRules": [{"id": q["id"], "status": q["status"], "margin": q["margin"]}
+                                                    for q in evaluate_rules(r["groupsDb"], v2_rules)]}
+                           for n, r in reports.items()}
     result["before"] = _err_summary(reports["starter_L"])
     result["after"] = _err_summary(reports["best_L"])
     log(f"A-weighted error vs {Path(refs[0][0]).name}: before {result['before'][0]['aWeightedErrorDb']:.2f} dB, "
@@ -364,7 +418,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             fin["L"] = _refine_native(y, fs, ref.path, col, 1000.0 * ref.offset_samples / RATE)
             if "best_R" in renders:
                 fin["R"] = _refine_native(renders["best_R"][0], renders["best_R"][1], ref.path, 1,
-                                          175.0 if ref.matched_channel == "left" else 1000.0 * ref.offset_samples / RATE)
+                                          fin["L"]["offsetMs"])
             log("final offsets (full-length renders vs mix): " +
                 ", ".join(f"{k} {v['offsetSamples']} smp = {v['offsetMs']:.2f} ms ({v['method']}, fine ratio "
                           f"{v.get('peakRatio', 0):.1f})" for k, v in fin.items()))
@@ -383,9 +437,9 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         if s.stage == "refined":
             v_alt, gdb = s.extra["params"], s.extra["outputGainDb"]
         else:
-            sp_alt = sp_b if s.combo.boost is not None else sp_nb
-            v_alt, gdb = sp_alt.default(), 0.0
-            v_alt["blend"] = s.blend
+            v_alt, gdb = Space.for_combo(s.combo).default(), 0.0
+            if "blend" in v_alt:
+                v_alt["blend"] = s.blend
         preset = build_preset(s.combo, v_alt, gate=gate, align=s.align, output_db=gdb, name=f"Sawblade match alt {i}")
         (out / f"alt{i}.preset.resolved.json").write_text(json.dumps(preset, indent=2) + "\n")
         alts.append({**_scored_json(s), "file": f"alt{i}.preset.resolved.json"})
@@ -417,12 +471,26 @@ def _json_default(o):
 
 
 def _names(c: Combo) -> str:
-    return " | ".join(f"{k}={v.title}:{v.name}" for k, v in c.captures().items() if v)
+    return c.describe()
+
+
+def _guardrails(y: np.ndarray, profile: dict) -> dict:
+    """Profile rules evaluated on an excerpt render (excerpt-level analysis, reported per candidate)."""
+    try:
+        g = analyze(y.astype(np.float64), RATE, profile).groups
+        rows = evaluate_rules(g, profile["rules"])
+        return {"fail": [r["id"] for r in rows if r["status"] == "fail"],
+                "marginal": [r["id"] for r in rows if r["status"] == "marginal"]}
+    except ValueError:
+        return {"fail": None, "marginal": None}
 
 
 def _scored_json(s: Scored) -> dict:
-    d = {"stage": s.stage, "loss": s.loss, "blend": s.blend, "align": s.align, "captures": caps_summary(s.combo),
-         "modelBytes": s.combo.model_bytes()}
+    d = {"stage": s.stage, "topology": s.topology, "loss": s.loss, "blend": s.blend, "align": s.align,
+         "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
+         "sizeRank": {"category": s.combo.size_rank()[0], "byteBucket": s.combo.size_rank()[1]}}
+    if "guardrails" in s.extra:
+        d["guardrails"] = s.extra["guardrails"]
     if s.result is not None:
         d["breakdown"] = s.result.as_dict()
     if "clipped" in s.extra:

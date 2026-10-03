@@ -191,50 +191,61 @@ choose it). Method 1 is installed with `pip install -e 'match[separation]' -c ma
 (the constraints file pins the resolved transitive set; the PyPI linux torch wheel also pulls ~2.5 GB of CUDA
 libraries although inference runs on CPU). The real-demucs test runs only with `SAWBLADE_TEST_DEMUCS=1`.
 
-## Matcher (`sawblade-match`, phase 3.2)
+## Matcher (`sawblade-match`, phase 3.2 + 3.3 A/B)
 
 ```
 sawblade-match --di Guitar_L.wav [--di-r Guitar_R.wav] --ref REF.mp3 --pool ~/.cache/sawblade/captures/pool_manifest.json
                [--matched left|right|mono] [--offset-ms N] [--ref-channel auto|side|left|right|mid] [--ref-section A:B ...]
-               [--stems-dir DIR] [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 5] [--threads 4]
-python -m sawblade_match.matcher.known_answer --pool ... --di Guitar_L.wav --out DIR [--seed 1]   # acceptance (a), real captures
+               [--stems-dir DIR] [--profile derived|<id>|PATH] [--base-profile swedish_death_hm2] [--prescreen N]
+               [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 3] [--threads 4]
+python -m sawblade_match.matcher.known_answer --pool ... --di Guitar_L.wav --out DIR [--seed 1] [--topology blend|single|single2]
+python -m sawblade_match.matcher.recall --run RUN_DIR --di ... --ref ... [--matched left] --pool ... --ns 2,3,4,6,9
 ```
 
-Needs the built `sawblade_core` (see "Core bindings"; set `SAWBLADE_CORE_DIR` to pin a build) and a pool whose captures are
-downloaded (`sawblade-t3k pull`): only downloaded, commercially licensed models are candidates. Slots: pedals titled
-"HM-2" -> path A pedal; other pedals (plus "none") -> path B boost; amps -> both amp slots (saw amp sampling prefers
-low/medium-gain titles, no hard filter); cabs -> one shared IR (live-compatible).
+Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a build) and a pool whose captures are downloaded
+(`sawblade-t3k pull`): only downloaded, commercially licensed models are candidates.
 
-* **Reference**: `--ref-channel auto` uses a cached htdemucs `other` stem (`testdata/stems/`, from `sawblade-calibrate`) if
-  present, else the side channel `(L-R)/2` (output level is then set +3 dB, two uncorrelated hard-panned guitars). With
-  `--matched left` the reference is a time-aligned pair with the DI (cover mix: 190 ms L / 175 ms R by default): the LTAS
-  target is the matching segment of the side channel and a multi-resolution STFT term is added against that mix channel; the
-  DI->mix offset is refined (about +-1 ms; distorted renders vs a mix are not guaranteed sample-exact) by cross-correlating the rendered excerpt with the mix channel (envelope, then
-  band-limited PHAT waveform correlation) and re-measured on the final full-length renders (reported in `result.json`).
-* **Stage 1** (one guitar-dominant excerpt, 6 s, chosen from DI activity): each A pair (HM-2, saw amp) and B pair (boost or
-  none, body amp) is rendered once through the C++ core; because the chain after the NAMs is linear, every A x B combination
-  is scored from band cross-spectra without another render (blend grid 0.15..0.85), top pairs get an auto-align probe and the
-  full loss, and the best are re-scored with every cab IR. If the pair product exceeds the budget a seeded random subset of
-  pairs is rendered (default budget: the full product, 410 A / 300 B pairs for the current pool). **Stage 2**: seeded CMA-ES (own implementation, `matcher/cma.py`) on the
-  top-K combos, blocks linear -> NAM gains -> linear. **Stage 3**: full-length renders with the real chain (preset, DI L and R),
-  `sawblade-tonecheck` on the best and on the starter preset, clip guard (full-length peak <= -1 dBFS).
-* **Loss** weights are documented in `matcher/loss.py` (A-weighted LTAS error after level-offset removal x1, buzz x0.5/dB,
-  lowDecay x2 per dB/ms, STFT x0.25/dB for matched pairs, EQ-gain regulariser x0.02/dB). Within 0.05 dB the lighter model set wins
-  (manifest size / name label category, then 10 % byte buckets; same category -> lower loss); combos that clip at the matched level are rejected.
-* **Not searched**: gate (fixed: DI floor measured on the gate's own peak envelope (0.1/10 ms follower, 5th percentile of 20 ms frames) +4 dB, hold 40 ms, release 150 ms, range -50 dB), A pre-EQ (HP 90 Hz,
-  as the starter), bus comp (off), alignment (resolved once per combo then written as `manual`).
-* **Determinism**: `--seed` seeds subset sampling and CMA-ES; thread-pool results are order-independent. All seeds are in
-  `result.json`.
+* **Slots are gear classes, not titles** (`matcher/classify.py`): pedals are `drive`, `distortion` (HM-2/chainsaw, RAT, DS-1, MT-2...),
+  `fuzz`, `preamp` or `pedal_unknown`; amps `amp_low`/`amp_high`; `cab`. Every pedal slot may be "none" and accepts any pedal
+  (unknown ones included); every amp slot accepts any amp. Profiles never choose gear: the HM-2 is just a `distortion` capture.
+* **Three topologies**, all with one shared cab (live-compatible): `single` [pedal?] -> amp; `single2` pedal1 -> pedal2 -> amp;
+  `blend` A [pedal?] -> amp + B [pedal?] -> amp. All are searched; the final choice prefers the simplest topology within 0.1 dB
+  of the best loss (single < single2 < blend), then the lighter model set within 0.05 dB, and `result.json` reports the best of
+  every topology (`topologies`).
+* **Reference**: `--ref-channel auto` uses a cached htdemucs `other` stem (`testdata/stems/`) if present, else the side channel
+  `(L-R)/2` (output level +3 dB: two uncorrelated hard-panned guitars). `--matched left` makes the reference a time-aligned pair
+  with the DI (STFT term against that mix channel, LTAS target = matching side segment). The DI->reference offset is searched
+  within +-3 s (or +-250 ms around `--offset-ms`) and refined (about +-1 ms; distorted renders vs a mix are not sample-exact).
+* **Stage 1** (one guitar-dominant 6 s excerpt): every (pedal-or-none, amp) pair is rendered once through the C++ core; because
+  the chain after the NAMs is linear, every pair x pair blend is scored from band cross-spectra without another render, singles
+  directly; two-pedal chains use the pre-screened top pedals/amps. Top candidates per topology are re-scored with the full loss
+  (blend ones after an auto-align probe) and swept over all cab IRs. **Pre-screen** (`prescreen.py`): each capture alone
+  (pedals behind two proxy amps) is scored on the excerpt LTAS and the top N per gear class survive. It is applied automatically only
+  when the pair product exceeds the pair cap (default 800 pairs; current pool: 703, so the default is the full search);
+  `--prescreen N` forces it. Recall vs the full search on the current pool (N per class, kept pedals/amps, blend recall@10):
+  see `result.json` of `matcher.recall` runs; N >= 6 keeps the best combo for the original, N = 9 (what the automatic rule picks at
+  the cap) recall@10 is 1.0 single / 0.8 blend there and 0.9 / 0.4 for the cover mix. **Stage 2**: seeded CMA-ES (own
+  implementation) per topology, blocks linear -> NAM gains -> linear. **Stage 3**: full-length L/R renders with the real chain,
+  `sawblade-tonecheck` against the profile on the best and on the starter, clip guard on max(L, R).
+* **Loss** weights are in `matcher/loss.py` (A-weighted LTAS error after level-offset removal x1, buzz x0.5/dB, lowDecay x2 per
+  dB/ms, STFT x0.25/dB for matched pairs, EQ-gain regulariser x0.02/dB). **Not searched**: gate (DI floor measured on the gate's
+  own peak envelope +4 dB, hold 40 ms, release 150 ms, range -50 dB), bus comp (off), alignment (probed once per blend combo,
+  written as `manual`), output gain.
+* **Profiles** (`profiles/`, schema `sawblade.profile`; see `profiles/README.md`): guardrail rules only, the reference LTAS is the
+  target. `--profile derived` (default) derives a profile from the reference's isolated guitars with loosen-only tolerances from the
+  rule skeleton of `--base-profile`; written to `<out>/profile.derived.json`; result.json lists the changes and the base rules'
+  status on the best render. Hand-written profiles are optional; those other than `swedish_death_hm2` are flagged
+  `"calibrated": false`.
+* **Determinism**: `--seed` seeds subset sampling and CMA-ES; thread-pool results are order-independent.
 * **Output** (`--out`, default `~/.cache/sawblade/match_runs/<timestamp>`, never in the repo): `best.preset.resolved.json`
-  (absolute capture paths + TONE3000 `source` ids/modelIds), `best.preset.json` (portable file names), `alt1..5`,
-  `result.json` (loss breakdown, captures, offsets, before/after, plan, timings), `tonecheck/*` (report.json/png + rule table),
-  `render_*.wav`, `listen/*.wav|mp3` (L/R DIs panned, peak-normalised to -1 dBFS; the normalisation gain is in result.json).
+  (absolute capture paths + TONE3000 `source` ids/modelIds), `best.preset.json` (portable names), `alt1..5`, `result.json` (loss
+  breakdown, topology, captures with gear class and size category, offsets, before/after, plan, timings, profile),
+  `tonecheck/*`, `render_*.wav`, `listen/*.wav|mp3` (L/R DIs panned, peak-normalised to -1 dBFS; gain in result.json).
   Exported/derived models from TONE3000 captures are for the user's own use only.
 
-Cost model: one 4-NAM render runs at ~0.6x real time per core. The default plan (stage 1: ~700 path-pair renders of a 6.5 s
-excerpt; stage 2: 5 combos x ~72 NAM-gain evaluations + ~1700 cheap linear evaluations; stage 3: 3 full-length renders)
-measured 19.6 min (cover mix) and 24.6 min (original) on 4 cores at a load average of ~7, with the box shared (44 min in an earlier
-run at load ~10); `--budget` scales every count (`--budget 0.1` for a quick check).
+Cost model: one 4-NAM render runs at ~0.6x real time per core. The default plan (703 pair renders of a 6.5 s excerpt, 3 + 2 + 1
+CMA-ES refined combos, 3 full-length renders) measured 20.7 min (original) and 25.9 min (cover mix) on 4 shared cores;
+`--budget` scales every count (`--budget 0.05` ~ 4 min).
 
 ## NAM export (`sawblade-export`, phase 4)
 

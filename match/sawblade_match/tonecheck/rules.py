@@ -29,8 +29,8 @@ def parse_expr(text: str) -> Expr:
 
 def load_targets(path: str | Path) -> dict:
     t = json.loads(Path(path).read_text())
-    if t.get("schema") != "sawblade.tone_targets":
-        raise ValueError(f"{path}: not a sawblade.tone_targets file")
+    if t.get("schema") not in ("sawblade.tone_targets", "sawblade.profile"):
+        raise ValueError(f"{path}: not a sawblade.tone_targets or sawblade.profile file")
     return t
 
 

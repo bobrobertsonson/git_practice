@@ -27,12 +27,15 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
     u = space.encode(v0)
     info = {"evals": {"linear": 0, "gain": 0}}
 
-    def cores_for(vv):          # serial: also called from pool threads (never nest pool maps)
-        return eng.core(combo, vv, "a", ex.x), eng.core(combo, vv, "b", ex.x)
+    paths = ("a", "b") if combo.topology == "blend" else ("a",)
 
-    def cores_top(vv):          # top level only: the two paths in parallel
-        ca, cb = eng.map(lambda p: eng.core(combo, vv, p, ex.x), ("a", "b"))
-        return ca, cb
+    def cores_for(vv):          # serial: also called from pool threads (never nest pool maps)
+        r = [eng.core(combo, vv, p, ex.x) for p in paths]
+        return r[0], (r[1] if len(r) > 1 else None)
+
+    def cores_top(vv):          # top level only: the paths in parallel
+        r = eng.map(lambda p: eng.core(combo, vv, p, ex.x), paths)
+        return r[0], (r[1] if len(r) > 1 else None)
 
     def score(vv, ca, cb):
         y = ex.trim(eng.emulate(combo, vv, ca, cb, align))
