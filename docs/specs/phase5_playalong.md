@@ -61,3 +61,12 @@ guitars removed, through the matched tone.
 ## Rules
 - The user's songs and their stems are never committed or uploaded.
 - Personal use: the user brings their own files; Sawblade does not download songs.
+
+## Lead decisions (2026-10-04, from the first offline play-along render)
+- With the 4-stem model, the `other` stem is treated as **guitar** by default, so "mute guitar"
+  removes it. The user can switch to "keep other" when a song has keys or synths. The StemSet
+  loader needs a role-mapping option for this (5.2).
+- When the user's DI is a recording of the same song, the backing needs a **start offset**
+  to line up with it. The matcher already measures this offset, so expose it as a
+  `StemPlayer` start offset and a `tonerender --backing-offset-ms` option (5.2). For live
+  play-along there is no DI, and the offset is 0.
