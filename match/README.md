@@ -311,3 +311,14 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   report states `accepted` honestly (other sizes are reported, not judged).
 * **Listening file.** `listen/ab_original_then_export.mp3`: the DI excerpt through the original chain, 0.8 s gap, then the export
   (RMS-matched to the original; the gain is in the report). The gate is bypassed in both.
+* **Budget and measured results (CPU only).** Defaults: feather 40 epochs / 15 min, lite 30 epochs / 30 min, standard 22 epochs /
+  55 min (whichever comes first; the learning rate decays to 5 % over `--epochs`, `--lr-gamma` overrides), 188 s of training audio =
+  1099 datums = 68 steps of batch 16 per epoch. Measured on the shared 4-core box with the matcher's best `original` preset
+  (nocab, seed 0): uncontended ~53 s/epoch for lite (4 threads); with other jobs on the cores 100-170 s/epoch for lite and 100-165
+  s/epoch for standard (3 threads, `OMP_WAIT_POLICY=PASSIVE`: with spinning OpenMP threads an epoch stalled for > 6 min as soon as
+  another job took cores). At that budget the models are **under-trained**: lite 14 epochs (30.2 min): trainer validation ESR 0.359,
+  held-out ESR 0.455 after the IR, DI-excerpt LTAS error 3.74 dB; standard 22 epochs (48.8 min): validation ESR 0.457, held-out ESR
+  0.404, DI-excerpt ESR 0.517, LTAS error 4.23 dB. The spec's acceptance (standard: ESR <= 0.02, LTAS <= 0.5 dB) is **not met**; NAM
+  models of heavy two-path high-gain chains normally need hundreds of epochs on a GPU. The same code trains on a GPU box unchanged
+  except for the Lightning accelerator (CPU is hard-wired in `train.py`; a `--device` option is the obvious next step).
+  `--batch-size 4` gave a better ESR per minute in a 10-minute trial (0.51 vs ~0.58 at the same time) but did not change the picture.

@@ -49,8 +49,8 @@ DILATIONS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
 # channels of array 1, head size of array 1 (= channels of array 2), channels of array 2
 SIZES = {"feather": (8, 4, 4), "lite": (12, 6, 6), "standard": (16, 8, 8)}
 # Default epochs: sized from measured CPU speed (see README "NAM export"); the wall-time cap also applies.
-DEFAULT_EPOCHS = {"feather": 100, "lite": 60, "standard": 60}
-DEFAULT_MAX_MINUTES = {"feather": 15.0, "lite": 30.0, "standard": 60.0}
+DEFAULT_EPOCHS = {"feather": 40, "lite": 30, "standard": 22}
+DEFAULT_MAX_MINUTES = {"feather": 15.0, "lite": 30.0, "standard": 55.0}
 
 
 def import_nam():
