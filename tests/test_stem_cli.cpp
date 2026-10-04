@@ -198,3 +198,21 @@ TEST_CASE("CLI --backing: unrecognised stems warn, errors map to exit codes", "[
   REQUIRE(readWav(t / "o.wav").channels == 1);
   REQUIRE_FALSE(json::parse(slurp(t / "plain.json")).contains("backing"));
 }
+
+TEST_CASE("CLI --backing: report carries backing.loudnessLufs", "[cli][backing][loudness]") {
+  StemTempDir t;
+  const std::string base = "--preset " + q(kPreset) + " --in " + q(kDi) + " --out " + q(t / "o.wav") + " --report " + q(t / "r.json");
+  const fs::path err = t / "err.txt";
+  const fs::path a = t.dir / "a", g = t.dir / "g";
+  fs::create_directories(a);
+  fs::create_directories(g);
+  writeWavFloat32(a / "drums.wav", 48000.0, sine(1000.0, 48000.0, 96000, 0.07));  // -23 dBFS peak, both channels: about -23 LUFS
+  writeWavFloat32(g / "guitar.wav", 48000.0, sine(1000.0, 48000.0, 96000, 0.5));
+  REQUIRE(runCli(base + " --backing " + q(a), err) == 0);
+  const json r = json::parse(slurp(t / "r.json"));
+  REQUIRE(r["backing"]["loudnessLufs"].is_number());
+  REQUIRE(std::fabs(r["backing"]["loudnessLufs"].get<double>() - (-23.0)) < 0.5);
+  // Guitar-only backing: nothing to measure -> null.
+  REQUIRE(runCli(base + " --backing " + q(g), err) == 0);
+  REQUIRE(json::parse(slurp(t / "r.json"))["backing"]["loudnessLufs"].is_null());
+}

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "sawblade/loudness.h"
 #include "sawblade/resample.h"
 #include "sawblade/wav_io.h"
 
@@ -33,6 +34,22 @@ void padTo(StemSet& s) {
 void sumInto(std::vector<float>& dst, const std::vector<float>& src) {
   if (dst.size() < src.size()) dst.resize(src.size(), 0.0f);
   for (std::size_t i = 0; i < src.size(); ++i) dst[i] += src[i];
+}
+
+void measureBacking(StemSet& s) {
+  std::vector<float> l(static_cast<std::size_t>(s.length), 0.0f), r(l);
+  bool any = false;
+  for (int k = 0; k < kStemKindCount; ++k) {
+    const auto ks = static_cast<std::size_t>(k);
+    if (!s.present[ks] || k == static_cast<int>(StemKind::Guitar)) continue;
+    any = true;
+    for (std::size_t i = 0; i < l.size(); ++i) {
+      l[i] += s.audio[ks][0][i];
+      r[i] += s.audio[ks][1][i];
+    }
+  }
+  s.backingLoudnessLufs.reset();
+  if (any) s.backingLoudnessLufs = integratedLoudnessLufs(l.data(), r.data(), s.length, s.sampleRate);
 }
 
 }  // namespace
@@ -90,6 +107,7 @@ StemSet loadStemFiles(const std::vector<std::pair<StemKind, std::filesystem::pat
       set.length = std::max<std::int64_t>(set.length, static_cast<std::int64_t>(set.audio[static_cast<std::size_t>(k)][0].size()));
   if (set.length == 0) fail("stems have zero length after resampling");
   padTo(set);
+  measureBacking(set);
   return set;
 }
 
@@ -154,6 +172,7 @@ StemSet makeStemSet(double sampleRate, const std::array<std::optional<StemAudio>
   }
   if (set.length == 0) fail("no stems given");
   padTo(set);
+  measureBacking(set);
   return set;
 }
 

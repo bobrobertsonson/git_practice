@@ -35,6 +35,10 @@ struct StemSet {
   std::array<std::array<std::vector<float>, 2>, kStemKindCount> audio;
   std::array<std::vector<StemInfo>, kStemKindCount> sources;  // files that went into each stem
   std::vector<std::string> warnings;
+  // BS.1770-4 integrated loudness (LUFS) of the unity-gain sum of every present stem except guitar,
+  // measured at load time. None if there is no non-guitar stem or it is silent. Metadata only: it
+  // is for suggesting a backing level in a UI; StemPlayer never applies gain from it.
+  std::optional<double> backingLoudnessLufs;
 };
 
 // Loads the given files, each mapped to a kind; several files may map to the same kind and are
