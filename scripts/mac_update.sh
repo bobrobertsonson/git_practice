@@ -35,7 +35,6 @@ VST3_DIR="$HOME/Library/Audio/Plug-Ins/VST3"
 ART_DIR="$BUILD_DIR/plugin/SawbladePlugin_artefacts/Release"
 T3K=match/.venv/bin/sawblade-t3k
 TOKEN_FILE="${SAWBLADE_T3K_TOKEN_FILE:-$HOME/.config/sawblade/t3k_tokens.json}"
-POOL_SOURCES="${SAWBLADE_POOL_SOURCES:-$HOME/.config/sawblade/pool_sources.json}"
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
@@ -86,6 +85,11 @@ say "Build took $((SECONDS - START)) s."
 
 # ---------------------------------------------------------------- 3. install + auval
 step "3/5 install + auval"
+if [[ $DRY -eq 0 ]]; then
+  for f in "$ART_DIR/AU/Sawblade.component" "$ART_DIR/VST3/Sawblade.vst3"; do
+    [[ -d $f ]] || { echo "mac_update: build artefact missing: $f" >&2; exit 1; }
+  done
+fi
 run mkdir -p "$AU_DIR" "$VST3_DIR"
 run rm -rf "$AU_DIR/Sawblade.component" "$VST3_DIR/Sawblade.vst3"
 run cp -R "$ART_DIR/AU/Sawblade.component" "$AU_DIR/"
@@ -134,7 +138,7 @@ if [[ $NO_RESOLVE -eq 1 ]]; then
   say "Skipped (--no-resolve)."
 elif [[ $DRY -eq 0 && ! -x $T3K ]]; then
   say "Skipped: $T3K not found (see match/README.md to set up the venv)."
-elif [[ $DRY -eq 1 || -n ${TONE3000_CLIENT_ID:-} || -f $TOKEN_FILE || -f $POOL_SOURCES ]]; then
+elif [[ $DRY -eq 1 || -n ${TONE3000_CLIENT_ID:-} || -f $TOKEN_FILE ]]; then
   resolve_presets
 else
   say "Not logged in to TONE3000. Run this once, then re-run mac_update.sh:"
