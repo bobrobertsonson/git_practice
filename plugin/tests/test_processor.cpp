@@ -164,6 +164,31 @@ TEST_CASE("Processor: starts as a zero-latency pass-through (Init preset)", "[pr
   CHECK(y == x);
 }
 
+TEST_CASE("Processor: parameters that are not float- or 1e-4-exact leave the engine at its baseline", "[processor]") {
+  TempDir t;
+  const fs::path base = writeIdentityPreset(t.dir, "odd", 0);
+  json j = json::parse(std::ifstream(base));
+  j["paths"]["a"]["levelDb"] = -3.27419;
+  j["paths"]["b"]["levelDb"] = -3.27419;
+  j["blend"] = 0.333333;
+  j["input"] = {{"gainDb", 1.23456}};
+  j["output"] = {{"gainDb", -0.987654}};
+  j["gate"] = {{"thresholdDb", -50.123456}};
+  j["postEq"][0]["gainDb"] = -2.71828;
+  const fs::path odd = t.dir / "odd_values.json";
+  std::ofstream(odd) << j.dump(2);
+
+  Host h(48000.0, 256);
+  h.load(odd);
+  const auto x = noise(4000, 11, 0.3f);
+  std::vector<float> y;
+  h.run(x, y, {256, 100, 37});
+  const auto st = h.p.engineParamState();
+  REQUIRE(st.valid);
+  CHECK(st.live == st.baseline);  // no live-parameter change was applied after the load
+  CHECK(h.p.engineBuilds() >= 1);
+}
+
 TEST_CASE("Processor: prepare/process at 44.1/48/96 kHz, block sizes 1..4096, no allocations or locks", "[processor][rt]") {
   for (const double rate : {44100.0, 48000.0, 96000.0}) {
     CAPTURE(rate);

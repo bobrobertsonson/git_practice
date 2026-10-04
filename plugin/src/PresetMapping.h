@@ -46,6 +46,11 @@ SlotBands postEqSlotBands(const Preset& p);
 
 // The parameter values a preset implies, clamped to the parameter ranges. Slots without a band
 // are 0.
+// The one rule that keeps the audio thread's parameter reads and the engine baseline identical:
+// every parameter value is clamped to its range and snapped to the 1e-4 grid of the saved state.
+// The host parameter stores a float (and, on FMA targets, convertFrom0to1 may be off by an ulp),
+// but both are far below the grid step, so round4(float param) == snapParam(value) exactly.
+double snapParam(double v) noexcept;
 ParamValues paramsFromPreset(const Preset& p);
 
 // Writes parameter values into a preset (inverse of paramsFromPreset for the mapped fields).

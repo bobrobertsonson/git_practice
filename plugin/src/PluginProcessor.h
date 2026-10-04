@@ -94,11 +94,18 @@ class SawbladeProcessor : public juce::AudioProcessor {
 
   // Blocks until the loader has nothing queued or in progress (tests, prepareToPlay).
   bool waitForLoader(std::chrono::milliseconds timeout = std::chrono::milliseconds(60000));
+  // Test hook (call with the audio thread idle): the current engine's applied live parameters and
+  // the baseline it was built with. Parameter updates must never move the first off the second.
+  struct EngineParamState {
+    LiveParams live, baseline;
+    bool valid = false;
+  };
+  EngineParamState engineParamState() const;
   // Number of engines the loader has published (parameter changes must not increase it).
   std::uint64_t engineBuilds() const noexcept { return loader_->engineBuilds(); }
 
  private:
-  Preset presetWithParams(bool rounded) const;
+  Preset presetWithParams() const;
   ParamValues readParams() const noexcept;
   void writeParams(const ParamValues& v);
   void submit(bool fallbackToInit);

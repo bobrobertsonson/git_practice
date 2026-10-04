@@ -107,8 +107,11 @@ controls are host parameters:
 | `levelA`, `levelB` | -24..+12 dB | `paths.a/b.levelDb` |
 | `postEq1..6` | -18..+18 dB | gain of the k-th gain-bearing band (peak/shelf, in order, skipping high/low-pass) of `postEq` |
 
-Loading a preset writes its values into the parameters (clamped to the ranges above; the engine's
-baseline is built from the same clamped preset, so nothing jumps). The saved state is the loaded
+Loading a preset writes its values into the parameters (clamped to the ranges above and snapped to
+the 1e-4 grid by `snapParam`; the engine's baseline is built from the same clamped, snapped preset,
+and `readParams()` snaps what the audio thread reads the same way, so the two are bit-identical on
+every platform (an FMA-fusing compiler perturbs `convertFrom0to1`, and the float parameter is not
+the preset's double) and nothing jumps or ramps spuriously). The saved state is the loaded
 preset with the current parameter values written back (rounded to 1e-4 so a state round trip is
 byte-stable). Smoothing lives in `Chain::setLiveParams`: input/output gain, path levels and the blend
 ramp linearly per sample over 20 ms (block-size independent); post-EQ gains ramp in dB with the

@@ -54,6 +54,11 @@ class Engine {
   // are smoothed inside the chain; the gate threshold moves immediately.
   void setParams(const ParamValues& v) noexcept;
 
+  // The values the chain currently applies, and the ones it was built with (tests: after the
+  // parameters have been applied they must still be equal; see PresetMapping.h, snapParam).
+  const LiveParams& liveParams() const noexcept { return chain_->liveParams(); }
+  const LiveParams& baseline() const noexcept { return baseline_; }
+
   double hostRate() const noexcept { return hostRate_; }
   double modelRate() const noexcept { return modelRate_; }
   const EngineLatency& latency() const noexcept { return latency_; }
