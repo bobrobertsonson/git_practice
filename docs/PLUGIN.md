@@ -255,23 +255,80 @@ content component that the editor scales with an `AffineTransform` (resizable, f
 2560x1600). It reads `status()` and the APVTS only. Layout: top bar (preset button opening the preset file chooser,
 latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM), rig area (amp heads, cab, pedalboard
 with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
-knobs; all 12 parameters are bound to exactly one knob each).
+knobs; all 12 parameters are bound to exactly one knob each outside the rig panel).
 
 Pictures come from `plugin/assets/` (our own renders, embedded with `juce_add_binary_data`). Controls live in
 `plugin/src/skin/`: `SkinAssets` (decodes the PNGs and JSON sidecars once), `FilmstripKnob`, `FootswitchButton`,
 `LedIndicator`, `RigView`. Colours, fonts and plain-widget drawing are in `SawbladeLookAndFeel`. Placeholders
 (disabled, titled, with a tooltip saying so): A/B, MATCH, EXPORT NAM, previous / next preset, BROWSE CAPTURES,
-LEARN GATE, "+ PEDAL", CPU readout, the footswitch (visual bypass only).
+"+ PEDAL", CPU readout, the footswitch (visual bypass only).
+
+### Rig editor (phase 10)
+
+The RIG button in the top bar (next to PLAY ALONG) opens an overlay of 940 x 742 design px exactly over the rig area
+(the inspector stays visible). It makes every blend feature of the engine usable from the UI; open / closed and the
+active tab are UI state and are never saved. Spec: `docs/specs/phase10_rig_editor.md`. Code: `plugin/src/rig/`.
+
+- **Top strip.** Topology `SINGLE | SINGLE + 2 PEDALS | BLEND`, tabs `CHAIN | EQ | BLEND | CAB | GATE | COMP`, one status
+  line (loading / error / first warning, or the last message of a failed ADD).
+- **CHAIN.** Two lanes, `A . SAW` and `B . BODY`, of block cards in preset order (max 8): slot and type, title and
+  credit from the capture metadata (`@creator . licence . VIA TONE3000`, `LOCAL FILE`), BYPASS, an INPUT knob (nam blocks,
+  live), move left / right, remove, and `+ ADD`, whose menu lists `BlockRegistry::typeNames()` (a new block type, for
+  example a modelled pedal, appears without UI changes; `nam` opens a `.nam` chooser, `eq` adds a flat band). A pedal is
+  inserted in front of the path's amp. In the single topologies lane B shows only `BLEND OFF - choose BLEND above to use
+  path B` (its blocks are kept).
+- **EQ.** `A PRE | A POST | B PRE | B POST | POST`; the graph (`EqGraph.h` documents the pixel mapping) draws the combined
+  analytic response; drag a node (frequency + gain, or Q for high / low-pass), shift-drag or wheel (Q), double-click a node
+  (on / off), right-click (type, remove), double-click empty space (add a band), `+ BAND`.
+- **BLEND.** Blend knob (`SAW 79 / BODY 21`), path levels with `M` / `S` (mute / solo, monitoring only), ALIGN
+  `AUTO | MANUAL | OFF` with the resolved values, nudge `-10 -1 +1 +10`, `INVERT B`, `RE-MEASURE`.
+- **CAB.** `SHARED | PER PATH`, `CAB ON`, IR cards with `CHOOSE...`; the notice `LIVE-COMPATIBLE: the no-cab NAM export is
+  exact` (shared) or `STUDIO BLEND: only the with-cab NAM export is exact` (per path).
+- **GATE.** `GATE ON`, `GATE | EXPANDER`, THRESHOLD, HYSTERESIS, ATTACK, HOLD, RELEASE, RANGE, RATIO (expander only),
+  KEY HPF (bottom = off), release curve, LEARN. **COMP.** `COMP ON`, THRESHOLD, RATIO, KNEE, ATTACK, RELEASE, MAKEUP; a
+  release above 150 ms shows `release > 150 ms: not NAM-trainable`.
+
+**How edits reach the engine.**
+
+| edit | path |
+|---|---|
+| block add / remove / move / bypass, topology, band type / on-off / add / remove, cab mode / IR / on-off, align mode, gate and comp settings (except the threshold) | structural: `RigController::edit` -> `SawbladeProcessor::loadPreset` -> loader thread build (models and IRs come from the loader's persistent `CaptureCache`) -> 30 ms cross-fade. Knobs submit on drag end, wheel / typed values after a 150 ms debounce; a failed build keeps the previous preset and shows the error |
+| EQ frequency / Q, gain of a pre / path EQ band or of a post band without a parameter slot, nam block input gain | live: `applyLiveEdit` -> `LiveSnapshot` (a second `SwapSlot`, published under the processor mutex, tagged with the engine generation) -> `Chain::setLiveParams` ramps (20 ms; gains in dB, frequency in log2, Q in log, on the absolute 32-sample redesign grid), no rebuild |
+| blend, path levels, gate threshold, input / output gain, the six post EQ slot gains | host parameters (automatable), unchanged: the 12 parameters and their ids do not change |
+| mute / solo | transient monitor state (`setMonitor`): ramps the path level to 0; cleared by user loads and state restores, kept by the editor's structural edits and by rebuilds |
+
+A live edit made while a structural load is in flight can be overwritten when that load commits (EQ drags are absolute
+and heal on the next mouse move). Everything the panel edits lives in the preset and round-trips through
+`getStateInformation` / `setStateInformation`; transient and never saved: mute / solo, the open panel and tab, the
+SINGLE + 2 PEDALS choice while the preset reads SINGLE, the remembered blend. The engine's alignment, latency and
+`status().generation` are reported per block as before; re-measuring never runs on the audio thread.
+
+**Topology rules** (`rig/RigModel.h`). A path's amp is its last `slot: "amp"` block, else its last `nam` block; every other block is a pedal slot.
+`BLEND` iff path B is enabled; else `SINGLE + 2 PEDALS` iff path A has two or more non-bypassed pedal slots. Going to
+SINGLE or SINGLE + 2 PEDALS disables B and sets `blend = 0` (the chain computes `(1-blend)*A + blend*B`, so a disabled B
+at 0.5 would halve A); B's blocks are kept. Going to SINGLE bypasses the extra pedal slots of A (never deletes), going to
+SINGLE + 2 PEDALS un-bypasses one. Going back to BLEND restores the remembered blend. In the single topologies the blend
+knob is disabled in the UI, but the host may still automate `blend`: with B disabled the output is `(1-blend)*A`.
+
+**Alignment.** `AUTO` presets stay `AUTO` across loads; `RE-MEASURE` builds the engine in auto mode off the audio thread and
+writes `manual` values (`delaySamplesB`, `invertB`) back, without a further rebuild. Nudging or inverting while in `AUTO`
+switches to `MANUAL` seeded with the measured values.
+
+**Gate LEARN.** The audio thread pushes one input peak per block into a lock-free ring (`rig/InputMeter.h`, 512 blocks);
+LEARN waits 1 s, takes the loudest peak since, and sets `gateThreshold = peak dB + 6 dB` (clamped to -80..-20). The
+inspector's LEARN GATE button does the same.
 
 ## Tests
 
 `sawblade_editor_tests` (`plugin/tests/test_editor.cpp`, ctest prefix `editor: `, run under `xvfb-run -a` when
-available): snapshots to `build/screenshots/sawblade_skin_{1x,2x}.png`, resizing, parameter bindings, filmstrip
+available; the rig editor tests write `build/screenshots/rig_{single,blend,eq,gate}.png` plus `rig_tab_*.png`): snapshots to `build/screenshots/sawblade_skin_{1x,2x}.png`, resizing, parameter bindings, filmstrip
 mapping, knob interaction, footswitch / LED, accessibility, and the `plugin/assets/` budget (< 25 MB). The play-along
 tests cover the panel (exists, closed by default, opens from the top bar), its controls bound to the processor, folder
 drop, the missing-folder message, and screenshots `build/screenshots/sawblade_playalong_{closed,open}_1x.png`.
 
-`sawblade_plugin_tests` (headless): `plugin/tests/test_engine.cpp` (Engine, no JUCE),
+`sawblade_plugin_tests` (headless): `plugin/tests/test_rig_model.cpp` and `plugin/tests/test_rig_controller.cpp` (rig
+model, controller, live edits, mutes, re-measure, blend automation, concurrent-edit RT test, LEARN),
+`plugin/tests/test_engine.cpp` (Engine, no JUCE),
 `plugin/tests/test_processor.cpp` (the processor driven like a host) and `plugin/tests/test_playalong.cpp` (the backing:
 level rule, queue, Standalone and host-follow transport, rig-latency alignment, offset, state, zero allocations and
 locks with the backing playing; stems are synthesised into a temp dir, no audio is committed). Audio-thread rules are

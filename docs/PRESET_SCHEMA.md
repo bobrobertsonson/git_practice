@@ -166,8 +166,9 @@ different latency calibration, pedal phase shifts, etc.).
   including each path's own IR in `perPath` mode (different IRs carry different mic/onset
   delays, which must be aligned too). The lag maximizing |cross-correlation| within
   ±`maxLagMs` sets `delaySamplesB`; a negative peak sets `invertB = true`. The resolved
-  values are written to the render report (and in the plugin, back into the preset as
-  `manual`, so a preset always replays identically).
+  values are written to the render report. In the plugin a preset that is `auto` at load time stays `auto`
+  (it re-resolves deterministically on every load); only the rig editor's RE-MEASURE writes the result back
+  into the preset as `manual`, with the measured `delaySamplesB` / `invertB`.
 - `manual`: use the stored values. `off`: no alignment beyond latency compensation.
 
 ## Blend
