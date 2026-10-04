@@ -1,0 +1,556 @@
+Sawblade phase 5.1a patch against sevagh/demucs.cpp f1206e9adeea103aef4a636b9e62297cf1f8e34e (MIT).
+Applied by spikes/separator/CMakeLists.txt via patches/apply_patch.cmake. Regenerate with `git diff` in a checkout.
+
+  model_apply.cpp  - shift fixed at 0: no rand(), no shift padding (4/6-source path and V3 path)
+                   - Python-compatible context padding: every segment, including the short last one, is
+                     filled with the real neighbouring audio (demucs.apply.TensorChunk.padded semantics),
+                     zeros only beyond the track ends; output trimmed with center_trim (delta // 2)
+                   - cancel flag: demucs_inference(model, audio, cb, const std::atomic<bool>* cancel = nullptr),
+                     polled between segments; cancelled => returns an EMPTY tensor (dimension(0) == 0)
+                   - FTZ/DAZ (x86 MXCSR bits 15 and 6, ARM FPCR.FZ) on the calling thread and on every
+                     OpenMP worker of the team that Eigen/OpenBLAS GEMMs use; restored on return
+                   - no std::cout
+  model_load.cpp   - no stdout/stderr; load_demucs_model reports failure only through its return value
+  layers.cpp, crosstransformer.cpp - invariant violations abort() instead of printing
+  model.hpp        - new demucs_inference signature (default argument keeps old callers compiling)
+
+diff --git a/src/crosstransformer.cpp b/src/crosstransformer.cpp
+index d649b95..419e0d8 100644
+--- a/src/crosstransformer.cpp
++++ b/src/crosstransformer.cpp
+@@ -10,9 +10,7 @@ static Eigen::Tensor3dXf create_2d_sin_embedding(int d_model, int height,
+ {
+     if (d_model % 4 != 0)
+     {
+-        std::cerr << "Cannot use sin/cos positional encoding with odd dimension"
+-                  << std::endl;
+-        std::exit(1);
++        std::abort(); // sawblade: invariant violation, no stdout/stderr from the library
+     }
+ 
+     Eigen::Tensor3dXf pe(d_model, height, width);
+diff --git a/src/layers.cpp b/src/layers.cpp
+index c13d023..6d37778 100644
+--- a/src/layers.cpp
++++ b/src/layers.cpp
+@@ -97,9 +97,7 @@ Eigen::Tensor3dXf demucscpp::glu(const Eigen::Tensor3dXf &x, const int dim)
+ {
+     if (x.dimension(dim) % 2 != 0)
+     {
+-        std::cerr << "Dimension size must be evenly divisible by 2"
+-                  << std::endl;
+-        std::exit(1);
++        std::abort(); // sawblade: invariant violation, no stdout/stderr from the library
+     }
+ 
+     int split_size = x.dimension(dim) / 2;
+diff --git a/src/model.hpp b/src/model.hpp
+index 630ef4e..b100bdf 100644
+--- a/src/model.hpp
++++ b/src/model.hpp
+@@ -5,6 +5,7 @@
+ #include "tensor.hpp"
+ #include <Eigen/Dense>
+ #include <array>
++#include <atomic>
+ #include <functional>
+ #include <iostream>
+ #include <string>
+@@ -655,9 +656,13 @@ const float MAX_SHIFT_SECS = 0.5;        // max shift
+ const float OVERLAP = 0.25;              // overlap between segments
+ const float TRANSITION_POWER = 1.0;      // transition between segments
+ 
++// sawblade 5.1a: `cancel` (optional) is polled between segments; if it becomes true the call
++// returns promptly with an EMPTY tensor (dimension(0) == 0). Shift is fixed at 0; padding follows
++// Python's TensorChunk.padded; FTZ/DAZ is set on all inference threads; nothing is printed.
+ Eigen::Tensor3dXf demucs_inference(const struct demucs_model &model,
+                                    const Eigen::MatrixXf &full_audio,
+-                                   ProgressCallback cb);
++                                   ProgressCallback cb,
++                                   const std::atomic<bool> *cancel = nullptr);
+ 
+ void model_inference(const struct demucs_model &model,
+                      struct demucscpp::demucs_segment_buffers &buffers,
+diff --git a/src/model_apply.cpp b/src/model_apply.cpp
+index d7e5262..4b1ec18 100644
+--- a/src/model_apply.cpp
++++ b/src/model_apply.cpp
+@@ -6,6 +6,8 @@
+ #include "tensor.hpp"
+ #include <Eigen/Dense>
+ #include <cmath>
++#include <algorithm>
++#include <atomic>
+ #include <cstdlib>
+ #include <filesystem>
+ #include <fstream>
+@@ -42,104 +44,123 @@ symmetric_zero_padding(Eigen::MatrixXf &padded, const Eigen::MatrixXf &original,
+     return std::make_tuple(left_padding, right_padding);
+ }
+ 
+-// forward declaration of inner fns
+-static Eigen::Tensor3dXf
+-shift_inference(const struct demucscpp::demucs_model &model,
+-                Eigen::MatrixXf &full_audio, demucscpp::ProgressCallback cb);
++// sawblade: FTZ/DAZ on every thread that runs inference (caller + OpenMP team).
++#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
++#include <xmmintrin.h>
++static inline unsigned long sb_fp_get() { return _mm_getcsr(); }
++static inline void sb_fp_set(unsigned long v) { _mm_setcsr((unsigned)v); }
++static inline unsigned long sb_fp_ftz(unsigned long v) { return v | 0x8040u; } // FTZ (bit 15) | DAZ (bit 6)
++#elif defined(__aarch64__)
++static inline unsigned long sb_fp_get()
++{
++    unsigned long v;
++    __asm__ __volatile__("mrs %0, fpcr" : "=r"(v));
++    return v;
++}
++static inline void sb_fp_set(unsigned long v)
++{
++    __asm__ __volatile__("msr fpcr, %0" : : "r"(v));
++}
++static inline unsigned long sb_fp_ftz(unsigned long v) { return v | (1ul << 24); } // FPCR.FZ
++#else
++static inline unsigned long sb_fp_get() { return 0; }
++static inline void sb_fp_set(unsigned long) {}
++static inline unsigned long sb_fp_ftz(unsigned long v) { return v; }
++#endif
++#ifdef _OPENMP
++#include <omp.h>
++#endif
++
++namespace
++{
++// Sets flush-to-zero / denormals-are-zero on the calling thread and on every OpenMP worker
++// of the team that Eigen/OpenBLAS GEMMs will use; restores the previous state on destruction.
++struct FtzScope
++{
++    std::vector<unsigned long> saved;
++    FtzScope()
++    {
++#ifdef _OPENMP
++        const int n = omp_get_max_threads();
++        saved.assign(static_cast<std::size_t>(n), 0);
++#pragma omp parallel num_threads(n)
++        {
++            const int t = omp_get_thread_num();
++            if (t < n)
++            {
++                saved[static_cast<std::size_t>(t)] = sb_fp_get();
++                sb_fp_set(sb_fp_ftz(sb_fp_get()));
++            }
++        }
++#else
++        saved.assign(1, sb_fp_get());
++        sb_fp_set(sb_fp_ftz(sb_fp_get()));
++#endif
++    }
++    ~FtzScope()
++    {
++#ifdef _OPENMP
++        const int n = static_cast<int>(saved.size());
++#pragma omp parallel num_threads(n)
++        {
++            const int t = omp_get_thread_num();
++            if (t < n)
++                sb_fp_set(saved[static_cast<std::size_t>(t)]);
++        }
++#else
++        sb_fp_set(saved[0]);
++#endif
++    }
++};
++} // namespace
+ 
+ static Eigen::Tensor3dXf
+ split_inference(const struct demucscpp::demucs_model &model,
+-                Eigen::MatrixXf &full_audio, demucscpp::ProgressCallback cb);
++                const Eigen::MatrixXf &full_audio, demucscpp::ProgressCallback cb,
++                const std::atomic<bool> *cancel);
+ 
+ static Eigen::Tensor3dXf segment_inference(
+-    const struct demucscpp::demucs_model &model, Eigen::MatrixXf chunk,
++    const struct demucscpp::demucs_model &model,
++    const Eigen::MatrixXf &full_audio, int offset, int chunk_length,
+     int segment_sample, struct demucscpp::demucs_segment_buffers &buffers,
+     struct demucscpp::stft_buffers &stft_buf, demucscpp::ProgressCallback cb,
+     float current_progress, float segment_progress);
+ 
++// sawblade 5.1a: shift fixed at 0 (no rand()), Python-compatible context padding, cancel flag,
++// FTZ/DAZ on all inference threads, no stdout/stderr. An EMPTY result (dimension(0) == 0)
++// means the run was cancelled via `cancel`.
+ Eigen::Tensor3dXf demucscpp::demucs_inference(const struct demucs_model &model,
+                                               const Eigen::MatrixXf &audio,
+-                                              demucscpp::ProgressCallback cb)
++                                              demucscpp::ProgressCallback cb,
++                                              const std::atomic<bool> *cancel)
+ {
+-    // working copy to modify
+-    Eigen::MatrixXf full_audio = audio;
++    FtzScope ftz;
+ 
+     // first, normalize the audio to mean and std
+-    // ref = wav.mean(0)
+-    // wav = (wav - ref.mean()) / ref.std()
+-    // Calculate the overall mean and standard deviation
+-    // Compute the mean and standard deviation separately for each channel
+-    Eigen::VectorXf ref_mean_0 = full_audio.colwise().mean();
++    // ref = wav.mean(0); wav = (wav - ref.mean()) / ref.std()
++    Eigen::VectorXf ref_mean_0 = audio.colwise().mean();
+ 
+     float ref_mean = ref_mean_0.mean();
+     float ref_std = std::sqrt((ref_mean_0.array() - ref_mean).square().sum() /
+                               (ref_mean_0.size() - 1));
+ 
+-    // Normalize the audio
+-    Eigen::MatrixXf normalized_audio =
+-        (full_audio.array() - ref_mean) / ref_std;
+-
+-    full_audio = normalized_audio;
++    Eigen::MatrixXf full_audio = (audio.array() - ref_mean) / ref_std;
+ 
+-    Eigen::Tensor3dXf waveform_outputs = shift_inference(model, full_audio, cb);
++    Eigen::Tensor3dXf waveform_outputs =
++        split_inference(model, full_audio, cb, cancel);
++    if (waveform_outputs.size() == 0)
++        return waveform_outputs; // cancelled
+ 
+-    // now inverse the normalization in Eigen C++
+     // sources = sources * ref.std() + ref.mean()
+     waveform_outputs = (waveform_outputs * ref_std).eval() + ref_mean;
+ 
+     return waveform_outputs;
+ }
+ 
+-static Eigen::Tensor3dXf
+-shift_inference(const struct demucscpp::demucs_model &model,
+-                Eigen::MatrixXf &full_audio, demucscpp::ProgressCallback cb)
+-{
+-    // first, apply shifts for time invariance
+-    // we simply only support shift=1, the demucs default
+-    // shifts (int): if > 0, will shift in time `mix` by a random amount between
+-    // 0 and 0.5 sec
+-    //     and apply the oppositve shift to the output. This is repeated
+-    //     `shifts` time and all predictions are averaged. This effectively
+-    //     makes the model time equivariant and improves SDR by up to 0.2
+-    //     points.
+-    int max_shift =
+-        (int)(demucscpp::MAX_SHIFT_SECS * demucscpp::SUPPORTED_SAMPLE_RATE);
+-
+-    int length = full_audio.cols();
+-
+-    Eigen::MatrixXf padded_mix(2, length + 2 * max_shift);
+-
+-    symmetric_zero_padding(padded_mix, full_audio, 2 * max_shift);
+-
+-    int offset = rand() % max_shift;
+-    // int offset = 1337;
+-
+-    std::cout << "1., apply model w/ shift, offset: " << offset << std::endl;
+-
+-    Eigen::MatrixXf shifted_audio =
+-        padded_mix.block(0, offset, 2, length + max_shift - offset);
+-
+-    Eigen::Tensor3dXf waveform_outputs =
+-        split_inference(model, shifted_audio, cb);
+-
+-    int nb_out_sources = model.is_4sources ? 4 : 6;
+-
+-    // trim the output to the original length
+-    // waveform_outputs = waveform_outputs[..., max_shift:max_shift + length]
+-    Eigen::Tensor3dXf trimmed_waveform_outputs =
+-        waveform_outputs
+-            .reshape(Eigen::array<int, 3>(
+-                {nb_out_sources, 2,
+-                 static_cast<int>(waveform_outputs.dimension(2))}))
+-            .slice(Eigen::array<int, 3>({0, 0, max_shift - offset}),
+-                   Eigen::array<int, 3>({nb_out_sources, 2, length}));
+-
+-    return trimmed_waveform_outputs;
+-}
+-
+ static Eigen::Tensor3dXf
+ split_inference(const struct demucscpp::demucs_model &model,
+-                Eigen::MatrixXf &full_audio, demucscpp::ProgressCallback cb)
++                const Eigen::MatrixXf &full_audio, demucscpp::ProgressCallback cb,
++                const std::atomic<bool> *cancel)
+ {
+     // calculate segment in samples
+     int segment_samples =
+@@ -152,18 +173,11 @@ split_inference(const struct demucscpp::demucs_model &model,
+                                                      nb_out_sources);
+     struct demucscpp::stft_buffers stft_buf(buffers.padded_segment_samples);
+ 
+-    // next, use splits with weighted transition and overlap
+-    // split (bool): if True, the input will be broken down in 8 seconds
+-    // extracts
+-    //     and predictions will be performed individually on each and
+-    //     concatenated. Useful for model with large memory footprint like
+-    //     Tasnet.
+-
+     int stride_samples = (int)((1 - demucscpp::OVERLAP) * segment_samples);
+ 
+     int length = full_audio.cols();
+ 
+-    // create an output tensor of zeros for four source waveforms
++    // create an output tensor of zeros for the source waveforms
+     Eigen::Tensor3dXf out = Eigen::Tensor3dXf(nb_out_sources, 2, length);
+     out.setZero();
+ 
+@@ -181,54 +195,37 @@ split_inference(const struct demucscpp::demucs_model &model,
+     Eigen::VectorXf sum_weight(length);
+     sum_weight.setZero();
+ 
+-    // i prefer using `std::ceilf` but :shrug:
+     int total_chunks = ::ceilf((float)length / (float)stride_samples);
+     float increment_per_chunk = 1.0f / (float)total_chunks;
+     float inference_progress = 0.0f;
+ 
+     for (int offset = 0; offset < length; offset += stride_samples)
+     {
+-        // create a chunk of the padded_full_audio
+-        int chunk_end = std::min(segment_samples, length - offset);
+-        Eigen::MatrixXf chunk = full_audio.block(0, offset, 2, chunk_end);
+-        int chunk_length = chunk.cols();
++        // sawblade: cancel is checked between segments
++        if (cancel && cancel->load(std::memory_order_relaxed))
++            return Eigen::Tensor3dXf();
+ 
+-        std::cout << "2., apply model w/ split, offset: " << offset
+-                  << ", chunk shape: (" << chunk.rows() << ", " << chunk.cols()
+-                  << ")" << std::endl;
++        int chunk_length = std::min(segment_samples, length - offset);
+ 
+-        Eigen::Tensor3dXf chunk_out =
+-            segment_inference(model, chunk, segment_samples, buffers, stft_buf,
+-                              cb, inference_progress, increment_per_chunk);
++        Eigen::Tensor3dXf chunk_out = segment_inference(
++            model, full_audio, offset, chunk_length, segment_samples, buffers,
++            stft_buf, cb, inference_progress, increment_per_chunk);
+ 
+-        // add the weighted chunk to the output
+-        // out[..., offset:offset + segment] += (weight[:chunk_length] *
+-        // chunk_out).to(mix.device)
++        // out[..., offset:offset + segment] += weight[:chunk_length] * chunk_out
+         for (int i = 0; i < nb_out_sources; ++i)
+         {
+             for (int j = 0; j < 2; ++j)
+             {
+                 for (int k = 0; k < chunk_length; ++k)
+                 {
+-                    if (offset + k >= length)
+-                    {
+-                        break;
+-                    }
+-                    out(i, j, offset + k) +=
+-                        weight(k % chunk_length) * chunk_out(i, j, k);
++                    out(i, j, offset + k) += weight(k) * chunk_out(i, j, k);
+                 }
+             }
+         }
+ 
+-        // sum_weight[offset:offset + segment] +=
+-        // weight[:chunk_length].to(mix.device)
+         for (int k = 0; k < chunk_length; ++k)
+         {
+-            if (offset + k >= length)
+-            {
+-                break;
+-            }
+-            sum_weight(offset + k) += weight(k % chunk_length);
++            sum_weight(offset + k) += weight(k);
+         }
+ 
+         inference_progress += increment_per_chunk;
+@@ -247,18 +244,31 @@ split_inference(const struct demucscpp::demucs_model &model,
+     return out;
+ }
+ 
++// sawblade: Python's TensorChunk.padded(valid_length) semantics. The chunk
++// [offset, offset+chunk_length) is centred in a segment_samples window filled with the REAL
++// neighbouring audio; zeros only beyond the track ends. The model output is trimmed with
++// center_trim (delta // 2 from the left).
+ static Eigen::Tensor3dXf segment_inference(
+-    const struct demucscpp::demucs_model &model, Eigen::MatrixXf chunk,
++    const struct demucscpp::demucs_model &model,
++    const Eigen::MatrixXf &full_audio, int offset, int chunk_length,
+     int segment_samples, struct demucscpp::demucs_segment_buffers &buffers,
+     struct demucscpp::stft_buffers &stft_buf, demucscpp::ProgressCallback cb,
+     float current_progress, float segment_progress)
+ {
+-    int chunk_length = chunk.cols();
+-
+-    // copy chunk into buffers.mix with symmetric zero-padding
+-    // assign two ints to tuple return value
+-    std::tuple<int, int> padding = symmetric_zero_padding(
+-        buffers.mix, chunk, segment_samples - chunk_length);
++    const int total = (int)full_audio.cols();
++    const int delta = segment_samples - chunk_length;
++    const int left = delta / 2;
++    const int start = offset - left;
++    const int correct_start = std::max(0, start);
++    const int correct_end = std::min(total, start + segment_samples);
++
++    buffers.mix.setZero();
++    if (correct_end > correct_start)
++    {
++        buffers.mix.block(0, correct_start - start, 2,
++                          correct_end - correct_start) =
++            full_audio.block(0, correct_start, 2, correct_end - correct_start);
++    }
+ 
+     // apply demucs inference
+     demucscpp::model_inference(model, buffers, stft_buf, cb, current_progress,
+@@ -277,9 +287,7 @@ static Eigen::Tensor3dXf segment_inference(
+         {
+             for (int k = 0; k < chunk_length; ++k)
+             {
+-                // undoing center_trim
+-                chunk_out(i, j, k) =
+-                    buffers.targets_out(i, j, k + std::get<0>(padding));
++                chunk_out(i, j, k) = buffers.targets_out(i, j, k + left);
+             }
+         }
+     }
+@@ -356,10 +364,7 @@ shift_inference(const struct demucscpp_v3::demucs_v3_model &model,
+ 
+     symmetric_zero_padding(padded_mix, full_audio, 2 * max_shift);
+ 
+-    int offset = rand() % max_shift;
+-    // int offset = 1337;
+-
+-    std::cout << "1., apply model w/ shift, offset: " << offset << std::endl;
++    int offset = max_shift; // sawblade: shift fixed at 0 (no rand()); offset == max_shift => no shift
+ 
+     Eigen::MatrixXf shifted_audio =
+         padded_mix.block(0, offset, 2, length + max_shift - offset);
+@@ -438,10 +443,6 @@ split_inference(const struct demucscpp_v3::demucs_v3_model &model,
+         Eigen::MatrixXf chunk = full_audio.block(0, offset, 2, chunk_end);
+         int chunk_length = chunk.cols();
+ 
+-        std::cout << "2., apply model w/ split, offset: " << offset
+-                  << ", chunk shape: (" << chunk.rows() << ", " << chunk.cols()
+-                  << ")" << std::endl;
+-
+         Eigen::Tensor3dXf chunk_out =
+             segment_inference(model, chunk, segment_samples, buffers, stft_buf,
+                               cb, inference_progress, increment_per_chunk);
+diff --git a/src/model_load.cpp b/src/model_load.cpp
+index 6cc4e86..632bd84 100644
+--- a/src/model_load.cpp
++++ b/src/model_load.cpp
+@@ -7,22 +7,9 @@
+ #include <string>
+ #include <vector>
+ 
+-static void my_fprintf(const std::FILE *stream, const char *format, ...)
++static void my_fprintf(const std::FILE *, const char *, ...)
+ {
+-    char buffer[1024];
+-    va_list args;
+-    va_start(args, format);
+-    vsnprintf(buffer, sizeof(buffer), format, args);
+-    va_end(args);
+-
+-    if (stream == stderr)
+-    {
+-        std::cerr << buffer;
+-    }
+-    else
+-    {
+-        std::cout << buffer;
+-    }
++    // sawblade: the library never writes to stdout/stderr; callers see only the return value
+ }
+ 
+ // forward declaration
+@@ -58,7 +45,6 @@ bool demucscpp::load_demucs_model(const std::string &model_file,
+             std::chrono::system_clock::now().time_since_epoch())
+             .count();
+ 
+-    std::cout << "Loading model_file... " << std::endl;
+ 
+     FILE *f = fopen(model_file.c_str(), "rb");
+     if (!f)
+@@ -71,7 +57,6 @@ bool demucscpp::load_demucs_model(const std::string &model_file,
+     // verify magic
+     uint32_t magic;
+ 
+-    std::cout << "Checking the magic of model_file" << std::endl;
+ 
+     // read the size of uint32_t bytes from f into magic
+     fread(&magic, sizeof(uint32_t), 1, f);
+@@ -79,7 +64,6 @@ bool demucscpp::load_demucs_model(const std::string &model_file,
+     if (magic == 0x646d6336) // dmc6
+     {
+         model->is_4sources = false;
+-        std::cout << "Model magic is Demucs 6-source" << std::endl;
+ 
+         // modify a few tensor shapes in the model corresponding to the
+         // number of sources
+@@ -92,11 +76,9 @@ bool demucscpp::load_demucs_model(const std::string &model_file,
+     else if (magic == 0x646d6334) // dmc4
+     {
+         model->is_4sources = true;
+-        std::cout << "Model magic is Demucs 4-source" << std::endl;
+     }
+     else
+     {
+-        fprintf(stderr, "%s: invalid model data (bad magic)\n", __func__);
+         fclose(f);
+         return false;
+     }
+@@ -104,7 +86,6 @@ bool demucscpp::load_demucs_model(const std::string &model_file,
+     model->crosstransformer =
+         demucscpp::initialize_crosstransformer(model->is_4sources);
+ 
+-    std::cout << "Loading demucs model... " << std::endl;
+ 
+     // we dont need to prepare memory for the weights
+     // they come preallocated in the hardcoded model
+@@ -113,7 +94,6 @@ bool demucscpp::load_demucs_model(const std::string &model_file,
+     uint32_t n_loaded = 0;
+ 
+     // equivalent of with open(...) as f on each model_file
+-    std::cout << "Loading weights from model_file" << std::endl;
+ 
+     // load weights from the file one tensor at a time
+ 
+@@ -1310,7 +1290,6 @@ bool demucscpp_v3::load_demucs_v3_model(
+             std::chrono::system_clock::now().time_since_epoch())
+             .count();
+ 
+-    std::cout << "Loading model_file... " << std::endl;
+ 
+     FILE *f = fopen(model_file.c_str(), "rb");
+     if (!f)
+@@ -1323,21 +1302,17 @@ bool demucscpp_v3::load_demucs_v3_model(
+     // verify magic
+     uint32_t magic;
+ 
+-    std::cout << "Checking the magic of model_file" << std::endl;
+ 
+     // read the size of uint32_t bytes from f into magic
+     fread(&magic, sizeof(uint32_t), 1, f);
+ 
+     if (magic != 0x646d6333) // dmc3 = v3 mmi
+     {
+-        fprintf(stderr, "%s: invalid model data (bad magic)\n", __func__);
+         fclose(f);
+         return false;
+     }
+ 
+-    std::cout << "Model magic is Demucs V3 MMI" << std::endl;
+ 
+-    std::cout << "Loading demucs model... " << std::endl;
+ 
+     // we dont need to prepare memory for the weights
+     // they come preallocated in the hardcoded model
+@@ -1346,7 +1321,6 @@ bool demucscpp_v3::load_demucs_v3_model(
+     uint32_t n_loaded = 0;
+ 
+     // equivalent of with open(...) as f on each model_file
+-    std::cout << "Loading weights from model_file" << std::endl;
+ 
+     // load weights from the file one tensor at a time
+ 
