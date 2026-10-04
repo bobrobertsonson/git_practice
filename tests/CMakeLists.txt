@@ -19,7 +19,10 @@ add_executable(sawblade_tests
   test_resample.cpp
   test_rt_resample.cpp
   test_chain_live.cpp
-  test_capture_cache.cpp)
+  test_capture_cache.cpp
+  test_stem_set.cpp
+  test_stem_player.cpp
+  test_stem_cli.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)

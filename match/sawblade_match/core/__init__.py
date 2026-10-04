@@ -59,5 +59,10 @@ render = _core.render
 CaptureCache = _core.CaptureCache
 PresetError = _core.PresetError
 RenderIOError = _core.RenderIOError
+# Play-along backing (spec 5.1). getattr: tolerate a module built before these existed.
+StemSet = getattr(_core, "StemSet", None)
+StemPlayer = getattr(_core, "StemPlayer", None)
+load_stems = getattr(_core, "load_stems", None)
+stem_set_from_arrays = getattr(_core, "stem_set_from_arrays", None)
 
-__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError"]
+__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError", "StemSet", "StemPlayer", "load_stems", "stem_set_from_arrays"]
