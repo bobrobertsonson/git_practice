@@ -1,6 +1,6 @@
 """STOCKHOLM SYNDROME (design B2) - 120x190x55 mm pedal, saw-blade crust stencil, burnt orange + bone.
     python pedal_b2.py --mode all --out /path/outside/repo"""
-import math
+import math, os
 import numpy as np
 import common as C
 from common import *
@@ -77,9 +77,46 @@ def populate(mats, mode):
     build_oled(mats, 0, OLED_Y)
     return knobs
 
+INK_A, INK_B = '#ff6a1a', '#e8e4d8'
+OLED_LINES = ["HM-2w CHAINSAW", "std · A2 · 48k"]
+
+def build(mats=None, origin=(0.0, 0.0, 0.0), rot_z=0.0, mode='hero', art_image=None, font_dir=None,
+          return_knobs=False):
+    """Build the complete STOCKHOLM SYNDROME pedal and return a root empty at `origin` (mm; centre of the footprint
+    at the base of the enclosure), rotated `rot_z` degrees about Z.  Everything is parented to the root; camera,
+    lights, world and render settings are not touched.
+    mats: dict from common.make_standard_mats / run() (None -> created here).  art_image: packed Blender image of the
+    face art (None -> generated, cached in mats['stock_art']).  mode='strip': bare enclosure + one knob at the origin.
+    return_knobs=True returns (root, knobs)."""
+    set_piece_dims(W, L, H)
+    if mats is None:
+        mats = make_standard_mats(None)
+    if 'oled' not in mats:                 # make_standard_mats has no OLED material; run() adds it
+        oimg = oled_image(OLED_LINES)
+        mats['oled'] = mat_oled_display(oimg, oimg.size[0], 28)
+    if mode == 'strip':
+        art_img = mats.get('art')
+    else:
+        art_img = art_image or mats.get('stock_art')
+        if art_img is None:
+            art_img = art_to_image(art(fetch_font(font_dir or os.path.join(os.path.expanduser('~'), '.cache', 'pedal_b2_fonts'))))
+            mats['stock_art'] = art_img
+    before = set(bpy.data.objects)
+    root = empty('stockholm_root', 0, 0, 0)
+    powder = mat_powder(art_img, INK_A, INK_B, gain_a=0.45)
+    build_enclosure(powder, W, L, H, r=7.0, bev=1.0, nb=5, name='stockholm_enclosure')
+    knobs = populate(mats, mode)
+    parent_new(before, root)
+    root.location = (origin[0] * MM, origin[1] * MM, origin[2] * MM)
+    root.rotation_euler = (0, 0, math.radians(rot_z))
+    return (root, knobs) if return_knobs else root
+
+def _run_build(mats, mode):
+    return build(mats, mode=mode, art_image=mats['art'], return_knobs=True)[1]
+
 SPEC = dict(
-    name='stockholm', kind='pedal', plate=(W, L, H), art=art, ink_a='#ff6a1a', ink_b='#e8e4d8', populate=populate,
-    oled_lines=["HM-2w CHAINSAW", "std · A2 · 48k"], strip=True,
+    name='stockholm', kind='piece', plate=(W, L, H), art=art, ink_a=INK_A, ink_b=INK_B, build=_run_build,
+    oled_lines=OLED_LINES, strip=True,
     hero=dict(kind='persp', loc=(0.20, -0.44, 0.59), target=(0, -0.008, H * MM), lens=85),
     ortho=dict(kind='ortho', loc=(0, 0, 0.5), ortho_scale=0.205), ortho_res=(1200, 1800))
 
