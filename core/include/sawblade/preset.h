@@ -150,6 +150,9 @@ std::filesystem::path captureCacheRoot();
 // the cached copy if that exists; else `resolvedPath`. IRs are recognised by the file extension (.wav / .flac).
 // Every core loader (verifyCapture, CaptureCache, the NAM block, IR loading) goes through this.
 std::filesystem::path locateCapture(const Capture& c);
+// The "file not found" message for a capture (JSON path, file, and for a TONE3000 capture the resolve hint, or the reason the
+// cache cannot be used when its id / modelId is not a plain token).
+std::string captureNotFoundMessage(const Capture& c, const std::string& jsonPath);
 
 // Shared parse helpers (used by block-type parse hooks).
 Capture parseCapture(const nlohmann::json& j, const std::string& path, const std::filesystem::path& baseDir);

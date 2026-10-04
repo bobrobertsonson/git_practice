@@ -36,12 +36,7 @@ template <class Entry>
 void validate(Entry& e, const Capture& c, const std::string& jsonPath) {
   std::error_code ec;
   const fs::path p = locateCapture(c);
-  if (!fs::exists(p, ec)) {
-    std::string msg = jsonPath + ": file not found: " + c.resolvedPath.string();
-    if (c.source && c.source->provider == "tone3000" && !c.source->id.empty() && !c.source->modelId.empty())
-      msg += " (not in the capture cache either; run: sawblade-t3k resolve <preset file>)";
-    throw CaptureError(jsonPath, msg);
-  }
+  if (!fs::exists(p, ec)) throw CaptureError(jsonPath, captureNotFoundMessage(c, jsonPath));
   const std::uintmax_t size = fs::file_size(p, ec);
   const fs::file_time_type mtime = ec ? fs::file_time_type{} : fs::last_write_time(p, ec);
   if (!e.known || ec || size != e.size || mtime != e.mtime) {

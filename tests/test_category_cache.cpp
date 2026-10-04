@@ -141,3 +141,32 @@ TEST_CASE("cache root defaults to ~/.cache/sawblade/captures", "[capture][cache]
   REQUIRE(home != nullptr);
   CHECK(captureCacheRoot() == fs::path(home) / ".cache" / "sawblade" / "captures");
 }
+
+TEST_CASE("capture cache: ids that are not plain tokens never build a path", "[capture][cache]") {
+  TempDir tmp;
+  fs::create_directories(tmp.dir / "cache");
+  EnvGuard env(tmp.dir / "cache");
+  // a file outside the cache root that a traversal id would reach
+  fs::copy_file(kFx / "nam/linear_identity.nam", tmp.dir / "secret.nam");
+  const json ir = {{"file", (kFx / "ir/impulse.wav").string()}};
+  for (const char* bad : {"../secret", "..", "a/b", "a\\b", "x..y", "", "/abs", "a b"}) {
+    INFO("id: " << bad);
+    json nam = {{"file", "gone.nam"}, {"source", src(bad, "secret")}};
+    const Preset p = parsePreset(presetJson(nam, ir), "/nowhere");
+    const auto& model = static_cast<const NamBlockParams&>(*p.a.blocks[0].params).model;
+    CHECK(locateCapture(model) == model.resolvedPath);  // never a cache path
+  }
+  json nam = {{"file", "gone.nam"}, {"source", src("../", "secret")}};
+  const Preset p = parsePreset(presetJson(nam, ir), "/nowhere");
+  try {
+    loadResources(p, 48000.0);
+    FAIL("expected CaptureError");
+  } catch (const CaptureError& e) {
+    CHECK_THAT(std::string(e.what()), ContainsSubstring("file not found"));
+    CHECK_THAT(std::string(e.what()), ContainsSubstring("plain letters, digits"));
+  }
+  json nam2 = {{"file", "gone.nam"}, {"source", src("1", "../../secret")}};
+  CHECK_THROWS_AS(loadResources(parsePreset(presetJson(nam2, ir), "/nowhere"), 48000.0), CaptureError);
+  CaptureCache cache;
+  CHECK_THROWS_AS(loadResources(parsePreset(presetJson(nam2, ir), "/nowhere"), 48000.0, &cache), CaptureError);
+}

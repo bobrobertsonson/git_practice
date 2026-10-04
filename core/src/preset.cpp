@@ -389,9 +389,17 @@ fs::path captureCacheRoot() {
 }
 
 namespace {
-bool isTone3000(const Capture& c) {
+// Ids come from preset JSON and become path components: only plain tokens (letters, digits, '_' and '-', no "..") are used.
+bool safeToken(const std::string& t) {
+  if (t.empty() || t.size() > 64 || t.find("..") != std::string::npos) return false;
+  for (char ch : t)
+    if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '-')) return false;
+  return true;
+}
+bool hasTone3000Ids(const Capture& c) {
   return c.source && c.source->provider == "tone3000" && !c.source->id.empty() && !c.source->modelId.empty();
 }
+bool isTone3000(const Capture& c) { return hasTone3000Ids(c) && safeToken(c.source->id) && safeToken(c.source->modelId); }
 }  // namespace
 
 fs::path locateCapture(const Capture& c) {
@@ -404,13 +412,16 @@ fs::path locateCapture(const Capture& c) {
   return fs::exists(cached, ec) ? cached : c.resolvedPath;
 }
 
+std::string captureNotFoundMessage(const Capture& c, const std::string& jsonPath) {
+  std::string msg = jsonPath + ": file not found: " + c.resolvedPath.string();
+  if (isTone3000(c)) msg += " (not in the capture cache either; run: sawblade-t3k resolve <preset file>)";
+  else if (hasTone3000Ids(c)) msg += " (the capture cache was not tried: source.id / source.modelId must be plain letters, digits, '_' or '-')";
+  return msg;
+}
+
 void verifyCapture(const Capture& c, const std::string& jsonPath) {
   const fs::path p = locateCapture(c);
-  if (!fs::exists(p)) {
-    std::string msg = jsonPath + ": file not found: " + c.resolvedPath.string();
-    if (isTone3000(c)) msg += " (not in the capture cache either; run: sawblade-t3k resolve <preset file>)";
-    throw CaptureError(jsonPath, msg);
-  }
+  if (!fs::exists(p)) throw CaptureError(jsonPath, captureNotFoundMessage(c, jsonPath));
   if (c.sha256.empty()) return;
   const std::string got = sha256File(p);
   if (got != c.sha256)
