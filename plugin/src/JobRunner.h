@@ -5,17 +5,14 @@
 // job survives the panel closing; the job directory (<app data>/jobs/<timestamp>-match|export, with job.json)
 // is the source of truth, and a runner that finds a running job on disk re-attaches to it.
 //
-// Nothing here blocks the message thread: every job has its own background threads (a launcher/monitor and a
-// reader that drains the child's stdout/stderr pipe so it never fills), and the message thread only copies a
-// snapshot. The audio thread never touches this.
+// Nothing here blocks the message thread: every job has its own monitor thread (probe, launch, follow the log and the
+// progress file, notice the exit) and the message thread only copies a snapshot. The audio thread never touches this.
 //
-// Cancel = SIGTERM, then SIGKILL (juce::ChildProcess::kill) after a short grace period; the job is then marked
-// `cancelled` in job.json.
-//
-// POSIX note: juce::ChildProcess does not expose the child's pid, so the child is started through
-// `/bin/sh -c 'echo $$; exec "$0" "$@"' <exe> <args...>`: the shell prints its pid (which `exec` keeps) as the
-// first output line, and the reader strips it. That pid is what job.json stores and what a re-attached runner
-// polls and signals.
+// The tool is started with posix_spawn as the leader of its own process group, with stdout and stderr appended to
+// <job>/log.txt (a file, not a pipe: nothing can fill, nothing needs a reader thread, and the job outlives the app).
+// Cancel = SIGTERM to the whole group, then SIGKILL to it after a short grace period, so helper processes the tool
+// started die with it; the job is then marked `cancelled` in job.json. job.json stores pid and pgid, which a runner
+// started later uses to re-attach.
 
 #include <atomic>
 #include <chrono>

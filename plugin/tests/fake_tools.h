@@ -37,6 +37,11 @@ out = opt("--out")
 os.makedirs(out, exist_ok=True)
 json.dump({"argv": argv}, open(os.path.join(out, "argv.json"), "w"))
 
+if cfg.get("grandchild"):
+    import subprocess
+    gc = subprocess.Popen(["sleep", "120"])
+    open(os.path.join(out, "grandchild.pid"), "w").write(str(gc.pid))
+
 def gate(g):
     if g not in cfg.get("gates", []):
         return

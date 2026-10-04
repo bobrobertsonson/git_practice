@@ -18,10 +18,22 @@
 #include "AppPaths.h"
 
 #if !JUCE_WINDOWS
+#include <fcntl.h>
 #include <signal.h>
+#include <spawn.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
+
+#if !JUCE_WINDOWS
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#define SAWBLADE_ENVIRON (*_NSGetEnviron())
+#else
+extern char** environ;
+#define SAWBLADE_ENVIRON environ
+#endif
 #endif
 
 #ifndef SAWBLADE_SOURCE_DIR
@@ -100,12 +112,13 @@ bool pidAlive(std::int64_t pid) {
 #endif
 }
 
-void signalPid(std::int64_t pid, bool hard) {
+// The tool runs as the leader of its own process group (pgid == pid), so this reaches its helper processes too.
+void signalGroup(std::int64_t pgid, bool hard) {
 #if JUCE_WINDOWS
-  (void)pid;
+  (void)pgid;
   (void)hard;
 #else
-  if (pid > 1) ::kill(static_cast<pid_t>(pid), hard ? SIGKILL : SIGTERM);
+  if (pgid > 1) ::kill(-static_cast<pid_t>(pgid), hard ? SIGKILL : SIGTERM);
 #endif
 }
 
@@ -375,11 +388,12 @@ struct JobRunner::Job {
   bool progressFileSeen = false;          // snap.progressJson and the file has been read at least once
   std::vector<std::string> commandLine;
 
-  std::atomic<bool> cancelRequested{false}, stopMonitoring{false}, readerDone{false}, owned{true};
+  std::atomic<bool> cancelRequested{false}, stopMonitoring{false}, owned{true};
   std::atomic<std::int64_t> pid{0};
-  std::unique_ptr<juce::ChildProcess> proc;
+  std::atomic<std::int64_t> pgid{0};
+  std::string logPartial;                 // an incomplete last line of log.txt
   std::thread monitor;
-  std::int64_t logOffset = 0;             // attached jobs: how much of log.txt was read
+  std::int64_t logOffset = 0;             // how much of log.txt was read
 
   void pushLine(const std::string& line) {
     std::lock_guard<std::mutex> lk(m);
@@ -424,6 +438,7 @@ struct JobRunner::Job {
     j["kind"] = jobKindName(kind);
     j["state"] = jobStateName(s.state);
     j["pid"] = pid.load();
+    j["pgid"] = pgid.load();
     j["startedEpochMs"] = startedMs;
     j["startedUtc"] = utcIso(startedMs);
     if (finishedMs > 0) {
@@ -472,20 +487,32 @@ struct JobRunner::Job {
     }
   }
 
-  // Attached jobs have no pipe: follow log.txt instead.
-  void pollLogFile() {
+  // The tool's stdout / stderr go straight to <job>/log.txt (no pipe, so nothing can fill and nothing needs a reader
+  // thread, and a re-attached runner reads the same file). Complete lines only, until `flush`.
+  void pollLogFile(bool flush = false) {
     std::ifstream f(dir / "log.txt", std::ios::binary);
-    if (!f) return;
-    f.seekg(0, std::ios::end);
-    const std::int64_t size = f.tellg();
-    if (size <= logOffset) return;
-    f.seekg(logOffset);
-    std::string chunk(static_cast<std::size_t>(size - logOffset), '\0');
-    f.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-    logOffset = size;
-    std::istringstream ss(chunk);
-    std::string line;
-    while (std::getline(ss, line)) pushLine(line);
+    if (f) {
+      f.seekg(0, std::ios::end);
+      const std::int64_t size = f.tellg();
+      if (size > logOffset) {
+        f.seekg(logOffset);
+        std::string chunk(static_cast<std::size_t>(size - logOffset), '\0');
+        f.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        logOffset = size;
+        logPartial += chunk;
+      }
+    }
+    std::size_t nl;
+    while ((nl = logPartial.find('\n')) != std::string::npos) {
+      std::string line = logPartial.substr(0, nl);
+      if (!line.empty() && line.back() == '\r') line.pop_back();
+      logPartial.erase(0, nl + 1);
+      pushLine(line);
+    }
+    if (flush && !logPartial.empty()) {
+      pushLine(logPartial);
+      logPartial.clear();
+    }
   }
 };
 
@@ -694,87 +721,77 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
     job->commandLine.clear();
     job->commandLine.push_back(job->exe);
     for (const auto& a : job->args) job->commandLine.push_back(a);
-    job->proc = std::make_unique<juce::ChildProcess>();
-    juce::StringArray argv;
 #if JUCE_WINDOWS
-    argv.add(juce::String(job->exe));
-    bool pidSeen = true;
+    job->finishedMs = nowMs();
+    job->finish(JobState::Failed, "Running the match tools is not supported on this platform.");
+    return;
 #else
-    argv.add("/bin/sh");
-    argv.add("-c");
-    argv.add("echo $$; exec \"$0\" \"$@\"");
-    argv.add(juce::String(job->exe));
-    bool pidSeen = false;
-#endif
-    for (const auto& a : job->args) argv.add(juce::String(a));
-    if (!job->proc->start(argv, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr)) {
-      job->finishedMs = nowMs();
-      job->finish(JobState::Failed, "Could not start " + job->exe);
-      return;
+    // posix_spawn: the tool is the leader of a new process group (cancel signals the whole group), its stdout and
+    // stderr are appended to <job>/log.txt, and its pid is known at once.
+    pid_t pid = 0;
+    {
+      posix_spawn_file_actions_t fa;
+      posix_spawnattr_t at;
+      posix_spawn_file_actions_init(&fa);
+      posix_spawnattr_init(&at);
+      const std::string logPath = (job->dir / "log.txt").string();
+      posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+      posix_spawn_file_actions_addopen(&fa, 1, logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+      posix_spawn_file_actions_adddup2(&fa, 1, 2);
+      posix_spawnattr_setpgroup(&at, 0);
+      posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);
+      std::vector<std::string> store;
+      store.push_back(job->exe);
+      for (const auto& a : job->args) store.push_back(a);
+      std::vector<char*> argv;
+      for (auto& s : store) argv.push_back(s.data());
+      argv.push_back(nullptr);
+      const int rc = posix_spawn(&pid, job->exe.c_str(), &fa, &at, argv.data(), SAWBLADE_ENVIRON);
+      posix_spawn_file_actions_destroy(&fa);
+      posix_spawnattr_destroy(&at);
+      if (rc != 0) {
+        job->finishedMs = nowMs();
+        job->finish(JobState::Failed, "Could not start " + job->exe + ": " + std::strerror(rc));
+        return;
+      }
     }
+    job->pid.store(pid);
+    job->pgid.store(pid);
     job->setState(JobState::Running);
     job->writeJobJson();
 
-    // --- reader: drains the pipe so the child never blocks on a full pipe; also writes log.txt. It owns a
-    //     reference to the job, so it can outlive a runner that was destroyed while the child still runs.
-    std::thread([job, pidSeen]() mutable {
-      std::ofstream log(job->dir / "log.txt", std::ios::binary | std::ios::app);
-      std::string partial;
-      auto handle = [&](const std::string& line) {
-        if (!pidSeen) {
-          pidSeen = true;
-          const bool digits = !line.empty() && line.size() <= 12 && std::all_of(line.begin(), line.end(), [](unsigned char c) { return std::isdigit(c); });
-          if (digits) {
-            job->pid.store(std::stoll(line));
-            job->writeJobJson();
-            return;
-          }
-        }
-        log << line << '\n';
-        log.flush();
-        job->pushLine(line);
-      };
-      // juce::ChildProcess::readProcessOutput is an fread of the requested size: it waits until that many bytes
-      // arrived (or EOF). One byte at a time returns as soon as a line is available (FILE buffering keeps it cheap).
-      char ch;
-      while (job->proc->readProcessOutput(&ch, 1) == 1) {
-        if (ch != '\n') {
-          partial.push_back(ch);
-          continue;
-        }
-        if (!partial.empty() && partial.back() == '\r') partial.pop_back();
-        handle(partial);
-        partial.clear();
-      }
-      if (!partial.empty()) handle(partial);
-      job->readerDone = true;
-    }).detach();
-
-    // --- monitor
-    bool termSent = false, killSent = false;
+    // --- monitor: log lines, progress, cancel (group SIGTERM, then SIGKILL after the grace period), exit
+    bool termSent = false, killSent = false, exited = false;
+    int status = 0;
     std::chrono::steady_clock::time_point termAt;
     while (!job->stopMonitoring) {
       if (job->cancelRequested && !termSent) {
         termSent = true;
         termAt = std::chrono::steady_clock::now();
-        if (job->pid.load() > 1) signalPid(job->pid.load(), false);
-        else job->proc->kill();
+        signalGroup(pid, false);
       }
-      if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace && job->proc->isRunning()) {
+      if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace) {
         killSent = true;
-        job->proc->kill();
+        signalGroup(pid, true);
       }
+      job->pollLogFile();
       job->pollProgress();
-      if (!job->proc->isRunning()) break;
+      const pid_t r = ::waitpid(pid, &status, WNOHANG);
+      if (r == pid || (r < 0 && errno != EINTR)) {
+        exited = true;
+        break;
+      }
       std::this_thread::sleep_for(kPollPeriod);
     }
-    if (job->stopMonitoring && job->proc->isRunning()) return;  // runner destroyed: the job dir lets the next runner re-attach
-    for (int i = 0; i < 20 && !job->readerDone; ++i) std::this_thread::sleep_for(100ms);  // let the reader finish the last lines
+    if (!exited) return;  // runner destroyed: the child keeps running; the job dir lets the next runner re-attach
+    if (job->cancelRequested) signalGroup(pid, true);  // sweep helpers that outlived the tool
+    job->pollLogFile(/*flush=*/true);
     job->pollProgress();
     {
       std::lock_guard<std::mutex> sl(job->m);
-      job->snap.exitCode = static_cast<int>(job->proc->getExitCode());
+      job->snap.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : -1);
     }
+#endif
     finalizeJob(*job);
   });
   return true;
@@ -861,11 +878,11 @@ void JobRunner::monitorAttached(std::shared_ptr<Job> job) {
     if (job->cancelRequested && !termSent) {
       termSent = true;
       termAt = std::chrono::steady_clock::now();
-      signalPid(job->pid.load(), false);
+      signalGroup(job->pgid.load(), false);
     }
     if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace && pidAlive(job->pid.load())) {
       killSent = true;
-      signalPid(job->pid.load(), true);
+      signalGroup(job->pgid.load(), true);
     }
     job->pollLogFile();
     job->pollProgress();
@@ -873,7 +890,8 @@ void JobRunner::monitorAttached(std::shared_ptr<Job> job) {
     std::this_thread::sleep_for(kPollPeriod);
   }
   if (job->stopMonitoring) return;
-  job->pollLogFile();
+  if (job->cancelRequested) signalGroup(job->pgid.load(), true);
+  job->pollLogFile(/*flush=*/true);
   job->pollProgress();
   finalizeJob(*job);
 }
@@ -890,6 +908,7 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
   job->grace = std::chrono::milliseconds(graceMs_.load());
   job->startedMs = j.value("startedEpochMs", static_cast<std::int64_t>(0));
   job->pid = j.value("pid", static_cast<std::int64_t>(0));
+  job->pgid = j.value("pgid", job->pid.load());
   if (auto it = j.find("commandLine"); it != j.end() && it->is_array())
     for (const auto& a : *it)
       if (a.is_string()) job->commandLine.push_back(a.get<std::string>());

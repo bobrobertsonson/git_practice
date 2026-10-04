@@ -59,12 +59,29 @@ MatchPlan planMatch(SawbladeProcessor& p) {
   return plan;
 }
 
+std::string exportBlockedReason(const Preset& p) {
+  auto missing = [](const Capture& c) { return c.resolvedPath.empty(); };
+  for (const PathPreset* path : {&p.a, &p.b})
+    for (const auto& b : path->blocks)
+      if (const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get()))
+        if (missing(nam->model)) return "A NAM block in the preset has no model file, so it cannot be exported. Load a preset whose captures are on disk.";
+  if (p.cab.enabled) {
+    const bool bad = p.cab.mode == CabMode::Shared ? missing(p.cab.ir) : (missing(p.cab.irA) || missing(p.cab.irB));
+    if (bad) return "The cab IR in the preset has no file, so it cannot be exported.";
+  }
+  return {};
+}
+
 ExportSource prepareExportSource(SawbladeProcessor& p) {
   ExportSource s;
   if (const auto f = p.audition().currentCandidateFile(); f && fs::exists(*f)) {
     s.ok = true;
     s.file = *f;
     s.description = "Matched preset: " + f->filename().string();
+    return s;
+  }
+  if (const std::string why = exportBlockedReason(p.currentPreset()); !why.empty()) {
+    s.message = why;
     return s;
   }
   const fs::path dir = p.jobs().jobsDir() / "inputs";

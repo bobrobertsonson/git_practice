@@ -346,8 +346,8 @@ struct PlayAlongPanel::Impl {
     recTime.setText(t, juce::dontSendNotification);
     recTime.setColour(juce::Label::textColourId, state == TakeRecorder::State::Recording ? juce::Colour(0xffff6a5a) : L::dimText());
 
-    // The takes on disk: rescanned when the recorder changed them, and every 2 s (other instances / the user's file manager).
-    if (force || r.takesVersion() != seenVersion || (++refreshTick % 32) == 0) {
+    // The takes on disk: rescanned when the recorder changed them, and every 10 s (other instances / the user's file manager).
+    if (force || r.takesVersion() != seenVersion || (++refreshTick % 160) == 0) {
       seenVersion = r.takesVersion();
       auto fresh = r.listTakes();
       const std::string keep = selectedTakeName();

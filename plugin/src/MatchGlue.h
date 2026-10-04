@@ -9,6 +9,7 @@
 
 #include "JobRunner.h"
 #include "TakeRecorder.h"
+#include "sawblade/preset.h"
 
 namespace sawblade::plugin {
 
@@ -27,6 +28,10 @@ struct MatchPlan {
 // reference = the loaded song's guitar stem (else other, else the mix / first file), DI = the selected take,
 // offset = the take's stem sample index at its first sample (only if it was recorded against this song).
 MatchPlan planMatch(SawbladeProcessor& p);
+
+// Why a preset cannot be exported as written: a capture (NAM model, or the cab IR when the cab is on) with no file path.
+// "" = fine.
+std::string exportBlockedReason(const Preset& p);
 
 struct ExportSource {
   bool ok = false;

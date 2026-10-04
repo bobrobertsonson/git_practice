@@ -301,13 +301,19 @@ line, the progress mode), `log.txt` (the child's output) and the tool's own file
 loaded with its results, and a `running` job whose process is gone is reported as failed (or as succeeded if it left its
 result). One match and one export can be active at the same time; a second job of the same kind is refused.
 
-- *Threads.* The message thread only starts, cancels and copies snapshots. Each job has a monitor thread (probe, launch,
-  poll progress, notice the exit) and a reader thread that drains the pipe so it never fills. (`ChildProcess::readProcessOutput`
-  is an `fread` of the requested size, so it is called one byte at a time to return when a line is complete.)
-- *Child pid.* `ChildProcess` has no pid, so on POSIX the child is started as `/bin/sh -c 'echo $$; exec "$0" "$@"' <exe> ...`:
-  the first output line is the pid of the exec'd tool, which job.json records and a re-attached runner signals.
-- *Cancel.* SIGTERM, then SIGKILL (`ChildProcess::kill`) after 2.5 s; the job is then `cancelled` in job.json. Only the
-  tool's own process is signalled, not a process tree.
+- *Threads.* The message thread only starts, cancels and copies snapshots. Each job has one monitor thread (probe,
+  launch, follow the log and the progress file, notice the exit). There is no pipe and no reader thread.
+- *Process.* The tool is started with `posix_spawn` as the leader of its own process group (`POSIX_SPAWN_SETPGROUP`, so
+  pgid = pid), with stdout and stderr appended to `<job>/log.txt` (a file: a child that floods its output cannot stall,
+  and the log survives the app). The monitor parses new complete lines of that file; stage and message come from them
+  when there is no progress file.
+- *Cancel.* SIGTERM to the whole process group, then SIGKILL to the group after 2.5 s, then a last group SIGKILL once the
+  tool has exited, so helpers it started (worker processes) die with it. The job is then `cancelled` in job.json.
+- *Re-attach.* job.json stores `pid` and `pgid`. A job survives the app quitting (the tool keeps running, its output
+  keeps going to log.txt). A runner started later re-attaches by pid (`kill(pid, 0)`, reaping it if it is its own
+  child), follows log.txt and progress.json, cancels through the group, and when the pid is gone decides the final
+  state from the files: `result.json` (match) / `export_report.json` or a `.nam` (export) means succeeded, otherwise
+  failed ("stopped without a result"). Exit codes are only known for jobs the runner started itself.
 - *Tools and settings.* The matcher executable (default `<repo>/match/.venv/bin/sawblade-match`, `<repo>` from the build's
   source dir), the exporter (`.../sawblade-export`) and the pool manifest
   (`~/.cache/sawblade/captures/pool_manifest.json`) are settings in `juce::PropertiesFile` application properties
@@ -341,8 +347,8 @@ live blend, both paths on one cab, is exact without the cab; a studio blend only
 `auto` (the tool's default; `--device auto` is passed), the licence note of the export, progress, and REVEAL
 (`File::revealToUser` on the result folder). It runs `sawblade-export <preset> --mode <m> --size <s> --device auto
 [--di <selected take>] --out <job>/export`. The preset is the auditioned / applied candidate's resolved file when that is what
-is loaded, otherwise the current preset written to `<jobs>/inputs/` (so the export is what is playing, parameter changes included).
-The selected take is also passed as the validation DI.
+is still exactly the current preset (compared as state JSON, so any later preset load or parameter change forgets the association), otherwise the current preset written to `<jobs>/inputs/` (so the export is what is playing, parameter changes included).
+The selected take is also passed as the validation DI. A capture without a file (NAM model, or the cab IR while the cab is on) blocks the export with a message instead of launching; the written file keeps absolute capture paths (tested by loading it back with `loadPresetFile`).
 
 **Tests.** `plugin/tests/test_record_match.cpp` (headless; recorder: no allocation or lock while recording, WAV bit-exact for
 mixed block sizes, overrun counting with a stalled writer and the silence padding, a take shorter than a writer pass, the
@@ -357,9 +363,7 @@ Standalone-only buttons, the missing-tool message, a job that survives the edito
 `sawblade_export_progress_1x.png`). All test data is synthesised into temp dirs; `SAWBLADE_DATA_DIR` keeps the default
 locations out of the home folder.
 
-**Known limits.** MATCH / EXPORT are Standalone-only. Cancel signals the tool's process only. A running job's reader thread is
-detached when the processor is destroyed (it holds its own reference; it ends with the child). The take list is rescanned every
-2 s while the panel is open. Takes and job folders are never deleted by the plugin.
+**Known limits.** MATCH / EXPORT are Standalone-only. The take list is rescanned when the recorder changes it and every 10 s while the panel is open. Takes and job folders are never deleted by the plugin.
 
 ### Editor
 

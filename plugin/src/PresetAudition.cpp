@@ -1,6 +1,7 @@
 #include "PresetAudition.h"
 
 #include "PluginProcessor.h"
+#include "PresetMapping.h"
 
 #include "sawblade/preset.h"
 
@@ -59,10 +60,20 @@ bool PresetAudition::revert() {
   return true;
 }
 
+// The candidate's file counts only while the current preset IS that candidate: any later preset load or parameter
+// change makes the saved state differ from the candidate as it would load, and then the exporter must take the
+// current state instead. (Compared as state JSON; while a load is still in flight the association is kept.)
 std::optional<fs::path> PresetAudition::currentCandidateFile() const {
-  const std::string current = proc_.status().presetName;
-  if (state_.active && state_.onCandidate) return state_.candidate;
-  if (!applied_.empty() && current == appliedName_) return applied_;
+  fs::path file;
+  if (state_.active && state_.onCandidate) file = state_.candidate;
+  else if (!applied_.empty()) file = applied_;
+  if (file.empty()) return std::nullopt;
+  if (proc_.status().loading) return file;
+  try {
+    const std::string wanted = presetToStateJson(clampedToParams(sawblade::loadPresetFile(file)));
+    if (wanted == presetToStateJson(proc_.currentPreset())) return file;
+  } catch (...) {
+  }
   return std::nullopt;
 }
 

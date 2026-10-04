@@ -121,7 +121,22 @@ struct FakeTools : TmpHolder, fake_tools::Toolbox {
 
 bool processGone(std::int64_t pid) {
   if (pid <= 1) return false;
-  return ::kill(static_cast<pid_t>(pid), 0) == -1 && errno == ESRCH;
+  if (::kill(static_cast<pid_t>(pid), 0) == -1 && errno == ESRCH) return true;
+  // Killed but not yet reaped (nobody waits for an orphan in a container): a zombie is gone too.
+  std::ifstream st("/proc/" + std::to_string(pid) + "/stat");
+  std::string line;
+  if (std::getline(st, line)) {
+    const auto close = line.rfind(')');
+    return close != std::string::npos && close + 2 < line.size() && line[close + 2] == 'Z';
+  }
+  return false;
+}
+
+std::int64_t grandchildPid(const fs::path& outDir) {
+  std::ifstream f(outDir / "grandchild.pid");
+  std::int64_t p = 0;
+  f >> p;
+  return p;
 }
 
 std::vector<std::string> argvOf(const fs::path& outDir) {
@@ -359,6 +374,8 @@ TEST_CASE("record: the sidecar stores the stem sample played at the take's first
 
   REQUIRE(rec.start(song.string()));
   runBlocks(h, x, at, 5, 480);
+  CHECK(h.allocs == 0);  // the take began with a StemPlayer running: still nothing allocated or locked on the audio thread
+  CHECK(h.locks == 0);
   finishTake(h);
   const auto takes = rec.listTakes();
   REQUIRE(takes.size() == 1);
@@ -416,6 +433,8 @@ TEST_CASE("record: the sidecar offset follows the host position in plugin mode",
   const std::int64_t hostPos = head.pos;
   REQUIRE(h.p.recorder().start(song.string()));
   runBlocks(h, x, at, 3, 256, &head);
+  CHECK(h.allocs == 0);
+  CHECK(h.locks == 0);
   finishTake(h);
   const auto takes = h.p.recorder().listTakes();
   REQUIRE(takes.size() == 1);
@@ -1192,4 +1211,128 @@ TEST_CASE("match: a finished match job's candidates audition and apply through t
   REQUIRE(h.p.waitForLoader());
   CHECK(h.p.status().presetName == "match best");
   CHECK(h.p.status().error.empty());
+}
+
+TEST_CASE("runner: cancel kills the tool's whole process group, helpers included", "[match][runner][cancel]") {
+  using namespace sawblade::plugin;
+  for (bool ignoreTerm : {false, true}) {
+    INFO("ignoreTerm " << ignoreTerm);
+    FakeTools t;
+    t.cfgMatch({{"progressJson", true}, {"grandchild", true}, {"ignoreTerm", ignoreTerm}, {"gates", json::array({"g1"})}});
+    JobRunner runner(t.settings, t.jobs);
+    runner.setCancelGrace(300ms);
+    REQUIRE(runner.startMatch(t.request()));
+    REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Match).progress.stage == "stage 1: screening"; }));
+    const JobSnapshot s = runner.snapshot(JobKind::Match);
+    const auto gc = grandchildPid(s.dir);
+    REQUIRE(gc > 1);
+    CHECK_FALSE(processGone(gc));
+    CHECK(readJson(s.dir / "job.json")["pgid"] == s.pid);  // its own process group
+    runner.cancel(JobKind::Match);
+    REQUIRE(runner.waitFinished(JobKind::Match, 15000ms));
+    CHECK(runner.snapshot(JobKind::Match).state == JobState::Cancelled);
+    CHECK(processGone(s.pid));
+    CHECK(waitUntil([&] { return processGone(gc); }, 5000ms));  // the grandchild died with the group
+  }
+}
+
+TEST_CASE("runner: a re-attached runner cancels the whole group too", "[match][runner][cancel][attach]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgMatch({{"progressJson", true}, {"grandchild", true}, {"gates", json::array({"g1"})}});
+  fs::path dir;
+  {
+    JobRunner first(t.settings, t.jobs);
+    REQUIRE(first.startMatch(t.request()));
+    REQUIRE(waitUntil([&] { return first.snapshot(JobKind::Match).progress.stage == "stage 1: screening"; }));
+    dir = first.snapshot(JobKind::Match).dir;
+  }
+  const auto gc = grandchildPid(dir);
+  REQUIRE(gc > 1);
+  JobRunner second(t.settings, t.jobs);
+  second.attachExisting();
+  REQUIRE(second.snapshot(JobKind::Match).state == JobState::Running);
+  second.cancel(JobKind::Match);
+  REQUIRE(second.waitFinished(JobKind::Match, 15000ms));
+  CHECK(second.snapshot(JobKind::Match).state == JobState::Cancelled);
+  CHECK(waitUntil([&] { return processGone(gc); }, 5000ms));
+}
+
+TEST_CASE("match: an applied candidate is forgotten after any later change, so EXPORT takes the current state", "[match][audition][export]") {
+  using namespace sawblade::plugin;
+  TempDir tmp;
+  Host h(kFs, 256);
+  h.p.jobs().setJobsDir(tmp.dir / "jobs");
+  const fs::path candA = writeIdentityPreset(tmp.dir, "candA", 0);
+  const fs::path candB = writeIdentityPreset(tmp.dir, "candB", 0);
+  auto& au = h.p.audition();
+  REQUIRE(au.audition(candA));
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(au.apply());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(au.currentCandidateFile() == std::optional<fs::path>{candA});
+  CHECK(prepareExportSource(h.p).file == candA);
+
+  // A parameter change: the state is no longer the candidate.
+  h.setParam(kBlend, 0.9);
+  CHECK(au.currentCandidateFile() == std::optional<fs::path>{});
+  ExportSource s = prepareExportSource(h.p);
+  REQUIRE(s.ok);
+  CHECK(s.file != candA);
+  CHECK(s.description.find("Current preset") == 0);
+  CHECK(readJson(s.file)["blend"] == Catch::Approx(0.9));
+
+  // Back to the candidate's value does not matter; loading another preset does.
+  REQUIRE(au.audition(candA));
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(au.apply());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(au.currentCandidateFile().has_value());
+  REQUIRE(h.p.loadPresetFile(candB));
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(au.currentCandidateFile().has_value());
+  CHECK(readJson(prepareExportSource(h.p).file)["name"] == "candB");
+}
+
+TEST_CASE("match: the written export source loads back with its capture paths resolved; a capture without a file blocks the export", "[match][export]") {
+  using namespace sawblade::plugin;
+  TempDir tmp;
+  Host h(kFs, 256);
+  h.p.jobs().setJobsDir(tmp.dir / "jobs");
+  const fs::path src = writeIdentityPreset(tmp.dir, "withcaptures", 0);
+  h.load(src);
+  const ExportSource s = prepareExportSource(h.p);
+  REQUIRE(s.ok);
+  REQUIRE(fs::exists(s.file));
+  // The way sawblade-export reads it: through the preset loader, from another directory.
+  const Preset back = sawblade::loadPresetFile(s.file);
+  int nam = 0;
+  for (const PathPreset* path : {&back.a, &back.b})
+    for (const auto& b : path->blocks)
+      if (const auto* n = dynamic_cast<const NamBlockParams*>(b.params.get())) {
+        ++nam;
+        CHECK(n->model.resolvedPath.is_absolute());
+        CHECK(fs::exists(n->model.resolvedPath));
+        CHECK(n->model.resolvedPath.filename() == "linear_identity.nam");
+      }
+  CHECK(nam == 2);
+  CHECK(back.cab.ir.resolvedPath.is_absolute());
+  CHECK(fs::exists(back.cab.ir.resolvedPath));
+  CHECK(exportBlockedReason(back).empty());
+
+  // A capture with no resolved path cannot be exported.
+  Preset bad = back;
+  for (auto& b : bad.a.blocks)
+    if (const auto* n = dynamic_cast<const NamBlockParams*>(b.params.get())) {
+      auto copy = std::make_shared<NamBlockParams>(*n);
+      copy->model.resolvedPath.clear();
+      b.params = copy;
+    }
+  CHECK(exportBlockedReason(bad).find("no model file") != std::string::npos);
+  Preset badIr = back;
+  badIr.cab.ir.resolvedPath.clear();
+  CHECK(exportBlockedReason(badIr).find("cab IR") != std::string::npos);
+  badIr.cab.enabled = false;  // a disabled cab is not exported
+  CHECK(exportBlockedReason(badIr).empty());
+  CHECK(exportBlockedReason(makeInitPreset()).empty());
 }
