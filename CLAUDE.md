@@ -63,6 +63,9 @@ types; every type declares its latency and whether it is NAM-trainable.
 - Modular pedal chain: modeled recreations of real pedals as block types (DSP models, not
   captures); UI names use generic descriptors, not trademarks, unless licensed.
 - Matching engine (`match/`), NAM export, AAX.
+- Play-along (phase 5, `docs/specs/phase5_playalong.md`): on-device stem separation of the
+  user's song; the guitar stem feeds the matcher, the rest becomes a backing track to play
+  over with the matched tone.
 
 ## Hard rules
 
