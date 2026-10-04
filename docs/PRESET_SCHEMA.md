@@ -88,18 +88,22 @@ Every block shares these fields; the rest depend on `type`:
 }
 ```
 
-Block types in v1:
+Block types:
 
-| `type` | Purpose | Type-specific fields |
-|---|---|---|
-| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below |
-| `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` |
+| `type` | Purpose | Type-specific fields | NAM-trainable | Latency |
+|---|---|---|---|---|
+| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below | yes | the model's |
+| `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` | yes | 0 |
+| `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology) | `modelVersion`, `params`; see PedalHm below | yes | 50 samples (at any rate) |
+| `pedal.ts` | Modeled "green overdrive" (Tube-Screamer topology) | `modelVersion`, `params`; see PedalTs below | yes | 50 samples (at any rate) |
 
-Unknown `type` values are a parse error in v1. Future types (modeled pedal recreations, e.g.
-`"type": "pedal.hm"` with `"params": { ... }` and `"modelVersion": 1`) are added to the
-registry without changing this schema's shape. Each registered type declares in code:
-latency, and whether it is **NAM-trainable** (time-based effects — delay, reverb,
-modulation, long-release dynamics — are not; the export phase refuses or bypasses them).
+Unknown `type` values are a parse error. New block types (further modeled pedal recreations)
+are added to the registry without changing this schema's shape: they use `"params": { ... }`
+and `"modelVersion": N`. Each registered type declares in code: latency, and whether it is
+**NAM-trainable** (time-based effects — delay, reverb, modulation, long-release dynamics — are
+not; the export phase refuses or bypasses them). The modeled pedals are DSP models, not
+captures: they are static, nonlinear and time-invariant, so they are NAM-trainable, and they
+carry no TONE3000 license or creator. UI names are generic descriptors (no trademarks).
 
 ### NamBlock (`type: "nam"`)
 
@@ -114,6 +118,54 @@ modulation, long-release dynamics — are not; the export phase refuses or bypas
   "model": Capture
 }
 ```
+
+### PedalHm (`type: "pedal.hm"`) and PedalTs (`type: "pedal.ts"`)
+
+Modeled pedals (DSP, no capture files). Generic UI names: `pedal.hm` = **"Swedish chainsaw
+distortion"**, `pedal.ts` = **"green overdrive"**. Typical `slot`: `"pedal"` for the HM
+model, `"boost"` for the TS model, but any slot is accepted.
+
+```jsonc
+{ "id": "a1", "type": "pedal.hm", "slot": "pedal", "bypass": false,
+  "modelVersion": 1,                    // optional, default 1; any other value = PresetError
+  "params": { "level": 5, "low": 10, "high": 10, "distortion": 10 } }   // optional; every key optional
+{ "id": "b1", "type": "pedal.ts", "slot": "boost",
+  "modelVersion": 1, "params": { "drive": 2, "tone": 6, "level": 8 } }
+```
+
+| Type | Param | Range | Default | Meaning |
+|---|---|---|---|---|
+| `pedal.hm` | `level` | 0-10 | 5 | output level, `3*level - 24` dB (0 dB at 8) |
+| | `low` | 0-10 | 5 | low gyrator of the colour-mix EQ, 100 Hz peak, -12..+18 dB |
+| | `high` | 0-10 | 5 | high gyrators, 1 kHz + 1.5 kHz peaks, -8..+14 dB each |
+| | `distortion` | 0-10 | 5 | first-stage gain, 6..46 dB (second stage fixed +20 dB) |
+| `pedal.ts` | `drive` | 0-10 | 5 | feedback-loop gain, `Rd/4.7k` with `Rd = 51k + 500k*drive/10` |
+| | `tone` | 0-10 | 5 | 1st-order low-pass, 723 Hz .. 7.23 kHz |
+| | `level` | 0-10 | 5 | output level, `3*level - 24` dB |
+
+- Every param is a JSON number in [0, 10]; out of range, wrong type, or an unknown key inside
+  `params` (including another type's key), or a `params` that is not an object, is a
+  PresetError (exit 3). `modelVersion` is the model revision: it is `1`; a later re-fit of the
+  EQ table or clip knees that changes the sound bumps it, and a preset naming a version this
+  build does not know is rejected instead of silently sounding different.
+- `toJson()` always writes `modelVersion` and all params (explicit defaults), so
+  parse -> write -> parse is exact.
+- Params are static per preset: changing one goes through the Chain rebuild/swap path, there is
+  no parameter smoothing in v1.
+- Internals: both run their nonlinear stages at 4x oversampling (linear-phase half-band FIRs)
+  with second-order antiderivative anti-aliasing (ADAA2) on a soft clipper; aliasing is below
+  -80 dB (measured around -92 .. -94 dB) at maximum gain.
+- **Latency: 50 samples at every sample rate** (oversampler round trip + ADAA, padded to a whole
+  number of base-rate samples; IIR group delay is not counted). It is reported through the block's
+  `latencySamples()`, so `pathLatency`, `compensationDelay` and the plugin's reported latency
+  include it; a bypassed block adds none. In a preset with a pedal on one path only, the other
+  path is delayed by the same amount.
+- `namTrainable: true` for both (static, nonlinear, time-invariant).
+- Neither model is a capture of a real unit: the targets are published frequency-response
+  descriptions plus engineering reasoning (see `docs/specs/phase7_modeled_pedals.md`); a later
+  task fits them to captures and bumps `modelVersion` if the sound changes.
+- Examples that render with files in this repo only: `presets/modeled/hm_chainsaw.json`,
+  `presets/modeled/ts_boost.json`.
 
 ### Capture (shared by NAM models and IRs)
 

@@ -11,6 +11,17 @@ matcher. Every preset uses `align: auto`.
 | `tight_body.json` | 0.75 | shared V30 | fast palm mutes / D-beat |
 | `studio_split.json` | 0.55 | per-path (studio blend) | wider studio tone; with-cab export only |
 
+## Modeled-pedal examples (`modeled/`)
+
+| Preset | Blocks | Use |
+|---|---|---|
+| `modeled/hm_chainsaw.json` | `pedal.hm` (everything 10) | single-path "Swedish chainsaw distortion" model |
+| `modeled/ts_boost.json` | `pedal.ts` (drive 2, tone 6, level 8) into `pedal.hm` | "green overdrive" boost into the chainsaw model |
+
+These use no TONE3000 captures (DSP models only) and a repo fixture identity IR, so they render
+anywhere: `tonerender --preset presets/modeled/hm_chainsaw.json --in tests/fixtures/di_riff.wav --out out.wav`.
+Starting points, not tuned tones.
+
 ## Captures to fetch (not committed)
 
 TONE3000 captures carry their own licenses and are **not** redistributed in this repo. Put
