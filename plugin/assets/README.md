@@ -18,6 +18,7 @@ renders at build time. Total size is well under the 25 MB budget (checked by the
 | `knob_pedal.png` + `.json` | knurled knob, same layout | strip |
 | `footswitch.png` + `.json` | footswitch, 2 frames (up, down) | strip |
 | `led_orange.png` + `.json` | LED, 2 frames (off, on), 64 x 64 | strip |
+| `preview_riff.wav` | the capture browser's PREVIEW riff: 6.0 s, 48 kHz, mono, 24-bit, peak -12 dBFS; synthesised (Karplus-Strong), no third-party audio; `design/render/make_preview_riff.py` regenerates it byte for byte | 864 KB |
 
 Stored sizes are 2x the layout size (the editor lays out at 1280 x 800 and draws panels at half the stored
 width). Sidecar JSONs are copied unchanged from `ui_sprites.py`.

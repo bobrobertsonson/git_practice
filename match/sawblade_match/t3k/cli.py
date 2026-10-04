@@ -16,12 +16,14 @@ from .auth import (DEFAULT_BASE_URL, TokenManager, TokenStore, poll_for_session,
                    request_device_code)
 from .cache import Cache
 from .client import T3KClient
-from .errors import T3KError
+from .errors import ApiError, AuthError, LicenseRefused, NotFoundError, T3KError
+from .fetch import ensure_capture, list_candidates
+from .licenses import check_license
 from .filter import FilterConfig
 from .ids import require_id
 from .pool import build_pool, write_manifest
 from .resolve import default_output, resolve_file
-from .search import TABLE_HEADER, assess, table_rows
+from .search import TABLE_HEADER, assess, pool_records, table_rows
 from .sources import default_path, load_pool_sources, merge_unique
 
 PERSONAL_USE_NOTE = ("tones/search is outside TONE3000's free tier. This is a personal, non-commercial "
@@ -49,9 +51,9 @@ GEAR_TO_SLOT = {"amp": "amp", "pedal": "pedal", "ir": "cab", "cab": "cab"}
 def _env_client_id() -> str:
     cid = os.environ.get("TONE3000_CLIENT_ID", "").strip()
     if not cid:
-        raise T3KError("TONE3000_CLIENT_ID is not set (your publishable key, t3k_pub_...). See match/README.md")
+        raise AuthError("TONE3000_CLIENT_ID is not set (your publishable key, t3k_pub_...). See match/README.md")
     if cid.startswith("t3k_cs_"):
-        raise T3KError("TONE3000_CLIENT_ID looks like a SECRET key (t3k_cs_...); use the publishable t3k_pub_ key")
+        raise AuthError("TONE3000_CLIENT_ID looks like a SECRET key (t3k_cs_...); use the publishable t3k_pub_ key")
     return cid
 
 
@@ -66,18 +68,32 @@ def make_client(http: httpx.Client | None = None) -> T3KClient:
     return T3KClient(tm, base, http=http)
 
 
+def _emit(obj: dict) -> None:
+    """One compact JSON document on stdout, flushed so a reader sees events as they happen."""
+    print(json.dumps(obj), flush=True)
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     base = _base_url()
     cid = _env_client_id()
     http = httpx.Client(base_url=base, timeout=30.0)
     dc = request_device_code(http, cid)
-    print(f"\nOpen  {dc.verification_uri}  and enter the code:  {dc.user_code}")
-    if dc.verification_uri_complete:
-        print(f"(or open {dc.verification_uri_complete})")
-    print(f"Waiting for approval (expires in {int(dc.expires_in)} s)...", flush=True)
+    events = args.json_events
+    if events:
+        _emit({"event": "device_code", "verification_uri": dc.verification_uri,
+               "verification_uri_complete": dc.verification_uri_complete, "user_code": dc.user_code,
+               "expires_in": int(dc.expires_in)})
+    else:
+        print(f"\nOpen  {dc.verification_uri}  and enter the code:  {dc.user_code}")
+        if dc.verification_uri_complete:
+            print(f"(or open {dc.verification_uri_complete})")
+        print(f"Waiting for approval (expires in {int(dc.expires_in)} s)...", flush=True)
     session = poll_for_session(http, cid, dc)
     tm = TokenManager(cid, http, TokenStore())
     tm.set_session(session)
+    if events:
+        _emit({"event": "logged_in"})   # the refresh token is saved by TokenStore and never printed here
+        return 0
     print(f"Logged in. Tokens saved to {tm.store.path} (mode 0600).")
     print("\nContainers are ephemeral. To skip this login next time, save this refresh token as the\n"
           "TONE3000_REFRESH_TOKEN secret (shown once; treat it like a password):\n")
@@ -87,6 +103,9 @@ def cmd_login(args: argparse.Namespace) -> int:
 
 def cmd_whoami(args: argparse.Namespace) -> int:
     u = make_client().get_user()
+    if args.json:
+        _emit({"id": u.id, "username": u.username, "display_name": u.display_name})
+        return 0
     print(f"{u.display_name or u.username} (@{u.username}, id {u.id})")
     return 0
 
@@ -114,6 +133,79 @@ def cmd_search(args: argparse.Namespace) -> int:
     _table(table_rows(records), TABLE_HEADER)
     npass = sum(r["passes"] for r in records)
     print(f"\n{len(records)} result(s), {npass} pass the quality filter.")
+    return 0
+
+
+def _gear_names(gear) -> set[str] | None:
+    """`--gear` values as TONE3000 `gear` names (cab == ir)."""
+    return {"ir" if g == "cab" else g for g in gear} if gear else None
+
+
+def cmd_models(args: argparse.Namespace) -> int:
+    """Read-only: the candidate models of a tone (A2 then A1; IRs as `pull` does). No download."""
+    client = make_client()
+    tone = client.get_tone(require_id(args.tone_id, "tone id"))
+    found = list_candidates(client, tone)
+    arch, models = found if found else ("", [])
+    _emit({"tone_id": tone.id, "architecture": arch,
+           "models": [{"model_id": m.id, "name": m.name, "size": m.size or None} for m in models]})
+    return 0
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    """Licence-check, pick a model, download into the cache (a hit downloads nothing), print the result."""
+    cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
+    client = make_client()
+    tone = client.get_tone(require_id(args.tone_id, "tone id"))
+    check_license(tone.license, f"tone {tone.id}")            # before any model lookup or download
+    found = list_candidates(client, tone)
+    models = found[1] if found else []
+    if args.model is not None:
+        want = int(require_id(args.model, "model id"))
+        model = next((m for m in models if m.id == want), None)
+        if model is None:
+            raise NotFoundError(f"model {want} is not one of tone {tone.id}'s candidate models "
+                                f"({', '.join(str(m.id) for m in models) or 'none'})")
+    elif models:
+        model = models[0]
+    else:
+        raise NotFoundError(f"tone {tone.id} has no usable models")
+    entry = ensure_capture(client, cache, tone, model)
+    _emit({"tone_id": tone.id, "model_id": model.id, "path": str(Path(entry.path).resolve()),
+           "sha256": entry.sha256, "kind": tone.format, "gear": tone.gear,
+           "source": {"provider": "tone3000", "id": str(tone.id), "modelId": str(model.id), "url": tone.url,
+                      "title": tone.title, "creator": tone.user.creator, "license": tone.license}})
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    """Read-only listing of favorites (network) or the pool manifest (no network), `search` record shape."""
+    gears = _gear_names(args.gear)
+    if args.source == "favorites":
+        tones = make_client().list_favorited(query=args.query or None)
+        if gears:
+            tones = [t for t in tones if t.gear in gears]
+        records = assess(tones, _filter_cfg(args), datetime.now(timezone.utc))
+    else:
+        cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
+        try:
+            manifest = json.loads((cache.root / "pool_manifest.json").read_text())
+        except (FileNotFoundError, ValueError):
+            manifest = None
+        records = pool_records(manifest if isinstance(manifest, dict) else None)
+        if gears:
+            records = [r for r in records if r["gear"] in gears]
+        if args.query:
+            q = args.query.lower()
+            records = [r for r in records if q in (r["title"] or "").lower() or q in (r["creator"] or "").lower()]
+    records = records[:args.limit]
+    if args.json:
+        json.dump(records, sys.stdout, indent=2)
+        print()
+        return 0
+    _table([[str(r["tone_id"]), str(r["title"])[:40], str(r["creator"]), str(r["license"] or "-"),
+             str(r["gear"]), "PASS" if r["passes"] else "FAIL"] for r in records],
+           ["tone", "title", "creator", "license", "gear", "quality"])
     return 0
 
 
@@ -161,8 +253,43 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sawblade-t3k", description="TONE3000 access for Sawblade")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("login", help="device-flow login (needs TONE3000_CLIENT_ID)").set_defaults(fn=cmd_login)
-    sub.add_parser("whoami", help="show the logged-in TONE3000 user").set_defaults(fn=cmd_whoami)
+    lg = sub.add_parser("login", help="device-flow login (needs TONE3000_CLIENT_ID)")
+    lg.add_argument("--json-events", action="store_true",
+                    help="print JSON event lines (device_code, logged_in) and never the refresh token")
+    lg.set_defaults(fn=cmd_login, json=False)
+    wh = sub.add_parser("whoami", help="show the logged-in TONE3000 user")
+    wh.add_argument("--json", action="store_true", help="machine-readable output and errors")
+    wh.set_defaults(fn=cmd_whoami)
+
+    md = sub.add_parser("models", help="read-only: candidate models of a tone (A2 then A1), no download")
+    md.add_argument("tone_id")
+    md.add_argument("--json", action="store_true", help="machine-readable output and errors")
+    md.add_argument("--cache-dir")
+    md.set_defaults(fn=cmd_models)
+
+    fe = sub.add_parser("fetch", help="download one capture into the cache and print where it is")
+    fe.add_argument("tone_id")
+    fe.add_argument("--model", metavar="MODEL_ID", help="one of `models`' ids (default: the first)")
+    fe.add_argument("--json", action="store_true", help="machine-readable output and errors")
+    fe.add_argument("--cache-dir")
+    fe.set_defaults(fn=cmd_fetch)
+
+    ls = sub.add_parser("list", help="read-only: list favorites or the cached pool, search-record shaped")
+    ls.add_argument("--source", choices=["favorites", "pool"], required=True)
+    ls.add_argument("--query", help="favorites: passed to the API; pool: title/creator substring")
+    ls.add_argument("--gear", nargs="+", choices=sorted(GEAR_TO_SLOT), help="gear to keep: amp pedal ir")
+    ls.add_argument("--limit", type=int, default=100)
+    ls.add_argument("--json", action="store_true", help="machine-readable output and errors")
+    ls.add_argument("--cache-dir")
+    ls.add_argument("--max-age-months", type=float, default=FilterConfig.max_age_months)
+    ls.add_argument("--popularity-percentile", "--percentile", dest="percentile", type=float, default=None,
+                    metavar="P")
+    ls.add_argument("--min-favorites", type=int, default=FilterConfig.min_favorites)
+    ls.add_argument("--min-downloads", type=int, default=FilterConfig.min_downloads)
+    ls.add_argument("--no-a1-fallback", action="store_true")
+    ls.add_argument("--keep-favorites-below-floor", action="store_true")
+    ls.add_argument("--favorites-bypass-recency", action="store_true")
+    ls.set_defaults(fn=cmd_list)
 
     q = sub.add_parser("pull", help="build the filtered candidate pool and download it to the cache")
     q.add_argument("--favorites", action="store_true", help="(default, always on) include favorited tones")
@@ -220,19 +347,44 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def error_code(e: Exception) -> str:
+    """The `--json` error `code` for an exception: license|auth|not_found|network|error."""
+    if isinstance(e, httpx.HTTPError):
+        return "network"
+    if isinstance(e, LicenseRefused):
+        return "license"
+    if isinstance(e, AuthError):
+        return "auth"
+    if isinstance(e, NotFoundError) or (isinstance(e, ApiError) and e.status in (404, 410)):
+        return "not_found"
+    return "error"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
     # httpx logs request lines at INFO; keep it quiet (it never logs headers, but be conservative).
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    as_json = bool(getattr(args, "json", False) or getattr(args, "json_events", False))
     try:
         return args.fn(args)
-    except T3KError as e:
-        print(f"error: {e}", file=sys.stderr)
+    except (T3KError, httpx.HTTPError) as e:
+        code, msg = error_code(e), str(e)
+        if isinstance(e, httpx.HTTPError):
+            msg = f"network failure: {type(e).__name__}: {e}"
+        if as_json:
+            _emit({"error": msg, "code": code})
+        else:
+            print(f"error: {msg}", file=sys.stderr)
         return 1
-    except httpx.HTTPError as e:
-        print(f"error: network failure: {type(e).__name__}: {e}", file=sys.stderr)
+    except Exception as e:
+        if not as_json:
+            raise                      # text mode: unchanged (traceback)
+        if args.verbose:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+        _emit({"error": f"{type(e).__name__}: {e}", "code": "error"})
         return 1
 
 

@@ -287,6 +287,7 @@ void SawbladeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     backR_.assign(kMinChunk, 0.0f);
   }
   fadeLen_ = std::max(1, static_cast<int>(std::lround(kFadeSeconds * sampleRate)));
+  preview_.prepare(sampleRate);
   playAlong_.prepare(sampleRate, std::min(samplesPerBlock, kMinChunk), static_cast<int>(std::lround(sampleRate)));  // up to 1 s of rig latency
   {
     // Hosts may call prepareToPlay again with unchanged settings: the running engine is still
@@ -391,6 +392,7 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     }
   }
   for (int ch = numOut; ch < buffer.getNumChannels(); ++ch) buffer.clear(ch, 0, n);
+  preview_.process(buffer.getArrayOfWritePointers(), numOut, n);  // a capture-browser audition replaces the rig
 }
 
 }  // namespace sawblade::plugin

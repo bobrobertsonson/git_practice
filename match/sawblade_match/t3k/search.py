@@ -50,3 +50,29 @@ def table_rows(records: list[dict[str, Any]]) -> list[list[str]]:
 
 
 TABLE_HEADER = ["tone", "title", "creator", "license", "gear", "fav/dl", "created", "models", "sizes", "quality"]
+
+
+def pool_records(manifest: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Map the included entries of a `pool_manifest.json` to the `assess` record shape (no network).
+
+    Fields the manifest does not carry are ``None``. Pool entries are by construction the ones that
+    passed the quality filter at `pull` time, so ``passes`` is true.
+    """
+    out = []
+    for e in (manifest or {}).get("tones") or []:
+        if not isinstance(e, dict) or e.get("tone_id") is None:
+            continue
+        models = e.get("models")
+        sizes = sorted({m["size"] for m in models if isinstance(m, dict) and m.get("size")}) if models else None
+        out.append({
+            "tone_id": int(e["tone_id"]), "title": e.get("title"), "creator": e.get("creator"),
+            "gear": e.get("gear"), "format": e.get("format"), "license": e.get("license"),
+            "favorites_count": e.get("favorites_count"), "downloads_count": e.get("downloads_count"),
+            "created_at": e.get("published_at"),
+            "models_count": len(models) if models is not None else None,
+            "a2_models_count": e.get("a2_models_count"), "a1_models_count": e.get("a1_models_count"),
+            "irs_count": e.get("irs_count"), "sizes": sizes, "url": e.get("url"),
+            "passes": True, "status": e.get("status") or "included", "reasons": list(e.get("reasons") or []),
+            "flags": list(e.get("flags") or []),
+        })
+    return out

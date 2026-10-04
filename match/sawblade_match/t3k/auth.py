@@ -16,7 +16,7 @@ from typing import Callable
 
 import httpx
 
-from .errors import DeviceFlowError, ReauthRequired, T3KError
+from .errors import AuthError, DeviceFlowError, ReauthRequired, T3KError
 
 log = logging.getLogger("sawblade.t3k.auth")
 
@@ -235,7 +235,7 @@ class TokenManager:
             self.store.clear()
             raise ReauthRequired("session expired or revoked; run `sawblade-t3k login`")
         if r.status_code != 200:
-            raise T3KError(f"token refresh failed: HTTP {r.status_code}")
+            raise AuthError(f"token refresh failed: HTTP {r.status_code}")
         s = Session.from_token_response(r.json(), self._now(), prev_refresh=refresh_token)
         self._session = s
         self.store.save(s)  # persist rotation immediately

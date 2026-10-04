@@ -69,6 +69,36 @@ sawblade-t3k resolve presets/chainsaw_body.json [--first-model]   # -> presets/c
 * Cache: `~/.cache/sawblade/captures/<tone_id>/<model_id>.<nam|wav>` + `meta.json` (override with
   `SAWBLADE_CACHE_DIR`). Files are sha256-verified on every hit.
 
+### Capture browser commands (spec 8a, used by the plugin)
+
+```
+sawblade-t3k models TONE_ID --json
+sawblade-t3k fetch TONE_ID [--model MODEL_ID] [--cache-dir DIR] --json
+sawblade-t3k list --source favorites|pool [--query Q] [--gear amp pedal ir] [--limit N] [--cache-dir DIR] --json
+sawblade-t3k whoami --json
+sawblade-t3k login --json-events
+```
+
+With `--json`, stdout is exactly one JSON document (notes/logs go to stderr). Failure: exit 1 and
+`{"error": "<message>", "code": "license|auth|not_found|network|error"}` (also for `search --json`).
+Without `--json` behaviour is unchanged. Licence policy is unchanged (`cc-by-nc*`/unknown refused, code `license`).
+
+* `models` -> `{"tone_id": int, "architecture": str, "models": [{"model_id": int, "name": str, "size": str|null}]}`
+  (A2 then A1 candidates as `pull` picks; `""` and `[]` if none; empty `size` -> `null`).
+* `fetch` -> `{"tone_id", "model_id", "path" (absolute), "sha256", "kind": "nam"|"ir", "gear",
+  "source": {"provider": "tone3000", "id", "modelId", "url", "title", "creator", "license"}}`
+  (`source` = preset `CaptureSource`). The licence is checked before any download; `--model` must be one
+  of `models`' ids, else `not_found`; a cache hit downloads nothing.
+* `list` -> array of the same records as `search --json` (`tone_id, title, creator, gear, format, license,
+  favorites_count, downloads_count, created_at, models_count, a2_models_count, a1_models_count, irs_count,
+  sizes, url, passes, status, reasons, flags`). `favorites` uses the API; `pool` reads
+  `<cache>/pool_manifest.json` (its included tones, no network; missing/corrupt -> `[]`; fields the
+  manifest lacks are `null`).
+* `whoami --json` -> `{"id", "username", "display_name"}`.
+* `login --json-events` prints JSON lines `{"event":"device_code","verification_uri",
+  "verification_uri_complete","user_code","expires_in"}` then `{"event":"logged_in"}`. The refresh token is
+  saved by the token store and never printed.
+
 ### License policy
 
 Sawblade is commercial, so only tones licensed `t3k`, `cc-by`, `cc-by-sa`, `cc-by-nd` or `cco` are used.
