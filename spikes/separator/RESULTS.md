@@ -415,7 +415,7 @@ the repo. **This section gives data; the recommendation is the lead's.**
   (5.0's -16 to -28 dB against `shifts=0` Python came from the random shift and zero padding; both are patched out.)
 - **Speed on this box, 6s model, 4 threads, 70 s loop: ORT 34.0 s per minute of audio, Python 36.7, OpenBLAS 455,
   Eigen 437.** demucs.cpp is **about 13x slower than ORT** and does not scale with threads (1 -> 4 threads: 1.0 to 1.2x;
-  ORT 2.3x, Python 2.4x). OpenBLAS barely helps (-4% to +10%, depending on model and threads) because GEMM is only 13% (OpenBLAS) to 25% (Eigen) of the
+  ORT 2.3x, Python 2.4x). OpenBLAS barely helps (from 10% faster to 4% slower than Eigen GEMM, depending on model and threads) because GEMM is only 13% (OpenBLAS) to 25% (Eigen) of the
   time in a sampling profile; the rest is scalar layers (transformer layer loops, group norm, tensor ops, im2col copies).
 - **Memory:** ORT's default session (arena + memory-pattern planner) peaks at **4971 MB**; with both off (the driver's
   default, 10% slower than ORT's defaults) **2600 MB on the 70 s loop and 3086 MB on a 240 s song** (about 0.5% over a 3 GiB bar; the
@@ -432,7 +432,7 @@ the repo. **This section gives data; the recommendation is the lead's.**
 | Bar | (a) demucs.cpp patched | (b) ONNX Runtime |
 |---|---|---|
 | 6s model <= 60 s of compute per minute of audio on the Mac | **No** (estimate 160-320 s/min with Accelerate; measured 437-455 s/min here, flat in threads) | **Yes** (estimate 25-45 s/min; measured 34.0 s/min on 4 threads here) |
-| Peak RSS <= 3 GB | OpenBLAS: 2.1 GB at 70 s, 2.7 GB at 240 s (yes). Eigen GEMM: 2.8 GB at 70 s, **3.3 GB at 240 s (no)** | 2600 MB at 70 s; 3086 MB at 240 s (marginal, trimmable) with the arena off; 4971 MB with ORT defaults |
+| Peak RSS <= 3 GB | OpenBLAS: 2.1 GB at 70 s, 2.7 GB at 240 s (yes). Eigen GEMM: 2.8 GB at 70 s, **3.3 GB at 240 s (no)** | 2600 MB at 70 s; 3086 MB at 240 s (marginal: 3% over 3000 MB, 0.5% over 3 GiB; trimmable) with the arena off; 4971 MB with ORT defaults |
 | Null <= -40 dB vs stock Python, matched settings | Yes (worst -42.8 dB) | Yes (worst -56.0 dB) |
 
 ## Environment, versions, hashes
@@ -809,7 +809,7 @@ Xeon core (from the peak ratio above at equal efficiency); (A2) memory/elementwi
 4. **5.0's "denormal" finding re-read.** The 5.0 clip fits in one (zero-padded) segment after the shift padding, so "102 s ->
    49 s with `--ftz`" was per single segment; with the real two-segment run the FTZ'd time here is ~51 s per segment, consistent with that (not re-measured
    without FTZ). FTZ is confirmed active (gdb `MXCSR`) and does not change the headline: demucs.cpp is slow for other reasons.
-5. **ORT default memory** is 4971 MB (arena + planner). The arena alone is worth 25% in speed for +1 GB (ablation above).
+5. **ORT default memory** is 4971 MB (arena + planner). The arena alone is worth 23% in speed (34.0 -> 26.1 s/min) for +1 GB (ablation above).
 6. **ORT 1.30.0** is newer than anything I had seen; it is what PyPI and GitHub list as latest stable on 2026-10-04, and
    the Python wheel and the C++ tarball are the same version.
 7. The CPU of this box differs from 5.0's (see Environment). Relative numbers are the finding.
