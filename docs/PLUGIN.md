@@ -290,6 +290,31 @@ closed is UI state and is never saved). Code: `plugin/src/mic/`.
   it). Exit code 4 means "not logged in" (run `sawblade-t3k login` in a terminal). `<appdata>` is
   `~/.local/share/sawblade` (Linux), `~/Library/Application Support/Sawblade` (macOS); `SAWBLADE_APPDATA` overrides it.
 
+### Preset browser, factory presets, A/B compare (phase 9b)
+
+Code: `plugin/src/presets/` (`PresetLibrary`, `PresetLoadFlow`, `AbCompare`, `PresetBrowser`, `PresetInfoPanel`, `T3kTool`).
+
+- **Browser:** clicking the top-bar preset selector opens an overlay over the rig and inspector: search, banks (Factory: Classic /
+  Styles / Matched; User), the categories present with counts, the preset list (double-click loads), and the info panel (name,
+  category, bank, file, notes, and every capture of path A, path B and the cab with title, @creator, licence, TONE3000 URL, a
+  NON-COMMERCIAL tag when the licence contains `nc`, or "local file: no attribution recorded"). LOAD FILE... keeps the file chooser.
+  The footer has SAVE, SAVE AS, RENAME, DELETE (user presets only; delete moves the file to the OS trash) and the resolve status.
+- **Banks:** factory presets are `presets/*.json`, `presets/styles/*.json`, `presets/matched/*.json` (key `factoryPresetDir` in
+  `settings.json`, default `<repo>/presets`); user presets are `<appdata>/sawblade/presets/*.json`. `*.resolved.json` files are never
+  listed; an unparseable file is listed greyed out with its error. Scanning runs on a background thread and parses without loading
+  captures. An uncategorised preset shows as "Uncategorised" (in `matched/`: "Matched").
+- **Search:** case-insensitive, whitespace-separated terms ANDed over name, category, notes and capture titles / creators.
+- **Resolve on load:** a preset with a TONE3000 capture whose file is missing (and not in the capture cache) is resolved first with
+  `sawblade-t3k resolve <preset> -o <appdata>/sawblade/resolved/<bank>/<stem>.resolved.json --progress-json`; progress shows in the
+  footer ("Resolving 2/5: <title>") with CANCEL, exit 4 shows the not-logged-in message, a missing tool shows LOCATE.... The current
+  sound is unchanged until the resolved preset has loaded. A resolved file that is newer than the preset and complete is used with
+  no child process. The core loader also finds a TONE3000 capture in the capture cache (`$SAWBLADE_CACHE_DIR`, else
+  `~/.cache/sawblade/captures/<id>/<modelId>.nam|.wav`) when its file is missing (docs/PRESET_SCHEMA.md).
+- **Previous / next** (the top-bar < > buttons) step through the browser's filtered list, wrapping.
+- **A/B compare:** the top-bar button shows A or B. Switching stores the current preset (with its parameter values) in the active
+  slot, activates the other (an empty B starts as a copy) and loads it: one engine build and the 30 ms swap. A browser load replaces
+  the active slot only. Right-click: Copy A to B, Copy B to A, Reset compare. Not saved in the plugin state.
+
 ## Tests
 
 `sawblade_editor_tests` (`plugin/tests/test_editor.cpp`, ctest prefix `editor: `, run under `xvfb-run -a` when
@@ -300,6 +325,8 @@ drop, the missing-folder message, and screenshots `build/screenshots/sawblade_pl
 `plugin/tests/test_mic_page.cpp` covers the mic page (open from the rig, dots, drag and snap, fields and combo boxes, BLEND
 and the MIX fader, read-only studio mode, LOAD IR FOLDER, LOAD PACK through a fake `sawblade-t3k`) and the screenshots
 `build/screenshots/sawblade_micpage_{rig,single,blend}_1x.png`.
+`plugin/tests/test_presets.cpp` (library, user operations, A/B, resolve flow with fake executables, info panel) and
+`plugin/tests/test_preset_browser.cpp` (the browser, stepping, the A/B button, screenshot `sawblade_browser_1x.png`) cover phase 9b.
 
 `sawblade_plugin_tests` (headless): `plugin/tests/test_mic.cpp` (IR name parser, pack and dot layout, snapping, choosing
 models through the processor, the `sawblade-t3k` runner and settings, with fake executables), `plugin/tests/test_engine.cpp` (Engine, no JUCE),
