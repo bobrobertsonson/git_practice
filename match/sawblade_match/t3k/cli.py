@@ -378,6 +378,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(f"error: {msg}", file=sys.stderr)
         return 1
+    except Exception as e:
+        if not as_json:
+            raise                      # text mode: unchanged (traceback)
+        if args.verbose:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+        _emit({"error": f"{type(e).__name__}: {e}", "code": "error"})
+        return 1
 
 
 if __name__ == "__main__":

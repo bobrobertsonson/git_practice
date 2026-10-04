@@ -255,3 +255,39 @@ def test_whoami_json_after_login_store(login_env, api, capsys):
     cap = capsys.readouterr()
     assert json.loads(cap.out) == {"id": 7, "username": "alice", "display_name": None}
     assert SECRET_ACCESS not in cap.out + cap.err
+
+
+def test_fetch_cache_hit_still_looks_up_tone_and_refuses_changed_license(run, world, tmp_path):
+    cache = str(tmp_path / "cc")
+    run("fetch", "10", "--model", "102", "--json", "--cache-dir", cache)
+    before = len(world.requests(r"/tones/10$"))
+    rc, out, _ = run("fetch", "10", "--model", "102", "--json", "--cache-dir", cache)
+    assert rc == 0 and len(world.requests(r"/tones/10$")) == before + 1      # tone lookup happens
+    assert len(world.requests("download")) == 1
+    # the cached copy's tone licence is now non-commercial (and the live lookup agrees)
+    meta_path = tmp_path / "cc" / "10" / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["tone"]["license"] = "cc-by-nc"
+    meta_path.write_text(json.dumps(meta))
+    world.tones[10]["license"] = "cc-by-nc"
+    rc, out, _ = run("fetch", "10", "--model", "102", "--json", "--cache-dir", cache)
+    assert rc == 1 and out["code"] == "license"
+    assert len(world.requests("download")) == 1
+
+
+def test_models_empty_result(run, world):
+    world.add_tone(tone_json(16, gear="amp", a2=0, a1=0), [])
+    rc, out, _ = run("models", "16", "--json")
+    assert rc == 0 and out == {"tone_id": 16, "architecture": "", "models": []}
+
+
+def test_json_catch_all(run, monkeypatch):
+    def boom():
+        raise RuntimeError("kaboom")
+    monkeypatch.setattr(cli, "make_client", boom)
+    rc, out, err = run("models", "1", "--json")
+    assert rc == 1 and out == {"error": "RuntimeError: kaboom", "code": "error"} and "Traceback" not in err
+    rc, out, err = run("-v", "models", "1", "--json")
+    assert rc == 1 and out["code"] == "error" and "Traceback" in err
+    with pytest.raises(RuntimeError):                      # text mode unchanged
+        cli.main(["models", "1"])
