@@ -558,3 +558,31 @@ with `interLpfHz = postLpfHz = 11000` (keeps the "brighter top" meaning above th
 The `k−` scan table and the chosen knees; H2…H6 before/after; crest/envelope numbers v2 vs v3
 and stock vs custom; the v3 − v2 difference-curve values; preset level changes; full ctest;
 commits; decisions / questions for lead.
+
+## 3.7 hmx `midVoice` (added 20:45 UTC, user request via the main lead)
+The family spans several circuits (Wurm, big fuzz, one-knob, Throne-Torcher / Left-Hand-Wrath
+class). The Wurm-type derivative has **three selectable high-mid voicings** over a 4-band active
+EQ, so `pedal.hmx` gets a `midVoice` switch that selects the **base centre and Q of the
+HIGH-MID band**; the `highMidFreq` knob keeps trimming around that base (`fHM = base ·
+1.6^((highMidFreq − 5)/5)`), `highMid` keeps its gain law, and HIGH (1.5 kHz gyrator B) is
+unchanged. Table-driven so the local re-fit can set the numbers:
+
+| `midVoice` | base centre | Q | meaning |
+|---|---|---|---|
+| `stock` (default) | 1000 Hz | 1.2 | the HM-2's 1.0 / 1.5 kHz coupling (today's behaviour, bit-identical) |
+| `low` | 750 Hz | 1.4 | lower, thicker bark |
+| `high` | 2000 Hz | 1.2 | upper-mid cut-through |
+
+`HmxVoicing::kMidVoices[3] = {{1000, 1.2}, {750, 1.4}, {2000, 1.2}}` in `pedal_hmx.h`. JSON key
+`midVoice`, strings as above, PresetError otherwise. Live: appended as the **last** `HmxLive`
+index (`kHmxMidVoice`, choice 0/1/2); descriptor, converters, plugin id `hmxMidVoice`
+("Modded Saw Mid Voice", choices `Stock`, `Low`, `High`); drawer switch **VOICE** on the MODDED
+SAW row (beside BOOST). Presets, `presets/modeled/hmx/`: `berlin_saw_low.json`,
+`berlin_saw_mid.json`, `berlin_saw_high.json` — same knobs (low 7, lowMid 5, highMid 9, high 7,
+dist 8, presence 5, tight 3, mix 100, silicon, boost off, freqs 5/5), only `midVoice` differs;
+`level` for the usual peak window; notes name the voicing. hmx then has 7 presets; family 29.
+
+Acceptance 24: `FR(highMid 10) − FR(highMid 5)` argmax (100 Hz–10 kHz, `highMidFreq` 5) within
+±5 % of 750 / 1000 / 2000 Hz for `low` / `stock` / `high`; `stock` renders bit-identically to a
+block without the key; round-trip and PresetError for `"mid"`; the three presets render in
+window; the drawer shows VOICE and the editor count test includes it.
