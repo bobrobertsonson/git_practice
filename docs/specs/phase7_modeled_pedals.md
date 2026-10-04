@@ -74,7 +74,7 @@ Stage 10, the gyrator EQ as fitted biquads (RBJ cookbook, cascaded in this order
 | Low gyrator | peak | 100 Hz | 0.8 | `−12 + 3·low` (−12 … +18) |
 | High gyrator A | peak | 1000 Hz | 1.2 | `−8 + 2.2·high` (−8 … +14) |
 | High gyrator B | peak | 1500 Hz | 1.2 | `−8 + 2.2·high` (−8 … +14) |
-| HF presence peak (fixed) | peak | 4800 Hz | 2.0 | +6 |
+| HF presence peak (fixed) | peak | 4800 Hz | 2.0 | +8 |
 | Output roll-off (fixed) | lowPass | 9000 Hz | 0.707 | — |
 
 Rationale for these targets (used in place of real-unit captures, which are not available
@@ -151,7 +151,7 @@ normalise by the impulse amplitude.
    - HM whole block, low = high = 10, distortion = 10:
      - local max in 80–130 Hz, ≥ 8 dB above 400 Hz;
      - max in 1.0–1.6 kHz, ≥ 12 dB above 400 Hz;
-     - a local max in 3.5–6 kHz;
+     - a local max in 3.5–6 kHz, at least 1 dB above |H(3.5 kHz)| (lead analytic estimate: about +2 dB);
      - |H(12 kHz)| ≥ 10 dB below the 1–1.6 kHz max.
    - HM whole block, low = high = 0: |H(100)| and |H(1250)| each ≥ 6 dB below |H(400)|.
    - HM knob isolation:
