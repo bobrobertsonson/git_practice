@@ -1,5 +1,5 @@
 """TIGHTEN (design B boost) - 100x150x42 mm pedal: bench-vise jaws + barbed wire crust stencil, cold steel blue + bone."""
-import math
+import math, os
 import numpy as np
 from common import *
 
@@ -94,9 +94,39 @@ def populate(mats, mode):
             build_screw(sx * 43.2, sy * 68.2, mats)
     return knobs
 
+INK_A, INK_B = '#4f8fd0', '#e8e4d8'
+LED_RGB, LED_OFF = (0.12, 0.45, 1.0, 1), '#0b2038'
+
+def build(mats=None, origin=(0.0, 0.0, 0.0), rot_z=0.0, mode='hero', art_image=None, font_dir=None,
+          return_knobs=False):
+    """Build the complete TIGHTEN pedal and return a root empty at `origin` (mm; centre of the footprint at the base
+    of the enclosure), rotated `rot_z` degrees about Z.  Everything is parented to the root; camera, lights, world and
+    render settings are not touched.  mats: dict from common.make_standard_mats / run() (None -> created here, with
+    the blue LED colours).  art_image: packed Blender image (None -> generated, cached in mats['tighten_art']).
+    return_knobs=True returns (root, knobs).  `mode` is accepted for API symmetry (no strip mode)."""
+    set_piece_dims(W, L, H)
+    if mats is None:
+        mats = make_standard_mats(None, led_rgb=LED_RGB, led_off=LED_OFF)
+    art_img = art_image or mats.get('tighten_art')
+    if art_img is None:
+        art_img = art_to_image(art(fetch_font(font_dir or os.path.join(os.path.expanduser('~'), '.cache', 'pedal_b2_fonts'))))
+        mats['tighten_art'] = art_img
+    before = set(bpy.data.objects)
+    root = empty('tighten_root', 0, 0, 0)
+    powder = mat_powder(art_img, INK_A, INK_B, gain_a=0.6)
+    build_enclosure(powder, W, L, H, r=6.0, bev=0.9, nb=5, name='tighten_enclosure')
+    knobs = populate(mats, mode)
+    parent_new(before, root)
+    root.location = (origin[0] * MM, origin[1] * MM, origin[2] * MM)
+    root.rotation_euler = (0, 0, math.radians(rot_z))
+    return (root, knobs) if return_knobs else root
+
+def _run_build(mats, mode):
+    return build(mats, mode=mode, art_image=mats['art'], return_knobs=True)[1]
+
 SPEC = dict(
-    name='tighten', kind='pedal', plate=(W, L, H), art=art, ink_a='#4f8fd0', ink_b='#e8e4d8', populate=populate,
-    corner=6.0, bevel=0.9, ink_gain=0.6, led_rgb=(0.12, 0.45, 1.0, 1), led_off='#0b2038',
+    name='tighten', kind='piece', plate=(W, L, H), art=art, ink_a=INK_A, ink_b=INK_B, build=_run_build,
+    ink_gain=0.6, led_rgb=LED_RGB, led_off=LED_OFF,
     hero=dict(kind='persp', loc=(0.17, -0.37, 0.50), target=(0, -0.006, H * MM), lens=85),
     ortho=dict(kind='ortho', loc=(0, 0, 0.5), ortho_scale=0.165), ortho_res=(1000, 1500))
 

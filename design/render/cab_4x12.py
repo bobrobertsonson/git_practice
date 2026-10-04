@@ -135,17 +135,25 @@ def build(mats, mode):
             ob.parent = None
     return None
 
+LIFT = 60.0                              # mm, ortho/open views only (see _build)
 C_FONT = {}
 SPEC = dict(
     name='cab', kind='cab', plate=(W, L, 4.0), art=art, ink_a='#7fd13b', ink_b='#e8e4d8', populate=None, build=None,
     k=4.0, center=(0, 0, 0.38), modes=['hero', 'ortho', 'open'], ortho_res=(1400, 1400),
     fnames={'hero': 'cab_hero_3q.png', 'ortho': 'cab_front_ortho.png', 'open': 'cab_open_ortho.png'},
     hero=dict(kind='persp', loc=(1.15, -2.15, 1.25), target=(0, 0, 0.36), lens=70, k=4.0),
-    ortho=dict(kind='ortho', loc=(0, -4.0, 0.38), rot=(90, 0, 0), ortho_scale=0.86, k=4.0))
+    ortho=dict(kind='ortho', loc=(0, -4.0, (0.38 + LIFT * MM)), rot=(90, 0, 0), ortho_scale=0.86, k=4.0))
 
 def _build(mats, mode):
     mats['grille'] = mat_grille(mats['art'], W, L, SPEC['ink_a'], SPEC['ink_b'])
-    return build(mats, mode)
+    r = build(mats, mode)
+    if mode != 'hero':
+        # front ortho: the 0.86 m frame reaches 50 mm below the cab, past the floor backdrop (edge-on at z=0), which rendered as a
+        # black band along the bottom.  Lift the cab LIFT mm (camera lifted by the same amount in SPEC['ortho']).
+        for ob in bpy.data.objects:
+            if ob.parent is None and ob.type != 'CAMERA':
+                ob.location.z += LIFT * MM
+    return r
 SPEC['build'] = _build
 
 if __name__ == '__main__':

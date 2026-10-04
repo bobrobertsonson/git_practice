@@ -17,6 +17,7 @@ SPK = [(-165, 0), (165, 0)]
 BAFFLE_Z = -22.0
 GRILLE_TOP = -6.0
 LOGO = (252.0, -192.0)
+LIFT = 50.0                              # mm, ortho views only (see _build)
 INK_A, INK_B = '#8f55b8', '#e8e4d8'      # bruise purple, bone
 
 def layout():
@@ -143,11 +144,19 @@ SPEC = dict(
     k=3.4, center=(0, 0, BH / 2 * MM), modes=['hero', 'ortho', 'open'], ortho_res=(1400, 1000),
     fnames={'hero': 'cab2x12_hero_3q.png', 'ortho': 'cab2x12_front_ortho.png', 'open': 'cab2x12_open_ortho.png'},
     hero=dict(kind='persp', loc=(1.0, -1.85, 1.05), target=(0, 0, 0.25), lens=70, k=3.4),
-    ortho=dict(kind='ortho', loc=(0, -4.0, BH / 2 * MM), rot=(90, 0, 0), ortho_scale=0.84, k=3.4))
+    ortho=dict(kind='ortho', loc=(0, -4.0, (BH / 2 + LIFT) * MM), rot=(90, 0, 0), ortho_scale=0.84, k=3.4))
 
 def _build(mats, mode):
     mats['grille'] = mat_grille(mats['art'], GW, GL, SPEC['ink_a'], SPEC['ink_b'])
-    return build(mats, mode)
+    r = build(mats, mode)
+    if mode != 'hero':
+        # front ortho: the 740x520 cab at 0.84 m frame width needs a 0.6 m tall frame, i.e. 40 mm below the cab; the floor
+        # backdrop ends at z=0 (edge-on) so that margin rendered as a black band.  Lift the cab LIFT mm so the whole frame
+        # stays above the floor (the camera is lifted by the same amount in SPEC['ortho']).
+        for ob in bpy.data.objects:
+            if ob.parent is None and ob.type != 'CAMERA':
+                ob.location.z += LIFT * MM
+    return r
 SPEC['build'] = _build
 
 if __name__ == '__main__':
