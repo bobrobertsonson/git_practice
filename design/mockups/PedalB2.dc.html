@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direction B2: boutique pedal close-up</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&amp;family=Barlow+Condensed:wght@600;700&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#070707}
+.kl{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.16em}
+.kn{position:absolute;inset:9px;border-radius:50%;background:radial-gradient(circle at 38% 30%,#f5f5f5 0,#c9c9c9 40%,#7c7c7c 85%);box-shadow:0 5px 8px rgba(0,0,0,.6),inset 0 -2px 3px rgba(0,0,0,.3)}
+.kp{position:absolute;inset:9px}
+.kp i{position:absolute;left:50%;top:6%;width:2px;height:34%;margin-left:-1px;background:#111}
+.bat{position:relative;width:26px;height:26px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#f2f2f2,#8d8d8d 60%,#444);box-shadow:0 3px 5px rgba(0,0,0,.6)}
+.bat i{position:absolute;left:9px;width:8px;height:30px;border-radius:4px;background:linear-gradient(90deg,#9a9a9a,#f6f6f6 45%,#8a8a8a);box-shadow:0 4px 6px rgba(0,0,0,.6)}
+.dip{width:14px;height:30px;border-radius:2px;background:#1a1a1a;box-shadow:inset 0 1px 2px #000;position:relative}
+.dip i{position:absolute;left:2px;right:2px;height:12px;border-radius:2px;background:linear-gradient(#fafafa,#bdbdbd)}
+.foot{width:52px;height:52px;border-radius:50%;border:none;background:radial-gradient(circle at 40% 30%,#fafafa,#9c9c9c 55%,#555);box-shadow:0 6px 0 #333,0 9px 14px rgba(0,0,0,.7)}
+.led{width:12px;height:12px;border-radius:50%}
+.oled{background:#030303;color:#e8f6ff;font-family:'Share Tech Mono',monospace;font-size:13px;border-radius:4px;padding:8px 10px;box-shadow:inset 0 0 0 1px #222,inset 0 2px 6px #000;line-height:1.35;white-space:pre-line}
+</style>
+</helmet>
+<div style="width:1200px;height:760px;box-sizing:border-box;padding:30px;background:radial-gradient(ellipse at 40% 30%,#232019,#0b0a08 70%);font-family:'Barlow Condensed',sans-serif;display:flex;gap:34px;align-items:center">
+
+ <div style="position:relative;width:520px;height:690px;border-radius:26px;overflow:hidden;background:{{body}};box-shadow:0 40px 70px rgba(0,0,0,.85),inset 0 2px 2px rgba(255,255,255,.25),inset 0 -6px 10px rgba(0,0,0,.5)">
+  <svg width="520" height="690" viewBox="0 0 520 690" style="position:absolute;inset:0" aria-hidden="true">
+   <defs><radialGradient id="glow" cx="50%" cy="38%" r="55%"><stop offset="0" stop-color="{{art}}" stop-opacity=".55"></stop><stop offset="1" stop-color="{{art}}" stop-opacity="0"></stop></radialGradient></defs>
+   <rect width="520" height="690" fill="url(#glow)"></rect>
+   <g transform="translate(260 300)" fill="none" stroke="{{art}}" stroke-opacity=".55" stroke-width="2">
+    <circle r="150"></circle><circle r="118"></circle><circle r="40"></circle>
+    <path d="M0-150 L18-188 L36-146 M106-106 L140-128 L132-88 M150 0 L188 18 L146 36 M106 106 L128 140 L88 132 M0 150 L-18 188 L-36 146 M-106 106 L-140 128 L-132 88 M-150 0 L-188-18 L-146-36 M-106-106 L-128-140 L-88-132"></path>
+   </g>
+  </svg>
+  <div style="position:relative;padding:26px 30px;height:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:18px;color:{{ink}}">
+   <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <div style="display:flex;flex-direction:column"><span style="font-family:'Big Shoulders Display',sans-serif;font-weight:900;font-size:46px;letter-spacing:.14em;line-height:.9">CHAINSAW</span><span class="kl" style="opacity:.8">SAW PATH · PEDAL 1 · NAM CAPTURE</span></div>
+    <div class="oled" style="width:150px">HM-2w CHAINSAW
+std · A2 · 48k
+@ebheron · t3k</div>
+   </div>
+   <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));row-gap:22px;justify-items:center;margin-top:8px">
+    <sc-for list="{{knobs}}" as="k" hint-placeholder-count="6">
+     <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+      <div style="position:relative;width:84px;height:84px;border-radius:50%;background:conic-gradient(from -135deg,{{k.c}} 0 {{k.deg}}deg,rgba(255,255,255,.08) {{k.deg}}deg 270deg,transparent 270deg);box-shadow:0 0 14px {{k.glow}}">
+       <div style="position:absolute;inset:5px;border-radius:50%;background:{{bodyFlat}}"></div>
+       <div class="kn"></div><div class="kp" style="transform:rotate({{k.a}}deg)"><i></i></div>
+      </div>
+      <span class="kl">{{k.l}}</span>
+     </div>
+    </sc-for>
+   </div>
+   <div style="display:flex;justify-content:space-around;align-items:flex-end;margin-top:6px">
+    <sc-for list="{{toggles}}" as="t" hint-placeholder-count="3">
+     <div style="display:flex;flex-direction:column;align-items:center;gap:6px"><span class="kl" style="font-size:10px;opacity:.75">{{t.top}}</span><div class="bat"><i style="top:{{t.pos}}px"></i></div><span class="kl" style="font-size:10px;opacity:.75">{{t.bottom}}</span><span class="kl">{{t.l}}</span></div>
+    </sc-for>
+   </div>
+   <div style="display:flex;justify-content:space-around;align-items:center;margin-top:auto">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span class="led" style="background:#ff3b2f;box-shadow:0 0 12px #ff3b2f"></span><button class="foot" aria-label="Bypass"></button><span class="kl">BYPASS</span></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span class="led" style="background:{{art}};box-shadow:0 0 12px {{art}}"></span><button class="foot" aria-label="Next capture"></button><span class="kl">NEXT CAPTURE</span></div>
+   </div>
+  </div>
+ </div>
+
+ <div style="flex:1;display:flex;flex-direction:column;gap:22px;color:#e9e3d6">
+  <div style="display:flex;flex-direction:column;gap:6px"><span class="kl" style="color:#9a9285">SIDE PANEL · DEEP SETTINGS (DIP)</span>
+   <div style="display:flex;gap:6px;padding:12px;border-radius:8px;background:#141310;box-shadow:inset 0 0 0 1px #2a2722;width:fit-content">
+    <sc-for list="{{dips}}" as="d" hint-placeholder-count="8"><div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div class="dip"><i style="top:{{d.top}}px"></i></div><span class="kl" style="font-size:9px;color:#9a9285">{{d.l}}</span></div></sc-for>
+   </div>
+   <span class="kl" style="color:#7d766a;font-size:10px;letter-spacing:.1em">IN GAIN +6 · LOUDNESS NORM · A1 FALLBACK · TRAINABLE · … (hidden, like Chase Bliss dips)</span>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px"><span class="kl" style="color:#9a9285">THE BOARD</span>
+   <div style="display:flex;gap:12px;align-items:center;padding:16px;border-radius:12px;background:repeating-linear-gradient(0deg,#151515 0 14px,#0c0c0c 14px 17px);box-shadow:inset 0 0 0 2px #2a2a2a">
+    <sc-for list="{{board}}" as="p" hint-placeholder-count="4">
+     <div style="width:86px;height:118px;border-radius:9px;background:{{p.bg}};box-shadow:0 8px 12px rgba(0,0,0,.7),0 0 0 {{p.sel}}px {{art}};display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:10px 6px;box-sizing:border-box;color:{{p.ink}}"><span style="width:7px;height:7px;border-radius:50%;background:{{p.led}};box-shadow:0 0 8px {{p.led}}"></span><span class="kl" style="font-size:10px;text-align:center">{{p.name}}</span><span style="width:26px;height:26px;border-radius:50%;background:radial-gradient(circle at 40% 30%,#eee,#888 60%,#444)"></span></div>
+    </sc-for>
+    <button aria-label="Add pedal" style="width:86px;height:118px;border-radius:9px;border:2px dashed #444;background:transparent;color:#8a8a8a;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.12em">+ ADD</button>
+   </div>
+  </div>
+  <div class="oled" style="font-size:14px">SAW 45 / BODY 55 · ALIGN Δ −0.48 ms · LIVE ●
+LATENCY 0 smp · CPU 18%</div>
+ </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"finish":{"editor":"enum","options":["matte black","raw aluminum","cream"],"default":"matte black"},"art":{"editor":"color","options":["#ff6a1a","#ff2f5a","#46d4ff","#9cff3a"],"default":"#ff6a1a"},"$preview":{"width":1200,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const art = this.props.art ?? '#ff6a1a';
+    const f = this.props.finish ?? 'matte black';
+    const F = {
+      'matte black': { body: 'radial-gradient(circle at 30% 20%,#2a2a2a,#121212 70%)', flat: '#151515', ink: '#f2efe8' },
+      'raw aluminum': { body: 'repeating-linear-gradient(90deg,rgba(255,255,255,.08) 0 1px,rgba(0,0,0,.05) 1px 2px),linear-gradient(160deg,#d9dbde,#9ea3a9)', flat: '#b9bdc2', ink: '#151515' },
+      'cream': { body: 'radial-gradient(circle at 30% 20%,#fbf4e3,#e3d6b6 75%)', flat: '#eadfc3', ink: '#1b1712' }
+    }[f];
+    const ang = (p) => -135 + 270 * p;
+    const knobs = [['LOW', .95], ['HIGH', .92], ['DIST', .8], ['IN GAIN', .5], ['OUT', .55], ['MIX', 1]].map(([l, p]) => ({ l, a: ang(p), deg: Math.round(270 * p), c: art, glow: art + '55' }));
+    const toggles = [{ l: 'SLOT', top: 'PEDAL', bottom: 'AMP', pos: -14 }, { l: 'SIZE', top: 'STD', bottom: 'LITE', pos: -14 }, { l: 'NORM', top: 'ON', bottom: 'OFF', pos: 8 }];
+    const dips = [['IN+6', 1], ['NORM', 1], ['A1', 0], ['TRAIN', 1], ['MONO', 0], ['HP', 1], ['LP', 0], ['LOCK', 0]].map(([l, on]) => ({ l, top: on ? 2 : 16 }));
+    const board = [
+      { name: 'CHAINSAW', bg: F.body, ink: F.ink, led: '#ff3b2f', sel: 3 },
+      { name: 'JCM800 2203', bg: 'linear-gradient(160deg,#c9a24a,#7a5a1c)', ink: '#1a1206', led: '#ff3b2f', sel: 0 },
+      { name: 'TS808 TIGHT', bg: 'linear-gradient(160deg,#2f6fa8,#173a59)', ink: '#eaf6ff', led: '#ff3b2f', sel: 0 },
+      { name: '5150III RED', bg: 'linear-gradient(160deg,#3a3d42,#15171a)', ink: '#e8ecf0', led: '#ff3b2f', sel: 0 }
+    ];
+    return { art, body: F.body, bodyFlat: F.flat, ink: F.ink, knobs, toggles, dips, board };
+  }
+}
+</script>
+</body>
+</html>

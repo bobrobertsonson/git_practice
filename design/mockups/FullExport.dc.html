@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sawblade: export NAM</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&amp;family=Barlow+Condensed:wght@500;600;700&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#050505}
+.st{font-family:'Allerta Stencil',sans-serif;letter-spacing:.08em}
+.kl{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.16em}
+.mono{font-family:'Share Tech Mono',monospace}
+.btn{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:.12em;height:32px;padding:0 12px;border-radius:4px;border:1px solid #3a352d;background:#1b1916;color:#e8e1d2}
+.card{border-radius:8px;background:#151311;box-shadow:inset 0 0 0 1px #2a2622;padding:16px}
+</style>
+</helmet>
+<div style="width:1280px;height:800px;display:flex;flex-direction:column;background:#0b0a09;color:#e8e1d2;font-family:'Barlow Condensed',sans-serif">
+ <div style="height:58px;display:flex;align-items:center;gap:14px;padding:0 18px;background:#121110;border-bottom:1px solid #2a2622">
+  <button class="btn" aria-label="Back to rig">‹ RIG</button>
+  <span class="st" style="font-size:22px;color:#ff6a1a">EXPORT NAM</span>
+  <span class="kl" style="color:#a39a8a">TRAIN ONE MODEL OF THIS BLEND FOR A LOADER PEDAL</span>
+ </div>
+ <div style="flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;padding:14px">
+  <sc-for list="{{opts}}" as="o" hint-placeholder-count="3">
+   <div class="card" style="display:flex;flex-direction:column;gap:10px;box-shadow:inset 0 0 0 {{o.sel}}px #ff6a1a,inset 0 0 0 1px #2a2622">
+    <span class="st" style="font-size:18px">{{o.t}}</span>
+    <span style="font-size:15px;line-height:1.35;color:#cfc6b4">{{o.d}}</span>
+    <div style="display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:50%;background:{{o.c}}"></span><span class="kl" style="color:{{o.c}}">{{o.ex}}</span></div>
+    <span class="mono" style="font-size:12px;color:#a39a8a">{{o.out}}</span>
+   </div>
+  </sc-for>
+  <div class="card" style="grid-column:span 2;display:flex;flex-direction:column;gap:10px">
+   <span class="kl" style="color:#a39a8a">WHAT GOES INTO THE MODEL</span>
+   <sc-for list="{{checks}}" as="c" hint-placeholder-count="6"><div style="display:flex;gap:10px;align-items:center"><span class="mono" style="width:18px;color:{{c.col}}">{{c.m}}</span><span style="font-size:15px">{{c.t}}</span></div></sc-for>
+  </div>
+  <div class="card" style="display:flex;flex-direction:column;gap:10px">
+   <span class="kl" style="color:#a39a8a">CREDITS (EMBEDDED IN THE .nam METADATA)</span>
+   <span class="mono" style="font-size:12px;line-height:1.5;color:#cfc6b4;white-space:pre-line">HM-2w CHAINSAW — @ebheron (t3k)
+JCM800 2203 — @sarcobe (t3k)
+TS808 JP03 — @v24x (t3k)
+5150III Ivory — @AmpsPedalsPickups (t3k)
+V30 Mesa 4x12 — @OutmodedElectronics (t3k)</span>
+   <div style="padding:10px;border-radius:6px;background:#2a1a0e;color:#ffd2ad;font-size:13px;line-height:1.35">Built from TONE3000 captures: for your own use. Sharing or selling exports needs permission from the creators and TONE3000.</div>
+   <button class="btn" style="margin-top:auto;height:42px;background:#ff6a1a;border-color:#ff6a1a;color:#140a04">TRAIN EXPORT</button>
+  </div>
+ </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const G = '#7fe08f', A = '#ffb020', R = '#ff6b5a';
+    return {
+      opts: [
+        { t: 'NO-CAB + IR', d: 'Model of both paths without the cab, plus the shared cab IR as a .wav. Load both into your pedal.', ex: 'EXACT — LIVE-COMPATIBLE BLEND', c: G, out: 'sawblade_blend.nam + v30_mesa.wav', sel: 2 },
+        { t: 'WITH CAB', d: 'One model of the whole rig including the cab. For pedals without an IR slot.', ex: 'EXACT', c: G, out: 'sawblade_blend_cab.nam', sel: 0 },
+        { t: 'STUDIO BLEND', d: 'Per-path cabs: only the with-cab export is exact. The no-cab option is disabled for this preset type.', ex: 'NO-CAB NOT EXACT', c: A, out: '—', sel: 0 }
+      ],
+      checks: [
+        { m: '✓', col: G, t: 'Pedals, amps, path EQ, blend, post EQ' },
+        { m: '✓', col: G, t: 'Bus comp (release 80 ms — trainable)' },
+        { m: '✕', col: R, t: 'Noise gate — left out, set it on your pedal' },
+        { m: '✕', col: R, t: 'Time effects (delay / reverb / modulation) — none in this rig' },
+        { m: 'i', col: A, t: 'Training uses the standard NAM capture signal at 48 kHz' },
+        { m: 'i', col: A, t: 'Model size: Standard (A2) · est. 25 min on this machine' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
