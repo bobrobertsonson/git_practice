@@ -63,3 +63,10 @@ https://raw.githubusercontent.com/google/fonts/main/ofl/blackopsone/BlackOpsOne-
 (licence: https://github.com/google/fonts/tree/main/ofl/blackopsone).
 The script downloads it into `--font-dir` on first run; the `.ttf` must not be committed.
 If the download fails it falls back to Pillow's default bitmap font.
+
+## Exporting the plugin UI assets
+
+`export_ui_assets.py` is the driver that renders the set the JUCE editor needs (amp heads, cab, both pedals,
+knob / footswitch / LED filmstrips) with the piece scripts above and writes the post-processed results into
+`plugin/assets/`. **`plugin/assets/` is the one place UI renders are committed**; no CMake step renders anything.
+Usage and the exact command line used are in `plugin/assets/README.md`.
