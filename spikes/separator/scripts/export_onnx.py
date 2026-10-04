@@ -29,6 +29,7 @@ ap.add_argument("--model", required=True, choices=["htdemucs", "htdemucs_6s"])
 ap.add_argument("--out-dir", default=str(Path.home() / ".cache/sawblade/separator/onnx"))
 ap.add_argument("--opset", type=int, default=17)
 ap.add_argument("--verify", action="store_true", help="compare ORT vs torch on a real segment")
+ap.add_argument("--flops-only", action="store_true", help="count FLOPs of one segment (torch FlopCounterMode: conv/mm/bmm/sdpa) and exit")
 ap.add_argument("--verify-wav", default=str(Path.home() / "sawblade-sep-data/loop70/mixture.wav"))
 a = ap.parse_args()
 cache = Path(os.environ.get("SAWBLADE_SEP_CACHE", Path.home() / ".cache/sawblade/separator"))
@@ -137,6 +138,15 @@ with th.no_grad():
     full_ref = model(seg)
     full_mine = model._ispec(model._mask(z, xf_ref), SEG) + xt_ref
     print("wrapper vs stock forward max abs diff:", float((full_ref - full_mine).abs().max()))
+
+if a.flops_only:
+    from torch.utils.flop_counter import FlopCounterMode
+    with FlopCounterMode(display=False) as fc, th.no_grad():
+        core(seg, mag)
+    print(f"{a.model}: {fc.get_total_flops()/1e9:.1f} GFLOP per 7.8 s segment (counted: conv, mm, bmm, sdpa; 2 FLOP per MAC)")
+    for k, v in fc.get_flop_counts()["Global"].items():
+        print(f"   {str(k):40s} {v/1e9:8.1f} GFLOP")
+    sys.exit(0)
 
 out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
 path = out / f"{a.model}-core-opset{a.opset}.onnx"

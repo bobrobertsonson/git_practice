@@ -80,6 +80,11 @@ spikes/separator/scripts/run_timing.sh        # 70 s loop speed/memory (onnx pyt
 spikes/separator/scripts/run_cancel.sh        # cancel latency + library-silence check
 ~/.venvs/sawblade-demucs/bin/python spikes/separator/scripts/verify_segment.py --model htdemucs --dump DIR   # STFT/iSTFT check
 spikes/separator/scripts/gdb_sample.sh PID N DT OUT                                                          # sampling profile
+python3 spikes/separator/scripts/summarize_timing.py      # timing_51a.log -> RESULTS table (run from anywhere)
+(cd ~/sawblade-sep-data && python3 /path/to/spikes/separator/scripts/summarize_cancel.py)   # cancel.log -> table
+~/.venvs/sawblade-demucs/bin/python spikes/separator/scripts/coreml_coverage.py <core.onnx>   # CoreML EP op coverage
+~/.venvs/sawblade-demucs/bin/python spikes/separator/scripts/fp16_check.py --model htdemucs_6s # fp16 proxy
+~/.venvs/sawblade-demucs/bin/python spikes/separator/scripts/export_onnx.py --model htdemucs_6s --flops-only
 ```
 
 `eval_50.py` is the 5.0 evaluation (needs the 5.0 stem sets; the 5.0 scripts and their driver flags are in git
