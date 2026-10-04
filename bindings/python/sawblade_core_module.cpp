@@ -3,7 +3,7 @@
 //   render(preset, audio, sample_rate, render_rate="auto", out_rate="input", block=256,
 //          base_dir=None, cache=None) -> (float32 ndarray, report dict)
 //   CaptureCache: loads each .nam / IR once, shared by any number of renders and threads.
-//   load_stems(dir, sample_rate) / stem_set_from_arrays(dict, sample_rate) -> StemSet, and
+//   load_stems(dir, sample_rate, other_role="guitar") / stem_set_from_arrays(dict, sample_rate) -> StemSet, and
 //   StemPlayer (play-along backing, spec docs/specs/phase5_1_stemplayer.md section 5).
 //
 // The GIL is released for the whole parse + render; nothing in there touches Python objects.
@@ -191,6 +191,7 @@ void bindStems(py::module_& m) {
   py::class_<StemSet, std::shared_ptr<StemSet>>(m, "StemSet", "Immutable stereo stems at one sample rate (load_stems / stem_set_from_arrays).")
       .def_property_readonly("sample_rate", [](const StemSet& s) { return s.sampleRate; })
       .def_property_readonly("length", [](const StemSet& s) { return s.length; })
+      .def_property_readonly("other_mapped_to_guitar", [](const StemSet& s) { return s.otherMappedToGuitar; })
       .def_property_readonly("present",
                              [](const StemSet& s) {
                                std::vector<std::string> names;
@@ -207,18 +208,21 @@ void bindStems(py::module_& m) {
 
   m.def(
       "load_stems",
-      [](const py::object& dir, double sampleRate) {
+      [](const py::object& dir, double sampleRate, const std::string& otherRole) {
+        if (otherRole != "guitar" && otherRole != "other") throw py::value_error("other_role must be 'guitar' or 'other'");
         const std::string path = py::str(py::module_::import("os").attr("fspath")(dir)).cast<std::string>();
         std::shared_ptr<StemSet> out;
         {
           py::gil_scoped_release nogil;
-          out = std::make_shared<StemSet>(loadStemDirectory(path, sampleRate));
+          out = std::make_shared<StemSet>(loadStemDirectory(path, sampleRate, otherRole == "other" ? OtherRole::Other : OtherRole::Guitar));
         }
         return out;
       },
-      py::arg("dir"), py::arg("sample_rate"),
+      py::arg("dir"), py::arg("sample_rate"), py::arg("other_role") = "guitar",
       "Load the *.wav / *.flac stems of a directory (drums, bass, vocals, other, guitar|guitars; other audio files are\n"
-      "summed into 'other' with a warning), resampled to sample_rate. Raises RuntimeError on failure.");
+      "summed into 'other' with a warning), resampled to sample_rate. other_role: 'guitar' (default) loads a 4-stem\n"
+      "'other' as the guitar stem when the folder has no guitar file (StemSet.other_mapped_to_guitar tells); 'other' keeps\n"
+      "it. Raises RuntimeError on failure.");
   m.def(
       "integrated_loudness_lufs",
       [](const py::array& audio, double sampleRate) -> std::optional<double> {

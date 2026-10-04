@@ -243,13 +243,13 @@ struct PlayAlongPanel::Impl {
           col = L::warning();
         } else if (st.suggestedLevelDb) {
           msg = "Level set to " + juce::String(*st.suggestedLevelDb, 1) + " dB to match the rig. Adjust to taste.";
-        } else if (st.otherMappedToGuitar) {
+        } else if (st.otherMappedToGuitar && (standalone || s.hostSync)) {
           msg = "4-stem song: 'other' is treated as the guitar.";
         }
         break;
       case PlayAlong::LoadStatus::State::None: msg = "Drop a folder of stems here, or LOAD SONG."; break;
     }
-    if (st.state != PlayAlong::LoadStatus::State::Failed && st.state != PlayAlong::LoadStatus::State::Loading && !standalone && !s.hostSync)
+    if (st.state == PlayAlong::LoadStatus::State::Ready && msg.isEmpty() && !standalone && !s.hostSync)
       msg = "Backing is off. Enable SYNC TO HOST to follow the host transport.";
     status.setText(msg, juce::dontSendNotification);
     status.setColour(juce::Label::textColourId, col);

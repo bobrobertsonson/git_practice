@@ -166,7 +166,14 @@ void PlayAlong::prepare(double sampleRate, int maxBlock, int maxRigLatencySample
 // ---- commands --------------------------------------------------------------------------------------
 void PlayAlong::push(const PlayAlongCmd& c) {
   std::lock_guard<std::mutex> lk(producerM_);
-  if (!queue_.push(c)) dropped_.fetch_add(1);
+  if (!queue_.push(c)) {
+    dropped_.fetch_add(1);
+    resync_.store(true);
+  }
+}
+
+void PlayAlong::resyncIfNeeded() {
+  if (resync_.exchange(false)) applyAll();  // a push dropped again inside re-arms the flag
 }
 
 void PlayAlong::pushLoop(const PlayAlongSettings& s, double rate) {
@@ -351,6 +358,7 @@ void PlayAlong::loaderMain() {
       if (loaderCv_.wait_for(lk, std::chrono::milliseconds(500)) == std::cv_status::timeout && !pending_ && !stop_) {
         lk.unlock();
         player_.collectGarbage();  // retired stem sets are freed here, never on the audio thread
+        resyncIfNeeded();
         lk.lock();
       }
       continue;

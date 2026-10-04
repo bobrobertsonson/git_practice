@@ -190,16 +190,23 @@ void SawbladeProcessor::getStateInformation(juce::MemoryBlock& dest) {
 
 void SawbladeProcessor::setStateInformation(const void* data, int size) {
   if (data == nullptr || size <= 0) return;
-  const std::string s(static_cast<const char*>(data), static_cast<std::size_t>(size));
+  std::string s(static_cast<const char*>(data), static_cast<std::size_t>(size));
   // Capture paths in a saved state are absolute; the base only matters for hand-edited relative ones.
   // (current_path() throws if the working directory was deleted: use the error_code overload.)
   std::error_code ec;
   std::filesystem::path base = std::filesystem::current_path(ec);
   if (ec) base = std::filesystem::path("/");
+  // A `playAlong` that is not an object would make the core parser reject the whole state: drop it, so the
+  // tone still loads.
+  nlohmann::json j = nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/false);
+  if (j.is_object())
+    if (auto it = j.find("playAlong"); it != j.end() && !it->is_object()) {
+      j.erase(it);
+      s = j.dump();
+    }
   loadPresetJson(s, base, nullptr, /*restore=*/true);
   // A state without `playAlong` (older sessions) leaves the play-along as it is. Never throws: a missing
   // or unreadable folder shows up in playAlong().loadStatus().
-  const nlohmann::json j = nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/false);
   if (j.is_object())
     if (auto it = j.find("playAlong"); it != j.end()) playAlong_.restore(playAlongFromJson(*it));
 }

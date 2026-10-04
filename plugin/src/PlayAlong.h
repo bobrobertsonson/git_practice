@@ -202,6 +202,12 @@ class PlayAlong {
   std::optional<double> rigLoudnessLufs() const noexcept { return loud_.lufs(); }
   bool waitForLoader(std::chrono::milliseconds timeout = std::chrono::milliseconds(60000));
   std::uint64_t commandsDropped() const noexcept { return dropped_.load(); }
+  // A command was dropped because the queue was full, so the audio side may differ from the settings.
+  // The loader thread's 0.5 s tick calls resyncIfNeeded(); tests may call it directly. It re-sends the
+  // whole settings state (level, mode, count-in, loop, host sync, offset); transport events (play, pause,
+  // seek) are not replayed.
+  bool needsResync() const noexcept { return resync_.load(); }
+  void resyncIfNeeded();
 
   // ---- audio thread --------------------------------------------------------------------------
   // `rig` is the rig's mono output for these n samples (read only: measured for the loudness estimate).
@@ -234,6 +240,7 @@ class PlayAlong {
   std::atomic<double> loadedRate_{0.0};
   std::atomic<int> rigLatency_{0};
   std::atomic<std::uint64_t> dropped_{0};
+  std::atomic<bool> resync_{false};
 
   mutable std::mutex m_;  // settings_, status_
   PlayAlongSettings settings_;

@@ -13,7 +13,8 @@ namespace sawblade::plugin {
 // Skinned prototype of the main rig screen (design/mockups/RigReal.dc.html, spec
 // docs/specs/phase2_5_skin.md). A fixed 1280 x 800 design laid out in one content component that
 // the editor scales with an AffineTransform; the editor is resizable at a fixed 1.6 aspect.
-// Reads status() and the APVTS only: no processor, preset or parameter changes.
+// Reads status() and the APVTS; the only things it changes are the preset file chooser's load and the
+// play-along (PlayAlongPanel / folder drop), which act on the processor's PlayAlong object.
 class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragAndDropTarget, private juce::Timer {
  public:
   static constexpr int kDesignWidth = 1280, kDesignHeight = 800;

@@ -681,3 +681,38 @@ TEST_CASE("play-along: screenshots with the panel closed and open", "[editor][pl
   CHECK(anyLabelContains(*rig.ed, "Gatecreeper"));
   CHECK_FALSE(anyLabelContains(*rig.ed, "not found"));
 }
+
+TEST_CASE("play-along: in plugin mode with sync off the status shows warnings and the suggestion before the off hint", "[editor][playalong]") {
+  Rig rig;
+  TempFolder tmp;
+  auto& pa = rig.proc.playAlong();
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  REQUIRE_FALSE(pa.standalone());
+  REQUIRE_FALSE(pa.settings().hostSync);
+
+  // A folder with an unknown stem name: the loader warning wins over the hint.
+  const auto warn = writeSyntheticSong(tmp.dir, "warn", 4.0);
+  std::vector<float> x(48000, 0.1f);
+  sawblade::writeWavFloat32Stereo(warn / "piano.wav", 48000.0, x, x);
+  pa.loadFolder(warn.string(), false);
+  REQUIRE(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*rig.ed, "piano.wav"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "Backing is off"));
+
+  // A clean user load: the one-time level suggestion is shown.
+  const auto clean = writeSyntheticSong(tmp.dir, "clean", 4.0);
+  pa.loadFolder(clean.string(), true);
+  REQUIRE(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*rig.ed, "Level set to"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "Backing is off"));
+
+  // A restored (non-user) clean load has nothing to say but the hint.
+  PlayAlongSettings s = pa.settings();
+  s.folder = clean.string();
+  pa.restore(s);
+  REQUIRE(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*rig.ed, "Backing is off"));
+}

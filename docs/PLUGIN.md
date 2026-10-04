@@ -197,9 +197,14 @@ because the host owns the transport).
 
 The play-along loader is its own thread, not the `EngineLoader`: a long song load must not hold up preset builds or
 `prepareToPlay` (which waits for the engine loader). Latest request wins. A new set replaces the old one only while the
-transport is stopped (`StemPlayer` rule); a user load in Standalone sends a pause so it is adopted. `StemPlayer`'s own
+transport is stopped (`StemPlayer` rule); a **user** load in Standalone (LOAD SONG or a drop) therefore **pauses the
+playback** so the new set is adopted, whereas a reload (state restore, rate change, KEEP KEYS) does not touch the
+transport and the old set keeps playing until the next stop. `StemPlayer`'s own
 setters are audio-thread-only, so the message thread never calls them: continuous values and transport go through the
-queue, `setStartOffsetSamples` is atomic. A loop is re-applied by the audio thread whenever a set is adopted.
+queue, `setStartOffsetSamples` is atomic. A loop is re-applied by the audio thread whenever a set is adopted. If the queue is ever full, the dropped command
+sets a resync flag; the loader's 0.5 s tick then re-sends the whole settings state (level, guitar mode, count-in, loop,
+host sync, offset), so the audio side cannot stay out of step with the panel. Transport events (play, pause, seek) are
+not replayed.
 
 **Rig latency.** `setRigLatencySamples(chain latency)` is called whenever the engine is published and in
 `prepareToPlay`, so the backing is delayed by the same number of samples the host is told (the plugin reports the

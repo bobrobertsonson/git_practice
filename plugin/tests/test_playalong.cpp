@@ -596,7 +596,8 @@ TEST_CASE("PlayAlong: 4-stem other is the guitar by default, KEEP KEYS keeps it"
 TEST_CASE("PlayAlong: processBlock allocates and locks nothing with the backing playing", "[playalong][rt]") {
   TempDir t;
   const Stems st = rampStems(400000);
-  const fs::path song = writeSong(t.dir, "song", st);
+  const fs::path songA = writeSong(t.dir, "songA", st);
+  const fs::path songB = writeSong(t.dir, "songB", rampStems(300000, 0.5f));
   for (const bool standalone : {true, false}) {
     CAPTURE(standalone);
     Host h(kFs, 128);
@@ -605,35 +606,215 @@ TEST_CASE("PlayAlong: processBlock allocates and locks nothing with the backing 
     h.prepare(kFs, 128);
     FakeHead head;
     h.p.setPlayHead(&head);
-    pa.loadFolder(song.string(), true);
+    pa.loadFolder(songA.string(), true);
     REQUIRE(pa.waitForLoader());
+    pa.setLevelDb(0.0);
     pa.setHostSync(true);
-    pa.setCountIn(true, 200.0);
+    pa.setCountIn(true, 240.0);  // one bar = 1 s (Standalone)
     pa.setLoopMs(1000.0, 3000.0, true);
     pa.setGuitarMode(GuitarMode::Ghost);
-    head.playing = true;
-    pa.play();
-    h.allocs = h.locks = 0;
-    // Blocks of mixed sizes while the main thread keeps sending commands, seeking and swapping sets.
     const std::vector<int> sizes{128, 1, 64, 4096, 333, 512, 17};
     const auto in = noise(8192, 3, 0.3f);
     std::vector<float> out(8192), out2(8192);
-    for (int b = 0; b < 400; ++b) {
-      const int n = sizes[static_cast<std::size_t>(b) % sizes.size()];
-      if (b % 40 == 7) pa.seekSamples((b * 977) % 300000);
-      if (b % 50 == 3) pa.setLevelDb(-3.0 - (b % 7));
-      if (b % 97 == 5) pa.setGuitarMode(b % 2 ? GuitarMode::Full : GuitarMode::Muted);
-      if (b == 200) pa.loadFolder(song.string(), true);  // a set swap while running
+    run(h, 3, 128, &head);  // adopt the set (not counted below: the guard is armed per process() call anyway)
+    REQUIRE(pa.snapshot().length == 400000);
+    h.allocs = h.locks = 0;
+
+    struct Probe {
+      int audible = 0, countIn = 0;
+      bool wrapped = false;
+      std::int64_t first = -1, last = -1;
+    };
+    // One block of silence-through-the-rig; the backing is whatever the output adds to the input.
+    auto block = [&](int n, Probe& pr) {
       h.process(in.data(), out.data(), n, nullptr, out2.data());
       head.pos += n;
+      double e = 0.0;
+      for (int i = 0; i < n; ++i) {
+        const double d = static_cast<double>(out[static_cast<std::size_t>(i)]) - in[static_cast<std::size_t>(i)];
+        e += d * d;
+      }
+      const auto sn = pa.snapshot();
+      if (std::sqrt(e / n) > 1e-3) ++pr.audible;
+      if (sn.countingIn) ++pr.countIn;
+      if (pr.last >= 0 && sn.position < pr.last - 1000) pr.wrapped = true;
+      if (sn.playing && !sn.countingIn) {
+        if (pr.first < 0) pr.first = sn.position;
+        pr.last = sn.position;
+      }
+    };
+
+    // Phase 1: play (count-in, then the loop wraps in Standalone) with commands arriving from the main thread.
+    Probe p1;
+    if (standalone) {
+      pa.seekSamples(120000);
+      pa.play();
+    } else {
+      head.playing = true;
+      head.pos = 120000;
     }
-    pa.pause();
+    for (int b = 0; b < 1400; ++b) {
+      if (b % 60 == 7) pa.setLevelDb(-3.0 - (b % 7));
+      if (b % 97 == 5) pa.setGuitarMode(b % 2 ? GuitarMode::Full : GuitarMode::Muted);
+      if (b % 311 == 100 && !standalone) pa.seekSamples(5);  // ignored in host-follow: must be harmless
+      block(sizes[static_cast<std::size_t>(b) % sizes.size()], p1);
+    }
+    CHECK(pa.snapshot().playing);
+    CHECK(p1.audible > 300);  // the backing is really there, not the idle path
+    CHECK(p1.last > p1.first);
+    if (standalone) {
+      CHECK(p1.countIn > 30);  // about 1 s of blocks
+      CHECK(p1.wrapped);  // the loop wrapped inside the measured window
+      CHECK(pa.snapshot().loopActive);
+    }
+
+    // Phase 2: stop, swap the set with a NON-user reload (no automatic pause), and check it was adopted.
+    if (standalone) pa.pause();
+    else head.playing = false;
+    for (int b = 0; b < 40; ++b) block(128, p1);
+    CHECK_FALSE(pa.snapshot().playing);
+    pa.loadFolder(songB.string(), false);
     REQUIRE(pa.waitForLoader());
-    for (int b = 0; b < 10; ++b) h.process(in.data(), out.data(), 128, nullptr, out2.data());
+    for (int b = 0; b < 10; ++b) block(128, p1);
+    CHECK(pa.snapshot().length == 300000);  // songB adopted
+    CHECK(pa.loadStatus().songName == "songB");
+    if (standalone) CHECK(pa.snapshot().loopActive);  // re-applied to the new set
+
+    // Phase 3: play the new set.
+    Probe p3;
+    if (standalone) {
+      pa.seekSamples(100000);
+      pa.play();
+    } else {
+      head.playing = true;
+      head.pos = 100000;
+    }
+    for (int b = 0; b < 700; ++b) block(sizes[static_cast<std::size_t>(b) % sizes.size()], p3);
+    CHECK(pa.snapshot().playing);
+    CHECK(p3.audible > 150);
+    CHECK((standalone ? p3.wrapped : p3.last > p3.first));  // advances; Standalone also wraps the re-applied loop
+
     CHECK(h.allocs == 0);
     if (LockGuard::enabled()) CHECK(h.locks == 0);
     CHECK_FALSE(h.nonFinite);
-    CHECK(pa.snapshot().hasSet);
     h.p.setPlayHead(nullptr);
+  }
+}
+
+TEST_CASE("PlayAlong plugin: with host sync off the backing is silent, with a set loaded and the host playing", "[playalong][plugin]") {
+  TempDir t;
+  const fs::path song = writeSong(t.dir, "song", rampStems(100000));
+  Host h(kFs, 256);
+  PlayAlong& pa = h.p.playAlong();
+  FakeHead head;
+  h.p.setPlayHead(&head);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  pa.setLevelDb(6.0);
+  CHECK_FALSE(pa.settings().hostSync);
+  head.playing = true;
+  head.pos = 0;
+  const Out o = run(h, 40, 256, &head);
+  for (std::size_t i = 0; i < o.l.size(); ++i) {
+    REQUIRE(o.l[i] == 0.0f);
+    REQUIRE(o.r[i] == 0.0f);
+  }
+  CHECK(pa.snapshot().hasSet);
+  CHECK_FALSE(pa.snapshot().playing);
+  h.p.setPlayHead(nullptr);
+}
+
+TEST_CASE("PlayAlong Standalone: a user load while playing pauses so the new set is adopted; a non-user load does not", "[playalong][standalone]") {
+  TempDir t;
+  const fs::path a = writeSong(t.dir, "a", rampStems(200000));
+  const fs::path b = writeSong(t.dir, "b", rampStems(150000));
+  Host h(kFs, 256);
+  PlayAlong& pa = h.p.playAlong();
+  pa.setStandalone(true);
+  h.prepare(kFs, 256);
+  pa.loadFolder(a.string(), true);
+  REQUIRE(pa.waitForLoader());
+  run(h, 2, 256);
+  pa.play();
+  run(h, 20, 256);
+  REQUIRE(pa.snapshot().playing);
+
+  pa.loadFolder(b.string(), false);  // reload: no pause, the old set keeps playing
+  REQUIRE(pa.waitForLoader());
+  run(h, 40, 256);
+  CHECK(pa.snapshot().playing);
+  CHECK(pa.snapshot().length == 200000);
+
+  pa.loadFolder(b.string(), true);  // user load: pauses, then the new set is adopted
+  REQUIRE(pa.waitForLoader());
+  run(h, 40, 256);
+  CHECK_FALSE(pa.snapshot().playing);
+  CHECK(pa.snapshot().length == 150000);
+}
+
+TEST_CASE("PlayAlong: a full command queue is resynchronised from the settings", "[playalong][queue]") {
+  TempDir t;
+  const Stems st = rampStems(200000);
+  const fs::path song = writeSong(t.dir, "song", st);
+  Host h(kFs, 256);
+  PlayAlong& pa = h.p.playAlong();
+  pa.setStandalone(true);
+  h.prepare(kFs, 256);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  pa.setLevelDb(0.0);
+  run(h, 3, 256);
+  pa.seekSamples(50000);
+  pa.play();
+  run(h, 20, 256);
+  REQUIRE(pa.snapshot().playing);
+  REQUIRE_FALSE(pa.needsResync());
+
+  // Flood with no audio running: the queue fills, later commands are dropped, the last value is among them.
+  for (int i = 0; i < 400; ++i) pa.setLevelDb(-1.0 - (i % 8));  // ends at -8
+  pa.setLevelDb(-12.0);
+  CHECK(pa.commandsDropped() > 0);
+  CHECK(pa.needsResync());
+  CHECK(pa.settings().levelDb == -12.0);
+
+  // The audio side drains what fit (a stale level), then the resync re-sends the settings.
+  run(h, 4, 256);
+  pa.resyncIfNeeded();  // what the loader's 0.5 s tick does
+  CHECK_FALSE(pa.needsResync());
+  const Out o = run(h, 30, 256);
+  const double gain = std::pow(10.0, -12.0 / 20.0);
+  const std::size_t i = o.l.size() - 1;
+  const double pos = static_cast<double>(pa.snapshot().position) - 1.0;  // sample just rendered
+  CHECK(static_cast<double>(o.l[i]) == Catch::Approx(gain * st.l[static_cast<std::size_t>(pos)]).epsilon(1e-3));
+
+  // The loader tick does it on its own.
+  for (int k = 0; k < 400; ++k) pa.setLevelDb(-2.0);
+  pa.setLevelDb(-4.0);
+  REQUIRE(pa.needsResync());
+  run(h, 4, 256);
+  for (int k = 0; k < 40 && pa.needsResync(); ++k) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  CHECK_FALSE(pa.needsResync());
+  const Out o2 = run(h, 30, 256);
+  const double g2 = std::pow(10.0, -4.0 / 20.0);
+  const double pos2 = static_cast<double>(pa.snapshot().position) - 1.0;
+  CHECK(static_cast<double>(o2.l.back()) == Catch::Approx(g2 * st.l[static_cast<std::size_t>(pos2)]).epsilon(1e-3));
+}
+
+TEST_CASE("PlayAlong: a non-object playAlong in the state is ignored and the tone state still loads", "[playalong][state]") {
+  Host a(kFs, 512);
+  a.setParam(kBlend, 0.3);
+  a.setParam(kInputGain, 4.0);
+  juce::MemoryBlock plain;
+  a.p.getStateInformation(plain);
+  for (const json& bad : {json("nonsense"), json(7), json::array({1}), json(nullptr)}) {
+    json g = json::parse(std::string(static_cast<const char*>(plain.getData()), plain.getSize()));
+    g["playAlong"] = bad;
+    const std::string gs = g.dump();
+    SawbladeProcessor b;
+    b.setStateInformation(gs.data(), static_cast<int>(gs.size()));
+    CHECK(b.status().error.empty());
+    CHECK(b.parameters().getRawParameterValue("blend")->load() == Catch::Approx(0.3f).margin(1e-4));
+    CHECK(b.parameters().getRawParameterValue("inputGain")->load() == Catch::Approx(4.0f).margin(1e-4));
+    CHECK(b.playAlong().settings().isDefault());
   }
 }
