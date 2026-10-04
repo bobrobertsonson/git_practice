@@ -5,6 +5,7 @@
 #   SawbladePlugin         juce_add_plugin: the shared-code static library (our sources + the JUCE
 #                          modules, compiled once) plus the format targets SawbladePlugin_VST3,
 #                          SawbladePlugin_Standalone (and SawbladePlugin_AU on macOS).
+#   sawblade_editor_tests  Catch2 tests of the skinned editor (needs a display: run under xvfb-run).
 #   sawblade_plugin_tests  headless Catch2 tests of the processor (no plugin wrapper, no window,
 #                          no audio device, no host): our sources + the JUCE modules, compiled
 #                          into the test executable.
@@ -21,7 +22,29 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/Engine.cpp
   src/EngineLoader.cpp
   src/PluginProcessor.cpp
-  src/PluginEditor.cpp)
+  src/PluginEditor.cpp
+  src/skin/SkinAssets.cpp
+  src/skin/FilmstripKnob.cpp
+  src/skin/FootswitchButton.cpp
+  src/skin/LedIndicator.cpp
+  src/skin/RigView.cpp)
+
+# UI renders embedded into the binary: an explicit list (not a glob) of everything in assets/.
+# Nothing renders at build time; design/render/export_ui_assets.py produced these files once.
+juce_add_binary_data(SawbladeAssets SOURCES
+  assets/amp_saw.png
+  assets/amp_body.png
+  assets/cab_4x12.png
+  assets/pedal_saw.png
+  assets/pedal_body.png
+  assets/knob_amp.png
+  assets/knob_amp.json
+  assets/knob_pedal.png
+  assets/knob_pedal.json
+  assets/footswitch.png
+  assets/footswitch.json
+  assets/led_orange.png
+  assets/led_orange.json)
 
 # JUCE module sources are compiled into the same targets: -Werror applies to OUR files only.
 set_source_files_properties(${SAWBLADE_PLUGIN_SOURCES} src/PluginEntry.cpp PROPERTIES
@@ -56,7 +79,7 @@ target_compile_definitions(SawbladePlugin PUBLIC ${SAWBLADE_JUCE_DEFS})
 target_link_libraries(SawbladePlugin
   PRIVATE sawblade_core
           juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
-          juce::juce_audio_utils
+          juce::juce_audio_utils SawbladeAssets
   PUBLIC  juce::juce_recommended_config_flags)
 # NAM registers its architectures from static initializers: the archive must be linked whole into
 # every final binary (the shared code is a static library, so the format targets and the tests
@@ -79,7 +102,7 @@ if(SAWBLADE_BUILD_TESTS)
   target_include_directories(sawblade_plugin_tests PRIVATE src)
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})
   target_link_libraries(sawblade_plugin_tests PRIVATE
-    sawblade_core Catch2::Catch2WithMain
+    sawblade_core Catch2::Catch2WithMain SawbladeAssets
     juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
     juce::juce_recommended_config_flags
     "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib)
@@ -95,6 +118,38 @@ if(SAWBLADE_BUILD_TESTS)
     SAWBLADE_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets")
   catch_discover_tests(sawblade_plugin_tests TEST_PREFIX "plugin: ")
+endif()
+
+# Editor tests (skin, layout, bindings, screenshots): need a display, so they live in their own
+# executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
+# compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
+if(SAWBLADE_BUILD_TESTS)
+  add_executable(sawblade_editor_tests tests/test_editor.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp
+    PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
+  target_include_directories(sawblade_editor_tests PRIVATE src)
+  target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS}
+    SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
+    SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots")
+  target_link_libraries(sawblade_editor_tests PRIVATE
+    sawblade_core Catch2::Catch2WithMain SawbladeAssets
+    juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
+    juce::juce_recommended_config_flags
+    "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib)
+  find_program(SAWBLADE_XVFB_RUN xvfb-run)
+  if(SAWBLADE_XVFB_RUN AND NOT APPLE)
+    set_property(TARGET sawblade_editor_tests PROPERTY CROSSCOMPILING_EMULATOR ${SAWBLADE_XVFB_RUN} -a)
+  endif()
+  catch_discover_tests(sawblade_editor_tests TEST_PREFIX "editor: ")
+
+  # plugin/assets/ budget (< 25 MB) and every file the exporter lists exists.
+  find_program(SAWBLADE_PYTHON NAMES python3 python)
+  if(SAWBLADE_PYTHON)
+    add_test(NAME "editor: assets budget"
+      COMMAND ${CMAKE_COMMAND} -DASSETS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/assets
+              -DEXPORTER=${PROJECT_SOURCE_DIR}/design/render/export_ui_assets.py -DPYTHON=${SAWBLADE_PYTHON}
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/check_assets.cmake)
+  endif()
 endif()
 
 # Optional: validate the built VST3 with pluginval (https://github.com/Tracktion/pluginval).

@@ -170,12 +170,25 @@ latency `C = 0..2M` for host rates 8000 to 192000 with 48 kHz models.
 
 ### Editor
 
-Functional only: preset-load button, preset name, latency / rate / live-compatible read-outs,
-load state and errors, one labelled slider per parameter (post-EQ slots without a band are
-greyed). All colours, fonts and metrics live in `SawbladeLookAndFeel.h`; replacing the look is a
-change to that class (plus the editor's layout), nothing else.
+A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, spec
+`docs/specs/phase2_5_skin.md`); the final UI is the user's design. A fixed 1280 x 800 design laid out in one
+content component that the editor scales with an `AffineTransform` (resizable, fixed 1.6 aspect, 640x400 to
+2560x1600). It reads `status()` and the APVTS only. Layout: top bar (preset button opening the preset file chooser,
+latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM), rig area (amp heads, cab, pedalboard
+with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
+knobs; all 12 parameters are bound to exactly one knob each).
+
+Pictures come from `plugin/assets/` (our own renders, embedded with `juce_add_binary_data`). Controls live in
+`plugin/src/skin/`: `SkinAssets` (decodes the PNGs and JSON sidecars once), `FilmstripKnob`, `FootswitchButton`,
+`LedIndicator`, `RigView`. Colours, fonts and plain-widget drawing are in `SawbladeLookAndFeel`. Placeholders
+(disabled, titled, with a tooltip saying so): A/B, MATCH, EXPORT NAM, previous / next preset, BROWSE CAPTURES,
+LEARN GATE, "+ PEDAL", CPU readout, the footswitch (visual bypass only).
 
 ## Tests
+
+`sawblade_editor_tests` (`plugin/tests/test_editor.cpp`, ctest prefix `editor: `, run under `xvfb-run -a` when
+available): snapshots to `build/screenshots/sawblade_skin_{1x,2x}.png`, resizing, parameter bindings, filmstrip
+mapping, knob interaction, footswitch / LED, accessibility, and the `plugin/assets/` budget (< 25 MB).
 
 `sawblade_plugin_tests` (headless): `plugin/tests/test_engine.cpp` (Engine, no JUCE) and
 `plugin/tests/test_processor.cpp` (the processor driven like a host). Audio-thread rules are
