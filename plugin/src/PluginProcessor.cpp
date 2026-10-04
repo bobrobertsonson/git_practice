@@ -27,8 +27,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   return layout;
 }
 
-double round4(double v) { return std::round(v * 1e4) / 1e4; }
-
 constexpr int kMinChunk = 4096;  // audio-thread scratch size; larger host blocks are processed in chunks
 
 }  // namespace
@@ -69,7 +67,7 @@ bool SawbladeProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 // --- parameters ---------------------------------------------------------------------------------
 ParamValues SawbladeProcessor::readParams() const noexcept {
   ParamValues v{};
-  for (std::size_t i = 0; i < v.size(); ++i) v[i] = static_cast<double>(paramAtomic_[i]->load(std::memory_order_relaxed));
+  for (std::size_t i = 0; i < v.size(); ++i) v[i] = snapParam(static_cast<double>(paramAtomic_[i]->load(std::memory_order_relaxed)));
   return v;
 }
 
@@ -79,24 +77,32 @@ void SawbladeProcessor::writeParams(const ParamValues& v) {
 }
 
 // --- presets / state ----------------------------------------------------------------------------
-Preset SawbladeProcessor::presetWithParams(bool rounded) const {
+Preset SawbladeProcessor::presetWithParams() const {
   Preset p;
   {
     std::lock_guard<std::mutex> lk(mutex_);
     p = preset_;
   }
-  ParamValues v = readParams();
-  if (rounded)
-    for (auto& x : v) x = round4(x);
+  ParamValues v = readParams();  // already on the 1e-4 grid
   applyParams(p, v);
   return p;
 }
 
-Preset SawbladeProcessor::currentPreset() const { return presetWithParams(true); }
+Preset SawbladeProcessor::currentPreset() const { return presetWithParams(); }
 
 SawbladeProcessor::Status SawbladeProcessor::status() const {
   std::lock_guard<std::mutex> lk(mutex_);
   return status_;
+}
+
+SawbladeProcessor::EngineParamState SawbladeProcessor::engineParamState() const {
+  EngineParamState st;
+  if (cur_) {
+    st.live = cur_->liveParams();
+    st.baseline = cur_->baseline();
+    st.valid = true;
+  }
+  return st;
 }
 
 SlotBands SawbladeProcessor::postEqSlots() const {
@@ -232,7 +238,7 @@ void SawbladeProcessor::submit(bool fallbackToInit) {
       if (wanted_ == wanted) wanted_.reset();
     };
   } else {
-    r.preset = presetWithParams(false);
+    r.preset = presetWithParams();
   }
   r.hostRate = hostRate_;
   r.maxBlock = maxBlock_;

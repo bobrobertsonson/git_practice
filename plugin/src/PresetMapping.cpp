@@ -28,12 +28,14 @@ const std::array<ParamSpec, kNumParams>& specs() {
 double clampTo(int index, double v) {
   const ParamSpec& s = paramSpec(index);
   if (!std::isfinite(v)) return s.def;
-  return std::clamp(v, s.min, s.max);
+  return snapParam(std::clamp(v, s.min, s.max));
 }
 
 bool hasGain(EqType t) { return t != EqType::HighPass && t != EqType::LowPass; }
 
 }  // namespace
+
+double snapParam(double v) noexcept { return std::round(v * 1e4) / 1e4; }
 
 const ParamSpec& paramSpec(int index) { return specs()[static_cast<std::size_t>(index)]; }
 
