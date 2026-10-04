@@ -434,3 +434,127 @@ After the merge: full Release ctest must pass before any adaptation commit.
 The merge conflict resolutions; the deleted/replaced 7c shadow types; re-measured clip numbers
 (the LED is now quintic); the live-param design notes; the plugin table rows; screenshots;
 full ctest summary; commit hashes; decisions / questions for lead.
+
+---
+
+# Part 3 (added 2026-10-04 20:45 UTC): calibration corrections from phase 7.1
+
+The main lead's phase 7.1 measured `pedal.hm` v2 against 18 real captures (HM-2 1985 ×6
+labelled D/L/H, HM-2W ×8 standard/custom pairs, Throne Torcher ×2, Eyemaster ×2); full report
+`docs/specs/phase7_1_hm_calibration_REPORT.md` + `docs/reports/phase7_1/` on the main working
+branch (landing shortly; the numbers below are the lead's relay and are binding for this part).
+Mean free-fit LTAS error vs the stock HM-2 is 4.1 dB RMS: the model is structurally off. The
+corrections are measured, not guesses, and are folded in here as a **new HM voicing**. The
+local re-fit against the captures happens after the merge.
+
+## 3.1 Versioning (binding)
+- `pedal.hm` gets **`modelVersion: 3`** = the calibrated voicing. `modelVersion` 1 and 2 keep
+  the phase 7 / 7b voicing **bit-identically** (7b test 1 and its 15-preset bank are untouched:
+  the bank stays at v2 in this phase). `HmParams` stores its version; `toJson()` writes the
+  stored version (2 or 3); a block created from defaults (`HmParams{}`, the plugin's
+  `switchCircuit`) is **v3**. v3 accepts every v2 key plus the two custom trims of §3.4.
+- `HmVoicing` becomes per-version: `HmVoicing::v2()` (today's constants, unchanged) and
+  `HmVoicing::v3()` (below), selected at construction; every v3 number lives in that one table.
+- `pedal.hmx` and `pedal.eye` (both `modelVersion: 1`, new blocks) are built on the **v3** core.
+
+## 3.2 v3 core (STRUCTURAL)
+1. **Asymmetric diode clip.** Real units: H2 ≈ −9, H4 ≈ −13, H6 ≈ −20 dB re fundamental, H3 ≈
+   −18; the symmetric model has H2 = −∞ and H3 ≈ −9. v3 stock knees: `k+ = 0.5` (silicon) and
+   `k−` **fitted** so that the whole pedal at D 10, L = H = 5, 500 Hz at −20 dBFS gives
+   H2 ∈ [−12, −6] dBc and H3 ∈ [−22, −14] dBc. Fit procedure (implementer, offline or in a
+   test-time search, one number hard-coded into the table with the procedure in the comment):
+   scan `k−` from 0.5 to 3.0 in steps of 0.05 on both stages (same knees), pick the value whose
+   H2 is nearest −9 dBc, then check H3; if H3 is not in range with both stages asymmetric, make
+   only stage 2 asymmetric and re-scan. Report the scan table. The `clip` enum keeps its
+   meaning: `silicon` = these v3 stock knees in a v3 block (and 0.5/0.5 in v1/v2), `bias` still
+   scales `k−`. The 10 Hz DC blocker already exists.
+2. **Drive range.** Free fits land at distortion ≈ 10 for every real label D-2…D-10 and ≈ 3.3
+   for D-0: the real pedal is saturated from D-2. v3: `g1BaseDb = 26`, `s1 = 2.0` (26–46 dB
+   across the knob, was 6–46). Custom: same (no gain change measured).
+3. **Dynamics** (re-measure only): captures have crest 7.6–10.1 dB and envelope spread
+   2.2–3.0 dB; v2 at D 10 gives crest ≈ 9.5 and spread 1.6. Print crest factor and envelope
+   spread (RMS over 50 ms windows, 10th–90th percentile range in dB) of the fixture-DI render at
+   D 10 for v2 and v3; no threshold.
+
+## 3.3 v3 colour EQ
+Apply the free-cascade residual fit **on top of** the v2 bands (it was fitted to the residual of
+the v2 model, presence peak included), and open the top end:
+- keep: low gyrator (100 Hz, Q 0.8, `−12 + 3·low`), high A (`highFreq`, Q 1.2), high B
+  (`highFreq·highSpread`), presence peak (`presenceFreq`, `presenceDb` default 8);
+- **add three fixed fit bands** (table constants `fitLowShelfHz = 85, fitLowShelfDb = 2.4,
+  Q 0.707`; `fitMidHz = 705, fitMidDb = 4.65, fitMidQ = 2.76`; `fitCutHz = 5500, fitCutDb =
+  −12.2, fitCutQ = 1.54`);
+- **remove the output roll-off by default**: `rolloffHz` range becomes 4000–16000, v3 default
+  **16000** (the fit ran to its 14 kHz bound; 16 kHz keeps it out of the way at 44.1 kHz too);
+- **post-clip LPF** (4th-order) `postLpfHz = 9500` for stock and custom in v3 (was 6500; the
+  model was ~12 dB short at 10 kHz). Check the alias margin stays < −80 dB with the wider LPF
+  (Acceptance 16); if it does not, lower towards 9 kHz and report.
+Gains-only cross-check (informational print): v3 − v2 at 1 kHz ≈ +3 dB, 1.5 kHz ≈ −1.6 dB.
+
+## 3.4 Custom mode in v3 (all four standard/custom pairs agree)
+`mode: custom` in v3 = exactly these deltas over stock (v2's custom `s1 4.6 / sLow 3.6` stay
+v2-only): output **+2.5 dB**; low shelf **`customLowDb`** (new key, 0–8 dB, default **3.2**) at
+100 Hz Q 0.7; high shelf **`customHighDb`** (new key, 0–8 dB, default **3.0**) at 6 kHz Q 0.7;
+no gain change; slightly odd-heavier harmonics (measured H3 +2.5, H2 −1): implement as `k−`
+pulled 25 % of the way toward `k+` (`k−_custom = k− − 0.25·(k− − k+)`); crest 0.6–1.4 dB lower
+(print). The two new keys are **preset-static trims** (not live, not on the face or drawer: the
+drawer is full at 10 knobs); they are PresetErrors on v1/v2 blocks. `modded` in v3 = stock v3
+with `interLpfHz = postLpfHz = 11000` (keeps the "brighter top" meaning above the new 9.5 kHz).
+
+## 3.5 hmx and eye on the v3 core
+- **hmx** (Throne Torcher measured vs stock): fixed voicing deltas in `HmxPedal`: low shelf
+  **+3.8 dB at 110 Hz** Q 0.7 and peak **−2.5 dB at 2.2 kHz** Q 1.0 (the 1.6–3 kHz dip), no extra
+  presence (presence shelf default stays 0 dB); gain range tops out at D 6.2: `G1 = 26 +
+  1.24·distortion (+ 9 boost)` dB. Decoupled bands, 4-way clip, boost, mix, tightness unchanged.
+  Part 1 test 2a (stock position = hm) is **replaced** by Acceptance 19.
+- **eye** (Eyemaster fits D 6.6–7.4 with the lowest errors of the set and the stock residual
+  shape, so it is an HM-2-family fixed-knob circuit): the v3 core with **L = 6.2, H = 7.1
+  fixed**, `gain` mapping **D = 3 + 0.5·gain** (D 3 → 8), `level`, `tightness`; the Part 1 100 Hz
+  pre-clip corner and the 10–52 dB law are dropped (pre-filter = v3 `preHpfHz`). Part 1 tests
+  3a/3b are **replaced** by Acceptance 20. The HM-3 fallback question is closed: the measurement
+  says HM-2 family.
+
+## 3.6 Presets
+- New `presets/modeled/hm_v3/` (`pedal.hm`, `modelVersion: 3`, all keys explicit), the Part-1 §5
+  recipes made real: `sunlight_all_tens.json` (10/10/10, stock), `stockholm_custom.json`
+  (10/9/10, custom, lowFreq 90), `gothenburg_half_mids.json` (8/5/8, custom, highFreq 900,
+  highSpread 1.4, presenceDb 6), `grind_buzz.json` (6/10/10, custom, tightness 7, presenceFreq
+  5500, presenceDb 12). `level` set for a peak in [−6, −0.5] dBFS. Family bank: 15 + 7 + 4 = 26.
+- Re-level the seven hmx/eye presets on the v3 core (same window), report old/new.
+- `presets/README.md`, `docs/PEDALS.md`, `docs/PRESET_SCHEMA.md` (v3 section: versioning rule,
+  the two trims, the table of v3 constants with "measured in phase 7.1" provenance).
+
+## Acceptance, Part 3
+16. **v1/v2 untouched**: 7b test 1 (goldens) and the whole 7b suite pass unchanged; a v2 block
+    renders bit-identically to before this part (compare `presets/modeled/chainsaw/*.json`
+    renders against renders made at the Part-2 head, recorded once as a temporary check or via
+    7b's LTAS/peak tests + the two goldens). v3 alias floor < −80 dB at D 10 for each clip type
+    and mode (phase 7 recipe) with the 9.5 kHz post LPF.
+17. **v3 harmonics and drive**: whole pedal, D 10, L = H = 5, 500 Hz −20 dBFS: H2 ∈ [−12, −6]
+    dBc, H3 ∈ [−22, −14] dBc (print H2…H6). Small-signal `FR(D 10) − FR(D 0)` at 1 kHz = 20 ±
+    0.2 dB. THD at −40 dBFS: D 2 ≥ (v2's D 10 THD) − 3 dB (saturated from D-2). THD still
+    monotonic in D at −20 and −40 dBFS.
+18. **v3 EQ** (`FR(v3 default) − FR(v2 default)`, absolute, same knobs): 50 Hz ∈ [+1.4, +3.4];
+    705 Hz ∈ [+3.5, +5.5]; 5.5 kHz ∈ [−13, −8]; 10 kHz ≥ +8. **Custom v3** (`FR(custom) −
+    FR(stock)`, v3): 400 Hz ∈ [2.0, 3.0]; 50 Hz ∈ [4.5, 6.5]; 10 kHz ∈ [4.5, 6.5]; with
+    `customLowDb = customHighDb = 0`: flat 2.5 ± 0.3 dB from 50 Hz to 10 kHz. Harmonics custom
+    vs stock at D 10: H3 +1…+4 dB, H2 −2.5…0 dB. `modded` v3: |H(10 kHz)| − |H(400)| ≥ stock's + 3 dB.
+19. **hmx vs hm v3** (both re their own |H(400)|, same knobs, dist 5): 110 Hz ∈ [+3.1, +4.5];
+    2.2 kHz ∈ [−3.2, −1.8]; 400 Hz and 8 kHz within ±0.5. Gain law `FR(dist 10) − FR(dist 0)` at
+    1 kHz = 12.4 ± 0.2 dB. Part-1 tests 2b–2g unchanged and passing.
+20. **eye = hm v3 at fixed knobs**: eye (gain 10, tight 0) vs hm v3 (L 6.2, H 7.1, D 8, same
+    level): |ΔH| ≤ 0.3 dB absolute at 50, 100, 400, 1000, 1500, 4800, 8000 Hz; gain law 5 ± 0.2
+    dB at 1 kHz; tightness test as before.
+21. **Presets**: 4 hm_v3 + 7 re-levelled hmx/eye render in [−6, −0.5] dBFS, finite, name rules;
+    `presets/modeled/chainsaw/*.json` (v2) unchanged byte-for-byte.
+22. **Round-trip**: v3 block with every key incl. the trims round-trips; `customLowDb` on a v2
+    block → PresetError; `modelVersion: 4` → PresetError; `toJson` preserves 2 vs 3; defaults
+    construct as v3; plugin `switchCircuit` to Chainsaw yields a v3 block and the 7b plugin
+    tests still pass (amend the expected version where they assert 2 on a default-built block).
+23. Full suite, `-Werror`, ASan/UBSan for the core, `pedal_fr` CSVs for v2 vs v3 (default and
+    10/10/10), custom vs stock, hmx vs hm v3, eye vs hm v3.
+
+## Report back (Part 3)
+The `k−` scan table and the chosen knees; H2…H6 before/after; crest/envelope numbers v2 vs v3
+and stock vs custom; the v3 − v2 difference-curve values; preset level changes; full ctest;
+commits; decisions / questions for lead.
