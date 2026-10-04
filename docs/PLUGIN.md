@@ -247,6 +247,33 @@ saved in the state, only its path.
 is adopted when the host stops. Toggling KEEP KEYS reloads the song (decode time; resampling too if the files are not at
 the host rate). The whole song is held in memory at the host rate (5.1 open question 1).
 
+### Capture browser (phase 8b, `plugin/src/browser/`)
+
+BROWSE CAPTURES (inspector) opens a full-editor overlay (`CaptureBrowser`) for the selected rig piece; spec
+`docs/specs/phase8_capture_browser.md`. Layers, bottom to top:
+
+- `T3kRunner`: runs `sawblade-t3k` (a `juce::ChildProcess`, stdout + stderr merged) on one worker thread with a
+  watchdog thread that kills the child at the per-job deadline (30 s queries, 120 s fetch, login = code expiry).
+  Results reach the message thread through `callAsync` behind an "alive" flag, so nothing is delivered after
+  destruction. A newer job with the same supersede key replaces a queued older one.
+- `T3kJson` (pure) parses the CLI's JSON contract; `T3kClient` builds the argv per command and maps a run to a
+  parsed struct or an error (`launch`, `timeout`, `parse`, `exit` plus the CLI's own codes). A non-zero exit with no
+  error object shows the output tail. Login output is never kept: only parsed `device_code` / `logged_in` lines
+  are used.
+- `BrowserSettings`: the executable path (`<app-data>/Sawblade/browser.settings`, not plugin state). Default
+  `<repo>/match/.venv/bin/sawblade-t3k` (`SAWBLADE_REPO_DIR`).
+- `SlotTarget` (pure): rig piece -> preset capture; `withCapture` substitutes a fetched file (and `source`) into a
+  copy of the preset. USE hands that copy to `SawbladeProcessor::loadPreset` (the normal background build +
+  lock-free swap).
+- `BrowserController` holds the state (login, query, records, selection, models, status) and runs USE / PREVIEW;
+  `CaptureBrowser` only shows it.
+- Preview: the candidate preset is rendered with `renderPreset` on a preview worker (the embedded
+  `preview_riff.wav` at the host rate, peak-normalised to -3 dBFS) and handed to the processor's `PreviewPlayer`
+  (a `SwapSlot` of immutable buffers). `PreviewPlayer::process`, the only audio-thread code of the feature, runs at
+  the end of `processBlock`: it cross-fades the rig output into the preview over 10 ms, plays it dual-mono, and
+  fades back at the end or on `stop()`. No allocation, no locks (covered by the alloc / lock harness); the preview
+  adds no host-reported latency.
+
 ### Editor
 
 A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, spec
