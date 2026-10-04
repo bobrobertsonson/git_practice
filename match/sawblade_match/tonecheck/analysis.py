@@ -168,7 +168,8 @@ GAP_FRAME_S = 0.010      # short-term RMS frame for gap detection
 GAP_MIN_S = 0.120        # a gap is a DI region below floor + GAP_MARGIN_DB for at least this long
 GAP_SKIP_S = 0.050       # the first part of each gap is ignored (ringing tail)
 GAP_THRESHOLD_DB = -50.0  # absolute: a gap is DI 10 ms RMS below this (dBFS); the percentile floor is reporting only
-GAP_MIN_TOTAL_S = 1.0    # less real silence than this in total -> rule n/a
+GAP_MIN_TOTAL_S = 3.0    # less real silence than this in total -> rule n/a
+GAP_MIN_COUNT = 3        # fewer separate gaps than this -> rule n/a (one intro/outro silence is not a gate test)
 
 
 def _ms_frames_db(x: np.ndarray, n: int) -> np.ndarray:
@@ -204,7 +205,7 @@ def gap_noise_db(out: np.ndarray, di: np.ndarray | None, fs: int) -> dict:
     """Output RMS in the DI's real-silence gaps relative to the output RMS over its playing frames.
 
     Gaps: DI regions whose 10 ms RMS stays below an absolute -50 dBFS for >= 120 ms, minus the first 50 ms of each
-    (see ``gap_regions``); a dense DI with no real silence therefore gives n/a. Value None with a reason when there is no DI, when the gaps total less than 1 s
+    (see ``gap_regions``); a dense DI with no real silence therefore gives n/a. Value None with a reason when there is no DI, when there are fewer than 3 gaps or they total less than 3 s
     ("no gaps"), or when the floor is within 10 dB of the median active DI frame ("no clear gaps": a steady DI has no real
     gaps). Also reports ``gapCount`` and ``gapTotalS``. Output and DI are compared sample-aligned (the render has the DI's
     length, advanced by the chain latency)."""
@@ -216,7 +217,7 @@ def gap_noise_db(out: np.ndarray, di: np.ndarray | None, fs: int) -> dict:
     floor = di_noise_floor_db(di, fs)          # reporting only
     total = sum(b - a for a, b in regions) / fs
     res = {"diNoiseFloorDb": floor, "gapCount": len(regions), "gapTotalS": float(total)}
-    if total < GAP_MIN_TOTAL_S:
+    if len(regions) < GAP_MIN_COUNT or total < GAP_MIN_TOTAL_S:
         return {**res, "value": None, "reason": "no gaps"}
     di_db, _ = frame_rms_db(di, fs)
     _, di_active, _ = activity_mask(di, fs)

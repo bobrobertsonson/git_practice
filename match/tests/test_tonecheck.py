@@ -122,11 +122,17 @@ def test_activity_gate_excludes_silence():
     _, r2 = A.band_levels_db(freqs2, psd2)
     assert np.max(np.abs(r1 - r2)[8:-6]) < 0.5
     # gap noise: hiss is ~ -90 dB re active RMS ~ -20 dBFS => about -70 dB
-    di = np.zeros(n)
-    di[: n // 2] = 0.1 * pink(n // 2)
-    di[n // 2:] = 3e-5 * rng.standard_normal(n - n // 2)
-    g = A.gap_noise_db(x, di, FS)
-    assert g["value"] < -60
+    blk = n // 8                                    # 4 playing / 4 silent blocks (>= 3 gaps and >= 3 s needed)
+    di, xo = np.zeros(n), np.zeros(n)
+    for k in range(8):
+        sl = slice(k * blk, (k + 1) * blk)
+        if k % 2 == 0:
+            di[sl], xo[sl] = 0.1 * pink(blk), 0.1 * pink(blk)
+        else:
+            di[sl] = 3e-5 * rng.standard_normal(blk)
+            xo[sl] = 1e-7 * rng.standard_normal(blk)
+    g = A.gap_noise_db(xo, di, FS)
+    assert g["value"] < -60 and g["gapCount"] == 4
     assert g["diNoiseFloorDb"] < -80
 
 
@@ -512,11 +518,13 @@ def test_gap_regions_real_silence_only():
                          (2, -60.0, -80.0, -45.0),      # 100 ms < 120 ms: not a gap
                          (20, -20.0, -10.0, -10.0),
                          (3, -60.0, -80.0, -45.0),      # 150 ms: a gap, 100 ms after the skip
+                         (20, -20.0, -10.0, -10.0),
+                         (30, -60.0, -80.0, -45.0),     # 1.5 s gap: brings the count to 3 and the total over 3 s
                          (20, -20.0, -10.0, -10.0)])
     g = A.gap_noise_db(out, di, FS)
     assert g["diNoiseFloorDb"] == pytest.approx(-60.0, abs=0.01)
-    assert g["gapCount"] == 2
-    assert g["gapTotalS"] == pytest.approx(1.95 + 0.10, abs=0.01)
+    assert g["gapCount"] == 3
+    assert g["gapTotalS"] == pytest.approx(1.95 + 0.10 + 1.45, abs=0.01)
     assert g["value"] == pytest.approx(-80.0 + 10.0, abs=0.05)    # tail frames (-45) are skipped
     leg = A.gap_noise_legacy_db(out, di, FS)
     assert leg["value"] > g["value"]                               # the old definition counted tails
@@ -527,6 +535,21 @@ def test_gap_noise_is_na_on_a_dense_di_with_quiet_playing():
     di, out = _gap_case([(40, -20.0, -10.0, -10.0), (30, -40.0, -30.0, -30.0), (40, -20.0, -10.0, -10.0)])
     g = A.gap_noise_db(out, di, FS)
     assert g["value"] is None and g["reason"] == "no gaps" and g["gapCount"] == 0
+
+
+def test_gap_noise_na_with_fewer_than_three_gaps_or_under_three_seconds():
+    loud = (20, -20.0, -10.0, -10.0)
+    # two long gaps (4 s total): count rule
+    di, out = _gap_case([loud, (40, -60.0, -80.0, -80.0), loud, (40, -60.0, -80.0, -80.0), loud])
+    g = A.gap_noise_db(out, di, FS)
+    assert g["value"] is None and g["reason"] == "no gaps" and g["gapCount"] == 2 and g["gapTotalS"] > 3.0
+    # three gaps, 1.8 s total: total rule
+    di, out = _gap_case([loud] + [(14, -60.0, -80.0, -80.0), loud] * 3)
+    g = A.gap_noise_db(out, di, FS)
+    assert g["value"] is None and g["gapCount"] == 3 and g["gapTotalS"] < 3.0
+    # three gaps, > 3 s: measured
+    di, out = _gap_case([loud] + [(25, -60.0, -80.0, -80.0), loud] * 3)
+    assert A.gap_noise_db(out, di, FS)["value"] == pytest.approx(-70.0, abs=0.1)
 
 
 def test_gap_noise_na_below_one_second_of_gaps():
