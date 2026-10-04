@@ -1,10 +1,10 @@
-**Blocked on user:** (0) this Mac is not logged in to GitHub, so pushes fail until `gh auth login` + `gh auth setup-git`; (1) choose a fix for the one macOS ctest failure (below; DSP-adjacent, not applied); (2) to play a preset: `TONE3000_CLIENT_ID` + `sawblade-t3k login` (device flow) to fetch captures.
+**Blocked on user:** (0) this Mac is not logged in to GitHub, so pushes fail until `gh auth login` + `gh auth setup-git`; nothing else. TONE3000 login done on this Mac; `barbaric_v4` resolved and ready to play.
 
 # Mac 1 build report
 
 | | |
 |---|---|
-| Main-branch commit built | `ee0291c` (`origin/claude/sawblade-plugin-setup-7k0b8q`) + fix `205d03b`. Earlier runs: `4f725fe`, `d310518`, `435838a` (that one needed the fix) |
+| Main-branch commit built | `ee0291c` (`origin/claude/sawblade-plugin-setup-7k0b8q`) + fixes `205d03b`, `4c19736`. Earlier runs: `4f725fe`, `d310518`, `435838a` (that one needed the fix) |
 | macOS | 26.6 (25G72) |
 | Xcode | none; Command Line Tools only (Apple clang 21.0.0, clang-2100.0.123.102). Full Xcode not needed |
 | Chip | Apple M5 (arm64) |
@@ -13,23 +13,10 @@
 
 ## ctest
 
-`ctest --test-dir build-mac --output-on-failure`: **187 tests, 185 passed, 1 failed, 1 skipped.**
+`ctest --test-dir build-mac --output-on-failure`: **188 tests, 187 passed, 0 failed, 1 skipped** (after `4c19736`).
 
 - Skipped (expected): `plugin:test harness: LockGuard sees mutex acquisitions`, which runs on Linux only (`--wrap` linker flags).
-- Failed: `plugin:Processor: starts as a zero-latency pass-through (Init preset)` (`plugin/tests/test_processor.cpp:164`, `CHECK(y == x)`). The output is the input times 1.00000012f (one float ulp hot) on 989 of 1000 samples. Latency is correctly 0.
-
-Root cause (dsp-engineer diagnosis, reproduced in a scratch program; no repo change):
-- `levelA`/`levelB` (range -24..+12 dB, default 0) are stored by APVTS as `convertTo0to1(0) = 0.666666687f`.
-- Reading the value back, `convertFrom0to1` computes `start + (end - start) * p`.
-- On arm64, Apple clang defaults to `-ffp-contract=on`, which fuses that into an FMA. The result is +7.15e-7 dB instead of 0.
-- Linux/x86-64 has no FMA by default, so it gets exactly 0 there.
-- `Chain::setLiveParams` sees a change from 0 and ramps both path levels to `pow(10, 7.15e-7/20) = 1.00000012f`.
-- Confirmed: a scratch build with `-ffp-contract=off` passes the whole plugin test binary (23 passed, 1 skipped).
-
-This is a real, tiny defect: every fresh instance on an FMA platform applies a spurious 7e-7 dB level ramp. It is not a build or packaging problem. Both real fixes change how output values are computed, so **neither was applied**. Options for the lead/user:
-1. `plugin/src/PluginProcessor.cpp:69`: snap parameter reads with the existing `round4` (as preset export already does). Recommended: one line, platform-independent, also covers automation.
-2. Top-level `CMakeLists.txt`: `add_compile_options(-ffp-contract=off)` for all targets including JUCE and NAM. A global numeric change that may cost a little speed and hides the round-trip issue.
-3. Loosen the test to a 1e-6 margin. Not recommended; it masks the drift.
+- Fixed (`4c19736`, below): `plugin:Processor: starts as a zero-latency pass-through (Init preset)` used to fail on macOS with output = input × 1.00000012f. Cause: on arm64, Apple clang fuses JUCE's `convertFrom0to1` into an FMA, so the `levelA`/`levelB` default read back as +7.15e-7 dB instead of 0, and the engine ramped to it. x86-64 gets exactly 0.
 
 ## pluginval (v1.0.4, `~/tools/pluginval.app`, `--strictness-level 10 --validate-in-process`)
 
@@ -45,6 +32,7 @@ Plugins were copied to `~/Library/Audio/Plug-Ins/Components/Sawblade.component` 
 ## Fixes made
 
 - `205d03b` **Fix clang -Werror build break on macOS** (spec `docs/specs/mac1-clang_werror.md`; dsp-engineer, reviewer **ACCEPT** with a clean `build-review` configure + build + ctest). StemPlayer (spec 5.1) broke the Apple clang build: `-Wunused-private-field` on `StemPlayer::master_` (`core/include/sawblade/stem_player.h:198`), then `-Wunused-const-variable` on `kD`/`kB`/`kV`/`kG` (`tests/test_stem_player.cpp:28-31`). GCC has neither warning, so Linux was green. All five symbols were unreferenced and were deleted (5 lines). No functional or DSP change, no flags weakened, no suppressions.
+- `4c19736` **plugin: snap host parameters to the 1e-4 state grid** (spec `docs/specs/mac1-param_snap.md`; fix chosen by the user; dsp-engineer, reviewer **ACCEPT** with Release + ASan/UBSan builds, 188/188, and an independent pre-fix revert that reproduces both failures). `readParams()` returns `snapParam(float param)`, and the engine baseline is built from the clamped and snapped preset (`clampTo` → `snapParam`), so the audio thread and the baseline are bit-identical on every platform and no spurious ramp starts after Init, a load or a restore. New test: odd preset values leave the engine at its baseline. `core/` and compiler flags are unchanged. `getStateInformation` bytes are unchanged (state was already rounded to 1e-4). Reviewer's non-blocking notes, left for the lead: the `paramsFromPreset` comment in `PresetMapping.h` is now orphaned above `snapParam`; `engineParamState()`/`Engine::liveParams()/baseline()` are public test hooks; the Init fallback after a failed rate rebuild still ramps once to the user's parameter values (pre-existing, semantic, out of scope).
 - Note for the lead: consider a macOS/clang CI job (or `-Wunused-private-field -Wunused-const-variable` checks) so this doesn't recur.
 - Process note: this session started outside the repo, so the project's `.claude/agents` were not registered. The dsp-engineer and reviewer ran as general-purpose agents (model sonnet) following `.claude/agents/dsp-engineer.md` / `reviewer.md` verbatim.
 
