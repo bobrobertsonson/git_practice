@@ -16,6 +16,7 @@ add_library(sawblade_core STATIC
   src/delay.cpp
   src/wav_io.cpp
   src/stem_set.cpp
+  src/stem_player.cpp
   src/sha256.cpp
   src/bus_comp.cpp
   src/preset_reader.cpp
