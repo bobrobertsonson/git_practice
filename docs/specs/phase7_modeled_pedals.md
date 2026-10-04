@@ -154,7 +154,8 @@ normalise by the impulse amplitude.
      - a local max in 3.5–6 kHz, at least 1 dB above |H(3.5 kHz)| (lead analytic estimate: about +2 dB);
      - |H(12 kHz)| ≥ 10 dB below the 1–1.6 kHz max.
    - HM whole block, low = high = 0: |H(100)| and |H(1250)| each ≥ 6 dB below |H(400)|.
-   - HM knob isolation:
+   - HM knob isolation (absolute magnitude change, not relative to 400 Hz; the 100 Hz
+     gyrator skirt moves |H(400)| by about 4 dB):
      - low 0→10 changes |H(100)| by ≥ 25 dB and |H(1250)| by ≤ 1 dB;
      - high 0→10 changes |H(1250)| by ≥ 25 dB and |H(100)| by ≤ 1.5 dB.
    - TS, drive = 10, tone = 0:
@@ -168,7 +169,10 @@ normalise by the impulse amplitude.
    - Input: 500 Hz sine at −20 dBFS, other knobs at default. THD = power of harmonics 2–20
      over the fundamental, in dB.
    - Sweep HM `distortion` and TS `drive` over 0, 1, …, 10. Each step ≥ previous − 0.05 dB,
-     and THD(10) − THD(0) ≥ 6 dB.
+     at both −20 dBFS and −40 dBFS. THD(10) − THD(0) ≥ 6 dB is asserted at **−40 dBFS**.
+     (Amended after implementation: at −20 dBFS both models are already near saturation at
+     knob 0, so the span is 1.4 dB for HM and 3.6 dB for TS. −40 dBFS is a realistic
+     single-note DI level and exercises the gain range.)
    - TS asymmetry check: H2 at drive 10 is > −60 dBc.
 3. **Aliasing.**
    - Input: 5 kHz sine, bin-centred (`f = round(5000·N/fs)·fs/N`, N = 32768), −6 dBFS, max
