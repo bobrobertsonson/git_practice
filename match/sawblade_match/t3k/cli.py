@@ -16,13 +16,16 @@ from .auth import (DEFAULT_BASE_URL, TokenManager, TokenStore, poll_for_session,
                    request_device_code)
 from .cache import Cache
 from .client import T3KClient
-from .errors import T3KError
+from .errors import ReauthRequired, T3KError
 from .filter import FilterConfig
 from .ids import require_id
 from .pool import build_pool, write_manifest
+from .pack import build_pack
 from .resolve import default_output, resolve_file
 from .search import TABLE_HEADER, assess, table_rows
 from .sources import default_path, load_pool_sources, merge_unique
+
+EXIT_NOT_LOGGED_IN = 4   # not logged in / re-auth required (the plugin relies on this); 1 = any other error
 
 PERSONAL_USE_NOTE = ("tones/search is outside TONE3000's free tier. This is a personal, non-commercial "
                      "project: check the API terms before sharing anything that uses search.")
@@ -146,14 +149,39 @@ def cmd_pull(args: argparse.Namespace) -> int:
     return 0
 
 
+def _progress_line(obj: dict) -> None:
+    """One flushed JSON line on stdout (the plugin reads these)."""
+    print(json.dumps(obj), flush=True)
+
+
 def cmd_resolve(args: argparse.Namespace) -> int:
+    def on_progress(done: int, total: int, path: str, cap: dict) -> None:
+        _progress_line({"done": done, "total": total, "capture": path,
+                        "title": (cap.get("source") or {}).get("title") or ""})
+
     done = resolve_file(make_client(), Cache(Path(args.cache_dir) if args.cache_dir else None),
                         Path(args.preset), Path(args.output) if args.output else None,
-                        first_model=args.first_model)
+                        first_model=args.first_model, progress=on_progress if args.progress_json else None)
     dest = args.output or default_output(Path(args.preset))
-    print(f"Resolved {len(done)} capture(s) -> {dest}")
+    # with --progress-json stdout is JSON lines only; the human summary goes to stderr
+    out = sys.stderr if args.progress_json else sys.stdout
+    print(f"Resolved {len(done)} capture(s) -> {dest}", file=out)
     for p in done:
-        print(f"  {p}")
+        print(f"  {p}", file=out)
+    return 0
+
+
+def cmd_pack(args: argparse.Namespace) -> int:
+    def on_progress(done: int, total: int, name: str) -> None:
+        _progress_line({"done": done, "total": total, "name": name})
+
+    m = build_pack(make_client(), Cache(Path(args.cache_dir) if args.cache_dir else None), args.tone_id,
+                   progress=on_progress if args.progress_json else None)
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(m, indent=2) + "\n")
+    print(f"Pack {m['toneId']} ({m['title']!r}): {len(m['models'])} model(s) -> {out}",
+          file=sys.stderr if args.progress_json else sys.stdout)
     return 0
 
 
@@ -216,7 +244,18 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--cache-dir")
     r.add_argument("--first-model", action="store_true",
                    help="if a tone has several models and no source.modelId, use the first instead of failing")
+    r.add_argument("--progress-json", action="store_true",
+                   help="print one JSON line per resolved capture to stdout: "
+                        '{"done", "total", "capture", "title"}')
     r.set_defaults(fn=cmd_resolve)
+
+    k = sub.add_parser("pack", help="download every model of an IR tone and write a manifest")
+    k.add_argument("tone_id")
+    k.add_argument("--cache-dir")
+    k.add_argument("-o", "--output", required=True, help="manifest path")
+    k.add_argument("--progress-json", action="store_true",
+                   help='print one JSON line per model to stdout: {"done", "total", "name"}')
+    k.set_defaults(fn=cmd_pack)
     return p
 
 
@@ -228,6 +267,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         return args.fn(args)
+    except ReauthRequired as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_NOT_LOGGED_IN
     except T3KError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
