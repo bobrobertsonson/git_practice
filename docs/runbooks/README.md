@@ -1,5 +1,7 @@
 # Runbooks for the user's Macs
 
+> **Paused (2026-10-04, user):** everything runs from the lead cloud session; the Macs are not in use.
+
 The user's two Macs run Claude Code sessions in `~/sawblade`. They coordinate with the lead
 (cloud) session **through git only**, so the user doesn't have to relay messages:
 
