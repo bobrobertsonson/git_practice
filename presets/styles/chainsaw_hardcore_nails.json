@@ -1,0 +1,120 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Chainsaw Hardcore (Nails-style)",
+  "notes": "HM-2 into a JCM800 2204: chainsaw edge with a fat low-mid push for powerviolence / metallic hardcore. Tighter gate for stops. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
+  "gate": {
+    "enabled": true,
+    "thresholdDb": -40,
+    "hysteresisDb": 6.0,
+    "attackMs": 0.5,
+    "holdMs": 40.0,
+    "releaseMs": 150.0,
+    "rangeDb": -50.0
+  },
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "nam",
+          "slot": "pedal",
+          "model": {
+            "file": "captures/58569_496942.nam",
+            "source": {
+              "provider": "tone3000",
+              "id": "58569",
+              "modelId": "496942",
+              "url": "https://www.tone3000.com/tones/boss-hm-2-1985-mij-ttsv10-58569",
+              "title": "Boss HM-2 1985 MIJ TTSV10",
+              "creator": "OutmodedElectronics",
+              "license": "t3k"
+            }
+          },
+          "inputGainDb": 0.0
+        },
+        {
+          "id": "a2",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "captures/93752_785274.nam",
+            "source": {
+              "provider": "tone3000",
+              "id": "93752",
+              "modelId": "785274",
+              "url": "https://www.tone3000.com/tones/1986-jcm-800-2204--93752",
+              "title": "1986 JCM 800 2204 ",
+              "creator": "tonecast",
+              "license": "t3k"
+            }
+          },
+          "inputGainDb": 0,
+          "normalizeLoudness": true
+        }
+      ],
+      "levelDb": 0.0
+    },
+    "b": {
+      "role": "body",
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "manual",
+    "delaySamplesB": 0,
+    "invertB": false
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "captures/84863_721117.wav",
+      "source": {
+        "provider": "tone3000",
+        "id": "84863",
+        "modelId": "721117",
+        "url": "https://www.tone3000.com/tones/mesa-oversized-sm57-and-vr2-5150-power-84863",
+        "title": "Mesa Oversized SM57 and VR2 5150 Power",
+        "creator": "jpisoutoftune",
+        "license": "t3k"
+      }
+    },
+    "enabled": true
+  },
+  "postEq": [
+    {
+      "type": "highPass",
+      "freq": 70,
+      "q": 0.707
+    },
+    {
+      "type": "peak",
+      "freq": 250,
+      "gainDb": 1.5,
+      "q": 1.0
+    },
+    {
+      "type": "peak",
+      "freq": 1200,
+      "gainDb": 1.0,
+      "q": 1.0
+    },
+    {
+      "type": "highShelf",
+      "freq": 4500,
+      "gainDb": -1.5,
+      "q": 0.707
+    },
+    {
+      "type": "lowPass",
+      "freq": 9500,
+      "q": 0.707
+    }
+  ],
+  "output": {
+    "gainDb": 0.0
+  }
+}

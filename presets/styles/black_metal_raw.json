@@ -1,0 +1,114 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Black Metal (Darkthrone / Dissection-style)",
+  "notes": "DS-1 into a Peavey 5150 lead channel through Greenbacks, low end trimmed: thin, buzzing, trebly but not fizzy. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
+  "gate": {
+    "enabled": true,
+    "thresholdDb": -45,
+    "hysteresisDb": 6.0,
+    "attackMs": 0.5,
+    "holdMs": 40.0,
+    "releaseMs": 150.0,
+    "rangeDb": -50.0
+  },
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "nam",
+          "slot": "pedal",
+          "model": {
+            "file": "captures/67423_512650.nam",
+            "source": {
+              "provider": "tone3000",
+              "id": "67423",
+              "modelId": "512650",
+              "url": "https://www.tone3000.com/tones/boss-distortion-ds-1--67423",
+              "title": "Boss Distortion DS-1 ",
+              "creator": "drprophecystudio",
+              "license": "t3k"
+            }
+          },
+          "inputGainDb": 0.0
+        },
+        {
+          "id": "a2",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "captures/87953_742871.nam",
+            "source": {
+              "provider": "tone3000",
+              "id": "87953",
+              "modelId": "742871",
+              "url": "https://www.tone3000.com/tones/peavey-5150-blockletter-87953",
+              "title": "Peavey 5150 Blockletter",
+              "creator": "DoubleyouD",
+              "license": "t3k"
+            }
+          },
+          "inputGainDb": 0,
+          "normalizeLoudness": true
+        }
+      ],
+      "levelDb": 0.0
+    },
+    "b": {
+      "role": "body",
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "manual",
+    "delaySamplesB": 0,
+    "invertB": false
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "captures/75087_656946.wav",
+      "source": {
+        "provider": "tone3000",
+        "id": "75087",
+        "modelId": "656946",
+        "url": "https://www.tone3000.com/tones/uk-greenback-marshall-1960tv-4x12-m201-75087",
+        "title": "UK Greenback - Marshall 1960TV 4x12 M201",
+        "creator": "OutmodedElectronics",
+        "license": "t3k"
+      }
+    },
+    "enabled": true
+  },
+  "postEq": [
+    {
+      "type": "highPass",
+      "freq": 130,
+      "q": 0.707
+    },
+    {
+      "type": "peak",
+      "freq": 400,
+      "gainDb": -2.0,
+      "q": 1.0
+    },
+    {
+      "type": "peak",
+      "freq": 2500,
+      "gainDb": 2.0,
+      "q": 1.0
+    },
+    {
+      "type": "lowPass",
+      "freq": 9000,
+      "q": 0.707
+    }
+  ],
+  "output": {
+    "gainDb": 0.0
+  }
+}

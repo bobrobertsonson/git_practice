@@ -1,0 +1,96 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Sludge (Crowbar-style)",
+  "notes": "Mesa Dual Rectifier, no pedal, Mesa V30 cab: thick, saturated, low and slow. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
+  "gate": {
+    "enabled": true,
+    "thresholdDb": -50,
+    "hysteresisDb": 6.0,
+    "attackMs": 0.5,
+    "holdMs": 40.0,
+    "releaseMs": 150.0,
+    "rangeDb": -50.0
+  },
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "captures/45026_382709.nam",
+            "source": {
+              "provider": "tone3000",
+              "id": "45026",
+              "modelId": "382709",
+              "url": "https://www.tone3000.com/tones/mesa-dual-rectifier-2025-45026",
+              "title": "MESA DUAL RECTIFIER 2025",
+              "creator": "Deathblossomaudio",
+              "license": "t3k"
+            }
+          },
+          "inputGainDb": 0,
+          "normalizeLoudness": true
+        }
+      ],
+      "levelDb": 0.0
+    },
+    "b": {
+      "role": "body",
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "manual",
+    "delaySamplesB": 0,
+    "invertB": false
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "captures/84863_721117.wav",
+      "source": {
+        "provider": "tone3000",
+        "id": "84863",
+        "modelId": "721117",
+        "url": "https://www.tone3000.com/tones/mesa-oversized-sm57-and-vr2-5150-power-84863",
+        "title": "Mesa Oversized SM57 and VR2 5150 Power",
+        "creator": "jpisoutoftune",
+        "license": "t3k"
+      }
+    },
+    "enabled": true
+  },
+  "postEq": [
+    {
+      "type": "highPass",
+      "freq": 55,
+      "q": 0.707
+    },
+    {
+      "type": "peak",
+      "freq": 150,
+      "gainDb": 1.5,
+      "q": 1.0
+    },
+    {
+      "type": "peak",
+      "freq": 700,
+      "gainDb": -1.0,
+      "q": 1.0
+    },
+    {
+      "type": "lowPass",
+      "freq": 8000,
+      "q": 0.707
+    }
+  ],
+  "output": {
+    "gainDb": 0.0
+  }
+}
