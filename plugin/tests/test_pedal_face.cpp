@@ -502,3 +502,38 @@ TEST_CASE("Pedal params: a failed circuit-switch build writes the circuit parame
   CHECK(h.p.currentPreset().a.blocks[0].type == "pedal.hm");
   CHECK(h.param(kSawCircuit) == 0.0);  // the lever follows the sounding circuit again
 }
+
+TEST_CASE("Pedal params: overlapping loads of different circuits do not trigger a spurious switch", "[pedalface][swap]") {
+  Host h(48000.0, 512);
+  // The mechanism, deterministically: a load commits its own sawCircuit value from the loader thread, and
+  // that write is not an edit, so nothing is left for the timer to "retry" (it would act on whichever
+  // preset is wanted by then and replace it by the other circuit's version of itself).
+  for (const char* file : {"pickle_chainsaw.json", "classic_buzzsaw.json", "pickle_into_saw.json", "classic_buzzsaw.json"}) {
+    h.load(kChainsawDir / file);
+    CHECK_FALSE(h.p.circuitEditPending());
+  }
+  // A real edit from another thread is still flagged.
+  std::thread([&] { h.setParam(kSawCircuit, 1.0); }).join();
+  CHECK(h.p.circuitEditPending());
+  juce::MessageManager::getInstance()->runDispatchLoopUntil(250);
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(h.p.circuitEditPending());
+
+  for (int round = 0; round < 5; ++round) {
+    INFO("round " << round);
+    h.load(kChainsawDir / "classic_buzzsaw.json");
+    const std::uint64_t builds = h.p.engineBuilds();
+    // A (big fuzz) is committing while B (chainsaw) is already the wanted preset.
+    h.p.loadPreset(loadPresetFile(kChainsawDir / "pickle_chainsaw.json"));
+    h.p.loadPreset(loadPresetFile(kChainsawDir / "classic_buzzsaw.json"));
+    REQUIRE(h.p.waitForLoader());
+    for (int i = 0; i < 6; ++i) {  // past the 10 Hz circuit timer
+      juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+      REQUIRE(h.p.waitForLoader());
+    }
+    CHECK(h.p.currentPreset().name == "Classic Buzzsaw");
+    CHECK(h.p.currentPreset().a.blocks[0].type == "pedal.hm");
+    CHECK(h.param(kSawCircuit) == 0.0);
+    CHECK(h.p.engineBuilds() <= builds + 2);  // the two loads (A may be superseded), never an extra switch build
+  }
+}

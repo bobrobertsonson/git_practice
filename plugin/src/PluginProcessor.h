@@ -117,6 +117,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
   EngineParamState engineParamState() const;
   // Number of engines the loader has published (parameter changes must not increase it).
   std::uint64_t engineBuilds() const noexcept { return loader_->engineBuilds(); }
+  // Test hook: a CIRCUIT edit from another thread (or during a commit) is waiting for the timer. Commit's own
+  // writes of the parameters never set it.
+  bool circuitEditPending() const noexcept { return circuitDirty_.load(); }
 
  private:
   Preset presetWithParams() const;
@@ -142,6 +145,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::uint64_t lastSubmitted_ = 0;
   std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed
   std::atomic<bool> circuitDirty_{false};
+  std::atomic<int> commitCircuit_{0};  // the sawCircuit value commit() / the write-back is writing
   std::atomic<int> committing_{0};  // >0 while commit() writes the parameters: those writes are not user edits
 
   double hostRate_ = 0.0;

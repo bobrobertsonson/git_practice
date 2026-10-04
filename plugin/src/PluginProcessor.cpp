@@ -127,11 +127,13 @@ std::optional<CircuitSlot> SawbladeProcessor::circuitSlot() const {
 }
 
 // --- CIRCUIT switch -----------------------------------------------------------------------------
-void SawbladeProcessor::parameterChanged(const juce::String&, float) {
+void SawbladeProcessor::parameterChanged(const juce::String&, float value) {
   // During commit() the parameters are being rewritten from a preset, but an edit that lands meanwhile
   // must not be lost: flag it, the timer retries (circuitChanged() is a no-op when nothing differs).
-  if (committing_.load() > 0)
-    circuitDirty_.store(true);
+  if (committing_.load() > 0) {
+    // Flag only an edit that is not commit's own write of the value it is publishing.
+    if (static_cast<int>(std::lround(value)) != commitCircuit_.load()) circuitDirty_.store(true);
+  }
   else if (juce::MessageManager::existsAndIsCurrentThread())
     circuitChanged();
   else
@@ -202,8 +204,10 @@ void SawbladeProcessor::commit(const Preset& p) {
     preset_ = p;
     status_.presetName = p.name;
   }
+  const ParamValues pv = paramsFromPreset(p);
+  commitCircuit_.store(static_cast<int>(std::lround(pv[kSawCircuit])));
   committing_.fetch_add(1);
-  writeParams(paramsFromPreset(p));
+  writeParams(pv);
   committing_.fetch_sub(1);
 }
 
@@ -333,18 +337,20 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
   }
   }
   if (restoreCircuit) {
-    // A failed load (e.g. a circuit switch) keeps the previous preset: the CIRCUIT lever and the circuit set
-    // must show what is sounding and saved, not what was asked for.
+    // A failed load (e.g. a circuit switch) keeps the previous preset: the CIRCUIT lever must show what is
+    // sounding and saved, not what was asked for.
     Preset prev;
     {
       std::lock_guard<std::mutex> lk(mutex_);
       prev = preset_;
     }
-    const ParamValues v = paramsFromPreset(prev);
-    committing_.fetch_add(1);
-    for (int i = kSawCircuit; i < kNumParams; ++i)
-      paramObj_[static_cast<std::size_t>(i)]->setValueNotifyingHost(paramObj_[static_cast<std::size_t>(i)]->convertTo0to1(static_cast<float>(v[static_cast<std::size_t>(i)])));
-    committing_.fetch_sub(1);
+    // Only the lever, and only if it disagrees: knob tweaks made during the failed build survive.
+    if (const auto slot = findCircuitBlock(prev); slot && static_cast<int>(std::lround(paramAtomic_[kSawCircuit]->load())) != static_cast<int>(slot->circuit)) {
+      commitCircuit_.store(static_cast<int>(slot->circuit));
+      committing_.fetch_add(1);
+      paramObj_[kSawCircuit]->setValueNotifyingHost(paramObj_[kSawCircuit]->convertTo0to1(static_cast<float>(static_cast<int>(slot->circuit))));
+      committing_.fetch_sub(1);
+    }
   }
 }
 
