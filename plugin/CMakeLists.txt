@@ -21,6 +21,9 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/PresetMapping.cpp
   src/pedals/CircuitParams.cpp
   src/pedals/CircuitFaces.cpp
+  src/pedals/PedalSwitch.cpp
+  src/pedals/PedalFace.cpp
+  src/pedals/AdvancedDrawer.cpp
   src/Engine.cpp
   src/EngineLoader.cpp
   src/PlayAlong.cpp
@@ -134,7 +137,7 @@ if(SAWBLADE_BUILD_TESTS)
   set_source_files_properties(tests/test_editor.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_editor_tests PRIVATE src)
-  target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS}
+  target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
     SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots")
   target_link_libraries(sawblade_editor_tests PRIVATE

@@ -247,6 +247,21 @@ saved in the state, only its path.
 is adopted when the host stops. Toggling KEEP KEYS reloads the song (decode time; resampling too if the files are not at
 the host rate). The whole song is held in memory at the host rate (5.1 open question 1).
 
+### Live pedal parameters, the circuit switch and the pedal face (phase 7b)
+
+The two modeled-pedal circuits (CHAINSAW = `pedal.hm`, BIG FUZZ = `pedal.muff`) each have their own host-parameter set
+(`hm*` / `muff*`, built from the core's live-parameter descriptors in `plugin/src/pedals/CircuitParams`), plus the
+`sawCircuit` choice. The sets control the first circuit block of the preset (path a, then b) and are inert when there is
+none. Every circuit parameter is live: `Engine::setParams` forwards the active set to `Chain::setBlockLiveParams` when a
+value changed (core ramps gains over 20 ms; no rebuild, no allocation or lock on the audio thread). `sawCircuit` is the one
+parameter that rebuilds: the processor swaps the block type (level/volume, mix, tightness and clip carried over, the rest
+at defaults) and hands the new preset to the loader like any preset load (build off-thread, cross-fade). A change coming
+from a non-message thread is flagged and handled by a message-thread timer. The saved state is the preset, so it always
+carries the block type that is playing. The editor adds `PedalFace` (live controls laid over the SAW pedal render: six
+knobs, CLIP and FOCUS switches, the CIRCUIT switch, label chips, OLED overlay) and `AdvancedDrawer` (deep controls, slides
+out to the right of the pedal on double-click; close with a second double-click, the x or Escape; UI state, never saved).
+Both are driven by one table row per circuit (`CircuitFaces`). A preset chaining two circuits exposes the first one.
+
 ### Editor
 
 A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, spec

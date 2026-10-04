@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -14,6 +15,10 @@
 #include "PlayAlongPanel.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "pedals/AdvancedDrawer.h"
+#include "pedals/CircuitFaces.h"
+#include "pedals/PedalFace.h"
+#include "pedals/PedalSwitch.h"
 #include "skin/FilmstripKnob.h"
 #include "skin/FootswitchButton.h"
 #include "skin/LedIndicator.h"
@@ -21,6 +26,7 @@
 #include "skin/SkinAssets.h"
 #include "sawblade/wav_io.h"
 
+using namespace sawblade;
 using namespace sawblade::plugin;
 using Catch::Matchers::WithinAbs;
 
@@ -83,6 +89,19 @@ struct Rig {
     REQUIRE(ed != nullptr);
   }
   ~Rig() { base.reset(); }
+
+  // Loads a preset and waits for the engine (the parameters then hold its values).
+  void load(const std::filesystem::path& file) {
+    REQUIRE(proc.loadPresetFile(file));
+    REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
+    REQUIRE(proc.status().error.empty());
+    // The loader thread wrote the parameters: let the attachments deliver to the controls.
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+  }
+  void loadInit() {
+    proc.loadPreset(makeInitPreset());
+    REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
+  }
 };
 
 juce::MouseEvent mouse(juce::Component& c, juce::Point<float> pos, juce::Point<float> downPos, bool shift, int clicks = 1) {
@@ -181,17 +200,29 @@ TEST_CASE("resizing keeps the aspect and scales the content", "[editor]") {
   CHECK(rig.ed->getHeight() >= 400);
 }
 
-TEST_CASE("every parameter has exactly one knob bound to it", "[editor]") {
+TEST_CASE("every parameter has exactly one bound control", "[editor]") {
   Rig rig;
   auto knobs = all<skin::FilmstripKnob>(*rig.ed);
-  REQUIRE(static_cast<int>(knobs.size()) == kNumParams);
-  std::set<std::string> ids;
-  for (auto* k : knobs) ids.insert(k->paramId().toStdString());
-  CHECK(static_cast<int>(ids.size()) == kNumParams);
+  auto switches = all<PedalSwitch>(*rig.ed);
+  std::map<std::string, int> nKnobs, nSwitches;
+  for (auto* k : knobs) ++nKnobs[k->paramId().toStdString()];
+  for (auto* sw : switches) ++nSwitches[sw->paramId().toStdString()];
+  std::set<std::string> focusParams;
+  for (int c = 0; c < kNumCircuits; ++c) focusParams.insert(paramSpec(circuitFace(static_cast<Circuit>(c)).focus.param).id);
+  CHECK(static_cast<int>(nKnobs.size() + nSwitches.size()) >= kNumParams);
 
   for (int i = 0; i < kNumParams; ++i) {
     const ParamSpec& s = paramSpec(i);
     INFO(s.id);
+    // One knob or one switch; a FOCUS parameter has one knob (the drawer) and one switch (the face).
+    if (focusParams.count(s.id)) {
+      CHECK(nKnobs[s.id] == 1);
+      CHECK(nSwitches[s.id] == 1);
+    } else {
+      CHECK(nKnobs[s.id] + nSwitches[s.id] == 1);
+    }
+    if (!s.choices.empty()) CHECK(nKnobs[s.id] == 0);  // choices are switches
+    if (nKnobs[s.id] == 0) continue;
     auto it = std::find_if(knobs.begin(), knobs.end(), [&](auto* k) { return k->paramId().toStdString() == s.id; });
     REQUIRE(it != knobs.end());
     skin::FilmstripKnob& knob = **it;
@@ -205,6 +236,9 @@ TEST_CASE("every parameter has exactly one knob bound to it", "[editor]") {
     param->setValueNotifyingHost(0.25f);
     CHECK_THAT(knob.proportion(), WithinAbs(0.25, 1e-3));
   }
+  // No parameter id appears twice among the knobs of one component set, and no knob is unbound.
+  for (auto& kv : nKnobs) CHECK(kv.second <= 1);
+  for (auto& kv : nSwitches) CHECK(kv.second <= 1);
 }
 
 TEST_CASE("filmstrip mapping and embedded sidecars", "[editor]") {
@@ -715,4 +749,411 @@ TEST_CASE("play-along: in plugin mode with sync off the status shows warnings an
   REQUIRE(pa.waitForLoader());
   panel->refresh();
   CHECK(anyLabelContains(*rig.ed, "Backing is off"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pedal face and advanced drawer (docs/specs/phase7b_chainsaw_pedal.md, 5.3-5.6; acceptance 13).
+namespace {
+
+constexpr int hmP(int live) { return kHmFirst + live; }
+constexpr int muffP(int live) { return kMuffFirst + live; }
+
+const std::filesystem::path kChainsawPresets = std::filesystem::path(SAWBLADE_PRESETS_DIR) / "modeled" / "chainsaw";
+
+PedalFace& faceOf(Rig& rig) {
+  auto v = all<PedalFace>(*rig.ed);
+  REQUIRE(v.size() == 1);
+  return *v[0];
+}
+AdvancedDrawer& drawerOf(Rig& rig) {
+  auto v = all<AdvancedDrawer>(*rig.ed);
+  REQUIRE(v.size() == 1);
+  return *v[0];
+}
+skin::RigView& rigViewOf(Rig& rig) {
+  auto v = all<skin::RigView>(*rig.ed);
+  REQUIRE(v.size() == 1);
+  return *v[0];
+}
+
+void setParam(Rig& rig, int index, double value) {
+  auto* p = rig.proc.parameters().getParameter(paramSpec(index).id);
+  p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(value)));
+}
+double getParam(Rig& rig, int index) { return static_cast<double>(rig.proc.parameters().getRawParameterValue(paramSpec(index).id)->load()); }
+
+void press(juce::Component& c) {
+  const auto centre = c.getLocalBounds().toFloat().getCentre();
+  c.mouseDown(mouse(c, centre, centre, false));
+}
+
+void doubleClick(juce::Component& c) {
+  const auto centre = c.getLocalBounds().toFloat().getCentre();
+  c.mouseDoubleClick(mouse(c, centre, centre, false, 2));
+}
+
+// Every string a player can see for the pedal controls: parameter and choice names, titles, tooltips,
+// drawer labels, OLED lines and the table's panel labels.
+std::vector<juce::String> uiStrings(Rig& rig) {
+  std::vector<juce::String> out;
+  for (int i = 0; i < kNumParams; ++i) {
+    auto* p = rig.proc.parameters().getParameter(paramSpec(i).id);
+    out.push_back(p->getName(128));
+    for (const auto& v : p->getAllValueStrings()) out.push_back(v);
+  }
+  std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+    out.push_back(c.getTitle());
+    if (auto* t = dynamic_cast<juce::SettableTooltipClient*>(&c)) out.push_back(t->getTooltip());
+    if (auto* l = dynamic_cast<juce::Label*>(&c)) out.push_back(l->getText());
+    if (auto* b = dynamic_cast<juce::Button*>(&c)) out.push_back(b->getButtonText());
+    for (auto* child : c.getChildren()) walk(*child);
+  };
+  walk(*rig.ed);
+  for (int c = 0; c < kNumCircuits; ++c) {
+    const CircuitFace& f = circuitFace(static_cast<Circuit>(c));
+    out.push_back(f.oledName);
+    out.push_back(f.focus.label);
+    for (const auto& k : f.knobs) out.push_back(k.label);
+    for (const auto& k : f.drawerKnobs) out.push_back(k.label);
+    for (const auto& k : f.drawerSwitches) out.push_back(k.label);
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("pedal face: shown only when the preset has a circuit block", "[editor][pedal]") {
+  Rig rig;
+  PedalFace& face = faceOf(rig);
+  rig.loadInit();
+  face.refresh();
+  CHECK_FALSE(face.isVisible());
+  CHECK_FALSE(face.activeCircuit().has_value());
+
+  rig.load(kChainsawPresets / "classic_buzzsaw.json");
+  face.refresh();
+  CHECK(face.isVisible());
+  REQUIRE(face.activeCircuit().has_value());
+  CHECK(*face.activeCircuit() == Circuit::Chainsaw);
+
+  // The face lies exactly over the saw pedal render and lets background clicks through.
+  const auto& piece = rigViewOf(rig).piece(skin::Piece::SawPedal);
+  CHECK(face.getBounds() == piece.getBounds() + rigViewOf(rig).getPosition());
+  bool self = true, kids = false;
+  face.getInterceptsMouseClicks(self, kids);
+  CHECK_FALSE(self);
+  CHECK(kids);
+  CHECK(rig.ed->getLocalArea(&face, face.getLocalBounds()).getWidth() == piece.getWidth());
+
+  rig.loadInit();
+  face.refresh();
+  CHECK_FALSE(face.isVisible());
+}
+
+TEST_CASE("pedal face: controls round-trip with the parameters; FOCUS and CIRCUIT behave", "[editor][pedal]") {
+  Rig rig;
+  PedalFace& face = faceOf(rig);
+  rig.load(kChainsawPresets / "classic_buzzsaw.json");
+  face.refresh();
+
+  // Knobs: knob -> parameter -> knob at 0.8 / 0.25, for both circuits' sets.
+  for (int c = 0; c < kNumCircuits; ++c) {
+    const CircuitFace& f = circuitFace(static_cast<Circuit>(c));
+    for (int k = 0; k < 6; ++k) {
+      auto* knob = face.knob(static_cast<Circuit>(c), k);
+      REQUIRE(knob != nullptr);
+      auto* param = rig.proc.parameters().getParameter(paramSpec(f.knobs[static_cast<size_t>(k)].param).id);
+      INFO(param->getName(64));
+      CHECK(knob->paramId() == param->paramID);
+      knob->setValue(knob->proportionOfLengthToValue(0.8), juce::sendNotificationSync);
+      CHECK_THAT(static_cast<double>(param->getValue()), WithinAbs(0.8, 1e-3));
+      param->setValueNotifyingHost(0.25f);
+      CHECK_THAT(knob->proportion(), WithinAbs(0.25, 1e-3));
+      CHECK(knob->getTitle().isNotEmpty());
+    }
+  }
+
+  // CLIP: pressing cycles through the four clips and wraps; the parameter and the switch agree.
+  for (int c = 0; c < kNumCircuits; ++c) {
+    const CircuitFace& f = circuitFace(static_cast<Circuit>(c));
+    PedalSwitch& clip = face.clipSwitch(static_cast<Circuit>(c));
+    setParam(rig, f.clipParam, 0.0);
+    CHECK(clip.position() == 0);
+    for (int expect : {1, 2, 3, 0}) {
+      press(clip);
+      CHECK(clip.position() == expect);
+      CHECK(getParam(rig, f.clipParam) == expect);
+    }
+    setParam(rig, f.clipParam, 2.0);  // parameter -> switch
+    CHECK(clip.position() == 2);
+    CHECK(clip.valueText() == clipShortName(2));
+    // the mouse wheel steps without wrapping
+    juce::MouseWheelDetails w{};
+    w.deltaY = 1.0f;
+    clip.mouseWheelMove(mouse(clip, {1.0f, 1.0f}, {1.0f, 1.0f}, false), w);
+    CHECK(clip.position() == 3);
+    clip.mouseWheelMove(mouse(clip, {1.0f, 1.0f}, {1.0f, 1.0f}, false), w);
+    CHECK(clip.position() == 3);
+    w.deltaY = -1.0f;
+    clip.mouseWheelMove(mouse(clip, {1.0f, 1.0f}, {1.0f, 1.0f}, false), w);
+    CHECK(clip.position() == 2);
+  }
+
+  // FOCUS: writes its two values; reads NARROW on the narrow side of the threshold.
+  for (int c = 0; c < kNumCircuits; ++c) {
+    const FaceSwitchSpec& fs = circuitFace(static_cast<Circuit>(c)).focus;
+    PedalSwitch& focus = face.focusSwitch(static_cast<Circuit>(c));
+    setParam(rig, fs.param, fs.wideValue);
+    CHECK(focus.position() == 0);
+    CHECK(focus.valueText() == "WIDE");
+    press(focus);
+    CHECK_THAT(getParam(rig, fs.param), WithinAbs(fs.narrowValue, 1e-4));
+    CHECK(focus.position() == 1);
+    CHECK(focus.valueText() == "NARROW");
+    press(focus);
+    CHECK_THAT(getParam(rig, fs.param), WithinAbs(fs.wideValue, 1e-4));
+    const double past = fs.narrowValue > fs.wideValue ? fs.threshold + 0.01 : fs.threshold - 0.01;
+    const double before = fs.narrowValue > fs.wideValue ? fs.threshold - 0.01 : fs.threshold + 0.01;
+    setParam(rig, fs.param, past);
+    CHECK(focus.position() == 1);
+    setParam(rig, fs.param, before);
+    CHECK(focus.position() == 0);
+  }
+
+  // CIRCUIT: chainsaw -> big fuzz -> chainsaw; the face shows the other set after the loader settles.
+  PedalSwitch& circuit = face.circuitSwitch();
+  CHECK(circuit.numPositions() == 2);
+  CHECK(circuit.position() == 0);
+  const auto builds = rig.proc.engineBuilds();
+  press(circuit);
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  face.refresh();
+  CHECK(rig.proc.engineBuilds() == builds + 1);
+  CHECK(circuit.position() == 1);
+  REQUIRE(face.activeCircuit().has_value());
+  CHECK(*face.activeCircuit() == Circuit::BigFuzz);
+  for (int k = 0; k < 6; ++k) {
+    CHECK(face.knob(Circuit::BigFuzz, k)->isVisible());
+    CHECK_FALSE(face.knob(Circuit::Chainsaw, k)->isVisible());
+  }
+  CHECK(face.clipSwitch(Circuit::BigFuzz).isVisible());
+  CHECK_FALSE(face.clipSwitch(Circuit::Chainsaw).isVisible());
+  CHECK(face.focusSwitch(Circuit::BigFuzz).isVisible());
+  press(circuit);
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  face.refresh();
+  CHECK(circuit.position() == 0);
+  CHECK(*face.activeCircuit() == Circuit::Chainsaw);
+  CHECK(face.knob(Circuit::Chainsaw, 0)->isVisible());
+  CHECK_FALSE(face.knob(Circuit::BigFuzz, 0)->isVisible());
+  CHECK(rig.proc.engineBuilds() == builds + 2);
+}
+
+TEST_CASE("pedal drawer: closed by default, opens and closes on double-click, x and Escape", "[editor][pedal]") {
+  Rig rig;
+  PedalFace& face = faceOf(rig);
+  AdvancedDrawer& drawer = drawerOf(rig);
+  rig.load(kChainsawPresets / "classic_buzzsaw.json");
+  face.refresh();
+  skin::RigPiece& piece = rigViewOf(rig).piece(skin::Piece::SawPedal);
+
+  CHECK_FALSE(drawer.isOpen());
+  CHECK_FALSE(drawer.isVisible());
+
+  doubleClick(piece);
+  CHECK(drawer.isOpen());
+  CHECK(drawer.isVisible());
+  drawer.finishAnimation();
+  CHECK(drawer.getBounds() == drawer.openBounds());
+
+  // Geometry: inside the rig, to the right of the pedal, aligned with its vertical span.
+  const auto rigBounds = rigViewOf(rig).getBounds();
+  const auto pedal = piece.getBounds() + rigViewOf(rig).getPosition();
+  CHECK(rigBounds.contains(drawer.getBounds()));
+  CHECK_FALSE(drawer.getBounds().intersects(pedal));
+  CHECK(drawer.getX() == pedal.getRight() + AdvancedDrawer::kGap);
+  CHECK(drawer.getY() == pedal.getY());
+  CHECK(drawer.getHeight() == pedal.getHeight());
+  CHECK(drawer.getWidth() > 500);
+  CHECK(drawer.getParentComponent() == face.getParentComponent());  // a child of the editor content, above the rig
+
+  // Its visible knobs are the active circuit's drawer knobs, with titles and tooltips.
+  auto visibleKnobs = [&] {
+    std::set<std::string> ids;
+    for (auto* k : all<skin::FilmstripKnob>(drawer))
+      if (k->isVisible()) ids.insert(k->paramId().toStdString());
+    return ids;
+  };
+  auto expected = [&](Circuit c) {
+    std::set<std::string> ids;
+    for (const auto& k : circuitFace(c).drawerKnobs) ids.insert(paramSpec(k.param).id.c_str());
+    return ids;
+  };
+  CHECK(visibleKnobs() == expected(Circuit::Chainsaw));
+  CHECK(visibleKnobs().size() == 10);
+  for (auto* k : all<skin::FilmstripKnob>(drawer)) {
+    CHECK(k->getTitle().isNotEmpty());
+    CHECK(k->getTooltip().isNotEmpty());
+  }
+  int visibleSwitches = 0;
+  for (auto* sw : all<PedalSwitch>(drawer))
+    if (sw->isVisible()) ++visibleSwitches;
+  CHECK(visibleSwitches == 2);  // MODE, CLIP 2
+
+  // A drawer knob moves its (live) parameter.
+  for (auto* k : all<skin::FilmstripKnob>(drawer))
+    if (k->paramId() == "hmPresenceDb") {
+      k->setValue(12.0, juce::sendNotificationSync);
+      CHECK_THAT(getParam(rig, hmP(kHmPresenceDb)), WithinAbs(12.0, 1e-3));
+    }
+
+  // Second double-click closes it.
+  doubleClick(piece);
+  CHECK_FALSE(drawer.isOpen());
+  drawer.finishAnimation();
+  CHECK_FALSE(drawer.isVisible());
+
+  // Escape closes it.
+  drawer.setOpen(true, false);
+  CHECK(drawer.isVisible());
+  CHECK(drawer.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+  CHECK_FALSE(drawer.isOpen());
+  drawer.finishAnimation();
+  CHECK_FALSE(drawer.isVisible());
+  CHECK_FALSE(drawer.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));  // nothing to close
+
+  // The x button closes it.
+  drawer.setOpen(true, false);
+  juce::TextButton* close = nullptr;
+  for (auto* b : all<juce::TextButton>(drawer)) close = b;
+  REQUIRE(close != nullptr);
+  CHECK(close->getTitle().isNotEmpty());
+  close->onClick();  // (Button::triggerClick is asynchronous)
+  CHECK_FALSE(drawer.isOpen());
+  drawer.finishAnimation();
+  CHECK_FALSE(drawer.isVisible());
+
+  // The animation is the slide of the spec: opening from the pedal edge, 180 ms.
+  CHECK(AdvancedDrawer::kAnimationMs == 180);
+  drawer.setOpen(true, true);
+  CHECK(drawer.isVisible());
+  CHECK(drawer.getX() == drawer.openBounds().getX());
+  CHECK(drawer.getWidth() < drawer.openBounds().getWidth());  // starts narrow: it grows out of the pedal side
+  drawer.finishAnimation();
+  CHECK(drawer.getBounds() == drawer.openBounds());
+
+  // Switching the circuit swaps the drawer's set.
+  press(face.circuitSwitch());
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  face.refresh();
+  drawer.refresh();
+  REQUIRE(drawer.activeCircuit().has_value());
+  CHECK(*drawer.activeCircuit() == Circuit::BigFuzz);
+  CHECK(visibleKnobs() == expected(Circuit::BigFuzz));
+  CHECK(drawer.title().containsIgnoreCase("big fuzz"));
+  visibleSwitches = 0;
+  for (auto* sw : all<PedalSwitch>(drawer))
+    if (sw->isVisible()) ++visibleSwitches;
+  CHECK(visibleSwitches == 1);  // CLIP 2
+}
+
+TEST_CASE("pedal face: the OLED shows the preset and the circuit, clip and focus", "[editor][pedal]") {
+  Rig rig;
+  PedalFace& face = faceOf(rig);
+  rig.load(kChainsawPresets / "classic_buzzsaw.json");
+  face.refresh();
+  CHECK(face.oledLine1() == "CLASSIC BUZZSAW");
+  const juce::String dot = juce::String::fromUTF8(" \xc2\xb7 ");
+  CHECK(face.oledLine2() == "CHAINSAW" + dot + "SI" + dot + "WIDE");
+  setParam(rig, hmP(kHmClip), 1.0);
+  CHECK(face.oledLine2() == "CHAINSAW" + dot + "LED" + dot + "WIDE");
+  setParam(rig, hmP(kHmLowQ), 1.6);
+  CHECK(face.oledLine2() == "CHAINSAW" + dot + "LED" + dot + "NARROW");
+  setParam(rig, hmP(kHmClip), 3.0);
+  CHECK(face.oledLine2() == "CHAINSAW" + dot + "SOFT" + dot + "NARROW");
+
+  rig.load(kChainsawPresets / "pickle_chainsaw.json");
+  face.refresh();
+  CHECK(face.oledLine1() == "BIG FUZZ CHAINSAW");
+  CHECK(face.oledLine2() == "BIG FUZZ" + dot + "SI" + dot + "WIDE");
+  setParam(rig, muffP(kMuffStackRatio), 2.5);
+  CHECK(face.oledLine2() == "BIG FUZZ" + dot + "SI" + dot + "NARROW");
+  setParam(rig, muffP(kMuffClip), 2.0);
+  CHECK(face.oledLine2() == "BIG FUZZ" + dot + "ASYM" + dot + "NARROW");
+}
+
+TEST_CASE("pedal face: titles and tooltips on every new control; no trademark in any UI string", "[editor][pedal]") {
+  Rig rig;
+  rig.load(kChainsawPresets / "classic_buzzsaw.json");
+  faceOf(rig).refresh();
+  for (auto* sw : all<PedalSwitch>(*rig.ed)) {
+    INFO(sw->paramId());
+    CHECK(sw->getTitle().isNotEmpty());
+    CHECK(sw->getTooltip().isNotEmpty());
+    CHECK(sw->getTitle().containsIgnoreCase(sw->controlName()));
+    CHECK(sw->getTooltip().containsIgnoreCase(sw->valueText()));
+  }
+  for (auto* k : all<skin::FilmstripKnob>(*rig.ed)) {
+    INFO(k->paramId());
+    CHECK(k->getTitle().isNotEmpty());
+    CHECK(k->getTooltip().isNotEmpty());
+  }
+  CHECK(all<PedalSwitch>(*rig.ed).size() == 1 + 2 * kNumCircuits + 3);  // CIRCUIT, face CLIP+FOCUS per circuit, drawer MODE+CLIP2+CLIP2
+  CHECK(faceOf(rig).getTitle().isNotEmpty());
+  CHECK(drawerOf(rig).getTitle().isNotEmpty());
+
+  // The strings are collected with both circuits shown in turn (the OLED text and the drawer title).
+  for (const char* preset : {"classic_buzzsaw.json", "pickle_chainsaw.json"}) {
+    rig.load(kChainsawPresets / preset);
+    faceOf(rig).refresh();
+    drawerOf(rig).refresh();
+    auto strings = uiStrings(rig);
+    strings.push_back(faceOf(rig).oledLine1());
+    strings.push_back(faceOf(rig).oledLine2());
+    strings.push_back(drawerOf(rig).title());
+    for (const auto& s : strings)
+      for (const char* bad : {"boss", "hm-2", "swollen", "pickle", "muff"}) {
+        INFO("\"" << s << "\" contains " << bad);
+        CHECK_FALSE(s.containsIgnoreCase(bad));
+      }
+  }
+}
+
+TEST_CASE("pedal face and drawer: screenshots", "[editor][pedal][screenshots]") {
+  Rig rig;
+  rig.ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  PedalFace& face = faceOf(rig);
+  AdvancedDrawer& drawer = drawerOf(rig);
+  struct Shot { const char* preset; const char* tag; };
+  for (const Shot shot : {Shot{"classic_buzzsaw.json", "chainsaw"}, Shot{"pickle_chainsaw.json", "bigfuzz"}}) {
+    INFO(shot.tag);
+    rig.load(kChainsawPresets / shot.preset);
+    face.refresh();
+    drawer.setOpen(false, false);
+    REQUIRE(face.isVisible());
+    const auto pedal = face.getBounds();
+
+    const juce::Image closed = rig.ed->createComponentSnapshot(rig.ed->getLocalBounds(), true, 2.0f);
+    REQUIRE(closed.getWidth() == 2560);
+    savePng(closed, juce::String("sawblade_face_") + shot.tag + "_2x.png");
+    // the face changed the pedal area: the controls are drawn (more than the plain render would be)
+    CHECK(nonBackgroundFraction(closed, {pedal.getX() * 2, pedal.getY() * 2, pedal.getWidth() * 2, pedal.getHeight() * 2}) > 0.3);
+    const juce::Image faceCrop = rig.ed->createComponentSnapshot(pedal.expanded(6), true, 3.0f);
+    savePng(faceCrop, juce::String("face_") + shot.tag + "_crop.png");
+
+    drawer.setOpen(true, false);
+    drawer.refresh();
+    const juce::Image open = rig.ed->createComponentSnapshot(rig.ed->getLocalBounds(), true, 2.0f);
+    savePng(open, juce::String("sawblade_drawer_") + shot.tag + "_2x.png");
+    const auto both = pedal.getUnion(drawer.getBounds()).expanded(8);
+    savePng(rig.ed->createComponentSnapshot(both, true, 3.0f), juce::String("drawer_") + shot.tag + "_crop.png");
+    // opening the drawer changed the picture to the right of the pedal
+    int differing = 0;
+    const auto d = drawer.getBounds();
+    for (int y = d.getY() * 2; y < d.getBottom() * 2; y += 3)
+      for (int x = d.getX() * 2; x < d.getRight() * 2; x += 3)
+        if (closed.getPixelAt(x, y) != open.getPixelAt(x, y)) ++differing;
+    CHECK(differing > 1000);
+    drawer.setOpen(false, false);
+  }
 }
