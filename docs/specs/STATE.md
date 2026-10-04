@@ -1,4 +1,11 @@
-# Phase 7b — session state (HOLD requested by the main lead, 2026-10-04 18:51 UTC)
+# Phase 7b — session state
+
+**Phase 7b is complete** (2026-10-04, about 20:50 UTC). Everything is on `claude/sawblade-p7b-chainsaw-pedal` and pushed; the report is `docs/specs/phase7b_chainsaw_pedal_REPORT.md`, the Artifact is https://claude.ai/artifact/4runZHNZamDx6gSjaGKSLi. No PR was opened (not requested). Open follow-ups are listed in the report (§Follow-ups); 7c adds `pedal.hmx` and `pedal.eye`.
+
+The hold-time snapshot below is kept for the process record.
+
+---
+
 
 Branch `claude/sawblade-p7b-chainsaw-pedal`. Remote is at `039bbbd`; local HEAD is the commit
 that adds this file. **Nothing after `039bbbd` is pushed** (hold). Spec:

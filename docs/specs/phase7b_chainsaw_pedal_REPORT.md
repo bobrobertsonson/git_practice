@@ -1,12 +1,14 @@
 # Phase 7b report: the chainsaw pedal (deep `pedal.hm` v2, `pedal.muff`, pedal face, preset bank)
 
 **Status: accepted by the lead** after two reviewer rounds (task A core: REVISE → fixed → accepted;
-task B plugin: see §Review). Release ctest **295/295** (core, plugin, editor, pluginval);
+task B plugin: ACCEPT, then three non-blocking fixes re-checked). Release ctest **297/297** (core,
+plugin, editor, pluginval);
 Debug ASan/UBSan core tests **219/219**; `-Werror` clean; pluginval strictness 10 **SUCCESS**.
 Spec: `docs/specs/phase7b_chainsaw_pedal.md`. Branch `claude/sawblade-p7b-chainsaw-pedal`.
 
-Artifact page "Sawblade Chainsaw Pedal" (face + drawer screenshots, plots, preset list): see the
-link in the session summary. Plots: `docs/reports/phase7b/`.
+Artifact page "Sawblade Chainsaw Pedal" (face + drawer screenshots, plots, preset list):
+https://claude.ai/artifact/4runZHNZamDx6gSjaGKSLi (private until shared). Plots:
+`docs/reports/phase7b/`, UI crops: `docs/reports/phase7b/ui/`.
 
 ## What the user asked for, and what changed on the way
 User: *"a very tweakable and customizable pedal not a NAM capture … at least 10 starting presets
@@ -201,5 +203,6 @@ tightness (|ΔH(1 kHz)| ≤ 1.0 dB re 400 Hz and ≤ 0.5 dB absolute); HM bias (
 ## Commits
 Spec `c4b3905`, `8e08835`, `740c1da`, `b42d89c`, `148729b`; STATE `70f356a`; goldens
 `ccc9740`; core `039bbbd`, `eb9dd06`, `ef95c4b`; tests `5ce4718`, `99ce45e`; tool `193c1e1`;
-presets `c408bec`, `58f7a29`; docs `58c646a`; plots `a3d6668`; plugin `27fb734`, `6256ec3`
-and the face fix / review commits listed in the session summary.
+presets `c408bec`, `58f7a29`; docs `58c646a`; plots `a3d6668`, screenshots `561048b`; plugin
+`27fb734`, `6256ec3`, `957523d` (face value text removed), `09864c6` (circuit-switch
+robustness from the review); this report `a7698d9` and its final revision.
