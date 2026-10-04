@@ -13,7 +13,7 @@
           "slot": "pedal",
           "modelVersion": 1,
           "params": {
-            "volume": 6,
+            "volume": 2,
             "sustain": 6,
             "tone": 6,
             "scoop": 2,

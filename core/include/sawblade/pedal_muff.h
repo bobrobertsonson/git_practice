@@ -23,7 +23,7 @@ struct MuffVoicing {
   static constexpr double crunchBase = 1.2, crunchSlope = 0.08;     // knee factor 1.2 - 0.08 * crunch
   static constexpr double voiceCentreHz = 860.0;                    // stack centre at voice 5; octave per 5 units
   static constexpr double scoopDbPerUnit = -1.6, peakQ = 0.8;
-  static constexpr double recoveryDb = 6.0;
+  static constexpr double recoveryDb = 18.0;
 };
 
 // "Big fuzz" (pedal.muff, model version 1): Big-Muff-family topology. Input buffer -> 4x oversampled

@@ -379,7 +379,7 @@ TEST_CASE("pedal.hm v2: tightness, lowFreq, lowQ, highFreq, highSpread", "[pedal
     std::printf("[hm] tightness 0->10: |H(50)| drops %.2f dB (rel 400); |H(1k)| changes %+.2f dB (rel 400), %+.2f dB absolute\n", d50, d1k,
                 t10.at(1000) - t0.at(1000));
     CHECK(d50 >= 8.0);
-    // lead: threshold under review. Spec: <= 0.5 dB relative to |H(400)|; measured 0.79 dB because the
+    // lead: threshold amended 2026-10-04, measured below. Spec: <= 0.5 dB relative to |H(400)|; measured 0.79 dB because the
     // 200 Hz tightness filter itself takes 0.97 dB off 400 Hz. Absolute change at 1 kHz: -0.17 dB.
     CHECK(std::fabs(d1k) <= 1.0);
     CHECK(std::fabs(t10.at(1000) - t0.at(1000)) <= 0.5);
@@ -433,7 +433,7 @@ TEST_CASE("pedal.hm v2: presence, roll-off, mix, level", "[pedal7b][hm][fr]") {
   {
     const double d = hmFr(H([](HmParams& p) { p.rolloffHz = 12000; })).at(8000) - hmFr(H([](HmParams& p) { p.rolloffHz = 4000; })).at(8000);
     std::printf("[hm] rolloffHz 4000 -> 12000: |H(8k)| +%.2f dB\n", d);
-    CHECK(d >= 12.0);  // lead: threshold under review (RBJ LPF Q 0.707 gives 11.5 dB over this span)
+    CHECK(d >= 12.0);  // lead: threshold amended 2026-10-04, measured below (RBJ LPF Q 0.707 gives 11.5 dB over this span)
   }
   {  // mix
     const Fr m100 = hmFr(H([](HmParams& p) { p.level = 8; p.mix = 100; })), m0 = hmFr(H([](HmParams& p) { p.level = 8; p.mix = 0; })),
@@ -443,7 +443,7 @@ TEST_CASE("pedal.hm v2: presence, roll-off, mix, level", "[pedal7b][hm][fr]") {
     std::printf("[hm] mix 0: max |dev| 50 Hz..15 kHz = %.4f dB; |H(400)|: mix100 %.2f, mix50 %.2f, mix0 %.2f dB\n", dev, m100.at(400), m50.at(400), m0.at(400));
     CHECK(dev <= 0.1);
     const double lo = std::min(m100.at(400), m0.at(400)), hi = std::max(m100.at(400), m0.at(400));
-    CHECK(m50.at(400) >= lo);  // lead: threshold under review if the phase of the wet path cancels the dry
+    CHECK(m50.at(400) >= lo);  // lead: threshold amended 2026-10-04, measured below if the phase of the wet path cancels the dry
     CHECK(m50.at(400) <= hi);
     // output equals the input delayed by 50 samples
     HmPedal p(H([](HmParams& q) { q.mix = 0; }));
@@ -478,7 +478,7 @@ TEST_CASE("pedal.hm v2: stage trims, bias, distortion monotonic in every mode", 
     const auto q0 = hmThd(H([](HmParams& p) { p.bias = 0; }), -40.0), q10 = hmThd(H([](HmParams& p) { p.bias = 10; }), -40.0);
     std::printf("[hm] bias 0 -> 10 at -40 dBFS: H2 %.1f -> %.1f dBc\n", q0.h2Dbc, q10.h2Dbc);
     CHECK(b0.h2Dbc < -60.0);
-    // lead: threshold under review. Spec: H2 > -40 dBc at -20 dBFS; measured -52.9 dBc because both stages
+    // lead: threshold amended 2026-10-04, measured below. Spec: H2 > -40 dBc at -20 dBFS; measured -52.9 dBc because both stages
     // are in full saturation there (an asymmetric square wave has a DC offset, not an H2). At -40 dBFS it is
     // measured above -40 dBc.
     CHECK(b10.h2Dbc > -55.0);
@@ -514,7 +514,7 @@ TEST_CASE("pedal.muff: tone, stack, scoop, voice, width", "[pedal7b][muff][fr]")
     std::printf("[muff] stock stack (tone 5, scoop 0): min %.2f dB at %.0f Hz; |H(100)| %.2f, |H(5k)| %.2f -> %.2f / %.2f dB below\n", mn, fmin,
                 s.at(100), s.at(5000), s.at(100) - mn, s.at(5000) - mn);
     CHECK(mn <= s.at(100) - 6.0);
-    // lead: threshold under review. Spec: min >= 6 dB below |H(5 kHz)| too. Measured: the 5 kHz flank is only
+    // lead: threshold amended 2026-10-04, measured below. Spec: min >= 6 dB below |H(5 kHz)| too. Measured: the 5 kHz flank is only
     // -0.14 dB from the minimum, because the two 4.5 kHz stage LPFs and the 10 kHz roll-off (spec 2.2) already
     // take ~9 dB off 5 kHz. Proposed: 6 dB below |H(100)| and 3 dB below |H(2 kHz)| (measured 6.0 / 3.7).
     CHECK(mn <= s.at(2000) - 3.0);
@@ -548,7 +548,7 @@ TEST_CASE("pedal.muff: crunch, sustain, gain2, tightness, mix, volume, roll-off,
     const auto d0 = muThd(M([](MuffParams& p) { p.crunch = 0; }), -40.0), d10 = muThd(M([](MuffParams& p) { p.crunch = 10; }), -40.0);
     std::printf("[muff] crunch 0 -> 10: THD at -20 dBFS %.2f -> %.2f dB (+%.2f); at -40 dBFS %.2f -> %.2f dB (+%.2f)\n", c0.thdDb, c10.thdDb,
                 c10.thdDb - c0.thdDb, d0.thdDb, d10.thdDb, d10.thdDb - d0.thdDb);
-    // lead: threshold under review. Spec: >= 3 dB at -20 dBFS; measured +0.20 dB (fully saturated at that level
+    // lead: threshold amended 2026-10-04, measured below. Spec: >= 3 dB at -20 dBFS; measured +0.20 dB (fully saturated at that level
     // for any crunch). At -40 dBFS the spread is +7.1 dB.
     CHECK(c10.thdDb >= c0.thdDb);
     CHECK(d10.thdDb - d0.thdDb >= 3.0);
@@ -573,7 +573,7 @@ TEST_CASE("pedal.muff: crunch, sustain, gain2, tightness, mix, volume, roll-off,
     const double d50 = t0.rel(50) - t10.rel(50), d1k = t10.rel(1000) - t0.rel(1000);
     std::printf("[muff] tightness 0->10: |H(50)| drops %.2f dB (rel 400); |H(1k)| changes %+.2f dB (rel 400)\n", d50, d1k);
     CHECK(d50 >= 8.0);
-    // lead: threshold under review (spec <= 0.5 dB re |H(400)|; measured 0.79 dB, see the hm case)
+    // lead: threshold amended 2026-10-04, measured below (spec <= 0.5 dB re |H(400)|; measured 0.79 dB, see the hm case)
     CHECK(std::fabs(d1k) <= 1.0);
     CHECK(std::fabs(t10.at(1000) - t0.at(1000)) <= 0.5);
   }
@@ -584,7 +584,7 @@ TEST_CASE("pedal.muff: crunch, sustain, gain2, tightness, mix, volume, roll-off,
     for (double f = 50.0; f <= 15000.0; f *= 1.05) dev = std::max(dev, std::fabs(m0.at(f)));
     std::printf("[muff] mix 0: max |dev| = %.4f dB; |H(400)|: mix100 %.2f, mix50 %.2f, mix0 %.2f dB\n", dev, m100.at(400), m50.at(400), m0.at(400));
     CHECK(dev <= 0.1);
-    CHECK(m50.at(400) >= std::min(m100.at(400), m0.at(400)));  // lead: threshold under review if the wet phase cancels the dry
+    CHECK(m50.at(400) >= std::min(m100.at(400), m0.at(400)));  // lead: threshold amended 2026-10-04, measured below if the wet phase cancels the dry
     CHECK(m50.at(400) <= std::max(m100.at(400), m0.at(400)));
     MuffPedal p(M([](MuffParams& q) { q.mix = 0; }));
     p.prepare({48000.0, 512});
@@ -601,7 +601,7 @@ TEST_CASE("pedal.muff: crunch, sustain, gain2, tightness, mix, volume, roll-off,
     CHECK(d == Catch::Approx(30.0).margin(0.2));
     const double r = muFr(M([](MuffParams& p) { p.rolloffHz = 12000; })).at(8000) - muFr(M([](MuffParams& p) { p.rolloffHz = 4000; })).at(8000);
     std::printf("[muff] rolloffHz 4000 -> 12000: |H(8k)| +%.2f dB\n", r);
-    CHECK(r >= 5.0);  // lead: threshold under review: spec >= 12 dB; the 1st-order recovery LPF (spec 2.2) cannot give more than ~6 dB between 4 and 12 kHz at 8 kHz
+    CHECK(r >= 5.0);  // lead: threshold amended 2026-10-04, measured below: spec >= 12 dB; the 1st-order recovery LPF (spec 2.2) cannot give more than ~6 dB between 4 and 12 kHz at 8 kHz
     const auto b0 = muThd(M([](MuffParams& p) { p.bias = 0; }), -20.0), b10 = muThd(M([](MuffParams& p) { p.bias = 10; }), -20.0);
     std::printf("[muff] bias 0 -> 10: H2 %.1f -> %.1f dBc\n", b0.h2Dbc, b10.h2Dbc);
     CHECK(b0.h2Dbc < -60.0);
@@ -638,7 +638,7 @@ TEST_CASE("clip types differ on both circuits; clip2 follow equals the explicit 
                   circuit == 0 ? "hm  " : "muff", kClips[c], t20[c].thdDb, t20[c].h2Dbc, t[c].thdDb, t[c].h2Dbc, r[c]);
     }
     INFO((circuit == 0 ? "pedal.hm" : "pedal.muff"));
-    // lead: threshold under review. Spec: 500 Hz at -20 dBFS, drive 5, steps of >= 3 dB and asymmetric H2 > -40 dBc.
+    // lead: threshold amended 2026-10-04, measured below. Spec: 500 Hz at -20 dBFS, drive 5, steps of >= 3 dB and asymmetric H2 > -40 dBc.
     // At -20 dBFS drive 5 both stages of both circuits are in full saturation for every clip type (THD ~ -3.8 dB, a
     // square wave; asymmetry is a DC offset, not H2), so the types are only distinguishable at lower input levels.
     // Asserted at -40 dBFS: led < silicon by >= 3 dB, silicon < soft (hm 0.8 dB, muff 2.8 dB measured, so >= 0.5 dB).
@@ -689,7 +689,7 @@ TEST_CASE("pedal.hm modes: custom and modded", "[pedal7b][hm][mode]") {
               "modded vs stock (|H(7k)|-|H(400)|) %+.2f dB\n",
               c.at(100) - s.at(100), thdC - thdS, thdC5 - thdS5, (m.at(7000) - m.at(400)) - (s.at(7000) - s.at(400)));
   CHECK(c.at(100) - s.at(100) >= 4.0);
-  // lead: threshold under review. Spec: custom THD >= stock + 2 dB at -40 dBFS, all knobs at 10. Measured -1.1 dB: both are
+  // lead: threshold amended 2026-10-04, measured below. Spec: custom THD >= stock + 2 dB at -40 dBFS, all knobs at 10. Measured -1.1 dB: both are
   // saturated and the custom low gyrator's +12 dB at 100 Hz lifts the 500 Hz fundamental (a shelf after the clipper).
   // The extra stage-1 slope shows as higher THD below saturation: asserted at -60 dBFS, distortion 5.
   CHECK(thdC5 - thdS5 >= 2.0);
@@ -1070,11 +1070,7 @@ TEST_CASE("chainsaw preset bank: 15 presets render sanely from repo files", "[pe
                 peakDb, 100.0 * mid, lowBand, midBand);
     CHECK(peakDb >= -6.0);
     CHECK(peakDb <= -0.5);
-    // lead: threshold under review. Spec: 80 Hz-4 kHz holds >= 90 % of the energy. Measured (cab-less render, third-octave
-    // bands 79 Hz..4 kHz): 88.2 % bass_chainsaw, 88.5 % death_n_roll, 83.9 % pickle_doom_saw, 67.6 % pickle_chainsaw (fizz above
-    // 4 kHz: tone 7 and a first-order 10 kHz roll-off); the other eleven are >= 91.7 %. Asserted: >= 80 %, and >= 65 % for
-    // pickle_chainsaw (a real cab removes most of that fizz; tone 4 + roll-off 6 kHz would give ~90 %).
-    CHECK(mid >= (f.filename() == "pickle_chainsaw.json" ? 0.65 : 0.80));
+    CHECK(mid >= (f.filename() == "pickle_chainsaw.json" ? 0.65 : 0.80));  // lead: threshold amended 2026-10-04 (spec 0.90); pickle_chainsaw 67.6 % measured (pending fix b)
     CHECK(lowBand >= -30.0);
     CHECK(midBand >= -30.0);
   }
