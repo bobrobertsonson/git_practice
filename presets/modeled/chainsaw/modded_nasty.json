@@ -1,0 +1,54 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Modded Nasty",
+  "notes": "Bright, nasty modded chainsaw: the modded mode (higher interstage and post-clip filters) with LED clipping, presence at 6 kHz and an open roll-off. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 2,
+          "params": {
+            "level": 0.63,
+            "low": 7,
+            "high": 8,
+            "distortion": 9,
+            "tightness": 3,
+            "mix": 100,
+            "mode": "modded",
+            "clip": "led",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 0.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 6000,
+            "presenceDb": 10,
+            "rolloffHz": 12000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  }
+}

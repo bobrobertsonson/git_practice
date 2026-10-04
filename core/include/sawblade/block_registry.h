@@ -26,6 +26,14 @@ struct BlockBuildContext {
   CaptureCache* cache = nullptr;                 // optional: reuse parsed captures across loads
 };
 
+// One live (knob-movable) parameter of a block type; index order = the `values` order of
+// Processor::setLiveParams. A non-empty `choices` makes it an enum: the value is a choice index.
+struct LiveParamDesc {
+  std::string key, name;
+  double min = 0.0, max = 1.0, def = 0.0;
+  std::vector<std::string> choices;  // empty = continuous
+};
+
 struct BlockType {
   BlockTraits traits;
   // Reads the type-specific members of a block object (common members id/type/slot/bypass are
@@ -34,6 +42,8 @@ struct BlockType {
   // Load-time: builds the processor (loads models etc.). Latency is whatever the processor
   // reports after prepare(). Throws std::runtime_error on I/O or model errors.
   std::function<std::unique_ptr<Processor>(const Block&, const BlockBuildContext&)> create;
+  // Live parameters, if the type supports Processor::setLiveParams (empty otherwise).
+  std::vector<LiveParamDesc> liveParams;
 };
 
 // Process-wide map type string -> BlockType. "nam" and "eq" are built in. add() is for startup

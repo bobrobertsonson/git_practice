@@ -4,6 +4,8 @@
 #include <cmath>
 #include <filesystem>
 
+#include "pedals/CircuitParams.h"
+
 namespace sawblade::plugin {
 namespace {
 
@@ -20,6 +22,7 @@ const std::array<ParamSpec, kNumParams>& specs() {
     for (int k = 0; k < kPostEqSlots; ++k)
       a[static_cast<std::size_t>(kPostEqFirst + k)] = {"postEq" + std::to_string(k + 1),
                                                        "Post EQ " + std::to_string(k + 1) + " Gain", "dB", -18.0, 18.0, 0.0};
+    for (int i = kSawCircuit; i < kNumParams; ++i) a[static_cast<std::size_t>(i)] = circuitParamSpec(i);
     return a;
   }();
   return s;
@@ -62,6 +65,7 @@ ParamValues paramsFromPreset(const Preset& p) {
     v[static_cast<std::size_t>(kPostEqFirst + k)] =
         b < 0 ? 0.0 : clampTo(kPostEqFirst + k, p.postEq[static_cast<std::size_t>(b)].gainDb);
   }
+  circuitParamsFromPreset(p, v);
   return v;
 }
 
@@ -77,6 +81,7 @@ void applyParams(Preset& p, const ParamValues& v) {
     const int b = bands[static_cast<std::size_t>(k)];
     if (b >= 0) p.postEq[static_cast<std::size_t>(b)].gainDb = v[static_cast<std::size_t>(kPostEqFirst + k)];
   }
+  applyCircuitParams(p, v);
 }
 
 Preset makeInitPreset() {

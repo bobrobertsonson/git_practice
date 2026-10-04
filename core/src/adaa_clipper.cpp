@@ -6,6 +6,12 @@ namespace sawblade {
 
 double SoftClipShape::f(double u) const noexcept {
   const double k = u >= 0.0 ? kPos : kNeg;
+  if (order == 2) {
+    if (u >= k) return 4.0 * k / 5.0;
+    if (u <= -k) return -4.0 * k / 5.0;
+    const double r = u / k;
+    return u - u * r * r * r * r / 5.0;
+  }
   if (u >= k) return 2.0 * k / 3.0;
   if (u <= -k) return -2.0 * k / 3.0;
   return u - u * u * u / (3.0 * k * k);
@@ -15,6 +21,13 @@ double SoftClipShape::f(double u) const noexcept {
 double SoftClipShape::f1(double u) const noexcept {
   const double k = u >= 0.0 ? kPos : kNeg;
   const double a = std::fabs(u);
+  if (order == 2) {
+    if (a < k) {
+      const double r = a / k;
+      return 0.5 * u * u - u * u * r * r * r * r / 30.0;
+    }
+    return (4.0 * k / 5.0) * a - k * k / 3.0;
+  }
   if (a < k) return 0.5 * u * u - u * u * u * u / (12.0 * k * k);
   return (2.0 * k / 3.0) * a - 0.25 * k * k;
 }
@@ -24,6 +37,14 @@ double SoftClipShape::f1(double u) const noexcept {
 double SoftClipShape::f2(double u) const noexcept {
   const double k = u >= 0.0 ? kPos : kNeg;
   const double a = std::fabs(u);
+  if (order == 2) {
+    if (a < k) {
+      const double r = u / k;
+      return u * u * u / 6.0 - u * u * u * r * r * r * r / 210.0;
+    }
+    const double m = (2.0 * k / 5.0) * a * a - (k * k / 3.0) * a + 2.0 * k * k * k / 21.0;
+    return u >= 0.0 ? m : -m;
+  }
   if (a < k) return u * u * u / 6.0 - u * u * u * u * u / (60.0 * k * k);
   const double m = (k / 3.0) * a * a - 0.25 * k * k * a + k * k * k / 15.0;
   return u >= 0.0 ? m : -m;

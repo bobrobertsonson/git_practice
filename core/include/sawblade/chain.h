@@ -166,6 +166,10 @@ class Chain {
   // Not RT-safe (call before audio): start with the paths muted, without a ramp.
   void presetMutes(bool a, bool b) noexcept;
 
+  // RT-safe. Forwards `n` values (the block type's liveParams order) to block `blockIndex` (preset
+  // order) of path 0 = a / 1 = b. Out-of-range path/index: ignored. Bypass is still handled in process().
+  void setBlockLiveParams(int path, int blockIndex, const float* v, int n) noexcept;
+
   // Measures the alignment with the deterministic probe (see chain.cpp for the exact recipe),
   // at the blend point, gate bypassed, current latency compensation, no alignment delay.
   // Does not change the chain's settings; resets all state afterwards. Needs prepare().

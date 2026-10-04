@@ -780,8 +780,8 @@ TEST_CASE("pedal block presets round-trip and reject bad values", "[pedal][prese
     REQUIRE(p == q);
     // toJson always writes modelVersion and every param
     const json& b0 = out["paths"]["a"]["blocks"][0];
-    REQUIRE(b0["modelVersion"] == 1);
-    REQUIRE(b0["params"].size() == 4);
+    REQUIRE(b0["modelVersion"] == 2);  // pedal.hm writes the v2 object (every key) even when read from v1
+    REQUIRE(b0["params"].size() == 19);
     REQUIRE(out["paths"]["a"]["blocks"][1]["params"].size() == 3);
     REQUIRE(toJson(q) == out);  // exact
   }
@@ -804,7 +804,7 @@ TEST_CASE("pedal block presets round-trip and reject bad values", "[pedal][prese
     b[k] = std::move(v);
     return b;
   };
-  CHECK_THROWS_AS(parseP(bad(with("modelVersion", 2))), PresetError);
+  CHECK_THROWS_AS(parseP(bad(with("modelVersion", 3))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("modelVersion", 2, "pedal.ts"))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("modelVersion", 0))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("params", {{"distortion", 11}}))), PresetError);

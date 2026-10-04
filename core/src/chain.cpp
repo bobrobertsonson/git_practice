@@ -505,6 +505,13 @@ void Chain::presetMutes(bool a, bool b) noexcept {
   if (b) path_[1].level.setGainLinear(0.0f);
 }
 
+void Chain::setBlockLiveParams(int path, int blockIndex, const float* v, int n) noexcept {
+  if (path < 0 || path > 1 || blockIndex < 0) return;
+  auto& blocks = path_[static_cast<std::size_t>(path)].blocks;
+  if (static_cast<std::size_t>(blockIndex) >= blocks.size()) return;
+  if (auto* p = blocks[static_cast<std::size_t>(blockIndex)].processor.get()) p->setLiveParams(v, n);
+}
+
 void Chain::setLiveParams(const LiveParams& in) noexcept {
   if (!prepared_) return;
   LiveParams p = in;

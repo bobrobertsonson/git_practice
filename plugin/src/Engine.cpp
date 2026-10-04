@@ -47,6 +47,11 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
   const Preset clamped = clampedToParams(preset);  // engine baseline == parameter values
   e->baseline_ = LiveParams::fromPreset(clamped);
   e->slotBand_ = postEqSlotBands(clamped);
+  e->circuit_ = findCircuitBlock(clamped);
+  if (e->circuit_) {
+    const PathPreset& path = e->circuit_->path == 0 ? clamped.a : clamped.b;
+    e->circuitLiveCount_ = blockLiveValues(path.blocks[static_cast<std::size_t>(e->circuit_->block)], e->circuitLive_.data());
+  }
 
   if (!e->resampling_) {
     e->chain_ = std::make_unique<Chain>(clamped, std::move(res));
@@ -95,6 +100,13 @@ void Engine::setParams(const ParamValues& v, const LiveParams* extras, const Liv
   for (std::size_t k = 0; k < slotBand_.size(); ++k)
     if (slotBand_[k] >= 0) l.postEq[static_cast<std::size_t>(slotBand_[k])].gainDb = v[static_cast<std::size_t>(kPostEqFirst) + k];
   chain_->setLiveParams(l);
+  if (circuit_ && circuitLiveCount_ > 0) {
+    const int n = circuitLiveValues(circuit_->circuit, v, circuitScratch_.data());
+    if (n == circuitLiveCount_ && std::memcmp(circuitScratch_.data(), circuitLive_.data(), static_cast<std::size_t>(n) * sizeof(float)) != 0) {
+      circuitLive_ = circuitScratch_;
+      chain_->setBlockLiveParams(circuit_->path, circuit_->block, circuitLive_.data(), n);
+    }
+  }
 }
 
 void Engine::process(const float* in, float* out, int n) noexcept {

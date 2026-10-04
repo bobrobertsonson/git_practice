@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,7 @@
 #include "PlayAlong.h"
 #include "PresetMapping.h"
 #include "browser/PreviewPlayer.h"
+#include "pedals/CircuitParams.h"
 #include "rig/InputMeter.h"
 #include "sawblade/swap_slot.h"
 
@@ -35,8 +37,11 @@ namespace sawblade::plugin {
 //                  by mutex_, which the audio thread never touches.
 // Parameter changes never rebuild anything: they only change the atomics the audio thread reads
 // and the chain smooths them in place. A rebuild happens only for a preset load, a state restore,
-// or prepareToPlay (new sample rate / block size).
-class SawbladeProcessor : public juce::AudioProcessor {
+// or prepareToPlay (new sample rate / block size). The one exception is the CIRCUIT switch
+// (`sawCircuit`): it swaps the first pedal block's type through loadPreset (see circuitChanged()).
+class SawbladeProcessor : public juce::AudioProcessor,
+                          private juce::AudioProcessorValueTreeState::Listener,
+                          private juce::Timer {
  public:
   struct Status {
     std::string presetName = "Init";
@@ -100,6 +105,8 @@ class SawbladeProcessor : public juce::AudioProcessor {
   juce::AudioProcessorValueTreeState& parameters() { return apvts_; }
   // Which post-EQ slots currently control a band (for the UI).
   SlotBands postEqSlots() const;
+  // The pedal circuit block the circuit parameters control in the current preset (empty: none).
+  std::optional<CircuitSlot> circuitSlot() const;
 
   // Blocks until the loader has nothing queued or in progress (tests, prepareToPlay).
   bool waitForLoader(std::chrono::milliseconds timeout = std::chrono::milliseconds(60000));
@@ -145,6 +152,9 @@ class SawbladeProcessor : public juce::AudioProcessor {
   EngineParamState engineParamState() const;
   // Number of engines the loader has published (parameter changes must not increase it).
   std::uint64_t engineBuilds() const noexcept { return loader_->engineBuilds(); }
+  // Test hook: a CIRCUIT edit from another thread (or during a commit) is waiting for the timer. Commit's own
+  // writes of the parameters never set it.
+  bool circuitEditPending() const noexcept { return circuitDirty_.load(); }
 
  private:
   Preset presetWithParams() const;
@@ -155,6 +165,12 @@ class SawbladeProcessor : public juce::AudioProcessor {
   void publishLive();  // mutex_ held
   void dropReplacedRemeasure();  // mutex_ held
   void onOutcome(const EngineLoader::Outcome& o);
+  // CIRCUIT switch: parameterChanged() (APVTS listener, any thread) handles the change at once on the
+  // message thread and otherwise flags it for the message-thread timer, so a host automating the
+  // switch from the audio thread never allocates or locks here.
+  void parameterChanged(const juce::String& id, float value) override;
+  void timerCallback() override;
+  void circuitChanged();
 
   juce::AudioProcessorValueTreeState apvts_;
   std::array<std::atomic<float>*, kNumParams> paramAtomic_{};
@@ -173,6 +189,9 @@ class SawbladeProcessor : public juce::AudioProcessor {
   Monitor monitor_;
   std::atomic<std::uint64_t> userLoadSerial_{0};
   rig::InputMeter inputMeter_;
+  std::atomic<bool> circuitDirty_{false};
+  std::atomic<int> commitCircuit_{0};  // the sawCircuit value commit() / the write-back is writing
+  std::atomic<int> committing_{0};  // >0 while commit() writes the parameters: those writes are not user edits
 
   double hostRate_ = 0.0;
   int maxBlock_ = 0;

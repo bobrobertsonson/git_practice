@@ -7,6 +7,8 @@
 #include "PlayAlongPanel.h"
 #include "browser/BrowserSettings.h"
 #include "browser/CaptureBrowser.h"
+#include "pedals/AdvancedDrawer.h"
+#include "pedals/PedalFace.h"
 #include "rig/RigController.h"
 #include "skin/FilmstripKnob.h"
 
@@ -147,6 +149,15 @@ class SawbladeEditor::Content : public juce::Component {
     for (int k = 0; k < kPostEqSlots; ++k) addKnob({kPostEqFirst + k, nullptr, FilmstripKnob::Kind::Pedal, 0xffff6a1a});
     knobs_[kGateThreshold]->onValueChange = [this] { updateReadouts(); };
 
+    // The live pedal controls: the face over the SAW pedal render, the advanced drawer to its right.
+    face_ = std::make_unique<PedalFace>(processor_);
+    addChildComponent(*face_);
+    drawer_ = std::make_unique<AdvancedDrawer>(processor_);
+    addChildComponent(*drawer_);
+    auto& sawPedal = rig_.piece(Piece::SawPedal);
+    sawPedal.setTooltip(sawPedal.getTitle() + " (click to select, double-click for the advanced controls)");
+    sawPedal.onDoubleClick = [this](Piece) { drawer_->toggle(); };
+
     panel_ = std::make_unique<PlayAlongPanel>(processor_);
     panel_->setVisible(false);
     addChildComponent(*panel_);  // on top of the rig and the inspector
@@ -212,6 +223,11 @@ class SawbladeEditor::Content : public juce::Component {
     latChip_.setBounds(r - 150, y + 2, 150, 30);
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
+    {
+      const auto pedal = rig_.piece(Piece::SawPedal).getBounds() + rig_.getPosition();
+      face_->setBounds(pedal);
+      drawer_->setAnchor(pedal, rig_.getBounds().withTrimmedRight(24));
+    }
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
     rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
@@ -263,6 +279,8 @@ class SawbladeEditor::Content : public juce::Component {
     const SlotBands bands = processor_.postEqSlots();
     for (int k = 0; k < kPostEqSlots; ++k) knobs_[static_cast<size_t>(kPostEqFirst + k)]->setEnabled(bands[static_cast<size_t>(k)] >= 0);
     updateReadouts();
+    face_->refresh();
+    if (drawer_->isVisible()) drawer_->refresh();
   }
 
   void updateReadouts() {
@@ -371,6 +389,8 @@ class SawbladeEditor::Content : public juce::Component {
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
   juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_;
   juce::uint32 learnShownUntil_ = 0;
+  std::unique_ptr<PedalFace> face_;
+  std::unique_ptr<AdvancedDrawer> drawer_;
   std::unique_ptr<PlayAlongPanel> panel_;
   std::unique_ptr<BrowserSettings> browserSettings_;
   std::unique_ptr<CaptureBrowser> browser_;  // declared after the settings it uses

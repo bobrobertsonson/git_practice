@@ -19,6 +19,11 @@
 # the modules once; format targets share the plugin's "shared code" library).
 set(SAWBLADE_PLUGIN_SOURCES
   src/PresetMapping.cpp
+  src/pedals/CircuitParams.cpp
+  src/pedals/CircuitFaces.cpp
+  src/pedals/PedalSwitch.cpp
+  src/pedals/PedalFace.cpp
+  src/pedals/AdvancedDrawer.cpp
   src/Engine.cpp
   src/EngineLoader.cpp
   src/PlayAlong.cpp
@@ -122,13 +127,14 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_browser_preview.cpp
     tests/test_rig_model.cpp
     tests/test_rig_controller.cpp
+    tests/test_pedal_face.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
-    tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp
+    tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp tests/test_pedal_face.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_plugin_tests PRIVATE src)
-  target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})
+  target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1)
   target_link_libraries(sawblade_plugin_tests PRIVATE
     sawblade_core Catch2::Catch2WithMain SawbladeAssets
     juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
