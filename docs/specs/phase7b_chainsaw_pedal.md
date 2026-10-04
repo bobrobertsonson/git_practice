@@ -187,7 +187,7 @@ Same validation rules as the HM block. `toJson()` writes `modelVersion: 1` and e
 | 8 | Post-clip LPF | OS | 2nd-order Butterworth 8 kHz |
 | 9 | Downsample | → fs | |
 | 10 | Tone stack | fs | `y = (1 − t)·LPF1(fL)(x) + t·HPF1(fH)(x)`, `t = tone/10`; then a peak EQ at `c`, Q 0.8, gain `−1.6·scoop` dB (RBJ) |
-| 11 | Recovery / roll-off | fs | 1st-order LPF `rolloffHz`; recovery gain +6 dB fixed |
+| 11 | Recovery / roll-off | fs | 1st-order LPF `rolloffHz`; recovery gain +18 dB fixed (amended from +6 after measurement: at +6 the stock settings sat about 18 dB under the chainsaw circuit) |
 | 12 | Volume + mix | fs | as §1.4 with `volume` |
 
 Lead's analytic check of the stock stack (t = 0.5, fL 408, fH 1800): −6 dB at the flanks,
@@ -239,7 +239,8 @@ the `notes` field names the recommended TONE3000 amp and cab from `presets/CAPTU
 `notes` only, never in `name`. Each `notes` starts with the sound it chases.
 
 Values are the lead's starting hypotheses. The implementer may move `level` / `volume` (only) so
-that the fixture render peaks between −6 and −0.5 dBFS, and reports every change. Write every key
+that the fixture render peaks between −6 and −0.5 dBFS, and reports every change (levels marked
+≈ were set that way). Write every key
 explicitly in the files (the schema allows omission; the bank should be self-documenting).
 
 CHAINSAW circuit (`pedal.hm`, `modelVersion: 2`):
@@ -255,7 +256,7 @@ CHAINSAW circuit (`pedal.hm`, `modelVersion: 2`):
 | `modern_tight_swedish.json` | Modern Tight Swedish | 9 / 9 / 9 / 4 | 5 | 100 | stock / silicon | lowQ 1.8, presenceDb 11, gain1Db −2, gain2Db +2 | modern tight Swedish (Bloodbath, Gatecreeper, LIK); high-gain amp 88689 or 70977 |
 | `blend_partner.json` | Blend Partner | 4 / 10 / 9 / 8 | 6 | 100 | stock / silicon | — | saw path for Sawblade's two-path blend: level up, lows down, the body path carries the low end |
 | `custom_wall.json` | Custom Wall | 10 / 8 / 10 / 1 | 2 | 100 | custom / silicon | — | custom-mode wall: extended low and gain (reissue second mode) |
-| `modded_nasty.json` | Modded Nasty | 7 / 10 / 9 / 3 | 3 | 100 | modded / led | presenceFreq 6000, presenceDb 10, rolloffHz 12000 | bright modded nasty: higher interstage filter, LED clip |
+| `modded_nasty.json` | Modded Nasty | 7 / 8 / 9 / ≈0.6 | 3 | 100 | modded / led | presenceFreq 6000, presenceDb 10, rolloffHz 12000 | bright modded nasty: higher interstage filter, LED clip (high 10 → 8 by lead decision: at high 10 no level met the peak window) |
 | `bass_chainsaw.json` | Bass Chainsaw | 10 / 7 / 8 / 7 | 0 | 40 | stock / silicon | lowFreq 60, lowQ 0.7 | bass chainsaw: low focus at 60 Hz, 40 % mix keeps the clean DI low end |
 | `clean_mix_texture.json` | Clean Mix Texture | 6 / 8 / 7 / 8 | 2 | 30 | stock / soft | — | texture layer at 30 % over a clean or other amp tone |
 
@@ -264,9 +265,9 @@ UI-visible `name` says "Big Fuzz" / "Fuzz"):
 
 | file | name | sustain / tone / scoop / volume | crunch / voice | tight | mix | clip | deep | notes |
 |---|---|---|---|---|---|---|---|---|
-| `pickle_chainsaw.json` | Big Fuzz Chainsaw | 10 / 7 / 8 / 4 | 7 / 6 | 3 | 100 | silicon | — | a scooped, saturated fuzz chainsaw with no HM-2 in it (Swedish-style buzz from a muff-family fuzz); into a cranked British-style amp (JCM800 86089) with a V30 cab 45023 |
-| `pickle_doom_saw.json` | Big Fuzz Doom Saw | 8 / 3 / 4 / 5 | 4 / 3 | 0 | 100 | soft | stackRatio 6, rolloffHz 7000 | low-voiced doom/sludge saw: mids shifted down, dark top, soft clip (Electric Wizard, Conan); low-gain amp |
-| `pickle_into_saw.json` | Fuzz Into Saw | 6 / 6 / 2 / 6 then HM | 5 / 5 | 2 | 100 | silicon | second block: `pedal.hm` low 8, high 9, dist 6, level 3, tight 0 | two circuits chained: a mild fuzz pushing the chainsaw for a thicker, more compressed buzz |
+| `pickle_chainsaw.json` | Big Fuzz Chainsaw | 10 / 5 / 8 / ≈6 | 7 / 6 | 3 | 100 | silicon | rolloffHz 7000 | a scooped, saturated fuzz chainsaw with no HM-2 in it (Swedish-style buzz from a muff-family fuzz); into a cranked British-style amp (JCM800 86089) with a V30 cab 45023 |
+| `pickle_doom_saw.json` | Big Fuzz Doom Saw | 8 / 3 / 4 / ≈6 | 4 / 3 | 0 | 100 | soft | stackRatio 6, rolloffHz 7000 | low-voiced doom/sludge saw: mids shifted down, dark top, soft clip (Electric Wizard, Conan); low-gain amp |
+| `pickle_into_saw.json` | Fuzz Into Saw | 6 / 6 / 2 / ≈2 then HM | 5 / 5 | 2 | 100 | silicon | second block: `pedal.hm` low 8, high 9, dist 6, level 3, tight 0 | two circuits chained: a mild fuzz pushing the chainsaw for a thicker, more compressed buzz |
 
 7c placeholders (no files): a modded-chainsaw tone (`pedal.hmx`) and a one-knob chainsaw
 (`pedal.eye`) are listed as TODO rows in `presets/README.md`, to be added when those circuits land.
@@ -438,7 +439,9 @@ editor test rig (both render from repo files) and save to `${CMAKE_BINARY_DIR}/s
    value; `modelVersion: 2` on `pedal.muff` and `3` on `pedal.hm` are `PresetError`s.
 2. **Each HM parameter moves the output the expected way** (small-signal FR at −90 dBFS,
    relative to |H(400)| unless stated, other params default, low = high = 5):
-   - `tightness` 0 → 10: |H(50 Hz)| drops ≥ 8 dB; |H(1 kHz)| changes ≤ 0.5 dB.
+   - `tightness` 0 → 10: |H(50 Hz)| drops ≥ 8 dB; |H(1 kHz)| changes ≤ 1.0 dB relative to
+     400 Hz and ≤ 0.5 dB absolute (amended: the 200 Hz filter itself moves the 400 Hz reference by
+     about 1 dB).
    - `lowFreq` 60 vs 160 (low = 10): the 40–200 Hz peak moves from within 55–70 Hz to within
      140–180 Hz.
    - `lowQ` 0.5 vs 2.0 (low = 10): the −3 dB bandwidth of the low peak is ≥ 2× narrower at 2.0.
@@ -455,28 +458,34 @@ editor test rig (both render from repo files) and save to `${CMAKE_BINARY_DIR}/s
    - `gain1Db`, `gain2Db` −12 vs +12 (500 Hz sine at −40 dBFS, dist 5): THD rises by ≥ 6 dB
      each. `distortion` 0 → 10 still monotonic (phase 7 test) in all three modes.
    - `level` 0 vs 10: output RMS rises by 30 ± 0.2 dB (small signal).
-   - `bias` 0 vs 10 (clip silicon, −20 dBFS 500 Hz): H2 rises from < −60 dBc to > −40 dBc.
+   - `bias` 0 vs 10 (clip silicon, 500 Hz): H2 rises from < −60 dBc to > −55 dBc at −20 dBFS
+     and > −40 dBc at −40 dBFS (amended: both stages are in full saturation at −20 dBFS, so the
+     asymmetry shows as DC offset rather than H2).
 3. **Each muff parameter moves the output the expected way** (same method, relative to |H(5 kHz)|
    where a flank is needed, others default):
    - `tone` 0 vs 10: (|H(5 kHz)| − |H(100 Hz)|) rises by ≥ 20 dB.
-   - stock stack (tone 5, scoop 0): a minimum in 600–1200 Hz at least 6 dB below both |H(100)|
-     and |H(5 kHz)|.
+   - stock stack (tone 5, scoop 0): a minimum in 600–1200 Hz at least 6 dB below |H(100)| and
+     3 dB below |H(2 kHz)| (amended: the stage LPFs and the roll-off already pull 5 kHz down).
    - `scoop` 0 vs 10 (tone 5): |H(860 Hz)| drops by ≥ 8 dB more; `voice` 0 vs 10 (tone 5,
      scoop 10): the notch minimum lies within ±30 % of 430 Hz and of 1720 Hz respectively.
    - `stackRatio` 2 vs 8 (tone 5, scoop 0): the −3 dB width of the notch (relative to its
      flanks) is ≥ 2× wider at 8.
-   - `crunch` 0 vs 10 (500 Hz, −20 dBFS, sustain 5): THD rises ≥ 3 dB; `sustain` 0 → 10 THD
+   - `crunch` 0 vs 10 (500 Hz, −40 dBFS, sustain 5): THD rises ≥ 3 dB (amended: saturated at
+     −20 dBFS); `sustain` 0 → 10 THD
      monotonic with span ≥ 6 dB at −40 dBFS; `gain2Db` −12 vs +12: THD ≥ +6 dB.
    - `tightness`, `mix`, `volume`, `rolloffHz`, `bias`: the same criteria as the HM ones
-     (`rolloffHz` 4000 vs 12000: |H(8 kHz)| ≥ +12 dB; `volume` 0 vs 10: +30 ± 0.2 dB).
-4. **Clip types differ** (each circuit; 500 Hz sine, drive knob 5, −20 dBFS): THD(led) <
-   THD(silicon) < THD(soft) by ≥ 3 dB each step; output RMS led > silicon > soft; asymmetric has
-   H2 > −40 dBc while silicon has H2 < −70 dBc. `clip2 = follow` equals `clip2 = <same as
+     (`rolloffHz` 4000 vs 12000: |H(8 kHz)| ≥ +5 dB for the muff's 1st-order roll-off, amended
+     from +12; `volume` 0 vs 10: +30 ± 0.2 dB).
+4. **Clip types differ** (each circuit; 500 Hz sine, drive knob 5). At −40 dBFS (amended: at
+   −20 dBFS every clip is a near-square wave, THD ≈ −3.8 dB): THD(led) < THD(silicon) by ≥ 3 dB
+   and THD(silicon) < THD(soft) by ≥ 0.5 dB; asymmetric has H2 > −40 dBc while silicon has H2 <
+   −70 dBc. At −20 dBFS output RMS led > silicon > soft. `clip2 = follow` equals `clip2 = <same as
    clip>` bit-for-bit; `clip2 = led` with `clip = silicon` differs from both. The `m = 2` shape
    passes the extended continuity test (F1' = c, F2' = F1 by central differences within 1e-6
    relative; continuity at ±k and 0 within 1e-12).
-5. **HM modes.** low = high = dist = 10: custom vs stock |H(100)| ≥ +4 dB and THD at −40 dBFS
-   ≥ +2 dB; modded vs stock |H(7 kHz)| − |H(400)| ≥ +6 dB higher; custom at `low = 0,
+5. **HM modes.** low = high = dist = 10: custom vs stock |H(100)| ≥ +4 dB; custom vs stock THD
+   ≥ +2 dB at −60 dBFS with distortion 5 (amended: at all tens both are saturated and the custom
+   low lift raises the fundamental); modded vs stock |H(7 kHz)| − |H(400)| ≥ +6 dB higher; custom at `low = 0,
    distortion = 0` equals stock at the same knobs bit-for-bit (the slopes multiply zero).
 6. **Aliasing floor** ≤ −80 dB (phase 7 recipe, 5 kHz −6 dBFS) at maximum gain for each clip
    type on each circuit (HM stock dist 10; muff sustain 10, crunch 10) and for each HM mode
@@ -494,7 +503,8 @@ editor test rig (both render from repo files) and save to `${CMAKE_BINARY_DIR}/s
     muff settings.
 11. **Preset bank**: every `presets/modeled/chainsaw/*.json` (exactly 15) parses, renders the
     fixture DI at 48 kHz without error, output finite, peak in [−6, −0.5] dBFS, and the LTAS
-    sanity holds: band energy 80 Hz–4 kHz is at least 90 % of the total, and the 100–200 Hz and
+    sanity holds: band energy 80 Hz–4 kHz is at least 80 % of the total (amended from 90 %: the
+    renders have no cab), and the 100–200 Hz and
     1–2 kHz bands are each within 30 dB of the loudest third-octave band. Every `name` is free of
     band names and trademarks (the test checks, case-insensitive: entombed, dismember,
     gatecreeper, nails, nasum, bloodbath, wolfbrigade, disfear, trap them, rotten sound, carnage,
