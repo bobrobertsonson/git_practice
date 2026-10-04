@@ -54,7 +54,9 @@ class T3kTool {
   T3kTool& operator=(const T3kTool&) = delete;
 
   // Runs `<executable> <args...>` on a background thread (the executable defaults to settings::t3kExecutable()).
-  // `onProgress` and `onDone` are called on that thread. False if a run is already active.
+  // `onProgress` and `onDone` are called on that thread (marshal to the message thread; do not call start() or destroy
+  // the tool from them). False if a run is already active. stderr is merged into stdout (JUCE ChildProcess), so
+  // Result::message for exit code 1 is the last non-progress line of the child's output.
   bool start(std::vector<std::string> args, ProgressFn onProgress, DoneFn onDone, std::filesystem::path executable = {});
   void cancel();  // kills the child; onDone then gets Status::Cancelled
   bool running() const { return running_.load(); }
