@@ -18,6 +18,7 @@ from ..core import _core as _core_mod
 from ..matcher.excerpt import select_excerpt
 from ..tonecheck.rules import load_targets
 from . import plan as P
+from . import resume as R
 from . import signal as S
 from . import train as T
 from . import validate as V
@@ -79,7 +80,11 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
                allow_inexact: bool = False, epochs: int | None = None, max_minutes: float | None = None, seed: int = 0,
                threads: int = 4, di=None, validate: bool = True, signal_seed: int = 1, target_esr: float | None = None,
                keep_scratch: bool = False, log=print, signal_spec: S.SignalSpec | None = None,
-               lr_gamma: float | None = None, batch_size: int = T.BATCH, device: str = "auto") -> dict:
+               lr_gamma: float | None = None, batch_size: int = T.BATCH, device: str = "auto",
+               resume: str | None = None, exports_root=None) -> dict:
+    """``resume``: None (fresh), ``"auto"`` (newest matching unfinished run under ``exports_root`` / the default
+    exports dir, else fresh) or the output directory of an unfinished run (refused when preset, signal, mode, size or
+    training settings differ)."""
     t_all = time.time()
     preset, base = load_preset(preset_path)
     plan = P.make_plan(preset, mode, allow_inexact)           # raises ExportRefused
@@ -95,14 +100,44 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
 
     pname = name or slug(preset.get("name", "preset"))
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
-    outdir = Path(out).expanduser() if out else DEFAULT_OUT_ROOT / f"{pname}-{mode}-{size}-{stamp}"
+
+    tr, va, sinfo = _cached_signal(signal_spec or S.SignalSpec(seed=signal_seed), log)
+
+    cfg = T.TrainConfig(size=size, epochs=epochs, max_minutes=max_minutes, seed=seed, threads=threads,
+                        target_esr=target_esr, lr_gamma=lr_gamma, batch_size=batch_size, device=device)
+    rc = cfg.resolved()
+    identity = {"presetSha256": P.preset_hash(preset), "signalSha256": sinfo["trainSha256"],
+                "validSha256": sinfo["validSha256"], "mode": mode, "size": size}
+    run_config = {"seed": seed, "batchSize": batch_size, "epochs": rc.epochs, "lrGamma": rc.lr_gamma}
+    resumed_from = None
+    resume_dir = None
+    if resume == "auto":
+        root = Path(exports_root).expanduser() if exports_root else DEFAULT_OUT_ROOT
+        found, notes = R.find_auto(root, identity, run_config)
+        for n in notes:
+            log(f"  resume auto: {n}")
+        if found is None:
+            log(f"resume auto: no matching unfinished run in {root}; starting fresh")
+        else:
+            resume_dir = found
+            log(f"resume auto: resuming {found}")
+    elif resume:
+        resume_dir = Path(resume).expanduser()
+        if out and Path(out).expanduser().resolve() != resume_dir.resolve():
+            raise P.ExportRefused(f"--resume {resume_dir} and --out {out} differ: a resumed run continues in its own directory")
+    if resume_dir is not None:
+        resume_prog = R.validate_resume_dir(resume_dir, identity, run_config)     # raises ExportRefused
+        resumed_from = {"dir": str(resume_dir), "epoch": resume_prog.get("epoch"),
+                        "elapsedTrainingS": resume_prog.get("elapsedTrainingS")}
+        outdir = resume_dir
+    else:
+        outdir = Path(out).expanduser() if out else DEFAULT_OUT_ROOT / f"{pname}-{mode}-{size}-{stamp}"
     outdir.mkdir(parents=True, exist_ok=True)
     scratch = outdir / "_scratch"
     log(f"export {mode}/{size} -> {outdir}")
     for b in plan.bypassed:
         log(f"  bypassed: {b['what']} ({b['why']})")
 
-    tr, va, sinfo = _cached_signal(signal_spec or S.SignalSpec(seed=signal_seed), log)
     yt, yv, tinfo = _cached_targets(tpreset, base, sinfo, tr, va, cache, log)
 
     report: dict = {"reportVersion": REPORT_VERSION, "tool": "sawblade-export", "created": stamp,
@@ -135,12 +170,12 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
     um = UserMetadata(name=f"{preset.get('name', 'Sawblade')} ({mode}, {size})", modeled_by="Sawblade",
                       gear_type=GearType(P.gear_type(plan, preset)), gear_make="Sawblade",
                       gear_model=str(preset.get("name", "")), tone_type=ToneType.HI_GAIN)
-    cfg = T.TrainConfig(size=size, epochs=epochs, max_minutes=max_minutes, seed=seed, threads=threads,
-                        target_esr=target_esr, lr_gamma=lr_gamma, batch_size=batch_size, device=device)
     tres = T.train_nam(tr, yt, va, yv, cfg, outdir, scratch, user_metadata=um,
-                       other_metadata={"sawblade": sawblade_meta}, log=log, basename=f"{pname}-{mode}-{size}")
+                       other_metadata={"sawblade": sawblade_meta}, log=log, basename=f"{pname}-{mode}-{size}",
+                       ckpt_dir=R.ckpt_dir(outdir), resume=resumed_from is not None, identity=identity)
     log(f"trained in {tres.wall_s / 60:.1f} min, {tres.epochs_done} epochs, best val ESR {tres.best_val_esr:.5f} "
         f"(epoch {tres.best_epoch}), stopped by {tres.stopped_by}")
+    report["resume"] = resumed_from
     report["training"] = {"namFile": tres.nam_path.name, "epochsDone": tres.epochs_done, "bestEpoch": tres.best_epoch,
                           "validationEsr": tres.best_val_esr, "wallSeconds": round(tres.wall_s, 1),
                           "stoppedBy": tres.stopped_by, "parameters": tres.params,
@@ -164,8 +199,13 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
     tres.nam_path.write_text(json.dumps(nam))
     report["totalWallSeconds"] = round(time.time() - t_all, 1)
     (outdir / "export_report.json").write_text(json.dumps(report, indent=2, default=float))
-    if not keep_scratch:
+    if keep_scratch:
+        prog = R.read_progress(R.ckpt_dir(outdir))
+        if prog is not None:
+            R.write_progress(R.ckpt_dir(outdir), {**prog, "complete": True})     # kept, but never auto-resumed
+    else:
         shutil.rmtree(scratch, ignore_errors=True)
+        shutil.rmtree(R.ckpt_dir(outdir), ignore_errors=True)
     log(f"report: {outdir / 'export_report.json'}")
     return report
 

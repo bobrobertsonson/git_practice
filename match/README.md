@@ -280,7 +280,7 @@ CMA-ES refined combos, 3 full-length renders) measured 20.7 min (original) and 2
 pip install -e 'match[export]' -c match/constraints-export.txt     # neural-amp-modeler 0.13.0; torch stays 2.5.1 (CPU)
 sawblade-export PRESET.resolved.json [--mode nocab|withcab] [--size feather|lite|standard] [--epochs N] [--max-minutes M]
                 [--seed 0] [--signal-seed 1] [--threads 4] [--allow-inexact] [--target-esr E] [--out DIR] [--name STEM]
-                [--di Guitar_L.wav] [--no-validate]
+                [--di Guitar_L.wav] [--no-validate] [--resume DIR|auto] [--keep-scratch]
 ```
 
 Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.resolved.json`. Default output
@@ -320,6 +320,19 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   1..512, kernel 3, Tanh): feather 8/4 channels (3 637 params), lite 12/6 (7 903 params), standard 16/8 (13 801 params);
   receptive field 4093. **A2:** 0.13.0 trains a packed A2 WaveNet by default (`PackedWaveNet`, `export_container`; the core is built
   with `NAM_ENABLE_A2_FAST`); that path is available in the pin but not enabled here, A1 being what loader pedals play.
+* **Resume (phase 4.1).** After every epoch the trainer writes `<out>/checkpoint/` atomically (temp file + rename): `last.ckpt`
+  (Lightning checkpoint: model, optimiser, scheduler, epoch, plus the training history, elapsed time and the torch/numpy/python/
+  DataLoader RNG states), `best.ckpt` (best-so-far model) and `progress.json` (epoch, best val ESR, elapsed training seconds, preset /
+  training-signal / validation-signal sha256, mode, size, seed, batch size, epochs, lr gamma; written last). An interrupted run is
+  continued with the same command line plus `--resume`:
+  `sawblade-export PRESET --mode nocab --size standard --epochs 250 --max-minutes 420 ... --resume <out dir>` (the run's output
+  directory, e.g. `~/.cache/sawblade/exports/<name>-<mode>-<size>-<ts>`) or `--resume auto` (the newest unfinished run in the
+  exports dir with the same preset, mode, size, signal and training settings; otherwise it starts fresh; either way the CLI prints
+  which happened). It is refused (exit 2, message on stderr) if the preset sha, signal sha, size, mode, seed, batch size, epochs or
+  lr gamma differ, or if `--out` names another directory. `--max-minutes` counts the training time of all sessions together. On CPU
+  with the same thread count a resumed run is bit-identical to an uninterrupted one (test). The checkpoint dir is removed after a
+  successful export; `--keep-scratch` keeps it (marked complete, so `auto` never picks it). Runs started before 4.1 have no checkpoint
+  and cannot be resumed.
 * **Determinism.** Everything is seeded (`--seed`: model init + batch order; `--signal-seed`). CPU training repeats bit-for-bit for the
   same seed, thread count, machine and library versions (smoke test); it is not guaranteed across thread counts/BLAS builds. The `.nam`
   carries a date stamp, so its bytes differ between runs.

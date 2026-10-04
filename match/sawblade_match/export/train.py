@@ -28,6 +28,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import random
 import sys
 import time
 import types
@@ -35,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+from . import resume as R
 
 # The training box is usually shared with other jobs: spinning OpenMP workers collapse (>5x slower epochs) as soon as one
 # of them is descheduled, so wait passively.  Effective only if torch has not been imported yet (the CLI guarantees that).
@@ -146,12 +149,19 @@ class TrainResult:
 
 
 def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scratch, user_metadata=None,
-              other_metadata=None, log=print, basename: str = "model") -> TrainResult:
+              other_metadata=None, log=print, basename: str = "model", ckpt_dir=None, resume: bool = False,
+              identity: dict | None = None) -> TrainResult:
     """Train one A1 WaveNet on (x, y) pairs (float32 mono, 48 kHz, sample aligned) and export ``<outdir>/<basename>.nam``.
 
     Seeded: ``pytorch_lightning.seed_everything(seed)`` before model init and shuffling.  CPU training is
     repeatable for the same seed, thread count and library versions (verified by the smoke test); it is not
     guaranteed bit-identical across machines/thread counts (BLAS reductions).  The .nam also holds a date stamp.
+
+    Resumable: after every epoch ``<ckpt_dir>`` (default ``<scratch>/checkpoint``) gets ``last.ckpt`` (Lightning checkpoint
+    plus the history, best-so-far bookkeeping, elapsed time and torch/numpy/python/DataLoader RNG states),
+    ``best.ckpt`` and ``progress.json`` (``identity`` = preset/signal sha, mode, size is stored in it), all written
+    atomically.  ``resume=True`` continues from ``last.ckpt``; ``cfg.max_minutes`` counts the elapsed training time of
+    all sessions.
     """
     cfg = cfg.resolved()
     import_nam()
@@ -191,34 +201,104 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
 
     scratch = Path(scratch)
     scratch.mkdir(parents=True, exist_ok=True)
-    history: list[dict] = []
-    t0 = time.time()
+    cdir = Path(ckpt_dir) if ckpt_dir is not None else scratch / R.CKPT_DIRNAME
+    cdir.mkdir(parents=True, exist_ok=True)
+    identity = dict(identity or {})
+    cap_s = float(cfg.max_minutes) * 60.0
+    device, accel = resolve_device(cfg.device)
 
-    class Rec(pl.Callback):
+    class Run(pl.Callback):
+        """History, best-so-far tracking, per-epoch atomic checkpoints, total-time cap and resume state."""
+
+        def __init__(self):
+            self.history: list[dict] = []
+            self.best_val_loss = float("inf")
+            self.best_epoch = 0
+            self.prior_s = 0.0               # training time of earlier sessions
+            self.t0 = time.time()
+            self.improved = False
+
+        def elapsed(self) -> float:
+            return self.prior_s + (time.time() - self.t0)
+
+        # --- resume state (stored inside every Lightning checkpoint)
+        def state_dict(self):
+            return {"history": copy.deepcopy(self.history), "bestValLoss": self.best_val_loss,
+                    "bestEpoch": self.best_epoch, "elapsedS": self.elapsed(),
+                    "rng": {"torch": torch.get_rng_state(), "numpy": np.random.get_state(), "python": random.getstate(),
+                            "loader": gen.get_state()}}
+
+        def load_state_dict(self, st):
+            self.history = list(st["history"])
+            self.best_val_loss = float(st["bestValLoss"])
+            self.best_epoch = int(st["bestEpoch"])
+            self.prior_s = float(st["elapsedS"])
+            self.t0 = time.time()
+            rng = st["rng"]
+            torch.set_rng_state(rng["torch"])
+            np.random.set_state(rng["numpy"])
+            random.setstate(rng["python"])
+            gen.set_state(rng["loader"])
+
+        def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
+            if self.elapsed() >= cap_s:
+                trainer.should_stop = True
+
         def on_validation_end(self, trainer, module):
             if trainer.sanity_checking:
                 return
             m = trainer.callback_metrics
             row = {"epoch": trainer.current_epoch + 1, "valEsr": float(m["ESR"]), "valLoss": float(m["val_loss"]),
-                   "elapsedS": round(time.time() - t0, 1)}
-            history.append(row)
+                   "elapsedS": round(self.elapsed(), 1)}
+            self.history.append(row)
+            if row["valLoss"] < self.best_val_loss:
+                self.best_val_loss, self.best_epoch, self.improved = row["valLoss"], row["epoch"], True
             log(f"  epoch {row['epoch']:3d}  val ESR {row['valEsr']:.5f}  ({row['elapsedS']:.0f} s)")
             if cfg.target_esr is not None and row["valEsr"] <= cfg.target_esr:
                 trainer.should_stop = True
 
-    ckpt = pl.callbacks.ModelCheckpoint(dirpath=str(scratch / "ckpt"), filename="best", monitor="val_loss",
-                                        save_top_k=1, mode="min")
-    device, accel = resolve_device(cfg.device)
-    trainer = pl.Trainer(max_epochs=cfg.epochs, max_time={"seconds": int(cfg.max_minutes * 60)}, accelerator=accel,
-                         devices=1, callbacks=[ckpt, Rec()], logger=False, enable_progress_bar=False,
-                         enable_model_summary=False, default_root_dir=str(scratch), deterministic="warn",
-                         num_sanity_val_steps=0)
+        def on_train_epoch_end(self, trainer, module):
+            tmp = cdir / (R.LAST + ".tmp")
+            trainer.save_checkpoint(str(tmp))
+            if self.improved:
+                R.atomic_copy(tmp, cdir / R.BEST)
+                self.improved = False
+            os.replace(tmp, cdir / R.LAST)
+            best = min(self.history, key=lambda r: r["valLoss"]) if self.history else {}
+            R.write_progress(cdir, {**identity, "progressVersion": 1, "epoch": len(self.history),
+                                    "bestEpoch": best.get("epoch"), "bestValEsr": best.get("valEsr"),
+                                    "elapsedTrainingS": round(self.elapsed(), 1), "complete": False,
+                                    "config": {"seed": cfg.seed, "batchSize": cfg.batch_size, "epochs": cfg.epochs,
+                                               "lrGamma": cfg.lr_gamma, "maxMinutes": cfg.max_minutes,
+                                               "threads": cfg.threads, "ny": cfg.ny, "device": device}})
+
+    run = Run()
+    resume_from = None
+    if resume:
+        resume_from = cdir / R.LAST
+        if not resume_from.is_file():
+            raise ValueError(f"cannot resume: {resume_from} does not exist")
+        prog = R.read_progress(cdir) or {}
+        log(f"resuming from epoch {prog.get('epoch', '?')} ({prog.get('elapsedTrainingS', 0):.0f} s of training already spent)")
+        st = torch.load(resume_from, map_location="cpu", weights_only=False)["callbacks"][run.state_key]
+        run.prior_s = float(st["elapsedS"])
+        run.history = list(st["history"])
+    history = run.history
+
     log(f"training A1 WaveNet '{cfg.size}': {n_params} parameters, receptive field {rf}, "
         f"{len(ds_train)} datums/epoch of {cfg.ny}, up to {cfg.epochs} epochs / {cfg.max_minutes:g} min, "
         f"seed {cfg.seed}, {cfg.threads} threads, device {device}")
-    trainer.fit(model, dl_train, dl_val)
-    wall = time.time() - t0
-    if not ckpt.best_model_path:
+    already_done = (len(history) >= cfg.epochs or run.elapsed() >= cap_s or
+                    (cfg.target_esr is not None and history and history[-1]["valEsr"] <= cfg.target_esr))
+    if not already_done:
+        trainer = pl.Trainer(max_epochs=cfg.epochs, accelerator=accel, devices=1, callbacks=[run], logger=False,
+                             enable_checkpointing=False, enable_progress_bar=False, enable_model_summary=False, default_root_dir=str(scratch),
+                             deterministic="warn", num_sanity_val_steps=0)
+        trainer.fit(model, dl_train, dl_val, ckpt_path=str(resume_from) if resume_from else None)
+    history = run.history                # load_state_dict replaces the list on resume
+    wall = run.elapsed()
+    best_path = cdir / R.BEST
+    if not best_path.is_file():
         raise RuntimeError("training stopped before the first validation pass (time cap too small?)")
     done = len(history)
     if cfg.target_esr is not None and history and history[-1]["valEsr"] <= cfg.target_esr:
@@ -226,7 +306,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
     else:
         stopped = "max_epochs" if done >= cfg.epochs else "max_time"
 
-    best = lm.LightningModule.load_from_checkpoint(ckpt.best_model_path, **lm.LightningModule.parse_config(
+    best = lm.LightningModule.load_from_checkpoint(str(best_path), **lm.LightningModule.parse_config(
         copy.deepcopy(mcfg)))
     best.cpu()
     best.eval()

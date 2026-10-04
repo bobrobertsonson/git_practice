@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import types
 import os
 from pathlib import Path
 
@@ -413,3 +414,229 @@ def test_end_to_end_nocab_export_on_fixture_preset(tmp_path):
     assert rep["validation"]["acceptance"]["status"] == "not judged (non-standard size)"
     assert rep["training"]["config"]["device"] and "approximations" in rep["training"]["config"]["sizesNote"]
     assert "personal use only" in rep["licenceNote"]
+
+
+# ---------------------------------------------------------------- resumable training (phase 4.1)
+
+def _tiny_signals():
+    rng = np.random.default_rng(1)
+    x = (0.3 * rng.standard_normal(96000)).astype(np.float32)           # 2 s
+    v = (0.3 * rng.standard_normal(24000)).astype(np.float32)
+    f = lambda a: np.tanh(3 * a).astype(np.float32)
+    return x, f(x), v, f(v)
+
+
+@needs_train
+def test_resume_after_2_epochs_equals_uninterrupted_4_epochs(tmp_path):
+    from sawblade_match.export import resume as R
+    from sawblade_match.export import train as T
+    _need_nam(T)
+    x, y, v, yv = _tiny_signals()
+    kw = dict(size="feather", seed=3, threads=1, max_minutes=10, lr_gamma=0.9)
+    ident = {"presetSha256": "p", "signalSha256": "s", "validSha256": "v", "mode": "nocab", "size": "feather"}
+    full = T.train_nam(x, y, v, yv, T.TrainConfig(epochs=4, **kw), tmp_path / "full", tmp_path / "sf", basename="m",
+                       identity=ident)
+    part = T.train_nam(x, y, v, yv, T.TrainConfig(epochs=2, **kw), tmp_path / "res", tmp_path / "sr", basename="m",
+                       identity=ident)
+    assert part.epochs_done == 2
+    prog = R.read_progress(tmp_path / "sr" / "checkpoint")
+    assert prog["epoch"] == 2 and prog["presetSha256"] == "p" and prog["elapsedTrainingS"] > 0
+    assert {"last.ckpt", "best.ckpt", "progress.json"} <= {f.name for f in (tmp_path / "sr" / "checkpoint").iterdir()}
+    assert not list((tmp_path / "sr" / "checkpoint").glob("*.tmp"))              # atomic: no temp files left
+    res = T.train_nam(x, y, v, yv, T.TrainConfig(epochs=4, **kw), tmp_path / "res", tmp_path / "sr", basename="m",
+                      identity=ident, resume=True)
+    assert res.epochs_done == 4 and [r["epoch"] for r in res.history] == [1, 2, 3, 4]
+    a = json.loads(full.nam_path.read_text())["weights"]
+    b = json.loads(res.nam_path.read_text())["weights"]
+    assert a == b, "resumed run must be bit-identical to the uninterrupted one (CPU, 1 thread)"
+    assert [r["valEsr"] for r in full.history] == [r["valEsr"] for r in res.history]
+    assert res.best_epoch == full.best_epoch and res.wall_s >= part.wall_s       # total time spans the resume
+
+
+@needs_train
+def test_resume_time_cap_counts_total_training_time(tmp_path):
+    from sawblade_match.export import train as T
+    _need_nam(T)
+    x, y, v, yv = _tiny_signals()
+    kw = dict(size="feather", seed=3, threads=1, lr_gamma=0.9)
+    part = T.train_nam(x, y, v, yv, T.TrainConfig(epochs=2, max_minutes=10, **kw), tmp_path / "o", tmp_path / "s",
+                       basename="m")
+    # the cap is already used up by the first session: resuming trains nothing more and says why
+    res = T.train_nam(x, y, v, yv, T.TrainConfig(epochs=6, max_minutes=part.wall_s / 120.0, **kw), tmp_path / "o",
+                      tmp_path / "s", basename="m", resume=True)
+    assert res.epochs_done == 2 and res.stopped_by == "max_time" and res.nam_path.is_file()
+
+
+class _FakeTrain:
+    """Stands in for ``train.train_nam``: records the call, writes a minimal .nam and a checkpoint like the real one."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, x, y, v, yv, cfg, outdir, scratch, user_metadata=None, other_metadata=None, log=print,
+                 basename="model", ckpt_dir=None, resume=False, identity=None):
+        from sawblade_match.export import resume as R
+        self.calls.append({"outdir": Path(outdir), "resume": resume, "ckpt_dir": Path(ckpt_dir), "identity": identity,
+                           "cfg": cfg})
+        Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+        (Path(ckpt_dir) / R.LAST).write_bytes(b"x")
+        r = cfg.resolved()
+        R.write_progress(ckpt_dir, {**identity, "epoch": 2, "complete": False, "elapsedTrainingS": 1.0,
+                                    "config": {"seed": cfg.seed, "batchSize": cfg.batch_size, "epochs": r.epochs,
+                                               "lrGamma": r.lr_gamma}})
+        p = Path(outdir) / f"{basename}.nam"
+        p.write_text(json.dumps({"architecture": "WaveNet", "weights": [0.0],
+                                 "metadata": {"sawblade": dict(other_metadata["sawblade"])}}))
+        from sawblade_match.export.train import TrainResult
+        return TrainResult(nam_path=p, epochs_done=2, best_epoch=2, best_val_esr=0.5, wall_s=1.0, stopped_by="max_epochs",
+                           params=1, receptive_field=1, history=[], config={})
+
+
+@pytest.fixture
+def mocked_export(tmp_path, monkeypatch, shared):
+    from sawblade_match.export import run as RUN
+    from sawblade_match.export import train as T
+    _need_nam(T)
+    fake = _FakeTrain()
+    sinfo = {"trainSha256": "t" * 64, "validSha256": "v" * 64,
+             "train": {"rmsDbfs": -20.0, "peakDbfs": -3.0}, "valid": {}}
+    state = {"sinfo": sinfo}
+    monkeypatch.setattr(RUN.T, "train_nam", fake)
+    monkeypatch.setattr(RUN, "probe_report", lambda *a, **k: {"warnings": []})
+    monkeypatch.setattr(RUN, "_cached_signal", lambda spec, log: (np.zeros(10, np.float32), np.zeros(10, np.float32),
+                                                                  state["sinfo"]))
+    monkeypatch.setattr(RUN, "_cached_targets", lambda *a, **k: (np.zeros(10, np.float32), np.zeros(10, np.float32),
+                                                                 {"levels": {"trainOutRmsDbfs": -20.0, "trainOutPeakDbfs": -3.0}}))
+    monkeypatch.setattr(RUN, "fold_cab_post_eq", lambda *a, **k: (np.zeros(8, np.float32),
+                                                                  {"samples": 8, "peakDb": 0.0}))
+    p = copy.deepcopy(shared)
+    for k in ("a", "b"):
+        for blk in p["paths"][k]["blocks"]:
+            blk["model"]["file"] = str((PRESETS / blk["model"]["file"]).resolve())
+    p["cab"]["ir"]["file"] = str((PRESETS / p["cab"]["ir"]["file"]).resolve())
+    pj = tmp_path / "preset.json"
+    pj.write_text(json.dumps(p))
+
+    def go(**kw):
+        kw.setdefault("size", "feather")
+        kw.setdefault("mode", "nocab")
+        return RUN.run_export(pj, validate=False, log=lambda *_: None, exports_root=tmp_path / "exports", **kw)
+    return types.SimpleNamespace(go=go, fake=fake, tmp=tmp_path, sinfo=state, preset=p, RUN=RUN)
+
+
+def _unfinished(mocked, name, **over):
+    """An unfinished run directory (checkpoint + progress) as the trainer leaves it."""
+    from sawblade_match.export import plan as PL
+    from sawblade_match.export import resume as R
+    d = mocked.tmp / "exports" / name
+    c = R.ckpt_dir(d)
+    c.mkdir(parents=True)
+    (c / R.LAST).write_bytes(b"x")
+    rc = mocked.fake_cfg
+    prog = {"presetSha256": PL.preset_hash(mocked.preset), "signalSha256": "t" * 64, "validSha256": "v" * 64,
+            "mode": "nocab", "size": "feather", "epoch": 2, "complete": False,
+            "config": {"seed": 0, "batchSize": 16, "epochs": rc.epochs, "lrGamma": rc.lr_gamma}}
+    prog.update(over)
+    R.write_progress(c, prog)
+    return d
+
+
+@pytest.fixture
+def mx(mocked_export):
+    from sawblade_match.export import train as T
+    mocked_export.fake_cfg = T.TrainConfig(size="feather").resolved()
+    return mocked_export
+
+
+def test_mock_fresh_run_removes_checkpoint_unless_keep_scratch(mx):
+    from sawblade_match.export import resume as R
+    out = mx.tmp / "o1"
+    rep = mx.go(out=str(out))
+    assert rep["resume"] is None and mx.fake.calls[-1]["resume"] is False
+    assert mx.fake.calls[-1]["ckpt_dir"] == out / "checkpoint"
+    assert mx.fake.calls[-1]["identity"]["presetSha256"] == P.preset_hash(mx.preset)
+    assert not (out / "checkpoint").exists() and not (out / "_scratch").exists()
+    out2 = mx.tmp / "o2"
+    mx.go(out=str(out2), keep_scratch=True)
+    assert (out2 / "checkpoint").is_dir() and R.read_progress(out2 / "checkpoint")["complete"] is True
+
+
+def test_mock_resume_dir_continues_in_that_dir(mx):
+    d = _unfinished(mx, "run-a")
+    rep = mx.go(resume=str(d))
+    c = mx.fake.calls[-1]
+    assert c["resume"] is True and c["outdir"] == d and rep["resume"]["epoch"] == 2
+    assert not (d / "checkpoint").exists()                                   # removed after the successful export
+    assert (d / "export_report.json").is_file()
+
+
+def test_mock_resume_refuses_sha_size_mode_mismatch_and_missing(mx):
+    from sawblade_match.export.cli import main
+    n = len(mx.fake.calls)
+    d = _unfinished(mx, "run-a", presetSha256="0" * 64)
+    with pytest.raises(P.ExportRefused, match="preset sha256 differs"):
+        mx.go(resume=str(d))
+    d2 = _unfinished(mx, "run-b", signalSha256="0" * 64)
+    with pytest.raises(P.ExportRefused, match="training-signal sha256 differs"):
+        mx.go(resume=str(d2))
+    d3 = _unfinished(mx, "run-c", size="lite")
+    with pytest.raises(P.ExportRefused, match="size differs"):
+        mx.go(resume=str(d3))
+    d4 = _unfinished(mx, "run-d", mode="withcab")
+    with pytest.raises(P.ExportRefused, match="mode differs"):
+        mx.go(resume=str(d4))
+    d5 = _unfinished(mx, "run-e", config={"seed": 9, "batchSize": 16, "epochs": 40, "lrGamma": 0.9})
+    with pytest.raises(P.ExportRefused, match="seed differs"):
+        mx.go(resume=str(d5))
+    with pytest.raises(P.ExportRefused, match="no checkpoint"):
+        mx.go(resume=str(mx.tmp / "nowhere"))
+    with pytest.raises(P.ExportRefused, match="differ"):
+        mx.go(resume=str(d), out=str(mx.tmp / "other"))
+    assert len(mx.fake.calls) == n and (d / "checkpoint").exists()          # nothing trained, nothing deleted
+
+
+def test_mock_cli_refusal_exit_code_and_resume_flag(mx, capsys, monkeypatch):
+    from sawblade_match.export import cli
+    d = _unfinished(mx, "run-a", mode="withcab")
+    pj = mx.tmp / "preset.json"
+    rc = cli.main([str(pj), "--size", "feather", "--resume", str(d), "--no-validate"])
+    assert rc == 2 and "mode differs" in capsys.readouterr().err
+    assert cli.build_parser().parse_args([str(pj), "--resume", "auto"]).resume == "auto"
+
+
+def test_mock_resume_auto_picks_the_matching_newest_unfinished_dir(mx):
+    import os as _os
+    from sawblade_match.export import resume as R
+    other_preset = _unfinished(mx, "other-preset", presetSha256="1" * 64)
+    other_size = _unfinished(mx, "other-size", size="standard")
+    other_mode = _unfinished(mx, "other-mode", mode="withcab")
+    finished = _unfinished(mx, "finished", complete=True)
+    old = _unfinished(mx, "old-match")
+    new = _unfinished(mx, "new-match")
+    _os.utime(R.ckpt_dir(old) / R.PROGRESS, (1_000_000, 1_000_000))
+    msgs = []
+    rep = mx.RUN.run_export(mx.tmp / "preset.json", mode="nocab", size="feather", validate=False, log=msgs.append,
+                            resume="auto", exports_root=mx.tmp / "exports")
+    assert rep["resume"]["dir"] == str(new) and mx.fake.calls[-1]["outdir"] == new and mx.fake.calls[-1]["resume"]
+    assert any("resuming" in m and "new-match" in m for m in msgs)
+    for d in (other_preset, other_size, other_mode, finished, old):
+        assert (d / "checkpoint").exists()                                   # untouched
+
+
+def test_mock_resume_auto_without_match_starts_fresh_in_out(mx):
+    _unfinished(mx, "other-preset", presetSha256="1" * 64)
+    msgs = []
+    out = mx.tmp / "fresh"
+    rep = mx.RUN.run_export(mx.tmp / "preset.json", mode="nocab", size="feather", validate=False, log=msgs.append,
+                            resume="auto", exports_root=mx.tmp / "exports", out=str(out))
+    assert rep["resume"] is None and mx.fake.calls[-1]["resume"] is False and mx.fake.calls[-1]["outdir"] == out
+    assert any("starting fresh" in m for m in msgs)
+
+
+def test_resume_progress_is_written_atomically(tmp_path):
+    from sawblade_match.export import resume as R
+    R.write_progress(tmp_path, {"epoch": 1})
+    R.write_progress(tmp_path, {"epoch": 2})
+    assert R.read_progress(tmp_path) == {"epoch": 2} and [f.name for f in tmp_path.iterdir()] == ["progress.json"]
+    (tmp_path / "progress.json").write_text("{trunc")
+    assert R.read_progress(tmp_path) is None

@@ -34,7 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--require-accept", action="store_true",
                    help="exit 4 unless the acceptance status is 'met' (standard size, ESR and LTAS limits)")
     p.add_argument("--no-validate", action="store_true", help="skip validation + listening file")
-    p.add_argument("--keep-scratch", action="store_true", help="keep the checkpoint scratch directory")
+    p.add_argument("--resume", metavar="DIR|auto", default=None,
+                   help="continue an interrupted run: the run's output directory (refused if preset, signal, mode, size or "
+                        "training settings differ), or 'auto' = the newest matching unfinished run in the exports dir "
+                        "(else start fresh); --max-minutes counts training time across resumes")
+    p.add_argument("--keep-scratch", action="store_true", help="keep the scratch + checkpoint directories (the run is marked complete, never auto-resumed)")
     return p
 
 
@@ -45,7 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rep = run_export(args.preset, mode=args.mode, size=args.size, out=args.out, name=args.name,
                          allow_inexact=args.allow_inexact, epochs=args.epochs, max_minutes=args.max_minutes,
                          seed=args.seed, threads=args.threads, di=args.di, validate=not args.no_validate,
-                         signal_seed=args.signal_seed, target_esr=args.target_esr, lr_gamma=args.lr_gamma, batch_size=args.batch_size, device=args.device, keep_scratch=args.keep_scratch,
+                         signal_seed=args.signal_seed, target_esr=args.target_esr, lr_gamma=args.lr_gamma, batch_size=args.batch_size, device=args.device, keep_scratch=args.keep_scratch, resume=args.resume,
                          log=lambda m: print(m, flush=True))
     except ExportRefused as e:
         print(f"refused: {e}", file=sys.stderr)
