@@ -28,14 +28,13 @@
 
 using namespace sawblade;
 using namespace sawblade::test;
-using stages::ClipType;
 using nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
 
 const fs::path kFixtures = SAWBLADE_FIXTURES_DIR;
-constexpr ClipType kClips[] = {ClipType::Silicon, ClipType::Led, ClipType::Asymmetric};
+constexpr stages::ClipType kClips[] = {stages::ClipType::Silicon, stages::ClipType::Led, stages::ClipType::Asymmetric};
 
 // ---- helpers (copied from test_pedals.cpp, which must stay untouched) ------------------------
 void run(Processor& p, std::vector<float>& x, int block) {
@@ -130,16 +129,16 @@ HmxParams hx(auto&& mod) {
 
 // ---- 1. shared stages ---------------------------------------------------------------------------
 TEST_CASE("stages: clip type table, names and parsing", "[pedal][saw][stages]") {
-  CHECK(stages::clipKnees(ClipType::Silicon).kPos == 0.5);
-  CHECK(stages::clipKnees(ClipType::Silicon).kNeg == 0.5);
-  CHECK(stages::clipKnees(ClipType::Led).kPos == 1.4);
-  CHECK(stages::clipKnees(ClipType::Led).kNeg == 1.4);
-  CHECK(stages::clipKnees(ClipType::Asymmetric).kPos == 0.5);
-  CHECK(stages::clipKnees(ClipType::Asymmetric).kNeg == 0.3);
-  CHECK(std::string(stages::clipTypeName(ClipType::Silicon)) == "silicon");
-  CHECK(std::string(stages::clipTypeName(ClipType::Led)) == "led");
-  CHECK(std::string(stages::clipTypeName(ClipType::Asymmetric)) == "asymmetric");
-  for (ClipType t : kClips) {
+  CHECK(stages::clipKnees(stages::ClipType::Silicon).kPos == 0.5);
+  CHECK(stages::clipKnees(stages::ClipType::Silicon).kNeg == 0.5);
+  CHECK(stages::clipKnees(stages::ClipType::Led).kPos == 1.4);
+  CHECK(stages::clipKnees(stages::ClipType::Led).kNeg == 1.4);
+  CHECK(stages::clipKnees(stages::ClipType::Asymmetric).kPos == 0.5);
+  CHECK(stages::clipKnees(stages::ClipType::Asymmetric).kNeg == 0.3);
+  CHECK(std::string(stages::clipTypeName(stages::ClipType::Silicon)) == "silicon");
+  CHECK(std::string(stages::clipTypeName(stages::ClipType::Led)) == "led");
+  CHECK(std::string(stages::clipTypeName(stages::ClipType::Asymmetric)) == "asymmetric");
+  for (stages::ClipType t : kClips) {
     const auto r = stages::parseClipType(stages::clipTypeName(t));
     REQUIRE(r.has_value());
     CHECK(*r == t);
@@ -436,7 +435,7 @@ TEST_CASE("aliasing is below -80 dB with OS+ADAA and the test detects its absenc
     HmxParams p;
   };
   std::vector<Row> rows;
-  for (ClipType c : kClips)
+  for (stages::ClipType c : kClips)
     rows.push_back({std::string("hmx ") + stages::clipTypeName(c), hx([&](HmxParams& q) { q.distortion = 10; q.clip = c; })});
   rows.push_back({"hmx silicon + boost", hx([](HmxParams& q) { q.distortion = 10; q.boost = true; })});
   const PedalImplConfig ship{true, true, false}, naive{false, false, false};
@@ -476,7 +475,7 @@ TEST_CASE("latencySamples() is 50 at every rate and equals the measured delay", 
   flat.flatFilters = true;
   for (double fs : {44100.0, 48000.0, 96000.0, 192000.0}) {
     int worstMeasured = 0;
-    for (ClipType c : kClips)
+    for (stages::ClipType c : kClips)
       for (bool boost : {false, true})
         for (double mix : {0.0, 100.0}) {
           const HmxParams p = hx([&](HmxParams& q) { q.clip = c; q.boost = boost; q.mix = mix; });
@@ -564,7 +563,7 @@ TEST_CASE("Chain compensates the chainsaw pedals against an empty path", "[pedal
 
 // ---- 7. zero allocation ----------------------------------------------------------------------------
 TEST_CASE("chainsaw pedals do not allocate in process()", "[pedal][saw][alloc]") {
-  HmxPedal hmx(hx([](HmxParams& p) { p.mix = 60; p.boost = true; p.clip = ClipType::Led; }));
+  HmxPedal hmx(hx([](HmxParams& p) { p.mix = 60; p.boost = true; p.clip = stages::ClipType::Led; }));
   HmxPedal hmx100({});
   EyePedal eye({});
   for (Processor* p : {static_cast<Processor*>(&hmx), static_cast<Processor*>(&hmx100), static_cast<Processor*>(&eye)}) {
@@ -668,7 +667,7 @@ TEST_CASE("chainsaw block presets round-trip", "[pedal][saw][preset]") {
   CHECK(h.presence == 5.0);
   CHECK(h.tightness == 0.0);
   CHECK(h.mix == 100.0);
-  CHECK(h.clip == ClipType::Silicon);
+  CHECK(h.clip == stages::ClipType::Silicon);
   CHECK(!h.boost);
   CHECK(h.lowMidFreq == 5.0);
   CHECK(h.highMidFreq == 5.0);
@@ -677,7 +676,7 @@ TEST_CASE("chainsaw block presets round-trip", "[pedal][saw][preset]") {
   CHECK(e.level == 5.0);
   CHECK(e.tightness == 0.0);
   // every enum value; boost as string and as a JSON boolean (written back as the string)
-  for (ClipType c : kClips)
+  for (stages::ClipType c : kClips)
     for (const json& boost : {json("off"), json("on"), json(false), json(true)}) {
       json b = {{"id", "a1"}, {"type", "pedal.hmx"}, {"params", {{"clip", stages::clipTypeName(c)}, {"boost", boost}}}};
       const Preset p = parseP(blockPreset(json::array({b})));
@@ -766,7 +765,7 @@ TEST_CASE("live converters round-trip and the index order matches the spec", "[p
   p.presence = 7.5;
   p.tightness = 8.25;
   p.mix = 37.5;
-  p.clip = ClipType::Asymmetric;
+  p.clip = stages::ClipType::Asymmetric;
   p.boost = true;
   p.lowMidFreq = 9.0;
   p.highMidFreq = 0.5;
@@ -775,7 +774,7 @@ TEST_CASE("live converters round-trip and the index order matches the spec", "[p
   const float expect[kHmxNumLive] = {1.5f, 2.5f, 3.5f, 4.25f, 5.75f, 6.5f, 7.5f, 8.25f, 37.5f, 2.0f, 1.0f, 9.0f, 0.5f};
   for (int i = 0; i < kHmxNumLive; ++i) CHECK(v[i] == expect[i]);
   CHECK(hmxParamsFromLive(v, kHmxNumLive) == p);
-  for (ClipType c : kClips)
+  for (stages::ClipType c : kClips)
     for (bool b : {false, true}) {
       HmxParams q = p;
       q.clip = c;
