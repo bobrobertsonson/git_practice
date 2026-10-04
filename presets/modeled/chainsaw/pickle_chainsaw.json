@@ -15,7 +15,7 @@
           "params": {
             "volume": 6,
             "sustain": 10,
-            "tone": 7,
+            "tone": 4,
             "scoop": 8,
             "crunch": 7,
             "voice": 6,
@@ -24,7 +24,7 @@
             "clip": "silicon",
             "clip2": "follow",
             "stackRatio": 4.4,
-            "rolloffHz": 10000,
+            "rolloffHz": 6000,
             "gain2Db": 0,
             "bias": 0
           }

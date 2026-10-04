@@ -1070,7 +1070,7 @@ TEST_CASE("chainsaw preset bank: 15 presets render sanely from repo files", "[pe
                 peakDb, 100.0 * mid, lowBand, midBand);
     CHECK(peakDb >= -6.0);
     CHECK(peakDb <= -0.5);
-    CHECK(mid >= (f.filename() == "pickle_chainsaw.json" ? 0.65 : 0.80));  // lead: threshold amended 2026-10-04 (spec 0.90); pickle_chainsaw 67.6 % measured (pending fix b)
+    CHECK(mid >= 0.80);  // lead: threshold amended 2026-10-04 (spec 0.90), uniform for all 15
     CHECK(lowBand >= -30.0);
     CHECK(midBand >= -30.0);
   }
