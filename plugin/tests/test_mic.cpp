@@ -419,6 +419,7 @@ TEST_CASE("choosing a model from a folder pack loads a preset whose cab file is 
   CHECK(s.model(0) == -1);  // the cab still uses the init IR
   CHECK(s.pack().dots().size() == 2);
 
+  const Preset orig = h.proc.currentPreset();
   h.apply(s.choose(h.proc.currentPreset(), 0, indexOf(s.pack(), "V30 UR SM57 Cone 1in")));
   const Preset after = h.proc.currentPreset();
   REQUIRE(after.cab.mode == CabMode::Shared);
@@ -428,9 +429,10 @@ TEST_CASE("choosing a model from a folder pack loads a preset whose cab file is 
   CHECK(h.proc.status().latencySamples == 0);
   CHECK(s.model(0) == indexOf(s.pack(), "V30 UR SM57 Cone 1in"));
   // everything but the cab is untouched
-  Preset before = after;
-  before.cab = h.proc.currentPreset().cab;
-  CHECK(after.a == h.proc.currentPreset().a);
+  Preset a = after, b = orig;
+  a.cab = CabPreset{};
+  b.cab = CabPreset{};
+  CHECK(a == b);
 
   // the page notices the processor caught up: nothing to adopt
   CHECK(sameCab(h.proc.currentPreset().cab, s.build(h.proc.currentPreset()).cab));

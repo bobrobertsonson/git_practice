@@ -510,3 +510,32 @@ TEST_CASE("mic page: screenshots of the rig, the page with one mic and with BLEN
   CHECK(different > 100);  // the second mic and its dot
   CHECK(f.proc.currentPreset().cab.mode == sawblade::CabMode::IrMix);
 }
+
+TEST_CASE("mic page: in BLEND the highlighted row, the marker and the fields name the active mic", "[editor][mic]") {
+  Fixture f;
+  f.openByDoubleClick();
+  f.loadPackFromCache();
+  click(*f.page().buttonTitled("BLEND 2 MICS"));
+  f.wait();
+  f.dragTo(1, 6);  // mic 2 onto the upper-right cap: model "V30 UR SM57 Cap 1in"
+  f.wait();
+  f.page().refresh();
+  REQUIRE(f.page().session().active() == 1);
+  const auto& pack = f.page().session().pack();
+  const std::string name2 = pack.models()[static_cast<std::size_t>(f.page().session().model(1))].name;
+  const std::string name1 = pack.models()[static_cast<std::size_t>(f.page().session().model(0))].name;
+  REQUIRE(name1 != name2);
+  juce::Label *row1 = nullptr, *row2 = nullptr;
+  for (auto* l : all<juce::Label>(f.page())) {
+    if (l->getText().contains(juce::String(name1)) && l->getText().contains("1  ")) row1 = l;
+    if (l->getText().contains(juce::String(name2)) && l->getText().contains("2  ")) row2 = l;
+  }
+  REQUIRE(row1 != nullptr);
+  REQUIRE(row2 != nullptr);
+  CHECK(row2->getText().contains(juce::String::fromUTF8("\xe2\x96\xb8")));  // the marker is on mic 2
+  CHECK_FALSE(row1->getText().contains(juce::String::fromUTF8("\xe2\x96\xb8")));
+  CHECK(row2->findColour(juce::Label::textColourId) == juce::Colour(0xffb8f08a));  // highlighted
+  CHECK(row1->findColour(juce::Label::textColourId) != juce::Colour(0xffb8f08a));
+  CHECK(anyLabelContains(f.page(), "UPPER-RIGHT"));  // the fields describe mic 2's model
+  CHECK_FALSE(anyLabelContains(f.page(), "UPPER-LEFT"));
+}

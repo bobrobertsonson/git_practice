@@ -347,8 +347,6 @@ struct MicPage::Impl {
     packSub.setColour(juce::Label::textColourId, L::dimText());
     status.setFont(L::bodyFont(12.0f));
     for (juce::Label* l : {&irName[0], &irName[1]}) l->setFont(L::monoFont(13.0f));
-    irName[0].setColour(juce::Label::textColourId, kIrText);
-    irName[1].setColour(juce::Label::textColourId, L::dimText());
     static const char* fieldNames[4] = {"SPEAKER", "MIC", "DISTANCE", "POSITION"};
     for (int i = 0; i < 4; ++i) {
       fieldLabel[i].setText(fieldNames[i], juce::dontSendNotification);
@@ -722,9 +720,12 @@ struct MicPage::Impl {
     if (s.blend()) {
       irName[0].setText(juce::String(s.active() == 0 ? juce::String::fromUTF8("\xe2\x96\xb8 ") : "  ") + "1  " + nameOf(0), juce::dontSendNotification);
       irName[1].setText(juce::String(s.active() == 1 ? juce::String::fromUTF8("\xe2\x96\xb8 ") : "  ") + "2  " + nameOf(1), juce::dontSendNotification);
+      irName[s.active()].setColour(juce::Label::textColourId, kIrText);  // the highlighted row is the active mic's
+      irName[1 - s.active()].setColour(juce::Label::textColourId, L::dimText());
       irName[1].setVisible(true);
     } else {
       irName[0].setText(nameOf(0), juce::dontSendNotification);
+      irName[0].setColour(juce::Label::textColourId, kIrText);
       irName[1].setVisible(false);
     }
     refreshResponse();
@@ -834,7 +835,6 @@ void MicPage::resized() {
 
 void MicPage::open() {
   session_.adopt(processor_.currentPreset());
-  if (session_.pack().info().kind != mic::PackInfo::Kind::Manifest) session_.loadCachedPack();  // the pack of this cab's tone, if cached
   if (session_.pack().info().kind != mic::PackInfo::Kind::Manifest) session_.loadCachedPack();  // the pack of this cab's tone, if cached
   impl_->pending = false;
   impl_->applyLayout();
