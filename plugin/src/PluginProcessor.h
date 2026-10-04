@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -15,6 +16,7 @@
 #include "EngineLoader.h"
 #include "PlayAlong.h"
 #include "PresetMapping.h"
+#include "rig/InputMeter.h"
 #include "sawblade/swap_slot.h"
 
 namespace sawblade::plugin {
@@ -45,6 +47,9 @@ class SawbladeProcessor : public juce::AudioProcessor {
     bool liveCompatible = false;  // shared cab: the no-cab export is exact
     bool resampling = false;
     ChainInfo info;
+    AlignResult measuredAlign;     // the last RE-MEASURE result (docs/PLUGIN.md "Rig editor")
+    bool alignMeasuring = false;   // a re-measure build is in flight
+    std::uint64_t generation = 0;  // of the running engine (the loader request id it was built for)
   };
 
   SawbladeProcessor();
@@ -81,7 +86,9 @@ class SawbladeProcessor : public juce::AudioProcessor {
   bool loadPresetFile(const std::filesystem::path& file, std::string* error = nullptr);
   bool loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error = nullptr,
                       bool restore = false);
-  void loadPreset(Preset preset);
+  // `keepMonitor`: the rig editor's structural edits keep the transient mute / solo state; user
+  // loads clear it.
+  void loadPreset(Preset preset, bool keepMonitor = false);
   // Host-driven state restore: the preset and its parameter values are applied immediately (hosts
   // and validators read the parameters right after setStateInformation); the engine follows.
   void restorePreset(Preset preset);
@@ -101,6 +108,28 @@ class SawbladeProcessor : public juce::AudioProcessor {
   const PlayAlong& playAlong() const noexcept { return playAlong_; }
 
 
+  // --- rig editor hooks (message thread; docs/PLUGIN.md "Rig editor") -----------------------------------
+  // The preset a structural edit starts from: the pending user load if one is in flight, else the
+  // current preset (with the parameter values).
+  Preset editBasePreset() const;
+  // Edits the preset's live fields (EQ freq / gain / Q, block gains) in place and publishes them to
+  // the audio thread without a rebuild. Must not touch parameter-mapped fields (those go through the
+  // parameters) or structure. Does not touch the pending load: an edit made while a structural load is
+  // in flight can be overwritten when that load commits (EQ drags are absolute and self-heal).
+  void applyLiveEdit(const std::function<void(Preset&)>& edit);
+  struct Monitor {
+    bool muteA = false, muteB = false;
+  };
+  // Transient monitoring mutes (never saved; cleared by user loads and state restores).
+  void setMonitor(bool muteA, bool muteB);
+  Monitor monitor() const;
+  // Re-measures the alignment with an auto-mode build and writes the result back as manual values.
+  void remeasureAlignment();
+  const rig::InputMeter& inputMeter() const noexcept { return inputMeter_; }
+  // The loader request id the current preset was committed for (== the running engine's generation
+  // once it has been published).
+  std::uint64_t presetGeneration() const;
+
   // Test hook (call with the audio thread idle): the current engine's applied live parameters and
   // the baseline it was built with. Parameter updates must never move the first off the second.
   struct EngineParamState {
@@ -116,7 +145,8 @@ class SawbladeProcessor : public juce::AudioProcessor {
   ParamValues readParams() const noexcept;
   void writeParams(const ParamValues& v);
   void submit(bool fallbackToInit);
-  void commit(const Preset& p);
+  void commit(const Preset& p, std::uint64_t generation, bool clearMonitor);
+  void publishLive();  // mutex_ held
   void onOutcome(const EngineLoader::Outcome& o);
 
   juce::AudioProcessorValueTreeState apvts_;
@@ -128,6 +158,11 @@ class SawbladeProcessor : public juce::AudioProcessor {
   Status status_;
   std::uint64_t lastSubmitted_ = 0;
   std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed
+  bool wantedKeepsMonitor_ = false;
+  std::shared_ptr<const Preset> remeasureWanted_;  // the pending re-measure build, if any
+  std::uint64_t presetGeneration_ = 0;     // loader request id of the committed preset (kNoGeneration: none yet)
+  Monitor monitor_;
+  rig::InputMeter inputMeter_;
 
   double hostRate_ = 0.0;
   int maxBlock_ = 0;
@@ -141,6 +176,10 @@ class SawbladeProcessor : public juce::AudioProcessor {
   int fadePos_ = 0, fadeLen_ = 0;
   std::vector<float> fadeBuf_;
 
+  // Live values of the preset for the engine of the same generation. Producers: the message thread
+  // (live edits, monitor) and the loader thread (onOutcome); both publish only with mutex_ held, which
+  // serialises them and so satisfies SwapSlot's single-producer contract. Consumer: the audio thread.
+  SwapSlot<LiveSnapshot> liveSlot_;
   SwapSlot<EngineRef> slot_;                  // declared before loader_: the loader is destroyed first
   std::unique_ptr<EngineLoader> loader_;
 };

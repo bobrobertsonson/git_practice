@@ -27,6 +27,10 @@
 #include "sawblade/chain.h"
 #include "sawblade/rt_resample.h"
 
+namespace sawblade {
+class CaptureCache;
+}
+
 namespace sawblade::plugin {
 
 struct EngineLatency {
@@ -36,12 +40,21 @@ struct EngineLatency {
   bool resampling = false;
 };
 
+// What travels through the processor's live SwapSlot: the live values of the preset (EQ design,
+// block gains, mutes) for the engine built for request `generation`.
+struct LiveSnapshot {
+  std::uint64_t generation = 0;
+  LiveParams live;
+};
+
 class Engine {
  public:
   // Builds an engine for `preset` at the host rate. maxBlock is the largest block the host is
   // expected to use (process() accepts any size and splits it). Throws std::exception (with a
   // message naming the offending JSON path or file) if the preset cannot be loaded or prepared.
-  static std::unique_ptr<Engine> build(const Preset& preset, double hostRate, int maxBlock);
+  // With a `cache`, models and IRs are taken from / added to it (the loader keeps one for its whole
+  // life, so structural edits do not re-read files); without, a private cache is used.
+  static std::unique_ptr<Engine> build(const Preset& preset, double hostRate, int maxBlock, CaptureCache* cache = nullptr);
 
   ~Engine();
   Engine(const Engine&) = delete;
@@ -52,7 +65,13 @@ class Engine {
 
   // Applies the parameter values (RT-safe; cheap when nothing changed). Gains, blend and post-EQ
   // are smoothed inside the chain; the gate threshold moves immediately.
-  void setParams(const ParamValues& v) noexcept;
+  // `extras` (the live snapshot of this engine's generation, or null) replaces the baseline as the
+  // starting point; the parameter values are overlaid on it.
+  void setParams(const ParamValues& v, const LiveParams* extras = nullptr) noexcept;
+
+  // The id of the loader request this engine was built for (0 until the loader tags it).
+  std::uint64_t generation() const noexcept { return generation_; }
+  void setGeneration(std::uint64_t g) noexcept { generation_ = g; }
 
   // The values the chain currently applies, and the ones it was built with (tests: after the
   // parameters have been applied they must still be equal; see PresetMapping.h, snapParam).
@@ -84,6 +103,7 @@ class Engine {
   std::vector<float> mod_, tmp_, fifo_;
   int fifoCount_ = 0;
   std::uint64_t underruns_ = 0;
+  std::uint64_t generation_ = 0;
 };
 
 }  // namespace sawblade::plugin

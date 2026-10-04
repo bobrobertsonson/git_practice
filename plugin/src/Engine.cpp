@@ -20,7 +20,7 @@ std::string hz(double v) {
 
 Engine::~Engine() = default;
 
-std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int maxBlock) {
+std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int maxBlock, CaptureCache* sharedCache) {
   if (!(hostRate >= 8000.0 && hostRate <= 768000.0)) throw std::runtime_error("unsupported host sample rate " + hz(hostRate));
   std::unique_ptr<Engine> e(new Engine());
   e->hostRate_ = hostRate;
@@ -30,7 +30,8 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
   // The models' rate (shared rule with tonerender: recorded rate, else 48 kHz; blocks must agree;
   // none: the host rate). The cache means each file is read once even though the rate is probed
   // before the resources are built.
-  CaptureCache cache;
+  CaptureCache localCache;
+  CaptureCache& cache = sharedCache ? *sharedCache : localCache;
   double modelRate = hostRate;
   try {
     const ModelRate mr = commonModelRate(probeNamRates(preset, &cache));
@@ -79,8 +80,8 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
   return e;
 }
 
-void Engine::setParams(const ParamValues& v) noexcept {
-  LiveParams l = baseline_;
+void Engine::setParams(const ParamValues& v, const LiveParams* extras) noexcept {
+  LiveParams l = extras ? *extras : baseline_;
   l.inputGainDb = v[kInputGain];
   l.outputGainDb = v[kOutputGain];
   l.gateThresholdDb = v[kGateThreshold];

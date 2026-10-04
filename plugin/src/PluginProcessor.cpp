@@ -27,6 +27,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   return layout;
 }
 
+constexpr std::uint64_t kNoGeneration = ~std::uint64_t{0};
 constexpr int kMinChunk = 4096;  // audio-thread scratch size; larger host blocks are processed in chunks
 
 }  // namespace
@@ -36,7 +37,8 @@ SawbladeProcessor::SawbladeProcessor()
                                .withInput("Input", juce::AudioChannelSet::mono(), true)
                                .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts_(*this, nullptr, "SawbladeParameters", createLayout()),
-      preset_(makeInitPreset()) {
+      preset_(makeInitPreset()),
+      presetGeneration_(kNoGeneration) {
   for (int i = 0; i < kNumParams; ++i) {
     const juce::String id = paramSpec(i).id;
     paramAtomic_[static_cast<std::size_t>(i)] = apvts_.getRawParameterValue(id);
@@ -110,12 +112,13 @@ SlotBands SawbladeProcessor::postEqSlots() const {
   return postEqSlotBands(preset_);
 }
 
-void SawbladeProcessor::loadPreset(Preset preset) {
+void SawbladeProcessor::loadPreset(Preset preset, bool keepMonitor) {
   auto c = std::make_shared<const Preset>(clampedToParams(std::move(preset)));
   bool buildNow;
   {
     std::lock_guard<std::mutex> lk(mutex_);
     wanted_ = c;
+    wantedKeepsMonitor_ = keepMonitor;
     status_.error.clear();
     buildNow = hostRate_ > 0.0;
   }
@@ -125,7 +128,7 @@ void SawbladeProcessor::loadPreset(Preset preset) {
   if (buildNow) {
     submit(/*fallbackToInit=*/false);
   } else {
-    commit(*c);  // not prepared yet: nothing to build; prepareToPlay() will
+    commit(*c, kNoGeneration, !keepMonitor);  // not prepared yet: nothing to build; prepareToPlay() will
     std::lock_guard<std::mutex> lk(mutex_);
     wanted_.reset();
   }
@@ -138,17 +141,22 @@ void SawbladeProcessor::restorePreset(Preset preset) {
     wanted_.reset();
     status_.error.clear();
   }
-  commit(c);
+  commit(c, kNoGeneration, /*clearMonitor=*/true);
   submit(/*fallbackToInit=*/false);  // builds the committed preset (no pending "wanted")
 }
 
 // Makes `p` the current preset and writes its values into the parameters (its engine's baseline
 // equals them). Called from the loader thread right before the engine is published, or directly.
-void SawbladeProcessor::commit(const Preset& p) {
+// `generation` is the loader request the engine for `p` is built by (kNoGeneration: not known yet, no
+// engine matches until the build publishes and records its id).
+void SawbladeProcessor::commit(const Preset& p, std::uint64_t generation, bool clearMonitor) {
   {
     std::lock_guard<std::mutex> lk(mutex_);
     preset_ = p;
     status_.presetName = p.name;
+    presetGeneration_ = generation;
+    if (clearMonitor) monitor_ = {};
+    publishLive();
   }
   writeParams(paramsFromPreset(p));
 }
@@ -232,13 +240,18 @@ void SawbladeProcessor::submit(bool fallbackToInit) {
     // must not drop a load that is still in flight).
     r.preset = *wanted;
     r.wanted = wanted;
-    r.beforePublish = [this, wanted] {
-      commit(*wanted);
+    const bool keep = wantedKeepsMonitor_;
+    r.beforePublish = [this, wanted, keep](std::uint64_t id) {
+      commit(*wanted, id, !keep);
       std::lock_guard<std::mutex> lk(mutex_);
       if (wanted_ == wanted) wanted_.reset();
     };
   } else {
     r.preset = presetWithParams();
+    r.beforePublish = [this](std::uint64_t id) {
+      std::lock_guard<std::mutex> lk(mutex_);
+      presetGeneration_ = id;
+    };
   }
   r.hostRate = hostRate_;
   r.maxBlock = maxBlock_;
@@ -257,6 +270,16 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     playAlong_.setRigLatencySamples(o.latencySamples);  // the backing is delayed by the rig latency
   }
   std::lock_guard<std::mutex> lk(mutex_);
+  if (o.wanted && o.wanted == remeasureWanted_) {
+    remeasureWanted_.reset();
+    status_.alignMeasuring = false;
+    if (o.built) {
+      // The engine was built in auto mode: its resolved values are what a manual preset with the same
+      // numbers does, so the write-back needs no rebuild.
+      status_.measuredAlign = o.info.align;
+      preset_.align = {AlignMode::Manual, preset_.align.maxLagMs, o.info.align.delaySamplesB, o.info.align.invertB};
+    }
+  }
   if (o.id == lastSubmitted_ || o.id > lastSubmitted_) {
     status_.loading = false;
     status_.error = o.error;
@@ -270,8 +293,68 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     status_.liveCompatible = o.info.liveCompatible;
     status_.resampling = std::fabs(o.modelRate - o.hostRate) > 1e-6;
     status_.info = o.info;
+    status_.generation = o.id;
     if (o.built) status_.presetName = o.presetName;
+    publishLive();  // a fresh engine always gets a snapshot of its own generation (mutes survive rebuilds)
   }
+}
+
+// --- rig editor hooks ---------------------------------------------------------------------------
+void SawbladeProcessor::publishLive() {
+  auto snap = std::make_unique<LiveSnapshot>();
+  snap->generation = presetGeneration_;
+  snap->live = LiveParams::fromPreset(clampedToParams(preset_));
+  snap->live.muteA = monitor_.muteA;
+  snap->live.muteB = monitor_.muteB;
+  liveSlot_.publish(std::move(snap));
+  liveSlot_.collectGarbage();
+}
+
+Preset SawbladeProcessor::editBasePreset() const {
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (wanted_) return *wanted_;
+  }
+  return presetWithParams();
+}
+
+void SawbladeProcessor::applyLiveEdit(const std::function<void(Preset&)>& edit) {
+  std::lock_guard<std::mutex> lk(mutex_);
+  edit(preset_);
+  publishLive();
+}
+
+void SawbladeProcessor::setMonitor(bool muteA, bool muteB) {
+  std::lock_guard<std::mutex> lk(mutex_);
+  monitor_ = {muteA, muteB};
+  publishLive();
+}
+
+SawbladeProcessor::Monitor SawbladeProcessor::monitor() const {
+  std::lock_guard<std::mutex> lk(mutex_);
+  return monitor_;
+}
+
+std::uint64_t SawbladeProcessor::presetGeneration() const {
+  std::lock_guard<std::mutex> lk(mutex_);
+  return presetGeneration_;
+}
+
+void SawbladeProcessor::remeasureAlignment() {
+  if (hostRate_ <= 0.0) return;
+  Preset p = editBasePreset();
+  if (!p.a.enabled || !p.b.enabled) return;  // the chain skips alignment with a path disabled
+  p.align.mode = AlignMode::Auto;
+  auto c = std::make_shared<const Preset>(clampedToParams(std::move(p)));
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    wanted_ = c;
+    wantedKeepsMonitor_ = true;
+    remeasureWanted_ = c;
+    status_.alignMeasuring = true;
+    status_.error.clear();
+  }
+  submit(/*fallbackToInit=*/false);
 }
 
 bool SawbladeProcessor::waitForLoader(std::chrono::milliseconds timeout) { return loader_->waitIdle(timeout); }
@@ -326,8 +409,9 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
   if (engine == nullptr) fading_.reset();
   if (engine != nullptr) {
     const ParamValues pv = readParams();
-    engine->setParams(pv);
-    if (fading_) fading_->setParams(pv);
+    const LiveSnapshot* snap = liveSlot_.current();
+    engine->setParams(pv, snap && snap->generation == engine->generation() ? &snap->live : nullptr);
+    if (fading_) fading_->setParams(pv, snap && snap->generation == fading_->generation() ? &snap->live : nullptr);
   }
 
   // The host transport for the play-along (plugin mode only; Standalone free-runs).
@@ -358,6 +442,11 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
       const float* l = buffer.getReadPointer(0) + pos;
       const float* r = buffer.getReadPointer(1) + pos;
       for (int i = 0; i < len; ++i) mono[i] = 0.5f * (l[i] + r[i]);
+    }
+    {
+      float peak = 0.0f;
+      for (int i = 0; i < len; ++i) peak = std::max(peak, std::fabs(mono[i]));
+      inputMeter_.push(peak);
     }
     if (fading_) {
       std::memcpy(old, mono, static_cast<std::size_t>(len) * sizeof(float));

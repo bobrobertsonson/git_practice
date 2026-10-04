@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "Engine.h"
+#include "sawblade/capture_cache.h"
 #include "sawblade/swap_slot.h"
 
 namespace sawblade::plugin {
@@ -47,8 +48,8 @@ class EngineLoader {
     std::shared_ptr<const Preset> wanted;
     // Runs on the worker thread right before a successfully built engine is published (not for
     // the fallback engine): the processor commits the preset and its parameter values here, so
-    // nothing changes if the build fails.
-    std::function<void()> beforePublish;
+    // nothing changes if the build fails. Gets the request id (the engine's generation).
+    std::function<void(std::uint64_t id)> beforePublish;
   };
 
   struct Outcome {
@@ -94,6 +95,7 @@ class EngineLoader {
   std::uint64_t pendingId_ = 0, nextId_ = 0, doneId_ = 0;
   bool busy_ = false, stop_ = false;
   std::atomic<std::uint64_t> builds_{0};
+  CaptureCache cache_;  // worker thread only: models and IRs survive between builds (re-validated by size + mtime)
   std::vector<std::shared_ptr<Engine>> owned_;  // worker thread only; see EngineRef
   void collect();
   std::thread thread_;  // last: started after everything above is constructed
