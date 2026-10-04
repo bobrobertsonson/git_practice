@@ -12,6 +12,10 @@ add_library(sawblade_core STATIC
   src/pedal_params.cpp
   src/pedal_hm.cpp
   src/pedal_ts.cpp
+  src/pedal_stages.cpp
+  src/pedal_saw_params.cpp
+  src/pedal_hmx.cpp
+  src/pedal_eye.cpp
   src/gate.cpp
   src/convolver.cpp
   src/resample.cpp

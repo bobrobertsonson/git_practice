@@ -1,0 +1,72 @@
+#pragma once
+
+#include "sawblade/pedal_stages.h"
+#include "sawblade/preset.h"
+
+// Preset-side parameters of the chainsaw-family blocks pedal.hmx ("modded chainsaw distortion")
+// and pedal.eye ("one-knob chainsaw"); phase 7c, docs/specs/phase7c_chainsaw_family.md. Conventions
+// identical to phase 7b: knobs 0..10 doubles, `tightness` 0..10 (default 0), `mix` 0..100 %
+// (default 100), enums as lower-case strings, modelVersion 1.
+namespace sawblade {
+
+constexpr double kSawTightnessDefault = 0.0, kSawMixMin = 0.0, kSawMixMax = 100.0, kSawMixDefault = 100.0;
+
+struct HmxParams {
+  double level = 5.0, low = 5.0, lowMid = 5.0, highMid = 5.0, high = 5.0, distortion = 5.0, presence = 5.0;
+  double tightness = kSawTightnessDefault, mix = kSawMixDefault;
+  stages::ClipType clip = stages::ClipType::Silicon;
+  bool boost = false;
+  double lowMidFreq = 5.0, highMidFreq = 5.0;
+  bool operator==(const HmxParams&) const = default;
+};
+
+struct EyeParams {
+  double gain = 5.0, level = 5.0, tightness = kSawTightnessDefault;
+  bool operator==(const EyeParams&) const = default;
+};
+
+struct HmxBlockParams : BlockParams {
+  HmxParams p;
+  bool equals(const BlockParams& other) const override;
+  nlohmann::json toJson() const override;
+};
+
+struct EyeBlockParams : BlockParams {
+  EyeParams p;
+  bool equals(const BlockParams& other) const override;
+  nlohmann::json toJson() const override;
+};
+
+std::shared_ptr<const BlockParams> parseHmxBlock(JsonObject& o, const std::filesystem::path&);
+std::shared_ptr<const BlockParams> parseEyeBlock(JsonObject& o, const std::filesystem::path&);
+
+// Live parameter index order (the order of the spec tables). Parameters are static per preset in
+// 7c; these converters are for the generic live path wired after the merge with phase 7b.
+// Doubles are narrowed to float, enums are the choice index (clip: silicon 0, led 1, asymmetric 2),
+// boost is 0/1. The *FromLive converters read min(n, kNumLive) values (missing ones keep their
+// defaults), clamp knobs to their ranges, round enums to the nearest valid index and treat
+// boost >= 0.5 as on; they never throw.
+enum HmxLive {
+  kHmxLevel = 0,
+  kHmxLow,
+  kHmxLowMid,
+  kHmxHighMid,
+  kHmxHigh,
+  kHmxDistortion,
+  kHmxPresence,
+  kHmxTightness,
+  kHmxMix,
+  kHmxClip,
+  kHmxBoost,
+  kHmxLowMidFreq,
+  kHmxHighMidFreq,
+  kHmxNumLive
+};
+enum EyeLive { kEyeGain = 0, kEyeLevel, kEyeTightness, kEyeNumLive };
+
+HmxParams hmxParamsFromLive(const float* v, int n) noexcept;
+void hmxLiveFromParams(const HmxParams& p, float* v) noexcept;  // writes kHmxNumLive values
+EyeParams eyeParamsFromLive(const float* v, int n) noexcept;
+void eyeLiveFromParams(const EyeParams& p, float* v) noexcept;  // writes kEyeNumLive values
+
+}  // namespace sawblade

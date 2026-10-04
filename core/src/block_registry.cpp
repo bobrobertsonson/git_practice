@@ -5,7 +5,9 @@
 #include "sawblade/capture_cache.h"
 #include "sawblade/eq.h"
 #include "sawblade/nam_block.h"
+#include "sawblade/pedal_eye.h"
 #include "sawblade/pedal_hm.h"
+#include "sawblade/pedal_hmx.h"
 #include "sawblade/pedal_ts.h"
 
 namespace sawblade {
@@ -72,6 +74,8 @@ BlockRegistry::BlockRegistry() {
   // Modeled pedals: static, nonlinear, time-invariant, so NAM-trainable.
   types_["pedal.hm"] = BlockType{{/*namTrainable=*/true}, parseHmBlock, createHm};
   types_["pedal.ts"] = BlockType{{/*namTrainable=*/true}, parseTsBlock, createTs};
+  types_["pedal.hmx"] = BlockType{{/*namTrainable=*/true}, parseHmxBlock, createHmx};
+  types_["pedal.eye"] = BlockType{{/*namTrainable=*/true}, parseEyeBlock, createEye};
 }
 
 BlockRegistry& BlockRegistry::instance() {
