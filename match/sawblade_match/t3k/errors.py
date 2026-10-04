@@ -6,11 +6,23 @@ class T3KError(Exception):
     """Base class for all errors raised by this package."""
 
 
-class ReauthRequired(T3KError):
+class AuthError(T3KError):
+    """Not logged in / token refresh failed / client id missing (CLI JSON code `auth`)."""
+
+
+class LicenseRefused(T3KError):
+    """The capture's licence is not allowed by licenses.py (CLI JSON code `license`)."""
+
+
+class NotFoundError(T3KError):
+    """Tone or model id unknown (CLI JSON code `not_found`)."""
+
+
+class ReauthRequired(AuthError):
     """No usable session: the user must run `sawblade-t3k login`."""
 
 
-class DeviceFlowError(T3KError):
+class DeviceFlowError(AuthError):
     """The device authorization flow ended without tokens."""
 
 
