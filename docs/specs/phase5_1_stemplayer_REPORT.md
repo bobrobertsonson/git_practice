@@ -109,3 +109,34 @@ no audio is committed.
 6. **Settle block.** The CLI runs one block while the transport is stopped, so the
    `--backing-level` and `--guitar-stem` settings apply from the first output sample instead of
    ramping in over 20 ms. A "start at target, no ramp" option on the player would be cleaner.
+
+## Follow-up 5.1b: backing loudness metadata (main lead request)
+Spec §10. **Reviewer ACCEPT on the first pass**, so the lead accepts it.
+
+- **Measurement.** `loudness.h/.cpp` implements BS.1770-4 integrated loudness:
+  - K-weighting is designed for any sample rate. At 48 kHz it matches the published
+    coefficients within 1e-6. At 44.1 kHz its response matches the 48 kHz reference within
+    0.05 dB.
+  - Blocks are 400 ms with 75 % overlap.
+  - The absolute gate is −70 LUFS and the relative gate is −10 LU.
+- **Stored value.** `StemSet::backingLoudnessLufs` is the integrated loudness of the unity-gain
+  sum of all stems except guitar. It is computed at load time, and is none for silence or a
+  guitar-only set.
+- **Where it appears.**
+  - Python: `StemSet.backing_loudness_lufs` and `integrated_loudness_lufs`.
+  - `tonerender --backing --report`: `backing.loudnessLufs`.
+- **No gain is applied from it.** `process()` is untouched. The value is metadata for the
+  phase 5.2 UI to suggest a starting backing level.
+- **Tests.**
+  - Release `ctest`: 163/163 passed. Python build: 164/164 passed.
+  - ASan/UBSan: the new and related tests are clean.
+  - They cover EBU Tech 3341 case 1 (−23.0 ±0.1 LUFS at 48 and 44.1 kHz), a left-only 997 Hz
+    sine (−3.01 LUFS), the gates, the K-weighting coefficients, guitar exclusion
+    (bit-identical), the CLI and Python.
+- **Accepted deviation.** The gating test uses 20 s sections. Blocks that straddle a
+  tone/silence edge correctly pass the relative gate, so 10 s sections move the result by
+  0.066 LU.
+- **Non-blocking (reviewer).** The measurement and the backing sum each hold a full-length
+  temporary buffer at load (about 8 bytes/frame and 8 bytes/frame), roughly 230 MB each for a
+  10-minute song. A rolling per-hop sum and a streamed stem sum would cut this. Bundle it with
+  open question 1 (memory).
