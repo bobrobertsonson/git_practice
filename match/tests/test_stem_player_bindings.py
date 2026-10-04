@@ -198,3 +198,16 @@ def test_load_stems_directory(tmp_path):
     assert p.stem_set_length == 4800
     with pytest.raises(RuntimeError, match="nope"):
         core.load_stems(tmp_path / "nope", FS)
+
+
+def test_backing_loudness():
+    n = int(FS * 3)
+    tone = (0.0708 * np.sin(2 * np.pi * 1000 * np.arange(n) / FS)).astype(np.float32)  # about -23 dBFS peak
+    v = core.integrated_loudness_lufs(tone, FS)
+    assert v == pytest.approx(-23.0, abs=0.1)  # EBU Tech 3341 case 1: -23 dBFS peak sine on both channels
+    assert core.integrated_loudness_lufs(np.stack([tone, tone]), FS) == pytest.approx(v)
+    assert core.integrated_loudness_lufs(np.zeros(n, dtype=np.float32), FS) is None
+    loud_guitar = 0.5 * tone / 0.0708
+    ss = core.stem_set_from_arrays({"drums": tone, "guitar": loud_guitar.astype(np.float32)}, FS)
+    assert ss.backing_loudness_lufs == pytest.approx(v)  # guitar excluded
+    assert core.stem_set_from_arrays({"guitar": loud_guitar.astype(np.float32)}, FS).backing_loudness_lufs is None

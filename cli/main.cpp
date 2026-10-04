@@ -144,6 +144,7 @@ BackingResult mixBacking(const Args& a, const sawblade::RenderResult& r) {
   out.set.present = set->present;  // metadata only: the audio itself moves into the player
   out.set.sources = set->sources;
   out.set.warnings = set->warnings;
+  out.set.backingLoudnessLufs = set->backingLoudnessLufs;
   StemPlayer player;
   player.prepare({r.sampleRate, r.blockSize}, 0);  // rig latency 0: the render is already compensated
   player.setMasterLevelDb(a.backingLevelDb);
@@ -194,6 +195,7 @@ nlohmann::json backingReport(const Args& a, const BackingResult& b) {
           {"guitarStem", a.guitarStem},
           {"stems", stems},
           {"warnings", b.set.warnings},
+          {"loudnessLufs", b.set.backingLoudnessLufs ? json(*b.set.backingLoudnessLufs) : json(nullptr)},
           {"outputChannels", 2}};
 }
 

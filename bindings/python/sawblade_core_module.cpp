@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "sawblade/capture_cache.h"
+#include "sawblade/loudness.h"
 #include "sawblade/render.h"
 #include "sawblade/stem_player.h"
 #include "sawblade/stem_set.h"
@@ -198,6 +199,8 @@ void bindStems(py::module_& m) {
                                return names;
                              })
       .def_property_readonly("warnings", [](const StemSet& s) { return s.warnings; })
+      .def_property_readonly("backing_loudness_lufs", [](const StemSet& s) { return s.backingLoudnessLufs; },
+                             "BS.1770-4 integrated loudness of the non-guitar stems (float or None). Metadata only.")
       .def("__repr__", [](const StemSet& s) {
         return "<StemSet " + std::to_string(s.length) + " frames @ " + std::to_string(s.sampleRate) + " Hz>";
       });
@@ -216,6 +219,14 @@ void bindStems(py::module_& m) {
       py::arg("dir"), py::arg("sample_rate"),
       "Load the *.wav / *.flac stems of a directory (drums, bass, vocals, other, guitar|guitars; other audio files are\n"
       "summed into 'other' with a warning), resampled to sample_rate. Raises RuntimeError on failure.");
+  m.def(
+      "integrated_loudness_lufs",
+      [](const py::array& audio, double sampleRate) -> std::optional<double> {
+        const StemAudio a = arrayToStem("audio", audio);
+        return integratedLoudnessLufs(a[0].data(), a[1].data(), static_cast<std::int64_t>(a[0].size()), sampleRate);
+      },
+      py::arg("audio"), py::arg("sample_rate"),
+      "ITU-R BS.1770-4 integrated loudness (LUFS) of float audio (n,) (mono, both channels) or (2, n); None for silence or < 400 ms.");
   m.def("stem_set_from_arrays", &stemSetFromArrays, py::arg("stems"), py::arg("sample_rate"),
         "Build a StemSet from {name: float ndarray (n,) or (2, n)} already at sample_rate (padded to the longest).");
 

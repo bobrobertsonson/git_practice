@@ -15,6 +15,7 @@ add_library(sawblade_core STATIC
   src/nam_block.cpp
   src/delay.cpp
   src/wav_io.cpp
+  src/loudness.cpp
   src/stem_set.cpp
   src/stem_player.cpp
   src/sha256.cpp

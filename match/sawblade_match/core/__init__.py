@@ -64,5 +64,6 @@ StemSet = getattr(_core, "StemSet", None)
 StemPlayer = getattr(_core, "StemPlayer", None)
 load_stems = getattr(_core, "load_stems", None)
 stem_set_from_arrays = getattr(_core, "stem_set_from_arrays", None)
+integrated_loudness_lufs = getattr(_core, "integrated_loudness_lufs", None)
 
-__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError", "StemSet", "StemPlayer", "load_stems", "stem_set_from_arrays"]
+__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError", "StemSet", "StemPlayer", "load_stems", "stem_set_from_arrays", "integrated_loudness_lufs"]
