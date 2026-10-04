@@ -20,6 +20,10 @@ option(SAWBLADE_BUILD_PLUGIN "Build the JUCE plugin (VST3, AU on macOS, Standalo
 # so the normal build neither needs Python nor fetches pybind11.
 option(SAWBLADE_BUILD_PYTHON "Build the sawblade_core Python extension module" OFF)
 
+# Phase 5.0 spike: C++ htdemucs (demucs.cpp) stem separation. Off by default so the normal build
+# fetches and builds nothing extra. See spikes/separator/README.md.
+option(SAWBLADE_BUILD_SEPARATOR_SPIKE "Build the demucs.cpp stem-separation spike (spikes/separator)" OFF)
+
 # Warnings-as-errors apply to Sawblade targets only: link this interface target into them.
 # Third-party targets never link it and expose their headers as SYSTEM.
 add_library(sawblade_warnings INTERFACE)
@@ -46,4 +50,8 @@ endif()
 # After enable_testing() so the python_bindings ctest entry registers.
 if(SAWBLADE_BUILD_PYTHON)
   add_subdirectory(bindings/python)
+endif()
+
+if(SAWBLADE_BUILD_SEPARATOR_SPIKE)
+  add_subdirectory(spikes/separator)
 endif()
