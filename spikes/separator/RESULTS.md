@@ -6,7 +6,7 @@ Measured on the dev box on 2026-10-04. Everything here was produced by the scrip
 ## TL;DR
 
 - demucs.cpp (pinned `f1206e9a`) **reproduces Python Demucs**: with Python forced to the same settings the
-  residual is **-48 to -72 dB on every stem except one at -38 dB (synth 6s `other`, see the null section)** (see the null section). With
+  residual is **-48 to -72 dB on every stem except one at -38 dB (synth 6s `other`, see the null section)**. With
   the spec's `shifts=0` Python the residual is only about -16 to -28 dB (worse on low-level stems) because of two
   behaviours of demucs.cpp that differ from Python (below). Neither costs much SDR: on the real clip C++ and
   Python agree to within 0.3 dB (0.03 dB when the shift is matched).
