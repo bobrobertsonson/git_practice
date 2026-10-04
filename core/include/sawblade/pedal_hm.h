@@ -94,6 +94,7 @@ class HmPedal : public Processor {
 
   HmParams target_, applied_;
   bool dirty_ = false;
+  std::array<float, kHmNumLive> liveTarget_{};  // the last live values (float domain): identical values are ignored
   PedalImplConfig cfg_;
   double fs_ = 48000.0, fsOs_ = 192000.0;
   int latency_ = 0;

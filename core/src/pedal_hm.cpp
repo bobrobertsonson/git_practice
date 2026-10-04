@@ -54,6 +54,7 @@ void HmColorEq::process(float* io, int n) noexcept {
 }
 
 HmPedal::HmPedal(const HmParams& p, PedalImplConfig cfg) : target_(p), applied_(p), cfg_(cfg) {
+  hmLiveFromParams(p, liveTarget_.data());
   const int nAdaa = cfg_.adaa ? 2 * AdaaClipper::kLatency : 0;
   if (cfg_.oversample) {
     const int osTotal = Oversampler4x::roundTripLatencyOs() + nAdaa;
@@ -113,7 +114,10 @@ void HmPedal::retarget(bool immediate) noexcept {
 
 void HmPedal::setLiveParams(const float* values, int count) noexcept {
   const HmParams np = hmParamsFromLive(values, count);
-  if (np == target_) return;
+  std::array<float, kHmNumLive> nv;
+  hmLiveFromParams(np, nv.data());
+  if (nv == liveTarget_) return;  // same values (in float, as the host sends them): nothing to do
+  liveTarget_ = nv;
   target_ = np;
   dirty_ = true;
 }

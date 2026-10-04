@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <vector>
 
 #include "sawblade/adaa_clipper.h"
@@ -47,6 +48,7 @@ class MuffPedal : public Processor {
 
   MuffParams target_, applied_;
   bool dirty_ = false;
+  std::array<float, kMuffNumLive> liveTarget_{};  // the last live values (float domain): identical values are ignored
   PedalImplConfig cfg_;
   double fs_ = 48000.0, fsOs_ = 192000.0;
   int latency_ = 0, pad_ = 0;

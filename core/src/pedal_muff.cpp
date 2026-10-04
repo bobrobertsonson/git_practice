@@ -14,6 +14,7 @@ double stackCentre(const MuffParams& p) noexcept { return MuffVoicing::voiceCent
 }  // namespace
 
 MuffPedal::MuffPedal(const MuffParams& p, PedalImplConfig cfg) : target_(p), applied_(p), cfg_(cfg) {
+  muffLiveFromParams(p, liveTarget_.data());
   const int nAdaa = cfg_.adaa ? 2 * AdaaClipper::kLatency : 0;
   if (cfg_.oversample) {
     const int osTotal = Oversampler4x::roundTripLatencyOs() + nAdaa;
@@ -75,7 +76,10 @@ void MuffPedal::retarget(bool immediate) noexcept {
 
 void MuffPedal::setLiveParams(const float* values, int count) noexcept {
   const MuffParams np = muffParamsFromLive(values, count);
-  if (np == target_) return;
+  std::array<float, kMuffNumLive> nv;
+  muffLiveFromParams(np, nv.data());
+  if (nv == liveTarget_) return;  // same values (in float, as the host sends them): nothing to do
+  liveTarget_ = nv;
   target_ = np;
   dirty_ = true;
 }
