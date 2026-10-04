@@ -12,6 +12,7 @@ add_library(sawblade_core STATIC
   src/resample.cpp
   src/rt_resample.cpp
   src/ir.cpp
+  src/ir_mix.cpp
   src/nam_block.cpp
   src/delay.cpp
   src/wav_io.cpp

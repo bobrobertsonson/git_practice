@@ -200,7 +200,10 @@ json toJson(const AlignParams& a) {
 CabPreset parseCab(JsonObject& root, const fs::path& baseDir) {
   CabPreset c;
   JsonObject o = root.requireObject("cab");
-  c.mode = o.requireOneOf("mode", {"shared", "perPath"}) == "shared" ? CabMode::Shared : CabMode::PerPath;
+  {
+    const std::string m = o.requireOneOf("mode", {"shared", "perPath", "irMix"});
+    c.mode = m == "shared" ? CabMode::Shared : m == "perPath" ? CabMode::PerPath : CabMode::IrMix;
+  }
   c.enabled = o.boolean("enabled", true);
   c.normalize = o.boolean("normalize", true);
   auto cap = [&](const char* key) {
@@ -213,18 +216,21 @@ CabPreset parseCab(JsonObject& root, const fs::path& baseDir) {
   } else {
     c.irA = cap("irA");
     c.irB = cap("irB");
+    if (c.mode == CabMode::IrMix) c.mix = o.number("mix", 0.5, 0.0, 1.0);  // rejected (unknown key) in other modes
   }
   o.finish();
   return c;
 }
 
 json toJson(const CabPreset& c) {
-  json j = {{"mode", c.mode == CabMode::Shared ? "shared" : "perPath"}, {"enabled", c.enabled}, {"normalize", c.normalize}};
+  json j = {{"mode", c.mode == CabMode::Shared ? "shared" : c.mode == CabMode::PerPath ? "perPath" : "irMix"},
+            {"enabled", c.enabled}, {"normalize", c.normalize}};
   if (c.mode == CabMode::Shared) {
     j["ir"] = toJson(c.ir);
   } else {
     j["irA"] = toJson(c.irA);
     j["irB"] = toJson(c.irB);
+    if (c.mode == CabMode::IrMix) j["mix"] = c.mix;
   }
   return j;
 }

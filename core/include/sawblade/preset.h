@@ -90,11 +90,12 @@ struct AlignParams {
   bool operator==(const AlignParams&) const = default;
 };
 
-enum class CabMode { Shared, PerPath };
+enum class CabMode { Shared, PerPath, IrMix };
 struct CabPreset {
   CabMode mode = CabMode::Shared;
   Capture ir;          // shared
-  Capture irA, irB;    // perPath
+  Capture irA, irB;    // perPath and irMix
+  double mix = 0.5;    // irMix only: h = (1 - mix) * irA + mix * irB, in [0, 1]
   bool enabled = true;
   bool normalize = true;
   bool operator==(const CabPreset&) const = default;

@@ -180,12 +180,21 @@ so linear keeps level roughly constant; equal-power would bump the middle by up 
 ```jsonc
 "cab": { "mode": "shared",  "ir": Capture, "enabled": true }                 // live-compatible
 "cab": { "mode": "perPath", "irA": Capture, "irB": Capture, "enabled": true } // studio blend
+"cab": { "mode": "irMix", "irA": Capture, "irB": Capture, "mix": 0.5, "enabled": true } // two mics, one cab
 ```
 - `shared`: the blended signal is convolved with one IR. **Live-compatible**: a no-cab NAM
   export (`blend` of the two paths before the cab) plus that IR (convolved with post EQ) is
   exact.
 - `perPath`: each path is convolved with its own IR before the blend. **Studio blend**: only
   the with-cab export is exact. The UI must state this.
+- `irMix`: two IRs (typically two mic shots of one cab) combined into **one** IR,
+  `h = (1 − mix) · hA + mix · hB`. Each IR is loaded exactly as in `shared` (left channel,
+  resampled, truncated to 2.0 s, L2-normalised when `normalize` is true); the shorter one is
+  zero-padded; the sum is **not** re-normalised. `mix` is in [0, 1] (default 0.5; out of range is
+  a preset error), `irA` and `irB` are both required, and the strict-key rules hold: `ir` is
+  rejected in `irMix` mode and `mix` in the other modes. One convolver runs on `h` at the same
+  place in the chain and with the same latency as `shared`. It is still one combined IR, so
+  the no-cab export is exact (**live-compatible**).
 - IR files: mono WAV (stereo → left channel used, with a warning), any rate (resampled at
   load), truncated to 2.0 s max, normalized so the IR's L2 norm equals 1 unless
   `"normalize": false` is set on the cab object.
@@ -226,7 +235,9 @@ clamped (the plugin reader never throws). Songs and their stems are never stored
 
 ## Derived properties (not stored; reported by tonerender / plugin)
 
-- `liveCompatible` = `cab.mode == "shared"`.
+- `liveCompatible` = `cab.mode` is `"shared"` or `"irMix"`.
+- `cabMode` (render report): `"shared"`, `"perPath"` or `"irMix"`; the report's `captures` lists
+  `cab.irA` and `cab.irB` for `irMix`.
 - `exportExactness`: `{ "withCab": true, "noCab": liveCompatible }`.
 - `latencySamples` per path and total: processing latency only (alignment delay is part of
   the tone and reported separately as `alignDelay`).
