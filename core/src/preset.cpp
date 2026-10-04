@@ -15,7 +15,9 @@ namespace fs = std::filesystem;
 
 bool operator==(const GateParams& a, const GateParams& b) {
   return a.enabled == b.enabled && a.thresholdDb == b.thresholdDb && a.hysteresisDb == b.hysteresisDb &&
-         a.attackMs == b.attackMs && a.holdMs == b.holdMs && a.releaseMs == b.releaseMs && a.rangeDb == b.rangeDb;
+         a.attackMs == b.attackMs && a.holdMs == b.holdMs && a.releaseMs == b.releaseMs && a.rangeDb == b.rangeDb &&
+         a.mode == b.mode && a.ratio == b.ratio && a.keyHighPassHz == b.keyHighPassHz &&
+         a.releaseCurve == b.releaseCurve;
 }
 bool operator==(const EqBand& a, const EqBand& b) {
   return a.type == b.type && a.freq == b.freq && a.gainDb == b.gainDb && a.q == b.q && a.enabled == b.enabled;
@@ -87,13 +89,24 @@ GateParams parseGate(JsonObject& root) {
   g.holdMs = o->number("holdMs", g.holdMs, 0.0, 10000.0);
   g.releaseMs = o->number("releaseMs", g.releaseMs, 0.01, 10000.0);
   g.rangeDb = o->number("rangeDb", g.rangeDb, -120.0, 0.0);
+  g.mode = o->oneOf("mode", "gate", {"gate", "expander"}) == "expander" ? GateMode::Expander : GateMode::Gate;
+  g.ratio = o->number("ratio", g.ratio, 1.5, 10.0);
+  g.keyHighPassHz = o->number("keyHighPassHz", g.keyHighPassHz, 0.0, 400.0);
+  if (g.keyHighPassHz != 0.0 && g.keyHighPassHz < 40.0)
+    throw PresetError(o->child("keyHighPassHz"), "must be 0 (off) or in [40, 400]");
+  g.releaseCurve =
+      o->oneOf("releaseCurve", "one-pole", {"one-pole", "linear-db"}) == "linear-db" ? GateReleaseCurve::LinearDb
+                                                                                      : GateReleaseCurve::OnePole;
   o->finish();
   return g;
 }
 
 json toJson(const GateParams& g) {
   return {{"enabled", g.enabled}, {"thresholdDb", g.thresholdDb}, {"hysteresisDb", g.hysteresisDb},
-          {"attackMs", g.attackMs}, {"holdMs", g.holdMs}, {"releaseMs", g.releaseMs}, {"rangeDb", g.rangeDb}};
+          {"attackMs", g.attackMs}, {"holdMs", g.holdMs}, {"releaseMs", g.releaseMs}, {"rangeDb", g.rangeDb},
+          {"mode", g.mode == GateMode::Expander ? "expander" : "gate"}, {"ratio", g.ratio},
+          {"keyHighPassHz", g.keyHighPassHz},
+          {"releaseCurve", g.releaseCurve == GateReleaseCurve::LinearDb ? "linear-db" : "one-pole"}};
 }
 
 BusCompParams parseBusComp(JsonObject& root) {

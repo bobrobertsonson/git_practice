@@ -159,6 +159,31 @@ TEST_CASE("Preset: minimal source (provider + id) is accepted and round-trips", 
   REQUIRE(parsePreset(toJson(p), "/base") == p);
 }
 
+TEST_CASE("Preset: gate expander fields parse, round trip and validate", "[preset][gate]") {
+  json j = minimal();
+  j["gate"] = {{"mode", "expander"}, {"ratio", 8.0}, {"keyHighPassHz", 120.0}, {"releaseCurve", "linear-db"}};
+  const Preset p = parsePreset(j, "/base");
+  REQUIRE(p.gate.mode == GateMode::Expander);
+  REQUIRE(p.gate.ratio == 8.0);
+  REQUIRE(p.gate.keyHighPassHz == 120.0);
+  REQUIRE(p.gate.releaseCurve == GateReleaseCurve::LinearDb);
+  REQUIRE(parsePreset(toJson(p), "/base") == p);
+
+  j = minimal(); j["gate"] = json::object();  // defaults preserve v1 behaviour
+  const Preset d = parsePreset(j, "/base");
+  REQUIRE(d.gate.mode == GateMode::Gate);
+  REQUIRE(d.gate.ratio == 4.0);
+  REQUIRE(d.gate.keyHighPassHz == 0.0);
+  REQUIRE(d.gate.releaseCurve == GateReleaseCurve::OnePole);
+
+  j = minimal(); j["gate"] = {{"mode", "bogus"}}; requireErrorAt(j, "gate.mode");
+  j = minimal(); j["gate"] = {{"ratio", 1.0}}; requireErrorAt(j, "gate.ratio");
+  j = minimal(); j["gate"] = {{"ratio", 11.0}}; requireErrorAt(j, "gate.ratio");
+  j = minimal(); j["gate"] = {{"keyHighPassHz", 20.0}}; requireErrorAt(j, "gate.keyHighPassHz");
+  j = minimal(); j["gate"] = {{"keyHighPassHz", 500.0}}; requireErrorAt(j, "gate.keyHighPassHz");
+  j = minimal(); j["gate"] = {{"releaseCurve", "log"}}; requireErrorAt(j, "gate.releaseCurve");
+}
+
 TEST_CASE("Preset errors carry the JSON path", "[preset]") {
   SECTION("unknown keys") {
     json j = minimal(); j["bogus"] = 1; requireErrorAt(j, "bogus");

@@ -195,3 +195,163 @@ TEST_CASE("Gate process performs no allocations", "[gate][alloc]") {
   }
   REQUIRE(allocs == 0);
 }
+
+// ---- Phase 3.5: expander mode, key high-pass, linear-dB release ----
+
+namespace {
+
+GateParams expanderParams() {
+  GateParams p;
+  p.mode = GateMode::Expander;
+  p.ratio = 4.0;
+  p.thresholdDb = -50.0;
+  p.hysteresisDb = 6.0;  // close threshold -56 dBFS
+  p.holdMs = 0.0;
+  p.rangeDb = -60.0;
+  p.releaseMs = 5.0;
+  p.attackMs = 0.5;
+  return p;
+}
+
+}  // namespace
+
+TEST_CASE("Expander static curve matches the analytic law", "[gate][expander]") {
+  const GateParams p = expanderParams();
+  const double closeDb = p.thresholdDb - p.hysteresisDb;
+  // Constant (DC) key levels below the close threshold give a constant envelope. Start open so
+  // the state machine passes through the close path.
+  for (const double envDb : {-58.0, -62.0, -70.0, -80.0, -90.0}) {
+    Gate g = makeGate(p);
+    std::vector<float> key(ms(100), 0.1f);
+    key.insert(key.end(), ms(1500), static_cast<float>(dbfsToPeak(envDb)));
+    const auto gain = gainTrace(g, key);
+    const double expected = std::max(p.rangeDb, -(p.ratio - 1.0) * (closeDb - envDb));
+    INFO("env " << envDb << " dB");
+    REQUIRE(std::fabs(dbOf(gain.back()) - expected) <= 0.1);
+  }
+  SECTION("above the close threshold: unity") {
+    Gate g = makeGate(p);
+    std::vector<float> key(ms(100), 0.1f);
+    key.insert(key.end(), ms(500), static_cast<float>(dbfsToPeak(closeDb + 1.0)));
+    REQUIRE(std::fabs(dbOf(gainTrace(g, key).back())) < 0.1);
+  }
+  SECTION("ratio 8 expands harder") {
+    GateParams q = p;
+    q.ratio = 8.0;
+    Gate g = makeGate(q);
+    std::vector<float> key(ms(100), 0.1f);
+    key.insert(key.end(), ms(1500), static_cast<float>(dbfsToPeak(-58.0)));
+    REQUIRE(std::fabs(dbOf(gainTrace(g, key).back()) - (-14.0)) <= 0.1);
+  }
+}
+
+namespace {
+
+// Mean (over the second half) of the expander gain in dB for a given key, ratio 2 and a close
+// threshold of 0 dBFS, so gainDb = envDb exactly (never limited by the range).
+double meanExpanderGainDb(const std::vector<float>& key, double hpHz) {
+  GateParams p;
+  p.mode = GateMode::Expander;
+  p.ratio = 2.0;
+  p.thresholdDb = 0.0;
+  p.hysteresisDb = 0.0;
+  p.holdMs = 0.0;
+  p.rangeDb = -120.0;
+  p.releaseMs = 0.05;  // follows the target nearly instantly
+  p.attackMs = 0.01;
+  p.keyHighPassHz = hpHz;
+  Gate g = makeGate(p);
+  std::vector<float> io(key.size(), 1.0f);
+  g.processKeyed(key.data(), io.data(), static_cast<int>(key.size()));
+  double sum = 0.0;
+  std::size_t n = 0;
+  for (std::size_t i = key.size() / 2; i < io.size(); ++i, ++n) sum += dbOf(io[i]);
+  return sum / static_cast<double>(n);
+}
+
+}  // namespace
+
+TEST_CASE("Key high-pass: 12 dB/oct magnitude at 3 points, audio untouched", "[gate][expander]") {
+  const double fc = 120.0;
+  // The reference runs the same peak-follower on a pure sine of the analytic filtered amplitude
+  // (no filter), so envelope ripple cancels and only the filter magnitude is under test.
+  for (const double f : {60.0, 120.0, 480.0}) {
+    DYNAMIC_SECTION("tone at " << f << " Hz") {
+      const double peak = 0.2;
+      const double mag = 1.0 / std::sqrt(1.0 + std::pow(fc / f, 4.0));  // 2nd-order Butterworth
+      const double measured = meanExpanderGainDb(sine(f, kFs, ms(3000), peak), fc);
+      const double reference = meanExpanderGainDb(sine(f, kFs, ms(3000), peak * mag), 0.0);
+      REQUIRE(std::fabs(measured - reference) <= 0.15);
+    }
+  }
+  SECTION("audio path is not filtered") {
+    GateParams q;
+    q.keyHighPassHz = 400.0;
+    q.thresholdDb = -120.0;  // always open
+    Gate g = makeGate(q);
+    const std::vector<float> x = sine(50.0, kFs, ms(300), 0.5);
+    std::vector<float> y = x;
+    g.process(y.data(), static_cast<int>(y.size()));
+    for (std::size_t i = ms(50); i < x.size(); ++i) REQUIRE(y[i] == x[i]);
+  }
+}
+
+TEST_CASE("Linear-dB release falls at constant dB per ms", "[gate][expander]") {
+  GateParams p;
+  p.releaseCurve = GateReleaseCurve::LinearDb;
+  p.releaseMs = 150.0;
+  p.rangeDb = -50.0;
+  p.holdMs = 0.0;
+  Gate g = makeGate(p);
+  std::vector<float> key = tone(-20.0, ms(200));
+  const std::size_t dropAt = key.size();
+  const auto low = tone(-90.0, ms(600));
+  key.insert(key.end(), low.begin(), low.end());
+  const auto gain = gainTrace(g, key);
+  std::size_t start = dropAt;
+  while (start < gain.size() && dbOf(gain[start]) > -0.5) ++start;
+  const double expectedSlope = -p.rangeDb / p.releaseMs;  // dB per ms (magnitude)
+  const std::size_t a = start + ms(30), b = start + ms(110);
+  const double slope = (dbOf(gain[a]) - dbOf(gain[b])) / (static_cast<double>(b - a) / (kFs * 0.001));
+  REQUIRE(std::fabs(slope - expectedSlope) <= 0.05 * expectedSlope);
+  REQUIRE(std::fabs(dbOf(gain.back()) - p.rangeDb) <= 0.01);
+  std::size_t end = start;
+  while (end < gain.size() && dbOf(gain[end]) > p.rangeDb + 0.05) ++end;
+  REQUIRE(std::fabs(static_cast<double>(end - start) / (kFs * 0.001) - p.releaseMs) <= 0.05 * p.releaseMs + 1.0);
+}
+
+TEST_CASE("Expander output is independent of block size", "[gate][expander]") {
+  GateParams p = expanderParams();
+  p.keyHighPassHz = 120.0;
+  p.releaseCurve = GateReleaseCurve::LinearDb;
+  Gate a = makeGate(p);
+  Gate b = makeGate(p);
+  std::vector<float> x = noise(ms(500), 11, 0.2f);
+  for (std::size_t i = ms(250); i < x.size(); ++i) x[i] *= 1e-4f;
+  std::vector<float> y1 = x, y2 = x;
+  a.process(y1.data(), static_cast<int>(y1.size()));
+  processChunked(b, y2, {1, 64, 333, 7});
+  REQUIRE(y1 == y2);
+}
+
+TEST_CASE("Expander process performs no allocations", "[gate][alloc][expander]") {
+  GateParams p = expanderParams();
+  p.keyHighPassHz = 120.0;
+  p.releaseCurve = GateReleaseCurve::LinearDb;
+  Gate g = makeGate(p);
+  std::vector<float> buf = noise(1024, 5, 0.1f);
+  std::vector<float> key = noise(1024, 6, 0.01f);
+  const int sizes[] = {1, 7, 64, 333, 1024, 128, 2, 512};
+  long allocs = -1;
+  {
+    AllocGuard guard;
+    for (const int n : sizes) {
+      g.process(buf.data(), n);
+      g.processKeyed(key.data(), buf.data(), n);
+    }
+    g.setParams(p);
+    g.reset();
+    allocs = guard.count();
+  }
+  REQUIRE(allocs == 0);
+}

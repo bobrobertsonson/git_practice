@@ -42,10 +42,20 @@ Readers must reject `version` greater than they support and migrate lower versio
   "attackMs": 0.5,        // gain ramp up time
   "holdMs": 20.0,         // minimum open time after envelope falls below close threshold
   "releaseMs": 60.0,      // gain ramp down time
-  "rangeDb": -90.0        // attenuation when fully closed
+  "rangeDb": -90.0,       // attenuation when fully closed
+  "mode": "gate",         // "gate" | "expander" (phase 3.5)
+  "ratio": 4.0,           // expander only: downward ratio below the close threshold, 1.5-10
+  "keyHighPassHz": 0,     // 0 = off, else 40-400; 12 dB/oct high-pass on the key signal only
+  "releaseCurve": "one-pole"  // "one-pole" | "linear-db" (constant dB/ms: |rangeDb| over releaseMs)
 }
 ```
 Defaults are the values shown, with `enabled: false` if the object is omitted.
+Expander mode: while closed (envelope below the close threshold, hold elapsed) the gain
+follows `max(rangeDb, -(ratio-1) * (closeDb - envDb))` instead of the flat `rangeDb`;
+hysteresis and hold are as in gate mode. `keyHighPassHz` filters the key only, never the audio.
+`releaseMs` applies when the gain falls; with `releaseCurve: "linear-db"` the fall is a straight
+dB ramp (slope `-rangeDb/releaseMs` dB per ms) toward the target. Defaults reproduce v1 behaviour
+exactly. Out-of-range values, or `keyHighPassHz` in (0, 40), are preset errors (exit 3).
 Envelope detector: peak follower with 0.1 ms attack and 10 ms release (fixed in v1).
 Gate is never part of any NAM export.
 
