@@ -4,16 +4,16 @@
 
 | | |
 |---|---|
-| Main-branch commit built | `d310518` (`origin/claude/sawblade-plugin-setup-7k0b8q`; previous run: `4f725fe`, same results) |
+| Main-branch commit built | `435838a` (`origin/claude/sawblade-plugin-setup-7k0b8q`, Phase 5.1 StemPlayer merge) + fix `205d03b`. Earlier runs: `4f725fe`, `d310518` |
 | macOS | 26.6 (25G72) |
 | Xcode | none; Command Line Tools only (Apple clang 21.0.0, clang-2100.0.123.102). Full Xcode not needed |
 | Chip | Apple M5 (arm64) |
-| Build | `cmake -S . -B build-mac -G Ninja -DCMAKE_BUILD_TYPE=Release -DSAWBLADE_BUILD_PLUGIN=ON`, CMake 4.4.4, Ninja. Clean, 0 compiler warnings (only `ranlib: ... has no symbols` notes for JUCE's empty ARA/LV2 units) |
+| Build | `cmake -S . -B build-mac -G Ninja -DCMAKE_BUILD_TYPE=Release -DSAWBLADE_BUILD_PLUGIN=ON`, CMake 4.4.4, Ninja. At `435838a` the build **failed** under clang -Werror (fixed, see below); after the fix: clean, 0 compiler warnings (only `ranlib: ... has no symbols` notes for JUCE's empty ARA/LV2 units) |
 | Artefacts | AU `Sawblade.component`, VST3 `Sawblade.vst3`, Standalone `Sawblade.app` (ad-hoc signed) |
 
 ## ctest
 
-`ctest --test-dir build-mac --output-on-failure`: **150 tests, 148 passed, 1 failed, 1 skipped.**
+`ctest --test-dir build-mac --output-on-failure`: **187 tests, 185 passed, 1 failed, 1 skipped.**
 
 - Skipped (expected): `plugin:test harness: LockGuard sees mutex acquisitions`, which runs on Linux only (`--wrap` linker flags).
 - Failed: `plugin:Processor: starts as a zero-latency pass-through (Init preset)` (`plugin/tests/test_processor.cpp:164`, `CHECK(y == x)`). The output is the input times 1.00000012f (one float ulp hot) on 989 of 1000 samples. Latency is correctly 0.
@@ -44,7 +44,9 @@ Plugins were copied to `~/Library/Audio/Plug-Ins/Components/Sawblade.component` 
 
 ## Fixes made
 
-None. The build and packaging needed no changes on macOS.
+- `205d03b` **Fix clang -Werror build break on macOS** (spec `docs/specs/mac1-clang_werror.md`; dsp-engineer, reviewer **ACCEPT** with a clean `build-review` configure + build + ctest). StemPlayer (spec 5.1) broke the Apple clang build: `-Wunused-private-field` on `StemPlayer::master_` (`core/include/sawblade/stem_player.h:198`), then `-Wunused-const-variable` on `kD`/`kB`/`kV`/`kG` (`tests/test_stem_player.cpp:28-31`). GCC has neither warning, so Linux was green. All five symbols were unreferenced and were deleted (5 lines). No functional or DSP change, no flags weakened, no suppressions.
+- Note for the lead: consider a macOS/clang CI job (or `-Wunused-private-field -Wunused-const-variable` checks) so this doesn't recur.
+- Process note: this session started outside the repo, so the project's `.claude/agents` were not registered. The dsp-engineer and reviewer ran as general-purpose agents (model sonnet) following `.claude/agents/dsp-engineer.md` / `reviewer.md` verbatim.
 
 ## Play through the Standalone
 
