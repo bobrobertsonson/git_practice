@@ -58,7 +58,23 @@ goes in `plugin/src/presets/`, with minimal edits to `PluginEditor.*` / `PluginP
    - Exit 4 shows the not-logged-in message from 9a.
    - A missing executable shows LOCATE…
    - The current sound never changes until the resolved preset has loaded.
-3. **Python (match-engineer):** `resolve --progress-json` prints one JSON line per capture
+3. **Cache fallback in the core loader (added from user feedback).** Loading
+   `presets/matched/barbaric_v4.json` unresolved failed with "file not found:
+   …/captures/58569_496942.nam" even though the capture was cached. The fix:
+   - When a capture's `file` (a NAM model or an IR) does not exist and
+     `source.provider == "tone3000"` with `id` and `modelId`, the core capture loader tries
+     `<cacheRoot>/<id>/<modelId>.nam`, or `.wav` for IRs.
+   - `cacheRoot` follows `match/sawblade_match/t3k/cache.py`: `$SAWBLADE_CACHE_DIR` if set,
+     else `~/.cache/sawblade/captures`.
+   - The `sha256` is verified when the preset has one; a mismatch is an error.
+   - It works everywhere the core loads presets (tonerender, plugin, bindings).
+   - When the capture is not cached either, the error keeps the JSON path and adds:
+     "not in the capture cache either; run: sawblade-t3k resolve <preset file>".
+   - The plugin's step 1 check ("file does not exist") counts a cache hit as present, so a
+     cached preset loads with no child process.
+   - **Tests:** a missing local file found in a temp cache (via the env override), a sha
+     mismatch rejected, and the not-cached message.
+4. **Python (match-engineer):** `resolve --progress-json` prints one JSON line per capture
    (`{"done", "total", "capture": <json path>, "title"}`), flushed. Plus a pytest with the
    client mocked.
 
