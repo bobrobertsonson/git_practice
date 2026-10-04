@@ -2,6 +2,7 @@
 // section 5.1, acceptance test 12). Driven like a host, no window.
 #include <map>
 #include <set>
+#include <thread>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -462,4 +463,42 @@ TEST_CASE("Pedal params: the CIRCUIT switch works while audio runs and the engin
   if (LockGuard::enabled()) CHECK(h.locks == 0);
   CHECK_FALSE(h.nonFinite);
   CHECK(h.p.circuitSlot()->circuit == Circuit::Chainsaw);
+}
+
+TEST_CASE("Pedal params: the CIRCUIT switch set from another thread is retried by the message-thread timer", "[pedalface][swap]") {
+  Host h(48000.0, 512);
+  h.load(kChainsawDir / "classic_buzzsaw.json");
+  const std::uint64_t builds = h.p.engineBuilds();
+  std::thread t([&] { h.setParam(kSawCircuit, 1.0); });  // not the message thread: flagged, not handled inline
+  t.join();
+  CHECK(h.p.engineBuilds() == builds);
+  for (int i = 0; i < 40 && h.p.engineBuilds() == builds; ++i) {
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    h.p.waitForLoader();
+  }
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.engineBuilds() == builds + 1);
+  CHECK(h.p.circuitSlot()->circuit == Circuit::BigFuzz);
+  CHECK(h.p.currentPreset().a.blocks[0].type == "pedal.muff");
+}
+
+TEST_CASE("Pedal params: a failed circuit-switch build writes the circuit parameters back", "[pedalface][swap]") {
+  TempDir t;
+  const fs::path nam = t.dir / "model.nam";
+  fs::copy_file(kFixtures / "nam" / "linear_identity.nam", nam);
+  json j = json::parse(std::ifstream(kChainsawDir / "classic_buzzsaw.json"));
+  j["paths"]["b"] = {{"enabled", true}, {"blocks", json::array({{{"id", "b1"}, {"type", "nam"}, {"model", {{"file", nam.string()}}}}})}};
+  j["cab"]["ir"]["file"] = (kFixtures / "ir" / "impulse.wav").string();
+  const fs::path file = t.dir / "with_nam.json";
+  std::ofstream(file) << j.dump(2);
+  Host h(48000.0, 512);
+  h.load(file);
+  REQUIRE(h.param(kSawCircuit) == 0.0);
+  fs::remove(nam);  // the switch rebuilds everything: the model is gone, so the build fails
+  h.setParam(kSawCircuit, 1.0);
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(h.p.status().error.empty());
+  CHECK(h.p.circuitSlot()->circuit == Circuit::Chainsaw);
+  CHECK(h.p.currentPreset().a.blocks[0].type == "pedal.hm");
+  CHECK(h.param(kSawCircuit) == 0.0);  // the lever follows the sounding circuit again
 }

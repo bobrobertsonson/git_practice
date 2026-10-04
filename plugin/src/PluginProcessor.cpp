@@ -128,8 +128,11 @@ std::optional<CircuitSlot> SawbladeProcessor::circuitSlot() const {
 
 // --- CIRCUIT switch -----------------------------------------------------------------------------
 void SawbladeProcessor::parameterChanged(const juce::String&, float) {
-  if (committing_.load() > 0) return;  // commit() rewriting the parameters from a preset, not a user edit
-  if (juce::MessageManager::existsAndIsCurrentThread())
+  // During commit() the parameters are being rewritten from a preset, but an edit that lands meanwhile
+  // must not be lost: flag it, the timer retries (circuitChanged() is a no-op when nothing differs).
+  if (committing_.load() > 0)
+    circuitDirty_.store(true);
+  else if (juce::MessageManager::existsAndIsCurrentThread())
     circuitChanged();
   else
     circuitDirty_.store(true);  // audio or loader thread: the timer handles it on the message thread
@@ -300,6 +303,8 @@ void SawbladeProcessor::submit(bool fallbackToInit) {
 }
 
 void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader thread
+  bool restoreCircuit = false;
+  {
   if (o.published) {
     // The host learns the new latency as soon as the engine exists; the audio thread switches to
     // it at the start of its next block. (setLatencySamples is not audio-thread safe, so it is
@@ -312,7 +317,10 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     status_.loading = false;
     status_.error = o.error;
   }
-  if (!o.built && !o.superseded && o.wanted && wanted_ == o.wanted) wanted_.reset();  // failed: keep the previous preset
+  if (!o.built && !o.superseded && o.wanted && wanted_ == o.wanted) {
+    wanted_.reset();  // failed: keep the previous preset
+    restoreCircuit = true;
+  }
   if (o.published) {
     status_.latencySamples = o.latencySamples;
     status_.hostRate = o.hostRate;
@@ -322,6 +330,21 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     status_.resampling = std::fabs(o.modelRate - o.hostRate) > 1e-6;
     status_.info = o.info;
     if (o.built) status_.presetName = o.presetName;
+  }
+  }
+  if (restoreCircuit) {
+    // A failed load (e.g. a circuit switch) keeps the previous preset: the CIRCUIT lever and the circuit set
+    // must show what is sounding and saved, not what was asked for.
+    Preset prev;
+    {
+      std::lock_guard<std::mutex> lk(mutex_);
+      prev = preset_;
+    }
+    const ParamValues v = paramsFromPreset(prev);
+    committing_.fetch_add(1);
+    for (int i = kSawCircuit; i < kNumParams; ++i)
+      paramObj_[static_cast<std::size_t>(i)]->setValueNotifyingHost(paramObj_[static_cast<std::size_t>(i)]->convertTo0to1(static_cast<float>(v[static_cast<std::size_t>(i)])));
+    committing_.fetch_sub(1);
   }
 }
 
