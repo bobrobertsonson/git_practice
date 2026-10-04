@@ -263,6 +263,33 @@ Pictures come from `plugin/assets/` (our own renders, embedded with `juce_add_bi
 (disabled, titled, with a tooltip saying so): A/B, MATCH, EXPORT NAM, previous / next preset, BROWSE CAPTURES,
 LEARN GATE, "+ PEDAL", CPU readout, the footswitch (visual bypass only).
 
+### Cab mic page (phase 9a)
+
+Double-click the cab in the rig to open the mic page (an overlay over the rig and inspector; "< RIG" closes it; open /
+closed is UI state and is never saved). Code: `plugin/src/mic/`.
+
+- **IR pack:** one TONE3000 IR tone with many models (one IR per model), or a local folder of `.wav` files, or just the cab's
+  current IR. `IrNameParser` reads each model name (speaker type and slot, mic model and type, distance, position, cab
+  size; tolerant, unknown tokens are ignored). `IrPack` maps every model to a point on the open cab view using the sidecar
+  (`assets/cab_*_open.json`: driver centres and cone radii in image pixels): the speaker slot picks the driver, the position
+  gives the offset from the dust cap as a fraction of the cone radius (cap 0, cap edge 0.3, cone 0.6, edge 0.9, off axis
+  0.6; a bare position number spreads over 0..0.9; unknown 0.3), towards the cab centre. Models at the same point are
+  one dot. The 2x12 view is used when most models that name a cab size say 2x12.
+- **Snap:** the mic follows the mouse; on mouse-up it snaps to the nearest dot (ties to the lower model) and loads the
+  dot's model with the current mic and the nearest distance (else its first model). Nothing loads while dragging.
+- **Loading** goes through `SawbladeProcessor::loadPreset` (the normal off-thread build and the 30 ms equal-power swap);
+  `MicSession` builds the preset from `currentPreset()` with only the cab replaced. A/B toggles the last two chosen IRs
+  of the active mic, NEXT POSITION goes to the next dot.
+- **BLEND 2 MICS** switches the cab to `irMix` (`irA` = current IR, `irB` = the same IR, mix 0.5), adds a second draggable
+  mic and the MIX fader (not a host parameter; at most one rebuild per 150 ms while dragging, one on release). BLEND off
+  returns to `shared` with `irA`. An `irMix` preset opens with BLEND on. In `perPath` mode the page is read-only.
+- **LOAD PACK** (shown when the cab's capture has a TONE3000 tone id) runs `sawblade-t3k pack <toneId> -o
+  <appdata>/sawblade/packs/<toneId>.json --progress-json` (`presets/T3kTool`) on a background thread with a progress bar and
+  CANCEL; the manifest is cached and found again by the cab's tone id on reopen. The executable is
+  `t3kExecutable` in `<appdata>/sawblade/settings.json` (default `<repo>/match/.venv/bin/sawblade-t3k`; LOCATE... saves
+  it). Exit code 4 means "not logged in" (run `sawblade-t3k login` in a terminal). `<appdata>` is
+  `~/.local/share/sawblade` (Linux), `~/Library/Application Support/Sawblade` (macOS); `SAWBLADE_APPDATA` overrides it.
+
 ## Tests
 
 `sawblade_editor_tests` (`plugin/tests/test_editor.cpp`, ctest prefix `editor: `, run under `xvfb-run -a` when
@@ -270,8 +297,12 @@ available): snapshots to `build/screenshots/sawblade_skin_{1x,2x}.png`, resizing
 mapping, knob interaction, footswitch / LED, accessibility, and the `plugin/assets/` budget (< 25 MB). The play-along
 tests cover the panel (exists, closed by default, opens from the top bar), its controls bound to the processor, folder
 drop, the missing-folder message, and screenshots `build/screenshots/sawblade_playalong_{closed,open}_1x.png`.
+`plugin/tests/test_mic_page.cpp` covers the mic page (open from the rig, dots, drag and snap, fields and combo boxes, BLEND
+and the MIX fader, read-only studio mode, LOAD IR FOLDER, LOAD PACK through a fake `sawblade-t3k`) and the screenshots
+`build/screenshots/sawblade_micpage_{rig,single,blend}_1x.png`.
 
-`sawblade_plugin_tests` (headless): `plugin/tests/test_engine.cpp` (Engine, no JUCE),
+`sawblade_plugin_tests` (headless): `plugin/tests/test_mic.cpp` (IR name parser, pack and dot layout, snapping, choosing
+models through the processor, the `sawblade-t3k` runner and settings, with fake executables), `plugin/tests/test_engine.cpp` (Engine, no JUCE),
 `plugin/tests/test_processor.cpp` (the processor driven like a host) and `plugin/tests/test_playalong.cpp` (the backing:
 level rule, queue, Standalone and host-follow transport, rig-latency alignment, offset, state, zero allocations and
 locks with the backing playing; stems are synthesised into a temp dir, no audio is committed). Audio-thread rules are
