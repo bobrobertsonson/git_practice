@@ -182,7 +182,7 @@ class M:
         return n
 
 
-def mat_powder(art, ink_a_hex, ink_b_hex, coat=0.0065, gain_a=0.45):
+def mat_powder(art, ink_a_hex, ink_b_hex, coat=0.0065, gain_a=0.45, coat_rgb=None, gain_b=0.62):
     """Black powder-coated plate carrying the stencil artwork (R accent ink, G bone ink, B scratch-through)."""
     s = M('powder_coat')
     tc = s.n('ShaderNodeTexCoord')
@@ -222,12 +222,12 @@ def mat_powder(art, ink_a_hex, ink_b_hex, coat=0.0065, gain_a=0.45):
     # worn metal is rough/satin, never mirror-like: blend roughness toward 0.5 where paint is gone
     rw = s.math('ADD', s.math('MULTIPLY', rr, s.math('SUBTRACT', 1.0, (wear2, 'Value'))), s.math('MULTIPLY', (wear2, 'Value'), 0.5))
     c1 = s.n('ShaderNodeMix', data_type='RGBA')
-    c1.inputs['A'].default_value = (coat, coat, coat * 1.05, 1)
+    c1.inputs['A'].default_value = (tuple(coat_rgb) + (1,)) if coat_rgb is not None else (coat, coat, coat * 1.05, 1)
     c1.inputs['B'].default_value = tuple(c * gain_a for c in hexcol(ink_a_hex)[:3]) + (1,)
     s.l(ink_o, 'Value', c1, 'Factor')
     c2 = s.n('ShaderNodeMix', data_type='RGBA')
     s.l(c1, 'Result', c2, 'A')
-    c2.inputs['B'].default_value = tuple(c * 0.62 for c in hexcol(ink_b_hex)[:3]) + (1,)
+    c2.inputs['B'].default_value = tuple(c * gain_b for c in hexcol(ink_b_hex)[:3]) + (1,)
     s.l(ink_g, 'Value', c2, 'Factor')
     c3 = s.n('ShaderNodeMix', data_type='RGBA')
     s.l(c2, 'Result', c3, 'A')
@@ -1094,7 +1094,7 @@ def run(spec):
             before = set(bpy.data.objects)
             build_enclosure(mats['powder'], W_ - 1.0, L_ - 1.0, H_, r=3.0, bev=0.8, nb=4, name='faceplate')
             piping_loop(W_ / 2 + 1.5, L_ / 2 + 1.5, 6.0, 3.5, 2.6, mats['black'])
-        if kind == 'cab':
+        if kind in ('cab', 'piece'):
             knobs = spec['build'](mats, mode); root = None
         else:
             knobs = spec['populate'](mats, mode)
@@ -1369,3 +1369,211 @@ def amp_spec(name, art, ink_a, ink_b, oled_lines, ink_gain=0.45, led_rgb=(1.0, 0
         k=3.2, center=(0, 0, 0.13),
         hero=dict(kind='persp', loc=(0.70, -1.30, 0.74), target=(0, 0, 0.12), lens=70, k=3.2),
         ortho=dict(kind='ortho', loc=(0, -2.0, 0.13), rot=(90, 0, 0), ortho_scale=0.62, k=3.2), ortho_res=(1600, 700))
+
+
+# ----------------------------------------------------------------- helpers for importable piece builders (appended)
+def set_piece_dims(w, l, h):
+    """The part builders (Knob, add_text, build_footswitch...) read the module globals W_/L_/H_/Z (top-face height).
+    Piece builders call this first so several pieces of different sizes can be built into one scene."""
+    global W_, L_, H_, Z
+    W_, L_, H_ = w, l, h
+    Z = h
+
+def make_standard_mats(art=None, ink_a='#ff6a1a', ink_b='#e8e4d8', led_rgb=(1.0, 0.20, 0.0, 1), led_off='#5a1c05'):
+    """The material dict `run()` builds inline (same keys), for scenes that do not go through run()."""
+    if art is None:
+        art = bpy.data.images.new('blank', 4, 4, alpha=True); art.colorspace_settings.name = 'Non-Color'
+    mats = dict(
+        powder=mat_powder(art, ink_a, ink_b), chrome=mat_chrome(), chrome_dark=mat_chrome('chrome_dark', 0.25),
+        chrome_sat=mat_chrome('chrome_satin', 0.22), alu=mat_alu_brushed(), black=mat_black_anodised(),
+        white=mat_ink('inlay_white', hexcol('#e8e4d8'), 0.45),
+        led_on=mat_emit('led_on', led_rgb, 6.0), led_off=mat_led_off('led_off', hexcol(led_off)),
+        led_red_on=mat_emit('led_red_on', (1.0, 0.02, 0.01, 1), 9.0), led_red_off=mat_led_off('led_red_off', (0.22, 0.01, 0.008, 1)),
+        rubber=mat_black_anodised('rubber'), art=art, glow=mat_glow_decal((1.0, 0.07, 0.03, 1), 0.6),
+        glass=mat_glass_overlay(), glass_black=mat_black_anodised('oled_well'), slot=mat_ink('slot', (0.01, 0.01, 0.01, 1), 0.6))
+    return mats
+
+def parent_new(before, root):
+    """Parent every object created since the `before` snapshot (a set of objects) that has no parent to `root`."""
+    for ob in list(bpy.data.objects):
+        if ob not in before and ob is not root and ob.parent is None and ob.type != 'CAMERA':
+            ob.parent = root
+
+
+# ----------------------------------------------------------------- extra OLED glyphs (appended; existing glyphs untouched)
+FONT.update({
+ 'P': "11110 10001 10001 11110 10000 10000 10000", 'L': "10000 10000 10000 10000 10000 10000 11111",
+ ':': "00000 00100 00100 00000 00100 00100 00000", 'G': "01110 10001 10000 10111 10001 10001 01111",
+ 'T': "11111 00100 00100 00100 00100 00100 00100", 'F': "11111 10000 10000 11110 10000 10000 10000",
+ 'K': "10001 10010 10100 11000 10100 10010 10001", 'X': "10001 10001 01010 00100 01010 10001 10001",
+ '.': "00000 00000 00000 00000 00000 01100 01100", '6': "01110 10000 10000 11110 10001 10001 01110",
+ '7': "11111 00001 00010 00100 01000 01000 01000", '9': "01110 10001 10001 01111 00001 00001 01110",
+ '/': "00001 00010 00010 00100 01000 01000 10000", '>': "10000 01000 00100 00010 00100 01000 10000",
+})
+
+
+# ----------------------------------------------------------------- crust stickers (appended)
+# Full-colour vinyl/paper stickers made with the same photocopy pipeline as the face art: ragged torn edges,
+# mis-registered second ink, xerox speckle, scuffs, dirt; geometry with an optionally peeling corner.
+def sticker_rgba(font_path, w_mm, h_mm, bg, ink, lines, ink2=None, glyph=None, shape='rect', S=16, seed=1,
+                 tear=1.0, wear=1.0, ink_alpha=0.96):
+    """-> float32 (H, W, 4) straight-alpha image (sRGB values 0..1).
+    lines: [(text, cx_mm, cy_mm, width_mm, rot_deg)] centred on the sticker; glyph(draw, ctx) draws extra ink shapes
+    in pixel coordinates (ctx.P maps mm -> px, y up, origin at the sticker centre)."""
+    from PIL import Image, ImageDraw, ImageFilter
+    rng = np.random.default_rng(seed)
+    ctx = ArtCtx(w_mm, h_mm, S, font_path, rng)
+    AW, AH = ctx.AW, ctx.AH
+    q = max(0.3, S / 14.0)
+    def blur(a, r):
+        return np.asarray(Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8)).filter(
+            ImageFilter.GaussianBlur(max(0.3, r))), dtype=np.float32) / 255.0
+    def noise(sigma):
+        b = blur(rng.random((AH, AW), dtype=np.float32), sigma * q)
+        return (b - b.min()) / (b.max() - b.min() + 1e-9)
+    n_fine, n_mid, n_big = noise(1.0), noise(4.0), noise(30)
+    def rough(m, r, amt):
+        return (np.clip((blur(m, r * q) - 0.5) * 3.0 + 0.5 + (n_fine - 0.5) * amt, 0, 1) > 0.5).astype(np.float32)
+    # ink masks
+    text = np.zeros((AH, AW), np.float32)
+    for (t, cx, cy, w, rot) in lines:
+        text = np.maximum(text, ctx.text_mask(t, cx, cy, w, rot))
+    gim, gd = ctx.new()
+    if glyph is not None:
+        glyph(gd, ctx)
+    gl = arr_of(gim)
+    main = np.maximum(text, gl)
+    main_r = rough(main, 1.6, 0.9) * (0.10 + 0.90 * (n_mid > 0.18))
+    sec = np.zeros_like(main)
+    if ink2 is not None:
+        sec = np.roll(np.roll(main, int(0.9 * S), axis=1), int(0.7 * S), axis=0)
+        sec = rough(sec, 2.2, 1.0) * (0.2 + 0.8 * (n_mid > 0.25))
+    hexf = lambda h: np.array([int(h.lstrip('#')[i:i + 2], 16) / 255 for i in (0, 2, 4)], np.float32)
+    col = np.ones((AH, AW, 3), np.float32) * hexf(bg)
+    paper = 0.93 + 0.07 * n_fine + 0.05 * (n_big - 0.5)
+    col *= paper[..., None]
+    if ink2 is not None:
+        col = col * (1 - sec[..., None] * ink_alpha) + hexf(ink2) * sec[..., None] * ink_alpha
+    col = col * (1 - main_r[..., None] * ink_alpha) + hexf(ink) * main_r[..., None] * ink_alpha
+    # xerox speckle: stray toner dots + paper drop-outs in the ink
+    dots = ((n_fine > 0.86) & (n_big > 0.45)).astype(np.float32) * 0.7
+    col = col * (1 - dots[..., None]) + hexf(ink) * dots[..., None]
+    drop = ((n_fine < 0.10) & (main_r > 0.5)).astype(np.float32) * 0.7
+    col = col * (1 - drop[..., None]) + hexf(bg)[None, None] * drop[..., None]
+    # scuffs and creases: pale scratches, a diagonal crease, dirt
+    B = Image.new('L', (AW, AH), 0); db = ImageDraw.Draw(B)
+    for _ in range(int(40 * wear * (w_mm * h_mm) / 2000) + 8):
+        x, y = rng.random() * AW, rng.random() * AH
+        a = rng.uniform(0, 6.28); ln = rng.uniform(1, 10) * S
+        db.line((x, y, x + ln * math.cos(a), y + ln * math.sin(a)), fill=int(rng.uniform(80, 200)), width=int(rng.uniform(1, 2.2)))
+    sc = blur(arr_of(B), 0.5) * wear
+    col = col * (1 - 0.55 * sc[..., None]) + 0.92 * 0.55 * sc[..., None]
+    cr = Image.new('L', (AW, AH), 0); dc = ImageDraw.Draw(cr)
+    x0 = rng.uniform(0.2, 0.8) * AW
+    dc.line((x0, 0, x0 + rng.uniform(-0.3, 0.3) * AW, AH), fill=255, width=max(1, int(0.35 * S)))
+    crease = blur(arr_of(cr), 0.5 * S * 0.3)
+    col = col * (1 - 0.18 * wear * crease[..., None]) + 0.18 * wear * crease[..., None] * 0.9
+    dirt = np.clip((n_big - 0.35) * 1.4, 0, 1) * 0.22 * wear + 0.10 * wear * (n_mid > 0.7)
+    col *= (1 - dirt)[..., None] * 1.0 + 0.0
+    col *= (1 - 0.12 * wear * (n_fine > 0.6) * (n_mid < 0.3))[..., None]
+    # alpha: rect / round, ragged torn edge, chewed corners
+    M_ = Image.new('L', (AW, AH), 0); dm = ImageDraw.Draw(M_)
+    m = 0.5 * S
+    if shape == 'round':
+        dm.ellipse((m, m, AW - m, AH - m), fill=255)
+    else:
+        dm.rounded_rectangle((m, m, AW - m, AH - m), radius=int(1.6 * S), fill=255)
+    a0 = blur(arr_of(M_), 0.9 * S * 0.5)
+    rag = (noise(2.0) - 0.5) * 0.9 + (n_big - 0.5) * 0.35
+    alpha = (a0 + rag * tear * 0.9 > 0.5).astype(np.float32)
+    # a few torn-off bites on the border
+    Bt = Image.new('L', (AW, AH), 0); dbt = ImageDraw.Draw(Bt)
+    for _ in range(int(6 * tear)):
+        side = rng.integers(0, 4); t = rng.random()
+        px, py = ((t * AW, 0), (t * AW, AH), (0, t * AH), (AW, t * AH))[side]
+        r = rng.uniform(0.6, 2.6) * S
+        dbt.polygon([(px + r * rng.uniform(0.5, 1.2) * math.cos(a), py + r * rng.uniform(0.5, 1.2) * math.sin(a)) for a in np.linspace(0, 6.28, 7, endpoint=False)], fill=255)
+    alpha *= (1 - (arr_of(Bt) > 0.5)).astype(np.float32)
+    alpha = blur(alpha, 0.5)
+    # worn edge: paper white-out + darker grime just inside the border
+    inner = blur(alpha, 1.6 * q * 3)
+    edge = np.clip((1 - inner) * 2.2, 0, 1) * alpha
+    white = np.array([0.93, 0.92, 0.88], np.float32)
+    col = col * (1 - 0.7 * edge[..., None]) + white * 0.7 * edge[..., None]
+    out = np.zeros((AH, AW, 4), np.float32)
+    out[..., :3] = np.clip(col, 0, 1); out[..., 3] = alpha
+    return out
+
+def rgba_to_image(rgba, name='sticker', srgb=True):
+    h, w = rgba.shape[:2]
+    img = bpy.data.images.new(name, w, h, alpha=True, float_buffer=False)
+    img.colorspace_settings.name = 'sRGB' if srgb else 'Non-Color'
+    img.alpha_mode = 'STRAIGHT'
+    img.pixels.foreach_set(np.ascontiguousarray(rgba[::-1]).ravel())
+    img.pack()
+    return img
+
+def mat_sticker(img, rough=0.42, name='sticker'):
+    """vinyl-ish: satin gloss front, white paper back, alpha-cut torn edge, slight edge bump."""
+    s = M(name)
+    tc = s.n('ShaderNodeTexCoord')
+    tex = s.n('ShaderNodeTexImage'); tex.image = img; tex.interpolation = 'Linear'; tex.extension = 'CLIP'
+    s.l(tc, 'UV', tex, 'Vector')
+    bump = s.n('ShaderNodeBump'); bump.inputs['Strength'].default_value = 0.6; bump.inputs['Distance'].default_value = 0.0002
+    s.l(tex, 'Alpha', bump, 'Height')
+    front = s.n('ShaderNodeBsdfPrincipled')
+    s.l(tex, 'Color', front, 'Base Color')
+    front.inputs['Roughness'].default_value = rough
+    front.inputs['Specular IOR Level'].default_value = 0.5
+    front.inputs['Coat Weight'].default_value = 0.25
+    front.inputs['Coat Roughness'].default_value = 0.25
+    s.l(bump, 'Normal', front, 'Normal')
+    back = s.n('ShaderNodeBsdfPrincipled')
+    back.inputs['Base Color'].default_value = (0.62, 0.60, 0.55, 1)
+    back.inputs['Roughness'].default_value = 0.7
+    geo = s.n('ShaderNodeNewGeometry')
+    fb = s.n('ShaderNodeMixShader')
+    s.l(geo, 'Backfacing', fb, 'Fac'); s.l(front, 'BSDF', fb, 1); s.l(back, 'BSDF', fb, 2)
+    tr = s.n('ShaderNodeBsdfTransparent')
+    am = s.n('ShaderNodeMixShader')
+    s.l(tex, 'Alpha', am, 'Fac'); s.l(tr, 'BSDF', am, 1); s.l(fb, 'Shader', am, 2)
+    s.l(am, 'Shader', s.out, 'Surface')
+    return s.m
+
+def build_sticker(name, w, h, mat, x, y, z, rot=0.0, peel=None, n=36):
+    """flat sticker (mm) at (x, y, z) in the parent's frame, rotated `rot` deg about Z.
+    peel = (corner 0..3 [bl, br, tr, tl], size_mm, lift_deg, curl): that corner curls up off the surface."""
+    nx = ny = n
+    me = bpy.data.meshes.new(name)
+    cor = [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)]
+    verts, uvs = [], []
+    if peel is not None:
+        cx_, cy_ = cor[peel[0]]
+        dvec = Vector((-cx_, -cy_)).normalized()               # corner -> centre
+        size, lift, curl = peel[1], math.radians(peel[2]), peel[3]
+    for j in range(ny + 1):
+        for i in range(nx + 1):
+            u, v = i / nx, j / ny
+            px, py, pz = (u - 0.5) * w, (v - 0.5) * h, 0.0
+            if peel is not None:
+                d = (px - cx_) * dvec.x + (py - cy_) * dvec.y
+                if d < size:
+                    sdist = size - d
+                    phi = min(math.pi * 0.97, lift + curl * sdist)
+                    tx_, ty_ = px - dvec.x * (d - size), py - dvec.y * (d - size)     # point on the fold line
+                    dn = -sdist * math.cos(phi)
+                    px, py, pz = tx_ + dvec.x * dn, ty_ + dvec.y * dn, sdist * math.sin(phi)
+            verts.append((px * MM, py * MM, pz * MM)); uvs.append((u, v))
+    faces = [(j * (nx + 1) + i, j * (nx + 1) + i + 1, (j + 1) * (nx + 1) + i + 1, (j + 1) * (nx + 1) + i) for j in range(ny) for i in range(nx)]
+    me.from_pydata(verts, [], faces)
+    uv = me.uv_layers.new()
+    for poly in me.polygons:
+        for li, vi in zip(poly.loop_indices, poly.vertices):
+            uv.data[li].uv = uvs[vi]
+    for p in me.polygons:
+        p.use_smooth = True
+    ob = new_obj(name, me, [mat])
+    ob.location = (x * MM, y * MM, z * MM)
+    ob.rotation_euler = (0, 0, math.radians(rot))
+    ob.visible_shadow = True
+    return ob
