@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -36,12 +37,23 @@ constexpr std::int64_t kDefaultHostJumpThreshold = 64;  // samples
 //    otherwise serialised with process(). Setters take effect at the start of the next process()
 //    call; that block boundary is the sample they act on. When several commands arrive in one
 //    block, the last play()/pause() wins and seek() is applied before it.
-// A thread-safe command queue for the plugin is a later phase.
+// The plugin's thread-safe command queue (message thread -> audio thread) is plugin/src/PlayAlong.h.
 //
 // Ramps (transport, stem gains, master) follow the same linear law as Gain::rampToLinear (the first
 // ramped sample already moves one step; the last equals the target) but are double-precision and
 // counter-based (value = start + (target - start) * k / N), so the result is exact to ~1e-12 and
 // does not depend on block size.
+// Start offset (setStartOffsetSamples): the player's playhead p lives in "playhead time". Playhead time p
+// plays stem sample (p - offset). Negative offset: the stems lead (stem audio from |offset| plays at
+// p = 0). Positive offset: silence for the first `offset` samples, then the stems from sample 0. Seek,
+// loop points, position() and playheadLength() are all in playhead time; the host-follow position is
+// too (a host sample of p plays stem sample p - offset, so a positive offset is "the song starts
+// `offset` samples into the host timeline"). The playhead runs over [0, playheadLength()] with
+// playheadLength() = max(0, stemSetLength() + offset). The offset is set on the producer thread and
+// takes effect at the first block start where the transport is fully stopped (or no set is adopted
+// yet), like a replacement stem set; the position stays where it is (clamped in free-run mode), a
+// loop that no longer fits is cleared. (tonerender --backing-offset-ms uses the matcher's opposite
+// sign: see cli/main.cpp.)
 // Loop: a wrap happens when the playhead steps from b - 1 to b. A seek to exactly b (or beyond)
 // with a loop active therefore does not wrap; it plays on, like a playhead already at or beyond b
 // when the loop is set.
@@ -67,6 +79,9 @@ class StemPlayer {
   // (outside [0, length] it just reads silence) and clears the loop and pending crossfade state. Retired sets are freed by collectGarbage().
   void setStemSet(std::unique_ptr<StemSet> set);
   void collectGarbage() noexcept { slot_.collectGarbage(); }
+  // Producer thread (any thread, relaxed atomic): the start offset above, in samples at the set's rate.
+  void setStartOffsetSamples(std::int64_t offset) noexcept { offsetReq_.store(offset, std::memory_order_relaxed); }
+  std::int64_t startOffsetSamples() const noexcept { return offsetReq_.load(std::memory_order_relaxed); }
 
   // ---- audio thread ------------------------------------------------------------------------
   // Overwrites both outputs with the backing mix + count-in clicks, delayed by the rig latency.
@@ -83,12 +98,15 @@ class StemPlayer {
   void setClickLevelDb(double db) noexcept;  // -60..0, default -6; rewrites the click buffers in place
 
   // Queries.
-  std::int64_t position() const noexcept { return pos_; }  // next sample to be read, at the set's rate
+  std::int64_t position() const noexcept { return pos_; }  // playhead time (see above), at the set's rate
   bool isPlaying() const noexcept { return wantPlay_; }     // requested state (true during count-in)
   bool isCountingIn() const noexcept { return countingIn_; }
   bool atEnd() const noexcept { return set_ != nullptr && pos_ >= len_; }
   bool hasStemSet() const noexcept { return set_ != nullptr; }
-  std::int64_t stemSetLength() const noexcept { return len_; }  // of the adopted set; 0 if none
+  const StemSet* adoptedSet() const noexcept { return set_; }  // identity only (audio thread); null if none
+  std::int64_t stemSetLength() const noexcept { return rawLen_; }  // of the adopted set; 0 if none
+  std::int64_t playheadLength() const noexcept { return len_; }    // max(0, length + applied offset); 0 if none
+  std::int64_t appliedStartOffsetSamples() const noexcept { return off_; }
   bool loopActive() const noexcept { return loopActive_; }
   std::int64_t loopStart() const noexcept { return loopA_; }
   std::int64_t loopEnd() const noexcept { return loopB_; }
@@ -154,6 +172,7 @@ class StemPlayer {
   void applyCommands() noexcept;
   void applyHostFollow() noexcept;
   void adoptIfStopped() noexcept;
+  void applyOffset() noexcept;
   void updateMixTargets() noexcept;
   void startPlaying() noexcept;
   void startPause() noexcept;
@@ -171,7 +190,10 @@ class StemPlayer {
   // Set / slot.
   SwapSlot<StemSet> slot_;
   const StemSet* set_ = nullptr;
-  std::int64_t len_ = 0;
+  std::int64_t rawLen_ = 0;  // length of the adopted set
+  std::int64_t len_ = 0;     // playhead length: max(0, rawLen_ + off_)
+  std::int64_t off_ = 0;     // applied start offset
+  std::atomic<std::int64_t> offsetReq_{0};
   std::array<const float*, kStemKindCount * 2> ch_{};  // [kind * 2 + channel]
   std::array<int, kStemKindCount> active_{};
   int nActive_ = 0;

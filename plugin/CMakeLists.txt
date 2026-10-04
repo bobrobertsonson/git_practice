@@ -21,7 +21,9 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/PresetMapping.cpp
   src/Engine.cpp
   src/EngineLoader.cpp
+  src/PlayAlong.cpp
   src/PluginProcessor.cpp
+  src/PlayAlongPanel.cpp
   src/PluginEditor.cpp
   src/skin/SkinAssets.cpp
   src/skin/FilmstripKnob.cpp
@@ -95,9 +97,10 @@ if(SAWBLADE_BUILD_TESTS)
     tests/lock_guard.cpp
     tests/test_engine.cpp
     tests/test_processor.cpp
+    tests/test_playalong.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
-    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp
+    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_plugin_tests PRIVATE src)
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})

@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 
+#include "PlayAlongPanel.h"
 #include "skin/FilmstripKnob.h"
 
 namespace sawblade::plugin {
@@ -64,6 +65,10 @@ class SawbladeEditor::Content : public juce::Component {
     configure(ab_, "A / B", "A/B compare", true);
     configure(match_, "MATCH", "Match to a reference", true);
     configure(export_, "EXPORT NAM", "Export as NAM model", true);
+    configure(playAlong_, "PLAY ALONG", "Show / hide the play-along panel: a backing track from separated stems to play over", false);
+    playAlong_.setClickingTogglesState(true);
+    playAlong_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
+    playAlong_.onClick = [this] { setPlayAlongOpen(playAlong_.getToggleState()); };
     match_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
     match_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb27a));
     export_.setColour(juce::TextButton::buttonColourId, L::saw());
@@ -129,6 +134,10 @@ class SawbladeEditor::Content : public juce::Component {
     for (int k = 0; k < kPostEqSlots; ++k) addKnob({kPostEqFirst + k, nullptr, FilmstripKnob::Kind::Pedal, 0xffff6a1a});
     knobs_[kGateThreshold]->onValueChange = [this] { updateReadouts(); };
 
+    panel_ = std::make_unique<PlayAlongPanel>(processor_);
+    panel_->setVisible(false);
+    addChildComponent(*panel_);  // last child: on top of the rig and the inspector
+
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
     refresh();
@@ -169,10 +178,11 @@ class SawbladeEditor::Content : public juce::Component {
     wordmark_.setBounds(18, 8, 190, 42);
     int x = 226;
     prev_.setBounds(x, y, 34, h);
-    presetButton_.setBounds(x + 34, y, 280, h);
-    next_.setBounds(x + 34 + 280, y, 34, h);
-    x += 34 + 280 + 34 + 12;
+    presetButton_.setBounds(x + 34, y, 240, h);
+    next_.setBounds(x + 34 + 240, y, 34, h);
+    x += 34 + 240 + 34 + 12;
     ab_.setBounds(x, y, 70, h);
+    playAlong_.setBounds(x + 70 + 12, y, 104, h);
     int r = kDesignWidth - 18;
     export_.setBounds(r - 130, y, 130, h);
     r -= 130 + 12;
@@ -180,9 +190,10 @@ class SawbladeEditor::Content : public juce::Component {
     r -= 90 + 12;
     modeChip_.setBounds(r - 96, y + 2, 96, 30);
     r -= 96 + 12;
-    latChip_.setBounds(r - 214, y + 2, 214, 30);
+    latChip_.setBounds(r - 170, y + 2, 170, 30);
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
+    panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
 
     const int ix = kInspX + 16, iw = kInspW - 32;
@@ -238,6 +249,16 @@ class SawbladeEditor::Content : public juce::Component {
 
   skin::RigView& rig() { return rig_; }
 
+  void setPlayAlongOpen(bool open) {
+    panel_->setVisible(open);
+    if (open) panel_->refresh();
+    playAlong_.setToggleState(open, juce::dontSendNotification);
+  }
+  bool playAlongOpen() const { return panel_->isVisible(); }
+  void refreshPanel() {
+    if (panel_->isVisible()) panel_->refresh();
+  }
+
  private:
   static juce::Rectangle<int> matchBox() { return {kInspX + 16, kDesignHeight - 14 - 64, kInspW - 32, 64}; }
   static constexpr int kMasterY = kTopBar + 328, kEqY = kTopBar + 424, kLearnY = kTopBar + 500;
@@ -289,7 +310,8 @@ class SawbladeEditor::Content : public juce::Component {
   SawbladeProcessor& processor_;
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
-  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_;
+  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_;
+  std::unique_ptr<PlayAlongPanel> panel_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -298,7 +320,7 @@ class SawbladeEditor::Content : public juce::Component {
 };
 
 // ---------------------------------------------------------------------------------------------
-SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEditor(p) {
+SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEditor(p), processor_(p) {
   setLookAndFeel(&laf_);
   content_ = std::make_unique<Content>(p);
   addAndMakeVisible(*content_);
@@ -307,7 +329,7 @@ SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEdito
   setResizeLimits(640, 400, 2560, 1600);
   getConstrainer()->setFixedAspectRatio(static_cast<double>(kDesignWidth) / kDesignHeight);
   setSize(kDesignWidth, kDesignHeight);
-  startTimerHz(4);
+  startTimerHz(16);
 }
 
 SawbladeEditor::~SawbladeEditor() {
@@ -327,6 +349,27 @@ double SawbladeEditor::contentScale() const { return static_cast<double>(getWidt
 
 skin::Piece SawbladeEditor::selectedPiece() const { return content_->rig().selected(); }
 
-void SawbladeEditor::timerCallback() { content_->refresh(); }
+void SawbladeEditor::timerCallback() {
+  if ((tick_++ & 3) == 0) content_->refresh();  // 4 Hz; the open play-along panel refreshes at the full rate
+  content_->refreshPanel();
+}
+
+void SawbladeEditor::setPlayAlongOpen(bool open) { content_->setPlayAlongOpen(open); }
+bool SawbladeEditor::playAlongOpen() const { return content_->playAlongOpen(); }
+
+bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
+  for (const auto& f : files)
+    if (juce::File(f).isDirectory()) return true;
+  return false;
+}
+
+void SawbladeEditor::filesDropped(const juce::StringArray& files, int, int) {
+  for (const auto& f : files) {
+    if (!juce::File(f).isDirectory()) continue;
+    processor_.playAlong().loadFolder(f.toStdString(), /*userInitiated=*/true);
+    setPlayAlongOpen(true);
+    return;
+  }
+}
 
 }  // namespace sawblade::plugin

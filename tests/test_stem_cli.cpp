@@ -186,7 +186,7 @@ TEST_CASE("CLI --backing: unrecognised stems warn, errors map to exit codes", "[
   fs::remove(stems / "drums.wav");
 
   // An unknown stem name is summed into 'other' with a warning in the report and on stderr.
-  REQUIRE(runCli(base + " --backing " + q(stems) + " --report " + q(t / "r.json"), err) == 0);
+  REQUIRE(runCli(base + " --backing " + q(stems) + " --other-role other --report " + q(t / "r.json"), err) == 0);
   const json rep = json::parse(slurp(t / "r.json"));
   REQUIRE(rep["backing"]["warnings"].size() == 1);
   REQUIRE(rep["backing"]["warnings"][0].get<std::string>().find("piano.wav") != std::string::npos);
@@ -215,4 +215,93 @@ TEST_CASE("CLI --backing: report carries backing.loudnessLufs", "[cli][backing][
   // Guitar-only backing: nothing to measure -> null.
   REQUIRE(runCli(base + " --backing " + q(g), err) == 0);
   REQUIRE(json::parse(slurp(t / "r.json"))["backing"]["loudnessLufs"].is_null());
+}
+
+TEST_CASE("CLI --backing-offset-ms: an offset render equals a render of the shifted stems", "[cli][backing][offset]") {
+  StemTempDir t;
+  const std::size_t N = 192000;  // the DI's length
+  const std::size_t extra = 20000;
+  const auto dl = noise(N + extra, 11, 0.2f), dr = noise(N + extra, 12, 0.2f);
+  const std::string base = "--preset " + q(kPreset) + " --in " + q(kDi);
+
+  auto render = [&](const fs::path& stems, const std::string& name, const std::string& extraArgs) {
+    const int rc = runCli(base + " --out " + q(t / (name + ".wav")) + " --report " + q(t / (name + ".json")) + " --backing " + q(stems) + " " +
+                              extraArgs,
+                          t / "err.txt");
+    INFO(slurp(t / "err.txt"));
+    REQUIRE(rc == 0);
+    std::vector<float> l, r;
+    splitStereo(readWav(t / (name + ".wav")), l, r);
+    return std::make_pair(l, r);
+  };
+  auto stemsDir = [&](const std::string& name, const std::vector<float>& l, const std::vector<float>& r) {
+    const fs::path d = t.dir / name;
+    fs::create_directories(d);
+    writeWavFloat32Stereo(d / "drums.wav", 48000.0, l, r);
+    return d;
+  };
+
+  // The matcher's sign: --backing-offset-ms 100 means the DI starts 100 ms (4800 samples) into the
+  // song, so output sample p carries song sample p + 4800.
+  constexpr std::size_t kShift = 4800;
+  const fs::path orig = stemsDir("orig", dl, dr);
+  const fs::path ahead = stemsDir("ahead", std::vector<float>(dl.begin() + kShift, dl.end()), std::vector<float>(dr.begin() + kShift, dr.end()));
+  const auto viaOffset = render(orig, "viaoffset", "--backing-offset-ms 100");
+  const auto viaFixture = render(ahead, "viafixture", "");
+  REQUIRE(viaOffset.first.size() == N);
+  REQUIRE(viaOffset.first == viaFixture.first);   // bit-identical
+  REQUIRE(viaOffset.second == viaFixture.second);
+  const json rep = json::parse(slurp(t / "viaoffset.json"));
+  CHECK(rep["backing"]["offsetMs"].get<double>() == 100.0);
+
+  // Negative: the DI starts 50 ms before the song; the backing starts 2400 samples into the render.
+  std::vector<float> padL(2400, 0.0f), padR(2400, 0.0f);
+  padL.insert(padL.end(), dl.begin(), dl.end());
+  padR.insert(padR.end(), dr.begin(), dr.end());
+  const fs::path late = stemsDir("late", padL, padR);
+  const auto negOffset = render(orig, "negoffset", "--backing-offset-ms -50");
+  const auto negFixture = render(late, "negfixture", "");
+  REQUIRE(negOffset.first == negFixture.first);
+  REQUIRE(negOffset.second == negFixture.second);
+
+  // It is not a no-op: the zero-offset render differs.
+  const auto none = render(orig, "none", "");
+  REQUIRE(none.first != viaOffset.first);
+
+  // Usage errors.
+  const std::string args = base + " --out " + q(t / "x.wav");
+  REQUIRE(runCli(args + " --backing-offset-ms 5", t / "err.txt") == 2);  // needs --backing
+  REQUIRE(runCli(args + " --other-role guitar", t / "err.txt") == 2);
+  REQUIRE(runCli(args + " --backing " + q(orig) + " --backing-offset-ms nope", t / "err.txt") == 2);
+  REQUIRE(runCli(args + " --backing " + q(orig) + " --backing-offset-ms 700000", t / "err.txt") == 2);
+  REQUIRE(runCli(args + " --backing " + q(orig) + " --other-role keys", t / "err.txt") == 2);
+}
+
+TEST_CASE("CLI --other-role: a 4-stem other is the guitar stem by default", "[cli][backing][role]") {
+  StemTempDir t;
+  const fs::path stems = t.dir / "stems";
+  fs::create_directories(stems);
+  writeWavFloat32(stems / "bass.wav", 48000.0, noise(192000, 21, 0.2f));
+  writeWavFloat32(stems / "other.wav", 48000.0, noise(192000, 22, 0.2f));
+  const std::string base = "--preset " + q(kPreset) + " --in " + q(kDi);
+  auto run = [&](const std::string& extra, const std::string& name) {
+    REQUIRE(runCli(base + " --out " + q(t / (name + ".wav")) + " --report " + q(t / (name + ".json")) + " --backing " + q(stems) + " " + extra,
+                   t / "err.txt") == 0);
+    return json::parse(slurp(t / (name + ".json")))["backing"];
+  };
+  const json asGuitar = run("", "g");
+  CHECK(asGuitar["otherRole"] == "guitar");
+  CHECK(asGuitar["otherMappedToGuitar"] == true);
+  CHECK(asGuitar["stems"][1]["kind"] == "guitar");
+  const json asOther = run("--other-role other", "o");
+  CHECK(asOther["otherMappedToGuitar"] == false);
+  CHECK(asOther["stems"][1]["kind"] == "other");
+  // Muted guitar (the default) removes `other` from the mix; with `other` kept it is audible.
+  std::vector<float> gl, gr, ol, orr;
+  splitStereo(readWav(t / "g.wav"), gl, gr);
+  splitStereo(readWav(t / "o.wav"), ol, orr);
+  CHECK(gl != ol);
+  CHECK(asGuitar["loudnessLufs"].is_number());  // bass only
+  CHECK(asOther["loudnessLufs"].is_number());
+  CHECK(asGuitar["loudnessLufs"].get<double>() < asOther["loudnessLufs"].get<double>());
 }

@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "PlayAlongPanel.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "skin/FilmstripKnob.h"
@@ -18,6 +19,7 @@
 #include "skin/LedIndicator.h"
 #include "skin/RigView.h"
 #include "skin/SkinAssets.h"
+#include "sawblade/wav_io.h"
 
 using namespace sawblade::plugin;
 using Catch::Matchers::WithinAbs;
@@ -367,4 +369,350 @@ TEST_CASE("clicking a rig piece selects it", "[editor]") {
     p->mouseDown(mouse(*p, {5.0f, 5.0f}, {5.0f, 5.0f}, false));
     CHECK(rig.ed->selectedPiece() == p->piece());
   }
+}
+
+// ---- play-along panel (docs/specs/phase5_2_playalong_plugin.md) ------------------------------------------
+namespace {
+
+// Synthetic song (never committed): a folder of four stems, `seconds` long at 48 kHz.
+std::filesystem::path writeSyntheticSong(const std::filesystem::path& root, const std::string& name, double seconds) {
+  namespace fs = std::filesystem;
+  const fs::path dir = root / name;
+  fs::create_directories(dir);
+  const auto n = static_cast<std::size_t>(seconds * 48000.0);
+  auto make = [&](double hz, double amp, double pulseHz) {
+    std::vector<float> x(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      const double t = static_cast<double>(i) / 48000.0;
+      const double env = pulseHz > 0.0 ? std::exp(-8.0 * std::fmod(t * pulseHz, 1.0)) : 1.0;
+      x[i] = static_cast<float>(amp * env * std::sin(6.283185307179586 * hz * t));
+    }
+    return x;
+  };
+  const auto drums = make(180.0, 0.4, 2.0), bass = make(55.0, 0.3, 0.0), vocals = make(440.0, 0.15, 0.5), other = make(220.0, 0.3, 4.0);
+  sawblade::writeWavFloat32Stereo(dir / "drums.wav", 48000.0, drums, drums);
+  sawblade::writeWavFloat32Stereo(dir / "bass.wav", 48000.0, bass, bass);
+  sawblade::writeWavFloat32Stereo(dir / "vocals.wav", 48000.0, vocals, vocals);
+  sawblade::writeWavFloat32Stereo(dir / "other.wav", 48000.0, other, other);
+  return dir;
+}
+
+struct TempFolder {
+  std::filesystem::path dir;
+  TempFolder() {
+    dir = std::filesystem::temp_directory_path() / ("sawblade_editor_tests_" + std::to_string(juce::Random::getSystemRandom().nextInt()));
+    std::filesystem::create_directories(dir);
+  }
+  ~TempFolder() {
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+  }
+};
+
+void processBlocks(SawbladeProcessor& p, int blocks) {
+  juce::AudioBuffer<float> buf(2, 512);
+  juce::MidiBuffer midi;
+  for (int i = 0; i < blocks; ++i) {
+    buf.clear();
+    p.processBlock(buf, midi);
+  }
+}
+
+// A real click (mouse down + up inside the button); Button::triggerClick() is asynchronous.
+void click(juce::Button& b) {
+  juce::Component& c = b;
+  const auto centre = b.getLocalBounds().toFloat().getCentre();
+  c.mouseDown(mouse(b, centre, centre, false));
+  c.mouseUp(mouse(b, centre, centre, false));
+}
+
+juce::Button* buttonTitled(juce::Component& root, const juce::String& title) {
+  for (auto* b : all<juce::Button>(root))
+    if (b->getTitle() == title) return b;
+  return nullptr;
+}
+juce::Slider* sliderTitled(juce::Component& root, const juce::String& title) {
+  for (auto* s : all<juce::Slider>(root))
+    if (s->getTitle() == title) return s;
+  return nullptr;
+}
+bool anyLabelContains(juce::Component& root, const juce::String& text) {
+  for (auto* l : all<juce::Label>(root))
+    if (l->isVisible() && l->getText().contains(text)) return true;
+  return false;
+}
+
+}  // namespace
+
+TEST_CASE("play-along: the panel exists, is closed by default and opens from the top bar", "[editor][playalong]") {
+  Rig rig;
+  auto panels = all<PlayAlongPanel>(*rig.ed);
+  REQUIRE(panels.size() == 1);
+  PlayAlongPanel& panel = *panels[0];
+  CHECK_FALSE(panel.isVisible());
+  CHECK_FALSE(rig.ed->playAlongOpen());
+  juce::Button* toggle = buttonTitled(*rig.ed, "PLAY ALONG");
+  REQUIRE(toggle != nullptr);
+  CHECK(toggle->isEnabled());
+  CHECK(toggle->getTooltip().isNotEmpty());
+  // It is on the top bar and the panel is docked along the bottom of the 1280 x 800 design.
+  const auto tb = rig.ed->getLocalArea(toggle, toggle->getLocalBounds());
+  CHECK(tb.getBottom() <= 58);
+  const auto pb = rig.ed->getLocalArea(&panel, panel.getLocalBounds());
+  CHECK(pb.getBottom() == SawbladeEditor::kDesignHeight);
+  CHECK(pb.getWidth() == SawbladeEditor::kDesignWidth);
+  CHECK(pb.getY() > 400);
+
+  click(*toggle);
+  CHECK(panel.isVisible());
+  CHECK(rig.ed->playAlongOpen());
+  CHECK(toggle->getToggleState());
+  click(*toggle);
+  CHECK_FALSE(panel.isVisible());
+
+  // The open / closed state is UI state: it is not in the plugin state.
+  rig.ed->setPlayAlongOpen(true);
+  juce::MemoryBlock state;
+  rig.proc.getStateInformation(state);
+  CHECK(juce::String::fromUTF8(static_cast<const char*>(state.getData()), static_cast<int>(state.getSize())).contains("playAlong") == false);
+  rig.ed->setPlayAlongOpen(false);
+
+  // Existing top-bar controls still fit: nothing overlaps the new button.
+  for (auto* b : all<juce::Button>(*rig.ed)) {
+    if (b == toggle || !b->isShowing() || !b->getParentComponent() || b->getParentComponent() != toggle->getParentComponent()) continue;
+    if (b->getY() > 58) continue;
+    INFO(b->getTitle());
+    CHECK_FALSE(b->getBounds().intersects(toggle->getBounds()));
+  }
+}
+
+TEST_CASE("play-along: the controls are bound to the processor", "[editor][playalong]") {
+  Rig rig;
+  TempFolder tmp;
+  rig.ed->setPlayAlongOpen(true);
+  auto& pa = rig.proc.playAlong();
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+
+  // Every expected control exists, with a title and a tooltip.
+  for (const char* title : {"LOAD SONG", "KEEP KEYS", "PLAY", "SET A", "SET B", "LOOP", "COUNT-IN", "MUTE", "GHOST", "FULL", "SYNC TO HOST"}) {
+    INFO(title);
+    auto* b = buttonTitled(*panel, title);
+    REQUIRE(b != nullptr);
+    CHECK(b->getTooltip().isNotEmpty());
+  }
+  for (const char* title : {"Seek", "Count-in BPM", "Backing level", "Backing offset"}) {
+    INFO(title);
+    auto* s = sliderTitled(*panel, title);
+    REQUIRE(s != nullptr);
+    CHECK(s->getTooltip().isNotEmpty());
+  }
+
+  // Control -> settings.
+  auto* level = sliderTitled(*panel, "Backing level");
+  level->setValue(-12.5, juce::sendNotificationSync);
+  CHECK_THAT(pa.settings().levelDb, WithinAbs(-12.5, 1e-9));
+  auto* offset = sliderTitled(*panel, "Backing offset");
+  offset->setValue(190.0, juce::sendNotificationSync);
+  CHECK_THAT(pa.settings().offsetMs, WithinAbs(190.0, 1e-9));
+  auto* bpm = sliderTitled(*panel, "Count-in BPM");
+  bpm->setValue(150.0, juce::sendNotificationSync);
+  click(*buttonTitled(*panel, "COUNT-IN"));
+  CHECK(pa.settings().countIn);
+  CHECK_THAT(pa.settings().bpm, WithinAbs(150.0, 1e-9));
+  click(*buttonTitled(*panel, "GHOST"));
+  CHECK(pa.settings().guitarMode == sawblade::GuitarMode::Ghost);
+  click(*buttonTitled(*panel, "FULL"));
+  CHECK(pa.settings().guitarMode == sawblade::GuitarMode::Full);
+  click(*buttonTitled(*panel, "MUTE"));
+  CHECK(pa.settings().guitarMode == sawblade::GuitarMode::Muted);
+  click(*buttonTitled(*panel, "KEEP KEYS"));
+  CHECK(pa.settings().keepOther);
+  click(*buttonTitled(*panel, "KEEP KEYS"));
+  CHECK_FALSE(pa.settings().keepOther);
+
+  // Plugin mode (the default here): the backing is off and the host owns the transport.
+  auto* sync = buttonTitled(*panel, "SYNC TO HOST");
+  panel->refresh();
+  CHECK(sync->isVisible());
+  CHECK_FALSE(sync->getToggleState());
+  CHECK_FALSE(buttonTitled(*panel, "PLAY")->isEnabled());
+  click(*sync);
+  CHECK(pa.settings().hostSync);
+  click(*sync);
+  CHECK_FALSE(pa.settings().hostSync);
+
+  // Settings -> control.
+  pa.setLevelDb(-5.0);
+  pa.setGuitarMode(sawblade::GuitarMode::Ghost);
+  pa.setCountIn(false, 99.0);
+  pa.setOffsetMs(-40.0);
+  panel->refresh();
+  CHECK_THAT(level->getValue(), WithinAbs(-5.0, 1e-9));
+  CHECK(buttonTitled(*panel, "GHOST")->getToggleState());
+  CHECK_FALSE(buttonTitled(*panel, "MUTE")->getToggleState());
+  CHECK_FALSE(buttonTitled(*panel, "COUNT-IN")->getToggleState());
+  CHECK_THAT(bpm->getValue(), WithinAbs(99.0, 1e-9));
+  CHECK_THAT(offset->getValue(), WithinAbs(-40.0, 1e-9));
+  // Refreshing never feeds the values back as new edits.
+  CHECK_THAT(pa.settings().levelDb, WithinAbs(-5.0, 1e-9));
+
+  // Standalone: free-run transport. Load a song, then play / seek / loop from the panel.
+  pa.setStandalone(true);
+  pa.setOffsetMs(0.0);
+  rig.proc.prepareToPlay(48000.0, 512);
+  const auto song = writeSyntheticSong(tmp.dir, "song", 20.0);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  processBlocks(rig.proc, 4);
+  panel->refresh();
+  CHECK_FALSE(sync->isVisible());
+  auto* play = buttonTitled(*panel, "PLAY");
+  REQUIRE(play->isEnabled());
+  auto* seek = sliderTitled(*panel, "Seek");
+  CHECK_THAT(seek->getMaximum(), WithinAbs(20.0, 0.01));
+  seek->setValue(7.5, juce::sendNotificationSync);
+  processBlocks(rig.proc, 2);
+  CHECK(std::abs(static_cast<double>(pa.snapshot().position) / 48000.0 - 7.5) < 0.05);
+  click(*play);
+  processBlocks(rig.proc, 40);
+  panel->refresh();
+  CHECK(pa.snapshot().playing);
+  CHECK(play->getButtonText() == "PAUSE");
+  click(*play);
+  processBlocks(rig.proc, 40);
+  panel->refresh();
+  CHECK_FALSE(pa.snapshot().playing);
+  CHECK(play->getButtonText() == "PLAY");
+
+  // Loop A / B from the current position.
+  auto* loop = buttonTitled(*panel, "LOOP");
+  CHECK_FALSE(loop->isEnabled());
+  seek->setValue(5.0, juce::sendNotificationSync);
+  processBlocks(rig.proc, 2);
+  click(*buttonTitled(*panel, "SET A"));
+  seek->setValue(9.0, juce::sendNotificationSync);
+  processBlocks(rig.proc, 2);
+  click(*buttonTitled(*panel, "SET B"));
+  CHECK(std::abs(pa.settings().loopAMs - 5000.0) < 20.0);
+  CHECK(std::abs(pa.settings().loopBMs - 9000.0) < 20.0);
+  panel->refresh();
+  REQUIRE(loop->isEnabled());
+  click(*loop);
+  CHECK(pa.settings().loopOn);
+  processBlocks(rig.proc, 2);
+  CHECK(pa.snapshot().loopActive);
+  CHECK(pa.snapshot().loopStart == 240000);
+}
+
+TEST_CASE("play-along: dropping a folder loads it; a missing folder shows a message", "[editor][playalong]") {
+  Rig rig;
+  TempFolder tmp;
+  auto& pa = rig.proc.playAlong();
+  const auto song = writeSyntheticSong(tmp.dir, "drop", 6.0);
+  juce::StringArray dirs;
+  dirs.add(juce::String(song.string()));
+  CHECK(rig.ed->isInterestedInFileDrag(dirs));
+  juce::StringArray notDirs;
+  notDirs.add(juce::String((song / "drums.wav").string()));
+  CHECK_FALSE(rig.ed->isInterestedInFileDrag(notDirs));
+
+  CHECK_FALSE(rig.ed->playAlongOpen());
+  rig.ed->filesDropped(dirs, 10, 10);
+  CHECK(rig.ed->playAlongOpen());
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+  CHECK(pa.settings().folder == song.string());
+  all<PlayAlongPanel>(*rig.ed).at(0)->refresh();
+  CHECK(anyLabelContains(*rig.ed, "drop"));
+
+  // A missing folder (e.g. from a restored session): a clear message, no throw, the path is kept.
+  PlayAlongSettings s;
+  s.folder = (tmp.dir / "vanished").string();
+  REQUIRE_NOTHROW(pa.restore(s));
+  REQUIRE(pa.waitForLoader());
+  all<PlayAlongPanel>(*rig.ed).at(0)->refresh();
+  CHECK(anyLabelContains(*rig.ed, "Song folder not found"));
+  CHECK(anyLabelContains(*rig.ed, "vanished"));
+}
+
+TEST_CASE("play-along: screenshots with the panel closed and open", "[editor][playalong]") {
+  Rig rig;
+  TempFolder tmp;
+  auto& pa = rig.proc.playAlong();
+  rig.ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+
+  // Closed: the same screen as before, plus the PLAY ALONG button.
+  rig.ed->setPlayAlongOpen(false);
+  const juce::Image closed = rig.ed->createComponentSnapshot(rig.ed->getLocalBounds(), true, 1.0f);
+  REQUIRE(closed.getWidth() == 1280);
+  REQUIRE(closed.getHeight() == 800);
+  savePng(closed, "sawblade_playalong_closed_1x.png");
+
+  // Open, with a song loaded (Standalone look: free-run transport), a loop set and the count-in on.
+  pa.setStandalone(true);
+  rig.proc.prepareToPlay(48000.0, 512);
+  const auto song = writeSyntheticSong(tmp.dir, "Gatecreeper - Dark Superstition (stems)", 60.0);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  processBlocks(rig.proc, 4);
+  pa.setCountIn(true, 142.0);
+  pa.setLoopMs(21000.0, 33500.0, true);
+  pa.seekSamples(26 * 48000 + 7200);
+  processBlocks(rig.proc, 3);
+  rig.ed->setPlayAlongOpen(true);
+  const juce::Image open = rig.ed->createComponentSnapshot(rig.ed->getLocalBounds(), true, 1.0f);
+  savePng(open, "sawblade_playalong_open_1x.png");
+
+  // The panel region differs from the closed screen and is not plain background; above it nothing moved.
+  const juce::Rectangle<int> region(0, 800 - PlayAlongPanel::kHeight, 1280, PlayAlongPanel::kHeight);
+  int differing = 0, total = 0;
+  for (int y = region.getY(); y < region.getBottom(); ++y)
+    for (int x = region.getX(); x < region.getRight(); ++x, ++total)
+      if (open.getPixelAt(x, y) != closed.getPixelAt(x, y)) ++differing;
+  CHECK(differing > total / 2);
+  CHECK(nonBackgroundFraction(open, region) > 0.1);
+  // Strip between the top bar and the panel is the same, apart from the PLAY ALONG button's pressed look.
+  int changedAbove = 0;
+  for (int y = 70; y < region.getY() - 2; ++y)
+    for (int x = 0; x < 1280; ++x)
+      if (open.getPixelAt(x, y) != closed.getPixelAt(x, y)) ++changedAbove;
+  CHECK(changedAbove == 0);
+  // The open panel shows the loaded song and no error.
+  CHECK(anyLabelContains(*rig.ed, "Gatecreeper"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "not found"));
+}
+
+TEST_CASE("play-along: in plugin mode with sync off the status shows warnings and the suggestion before the off hint", "[editor][playalong]") {
+  Rig rig;
+  TempFolder tmp;
+  auto& pa = rig.proc.playAlong();
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  REQUIRE_FALSE(pa.standalone());
+  REQUIRE_FALSE(pa.settings().hostSync);
+
+  // A folder with an unknown stem name: the loader warning wins over the hint.
+  const auto warn = writeSyntheticSong(tmp.dir, "warn", 4.0);
+  std::vector<float> x(48000, 0.1f);
+  sawblade::writeWavFloat32Stereo(warn / "piano.wav", 48000.0, x, x);
+  pa.loadFolder(warn.string(), false);
+  REQUIRE(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*rig.ed, "piano.wav"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "Backing is off"));
+
+  // A clean user load: the one-time level suggestion is shown.
+  const auto clean = writeSyntheticSong(tmp.dir, "clean", 4.0);
+  pa.loadFolder(clean.string(), true);
+  REQUIRE(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*rig.ed, "Level set to"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "Backing is off"));
+
+  // A restored (non-user) clean load has nothing to say but the hint.
+  PlayAlongSettings s = pa.settings();
+  s.folder = clean.string();
+  pa.restore(s);
+  REQUIRE(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*rig.ed, "Backing is off"));
 }

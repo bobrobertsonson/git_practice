@@ -80,7 +80,7 @@ void StemPlayer::prepare(const ProcessSpec& spec, int maxRigLatencySamples) {
 
   if (set_ != nullptr && set_->sampleRate != fs_) {  // rate changed: drop the adopted set
     set_ = nullptr;
-    len_ = 0;
+    rawLen_ = len_ = 0;
     nActive_ = 0;
     ch_.fill(nullptr);
   }
@@ -117,15 +117,26 @@ void StemPlayer::setStemSet(std::unique_ptr<StemSet> set) {
 }
 
 // ---- command application (audio thread) -------------------------------------------------------
+void StemPlayer::applyOffset() noexcept {
+  const std::int64_t o = offsetReq_.load(std::memory_order_relaxed);
+  if (o == off_) return;
+  off_ = o;
+  len_ = set_ != nullptr ? std::max<std::int64_t>(0, rawLen_ + off_) : 0;
+  if (loopActive_ && loopB_ > len_) clearLoop();
+  if (set_ != nullptr && mode_ == TransportMode::FreeRun) pos_ = std::clamp<std::int64_t>(pos_, 0, len_);
+}
+
 void StemPlayer::adoptIfStopped() noexcept {
   // With a set already adopted, a new one waits until the transport is fully stopped. With none
   // adopted there is nothing to disturb, so it is adopted at the start of any block.
   const bool replacing = set_ != nullptr;
   if (replacing && (advancing_ || countingIn_)) return;
+  applyOffset();  // transport stopped, or no set adopted yet: nothing to disturb
   const StemSet* s = slot_.current();
   if (s == nullptr || s == set_ || s->sampleRate != fs_) return;
   set_ = s;
-  len_ = s->length;
+  rawLen_ = s->length;
+  len_ = std::max<std::int64_t>(0, rawLen_ + off_);
   nActive_ = 0;
   ch_.fill(nullptr);
   for (int k = 0; k < kStemKindCount; ++k) {
@@ -388,8 +399,9 @@ void StemPlayer::stepSample(float& outL, float& outR) noexcept {
   double vl = click, vr = click;
   if (stems) {
     const double tg = tg_.next();
-    const bool inNew = pos_ >= 0 && pos_ < len_;
-    const bool inOld = xfading_ && oldPos_ >= 0 && oldPos_ < len_;
+    const std::int64_t rn = pos_ - off_, ro = oldPos_ - off_;  // stem sample indices
+    const bool inNew = rn >= 0 && rn < rawLen_;
+    const bool inOld = xfading_ && ro >= 0 && ro < rawLen_;
     const double fin = xfading_ ? static_cast<double>(xfIn_[xfK_]) : 1.0;
     const double fout = xfading_ ? static_cast<double>(xfOut_[xfK_]) : 0.0;
     double sl = 0.0, sr = 0.0;
@@ -400,12 +412,12 @@ void StemPlayer::stepSample(float& outL, float& outR) noexcept {
         if (g == 0.0) continue;
         double xl = 0.0, xr = 0.0;
         if (inNew) {
-          xl = fin * static_cast<double>(ch_[k * 2][pos_]);
-          xr = fin * static_cast<double>(ch_[k * 2 + 1][pos_]);
+          xl = fin * static_cast<double>(ch_[k * 2][rn]);
+          xr = fin * static_cast<double>(ch_[k * 2 + 1][rn]);
         }
         if (inOld) {
-          xl += fout * static_cast<double>(ch_[k * 2][oldPos_]);
-          xr += fout * static_cast<double>(ch_[k * 2 + 1][oldPos_]);
+          xl += fout * static_cast<double>(ch_[k * 2][ro]);
+          xr += fout * static_cast<double>(ch_[k * 2 + 1][ro]);
         }
         sl += g * xl;
         sr += g * xr;

@@ -211,3 +211,20 @@ def test_backing_loudness():
     ss = core.stem_set_from_arrays({"drums": tone, "guitar": loud_guitar.astype(np.float32)}, FS)
     assert ss.backing_loudness_lufs == pytest.approx(v)  # guitar excluded
     assert core.stem_set_from_arrays({"guitar": loud_guitar.astype(np.float32)}, FS).backing_loudness_lufs is None
+
+
+def test_load_stems_other_role(tmp_path):
+    sf = pytest.importorskip("soundfile")
+    sf.write(tmp_path / "bass.wav", const(3000, 0.1), 48000, subtype="FLOAT")
+    sf.write(tmp_path / "other.wav", const(3000, 0.2), 48000, subtype="FLOAT")
+    g = core.load_stems(tmp_path, FS)  # default: 4-stem other is the guitar
+    assert g.present == ["bass", "guitar"] and g.other_mapped_to_guitar
+    g2 = core.load_stems(tmp_path, FS, other_role="guitar")
+    assert g2.present == ["bass", "guitar"]
+    o = core.load_stems(tmp_path, FS, other_role="other")
+    assert o.present == ["bass", "other"] and not o.other_mapped_to_guitar
+    with pytest.raises(ValueError):
+        core.load_stems(tmp_path, FS, other_role="keys")
+    sf.write(tmp_path / "guitars.wav", const(3000, 0.3), 48000, subtype="FLOAT")  # a real guitar file wins
+    w = core.load_stems(tmp_path, FS)
+    assert w.present == ["bass", "other", "guitar"] and not w.other_mapped_to_guitar

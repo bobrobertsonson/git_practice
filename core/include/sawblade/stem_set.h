@@ -26,6 +26,12 @@ struct StemInfo {
   std::int64_t sourceFrames = 0;
 };
 
+// How loadStemDirectory treats a 4-stem separation, whose `other` stem holds the guitars together
+// with keys and synths. Guitar (the default): with no real guitar file in the folder, everything that
+// maps to `other` becomes the guitar stem, so "mute guitar" removes it. Other: `other` stays other
+// (keep keys / synths playing). A real guitar / guitars file always wins: `other` stays other.
+enum class OtherRole { Guitar, Other };
+
 // Immutable after construction.
 struct StemSet {
   double sampleRate = 0.0;
@@ -35,6 +41,7 @@ struct StemSet {
   std::array<std::array<std::vector<float>, 2>, kStemKindCount> audio;
   std::array<std::vector<StemInfo>, kStemKindCount> sources;  // files that went into each stem
   std::vector<std::string> warnings;
+  bool otherMappedToGuitar = false;  // loadStemDirectory moved the `other` stem to guitar (OtherRole::Guitar)
   // BS.1770-4 integrated loudness (LUFS) of the unity-gain sum of every present stem except guitar,
   // measured at load time. None if there is no non-guitar stem or it is silent. Metadata only: it
   // is for suggesting a backing level in a UI; StemPlayer never applies gain from it.
@@ -52,9 +59,11 @@ StemSet loadStemFiles(const std::vector<std::pair<StemKind, std::filesystem::pat
 // Scans `dir` (non-recursive) for *.wav / *.flac (case-insensitive extension), in sorted file-name
 // order. Base names `drums`, `bass`, `vocals`, `other`, `guitar` or `guitars` (case-insensitive)
 // map to their kind; any other audio file (e.g. Demucs 6-stem `piano.wav`) is summed into `other`
-// with a warning naming it. Non-audio files are ignored. Throws std::runtime_error when the
-// directory is missing or holds no audio file, plus the loadStemFiles errors.
-StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate);
+// with a warning naming it. Then `otherRole` applies (see OtherRole): with OtherRole::Guitar and no
+// guitar file in the folder, the whole `other` stem (unknown-named files included) is loaded as the
+// guitar stem, and StemSet::otherMappedToGuitar is set. Non-audio files are ignored. Throws
+// std::runtime_error when the directory is missing or holds no audio file, plus the loadStemFiles errors.
+StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, OtherRole otherRole = OtherRole::Guitar);
 
 using StemAudio = std::array<std::vector<float>, 2>;  // L, R
 

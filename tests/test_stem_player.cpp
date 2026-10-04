@@ -953,3 +953,161 @@ TEST_CASE("StemPlayer host-follow: a jump during a running crossfade is deferred
     REQUIRE(std::fabs(o.l[static_cast<std::size_t>(t)] - x[static_cast<std::size_t>(t + 3200)]) < 1e-6);
   REQUIRE(p->position() == 120 * B + 3200);
 }
+
+// ---- 5.2: start offset (playhead time p plays stem sample p - offset) ----------------------------
+namespace {
+// Strictly increasing, all distinct: stem[i] = (i + 1) * 1e-5 (exact as float for the indices used).
+std::vector<float> idStem(std::size_t n) {
+  std::vector<float> x(n);
+  for (std::size_t i = 0; i < n; ++i) x[i] = static_cast<float>(i + 1) * 1e-5f;
+  return x;
+}
+// A player with the offset applied (the first set is adopted by the process(0) in make()).
+std::unique_ptr<StemPlayer> makeOffset(const std::vector<float>& stem, std::int64_t offset) {
+  auto p = std::make_unique<StemPlayer>();
+  p->prepare({kFs, 512}, 0);
+  p->setStartOffsetSamples(offset);
+  p->setStemSet(std::make_unique<StemSet>(mkSet(kFs, {{StemKind::Drums, stem}})));
+  p->process(nullptr, nullptr, 0);
+  return p;
+}
+}  // namespace
+
+TEST_CASE("StemPlayer offset: playhead p plays stem sample p - offset, to the sample", "[stemplayer][offset]") {
+  const auto stem = idStem(6000);
+  const int fade = samplesOf(kTransportFadeMs);  // 240: output is exactly the stem after this
+  for (const int block : {1, 7, 64, 512, 4096}) {
+    CAPTURE(block);
+    SECTION("positive: silence for the first `offset` samples, then the stems from sample 0") {
+      auto p = makeOffset(stem, 1000);
+      REQUIRE(p->appliedStartOffsetSamples() == 1000);
+      REQUIRE(p->stemSetLength() == 6000);
+      REQUIRE(p->playheadLength() == 7000);
+      p->play();
+      const Out o = run(*p, 7100, block);
+      for (int i = 0; i < 1000; ++i) REQUIRE(o.l[static_cast<std::size_t>(i)] == 0.0f);
+      for (int i = 1000; i < 6999 + 1; ++i) {
+        // the play fade (240 samples from p = 0) is long over at p = 1000
+        REQUIRE(o.l[static_cast<std::size_t>(i)] == stem[static_cast<std::size_t>(i - 1000)]);
+        REQUIRE(o.r[static_cast<std::size_t>(i)] == stem[static_cast<std::size_t>(i - 1000)]);
+      }
+      for (int i = 7000; i < 7100; ++i) REQUIRE(o.l[static_cast<std::size_t>(i)] == 0.0f);  // past the end
+    }
+    SECTION("negative: the stems lead, stem audio from |offset| plays at p = 0") {
+      auto p = makeOffset(stem, -700);
+      REQUIRE(p->playheadLength() == 5300);
+      p->play();
+      const Out o = run(*p, 5400, block);
+      for (int i = fade; i < 5300; ++i) REQUIRE(o.l[static_cast<std::size_t>(i)] == stem[static_cast<std::size_t>(i + 700)]);
+      // the first samples are the play fade of stem sample 700 onwards
+      REQUIRE(o.l[0] == Catch::Approx(static_cast<double>(stem[700]) * (1.0 / fade)).epsilon(1e-6));
+      for (int i = 5300; i < 5400; ++i) REQUIRE(o.l[static_cast<std::size_t>(i)] == 0.0f);
+    }
+  }
+  // Block size independence of the whole render, fade included.
+  auto a = makeOffset(stem, -700), b = makeOffset(stem, -700);
+  a->play();
+  b->play();
+  const Out oa = run(*a, 5000, 1), ob = run(*b, 5000, 777);
+  REQUIRE(oa.l == ob.l);
+}
+
+TEST_CASE("StemPlayer offset: takes effect only while stopped; the playhead stays", "[stemplayer][offset]") {
+  const auto stem = idStem(20000);
+  auto p = makeOffset(stem, 0);
+  p->play();
+  run(*p, 1000);
+  p->setStartOffsetSamples(500);  // set while playing: producer thread, applied at the next stopped block
+  const Out playing = run(*p, 300);
+  for (int i = 0; i < 300; ++i) REQUIRE(playing.l[static_cast<std::size_t>(i)] == stem[static_cast<std::size_t>(1000 + i)]);
+  REQUIRE(p->appliedStartOffsetSamples() == 0);
+  REQUIRE(p->startOffsetSamples() == 500);
+
+  p->pause();
+  run(*p, 2000);  // the pause fade finishes, the transport stops
+  REQUIRE(p->position() >= 1300);
+  const std::int64_t at = p->position();
+  p->play();
+  const Out o = run(*p, 1000);
+  REQUIRE(p->appliedStartOffsetSamples() == 500);
+  REQUIRE(p->playheadLength() == 20500);
+  REQUIRE(p->position() == at + 1000);  // playhead time kept, the content moved under it
+  for (int i = static_cast<int>(kTransportFadeMs * 0.001 * kFs) + 5; i < 1000; ++i)
+    REQUIRE(o.l[static_cast<std::size_t>(i)] == stem[static_cast<std::size_t>(at + i - 500)]);
+}
+
+TEST_CASE("StemPlayer offset: seek, loop and position are in playhead time", "[stemplayer][offset]") {
+  const auto stem = idStem(30000);
+  auto p = makeOffset(stem, 2000);  // playhead length 32000
+  p->seek(10000);
+  p->play();
+  run(*p, 2000);  // seek takes effect while stopped (the playhead jumps), fade done
+  REQUIRE(p->position() == 12000);
+  const Out o = run(*p, 100);
+  for (int i = 0; i < 100; ++i) REQUIRE(o.l[static_cast<std::size_t>(i)] == stem[static_cast<std::size_t>(12000 + i - 2000)]);
+
+  // Loop points beyond the stem length but inside the playhead length are valid; beyond it are not.
+  REQUIRE(p->setLoop(31000, 32000));
+  REQUIRE_FALSE(p->setLoop(31000, 32001));
+  REQUIRE(p->loopStart() == 31000);
+  p->seek(30500);
+  // let it wrap: after B the position returns to A + overshoot
+  run(*p, 4000);
+  REQUIRE(p->position() >= 31000);
+  REQUIRE(p->position() < 32000);
+
+  // Seek clamps to the playhead length, and the end is the playhead end.
+  p->clearLoop();
+  p->seek(1000000);
+  run(*p, 1000);
+  REQUIRE(p->atEnd());
+  REQUIRE(p->position() >= 32000);
+}
+
+TEST_CASE("StemPlayer offset: host-follow position is playhead time", "[stemplayer][offset]") {
+  const auto stem = idStem(20000);
+  auto p = makeOffset(stem, 3000);
+  p->setTransportMode(TransportMode::HostFollow);
+  std::int64_t host = 5000;
+  Out o;
+  o.l.resize(2000);
+  o.r.resize(2000);
+  for (int pos = 0; pos < 2000; pos += 100) {
+    p->setHostPosition(host + pos, true);
+    p->process(o.l.data() + pos, o.r.data() + pos, 100);
+  }
+  for (int i = 300; i < 2000; ++i) REQUIRE(o.l[static_cast<std::size_t>(i)] == stem[static_cast<std::size_t>(host + i - 3000)]);
+}
+
+TEST_CASE("StemPlayer offset: a set adopted later uses the offset; a loop that no longer fits is cleared", "[stemplayer][offset]") {
+  const auto stem = idStem(30000);
+  auto p = makeOffset(stem, 0);
+  REQUIRE(p->setLoop(20000, 29000));
+  p->setStartOffsetSamples(-5000);  // playhead length 25000: the loop end 29000 no longer fits
+  p->process(nullptr, nullptr, 0);
+  REQUIRE(p->appliedStartOffsetSamples() == -5000);
+  REQUIRE_FALSE(p->loopActive());
+
+  // No-op for zero-length results: an offset more negative than the set clamps the playhead length to 0.
+  p->setStartOffsetSamples(-40000);
+  p->process(nullptr, nullptr, 0);
+  REQUIRE(p->playheadLength() == 0);
+  p->play();
+  const Out o = run(*p, 500);
+  for (float v : o.l) REQUIRE(v == 0.0f);
+}
+
+TEST_CASE("StemPlayer offset: no allocation in process() with an offset and a loop", "[stemplayer][offset][rt]") {
+  auto p = makeOffset(idStem(60000), -1234);
+  REQUIRE(p->setLoop(10000, 40000));
+  p->play();
+  std::vector<float> l(512), r(512);
+  run(*p, 4096);
+  AllocGuard g;
+  for (int i = 0; i < 300; ++i) p->process(l.data(), r.data(), 512);
+  p->setStartOffsetSamples(99);
+  p->pause();
+  for (int i = 0; i < 20; ++i) p->process(l.data(), r.data(), 512);
+  REQUIRE(g.count() == 0);
+  REQUIRE(g.frees() == 0);
+}

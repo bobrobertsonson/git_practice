@@ -168,6 +168,82 @@ the tap count underflowed and `process()` read outside its buffer. It is fixed (
 the output there is exactly 0) and covered by a sweep of every `s` in `0..M-1` and of every chain
 latency `C = 0..2M` for host rates 8000 to 192000 with 48 kHz models.
 
+### Play-along (phase 5.2)
+
+A backing track from a folder of already-separated stems (`drums`, `bass`, `vocals`, `other`, `guitar`/`guitars`;
+`.wav` or `.flac`), played through core's `StemPlayer` and mixed **after** the rig. Spec:
+`docs/specs/phase5_2_playalong_plugin.md`. Code: `plugin/src/PlayAlong.{h,cpp}` (JUCE-free: transport, settings,
+loader, loudness), `plugin/src/PlayAlongPanel.{h,cpp}` (the panel).
+
+**Panel.** An overlay docked along the bottom of the 1280 x 800 design, toggled by the PLAY ALONG button in the top
+bar, closed by default (open / closed is UI state and is not saved). It uses the skin's palette and plain-widget
+drawing; no PLAY ALONG hardware render exists yet. Controls: LOAD SONG (folder picker; dropping a folder anywhere on
+the editor also loads it), play / pause, position display, seek bar, loop SET A / SET B / LOOP, COUNT-IN with BPM, guitar
+stem MUTE / GHOST / FULL, KEEP KEYS, backing level, offset, and in the plugin SYNC TO HOST.
+
+**Standalone vs plugin.** `wrapperType == wrapperType_Standalone` (a processor built outside any wrapper, as in the
+tests, counts as a plugin; `PlayAlong::setStandalone` overrides it). Standalone: always enabled, free-run, the panel's
+play / pause / seek drive it. Plugin: the backing is off by default; SYNC TO HOST enables it and it then follows the host
+transport through the 5.1 host-follow API (play / stop and position jumps; the panel's transport controls are disabled
+because the host owns the transport).
+
+**Threading.**
+
+| Thread | Does | Never does |
+|---|---|---|
+| audio (`processBlock`) | drains the command queue, runs `StemPlayer::process` (backing delayed by the rig latency), measures the rig output loudness, publishes a snapshot (atomics) | allocate, lock, I/O, throw |
+| play-along loader (own worker) | `loadStemDirectory`, `StemPlayer::setStemSet` (SwapSlot), `collectGarbage()` (also every 0.5 s, so a retired set is freed here and never on the audio thread) | touch the player's audio-thread state |
+| message / host / tests | every `PlayAlong` setter: updates the saved settings under a mutex and pushes a command into a preallocated lock-free SPSC queue (256 entries; producers are serialised by a mutex the audio thread never takes) | |
+
+The play-along loader is its own thread, not the `EngineLoader`: a long song load must not hold up preset builds or
+`prepareToPlay` (which waits for the engine loader). Latest request wins. A new set replaces the old one only while the
+transport is stopped (`StemPlayer` rule); a **user** load in Standalone (LOAD SONG or a drop) therefore **pauses the
+playback** so the new set is adopted, whereas a reload (state restore, rate change, KEEP KEYS) does not touch the
+transport and the old set keeps playing until the next stop. `StemPlayer`'s own
+setters are audio-thread-only, so the message thread never calls them: continuous values and transport go through the
+queue, `setStartOffsetSamples` is atomic. A loop is re-applied by the audio thread whenever a set is adopted. If the queue is ever full, the dropped command
+sets a resync flag; the loader's 0.5 s tick then re-sends the whole settings state (level, guitar mode, count-in, loop,
+host sync, offset), so the audio side cannot stay out of step with the panel. Transport events (play, pause, seek) are
+not replayed.
+
+**Rig latency.** `setRigLatencySamples(chain latency)` is called whenever the engine is published and in
+`prepareToPlay`, so the backing is delayed by the same number of samples the host is told (the plugin reports the
+latency; the host compensates other tracks by it). A latency change while playing is not click-free (core rule).
+
+**Offset.** The panel, the saved state and `tonerender --backing-offset-ms` use the matcher's convention (the matcher's
+`--offset-ms`: where the DI starts inside the song). Positive: the stems lead (stem audio from `offset` plays at
+playhead 0). Negative: the backing starts `-offset` into the playhead. `StemPlayer::setStartOffsetSamples` has the
+opposite sign (playhead p plays stem sample p - offset); the plugin negates. Seek, loop points and the position display
+are in playhead time; in plugin mode a host position p plays stem sample p + offsetMs. The offset takes effect while the
+transport is stopped.
+
+**Suggested level.** The backing level is a plain control (-40..+6 dB, default 0). When the user loads a song (LOAD SONG
+or a drop; never on a state restore, a sample-rate reload or a KEEP KEYS reload) it is set **once** to
+
+```
+level = clamp(rigLufs - StemSet::backingLoudnessLufs, -40, +6)
+```
+
+`rigLufs` is a running estimate of the rig's output loudness taken on the audio thread (K-weighted, 100 ms hops,
+absolute gate -70 LUFS and a -10 LU relative gate, 30 s leaky memory, dual-mono output counted as two channels;
+needs 0.5 s of gated signal). If no rig signal has been observed yet the reference is a fixed -18 LUFS. If the stems are
+silent the level stays 0. The backing then sits at the rig's loudness; it is never adjusted automatically again.
+
+**Stem roles.** 4-stem separations put the guitars in `other`. By default (`OtherRole::Guitar`) a folder without a real
+guitar file loads `other` as the guitar stem, so MUTE removes it. KEEP KEYS loads it as `other` instead (it reloads the
+folder). A real `guitar`/`guitars` file always wins.
+
+**State.** Plugin state is the preset JSON plus an optional top-level `playAlong` object (folder, offsetMs, loop, countIn,
+guitarMode, backingLevelDb, otherRole, hostSync; see `docs/PRESET_SCHEMA.md`). It is written only once the play-along has
+been touched, so untouched sessions save exactly the preset, and a state without it leaves the play-along as it is.
+Restoring a folder starts a background load (after `prepareToPlay` when the rate is not known yet); a missing, empty
+or undecodable folder shows a message in the panel and never throws; the saved path is kept. Nothing from a song is ever
+saved in the state, only its path.
+
+**Known limits.** The panel offers no slow-down / transpose (5.3). A new song loaded in plugin mode while the host plays
+is adopted when the host stops. Toggling KEEP KEYS reloads the song (decode time; resampling too if the files are not at
+the host rate). The whole song is held in memory at the host rate (5.1 open question 1).
+
 ### Editor
 
 A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, spec
@@ -188,10 +264,14 @@ LEARN GATE, "+ PEDAL", CPU readout, the footswitch (visual bypass only).
 
 `sawblade_editor_tests` (`plugin/tests/test_editor.cpp`, ctest prefix `editor: `, run under `xvfb-run -a` when
 available): snapshots to `build/screenshots/sawblade_skin_{1x,2x}.png`, resizing, parameter bindings, filmstrip
-mapping, knob interaction, footswitch / LED, accessibility, and the `plugin/assets/` budget (< 25 MB).
+mapping, knob interaction, footswitch / LED, accessibility, and the `plugin/assets/` budget (< 25 MB). The play-along
+tests cover the panel (exists, closed by default, opens from the top bar), its controls bound to the processor, folder
+drop, the missing-folder message, and screenshots `build/screenshots/sawblade_playalong_{closed,open}_1x.png`.
 
-`sawblade_plugin_tests` (headless): `plugin/tests/test_engine.cpp` (Engine, no JUCE) and
-`plugin/tests/test_processor.cpp` (the processor driven like a host). Audio-thread rules are
+`sawblade_plugin_tests` (headless): `plugin/tests/test_engine.cpp` (Engine, no JUCE),
+`plugin/tests/test_processor.cpp` (the processor driven like a host) and `plugin/tests/test_playalong.cpp` (the backing:
+level rule, queue, Standalone and host-follow transport, rig-latency alignment, offset, state, zero allocations and
+locks with the backing playing; stems are synthesised into a temp dir, no audio is committed). Audio-thread rules are
 enforced with the existing `AllocGuard` plus `LockGuard` (`plugin/tests/lock_guard.cpp`, counts
 `pthread_mutex_lock`/`trylock`/rwlock via linker `--wrap`; Linux only, skipped elsewhere). Core
 additions are tested in `tests/test_rt_resample.cpp` and `tests/test_chain_live.cpp`.

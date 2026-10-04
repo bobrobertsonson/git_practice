@@ -16,6 +16,7 @@ class SawbladeLookAndFeel : public juce::LookAndFeel_V4 {
     setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1b1916));
     setColour(juce::TextButton::textColourOffId, text());
     setColour(juce::TextButton::textColourOnId, text());
+    setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
     setColour(juce::TooltipWindow::backgroundColourId, panel());
     setColour(juce::TooltipWindow::textColourId, text());
     setColour(juce::TooltipWindow::outlineColourId, rule());
@@ -62,7 +63,8 @@ class SawbladeLookAndFeel : public juce::LookAndFeel_V4 {
   juce::Font getTextButtonFont(juce::TextButton&, int buttonHeight) override { return labelFont(juce::jmin(14.0f, 0.42f * static_cast<float>(buttonHeight))); }
   void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override {
     g.setFont(getTextButtonFont(b, b.getHeight()));
-    g.setColour(b.findColour(juce::TextButton::textColourOffId).withMultipliedAlpha(b.isEnabled() ? 1.0f : 0.5f));
+    g.setColour(b.findColour(b.getToggleState() ? juce::TextButton::textColourOnId : juce::TextButton::textColourOffId)
+                    .withMultipliedAlpha(b.isEnabled() ? 1.0f : 0.5f));
     g.drawText(b.getButtonText(), b.getLocalBounds().reduced(6, 0), juce::Justification::centred, true);
   }
 };

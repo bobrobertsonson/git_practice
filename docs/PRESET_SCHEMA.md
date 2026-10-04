@@ -28,7 +28,8 @@ Readers must reject `version` greater than they support and migrate lower versio
   "cab":    { ... },                   // required; see Cab
   "postEq": [ EqBand, ... ],           // optional, default []
   "busComp":{ ... },                   // optional; see Bus compressor
-  "output": { "gainDb": 0.0 }          // optional
+  "output": { "gainDb": 0.0 },         // optional
+  "playAlong": { ... }                 // optional; plugin UI state, see Play-along (not tone)
 }
 ```
 
@@ -200,6 +201,28 @@ so linear keeps level roughly constant; equal-power would bump the middle by up 
 ```
 Feed-forward, peak detector, soft knee. Release > 150 ms is flagged in the report as
 "not NAM-trainable" (export phase will refuse or bypass it).
+
+## Play-along (`playAlong`, plugin UI state, not tone)
+
+Written only by the plugin's state (`getStateInformation`), after the user has touched the play-along panel. It is
+**not part of the tone**: the core parser accepts the object (it must be an object) and ignores its contents, never
+writes it back, and so the matcher, `tonerender` and the NAM export, which all read presets through that parser, are
+unaffected by it. Unknown keys inside it are ignored, wrong-typed fields fall back to their defaults and numbers are
+clamped (the plugin reader never throws). Songs and their stems are never stored, only the folder path.
+
+```jsonc
+"playAlong": {
+  "folder": "/home/me/stems/song",     // folder of stems (.wav / .flac); "" or missing = none
+  "offsetMs": 0.0,                      // where the DI starts inside the song, ms (-10000..10000), matcher sign:
+                                        // positive = the stems lead; same meaning as tonerender --backing-offset-ms
+  "loop": { "on": false, "aMs": 21000.0, "bMs": 33500.0 },  // playhead time; aMs/bMs omitted when unset
+  "countIn": { "on": false, "bpm": 120.0 },                 // one bar, 30..300 bpm
+  "guitarMode": "mute",                 // "mute" | "ghost" | "full": what the song's own guitar stem does
+  "backingLevelDb": 0.0,                // -40..+6; a state restore keeps it (the loudness suggestion is for user loads)
+  "otherRole": "guitar",                // "guitar": a 4-stem `other` is the guitar | "other": keep it (KEEP KEYS)
+  "hostSync": false                     // plugin only: follow the host transport
+}
+```
 
 ## Derived properties (not stored; reported by tonerender / plugin)
 
