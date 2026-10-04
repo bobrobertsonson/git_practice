@@ -6,6 +6,7 @@
 #include "sawblade/eq.h"
 #include "sawblade/nam_block.h"
 #include "sawblade/pedal_hm.h"
+#include "sawblade/pedal_muff.h"
 #include "sawblade/pedal_ts.h"
 
 namespace sawblade {
@@ -60,6 +61,10 @@ std::unique_ptr<Processor> createHm(const Block& b, const BlockBuildContext&) {
   return std::make_unique<HmPedal>(static_cast<const HmBlockParams&>(*b.params).p);
 }
 
+std::unique_ptr<Processor> createMuff(const Block& b, const BlockBuildContext&) {
+  return std::make_unique<MuffPedal>(static_cast<const MuffBlockParams&>(*b.params).p);
+}
+
 std::unique_ptr<Processor> createTs(const Block& b, const BlockBuildContext&) {
   return std::make_unique<TsPedal>(static_cast<const TsBlockParams&>(*b.params).p);
 }
@@ -67,11 +72,12 @@ std::unique_ptr<Processor> createTs(const Block& b, const BlockBuildContext&) {
 }  // namespace
 
 BlockRegistry::BlockRegistry() {
-  types_["nam"] = BlockType{{/*namTrainable=*/true}, parseNam, createNam};
-  types_["eq"] = BlockType{{/*namTrainable=*/true}, parseEq, createEq};
+  types_["nam"] = BlockType{{/*namTrainable=*/true}, parseNam, createNam, {}};
+  types_["eq"] = BlockType{{/*namTrainable=*/true}, parseEq, createEq, {}};
   // Modeled pedals: static, nonlinear, time-invariant, so NAM-trainable.
-  types_["pedal.hm"] = BlockType{{/*namTrainable=*/true}, parseHmBlock, createHm};
-  types_["pedal.ts"] = BlockType{{/*namTrainable=*/true}, parseTsBlock, createTs};
+  types_["pedal.hm"] = BlockType{{/*namTrainable=*/true}, parseHmBlock, createHm, hmLiveParamDescs()};
+  types_["pedal.muff"] = BlockType{{/*namTrainable=*/true}, parseMuffBlock, createMuff, muffLiveParamDescs()};
+  types_["pedal.ts"] = BlockType{{/*namTrainable=*/true}, parseTsBlock, createTs, {}};
 }
 
 BlockRegistry& BlockRegistry::instance() {

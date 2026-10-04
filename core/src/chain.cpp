@@ -422,6 +422,13 @@ void Chain::renderPath(Path& p, float* io, int n) noexcept {
   p.delay.process(io, n);
 }
 
+void Chain::setBlockLiveParams(int path, int blockIndex, const float* v, int n) noexcept {
+  if (path < 0 || path > 1 || blockIndex < 0) return;
+  auto& blocks = path_[static_cast<std::size_t>(path)].blocks;
+  if (static_cast<std::size_t>(blockIndex) >= blocks.size()) return;
+  if (auto* p = blocks[static_cast<std::size_t>(blockIndex)].processor.get()) p->setLiveParams(v, n);
+}
+
 void Chain::setLiveParams(const LiveParams& p) noexcept {
   if (!prepared_) return;
   const auto lin = [](double db) { return static_cast<float>(std::pow(10.0, db / 20.0)); };
