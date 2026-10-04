@@ -13,15 +13,22 @@ switch. Each circuit is its own block type in the core, sharing `Oversampler4x` 
 | circuit | block type | status |
 |---|---|---|
 | CHAINSAW | `pedal.hm` (phase 7, deepened to model version 2 here) | this phase |
-| PICKLE | `pedal.muff` — Big-Muff-family topology with the Swollen-Pickle extras (scoop, crunch, voice) | this phase |
-| ZONE | `pedal.mz` — parametric mids + high gain, scoop | **7c** (design the registry/face mapping so it drops in) |
-| RAT | `pedal.rat` — op-amp clipper + filter | **7c** |
+| BIG FUZZ | `pedal.muff` — Big-Muff-family topology with the Swollen-Pickle-style extras (scoop, crunch, voice). Internal ids say "pickle"/"muff"; every UI-visible string says "Big Fuzz". | this phase |
+| (modded chainsaw) | `pedal.hmx` — modded-HM-2 class: decoupled mids, presence, 3-way clip, boost stage, clean blend, 4-band EQ | **7c** (design the registry/face mapping so it drops in) |
+| (one-knob chainsaw) | `pedal.eye` — one-knob chainsaw | **7c** |
+
+Main-lead decisions received during this spec (2026-10-04): Zone and Rat circuits are **out** of
+the chainsaw family (`docs/research/chainsaw_pedals.md` on the main working branch); a local
+phase 7.1 run is fitting `pedal.hm` to real captures and will correct its EQ constants later, so
+**every HM voicing constant lives in one table** (`HmVoicing` in `pedal_hm.h`) for a one-file
+edit; UI-visible names stay generic descriptors (no "Boss", "HM-2", "Swollen Pickle", "Big
+Muff", "Pickle" in preset names, circuit labels or parameter names).
 
 Phase 7 gave `pedal.hm` four stock knobs with every voicing constant hard-wired. This phase
 opens it up, adds the pickle circuit, gives both live knobs in the plugin on the STOCKHOLM
 SYNDROME render, and ships a bank of fifteen starting presets that span the chainsaw gamut:
 Swedish death metal, crust, hardcore, grind, modern tight, bass, texture, and three non-HM-2
-chainsaw tones built on the pickle circuit. Nothing is hard-wired to one band: the presets are
+chainsaw tones built on the big-fuzz circuit. Nothing is hard-wired to one band: the presets are
 starting points and the controls cover the space.
 
 Base: branch `claude/sawblade-p7-modeled-pedals` (`453c7af`). Working branch:
@@ -41,8 +48,8 @@ Base: branch `claude/sawblade-p7-modeled-pedals` (`453c7af`). Working branch:
 4x oversampled nonlinearities (`Oversampler4x`), ADAA2 clippers, no allocation / locks / I/O /
 exceptions in `process()` and in the live-parameter path, deterministic and block-size
 independent for static parameters, latency reported exactly. `-Wall -Wextra -Wpedantic -Werror`.
-Existing goldens bit-identical. No trademarks in UI names (CHAINSAW, PICKLE, ZONE, RAT are the
-generic circuit names; "Swedish chainsaw distortion", "pickle fuzz" the long descriptors).
+Existing goldens bit-identical. No trademarks in UI names (CHAINSAW and BIG FUZZ are the generic
+circuit names; "Swedish chainsaw distortion" and "big fuzz" the long descriptors).
 
 ---
 
@@ -81,7 +88,10 @@ Numbers out of range, wrong types, unknown enum strings, unknown keys → `Prese
 `HmParams` keeps `operator==`.
 
 ### 1.2 Signal flow (v2)
-Same topology as phase 7 with the constants replaced by the parameters:
+Same topology as phase 7 with the constants replaced by the parameters. Every fixed voicing
+constant below (pre-filter corners, the two mode-dependent LPF corners, the stock interstage gain,
+the gyrator Qs, the mode slopes `s1`/`s_low`) lives in one `constexpr` table `HmVoicing` in
+`pedal_hm.h`, so a later capture fit (phase 7.1) is a one-file edit:
 
 | # | Stage | Rate | v2 design |
 |---|---|---|---|
@@ -137,8 +147,8 @@ Unchanged: 50 samples at every rate. The dry delay equals it. IIR group delay st
 
 ---
 
-## 2. `pedal.muff` model version 1 (PICKLE circuit)
-Long name "pickle fuzz". Big-Muff-family topology (input stage → two cascaded diode-clipping
+## 2. `pedal.muff` model version 1 (BIG FUZZ circuit)
+Long name "big fuzz". Big-Muff-family topology (input stage → two cascaded diode-clipping
 gain stages → passive tone stack → recovery stage → volume) with the Swollen-Pickle-style
 extras: SCOOP (mid-notch depth), CRUNCH (clipping compression), VOICE (mid shift). Simplified
 to the same building blocks as `pedal.hm`. `namTrainable = true`. Latency 50 samples (same
@@ -249,16 +259,17 @@ CHAINSAW circuit (`pedal.hm`, `modelVersion: 2`):
 | `bass_chainsaw.json` | Bass Chainsaw | 10 / 7 / 8 / 7 | 0 | 40 | stock / silicon | lowFreq 60, lowQ 0.7 | bass chainsaw: low focus at 60 Hz, 40 % mix keeps the clean DI low end |
 | `clean_mix_texture.json` | Clean Mix Texture | 6 / 8 / 7 / 8 | 2 | 30 | stock / soft | — | texture layer at 30 % over a clean or other amp tone |
 
-PICKLE circuit (`pedal.muff`) — the non-HM-2 chainsaw tones:
+BIG FUZZ circuit (`pedal.muff`) — the non-HM-2 chainsaw tones (file ids keep "pickle", the
+UI-visible `name` says "Big Fuzz" / "Fuzz"):
 
 | file | name | sustain / tone / scoop / volume | crunch / voice | tight | mix | clip | deep | notes |
 |---|---|---|---|---|---|---|---|---|
-| `pickle_chainsaw.json` | Pickle Chainsaw | 10 / 7 / 8 / 4 | 7 / 6 | 3 | 100 | silicon | — | a scooped, saturated fuzz chainsaw with no HM-2 in it (Swedish-style buzz from a muff-family fuzz); into a cranked British-style amp (JCM800 86089) with a V30 cab 45023 |
-| `pickle_doom_saw.json` | Pickle Doom Saw | 8 / 3 / 4 / 5 | 4 / 3 | 0 | 100 | soft | stackRatio 6, rolloffHz 7000 | low-voiced doom/sludge saw: mids shifted down, dark top, soft clip (Electric Wizard, Conan); low-gain amp |
-| `pickle_into_saw.json` | Pickle Into Saw | 6 / 6 / 2 / 6 then HM | 5 / 5 | 2 | 100 | silicon | second block: `pedal.hm` low 8, high 9, dist 6, level 3, tight 0 | two circuits chained: a mild fuzz pushing the chainsaw for a thicker, more compressed buzz |
+| `pickle_chainsaw.json` | Big Fuzz Chainsaw | 10 / 7 / 8 / 4 | 7 / 6 | 3 | 100 | silicon | — | a scooped, saturated fuzz chainsaw with no HM-2 in it (Swedish-style buzz from a muff-family fuzz); into a cranked British-style amp (JCM800 86089) with a V30 cab 45023 |
+| `pickle_doom_saw.json` | Big Fuzz Doom Saw | 8 / 3 / 4 / 5 | 4 / 3 | 0 | 100 | soft | stackRatio 6, rolloffHz 7000 | low-voiced doom/sludge saw: mids shifted down, dark top, soft clip (Electric Wizard, Conan); low-gain amp |
+| `pickle_into_saw.json` | Fuzz Into Saw | 6 / 6 / 2 / 6 then HM | 5 / 5 | 2 | 100 | silicon | second block: `pedal.hm` low 8, high 9, dist 6, level 3, tight 0 | two circuits chained: a mild fuzz pushing the chainsaw for a thicker, more compressed buzz |
 
-7c placeholders (no files): a rat-style grind tone and a zone-style scoop are listed as TODO
-rows in `presets/README.md`, to be added when `pedal.rat` / `pedal.mz` land.
+7c placeholders (no files): a modded-chainsaw tone (`pedal.hmx`) and a one-knob chainsaw
+(`pedal.eye`) are listed as TODO rows in `presets/README.md`, to be added when those circuits land.
 
 Add the bank to `presets/README.md` (table, the amp-suggestion rule, the 7c TODOs).
 
@@ -270,8 +281,8 @@ Add the bank to `presets/README.md` (table, the amp-suggestion rule, the 7c TODO
 Each circuit gets its own host-parameter set (ranges and units differ per circuit; inert when
 the preset has no block of that type, exactly like the post-EQ slots), plus one circuit switch:
 
-- `ParamIndex` in `PresetMapping.h`: after the post-EQ slots add `kSawCircuit` (choice:
-  `chainsaw`, `pickle` — 7c appends `zone`, `rat`), then `kHmFirst … kHmFirst + kHmNumLive − 1`
+- `ParamIndex` in `PresetMapping.h`: after the post-EQ slots add `kSawCircuit` (choice strings
+  `Chainsaw`, `Big Fuzz` — 7c appends the `pedal.hmx` and `pedal.eye` circuits), then `kHmFirst … kHmFirst + kHmNumLive − 1`
   and `kMuffFirst … kMuffFirst + kMuffNumLive − 1`; `kNumParams` follows. `ParamSpec` gains
   `std::vector<std::string> choices` (empty = continuous). Ids: `sawCircuit`; `hmLevel, hmLow,
   hmHigh, hmDistortion, hmTightness, hmMix, hmMode, hmClip, hmClip2, hmLowFreq, hmLowQ,
@@ -279,6 +290,7 @@ the preset has no block of that type, exactly like the post-EQ slots), plus one 
   hmBias`; `muffVolume, muffSustain, muffTone, muffScoop, muffCrunch, muffVoice, muffTightness,
   muffMix, muffClip, muffClip2, muffStackRatio, muffRolloffHz, muffGain2Db, muffBias`. Display
   names "Chainsaw …" / "Pickle …"; units `Hz`, `dB`, `%` where they apply; ranges and defaults
+  names "Chainsaw …" / "Big Fuzz …"; units `Hz`, `dB`, `%` where they apply; ranges and defaults
   from the core descriptor lists (single source of truth).
 - `createLayout()`: a spec with `choices` becomes an `AudioParameterChoice`, else
   `AudioParameterFloat`. `readParams` / `writeParams` work unchanged (a choice's raw value is its
@@ -321,7 +333,7 @@ struct CircuitFace {
 | circuit | face knobs (positions 1–6) | CLIP | FOCUS | drawer knobs | drawer switches |
 |---|---|---|---|---|---|
 | CHAINSAW | LOW `hmLow`, HIGH `hmHigh`, DIST `hmDistortion`, TIGHT `hmTightness`, OUT `hmLevel`, MIX `hmMix` | `hmClip` | `hmLowQ`: WIDE 0.8 / NARROW 1.6, threshold 1.2 | LOW HZ `hmLowFreq`, LOW Q `hmLowQ`, HIGH HZ `hmHighFreq`, SPREAD `hmHighSpread`, PRES HZ `hmPresenceFreq`, PRES dB `hmPresenceDb`, ROLL-OFF `hmRolloffHz`, STAGE 1 `hmGain1Db`, STAGE 2 `hmGain2Db`, BIAS `hmBias` | MODE `hmMode`, CLIP 2 `hmClip2` |
-| PICKLE | SUSTAIN `muffSustain`, TONE `muffTone`, SCOOP `muffScoop`, TIGHT `muffTightness`, OUT `muffVolume`, MIX `muffMix` | `muffClip` | `muffStackRatio`: WIDE 4.4 / NARROW 2.5, threshold 3.4 | CRUNCH `muffCrunch`, VOICE `muffVoice`, WIDTH `muffStackRatio`, ROLL-OFF `muffRolloffHz`, STAGE 2 `muffGain2Db`, BIAS `muffBias` | CLIP 2 `muffClip2` |
+| BIG FUZZ | SUSTAIN `muffSustain`, TONE `muffTone`, SCOOP `muffScoop`, TIGHT `muffTightness`, OUT `muffVolume`, MIX `muffMix` | `muffClip` | `muffStackRatio`: WIDE 4.4 / NARROW 2.5, threshold 3.4 | CRUNCH `muffCrunch`, VOICE `muffVoice`, WIDTH `muffStackRatio`, ROLL-OFF `muffRolloffHz`, STAGE 2 `muffGain2Db`, BIAS `muffBias` | CLIP 2 `muffClip2` |
 
 ### 5.3 Pedal face (`plugin/src/pedals/PedalFace.{h,cpp}`)
 A transparent `juce::Component` laid exactly over the SAW pedal `RigPiece` (render
@@ -380,9 +392,9 @@ it is. `plugin/CMakeLists.txt`: add the `pedals/*.cpp` files to `SAWBLADE_PLUGIN
 Load `presets/modeled/chainsaw/classic_buzzsaw.json` and then `pickle_chainsaw.json` in the
 editor test rig (both render from repo files) and save to `${CMAKE_BINARY_DIR}/screenshots/`:
 `sawblade_face_chainsaw_2x.png`, `sawblade_drawer_chainsaw_2x.png`,
-`sawblade_face_pickle_2x.png`, `sawblade_drawer_pickle_2x.png` (full editor), and 3x crops
-`face_chainsaw_crop.png`, `drawer_chainsaw_crop.png`, `face_pickle_crop.png`,
-`drawer_pickle_crop.png` (saw pedal, and pedal + drawer).
+`sawblade_face_bigfuzz_2x.png`, `sawblade_drawer_bigfuzz_2x.png` (full editor), and 3x crops
+`face_chainsaw_crop.png`, `drawer_chainsaw_crop.png`, `face_bigfuzz_crop.png`,
+`drawer_bigfuzz_crop.png` (saw pedal, and pedal + drawer).
 
 ---
 
@@ -406,7 +418,7 @@ editor test rig (both render from repo files) and save to `${CMAKE_BINARY_DIR}/s
 - `docs/PEDALS.md` (task A, new, short): the one pedal and its circuits; every control of each
   circuit in player terms (what it does to the sound, where stock is, when to reach for it); the
   HM modes; the four clips; the face / drawer mapping (§5.2); the fifteen presets with one line
-  each; the 7c circuits as "coming".
+  each; the 7c circuits (`pedal.hmx`, `pedal.eye`) as "coming".
 - `docs/PLUGIN.md` (task B): one paragraph on live block parameters, the circuit switch
   (rebuild via the loader) and the pedal face.
 
@@ -484,9 +496,10 @@ editor test rig (both render from repo files) and save to `${CMAKE_BINARY_DIR}/s
     fixture DI at 48 kHz without error, output finite, peak in [−6, −0.5] dBFS, and the LTAS
     sanity holds: band energy 80 Hz–4 kHz is at least 90 % of the total, and the 100–200 Hz and
     1–2 kHz bands are each within 30 dB of the loudest third-octave band. Every `name` is free of
-    band names (the test checks: entombed, dismember, gatecreeper, nails, nasum, bloodbath,
-    wolfbrigade, disfear, trap them, rotten sound, carnage, nihilist, lik, electric wizard,
-    conan), every `notes` is non-empty, at least three presets use `pedal.muff`, and
+    band names and trademarks (the test checks, case-insensitive: entombed, dismember,
+    gatecreeper, nails, nasum, bloodbath, wolfbrigade, disfear, trap them, rotten sound, carnage,
+    nihilist, lik, electric wizard, conan, boss, hm-2, swollen, pickle, muff), every `notes` is
+    non-empty, at least three presets use `pedal.muff`, and
     `pickle_into_saw.json` has two circuit blocks and renders. Also run `sawblade-tonecheck
     --presets presets/modeled/chainsaw/*.json --di tests/fixtures/di_riff.wav` (install `match`
     with `pip install -e match`) and keep `summary.json` plus the per-preset LTAS JSONs for the
@@ -518,7 +531,8 @@ editor test rig (both render from repo files) and save to `${CMAKE_BINARY_DIR}/s
     saw pedal piece, closes on a second double-click and on Escape; its bounds lie inside the rig
     and do not intersect the saw pedal piece; its visible knobs are the active circuit's; (e) OLED
     line 2 shows the circuit / clip / focus text after a parameter change; (f) titles and tooltips
-    on every new control; (g) screenshots of §5.6.
+    on every new control; (g) screenshots of §5.6; (h) no UI-visible string (parameter names,
+    choice names, labels, OLED text) contains boss, hm-2, swollen, pickle or muff.
 14. **pluginval**: `--strictness-level 10 --validate-in-process` on the VST3 passes (binary at
     the path the lead gives; registered through `SAWBLADE_PLUGINVAL_EXECUTABLE`).
 15. `-Werror` clean; Release ctest all green; Debug ASan/UBSan ctest for the core tests green.
