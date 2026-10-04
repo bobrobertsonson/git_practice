@@ -5,6 +5,8 @@
 #include "sawblade/capture_cache.h"
 #include "sawblade/eq.h"
 #include "sawblade/nam_block.h"
+#include "sawblade/pedal_hm.h"
+#include "sawblade/pedal_ts.h"
 
 namespace sawblade {
 namespace {
@@ -54,11 +56,22 @@ std::unique_ptr<Processor> createEq(const Block& b, const BlockBuildContext& ctx
   return eq;
 }
 
+std::unique_ptr<Processor> createHm(const Block& b, const BlockBuildContext&) {
+  return std::make_unique<HmPedal>(static_cast<const HmBlockParams&>(*b.params).p);
+}
+
+std::unique_ptr<Processor> createTs(const Block& b, const BlockBuildContext&) {
+  return std::make_unique<TsPedal>(static_cast<const TsBlockParams&>(*b.params).p);
+}
+
 }  // namespace
 
 BlockRegistry::BlockRegistry() {
   types_["nam"] = BlockType{{/*namTrainable=*/true}, parseNam, createNam};
   types_["eq"] = BlockType{{/*namTrainable=*/true}, parseEq, createEq};
+  // Modeled pedals: static, nonlinear, time-invariant, so NAM-trainable.
+  types_["pedal.hm"] = BlockType{{/*namTrainable=*/true}, parseHmBlock, createHm};
+  types_["pedal.ts"] = BlockType{{/*namTrainable=*/true}, parseTsBlock, createTs};
 }
 
 BlockRegistry& BlockRegistry::instance() {
