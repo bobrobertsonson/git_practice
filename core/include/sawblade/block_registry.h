@@ -43,6 +43,7 @@ class BlockRegistry {
   static BlockRegistry& instance();
   void add(const std::string& type, BlockType t);  // throws std::invalid_argument on duplicates
   const BlockType* find(const std::string& type) const;
+  std::vector<std::string> typeNames() const;  // sorted
 
  private:
   BlockRegistry();

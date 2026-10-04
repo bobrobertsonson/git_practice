@@ -169,3 +169,43 @@ TEST_CASE("EQ process performs no allocations", "[eq][alloc]") {
   }
   REQUIRE(allocs == 0);
 }
+
+TEST_CASE("ParametricEq::setBand redesigns one band like a fresh configure", "[eq][live]") {
+  const double fs = 48000.0;
+  std::vector<EqBand> bands(3);
+  bands[0] = {EqType::Peak, 1000.0, 6.0, 1.0, true};
+  bands[1] = {EqType::HighPass, 80.0, 0.0, 0.7, true};
+  bands[2] = {EqType::LowShelf, 200.0, 3.0, 0.7, false};
+  ParametricEq live, ref;
+  live.configure(fs, bands);
+  live.prepare({fs, 512});
+  live.setBand(0, 2500.0, -4.0, 2.0);
+  live.setBand(1, 120.0, 9.0, 1.2);  // gain ignored for a pass band
+  const auto x = noise(4000, 3);
+  auto a = x, b = x;
+  live.process(a.data(), static_cast<int>(a.size()));
+  bands[0] = {EqType::Peak, 2500.0, -4.0, 2.0, true};
+  bands[1].freq = 120.0;
+  bands[1].q = 1.2;
+  ref.configure(fs, bands);
+  ref.prepare({fs, 512});
+  ref.process(b.data(), static_cast<int>(b.size()));
+  CHECK(a == b);
+  CHECK(live.magnitudeDb(1500.0) == Catch::Approx(ref.magnitudeDb(1500.0)));
+
+  // Ignored: bad index, disabled band, non-finite, out-of-range freq / q.
+  const double before = live.magnitudeDb(700.0);
+  live.setBand(-1, 1000.0, 3.0, 1.0);
+  live.setBand(3, 1000.0, 3.0, 1.0);
+  live.setBand(2, 1000.0, 3.0, 1.0);
+  live.setBand(0, std::nan(""), 3.0, 1.0);
+  live.setBand(0, 1000.0, std::nan(""), 1.0);
+  live.setBand(0, 9.0, 3.0, 1.0);
+  live.setBand(0, 0.49 * fs, 3.0, 1.0);
+  live.setBand(0, 1000.0, 3.0, 0.04);
+  live.setBand(0, 1000.0, 3.0, 37.0);
+  CHECK(live.magnitudeDb(700.0) == before);
+  AllocGuard g;
+  live.setBand(0, 1800.0, 2.0, 1.5);
+  CHECK(g.count() == 0);
+}

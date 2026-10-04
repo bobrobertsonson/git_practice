@@ -39,7 +39,13 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/skin/FilmstripKnob.cpp
   src/skin/FootswitchButton.cpp
   src/skin/LedIndicator.cpp
-  src/skin/RigView.cpp)
+  src/skin/RigView.cpp
+  src/rig/RigModel.cpp
+  src/rig/RigController.cpp
+  src/rig/RigWidgets.cpp
+  src/rig/SlotStrip.cpp
+  src/rig/EqGraph.cpp
+  src/rig/RigEditorPanel.cpp)
 
 # UI renders embedded into the binary: an explicit list (not a glob) of everything in assets/.
 # Nothing renders at build time; design/render/export_ui_assets.py produced these files once.
@@ -114,10 +120,12 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_playalong.cpp
     tests/test_browser_json.cpp
     tests/test_browser_preview.cpp
+    tests/test_rig_model.cpp
+    tests/test_rig_controller.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
-    tests/test_browser_json.cpp tests/test_browser_preview.cpp
+    tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_plugin_tests PRIVATE src)
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})

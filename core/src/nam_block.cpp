@@ -105,11 +105,33 @@ void NamBlock::updateGains() noexcept {
   outGain_ = static_cast<float>(dbToLin(outDb));
 }
 
+bool NamBlock::setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept {
+  if (!std::isfinite(inDb) || !std::isfinite(outDb)) return true;
+  double outTotal = outDb;
+  if (cfg_.normalizeLoudness && loudness_) outTotal += -18.0 - *loudness_;
+  const auto start = [rampSamples](float& gain, GainRamp& r, float target) {
+    if (target == gain && r.remaining <= 0) return;
+    if (rampSamples <= 0) {
+      gain = target;
+      r.remaining = 0;
+      return;
+    }
+    if (r.remaining <= 0) r.cur = gain;
+    gain = target;
+    r.step = (target - r.cur) / static_cast<float>(rampSamples);
+    r.remaining = rampSamples;
+  };
+  start(inGain_, inRamp_, static_cast<float>(dbToLin(inDb)));
+  start(outGain_, outRamp_, static_cast<float>(dbToLin(outTotal)));
+  return true;
+}
+
 void NamBlock::prepare(const ProcessSpec& spec) {
   if (expectedRate_ > 0.0 && expectedRate_ != spec.sampleRate && !dsp_->SupportsArbitrarySampleRate())
     throw std::runtime_error("NAM model expects sample rate " + std::to_string(expectedRate_) + " Hz but got " +
                              std::to_string(spec.sampleRate) + " Hz");
   dsp_->ResetAndPrewarm(spec.sampleRate, spec.maxBlockSize);
+  inRamp_.remaining = outRamp_.remaining = 0;
   sampleRate_ = spec.sampleRate;
   maxBlock_ = spec.maxBlockSize;
   scratchIn_.assign(static_cast<std::size_t>(maxBlock_), 0.0f);
@@ -118,6 +140,7 @@ void NamBlock::prepare(const ProcessSpec& spec) {
 
 void NamBlock::reset() {
   if (maxBlock_ <= 0) return;
+  inRamp_.remaining = outRamp_.remaining = 0;
   dsp_->ResetAndPrewarm(sampleRate_, maxBlock_);
 }
 
@@ -128,9 +151,35 @@ void NamBlock::process(float* io, int numSamples) noexcept {
     const int n = std::min(numSamples - done, maxBlock_);
     float* in = scratchIn_.data();
     float* out = scratchOut_.data();
-    for (int i = 0; i < n; ++i) in[i] = io[done + i] * inGain_;
+    if (inRamp_.remaining > 0) {
+      const int r = std::min(inRamp_.remaining, n);
+      float c = inRamp_.cur;
+      int i = 0;
+      for (; i < r; ++i) {
+        c += inRamp_.step;
+        in[i] = io[done + i] * c;
+      }
+      inRamp_.remaining -= r;
+      inRamp_.cur = inRamp_.remaining == 0 ? inGain_ : c;
+      for (; i < n; ++i) in[i] = io[done + i] * inGain_;
+    } else {
+      for (int i = 0; i < n; ++i) in[i] = io[done + i] * inGain_;
+    }
     dsp_->process(&in, &out, n);
-    for (int i = 0; i < n; ++i) io[done + i] = out[i] * outGain_;
+    if (outRamp_.remaining > 0) {
+      const int r = std::min(outRamp_.remaining, n);
+      float c = outRamp_.cur;
+      int i = 0;
+      for (; i < r; ++i) {
+        c += outRamp_.step;
+        io[done + i] = out[i] * c;
+      }
+      outRamp_.remaining -= r;
+      outRamp_.cur = outRamp_.remaining == 0 ? outGain_ : c;
+      for (; i < n; ++i) io[done + i] = out[i] * outGain_;
+    } else {
+      for (int i = 0; i < n; ++i) io[done + i] = out[i] * outGain_;
+    }
     done += n;
   }
 }

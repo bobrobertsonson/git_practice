@@ -65,6 +65,11 @@ class ParametricEq : public Processor {
   // non-finite gains, disabled bands or HighPass/LowPass bands (which have no gain).
   void setBandGainDb(int bandIndex, double gainDb) noexcept;
 
+  // RT-safe: redesigns one configured band (type and enabled flag unchanged, filter state kept).
+  // Ignored for an out-of-range index, a disabled band, non-finite values, freq outside
+  // [10, 0.49 fs) or q outside [0.05, 36]. The gain is ignored for HighPass/LowPass bands.
+  void setBand(int bandIndex, double freq, double gainDb, double q) noexcept;
+
   // Combined analytic response (sum of enabled bands' dB) at the configured sample rate.
   double magnitudeDb(double freqHz) const;
 

@@ -7,6 +7,7 @@
 #include "PlayAlongPanel.h"
 #include "browser/BrowserSettings.h"
 #include "browser/CaptureBrowser.h"
+#include "rig/RigController.h"
 #include "skin/FilmstripKnob.h"
 
 namespace sawblade::plugin {
@@ -71,6 +72,10 @@ class SawbladeEditor::Content : public juce::Component {
     playAlong_.setClickingTogglesState(true);
     playAlong_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
     playAlong_.onClick = [this] { setPlayAlongOpen(playAlong_.getToggleState()); };
+    configure(rigButton_, "RIG", "Show / hide the rig editor: topology, blocks, EQs, blend and alignment, cab, gate and compressor", false);
+    rigButton_.setClickingTogglesState(true);
+    rigButton_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
+    rigButton_.onClick = [this] { setRigEditorOpen(rigButton_.getToggleState()); };
     match_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
     match_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb27a));
     export_.setColour(juce::TextButton::buttonColourId, L::saw());
@@ -123,7 +128,12 @@ class SawbladeEditor::Content : public juce::Component {
     }
     configure(browse_, "BROWSE CAPTURES", "Browse TONE3000 captures", false);
     browse_.onClick = [this] { openBrowser(); };
-    configure(learn_, "LEARN GATE", "Learn the gate threshold from the input", true);
+    configure(learn_, "LEARN GATE", "Learn the gate threshold: stay silent for 1 s, the threshold is set 6 dB above your noise", false);
+    learn_.onClick = [this] {
+      rigController_->learnGate();
+      learnShownUntil_ = juce::Time::getMillisecondCounter() + 9000;
+      updateReadouts();
+    };
 
     auto addKnob = [this](const KnobDef& d) -> FilmstripKnob& {
       const ParamSpec& s = paramSpec(d.param);
@@ -139,7 +149,12 @@ class SawbladeEditor::Content : public juce::Component {
 
     panel_ = std::make_unique<PlayAlongPanel>(processor_);
     panel_->setVisible(false);
-    addChildComponent(*panel_);  // last child: on top of the rig and the inspector
+    addChildComponent(*panel_);  // on top of the rig and the inspector
+
+    rigController_ = std::make_unique<rig::RigController>(processor_);
+    rigPanel_ = std::make_unique<rig::RigEditorPanel>(processor_, *rigController_);
+    rigPanel_->setVisible(false);
+    addChildComponent(*rigPanel_);  // last child; opening either overlay brings it to the front
 
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
@@ -181,11 +196,12 @@ class SawbladeEditor::Content : public juce::Component {
     wordmark_.setBounds(18, 8, 190, 42);
     int x = 226;
     prev_.setBounds(x, y, 34, h);
-    presetButton_.setBounds(x + 34, y, 240, h);
-    next_.setBounds(x + 34 + 240, y, 34, h);
-    x += 34 + 240 + 34 + 12;
-    ab_.setBounds(x, y, 70, h);
-    playAlong_.setBounds(x + 70 + 12, y, 104, h);
+    presetButton_.setBounds(x + 34, y, 200, h);
+    next_.setBounds(x + 34 + 200, y, 34, h);
+    x += 34 + 200 + 34 + 12;
+    ab_.setBounds(x, y, 52, h);
+    playAlong_.setBounds(x + 52 + 12, y, 104, h);
+    rigButton_.setBounds(x + 52 + 12 + 104 + 12, y, 64, h);
     int r = kDesignWidth - 18;
     export_.setBounds(r - 130, y, 130, h);
     r -= 130 + 12;
@@ -193,11 +209,12 @@ class SawbladeEditor::Content : public juce::Component {
     r -= 90 + 12;
     modeChip_.setBounds(r - 96, y + 2, 96, 30);
     r -= 96 + 12;
-    latChip_.setBounds(r - 170, y + 2, 170, 30);
+    latChip_.setBounds(r - 150, y + 2, 150, 30);
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
+    rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
 
     const int ix = kInspX + 16, iw = kInspW - 32;
     selKind_.setBounds(ix, kTopBar + 14, iw, 16);
@@ -238,6 +255,11 @@ class SawbladeEditor::Content : public juce::Component {
       message_.setText({}, juce::dontSendNotification);
     }
 
+    // Single topologies: path B is off, so its level and the blend are not editable (spec 4.1).
+    const bool blendOn = rig::topologyOf(processor_.editBasePreset()) == rig::Topology::Blend;
+    knobs_[kBlend]->setEnabled(blendOn);
+    knobs_[kLevelB]->setEnabled(blendOn);
+
     const SlotBands bands = processor_.postEqSlots();
     for (int k = 0; k < kPostEqSlots; ++k) knobs_[static_cast<size_t>(kPostEqFirst + k)]->setEnabled(bands[static_cast<size_t>(k)] >= 0);
     updateReadouts();
@@ -245,16 +267,23 @@ class SawbladeEditor::Content : public juce::Component {
 
   void updateReadouts() {
     const double b = knobs_[kBlend]->getValue();
+    const bool showLearn = rigController_ && (rigController_->learning() ||
+                                              (rigController_->learnStatus().size() > 0 && static_cast<juce::int32>(learnShownUntil_ - juce::Time::getMillisecondCounter()) > 0));
     blendRead_.setText("SAW " + juce::String(juce::roundToInt((1.0 - b) * 100.0)) + " / BODY " + juce::String(juce::roundToInt(b * 100.0)),
                        juce::dontSendNotification);
-    thr_.setText("thr " + juce::String(knobs_[kGateThreshold]->getValue(), 1) + " dB", juce::dontSendNotification);
+    thr_.setText(showLearn ? juce::String(rigController_->learnStatus())
+                           : "thr " + juce::String(knobs_[kGateThreshold]->getValue(), 1) + " dB",
+                 juce::dontSendNotification);
   }
 
   skin::RigView& rig() { return rig_; }
 
   void setPlayAlongOpen(bool open) {
     panel_->setVisible(open);
-    if (open) panel_->refresh();
+    if (open) {
+      panel_->refresh();
+      panel_->toFront(false);
+    }
     playAlong_.setToggleState(open, juce::dontSendNotification);
   }
   bool playAlongOpen() const { return panel_->isVisible(); }
@@ -274,8 +303,19 @@ class SawbladeEditor::Content : public juce::Component {
     addAndMakeVisible(*browser_);
     browser_->setBounds(0, 0, kDesignWidth, kDesignHeight);
   }
+  void setRigEditorOpen(bool open) {
+    rigPanel_->setVisible(open);
+    if (open) {
+      rigPanel_->refresh();
+      rigPanel_->toFront(false);
+    }
+    rigButton_.setToggleState(open, juce::dontSendNotification);
+  }
+  bool rigEditorOpen() const { return rigPanel_->isVisible(); }
+  rig::RigEditorPanel& rigEditor() { return *rigPanel_; }
   void refreshPanel() {
     if (panel_->isVisible()) panel_->refresh();
+    if (rigPanel_->isVisible()) rigPanel_->refresh();
   }
 
  private:
@@ -329,10 +369,13 @@ class SawbladeEditor::Content : public juce::Component {
   SawbladeProcessor& processor_;
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
-  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_;
+  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_;
+  juce::uint32 learnShownUntil_ = 0;
   std::unique_ptr<PlayAlongPanel> panel_;
   std::unique_ptr<BrowserSettings> browserSettings_;
   std::unique_ptr<CaptureBrowser> browser_;  // declared after the settings it uses
+  std::unique_ptr<rig::RigController> rigController_;  // before the panel that uses it
+  std::unique_ptr<rig::RigEditorPanel> rigPanel_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -376,6 +419,9 @@ void SawbladeEditor::timerCallback() {
 }
 
 void SawbladeEditor::setPlayAlongOpen(bool open) { content_->setPlayAlongOpen(open); }
+void SawbladeEditor::setRigEditorOpen(bool open) { content_->setRigEditorOpen(open); }
+bool SawbladeEditor::rigEditorOpen() const { return content_->rigEditorOpen(); }
+rig::RigEditorPanel& SawbladeEditor::rigEditor() { return content_->rigEditor(); }
 bool SawbladeEditor::playAlongOpen() const { return content_->playAlongOpen(); }
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
