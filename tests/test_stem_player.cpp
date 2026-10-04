@@ -25,10 +25,6 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr double kFs = 48000.0;
-constexpr int kD = static_cast<int>(StemKind::Drums);
-constexpr int kB = static_cast<int>(StemKind::Bass);
-constexpr int kV = static_cast<int>(StemKind::Vocals);
-constexpr int kG = static_cast<int>(StemKind::Guitar);
 
 struct Out {
   std::vector<float> l, r;

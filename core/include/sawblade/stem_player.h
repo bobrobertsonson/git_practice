@@ -195,7 +195,6 @@ class StemPlayer {
   std::array<Ramp, kStemKindCount> stemRamp_;
   Ramp masterRamp_;
   std::array<double, kStemKindCount> g_{};  // per-sample gains
-  double master_ = 1.0;
 
   // Transport.
   PlayCmd playCmd_ = PlayCmd::None;
