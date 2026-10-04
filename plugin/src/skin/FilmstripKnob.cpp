@@ -7,13 +7,26 @@ namespace sawblade::plugin::skin {
 
 FilmstripKnob::FilmstripKnob(juce::AudioProcessorValueTreeState& apvts, const juce::String& paramId, const juce::String& displayName,
                              Kind kind, juce::Colour arcColour)
-    : juce::Slider(juce::Slider::RotaryVerticalDrag, juce::Slider::NoTextBox), apvts_(apvts), paramId_(paramId), kind_(kind), arc_(arcColour) {
+    : juce::Slider(juce::Slider::RotaryVerticalDrag, juce::Slider::NoTextBox), apvts_(&apvts), paramId_(paramId), kind_(kind), arc_(arcColour) {
   setMouseDragSensitivity(kPixelsForFullRange);
   setScrollWheelEnabled(true);
   setTitle(displayName);
   setTooltip(displayName + " (drag to turn, shift = fine, double-click = reset)");
-  attachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts_, paramId_, *this);
-  if (auto* p = apvts_.getParameter(paramId_)) setDoubleClickReturnValue(true, p->convertFrom0to1(p->getDefaultValue()));
+  attachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(*apvts_, paramId_, *this);
+  if (auto* p = apvts_->getParameter(paramId_)) setDoubleClickReturnValue(true, p->convertFrom0to1(p->getDefaultValue()));
+}
+
+FilmstripKnob::FilmstripKnob(const juce::String& displayName, Kind kind, juce::Colour arcColour, const Range& range)
+    : juce::Slider(juce::Slider::RotaryVerticalDrag, juce::Slider::NoTextBox), range_(range), kind_(kind), arc_(arcColour) {
+  setMouseDragSensitivity(kPixelsForFullRange);
+  setScrollWheelEnabled(true);
+  setRange(range.lo, range.hi, 0.0);
+  if (range.skewMidpoint > range.lo && range.skewMidpoint < range.hi) setSkewFactorFromMidPoint(range.skewMidpoint);
+  setValue(range.def, juce::dontSendNotification);
+  setDoubleClickReturnValue(true, range.def);
+  setNumDecimalPlacesToDisplay(range.decimals);
+  setTitle(displayName);
+  setTooltip(displayName + " (drag to turn, shift = fine, double-click = reset)");
 }
 
 FilmstripKnob::~FilmstripKnob() = default;
@@ -32,7 +45,12 @@ const Filmstrip& FilmstripKnob::strip() const {
 int FilmstripKnob::currentFrame() { return frameForProportion(proportion(), strip().frames); }
 
 juce::String FilmstripKnob::getTextFromValue(double v) {
-  if (auto* p = apvts_.getParameter(paramId_)) {
+  if (apvts_ == nullptr) {
+    juce::String t(v, range_.decimals);
+    if (range_.unit.isNotEmpty()) t << " " << range_.unit;
+    return t;
+  }
+  if (auto* p = apvts_->getParameter(paramId_)) {
     juce::String t = p->getText(p->convertTo0to1(static_cast<float>(v)), 32);
     if (p->getLabel().isNotEmpty()) t << " " << p->getLabel();
     return t;

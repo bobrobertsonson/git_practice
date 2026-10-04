@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <set>
 #include <vector>
@@ -14,6 +16,10 @@
 #include "PlayAlongPanel.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "rig/EqGraph.h"
+#include "rig/RigEditorPanel.h"
+#include "rig/RigModel.h"
+#include "rig/SlotStrip.h"
 #include "skin/FilmstripKnob.h"
 #include "skin/FootswitchButton.h"
 #include "skin/LedIndicator.h"
@@ -181,9 +187,22 @@ TEST_CASE("resizing keeps the aspect and scales the content", "[editor]") {
   CHECK(rig.ed->getHeight() >= 400);
 }
 
-TEST_CASE("every parameter has exactly one knob bound to it", "[editor]") {
+namespace {
+// Like collect(), but without descending into the RigEditorPanel: it binds blend, the path levels and the gate
+// threshold a second time (spec phase 10, section 1).
+void collectOutsideRigPanel(juce::Component& c, std::vector<skin::FilmstripKnob*>& out) {
+  for (auto* child : c.getChildren()) {
+    if (dynamic_cast<rig::RigEditorPanel*>(child) != nullptr) continue;
+    if (auto* k = dynamic_cast<skin::FilmstripKnob*>(child)) out.push_back(k);
+    collectOutsideRigPanel(*child, out);
+  }
+}
+}  // namespace
+
+TEST_CASE("every parameter has exactly one knob bound to it outside the rig panel", "[editor]") {
   Rig rig;
-  auto knobs = all<skin::FilmstripKnob>(*rig.ed);
+  std::vector<skin::FilmstripKnob*> knobs;
+  collectOutsideRigPanel(*rig.ed, knobs);
   REQUIRE(static_cast<int>(knobs.size()) == kNumParams);
   std::set<std::string> ids;
   for (auto* k : knobs) ids.insert(k->paramId().toStdString());
@@ -715,4 +734,400 @@ TEST_CASE("play-along: in plugin mode with sync off the status shows warnings an
   REQUIRE(pa.waitForLoader());
   panel->refresh();
   CHECK(anyLabelContains(*rig.ed, "Backing is off"));
+}
+
+// =====================================================================================================
+// Rig editor (docs/specs/phase10_rig_editor.md, section 8, tests 8-11)
+using namespace sawblade;
+namespace {
+
+using nlohmann::json;
+namespace fs = std::filesystem;
+
+const fs::path kFx = SAWBLADE_FIXTURES_DIR;
+
+json fxBlock(const std::string& id, const char* model = "linear_identity.nam") {
+  return {{"id", id}, {"type", "nam"}, {"slot", "amp"}, {"model", {{"file", (kFx / "nam" / model).string()}}}};
+}
+
+// Both paths identity (a nam block each), shared impulse cab, post EQ as given, blend 0.5, align off.
+json fxPreset(const std::string& name = "Fixture") {
+  return {{"schema", "sawblade.preset"}, {"version", 1}, {"name", name},
+          {"paths", {{"a", {{"role", "saw"}, {"blocks", json::array({fxBlock("a1")})}}},
+                     {"b", {{"role", "body"}, {"blocks", json::array({fxBlock("b1")})}}}}},
+          {"align", {{"mode", "off"}}},
+          {"blend", 0.5},
+          {"cab", {{"mode", "shared"}, {"ir", {{"file", (kFx / "ir" / "impulse.wav").string()}}}}},
+          {"postEq", json::array({{{"type", "peak"}, {"freq", 1000}, {"gainDb", 0.0}, {"q", 1.0}},
+                                  {{"type", "highPass"}, {"freq", 80}, {"q", 0.7071}}})}};
+}
+
+// A prepared processor with a fixture preset loaded, and its editor.
+struct FxRig {
+  juce::ScopedJuceInitialiser_GUI gui;
+  TempFolder tmp;
+  SawbladeProcessor proc;
+  std::unique_ptr<juce::AudioProcessorEditor> base;
+  SawbladeEditor* ed = nullptr;
+
+  explicit FxRig(const json& preset) {
+    proc.prepareToPlay(48000.0, 512);
+    load(preset);
+    base.reset(proc.createEditorAndMakeActive());
+    ed = dynamic_cast<SawbladeEditor*>(base.get());
+    REQUIRE(ed != nullptr);
+    ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  }
+  ~FxRig() { base.reset(); }
+
+  void load(const json& preset) {
+    const fs::path f = tmp.dir / "preset.json";
+    std::ofstream(f) << preset.dump(2);
+    REQUIRE(proc.loadPresetFile(f));
+    wait();
+  }
+  void wait() {
+    REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
+    REQUIRE(proc.status().error.empty());
+  }
+  rig::RigEditorPanel& panel() { return ed->rigEditor(); }
+  void open(rig::RigEditorPanel::Tab t) {
+    ed->setRigEditorOpen(true);
+    panel().setTab(t);
+    panel().refresh();
+  }
+  juce::Image snapshot(const char* file) {
+    ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+    panel().refresh();
+    const juce::Image img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f);
+    REQUIRE(img.getWidth() == 1280);
+    REQUIRE(img.getHeight() == 800);
+    savePng(img, file);
+    return img;
+  }
+};
+
+}  // namespace
+
+TEST_CASE("rig editor: the panel exists, is closed by default, opens from RIG and shows the six tabs", "[editor][rig]") {
+  json j = fxPreset();
+  j["paths"]["a"]["blocks"].push_back({{"id", "a2"}, {"type", "eq"}, {"slot", "fx"}, {"bands", json::array({{{"type", "peak"}, {"freq", 1000}, {"gainDb", 3}, {"q", 1}}})}});
+  FxRig rig(j);
+  auto panels = all<rig::RigEditorPanel>(*rig.ed);
+  REQUIRE(panels.size() == 1);
+  rig::RigEditorPanel& panel = *panels[0];
+  CHECK_FALSE(panel.isVisible());
+  CHECK_FALSE(rig.ed->rigEditorOpen());
+
+  juce::Button* toggle = buttonTitled(*rig.ed, "RIG");
+  REQUIRE(toggle != nullptr);
+  CHECK(toggle->isEnabled());
+  CHECK(toggle->getTooltip().isNotEmpty());
+  const auto tb = rig.ed->getLocalArea(toggle, toggle->getLocalBounds());
+  CHECK(tb.getBottom() <= 58);
+  // The panel sits exactly over the rig area.
+  const auto pb = rig.ed->getLocalArea(&panel, panel.getLocalBounds());
+  CHECK(pb.getX() == 0);
+  CHECK(pb.getY() == 58);
+  CHECK(pb.getWidth() == 940);
+  CHECK(pb.getHeight() == 742);
+  click(*toggle);
+  CHECK(panel.isVisible());
+  CHECK(rig.ed->rigEditorOpen());
+  CHECK(toggle->getToggleState());
+  CHECK(panel.tab() == rig::RigEditorPanel::Tab::Chain);
+
+  const char* names[] = {"CHAIN", "EQ", "BLEND", "CAB", "GATE", "COMP"};
+  for (int i = 0; i < 6; ++i) {
+    auto& b = panel.tabButton(static_cast<rig::RigEditorPanel::Tab>(i));
+    INFO(names[i]);
+    CHECK(b.getButtonText() == names[i]);
+    click(b);
+    CHECK(panel.tab() == static_cast<rig::RigEditorPanel::Tab>(i));
+  }
+  for (const char* t : {"SINGLE", "SINGLE + 2 PEDALS", "BLEND"}) {
+    bool found = false;
+    for (auto* b : all<juce::Button>(panel)) found = found || b->getButtonText() == t;
+    CHECK(found);
+  }
+  click(*toggle);
+  CHECK_FALSE(panel.isVisible());
+
+  // Open / closed and the tab are UI state: the saved state is the preset only.
+  rig.ed->setRigEditorOpen(true);
+  juce::MemoryBlock state;
+  rig.proc.getStateInformation(state);
+  const std::string text(static_cast<const char*>(state.getData()), state.getSize());
+  CHECK(text.find("rigEditor") == std::string::npos);
+  CHECK(text.find("RIG") == std::string::npos);
+  rig.ed->setRigEditorOpen(false);
+
+  // The top bar still fits: nothing overlaps the new button.
+  for (auto* b : all<juce::Button>(*rig.ed)) {
+    if (b == toggle || !b->getParentComponent() || b->getParentComponent() != toggle->getParentComponent()) continue;
+    if (b->getY() > 58) continue;
+    INFO(b->getTitle());
+    CHECK_FALSE(b->getBounds().intersects(toggle->getBounds()));
+  }
+
+  // Every control inside the panel (all tabs, all cards) has a title and a tooltip.
+  int sliders = 0, buttons = 0;
+  for (auto* s : all<juce::Slider>(panel)) {
+    INFO("slider " << s->getTitle());
+    CHECK(s->getTitle().isNotEmpty());
+    CHECK(s->getTooltip().isNotEmpty());
+    CHECK(s->getTextFromValue(s->getValue()).isNotEmpty());
+    ++sliders;
+  }
+  for (auto* b : all<juce::Button>(panel)) {
+    INFO("button " << b->getTitle() << " / " << b->getButtonText());
+    CHECK(b->getTitle().isNotEmpty());
+    CHECK(b->getTooltip().isNotEmpty());
+    ++buttons;
+  }
+  CHECK(sliders >= 3 + 8 + 6 + 2);  // blend + levels, gate, comp, block inputs
+  CHECK(buttons >= 30);
+  CHECK(panel.eqGraph().getTitle().isNotEmpty());
+  CHECK(panel.eqGraph().getTooltip().isNotEmpty());
+
+  // The panel binds blend, the levels and the gate threshold a second time: those parameters have two knobs now.
+  int blendKnobs = 0;
+  for (auto* k : all<skin::FilmstripKnob>(*rig.ed))
+    if (k->paramId() == "blend") ++blendKnobs;
+  CHECK(blendKnobs == 2);
+}
+
+TEST_CASE("rig editor: dragging an EQ node edits the band and the parameter", "[editor][rig]") {
+  FxRig rig(fxPreset());
+  rig.open(rig::RigEditorPanel::Tab::Eq);
+  rig.panel().setEqTarget(rig::EqTarget::Post);
+  rig.panel().refresh();
+  rig::EqGraph& g = rig.panel().eqGraph();
+  REQUIRE(g.numBands() == 2);
+  const double w = g.getWidth(), h = g.getHeight();
+  CHECK(w == rig::EqGraph::kWidth);
+  CHECK(h == rig::EqGraph::kHeight);
+
+  // The documented mapping round-trips.
+  CHECK_THAT(rig::EqGraph::xToFreq(rig::EqGraph::freqToX(1234.0, w), w), Catch::Matchers::WithinRel(1234.0, 1e-12));
+  CHECK_THAT(rig::EqGraph::yToGain(rig::EqGraph::gainToY(-7.5, h), h), WithinAbs(-7.5, 1e-12));
+  CHECK_THAT(rig::EqGraph::yToQ(rig::EqGraph::qToY(2.5, h), h), Catch::Matchers::WithinRel(2.5, 1e-12));
+  CHECK_THAT(rig::EqGraph::xToFreq(0.0, w), WithinAbs(20.0, 1e-9));
+  CHECK_THAT(rig::EqGraph::xToFreq(w, w), WithinAbs(20000.0, 1e-6));
+  CHECK_THAT(rig::EqGraph::yToGain(0.0, h), WithinAbs(18.0, 1e-12));
+  CHECK_THAT(rig::EqGraph::yToQ(h, h), WithinAbs(0.1, 1e-12));
+  CHECK_THAT(rig::EqGraph::yToQ(0.0, h), WithinAbs(20.0, 1e-9));
+
+  const std::uint64_t builds = rig.proc.engineBuilds();
+  // node 0: peak 1 kHz / 0 dB. Press on it, drag by (+70, -40), release.
+  const juce::Point<float> n0 = g.nodePosition(0);
+  const juce::Point<float> to(n0.x + 70.0f, n0.y - 40.0f);
+  juce::Component& gc = g;
+  gc.mouseDown(mouse(g, n0, n0, false));
+  CHECK(g.selected() == 0);
+  gc.mouseDrag(mouse(g, to, n0, false));
+  gc.mouseUp(mouse(g, to, n0, false));
+  const double wantF = rig::EqGraph::xToFreq(to.x, w), wantG = rig::EqGraph::yToGain(to.y, h);
+  const Preset p = rig.proc.currentPreset();
+  CHECK_THAT(p.postEq[0].freq, Catch::Matchers::WithinRel(wantF, 1e-6));
+  CHECK_THAT(p.postEq[0].gainDb, WithinAbs(wantG, 1e-4));
+  CHECK_THAT(static_cast<double>(rig.proc.parameters().getRawParameterValue("postEq1")->load()), WithinAbs(wantG, 1e-4));
+  CHECK(rig.proc.engineBuilds() == builds);  // a live edit: no rebuild
+  EqBand shown = p.postEq[0];
+  CHECK(rig.panel().eqReadoutText() == rig::EqGraph::bandReadout(shown));
+  CHECK(rig.panel().eqReadoutText().startsWith("PEAK"));
+  CHECK(rig.panel().eqReadoutText().contains("kHz"));
+  rig.panel().refresh();
+  CHECK_THAT(static_cast<double>(g.band(0).freq), Catch::Matchers::WithinRel(wantF, 1e-6));
+
+  // node 1: high-pass 80 Hz, Q 0.7071. A vertical drag moves the Q and leaves the frequency alone.
+  const juce::Point<float> n1 = g.nodePosition(1);
+  const juce::Point<float> to1(n1.x, n1.y - 50.0f);
+  gc.mouseDown(mouse(g, n1, n1, false));
+  CHECK(g.selected() == 1);
+  gc.mouseDrag(mouse(g, to1, n1, false));
+  gc.mouseUp(mouse(g, to1, n1, false));
+  const Preset p2 = rig.proc.currentPreset();
+  CHECK_THAT(p2.postEq[1].q, Catch::Matchers::WithinRel(rig::EqGraph::yToQ(to1.y, h), 1e-6));
+  CHECK(p2.postEq[1].freq == 80.0);
+  CHECK(p2.postEq[1].gainDb == 0.0);
+  CHECK(rig.panel().eqReadoutText().startsWith("HIGH-PASS"));
+  CHECK(rig.proc.engineBuilds() == builds);
+
+  // Shift-drag moves the Q only; the wheel too.
+  const juce::Point<float> n0b = g.nodePosition(0);
+  gc.mouseDown(mouse(g, n0b, n0b, false));
+  gc.mouseDrag(mouse(g, {n0b.x + 30.0f, n0b.y - 30.0f}, n0b, true));
+  gc.mouseUp(mouse(g, {n0b.x + 30.0f, n0b.y - 30.0f}, n0b, true));
+  const Preset p3 = rig.proc.currentPreset();
+  CHECK(p3.postEq[0].freq == p.postEq[0].freq);
+  CHECK(p3.postEq[0].q > p.postEq[0].q);
+  juce::MouseWheelDetails wheel;
+  wheel.deltaY = -1.0f;
+  const double qBefore = p3.postEq[0].q;
+  gc.mouseWheelMove(mouse(g, g.nodePosition(0), g.nodePosition(0), false), wheel);
+  CHECK(rig.proc.currentPreset().postEq[0].q < qBefore);
+
+  // Structural edits: double-click a node toggles it, double-click empty space adds a peak band there.
+  const auto n = g.nodePosition(0);
+  gc.mouseDoubleClick(mouse(g, n, n, false, 2));
+  rig.wait();
+  CHECK_FALSE(rig.proc.currentPreset().postEq[0].enabled);
+  const juce::Point<float> empty(200.0f, 60.0f);
+  gc.mouseDoubleClick(mouse(g, empty, empty, false, 2));
+  rig.wait();
+  const Preset p4 = rig.proc.currentPreset();
+  REQUIRE(p4.postEq.size() == 3);
+  CHECK(p4.postEq[2].type == EqType::Peak);
+  CHECK_THAT(p4.postEq[2].freq, Catch::Matchers::WithinRel(rig::EqGraph::xToFreq(200.0, w), 1e-9));
+  CHECK_THAT(p4.postEq[2].gainDb, WithinAbs(rig::EqGraph::yToGain(60.0, h), 1e-4));  // a gain band: the parameter's 1e-4 grid
+}
+
+TEST_CASE("rig editor: topology and cab buttons change the preset through the loader", "[editor][rig]") {
+  FxRig rig(fxPreset());
+  rig.open(rig::RigEditorPanel::Tab::Chain);
+  auto& panel = rig.panel();
+  CHECK(rig::topologyOf(rig.proc.currentPreset()) == rig::Topology::Blend);
+
+  click(panel.topologyButton(rig::Topology::Single));
+  rig.wait();
+  CHECK(rig::topologyOf(rig.proc.currentPreset()) == rig::Topology::Single);
+  CHECK_FALSE(rig.proc.currentPreset().b.enabled);
+  CHECK(rig.proc.currentPreset().blend == 0.0);
+  panel.refresh();
+  CHECK(anyLabelContains(*rig.ed, "BLEND OFF"));
+
+  click(panel.topologyButton(rig::Topology::Blend));
+  rig.wait();
+  panel.refresh();
+  CHECK(rig::topologyOf(rig.proc.currentPreset()) == rig::Topology::Blend);
+  CHECK(rig.proc.currentPreset().blend == 0.5);
+  CHECK_FALSE(anyLabelContains(*rig.ed, "BLEND OFF"));
+
+  panel.setTab(rig::RigEditorPanel::Tab::Cab);
+  CHECK(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "STUDIO BLEND"));
+  click(panel.cabModeButton(CabMode::PerPath));
+  rig.wait();
+  panel.refresh();
+  CHECK(rig.proc.currentPreset().cab.mode == CabMode::PerPath);
+  CHECK(anyLabelContains(*rig.ed, "STUDIO BLEND: only the with-cab NAM export is exact"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE"));
+  click(panel.cabModeButton(CabMode::Shared));
+  rig.wait();
+  panel.refresh();
+  CHECK(rig.proc.currentPreset().cab.mode == CabMode::Shared);
+  CHECK(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE: the no-cab NAM export is exact"));
+}
+
+TEST_CASE("rig editor: chain cards edit the blocks", "[editor][rig]") {
+  json j = fxPreset();
+  j["paths"]["a"]["blocks"].push_back({{"id", "a2"}, {"type", "eq"}, {"slot", "fx"}, {"bands", json::array({{{"type", "peak"}, {"freq", 1000}, {"gainDb", 3}, {"q", 1}}})}});
+  FxRig rig(j);
+  rig.open(rig::RigEditorPanel::Tab::Chain);
+  auto byTitle = [&](const juce::String& t) -> juce::Button* {
+    for (auto* b : all<juce::Button>(rig.panel()))
+      if (b->getTitle() == t) return b;
+    return nullptr;
+  };
+  REQUIRE(byTitle("Bypass a2") != nullptr);
+  click(*byTitle("Bypass a2"));
+  rig.wait();
+  CHECK(rig.proc.currentPreset().a.blocks[1].bypass);
+  rig.panel().refresh();
+  click(*byTitle("Move a2 left"));
+  rig.wait();
+  CHECK(rig.proc.currentPreset().a.blocks[0].id == "a2");
+  rig.panel().refresh();
+  click(*byTitle("Remove a2"));
+  rig.wait();
+  CHECK(rig.proc.currentPreset().a.blocks.size() == 1);
+  rig.panel().refresh();
+  CHECK(byTitle("Remove a2") == nullptr);
+
+  // INPUT knob: live, no rebuild.
+  const std::uint64_t builds = rig.proc.engineBuilds();
+  auto* in = sliderTitled(rig.panel(), "Input gain a1");
+  REQUIRE(in != nullptr);
+  in->setValue(6.0, juce::sendNotificationSync);
+  const Preset p = rig.proc.currentPreset();
+  CHECK(static_cast<const NamBlockParams&>(*p.a.blocks[0].params).inputGainDb == 6.0);
+  CHECK(rig.proc.engineBuilds() == builds);
+
+  // ADD: an eq block is appended in front of the amp.
+  rig.panel().refresh();
+  click(rig.panel().tabButton(rig::RigEditorPanel::Tab::Chain));
+  juce::Component* lane = nullptr;
+  for (auto* b : all<juce::Button>(rig.panel()))
+    if (b->getTitle().startsWith("Add block to A")) lane = b->getParentComponent();
+  REQUIRE(lane != nullptr);
+  dynamic_cast<rig::SlotStrip*>(lane)->addType("eq");
+  rig.wait();
+  const Preset p2 = rig.proc.currentPreset();
+  REQUIRE(p2.a.blocks.size() == 2);
+  CHECK(p2.a.blocks[0].type == "eq");
+  CHECK(p2.a.blocks[1].type == "nam");
+  CHECK(p2.a.blocks[0].id == "a2");
+  // A failing block type reports an error and changes nothing.
+  const std::uint64_t b2 = rig.proc.engineBuilds();
+  std::string seen;
+  dynamic_cast<rig::SlotStrip*>(lane)->onMessage = [&](const juce::String& m) { seen = m.toStdString(); };
+  dynamic_cast<rig::SlotStrip*>(lane)->addType("no.such.type");
+  CHECK_FALSE(seen.empty());
+  CHECK(rig.proc.engineBuilds() == b2);
+}
+
+TEST_CASE("rig editor: screenshots", "[editor][rig]") {
+  // Blend: both lanes populated from the identity preset plus an eq block.
+  {
+    json j = fxPreset();
+    j["paths"]["a"]["blocks"].push_back({{"id", "a2"}, {"type", "eq"}, {"slot", "fx"}, {"bands", json::array({{{"type", "peak"}, {"freq", 1000}, {"gainDb", 3}, {"q", 1}}})}});
+    j["paths"]["b"]["blocks"][0]["slot"] = "amp";
+    FxRig rig(j);
+    rig.open(rig::RigEditorPanel::Tab::Chain);
+    const juce::Image img = rig.snapshot("rig_blend.png");
+    CHECK(nonBackgroundFraction(img, {0, 58, 940, 742}) > 0.04);
+    CHECK(anyLabelContains(*rig.ed, juce::String::fromUTF8("A \xC2\xB7 SAW")));
+    CHECK(anyLabelContains(*rig.ed, juce::String::fromUTF8("B \xC2\xB7 BODY")));
+    CHECK(anyLabelContains(*rig.ed, "EQ 1 band"));
+    CHECK(rig::topologyOf(rig.proc.currentPreset()) == rig::Topology::Blend);
+
+    // Single: lane B shows the BLEND OFF note.
+    click(rig.panel().topologyButton(rig::Topology::Single));
+    rig.wait();
+    const juce::Image single = rig.snapshot("rig_single.png");
+    CHECK(nonBackgroundFraction(single, {0, 58, 940, 742}) > 0.04);
+    CHECK(anyLabelContains(*rig.ed, "BLEND OFF"));
+  }
+  // EQ: three bands of different types on the post EQ.
+  {
+    json j = fxPreset();
+    j["postEq"] = json::array({{{"type", "peak"}, {"freq", 800}, {"gainDb", 5.0}, {"q", 1.4}},
+                               {{"type", "highShelf"}, {"freq", 6000}, {"gainDb", -6.0}, {"q", 0.7}},
+                               {{"type", "highPass"}, {"freq", 90}, {"q", 0.9}}});
+    FxRig rig(j);
+    rig.open(rig::RigEditorPanel::Tab::Eq);
+    const juce::Image img = rig.snapshot("rig_eq.png");
+    CHECK(rig.panel().eqGraph().numBands() == 3);
+    CHECK(nonBackgroundFraction(img, {0, 58, 940, 742}) > 0.05);
+  }
+  // Gate in expander mode.
+  {
+    json j = fxPreset();
+    j["gate"] = {{"enabled", true}, {"mode", "expander"}, {"thresholdDb", -52.0}, {"hysteresisDb", 5.0}, {"attackMs", 0.4},
+                 {"holdMs", 25.0}, {"releaseMs", 90.0}, {"rangeDb", -60.0}, {"ratio", 3.0}, {"keyHighPassHz", 120.0},
+                 {"releaseCurve", "linear-db"}};
+    FxRig rig(j);
+    rig.open(rig::RigEditorPanel::Tab::Gate);
+    const juce::Image img = rig.snapshot("rig_gate.png");
+    CHECK(nonBackgroundFraction(img, {0, 58, 940, 742}) > 0.05);
+    CHECK(anyLabelContains(*rig.ed, "120 Hz"));
+    // The remaining tabs, for the reviewer's eyes (not in the spec's list).
+    rig.panel().setTab(rig::RigEditorPanel::Tab::Blend);
+    rig.snapshot("rig_tab_blend.png");
+    rig.panel().setTab(rig::RigEditorPanel::Tab::Cab);
+    rig.snapshot("rig_tab_cab.png");
+    rig.panel().setTab(rig::RigEditorPanel::Tab::Comp);
+    rig.snapshot("rig_tab_comp.png");
+  }
 }

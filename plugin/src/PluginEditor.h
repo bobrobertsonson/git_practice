@@ -6,6 +6,7 @@
 
 #include "PluginProcessor.h"
 #include "SawbladeLookAndFeel.h"
+#include "rig/RigEditorPanel.h"
 #include "skin/RigView.h"
 
 namespace sawblade::plugin {
@@ -32,6 +33,12 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   // The PLAY ALONG overlay (PlayAlongPanel): closed by default; open / closed is UI state, never saved.
   void setPlayAlongOpen(bool open);
   bool playAlongOpen() const;
+
+  // The RIG overlay (rig::RigEditorPanel): every blend feature of the engine. Closed by default; open / closed
+  // and the active tab are UI state, never saved.
+  void setRigEditorOpen(bool open);
+  bool rigEditorOpen() const;
+  rig::RigEditorPanel& rigEditor();
 
   // Dropping a folder (of stems) anywhere on the editor loads it as the song and opens the panel.
   bool isInterestedInFileDrag(const juce::StringArray& files) override;

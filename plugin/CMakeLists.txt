@@ -31,7 +31,11 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/skin/LedIndicator.cpp
   src/skin/RigView.cpp
   src/rig/RigModel.cpp
-  src/rig/RigController.cpp)
+  src/rig/RigController.cpp
+  src/rig/RigWidgets.cpp
+  src/rig/SlotStrip.cpp
+  src/rig/EqGraph.cpp
+  src/rig/RigEditorPanel.cpp)
 
 # UI renders embedded into the binary: an explicit list (not a glob) of everything in assets/.
 # Nothing renders at build time; design/render/export_ui_assets.py produced these files once.
@@ -138,6 +142,7 @@ if(SAWBLADE_BUILD_TESTS)
   target_include_directories(sawblade_editor_tests PRIVATE src)
   target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS}
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
+    SAWBLADE_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
     SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots")
   target_link_libraries(sawblade_editor_tests PRIVATE
     sawblade_core Catch2::Catch2WithMain SawbladeAssets
