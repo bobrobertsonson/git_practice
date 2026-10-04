@@ -8,7 +8,7 @@ Branch `claude/sawblade-p7c-zone-rat` (name historical). **Holding on the main l
   (`phase7c_zone_rat.md` is a stub). Spec: `docs/specs/phase7c_chainsaw_family.md`.
 - Pushed to origin: `dd2b891` (old spec), `716c2a7` (new spec), `2d5c736` (core). The push
   happened before the hold request arrived.
-- Local only (not pushed, per the hold): `e4cce00` (tests, `pedal_fr` string params, 7 presets,
+- Also pushed (the repo's stop hook requires it): `e4cce00` (tests, `pedal_fr` string params, 7 presets,
   `PRESET_SCHEMA.md`) and the spec amendment + this file.
 - Implementer round 1 result: 224/224 ctest Release, 24 new `[saw]` tests clean under
   ASan/UBSan, `-Werror` clean, goldens unchanged. Full report numbers are in the engineer's
@@ -22,7 +22,7 @@ Branch `claude/sawblade-p7c-zone-rat` (name historical). **Holding on the main l
 2. Plots from `build/fr_saw/*.csv` (script: scratchpad `plot_zr.py`, needs its figure config)
    into `docs/reports/phase7c/`; Artifact "Sawblade Zone + Rat" renamed to the chainsaw family.
 3. `docs/specs/phase7c_chainsaw_family_REPORT.md`.
-4. Push, final summary.
+4. Push the remaining commits, final summary.
 
 ## Open points for the main lead
 - `pedal.hm` custom mode: not implemented here on purpose. 7b's committed spec
