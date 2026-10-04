@@ -7,6 +7,11 @@ endif()
 
 add_library(sawblade_core STATIC
   src/eq.cpp
+  src/oversampler.cpp
+  src/adaa_clipper.cpp
+  src/pedal_params.cpp
+  src/pedal_hm.cpp
+  src/pedal_ts.cpp
   src/gate.cpp
   src/convolver.cpp
   src/resample.cpp

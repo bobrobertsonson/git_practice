@@ -23,7 +23,8 @@ add_executable(sawblade_tests
   test_stem_set.cpp
   test_stem_player.cpp
   test_stem_cli.cpp
-  test_loudness.cpp)
+  test_loudness.cpp
+  test_pedals.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)
@@ -48,3 +49,8 @@ if(SAWBLADE_BASH)
     COMMAND ${SAWBLADE_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/test_mac_update.sh
             ${PROJECT_SOURCE_DIR}/scripts/mac_update.sh)
 endif()
+
+# Developer tool (not installed): small-signal frequency response of the modeled pedals as CSV.
+add_executable(pedal_fr tools/pedal_fr.cpp)
+target_link_libraries(pedal_fr PRIVATE sawblade_core sawblade_warnings)
+target_include_directories(pedal_fr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
