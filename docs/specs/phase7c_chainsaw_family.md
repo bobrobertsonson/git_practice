@@ -481,15 +481,18 @@ Apply the free-cascade residual fit **on top of** the v2 bands (it was fitted to
 the v2 model, presence peak included), and open the top end:
 - keep: low gyrator (100 Hz, Q 0.8, `−12 + 3·low`), high A (`highFreq`, Q 1.2), high B
   (`highFreq·highSpread`), presence peak (`presenceFreq`, `presenceDb` default 8);
-- **add three fixed fit bands** (table constants `fitLowShelfHz = 85, fitLowShelfDb = 2.4,
-  Q 0.707`; `fitMidHz = 705, fitMidDb = 4.65, fitMidQ = 2.76`; `fitCutHz = 5500, fitCutDb =
-  −12.2, fitCutQ = 1.54`);
+- **add three fixed fit bands** (table constants `fitLowShelfHz = 85, fitLowShelfDb = 1.7,
+  Q 0.707`; `fitMidHz = 683, fitMidDb = 4.5, fitMidQ = 2.4`; `fitCutHz = 5500, fitCutDb =
+  −12.0, fitCutQ = 1.54`) — final 7.1 numbers (8 labelled stock models, 1.36 dB RMS), updated
+  21:02 UTC from the first relay (85/+2.4, 705/+4.65/2.76, −12.2);
 - **remove the output roll-off by default**: `rolloffHz` range becomes 4000–16000, v3 default
   **16000** (the fit ran to its 14 kHz bound; 16 kHz keeps it out of the way at 44.1 kHz too);
 - **post-clip LPF** (4th-order) `postLpfHz = 9500` for stock and custom in v3 (was 6500; the
   model was ~12 dB short at 10 kHz). Check the alias margin stays < −80 dB with the wider LPF
   (Acceptance 16); if it does not, lower towards 9 kHz and report.
-Gains-only cross-check (informational print): v3 − v2 at 1 kHz ≈ +3 dB, 1.5 kHz ≈ −1.6 dB.
+Gains-only cross-check (informational print): v3 − v2 at 1 kHz ≈ +3.3 dB, 1.5 kHz ≈ −1.9 dB.
+Measured knob map (provisional, v1 voicing): real D 2…10 all fit model D ≈ 9.7; real H 10 fits
+model H ≈ 7.2; real L 7…10 fit model L ≈ 7.1 — the drive change above is what the D map asks for.
 
 ## 3.4 Custom mode in v3 (all four standard/custom pairs agree)
 `mode: custom` in v3 = exactly these deltas over stock (v2's custom `s1 4.6 / sLow 3.6` stay
@@ -517,7 +520,7 @@ with `interLpfHz = postLpfHz = 11000` (keeps the "brighter top" meaning above th
 ## 3.6 Presets
 - New `presets/modeled/hm_v3/` (`pedal.hm`, `modelVersion: 3`, all keys explicit), the Part-1 §5
   recipes made real: `sunlight_all_tens.json` (10/10/10, stock), `stockholm_custom.json`
-  (10/9/10, custom, lowFreq 90), `gothenburg_half_mids.json` (8/5/8, custom, highFreq 900,
+  (6.5/5/10, custom — the 7.1 "custom all tens" knob map, lowFreq 90), `gothenburg_half_mids.json` (8/5/8, custom, highFreq 900,
   highSpread 1.4, presenceDb 6), `grind_buzz.json` (6/10/10, custom, tightness 7, presenceFreq
   5500, presenceDb 12). `level` set for a peak in [−6, −0.5] dBFS. Family bank: 15 + 7 + 4 = 26.
 - Re-level the seven hmx/eye presets on the v3 core (same window), report old/new.
@@ -534,8 +537,8 @@ with `interLpfHz = postLpfHz = 11000` (keeps the "brighter top" meaning above th
     dBc, H3 ∈ [−22, −14] dBc (print H2…H6). Small-signal `FR(D 10) − FR(D 0)` at 1 kHz = 20 ±
     0.2 dB. THD at −40 dBFS: D 2 ≥ (v2's D 10 THD) − 3 dB (saturated from D-2). THD still
     monotonic in D at −20 and −40 dBFS.
-18. **v3 EQ** (`FR(v3 default) − FR(v2 default)`, absolute, same knobs): 50 Hz ∈ [+1.4, +3.4];
-    705 Hz ∈ [+3.5, +5.5]; 5.5 kHz ∈ [−13, −8]; 10 kHz ≥ +8. **Custom v3** (`FR(custom) −
+18. **v3 EQ** (`FR(v3 default) − FR(v2 default)`, absolute, same knobs): 50 Hz ∈ [+0.7, +2.7];
+    683 Hz ∈ [+3.4, +5.4]; 5.5 kHz ∈ [−13, −8]; 10 kHz ≥ +8. **Custom v3** (`FR(custom) −
     FR(stock)`, v3): 400 Hz ∈ [2.0, 3.0]; 50 Hz ∈ [4.5, 6.5]; 10 kHz ∈ [4.5, 6.5]; with
     `customLowDb = customHighDb = 0`: flat 2.5 ± 0.3 dB from 50 Hz to 10 kHz. Harmonics custom
     vs stock at D 10: H3 +1…+4 dB, H2 −2.5…0 dB. `modded` v3: |H(10 kHz)| − |H(400)| ≥ stock's + 3 dB.
