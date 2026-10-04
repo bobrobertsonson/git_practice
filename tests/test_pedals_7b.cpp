@@ -112,9 +112,9 @@ double binCentred(double f, double fs, std::size_t n) { return std::round(f * st
 
 // Aliasing (phase 7 recipe): 5 kHz bin-centred sine at -6 dBFS, 1 s warm-up, Blackman-Harris window,
 // largest line in 20 Hz..20 kHz outside +-200 Hz of a harmonic of 5 kHz, relative to the fundamental.
-double aliasDb(Processor& p, double fs = 48000.0) {
+double aliasDb(Processor& p, double fs = 48000.0, double fundHz = 5000.0) {
   constexpr std::size_t N = 32768;
-  const double f0 = binCentred(5000.0, fs, N);
+  const double f0 = binCentred(fundHz, fs, N);
   p.prepare({fs, 512});
   auto y = sine(f0, fs, 48000 + N, std::pow(10.0, -6.0 / 20.0));
   run(p, y, 512);
@@ -134,8 +134,8 @@ double aliasDb(Processor& p, double fs = 48000.0) {
   for (std::size_t k = 1; k < N / 2; ++k) {
     const double f = static_cast<double>(k) * binHz;
     if (f < 20.0 || f > 20000.0) continue;
-    const double nearest = std::round(f / 5000.0);
-    if (nearest >= 1.0 && std::fabs(f - nearest * 5000.0) <= 200.0) continue;
+    const double nearest = std::round(f / fundHz);
+    if (nearest >= 1.0 && std::fabs(f - nearest * fundHz) <= 200.0) continue;
     worst = std::max(worst, std::abs(a[k]));
   }
   return toDb(worst / fund);
@@ -188,7 +188,7 @@ TEST_CASE("SoftClipShape order 2: C1 quintic shape, exact continuous antiderivat
     CHECK((s.f(kk.first + h) - s.f(kk.first - h)) / (2 * h) == Catch::Approx(0.0).margin(1e-4));  // slope 1-(u/k)^4 ~ 4h/k at the knee
     CHECK((s.f(0.5 * kk.first + h) - s.f(0.5 * kk.first - h)) / (2 * h) == Catch::Approx(1.0 - std::pow(0.5, 4.0)).margin(1e-6));
     for (double k : {kk.first, -kk.second, 0.0}) {  // continuity of f, F1, F2
-      CHECK(s.f(k + 1e-12) == Catch::Approx(s.f(k - 1e-12)).margin(3e-12));
+      CHECK(s.f(k + 1e-12) == Catch::Approx(s.f(k - 1e-12)).margin(3e-12));  // 1e-12 fails: at k = 0 the two points differ by 2e-12 (slope 1 over 2e-12), and double rounding at k^3 scale adds ~1e-12
       CHECK(s.f1(k + 1e-12) == Catch::Approx(s.f1(k - 1e-12)).margin(1e-12));
       CHECK(s.f2(k + 1e-12) == Catch::Approx(s.f2(k - 1e-12)).margin(1e-12));
     }
@@ -722,6 +722,11 @@ TEST_CASE("aliasing is below -80 dB at maximum gain for every clip type, circuit
     std::printf("[alias] mode %-7s (dist 10, gain1 = gain2 = +12): pedal.hm %7.1f dB\n", kModeNames[m], a);
     CHECK(a < -80.0);
   }
+  // informational (not asserted): the worst case, modded mode at maximum trim, at 44.1 kHz
+  for (double fh : {5000.0, 7000.0}) {
+    HmPedal hm(H([&](HmParams& p) { p.distortion = 10; p.low = p.high = 5; p.mode = HmMode::Modded; p.gain1Db = p.gain2Db = 12; }));
+    std::printf("[alias-44k] pedal.hm modded, dist 10, gain1 = gain2 = +12, %.0f Hz at -6 dBFS: %.1f dB\n", fh, aliasDb(hm, 44100.0, fh));
+  }
   PedalImplConfig naive;
   naive.oversample = naive.adaa = false;
   MuffPedal mn(M([](MuffParams& p) { p.sustain = 10; p.crunch = 10; }), naive);
@@ -911,11 +916,19 @@ TEST_CASE("live parameters: unchanged values keep the static render; changes are
     for (std::size_t i = 0; i < 8192; ++i) REQUIRE(y[i] == ref[i]);
     const double rBefore = rms(ref.data() + 12288, 2048), rAfter = rms(y.data() + 12288, 2048);
     CHECK(toDb(rAfter / rBefore) == Catch::Approx(9.0).margin(0.1));
-    // the ramp is gradual: the first 100 samples after the jump differ by less than 1 dB step of gain
-    double maxStep = 0.0;
-    for (std::size_t i = 8193; i < 8192 + 1200; ++i) maxStep = std::max(maxStep, static_cast<double>(std::fabs(y[i] - y[i - 1] - (ref[i] - ref[i - 1]))));
-    std::printf("[live] circuit %d: max per-sample deviation across the 20 ms ramp %.5f\n", circuit, maxStep);
-    CHECK(maxStep < 0.02);
+    // the ramp is gradual: per-period gain estimate (160 samples = one 300 Hz period) relative to the pre-jump static
+    // render. Starts near 1 right after the jump (an instantaneous step would read the final gain at once), rises
+    // monotonically across the 20 ms (960-sample) ramp, and equals the final static gain afterwards.
+    const double gFinal = std::pow(10.0, 9.0 / 20.0);
+    std::vector<double> g;
+    for (std::size_t w = 0; w < 1920; w += 160) g.push_back(rms(y.data() + 8192 + w, 160) / rms(ref.data() + 8192 + w, 160));
+    std::printf("[live] circuit %d: gain per 160-sample window after the jump (final %.3f):", circuit, gFinal);
+    for (double v : g) std::printf(" %.3f", v);
+    std::printf("\n");
+    CHECK(g[0] < 1.0 + 0.25 * (gFinal - 1.0));
+    for (std::size_t i = 1; i < g.size(); ++i) CHECK(g[i] >= g[i - 1] - 1e-3);
+    CHECK(g[3] < g[6]);
+    for (std::size_t i = 7; i < g.size(); ++i) CHECK(g[i] == Catch::Approx(gFinal).epsilon(0.01));
   }
   // enums and filters move: a mode / clip / lowFreq change alters the output without a rebuild
   {
@@ -988,6 +1001,12 @@ namespace {
 struct Ltas {
   std::vector<double> centre, energy;
   double total = 0.0;
+  double maxIn(double lo, double hi) const {  // loudest single third-octave band with its centre in [lo, hi]
+    double m = 1e-300;
+    for (std::size_t i = 0; i < centre.size(); ++i)
+      if (centre[i] >= lo * 0.99 && centre[i] <= hi * 1.01) m = std::max(m, energy[i]);
+    return m;
+  }
   double inBand(double lo, double hi) const {
     double s = 0.0;
     for (std::size_t i = 0; i < centre.size(); ++i)
@@ -1065,7 +1084,7 @@ TEST_CASE("chainsaw preset bank: 15 presets render sanely from repo files", "[pe
     double loudest = 0.0;
     for (double e : l.energy) loudest = std::max(loudest, e);
     const double mid = l.inBand(80.0, 4000.0) / l.total;
-    const double lowBand = 10.0 * std::log10(l.inBand(100.0, 200.0) / loudest), midBand = 10.0 * std::log10(l.inBand(1000.0, 2000.0) / loudest);
+    const double lowBand = 10.0 * std::log10(l.maxIn(100.0, 200.0) / loudest), midBand = 10.0 * std::log10(l.maxIn(1000.0, 2000.0) / loudest);
     std::printf("[bank] %-28s peak %6.2f dBFS  80-4k energy %5.1f %%  100-200 Hz %6.1f dB, 1-2 kHz %6.1f dB re loudest 1/3 oct\n", f.filename().string().c_str(),
                 peakDb, 100.0 * mid, lowBand, midBand);
     CHECK(peakDb >= -6.0);
