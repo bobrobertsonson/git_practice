@@ -111,7 +111,7 @@ StemSet loadStemFiles(const std::vector<std::pair<StemKind, std::filesystem::pat
   return set;
 }
 
-StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate) {
+StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, OtherRole otherRole) {
   namespace fs = std::filesystem;
   std::error_code ec;
   if (!fs::is_directory(dir, ec)) fail("not a directory (" + dir.string() + ")");
@@ -127,32 +127,51 @@ StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate) {
   std::sort(audioFiles.begin(), audioFiles.end(),
             [](const fs::path& a, const fs::path& b) { return a.filename().string() < b.filename().string(); });
 
-  std::vector<std::pair<StemKind, fs::path>> files;
-  std::vector<std::string> warnings;
-  std::array<std::string, kStemKindCount> firstNamed;  // first file that mapped to each named stem
+  // Pass 1: name -> kind (unknown names go to `other`).
+  struct Entry {
+    StemKind kind;
+    fs::path path;
+    bool unknown;
+  };
+  std::vector<Entry> entries;
+  bool realGuitar = false, anyOther = false;
   for (const auto& p : audioFiles) {
     const std::string base = lower(p.stem().string());
     StemKind kind = StemKind::Other;
+    bool unknown = false;
     if (base == "drums") kind = StemKind::Drums;
     else if (base == "bass") kind = StemKind::Bass;
     else if (base == "vocals") kind = StemKind::Vocals;
     else if (base == "other") kind = StemKind::Other;
     else if (base == "guitar" || base == "guitars") kind = StemKind::Guitar;
-    else {
-      warnings.push_back(p.filename().string() + ": unrecognised stem name; summed into 'other'");
-      files.emplace_back(kind, p);
-      continue;
-    }
-    std::string& first = firstNamed[static_cast<std::size_t>(kind)];
-    if (!first.empty())
-      warnings.push_back(p.filename().string() + ": duplicate '" + stemKindName(kind) + "' stem (also " + first + "); summed");
-    else first = p.filename().string();
-    files.emplace_back(kind, p);
+    else unknown = true;
+    realGuitar = realGuitar || kind == StemKind::Guitar;
+    anyOther = anyOther || kind == StemKind::Other;
+    entries.push_back({kind, p, unknown});
   }
-  if (files.empty()) fail("no .wav or .flac stems found in " + dir.string());
+  if (entries.empty()) fail("no .wav or .flac stems found in " + dir.string());
+
+  // Pass 2: role mapping, then warnings (which name the kind a file ends up in).
+  const bool toGuitar = otherRole == OtherRole::Guitar && !realGuitar && anyOther;
+  std::vector<std::pair<StemKind, fs::path>> files;
+  std::vector<std::string> warnings;
+  std::array<std::string, kStemKindCount> firstNamed;  // first file that mapped to each stem
+  for (auto& e : entries) {
+    if (toGuitar && e.kind == StemKind::Other) e.kind = StemKind::Guitar;
+    if (e.unknown) {
+      warnings.push_back(e.path.filename().string() + ": unrecognised stem name; summed into '" + stemKindName(e.kind) + "'");
+    } else {
+      std::string& first = firstNamed[static_cast<std::size_t>(e.kind)];
+      if (!first.empty())
+        warnings.push_back(e.path.filename().string() + ": duplicate '" + stemKindName(e.kind) + "' stem (also " + first + "); summed");
+      else first = e.path.filename().string();
+    }
+    files.emplace_back(e.kind, e.path);
+  }
 
   StemSet set = loadStemFiles(files, sampleRate);
   set.warnings.insert(set.warnings.begin(), warnings.begin(), warnings.end());
+  set.otherMappedToGuitar = toGuitar;
   return set;
 }
 

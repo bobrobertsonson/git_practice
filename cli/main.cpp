@@ -40,7 +40,13 @@ void usage(std::ostream& os) {
         "  length of the guitar render (the backing is truncated / zero-padded). --normalize-peak applies to\n"
         "  the guitar render only, before mixing. --backing-level: master backing level in dB (-60..12).\n"
         "  --guitar-stem: what the song's own guitar stem does: mute (default), ghost (-12 dB) or full.\n"
-        "  Both options need --backing (else exit 2). The report gains a \"backing\" object.\n"
+        "  --other-role: guitar (default) loads a 4-stem 'other' as the guitar stem when the folder has no\n"
+        "  guitar/guitars file, so --guitar-stem mute removes it; other keeps it as 'other' (keys, synths).\n"
+        "  A real guitar/guitars file always wins. --backing-offset-ms: where the DI starts inside the song,\n"
+        "  in ms (-600000..600000), the same sign and meaning as the matcher's --offset-ms: the DI's t = 0\n"
+        "  sounds at song time `ms`. Positive: the stems lead (stem audio from `ms` plays at t = 0); negative:\n"
+        "  the DI starts before the song, so the backing begins `-ms` into the render. Default 0.\n"
+        "  The options above need --backing (else exit 2). The report gains a \"backing\" object.\n"
         "exit codes: 0 ok, 2 usage, 3 preset error, 4 I/O or model error\n";
 }
 
@@ -50,6 +56,10 @@ struct Args {
   bool backingLevelGiven = false;
   std::string guitarStem = "mute";
   bool guitarStemGiven = false;
+  double backingOffsetMs = 0.0;
+  bool backingOffsetGiven = false;
+  std::string otherRole = "guitar";
+  bool otherRoleGiven = false;
   sawblade::RenderOptions opts;
   bool help = false;
 };
@@ -102,6 +112,16 @@ std::string parseArgs(int argc, char** argv, Args& a) {
       if (v != "mute" && v != "ghost" && v != "full") return "--guitar-stem must be mute, ghost or full";
       a.guitarStem = v;
       a.guitarStemGiven = true;
+    } else if (k == "--backing-offset-ms") {
+      if (!value(v)) return "missing value for " + k;
+      if (!parseNumber(v, a.backingOffsetMs) || std::fabs(a.backingOffsetMs) > 600000.0)
+        return "--backing-offset-ms must be a number in -600000..600000 (ms)";
+      a.backingOffsetGiven = true;
+    } else if (k == "--other-role") {
+      if (!value(v)) return "missing value for " + k;
+      if (v != "guitar" && v != "other") return "--other-role must be guitar or other";
+      a.otherRole = v;
+      a.otherRoleGiven = true;
     } else if (k == "--preset" || k == "--in" || k == "--out" || k == "--report" || k == "--block" || k == "--normalize-peak") {
       if (!value(v)) return "missing value for " + k;
       if (k == "--preset") a.preset = v;
@@ -127,6 +147,8 @@ std::string parseArgs(int argc, char** argv, Args& a) {
   if (a.out.empty()) return "--out is required";
   if (a.backing.empty() && a.backingLevelGiven) return "--backing-level requires --backing";
   if (a.backing.empty() && a.guitarStemGiven) return "--guitar-stem requires --backing";
+  if (a.backing.empty() && a.backingOffsetGiven) return "--backing-offset-ms requires --backing";
+  if (a.backing.empty() && a.otherRoleGiven) return "--other-role requires --backing";
   return "";
 }
 
@@ -140,14 +162,19 @@ struct BackingResult {
 BackingResult mixBacking(const Args& a, const sawblade::RenderResult& r) {
   using namespace sawblade;
   BackingResult out;
-  auto set = std::make_unique<StemSet>(loadStemDirectory(a.backing, r.sampleRate));
-  out.set.present = set->present;  // metadata only: the audio itself moves into the player
+  auto set = std::make_unique<StemSet>(
+      loadStemDirectory(a.backing, r.sampleRate, a.otherRole == "other" ? OtherRole::Other : OtherRole::Guitar));
+  out.set.present = set->present;
+  out.set.otherMappedToGuitar = set->otherMappedToGuitar;  // metadata only: the audio itself moves into the player
   out.set.sources = set->sources;
   out.set.warnings = set->warnings;
   out.set.backingLoudnessLufs = set->backingLoudnessLufs;
   StemPlayer player;
   player.prepare({r.sampleRate, r.blockSize}, 0);  // rig latency 0: the render is already compensated
   player.setMasterLevelDb(a.backingLevelDb);
+  // CLI sign (matcher convention, DI start inside the song) is the opposite of the player's (playhead p
+  // plays stem sample p - offset): the DI starting `ms` into the song means stem sample p + ms plays at p.
+  player.setStartOffsetSamples(-static_cast<std::int64_t>(std::llround(a.backingOffsetMs * 0.001 * r.sampleRate)));
   player.setGuitarMode(a.guitarStem == "full" ? GuitarMode::Full
                        : a.guitarStem == "ghost" ? GuitarMode::Ghost
                                                  : GuitarMode::Muted);
@@ -193,6 +220,9 @@ nlohmann::json backingReport(const Args& a, const BackingResult& b) {
   return {{"dir", a.backing},
           {"levelDb", a.backingLevelDb},
           {"guitarStem", a.guitarStem},
+          {"offsetMs", a.backingOffsetMs},
+          {"otherRole", a.otherRole},
+          {"otherMappedToGuitar", b.set.otherMappedToGuitar},
           {"stems", stems},
           {"warnings", b.set.warnings},
           {"loudnessLufs", b.set.backingLoudnessLufs ? json(*b.set.backingLoudnessLufs) : json(nullptr)},

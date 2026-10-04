@@ -274,3 +274,56 @@ TEST_CASE("Directory scan warns when two files map to the same named stem (still
     REQUIRE(s.audio[static_cast<int>(StemKind::Guitar)][1][i] == g1[i] + g2[i]);
   }
 }
+
+// ---- 5.2: other-role mapping ---------------------------------------------------------------------
+TEST_CASE("Role mapping: 4-stem `other` is the guitar stem by default", "[stems][loader][role]") {
+  StemTempDir t;
+  const auto d = noise(48000, 71, 0.2f), b = noise(48000, 72, 0.2f), v = noise(48000, 73, 0.2f), o = noise(50000, 74, 0.2f);
+  writeWavFloat32(t / "drums.wav", 48000.0, d);
+  writeWavFloat32(t / "bass.wav", 48000.0, b);
+  writeWavFloat32(t / "vocals.wav", 48000.0, v);
+  writeWavFloat32(t / "other.wav", 48000.0, o);
+  const StemSet s = loadStemDirectory(t.dir, 48000.0);  // default OtherRole::Guitar
+  REQUIRE(s.otherMappedToGuitar);
+  REQUIRE(s.present[static_cast<int>(StemKind::Guitar)]);
+  REQUIRE_FALSE(s.present[static_cast<int>(StemKind::Other)]);
+  REQUIRE(s.audio[static_cast<int>(StemKind::Guitar)][0][7] == o[7]);
+  REQUIRE(fs::path(s.sources[static_cast<int>(StemKind::Guitar)][0].file).filename() == "other.wav");
+  // The loudness metadata excludes the guitar stem, so it excludes this `other` too.
+  REQUIRE(s.backingLoudnessLufs.has_value());
+  const StemSet kept = loadStemDirectory(t.dir, 48000.0, OtherRole::Other);
+  REQUIRE(kept.backingLoudnessLufs.has_value());
+  REQUIRE(*s.backingLoudnessLufs < *kept.backingLoudnessLufs);
+}
+
+TEST_CASE("Role mapping: OtherRole::Other keeps `other` as other", "[stems][loader][role]") {
+  StemTempDir t;
+  const auto o = noise(1200, 75);
+  writeWavFloat32(t / "bass.wav", 48000.0, noise(1000, 76));
+  writeWavFloat32(t / "other.wav", 48000.0, o);
+  const StemSet s = loadStemDirectory(t.dir, 48000.0, OtherRole::Other);
+  REQUIRE_FALSE(s.otherMappedToGuitar);
+  REQUIRE(s.present[static_cast<int>(StemKind::Other)]);
+  REQUIRE_FALSE(s.present[static_cast<int>(StemKind::Guitar)]);
+  REQUIRE(s.audio[static_cast<int>(StemKind::Other)][1][9] == o[9]);
+}
+
+TEST_CASE("Role mapping: a real guitar file wins, `other` stays other", "[stems][loader][role]") {
+  StemTempDir t;
+  const auto g = noise(1000, 77), o = noise(1000, 78), piano = noise(1000, 79);
+  writeWavFloat32(t / "guitars.wav", 48000.0, g);
+  writeWavFloat32(t / "other.wav", 48000.0, o);
+  writeWavFloat32(t / "piano.wav", 48000.0, piano);  // 6-stem: piano is summed into other
+  for (const OtherRole role : {OtherRole::Guitar, OtherRole::Other}) {
+    const StemSet s = loadStemDirectory(t.dir, 48000.0, role);
+    REQUIRE_FALSE(s.otherMappedToGuitar);
+    REQUIRE(s.audio[static_cast<int>(StemKind::Guitar)][0][3] == g[3]);
+    REQUIRE(s.audio[static_cast<int>(StemKind::Other)][0][3] == o[3] + piano[3]);
+  }
+  // Without a real guitar, unknown-named files follow `other` into the guitar stem (and the warning says where).
+  fs::remove(t / "guitars.wav");
+  const StemSet s = loadStemDirectory(t.dir, 48000.0);
+  REQUIRE(s.otherMappedToGuitar);
+  REQUIRE(s.audio[static_cast<int>(StemKind::Guitar)][0][3] == o[3] + piano[3]);
+  REQUIRE(hasWarning(s, "piano.wav: unrecognised stem name; summed into 'guitar'"));
+}

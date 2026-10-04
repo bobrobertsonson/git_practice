@@ -105,6 +105,17 @@ TEST_CASE("Preset: defaults, omitted gate, absolute and relative paths", "[prese
   REQUIRE(q.gate.releaseMs == 60.0);
 }
 
+TEST_CASE("Preset: the plugin's playAlong UI state is accepted, ignored and never written", "[preset][playalong]") {
+  json j = minimal();
+  const Preset plain = parsePreset(j, "/base");
+  j["playAlong"] = {{"folder", "/home/x/stems"}, {"offsetMs", 12.5}, {"loop", {{"on", true}}}, {"future", {1, 2, 3}}};
+  const Preset withState = parsePreset(j, "/base");
+  REQUIRE(withState == plain);
+  REQUIRE_FALSE(toJson(withState).contains("playAlong"));
+  j["playAlong"] = 3;  // still a structured object, not a free-form value
+  REQUIRE_THROWS_AS(parsePreset(j, "/base"), PresetError);
+}
+
 TEST_CASE("Preset: round trip parse(toJson(p)) == p", "[preset]") {
   SECTION("schema example") {
     const Preset p = loadPresetFile(kPresets / "schema_example.json");

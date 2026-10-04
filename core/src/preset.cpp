@@ -345,6 +345,9 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
     p.outputGainDb = out->number("gainDb", 0.0, kGainLo, kGainHi);
     out->finish();
   }
+  // Plugin UI state (docs/PRESET_SCHEMA.md "playAlong"): not tone, so it is accepted and ignored here and
+  // never written back. The matcher and the NAM export read presets through this parser.
+  (void)r.optionalObject("playAlong");
   r.finish();
   return p;
 }
