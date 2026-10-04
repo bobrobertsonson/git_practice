@@ -13,6 +13,7 @@
 
 #include "Engine.h"
 #include "EngineLoader.h"
+#include "PlayAlong.h"
 #include "PresetMapping.h"
 #include "sawblade/swap_slot.h"
 
@@ -94,6 +95,11 @@ class SawbladeProcessor : public juce::AudioProcessor {
 
   // Blocks until the loader has nothing queued or in progress (tests, prepareToPlay).
   bool waitForLoader(std::chrono::milliseconds timeout = std::chrono::milliseconds(60000));
+  // The play-along backing (docs/PLUGIN.md "Play-along"): transport, settings, load status. Its setters
+  // are safe from any non-audio thread.
+  PlayAlong& playAlong() noexcept { return playAlong_; }
+  const PlayAlong& playAlong() const noexcept { return playAlong_; }
+
   // Number of engines the loader has published (parameter changes must not increase it).
   std::uint64_t engineBuilds() const noexcept { return loader_->engineBuilds(); }
 
@@ -117,7 +123,8 @@ class SawbladeProcessor : public juce::AudioProcessor {
 
   double hostRate_ = 0.0;
   int maxBlock_ = 0;
-  std::vector<float> mono_;
+  std::vector<float> mono_, backL_, backR_;  // rig mono, backing L / R (audio-thread scratch)
+  PlayAlong playAlong_;
 
   // Audio-thread state: the engine in use and, for kFadeSeconds after a swap, the outgoing one.
   // Neither reference is ever the last one (the loader keeps its own), so dropping them on the

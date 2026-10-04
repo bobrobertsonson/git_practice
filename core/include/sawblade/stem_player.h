@@ -37,7 +37,7 @@ constexpr std::int64_t kDefaultHostJumpThreshold = 64;  // samples
 //    otherwise serialised with process(). Setters take effect at the start of the next process()
 //    call; that block boundary is the sample they act on. When several commands arrive in one
 //    block, the last play()/pause() wins and seek() is applied before it.
-// A thread-safe command queue for the plugin is a later phase.
+// The plugin's thread-safe command queue (message thread -> audio thread) is plugin/src/PlayAlong.h.
 //
 // Ramps (transport, stem gains, master) follow the same linear law as Gain::rampToLinear (the first
 // ramped sample already moves one step; the last equals the target) but are double-precision and

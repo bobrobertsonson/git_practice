@@ -45,7 +45,10 @@ SawbladeProcessor::SawbladeProcessor()
     paramObj_[static_cast<std::size_t>(i)] = apvts_.getParameter(id);
   }
   mono_.assign(kMinChunk, 0.0f);
+  backL_.assign(kMinChunk, 0.0f);
+  backR_.assign(kMinChunk, 0.0f);
   fadeBuf_.assign(kMinChunk, 0.0f);
+  playAlong_.setStandalone(wrapperType == wrapperType_Standalone);
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
 }
 
@@ -175,7 +178,13 @@ bool SawbladeProcessor::loadPresetFile(const std::filesystem::path& file, std::s
 }
 
 void SawbladeProcessor::getStateInformation(juce::MemoryBlock& dest) {
-  const std::string s = presetToStateJson(currentPreset());
+  std::string s = presetToStateJson(currentPreset());
+  // Play-along UI state (not tone) rides along as an optional object; untouched sessions save exactly the preset.
+  if (const PlayAlongSettings pa = playAlong_.settings(); !pa.isDefault()) {
+    nlohmann::json j = nlohmann::json::parse(s);
+    j["playAlong"] = playAlongToJson(pa);
+    s = j.dump(2);
+  }
   dest.replaceAll(s.data(), s.size());
 }
 
@@ -188,6 +197,11 @@ void SawbladeProcessor::setStateInformation(const void* data, int size) {
   std::filesystem::path base = std::filesystem::current_path(ec);
   if (ec) base = std::filesystem::path("/");
   loadPresetJson(s, base, nullptr, /*restore=*/true);
+  // A state without `playAlong` (older sessions) leaves the play-along as it is. Never throws: a missing
+  // or unreadable folder shows up in playAlong().loadStatus().
+  const nlohmann::json j = nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/false);
+  if (j.is_object())
+    if (auto it = j.find("playAlong"); it != j.end()) playAlong_.restore(playAlongFromJson(*it));
 }
 
 // --- loader -------------------------------------------------------------------------------------
@@ -227,6 +241,7 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     // it at the start of its next block. (setLatencySamples is not audio-thread safe, so it is
     // never called from processBlock.)
     setLatencySamples(o.latencySamples);
+    playAlong_.setRigLatencySamples(o.latencySamples);  // the backing is delayed by the rig latency
   }
   std::lock_guard<std::mutex> lk(mutex_);
   if (o.id == lastSubmitted_ || o.id > lastSubmitted_) {
@@ -254,18 +269,27 @@ void SawbladeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   maxBlock_ = std::max(1, samplesPerBlock);
   if (static_cast<int>(mono_.size()) < kMinChunk) mono_.assign(kMinChunk, 0.0f);
   if (fadeBuf_.size() != mono_.size()) fadeBuf_.assign(mono_.size(), 0.0f);
+  if (static_cast<int>(backL_.size()) < kMinChunk) {
+    backL_.assign(kMinChunk, 0.0f);
+    backR_.assign(kMinChunk, 0.0f);
+  }
   fadeLen_ = std::max(1, static_cast<int>(std::lround(kFadeSeconds * sampleRate)));
+  playAlong_.prepare(sampleRate, std::min(samplesPerBlock, kMinChunk), static_cast<int>(std::lround(sampleRate)));  // up to 1 s of rig latency
   {
     // Hosts may call prepareToPlay again with unchanged settings: the running engine is still
     // right (it handles any block size), so there is nothing to rebuild.
     std::lock_guard<std::mutex> lk(mutex_);
-    if (!status_.loading && status_.error.empty() && status_.hostRate == sampleRate && status_.builtMaxBlock >= maxBlock_) return;
+    if (!status_.loading && status_.error.empty() && status_.hostRate == sampleRate && status_.builtMaxBlock >= maxBlock_) {
+      playAlong_.setRigLatencySamples(getLatencySamples());
+      return;
+    }
   }
   // The rate (or block size) changed: rebuild, and wait for it so the latency the host reads right
   // after this call is correct. A failed build must not leave an engine of the wrong rate behind:
   // fall back to pass-through.
   submit(/*fallbackToInit=*/true);
   waitForLoader();
+  playAlong_.setRigLatencySamples(getLatencySamples());
 }
 
 void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
@@ -293,8 +317,23 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     if (fading_) fading_->setParams(pv);
   }
 
+  // The host transport for the play-along (plugin mode only; Standalone free-runs).
+  PlayAlong::HostTransport host;
+  if (!playAlong_.standalone()) {
+    if (auto* head = getPlayHead()) {
+      if (const auto pos = head->getPosition()) {
+        host.playing = pos->getIsPlaying();
+        if (const auto t = pos->getTimeInSamples()) host.sample = *t;
+        else if (const auto sec = pos->getTimeInSeconds()) host.sample = static_cast<std::int64_t>(std::llround(*sec * hostRate_));
+        else host.playing = false;
+      }
+    }
+  }
+
   const int chunk = static_cast<int>(mono_.size());
   float* mono = mono_.data();
+  float* backL = backL_.data();
+  float* backR = backR_.data();
   float* old = fadeBuf_.data();
   for (int pos = 0; pos < n; pos += chunk) {
     const int len = std::min(chunk, n - pos);
@@ -323,6 +362,20 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
       if (fadePos_ >= fadeLen_) fading_.reset();
     }
     for (int ch = 0; ch < numOut; ++ch) std::memcpy(buffer.getWritePointer(ch) + pos, mono, static_cast<std::size_t>(len) * sizeof(float));
+
+    // Backing track, after the rig, on the same latency (the player delays it by the rig latency).
+    playAlong_.process(mono, backL, backR, len, {host.playing, host.sample + pos});
+    if (numOut >= 2) {
+      float* l = buffer.getWritePointer(0) + pos;
+      float* r = buffer.getWritePointer(1) + pos;
+      for (int i = 0; i < len; ++i) {
+        l[i] += backL[i];
+        r[i] += backR[i];
+      }
+    } else {
+      float* l = buffer.getWritePointer(0) + pos;
+      for (int i = 0; i < len; ++i) l[i] += 0.5f * (backL[i] + backR[i]);
+    }
   }
   for (int ch = numOut; ch < buffer.getNumChannels(); ++ch) buffer.clear(ch, 0, n);
 }
