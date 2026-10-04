@@ -24,7 +24,9 @@ class RigPiece : public juce::Component, public juce::SettableTooltipClient {
   float cornerRadius() const noexcept { return radius_; }
   void paint(juce::Graphics&) override;
   void mouseDown(const juce::MouseEvent&) override;
+  void mouseDoubleClick(const juce::MouseEvent&) override;
   std::function<void(Piece)> onSelect;
+  std::function<void()> onDoubleClick;
 
  private:
   Piece piece_;
@@ -47,6 +49,7 @@ class RigView : public juce::Component {
   void select(Piece p);
   Piece selected() const noexcept { return selected_; }
   std::function<void(Piece)> onSelect;
+  std::function<void()> onCabOpen;  // double-click on the cab: opens the mic page
 
   void paint(juce::Graphics&) override;
   void paintOverChildren(juce::Graphics&) override;

@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "PlayAlongPanel.h"
+#include "mic/MicPage.h"
 #include "skin/FilmstripKnob.h"
 
 namespace sawblade::plugin {
@@ -136,7 +137,12 @@ class SawbladeEditor::Content : public juce::Component {
 
     panel_ = std::make_unique<PlayAlongPanel>(processor_);
     panel_->setVisible(false);
-    addChildComponent(*panel_);  // last child: on top of the rig and the inspector
+    addChildComponent(*panel_);  // on top of the rig and the inspector
+    micPage_ = std::make_unique<MicPage>(processor_);
+    micPage_->setVisible(false);
+    micPage_->onClose = [this] { setMicPageOpen(false); };
+    rig_.onCabOpen = [this] { setMicPageOpen(true); };
+    addChildComponent(*micPage_);  // last child: on top of everything below the top bar
 
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
@@ -195,6 +201,7 @@ class SawbladeEditor::Content : public juce::Component {
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
+    micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
 
     const int ix = kInspX + 16, iw = kInspW - 32;
     selKind_.setBounds(ix, kTopBar + 14, iw, 16);
@@ -258,6 +265,15 @@ class SawbladeEditor::Content : public juce::Component {
   void refreshPanel() {
     if (panel_->isVisible()) panel_->refresh();
   }
+  void setMicPageOpen(bool open) {
+    micPage_->setVisible(open);
+    if (open) micPage_->open();
+  }
+  bool micPageOpen() const { return micPage_->isVisible(); }
+  MicPage& micPage() { return *micPage_; }
+  void refreshMicPage() {
+    if (micPage_->isVisible()) micPage_->refresh();
+  }
 
  private:
   static juce::Rectangle<int> matchBox() { return {kInspX + 16, kDesignHeight - 14 - 64, kInspW - 32, 64}; }
@@ -312,6 +328,7 @@ class SawbladeEditor::Content : public juce::Component {
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
   juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_;
   std::unique_ptr<PlayAlongPanel> panel_;
+  std::unique_ptr<MicPage> micPage_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -350,12 +367,18 @@ double SawbladeEditor::contentScale() const { return static_cast<double>(getWidt
 skin::Piece SawbladeEditor::selectedPiece() const { return content_->rig().selected(); }
 
 void SawbladeEditor::timerCallback() {
-  if ((tick_++ & 3) == 0) content_->refresh();  // 4 Hz; the open play-along panel refreshes at the full rate
+  if ((tick_++ & 3) == 0) {
+    content_->refresh();  // 4 Hz; the open play-along panel refreshes at the full rate
+    content_->refreshMicPage();
+  }
   content_->refreshPanel();
 }
 
 void SawbladeEditor::setPlayAlongOpen(bool open) { content_->setPlayAlongOpen(open); }
 bool SawbladeEditor::playAlongOpen() const { return content_->playAlongOpen(); }
+void SawbladeEditor::setMicPageOpen(bool open) { content_->setMicPageOpen(open); }
+bool SawbladeEditor::micPageOpen() const { return content_->micPageOpen(); }
+MicPage& SawbladeEditor::micPage() { return content_->micPage(); }
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
   for (const auto& f : files)
