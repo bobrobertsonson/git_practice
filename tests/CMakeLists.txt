@@ -40,3 +40,11 @@ add_dependencies(sawblade_tests tonerender)
 # Deterministic fixture generator (run via scripts/regen_fixtures.sh; not part of ctest).
 add_executable(make_fixtures tools/make_fixtures.cpp)
 target_link_libraries(make_fixtures PRIVATE sawblade_core sawblade_warnings)
+
+# Dry-run check of scripts/mac_update.sh (bash only; no Mac needed).
+find_program(SAWBLADE_BASH bash)
+if(SAWBLADE_BASH)
+  add_test(NAME mac_update_dry_run
+    COMMAND ${SAWBLADE_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/test_mac_update.sh
+            ${PROJECT_SOURCE_DIR}/scripts/mac_update.sh)
+endif()

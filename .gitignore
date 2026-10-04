@@ -11,3 +11,4 @@ __pycache__/
 testdata/
 .claude/worktrees/
 calibration_out/
+.mac_update_last
