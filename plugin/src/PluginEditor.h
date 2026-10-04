@@ -1,43 +1,40 @@
 #pragma once
 
-#include <array>
 #include <memory>
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "PluginProcessor.h"
 #include "SawbladeLookAndFeel.h"
+#include "skin/RigView.h"
 
 namespace sawblade::plugin {
 
-// Plain functional editor: a preset-load button, read-outs (preset, latency, model/host rate,
-// live-compatibility, load state/errors) and one labelled slider per parameter. Looks come from
-// SawbladeLookAndFeel only.
+// Skinned prototype of the main rig screen (design/mockups/RigReal.dc.html, spec
+// docs/specs/phase2_5_skin.md). A fixed 1280 x 800 design laid out in one content component that
+// the editor scales with an AffineTransform; the editor is resizable at a fixed 1.6 aspect.
+// Reads status() and the APVTS only: no processor, preset or parameter changes.
 class SawbladeEditor : public juce::AudioProcessorEditor, private juce::Timer {
  public:
+  static constexpr int kDesignWidth = 1280, kDesignHeight = 800;
+
   explicit SawbladeEditor(SawbladeProcessor& p);
   ~SawbladeEditor() override;
 
   void paint(juce::Graphics&) override;
   void resized() override;
 
+  // Scale of the content component (editor width / 1280).
+  double contentScale() const;
+  skin::Piece selectedPiece() const;
+
  private:
-  struct Row {
-    juce::Label label;
-    juce::Slider slider{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
-  };
-
+  class Content;
   void timerCallback() override;
-  void refresh();
-  void chooseFile();
 
-  SawbladeProcessor& processor_;
   SawbladeLookAndFeel laf_;
-  juce::Label title_, presetName_, info_, message_;
-  juce::TextButton loadButton_{"Load preset..."};
-  std::array<Row, kNumParams> rows_;
-  std::unique_ptr<juce::FileChooser> chooser_;
+  std::unique_ptr<Content> content_;
+  juce::TooltipWindow tooltip_{this, 600};
 };
 
 }  // namespace sawblade::plugin
