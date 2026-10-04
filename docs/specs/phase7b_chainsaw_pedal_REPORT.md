@@ -1,7 +1,7 @@
 # Phase 7b report: the chainsaw pedal (deep `pedal.hm` v2, `pedal.muff`, pedal face, preset bank)
 
 **Status: accepted by the lead** after two reviewer rounds (task A core: REVISE → fixed → accepted;
-task B plugin: ACCEPT, then three non-blocking fixes re-checked). Release ctest **297/297** (core,
+task B plugin: ACCEPT, then three non-blocking fixes re-checked). Release ctest **298/298** (core,
 plugin, editor, pluginval);
 Debug ASan/UBSan core tests **219/219**; `-Werror` clean; pluginval strictness 10 **SUCCESS**.
 Spec: `docs/specs/phase7b_chainsaw_pedal.md`. Branch `claude/sawblade-p7b-chainsaw-pedal`.
@@ -192,9 +192,11 @@ tightness (|ΔH(1 kHz)| ≤ 1.0 dB re 400 Hz and ≤ 0.5 dB absolute); HM bias (
   round, STATE.md written; 19:16 GO; 19:20–19:35 fix rounds (muff gain, pickle_chainsaw);
   19:33 reviewer(A) and task B started in parallel (reviewer in a git worktree);
   19:50 reviewer(A) REVISE → fixed 19:55; 20:12 task B reported; 20:20 face fix; 20:22–20:36
-  reviewer(B) ACCEPT; 20:40 three robustness fixes from its notes; plots, Artifact, this report.
+  reviewer(B) ACCEPT; 20:40 three robustness fixes from its notes; 21:05 re-check REVISE
+  (regression) → 21:15 fixed → 21:25 ACCEPT; plots, Artifact, this report.
 - **Review rounds**: task A 1 (REVISE on a lead-side spec lag; non-blocking items fixed);
-  task B 1 (ACCEPT; three non-blocking items fixed afterwards).
+  task B 1 (ACCEPT) + 2 re-checks of the follow-up fix (REVISE for a regression it introduced,
+  then ACCEPT).
 - **Blockers**: the usage limit (about 4 hours lost); JUCE's X11/freetype/ALSA dev packages and
   `ladspa-sdk` had to be installed before the plugin and pluginval would configure.
 - **Verification by the lead**: looked at every screenshot and plot; cross-checked the
@@ -204,5 +206,7 @@ tightness (|ΔH(1 kHz)| ≤ 1.0 dB re 400 Hz and ≤ 0.5 dB absolute); HM bias (
 Spec `c4b3905`, `8e08835`, `740c1da`, `b42d89c`, `148729b`; STATE `70f356a`; goldens
 `ccc9740`; core `039bbbd`, `eb9dd06`, `ef95c4b`; tests `5ce4718`, `99ce45e`; tool `193c1e1`;
 presets `c408bec`, `58f7a29`; docs `58c646a`; plots `a3d6668`, screenshots `561048b`; plugin
-`27fb734`, `6256ec3`, `957523d` (face value text removed), `09864c6` (circuit-switch
-robustness from the review); this report `a7698d9` and its final revision.
+`27fb734`, `6256ec3`, `957523d` (face value text removed), `09864c6` and `198f288`
+(circuit-switch robustness from the review; the second fixes a regression the re-check found
+in the first: commit's own circuit write no longer flags a user edit); this report `a7698d9`,
+`83e043f` and this revision.
