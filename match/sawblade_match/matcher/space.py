@@ -12,6 +12,9 @@ Continuous parameters (physical units; the optimizer works in the normalised box
 * per path (``a``; ``b`` for blend) path EQ after the blocks (RBJ biquads): 3 peaking bands (q = 1) with log-frequency in
   80-400 / 400-2500 / 2000-8000 Hz and gain +-9 dB, a high-pass 40-300 Hz and a low-pass 3.5-12 kHz (12 dB/oct).
 * post EQ (after the shared cab): 3 peaking bands, 100-400 / 400-2500 / 2000-8000 Hz, +-6 dB, q = 1.
+* post EQ roll-off (phase 3.4, a real cab + mic rolls off): a high shelf 3-7 kHz, -8..0 dB (q 0.707) and a low-pass
+  5-12 kHz (12 dB/oct). Both are neutral at their default (shelf 0 dB, low-pass at 12 kHz = band omitted); neither counts
+  toward the EQ-gain regulariser.
 * NAM input gains +-12 dB for every NAM block (``gain.a.0``, ``gain.a.amp``, ``gain.b.0`` ...).
 
 Not searched (fixed): gate (from the DI noise floor), NAM output gains (0), loudness normalisation (on for amps),
@@ -31,6 +34,7 @@ POST_RANGES = ((100.0, 400.0), (400.0, 2500.0), (2000.0, 8000.0))
 HP_RANGE, LP_RANGE = (40.0, 300.0), (3500.0, 12000.0)
 PEAK_GAIN, POST_GAIN, NAM_GAIN = 9.0, 6.0, 12.0
 Q = 1.0
+SHELF_RANGE, SHELF_GAIN_RANGE, POST_LP_RANGE = (3000.0, 7000.0), (-8.0, 0.0), (5000.0, 12000.0)
 DEFAULT_HP, DEFAULT_LP = 60.0, 9000.0
 
 
@@ -120,6 +124,9 @@ class Space:
         for i, (lo, hi) in enumerate(POST_RANGES):
             ps.append(P(f"post.f{i}", lo, hi, float(np.sqrt(lo * hi)), log=True))
             ps.append(P(f"post.g{i}", -POST_GAIN, POST_GAIN, 0.0, eq_gain=True))
+        ps.append(P("post.shelf_f", *SHELF_RANGE, float(np.sqrt(SHELF_RANGE[0] * SHELF_RANGE[1])), log=True))
+        ps.append(P("post.shelf_g", *SHELF_GAIN_RANGE, 0.0))
+        ps.append(P("post.lp", *POST_LP_RANGE, POST_LP_RANGE[1], log=True))
         gains = [f"a.{i}" for i in range(na)] + ["a.amp"]
         if nb is not None:
             gains += [f"b.{i}" for i in range(nb)] + ["b.amp"]
@@ -174,13 +181,21 @@ def path_eq(v: dict[str, float], path: str) -> list[dict]:
 
 
 def post_eq(v: dict[str, float]) -> list[dict]:
-    return [_peak(v[f"post.f{i}"], v[f"post.g{i}"]) for i in range(3)]
+    bands = [_peak(v[f"post.f{i}"], v[f"post.g{i}"]) for i in range(3)]
+    if "post.shelf_g" in v and v["post.shelf_g"] < -1e-3:
+        bands.append({"type": "highShelf", "freq": float(v["post.shelf_f"]), "gainDb": float(v["post.shelf_g"]), "q": 0.707})
+    if "post.lp" in v and v["post.lp"] < POST_LP_RANGE[1] * 0.999:
+        bands.append({"type": "lowPass", "freq": float(v["post.lp"]), "q": 0.707})
+    return bands
 
 
-def gate_preset(noise_floor_db: float) -> dict:
+def gate_preset(noise_floor_db: float, extra: dict | None = None) -> dict:
     """Fixed gate ("medium"): open at the DI noise floor + 4 dB, hold 40 ms, release 150 ms, range -50 dB."""
-    return {"enabled": True, "thresholdDb": round(noise_floor_db + 4.0, 2), "hysteresisDb": 6.0, "attackMs": 0.5,
-            "holdMs": 40.0, "releaseMs": 150.0, "rangeDb": -50.0}
+    g = {"enabled": True, "thresholdDb": round(noise_floor_db + 4.0, 2), "hysteresisDb": 6.0, "attackMs": 0.5,
+         "holdMs": 40.0, "releaseMs": 150.0, "rangeDb": -50.0}
+    if extra:  # phase 3.5 fields (mode, ratio, keyHighPassHz, releaseCurve) pass straight through
+        g.update(extra)
+    return g
 
 
 def _nam(id_, slot, cap: Capture, gain_db: float, normalize: bool) -> dict:

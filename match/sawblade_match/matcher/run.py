@@ -250,11 +250,14 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     log(f"excerpt {ex.start / RATE:.1f}-{ex.end / RATE:.1f} s ({ex.info})")
     result: dict = {"schema": "sawblade.match_result", "version": 1, "seed": cfg.seed, "budget": cfg.budget,
                     "plan": plan.__dict__, "di": str(cfg.di), "diR": str(cfg.di_r) if cfg.di_r else None,
-                    "reference": {"path": ref.path, "basis": ref.basis, "matched": ref.matched_channel,
+                    "reference": {"path": ref.path, "basis": ref.basis, "stemChannel": ref.stem_channel,
+                                  "bandLimitHz": ref.hf_limit_hz, "textureTerm": ref.texture,
+                                  "matchedStftFmaxHz": ref.matched_fmax if ref.matched_sig is not None else None,
+                                  "matched": ref.matched_channel,
                                   "sections": ref.sections, "notes": ref.notes},
                     "excerpt": {"startS": ex.start / RATE, "endS": ex.end / RATE, **ex.info},
                     "gate": gate, "diNoiseFloorDb": floor, "poolCounts": pool.counts(),
-                    "lossWeights": {"ltas": L.W_LTAS, "buzz": L.W_BUZZ, "decay": L.W_DECAY, "stft": L.W_STFT,
+                    "lossWeights": {"texFlat": L.W_FLAT, "texHf": L.W_HF, "ltas": L.W_LTAS, "buzz": L.W_BUZZ, "decay": L.W_DECAY, "stft": L.W_STFT,
                                     "reg": L.W_REG},
                     "randomness": f"numpy default_rng(seed={cfg.seed}) for subset sampling and CMA-ES (seed + block)"}
 

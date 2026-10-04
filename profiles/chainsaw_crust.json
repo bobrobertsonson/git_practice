@@ -114,7 +114,7 @@
     },
     {
       "id": "fizz_rolled_off",
-      "expr": "fizz <= saw - 10.5",
+      "expr": "fizz <= saw - 25",
       "toleranceDb": 6.0,
       "why": "remove fizz"
     }
@@ -143,7 +143,8 @@
   },
   "notes": [
     "Rules are evaluated on the post-cab output. The bus/master chain of a full mix is not modelled; when comparing to a reference recording, use the per-band LTAS difference (A-weighted 80 Hz\u20138 kHz) rather than these absolute rules.",
-    "Tolerance means a rule passes if violated by at most toleranceDb (reported as 'marginal')."
+    "Tolerance means a rule passes if violated by at most toleranceDb (reported as 'marginal').",
+    "2026-10-04: fizz_rolled_off expression follows swedish_death_hm2 v3 (stem-calibrated saw-25); tolerance still loosened."
   ],
   "calibrated": false
 }

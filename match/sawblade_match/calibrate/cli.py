@@ -14,7 +14,7 @@ from ..tonecheck import analysis as A
 from ..tonecheck.render import find_targets
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import report as R
-from .channels import cover_di_onsets, mid_channel, side_channel
+from .channels import cover_di_onsets, mid_channel, side_channel, stem_guitar_signal
 from .measure import Measured, measure
 from .propose import propose
 from .sections import (Selection, cover_guitar_frames, original_guitar_frames, parse_ranges)
@@ -40,8 +40,10 @@ def _mono48(path) -> np.ndarray:
     return A.to_analysis_rate(x, fs)
 
 
-def _stem_mono48(s: Stem) -> np.ndarray:
-    return A.to_analysis_rate(s.audio.mean(axis=1).astype(np.float64), s.rate)
+def _stem_mono48(s: Stem) -> tuple[np.ndarray, str, dict]:
+    """Phase 3.4: the stem's side channel when the guitars are hard-panned, else its mid (channels.stem_guitar_signal)."""
+    sig, kind, _, info = stem_guitar_signal(s.audio)
+    return A.to_analysis_rate(sig, s.rate), kind, info
 
 
 def _fmt_ranges(sel: Selection, min_s: float = 2.0, limit: int = 40) -> str:
@@ -103,8 +105,10 @@ def run(a: argparse.Namespace) -> int:
         if isinstance(s, Unavailable):
             availability[f"{ref} / stems (method 1)"] = str(s)
             continue
-        availability[f"{ref} / stems (method 1)"] = f"ran ({MODEL} 'other' stem, seed {SEED}, {'cached' if s.cached else 'fresh'}: {s.path})"
-        results[f"{ref}/stems"] = measure(f"{ref}/stems", _stem_mono48(s), targets, source=str(s.path), spread=True)
+        sig, kind, sinfo = _stem_mono48(s)
+        availability[f"{ref} / stems (method 1)"] = (f"ran ({MODEL} 'other' stem, seed {SEED}, {'cached' if s.cached else 'fresh'}: "
+                                                     f"{s.path}; analysed channel: stem {kind}, side/mid {sinfo.get('sideMidDb')} dB)")
+        results[f"{ref}/stems"] = measure(f"{ref}/stems", sig, targets, source=f"{s.path} ({kind})", spread=True)
 
     csel = cover_guitar_frames(mix_l, mix_r, di_l, di_r)
     di_onsets = cover_di_onsets(di_l, di_r, csel.info['offsetsS'])
@@ -159,7 +163,7 @@ def run(a: argparse.Namespace) -> int:
     prov = {"inputs": {k: str(v) for k, v in P.items()}, "targetsFile": str(targets_path),
             "methods": {k: availability.get(f"{k.split('/')[0]} / stems (method 1)") for k in results if k.endswith("/stems")},
             "sectionsArg": a.sections, "policy": a.policy, "randomness": f"none (demucs: seed {SEED}, shifts=0)",
-            "referenceMetrics": {k: _json_safe({m: v.metrics[m] for m in ("buzz", "lowTightnessMs", "lowDecayDbPerMs")})
+            "referenceMetrics": {k: _json_safe({m: v.metrics[m] for m in ("buzz", "lowTightnessMs", "lowDecayDbPerMs", "fizzTexture")})
                                  for k, v in results.items()}}
     proposed, table, contradicted = propose(targets, basis_m.groups, basis, others, prov, a.policy)
     (out / "tone_targets.proposed.json").write_text(json.dumps(proposed, indent=2))
