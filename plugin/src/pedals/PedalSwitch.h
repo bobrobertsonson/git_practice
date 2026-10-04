@@ -13,8 +13,9 @@ namespace sawblade::plugin {
 // A small code-drawn lever switch bound to one parameter through juce::ParameterAttachment. A press
 // cycles to the next position (wrapping), the mouse wheel steps (no wrap). Two flavours:
 //  * choice parameter: one position per choice (the value is the choice index);
-//  * FOCUS: two positions (WIDE / NARROW) over a continuous parameter: pressing writes the wide or the
-//    narrow value; a value reads as NARROW when it is on the narrow side of the threshold.
+//  * FOCUS: two positions (WIDE / NARROW by default, or the row's own readings, e.g. OFF / ON) over a
+//    parameter: pressing writes the first or the second value; a value reads as the second when it is on
+//    that side of the threshold.
 // The value text (SI, WIDE, ...) is drawn above or below the lever; title and tooltip carry the control
 // name and the current value text.
 class PedalSwitch : public juce::Component, public juce::SettableTooltipClient {

@@ -8,8 +8,8 @@ model, not a capture, so every knob moves live. The schema is in `docs/PRESET_SC
 |---|---|---|---|
 | CHAINSAW | Swedish chainsaw distortion | `pedal.hm` | ready |
 | BIG FUZZ | big fuzz | `pedal.muff` | ready |
-| (modded chainsaw) | modded-chainsaw class: decoupled mids, presence, 3-way clip, boost, clean blend, 4-band EQ | `pedal.hmx` | coming (phase 7c) |
-| (one-knob chainsaw) | one-knob chainsaw | `pedal.eye` | coming (phase 7c) |
+| MODDED SAW | modded chainsaw distortion: decoupled mids, presence, four clips, boost, clean blend, 4-band EQ | `pedal.hmx` | ready (phase 7c) |
+| ONE-KNOB SAW | one-knob chainsaw | `pedal.eye` | ready (phase 7c) |
 
 Both models are starting points built from published descriptions, not fitted to a real unit.
 A capture-based fit comes later (the fixed constants are in one table, `HmVoicing`).
@@ -56,6 +56,36 @@ Two cascaded clipping stages into a passive tone stack, with extras for a scoope
 - **TIGHT, MIX, OUT** (`volume`): as on CHAINSAW.
 - **ROLL-OFF**: the final low-pass. **STAGE 2**: trim on stage B. **BIAS**: asymmetry. **CLIP / CLIP 2**: as below.
 
+## MODDED SAW circuit
+The chainsaw core with the mods the modded-pedal class shares: the two mid bands are decoupled
+(HIGH-MID is its own parametric band, HIGH moves the upper bark alone), a low-mid band, a presence
+shelf, four clips, a boost stage and a clean blend. With HIGH-MID = HIGH, HIGH-MID FREQ, LOW-MID and
+PRESENCE at their centre settings, BOOST off, MIX 100 and clip `silicon`, it sounds like CHAINSAW
+(within 0.3 dB). Knob ranges are 0 to 10; the centre (5) of LOW-MID, HIGH-MID FREQ and PRESENCE is flat.
+
+- **LOW**, **HIGH**, **DIST**, **TIGHT**, **OUT**, **MIX**: as on CHAINSAW (HIGH here drives only the
+  1.5 kHz band).
+- **LOW-MID** and **LM HZ**: a bell that cuts or boosts 10 dB around 200 to 600 Hz (346 Hz at 5).
+  Up for body and doom weight, down for a leaner, cleaner low mid.
+- **HIGH-MID** and **HM HZ**: the stock 1 kHz bark band made movable, 625 Hz to 1.6 kHz (1 kHz at 5).
+  Push it for the modern "mids" voice; scoop it for a hollow, doom-like tone.
+- **PRESENCE**: a high shelf from 3.5 kHz, plus or minus 6 dB (flat at 5), on top of the stock
+  4.8 kHz peak.
+- **BOOST**: an extra 9 dB of drive into the first clipper: thicker and more compressed. It is a
+  switch (FOCUS on the face, BOOST in the drawer: they are the same parameter).
+- **CLIP**: `silicon`, `led`, `asymmetric` or `soft` (below).
+
+## ONE-KNOB SAW circuit
+A sealed all-tens chainsaw: the CHAINSAW EQ fixed at LOW 10, HIGH 10, with one GAIN knob, OUT and a
+TIGHT low cut. Compared with CHAINSAW at all tens it has a tighter low end (a 100 Hz corner before
+the clippers: about 3 dB less at 50 Hz and 1.5 dB less at 100 Hz) and about 6 dB more gain range
+(10 to 52 dB). There is no MIX and no CLIP choice.
+
+- **GAIN**: 10 to 52 dB into the clippers. Low settings leave the all-tens EQ with the clippers
+  barely driven (crust); full is the sealed buzzsaw.
+- **TIGHT**: as on CHAINSAW. On the face the FOCUS lever is the same parameter (OFF at 0, ON at 5).
+- **OUT**: output level.
+
 ## The four clips
 | clip | what you hear |
 |---|---|
@@ -68,14 +98,17 @@ At high gain every clip is close to a square wave and the differences shrink; th
 when you play softly or turn the gain down.
 
 ## Face and drawer (plugin)
-The pedal face shows six knobs per circuit plus CIRCUIT, CLIP and FOCUS switches; the advanced
-drawer (double-click the pedal) shows the rest. The mapping is a table in
+The pedal face shows up to six knobs per circuit plus CIRCUIT, CLIP and FOCUS switches; the advanced
+drawer (double-click the pedal) shows the rest. ONE-KNOB SAW has three knobs, no CLIP lever (the
+OLED's second line then has no clip field) and an empty drawer. The mapping is a table in
 `plugin/src/pedals/CircuitFaces` (phase 7b task B).
 
 | circuit | face knobs | CLIP | FOCUS | drawer |
 |---|---|---|---|---|
 | CHAINSAW | LOW, HIGH, DIST, TIGHT, OUT, MIX | `clip` | `lowQ` wide 0.8 / narrow 1.6 | LOW HZ, LOW Q, HIGH HZ, SPREAD, PRES HZ, PRES dB, ROLL-OFF, STAGE 1, STAGE 2, BIAS; MODE, CLIP 2 |
 | BIG FUZZ | SUSTAIN, TONE, SCOOP, TIGHT, OUT, MIX | `clip` | `stackRatio` wide 4.4 / narrow 2.5 | CRUNCH, VOICE, WIDTH, ROLL-OFF, STAGE 2, BIAS; CLIP 2 |
+| MODDED SAW | LOW, HIGH, DIST, TIGHT, OUT, MIX | `clip` | BOOST: `boost` OFF / ON | LOW-MID, LM HZ, HIGH-MID, HM HZ, PRESENCE; BOOST |
+| ONE-KNOB SAW | GAIN, (empty), (empty), TIGHT, OUT, (empty) | none | TIGHT: `tightness` OFF 0 / ON 5 | none |
 
 ## The fifteen starting presets (`presets/modeled/chainsaw/`)
 All render from repo files only (identity cab); the notes name the suggested amp and cab from
@@ -98,5 +131,19 @@ All render from repo files only (identity cab); the notes name the suggested amp
 | Big Fuzz Chainsaw | BIG FUZZ | scooped, saturated fuzz buzz with no chainsaw circuit in it |
 | Big Fuzz Doom Saw | BIG FUZZ | low-voiced doom and sludge saw, dark and soft-clipped |
 | Fuzz Into Saw | BIG FUZZ then CHAINSAW | a mild fuzz pushing the chainsaw: thicker, more compressed |
+
+## The seven modded and one-knob presets (`presets/modeled/hmx/`, `presets/modeled/eye/`)
+Same rules as the bank above (identity cab, amp suggestions by TONE3000 id in `notes`). Together with
+the fifteen above the family bank is 22.
+
+| preset | circuit | the sound |
+|---|---|---|
+| Arizona Mids | MODDED SAW | modern desert death metal: pushed high-mids, presence up, LED clip, 20 % clean |
+| Boosted Blend | MODDED SAW | boost on, 35 % clean: thicker, more compressed buzz that keeps the pick attack |
+| Four-Band Doom | MODDED SAW | doom and sludge: low-mids up, high-mids scooped, dark presence, asymmetric clip |
+| Decoupled Crust | MODDED SAW | d-beat crust: the bark at 1.2 kHz, less low, tight |
+| One-Knob Max | ONE-KNOB SAW | the sealed buzzsaw at full gain |
+| One-Knob Tight | ONE-KNOB SAW | the same voicing with a tight input low cut for palm-muted riffing |
+| One-Knob Crust | ONE-KNOB SAW | low-gain crust: the all-tens EQ with the clippers barely driven |
 
 Two or more circuits can sit in a chain; the plugin's face controls the first circuit block.

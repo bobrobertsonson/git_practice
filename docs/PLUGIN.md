@@ -249,13 +249,14 @@ the host rate). The whole song is held in memory at the host rate (5.1 open ques
 
 ### Live pedal parameters, the circuit switch and the pedal face (phase 7b)
 
-The two modeled-pedal circuits (CHAINSAW = `pedal.hm`, BIG FUZZ = `pedal.muff`) each have their own host-parameter set
-(`hm*` / `muff*`, built from the core's live-parameter descriptors in `plugin/src/pedals/CircuitParams`), plus the
+Four modeled-pedal circuits exist (CHAINSAW = `pedal.hm`, BIG FUZZ = `pedal.muff`, MODDED SAW = `pedal.hmx`, ONE-KNOB SAW
+= `pedal.eye`; the last two are phase 7c, one more row each in `CircuitFaces`). Each has its own host-parameter set
+(`hm*` / `muff*` / `hmx*` / `eye*`, built from the core's live-parameter descriptors in `plugin/src/pedals/CircuitParams`), plus the
 `sawCircuit` choice. The sets control the first circuit block of the preset (path a, then b) and are inert when there is
 none. Every circuit parameter is live: `Engine::setParams` forwards the active set to `Chain::setBlockLiveParams` when a
 value changed (core ramps gains over 20 ms; no rebuild, no allocation or lock on the audio thread). `sawCircuit` is the one
-parameter that rebuilds: the processor swaps the block type (level/volume, mix, tightness and clip carried over, the rest
-at defaults) and hands the new preset to the loader like any preset load (build off-thread, cross-fade). A change coming
+parameter that rebuilds: the processor swaps the block type (level/volume, mix, tightness and clip carried over where the
+new circuit has them, the rest at defaults) and hands the new preset to the loader like any preset load (build off-thread, cross-fade). A change coming
 from a non-message thread is flagged and handled by a message-thread timer. The saved state is the preset, so it always
 carries the block type that is playing. The editor adds `PedalFace` (live controls laid over the SAW pedal render: six
 knobs, CLIP and FOCUS switches, the CIRCUIT switch, label chips, OLED overlay) and `AdvancedDrawer` (deep controls, slides

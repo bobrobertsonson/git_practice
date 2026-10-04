@@ -154,10 +154,11 @@ void AdvancedDrawer::paint(juce::Graphics& g) {
   g.setColour(L::text());
   g.setFont(L::titleFont(14.0f));
   g.drawText(title(), kPad, 6, 400, kTitleH - 4, juce::Justification::centredLeft);
-  if (!active_) {
+  if (!active_ || (cells_[static_cast<size_t>(*active_)].empty() && switches_[static_cast<size_t>(*active_)].empty())) {
     g.setColour(L::dimText());
     g.setFont(L::bodyFont(13.0f));
-    g.drawText("This preset has no pedal circuit block.", getLocalBounds().reduced(kPad), juce::Justification::centred);
+    g.drawText(active_ ? "This circuit has no advanced controls." : "This preset has no pedal circuit block.", getLocalBounds().reduced(kPad),
+               juce::Justification::centred);
   }
 }
 

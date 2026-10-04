@@ -54,12 +54,20 @@ the fixture render peaks at about -3 dBFS.
 (Band names appear only in `notes`, never in `name`; file names keep "pickle" as the internal id
 of the BIG FUZZ circuit.)
 
-Coming with phase 7c (no files yet; TODO rows):
+Phase 7c adds seven presets in their own folders (the family bank is 22 with the fifteen above):
 
-| TODO | Circuit |
-|---|---|
-| a modded-chainsaw tone with decoupled mids, boost and clean blend | `pedal.hmx` |
-| a one-knob chainsaw | `pedal.eye` |
+| File | Name | Circuit | Notes |
+|---|---|---|---|
+| `hmx/arizona_mids.json` | Arizona Mids | MODDED SAW | pushed high-mids, presence up, LED clip, 20 % clean; high-gain amp 88689 |
+| `hmx/boosted_blend.json` | Boosted Blend | MODDED SAW | boost on, 35 % clean blend; mid-gain British amp 86089 |
+| `hmx/four_band_doom.json` | Four-Band Doom | MODDED SAW | low-mids up, high-mids scooped, asymmetric clip; low-gain amp |
+| `hmx/decoupled_crust.json` | Decoupled Crust | MODDED SAW | bark at 1.2 kHz, less low, tight; plexi-style amp 76884 |
+| `eye/one_knob_max.json` | One-Knob Max | ONE-KNOB SAW | sealed buzzsaw at full gain; small solid-state amp |
+| `eye/one_knob_tight.json` | One-Knob Tight | ONE-KNOB SAW | tight input low cut for palm-muted riffing |
+| `eye/one_knob_crust.json` | One-Knob Crust | ONE-KNOB SAW | low-gain crust, clippers barely driven |
+
+(`presets/modeled/chainsaw/` holds 7b's fifteen; `presets/modeled/hmx/` and `eye/` are 7c's, kept in
+their own folders because a test asserts exactly fifteen files in `chainsaw/`.)
 
 ## Captures to fetch (not committed)
 

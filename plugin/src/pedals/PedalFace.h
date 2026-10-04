@@ -38,13 +38,14 @@ class PedalFace : public juce::Component {
   void refresh();
   std::optional<Circuit> activeCircuit() const noexcept { return active_; }
 
-  // OLED text: the preset name (upper case) and `<circuit> · <clip> · <focus>`, from the parameters.
+  // OLED text: the preset name (upper case) and `<circuit> · <clip> · <focus>`, from the parameters (the clip
+  // field is omitted for a circuit without a CLIP switch).
   juce::String oledLine1() const;
   juce::String oledLine2() const;
 
   // Accessors (tests): the controls of a circuit row.
-  skin::FilmstripKnob* knob(Circuit c, int position) { return knobs_[static_cast<size_t>(c)][static_cast<size_t>(position)].get(); }
-  PedalSwitch& clipSwitch(Circuit c) { return *clip_[static_cast<size_t>(c)]; }
+  skin::FilmstripKnob* knob(Circuit c, int position) { return knobs_[static_cast<size_t>(c)][static_cast<size_t>(position)].get(); }  // null: an empty position
+  PedalSwitch* clipSwitch(Circuit c) { return clip_[static_cast<size_t>(c)].get(); }  // null: the circuit has no CLIP switch
   PedalSwitch& focusSwitch(Circuit c) { return *focus_[static_cast<size_t>(c)]; }
   PedalSwitch& circuitSwitch() { return *circuit_; }
 

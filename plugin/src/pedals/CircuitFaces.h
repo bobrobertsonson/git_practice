@@ -16,23 +16,26 @@ struct FaceKnob {
   const char* label;  // panel label (upper case)
 };
 
-// FOCUS: a two-position switch over a continuous parameter. `threshold` separates the two readings;
-// the reading nearer `narrowValue` is NARROW (so it works whichever of the two values is larger).
+// FOCUS: a two-position switch over a parameter. `threshold` separates the two readings; the reading
+// nearer `narrowValue` is the second one (so it works whichever of the two values is larger). The
+// readings default to WIDE / NARROW; a row may name its own (the modded circuit's BOOST reads OFF / ON).
 struct FaceSwitchSpec {
   int param;
   const char* label;
   double wideValue, narrowValue, threshold;
+  const char* wideText = "WIDE";
+  const char* narrowText = "NARROW";
   bool isNarrow(double v) const noexcept { return narrowValue > wideValue ? v > threshold : v < threshold; }
 };
 
 struct CircuitFace {
   const char* blockType;                  // "pedal.hm"
   const char* oledName;                   // "CHAINSAW"
-  std::array<FaceKnob, 6> knobs;          // positions 1-6: three on the top row, three below
-  int clipParam;                          // the CLIP switch (choice parameter)
+  std::array<FaceKnob, 6> knobs;          // positions 1-6: three on the top row, three below; param -1 = empty
+  int clipParam;                          // the CLIP switch (choice parameter), -1 = none (no switch, no OLED field)
   FaceSwitchSpec focus;                   // the FOCUS switch
-  std::vector<FaceKnob> drawerKnobs;      // up to 10, two rows of five
-  std::vector<FaceKnob> drawerSwitches;   // PedalSwitch rows (choice parameters)
+  std::vector<FaceKnob> drawerKnobs;      // up to 10, two rows of five; may be empty
+  std::vector<FaceKnob> drawerSwitches;   // PedalSwitch rows (choice parameters); may be empty
 };
 
 const CircuitFace& circuitFace(Circuit c);

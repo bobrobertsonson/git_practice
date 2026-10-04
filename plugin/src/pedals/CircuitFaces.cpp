@@ -5,6 +5,8 @@ namespace {
 
 constexpr int hm(int live) { return kHmFirst + live; }
 constexpr int mf(int live) { return kMuffFirst + live; }
+constexpr int hx(int live) { return kHmxFirst + live; }
+constexpr int ey(int live) { return kEyeFirst + live; }
 
 const std::array<CircuitFace, kNumCircuits>& faces() {
   static const std::array<CircuitFace, kNumCircuits> t{{
@@ -36,6 +38,24 @@ const std::array<CircuitFace, kNumCircuits>& faces() {
         {mf(kMuffGain2Db), "STAGE 2"},
         {mf(kMuffBias), "BIAS"}},
        {{mf(kMuffClip2), "CLIP 2"}}},
+      {"pedal.hmx",
+       "MODDED SAW",
+       {{{hx(kHmxLow), "LOW"}, {hx(kHmxHigh), "HIGH"}, {hx(kHmxDistortion), "DIST"}, {hx(kHmxTightness), "TIGHT"}, {hx(kHmxLevel), "OUT"}, {hx(kHmxMix), "MIX"}}},
+       hx(kHmxClip),
+       {hx(kHmxBoost), "BOOST", 0.0, 1.0, 0.5, "OFF", "ON"},
+       {{hx(kHmxLowMid), "LOW-MID"},
+        {hx(kHmxLowMidFreq), "LM HZ"},
+        {hx(kHmxHighMid), "HIGH-MID"},
+        {hx(kHmxHighMidFreq), "HM HZ"},
+        {hx(kHmxPresence), "PRESENCE"}},
+       {{hx(kHmxBoost), "BOOST"}}},
+      {"pedal.eye",
+       "ONE-KNOB SAW",
+       {{{ey(kEyeGain), "GAIN"}, {-1, ""}, {-1, ""}, {ey(kEyeTightness), "TIGHT"}, {ey(kEyeLevel), "OUT"}, {-1, ""}}},
+       -1,
+       {ey(kEyeTightness), "TIGHT", 0.0, 5.0, 2.5, "OFF", "ON"},
+       {},
+       {}},
   }};
   return t;
 }

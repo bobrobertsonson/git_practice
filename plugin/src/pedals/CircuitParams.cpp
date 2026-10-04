@@ -12,7 +12,19 @@ namespace {
 constexpr CircuitInfo kInfo[kNumCircuits] = {
     {"pedal.hm", "Chainsaw", kHmFirst, kHmNumLive},
     {"pedal.muff", "Big Fuzz", kMuffFirst, kMuffNumLive},
+    {"pedal.hmx", "Modded Saw", kHmxFirst, kHmxNumLive},
+    {"pedal.eye", "One-Knob Saw", kEyeFirst, kEyeNumLive},
 };
+constexpr const char* kIdPrefix[kNumCircuits] = {"hm", "muff", "hmx", "eye"};
+
+std::vector<LiveParamDesc> liveDescs(int circuit) {
+  switch (circuit) {
+    case 0: return hmLiveParamDescs();
+    case 1: return muffLiveParamDescs();
+    case 2: return hmxLiveParamDescs();
+    default: return eyeLiveParamDescs();
+  }
+}
 
 template <class E>
 E enumFrom(double v, int maxIndex) {
@@ -20,7 +32,8 @@ E enumFrom(double v, int maxIndex) {
   return static_cast<E>(std::clamp<long>(i, 0, maxIndex));
 }
 
-std::string unitFor(const std::string& key) {
+std::string unitFor(int circuit, const std::string& key) {
+  if (circuit >= 2) return key == "mix" ? "%" : "";  // the 7c knobs (incl. the Freq knobs) are 0..10, not Hz
   auto ends = [&](const char* s) {
     const std::string t(s);
     return key.size() >= t.size() && key.compare(key.size() - t.size(), t.size(), t) == 0;
@@ -129,6 +142,62 @@ void setMuffField(MuffParams& p, int i, double v) {
   }
 }
 
+double hmxField(const HmxParams& p, int i) {
+  switch (i) {
+    case kHmxLevel: return p.level;
+    case kHmxLow: return p.low;
+    case kHmxLowMid: return p.lowMid;
+    case kHmxHighMid: return p.highMid;
+    case kHmxHigh: return p.high;
+    case kHmxDistortion: return p.distortion;
+    case kHmxPresence: return p.presence;
+    case kHmxTightness: return p.tightness;
+    case kHmxMix: return p.mix;
+    case kHmxClip: return static_cast<int>(p.clip);
+    case kHmxBoost: return p.boost ? 1.0 : 0.0;
+    case kHmxLowMidFreq: return p.lowMidFreq;
+    case kHmxHighMidFreq: return p.highMidFreq;
+  }
+  return 0.0;
+}
+
+void setHmxField(HmxParams& p, int i, double v) {
+  switch (i) {
+    case kHmxLevel: p.level = v; break;
+    case kHmxLow: p.low = v; break;
+    case kHmxLowMid: p.lowMid = v; break;
+    case kHmxHighMid: p.highMid = v; break;
+    case kHmxHigh: p.high = v; break;
+    case kHmxDistortion: p.distortion = v; break;
+    case kHmxPresence: p.presence = v; break;
+    case kHmxTightness: p.tightness = v; break;
+    case kHmxMix: p.mix = v; break;
+    case kHmxClip: p.clip = enumFrom<ClipType>(v, kNumClipTypes - 1); break;
+    case kHmxBoost: p.boost = std::isfinite(v) && v >= 0.5; break;
+    case kHmxLowMidFreq: p.lowMidFreq = v; break;
+    case kHmxHighMidFreq: p.highMidFreq = v; break;
+    default: break;
+  }
+}
+
+double eyeField(const EyeParams& p, int i) {
+  switch (i) {
+    case kEyeGain: return p.gain;
+    case kEyeLevel: return p.level;
+    case kEyeTightness: return p.tightness;
+  }
+  return 0.0;
+}
+
+void setEyeField(EyeParams& p, int i, double v) {
+  switch (i) {
+    case kEyeGain: p.gain = v; break;
+    case kEyeLevel: p.level = v; break;
+    case kEyeTightness: p.tightness = v; break;
+    default: break;
+  }
+}
+
 const CircuitInfo& circuitInfo(Circuit c) { return kInfo[static_cast<int>(c)]; }
 
 std::optional<Circuit> circuitForBlockType(std::string_view t) {
@@ -155,11 +224,11 @@ ParamSpec circuitParamSpec(int index) {
     const CircuitInfo& ci = kInfo[c];
     if (index < ci.firstParam || index >= ci.firstParam + ci.numParams) continue;
     const int k = index - ci.firstParam;
-    const LiveParamDesc d = (c == 0 ? hmLiveParamDescs() : muffLiveParamDescs())[static_cast<std::size_t>(k)];
+    const LiveParamDesc d = liveDescs(c)[static_cast<std::size_t>(k)];
     std::string id = d.key;
     id[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[0])));
-    id = (c == 0 ? "hm" : "muff") + id;
-    return {id, std::string(ci.choiceName) + " " + d.name, d.choices.empty() ? unitFor(d.key) : "", d.min, d.max, d.def, d.choices};
+    id = kIdPrefix[c] + id;
+    return {id, std::string(ci.choiceName) + " " + d.name, d.choices.empty() ? unitFor(c, d.key) : "", d.min, d.max, d.def, d.choices};
   }
   return {};
 }
@@ -177,6 +246,8 @@ void circuitParamsFromPreset(const Preset& p, ParamValues& v) {
     double x = paramSpec(ci.firstParam + k).def;
     if (const auto* h = dynamic_cast<const HmBlockParams*>(b.params.get())) x = hmField(h->p, k);
     else if (const auto* m = dynamic_cast<const MuffBlockParams*>(b.params.get())) x = muffField(m->p, k);
+    else if (const auto* hx = dynamic_cast<const HmxBlockParams*>(b.params.get())) x = hmxField(hx->p, k);
+    else if (const auto* e = dynamic_cast<const EyeBlockParams*>(b.params.get())) x = eyeField(e->p, k);
     v[static_cast<std::size_t>(ci.firstParam + k)] = clampSnap(ci.firstParam + k, x);
   }
 }
@@ -197,6 +268,16 @@ void applyCircuitParams(Preset& p, const ParamValues& v) {
     nb->p = m->p;
     for (int k = 0; k < ci.numParams; ++k) setMuffField(nb->p, k, v[static_cast<std::size_t>(ci.firstParam + k)]);
     b.params = std::move(nb);
+  } else if (const auto* hx = dynamic_cast<const HmxBlockParams*>(b.params.get())) {
+    auto nb = std::make_shared<HmxBlockParams>();
+    nb->p = hx->p;
+    for (int k = 0; k < ci.numParams; ++k) setHmxField(nb->p, k, v[static_cast<std::size_t>(ci.firstParam + k)]);
+    b.params = std::move(nb);
+  } else if (const auto* e = dynamic_cast<const EyeBlockParams*>(b.params.get())) {
+    auto nb = std::make_shared<EyeBlockParams>();
+    nb->p = e->p;
+    for (int k = 0; k < ci.numParams; ++k) setEyeField(nb->p, k, v[static_cast<std::size_t>(ci.firstParam + k)]);
+    b.params = std::move(nb);
   }
 }
 
@@ -212,15 +293,36 @@ Preset switchCircuit(const Preset& p, Circuit target) {
     level = h->p.level; mix = h->p.mix; tight = h->p.tightness; clip = h->p.clip;
   } else if (const auto* m = dynamic_cast<const MuffBlockParams*>(b.params.get())) {
     level = m->p.volume; mix = m->p.mix; tight = m->p.tightness; clip = m->p.clip;
+  } else if (const auto* hx = dynamic_cast<const HmxBlockParams*>(b.params.get())) {
+    level = hx->p.level; mix = hx->p.mix; tight = hx->p.tightness; clip = hx->p.clip;
+  } else if (const auto* e = dynamic_cast<const EyeBlockParams*>(b.params.get())) {
+    level = e->p.level; tight = e->p.tightness;  // no mix, no clip: the defaults travel
   }
-  if (target == Circuit::Chainsaw) {
-    auto nb = std::make_shared<HmBlockParams>();
-    nb->p.level = level; nb->p.mix = mix; nb->p.tightness = tight; nb->p.clip = clip;
-    b.params = std::move(nb);
-  } else {
-    auto nb = std::make_shared<MuffBlockParams>();
-    nb->p.volume = level; nb->p.mix = mix; nb->p.tightness = tight; nb->p.clip = clip;
-    b.params = std::move(nb);
+  switch (target) {
+    case Circuit::Chainsaw: {
+      auto nb = std::make_shared<HmBlockParams>();
+      nb->p.level = level; nb->p.mix = mix; nb->p.tightness = tight; nb->p.clip = clip;
+      b.params = std::move(nb);
+      break;
+    }
+    case Circuit::BigFuzz: {
+      auto nb = std::make_shared<MuffBlockParams>();
+      nb->p.volume = level; nb->p.mix = mix; nb->p.tightness = tight; nb->p.clip = clip;
+      b.params = std::move(nb);
+      break;
+    }
+    case Circuit::ModdedSaw: {
+      auto nb = std::make_shared<HmxBlockParams>();
+      nb->p.level = level; nb->p.mix = mix; nb->p.tightness = tight; nb->p.clip = clip;
+      b.params = std::move(nb);
+      break;
+    }
+    case Circuit::OneKnobSaw: {
+      auto nb = std::make_shared<EyeBlockParams>();
+      nb->p.level = level; nb->p.tightness = tight;
+      b.params = std::move(nb);
+      break;
+    }
   }
   b.type = circuitInfo(target).blockType;
   return out;
@@ -240,6 +342,14 @@ int blockLiveValues(const Block& b, float* out) noexcept {
   if (const auto* m = dynamic_cast<const MuffBlockParams*>(b.params.get())) {
     muffLiveFromParams(m->p, out);
     return kMuffNumLive;
+  }
+  if (const auto* hx = dynamic_cast<const HmxBlockParams*>(b.params.get())) {
+    hmxLiveFromParams(hx->p, out);
+    return kHmxNumLive;
+  }
+  if (const auto* e = dynamic_cast<const EyeBlockParams*>(b.params.get())) {
+    eyeLiveFromParams(e->p, out);
+    return kEyeNumLive;
   }
   return 0;
 }

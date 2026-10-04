@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "sawblade/pedal_params.h"
+#include "sawblade/pedal_saw_params.h"
 #include "sawblade/preset.h"
 
 namespace sawblade::plugin {
@@ -33,7 +34,9 @@ enum ParamIndex : int {
   kSawCircuit = kPostEqFirst + kPostEqSlots,
   kHmFirst,
   kMuffFirst = kHmFirst + kHmNumLive,
-  kNumParams = kMuffFirst + kMuffNumLive
+  kHmxFirst = kMuffFirst + kMuffNumLive,
+  kEyeFirst = kHmxFirst + kHmxNumLive,
+  kNumParams = kEyeFirst + kEyeNumLive
 };
 
 struct ParamSpec {
