@@ -220,6 +220,8 @@ clamped (the plugin reader never throws). Songs and their stems are never stored
   "guitarMode": "mute",                 // "mute" | "ghost" | "full": what the song's own guitar stem does
   "backingLevelDb": 0.0,                // -40..+6; a state restore keeps it (the loudness suggestion is for user loads)
   "otherRole": "guitar",                // "guitar": a 4-stem `other` is the guitar | "other": keep it (KEEP KEYS)
+  "songFile": "/path/song.mp3",         // optional, only when a song FILE was loaded (separated on this machine; exclusive with folder)
+  "separationModel": "htdemucs",        // optional, only when the 4-stem fallback is chosen (default htdemucs_6s)
   "hostSync": false                     // plugin only: follow the host transport
 }
 ```

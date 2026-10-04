@@ -237,7 +237,7 @@ guitar file loads `other` as the guitar stem, so MUTE removes it. KEEP KEYS load
 folder). A real `guitar`/`guitars` file always wins.
 
 **State.** Plugin state is the preset JSON plus an optional top-level `playAlong` object (folder, offsetMs, loop, countIn,
-guitarMode, backingLevelDb, otherRole, hostSync; see `docs/PRESET_SCHEMA.md`). It is written only once the play-along has
+guitarMode, backingLevelDb, otherRole, hostSync, and, only when set, `songFile` and `separationModel` (`"htdemucs"` = the 4-stem fallback); see `docs/PRESET_SCHEMA.md`). It is written only once the play-along has
 been touched, so untouched sessions save exactly the preset, and a state without it leaves the play-along as it is.
 Restoring a folder starts a background load (after `prepareToPlay` when the rate is not known yet); a missing, empty
 or undecodable folder shows a message in the panel and never throws; the saved path is kept. Nothing from a song is ever
@@ -278,3 +278,29 @@ locks with the backing playing; stems are synthesised into a temp dir, no audio 
 enforced with the existing `AllocGuard` plus `LockGuard` (`plugin/tests/lock_guard.cpp`, counts
 `pthread_mutex_lock`/`trylock`/rwlock via linker `--wrap`; Linux only, skipped elsewhere). Core
 additions are tested in `tests/test_rt_resample.cpp` and `tests/test_chain_live.cpp`.
+
+### Song files: on-device separation (phase 5.1b)
+
+LOAD SONG (picker and drag-and-drop) accepts an audio file as well as a stems folder. A file (mp3, wav, flac; m4a / aac /
+aiff / ogg through JUCE's `AudioFormatManager`, i.e. CoreAudio on macOS) is separated by the htdemucs ONNX model
+(ONNX Runtime CPU EP, `core/src/separator.cpp`) on a **separation thread** (`PlayAlong`, started on the first song file;
+never the audio or message thread), written to the stem cache, and the cache directory then goes through the unchanged 5.2
+loader. The panel shows progress with an ETA and a CANCEL button; the second load of the same file (same bytes, same
+model) is a cache hit and takes a hash of the file. Cancel (CANCEL, a newer request, or destroying the processor) stops
+within about one network evaluation (`RunOptions::SetTerminate`), leaves nothing in the cache, and goes back to the
+previous song. Closing the editor does not cancel: the job belongs to the processor and finishes in the background.
+
+The 6/4-stem toggle beside the song name picks the model (6-stem `htdemucs_6s`, default, has a guitar stem; 4-stem
+`htdemucs`: `other` is treated as the guitar as in 5.2). With a 6-stem model piano is summed into `other`.
+
+Model files are never bundled. They live in `$SAWBLADE_MODELS_DIR`, else `~/Library/Application Support/Sawblade/models/`
+(macOS) / `$XDG_DATA_HOME/sawblade/models/` or `~/.local/share/sawblade/models/`, as `<id>-core-opset17.onnx` plus a
+`.sha256` sidecar, and are fetched with `match/.venv/bin/sawblade-models fetch --model htdemucs_6s` (run from the repository
+root). If the model is missing the panel says so with that command; nothing crashes. The stem cache is
+`$SAWBLADE_STEMS_DIR`, else the models dir's sibling `stems/` (32-bit float WAV, one directory per
+`sha256(file)-<model>`).
+
+Build: `SAWBLADE_WITH_SEPARATOR` (default ON with `SAWBLADE_BUILD_PLUGIN`, else OFF) fetches the pinned ONNX Runtime 1.30.0
+and copies its shared library next to the plugin binary (`$ORIGIN`; `Contents/Frameworks` + `@loader_path/../Frameworks`
+on macOS). With it OFF the plugin shows "Separation is not available in this build." for a song file. CLI: `tonerender
+--separate SONG --stems-out DIR` and `sawblade-stems SONG DIR [--model htdemucs_6s|htdemucs] [--threads N]`.
