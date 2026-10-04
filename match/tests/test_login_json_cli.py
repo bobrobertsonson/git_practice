@@ -1,4 +1,5 @@
 import functools
+import io
 import json
 
 import httpx
@@ -116,3 +117,68 @@ def test_login_plain_still_prints_refresh_token(respx_mock, capsys):
     assert cli.main(["login"]) == 0
     out = capsys.readouterr().out
     assert NEW_REFRESH in out and "BCDF-GHJK" in out
+
+
+def test_login_json_unexpected_exception_is_one_error_line(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(cli, "request_device_code", boom)
+    assert cli.main(["login", "--json"]) == 1
+    out, objs = lines(capsys)
+    assert objs == [{"event": "error", "message": "boom"}]
+
+
+def test_whoami_json_unexpected_exception_is_one_error_line(monkeypatch, capsys):
+    def boom(self):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(cli.T3KClient, "get_user", boom)
+    assert cli.main(["whoami", "--json"]) == 1
+    out, objs = lines(capsys)
+    assert objs == [{"error": "boom"}]
+
+
+def test_login_json_token_store_failure(respx_mock, monkeypatch, capsys):
+    mock_flow(respx_mock)
+
+    def fail(self, s):
+        raise OSError("disk full")
+    monkeypatch.setattr(cli.TokenStore, "save", fail)
+    assert cli.main(["login", "--json"]) == 1
+    out, objs = lines(capsys)
+    assert [o["event"] for o in objs] == ["device_code", "error"] and "disk full" in objs[1]["message"]
+    assert NEW_REFRESH not in out and NEW_ACCESS not in out
+
+
+def test_login_json_device_code_is_flushed_before_polling(respx_mock, monkeypatch):
+    mock_flow(respx_mock)
+
+    class Spy(io.StringIO):
+        flushes = 0
+        flushed_len = 0
+
+        def flush(self):
+            Spy.flushes += 1
+            Spy.flushed_len = len(self.getvalue())
+            super().flush()
+
+    spy = Spy()
+    seen = {}
+
+    def fake_poll(http, cid, dc, **kw):
+        # the device_code line must already have been flushed (not just written) at this point
+        seen["flushed"] = spy.getvalue() != "" and Spy.flushed_len == len(spy.getvalue())
+        raise cli.T3KError("stop")
+
+    monkeypatch.setattr(cli, "poll_for_session", fake_poll)
+    monkeypatch.setattr(cli.sys, "stdout", spy)
+    assert cli.main(["login", "--json"]) == 1
+    assert seen["flushed"] is True
+
+
+def test_whoami_json_with_env_seed_stdout_all_json(api, respx_mock, monkeypatch, capsys):
+    monkeypatch.setenv("TONE3000_REFRESH_TOKEN", SECRET_REFRESH)
+    respx_mock.post(TOK_URL).respond(200, json={"access_token": SECRET_ACCESS, "refresh_token": "ref-ROT",
+                                                "expires_in": 3600})
+    cli.main(["whoami", "--json"])
+    out, objs = lines(capsys)          # every line parses as JSON
+    assert len(objs) == 1 and SECRET_REFRESH not in out and "ref-ROT" not in out

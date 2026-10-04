@@ -77,7 +77,7 @@ def _err_text(e: Exception) -> str:
     return str(e) or type(e).__name__
 
 
-_JSON_ERRORS = (T3KError, httpx.HTTPError, KeyError, ValueError, OSError)
+_JSON_ERRORS = Exception     # --json must always end with a JSON error line; Ctrl-C still propagates
 
 
 def _login_json(base: str, cid: str, http: httpx.Client) -> None:
