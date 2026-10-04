@@ -289,14 +289,14 @@ TEST_CASE("Oversampler4x: reported round-trip delay is exact and chunking does n
     pos += static_cast<std::size_t>(n);
   }
   REQUIRE(ya == yb);
-  // A base-rate impulse: the 4x stream peaks at the centre of the up filters (99), before the down stage.
+  // A base-rate impulse: the 4x stream peaks at the one-way delay.
   Oversampler4x c;
   c.prepare(64);
   std::vector<float> imp(64, 0.0f), up4(256, 0.0f), all;
   imp[0] = 1.0f;
   c.upsample(imp.data(), 64, up4.data());
   const auto peak = std::max_element(up4.begin(), up4.end()) - up4.begin();
-  REQUIRE(peak == Oversampler4x::kOneWayLatencyOs);  // 2*43 + 13 = 99 (4x samples)... the 4x peak is the central tap
+  REQUIRE(peak == Oversampler4x::kOneWayLatencyOs);  // 2*43 + 13 = 99 samples at 4 fs
 }
 
 // ---- AdaaClipper ----------------------------------------------------------------------------
