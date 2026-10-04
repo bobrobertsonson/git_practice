@@ -80,8 +80,8 @@ BlockRegistry::BlockRegistry() {
   types_["pedal.hm"] = BlockType{{/*namTrainable=*/true}, parseHmBlock, createHm, hmLiveParamDescs()};
   types_["pedal.muff"] = BlockType{{/*namTrainable=*/true}, parseMuffBlock, createMuff, muffLiveParamDescs()};
   types_["pedal.ts"] = BlockType{{/*namTrainable=*/true}, parseTsBlock, createTs, {}};
-  types_["pedal.hmx"] = BlockType{{/*namTrainable=*/true}, parseHmxBlock, createHmx, {}};
-  types_["pedal.eye"] = BlockType{{/*namTrainable=*/true}, parseEyeBlock, createEye, {}};
+  types_["pedal.hmx"] = BlockType{{/*namTrainable=*/true}, parseHmxBlock, createHmx, hmxLiveParamDescs()};
+  types_["pedal.eye"] = BlockType{{/*namTrainable=*/true}, parseEyeBlock, createEye, eyeLiveParamDescs()};
 }
 
 BlockRegistry& BlockRegistry::instance() {

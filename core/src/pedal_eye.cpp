@@ -6,7 +6,8 @@
 
 namespace sawblade {
 
-EyePedal::EyePedal(const EyeParams& p, PedalImplConfig cfg) : p_(p), cfg_(cfg) {
+EyePedal::EyePedal(const EyeParams& p, PedalImplConfig cfg) : target_(p), applied_(p), cfg_(cfg) {
+  eyeLiveFromParams(p, liveTarget_.data());
   const int nAdaa = cfg_.adaa ? 2 * AdaaClipper::kLatency : 0;
   if (cfg_.oversample) {
     const int osTotal = Oversampler4x::roundTripLatencyOs() + nAdaa;
@@ -18,27 +19,57 @@ EyePedal::EyePedal(const EyeParams& p, PedalImplConfig cfg) : p_(p), cfg_(cfg) {
   }
 }
 
+void EyePedal::retarget(bool immediate) noexcept {
+  const EyeParams& n = target_;
+  const EyeParams& a = applied_;
+  if (immediate || n.tightness != a.tightness)
+    inHpf_.setHighPass(std::min(HmVoicing::tightHz0 * std::pow(10.0, n.tightness / HmVoicing::tightDecadeDiv), 0.45 * fs_), fs_);
+  const double g1 = dbToGain(EyeConstants::g1BaseDb + EyeConstants::g1DbPerUnit * n.gain);
+  const double lvl = dbToGain(pedalLevelDb(n.level));
+  if (immediate) {
+    g1_.setImmediate(g1);
+    level_.setImmediate(lvl);
+  } else {
+    g1_.setTarget(g1, rampOs_);
+    level_.setTarget(lvl, rampBase_);
+  }
+  applied_ = n;
+  dirty_ = false;
+}
+
+void EyePedal::setLiveParams(const float* values, int count) noexcept {
+  const EyeParams np = eyeParamsFromLive(values, count);
+  std::array<float, kEyeNumLive> nv;
+  eyeLiveFromParams(np, nv.data());
+  if (nv == liveTarget_) return;
+  liveTarget_ = nv;
+  target_ = np;
+  dirty_ = true;
+}
+
 void EyePedal::prepare(const ProcessSpec& spec) {
   if (!(spec.sampleRate >= 8000.0) || spec.maxBlockSize < 1)
     throw std::invalid_argument("pedal.eye: unsupported sample rate or block size");
-  const double fs = spec.sampleRate;
-  const double fsOs = cfg_.oversample ? 4.0 * fs : fs;
-  const auto cl = [&](double fc) { return std::min(fc, 0.45 * fsOs); };
+  fs_ = spec.sampleRate;
+  fsOs_ = cfg_.oversample ? 4.0 * fs_ : fs_;
+  rampBase_ = rampSamplesFor(fs_);
+  rampOs_ = rampSamplesFor(fsOs_);
+  const auto cl = [&](double fc) { return std::min(fc, 0.45 * fsOs_); };
+  const HmVoicing::Mode& m0 = HmVoicing::kModes[0];
 
-  inHpf_.setHighPass(std::min(20.0 * std::pow(10.0, p_.tightness / 10.0), 0.45 * fs), fs);
-  hpf100_.setHighPass(100.0, fsOs);
-  lpf8k_.setLowPass(cl(8000.0), fsOs);
-  lpf5k_.setLowPass(cl(5000.0), fsOs);
-  post_[0].setCoeffs(designBiquad({EqType::LowPass, cl(6500.0), 0.0, 0.5411961001461969, true}, fsOs));
-  post_[1].setCoeffs(designBiquad({EqType::LowPass, cl(6500.0), 0.0, 1.3065629648763766, true}, fsOs));
-  eq_.configure(fs, 10.0, 10.0);
-
-  g1_ = dbToGain(10.0 + 4.2 * p_.gain);
-  levelGain_ = dbToGain(pedalLevelDb(p_.level));
+  hpf100_.setHighPass(EyeConstants::preHpfHz, fsOs_);
+  lpf8k_.setLowPass(cl(HmVoicing::preLpfHz), fsOs_);
+  lpf5k_.setLowPass(cl(m0.interLpfHz), fsOs_);
+  post_[0].setCoeffs(designBiquad({EqType::LowPass, cl(m0.postLpfHz), 0.0, HmVoicing::postQ1, true}, fsOs_));
+  post_[1].setCoeffs(designBiquad({EqType::LowPass, cl(m0.postLpfHz), 0.0, HmVoicing::postQ2, true}, fsOs_));
+  eq_.configure(fs_, EyeConstants::eqLow, EyeConstants::eqHigh);
+  g2_ = dbToGain(HmVoicing::interstageDb);
+  const ClipShapeSpec s = clipShapeSpec(ClipType::Silicon);
   for (AdaaClipper* c : {&clip1_, &clip2_}) {
-    c->setShape(0.5, 0.5);  // silicon
+    c->setShape(s.kPos, s.kNeg, s.order);
     c->setAdaa(cfg_.adaa);
   }
+  retarget(true);
   padDelay_.set(pad_);
   if (cfg_.oversample) {
     os_.prepare(spec.maxBlockSize);
@@ -63,6 +94,7 @@ void EyePedal::reset() {
 }
 
 void EyePedal::process(float* io, int n) noexcept {
+  if (dirty_) retarget(false);
   const bool flat = cfg_.flatFilters;
   if (!flat) inHpf_.process(io, n);
   float* x = io;
@@ -76,10 +108,10 @@ void EyePedal::process(float* io, int n) noexcept {
     hpf100_.process(x, m);
     lpf8k_.process(x, m);
   }
-  for (int i = 0; i < m; ++i) x[i] *= g1_;
+  g1_.apply(x, m);
   clip1_.process(x, m);
   if (!flat) lpf5k_.process(x, m);
-  for (int i = 0; i < m; ++i) x[i] *= 10.0f;
+  for (int i = 0; i < m; ++i) x[i] *= g2_;
   clip2_.process(x, m);
   if (!flat) {
     post_[0].process(x, m);
@@ -88,7 +120,7 @@ void EyePedal::process(float* io, int n) noexcept {
   padDelay_.process(x, m);
   if (cfg_.oversample) os_.downsample(x, n, io);
   if (!flat) eq_.process(io, n);
-  for (int i = 0; i < n; ++i) io[i] *= levelGain_;
+  level_.apply(io, n);
 }
 
 std::unique_ptr<Processor> createEye(const Block& b, const BlockBuildContext&) {

@@ -21,7 +21,6 @@
 #include "sawblade/pedal_hm.h"
 #include "sawblade/pedal_hmx.h"
 #include "sawblade/pedal_saw_params.h"
-#include "sawblade/pedal_stages.h"
 #include "sawblade/render.h"
 #include "sawblade/wav_io.h"
 #include "test_util.h"
@@ -34,7 +33,7 @@ namespace fs = std::filesystem;
 namespace {
 
 const fs::path kFixtures = SAWBLADE_FIXTURES_DIR;
-constexpr stages::ClipType kClips[] = {stages::ClipType::Silicon, stages::ClipType::Led, stages::ClipType::Asymmetric};
+constexpr ClipType kClips[] = {ClipType::Silicon, ClipType::Led, ClipType::Asymmetric, ClipType::Soft};
 
 // ---- helpers (copied from test_pedals.cpp, which must stay untouched) ------------------------
 void run(Processor& p, std::vector<float>& x, int block) {
@@ -127,48 +126,53 @@ HmxParams hx(auto&& mod) {
 
 }  // namespace
 
-// ---- 1. shared stages ---------------------------------------------------------------------------
-TEST_CASE("stages: clip type table, names and parsing", "[pedal][saw][stages]") {
-  CHECK(stages::clipKnees(stages::ClipType::Silicon).kPos == 0.5);
-  CHECK(stages::clipKnees(stages::ClipType::Silicon).kNeg == 0.5);
-  CHECK(stages::clipKnees(stages::ClipType::Led).kPos == 1.4);
-  CHECK(stages::clipKnees(stages::ClipType::Led).kNeg == 1.4);
-  CHECK(stages::clipKnees(stages::ClipType::Asymmetric).kPos == 0.5);
-  CHECK(stages::clipKnees(stages::ClipType::Asymmetric).kNeg == 0.3);
-  CHECK(std::string(stages::clipTypeName(stages::ClipType::Silicon)) == "silicon");
-  CHECK(std::string(stages::clipTypeName(stages::ClipType::Led)) == "led");
-  CHECK(std::string(stages::clipTypeName(stages::ClipType::Asymmetric)) == "asymmetric");
-  for (stages::ClipType t : kClips) {
-    const auto r = stages::parseClipType(stages::clipTypeName(t));
-    REQUIRE(r.has_value());
-    CHECK(*r == t);
-  }
-  CHECK(!stages::parseClipType("soft"));
-  CHECK(!stages::parseClipType("asym"));
-  CHECK(!stages::parseClipType(""));
-}
+// ---- 1. shared types (7b's, pedal_common.h) ----------------------------------------------------------
+TEST_CASE("shared clip table: hmx uses 7b's four-way ClipType; DryDelay 50", "[pedal][saw][stages]") {
+  const auto spec = [](ClipType t) { return clipShapeSpec(t); };
+  CHECK(spec(ClipType::Silicon).kPos == 0.5);
+  CHECK(spec(ClipType::Silicon).kNeg == 0.5);
+  CHECK(spec(ClipType::Silicon).order == 1);
+  CHECK(spec(ClipType::Led).kPos == 1.4);
+  CHECK(spec(ClipType::Led).kNeg == 1.4);
+  CHECK(spec(ClipType::Led).order == 2);  // the quintic LED shape
+  CHECK(spec(ClipType::Asymmetric).kPos == 0.5);
+  CHECK(spec(ClipType::Asymmetric).kNeg == 0.3);
+  CHECK(spec(ClipType::Soft).kPos == 0.3);
+  CHECK(spec(ClipType::Soft).kNeg == 0.3);
+  CHECK(std::string(clipTypeName(ClipType::Soft)) == "soft");
+  // the hmx descriptor choices are 7b's names, in enum order
+  const auto d = hmxLiveParamDescs();
+  REQUIRE(d[kHmxClip].choices.size() == 4);
+  for (int i = 0; i < kNumClipTypes; ++i) CHECK(d[kHmxClip].choices[static_cast<std::size_t>(i)] == kClipNames[i]);
 
-TEST_CASE("stages: DryDelay 50 is exact and chunking-independent", "[pedal][saw][stages]") {
-  stages::DryDelay d;
-  d.set(50);
-  std::vector<float> x(200, 0.0f);
+  DryDelay dd;
+  dd.prepare(50, 64);
+  std::vector<float> x(200, 0.0f), y(200, 0.0f);
   x[0] = 1.0f;
-  d.process(x.data(), 200);
-  for (std::size_t i = 0; i < x.size(); ++i) CHECK(x[i] == (i == 50 ? 1.0f : 0.0f));
-  const auto in = noise(3000, 17, 0.7f);
-  auto ref = in;
-  stages::DryDelay a;
-  a.set(50);
-  a.process(ref.data(), static_cast<int>(ref.size()));
-  for (std::size_t i = 50; i < in.size(); ++i) REQUIRE(ref[i] == in[i - 50]);
-  for (int block : {1, 7, 64}) {
-    auto y = in;
-    stages::DryDelay b;
-    b.set(50);
-    for (std::size_t pos = 0; pos < y.size(); pos += static_cast<std::size_t>(block))
-      b.process(y.data() + pos, static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(block), y.size() - pos)));
-    CHECK(y == ref);
+  for (std::size_t pos = 0; pos < x.size(); pos += 64) {
+    const int n = static_cast<int>(std::min<std::size_t>(64, x.size() - pos));
+    dd.push(x.data() + pos, n);
+    for (int i = 0; i < n; ++i) y[pos + static_cast<std::size_t>(i)] = dd.tap(i);
+    dd.commit(n);
   }
+  for (std::size_t i = 0; i < y.size(); ++i) CHECK(y[i] == (i == 50 ? 1.0f : 0.0f));
+  const auto in = noise(3000, 17, 0.7f);
+  std::vector<std::vector<float>> outs;
+  for (int block : {1, 7, 64}) {
+    DryDelay b;
+    b.prepare(50, block);
+    std::vector<float> o(in.size());
+    for (std::size_t pos = 0; pos < in.size(); pos += static_cast<std::size_t>(block)) {
+      const int n = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(block), in.size() - pos));
+      b.push(in.data() + pos, n);
+      for (int i = 0; i < n; ++i) o[pos + static_cast<std::size_t>(i)] = b.tap(i);
+      b.commit(n);
+    }
+    for (std::size_t i = 50; i < in.size(); ++i) REQUIRE(o[i] == in[i - 50]);
+    outs.push_back(o);
+  }
+  CHECK(outs[0] == outs[1]);
+  CHECK(outs[1] == outs[2]);
 }
 
 // ---- 2. pedal.hmx frequency response ---------------------------------------------------------------
@@ -412,16 +416,16 @@ TEST_CASE("clip types: LED is cleaner and louder, asymmetric makes H2", "[pedal]
     bool check;
   } conds[] = {{5.0, -20.0, false}, {0.0, -40.0, true}};
   for (const auto& cd : conds) {
-    Thd t[3];
-    for (int i = 0; i < 3; ++i) {
+    Thd t[kNumClipTypes];
+    for (int i = 0; i < kNumClipTypes; ++i) {
       HmxPedal p(hx([&](HmxParams& q) { q.distortion = cd.dist; q.clip = kClips[i]; }));
       t[i] = measureThd(p, cd.lvl);
       std::printf("[clip] dist %.0f at %.0f dBFS: %-10s THD %7.2f dB, H2 %7.2f dBc, output RMS %7.2f dBFS\n", cd.dist, cd.lvl,
-                  stages::clipTypeName(kClips[i]), t[i].thdDb, t[i].h2Dbc, t[i].rmsDb);
+                  clipTypeName(kClips[i]), t[i].thdDb, t[i].h2Dbc, t[i].rmsDb);
     }
     if (!cd.check) continue;
     const Thd &si = t[0], &led = t[1], &as = t[2];
-    CHECK(led.thdDb <= si.thdDb - 3.0);
+    CHECK(led.thdDb <= si.thdDb - 3.0);  // (soft is printed, not asserted: the spec names the three original types)
     CHECK(led.rmsDb > si.rmsDb);
     CHECK(as.h2Dbc > -40.0);
     CHECK(si.h2Dbc < -70.0);
@@ -435,8 +439,8 @@ TEST_CASE("aliasing is below -80 dB with OS+ADAA and the test detects its absenc
     HmxParams p;
   };
   std::vector<Row> rows;
-  for (stages::ClipType c : kClips)
-    rows.push_back({std::string("hmx ") + stages::clipTypeName(c), hx([&](HmxParams& q) { q.distortion = 10; q.clip = c; })});
+  for (ClipType c : kClips)
+    rows.push_back({std::string("hmx ") + clipTypeName(c), hx([&](HmxParams& q) { q.distortion = 10; q.clip = c; })});
   rows.push_back({"hmx silicon + boost", hx([](HmxParams& q) { q.distortion = 10; q.boost = true; })});
   const PedalImplConfig ship{true, true, false}, naive{false, false, false};
   for (const Row& r : rows) {
@@ -475,14 +479,14 @@ TEST_CASE("latencySamples() is 50 at every rate and equals the measured delay", 
   flat.flatFilters = true;
   for (double fs : {44100.0, 48000.0, 96000.0, 192000.0}) {
     int worstMeasured = 0;
-    for (stages::ClipType c : kClips)
+    for (ClipType c : kClips)
       for (bool boost : {false, true})
         for (double mix : {0.0, 100.0}) {
           const HmxParams p = hx([&](HmxParams& q) { q.clip = c; q.boost = boost; q.mix = mix; });
           HmxPedal ship(p), fl(p, flat);
           const int m = measuredPeak(fl, fs);
           worstMeasured = m;
-          INFO("fs " << fs << " clip " << stages::clipTypeName(c) << " boost " << boost << " mix " << mix);
+          INFO("fs " << fs << " clip " << clipTypeName(c) << " boost " << boost << " mix " << mix);
           CHECK(ship.latencySamples() == 50);
           CHECK(fl.latencySamples() == 50);
           CHECK(m == 50);
@@ -563,7 +567,7 @@ TEST_CASE("Chain compensates the chainsaw pedals against an empty path", "[pedal
 
 // ---- 7. zero allocation ----------------------------------------------------------------------------
 TEST_CASE("chainsaw pedals do not allocate in process()", "[pedal][saw][alloc]") {
-  HmxPedal hmx(hx([](HmxParams& p) { p.mix = 60; p.boost = true; p.clip = stages::ClipType::Led; }));
+  HmxPedal hmx(hx([](HmxParams& p) { p.mix = 60; p.boost = true; p.clip = ClipType::Led; }));
   HmxPedal hmx100({});
   EyePedal eye({});
   for (Processor* p : {static_cast<Processor*>(&hmx), static_cast<Processor*>(&hmx100), static_cast<Processor*>(&eye)}) {
@@ -667,7 +671,7 @@ TEST_CASE("chainsaw block presets round-trip", "[pedal][saw][preset]") {
   CHECK(h.presence == 5.0);
   CHECK(h.tightness == 0.0);
   CHECK(h.mix == 100.0);
-  CHECK(h.clip == stages::ClipType::Silicon);
+  CHECK(h.clip == ClipType::Silicon);
   CHECK(!h.boost);
   CHECK(h.lowMidFreq == 5.0);
   CHECK(h.highMidFreq == 5.0);
@@ -676,16 +680,16 @@ TEST_CASE("chainsaw block presets round-trip", "[pedal][saw][preset]") {
   CHECK(e.level == 5.0);
   CHECK(e.tightness == 0.0);
   // every enum value; boost as string and as a JSON boolean (written back as the string)
-  for (stages::ClipType c : kClips)
+  for (ClipType c : kClips)
     for (const json& boost : {json("off"), json("on"), json(false), json(true)}) {
-      json b = {{"id", "a1"}, {"type", "pedal.hmx"}, {"params", {{"clip", stages::clipTypeName(c)}, {"boost", boost}}}};
+      json b = {{"id", "a1"}, {"type", "pedal.hmx"}, {"params", {{"clip", clipTypeName(c)}, {"boost", boost}}}};
       const Preset p = parseP(blockPreset(json::array({b})));
       CHECK(hmxOf(p).clip == c);
       const bool on = boost == json("on") || boost == json(true);
       CHECK(hmxOf(p).boost == on);
       const json out = toJson(p);
       CHECK(out["paths"]["a"]["blocks"][0]["params"]["boost"] == (on ? "on" : "off"));
-      CHECK(out["paths"]["a"]["blocks"][0]["params"]["clip"] == stages::clipTypeName(c));
+      CHECK(out["paths"]["a"]["blocks"][0]["params"]["clip"] == clipTypeName(c));
       CHECK(parseP(out) == p);
     }
 }
@@ -712,7 +716,7 @@ TEST_CASE("chainsaw block presets reject bad values", "[pedal][saw][preset]") {
   CHECK_THROWS_AS(parseP(bad(with("params", {{"distortion", 11}}))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("params", {{"mix", 101}}))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("params", {{"mix", -1}}))), PresetError);
-  CHECK_THROWS_AS(parseP(bad(with("params", {{"clip", "soft"}}))), PresetError);
+  CHECK_THROWS_AS(parseP(bad(with("params", {{"clip", "asym"}}))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("params", {{"clip", 1}}))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("params", {{"boost", "maybe"}}))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("params", {{"boost", 1}}))), PresetError);
@@ -765,7 +769,7 @@ TEST_CASE("live converters round-trip and the index order matches the spec", "[p
   p.presence = 7.5;
   p.tightness = 8.25;
   p.mix = 37.5;
-  p.clip = stages::ClipType::Asymmetric;
+  p.clip = ClipType::Asymmetric;
   p.boost = true;
   p.lowMidFreq = 9.0;
   p.highMidFreq = 0.5;
@@ -774,7 +778,7 @@ TEST_CASE("live converters round-trip and the index order matches the spec", "[p
   const float expect[kHmxNumLive] = {1.5f, 2.5f, 3.5f, 4.25f, 5.75f, 6.5f, 7.5f, 8.25f, 37.5f, 2.0f, 1.0f, 9.0f, 0.5f};
   for (int i = 0; i < kHmxNumLive; ++i) CHECK(v[i] == expect[i]);
   CHECK(hmxParamsFromLive(v, kHmxNumLive) == p);
-  for (stages::ClipType c : kClips)
+  for (ClipType c : kClips)
     for (bool b : {false, true}) {
       HmxParams q = p;
       q.clip = c;
@@ -831,4 +835,230 @@ TEST_CASE("presets/modeled/hmx and eye render the fixture DI with a safe peak", 
     }
     CHECK(count == expected);
   }
+}
+
+// ---- 12. live parameters (Part 2, spec 2.4) ---------------------------------------------------------------
+namespace {
+
+// Live values for index i of a descriptor list: continuous = a sweep over the range, enum = cycling.
+void fillLive(const std::vector<LiveParamDesc>& d, int blk, std::vector<float>& v) {
+  v.resize(d.size());
+  for (std::size_t i = 0; i < d.size(); ++i) {
+    const double ph = std::fmod(0.137 * blk * static_cast<double>(i + 1) + 0.31 * static_cast<double>(i), 1.0);
+    v[i] = d[i].choices.empty() ? static_cast<float>(d[i].min + ph * (d[i].max - d[i].min))
+                                : static_cast<float>((blk + static_cast<int>(i)) % static_cast<int>(d[i].choices.size()));
+  }
+}
+
+// A 500 Hz sine through `p` with live values `before` for 0.25 s, then `after` for 0.75 s (block 256).
+// Returns the last 16384 samples (the settled output after the change).
+std::vector<float> liveSine(Processor& p, const std::vector<float>& before, const std::vector<float>& after, double dbfs) {
+  constexpr std::size_t kTail = 16384;
+  const double f0 = binCentred(500.0, 48000.0, kTail);
+  p.prepare({48000.0, 256});
+  auto x = sine(f0, 48000.0, 12000 + 36000, std::pow(10.0, dbfs / 20.0));
+  const int n = static_cast<int>(before.size());
+  for (std::size_t pos = 0; pos < x.size(); pos += 256) {
+    p.setLiveParams(pos < 12000 ? before.data() : after.data(), n);
+    p.process(x.data() + pos, static_cast<int>(std::min<std::size_t>(256, x.size() - pos)));
+  }
+  return std::vector<float>(x.end() - static_cast<std::ptrdiff_t>(kTail), x.end());
+}
+double rmsDbOf(const std::vector<float>& y) { return toDb(rms(y.data(), y.size())); }
+double thdDbOf(const std::vector<float>& y) {
+  constexpr std::size_t N = 16384;
+  const std::size_t k0 = static_cast<std::size_t>(std::llround(binCentred(500.0, 48000.0, N) * static_cast<double>(N) / 48000.0));
+  const auto spec = fftReal(y, N);
+  double s = 0.0;
+  for (std::size_t h = 2; h <= 20; ++h) s += std::pow(magAt(spec, h * k0), 2.0);
+  return 10.0 * std::log10(s / std::pow(magAt(spec, k0), 2.0));
+}
+
+}  // namespace
+
+TEST_CASE("live descriptors match the schema, the enums and the index order", "[pedal][saw][live]") {
+  const auto hd = hmxLiveParamDescs(), ed = eyeLiveParamDescs();
+  REQUIRE(hd.size() == static_cast<std::size_t>(kHmxNumLive));
+  REQUIRE(ed.size() == static_cast<std::size_t>(kEyeNumLive));
+  const json hj = HmxBlockParams{}.toJson()["params"], ej = EyeBlockParams{}.toJson()["params"];
+  CHECK(hj.size() == hd.size());
+  CHECK(ej.size() == ed.size());
+  float hv[kHmxNumLive], ev[kEyeNumLive];
+  hmxLiveFromParams(HmxParams{}, hv);
+  eyeLiveFromParams(EyeParams{}, ev);
+  for (std::size_t i = 0; i < hd.size(); ++i) {
+    INFO("hmx " << hd[i].key);
+    CHECK(hj.contains(hd[i].key));
+    CHECK(hd[i].def == static_cast<double>(hv[i]));  // default = the converters' / the schema's default
+    CHECK(hd[i].min < hd[i].max);
+    CHECK(hd[i].choices.empty() == (static_cast<int>(i) != kHmxClip && static_cast<int>(i) != kHmxBoost));
+    if (!hd[i].choices.empty()) CHECK(hd[i].max == static_cast<double>(hd[i].choices.size() - 1));
+  }
+  for (std::size_t i = 0; i < ed.size(); ++i) {
+    INFO("eye " << ed[i].key);
+    CHECK(ej.contains(ed[i].key));
+    CHECK(ed[i].def == static_cast<double>(ev[i]));
+    CHECK(ed[i].choices.empty());
+  }
+  CHECK(hd[kHmxClip].choices == std::vector<std::string>{"silicon", "led", "asymmetric", "soft"});
+  CHECK(hd[kHmxBoost].choices == std::vector<std::string>{"off", "on"});
+  CHECK(hd[kHmxMix].max == 100.0);
+  CHECK(hd[kHmxMix].def == 100.0);
+  CHECK(hd[kHmxTightness].def == 0.0);
+  // the registry rows carry them
+  const BlockType* bh = BlockRegistry::instance().find("pedal.hmx");
+  const BlockType* be = BlockRegistry::instance().find("pedal.eye");
+  REQUIRE((bh && be));
+  CHECK(bh->liveParams.size() == hd.size());
+  CHECK(be->liveParams.size() == ed.size());
+  for (std::size_t i = 0; i < hd.size(); ++i) CHECK(bh->liveParams[i].key == hd[i].key);
+  for (std::size_t i = 0; i < ed.size(); ++i) CHECK(be->liveParams[i].key == ed[i].key);
+}
+
+TEST_CASE("hmx / eye setLiveParams() in a loop does not allocate", "[pedal][saw][live][alloc]") {
+  HmxPedal hmx(hx([](HmxParams& p) { p.mix = 60; }));
+  EyePedal eye({});
+  const auto hd = hmxLiveParamDescs(), ed = eyeLiveParamDescs();
+  for (int circuit = 0; circuit < 2; ++circuit) {
+    Processor* p = circuit == 0 ? static_cast<Processor*>(&hmx) : static_cast<Processor*>(&eye);
+    const auto& d = circuit == 0 ? hd : ed;
+    p->prepare({48000.0, 256});
+    auto x = noise(256 * 400, 72, 0.4f);
+    std::vector<float> v(d.size());
+    AllocGuard g;
+    for (int blk = 0; blk < 400; ++blk) {
+      fillLive(d, blk, v);  // (the vector keeps its size: no allocation after the first resize)
+      p->setLiveParams(v.data(), static_cast<int>(v.size()));
+      p->process(x.data() + 256 * blk, 256);
+    }
+    REQUIRE(g.count() == 0);
+    for (float s : x) REQUIRE(std::isfinite(s));
+  }
+}
+
+TEST_CASE("live changes are audible: distortion, gain, clip, boost", "[pedal][saw][live]") {
+  // hmx distortion 0 -> 5 at -40 dBFS: output RMS rises
+  {
+    HmxParams q;
+    q.distortion = 0.0;
+    std::vector<float> a(kHmxNumLive), b(kHmxNumLive);
+    hmxLiveFromParams(q, a.data());
+    q.distortion = 5.0;
+    hmxLiveFromParams(q, b.data());
+    HmxPedal p0(hx([](HmxParams& x) { x.distortion = 0; })), p1(hx([](HmxParams& x) { x.distortion = 0; }));
+    const double stay = rmsDbOf(liveSine(p0, a, a, -40.0)), moved = rmsDbOf(liveSine(p1, a, b, -40.0));
+    std::printf("[live] hmx distortion 0 -> 5 at -40 dBFS: RMS %.2f -> %.2f dBFS\n", stay, moved);
+    CHECK(moved > stay + 3.0);
+    // the settled live output equals a static build at the new value (RMS within 0.3 dB)
+    HmxPedal st(hx([](HmxParams& x) { x.distortion = 5; }));
+    st.prepare({48000.0, 256});
+    const double stat = rmsDbOf(liveSine(st, b, b, -40.0));
+    CHECK(std::fabs(moved - stat) < 0.3);
+  }
+  // eye gain 0 -> 10 at -40 dBFS
+  {
+    EyeParams q;
+    q.gain = 0.0;
+    std::vector<float> a(kEyeNumLive), b(kEyeNumLive);
+    eyeLiveFromParams(q, a.data());
+    q.gain = 10.0;
+    eyeLiveFromParams(q, b.data());
+    EyePedal p0(EyeParams{}), p1(EyeParams{});
+    const double stay = rmsDbOf(liveSine(p0, a, a, -40.0)), moved = rmsDbOf(liveSine(p1, a, b, -40.0));
+    std::printf("[live] eye gain 0 -> 10 at -40 dBFS: RMS %.2f -> %.2f dBFS\n", stay, moved);
+    CHECK(moved > stay + 3.0);
+  }
+  // hmx clip silicon -> led (dist 3, -35 dBFS): the spectrum changes (THD) with every other value fixed
+  {
+    HmxParams q;
+    q.distortion = 3.0;
+    std::vector<float> a(kHmxNumLive), b(kHmxNumLive);
+    hmxLiveFromParams(q, a.data());
+    q.clip = ClipType::Led;
+    hmxLiveFromParams(q, b.data());
+    HmxPedal p0(hx([](HmxParams& x) { x.distortion = 3; })), p1(hx([](HmxParams& x) { x.distortion = 3; }));
+    const double stay = thdDbOf(liveSine(p0, a, a, -35.0)), moved = thdDbOf(liveSine(p1, a, b, -35.0));
+    std::printf("[live] hmx clip silicon -> led at dist 3, -35 dBFS: THD %.2f -> %.2f dB\n", stay, moved);
+    CHECK(std::fabs(moved - stay) > 3.0);
+  }
+  // hmx boost off -> on raises RMS (dist 0, -40 dBFS)
+  {
+    HmxParams q;
+    q.distortion = 0.0;
+    std::vector<float> a(kHmxNumLive), b(kHmxNumLive);
+    hmxLiveFromParams(q, a.data());
+    q.boost = true;
+    hmxLiveFromParams(q, b.data());
+    HmxPedal p0(hx([](HmxParams& x) { x.distortion = 0; })), p1(hx([](HmxParams& x) { x.distortion = 0; }));
+    const double stay = rmsDbOf(liveSine(p0, a, a, -40.0)), moved = rmsDbOf(liveSine(p1, a, b, -40.0));
+    std::printf("[live] hmx boost off -> on at dist 0, -40 dBFS: RMS %.2f -> %.2f dBFS\n", stay, moved);
+    CHECK(moved > stay + 3.0);
+  }
+}
+
+TEST_CASE("setLiveParams with the current values keeps the static render bit-identical", "[pedal][saw][live]") {
+  const auto in = noise(48000, 81, 0.3f);
+  {
+    const HmxParams q = hx([](HmxParams& p) {
+      p.distortion = 8; p.mix = 70; p.clip = ClipType::Led; p.boost = true; p.lowMidFreq = 2; p.highMidFreq = 7; p.tightness = 3;
+    });
+    HmxPedal a(q), b(q);
+    a.prepare({48000.0, 512});
+    b.prepare({48000.0, 512});
+    float v[kHmxNumLive];
+    hmxLiveFromParams(q, v);
+    auto ya = in, yb = in;
+    run(a, ya, 512);
+    for (std::size_t pos = 0; pos < yb.size(); pos += 100) {
+      b.setLiveParams(v, kHmxNumLive);
+      b.process(yb.data() + pos, static_cast<int>(std::min<std::size_t>(100, yb.size() - pos)));
+    }
+    CHECK(ya == yb);
+  }
+  {
+    EyeParams q;
+    q.gain = 9;
+    q.tightness = 4;
+    EyePedal a(q), b(q);
+    a.prepare({48000.0, 512});
+    b.prepare({48000.0, 512});
+    float v[kEyeNumLive];
+    eyeLiveFromParams(q, v);
+    auto ya = in, yb = in;
+    run(a, ya, 512);
+    for (std::size_t pos = 0; pos < yb.size(); pos += 100) {
+      b.setLiveParams(v, kEyeNumLive);
+      b.process(yb.data() + pos, static_cast<int>(std::min<std::size_t>(100, yb.size() - pos)));
+    }
+    CHECK(ya == yb);
+  }
+}
+
+TEST_CASE("Chain setBlockLiveParams reaches an hmx block on path a, RT-safe", "[pedal][saw][live][chain]") {
+  json j = chainPreset("", 0.0);
+  j["paths"]["a"]["blocks"] = json::array({{{"id", "a1"}, {"type", "pedal.hmx"}, {"params", {{"distortion", 0}}}}});
+  auto chain = buildChain(j, 512);
+  auto base = buildChain(j, 512);
+  auto x = sine(binCentred(500.0, 48000.0, 16384), 48000.0, 512 * 80, std::pow(10.0, -40.0 / 20.0));
+  std::vector<float> y(512), yb(512);
+  float v[kHmxNumLive];
+  HmxParams q;
+  q.distortion = 8.0;
+  q.clip = ClipType::Led;
+  hmxLiveFromParams(q, v);
+  double rmsMoved = 0.0, rmsBase = 0.0;
+  AllocGuard g;
+  for (int blk = 0; blk < 80; ++blk) {
+    chain->setBlockLiveParams(0, 0, v, kHmxNumLive);
+    chain->setBlockLiveParams(0, 5, v, kHmxNumLive);  // out of range: ignored
+    chain->process(x.data() + 512 * blk, y.data(), 512);
+    base->process(x.data() + 512 * blk, yb.data(), 512);
+    if (blk >= 40) {
+      rmsMoved += rms(y.data(), 512);
+      rmsBase += rms(yb.data(), 512);
+    }
+  }
+  REQUIRE(g.count() == 0);
+  CHECK(rmsMoved > 2.0 * rmsBase);
+  for (float s : y) REQUIRE(std::isfinite(s));
 }

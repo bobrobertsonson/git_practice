@@ -27,7 +27,52 @@ double liveKnob(const float* v, int n, int i, double def, double lo, double hi) 
   return std::isfinite(d) ? clampd(d, lo, hi) : def;
 }
 
+// One row per live parameter (the single source of truth for descriptors and the live converters).
+struct Spec {
+  const char* key;
+  const char* name;
+  double min, max, def;
+};
+constexpr Spec kHmxSpec[kHmxNumLive] = {
+    {"level", "Level", 0, 10, 5},
+    {"low", "Low", 0, 10, 5},
+    {"lowMid", "Low-Mid", 0, 10, 5},
+    {"highMid", "High-Mid", 0, 10, 5},
+    {"high", "High", 0, 10, 5},
+    {"distortion", "Distortion", 0, 10, 5},
+    {"presence", "Presence", 0, 10, 5},
+    {"tightness", "Tightness", 0, 10, 0},
+    {"mix", "Mix", 0, 100, 100},
+    {"clip", "Clip", 0, 3, 0},
+    {"boost", "Boost", 0, 1, 0},
+    {"lowMidFreq", "Low-Mid Freq", 0, 10, 5},
+    {"highMidFreq", "High-Mid Freq", 0, 10, 5},
+};
+constexpr Spec kEyeSpec[kEyeNumLive] = {
+    {"gain", "Gain", 0, 10, 5},
+    {"level", "Level", 0, 10, 5},
+    {"tightness", "Tightness", 0, 10, 0},
+};
+
 }  // namespace
+
+std::vector<LiveParamDesc> hmxLiveParamDescs() {
+  std::vector<LiveParamDesc> d;
+  for (int i = 0; i < kHmxNumLive; ++i) {
+    const Spec& s = kHmxSpec[i];
+    std::vector<std::string> c;
+    if (i == kHmxClip) c.assign(kClipNames, kClipNames + kNumClipTypes);
+    if (i == kHmxBoost) c = {"off", "on"};
+    d.push_back({s.key, s.name, s.min, s.max, s.def, std::move(c)});
+  }
+  return d;
+}
+
+std::vector<LiveParamDesc> eyeLiveParamDescs() {
+  std::vector<LiveParamDesc> d;
+  for (const Spec& s : kEyeSpec) d.push_back({s.key, s.name, s.min, s.max, s.def, {}});
+  return d;
+}
 
 std::shared_ptr<const BlockParams> parseHmxBlock(JsonObject& o, const std::filesystem::path&) {
   auto b = std::make_shared<HmxBlockParams>();
@@ -43,7 +88,11 @@ std::shared_ptr<const BlockParams> parseHmxBlock(JsonObject& o, const std::files
     p.presence = knob(*po, "presence");
     p.tightness = knob(*po, "tightness", kSawTightnessDefault);
     p.mix = po->number("mix", kSawMixDefault, kSawMixMin, kSawMixMax);
-    p.clip = *stages::parseClipType(po->oneOf("clip", "silicon", {"silicon", "led", "asymmetric"}));
+    {
+      const std::string c = po->oneOf("clip", "silicon", {"silicon", "led", "asymmetric", "soft"});
+      for (int i = 0; i < kNumClipTypes; ++i)
+        if (c == kClipNames[i]) p.clip = static_cast<ClipType>(i);
+    }
     if (const nlohmann::json* v = po->take("boost")) {
       if (v->is_boolean()) {
         p.boost = v->get<bool>();
@@ -91,7 +140,7 @@ nlohmann::json HmxBlockParams::toJson() const {
             {"presence", p.presence},
             {"tightness", p.tightness},
             {"mix", p.mix},
-            {"clip", stages::clipTypeName(p.clip)},
+            {"clip", clipTypeName(p.clip)},
             {"boost", p.boost ? "on" : "off"},
             {"lowMidFreq", p.lowMidFreq},
             {"highMidFreq", p.highMidFreq}}}};
@@ -117,8 +166,8 @@ HmxParams hmxParamsFromLive(const float* v, int n) noexcept {
   p.presence = liveKnob(v, n, kHmxPresence, p.presence, kKnobMin, kKnobMax);
   p.tightness = liveKnob(v, n, kHmxTightness, p.tightness, kKnobMin, kKnobMax);
   p.mix = liveKnob(v, n, kHmxMix, p.mix, kSawMixMin, kSawMixMax);
-  const int clip = static_cast<int>(std::lround(liveKnob(v, n, kHmxClip, 0.0, 0.0, 2.0)));
-  p.clip = static_cast<stages::ClipType>(clip);
+  const int clip = static_cast<int>(std::lround(liveKnob(v, n, kHmxClip, 0.0, 0.0, kNumClipTypes - 1.0)));
+  p.clip = static_cast<ClipType>(clip);
   p.boost = liveKnob(v, n, kHmxBoost, 0.0, 0.0, 1.0) >= 0.5;
   p.lowMidFreq = liveKnob(v, n, kHmxLowMidFreq, p.lowMidFreq, kKnobMin, kKnobMax);
   p.highMidFreq = liveKnob(v, n, kHmxHighMidFreq, p.highMidFreq, kKnobMin, kKnobMax);

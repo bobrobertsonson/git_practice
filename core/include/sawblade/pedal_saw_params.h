@@ -1,12 +1,16 @@
 #pragma once
 
-#include "sawblade/pedal_stages.h"
+#include <vector>
+
+#include "sawblade/block_registry.h"
+#include "sawblade/pedal_common.h"
 #include "sawblade/preset.h"
 
 // Preset-side parameters of the chainsaw-family blocks pedal.hmx ("modded chainsaw distortion")
 // and pedal.eye ("one-knob chainsaw"); phase 7c, docs/specs/phase7c_chainsaw_family.md. Conventions
 // identical to phase 7b: knobs 0..10 doubles, `tightness` 0..10 (default 0), `mix` 0..100 %
-// (default 100), enums as lower-case strings, modelVersion 1.
+// (default 100), enums as lower-case strings, modelVersion 1. The clip type is 7b's four-way
+// ClipType (pedal_common.h): silicon | led | asymmetric | soft.
 namespace sawblade {
 
 constexpr double kSawTightnessDefault = 0.0, kSawMixMin = 0.0, kSawMixMax = 100.0, kSawMixDefault = 100.0;
@@ -14,7 +18,7 @@ constexpr double kSawTightnessDefault = 0.0, kSawMixMin = 0.0, kSawMixMax = 100.
 struct HmxParams {
   double level = 5.0, low = 5.0, lowMid = 5.0, highMid = 5.0, high = 5.0, distortion = 5.0, presence = 5.0;
   double tightness = kSawTightnessDefault, mix = kSawMixDefault;
-  stages::ClipType clip = stages::ClipType::Silicon;
+  ClipType clip = ClipType::Silicon;
   bool boost = false;
   double lowMidFreq = 5.0, highMidFreq = 5.0;
   bool operator==(const HmxParams&) const = default;
@@ -40,10 +44,9 @@ struct EyeBlockParams : BlockParams {
 std::shared_ptr<const BlockParams> parseHmxBlock(JsonObject& o, const std::filesystem::path&);
 std::shared_ptr<const BlockParams> parseEyeBlock(JsonObject& o, const std::filesystem::path&);
 
-// Live parameter index order (the order of the spec tables). Parameters are static per preset in
-// 7c; these converters are for the generic live path wired after the merge with phase 7b.
-// Doubles are narrowed to float, enums are the choice index (clip: silicon 0, led 1, asymmetric 2),
-// boost is 0/1. The *FromLive converters read min(n, kNumLive) values (missing ones keep their
+// Live parameter index order (the order of the spec tables), the Processor::setLiveParams order.
+// Doubles are narrowed to float, enums are the choice index (clip: silicon 0, led 1, asymmetric 2,
+// soft 3), boost is 0/1. The *FromLive converters read min(n, kNumLive) values (missing ones keep their
 // defaults), clamp knobs to their ranges, round enums to the nearest valid index and treat
 // boost >= 0.5 as on; they never throw.
 enum HmxLive {
@@ -63,6 +66,11 @@ enum HmxLive {
   kHmxNumLive
 };
 enum EyeLive { kEyeGain = 0, kEyeLevel, kEyeTightness, kEyeNumLive };
+
+// Descriptors in HmxLive / EyeLive order (key = the JSON key; ranges and defaults are the schema's;
+// `choices` for the enums clip and boost). The registry rows and the plugin read these.
+std::vector<LiveParamDesc> hmxLiveParamDescs();
+std::vector<LiveParamDesc> eyeLiveParamDescs();
 
 HmxParams hmxParamsFromLive(const float* v, int n) noexcept;
 void hmxLiveFromParams(const HmxParams& p, float* v) noexcept;  // writes kHmxNumLive values
