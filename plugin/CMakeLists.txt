@@ -30,6 +30,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/MatchGlue.cpp
   src/PluginProcessor.cpp
   src/PlayAlongPanel.cpp
+  src/MatchScreen.cpp
   src/PluginEditor.cpp
   src/skin/SkinAssets.cpp
   src/skin/FilmstripKnob.cpp

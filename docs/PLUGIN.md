@@ -247,13 +247,128 @@ saved in the state, only its path.
 is adopted when the host stops. Toggling KEEP KEYS reloads the song (decode time; resampling too if the files are not at
 the host rate). The whole song is held in memory at the host rate (5.1 open question 1).
 
+### Record + Match (phase 6a)
+
+The loop: play along to a song, record the clean DI, MATCH it against the song, audition the results, apply one, keep
+playing. Spec: `docs/specs/phase6a_record_match_plugin.md`. Code: `plugin/src/TakeRecorder.{h,cpp}` (recorder, JUCE-free),
+`JobRunner.{h,cpp}` (child processes, settings, parsers), `MatchGlue.{h,cpp}` (what MATCH / EXPORT start from),
+`PresetAudition.{h,cpp}` (audition / A-B / apply), `MatchScreen.{h,cpp}` (the overlay), and the record band at the bottom of
+`PlayAlongPanel`.
+
+**Recorder.** REC in the play-along panel records the plugin's **input**: the clean DI, before the gate and the rig (a
+stereo input is summed to mono exactly as the rig does). The audio thread pushes each block into a preallocated lock-free
+ring (the next power of two above 2 s at the host rate: 131072 samples at 48 kHz, allocated in `prepareToPlay`); a writer
+thread drains it into a **32-bit float mono WAV** and writes the sidecar when the take ends. Takes live in
+`~/Library/Application Support/Sawblade/takes/` (macOS) or `~/.local/share/sawblade/takes/` (Linux); the environment
+variable `SAWBLADE_DATA_DIR` replaces the `Sawblade` / `sawblade` root, and `TakeRecorder::setTakesDir` overrides the folder
+(tests). Nothing on the audio thread allocates, locks or does I/O: a take starts and stops at a block boundary through a
+small preallocated event queue, and a full ring never blocks. A block the ring cannot take is dropped, counted
+(`overruns`, shown in the panel and stored in the sidecar) and the writer later pads the file with the same number of
+zeros, so the take stays on the DI timeline and `lengthSamples` is always the number of samples that went by. Only a take
+that has ended has a sidecar, so a take in progress never shows up in the list.
+
+Sidecar `<take>.json`:
+
+```json
+{ "version": 1, "sampleRate": 48000.0, "channels": 1, "lengthSamples": 480000, "overruns": 0, "droppedSamples": 0,
+  "playAlong": { "running": true, "stemSampleIndex": 1507200, "stemSampleRate": 48000.0, "songFolder": "/songs/x" },
+  "createdUtc": "2026-10-04T12:00:00.000Z" }
+```
+
+`playAlong` is `null` when no song was loaded. `stemSampleIndex` is the stem sample that plays at the take's **first
+sample**: the playhead (the player's position in Standalone, the host position in plugin mode) minus the applied player
+offset, so the offset setting is already in it. The backing is delayed by the rig latency, which is exactly what lines the
+DI sample up with the stem sample the player plays at that moment. `running` is false when the backing was paused, counting
+in, or (plugin mode) not following the host: the index is then only where the playhead was, and MATCH does not use it.
+`droppedSamples` is an addition to the spec's field list. The matcher's `--offset-ms` is
+`stemSampleIndex / stemSampleRate * 1000` (the DI starts that far into the song). A loop that wraps during the take
+breaks the single offset (the take is one straight run of the DI; the offset is valid until the first wrap).
+
+**Panel.** The play-along panel is 112 px taller (`PlayAlongPanel::kHeight` = 170 + 112); the new band holds REC / STOP with
+a timer and a lamp, the take list (name, length, position in the song, overruns, a tag on the one used for MATCH), RENAME,
+DELETE (both confirm in a dialog), USE FOR MATCH, MATCH and EXPORT NAM. The selection used for MATCH is a setting, not tone
+state.
+
+**Standalone only.** MATCH and EXPORT NAM run the Python tools, so for now they are Standalone-only: `matchEnabled()` is
+`playAlong().standalone()` (a processor outside the Standalone wrapper counts as a plugin). In plugin mode the two buttons
+only show "... runs in the Standalone app: open the Standalone app." Recording works in both.
+
+**Job runner.** `JobRunner` (owned by the processor, so jobs survive the editor and the panel closing) starts
+`sawblade-match` and `sawblade-export` with `juce::ChildProcess`. Every job has a folder
+`<app data>/jobs/<timestamp>-match|export/` with `job.json` (kind, state, pid, start / finish time, exit code, the command
+line, the progress mode), `log.txt` (the child's output) and the tool's own files. The folder is the source of truth: a runner that finds a
+`running` job whose pid is alive monitors it again (`attachExisting()`, called when the screen opens), a finished one is
+loaded with its results, and a `running` job whose process is gone is reported as failed (or as succeeded if it left its
+result). One match and one export can be active at the same time; a second job of the same kind is refused.
+
+- *Threads.* The message thread only starts, cancels and copies snapshots. Each job has a monitor thread (probe, launch,
+  poll progress, notice the exit) and a reader thread that drains the pipe so it never fills. (`ChildProcess::readProcessOutput`
+  is an `fread` of the requested size, so it is called one byte at a time to return when a line is complete.)
+- *Child pid.* `ChildProcess` has no pid, so on POSIX the child is started as `/bin/sh -c 'echo $$; exec "$0" "$@"' <exe> ...`:
+  the first output line is the pid of the exec'd tool, which job.json records and a re-attached runner signals.
+- *Cancel.* SIGTERM, then SIGKILL (`ChildProcess::kill`) after 2.5 s; the job is then `cancelled` in job.json. Only the
+  tool's own process is signalled, not a process tree.
+- *Tools and settings.* The matcher executable (default `<repo>/match/.venv/bin/sawblade-match`, `<repo>` from the build's
+  source dir), the exporter (`.../sawblade-export`) and the pool manifest
+  (`~/.cache/sawblade/captures/pool_manifest.json`) are settings in `juce::PropertiesFile` application properties
+  (`<app data>/settings.properties`), **not** in the preset or the plugin state: the tone state bytes are unchanged. A
+  missing or non-executable tool, or a missing pool, gives a clear message and a LOCATE... button (async file chooser).
+- *Progress.* The runner runs `<exe> --help` once per executable. If it lists `--progress-json`, the matcher is started with
+  `--progress-json <job>/progress.json` and that file (`{stage, fraction, etaSeconds, bestErrorDb, message}`, partial or
+  missing reads ignored) feeds the bar, the stage, the ETA and the best error. Otherwise the log lines give the stage
+  (`stage2` / `stage3` markers), the last line as the message and an indeterminate bar, with no ETA. The exporter's progress
+  is `<out>/checkpoint/progress.json` (epoch against the epoch or minute budget).
+
+**MATCH.** The screen (after `design/mockups/FullMatch.dc.html`, in the plugin's skin) shows the reference, the DI take and
+the tools, a progress bar with stage, message, ETA and best error, CANCEL, and the results. The command line is
+`sawblade-match --di <take.wav> --ref <stem file> --ref-channel mid --pool <manifest> [--offset-ms <ms>] --out <job dir>
+[--progress-json <job>/progress.json]`:
+
+- the reference is the loaded song folder's guitar stem (`guitar` / `guitars`), else `other`, else a mix, else the first
+  audio file; the label on the screen says which. `--stems-dir` is not passed (it is the calibrate stem cache);
+- `--offset-ms` comes from the take's sidecar and is omitted when no backing was running or when the take was recorded
+  against another song (the matcher then searches within +-3 s).
+
+The results (`result.json`: `best` and `alternatives`, `loss` shown as dB, `topology`, a captures summary) list the matcher's
+choice first. **AUDITION** loads the candidate's `*.preset.resolved.json` through the processor's normal off-thread preset
+load (the EngineLoader builds it, the audio thread cross-fades) and keeps the preset that was current before the first
+audition; **A / B** switches between that preset (A) and the candidate (B); **APPLY** makes the selected candidate the
+current preset (what a normal preset load leaves; the audition ends); **REVERT** goes back to A. Auditioning is a real load:
+the plugin state holds whichever side is playing.
+
+**EXPORT NAM.** The same screen in export mode: NO CAB / WITH CAB (the hint says which is exact for the current blend: a
+live blend, both paths on one cab, is exact without the cab; a studio blend only with it), FEATHER / LITE / STANDARD, device
+`auto` (the tool's default; `--device auto` is passed), the licence note of the export, progress, and REVEAL
+(`File::revealToUser` on the result folder). It runs `sawblade-export <preset> --mode <m> --size <s> --device auto
+[--di <selected take>] --out <job>/export`. The preset is the auditioned / applied candidate's resolved file when that is what
+is loaded, otherwise the current preset written to `<jobs>/inputs/` (so the export is what is playing, parameter changes included).
+The selected take is also passed as the validation DI.
+
+**Tests.** `plugin/tests/test_record_match.cpp` (headless; recorder: no allocation or lock while recording, WAV bit-exact for
+mixed block sizes, overrun counting with a stalled writer and the silence padding, a take shorter than a writer pass, the
+sidecar offset with a running StemPlayer in Standalone and host-follow modes, rename / delete, re-prepare; runner against a fake
+child written at test time (`plugin/tests/fake_tools.h`, a Python script that answers `--help` with and without
+`--progress-json`, writes progress.json, log lines, result.json and presets, and can wait on gate files): progress in both
+modes, the command line, result list, cancel (SIGTERM and the SIGKILL escalation), failure message, missing tools, re-attach to
+a running and a finished job, a re-attached cancel, a child that floods the pipe, export progress; settings persistence;
+audition / A-B / apply; the plugin-mode gating) and the editor tests in `plugin/tests/test_editor.cpp` (the band, the
+Standalone-only buttons, the missing-tool message, a job that survives the editor, and the screenshots
+`build/screenshots/sawblade_record_armed_1x.png`, `sawblade_match_progress_1x.png`, `sawblade_match_results_1x.png`,
+`sawblade_export_progress_1x.png`). All test data is synthesised into temp dirs; `SAWBLADE_DATA_DIR` keeps the default
+locations out of the home folder.
+
+**Known limits.** MATCH / EXPORT are Standalone-only. Cancel signals the tool's process only. A running job's reader thread is
+detached when the processor is destroyed (it holds its own reference; it ends with the child). The take list is rescanned every
+2 s while the panel is open. Takes and job folders are never deleted by the plugin.
+
 ### Editor
 
 A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, spec
 `docs/specs/phase2_5_skin.md`); the final UI is the user's design. A fixed 1280 x 800 design laid out in one
 content component that the editor scales with an `AffineTransform` (resizable, fixed 1.6 aspect, 640x400 to
 2560x1600). It reads `status()` and the APVTS only. Layout: top bar (preset button opening the preset file chooser,
-latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM), rig area (amp heads, cab, pedalboard
+latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM; MATCH and EXPORT NAM are opened from the
+play-along panel, see Record + Match), rig area (amp heads, cab, pedalboard
 with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
 knobs; all 12 parameters are bound to exactly one knob each).
 
@@ -269,7 +384,8 @@ LEARN GATE, "+ PEDAL", CPU readout, the footswitch (visual bypass only).
 available): snapshots to `build/screenshots/sawblade_skin_{1x,2x}.png`, resizing, parameter bindings, filmstrip
 mapping, knob interaction, footswitch / LED, accessibility, and the `plugin/assets/` budget (< 25 MB). The play-along
 tests cover the panel (exists, closed by default, opens from the top bar), its controls bound to the processor, folder
-drop, the missing-folder message, and screenshots `build/screenshots/sawblade_playalong_{closed,open}_1x.png`.
+drop, the missing-folder message, and screenshots `build/screenshots/sawblade_playalong_{closed,open}_1x.png`. The Record + Match
+tests are described in that section.
 
 `sawblade_plugin_tests` (headless): `plugin/tests/test_engine.cpp` (Engine, no JUCE),
 `plugin/tests/test_processor.cpp` (the processor driven like a host) and `plugin/tests/test_playalong.cpp` (the backing:

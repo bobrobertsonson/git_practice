@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 
+#include "MatchScreen.h"
 #include "PlayAlongPanel.h"
 #include "skin/FilmstripKnob.h"
 
@@ -136,7 +137,11 @@ class SawbladeEditor::Content : public juce::Component {
 
     panel_ = std::make_unique<PlayAlongPanel>(processor_);
     panel_->setVisible(false);
-    addChildComponent(*panel_);  // last child: on top of the rig and the inspector
+    addChildComponent(*panel_);  // on top of the rig and the inspector
+    screen_ = std::make_unique<MatchScreen>(processor_);
+    addChildComponent(*screen_);  // last child: covers everything below the top bar
+    panel_->onMatch = [this] { openMatchScreen(false); };
+    panel_->onExport = [this] { openMatchScreen(true); };
 
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
@@ -194,6 +199,7 @@ class SawbladeEditor::Content : public juce::Component {
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
+    screen_->setBounds(0, kTopBar, MatchScreen::kWidth, kDesignHeight - kTopBar);
     message_.setBounds(34, kTopBar + 14, 860, 20);
 
     const int ix = kInspX + 16, iw = kInspW - 32;
@@ -258,6 +264,9 @@ class SawbladeEditor::Content : public juce::Component {
   void refreshPanel() {
     if (panel_->isVisible()) panel_->refresh();
   }
+  void openMatchScreen(bool exportMode) { screen_->open(exportMode ? MatchScreen::Mode::Export : MatchScreen::Mode::Match); }
+  bool matchScreenOpen() const { return screen_->isVisible(); }
+  void refreshScreen() { screen_->refresh(); }
 
  private:
   static juce::Rectangle<int> matchBox() { return {kInspX + 16, kDesignHeight - 14 - 64, kInspW - 32, 64}; }
@@ -312,6 +321,7 @@ class SawbladeEditor::Content : public juce::Component {
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
   juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_;
   std::unique_ptr<PlayAlongPanel> panel_;
+  std::unique_ptr<MatchScreen> screen_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -350,12 +360,19 @@ double SawbladeEditor::contentScale() const { return static_cast<double>(getWidt
 skin::Piece SawbladeEditor::selectedPiece() const { return content_->rig().selected(); }
 
 void SawbladeEditor::timerCallback() {
-  if ((tick_++ & 3) == 0) content_->refresh();  // 4 Hz; the open play-along panel refreshes at the full rate
+  if ((tick_++ & 3) == 0) {  // 4 Hz; the open play-along panel refreshes at the full rate
+    content_->refresh();
+    content_->refreshScreen();
+  }
   content_->refreshPanel();
 }
 
 void SawbladeEditor::setPlayAlongOpen(bool open) { content_->setPlayAlongOpen(open); }
 bool SawbladeEditor::playAlongOpen() const { return content_->playAlongOpen(); }
+void SawbladeEditor::openMatchScreen(bool exportMode) {
+  content_->openMatchScreen(exportMode);
+}
+bool SawbladeEditor::matchScreenOpen() const { return content_->matchScreenOpen(); }
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
   for (const auto& f : files)
