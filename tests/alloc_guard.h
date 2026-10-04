@@ -14,6 +14,8 @@ class AllocGuard {
 
   // Number of allocations on this thread since this guard was armed.
   long count() const noexcept;
+  // Number of deallocations (non-null operator delete calls) on this thread since armed.
+  long frees() const noexcept;
 };
 
 }  // namespace sawblade::test

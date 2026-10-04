@@ -17,6 +17,7 @@ target_link_libraries(sawblade_py PRIVATE
 if(SAWBLADE_BUILD_TESTS)
   add_test(NAME python_bindings
     COMMAND "${Python_EXECUTABLE}" -m pytest -q "${PROJECT_SOURCE_DIR}/match/tests/test_core_bindings.py"
+            "${PROJECT_SOURCE_DIR}/match/tests/test_stem_player_bindings.py"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/match")
   set_tests_properties(python_bindings PROPERTIES
     ENVIRONMENT "SAWBLADE_CORE_DIR=${CMAKE_BINARY_DIR}/python;SAWBLADE_TONERENDER=$<TARGET_FILE:tonerender>")

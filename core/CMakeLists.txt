@@ -1,5 +1,5 @@
-# dr_wav implementation lives in its own library so -Werror never sees third-party code.
-add_library(sawblade_dr_wav STATIC src/dr_wav_impl.cpp)
+# dr_wav / dr_flac implementations live in their own library so -Werror never sees third-party code.
+add_library(sawblade_dr_wav STATIC src/dr_wav_impl.cpp src/dr_flac_impl.cpp)
 target_link_libraries(sawblade_dr_wav PUBLIC dr_wav_headers)
 if(NOT MSVC)
   target_compile_options(sawblade_dr_wav PRIVATE -w)
@@ -15,6 +15,8 @@ add_library(sawblade_core STATIC
   src/nam_block.cpp
   src/delay.cpp
   src/wav_io.cpp
+  src/stem_set.cpp
+  src/stem_player.cpp
   src/sha256.cpp
   src/bus_comp.cpp
   src/preset_reader.cpp
