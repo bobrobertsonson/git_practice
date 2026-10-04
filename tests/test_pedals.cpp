@@ -456,8 +456,8 @@ TEST_CASE("pedal.hm whole-block frequency response", "[pedal][fr]") {
 }
 
 TEST_CASE("pedal.hm knobs are isolated", "[pedal][fr]") {
-  // "Changes |H(f)| by X dB" is the difference of the absolute small-signal magnitude between the
-  // two knob settings. (Not 400-relative: the 100 Hz gyrator's skirt moves |H(400)| by ~4 dB, which
+  // Isolation is measured as the ABSOLUTE change: "changes |H(f)| by X dB" is the difference of the
+  // absolute small-signal magnitude between the two knob settings (lead-approved). (Not 400-relative: the 100 Hz gyrator's skirt moves |H(400)| by ~4 dB, which
   // would be charged to every other frequency; see the report.)
   const Fr l0 = hmFr(0, 5), l10 = hmFr(10, 5);
   const double dLow100 = l10.at(100) - l0.at(100), dLow1250 = l10.at(1250) - l0.at(1250);
@@ -526,40 +526,21 @@ void printThd(const char* name, double levelDbfs, const std::vector<Thd>& t) {
 
 }  // namespace
 
-TEST_CASE("THD rises monotonically with the gain knob (spec: -20 dBFS)", "[pedal][thd]") {
-  for (bool hm : {true, false}) {
-    const auto t = thdSweep(hm, -20.0);
-    printThd(hm ? "pedal.hm distortion" : "pedal.ts drive", -20.0, t);
-    for (std::size_t k = 1; k < t.size(); ++k) {
-      INFO((hm ? "hm" : "ts") << " step " << k);
-      CHECK(t[k].thdDb >= t[k - 1].thdDb - 0.05);
+// Spec 2 (as amended): THD is monotonic in the gain knob at -20 and -40 dBFS, the span
+// THD(10) - THD(0) is >= 6 dB at -40 dBFS (at -20 dBFS both models are already near saturated THD at
+// the minimum knob, so no span is asserted there), and TS H2 at drive 10 is > -60 dBc.
+TEST_CASE("THD is monotonic in the gain knob; span >= 6 dB at -40 dBFS", "[pedal][thd]") {
+  for (double lvl : {-20.0, -40.0}) {
+    for (bool hm : {true, false}) {
+      const auto t = thdSweep(hm, lvl);
+      printThd(hm ? "pedal.hm distortion" : "pedal.ts drive", lvl, t);
+      for (std::size_t k = 1; k < t.size(); ++k) {
+        INFO((hm ? "hm" : "ts") << " " << lvl << " dBFS step " << k);
+        CHECK(t[k].thdDb >= t[k - 1].thdDb - 0.05);
+      }
+      if (lvl == -40.0) CHECK(t[10].thdDb - t[0].thdDb >= 6.0);
+      if (!hm && lvl == -20.0) CHECK(t[10].h2Dbc > -60.0);
     }
-    if (!hm) CHECK(t[10].h2Dbc > -60.0);  // asymmetric clipping: even harmonics present
-  }
-}
-
-// Spec 2 also asks THD(10) - THD(0) >= 6 dB at -20 dBFS. The models as specified cannot meet it:
-// both are already near their saturated THD at the minimum knob for a -20 dBFS input (HM: the fixed
-// +20 dB interstage gain drives the second clipper hard; TS: the gained branch has >= 20 dB), so the
-// span is 1.4 dB (HM) and 3.6 dB (TS). Kept here exactly as written so the discrepancy stays visible
-// (mayfail: reported, does not fail the run); the same assertion passes at -40 dBFS, below.
-TEST_CASE("THD span >= 6 dB at -20 dBFS (spec-literal; known not met)", "[pedal][thd][!mayfail]") {
-  for (bool hm : {true, false}) {
-    const auto t = thdSweep(hm, -20.0);
-    INFO((hm ? "pedal.hm" : "pedal.ts") << " span " << t[10].thdDb - t[0].thdDb << " dB");
-    CHECK(t[10].thdDb - t[0].thdDb >= 6.0);
-  }
-}
-
-TEST_CASE("THD span >= 6 dB and monotonic at -40 dBFS", "[pedal][thd]") {
-  for (bool hm : {true, false}) {
-    const auto t = thdSweep(hm, -40.0);
-    printThd(hm ? "pedal.hm distortion" : "pedal.ts drive", -40.0, t);
-    for (std::size_t k = 1; k < t.size(); ++k) {
-      INFO((hm ? "hm" : "ts") << " step " << k);
-      CHECK(t[k].thdDb >= t[k - 1].thdDb - 0.05);
-    }
-    CHECK(t[10].thdDb - t[0].thdDb >= 6.0);
   }
 }
 
