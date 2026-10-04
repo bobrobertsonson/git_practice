@@ -62,7 +62,9 @@ struct StemSet {                               // immutable after construction
   map as: `drums`, `bass`, `vocals`, `other`, `guitar` or `guitars` (case-insensitive) to
   their kind. Any other audio file (e.g. Demucs 6-stem `piano.wav`) is summed into `other`
   with a warning naming it, so no music is silently dropped. Non-audio files are ignored.
-  Files are processed in sorted-name order (determinism).
+  Files are processed in sorted-name order (determinism). Two files mapping to the same named
+  stem (e.g. `drums.wav` + `drums.flac`, `guitar.wav` + `guitars.wav`) are summed with a warning
+  (amendment).
 - `StemSet makeStemSet(double sampleRate, const std::array<std::optional<std::array<std::vector<float>,2>>, kStemKindCount>& audio)`
   (or an equivalent factory) for tests and bindings: audio already at `sampleRate`, padded to the longest.
 - Errors (`std::runtime_error`, path in the message): unreadable/undecodable file, no stems
@@ -83,6 +85,9 @@ struct StemSet {                               // immutable after construction
   playing, the pending set waits. Adoption resets the playhead to 0 and clears the loop. The
   old set is retired by `SwapSlot` and freed only by `collectGarbage()` on the producer thread.
 - With no set adopted, stems output silence (count-in clicks still work).
+- *Amendment (lead, after review):* a player with **no** adopted set adopts a pending set at
+  the start of any block regardless of transport state; the playhead is not reset (it stays
+  where the transport is; out-of-range positions read silence) and the loop is cleared.
 
 ### prepare
 `void prepare(const ProcessSpec& spec, int maxRigLatencySamples)`: allocates everything:
@@ -250,3 +255,12 @@ command times). Host-follow is evaluated per block by definition; its tests use 
 Plugin integration, a thread-safe command FIFO, time-stretching / pitch-shift, stem separation,
 tempo maps, song-start offset in host timeline, waveform display, compressed in-memory storage.
 Propose these in the report instead of building them.
+
+## 9. Accepted implementation decisions (lead, after review)
+- Mix/transport ramps use the same linear law as `Gain::rampToLinear` but with a double,
+  counter-based value (exact analytic ramp, block-size independent).
+- `AllocGuard` gained `frees()` (deallocation count) so tests prove `process()` frees nothing.
+- No internal block splitting or scratch buffers: the per-sample engine writes the outputs
+  directly and accepts any `n >= 0`.
+- `isPlaying()` reports the requested state (true during a count-in).
+- A seek to exactly `b` with a loop active does not wrap (consistent with "at or beyond b plays on").
