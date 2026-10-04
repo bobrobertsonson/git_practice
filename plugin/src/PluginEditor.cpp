@@ -6,6 +6,8 @@
 
 #include "PlayAlongPanel.h"
 #include "mic/MicPage.h"
+#include "presets/AbCompare.h"
+#include "presets/PresetBrowser.h"
 #include "skin/FilmstripKnob.h"
 
 namespace sawblade::plugin {
@@ -61,9 +63,17 @@ class SawbladeEditor::Content : public juce::Component {
     wordmark_.setTransform(juce::AffineTransform::rotation(-0.026f, 95.0f, 21.0f));
     addAndMakeVisible(wordmark_);
 
-    configure(prev_, juce::String::fromUTF8("\xe2\x80\xb9"), "Previous preset", true);
-    configure(next_, juce::String::fromUTF8("\xe2\x80\xba"), "Next preset", true);
-    configure(ab_, "A / B", "A/B compare", true);
+    configure(prev_, juce::String::fromUTF8("\xe2\x80\xb9"), "Previous preset in the browser's list", false);
+    configure(next_, juce::String::fromUTF8("\xe2\x80\xba"), "Next preset in the browser's list", false);
+    configure(ab_, "A", "A/B compare: switch between two versions of the sound (right-click: copy A to B, B to A, reset)", false);
+    ab_.setTitle("A/B compare");
+    ab_.onClick = [this] {
+      abCompare_.toggle();
+      ab_.setButtonText(abCompare_.label());
+    };
+    ab_.addMouseListener(this, false);
+    prev_.onClick = [this] { stepPreset(-1); };
+    next_.onClick = [this] { stepPreset(+1); };
     configure(match_, "MATCH", "Match to a reference", true);
     configure(export_, "EXPORT NAM", "Export as NAM model", true);
     configure(playAlong_, "PLAY ALONG", "Show / hide the play-along panel: a backing track from separated stems to play over", false);
@@ -76,8 +86,8 @@ class SawbladeEditor::Content : public juce::Component {
     export_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff140a04));
 
     presetButton_.setTitle("Preset");
-    presetButton_.setTooltip("Load a preset file...");
-    presetButton_.onClick = [this] { chooseFile(); };
+    presetButton_.setTooltip("Open the preset browser");
+    presetButton_.onClick = [this] { setBrowserOpen(!browser_->isVisible()); };
     addAndMakeVisible(presetButton_);
 
     for (juce::Label* c : {&latChip_, &modeChip_}) {
@@ -142,7 +152,12 @@ class SawbladeEditor::Content : public juce::Component {
     micPage_->setVisible(false);
     micPage_->onClose = [this] { setMicPageOpen(false); };
     rig_.onCabOpen = [this] { setMicPageOpen(true); };
-    addChildComponent(*micPage_);  // last child: on top of everything below the top bar
+    addChildComponent(*micPage_);
+    browser_ = std::make_unique<PresetBrowser>(processor_);
+    browser_->setVisible(false);
+    browser_->onClose = [this] { setBrowserOpen(false); };
+    browser_->onLoadFile = [this] { chooseFile(); };
+    addChildComponent(*browser_);  // last child: on top of everything below the top bar
 
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
@@ -202,6 +217,7 @@ class SawbladeEditor::Content : public juce::Component {
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
     micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
+    browser_->setBounds(0, kTopBar, PresetBrowser::kWidth, PresetBrowser::kHeight);
 
     const int ix = kInspX + 16, iw = kInspW - 32;
     selKind_.setBounds(ix, kTopBar + 14, iw, 16);
@@ -265,7 +281,33 @@ class SawbladeEditor::Content : public juce::Component {
   void refreshPanel() {
     if (panel_->isVisible()) panel_->refresh();
   }
+  void setBrowserOpen(bool open) {
+    if (open) micPage_->setVisible(false);
+    browser_->setVisible(open);
+    if (open) browser_->open();
+  }
+  bool browserOpen() const { return browser_->isVisible(); }
+  PresetBrowser& browser() { return *browser_; }
+  AbCompare& abCompare() { return abCompare_; }
+  void stepPreset(int dir) {
+    if (browser_->library().entries().empty()) browser_->scanBlocking();
+    browser_->step(dir);
+  }
+  void mouseDown(const juce::MouseEvent& e) override {
+    if (e.eventComponent != &ab_ || !e.mods.isPopupMenu()) return;
+    juce::PopupMenu m;
+    m.addItem(1, juce::String::fromUTF8("Copy A \xe2\x86\x92 B"));
+    m.addItem(2, juce::String::fromUTF8("Copy B \xe2\x86\x92 A"));
+    m.addItem(3, "Reset compare");
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&ab_), [this](int r) {
+      if (r == 1) abCompare_.copyAToB();
+      else if (r == 2) abCompare_.copyBToA();
+      else if (r == 3) abCompare_.reset();
+      ab_.setButtonText(abCompare_.label());
+    });
+  }
   void setMicPageOpen(bool open) {
+    if (open) browser_->setVisible(false);
     micPage_->setVisible(open);
     if (open) micPage_->open();
   }
@@ -324,11 +366,13 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
   SawbladeProcessor& processor_;
+  AbCompare abCompare_{processor_};
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
   juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_;
   std::unique_ptr<PlayAlongPanel> panel_;
   std::unique_ptr<MicPage> micPage_;
+  std::unique_ptr<PresetBrowser> browser_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -379,6 +423,10 @@ bool SawbladeEditor::playAlongOpen() const { return content_->playAlongOpen(); }
 void SawbladeEditor::setMicPageOpen(bool open) { content_->setMicPageOpen(open); }
 bool SawbladeEditor::micPageOpen() const { return content_->micPageOpen(); }
 MicPage& SawbladeEditor::micPage() { return content_->micPage(); }
+void SawbladeEditor::setBrowserOpen(bool open) { content_->setBrowserOpen(open); }
+bool SawbladeEditor::browserOpen() const { return content_->browserOpen(); }
+PresetBrowser& SawbladeEditor::browser() { return content_->browser(); }
+AbCompare& SawbladeEditor::abCompare() { return content_->abCompare(); }
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
   for (const auto& f : files)

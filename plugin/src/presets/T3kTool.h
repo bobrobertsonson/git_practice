@@ -26,6 +26,7 @@ std::filesystem::path packManifestPath(const std::string& toneId);  // <appdata>
 namespace settings {
 std::filesystem::path defaultT3kExecutable();       // <repo>/match/.venv/bin/sawblade-t3k (compile definition)
 std::filesystem::path t3kExecutable();              // key "t3kExecutable", else the default
+std::filesystem::path factoryPresetDir();           // key "factoryPresetDir", else <repo>/presets (compile definition)
 bool setT3kExecutable(const std::filesystem::path& exe, std::string* error = nullptr);
 }  // namespace settings
 

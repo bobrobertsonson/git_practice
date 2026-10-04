@@ -11,6 +11,8 @@
 namespace sawblade::plugin {
 
 class MicPage;
+class PresetBrowser;
+class AbCompare;
 
 // Skinned prototype of the main rig screen (design/mockups/RigReal.dc.html, spec
 // docs/specs/phase2_5_skin.md). A fixed 1280 x 800 design laid out in one content component that
@@ -39,6 +41,12 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   void setMicPageOpen(bool open);
   bool micPageOpen() const;
   MicPage& micPage();
+
+  // The preset browser overlay (presets/PresetBrowser), opened from the top-bar preset selector, and the A/B compare slots.
+  void setBrowserOpen(bool open);
+  bool browserOpen() const;
+  PresetBrowser& browser();
+  AbCompare& abCompare();
 
   // Dropping a folder (of stems) anywhere on the editor loads it as the song and opens the panel.
   bool isInterestedInFileDrag(const juce::StringArray& files) override;

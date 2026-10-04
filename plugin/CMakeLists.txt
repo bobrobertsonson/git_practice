@@ -35,7 +35,12 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/mic/IrResponse.cpp
   src/mic/MicSession.cpp
   src/mic/MicPage.cpp
-  src/presets/T3kTool.cpp)
+  src/presets/T3kTool.cpp
+  src/presets/PresetLibrary.cpp
+  src/presets/PresetLoadFlow.cpp
+  src/presets/AbCompare.cpp
+  src/presets/PresetInfoPanel.cpp
+  src/presets/PresetBrowser.cpp)
 
 # UI renders embedded into the binary: an explicit list (not a glob) of everything in assets/.
 # Nothing renders at build time; design/render/export_ui_assets.py produced these files once.
@@ -112,9 +117,10 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_processor.cpp
     tests/test_playalong.cpp
     tests/test_mic.cpp
+    tests/test_presets.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
-    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp tests/test_mic.cpp
+    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp tests/test_mic.cpp tests/test_presets.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_plugin_tests PRIVATE src)
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})
@@ -141,8 +147,8 @@ endif()
 # executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
 # compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
 if(SAWBLADE_BUILD_TESTS)
-  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_mic_page.cpp ${SAWBLADE_PLUGIN_SOURCES})
-  set_source_files_properties(tests/test_editor.cpp tests/test_mic_page.cpp
+  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_editor_tests PRIVATE src)
   # JUCE_MODAL_LOOPS_PERMITTED: the page tests pump the message loop (MessageManager::runDispatchLoopUntil).

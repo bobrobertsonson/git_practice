@@ -78,6 +78,19 @@ fs::path t3kExecutable() {
   return defaultT3kExecutable();
 }
 
+fs::path factoryPresetDir() {
+  json j;
+  if (readSettings(j)) {
+    const auto it = j.find("factoryPresetDir");
+    if (it != j.end() && it->is_string() && !it->get<std::string>().empty()) return fs::path(it->get<std::string>());
+  }
+#ifdef SAWBLADE_REPO_DIR
+  return fs::path(SAWBLADE_REPO_DIR) / "presets";
+#else
+  return fs::path("presets");
+#endif
+}
+
 bool setT3kExecutable(const fs::path& exe, std::string* error) {
   auto fail = [&](const std::string& m) {
     if (error) *error = m;
@@ -142,7 +155,9 @@ void handleLine(const std::string& raw, const T3kTool::ProgressFn& onProgress, s
       T3kTool::Progress p;
       p.done = j["done"].get<int>();
       p.total = j["total"].get<int>();
-      if (j.contains("name") && j["name"].is_string()) p.name = j["name"].get<std::string>();
+      // `pack` lines carry "name", `resolve` lines carry "title" (and the JSON path in "capture").
+      for (const char* k : {"name", "title"})
+        if (p.name.empty() && j.contains(k) && j[k].is_string()) p.name = j[k].get<std::string>();
       if (onProgress) onProgress(p);
       return;
     }
