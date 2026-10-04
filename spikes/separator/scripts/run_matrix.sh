@@ -12,4 +12,5 @@ for d in real7 synth; do for m in 4s 6s; do
   "$BIN" --model "$CACHE/ggml/ggml-model-htdemucs-$m-f16.bin" --in "$DATA/$d/mixture.wav" --out-dir "$DATA/out/cpp_${m}_$d" --threads "${THREADS:-4}" | grep RESULT
   "$VENV/bin/python" "$HERE/run_python.py" --model $model --in "$DATA/$d/mixture.wav" --out-dir "$DATA/out/py_${m}_${d}_shift0"
   "$VENV/bin/python" "$HERE/run_python.py" --model $model --in "$DATA/$d/mixture.wav" --out-dir "$DATA/out/py_${m}_${d}_shift4033" --shift-offset 4033
+  "$VENV/bin/python" "$HERE/run_python.py" --model $model --in "$DATA/$d/mixture.wav" --out-dir "$DATA/out/py_${m}_${d}_cppmatch" --shift-offset 4033 --zero-pad-chunks
 done; done

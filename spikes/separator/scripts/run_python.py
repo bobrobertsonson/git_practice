@@ -1,6 +1,6 @@
 """Python demucs reference with demucs.cpp-matching inference settings (runs in the venv).
 
-usage: run_python.py --model htdemucs|htdemucs_6s --in mix.wav --out-dir dir [--shift-offset N] [--threads T]
+usage: run_python.py --model htdemucs|htdemucs_6s --in mix.wav --out-dir dir [--shift-offset N] [--threads T] [--zero-pad-chunks]
 
 Settings (read from demucs.cpp src/model.hpp / model_apply.cpp):
   segment 7.8 s (SEGMENT_LEN_SECS), overlap 0.25, transition_power 1.0, split=True, float32,
@@ -19,6 +19,9 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--model", required=True); ap.add_argument("--in", dest="inp", required=True)
 ap.add_argument("--out-dir", required=True); ap.add_argument("--shift-offset", type=int, default=None)
 ap.add_argument("--threads", type=int, default=None)
+ap.add_argument("--zero-pad-chunks", action="store_true",
+                help="pad a short chunk with zeros on both sides like demucs.cpp, instead of borrowing "
+                     "neighbouring audio as demucs.apply.TensorChunk.padded does")
 a = ap.parse_args()
 if a.threads: torch.set_num_threads(a.threads)
 
@@ -35,6 +38,13 @@ kw = dict(shifts=0, split=True, overlap=0.25, transition_power=1.0, progress=Fal
 if a.shift_offset is not None:
     kw["shifts"] = 1
     dapply.random.randint = lambda lo, hi: a.shift_offset  # noqa: demucs.apply does `random.randint`
+if a.zero_pad_chunks:
+    import torch.nn.functional as F
+    def _zero_padded(self, target_length):
+        delta = target_length - self.length
+        end = self.offset + self.length
+        return F.pad(self.tensor[..., self.offset:end], (delta // 2, delta - delta // 2))
+    dapply.TensorChunk.padded = _zero_padded
 t0 = time.perf_counter()
 with torch.no_grad():
     out = dapply.apply_model(model, wavn[None], **kw)[0]

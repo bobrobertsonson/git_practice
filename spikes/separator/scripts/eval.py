@@ -109,7 +109,7 @@ for d in ("real7", "synth"):
         for k in res["cpp"][1]:
             print(f"| {k} (global only) | - | {res['cpp'][1][k]:.2f} | - | {res['py_shift0'][1][k]:.2f} | - | {res['py_shift4033'][1][k]:.2f} |")
         stems = ["drums", "bass", "other", "vocals"] + (["guitar", "piano"] if m == "6s" else [])
-        for ref_impl, lab in (("py_shift4033", "Python with the same time shift as C++ (offset 4033)"), ("py_shift0", "Python shifts=0 (spec setting)")):
+        for ref_impl, lab in (("py_cppmatch", "Python with C++ settings: same time shift (4033) and zero-padded short chunks"), ("py_shift4033", "Python with the same time shift as C++ (offset 4033)"), ("py_shift0", "Python shifts=0 (spec setting)")):
             print(f"\n#### Null test `{d}` {m}: C++ vs {lab}\n")
             print("| stem | residual dB (20log10 rms(cpp-py)/rms(py)) | max abs diff | xcorr lag (samples) | len cpp / py |")
             print("|---|---|---|---|---|")
