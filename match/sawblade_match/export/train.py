@@ -11,12 +11,13 @@ API path
 * ``nam.data.NormalizeJointDatasetOutput(-18 dBFS)``: the trainer normalises the output level for learning and
   registers an export hook that undoes it, so the exported ``.nam`` has the true level,
 * ``nam.train.lightning_module.LightningModule`` + ``pytorch_lightning.Trainer`` (CPU), with the loss / optimiser /
-  scheduler recipe that ships in the trainer's own default config (``config_model_packed.json``: ESR validation loss,
+  scheduler recipe that ships in the trainer's A2 packed-model default config (``config_model_packed.json``, applied here to an A1 net: ESR validation loss,
   MR-STFT 5e-4, Adam lr 4e-3, ExponentialLR 0.994),
 * ``net.export`` for the ``.nam`` (with ``other_metadata`` for the ``sawblade`` block).
 
 The trainer's default network in 0.13 is the *packed* A2 WaveNet (slimmable container); Sawblade trains the classic
-**A1 WaveNet** (``feather`` / ``lite`` / ``standard``, the community sizes: two layer arrays, 10 dilations 1..512,
+**A1 WaveNet** (``feather`` / ``lite`` / ``standard``, Sawblade's own approximations of the community sizes,
+recalled from memory, NOT NAM's official presets: two layer arrays, 10 dilations 1..512,
 kernel 3, Tanh) because every NAM loader pedal plays A1.  The same trainer can train the packed A2 model
 (``PackedWaveNet`` + ``export_container``); that is **possible with this pin but not enabled** here (see README).
 
@@ -46,6 +47,8 @@ BATCH = 16
 TARGET_RMS_DBFS = -18.0
 DILATIONS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
 
+SIZES_NOTE = ("feather/lite/standard are Sawblade's own approximations of the community A1 sizes, recalled from memory; "
+              "they are not NAM's official presets")
 # channels of array 1, head size of array 1 (= channels of array 2), channels of array 2
 SIZES = {"feather": (8, 4, 4), "lite": (12, 6, 6), "standard": (16, 8, 8)}
 # Default epochs: sized from measured CPU speed (see README "NAM export"); the wall-time cap also applies.
@@ -65,6 +68,22 @@ def import_nam():
         raise RuntimeError("neural-amp-modeler is not installed: pip install -e 'match[export]' "
                            "-c match/constraints-export.txt") from e
     return sys.modules["nam"]
+
+
+def resolve_device(requested: str = "auto", cuda: bool | None = None, mps: bool | None = None) -> tuple[str, str]:
+    """(device name, Lightning accelerator).  ``cuda`` / ``mps`` override availability (for tests)."""
+    if requested not in ("auto", "cpu", "cuda", "mps"):
+        raise ValueError(f"unknown device {requested!r}")
+    if cuda is None or mps is None:
+        import_nam()
+        import torch
+        cuda = torch.cuda.is_available() if cuda is None else cuda
+        mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()) if mps is None else mps
+    if requested == "auto":
+        requested = "cuda" if cuda else "mps" if mps else "cpu"
+    if requested == "cuda" and not cuda or requested == "mps" and not mps:
+        raise RuntimeError(f"device {requested} requested but not available")
+    return requested, {"cpu": "cpu", "cuda": "gpu", "mps": "mps"}[requested]
 
 
 def wavenet_config(size: str) -> dict:
@@ -96,6 +115,7 @@ class TrainConfig:
     seed: int = 0
     threads: int = 4
     batch_size: int = BATCH
+    device: str = "auto"                 # auto (cuda > mps > cpu) | cpu | cuda | mps
     ny: int = NY
     target_esr: float | None = None      # optional early stop on validation ESR
     lr_gamma: float | None = None        # ExponentialLR gamma per epoch; None = anneal to ~5 % of lr over the epochs
@@ -188,13 +208,14 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
 
     ckpt = pl.callbacks.ModelCheckpoint(dirpath=str(scratch / "ckpt"), filename="best", monitor="val_loss",
                                         save_top_k=1, mode="min")
-    trainer = pl.Trainer(max_epochs=cfg.epochs, max_time={"seconds": int(cfg.max_minutes * 60)}, accelerator="cpu",
+    device, accel = resolve_device(cfg.device)
+    trainer = pl.Trainer(max_epochs=cfg.epochs, max_time={"seconds": int(cfg.max_minutes * 60)}, accelerator=accel,
                          devices=1, callbacks=[ckpt, Rec()], logger=False, enable_progress_bar=False,
                          enable_model_summary=False, default_root_dir=str(scratch), deterministic="warn",
                          num_sanity_val_steps=0)
     log(f"training A1 WaveNet '{cfg.size}': {n_params} parameters, receptive field {rf}, "
         f"{len(ds_train)} datums/epoch of {cfg.ny}, up to {cfg.epochs} epochs / {cfg.max_minutes:g} min, "
-        f"seed {cfg.seed}, {cfg.threads} threads")
+        f"seed {cfg.seed}, {cfg.threads} threads, device {device}")
     trainer.fit(model, dl_train, dl_val)
     wall = time.time() - t0
     if not ckpt.best_model_path:
@@ -222,7 +243,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
                        receptive_field=int(rf), history=history,
                        config={"size": cfg.size, "epochs": cfg.epochs, "maxMinutes": cfg.max_minutes, "seed": cfg.seed,
                                "threads": cfg.threads, "batchSize": batch, "ny": cfg.ny,
-                               "targetEsr": cfg.target_esr, "lrGamma": cfg.lr_gamma, "net": wavenet_config(cfg.size),
+                               "device": device, "sizesNote": SIZES_NOTE, "targetEsr": cfg.target_esr, "lrGamma": cfg.lr_gamma, "net": wavenet_config(cfg.size),
                                "recipe": {k: mcfg[k] for k in ("loss", "optimizer", "lr_scheduler")},
                                "namVersion": NAM_PIN, "torch": torch.__version__,
                                "outputNormalisationDbfs": TARGET_RMS_DBFS})

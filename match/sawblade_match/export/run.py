@@ -79,7 +79,7 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
                allow_inexact: bool = False, epochs: int | None = None, max_minutes: float | None = None, seed: int = 0,
                threads: int = 4, di=None, validate: bool = True, signal_seed: int = 1, target_esr: float | None = None,
                keep_scratch: bool = False, log=print, signal_spec: S.SignalSpec | None = None,
-               lr_gamma: float | None = None, batch_size: int = T.BATCH) -> dict:
+               lr_gamma: float | None = None, batch_size: int = T.BATCH, device: str = "auto") -> dict:
     t_all = time.time()
     preset, base = load_preset(preset_path)
     plan = P.make_plan(preset, mode, allow_inexact)           # raises ExportRefused
@@ -110,7 +110,7 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
                                "sha256": P.preset_hash(preset)},
                     "mode": mode, "size": size, "seed": seed, "signalSeed": signal_seed,
                     "plan": plan.to_json(), "signal": sinfo, "target": tinfo, "coreBuild": _core_id(),
-                    "attribution": P.attribution(preset), "licenceNote": P.LICENCE_NOTE}
+                    "attribution": P.attribution(preset), "licenceNote": P.licence_note(preset), "nonCommercial": bool(P.nc_captures(preset))}
 
     ir_info = None
     ir_path = None
@@ -136,7 +136,7 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
                       gear_type=GearType(P.gear_type(plan, preset)), gear_make="Sawblade",
                       gear_model=str(preset.get("name", "")), tone_type=ToneType.HI_GAIN)
     cfg = T.TrainConfig(size=size, epochs=epochs, max_minutes=max_minutes, seed=seed, threads=threads,
-                        target_esr=target_esr, lr_gamma=lr_gamma, batch_size=batch_size)
+                        target_esr=target_esr, lr_gamma=lr_gamma, batch_size=batch_size, device=device)
     tres = T.train_nam(tr, yt, va, yv, cfg, outdir, scratch, user_metadata=um,
                        other_metadata={"sawblade": sawblade_meta}, log=log, basename=f"{pname}-{mode}-{size}")
     log(f"trained in {tres.wall_s / 60:.1f} min, {tres.epochs_done} epochs, best val ESR {tres.best_val_esr:.5f} "
@@ -147,14 +147,21 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
                           "receptiveField": tres.receptive_field, "config": tres.config, "history": tres.history,
                           "a2Export": "supported by the pinned trainer (PackedWaveNet + export_container) but not "
                                       "enabled: A1 only"}
-    # patch the final ESR into the .nam metadata (the trainer's own 'training' block convention)
-    nam = json.loads(tres.nam_path.read_text())
-    nam["metadata"].setdefault("training", {})["validation_esr"] = tres.best_val_esr
-    tres.nam_path.write_text(json.dumps(nam))
-
     if validate:
         report["validation"] = _validate(preset, base, plan, tres.nam_path, ir_path, outdir, scratch, size, cache,
                                          va, di or DI_DEFAULT, log)
+    nam = json.loads(tres.nam_path.read_text())
+    meta = nam["metadata"]
+    meta.setdefault("training", {})["validation_esr"] = tres.best_val_esr
+    meta["training"]["validation_esr_source"] = ("trainer best validation ESR on level-normalised held-out data "
+                                                 "(model output only: before the IR for nocab)")
+    if validate:
+        v = report["validation"]
+        meta["sawblade"]["validation"] = {"heldOutEsr": v["heldOut"]["esr"], "diExcerptEsr": v["diExcerpt"]["esr"],
+                                          "diLtasDb": v["diExcerpt"]["ltas"]["aWeightedErrorDb"],
+                                          "acceptanceStatus": v["acceptance"]["status"],
+                                          "note": "model + exported IR rendered through sawblade_core vs the original chain"}
+    tres.nam_path.write_text(json.dumps(nam))
     report["totalWallSeconds"] = round(time.time() - t_all, 1)
     (outdir / "export_report.json").write_text(json.dumps(report, indent=2, default=float))
     if not keep_scratch:

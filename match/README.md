@@ -269,7 +269,7 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   refused there.
 * **Never trained.** The gate is always bypassed in the training chain and reported (with its original settings) in
   `export_report.json -> plan.bypassed`. Non-bypassed blocks that are not NAM-trainable (unknown type, or the core's
-  `namTrainable == false` trait, detected from the core's render warnings) are refused. Captures with a `cc-by-nc*` licence are refused.
+  `namTrainable == false` trait, detected from the core's render warnings) are refused. `cc-by-nc*` captures are allowed (policy in CLAUDE.md): attribution entries and the `.nam` `sawblade` block get `nonCommercial: true` and the licence note adds NON-COMMERCIAL plus the capture names (it appears in the `.nam`, `export_report.json` and the CLI's final print). CLAUDE.md supersedes the phase 4 spec's note string; the note now reads "Derived from TONE3000 captures; for the user's personal use only; sharing needs permission from the creators and TONE3000."
 * **Folding (nocab).** The IR written next to the model is `cab IR (*) post-EQ impulse response`, obtained by rendering a unit impulse
   through the core's own `cab -> post EQ` (empty paths, blend 0): so IR loading, resampling to 48 kHz, the 2 s truncation and the L2
   normalisation are exactly the chain's, and the latency is already trimmed. Trailing samples below -120 dB (re. peak) are cut. The
@@ -287,9 +287,9 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   hash, core build) so a second size reuses it.
 * **Trainer API path.** `nam.train.core.train` only accepts NAM's own standard input files (hash-matched, blip latency calibration)
   and imports `tkinter`; Sawblade drives the trainer's lower layers instead (`nam.data.Dataset` from arrays, `NormalizeJointDatasetOutput`
-  -18 dBFS with the export hook that restores the level, `LightningModule` + `pytorch_lightning.Trainer` on CPU, `net.export` with
-  `other_metadata`), using the trainer's shipped default recipe (ESR validation loss, MR-STFT 5e-4, Adam 4e-3, ExponentialLR 0.994).
-  `tkinter` is stubbed when absent. See `export/train.py`. Sizes are the community A1 WaveNets (two layer arrays, 10 dilations
+  -18 dBFS with the export hook that restores the level, `LightningModule` + `pytorch_lightning.Trainer` (`--device auto|cpu|cuda|mps`, default auto = cuda > mps > cpu; the model is moved to CPU before export; the device is in the report), `net.export` with
+  `other_metadata`), using the loss/optimiser/scheduler recipe from the trainer's **A2 packed-model default config**, applied here to an A1 net (ESR validation loss, MR-STFT 5e-4, Adam 4e-3, ExponentialLR 0.994 unless annealed, see below).
+  `tkinter` is stubbed when absent. See `export/train.py`. Sizes are **Sawblade's own approximations of the community feather/lite/standard A1 sizes, recalled from memory, not NAM's official presets** (two layer arrays, 10 dilations
   1..512, kernel 3, Tanh): feather 8/4 channels (3 637 params), lite 12/6 (7 903 params), standard 16/8 (13 801 params);
   receptive field 4093. **A2:** 0.13.0 trains a packed A2 WaveNet by default (`PackedWaveNet`, `export_container`; the core is built
   with `NAM_ENABLE_A2_FAST`); that path is available in the pin but not enabled here, A1 being what loader pedals play.
@@ -297,7 +297,7 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   same seed, thread count, machine and library versions (smoke test); it is not guaranteed across thread counts/BLAS builds. The `.nam`
   carries a date stamp, so its bytes differ between runs.
 * **Metadata** (`.nam` `metadata`): `name`, `modeled_by: "Sawblade"`, `gear_type` (`pedal_amp` for nocab, `amp_pedal_cab` for withcab),
-  `tone_type: hi_gain`, `training.validation_esr`, NAM's own `loudness`/`gain`, and `sawblade`: preset name + sha256 (canonical JSON without
+  `tone_type: hi_gain`, `training.validation_esr` (the trainer's best validation ESR on level-normalised data, model output only; `validation_esr_source` says so), NAM's own `loudness`/`gain`, and `sawblade`: preset name + sha256 (canonical JSON without
   machine paths), export mode, exactness, bypassed items, seeds, signal hash, levels, IR file name, the full attribution list (title,
   creator, licence, TONE3000 URL, roles) and `licenceNote`: "Derived from TONE3000 captures; personal use only unless permitted by the
   creators and TONE3000."
@@ -308,7 +308,7 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   loads in the core's `NamBlock`, the plugin's engine). Metrics: ESR (broadband, level-sensitive) and the A-weighted 1/3-octave LTAS
   error (tonecheck's `--ref` definition: bands 80 Hz-8 kHz, both spectra normalised at 1 kHz). The DI excerpt is also compared with the
   *gated* original. Acceptance for `standard`: ESR <= 0.02 on the held-out segment and LTAS error <= 0.5 dB on the DI excerpt; the
-  report states `accepted` honestly (other sizes are reported, not judged).
+  report has `validation.acceptance.status` (`met` / `NOT MET` / `not judged (non-standard size)`) and a one-line summary, which the CLI prints; `--require-accept` exits 4 unless `met`.
 * **Listening file.** `listen/ab_original_then_export.mp3`: the DI excerpt through the original chain, 0.8 s gap, then the export
   (RMS-matched to the original; the gain is in the report). The gate is bypassed in both.
 * **Budget and measured results (CPU only).** Defaults: feather 40 epochs / 15 min, lite 30 epochs / 30 min, standard 22 epochs /
@@ -320,5 +320,5 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   held-out ESR 0.455 after the IR, DI-excerpt LTAS error 3.74 dB; standard 22 epochs (48.8 min): validation ESR 0.457, held-out ESR
   0.404, DI-excerpt ESR 0.517, LTAS error 4.23 dB. The spec's acceptance (standard: ESR <= 0.02, LTAS <= 0.5 dB) is **not met**; NAM
   models of heavy two-path high-gain chains normally need hundreds of epochs on a GPU. The same code trains on a GPU box unchanged
-  except for the Lightning accelerator (CPU is hard-wired in `train.py`; a `--device` option is the obvious next step).
+  with `--device cuda` or `--device mps` (default auto).
   `--batch-size 4` gave a better ESR per minute in a 10-minute trial (0.51 vs ~0.58 at the same time) but did not change the picture.

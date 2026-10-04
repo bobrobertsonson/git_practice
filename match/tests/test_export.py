@@ -101,11 +101,44 @@ def test_unknown_mode_and_untrainable_block_refused(shared):
     P.make_plan(p, "nocab")
 
 
-def test_non_commercial_capture_refused(shared):
+def test_non_commercial_capture_is_allowed_and_marked(shared):
     p = copy.deepcopy(shared)
     p["paths"]["a"]["blocks"][0]["model"]["source"] = {**SOURCE, "license": "cc-by-nc-sa"}
-    with pytest.raises(P.ExportRefused, match="non-commercial"):
-        P.make_plan(p, "withcab")
+    P.make_plan(p, "withcab")                                  # plans fine
+    att = P.attribution(p)
+    assert [a["nonCommercial"] for a in att if a["license"] == "cc-by-nc-sa"] == [True]
+    blk = P.sawblade_block(p, P.make_plan(p, "withcab"), "lite", 0, 1, "0" * 64, {}, None)
+    note = P.licence_note(p)
+    assert blk["nonCommercial"] is True and blk["licenceNote"] == note
+    assert "NON-COMMERCIAL" in note and "Some Amp" in note and "personal use only" in note
+
+
+def test_cc_by_only_preset_has_no_non_commercial_marker(shared):
+    p = copy.deepcopy(shared)
+    p["paths"]["a"]["blocks"][0]["model"]["source"] = dict(SOURCE)          # cc-by
+    assert not any("nonCommercial" in a for a in P.attribution(p))
+    blk = P.sawblade_block(p, P.make_plan(p, "withcab"), "lite", 0, 1, "0" * 64, {}, None)
+    assert blk["nonCommercial"] is False and "NON-COMMERCIAL" not in blk["licenceNote"]
+
+
+def test_acceptance_status_strings():
+    from sawblade_match.export import validate as V
+    assert V.acceptance("standard", 0.4, 4.0)["status"] == "NOT MET"
+    assert V.acceptance("standard", 0.01, 0.3)["status"] == "met"
+    a = V.acceptance("lite", 0.01, 0.3)
+    assert a["status"] == "not judged (non-standard size)" and "held-out ESR" in a["summary"]
+
+
+def test_device_resolution_without_gpu():
+    from sawblade_match.export import train as T
+    assert T.resolve_device("auto", cuda=True, mps=True) == ("cuda", "gpu")
+    assert T.resolve_device("auto", cuda=False, mps=True) == ("mps", "mps")
+    assert T.resolve_device("auto", cuda=False, mps=False) == ("cpu", "cpu")
+    assert T.resolve_device("cpu", cuda=True, mps=True) == ("cpu", "cpu")
+    with pytest.raises(RuntimeError):
+        T.resolve_device("cuda", cuda=False, mps=False)
+    with pytest.raises(ValueError):
+        T.resolve_device("tpu", cuda=False, mps=False)
 
 
 def test_core_trainability_warning_detected():
@@ -240,6 +273,7 @@ def test_attribution_and_sawblade_block(shared):
     assert blk["exportMode"] == "nocab" and blk["gateBypassed"] and blk["ir"] == "x.ir.wav"
     assert blk["attribution"] == att
     assert "personal use only" in blk["licenceNote"] and "TONE3000" in blk["licenceNote"]
+    assert "NON-COMMERCIAL" not in blk["licenceNote"]
 
 
 def test_preset_hash_ignores_machine_paths_but_not_content(shared):
@@ -375,3 +409,7 @@ def test_end_to_end_nocab_export_on_fixture_preset(tmp_path):
     assert rep["validation"]["heldOut"]["esr"] >= 0 and rep["validation"]["acceptance"]["evaluated"] is False
     nam = json.loads((out / rep["training"]["namFile"]).read_text())
     assert nam["metadata"]["training"]["validation_esr"] == rep["training"]["validationEsr"]
+    assert nam["metadata"]["sawblade"]["validation"]["heldOutEsr"] == rep["validation"]["heldOut"]["esr"]
+    assert rep["validation"]["acceptance"]["status"] == "not judged (non-standard size)"
+    assert rep["training"]["config"]["device"] and "approximations" in rep["training"]["config"]["sizesNote"]
+    assert "personal use only" in rep["licenceNote"]

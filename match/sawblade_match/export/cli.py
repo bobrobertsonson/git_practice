@@ -5,7 +5,7 @@ import argparse
 import sys
 from typing import Sequence
 
-from .plan import ExportRefused, LICENCE_NOTE
+from .plan import ExportRefused
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -13,7 +13,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("preset", help="resolved preset JSON (e.g. the matcher's best.preset.resolved.json)")
     p.add_argument("--mode", choices=("nocab", "withcab"), default="nocab",
                    help="nocab (default): model before the cab + IR (x) post EQ wav; withcab: the whole chain")
-    p.add_argument("--size", choices=("feather", "lite", "standard"), default="standard", help="A1 WaveNet size")
+    p.add_argument("--size", choices=("feather", "lite", "standard"), default="standard", help="A1 WaveNet size (Sawblade's own approximations of the community sizes, recalled "
+                   "from memory; not NAM's official presets)")
     p.add_argument("--epochs", type=int, default=None, help="max epochs (default per size: see README)")
     p.add_argument("--max-minutes", type=float, default=None, help="training wall-time cap (default per size)")
     p.add_argument("--lr-gamma", type=float, default=None,
@@ -28,6 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=None, help="output directory (default ~/.cache/sawblade/exports/<name>-<mode>-<size>-<ts>)")
     p.add_argument("--name", default=None, help="file name stem (default: slug of the preset name)")
     p.add_argument("--di", default=None, help="DI wav for the excerpt validation (default testdata/gatecreeper_cover/Guitar_L.wav)")
+    p.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto",
+                   help="training device (auto: cuda > mps > cpu)")
+    p.add_argument("--require-accept", action="store_true",
+                   help="exit 4 unless the acceptance status is 'met' (standard size, ESR and LTAS limits)")
     p.add_argument("--no-validate", action="store_true", help="skip validation + listening file")
     p.add_argument("--keep-scratch", action="store_true", help="keep the checkpoint scratch directory")
     return p
@@ -40,7 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rep = run_export(args.preset, mode=args.mode, size=args.size, out=args.out, name=args.name,
                          allow_inexact=args.allow_inexact, epochs=args.epochs, max_minutes=args.max_minutes,
                          seed=args.seed, threads=args.threads, di=args.di, validate=not args.no_validate,
-                         signal_seed=args.signal_seed, target_esr=args.target_esr, lr_gamma=args.lr_gamma, batch_size=args.batch_size, keep_scratch=args.keep_scratch,
+                         signal_seed=args.signal_seed, target_esr=args.target_esr, lr_gamma=args.lr_gamma, batch_size=args.batch_size, device=args.device, keep_scratch=args.keep_scratch,
                          log=lambda m: print(m, flush=True))
     except ExportRefused as e:
         print(f"refused: {e}", file=sys.stderr)
@@ -48,7 +53,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError, RuntimeError, ImportError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 3
-    print(LICENCE_NOTE)
+    if rep.get("validation"):
+        v = rep["validation"]
+        print(f"{v['acceptance']['summary']}")
+        print(f"held-out ESR {v['heldOut']['esr']:.4f}; DI LTAS error {v['diExcerpt']['ltas']['aWeightedErrorDb']:.2f} dB")
+    print(rep["licenceNote"])
+    if args.require_accept:
+        if not rep.get("validation"):
+            print("error: --require-accept needs validation", file=sys.stderr)
+            return 3
+        if rep["validation"]["acceptance"]["status"] != "met":
+            print("acceptance not met (--require-accept)", file=sys.stderr)
+            return 4
     return 0
 
 

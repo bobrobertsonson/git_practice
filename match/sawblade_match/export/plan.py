@@ -18,8 +18,31 @@ TRAINABLE_TYPES = frozenset({"nam", "eq"})
 MAX_TRAINABLE_RELEASE_MS = 150.0   # core kBusCompMaxTrainableReleaseMs
 
 STUDIO_MESSAGE = "studio blend (per-path cab IRs): only the with-cab export is exact for studio blends"
-LICENCE_NOTE = ("Derived from TONE3000 captures; personal use only unless permitted by the creators and TONE3000.")
-BLOCKED_LICENSES = ("cc-by-nc",)   # prefix: cc-by-nc, cc-by-nc-sa, cc-by-nc-nd (CLAUDE.md: never used)
+NC_PREFIX = "cc-by-nc"   # cc-by-nc, cc-by-nc-sa, cc-by-nc-nd: allowed, but exports are marked NON-COMMERCIAL
+
+
+def is_nc(license_: str | None) -> bool:
+    return (license_ or "").lower().startswith(NC_PREFIX)
+
+
+def nc_captures(preset: dict) -> list[str]:
+    """Titles (or file names) of the non-commercially licensed captures in use."""
+    out = []
+    for role, cap in captures(preset):
+        src = cap.get("source") or {}
+        if is_nc(src.get("license")):
+            out.append(f"{src.get('title') or (cap.get('file') or role).rsplit('/', 1)[-1]} ({src.get('license')})")
+    return list(dict.fromkeys(out))
+
+
+def licence_note(preset: dict) -> str:
+    """Note stored in the .nam, the report and printed by the CLI (CLAUDE.md supersedes the phase 4 spec's string)."""
+    note = ("Derived from TONE3000 captures; for the user's personal use only; sharing needs permission from the "
+            "creators and TONE3000.")
+    nc = nc_captures(preset)
+    if nc:
+        note += " NON-COMMERCIAL: contains non-commercially licensed captures: " + "; ".join(nc) + "."
+    return note
 
 
 class ExportRefused(Exception):
@@ -72,12 +95,6 @@ def make_plan(preset: dict, mode: str, allow_inexact: bool = False) -> Plan:
         raise ExportRefused(f"unknown mode {mode!r} (expected one of {', '.join(MODES)})")
     reasons: list[str] = []
     plan = Plan(mode=mode, allow_inexact=allow_inexact)
-
-    # licences: never export from non-commercial captures
-    for role, cap in captures(preset):
-        lic = ((cap.get("source") or {}).get("license") or "")
-        if lic.lower().startswith(BLOCKED_LICENSES):
-            reasons.append(f"capture {role} has non-commercial licence {lic!r}; Sawblade never uses cc-by-nc* captures")
 
     # non-trainable blocks
     for key, path, blk in _blocks(preset):
@@ -185,6 +202,8 @@ def attribution(preset: dict) -> list[dict]:
             "title": src.get("title"), "creator": src.get("creator"), "license": src.get("license"),
             "url": src.get("url"), "provider": src.get("provider"), "toneId": src.get("id"),
             "modelId": src.get("modelId"), "sha256": cap.get("sha256"), "roles": []})
+        if is_nc(src.get("license")):
+            ent["nonCommercial"] = True
         if not src:
             ent["title"] = ent["title"] or (cap.get("file") or "").rsplit("/", 1)[-1]
             ent["license"] = ent["license"] or "unknown"
@@ -205,4 +224,5 @@ def sawblade_block(preset: dict, plan: Plan, size: str, seed: int, signal_seed: 
             "exportMode": plan.mode, "exact": plan.exact, "size": size,
             "gateBypassed": True, "bypassed": [b["what"] for b in plan.bypassed],
             "seed": seed, "signalSeed": signal_seed, "signalSha256": signal_sha256, "levels": levels,
-            "ir": ir_file, "attribution": attribution(preset), "licenceNote": LICENCE_NOTE}
+            "ir": ir_file, "attribution": attribution(preset), "licenceNote": licence_note(preset),
+            "nonCommercial": bool(nc_captures(preset))}

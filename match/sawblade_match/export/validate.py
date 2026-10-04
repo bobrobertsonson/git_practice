@@ -82,7 +82,15 @@ def compare_signals(name: str, x: np.ndarray, in_rate: int, ref_preset: dict, re
 
 def acceptance(size: str, held_out_esr: float, di_ltas_db: float) -> dict:
     """The spec's acceptance numbers; they apply to ``standard`` only (lite/feather are reported, not judged)."""
+    esr_ok, ltas_ok = held_out_esr <= ACCEPT_ESR, di_ltas_db <= ACCEPT_LTAS_DB
+    accepted = bool(size == "standard" and esr_ok and ltas_ok)
     return {"appliesTo": "standard", "evaluated": size == "standard", "esrLimit": ACCEPT_ESR, "ltasLimitDb": ACCEPT_LTAS_DB,
-            "heldOutEsr": held_out_esr, "diLtasDb": di_ltas_db,
-            "esrOk": held_out_esr <= ACCEPT_ESR, "ltasOk": di_ltas_db <= ACCEPT_LTAS_DB,
-            "accepted": bool(size == "standard" and held_out_esr <= ACCEPT_ESR and di_ltas_db <= ACCEPT_LTAS_DB)}
+            "heldOutEsr": held_out_esr, "diLtasDb": di_ltas_db, "esrOk": esr_ok, "ltasOk": ltas_ok,
+            "accepted": accepted, **status_fields(size, held_out_esr, di_ltas_db, accepted)}
+
+
+def status_fields(size: str, held_out_esr: float, di_ltas_db: float, accepted: bool) -> dict:
+    status = ("met" if accepted else "NOT MET") if size == "standard" else "not judged (non-standard size)"
+    summary = (f"acceptance {status}: held-out ESR {held_out_esr:.4f} (limit {ACCEPT_ESR}), "
+               f"DI-excerpt LTAS error {di_ltas_db:.2f} dB (limit {ACCEPT_LTAS_DB})")
+    return {"status": status, "summary": summary}
