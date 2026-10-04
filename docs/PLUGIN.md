@@ -289,6 +289,10 @@ loader. The panel shows progress with an ETA and a CANCEL button; the second loa
 model) is a cache hit and takes a hash of the file. Cancel (CANCEL, a newer request, or destroying the processor) stops
 within about one network evaluation (`RunOptions::SetTerminate`), leaves nothing in the cache, and goes back to the
 previous song. Closing the editor does not cancel: the job belongs to the processor and finishes in the background.
+Host-friendly: the plugin separates with max(1, cores/2) threads on a lowered-priority thread (the CLI uses cores - 1). A
+state restore only uses stems that are already cached; with a cache miss the panel says "Song not separated yet - LOAD SONG
+to separate it" and nothing is separated until the user loads the song. Separation streams the stems into the cache as
+they become final, so peak memory does not grow with the song's length (ONNX Runtime's working set dominates).
 
 The 6/4-stem toggle beside the song name picks the model (6-stem `htdemucs_6s`, default, has a guitar stem; 4-stem
 `htdemucs`: `other` is treated as the guitar as in 5.2). With a 6-stem model piano is summed into `other`.
@@ -301,6 +305,6 @@ root). If the model is missing the panel says so with that command; nothing cras
 `sha256(file)-<model>`).
 
 Build: `SAWBLADE_WITH_SEPARATOR` (default ON with `SAWBLADE_BUILD_PLUGIN`, else OFF) fetches the pinned ONNX Runtime 1.30.0
-and copies its shared library next to the plugin binary (`$ORIGIN`; `Contents/Frameworks` + `@loader_path/../Frameworks`
+and copies its shared library (plus its LICENSE and ThirdPartyNotices.txt) next to the plugin binary (`$ORIGIN`; `Contents/Frameworks` + `@loader_path/../Frameworks`
 on macOS). With it OFF the plugin shows "Separation is not available in this build." for a song file. CLI: `tonerender
 --separate SONG --stems-out DIR` and `sawblade-stems SONG DIR [--model htdemucs_6s|htdemucs] [--threads N]`.

@@ -5,6 +5,16 @@
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <thread>
+
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#elif defined(__APPLE__)
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif
 
 #ifdef SAWBLADE_WITH_SEPARATOR
 #include "sawblade/separate_song.h"
@@ -31,6 +41,16 @@ std::string prettyLoadError(std::string e, const std::string& folder) {
   if (e.find("no .wav or .flac") != std::string::npos) return "No .wav or .flac stems found in " + folder;
   if (e.rfind("stems: ", 0) == 0) e.erase(0, 7);
   return e;
+}
+
+// The separation thread runs at lowered priority so a host's audio and UI keep priority (ONNX Runtime's pool
+// threads are created from it and inherit the setting). Best effort.
+void lowerThreadPriority() {
+#if defined(__linux__)
+  (void)setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);
+#elif defined(__APPLE__)
+  (void)pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#endif
 }
 
 std::string songNameOf(const std::string& file) { return std::filesystem::path(file).stem().string(); }
@@ -331,7 +351,7 @@ void PlayAlong::loadSong(const std::string& path, bool userInitiated) {
     sepPrevFolder_ = prevFolder;
     sepPrevSong_ = prevSong;
   }
-  requestSong(s, s.keepOther ? OtherRole::Other : OtherRole::Guitar, userInitiated);
+  requestSong(s, s.keepOther ? OtherRole::Other : OtherRole::Guitar, userInitiated, /*allowSeparate=*/true);
 }
 
 void PlayAlong::setFourStemModel(bool fourStem) {
@@ -342,7 +362,7 @@ void PlayAlong::setFourStemModel(bool fourStem) {
     settings_.fourStemModel = fourStem;
     haveSong = !settings_.songFile.empty();
   }
-  if (changed && haveSong) requestLoad(false);
+  if (changed && haveSong) requestLoad(false, /*allowSeparate=*/true);  // the user picked another model
 }
 
 void PlayAlong::setSongDecoder(SongDecoder d) {
@@ -428,7 +448,7 @@ bool PlayAlong::waitForLoader(std::chrono::milliseconds timeout) {
 }
 
 // ---- loading --------------------------------------------------------------------------------------
-void PlayAlong::requestLoad(bool user) {
+void PlayAlong::requestLoad(bool user, bool allowSeparate) {
   PlayAlongSettings s;
   {
     std::lock_guard<std::mutex> lk(m_);
@@ -441,7 +461,7 @@ void PlayAlong::requestLoad(bool user) {
       sepPrevFolder_ = s.folder;  // nothing to go back to: a cancel keeps the settings as they are
       sepPrevSong_ = s.songFile;
     }
-    requestSong(s, role, user);
+    requestSong(s, role, user, allowSeparate);
     return;
   }
   supersedeSeparation();  // a folder (or nothing) replaces a song file that is still being separated
@@ -480,7 +500,7 @@ void PlayAlong::supersedeSeparation() {
 }
 
 // ---- separation --------------------------------------------------------------------------------------
-void PlayAlong::requestSong(const PlayAlongSettings& s, OtherRole role, bool user) {
+void PlayAlong::requestSong(const PlayAlongSettings& s, OtherRole role, bool user, bool allowSeparate) {
   namespace fs = std::filesystem;
   std::string dir;
   {
@@ -490,7 +510,7 @@ void PlayAlong::requestSong(const PlayAlongSettings& s, OtherRole role, bool use
         fs::is_directory(fs::path(songDir_), ec))
       dir = songDir_;  // separated already in this session (KEEP KEYS, a rate change, a restore)
     status_ = LoadStatus{};
-    status_.state = dir.empty() ? LoadStatus::State::Separating : LoadStatus::State::Loading;
+    status_.state = (dir.empty() && allowSeparate) ? LoadStatus::State::Separating : LoadStatus::State::Loading;
   }
   if (!dir.empty()) {
     supersedeSeparation();
@@ -504,6 +524,7 @@ void PlayAlong::requestSong(const PlayAlongSettings& s, OtherRole role, bool use
   r.fourStem = s.fourStemModel;
   r.role = role;
   r.user = user;
+  r.allowSeparate = allowSeparate;
   r.token = std::make_shared<CancelToken>();
   {
     std::lock_guard<std::mutex> lk(sepM_);
@@ -517,6 +538,7 @@ void PlayAlong::requestSong(const PlayAlongSettings& s, OtherRole role, bool use
 }
 
 void PlayAlong::separationMain() {
+  lowerThreadPriority();
   std::unique_lock<std::mutex> lk(sepM_);
   while (!sepStop_) {
     if (!sepPending_) {
@@ -558,13 +580,16 @@ void PlayAlong::runSeparation(const SepRequest& r) {
     }
     SeparateSongOptions o;
     o.model = r.fourStem ? SeparationModel::Htdemucs4s : SeparationModel::Htdemucs6s;
+    o.threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);  // leave the host room
+    o.cacheOnly = !r.allowSeparate;
     {
       std::lock_guard<std::mutex> lk(sepM_);
       o.decoder = decoder_;
     }
     const SeparateSongResult res = separateSong(
         fs::path(r.file), o,
-        [this](double f, double eta) {
+        [this, &r](double f, double eta) {
+          if (r.id != sepId_.load(std::memory_order_relaxed)) return;  // superseded: the newer job owns the numbers
           sepFraction_.store(f, std::memory_order_relaxed);
           sepEta_.store(eta, std::memory_order_relaxed);
         },
@@ -583,6 +608,13 @@ void PlayAlong::runSeparation(const SepRequest& r) {
     }
     sepRunningToken_.reset();  // nothing to cancel any more
     submitLoad(res.stemsDir.string(), songNameOf(r.file), r.role, r.user, res.cacheHit);
+  } catch (const NotCached&) {
+    std::lock_guard<std::mutex> lk(sepM_);
+    if (!current()) return;
+    std::lock_guard<std::mutex> lk2(m_);
+    status_ = LoadStatus{};
+    status_.state = LoadStatus::State::NotSeparated;
+    status_.message = "Song not separated yet - LOAD SONG to separate it";
   } catch (const SeparationCancelled&) {
     // Superseded or cancelled: whoever did that has set the status already.
   } catch (const ModelUnavailable& e) {

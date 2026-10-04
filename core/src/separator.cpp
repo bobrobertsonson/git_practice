@@ -203,6 +203,13 @@ SeparationModel Separator::model() const noexcept { return impl_->model; }
 int Separator::threads() const noexcept { return impl_->threads; }
 
 SeparationResult Separator::separate(AudioFile audio, const SeparationProgress& progress, CancelToken& cancel) {
+  CollectingSink sink;
+  separate(std::move(audio), sink, progress, cancel);
+  sink.result.segments = static_cast<int>((sink.result.length + 257984) / 257985);  // ceil(length / stride)
+  return std::move(sink.result);
+}
+
+void Separator::separate(AudioFile audio, StemSink& sink, const SeparationProgress& progress, CancelToken& cancel) {
   using Clock = std::chrono::steady_clock;
   if (audio.channels < 1 || audio.sampleRate <= 0.0) throw std::runtime_error("separator: invalid audio");
   const int S = impl_->sources;
@@ -243,10 +250,12 @@ SeparationResult Separator::separate(AudioFile audio, const SeparationProgress& 
     for (std::size_t i = 0; i < N; ++i) in[c][i] = static_cast<float>((in[c][i] - refMean) / refStd);
 
   // ---- buffers ---------------------------------------------------------------------------------
+  // Sliding output window: segment k starts at k * stride, so once it is done everything before
+  // (k + 1) * stride is final. acc[s*2 + c][i] holds output sample base + i, i in [0, kSeg).
   const std::size_t magN = sz(4) * kBins * kFrames;
   std::vector<float> mag(magN), xf(sz(S) * magN), xt(sz(S) * 2 * kSeg), mixIn(sz(2) * kSeg);
-  std::vector<std::vector<float>> acc(sz(S) * 2, std::vector<float>(N, 0.0f));  // [s*2 + c][i]
-  std::vector<float> sumWeight(N, 0.0f);
+  std::vector<std::vector<float>> acc(sz(S) * 2, std::vector<float>(kSeg, 0.0f));
+  std::vector<float> sumWeight(kSeg, 0.0f);
   std::vector<float> weight(kSeg);
   for (int k = 0; k < kSeg / 2; ++k) {
     weight[sz(k)] = static_cast<float>(k + 1) / static_cast<float>(kSeg / 2);
@@ -269,7 +278,37 @@ SeparationResult Separator::separate(AudioFile audio, const SeparationProgress& 
   cancel.setHook([&ro] { ro.SetTerminate(); });
   HookGuard hookGuard{cancel};
   if (cancel.cancelled()) throw SeparationCancelled();
+  sink.begin(static_cast<std::int64_t>(N), S == 6);
   if (progress) progress(0.0, -1.0);
+
+  // Source order of htdemucs: drums, bass, other, vocals, [guitar, piano].
+  static constexpr StemKind order[6] = {StemKind::Drums, StemKind::Bass,   StemKind::Other,
+                                        StemKind::Vocals, StemKind::Guitar, StemKind::Other /* piano */};
+  std::vector<float> outL[kStemKindCount], outR[kStemKindCount];  // flush scratch, one region per kind
+
+  // Finalises acc[0, n) (divide by the weight sum, undo the normalisation, fold piano into other) and
+  // hands it to the sink at absolute position `pos`.
+  auto flush = [&](std::int64_t pos, int n) {
+    for (int s = 0; s < S; ++s) {
+      const auto k = static_cast<std::size_t>(order[s]);
+      for (int c = 0; c < 2; ++c) {
+        const std::vector<float>& a = acc[sz(s) * 2 + sz(c)];
+        std::vector<float>& o = (c == 0 ? outL : outR)[k];
+        if (s != 5) o.resize(sz(n));
+        for (int i = 0; i < n; ++i) {
+          const float v = a[sz(i)] / sumWeight[sz(i)];
+          const float f = static_cast<float>(v * refStd + refMean);
+          if (s == 5) o[sz(i)] += f;  // piano: no StemKind of its own, summed into other
+          else o[sz(i)] = f;
+        }
+      }
+    }
+    for (int s = 0; s < S; ++s) {
+      if (s == 5) continue;
+      const auto k = static_cast<std::size_t>(order[s]);
+      sink.write(order[s], pos, outL[k].data(), outR[k].data(), n);
+    }
+  };
 
   const auto t0 = Clock::now();
   int done = 0;
@@ -306,9 +345,23 @@ SeparationResult Separator::separate(AudioFile audio, const SeparationProgress& 
 
       for (int s = 0; s < S; ++s) {
         float* a[2] = {acc[sz(s) * 2].data(), acc[sz(s) * 2 + 1].data()};
-        stft.synthAccumulate(xf.data() + sz(s) * magN, xt.data() + sz(s) * 2 * kSeg, a, sz(offset), left, chunkLen, weight.data());
+        stft.synthAccumulate(xf.data() + sz(s) * magN, xt.data() + sz(s) * 2 * kSeg, a, 0, left, chunkLen, weight.data());
       }
-      for (int k = 0; k < chunkLen; ++k) sumWeight[sz(offset + k)] += weight[sz(k)];
+      for (int k = 0; k < chunkLen; ++k) sumWeight[sz(k)] += weight[sz(k)];
+
+      // Everything before the next segment's start (or the end of the song) can no longer change.
+      const bool last = offset + stride >= length;
+      const int final = last ? chunkLen : stride;
+      flush(offset, final);
+      if (!last) {
+        const int keep = kSeg - stride;  // the overlap the next segment adds to
+        for (auto& a : acc) {
+          std::memmove(a.data(), a.data() + stride, sizeof(float) * sz(keep));
+          std::fill(a.begin() + keep, a.end(), 0.0f);
+        }
+        std::memmove(sumWeight.data(), sumWeight.data() + stride, sizeof(float) * sz(keep));
+        std::fill(sumWeight.begin() + keep, sumWeight.end(), 0.0f);
+      }
 
       ++done;
       if (progress) {
@@ -318,44 +371,6 @@ SeparationResult Separator::separate(AudioFile audio, const SeparationProgress& 
       }
     }
   }
-  in[0] = {};  // (shrink: the input is no longer needed)
-  in[1] = {};
-  mag = {};
-  xf = {};
-  xt = {};
-  mixIn = {};
-
-  // ---- finalise: divide by the weight sum, undo the normalisation, map the sources ------------------
-  for (auto& a : acc)
-    for (std::size_t i = 0; i < N; ++i) {
-      const float v = a[i] / sumWeight[i];
-      a[i] = static_cast<float>(v * refStd + refMean);
-    }
-  sumWeight = {};
-
-  SeparationResult res;
-  res.length = static_cast<std::int64_t>(N);
-  res.segments = totalChunks;
-  // Source order of htdemucs: drums, bass, other, vocals, [guitar, piano].
-  static constexpr StemKind order[6] = {StemKind::Drums, StemKind::Bass,   StemKind::Other,
-                                        StemKind::Vocals, StemKind::Guitar, StemKind::Other /* piano */};
-  for (int s = 0; s < S; ++s) {
-    const auto k = static_cast<std::size_t>(order[s]);
-    std::vector<float>& l = acc[sz(s) * 2];
-    std::vector<float>& r = acc[sz(s) * 2 + 1];
-    if (s == 5) {  // piano: no StemKind of its own, summed into other
-      auto& o = *res.stems[k];
-      for (std::size_t i = 0; i < N; ++i) {
-        o[0][i] += l[i];
-        o[1][i] += r[i];
-      }
-    } else {
-      res.stems[k] = StemAudio{std::move(l), std::move(r)};
-    }
-    l = {};
-    r = {};
-  }
-  return res;
 }
 
 }  // namespace sawblade

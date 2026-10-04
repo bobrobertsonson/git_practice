@@ -164,7 +164,7 @@ class PlayAlong {
     double sampleRate = 0.0;
   };
   struct LoadStatus {
-    enum class State { None, Separating, Loading, Ready, Failed, Cancelled };
+    enum class State { None, Separating, Loading, Ready, Failed, Cancelled, NotSeparated };
     State state = State::None;
     std::string message;                      // why it failed
     std::string songName;                     // folder name of the loaded song
@@ -266,8 +266,10 @@ class PlayAlong {
 
   void push(const PlayAlongCmd& c);
   void applyAll();                         // pushes the whole settings state
-  void requestLoad(bool user);
-  void requestSong(const PlayAlongSettings& s, OtherRole role, bool user);
+  // allowSeparate: only LOAD SONG and the model toggle may start a separation; a state restore, a rate
+  // change or KEEP KEYS only use stems that are cached already (else NotSeparated).
+  void requestLoad(bool user, bool allowSeparate = false);
+  void requestSong(const PlayAlongSettings& s, OtherRole role, bool user, bool allowSeparate);
   void submitLoad(const std::string& dir, const std::string& name, OtherRole role, bool user, bool cacheHit);
   void supersedeSeparation();
   void separationMain();
@@ -302,6 +304,7 @@ class PlayAlong {
     bool fourStem = false;
     OtherRole role = OtherRole::Guitar;
     bool user = false;
+    bool allowSeparate = true;
     std::string prevFolder, prevSongFile;  // restored if the user cancels
     std::uint64_t id = 0;
     std::shared_ptr<CancelToken> token;
@@ -310,7 +313,7 @@ class PlayAlong {
   std::condition_variable sepCv_, sepIdleCv_;
   std::optional<SepRequest> sepPending_;
   std::shared_ptr<CancelToken> sepRunningToken_;
-  std::uint64_t sepId_ = 0;
+  std::atomic<std::uint64_t> sepId_{0};
   std::string sepPrevFolder_, sepPrevSong_;   // what a cancel goes back to (under sepM_)
   bool sepBusy_ = false, sepStop_ = false;
   SongDecoder decoder_;                       // under sepM_

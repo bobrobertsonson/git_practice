@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -9,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <vector>
 
 #include "sawblade/model_store.h"
 #include "sawblade/stem_set.h"
@@ -65,11 +67,43 @@ int defaultSeparatorThreads();
 
 constexpr double kSeparatorSampleRate = 44100.0;
 
+// Receives the separated stems incrementally, so a whole song never has to be held in memory. For every
+// StemKind the engine present for the model (drums, bass, vocals, other, and guitar for the 6-stem model)
+// write() is called with consecutive, increasing, non-overlapping ranges that together cover [0, length).
+// Ranges of different kinds arrive interleaved in time. The 6-stem model's piano is already summed into
+// `other`. Called on the separating thread; may throw (the job then fails).
+class StemSink {
+ public:
+  virtual ~StemSink() = default;
+  virtual void begin(std::int64_t length, bool hasGuitar) = 0;
+  virtual void write(StemKind kind, std::int64_t offset, const float* left, const float* right, std::int64_t frames) = 0;
+};
+
 // Stems at 44.1 kHz, each `length` frames. The 6-stem model's piano is already summed into `other`.
 struct SeparationResult {
   std::int64_t length = 0;
   std::array<std::optional<StemAudio>, kStemKindCount> stems;
   int segments = 0;
+};
+
+// A sink that collects whole stems in memory (tests, short clips).
+class CollectingSink final : public StemSink {
+ public:
+  void begin(std::int64_t length, bool hasGuitar) override {
+    result.length = length;
+    for (int k = 0; k < kStemKindCount; ++k) {
+      auto& o = result.stems[static_cast<std::size_t>(k)];
+      o.reset();
+      if (k == static_cast<int>(StemKind::Guitar) && !hasGuitar) continue;
+      o = StemAudio{std::vector<float>(static_cast<std::size_t>(length)), std::vector<float>(static_cast<std::size_t>(length))};
+    }
+  }
+  void write(StemKind kind, std::int64_t offset, const float* l, const float* r, std::int64_t n) override {
+    auto& a = *result.stems[static_cast<std::size_t>(kind)];
+    std::copy(l, l + n, a[0].begin() + offset);
+    std::copy(r, r + n, a[1].begin() + offset);
+  }
+  SeparationResult result;
 };
 
 class Separator {
@@ -83,6 +117,11 @@ class Separator {
 
   SeparationModel model() const noexcept;
   int threads() const noexcept;
+
+  // Streams the stems into `sink` as they become final (a sliding window of about one segment per stem is
+  // all that is held, so peak memory does not grow with the song's length beyond the input). Otherwise as
+  // below.
+  void separate(AudioFile audio, StemSink& sink, const SeparationProgress& progress, CancelToken& cancel);
 
   // Separates `audio` (mono or stereo; any rate, resampled to 44.1 kHz with the offline Kaiser resampler;
   // mono is duplicated; channels beyond two are dropped). `audio` is consumed to keep peak memory low:

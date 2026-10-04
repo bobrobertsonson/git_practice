@@ -11,3 +11,8 @@ __pycache__/
 testdata/
 .claude/worktrees/
 calibration_out/
+
+# Model / runtime binaries (derivative weights, ONNX Runtime tarballs): never committed
+*.onnx
+*.ort
+*.tgz

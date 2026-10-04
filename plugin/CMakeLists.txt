@@ -102,17 +102,16 @@ if(SAWBLADE_WITH_SEPARATOR)
       set_property(TARGET SawbladePlugin_${_fmt} APPEND PROPERTY BUILD_RPATH "@loader_path/../Frameworks")
       set_property(TARGET SawbladePlugin_${_fmt} APPEND PROPERTY INSTALL_RPATH "@loader_path/../Frameworks")
     else()
-      if(_fmt STREQUAL "VST3")
-        set(_dest "$<TARGET_FILE_DIR:SawbladePlugin_${_fmt}>")
-      else()
-        set(_dest "$<TARGET_FILE_DIR:SawbladePlugin_${_fmt}>")
-      endif()
+      set(_dest "$<TARGET_FILE_DIR:SawbladePlugin_${_fmt}>")
       set_property(TARGET SawbladePlugin_${_fmt} APPEND PROPERTY BUILD_RPATH "$ORIGIN")
       set_property(TARGET SawbladePlugin_${_fmt} APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
     endif()
     add_custom_command(TARGET SawbladePlugin_${_fmt} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E make_directory "${_dest}"
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SAWBLADE_ORT_LIBRARY}" "${_dest}/${SAWBLADE_ORT_SONAME}"
+      # The licence and third-party notices must accompany the redistributed library.
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SAWBLADE_ORT_ROOT}/LICENSE" "${_dest}/ONNXRUNTIME_LICENSE"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SAWBLADE_ORT_ROOT}/ThirdPartyNotices.txt" "${_dest}/ONNXRUNTIME_ThirdPartyNotices.txt"
       VERBATIM)
   endforeach()
 endif()

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <stdexcept>
 #include <string>
 
 #include "sawblade/model_store.h"
@@ -20,7 +21,14 @@ class ModelUnavailable : public std::runtime_error {
   ModelStatus status;
 };
 
+// Thrown instead of separating when SeparateSongOptions::cacheOnly is set and the song is not cached.
+class NotCached : public std::runtime_error {
+ public:
+  NotCached() : std::runtime_error("song not separated yet") {}
+};
+
 struct SeparateSongOptions {
+  bool cacheOnly = false;                   // never separate: a cache miss throws NotCached
   SeparationModel model = SeparationModel::Htdemucs6s;
   int threads = 0;                          // 0 = defaultSeparatorThreads()
   std::filesystem::path modelsDir;          // empty = defaultModelsDirectory()

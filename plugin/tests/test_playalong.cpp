@@ -927,6 +927,29 @@ TEST_CASE("PlayAlong: a song file is separated, cached and loaded like a folder"
   CHECK(pa.settings().fourStemModel);
 }
 
+TEST_CASE("PlayAlong: a state restore with a stem-cache miss does not separate; LOAD SONG does", "[playalong][separation]") {
+  using State = PlayAlong::LoadStatus::State;
+  TempDir t;
+  EnvVar m("SAWBLADE_MODELS_DIR", (t.dir / "models").string());
+  EnvVar c("SAWBLADE_STEMS_DIR", (t.dir / "stems").string());
+  writeSynthModel(t.dir / "models", "htdemucs_6s", 6);
+  const fs::path song = writeSongFile(t.dir, 2.0);
+  Host h(kFs, 512);
+  PlayAlong& pa = h.p.playAlong();
+  PlayAlongSettings s;
+  s.songFile = song.string();
+  pa.restore(s);
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == State::NotSeparated);
+  CHECK(pa.loadStatus().message.find("LOAD SONG") != std::string::npos);
+  CHECK(pa.settings().songFile == song.string());  // kept
+  CHECK_FALSE(fs::exists(t.dir / "stems"));          // nothing was separated
+  pa.loadSong(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == State::Ready);
+  CHECK_FALSE(pa.loadStatus().cacheHit);
+}
+
 TEST_CASE("PlayAlong: a missing separation model gives the fetch command and no crash", "[playalong][separation]") {
   using State = PlayAlong::LoadStatus::State;
   TempDir t;

@@ -223,6 +223,43 @@ TEST_CASE("Separator: STFT / iSTFT path (frequency-domain model)", "[separator][
   }
 }
 
+TEST_CASE("Separator: stems stream to the sink as contiguous ranges, bit-identical to the collected result", "[separator][stream]") {
+  StemTempDir t;
+  const fs::path model = writeModel(t / "m", SeparationModel::Htdemucs6s, kTime6, kFreq6);
+  const AudioFile song = makeSong(3 * kStride + 777);
+  const SeparationResult whole = run(model, SeparationModel::Htdemucs6s, song);
+
+  struct Rec final : StemSink {
+    std::int64_t len = 0;
+    bool guitar = false;
+    std::array<std::int64_t, kStemKindCount> next{};
+    std::array<StemAudio, kStemKindCount> data;
+    std::size_t calls = 0;
+    std::int64_t maxChunk = 0;
+    void begin(std::int64_t l, bool g) override { len = l; guitar = g; }
+    void write(StemKind k, std::int64_t off, const float* l, const float* r, std::int64_t n) override {
+      const auto i = static_cast<std::size_t>(k);
+      REQUIRE(off == next[i]);  // consecutive and increasing
+      next[i] += n;
+      ++calls;
+      maxChunk = std::max(maxChunk, n);
+      data[i][0].insert(data[i][0].end(), l, l + n);
+      data[i][1].insert(data[i][1].end(), r, r + n);
+    }
+  } rec;
+  Separator sep(model, SeparationModel::Htdemucs6s, SeparatorOptions{2});
+  CancelToken c;
+  sep.separate(song, rec, nullptr, c);
+  REQUIRE(rec.guitar);
+  REQUIRE(rec.len == static_cast<std::int64_t>(song.interleaved.size() / 2));
+  REQUIRE(rec.maxChunk <= kStride);  // a window, not the whole song
+  REQUIRE(rec.calls >= 4 * 5);
+  for (const StemKind k : {StemKind::Drums, StemKind::Bass, StemKind::Vocals, StemKind::Other, StemKind::Guitar}) {
+    REQUIRE(rec.next[static_cast<std::size_t>(k)] == rec.len);
+    REQUIRE(rec.data[static_cast<std::size_t>(k)] == stem(whole, k));
+  }
+}
+
 TEST_CASE("Separator: mono and 48 kHz input are duplicated to stereo and resampled to 44.1 kHz", "[separator][input]") {
   StemTempDir t;
   const fs::path model = writeModel(t / "m", SeparationModel::Htdemucs6s, kTime6, kZero6);

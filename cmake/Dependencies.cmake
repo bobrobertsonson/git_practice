@@ -80,7 +80,13 @@ if(SAWBLADE_WITH_SEPARATOR)
     set(_ort_hash a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd)
     set(_ort_lib  lib/libonnxruntime.so.${_ort_ver})
     set(_ort_soname libonnxruntime.so.1)
-  elseif(APPLE AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" OR CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64"))
+  elseif(APPLE)
+    # Only an arm64 ONNX Runtime 1.30.0 exists (no universal2, no x86_64): refuse anything else.
+    if(CMAKE_OSX_ARCHITECTURES MATCHES "x86_64" OR (NOT CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64"))
+      message(FATAL_ERROR "SAWBLADE_WITH_SEPARATOR: the pinned ONNX Runtime ${_ort_ver} for macOS is arm64 only, but this build targets "
+                          "'${CMAKE_OSX_ARCHITECTURES}' on a ${CMAKE_HOST_SYSTEM_PROCESSOR} host. Configure with -DSAWBLADE_WITH_SEPARATOR=OFF "
+                          "(or build arm64 only).")
+    endif()
     set(_ort_url  https://github.com/microsoft/onnxruntime/releases/download/v${_ort_ver}/onnxruntime-osx-arm64-${_ort_ver}.tgz)
     set(_ort_hash 6ebb5062a934537c352937821f9fe9718e7de1a2db1122a93dd363ffd53a7012)
     set(_ort_lib  lib/libonnxruntime.${_ort_ver}.dylib)
@@ -103,6 +109,7 @@ if(SAWBLADE_WITH_SEPARATOR)
   # Directory and file name to copy into a bundle (the file is renamed to the soname so the loader finds it).
   set(SAWBLADE_ORT_LIBRARY "${onnxruntime_prebuilt_SOURCE_DIR}/${_ort_lib}" CACHE INTERNAL "ONNX Runtime shared library")
   set(SAWBLADE_ORT_SONAME "${_ort_soname}" CACHE INTERNAL "ONNX Runtime soname / install-name leaf")
+  set(SAWBLADE_ORT_ROOT "${onnxruntime_prebuilt_SOURCE_DIR}" CACHE INTERNAL "ONNX Runtime tarball root (LICENSE, ThirdPartyNotices.txt)")
   set(SAWBLADE_ORT_LIBDIR "${onnxruntime_prebuilt_SOURCE_DIR}/lib" CACHE INTERNAL "ONNX Runtime lib dir (build rpath)")
 endif()
 

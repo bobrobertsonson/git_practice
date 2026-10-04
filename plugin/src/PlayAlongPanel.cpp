@@ -255,6 +255,7 @@ struct PlayAlongPanel::Impl {
         col = L::warning();
         break;
       }
+      case PlayAlong::LoadStatus::State::NotSeparated: msg = juce::String(st.message); col = L::warning(); break;
       case PlayAlong::LoadStatus::State::Cancelled: msg = "Separation cancelled."; break;
       case PlayAlong::LoadStatus::State::Loading: msg = "Loading stems..."; col = L::warning(); break;
       case PlayAlong::LoadStatus::State::Failed: msg = juce::String(st.message); col = L::error(); break;
