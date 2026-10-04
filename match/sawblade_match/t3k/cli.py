@@ -66,7 +66,42 @@ def make_client(http: httpx.Client | None = None) -> T3KClient:
     return T3KClient(tm, base, http=http)
 
 
+def _emit(obj: dict) -> None:
+    """One JSON object per line, flushed immediately (the plugin reads these as they arrive)."""
+    print(json.dumps(obj), flush=True)
+
+
+def _err_text(e: Exception) -> str:
+    if isinstance(e, httpx.HTTPError):
+        return f"network failure: {type(e).__name__}: {e}"
+    return str(e) or type(e).__name__
+
+
+_JSON_ERRORS = (T3KError, httpx.HTTPError, KeyError, ValueError, OSError)
+
+
+def _login_json(base: str, cid: str, http: httpx.Client) -> None:
+    dc = request_device_code(http, cid)
+    _emit({"event": "device_code", "user_code": dc.user_code, "verification_uri": dc.verification_uri,
+           "verification_uri_complete": dc.verification_uri_complete, "expires_in": int(dc.expires_in)})
+    session = poll_for_session(http, cid, dc)
+    tm = TokenManager(cid, http, TokenStore())
+    tm.set_session(session)
+    u = T3KClient(tm, base, http=http).get_user()
+    _emit({"event": "logged_in", "username": u.username, "display_name": u.display_name, "id": u.id,
+           "token_file": str(tm.store.path)})     # the refresh token is never printed in --json mode
+
+
 def cmd_login(args: argparse.Namespace) -> int:
+    if args.json:
+        try:
+            base = _base_url()
+            cid = _env_client_id()
+            _login_json(base, cid, httpx.Client(base_url=base, timeout=30.0))
+        except _JSON_ERRORS as e:
+            _emit({"event": "error", "message": _err_text(e)})
+            return 1
+        return 0
     base = _base_url()
     cid = _env_client_id()
     http = httpx.Client(base_url=base, timeout=30.0)
@@ -86,6 +121,15 @@ def cmd_login(args: argparse.Namespace) -> int:
 
 
 def cmd_whoami(args: argparse.Namespace) -> int:
+    if args.json:
+        try:
+            u = make_client().get_user()
+        except _JSON_ERRORS as e:
+            _emit({"error": _err_text(e)})
+            return 1
+        _emit({"username": u.username, "display_name": u.display_name, "id": u.id,
+               "token_file": str(TokenStore().path)})
+        return 0
     u = make_client().get_user()
     print(f"{u.display_name or u.username} (@{u.username}, id {u.id})")
     return 0
@@ -161,8 +205,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sawblade-t3k", description="TONE3000 access for Sawblade")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("login", help="device-flow login (needs TONE3000_CLIENT_ID)").set_defaults(fn=cmd_login)
-    sub.add_parser("whoami", help="show the logged-in TONE3000 user").set_defaults(fn=cmd_whoami)
+    lg = sub.add_parser("login", help="device-flow login (needs TONE3000_CLIENT_ID)")
+    lg.add_argument("--json", action="store_true",
+                    help="one JSON event per line on stdout; never prints the refresh token")
+    lg.set_defaults(fn=cmd_login)
+    wh = sub.add_parser("whoami", help="show the logged-in TONE3000 user")
+    wh.add_argument("--json", action="store_true", help="one JSON line on stdout")
+    wh.set_defaults(fn=cmd_whoami)
 
     q = sub.add_parser("pull", help="build the filtered candidate pool and download it to the cache")
     q.add_argument("--favorites", action="store_true", help="(default, always on) include favorited tones")

@@ -36,6 +36,14 @@ Containers are ephemeral: `login` prints the refresh token **once**. Save it as 
 `TONE3000_REFRESH_TOKEN` secret and a fresh container logs in without the device step (stored tokens,
 when present, win over the env seed). Access tokens and Authorization headers are never printed or logged.
 
+`login --json` and `whoami --json` are the machine-readable forms used by the plugin's Settings panel.
+`login --json` prints one JSON object per line on stdout, flushed immediately: a `device_code` event
+(`user_code`, `verification_uri`, `verification_uri_complete` or null, `expires_in`), then `logged_in`
+(`username`, `display_name`, `id`, `token_file`); failures are `{"event": "error", "message": ...}` with exit
+status 1. `whoami --json` prints one line `{"username", "display_name", "id", "token_file"}`, or
+`{"error": ...}` with exit status 1. In `--json` mode nothing but JSON goes to stdout and the refresh token is
+never printed (it is only in the token file); plain-text `login` still prints it for the container workflow.
+
 ## Usage
 
 ```
