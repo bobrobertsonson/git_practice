@@ -1,0 +1,54 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Bass Chainsaw",
+  "notes": "Bass chainsaw: low focus at 60 Hz and a 40 percent wet mix, so the clean DI low end stays underneath the buzz. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 2,
+          "params": {
+            "level": 7.41,
+            "low": 10,
+            "high": 7,
+            "distortion": 8,
+            "tightness": 0,
+            "mix": 40,
+            "mode": "stock",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 60,
+            "lowQ": 0.7,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 4800,
+            "presenceDb": 8,
+            "rolloffHz": 9000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  }
+}
