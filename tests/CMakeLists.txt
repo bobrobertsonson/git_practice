@@ -23,6 +23,7 @@ add_executable(sawblade_tests
   test_stem_set.cpp
   test_stem_player.cpp
   test_stem_cli.cpp
+  test_separation_support.cpp
   test_loudness.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
@@ -40,3 +41,20 @@ add_dependencies(sawblade_tests tonerender)
 # Deterministic fixture generator (run via scripts/regen_fixtures.sh; not part of ctest).
 add_executable(make_fixtures tools/make_fixtures.cpp)
 target_link_libraries(make_fixtures PRIVATE sawblade_core sawblade_warnings)
+
+# Phase 5.1b separator tests: a synthetic ONNX model built at test time (tests/onnx_synth.h), no weights,
+# no Python. Separate executable so the ONNX Runtime library stays out of the core tests.
+if(SAWBLADE_WITH_SEPARATOR)
+  add_executable(sawblade_separator_tests test_separator.cpp)
+  target_link_libraries(sawblade_separator_tests PRIVATE
+    sawblade_separator sawblade_warnings Catch2::Catch2WithMain sawblade_json)
+  target_include_directories(sawblade_separator_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(sawblade_separator_tests PRIVATE
+    SAWBLADE_SEPARATE_EXE="$<TARGET_FILE:sawblade-stems>"
+    SAWBLADE_TONERENDER_EXE="$<TARGET_FILE:tonerender>"
+    SAWBLADE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets")
+  add_dependencies(sawblade_separator_tests sawblade-stems tonerender)
+  sawblade_ort_build_rpath(sawblade_separator_tests)
+  catch_discover_tests(sawblade_separator_tests TEST_PREFIX "separator: ")
+endif()
