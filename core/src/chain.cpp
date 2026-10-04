@@ -498,6 +498,13 @@ void Chain::applyLiveEq(EqRamps& rs, const std::vector<EqBand>& cfg, const LiveE
   }
 }
 
+void Chain::presetMutes(bool a, bool b) noexcept {
+  live_.muteA = a;
+  live_.muteB = b;
+  if (a) path_[0].level.setGainLinear(0.0f);
+  if (b) path_[1].level.setGainLinear(0.0f);
+}
+
 void Chain::setLiveParams(const LiveParams& in) noexcept {
   if (!prepared_) return;
   LiveParams p = in;

@@ -1095,6 +1095,11 @@ TEST_CASE("rig editor: screenshots", "[editor][rig]") {
     // Single: lane B shows the BLEND OFF note.
     click(rig.panel().topologyButton(rig::Topology::Single));
     rig.wait();
+    // let the async parameter attachments land: queued messages run before the stop request
+    juce::MessageManager::callAsync([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    for (auto* k : all<skin::FilmstripKnob>(*rig.ed))
+      if (k->paramId() == "blend") CHECK(k->getValue() == 0.0);
     const juce::Image single = rig.snapshot("rig_single.png");
     CHECK(nonBackgroundFraction(single, {0, 58, 940, 742}) > 0.04);
     CHECK(anyLabelContains(*rig.ed, "BLEND OFF"));

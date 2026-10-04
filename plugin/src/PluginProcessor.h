@@ -150,6 +150,7 @@ class SawbladeProcessor : public juce::AudioProcessor {
   void submit(bool fallbackToInit);
   void commit(const Preset& p, std::uint64_t generation, bool clearMonitor);
   void publishLive();  // mutex_ held
+  void dropReplacedRemeasure();  // mutex_ held
   void onOutcome(const EngineLoader::Outcome& o);
 
   juce::AudioProcessorValueTreeState apvts_;
@@ -162,6 +163,8 @@ class SawbladeProcessor : public juce::AudioProcessor {
   std::uint64_t lastSubmitted_ = 0;
   std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed
   bool wantedKeepsMonitor_ = false;
+  std::shared_ptr<const Preset> remeasureBase_;    // the preset a pending re-measure started from
+  std::uint64_t presetSerial_ = 0;                 // bumped by every commit()
   std::shared_ptr<const Preset> remeasureWanted_;  // the pending re-measure build, if any
   std::uint64_t presetGeneration_ = 0;     // loader request id of the committed preset (kNoGeneration: none yet)
   Monitor monitor_;

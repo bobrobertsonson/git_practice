@@ -80,8 +80,12 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
   return e;
 }
 
-void Engine::setParams(const ParamValues& v, const LiveParams* extras) noexcept {
+void Engine::setParams(const ParamValues& v, const LiveParams* extras, const LiveParams* mutesFrom) noexcept {
   LiveParams l = extras ? *extras : baseline_;
+  if (!extras && mutesFrom) {
+    l.muteA = mutesFrom->muteA;
+    l.muteB = mutesFrom->muteB;
+  }
   l.inputGainDb = v[kInputGain];
   l.outputGainDb = v[kOutputGain];
   l.gateThresholdDb = v[kGateThreshold];

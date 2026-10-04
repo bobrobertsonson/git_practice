@@ -163,6 +163,8 @@ class Chain {
   // RT-safe. Only changed fields act, so calling this every block with the same values is cheap.
   void setLiveParams(const LiveParams& p) noexcept;  // invalid (non-finite / out-of-range) fields are ignored
   const LiveParams& liveParams() const noexcept { return live_; }
+  // Not RT-safe (call before audio): start with the paths muted, without a ramp.
+  void presetMutes(bool a, bool b) noexcept;
 
   // Measures the alignment with the deterministic probe (see chain.cpp for the exact recipe),
   // at the blend point, gate bypassed, current latency compensation, no alignment delay.

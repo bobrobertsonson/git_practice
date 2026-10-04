@@ -315,7 +315,7 @@ writes `manual` values (`delaySamplesB`, `invertB`) back, without a further rebu
 switches to `MANUAL` seeded with the measured values.
 
 **Gate LEARN.** The audio thread pushes one input peak per block into a lock-free ring (`rig/InputMeter.h`, 512 blocks);
-LEARN waits 1 s, takes the loudest peak since, and sets `gateThreshold = peak dB + 6 dB` (clamped to -80..-20). The
+LEARN waits 1 s, takes the loudest peak since, and sets `gateThreshold = peak dB + input gain dB + 6 dB` (clamped to -80..-20; the gate sits after the input gain, the meter before it). The ring keeps only the last 512 blocks, so with 64-sample blocks at 48 kHz about 0.68 s is measured. The
 inspector's LEARN GATE button does the same.
 
 ## Tests

@@ -255,6 +255,11 @@ void SlotStrip::addBlockOfType(const std::string& type, const juce::File& namFil
     fields = flatEqFields();
   }
   const char which = path_ == 0 ? 'a' : 'b';
+  const Preset current = controller_.view();
+  if (static_cast<int>((path_ == 0 ? current.a : current.b).blocks.size()) >= kMaxBlocksPerPath) {
+    if (onMessage) onMessage("max 8 blocks per path");
+    return;
+  }
   // Validate first (a bad block must not trigger a rebuild); the id is chosen again on the edit base.
   Block probe;
   try {

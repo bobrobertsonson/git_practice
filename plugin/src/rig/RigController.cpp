@@ -187,7 +187,9 @@ void RigController::finishLearn() {
   }
   const double peak = *std::max_element(peaks.begin(), peaks.end());
   const double db = peak > 0.0 ? 20.0 * std::log10(peak) : -200.0;
-  const double thr = std::clamp(db + 6.0, -80.0, -20.0);
+  // The gate sits after the input gain (DI -> input gain -> gate), the meter before it.
+  const double inGain = proc_.parameters().getRawParameterValue(paramSpec(kInputGain).id)->load();
+  const double thr = std::clamp(db + inGain + 6.0, -80.0, -20.0);
   beginParam(kGateThreshold);
   setParam(kGateThreshold, thr);
   endParam(kGateThreshold);

@@ -252,6 +252,11 @@ class SawbladeEditor::Content : public juce::Component {
       message_.setText({}, juce::dontSendNotification);
     }
 
+    // Single topologies: path B is off, so its level and the blend are not editable (spec 4.1).
+    const bool blendOn = rig::topologyOf(processor_.editBasePreset()) == rig::Topology::Blend;
+    knobs_[kBlend]->setEnabled(blendOn);
+    knobs_[kLevelB]->setEnabled(blendOn);
+
     const SlotBands bands = processor_.postEqSlots();
     for (int k = 0; k < kPostEqSlots; ++k) knobs_[static_cast<size_t>(kPostEqFirst + k)]->setEnabled(bands[static_cast<size_t>(k)] >= 0);
     updateReadouts();

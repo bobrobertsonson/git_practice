@@ -50,6 +50,8 @@ class EngineLoader {
     // the fallback engine): the processor commits the preset and its parameter values here, so
     // nothing changes if the build fails. Gets the request id (the engine's generation).
     std::function<void(std::uint64_t id)> beforePublish;
+    // Runs on the worker thread on a successfully built engine, before it is published (seeds live state).
+    std::function<void(Engine&)> configure;
   };
 
   struct Outcome {

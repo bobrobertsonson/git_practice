@@ -67,7 +67,15 @@ class Engine {
   // are smoothed inside the chain; the gate threshold moves immediately.
   // `extras` (the live snapshot of this engine's generation, or null) replaces the baseline as the
   // starting point; the parameter values are overlaid on it.
-  void setParams(const ParamValues& v, const LiveParams* extras = nullptr) noexcept;
+  // `mutesFrom` (any snapshot) supplies the monitor mutes when `extras` is null (an outgoing engine).
+  void setParams(const ParamValues& v, const LiveParams* extras = nullptr, const LiveParams* mutesFrom = nullptr) noexcept;
+
+  // Before the engine is published: start with these paths muted (no ramp), so a rebuild keeps a mute / solo.
+  void setInitialMutes(bool a, bool b) {
+    baseline_.muteA = a;
+    baseline_.muteB = b;
+    chain_->presetMutes(a, b);
+  }
 
   // The id of the loader request this engine was built for (0 until the loader tags it).
   std::uint64_t generation() const noexcept { return generation_; }

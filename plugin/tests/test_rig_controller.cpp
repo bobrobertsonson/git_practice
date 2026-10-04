@@ -535,6 +535,14 @@ TEST_CASE("RigController: gate LEARN sets the threshold 6 dB above the quiet inp
   CHECK(c.learnStatus().rfind("thr set -", 0) == 0);
   CHECK(h.param(kGateThreshold) == Catch::Approx(-54.0).margin(1.0));
 
+  // The gate sits after the input gain: +6 dB of input gain moves the learned threshold up by 6 dB.
+  h.setParam(kInputGain, 6.0);
+  c.learnGate();
+  h.run(noise(static_cast<std::size_t>(kFs), 5, 0.001f), y, {512});
+  c.finishLearn();
+  CHECK(h.param(kGateThreshold) == Catch::Approx(-48.0).margin(1.0));
+  h.setParam(kInputGain, 0.0);
+
   // A loud take clamps at -20 dB; silence at -80 dB.
   c.learnGate();
   h.run(noise(4800, 6, 0.9f), y, {512});
@@ -558,4 +566,36 @@ TEST_CASE("InputMeter: ring of block peaks", "[rig][meter]") {
   for (int i = 0; i < 1000; ++i) m.push(7.0f);
   CHECK(m.since(0).size() == InputMeter::kSize);  // only the last 512 blocks are kept
   CHECK(m.counter() == 1003);
+}
+
+TEST_CASE("RigController: an edit that supersedes a pending re-measure leaves no stuck state", "[rig][controller][align]") {
+  TempDir t;
+  Host h(kFs, 512);
+  h.load(writePreset(t.dir, "delay", "linear_delay_300.nam", "off", 10.0));
+  RigController c(h.p);
+  h.p.remeasureAlignment();
+  CHECK(h.p.status().alignMeasuring);
+  c.edit([](Preset& p) { addBlock(p.a, 1, eqBlock("a2")); });  // replaces the re-measure request in the loader
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(h.p.status().alignMeasuring);
+  CHECK(h.p.currentPreset().align.mode == AlignMode::Off);
+  CHECK(h.p.currentPreset().a.blocks.size() == 2);
+  CHECK(h.p.status().error.empty());
+}
+
+TEST_CASE("RigController: mutes survive a rebuild without a blip", "[rig][controller][live]") {
+  TempDir t;
+  Host h(kFs, 512);
+  h.load(writePreset(t.dir, "rig"));
+  RigController c(h.p);
+  c.setTopology(Topology::Single);
+  waitLoaded(h);
+  const std::vector<float> x(8000, 0.1f);
+  std::vector<float> y;
+  c.setMute(0, true);
+  h.run(x, y, {512});
+  c.edit([](Preset& p) { addBlock(p.a, 1, eqBlock("a2")); });
+  waitLoaded(h);
+  h.run(x, y, {64});  // the cross-fade: the old engine is silent, the new one must start silent too
+  for (const float v : y) REQUIRE(v == 0.0f);
 }

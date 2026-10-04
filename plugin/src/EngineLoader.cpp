@@ -96,6 +96,7 @@ void EngineLoader::run() {
       out.info = engine->chainInfo();
       out.presetName = engine->presetName();
       engine->setGeneration(id);
+      if (out.built && req.configure) req.configure(*engine);
       if (out.built && req.beforePublish) req.beforePublish(id);
       std::shared_ptr<Engine> shared = std::move(engine);
       owned_.push_back(shared);
