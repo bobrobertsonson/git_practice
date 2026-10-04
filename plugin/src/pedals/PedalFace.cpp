@@ -45,12 +45,12 @@ PedalFace::PedalFace(SawbladeProcessor& p) : proc_(p) {
     clip_[static_cast<size_t>(c)] = std::make_unique<PedalSwitch>(apvts, paramSpec(f.clipParam).id, std::string(f.oledName) + " clip", clipTexts);
     focus_[static_cast<size_t>(c)] = std::make_unique<PedalSwitch>(apvts, paramSpec(f.focus.param).id, std::string(f.oledName) + " focus", f.focus);
     for (PedalSwitch* sw : {clip_[static_cast<size_t>(c)].get(), focus_[static_cast<size_t>(c)].get()}) {
-      sw->setValueText(PedalSwitch::TextSide::Above, 8, 6.5f);
+      sw->setValueText(PedalSwitch::TextSide::Above, 0, 6.5f);
       addChildComponent(*sw);
     }
   }
   circuit_ = std::make_unique<PedalSwitch>(apvts, paramSpec(kSawCircuit).id, "Circuit");
-  circuit_->setValueText(PedalSwitch::TextSide::Above, 8, 6.5f);
+  circuit_->setValueText(PedalSwitch::TextSide::Above, 0, 6.5f);
   addChildComponent(*circuit_);
   setVisible(false);
 }
@@ -73,7 +73,7 @@ void PedalFace::resized() {
       if (auto* knob = knobs_[static_cast<size_t>(c)][static_cast<size_t>(k)].get())
         knob->setBounds(juce::Rectangle<float>(kd, kd).withCentre(toPx(knobMm(k))).toNearestInt());
   const float lever = kSwitchMm * ppm;
-  const int textH = 8;
+  const int textH = 0;
   auto place = [&](PedalSwitch& sw, int position) {
     const auto centre = toPx(switchMm(position));
     const float w = 30.0f * ppm;
