@@ -15,13 +15,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   juce::AudioProcessorValueTreeState::ParameterLayout layout;
   for (int i = 0; i < kNumParams; ++i) {
     const ParamSpec& s = paramSpec(i);
+    if (!s.choices.empty()) {
+      juce::StringArray names;
+      for (const std::string& c : s.choices) names.add(c);
+      layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{s.id, 1}, s.name, names, static_cast<int>(s.def)));
+      continue;
+    }
+    const int decimals = s.unit.empty() ? 2 : (s.unit == "Hz" || s.unit == "%") ? 0 : 1;
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{s.id, 1}, s.name,
         juce::NormalisableRange<float>(static_cast<float>(s.min), static_cast<float>(s.max)),
         static_cast<float>(s.def),
         juce::AudioParameterFloatAttributes()
             .withLabel(s.unit)
-            .withStringFromValueFunction([decimals = s.unit.empty() ? 2 : 1](float v, int) { return juce::String(v, decimals); })
+            .withStringFromValueFunction([decimals](float v, int) { return juce::String(v, decimals); })
             .withValueFromStringFunction([](const juce::String& t) { return t.getFloatValue(); })));
   }
   return layout;
@@ -48,10 +55,14 @@ SawbladeProcessor::SawbladeProcessor()
   fadeBuf_.assign(kMinChunk, 0.0f);
   playAlong_.setStandalone(wrapperType == wrapperType_Standalone);
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
+  apvts_.addParameterListener(paramSpec(kSawCircuit).id, this);
+  startTimerHz(10);
 }
 
 SawbladeProcessor::~SawbladeProcessor() {
+  stopTimer();
   loader_.reset();  // joins the worker before the slot and the rest are destroyed
+  apvts_.removeParameterListener(paramSpec(kSawCircuit).id, this);
 }
 
 juce::AudioProcessorEditor* SawbladeProcessor::createEditor() { return new SawbladeEditor(*this); }
@@ -110,6 +121,44 @@ SlotBands SawbladeProcessor::postEqSlots() const {
   return postEqSlotBands(preset_);
 }
 
+std::optional<CircuitSlot> SawbladeProcessor::circuitSlot() const {
+  std::lock_guard<std::mutex> lk(mutex_);
+  return findCircuitBlock(preset_);
+}
+
+// --- CIRCUIT switch -----------------------------------------------------------------------------
+void SawbladeProcessor::parameterChanged(const juce::String&, float) {
+  if (committing_.load() > 0) return;  // commit() rewriting the parameters from a preset, not a user edit
+  if (juce::MessageManager::existsAndIsCurrentThread())
+    circuitChanged();
+  else
+    circuitDirty_.store(true);  // audio or loader thread: the timer handles it on the message thread
+}
+
+void SawbladeProcessor::timerCallback() {
+  if (committing_.load() > 0) return;
+  if (circuitDirty_.exchange(false)) circuitChanged();
+}
+
+// The user (or the host) moved the CIRCUIT switch: if it names a different circuit than the preset's
+// first circuit block, rebuild once with that block replaced (level/volume, mix, tightness and clip
+// carried over, the rest at the new circuit's defaults). Inert when the preset has no circuit block.
+void SawbladeProcessor::circuitChanged() {
+  const int idx = std::clamp(static_cast<int>(std::lround(paramAtomic_[kSawCircuit]->load())), 0, kNumCircuits - 1);
+  std::shared_ptr<const Preset> wanted;
+  Preset p;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    wanted = wanted_;
+    if (!wanted) p = preset_;
+  }
+  if (wanted) p = *wanted;  // a load still in flight is the latest intent: switch on top of it
+  else applyParams(p, readParams());
+  const auto slot = findCircuitBlock(p);
+  if (!slot || static_cast<int>(slot->circuit) == idx) return;
+  loadPreset(switchCircuit(p, static_cast<Circuit>(idx)));
+}
+
 void SawbladeProcessor::loadPreset(Preset preset) {
   auto c = std::make_shared<const Preset>(clampedToParams(std::move(preset)));
   bool buildNow;
@@ -150,7 +199,9 @@ void SawbladeProcessor::commit(const Preset& p) {
     preset_ = p;
     status_.presetName = p.name;
   }
+  committing_.fetch_add(1);
   writeParams(paramsFromPreset(p));
+  committing_.fetch_sub(1);
 }
 
 bool SawbladeProcessor::loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error,
