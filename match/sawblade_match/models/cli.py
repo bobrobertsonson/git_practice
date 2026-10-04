@@ -33,7 +33,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "status":
         print(format_status(d))
         return 0
-    from .download import DownloadError, ensure_checkpoint
+    from .download import ensure_checkpoint
     from .store import model_status
     ids = MODEL_IDS if args.model == "all" else (args.model,)
     rc = 0
@@ -50,8 +50,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         except ImportError as e:
             print(f"error: {e}\nInstall the extra first: see match/README.md (\"Separation models\").", file=sys.stderr)
             return 3
-        except (DownloadError, OSError, RuntimeError) as e:
-            print(f"error: {mid}: {e}", file=sys.stderr)
+        except Exception as e:       # one model failing must not stop `--model all`
+            print(f"error: {mid}: {type(e).__name__}: {e}", file=sys.stderr)
             rc = 4
     return rc
 

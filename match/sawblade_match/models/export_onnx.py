@@ -41,6 +41,22 @@ def residual_db(got, ref) -> float:
     return float(20 * np.log10(np.sqrt((r ** 2).mean()) / np.sqrt((ref ** 2).mean()) + 1e-30))
 
 
+def check_residuals(model_id: str, res: dict) -> None:
+    import numpy as np
+    worst = max(res.values())
+    if not np.isfinite(worst) or worst > VERIFY_LIMIT_DB:
+        raise VerifyError(f"{model_id}: ORT vs torch residual {worst:.1f} dB is worse than {VERIFY_LIMIT_DB:.0f} dB")
+
+
+def commit(model_id: str, directory: Path, part: Path) -> None:
+    """Move a verified `.partial` into place and write its sidecar. The old sidecar is dropped only right before
+    the swap, so a failed export keeps the previously verified pair."""
+    final = onnx_path(model_id, directory)
+    sidecar_path(model_id, directory).unlink(missing_ok=True)
+    os.replace(part, final)
+    write_sidecar(model_id, directory, sha256_file(final))
+
+
 def _core_module(th):
     from einops import rearrange
 
@@ -120,15 +136,13 @@ def export_and_verify(model_id: str, directory: Path, *, threads: int = 4,
                       log: Callable[[str], None] = print) -> dict:
     """Export `<id>-core-opset17.onnx`, check ORT against torch on a seeded synthetic segment, and only then
     move it into place and write the sha256 sidecar. Returns a result dict (sha256, residuals, pin match)."""
-    import numpy as np
     import onnx
     import onnxruntime as ort
     import torch as th
     from demucs.pretrained import get_model
 
     directory.mkdir(parents=True, exist_ok=True)
-    final, sidecar = onnx_path(model_id, directory), sidecar_path(model_id, directory)
-    sidecar.unlink(missing_ok=True)            # never leave a sidecar next to an unverified file
+    final = onnx_path(model_id, directory)
     part = final.with_name(final.name + ".partial")
     os.environ["TORCH_HOME"] = str(torch_home(directory))
     th.set_num_threads(max(1, threads))
@@ -168,15 +182,12 @@ def export_and_verify(model_id: str, directory: Path, *, threads: int = 4,
                "composed": residual_db(full_ort.numpy(), full_ref.numpy())}
         for k, v in res.items():
             log(f"verify {k}: residual {v:.1f} dB")
-        worst = max(res.values())
-        if not np.isfinite(worst) or worst > VERIFY_LIMIT_DB:
-            raise VerifyError(f"{model_id}: ORT vs torch residual {worst:.1f} dB is worse than {VERIFY_LIMIT_DB:.0f} dB")
+        check_residuals(model_id, res)
     except BaseException:
         part.unlink(missing_ok=True)
         raise
-    os.replace(part, final)
+    commit(model_id, directory, part)
     digest = sha256_file(final)
-    write_sidecar(model_id, directory, digest)
     pinned = PINNED_ONNX_SHA256[model_id]
     match = digest == pinned
     log(f"sha256 {digest}")

@@ -168,3 +168,73 @@ def test_fetch_skips_when_verified(tmp_path, capsys):
     store.write_sidecar("htdemucs_6s", tmp_path, store.sha256_file(f))
     assert cli.main(["fetch", "--dir", str(tmp_path)]) == 0
     assert "already present and verified" in capsys.readouterr().out
+
+
+def test_full_pins_and_checkpoint_hashes():
+    assert store.PINNED_ONNX_SHA256 == {
+        "htdemucs": "79189af3c584b1a2145ae5e4182a50c0204f88b76e2829bd27e4d4a88ede427d",
+        "htdemucs_6s": "d23996ba2e9396d393e2bd53c29f1411bd33b8cf3451854ad32d746ad3d06132",
+    }
+    assert store.CHECKPOINTS == {
+        "htdemucs": ("955717e8-8726e21a.th", "8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4"),
+        "htdemucs_6s": ("5c90dfd2-34c22ccb.th", "34c22ccb381c6f9fdbf324f04e1e2fe21aaaf293f5ded163a162697ff9a02ddd"),
+    }
+
+
+def test_residual_db():
+    np = pytest.importorskip("numpy")
+    from sawblade_match.models.export_onnx import residual_db
+    ref = np.random.default_rng(0).standard_normal(1000)
+    assert residual_db(ref, ref) < -250
+    assert residual_db(ref * 1.1, ref) == pytest.approx(-20.0, abs=1e-6)
+    assert residual_db(ref + 0.01 * ref, ref) == pytest.approx(-40.0, abs=1e-6)
+
+
+def test_verify_error_keeps_existing_pair_and_leaves_nothing_new(tmp_path):
+    from sawblade_match.models import export_onnx as ex
+    f, sc = paths.onnx_path("htdemucs", tmp_path), paths.sidecar_path("htdemucs", tmp_path)
+    f.write_bytes(b"old-verified")
+    store.write_sidecar("htdemucs", tmp_path, store.sha256_file(f))
+    old_sc = sc.read_text()
+    part = f.with_name(f.name + ".partial")
+    part.write_bytes(b"new-bad")
+    with pytest.raises(ex.VerifyError):
+        ex.check_residuals("htdemucs", {"x_freq": -80.0, "x_time": -59.0, "composed": -80.0})
+    # the exporter deletes the partial on any failure and never calls commit(): the old pair is untouched
+    part.unlink()
+    assert f.read_bytes() == b"old-verified" and sc.read_text() == old_sc
+    assert store.model_status("htdemucs", tmp_path).sha_ok
+
+
+def test_verify_error_on_fresh_dir_leaves_no_onnx_or_sidecar(tmp_path):
+    from sawblade_match.models import export_onnx as ex
+    with pytest.raises(ex.VerifyError):
+        ex.check_residuals("htdemucs_6s", {"composed": float("nan")})
+    assert not list(tmp_path.iterdir())
+
+
+def test_commit_swaps_pair_and_writes_sidecar(tmp_path):
+    from sawblade_match.models import export_onnx as ex
+    f = paths.onnx_path("htdemucs", tmp_path)
+    f.write_bytes(b"old")
+    store.write_sidecar("htdemucs", tmp_path, store.sha256_file(f))
+    part = f.with_name(f.name + ".partial")
+    part.write_bytes(b"new")
+    ex.commit("htdemucs", tmp_path, part)
+    assert f.read_bytes() == b"new" and not part.exists()
+    assert store.model_status("htdemucs", tmp_path).sha_ok
+
+
+def test_fetch_all_continues_after_a_failure(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    def fake_ensure(mid, d, log=print):
+        calls.append(mid)
+        if mid == "htdemucs_6s":
+            raise ValueError("boom")
+        raise KeyError("also")
+    monkeypatch.setattr(download, "ensure_checkpoint", fake_ensure)
+    assert cli.main(["fetch", "--model", "all", "--dir", str(tmp_path)]) == 4
+    assert calls == ["htdemucs_6s", "htdemucs"]
+    err = capsys.readouterr().err
+    assert "htdemucs_6s: ValueError: boom" in err and "htdemucs: KeyError" in err
