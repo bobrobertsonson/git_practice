@@ -186,7 +186,8 @@ IrPack IrPack::single(const Capture& cap) {
   p.info_.kind = PackInfo::Kind::Single;
   p.singleCapture_ = cap;
   PackModel m;
-  m.file = cap.resolvedPath.empty() ? fs::path(cap.file) : cap.resolvedPath;
+  m.file = locateCapture(cap);  // a cached-but-unresolved TONE3000 IR is found in the capture cache
+  if (m.file.empty()) m.file = fs::path(cap.file);
   m.sha256 = cap.sha256;
   if (cap.source) {
     m.modelId = cap.source->modelId;
@@ -318,7 +319,8 @@ Capture IrPack::captureFor(int model) const {
 
 int IrPack::findModel(const Capture& cap) const {
   std::error_code ec;
-  const fs::path want = cap.resolvedPath.empty() ? fs::path(cap.file) : cap.resolvedPath;
+  fs::path want = locateCapture(cap);
+  if (want.empty()) want = fs::path(cap.file);
   for (int i = 0; i < static_cast<int>(models_.size()); ++i) {
     const fs::path& f = models_[static_cast<std::size_t>(i)].file;
     if (f == want || fs::weakly_canonical(f, ec) == fs::weakly_canonical(want, ec)) return i;

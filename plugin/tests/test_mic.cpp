@@ -773,3 +773,20 @@ TEST_CASE("settings.json: the t3kExecutable key is read-modify-write and keeps u
   CHECK(content == "[1, 2, 3]");
   ::unsetenv("SAWBLADE_APPDATA");
 }
+
+TEST_CASE("a cached-but-unresolved cab IR previews and lays out through the capture cache", "[mic][session]") {
+  TempDir tmp;
+  ::setenv("SAWBLADE_CACHE_DIR", (tmp.dir / "cache").string().c_str(), 1);
+  fs::create_directories(tmp.dir / "cache" / "77");
+  writeWavFloat32(tmp.dir / "cache" / "77" / "9.wav", 48000.0, std::vector<float>(64, 0.1f));
+  Capture c;
+  c.file = "captures/missing.wav";
+  c.resolvedPath = tmp.dir / "nowhere" / "missing.wav";
+  c.source = CaptureSource{"tone3000", "77", "9", "", "", "", ""};
+  CHECK_FALSE(spectrumOfCapture(c, true).empty());
+  const IrPack p = IrPack::single(c);
+  REQUIRE(p.size() == 1);
+  CHECK(p.models()[0].file == tmp.dir / "cache" / "77" / "9.wav");
+  CHECK(p.findModel(c) == 0);
+  ::unsetenv("SAWBLADE_CACHE_DIR");
+}

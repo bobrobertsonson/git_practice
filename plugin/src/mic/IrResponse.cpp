@@ -61,7 +61,7 @@ Response magnitudeResponse(const std::vector<float>& ir, double sampleRate, int 
 
 Spectrum spectrumOfCapture(const Capture& c, bool normalize, std::string* error) {
   try {
-    const IrData ir = loadIr(c.resolvedPath.empty() ? std::filesystem::path(c.file) : c.resolvedPath, kResponseRate, normalize);
+    const IrData ir = loadIr(locateCapture(c).empty() ? std::filesystem::path(c.file) : locateCapture(c), kResponseRate, normalize);
     return irSpectrum(ir.samples, kResponseRate);
   } catch (const std::exception& e) {
     if (error) *error = e.what();

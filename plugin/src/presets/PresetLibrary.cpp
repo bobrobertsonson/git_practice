@@ -199,6 +199,22 @@ fs::path PresetLibrary::userPathFor(const std::string& name) const {
   return s.empty() ? fs::path() : cfg_.userDir / (s + ".json");
 }
 
+// Keeps the in-memory list current after a user operation without scanning the folders (the message thread must not block).
+static void dropEntry(std::vector<PresetEntry>& v, const fs::path& file) {
+  v.erase(std::remove_if(v.begin(), v.end(), [&](const PresetEntry& e) { return e.file == file; }), v.end());
+}
+static void upsertUser(std::vector<PresetEntry>& v, const fs::path& file) {
+  dropEntry(v, file);
+  PresetEntry e = readEntry(file, SubBank::User);
+  auto pos = v.end();  // user entries are last and sorted by file name
+  for (auto it = v.begin(); it != v.end(); ++it)
+    if (it->bank == SubBank::User && lower(it->file.filename().string()) > lower(file.filename().string())) {
+      pos = it;
+      break;
+    }
+  v.insert(pos, std::move(e));
+}
+
 static bool writeJsonFile(const fs::path& file, const json& j, std::string* error) {
   std::error_code ec;
   fs::create_directories(file.parent_path(), ec);
@@ -238,13 +254,13 @@ bool PresetLibrary::saveAs(Preset preset, const std::string& name, const std::st
   preset.category = category;
   if (!writeJsonFile(dest, json::parse(presetToStateJson(preset)), error)) return false;  // absolute capture paths
   if (written) *written = dest;
-  rescan();
+  upsertUser(entries_, dest);
   return true;
 }
 
 bool PresetLibrary::save(const Preset& preset, const fs::path& userFile, std::string* error) {
   if (!writeJsonFile(userFile, json::parse(presetToStateJson(preset)), error)) return false;
-  rescan();
+  upsertUser(entries_, userFile);
   return true;
 }
 
@@ -265,8 +281,11 @@ bool PresetLibrary::rename(int index, const std::string& newName, std::string* e
   if (!j.is_object()) return fail("cannot read " + e.file.string());
   j["name"] = newName;
   if (!writeJsonFile(dest, j, error)) return false;
-  if (dest != e.file) fs::remove(e.file, ec);
-  rescan();
+  if (dest != e.file) {
+    fs::remove(e.file, ec);
+    dropEntry(entries_, e.file);
+  }
+  upsertUser(entries_, dest);
   return true;
 }
 
@@ -277,7 +296,8 @@ bool PresetLibrary::remove(int index, const TrashFn& trash, std::string* error) 
     if (error) *error = "no such preset";
     return false;
   }
-  const PresetEntry& e = entries_[static_cast<std::size_t>(index)];
+  const PresetEntry e = entries_[static_cast<std::size_t>(index)];
+  const fs::path fileCopy = e.file;
   if (isFactory(e.bank)) {
     if (error) *error = "factory presets are read-only";
     return false;
@@ -286,7 +306,7 @@ bool PresetLibrary::remove(int index, const TrashFn& trash, std::string* error) 
     if (error) *error = "could not move " + e.file.string() + " to the trash";
     return false;
   }
-  rescan();
+  dropEntry(entries_, fileCopy);
   return true;
 }
 

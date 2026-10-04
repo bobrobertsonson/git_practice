@@ -14,6 +14,7 @@
 #include "PluginProcessor.h"
 #include "presets/AbCompare.h"
 #include "presets/PresetBrowser.h"
+#include "presets/PresetLibrary.h"
 
 using namespace sawblade::plugin;
 using nlohmann::json;
@@ -102,16 +103,22 @@ struct Fixture {
     const fs::path factory = tmp.dir / "factory";
     fs::copy(SAWBLADE_PRESETS_DIR, factory, fs::copy_options::recursive);
     fs::remove_all(factory / "captures");
-    const fs::path nc = factory / "styles" / "uk_death_bolt_thrower.json";
-    std::string text;
+    // an obviously synthetic preset with a non-commercial capture (real captures' licences are never edited)
     {
-      std::ifstream in(nc);
-      text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+      const std::string nam = (fs::path(SAWBLADE_FIXTURES_DIR) / "nam" / "linear_identity.nam").string();
+      const json source = {{"provider", "tone3000"}, {"id", "test-0"}, {"modelId", "test-0"}, {"title", "Synthetic NC capture"}, {"creator", "example"}, {"license", "cc-by-nc"}};
+      auto block = [&](const char* id, bool withSource) {
+        json m = {{"file", nam}};
+        if (withSource) m["source"] = source;
+        return json{{"id", id}, {"type", "nam"}, {"model", m}};
+      };
+      const json j = {{"schema", "sawblade.preset"}, {"version", 1}, {"name", "Test NC capture"}, {"category", "Death metal"},
+                      {"notes", "Synthetic test preset (not a real capture)."},
+                      {"paths", {{"a", {{"blocks", json::array({block("a1", true)})}}}, {"b", {{"blocks", json::array({block("b1", false)})}}}}},
+                      {"align", {{"mode", "off"}}},
+                      {"cab", {{"mode", "shared"}, {"ir", {{"file", (fs::path(SAWBLADE_FIXTURES_DIR) / "ir" / "impulse.wav").string()}}}}}};
+      std::ofstream(factory / "styles" / "zz_test_nc.json") << j.dump(2);
     }
-    const auto pos = text.find("\"license\": \"t3k\"");
-    REQUIRE(pos != std::string::npos);
-    text.replace(pos, 16, "\"license\": \"cc-by-nc\"");
-    std::ofstream(nc) << text;
     fs::create_directories(tmp.dir / "appdata");
     std::ofstream(tmp.dir / "appdata" / "settings.json") << json{{"factoryPresetDir", factory.string()}}.dump();
     appdata = std::make_unique<EnvVar>("SAWBLADE_APPDATA", (tmp.dir / "appdata").string());
@@ -159,32 +166,32 @@ TEST_CASE("browser: the preset selector opens it, the banks and categories filte
   REQUIRE(f.ed->browserOpen());
   f.browser().scanBlocking();
   auto& lib = f.browser().library();
-  CHECK(lib.entries().size() == 13);  // 11 factory + 2 user
-  CHECK(f.browser().visible().size() == 13);
+  CHECK(lib.entries().size() == 14);  // 11 real + 1 synthetic factory + 2 user
+  CHECK(f.browser().visible().size() == 14);
 
   f.browser().selectBankRow(1);  // Factory
-  CHECK(f.browser().visible().size() == 11);
+  CHECK(f.browser().visible().size() == 12);
   f.browser().selectBankRow(2);  // Classic
   CHECK(f.browser().visible().size() == 4);
   f.browser().selectBankRow(3);  // Styles
-  CHECK(f.browser().visible().size() == 6);
+  CHECK(f.browser().visible().size() == 7);
   f.browser().selectBankRow(4);  // Matched
   CHECK(f.browser().visible().size() == 1);
   f.browser().selectBankRow(5);  // User
   CHECK(f.browser().visible().size() == 2);
   f.browser().selectBankRow(1);
   const auto cats = f.browser().categoryRows();
-  CHECK(cats[0] == "All categories  (11)");
+  CHECK(cats[0] == "All categories  (12)");
   bool grind = false;
   for (const auto& c : cats) grind = grind || c == "Grind  (1)";
   CHECK(grind);
   f.browser().selectCategory("Death metal");
-  CHECK(f.browser().visible().size() == 3);  // studio_split, uk death, barbaric
+  CHECK(f.browser().visible().size() == 4);  // studio_split, uk death, barbaric, the synthetic one
   f.browser().setSearch("bolt");
   CHECK(f.browser().visible().size() == 1);
   f.browser().setSearch("");
   f.browser().selectCategory("");
-  CHECK(f.browser().visible().size() == 11);
+  CHECK(f.browser().visible().size() == 12);
 
   // close
   click(*f.browser().buttonTitled(juce::String::fromUTF8("\xe2\x80\xb9 BACK")));
@@ -196,16 +203,22 @@ TEST_CASE("browser: selecting a preset shows its info; factory presets are read-
   f.ed->setBrowserOpen(true);
   f.browser().scanBlocking();
   f.browser().selectBankRow(1);
-  const int uk = f.indexOf("UK Death (Bolt Thrower-style)");
-  REQUIRE(uk >= 0);
-  f.browser().selectEntry(uk);
+  const int nc = f.indexOf("Test NC capture");
+  REQUIRE(nc >= 0);
+  f.browser().selectEntry(nc);
   const auto text = f.browser().infoPanel().plainText();
-  CHECK(text.contains("UK Death (Bolt Thrower-style)"));
+  CHECK(text.contains("Test NC capture"));
   CHECK(text.contains("DEATH METAL"));
   CHECK(text.contains("STYLES"));
-  CHECK(text.contains("@"));  // a creator
+  CHECK(text.contains("@example"));
   CHECK(text.contains("cc-by-nc"));
-  CHECK(f.browser().infoPanel().nonCommercialTags() >= 1);
+  CHECK(text.contains("local file: no attribution recorded"));  // the second path and the cab
+  CHECK(f.browser().infoPanel().nonCommercialTags() == 1);
+  // a real factory preset shows its real creator and licence (never an NC tag: they are t3k captures)
+  f.browser().selectEntry(f.indexOf("UK Death (Bolt Thrower-style)"));
+  CHECK(f.browser().infoPanel().plainText().contains("@pong"));
+  CHECK(f.browser().infoPanel().nonCommercialTags() == 0);
+  f.browser().selectEntry(nc);
   CHECK_FALSE(f.browser().buttonTitled("DELETE")->isEnabled());
   CHECK_FALSE(f.browser().buttonTitled("RENAME")->isEnabled());
   CHECK(f.browser().buttonTitled("SAVE AS")->isEnabled());
@@ -257,7 +270,7 @@ TEST_CASE("browser: loading, stepping with the top-bar buttons, save as and dele
   f.browser().setTrashFunction([](const fs::path& p) { return fs::remove(p); });
   REQUIRE(f.browser().deleteSelected());
   CHECK_FALSE(fs::exists(f.tmp.dir / "appdata" / "presets" / "Renamed from the test.json"));
-  CHECK(f.browser().library().entries().size() == 13);
+  CHECK(f.browser().library().entries().size() == 14);
 }
 
 TEST_CASE("A/B button: shows A or B, switches the sound, replaced by browser loads on the active slot", "[editor][browser][ab]") {
@@ -285,23 +298,48 @@ TEST_CASE("A/B button: shows A or B, switches the sound, replaced by browser loa
   CHECK(f.proc.currentPreset().name == "User two");
 }
 
+TEST_CASE("browser: real factory entries show exactly the licences and creators of the repo files", "[editor][browser]") {
+  Fixture f;
+  f.browser().scanBlocking();
+  int checked = 0;
+  for (const auto& e : f.browser().library().entries()) {
+    if (e.bank == SubBank::User || e.name == "Test NC capture") continue;
+    const fs::path rel = fs::relative(e.file, f.tmp.dir / "factory");
+    const auto repo = sawblade::plugin::summariseCaptures(sawblade::loadPresetFile(fs::path(SAWBLADE_PRESETS_DIR) / rel));
+    REQUIRE(repo.size() == e.captures.size());
+    for (std::size_t i = 0; i < repo.size(); ++i) {
+      CHECK(e.captures[i].license == repo[i].license);
+      CHECK(e.captures[i].creator == repo[i].creator);
+      CHECK(e.captures[i].nonCommercial == repo[i].nonCommercial);
+    }
+    ++checked;
+  }
+  CHECK(checked == 11);
+}
+
 TEST_CASE("browser: screenshot with a factory category selected and the info panel on a capture with an NC tag", "[editor][browser][screenshot]") {
   Fixture f;
   f.ed->setBrowserOpen(true);
   f.browser().scanBlocking();
   f.browser().selectBankRow(1);
   f.browser().selectCategory("Death metal");
-  f.browser().selectEntry(f.indexOf("UK Death (Bolt Thrower-style)"));
   auto* ab = f.topButton("A/B compare");
   REQUIRE(f.browser().loadEntry(f.indexOf("User one")));
   REQUIRE(f.proc.waitForLoader());
   click(*ab);  // the compare button shows B
   REQUIRE(f.proc.waitForLoader());
   CHECK(ab->getButtonText() == "B");
-  f.browser().selectEntry(f.indexOf("UK Death (Bolt Thrower-style)"));
+  f.browser().selectEntry(f.indexOf("Test NC capture"));
+  // let the top bar's 4 Hz refresh show the loaded preset's name
+  juce::Button* selector = nullptr;
+  for (auto* b : all<juce::Button>(*f.ed))
+    if (b->getTitle() == "Preset") selector = b;
+  REQUIRE(selector != nullptr);
+  for (int i = 0; i < 40 && selector->getButtonText() != "USER ONE"; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+  CHECK(selector->getButtonText() == "USER ONE");
   const juce::Image img = f.ed->createComponentSnapshot(f.ed->getLocalBounds(), true, 1.0f);
   REQUIRE(img.getWidth() == 1280);
   savePng(img, "sawblade_browser_1x.png");
-  CHECK(f.browser().infoPanel().nonCommercialTags() >= 1);
+  CHECK(f.browser().infoPanel().nonCommercialTags() == 1);
   CHECK(anyLabelContains(*f.ed, "PRESETS"));
 }
