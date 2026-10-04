@@ -78,6 +78,10 @@ void RigPiece::mouseDown(const juce::MouseEvent&) {
   if (onSelect) onSelect(piece_);
 }
 
+void RigPiece::mouseDoubleClick(const juce::MouseEvent&) {
+  if (onDoubleClick) onDoubleClick(piece_);
+}
+
 // ---------------------------------------------------------------------------------------------
 // The two instrument cables, drawn above the amps and below the pedals.
 class RigView::Cables : public juce::Component {

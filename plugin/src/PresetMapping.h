@@ -9,6 +9,9 @@
 #include <array>
 #include <string>
 
+#include <vector>
+
+#include "sawblade/pedal_params.h"
 #include "sawblade/preset.h"
 
 namespace sawblade::plugin {
@@ -26,7 +29,11 @@ enum ParamIndex : int {
   kLevelA,
   kLevelB,
   kPostEqFirst,
-  kNumParams = kPostEqFirst + kPostEqSlots
+  // Pedal circuits (pedals/CircuitParams.h): the CIRCUIT switch, then one live set per circuit.
+  kSawCircuit = kPostEqFirst + kPostEqSlots,
+  kHmFirst,
+  kMuffFirst = kHmFirst + kHmNumLive,
+  kNumParams = kMuffFirst + kMuffNumLive
 };
 
 struct ParamSpec {
@@ -34,6 +41,7 @@ struct ParamSpec {
   std::string name;  // display name
   std::string unit;
   double min, max, def;
+  std::vector<std::string> choices = {};  // empty = continuous; else the value is a choice index (min 0, max n-1)
 };
 
 const ParamSpec& paramSpec(int index);

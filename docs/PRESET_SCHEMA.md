@@ -94,7 +94,8 @@ Block types:
 |---|---|---|---|---|
 | `nam` | NAM capture (pedal, boost, amp) | see NamBlock below | yes | the model's |
 | `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` | yes | 0 |
-| `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology) | `modelVersion`, `params`; see PedalHm below | yes | 50 samples (at any rate) |
+| `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology), the CHAINSAW circuit | `modelVersion` (1 or 2), `params`; see PedalHm below | yes | 50 samples (at any rate) |
+| `pedal.muff` | Modeled "big fuzz" (Big-Muff-family topology), the BIG FUZZ circuit | `modelVersion` (1), `params`; see PedalMuff below | yes | 50 samples (at any rate) |
 | `pedal.ts` | Modeled "green overdrive" (Tube-Screamer topology) | `modelVersion`, `params`; see PedalTs below | yes | 50 samples (at any rate) |
 | `pedal.hmx` | Modeled "modded chainsaw distortion" (modded HM-2 class) | `modelVersion`, `params`; see PedalHmx below | yes | 50 samples (at any rate) |
 | `pedal.eye` | Modeled "one-knob chainsaw" | `modelVersion`, `params`; see PedalEye below | yes | 50 samples (at any rate) |
@@ -121,53 +122,127 @@ carry no TONE3000 license or creator. UI names are generic descriptors (no trade
 }
 ```
 
-### PedalHm (`type: "pedal.hm"`) and PedalTs (`type: "pedal.ts"`)
+### PedalHm (`type: "pedal.hm"`), PedalMuff (`type: "pedal.muff"`) and PedalTs (`type: "pedal.ts"`)
 
 Modeled pedals (DSP, no capture files). Generic UI names: `pedal.hm` = **"Swedish chainsaw
-distortion"**, `pedal.ts` = **"green overdrive"**. Typical `slot`: `"pedal"` for the HM
-model, `"boost"` for the TS model, but any slot is accepted.
+distortion"** (CHAINSAW circuit), `pedal.muff` = **"big fuzz"** (BIG FUZZ circuit), `pedal.ts` =
+**"green overdrive"**. Typical `slot`: `"pedal"` for the first two, `"boost"` for the TS model, but
+any slot is accepted. The player-facing description of every control is in `docs/PEDALS.md`.
 
 ```jsonc
 { "id": "a1", "type": "pedal.hm", "slot": "pedal", "bypass": false,
-  "modelVersion": 1,                    // optional, default 1; any other value = PresetError
-  "params": { "level": 5, "low": 10, "high": 10, "distortion": 10 } }   // optional; every key optional
+  "modelVersion": 2,                    // optional, default 1 (the phase 7 four-knob object)
+  "params": { "level": 2, "low": 10, "high": 10, "distortion": 10, "mode": "stock", "clip": "silicon" } }
+{ "id": "a1", "type": "pedal.muff", "slot": "pedal", "modelVersion": 1,
+  "params": { "sustain": 10, "tone": 7, "scoop": 8, "volume": 4 } }
 { "id": "b1", "type": "pedal.ts", "slot": "boost",
   "modelVersion": 1, "params": { "drive": 2, "tone": 6, "level": 8 } }
 ```
 
-| Type | Param | Range | Default | Meaning |
-|---|---|---|---|---|
-| `pedal.hm` | `level` | 0-10 | 5 | output level, `3*level - 24` dB (0 dB at 8) |
-| | `low` | 0-10 | 5 | low gyrator of the colour-mix EQ, 100 Hz peak, -12..+18 dB |
-| | `high` | 0-10 | 5 | high gyrators, 1 kHz + 1.5 kHz peaks, -8..+14 dB each |
-| | `distortion` | 0-10 | 5 | first-stage gain, 6..46 dB (second stage fixed +20 dB) |
-| `pedal.ts` | `drive` | 0-10 | 5 | feedback-loop gain, `Rd/4.7k` with `Rd = 51k + 500k*drive/10` |
-| | `tone` | 0-10 | 5 | 1st-order low-pass, 723 Hz .. 7.23 kHz |
-| | `level` | 0-10 | 5 | output level, `3*level - 24` dB |
+#### `pedal.hm` parameters
 
-- Every param is a JSON number in [0, 10]; out of range, wrong type, or an unknown key inside
-  `params` (including another type's key), or a `params` that is not an object, is a
-  PresetError (exit 3). `modelVersion` is the model revision: it is `1`; a later re-fit of the
-  EQ table or clip knees that changes the sound bumps it, and a preset naming a version this
-  build does not know is rejected instead of silently sounding different.
-- `toJson()` always writes `modelVersion` and all params (explicit defaults), so
-  parse -> write -> parse is exact.
-- Params are static per preset: changing one goes through the Chain rebuild/swap path, there is
-  no parameter smoothing in v1.
-- Internals: both run their nonlinear stages at 4x oversampling (linear-phase half-band FIRs)
-  with second-order antiderivative anti-aliasing (ADAA2) on a soft clipper; aliasing is below
-  -80 dB (measured around -91.6 dB for pedal.ts, -93.8 dB for pedal.hm) at maximum gain.
-- **Latency: 50 samples at every sample rate** (oversampler round trip + ADAA, padded to a whole
-  number of base-rate samples; IIR group delay is not counted). It is reported through the block's
+| key | type / range | default | meaning |
+|---|---|---|---|
+| `level` | 0-10 | 5 | output level, `3*level - 24` dB (0 dB at 8); wet path only |
+| `low` | 0-10 | 5 | low gyrator gain, `-12 + s_low*low` dB |
+| `high` | 0-10 | 5 | both high gyrators, `-8 + 2.2*high` dB |
+| `distortion` | 0-10 | 5 | stage-1 gain, `6 + s1*distortion + gain1Db` dB |
+| `tightness` | 0-10 | 0 | input high-pass `20 * 10^(tightness/10)` Hz (20-200 Hz); the dry signal is tapped before it |
+| `mix` | 0-100 (%) | 100 | wet proportion; `out = (1-m)*dry[n-50] + m*level*wet` |
+| `mode` | `stock` \| `custom` \| `modded` | `stock` | `custom`: `s_low` 3.6, `s1` 4.6 (more low and gain); `modded`: interstage and post-clip LPFs at 9 kHz |
+| `clip` | `silicon` \| `led` \| `asymmetric` \| `soft` | `silicon` | clipper of stage 1 (and stage 2 while `clip2` is `follow`) |
+| `clip2` | `follow` \| the four clip names | `follow` | clipper of stage 2 |
+| `lowFreq` | 60-160 Hz | 100 | low gyrator centre |
+| `lowQ` | 0.5-2.0 | 0.8 | low gyrator Q (wide 0.8, narrow 1.6) |
+| `highFreq` | 800-2000 Hz | 1000 | high gyrator A centre |
+| `highSpread` | 1.0-2.0 | 1.5 | gyrator B centre = `highFreq * highSpread` |
+| `presenceFreq` | 3000-7000 Hz | 4800 | presence peak centre (Q 2) |
+| `presenceDb` | 0-16 dB | 8 | presence peak gain |
+| `rolloffHz` | 4000-12000 Hz | 9000 | output low-pass corner |
+| `gain1Db` | -12..+12 dB | 0 | trim on the stage-1 gain |
+| `gain2Db` | -12..+12 dB | 0 | trim on the interstage gain (stock +20 dB) |
+| `bias` | 0-10 | 0 | asymmetry: negative knee scaled by `1 - 0.5*bias/10` on both stages |
+
+All fixed voicing constants (pre-filter corners, mode LPF corners, interstage gain, gyrator Qs, mode
+slopes) live in the `HmVoicing` table in `core/include/sawblade/pedal_hm.h`.
+
+**Versions.** `modelVersion` 1 (the default when absent) may set only `level`, `low`, `high`,
+`distortion`; any other key is a PresetError. A v1 block maps onto the v2 defaults and renders
+**bit-identically** to the phase 7 implementation (golden `tests/golden/hm_chainsaw_v1.wav`,
+`ts_boost_v1.wav`). `modelVersion` 2 may set any key. `toJson()` always writes `modelVersion: 2`
+with every key (enums as strings), so parse -> write -> parse is exact. Any other version (0, 3)
+is a PresetError.
+
+#### `pedal.muff` parameters (`modelVersion` 1)
+
+| key | type / range | default | meaning |
+|---|---|---|---|
+| `volume` | 0-10 | 5 | output level, `3*volume - 24` dB (wet only) |
+| `sustain` | 0-10 | 5 | stage-A gain, `6 + 3*sustain` dB |
+| `tone` | 0-10 | 5 | tone-stack blend, dark -> bright |
+| `scoop` | 0-10 | 3 | extra mid notch at the stack centre, `-1.6*scoop` dB |
+| `crunch` | 0-10 | 5 | clipping compression: both knees x `1.2 - 0.08*crunch` |
+| `voice` | 0-10 | 5 | stack centre `860 * 2^((voice-5)/5)` Hz (430 Hz .. 1.72 kHz) |
+| `tightness` | 0-10 | 0 | input high-pass as in `pedal.hm` |
+| `mix` | 0-100 (%) | 100 | wet proportion |
+| `clip`, `clip2` | as `pedal.hm` | `silicon`, `follow` | stage A / stage B clipper |
+| `stackRatio` | 2.0-8.0 | 4.4 | stack corner ratio `fH/fL` (scoop width) |
+| `rolloffHz` | 4000-12000 Hz | 10000 | output low-pass corner |
+| `gain2Db` | -12..+12 dB | 0 | trim on the stage-B gain (stock +18 dB) |
+| `bias` | 0-10 | 0 | asymmetry as `pedal.hm` |
+
+`modelVersion: 2` on `pedal.muff` is a PresetError.
+
+#### The clip table (shared by both circuits)
+
+| `clip` | knees k+ / k- | shape order | character |
+|---|---|---|---|
+| `silicon` | 0.5 / 0.5 | cubic | stock diode pair |
+| `led` | 1.4 / 1.4 | quintic | louder, harder knee |
+| `asymmetric` | 0.5 / 0.3 | cubic | even harmonics |
+| `soft` | 0.3 / 0.3 | cubic | earlier, rounder, quieter |
+
+Cubic: `c(u) = u - u^3/(3k^2)`, saturating at `2k/3`. Quintic: `c(u) = u - u^5/(5k^4)`, saturating at
+`4k/5`, slope `1 - (u/k)^4`.
+
+#### `pedal.ts` parameters
+
+| Param | Range | Default | Meaning |
+|---|---|---|---|
+| `drive` | 0-10 | 5 | feedback-loop gain, `Rd/4.7k` with `Rd = 51k + 500k*drive/10` |
+| `tone` | 0-10 | 5 | 1st-order low-pass, 723 Hz .. 7.23 kHz |
+| `level` | 0-10 | 5 | output level, `3*level - 24` dB |
+
+#### Rules common to the modeled pedals
+
+- Out of range, wrong type, an unknown enum string, an unknown key inside `params` (including
+  another type's key), or a `params` that is not an object, is a PresetError (exit 3). A preset
+  naming a `modelVersion` this build does not know is rejected instead of silently sounding
+  different; a later re-fit that changes the sound bumps it.
+- **Live parameters.** `pedal.hm` and `pedal.muff` can move every parameter while running
+  (`Processor::setLiveParams`, descriptors in `BlockType::liveParams`, `Chain::setBlockLiveParams`;
+  the plugin uses it). Gains ramp over 20 ms; filter coefficients are redesigned once at the next
+  block start (a small step is possible); enums and the clip knees apply immediately. With no live
+  change the render is bit-identical to a static build. `pedal.ts` is not live. Presets themselves
+  stay static.
+- Internals: the nonlinear stages run at 4x oversampling (linear-phase half-band FIRs) with
+  second-order antiderivative anti-aliasing (ADAA2); aliasing is below -80 dB at maximum gain
+  (see the phase 7b report for the table).
+- **Latency: 50 samples at every sample rate** for every mode and clip (oversampler round trip +
+  two ADAA samples, padded to a whole number of base-rate samples; IIR group delay is not counted;
+  the clean-mix dry path is delayed by the same 50). It is reported through the block's
   `latencySamples()`, so `pathLatency`, `compensationDelay` and the plugin's reported latency
   include it; a bypassed block adds none. In a preset with a pedal on one path only, the other
   path is delayed by the same amount.
-- `namTrainable: true` for both (static, nonlinear, time-invariant).
-- Neither model is a capture of a real unit: the targets are published frequency-response
-  descriptions plus engineering reasoning (see `docs/specs/phase7_modeled_pedals.md`); a later
-  task fits them to captures and bumps `modelVersion` if the sound changes.
+- `namTrainable: true` for all three (static, nonlinear, time-invariant).
+- None of the models is a capture of a real unit; a later task fits them to captures and bumps
+  `modelVersion` if the sound changes.
 - Examples that render with files in this repo only: `presets/modeled/hm_chainsaw.json`,
-  `presets/modeled/ts_boost.json`.
+  `presets/modeled/ts_boost.json` (v1) and the bank `presets/modeled/chainsaw/*.json`:
+  `classic_buzzsaw`, `early_raw_demo`, `dbeat_crust`, `powerviolence_hardcore`, `grind`,
+  `death_n_roll`, `modern_tight_swedish`, `blend_partner`, `custom_wall`, `modded_nasty`,
+  `bass_chainsaw`, `clean_mix_texture` (CHAINSAW) and `pickle_chainsaw`, `pickle_doom_saw`,
+  `pickle_into_saw` (BIG FUZZ). See `presets/README.md`.
 
 ### PedalHmx (`type: "pedal.hmx"`) and PedalEye (`type: "pedal.eye"`)
 

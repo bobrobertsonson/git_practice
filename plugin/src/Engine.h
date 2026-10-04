@@ -20,10 +20,12 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "PresetMapping.h"
+#include "pedals/CircuitParams.h"
 #include "sawblade/chain.h"
 #include "sawblade/rt_resample.h"
 
@@ -51,7 +53,9 @@ class Engine {
   void process(const float* in, float* out, int n) noexcept;
 
   // Applies the parameter values (RT-safe; cheap when nothing changed). Gains, blend and post-EQ
-  // are smoothed inside the chain; the gate threshold moves immediately.
+  // are smoothed inside the chain; the gate threshold moves immediately. The values of the circuit
+  // set that belongs to this engine's first pedal block (docs/specs/phase7b, 5.1) are forwarded to
+  // the block as live parameters when any of them changed.
   void setParams(const ParamValues& v) noexcept;
 
   // The values the chain currently applies, and the ones it was built with (tests: after the
@@ -80,6 +84,10 @@ class Engine {
   EngineLatency latency_;
   LiveParams baseline_;
   SlotBands slotBand_{};
+  std::optional<CircuitSlot> circuit_;                // the first pedal block, recorded at build
+  std::array<float, kMaxCircuitLive> circuitLive_{};  // what the block currently applies
+  std::array<float, kMaxCircuitLive> circuitScratch_{};
+  int circuitLiveCount_ = 0;
   RtResampler down_, up_;  // host -> model, model -> host
   std::vector<float> mod_, tmp_, fifo_;
   int fifoCount_ = 0;

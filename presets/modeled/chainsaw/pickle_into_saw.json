@@ -1,0 +1,76 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Fuzz Into Saw",
+  "notes": "Two circuits chained: a mild fuzz pushing the chainsaw for a thicker, more compressed buzz. The second block is the chainsaw (low 8, high 9, distortion 6). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.muff",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "volume": 2,
+            "sustain": 6,
+            "tone": 6,
+            "scoop": 2,
+            "crunch": 5,
+            "voice": 5,
+            "tightness": 2,
+            "mix": 100,
+            "clip": "silicon",
+            "clip2": "follow",
+            "stackRatio": 4.4,
+            "rolloffHz": 10000,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        },
+        {
+          "id": "a2",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 2,
+          "params": {
+            "level": 3,
+            "low": 8,
+            "high": 9,
+            "distortion": 6,
+            "tightness": 0,
+            "mix": 100,
+            "mode": "stock",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 0.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 4800,
+            "presenceDb": 8,
+            "rolloffHz": 9000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  }
+}

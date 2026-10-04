@@ -34,3 +34,5 @@ Branch `claude/sawblade-p7c-zone-rat` (name historical). **Holding on the main l
   10/10/10, ≤ 0.16 dB above 400 Hz). The HM-3 fallback decision needs the captures.
 - My acknowledgement replies to the main session were blocked by the permission classifier
   (`send_message` denied), so nothing was sent back; this file is the status channel.
+
+Phase 7b is merged into this branch at `a0eae2e` (Part 2, step A).

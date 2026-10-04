@@ -7,8 +7,13 @@ namespace sawblade {
 // C1 everywhere (c'(+-k) = 0), slope 1 at 0 so small signals pass linearly, symmetric when
 // k+ == k-. F1 = integral of c, F2 = integral of F1, both with F(0) = 0 and continuous at +-k
 // (closed forms in the .cpp).
+//
+// Order m = 2 (quintic, harder knee): c(u) = u - u^5/(5 k^4) for |u| < k, +-4k/5 beyond; slope
+// 1 - (u/k)^4. F1 = u^2/2 - u^6/(30 k^4) inside, (4k/5)|u| - k^2/3 beyond; F2 = u^3/6 - u^7/(210 k^4)
+// inside, +-((2k/5)u^2 - (k^2/3)|u| + 2k^3/21) beyond (continuous at 0 and +-k).
 struct SoftClipShape {
   double kPos = 0.5, kNeg = 0.5;
+  int order = 1;  // m in {1, 2}
   double f(double u) const noexcept;    // c(u)
   double f1(double u) const noexcept;   // first antiderivative
   double f2(double u) const noexcept;   // second antiderivative
@@ -33,9 +38,10 @@ class AdaaClipper {
   static constexpr double kEps = 1e-5;
   static constexpr int kLatency = 1;
 
-  void setShape(double kPos, double kNeg) noexcept {
+  void setShape(double kPos, double kNeg, int order = 1) noexcept {
     shape_.kPos = kPos;
     shape_.kNeg = kNeg;
+    shape_.order = order == 2 ? 2 : 1;
   }
   void setAdaa(bool on) noexcept { adaa_ = on; }
   bool adaa() const noexcept { return adaa_; }

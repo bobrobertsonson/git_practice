@@ -25,6 +25,7 @@ add_executable(sawblade_tests
   test_stem_cli.cpp
   test_loudness.cpp
   test_pedals.cpp
+  test_pedals_7b.cpp
   test_pedals_saw.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain

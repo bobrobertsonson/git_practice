@@ -15,13 +15,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   juce::AudioProcessorValueTreeState::ParameterLayout layout;
   for (int i = 0; i < kNumParams; ++i) {
     const ParamSpec& s = paramSpec(i);
+    if (!s.choices.empty()) {
+      juce::StringArray names;
+      for (const std::string& c : s.choices) names.add(c);
+      layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{s.id, 1}, s.name, names, static_cast<int>(s.def)));
+      continue;
+    }
+    const int decimals = s.unit.empty() ? 2 : (s.unit == "Hz" || s.unit == "%") ? 0 : 1;
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{s.id, 1}, s.name,
         juce::NormalisableRange<float>(static_cast<float>(s.min), static_cast<float>(s.max)),
         static_cast<float>(s.def),
         juce::AudioParameterFloatAttributes()
             .withLabel(s.unit)
-            .withStringFromValueFunction([decimals = s.unit.empty() ? 2 : 1](float v, int) { return juce::String(v, decimals); })
+            .withStringFromValueFunction([decimals](float v, int) { return juce::String(v, decimals); })
             .withValueFromStringFunction([](const juce::String& t) { return t.getFloatValue(); })));
   }
   return layout;
@@ -48,10 +55,14 @@ SawbladeProcessor::SawbladeProcessor()
   fadeBuf_.assign(kMinChunk, 0.0f);
   playAlong_.setStandalone(wrapperType == wrapperType_Standalone);
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
+  apvts_.addParameterListener(paramSpec(kSawCircuit).id, this);
+  startTimerHz(10);
 }
 
 SawbladeProcessor::~SawbladeProcessor() {
+  stopTimer();
   loader_.reset();  // joins the worker before the slot and the rest are destroyed
+  apvts_.removeParameterListener(paramSpec(kSawCircuit).id, this);
 }
 
 juce::AudioProcessorEditor* SawbladeProcessor::createEditor() { return new SawbladeEditor(*this); }
@@ -110,6 +121,49 @@ SlotBands SawbladeProcessor::postEqSlots() const {
   return postEqSlotBands(preset_);
 }
 
+std::optional<CircuitSlot> SawbladeProcessor::circuitSlot() const {
+  std::lock_guard<std::mutex> lk(mutex_);
+  return findCircuitBlock(preset_);
+}
+
+// --- CIRCUIT switch -----------------------------------------------------------------------------
+void SawbladeProcessor::parameterChanged(const juce::String&, float value) {
+  // During commit() the parameters are being rewritten from a preset, but an edit that lands meanwhile
+  // must not be lost: flag it, the timer retries (circuitChanged() is a no-op when nothing differs).
+  if (committing_.load() > 0) {
+    // Flag only an edit that is not commit's own write of the value it is publishing.
+    if (static_cast<int>(std::lround(value)) != commitCircuit_.load()) circuitDirty_.store(true);
+  }
+  else if (juce::MessageManager::existsAndIsCurrentThread())
+    circuitChanged();
+  else
+    circuitDirty_.store(true);  // audio or loader thread: the timer handles it on the message thread
+}
+
+void SawbladeProcessor::timerCallback() {
+  if (committing_.load() > 0) return;
+  if (circuitDirty_.exchange(false)) circuitChanged();
+}
+
+// The user (or the host) moved the CIRCUIT switch: if it names a different circuit than the preset's
+// first circuit block, rebuild once with that block replaced (level/volume, mix, tightness and clip
+// carried over, the rest at the new circuit's defaults). Inert when the preset has no circuit block.
+void SawbladeProcessor::circuitChanged() {
+  const int idx = std::clamp(static_cast<int>(std::lround(paramAtomic_[kSawCircuit]->load())), 0, kNumCircuits - 1);
+  std::shared_ptr<const Preset> wanted;
+  Preset p;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    wanted = wanted_;
+    if (!wanted) p = preset_;
+  }
+  if (wanted) p = *wanted;  // a load still in flight is the latest intent: switch on top of it
+  else applyParams(p, readParams());
+  const auto slot = findCircuitBlock(p);
+  if (!slot || static_cast<int>(slot->circuit) == idx) return;
+  loadPreset(switchCircuit(p, static_cast<Circuit>(idx)));
+}
+
 void SawbladeProcessor::loadPreset(Preset preset) {
   auto c = std::make_shared<const Preset>(clampedToParams(std::move(preset)));
   bool buildNow;
@@ -150,7 +204,11 @@ void SawbladeProcessor::commit(const Preset& p) {
     preset_ = p;
     status_.presetName = p.name;
   }
-  writeParams(paramsFromPreset(p));
+  const ParamValues pv = paramsFromPreset(p);
+  commitCircuit_.store(static_cast<int>(std::lround(pv[kSawCircuit])));
+  committing_.fetch_add(1);
+  writeParams(pv);
+  committing_.fetch_sub(1);
 }
 
 bool SawbladeProcessor::loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error,
@@ -249,6 +307,8 @@ void SawbladeProcessor::submit(bool fallbackToInit) {
 }
 
 void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader thread
+  bool restoreCircuit = false;
+  {
   if (o.published) {
     // The host learns the new latency as soon as the engine exists; the audio thread switches to
     // it at the start of its next block. (setLatencySamples is not audio-thread safe, so it is
@@ -261,7 +321,10 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     status_.loading = false;
     status_.error = o.error;
   }
-  if (!o.built && !o.superseded && o.wanted && wanted_ == o.wanted) wanted_.reset();  // failed: keep the previous preset
+  if (!o.built && !o.superseded && o.wanted && wanted_ == o.wanted) {
+    wanted_.reset();  // failed: keep the previous preset
+    restoreCircuit = true;
+  }
   if (o.published) {
     status_.latencySamples = o.latencySamples;
     status_.hostRate = o.hostRate;
@@ -271,6 +334,23 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     status_.resampling = std::fabs(o.modelRate - o.hostRate) > 1e-6;
     status_.info = o.info;
     if (o.built) status_.presetName = o.presetName;
+  }
+  }
+  if (restoreCircuit) {
+    // A failed load (e.g. a circuit switch) keeps the previous preset: the CIRCUIT lever must show what is
+    // sounding and saved, not what was asked for.
+    Preset prev;
+    {
+      std::lock_guard<std::mutex> lk(mutex_);
+      prev = preset_;
+    }
+    // Only the lever, and only if it disagrees: knob tweaks made during the failed build survive.
+    if (const auto slot = findCircuitBlock(prev); slot && static_cast<int>(std::lround(paramAtomic_[kSawCircuit]->load())) != static_cast<int>(slot->circuit)) {
+      commitCircuit_.store(static_cast<int>(slot->circuit));
+      committing_.fetch_add(1);
+      paramObj_[kSawCircuit]->setValueNotifyingHost(paramObj_[kSawCircuit]->convertTo0to1(static_cast<float>(static_cast<int>(slot->circuit))));
+      committing_.fetch_sub(1);
+    }
   }
 }
 

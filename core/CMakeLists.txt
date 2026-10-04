@@ -11,6 +11,7 @@ add_library(sawblade_core STATIC
   src/adaa_clipper.cpp
   src/pedal_params.cpp
   src/pedal_hm.cpp
+  src/pedal_muff.cpp
   src/pedal_ts.cpp
   src/pedal_stages.cpp
   src/pedal_saw_params.cpp

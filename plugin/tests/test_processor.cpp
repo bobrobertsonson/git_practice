@@ -251,6 +251,7 @@ TEST_CASE("Processor: parameter changes never reload or rebuild anything", "[pro
   int step = 0;
   while (pos + 512 <= x.size()) {
     for (int i = 0; i < kNumParams; ++i) {
+      if (i == kSawCircuit) continue;  // the CIRCUIT switch is the one parameter that rebuilds (test_pedal_face.cpp)
       const ParamSpec& s = paramSpec(i);
       const double ph = 0.5 + 0.5 * std::sin(0.01 * step * (i + 1));
       h.setParam(i, s.min + ph * (s.max - s.min));
