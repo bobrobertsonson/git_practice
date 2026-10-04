@@ -154,7 +154,7 @@ model, `"boost"` for the TS model, but any slot is accepted.
   no parameter smoothing in v1.
 - Internals: both run their nonlinear stages at 4x oversampling (linear-phase half-band FIRs)
   with second-order antiderivative anti-aliasing (ADAA2) on a soft clipper; aliasing is below
-  -80 dB (measured around -92 .. -94 dB) at maximum gain.
+  -80 dB (measured around -91.6 dB for pedal.ts, -93.8 dB for pedal.hm) at maximum gain.
 - **Latency: 50 samples at every sample rate** (oversampler round trip + ADAA, padded to a whole
   number of base-rate samples; IIR group delay is not counted). It is reported through the block's
   `latencySamples()`, so `pathLatency`, `compensationDelay` and the plugin's reported latency
