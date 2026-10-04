@@ -1,6 +1,6 @@
 # Phase 2.5 skin: implementation report
 
-Artifact: <TBD by lead>
+Artifact: **Sawblade Skin Prototype**, https://claude.ai/artifact/EWGeaaNoF6gUzeRDuCSx6L (1x and 2x snapshots; private until shared). Reviewer verdict: ACCEPT (round 2, af4101e); lead accepted.
 
 ## Files
 - `design/render/export_ui_assets.py` (exporter, `--list`), `design/render/README.md` (section added)
