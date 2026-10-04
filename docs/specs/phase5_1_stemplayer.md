@@ -264,3 +264,36 @@ Propose these in the report instead of building them.
   directly and accepts any `n >= 0`.
 - `isPlaying()` reports the requested state (true during a count-in).
 - A seek to exactly `b` with a loop active does not wrap (consistent with "at or beyond b plays on").
+
+## 10. Follow-up 5.1b: backing loudness metadata (main lead request)
+No normalize step anywhere: stems play at their separated levels; the user owns the master
+backing level. Add a load-time measurement only, for the phase 5.2 UI to *suggest* a starting
+backing level. **Never apply gain from it in `process()`.**
+- `core/include/sawblade/loudness.h` / `core/src/loudness.cpp`:
+  `std::optional<double> integratedLoudnessLufs(const float* left, const float* right, std::int64_t frames, double sampleRate)`
+  per ITU-R BS.1770-4: K-weighting (high-shelf + RLB high-pass; coefficients designed for any
+  `sampleRate`, matching the BS.1770 48 kHz values), 400 ms blocks with 75 % overlap, channel
+  weights 1.0 (L, R), absolute gate −70 LUFS, relative gate −10 LU. Returns none when no
+  block passes the absolute gate (silence) or the signal is shorter than one block. Double
+  accumulation; load-time only (may allocate).
+- `StemSet::backingLoudnessLufs` (`std::optional<double>`): integrated loudness of the
+  unity-gain sum of every present stem **except guitar**, computed by `loadStemFiles`,
+  `loadStemDirectory` and `makeStemSet` (all off the audio thread). None if no non-guitar
+  stem or silence.
+- Bindings: `StemSet.backing_loudness_lufs` (float or None), and the measurement function
+  exposed as `integrated_loudness_lufs(audio (n,) or (2,n), sample_rate)`.
+- `tonerender --backing` report: `backing.loudnessLufs` (number or `null`).
+
+Acceptance:
+1. EBU Tech 3341 case 1: a 1 kHz sine with peak −23 dBFS on both channels (20 s) measures
+   −23.0 ±0.1 LUFS, at 48 kHz and at 44.1 kHz. A 997 Hz sine at 0 dBFS peak in the left channel
+   only (right silent) measures −3.01 ±0.1 LUFS.
+2. Gating: inserting long digital silence between two tone sections does not change the
+   result (±0.05 LU); a −80 dBFS section is excluded by the absolute gate; a tone 20 dB below
+   the main section is excluded by the relative gate (result within ±0.1 LU of the main section alone).
+3. K-weighting: at 48 kHz the designed coefficients equal the BS.1770-4 table values within
+   1e-6; at 44.1 kHz the magnitude response of the designed filters matches the 48 kHz reference
+   response within 0.05 dB at 50 Hz, 100 Hz, 1 kHz, 4 kHz and 10 kHz.
+4. StemSet: guitar excluded (adding a loud guitar stem leaves the value unchanged); silence → none.
+5. CLI report carries `backing.loudnessLufs`; Python exposes it. Full suite passes.
+6. No change to `process()`; the zero-allocation tests still pass.
