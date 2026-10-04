@@ -1,0 +1,12 @@
+# Never commit audio, stems or weights from the separator spike.
+*.wav
+*.mp3
+*.mp4
+*.flac
+*.bin
+*.th
+*.ggml
+*.npy
+*.npz
+out/
+data/
