@@ -39,14 +39,19 @@ int main(int argc, char** argv) {
         std::cerr << "pedal_fr: --param expects key=value\n";
         return 2;
       }
-      params[kv.substr(0, eq)] = std::strtod(kv.c_str() + eq + 1, nullptr);
+      const std::string val = kv.substr(eq + 1);
+      char* end = nullptr;
+      const double num = std::strtod(val.c_str(), &end);
+      // A value that does not parse fully as a number is passed as a JSON string (enums).
+      if (!val.empty() && end == val.c_str() + val.size()) params[kv.substr(0, eq)] = num;
+      else params[kv.substr(0, eq)] = val;
     } else {
-      std::cerr << "usage: pedal_fr --type pedal.hm|pedal.ts [--param key=value]... --out file.csv\n";
+      std::cerr << "usage: pedal_fr --type pedal.hm|pedal.ts|pedal.hmx|pedal.eye [--param key=value]... --out file.csv\n";
       return 2;
     }
   }
   if (type.empty() || out.empty()) {
-    std::cerr << "usage: pedal_fr --type pedal.hm|pedal.ts [--param key=value]... --out file.csv\n";
+    std::cerr << "usage: pedal_fr --type pedal.hm|pedal.ts|pedal.hmx|pedal.eye [--param key=value]... --out file.csv\n";
     return 2;
   }
   try {

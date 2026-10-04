@@ -96,6 +96,8 @@ Block types:
 | `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` | yes | 0 |
 | `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology) | `modelVersion`, `params`; see PedalHm below | yes | 50 samples (at any rate) |
 | `pedal.ts` | Modeled "green overdrive" (Tube-Screamer topology) | `modelVersion`, `params`; see PedalTs below | yes | 50 samples (at any rate) |
+| `pedal.hmx` | Modeled "modded chainsaw distortion" (modded HM-2 class) | `modelVersion`, `params`; see PedalHmx below | yes | 50 samples (at any rate) |
+| `pedal.eye` | Modeled "one-knob chainsaw" | `modelVersion`, `params`; see PedalEye below | yes | 50 samples (at any rate) |
 
 Unknown `type` values are a parse error. New block types (further modeled pedal recreations)
 are added to the registry without changing this schema's shape: they use `"params": { ... }`
@@ -166,6 +168,59 @@ model, `"boost"` for the TS model, but any slot is accepted.
   task fits them to captures and bumps `modelVersion` if the sound changes.
 - Examples that render with files in this repo only: `presets/modeled/hm_chainsaw.json`,
   `presets/modeled/ts_boost.json`.
+
+### PedalHmx (`type: "pedal.hmx"`) and PedalEye (`type: "pedal.eye"`)
+
+Modeled chainsaw-family pedals (DSP, no capture files, phase 7c). Generic UI names:
+`pedal.hmx` = **"modded chainsaw distortion"** (circuit label MODDED SAW), `pedal.eye` =
+**"one-knob chainsaw"** (circuit label ONE-KNOB SAW). They are not captures of any real unit; the
+voicings are starting hypotheses to be fitted against captures later (`modelVersion`).
+
+```jsonc
+{ "id": "a1", "type": "pedal.hmx", "slot": "pedal", "modelVersion": 1,
+  "params": { "level": 3, "low": 8, "lowMid": 5, "highMid": 9, "high": 7, "distortion": 9,
+              "presence": 8, "tightness": 3, "mix": 80, "clip": "led", "boost": "off",
+              "lowMidFreq": 5, "highMidFreq": 6 } }
+{ "id": "a1", "type": "pedal.eye", "modelVersion": 1, "params": { "gain": 10, "level": 2, "tightness": 0 } }
+```
+
+| Type | Param | Range | Default | Meaning |
+|---|---|---|---|---|
+| `pedal.hmx` | `level` | 0-10 | 5 | output level on the wet path, `3*level - 24` dB |
+| | `low` | 0-10 | 5 | 100 Hz peak, Q 0.8, `-12 + 3*low` dB |
+| | `lowMid` | 0-10 | 5 | low-mid peak gain, Q 1.0, `2*(lowMid - 5)` dB (0 dB at 5) |
+| | `highMid` | 0-10 | 5 | high-mid peak gain, Q 1.2, `-8 + 2.2*highMid` dB |
+| | `high` | 0-10 | 5 | 1.5 kHz peak alone (decoupled from highMid), Q 1.2, `-8 + 2.2*high` dB |
+| | `distortion` | 0-10 | 5 | first-stage gain `6 + 4*distortion` dB (+9 dB with boost); second stage fixed +20 dB |
+| | `presence` | 0-10 | 5 | high shelf at 3.5 kHz, Q 0.7071, `1.2*(presence - 5)` dB (0 dB at 5); a fixed +8 dB peak at 4.8 kHz stays |
+| | `tightness` | 0-10 | 0 | input 1st-order high-pass at `20 * 10^(tightness/10)` Hz (20 Hz .. 200 Hz) |
+| | `mix` | 0-100 | 100 | wet percent; the dry branch is delayed by the latency; skipped at 100 |
+| | `clip` | `"silicon"` \| `"led"` \| `"asymmetric"` | `"silicon"` | clip knees, see below |
+| | `boost` | `"off"` \| `"on"` (a JSON boolean is also read) | `"off"` | +9 dB ahead of the clippers; always written as the string |
+| | `lowMidFreq` | 0-10 | 5 | `200 * 3^(lowMidFreq/10)` Hz (200-600 Hz; 346 Hz at 5) |
+| | `highMidFreq` | 0-10 | 5 | `1000 * 1.6^((highMidFreq-5)/5)` Hz (625 Hz-1.6 kHz; 1 kHz at 5) |
+| `pedal.eye` | `gain` | 0-10 | 5 | first-stage gain `10 + 4.2*gain` dB (10-52 dB) |
+| | `level` | 0-10 | 5 | output level, `3*level - 24` dB |
+| | `tightness` | 0-10 | 0 | as above |
+
+| `clip` | knee k+ / k- | character |
+|---|---|---|
+| `silicon` | 0.5 / 0.5 | stock silicon pair |
+| `led` | 1.4 / 1.4 | later, louder, more open |
+| `asymmetric` | 0.5 / 0.3 | silicon + germanium-like pair: even harmonics when not saturated, a little DC (a 10 Hz DC block follows) |
+
+- `pedal.hmx` at the **stock position** (`highMid = high`, `highMidFreq = 5`, `lowMid = 5`,
+  `presence = 5`, `boost = off`, `mix = 100`, `clip = silicon`, `tightness = 0`) equals
+  `pedal.hm` at the same `low` / `high` / `distortion` / `level` within 0.2 dB (the added bands are
+  0 dB). `pedal.eye` is the HM colour-mix EQ fixed at low = high = 10, a 100 Hz pre-clip high-pass
+  (stock HM: 60 Hz) and +6 dB more gain range; it has no `mix`.
+- `mix`: `out = (1 - m)*dry + m*levelGain*wet`, `m = mix/100`. The dry signal is delayed by
+  exactly the reported latency so both branches align; at `mix = 100` the dry branch is not run.
+- Value rules as PedalHm/PedalTs: out-of-range, wrong type, unknown key, unknown enum value
+  (`clip: "soft"`, `clip: 1`, `boost: "maybe"`) or `modelVersion` other than 1 is a PresetError;
+  `toJson()` writes every key. Params are static per preset.
+- **Latency: 50 samples at every sample rate** (two ADAA2 stages, as `pedal.hm`), NAM-trainable.
+- Preset folders: `presets/modeled/hmx/` (4) and `presets/modeled/eye/` (3).
 
 ### Capture (shared by NAM models and IRs)
 

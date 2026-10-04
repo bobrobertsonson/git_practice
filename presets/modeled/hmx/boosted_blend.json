@@ -1,0 +1,48 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Boosted Blend",
+  "notes": "Thicker, more compressed buzz that keeps the pick attack: boost stage on, 35 % clean blend (Throne-Torcher-style); into a mid-gain British amp, TONE3000 86089. Starting hypothesis. Modeled pedal, no capture; the cab slot is the repo identity IR.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hmx",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "level": 6,
+            "low": 7,
+            "lowMid": 6,
+            "highMid": 7,
+            "high": 8,
+            "distortion": 7,
+            "presence": 6,
+            "tightness": 2,
+            "mix": 65,
+            "clip": "silicon",
+            "boost": "on",
+            "lowMidFreq": 4,
+            "highMidFreq": 5
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  }
+}

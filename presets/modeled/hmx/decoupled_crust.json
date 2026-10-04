@@ -1,0 +1,48 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Decoupled Crust",
+  "notes": "D-beat crust with the mids decoupled: 1.2 kHz bark, less low, tight; into a plexi-style amp, TONE3000 76884. Starting hypothesis. Modeled pedal, no capture; the cab slot is the repo identity IR.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hmx",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "level": 1,
+            "low": 5,
+            "lowMid": 4,
+            "highMid": 10,
+            "high": 10,
+            "distortion": 9,
+            "presence": 7,
+            "tightness": 5,
+            "mix": 100,
+            "clip": "silicon",
+            "boost": "off",
+            "lowMidFreq": 5,
+            "highMidFreq": 7
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  }
+}
