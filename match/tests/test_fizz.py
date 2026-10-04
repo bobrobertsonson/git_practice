@@ -154,3 +154,15 @@ def test_fizz_texture_metric_and_pending_rule():
     assert row["id"] == "fizz_texture" and row["status"] == "n/a" and row["valueStatus"] == FIZZ_TEXTURE_PENDING
     approved = {"metrics": {"fizzTexture": {"target": 0.05}}}
     assert fizz_texture_rule(mf, approved)["status"] == "fail" and fizz_texture_rule(ms, approved)["status"] == "pass"
+
+
+def test_explicit_full_mix_channel_without_hf_limit_gets_a_note(tmp_path):
+    mix = tmp_path / "song.wav"
+    _write(mix, np.stack([_guitar(1, n=FS * 3), _guitar(2, n=FS * 3)], 1))
+    hint = "--ref-hf-limit 4500"
+    for ch in ("left", "right", "mid"):
+        ref = load_reference(mix, channel=ch)
+        assert ref.hf_limit_hz is None and any(hint in n and ch in n for n in ref.notes), ref.notes
+    assert not any(hint in n for n in load_reference(mix, channel="mid", hf_limit_hz=4500.0).notes)
+    assert not any(hint in n for n in load_reference(mix, channel="side").notes)
+    assert not any(hint in n for n in load_reference(mix, channel="auto", stems_dir=tmp_path / "none").notes)

@@ -204,6 +204,9 @@ def encode_mp3(wav: Path, mp3: Path, log) -> bool:
         return False
 
 
+HINT_WINDOW_MS = 20.0   # an explicit --offset-ms is trusted: both refinements search only +-20 ms around it
+
+
 def _refine_native(render: np.ndarray, fs: int, ref_path: str, col: int, coarse_ms: float, search_ms: float = 250.0):
     x, rfs = sf.read(ref_path, dtype="float64", always_2d=True)
     if rfs != fs:
@@ -248,6 +251,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     window = None if cfg.window_s is None else (int(cfg.window_s[0] * RATE), int(cfg.window_s[1] * RATE))
     ex = make_excerpt(di48, cfg.excerpt_s, window=window, ref=ref)
     log(f"excerpt {ex.start / RATE:.1f}-{ex.end / RATE:.1f} s ({ex.info})")
+    for note in ref.notes:
+        log(f"reference note: {note}")
     result: dict = {"schema": "sawblade.match_result", "version": 1, "seed": cfg.seed, "budget": cfg.budget,
                     "plan": plan.__dict__, "di": str(cfg.di), "diR": str(cfg.di_r) if cfg.di_r else None,
                     "reference": {"path": ref.path, "basis": ref.basis, "stemChannel": ref.stem_channel,
@@ -266,8 +271,11 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result["starter"] = {"label": "generic starter baseline", "captures": starter_caps}
     y_st, rep_st = eng.render(starter_p, ex.x)
 
+    hint_samples = ref.offset_samples if ref.offset_given else None
+
     def offset_from(y_full_excerpt, label):
-        search = int(0.25 * RATE) if ref.offset_given else int(3.0 * RATE)     # unknown offset: +-3 s, then refined
+        # unknown offset: +-3 s, then refined; given: only +-HINT_WINDOW_MS around the hint
+        search = int(HINT_WINDOW_MS * RATE / 1000) if ref.offset_given else int(3.0 * RATE)
         return refine_offset(ex.trim(y_full_excerpt), ref.matched_sig.astype(np.float64), RATE, ref.offset_samples,
                              start=ex.start, search=search)
 
@@ -415,10 +423,14 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         try:
             y, fs, _ = renders["best_L"]
             col = 0 if ref.matched_channel in ("left", "mono") else 1
-            fin["L"] = _refine_native(y, fs, ref.path, col, 1000.0 * ref.offset_samples / RATE)
+            if hint_samples is not None:      # the user's hint bounds the final search too (+-HINT_WINDOW_MS)
+                hint_ms, win = 1000.0 * hint_samples / RATE, HINT_WINDOW_MS
+            else:
+                hint_ms, win = 1000.0 * ref.offset_samples / RATE, 250.0
+            fin["L"] = _refine_native(y, fs, ref.path, col, hint_ms, win)
             if "best_R" in renders:
                 fin["R"] = _refine_native(renders["best_R"][0], renders["best_R"][1], ref.path, 1,
-                                          fin["L"]["offsetMs"])
+                                          hint_ms if hint_samples is not None else fin["L"]["offsetMs"], win)
             log("final offsets (full-length renders vs mix): " +
                 ", ".join(f"{k} {v['offsetSamples']} smp = {v['offsetMs']:.2f} ms ({v['method']}, fine ratio "
                           f"{v.get('peakRatio', 0):.1f})" for k, v in fin.items()))

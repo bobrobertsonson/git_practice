@@ -83,7 +83,7 @@ def measure(label: str, x48: np.ndarray, targets: dict, mask: np.ndarray | None 
     metrics = {"buzz": {"value": A.buzz_flatness(fr, psd)},
                "lowTightnessMs": tight, "lowDecayDbPerMs": decay,
                "crestFactorDb": {"value": A.crest_factor_db(x48, mask)},
-                   "fizzTexture": A.fizz_texture(x48, mask)}
+               "fizzTexture": A.fizz_texture(x48, mask)}
     return Measured(label, absdb, rel, list(A.NOMINAL_CENTRES), groups, evaluate_rules(groups, targets["rules"]),
                     metrics, nseg, frac, float(mask.sum() / A.ANALYSIS_RATE), warnings,
                     _chunk_spread(x48, mask, targets) if spread else None, source)

@@ -196,6 +196,50 @@ def test_offset_refinement_sample_accurate(true):
     assert r["fineAccepted"]
 
 
+def test_offset_search_window_ignores_a_stronger_decoy_outside_it():
+    """With a +-20 ms window around the hint, a stronger copy 200 ms away is not picked (the cover run chose 176.9 ms over a
+    192.2 ms hint with the default +-250 ms)."""
+    fs = 48000
+    x = _bursts()
+    true, decoy = 9137, 9137 + int(0.2 * fs)
+    ref = np.zeros(len(x) + 40000)
+    ref[true:true + len(x)] += 0.4 * x
+    ref[decoy:decoy + len(x)] += 1.0 * x
+    ref += np.random.default_rng(3).standard_normal(len(ref)) * 0.01
+    wide = offset.refine_offset(x[fs:5 * fs], ref, fs, coarse=9000, start=fs, search=int(0.25 * fs))
+    narrow = offset.refine_offset(x[fs:5 * fs], ref, fs, coarse=9000, start=fs, search=int(0.020 * fs))
+    assert abs(wide["offset"] - decoy) < 50
+    assert narrow["offset"] == true
+
+
+def test_run_match_searches_only_around_an_explicit_offset_hint(tmp_path, monkeypatch):
+    """--offset-ms: the excerpt pass and the final pass both search +-20 ms around the hint; with no hint the wide
+    searches (+-3 s / +-250 ms) are unchanged."""
+    from sawblade_match.matcher import run as R
+    from sawblade_match.matcher.reference import load_reference
+    pool, combo, di, ref = _setup_known(tmp_path, "single")
+    calls = []
+    real = R.refine_offset
+
+    def spy(render, refsig, fs, coarse, start=0, search=None, **kw):
+        calls.append((coarse, search, fs))
+        return real(render, refsig, fs, coarse, start=start, search=search, **kw)
+
+    monkeypatch.setattr(R, "refine_offset", spy)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0})
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=1, excerpt_s=2.0, threads=2, plan=plan,
+                 write_audio=False, refine_offsets=True)
+    res = run_match(cfg, Log())
+    assert len(calls) >= 2 and "error" not in res["offsetRefinement"]["final"]
+    assert all(c[0] == 0 and c[1] == int(0.020 * c[2]) for c in calls), calls
+    # no hint -> wide windows
+    calls.clear()
+    ref2 = load_reference(Path(ref.path), channel="mid", matched="mono", offset_ms=None)
+    run_match(Config(di=di, ref=ref2, pool=pool, out=tmp_path / "out2", seed=1, excerpt_s=2.0, threads=2, plan=plan,
+                     write_audio=False, refine_offsets=True), Log())
+    assert calls[0][1] == 3 * calls[0][2] and calls[-1][1] == int(0.25 * calls[-1][2]), calls
+
+
 def test_offset_phat_corrects_a_skewed_envelope():
     """The reference's envelope is tilted (rising gain ramp inside each burst), which biases the envelope correlation by
     a few ms; the waveform (PHAT) step must land on the true offset and with the right sign (both directions)."""

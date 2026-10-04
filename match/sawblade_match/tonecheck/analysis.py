@@ -164,34 +164,84 @@ def di_noise_floor_db(di: np.ndarray, fs: int) -> float:
     return float(np.percentile(rms_db, 5))
 
 
-def gap_noise_db(out: np.ndarray, di: np.ndarray | None, fs: int) -> dict:
-    """Output RMS in the DI's gap frames relative to the output's active RMS.
+GAP_FRAME_S = 0.010      # short-term RMS frame for gap detection
+GAP_MIN_S = 0.120        # a gap is a DI region below floor + GAP_MARGIN_DB for at least this long
+GAP_SKIP_S = 0.050       # the first part of each gap is ignored (ringing tail)
+GAP_MARGIN_DB = 6.0
+GAP_MIN_TOTAL_S = 1.0    # less real silence than this in total -> rule n/a
 
-    Gap frames: 50 ms frames where the DI level is within 6 dB of its own noise floor (5th-percentile
-    frame level). Value None with a reason when there is no DI, when fewer than 1 % of frames qualify
-    ("no gaps"), or when the floor is within 10 dB of the median active DI frame ("no clear gaps": a steady
-    DI has no real gaps to measure). Output and DI
-    are compared frame by frame (render output has the DI's length, advanced by the chain latency)."""
+
+def _ms_frames_db(x: np.ndarray, n: int) -> np.ndarray:
+    nf = len(x) // n
+    fr = x[: nf * n].reshape(nf, n)
+    return _db(np.mean(fr * fr, axis=1))
+
+
+def gap_regions(di: np.ndarray, fs: int, floor_db: float | None = None) -> tuple[list[tuple[int, int]], float]:
+    """Real-silence regions of the DI as (start, stop) sample indices, and the floor used.
+
+    A region is a run of 10 ms frames whose RMS stays below ``floor + 6 dB`` (floor: the DI noise floor, 5th-percentile
+    50 ms frame level) for at least 120 ms; the first 50 ms of each region are skipped (ringing tail)."""
+    n = int(round(GAP_FRAME_S * fs))
+    floor = di_noise_floor_db(di, fs) if floor_db is None else floor_db
+    quiet = _ms_frames_db(di, n) <= floor + GAP_MARGIN_DB
+    min_f, skip_f = int(round(GAP_MIN_S / GAP_FRAME_S)), int(round(GAP_SKIP_S / GAP_FRAME_S))
+    regions: list[tuple[int, int]] = []
+    i, nf = 0, len(quiet)
+    while i < nf:
+        if not quiet[i]:
+            i += 1
+            continue
+        j = i
+        while j < nf and quiet[j]:
+            j += 1
+        if j - i >= min_f:
+            regions.append(((i + skip_f) * n, j * n))
+        i = j
+    return regions, floor
+
+
+def gap_noise_db(out: np.ndarray, di: np.ndarray | None, fs: int) -> dict:
+    """Output RMS in the DI's real-silence gaps relative to the output RMS over its playing frames.
+
+    Gaps: DI regions whose 10 ms RMS stays below (DI noise floor + 6 dB) for >= 120 ms, minus the first 50 ms of each
+    (see ``gap_regions``). Value None with a reason when there is no DI, when the gaps total less than 1 s
+    ("no gaps"), or when the floor is within 10 dB of the median active DI frame ("no clear gaps": a steady DI has no real
+    gaps). Also reports ``gapCount`` and ``gapTotalS``. Output and DI are compared sample-aligned (the render has the DI's
+    length, advanced by the chain latency)."""
     if di is None:
-        return {"value": None, "reason": "no DI supplied (gap frames are located on the DI)"}
+        return {"value": None, "reason": "no DI supplied (gaps are located on the DI)"}
     n = min(len(out), len(di))
     out, di = out[:n], di[:n]
-    di_db, _ = frame_rms_db(di, fs)
-    out_db, _ = frame_rms_db(out, fs)
-    floor = float(np.percentile(di_db, 5))
-    gaps = di_db <= floor + 6.0
-    res = {"diNoiseFloorDb": floor, "gapFrameFraction": float(gaps.mean())}
-    if gaps.mean() < 0.01:
+    regions, floor = gap_regions(di, fs)
+    total = sum(b - a for a, b in regions) / fs
+    res = {"diNoiseFloorDb": floor, "gapCount": len(regions), "gapTotalS": float(total)}
+    if total < GAP_MIN_TOTAL_S:
         return {**res, "value": None, "reason": "no gaps"}
+    di_db, _ = frame_rms_db(di, fs)
     _, di_active, _ = activity_mask(di, fs)
     median_active = float(np.median(di_db[di_active]))
     res["diMedianActiveDb"] = median_active
     if median_active - floor < 10.0:
         return {**res, "value": None, "reason": "no clear gaps"}
+    gap_ms = sum(float(np.sum(out[a:b] ** 2)) for a, b in regions) / sum(b - a for a, b in regions)
+    out_db, _ = frame_rms_db(out, fs)
+    _, active, _ = activity_mask(out, fs)
+    act = _db(np.mean(10 ** (out_db[active] / 10.0)))
+    return {**res, "value": float(_db(gap_ms) - act)}
+
+
+def gap_noise_legacy_db(out: np.ndarray, di: np.ndarray, fs: int) -> dict:
+    """The pre-3.6 definition (quietest-5 % + 6 dB DI frames, 50 ms), kept only to compare with ``gap_noise_db``."""
+    n = min(len(out), len(di))
+    out, di = out[:n], di[:n]
+    di_db, _ = frame_rms_db(di, fs)
+    out_db, _ = frame_rms_db(out, fs)
+    gaps = di_db <= float(np.percentile(di_db, 5)) + 6.0
     _, active, _ = activity_mask(out, fs)
     gap = _db(np.mean(10 ** (out_db[gaps] / 10.0)))
     act = _db(np.mean(10 ** (out_db[active] / 10.0)))
-    return {**res, "value": float(gap - act)}
+    return {"value": float(gap - act), "gapCount": None, "gapTotalS": float(gaps.sum() * FRAME_S)}
 
 
 # --- EBU R128 loudness range ---------------------------------------------------------------------

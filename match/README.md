@@ -111,10 +111,12 @@ A-weighted error = sqrt(sum(w d^2)/sum(w)), w = 10^(A(fc)/10), bands 80 Hz-8 kHz
 (no random processes).
 
 Addenda: `--ref`/`--ref-channel` repeat (one channel value for all refs, or one per ref); `report.json`
-has a `references` list and `report.png` one overlay + difference panel per ref. `gapNoiseDb` is measured on
-the DI's gap frames (50 ms frames within 6 dB of the DI's 5th-percentile level), output RMS there relative to
-active output RMS; null / rule status `n/a` when fewer than 1 % of frames qualify or no DI is given;
-`diNoiseFloorDb` reports that floor (dBFS) for gate calibration. `lowDecayDbPerMs` is the regression slope
+has a `references` list and `report.png` one overlay + difference panel per ref. `gapNoiseDb` is measured in the DI's
+real silences (phase 3.6): regions where the DI's 10 ms RMS stays below its noise floor + 6 dB (floor: 5th-percentile 50 ms
+frame level) for at least 120 ms, ignoring the first 50 ms of each so a ringing tail is not counted; the value is the output
+RMS in those regions minus the output RMS over its playing frames, and `gapCount` / `gapTotalS` are reported. Null / rule
+status `n/a` when the gaps total less than 1 s or no DI is given (the earlier "quietest 5 % + 6 dB" frames were mostly palm
+mutes and ring tails, which a gate never closes on). `diNoiseFloorDb` reports that floor (dBFS) for gate calibration. `lowDecayDbPerMs` is the regression slope
 (dB/ms) of the 80-160 Hz envelope over [peak+5 ms, min(peak+35 ms, next onset)] (>= 15 ms, else censored); the
 causal band-pass transient makes it read ~10-25 % shallower than the true decay, so compare presets, not
 absolute values.
@@ -222,10 +224,11 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   segments. `result.json -> reference` records `basis`, `stemChannel`, `bandLimitHz`, `textureTerm`, and the loss breakdown has `tex`.
   Stage 2 also searches a post-EQ high shelf (3-7 kHz, -8..0 dB) and a post-EQ low-pass (5-12 kHz, 12 dB/oct; 12 kHz = off).
   `sawblade-tonecheck` reports `fizz_texture` (flatness 5-10 kHz ceiling; value **pending lead approval**, reported as n/a until
-  `metrics.fizzTexture.target` is set in the targets file) and the `fizzTexture` metric. The old side-channel (+3 dB) basis is
-  otherwise unchanged. (`--ref-channel` previously preferred the stem as the mean of its channels.) `--matched left` makes the reference a time-aligned pair
+  `metrics.fizzTexture.target` is set in the targets file) and the `fizzTexture` metric. The side-channel (+3 dB) basis is the
+  fallback described above, otherwise unchanged. An explicit full-mix `left`/`right`/`mid` channel gets no HF limit, and the run
+  notes and logs a suggestion to pass `--ref-hf-limit 4500`. `--matched left` makes the reference a time-aligned pair
   with the DI (STFT term against that mix channel, LTAS target = matching side segment). The DI->reference offset is searched
-  within +-3 s (or +-250 ms around `--offset-ms`) and refined (about +-1 ms; distorted renders vs a mix are not sample-exact).
+  within +-3 s (or only +-20 ms around `--offset-ms`, in both the excerpt and the final refinement) and refined (about +-1 ms; distorted renders vs a mix are not sample-exact).
 * **Stage 1** (one guitar-dominant 6 s excerpt): every (pedal-or-none, amp) pair is rendered once through the C++ core; because
   the chain after the NAMs is linear, every pair x pair blend is scored from band cross-spectra without another render, singles
   directly; two-pedal chains use the pre-screened top pedals/amps. Top candidates per topology are re-scored with the full loss

@@ -248,7 +248,7 @@ def test_end_to_end_fixtures(tmp_path):
     rep = json.loads((tmp_path / "report.json").read_text())
     assert rep["tonerender"]["renderRate"] > 0
     assert len(rep["rules"]) == len(TARGETS["rules"]) + 2          # + gap_noise + fizz_texture (phase 3.4)
-    assert all(r["status"] in ("pass", "marginal", "fail") for r in rep["rules"] if r["id"] != "fizz_texture")
+    assert all(r["status"] in ("pass", "marginal", "fail") for r in rep["rules"] if r["id"] not in ("fizz_texture", "gap_noise"))   # gap_noise: n/a when the DI has < 1 s of real silence
     fz = [r for r in rep["rules"] if r["id"] == "fizz_texture"][0]
     assert fz["status"] == "n/a" and fz["valueStatus"] == "pending lead approval" and fz["value"] is not None
     assert (tmp_path / "report.png").exists() and (tmp_path / "render.wav").exists()
@@ -277,7 +277,7 @@ def test_gap_noise_from_di_robust_and_na():
     assert A.gap_noise_db(out, None, FS)["value"] is None
     # steady DI: no frame can be < ... all frames equal -> everything within 6 dB (not "no gaps"); a DI
     # whose quietest 5 % are far below the rest still yields a measurable gap set
-    assert g["gapFrameFraction"] >= 0.01
+    assert g["gapCount"] == 10 and g["gapTotalS"] > 8.0
 
 
 def test_gap_noise_rule_na(tmp_path):
@@ -494,15 +494,38 @@ def test_summarize_mixes():
     assert s("n/a", "pass")["overall"] == "pass" and s("n/a")["overall"] == "pass"
 
 
-def test_gap_frames_exclude_frames_just_above_floor():
-    # DI frame levels: 10 at -60 (floor), 10 at -52 (8 dB above: not gaps), 80 at -20
-    di = _frames_signal([-60.0] * 10 + [-52.0] * 10 + [-20.0] * 80)
-    out = _frames_signal([-80.0] * 10 + [-30.0] * 10 + [-10.0] * 80)
+def _gap_case(di_runs):
+    """DI/output from runs of (n_frames, di_level, out_level, out_level_first_frame) in 50 ms frames."""
+    di, out = [], []
+    for nfr, dl, ol, first in di_runs:
+        di += [dl] * nfr
+        out += [first] + [ol] * (nfr - 1)
+    return _frames_signal(di), _frames_signal(out)
+
+
+def test_gap_regions_real_silence_only():
+    di, out = _gap_case([(20, -20.0, -10.0, -10.0),
+                         (40, -60.0, -80.0, -45.0),     # 2.0 s real gap (first 50 ms = ringing tail, output -45)
+                         (20, -20.0, -10.0, -10.0),
+                         (10, -52.0, -10.0, -10.0),     # 8 dB above the floor: quiet playing, not a gap
+                         (20, -20.0, -10.0, -10.0),
+                         (2, -60.0, -80.0, -45.0),      # 100 ms < 120 ms: not a gap
+                         (20, -20.0, -10.0, -10.0),
+                         (3, -60.0, -80.0, -45.0),      # 150 ms: a gap, 100 ms after the skip
+                         (20, -20.0, -10.0, -10.0)])
     g = A.gap_noise_db(out, di, FS)
-    act = 10 * np.log10((10 * 1e-3 + 80 * 1e-1) / 90)  # output frames within 30 dB of its p95 (-10)
     assert g["diNoiseFloorDb"] == pytest.approx(-60.0, abs=0.01)
-    assert g["gapFrameFraction"] == pytest.approx(0.10)
-    assert g["value"] == pytest.approx(-80.0 - act, abs=0.05)
+    assert g["gapCount"] == 2
+    assert g["gapTotalS"] == pytest.approx(1.95 + 0.10, abs=0.01)
+    assert g["value"] == pytest.approx(-80.0 + 10.0, abs=0.05)    # tail frames (-45) are skipped
+    leg = A.gap_noise_legacy_db(out, di, FS)
+    assert leg["value"] > g["value"]                               # the old definition counted tails
+
+
+def test_gap_noise_na_below_one_second_of_gaps():
+    di, out = _gap_case([(40, -20.0, -10.0, -10.0), (10, -60.0, -80.0, -80.0), (40, -20.0, -10.0, -10.0)])
+    g = A.gap_noise_db(out, di, FS)       # 0.5 s of silence (0.45 s after the skip)
+    assert g["value"] is None and g["reason"] == "no gaps" and g["gapCount"] == 1
 
 
 def test_gap_noise_null_for_steady_di():

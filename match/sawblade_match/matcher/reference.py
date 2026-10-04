@@ -102,6 +102,9 @@ def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path |
         if lim is not None:
             notes.append(f"full-mix reference ({basis}): LTAS above {lim:g} Hz is a one-sided ceiling (render may be "
                          "darker, never brighter); cymbals dominate there")
+        elif channel in ("left", "right", "mid") and not auto_fallback:
+            notes.append(f"explicit full-mix channel '{channel}' has no HF limit: cymbals/hats in the mix will pull the "
+                         "5-10 kHz fit brighter; consider --ref-hf-limit 4500")
     if matched:
         col = {"left": 0, "right": 1, "mono": 0}[matched]
         ref.matched_sig = to48(x[:, min(col, x.shape[1] - 1)], fs)
