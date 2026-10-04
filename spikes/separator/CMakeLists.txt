@@ -1,6 +1,8 @@
 # Phase 5.0 spike (docs/specs/phase5_0_separator_spike.md). Only added with
 # -DSAWBLADE_BUILD_SEPARATOR_SPIKE=ON. Nothing here is linked into core/, cli/ or the plugin.
 option(SAWBLADE_SEPARATOR_NATIVE "Compile demucs.cpp with -march=native (not shippable)" ON)
+# Explicit -march value (e.g. x86-64-v3 = AVX2/FMA, a realistic shippable baseline). Overrides NATIVE.
+set(SAWBLADE_SEPARATOR_ARCH "" CACHE STRING "-march value for demucs.cpp and the driver (empty: use NATIVE)")
 option(SAWBLADE_SEPARATOR_OPENMP "Build demucs.cpp with OpenMP (Eigen GEMM threading)" ON)
 
 # demucs.cpp pinned to the spec's commit. Its git submodules (eigen, demucs, libnyquist,
@@ -23,7 +25,9 @@ target_compile_features(demucs_cpp_lib PUBLIC cxx_std_17)
 # Same arithmetic flags as upstream's Release build, minus -Ofast's blanket unsafe-math
 # (upstream passes -Ofast -fno-unsafe-math-optimizations -freciprocal-math -fno-signed-zeros).
 target_compile_options(demucs_cpp_lib PRIVATE -w -O3 -DNDEBUG -freciprocal-math -fno-signed-zeros)
-if(SAWBLADE_SEPARATOR_NATIVE)
+if(SAWBLADE_SEPARATOR_ARCH)
+  target_compile_options(demucs_cpp_lib PUBLIC -march=${SAWBLADE_SEPARATOR_ARCH})
+elseif(SAWBLADE_SEPARATOR_NATIVE)
   # PUBLIC on purpose: Eigen's alignment (EIGEN_MAX_ALIGN_BYTES) follows -march, and the driver
   # constructs demucs_model, so every TU that sees Eigen types must use the same flags
   # (a mismatch heap-corrupts in the first GEMM).

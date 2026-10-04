@@ -21,7 +21,7 @@ cmake --build ~/sawblade-sep-data/build-spike --target separator_spike
 ```
 
 Spike-only CMake options: `SAWBLADE_SEPARATOR_NATIVE` (default ON, `-march=native`; **not shippable**,
-use `-DSAWBLADE_SEPARATOR_NATIVE=OFF` for a portable build) and `SAWBLADE_SEPARATOR_OPENMP` (default ON).
+`-DSAWBLADE_SEPARATOR_NATIVE=OFF` for a no-`-march` build), `SAWBLADE_SEPARATOR_ARCH` (e.g. `x86-64-v3`, overrides NATIVE) and `SAWBLADE_SEPARATOR_OPENMP` (default ON).
 Eigen's alignment depends on `-march`, so the flag is PUBLIC on `demucs_cpp_lib`; every TU that sees
 Eigen types must match or the first GEMM heap-corrupts.
 
@@ -30,7 +30,8 @@ Eigen types must match or the first GEMM heap-corrupts.
 ```
 python3 -m venv ~/.venvs/sawblade-demucs
 ~/.venvs/sawblade-demucs/bin/pip install demucs==4.0.1 torch==2.5.1 torchaudio==2.5.1 \
-    -c match/constraints-separation.txt museval soundfile numpy scipy
+    -c match/constraints-separation.txt museval==0.4.1 musdb==0.4.3 stempeg==0.2.6 \
+    soundfile==0.14.0 numpy==2.4.6 scipy==1.17.1
 spikes/separator/scripts/fetch_weights.sh      # checkpoints (dl.fbaipublicfiles.com), sha256, ggml convert
 spikes/separator/scripts/fetch_material.sh     # test material (git clone of sigsep-mus-eval + synthetic)
 ```

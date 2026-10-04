@@ -6,7 +6,7 @@ Measured on the dev box on 2026-10-04. Everything here was produced by the scrip
 ## TL;DR
 
 - demucs.cpp (pinned `f1206e9a`) **reproduces Python Demucs**: with Python forced to the same settings the
-  residual is **-48 to -72 dB on every stem except one low-level stem at -38 dB** (see the null section). With
+  residual is **-48 to -72 dB on every stem except one at -38 dB (synth 6s `other`, see the null section)** (see the null section). With
   the spec's `shifts=0` Python the residual is only about -16 to -28 dB (worse on low-level stems) because of two
   behaviours of demucs.cpp that differ from Python (below). Neither costs much SDR: on the real clip C++ and
   Python agree to within 0.3 dB (0.03 dB when the shift is matched).
@@ -14,7 +14,11 @@ Measured on the dev box on 2026-10-04. Everything here was produced by the scrip
   (AVX-512): 261 s of compute per minute of audio on 1 thread, 241 s at 4 OpenMP threads (RTF 4.0). Its own
   song-splitting `demucs_mt` path gets 85 s/min on 4 cores but is a different, slightly worse algorithm
   (0 to 1.6 dB lower SDR) and uses 6 GB RAM. Python/torch CPU does 20 s/min (4 threads) and 64 s/min (1 thread).
-  A portable (no `-march=native`) build is 1.5 to 3.7x slower again (4-source model: 978 s/min on 1 thread).
+  Shippable-baseline builds are slower again: `-march=x86-64-v3` (AVX2/FMA) is 262 s/min (6s) and 574 s/min (4s)
+  on 1 thread; plain no-`-march` is 359 s/min (6s) and 978 s/min (4s, **an outlier**, see below). The 4s slowness
+  in non-native builds is **denormal floats in the 4-source model's GEMMs**: setting flush-to-zero/denormals-are-zero
+  (`separator_spike --ftz`) cut the 6.8 s clip from 165 s to 69 s (no-`-march`) and from 102 s to 49 s (v3), and
+  does nothing for 6s. Not yet re-timed on the 70 s loop with `--ftz`.
 - Weights: **no separate weights licence is stated**; repo is MIT; trained on MUSDB18-HQ (academic use only) +
   800 extra songs. Fine for personal non-commercial use; needs re-clearing for anything commercial or
   redistributed. See `docs/THIRD_PARTY.md`.
@@ -273,8 +277,9 @@ comparison.
 
 Caveats on the nulls: the `other` stem of the 6s model on the real clip is almost silent (the model puts the
 guitar-like energy in `guitar`), so its residuals are at a very low absolute level (max abs diff 1e-5 to 1e-3).
-The remaining weak cell, `synth` 6s `other` at -38 dB, is a low-energy stem (the model got it wrong by 3.4 dB
-SDR); max abs diff 8e-3. Not investigated further.
+The remaining weak cell, `synth` 6s `other` at -38 dB, is not a quiet stem (rms -22.3 dBFS, as loud as bass at
+-23.4; the guitar and piano stems are -42.8): the model is unsure on this synthetic material (its SDR is only
+3.7 dB), so tiny numeric differences are amplified; likely cause, not proven. Max abs diff 8e-3.
 
 ### demucs.cpp `demucs_mt` split mode quality (4 workers; 4-source model)
 
@@ -312,8 +317,27 @@ shippable**); "portable" = no `-march`. Python: demucs 4.0.1 / torch 2.5.1 CPU, 
 Short-clip single runs for reference (6.8 s real clip, C++ native): 46.3 s at 1 thread, 43.3 s (4s) and 43.0 s
 (6s) at 4 threads, RTF 6.3 to 6.8 (the clip is one 7.8 s-padded segment plus a short one, so RTF is worse than the long-file RTF).
 
-Unexplained: the portable 1-thread 4-source run (978 s/min) is 3.7x slower than native while the 6-source one
-is 1.5x slower; both reps agree. Not investigated.
+`x86-64-v3` rows (`-DSAWBLADE_SEPARATOR_ARCH=x86-64-v3`, 2 runs each, same 70 s loop, same box):
+
+| config | runs | load s | separation s for 70 s audio (per run) | s per min of audio (median) | RTF | peak RSS MB |
+|---|---|---|---|---|---|---|
+| v3-single m=4s threads=1 | 2 | 0.32 | 670.4, 668.4 | 573.7 | 9.56 | 2113 |
+| v3-single m=4s threads=4 | 2 | 0.32 | 379.4, 379.5 | 325.2 | 5.42 | 2914 |
+| v3-split m=4s 4 workers | 2 | 0.31 | 219.0, 214.3 | 185.7 | 3.09 | 5448 |
+| v3-single m=6s threads=1 | 2 | 0.16 | 307.4, 305.5 | 262.7 | 4.38 | 2155 |
+| v3-single m=6s threads=4 | 2 | 0.16 | 269.0, 267.6 | 230.0 | 3.83 | 2929 |
+| v3-split m=6s 4 workers | 2 | 0.16 | 103.5, 102.6 | 88.3 | 1.47 | 5896 |
+
+Why is the 4-source model 2.7x slower than 6s in non-native builds (978 vs 359 s/min no-`-march`; 574 vs 263
+v3)? No `perf` on this box, so I sampled with gdb (24 stack samples per run, 6.8 s clip, no-`-march`, 1 thread):
+4s: 22 of 24 samples innermost in `Eigen::internal::gebp_kernel` (GEMM), all under
+`demucscpp::common_encoder_layer` (the cross-transformer); 6s: 10 of 24 in `gebp_kernel`, the rest spread over
+`apply_dconv`, decoders, `memset`, `erff`. Same layer, so it is data-dependent: a diagnostic `--ftz` switch
+(MXCSR flush-to-zero + denormals-are-zero) made 4s no-`-march` 165 s -> 69 s and 4s v3 102 s -> 49 s, and
+left 6s unchanged (64 s either way). So **denormals in the 4-source model's transformer GEMMs are the main
+cause**. Not explained: why `-march=native` (AVX-512) 4s does not show it (45 s on the same clip), and the
+remaining gap 69 s vs 45 s. For 5.1: set FTZ/DAZ on every inference thread (it is one line, but OpenMP/worker
+threads each need it), or flush tiny weights/activations; the numbers above are without it.
 
 For scale, a 4-minute song: Python 4 threads about 1.4 min (4s) / 1.1 min (6s); C++ native single 4 threads
 about 16 min; C++ native split 4 workers about 5.6 min; C++ portable split 4 workers 20 min (4s) / 7.6 min (6s).

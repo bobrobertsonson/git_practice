@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Produce every stem set the evaluation needs (C++ 1 thread; Python shifts=0 and shift=4033), outside the repo.
+# Produce every stem set the evaluation needs (C++ with THREADS threads, default 4; Python shifts=0 and shift=4033), outside the repo.
 set -euo pipefail
 DATA="${SAWBLADE_SEP_DATA:-$HOME/sawblade-sep-data}"
 CACHE="${SAWBLADE_SEP_CACHE:-$HOME/.cache/sawblade/separator}"

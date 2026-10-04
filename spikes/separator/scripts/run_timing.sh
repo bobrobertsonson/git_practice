@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Speed / memory runs on the 70 s looped mixture (timing only). Raw RESULT lines go to $DATA/timing.log.
 # Run on an otherwise idle machine. Stems are written to a scratch dir and discarded.
-# usage: run_timing.sh [portable-binary]   (portable = build with -DSAWBLADE_SEPARATOR_NATIVE=OFF)
+# usage: run_timing.sh [portable-binary [x86-64-v3-binary]]   (portable = build with -DSAWBLADE_SEPARATOR_NATIVE=OFF)
 set -uo pipefail
 DATA="${SAWBLADE_SEP_DATA:-$HOME/sawblade-sep-data}"
 CACHE="${SAWBLADE_SEP_CACHE:-$HOME/.cache/sawblade/separator}"
@@ -38,6 +38,14 @@ if [ -x "$PORT" ]; then
   for m in 4s 6s; do
     run_cpp portable-single "$PORT" $m single 1 2
     run_cpp portable-split  "$PORT" $m split 4 3
+  done
+fi
+V3="${2:-$DATA/build-v3/spikes/separator/separator_spike}"   # built with -DSAWBLADE_SEPARATOR_ARCH=x86-64-v3
+if [ -x "$V3" ]; then
+  for m in 4s 6s; do
+    run_cpp v3-single "$V3" $m single 1 2
+    run_cpp v3-single "$V3" $m single 4 2
+    run_cpp v3-split  "$V3" $m split 4 2
   done
 fi
 echo ALLDONE | tee -a "$LOG"

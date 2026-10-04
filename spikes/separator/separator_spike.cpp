@@ -12,6 +12,9 @@
 #include <string>
 #include <vector>
 
+#include <xmmintrin.h>
+#include <pmmintrin.h>
+
 #include <Eigen/Core>
 #include <dr_wav.h>
 
@@ -54,7 +57,8 @@ void writeStereoFloat32(const fs::path& path, const Eigen::Tensor3dXf& t, int so
 void usage() {
   std::fprintf(stderr,
                "usage: separator_spike --model <ggml.bin> --in <mix.wav> --out-dir <dir>\n"
-               "                       [--threads N] [--mode single|split]\n"
+               "                       [--threads N] [--mode single|split] [--ftz]\n"
+               "  --ftz         set flush-to-zero / denormals-are-zero on the calling thread (diagnostic)\n"
                "  --threads N   OpenMP/Eigen GEMM threads (single) or song-split workers (split)\n"
                "  --mode single (default) library demucs_inference(): the real 7.8 s/25%% overlap\n"
                "                pipeline, one segment at a time\n"
@@ -66,6 +70,7 @@ void usage() {
 
 int main(int argc, char** argv) {
   std::string model, in, outDir, mode = "single";
+  bool ftz = false;
   int threads = 1;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -78,6 +83,7 @@ int main(int argc, char** argv) {
     else if (a == "--out-dir") outDir = next();
     else if (a == "--threads") threads = std::atoi(next().c_str());
     else if (a == "--mode") mode = next();
+    else if (a == "--ftz") ftz = true;
     else { usage(); return 2; }
   }
   if (model.empty() || in.empty() || outDir.empty() || threads < 1 || (mode != "single" && mode != "split")) {
@@ -85,6 +91,10 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  if (ftz) {
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+  }
   try {
     const sawblade::AudioFile wav = sawblade::readWav(in);
     if (wav.sampleRate != 44100.0 || wav.channels != 2) {
