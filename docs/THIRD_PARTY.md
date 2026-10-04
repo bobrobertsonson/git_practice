@@ -102,6 +102,23 @@ the tests. Measured results and the "what does this mean for 5.1" notes are in `
 | Demucs (facebookresearch/demucs) | `demucs==4.0.1` from PyPI (dev venv only: reference runs, ggml conversion script needs `demucs.pretrained.get_model`) | MIT, "Copyright (c) Meta Platforms, Inc. and affiliates." (`LICENSE` in the repo; README: "Demucs is released under the MIT license as found in the LICENSE file."). The repo README states it is no longer maintained by its author (fork: adefossez/demucs). | Python reference + the model architecture that demucs.cpp re-implements. Never shipped. |
 | torch 2.5.1, torchaudio 2.5.1, numpy, scipy, soundfile, museval 0.4.1, musdb 0.4.3, stempeg | pinned by `match/constraints-separation.txt` where listed there; museval / musdb / stempeg are evaluation-only | torch BSD-3-Clause (wheel bundles NVIDIA CUDA libs under their own licences; CPU only here), others BSD / MIT (museval and musdb: MIT per the sigsep repos' `LICENSE`) | Spike venv (`~/.venvs/sawblade-demucs`, outside the repo). Never shipped. |
 
+### Phase 5.1a additions (engine bake-off; `spikes/separator/`, spec `docs/specs/phase5_1a_separator_engine.md`)
+
+All behind OFF-by-default options (`SAWBLADE_SEPARATOR_BLAS`, `SAWBLADE_BUILD_SEPARATOR_ONNX`, both only
+meaningful with `SAWBLADE_BUILD_SEPARATOR_SPIKE=ON`). With the spike option OFF none of this is fetched, built or linked.
+
+| Name | Version / pin | License | Use |
+|------|---------------|---------|-----|
+| demucs.cpp patch (`spikes/separator/patches/demucscpp-f1206e9a-sawblade.patch`) | against `f1206e9a` (above) | Our changes to MIT code; the patched files keep the upstream MIT notice | Shift fixed 0, Python-compatible context padding, cancel flag, FTZ/DAZ, no stdout/stderr. Applied by CMake (`patches/apply_patch.cmake`) to the FetchContent checkout, so the diff is reviewable in our repo. |
+| OpenBLAS | Ubuntu 24.04 apt `libopenblas-dev` / `libopenblas0-openmp` / `libopenblas0-pthread` `0.3.26+ds-1ubuntu0.1` | BSD-3-Clause ("Copyright 2011-2023 The OpenBLAS Project", plus UT Austin 2009-2010 and others; from the package's `/usr/share/doc/libopenblas0-pthread/copyright`) | `EIGEN_USE_BLAS` GEMM backend for candidate (a), spike option `SAWBLADE_SEPARATOR_BLAS`. A system package, dynamically linked, not bundled. The OpenMP variant is linked by explicit path so its workers are libgomp threads. macOS would use Accelerate instead (system framework). |
+| ONNX Runtime (microsoft/onnxruntime) | `1.30.0` (git `f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7`), official tarball `https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-linux-x64-1.30.0.tgz`, sha256 `a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd` (11,306,877 bytes), pinned by `URL_HASH` in `spikes/separator/CMakeLists.txt` | MIT, "Copyright (c) Microsoft Corporation" (the tarball's `LICENSE`). The tarball also ships `ThirdPartyNotices.txt` (6,369 lines: protobuf, Eigen, Microsoft GSL, HowardHinnant/date, google/re2 and others, each under its own licence); it must accompany any redistributed binary. | Candidate (b): CPU execution provider, `libonnxruntime.so` loaded by `separator_onnx`. The official macOS arm64 tarball of the same version is the one that ships the CoreML EP (not built or tested here). |
+| PFFFT | the project's existing pin (above) | BSD-style | The STFT/iSTFT of `separator_onnx` (4096-point real FFT). No new FFT library. |
+| `onnx` 1.23.1, `onnxruntime` 1.30.0 (Python wheels) | exact pins in the venv (`pip install onnx==1.23.1 onnxruntime==1.30.0`) | `onnx`: Apache-2.0 (`License-Expression` in its wheel metadata). `onnxruntime`: MIT (wheel metadata). | Export checking and ORT-vs-torch verification in `scripts/export_onnx.py`. Dev venv only, never shipped. |
+| sevagh/demucs.onnx | not used | n/a | Nothing was read or copied from it; `scripts/export_onnx.py` is our own wrapper around demucs 4.0.1's `HTDemucs.forward`. |
+
+The exported `*.onnx` files (`~/.cache/sawblade/separator/onnx/`) are derivative weights: same treatment as the
+ggml files (never committed, never redistributed; `.gitignore` covers `*.onnx`, `*.ort`, `*.tgz`).
+
 ### Model weights (downloaded, never committed, never redistributed)
 
 | File | Source | Licence statement found |

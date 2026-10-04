@@ -10,3 +10,6 @@
 *.npz
 out/
 data/
+*.onnx
+*.ort
+*.tgz
