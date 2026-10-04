@@ -87,6 +87,17 @@ struct ChainInfo {
   std::vector<std::string> warnings;
 };
 
+struct LiveEqBand {
+  double freq = 0.0, gainDb = 0.0, q = 0.0;  // freq 0 = no band at that index
+  bool operator==(const LiveEqBand&) const = default;
+};
+using LiveEq = std::array<LiveEqBand, ParametricEq::kMaxBands>;
+
+struct LiveBlock {
+  double inputGainDb = 0.0, outputGainDb = 0.0;
+  bool operator==(const LiveBlock&) const = default;
+};
+
 // The continuous controls that can change while the chain runs, without rebuilding it (the
 // plugin's parameters). Defaults come from the preset (LiveParams::fromPreset).
 struct LiveParams {
@@ -96,8 +107,15 @@ struct LiveParams {
   double blend = 0.5;              // 0 = path A only, 1 = path B only
   double levelDbA = 0.0;
   double levelDbB = 0.0;
-  // Gain (dB) of each band of the preset's postEq, by band index (gain-less bands ignore it).
-  std::array<double, ParametricEq::kMaxBands> postEqGainDb{};
+  // Live design of each band of the post EQ and of each path's pre / path EQ, by band index
+  // (freq 0 = no band at that index; pass bands ignore gainDb; changing a band's type, enabled flag
+  // or the number of bands is structural and not live). [0] = path A, [1] = path B.
+  LiveEq postEq{};
+  std::array<LiveEq, 2> preEq{}, pathEq{};
+  // Input / output gain of each block (by block index; `nam` blocks only, others ignore it).
+  std::array<std::array<LiveBlock, kMaxBlocksPerPath>, 2> blocks{};
+  // Monitoring (not preset state): ramp the path's level to silence and back.
+  bool muteA = false, muteB = false;
 
   static LiveParams fromPreset(const Preset& p);
   bool operator==(const LiveParams&) const = default;
@@ -115,7 +133,9 @@ struct LiveParams {
 //
 // Live parameters: setLiveParams() changes the LiveParams controls in place (no model reload, no
 // allocation). Gains and the blend are smoothed with sample-accurate linear ramps over
-// kLiveRampMs; post-EQ band gains ramp in dB, redesigning the band every kEqSubBlock samples.
+// kLiveRampMs; EQ bands (post, and each path's pre / path EQ) ramp gain in dB, freq in log2(Hz)
+// and Q in log, redesigning the band every kEqSubBlock samples on an absolute sample grid; block
+// input / output gains ramp linearly; a mute ramps the path level to 0 and back.
 // The gate threshold moves immediately (it is a state-machine threshold, not an audio gain).
 // The alignment (resolved at prepare()) is not re-resolved when levels change.
 //
@@ -141,7 +161,7 @@ class Chain {
   static constexpr double kLiveRampMs = 20.0;
   static constexpr int kEqSubBlock = 32;
   // RT-safe. Only changed fields act, so calling this every block with the same values is cheap.
-  void setLiveParams(const LiveParams& p) noexcept;
+  void setLiveParams(const LiveParams& p) noexcept;  // invalid (non-finite / out-of-range) fields are ignored
   const LiveParams& liveParams() const noexcept { return live_; }
 
   // Measures the alignment with the deterministic probe (see chain.cpp for the exact recipe),
@@ -170,10 +190,28 @@ class Chain {
     int alignDelay = 0;
   };
 
+  struct Ramp1 {
+    double cur = 0.0, target = 0.0, step = 0.0;
+    int remaining = 0;  // samples
+  };
+  struct BandRamp {
+    Ramp1 gain, logF, logQ;
+    double gNow = 0.0, fNow = 0.0, qNow = 0.0;  // current values while any dimension ramps
+    double fTarget = 0.0, qTarget = 0.0;         // linear targets (a finished ramp lands exactly on them)
+    bool shape = false;                          // freq or Q ramped since the band became active
+    bool active() const noexcept { return gain.remaining > 0 || logF.remaining > 0 || logQ.remaining > 0; }
+  };
+  struct EqRamps {
+    std::array<BandRamp, ParametricEq::kMaxBands> band{};
+    int active = 0;  // bands with a running ramp
+  };
+
   void processChunk(const float* in, float* out, int n) noexcept;
-  void renderPath(Path& p, float* io, int n) noexcept;
+  void renderPath(Path& p, float* io, int n, std::uint64_t counter, bool allowRamp) noexcept;
   void applyAlignment(const AlignResult& r);
-  void processPostEq(float* w, int n) noexcept;
+  void processEq(ParametricEq& eq, EqRamps& rs, float* w, int n, std::uint64_t counter) noexcept;
+  void applyLiveEq(EqRamps& rs, const std::vector<EqBand>& cfg, const LiveEq& oldL,
+                   LiveEq& newL) noexcept;
   void resetAll();
 
   Preset preset_;
@@ -192,13 +230,9 @@ class Chain {
   int blendRamp_ = 0;                          // samples left in the blend ramp
   LiveParams live_;
   int rampSamples_ = 1;
-  struct EqRamp {
-    double cur = 0.0, target = 0.0, step = 0.0;
-    int remaining = 0;  // samples
-  };
-  std::array<EqRamp, ParametricEq::kMaxBands> eqRamp_{};
-  int eqRamping_ = 0;  // number of bands with remaining > 0
-  std::uint64_t eqCounter_ = 0;  // post-EQ samples processed: the 32-sample redesign grid is absolute
+  EqRamps postRamps_;
+  std::array<EqRamps, 2> preRamps_, pathRamps_;
+  std::uint64_t eqCounter_ = 0;  // samples processed: the 32-sample EQ redesign grid is absolute
   AlignResult align_;
   int latency_ = 0;
   int maxBlock_ = 0;

@@ -88,6 +88,11 @@ class NamBlock : public Processor {
   void reset() override;
   void process(float* io, int numSamples) noexcept override;
 
+  // RT-safe. Ramps the input gain and the output gain (the loudness normalisation offset stays
+  // folded into the output gain, as in the config) to the given dB values over `rampSamples`
+  // (linear ramps, sample-accurate: independent of the block size). Unchanged gains stay bit-exact.
+  bool setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept override;
+
  private:
   NamBlock() = default;
   void updateGains() noexcept;
@@ -99,7 +104,12 @@ class NamBlock : public Processor {
   std::optional<double> loudness_;
   double sampleRate_ = 0.0;
   int maxBlock_ = 0;
-  float inGain_ = 1.0f, outGain_ = 1.0f;
+  float inGain_ = 1.0f, outGain_ = 1.0f;  // targets (== current when not ramping)
+  struct GainRamp {
+    float cur = 1.0f, step = 0.0f;
+    int remaining = 0;
+  };
+  GainRamp inRamp_, outRamp_;
   std::vector<float> scratchIn_, scratchOut_;
 };
 

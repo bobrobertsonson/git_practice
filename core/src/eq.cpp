@@ -152,6 +152,26 @@ void ParametricEq::setBandGainDb(int bandIndex, double gainDb) noexcept {
   }
 }
 
+void ParametricEq::setBand(int bandIndex, double freq, double gainDb, double q) noexcept {
+  if (bandIndex < 0 || bandIndex >= numBands_) return;
+  if (!std::isfinite(freq) || !std::isfinite(gainDb) || !std::isfinite(q)) return;
+  if (freq < 10.0 || freq >= 0.49 * sampleRate_ || q < 0.05 || q > 36.0) return;
+  EqBand& b = bands_[static_cast<std::size_t>(bandIndex)];
+  if (!b.enabled) return;
+  EqBand nb = b;
+  nb.freq = freq;
+  nb.q = q;
+  if (b.type != EqType::HighPass && b.type != EqType::LowPass) nb.gainDb = gainDb;
+  int k = 0;  // index of this band among the enabled ones
+  for (int i = 0; i < bandIndex; ++i)
+    if (bands_[static_cast<std::size_t>(i)].enabled) ++k;
+  try {
+    filters_[static_cast<std::size_t>(k)].setCoeffs(designBiquad(nb, sampleRate_));
+    b = nb;
+  } catch (...) {  // unreachable after the range checks; keep the old design regardless
+  }
+}
+
 double ParametricEq::magnitudeDb(double freqHz) const {
   double db = 0.0;
   for (int k = 0; k < numActive_; ++k)

@@ -75,4 +75,11 @@ const BlockType* BlockRegistry::find(const std::string& type) const {
   return it == types_.end() ? nullptr : &it->second;
 }
 
+std::vector<std::string> BlockRegistry::typeNames() const {
+  std::vector<std::string> n;
+  n.reserve(types_.size());
+  for (const auto& kv : types_) n.push_back(kv.first);  // std::map: already sorted
+  return n;
+}
+
 }  // namespace sawblade

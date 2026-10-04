@@ -88,7 +88,7 @@ void Engine::setParams(const ParamValues& v) noexcept {
   l.levelDbA = v[kLevelA];
   l.levelDbB = v[kLevelB];
   for (std::size_t k = 0; k < slotBand_.size(); ++k)
-    if (slotBand_[k] >= 0) l.postEqGainDb[static_cast<std::size_t>(slotBand_[k])] = v[static_cast<std::size_t>(kPostEqFirst) + k];
+    if (slotBand_[k] >= 0) l.postEq[static_cast<std::size_t>(slotBand_[k])].gainDb = v[static_cast<std::size_t>(kPostEqFirst) + k];
   chain_->setLiveParams(l);
 }
 

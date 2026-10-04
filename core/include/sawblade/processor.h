@@ -17,6 +17,9 @@ class Processor {
   virtual void reset() = 0;
   virtual void process(float* io, int numSamples) noexcept = 0;  // n <= maxBlockSize
   virtual int latencySamples() const noexcept { return 0; }
+  // RT-safe. Live input / output gain (dB) ramped linearly over `rampSamples`. Returns false when
+  // the block has no such gains (the default).
+  virtual bool setLiveGainsDb(double /*inDb*/, double /*outDb*/, int /*rampSamples*/) noexcept { return false; }
 };
 
 }  // namespace sawblade
