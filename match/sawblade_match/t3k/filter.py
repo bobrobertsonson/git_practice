@@ -98,8 +98,14 @@ def evaluate(
     cfg: FilterConfig,
     now: datetime,
     gears: Iterable[str] | None = None,
+    forced: Iterable[int] = (),
 ) -> tuple[list[Decision], dict[str, dict[str, float]]]:
-    """Decide every tone. ``gears`` (slot names pedal/amp/cab) restricts slot candidates."""
+    """Decide every tone. ``gears`` (slot names pedal/amp/cab) restricts slot candidates.
+
+    ``forced`` tone ids (``--force-tone``) skip the recency and popularity checks and are flagged
+    ``forced``. Slot fit, licence and model availability still apply: there is no licence override.
+    """
+    forced = set(forced)
     thresholds = popularity_thresholds(tones.values(), cfg)
     wanted = set(gears) if gears else None
     cutoff = now - timedelta(days=cfg.max_age_months * DAYS_PER_MONTH)
@@ -140,8 +146,13 @@ def evaluate(
             d.reasons.append("no_models")
 
         # recency
+        is_forced = tid in forced
+        if is_forced:
+            d.flags.append("forced")
         date = parse_ts(t.published_at) or parse_ts(t.updated_at)
-        if date is None:
+        if is_forced:
+            pass
+        elif date is None:
             d.reasons.append("no_publish_date")
         elif date < cutoff and not (cfg.favorites_bypass_recency and d.favorited):
             d.reasons.append(f"too_old:{date.date().isoformat()}")
@@ -154,7 +165,7 @@ def evaluate(
             low.append(f"favorites {t.favorites_count} < {th['favorites']:g}")
         if t.downloads_count < th["downloads"]:
             low.append(f"downloads {t.downloads_count} < {th['downloads']:g}")
-        if low:
+        if low and not is_forced:
             if d.favorited and cfg.keep_favorites_below_floor:
                 d.flags.append("below_popularity_floor")
             else:

@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -16,8 +18,30 @@ from .cache import Cache
 from .client import T3KClient
 from .errors import T3KError
 from .filter import FilterConfig
+from .ids import require_id
 from .pool import build_pool, write_manifest
 from .resolve import default_output, resolve_file
+from .search import TABLE_HEADER, assess, table_rows
+from .sources import default_path, load_pool_sources, merge_unique
+
+PERSONAL_USE_NOTE = ("tones/search is outside TONE3000's free tier. This is a personal, non-commercial "
+                     "project: check the API terms before sharing anything that uses search.")
+
+
+def _filter_cfg(args: argparse.Namespace) -> FilterConfig:
+    return FilterConfig(max_age_months=args.max_age_months, popularity_percentile=args.percentile,
+                        min_favorites=args.min_favorites, min_downloads=args.min_downloads,
+                        allow_a1_fallback=not args.no_a1_fallback,
+                        favorites_bypass_recency=args.favorites_bypass_recency,
+                        keep_favorites_below_floor=args.keep_favorites_below_floor)
+
+
+def _slots(gear) -> list[str]:
+    return sorted({GEAR_TO_SLOT[g] for g in gear}) if gear else ["pedal", "amp", "cab"]
+
+
+def _tone_ids(values) -> list[int]:
+    return [int(require_id(v, "tone id")) for v in values or []]
 
 GEAR_TO_SLOT = {"amp": "amp", "pedal": "pedal", "ir": "cab", "cab": "cab"}
 
@@ -76,19 +100,38 @@ def _table(rows: list[list[str]], header: list[str]) -> None:
             print("  ".join("-" * w for w in widths))
 
 
+def cmd_search(args: argparse.Namespace) -> int:
+    """Read-only: list tones/search results with the quality-filter verdict. No manifest, no download."""
+    slots = _slots(args.gear)
+    gears = "_".join(slots) if args.gear else None
+    tones = make_client().search(args.query, gears=gears, limit=args.limit)
+    records = assess(tones, _filter_cfg(args), datetime.now(timezone.utc))
+    if args.json:
+        json.dump(records, sys.stdout, indent=2)
+        print()
+        return 0
+    print(PERSONAL_USE_NOTE, file=sys.stderr)
+    _table(table_rows(records), TABLE_HEADER)
+    npass = sum(r["passes"] for r in records)
+    print(f"\n{len(records)} result(s), {npass} pass the quality filter.")
+    return 0
+
+
 def cmd_pull(args: argparse.Namespace) -> int:
-    cfg = FilterConfig(max_age_months=args.max_age_months, popularity_percentile=args.percentile,
-                       min_favorites=args.min_favorites, min_downloads=args.min_downloads,
-                       allow_a1_fallback=not args.no_a1_fallback,
-                       favorites_bypass_recency=args.favorites_bypass_recency,
-                       keep_favorites_below_floor=args.keep_favorites_below_floor)
-    slots = sorted({GEAR_TO_SLOT[g] for g in args.gear}) if args.gear else ["pedal", "amp", "cab"]
+    cfg = _filter_cfg(args)
+    slots = _slots(args.gear)
     cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
-    if args.search is not None:
-        print("NOTE: --search uses tones/search, which requires a commercial agreement with TONE3000 "
-              "before shipping.", file=sys.stderr)
+    src_path = default_path()
+    extra = load_pool_sources(src_path)
+    searches = merge_unique(args.search or [], extra.searches)
+    add_tones = merge_unique(_tone_ids(args.add_tone), extra.tones)
+    force_tones = _tone_ids(args.force_tone)
+    print(f"Extra pool sources file: {src_path} ({len(extra.searches)} search(es), {len(extra.tones)} tone(s))")
+    if searches:
+        print(f"NOTE: {PERSONAL_USE_NOTE}", file=sys.stderr)
     m = build_pool(make_client(), cache, cfg, slots=slots, trending=not args.no_trending,
-                   latest=not args.no_latest, search_query=args.search, download=not args.no_download,
+                   latest=not args.no_latest, searches=searches, add_tones=add_tones,
+                   force_tones=force_tones, download=not args.no_download,
                    max_models_per_tone=args.max_models_per_tone)
     out = Path(args.manifest) if args.manifest else cache.root / "pool_manifest.json"
     write_manifest(m, out)
@@ -126,8 +169,15 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--gear", nargs="+", choices=sorted(GEAR_TO_SLOT), help="slots to keep: amp pedal ir")
     q.add_argument("--no-trending", action="store_true")
     q.add_argument("--no-latest", action="store_true")
-    q.add_argument("--search", metavar="QUERY", default=None,
-                   help="OPT-IN tones/search (commercial agreement required before shipping)")
+    q.add_argument("--search", metavar="QUERY", action="append", default=None,
+                   help="OPT-IN tones/search query; repeatable (personal use: check the API terms before "
+                        "sharing anything that uses search)")
+    q.add_argument("--add-tone", metavar="ID", action="append", default=None,
+                   help="add a specific tone id regardless of source (source 'lead-pick'); repeatable; "
+                        "still subject to the licence and quality filter")
+    q.add_argument("--force-tone", metavar="ID", action="append", default=None,
+                   help="like --add-tone but skips the quality filter (recency/popularity); the licence "
+                        "policy still applies. repeatable")
     q.add_argument("--no-download", action="store_true", help="write the manifest only")
     q.add_argument("--manifest", help="manifest path (default: <cache>/pool_manifest.json)")
     q.add_argument("--cache-dir")
@@ -144,6 +194,21 @@ def build_parser() -> argparse.ArgumentParser:
                         "always lists all models)")
     q.add_argument("--favorites-bypass-recency", action="store_true")
     q.set_defaults(fn=cmd_pull)
+
+    sr = sub.add_parser("search", help="read-only tones/search listing with the quality-filter verdict")
+    sr.add_argument("query")
+    sr.add_argument("--gear", nargs="+", choices=sorted(GEAR_TO_SLOT), help="gear to search: amp pedal ir")
+    sr.add_argument("--limit", type=int, default=25)
+    sr.add_argument("--json", action="store_true", help="machine-readable output")
+    sr.add_argument("--max-age-months", type=float, default=FilterConfig.max_age_months)
+    sr.add_argument("--popularity-percentile", "--percentile", dest="percentile", type=float, default=None,
+                    metavar="P")
+    sr.add_argument("--min-favorites", type=int, default=FilterConfig.min_favorites)
+    sr.add_argument("--min-downloads", type=int, default=FilterConfig.min_downloads)
+    sr.add_argument("--no-a1-fallback", action="store_true")
+    sr.add_argument("--keep-favorites-below-floor", action="store_true")
+    sr.add_argument("--favorites-bypass-recency", action="store_true")
+    sr.set_defaults(fn=cmd_search)
 
     r = sub.add_parser("resolve", help="fill capture file/sha256/source in a preset")
     r.add_argument("preset")

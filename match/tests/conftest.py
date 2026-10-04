@@ -145,3 +145,9 @@ def make_client(store, clock):
             tm.set_session(Session(access, refresh, clock() + 3600 if expires_at is None else expires_at))
         return T3KClient(tm, BASE, http=http, sleep=clock.sleep, clock=clock, **kw)
     return _make
+
+
+@pytest.fixture(autouse=True)
+def _isolated_pool_sources(tmp_path, monkeypatch):
+    """Never read the developer's real ~/.config/sawblade/pool_sources.json."""
+    monkeypatch.setenv("SAWBLADE_POOL_SOURCES", str(tmp_path / "no_such_pool_sources.json"))

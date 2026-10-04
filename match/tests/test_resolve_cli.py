@@ -188,7 +188,7 @@ def test_cli_search_flag_warns(cli_env, api, tmp_path, capsys):
     TokenStore(cli_env).save(Session(SECRET_ACCESS, "r", time.time() + 3600))
     assert cli.main(["pull", "--search", "plexi", "--no-trending", "--no-latest", "--no-download",
                      "--cache-dir", str(tmp_path / "cc"), "--manifest", str(tmp_path / "m.json")]) == 0
-    assert "commercial agreement" in capsys.readouterr().err
+    assert "personal, non-commercial" in capsys.readouterr().err
 
 
 def _nc_world(api, lic="cc-by-nc"):

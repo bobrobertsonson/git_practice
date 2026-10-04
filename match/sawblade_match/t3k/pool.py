@@ -24,9 +24,11 @@ def collect(
     *,
     trending: bool = True,
     latest: bool = True,
-    search_query: str | None = None,
+    searches: Iterable[str] = (),
+    add_tones: Iterable[int] = (),
 ) -> tuple[dict[int, Tone], dict[int, list[str]]]:
-    """Favorited (always) + free-tier trending/latest; search only when ``search_query`` is given."""
+    """Favorited (always) + free-tier trending/latest; ``searches`` (each a tones/search query) and
+    ``add_tones`` (specific ids, source ``lead-pick``) are opt-in. Duplicates merge, sources accumulate."""
     tones: dict[int, Tone] = {}
     sources: dict[int, list[str]] = {}
 
@@ -43,10 +45,12 @@ def collect(
             add("trending", client.list_trending(SLOT_GEAR[s]))
     if latest:
         add("latest", client.list_latest())
-    if search_query is not None:
-        # Opt-in; needs a commercial agreement before shipping (see T3KClient.search).
-        gears = "_".join(SLOT_GEAR[s] for s in slots)
-        add("search", client.search(search_query, gears=gears))
+    gears = "_".join(SLOT_GEAR[s] for s in slots)
+    for q in searches:
+        # Opt-in; check the TONE3000 API terms before sharing anything that uses search.
+        add("search", client.search(q, gears=gears))
+    for tid in add_tones:
+        add("lead-pick", [client.get_tone(tid)])
     return tones, sources
 
 
@@ -75,15 +79,22 @@ def build_pool(
     slots: Iterable[str] = ALL_SLOTS,
     trending: bool = True,
     latest: bool = True,
-    search_query: str | None = None,
+    searches: Iterable[str] = (),
+    add_tones: Iterable[int] = (),
+    force_tones: Iterable[int] = (),
     download: bool = True,
     max_models_per_tone: int = 3,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     slots = list(slots)
-    tones, sources = collect(client, slots, trending=trending, latest=latest, search_query=search_query)
-    decisions, thresholds = evaluate(tones, sources, cfg, now, gears=slots)
+    searches = list(dict.fromkeys(searches))
+    force_tones = list(dict.fromkeys(int(t) for t in force_tones))
+    # a forced tone is also a lead pick, so it is fetched even without --add-tone
+    add_tones = list(dict.fromkeys([*(int(t) for t in add_tones), *force_tones]))
+    tones, sources = collect(client, slots, trending=trending, latest=latest, searches=searches,
+                             add_tones=add_tones)
+    decisions, thresholds = evaluate(tones, sources, cfg, now, gears=slots, forced=force_tones)
 
     for d in decisions:
         if d.status != "included":
@@ -112,7 +123,7 @@ def build_pool(
         "max_models_per_tone": max_models_per_tone,
         "slots": slots,
         "sources": {"favorited": True, "trending": trending, "latest": latest,
-                    "search": search_query if search_query is not None else False},
+                    "search": searches, "lead_picks": add_tones, "forced": force_tones},
         "popularity_thresholds": thresholds,
         "counts": counts,
         "tones": [decision_to_json(d) for d in decisions if d.status == "included"],

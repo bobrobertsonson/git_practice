@@ -45,6 +45,8 @@ sawblade-t3k pull [--favorites] [--gear amp pedal ir] [--no-trending] [--no-late
                   [--max-age-months 18] [--min-favorites 100] [--min-downloads 1000]
                   [--popularity-percentile P] [--keep-favorites-below-floor]
                   [--no-a1-fallback] [--favorites-bypass-recency]
+                  [--search QUERY]... [--add-tone ID]... [--force-tone ID]...
+sawblade-t3k search QUERY [--gear amp pedal ir] [--limit 25] [--json]
 sawblade-t3k resolve presets/chainsaw_body.json [--first-model]   # -> presets/chainsaw_body.resolved.json
 ```
 
@@ -74,11 +76,24 @@ Sawblade is commercial, so only tones licensed `t3k`, `cc-by`, `cc-by-sa`, `cc-b
 excluded from the pool even if favorited, and `resolve`/downloads refuse them (also on cache hits). There is
 no override flag.
 
-### `--search` (opt-in, commercial)
+### Search and extra pool sources (opt-in, personal use)
 
-`pull --search "query"` adds `tones/search` results to the pool. That endpoint is outside TONE3000's
-free tier: **a commercial agreement with TONE3000 is required before shipping anything that uses it**
-(Sawblade is commercial). It is off by default and uses a separate, tighter client-side rate bucket.
+`tones/search` is outside TONE3000's free tier. This is a personal, non-commercial project, so check the
+API terms before sharing anything that uses search.
+
+* `sawblade-t3k search QUERY [--gear ...] [--limit N] [--json]` is **read-only** (no manifest, no download).
+  It lists tone id, title, creator, licence, gear, favorites/downloads, created date, model count
+  (A2/A1 counts, or IR count) and sizes, plus a `PASS`/`FAIL`/`REF` verdict from the same quality filter as
+  `pull` (<= 18 months, >= 100 favorites, >= 1000 downloads, A2 preferred, licence allow-list) with the failing
+  reasons. The filter flags (`--max-age-months`, `--min-favorites`, ...) apply to the verdict.
+* `pull --search QUERY` is repeatable; results are merged with the other sources and de-duplicated by tone id
+  (a tone found by several sources lists them all in the manifest).
+* `pull --add-tone ID` (repeatable) adds specific tones regardless of source; the manifest source is
+  `lead-pick`. They still go through the licence and quality filter. `--force-tone ID` additionally skips the
+  recency and popularity checks (flag `forced`); the licence policy is never skipped.
+* **Persistent sources:** `~/.config/sawblade/pool_sources.json` (override `SAWBLADE_POOL_SOURCES`),
+  `{"searches": ["big muff"], "tones": [12345]}`, is merged into every `pull`; `pull` prints the path. It is
+  user state and is not committed. A malformed file is an error, a missing one is empty.
 
 ### Rate limits and logging
 

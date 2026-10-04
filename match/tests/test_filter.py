@@ -1,4 +1,5 @@
 import json
+import pytest
 
 import numpy as np
 
@@ -189,7 +190,7 @@ def test_search_is_opt_in(make_client, api):
     client = make_client()
     collect(client)
     assert not api.requests("search")
-    _, src = collect(client, search_query="plexi")
+    _, src = collect(client, searches=["plexi"])
     assert len(api.requests("search")) == 1 and src[9] == ["search"]
 
 
@@ -207,3 +208,107 @@ def test_license_allowlist_no_favorites_bypass():
         assert ds[600 + i].status == "included", allowed[i]
     for i, (lic, reason) in enumerate(bad.items()):
         assert ds[700 + i].status == "excluded" and reason in ds[700 + i].reasons, lic
+
+
+# ---- phase 3.7: search, lead picks, pool_sources.json -------------------------------------------
+
+def _pool(make_client, tmp_path, **kw):
+    return build_pool(make_client(), Cache(tmp_path / "c"), FilterConfig(), download=False, now=NOW, **kw)
+
+
+def test_multi_search_merge_dedupes(make_client, api, tmp_path):
+    a = tone_json(10, gear="amp", fav=500, dl=5000)
+    b = tone_json(11, gear="pedal", fav=500, dl=5000)
+    api.search_results = [a, b]          # the fake returns the same list for every query
+    for t in (a, b):
+        api.add_tone(t, [model_json(t["id"] * 10, t["id"])])
+    m = _pool(make_client, tmp_path, searches=["plexi", "big muff", "plexi"], trending=False, latest=False)
+    assert len(api.requests("search")) == 2                       # duplicate query dropped
+    assert sorted(t["tone_id"] for t in m["tones"]) == [10, 11]   # not listed twice
+    assert m["sources"]["search"] == ["plexi", "big muff"]
+    assert all(t["sources"] == ["search"] for t in m["tones"])
+
+
+def test_add_tone_is_lead_pick_and_filtered(make_client, api, tmp_path):
+    ok = tone_json(20, gear="pedal", fav=500, dl=5000)
+    old = tone_json(21, gear="pedal", fav=500, dl=5000, pub="2020-01-01T00:00:00Z")
+    nc = tone_json(22, gear="pedal", fav=500, dl=5000, license="cc-by-nc")
+    for t in (ok, old, nc):
+        api.add_tone(t, [model_json(t["id"] * 10, t["id"])])
+    m = _pool(make_client, tmp_path, add_tones=[20, 21, 22], trending=False, latest=False)
+    assert [t["tone_id"] for t in m["tones"]] == [20] and m["tones"][0]["sources"] == ["lead-pick"]
+    ex = {t["tone_id"]: t["reasons"] for t in m["excluded"]}
+    assert ex[21][0].startswith("too_old") and ex[22] == ["non_commercial_license:cc-by-nc"]
+    assert m["sources"]["lead_picks"] == [20, 21, 22]
+
+
+def test_force_tone_skips_quality_but_not_license(make_client, api, tmp_path):
+    old = tone_json(30, gear="pedal", fav=1, dl=1, pub="2020-01-01T00:00:00Z")
+    nc = tone_json(31, gear="pedal", fav=999, dl=9999, license="cc-by-nc-sa")
+    for t in (old, nc):
+        api.add_tone(t, [model_json(t["id"] * 10, t["id"])])
+    m = _pool(make_client, tmp_path, force_tones=[30, 31], trending=False, latest=False)
+    assert [t["tone_id"] for t in m["tones"]] == [30]
+    assert m["tones"][0]["flags"] == ["forced"] and m["tones"][0]["sources"] == ["lead-pick"]
+    assert [t["reasons"] for t in m["excluded"]] == [["non_commercial_license:cc-by-nc-sa"]]
+
+
+def test_pool_sources_file_merged_into_pull(make_client, api, tmp_path, monkeypatch, capsys):
+    from sawblade_match.t3k import cli
+    srcs = tmp_path / "pool_sources.json"
+    srcs.write_text(json.dumps({"searches": ["hm-2"], "tones": [41]}))
+    monkeypatch.setenv("SAWBLADE_POOL_SOURCES", str(srcs))
+    monkeypatch.setattr(cli, "make_client", make_client)
+    s = tone_json(40, gear="pedal", fav=500, dl=5000)
+    p = tone_json(41, gear="pedal", fav=500, dl=5000)
+    api.search_results = [s]
+    for t in (s, p):
+        api.add_tone(t, [model_json(t["id"] * 10, t["id"])])
+    man = tmp_path / "m.json"
+    rc = cli.main(["pull", "--no-trending", "--no-latest", "--no-download", "--search", "hm-2",
+                   "--add-tone", "41", "--cache-dir", str(tmp_path / "c"), "--manifest", str(man)])
+    assert rc == 0 and str(srcs) in capsys.readouterr().out
+    m = json.loads(man.read_text())
+    assert {t["tone_id"]: t["sources"] for t in m["tones"]} == {40: ["search"], 41: ["lead-pick"]}
+    assert len(api.requests("search")) == 1                      # flag + file de-duplicated
+
+
+def test_pool_sources_missing_and_malformed(tmp_path):
+    from sawblade_match.t3k.errors import T3KError
+    from sawblade_match.t3k.sources import load_pool_sources
+    assert load_pool_sources(tmp_path / "nope.json").searches == []
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"tones": ["../x"]}')
+    with pytest.raises(T3KError):
+        load_pool_sources(bad)
+    bad.write_text("{not json")
+    with pytest.raises(T3KError):
+        load_pool_sources(bad)
+
+
+def test_search_output_and_verdicts(make_client, api, tmp_path, monkeypatch, capsys):
+    from sawblade_match.t3k import cli
+    monkeypatch.setattr(cli, "make_client", make_client)
+    good = tone_json(50, gear="pedal", fav=300, dl=5000, title="Fuzz Good", user="bob", license="cc-by")
+    bad = tone_json(51, gear="pedal", fav=5, dl=50, pub="2020-01-01T00:00:00Z", license="cc-by-nc",
+                    title="Fuzz Bad")
+    api.search_results = [good, bad]
+    before = len(api.calls)
+    assert cli.main(["search", "fuzz", "--gear", "pedal"]) == 0
+    out = capsys.readouterr().out
+    lines = {l.split()[0]: l for l in out.splitlines() if l[:2] in ("50", "51")}
+    assert "Fuzz Good" in lines["50"] and "bob" in lines["50"] and "cc-by" in lines["50"]
+    assert "300/5000" in lines["50"] and "2026-06-01" in lines["50"] and "PASS" in lines["50"]
+    assert "A2:1" in lines["50"]
+    assert "FAIL" in lines["51"] and "non_commercial_license:cc-by-nc" in lines["51"]
+    assert "too_old" in lines["51"] and "below_popularity" in lines["51"]
+    assert "1 pass" in out
+    q = api.requests("search")[0].url.params
+    assert q["query"] == "fuzz" and q["gears"] == "pedal"
+    # read-only: only the search call, no download / models / tone lookups
+    assert [r.url.path for r in api.calls[before:]] == ["/api/v1/tones/search"]
+
+    assert cli.main(["search", "fuzz", "--json"]) == 0
+    recs = json.loads(capsys.readouterr().out)
+    assert [(r["tone_id"], r["passes"]) for r in recs] == [(50, True), (51, False)]
+    assert recs[1]["reasons"][0] == "non_commercial_license:cc-by-nc"

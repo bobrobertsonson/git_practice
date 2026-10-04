@@ -223,10 +223,10 @@ class T3KClient:
                verified: bool | None = None, limit: int = 25) -> list[Tone]:
         """Search tones (``/api/v1/tones/search``). OPT-IN ONLY.
 
-        This endpoint is outside the free tier: Sawblade is a commercial product, so a signed
-        commercial agreement with TONE3000 is REQUIRED before shipping anything that calls it
-        (free tier = OAuth prompt flows + favorited/downloaded/created/trending/latest). It is also
-        heavily rate limited, hence the separate, tighter client-side bucket.
+        This endpoint is outside the free tier (free tier = OAuth prompt flows +
+        favorited/downloaded/created/trending/latest). Personal, non-commercial use for now: check the
+        API terms before sharing anything that uses search. It is also heavily rate limited, hence
+        the separate, tighter client-side bucket.
         """
         params: dict[str, Any] = {"query": query, "architecture": architecture}
         if gears: params["gears"] = gears
