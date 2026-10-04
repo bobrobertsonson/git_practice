@@ -112,11 +112,10 @@ A-weighted error = sqrt(sum(w d^2)/sum(w)), w = 10^(A(fc)/10), bands 80 Hz-8 kHz
 
 Addenda: `--ref`/`--ref-channel` repeat (one channel value for all refs, or one per ref); `report.json`
 has a `references` list and `report.png` one overlay + difference panel per ref. `gapNoiseDb` is measured in the DI's
-real silences (phase 3.6): regions where the DI's 10 ms RMS stays below its noise floor + 6 dB (floor: 5th-percentile 50 ms
-frame level) for at least 120 ms, ignoring the first 50 ms of each so a ringing tail is not counted; the value is the output
+real silences (phase 3.6): regions where the DI's 10 ms RMS stays below an absolute -50 dBFS for at least 120 ms, ignoring the first 50 ms of each so a ringing tail is not counted; the value is the output
 RMS in those regions minus the output RMS over its playing frames, and `gapCount` / `gapTotalS` are reported. Null / rule
-status `n/a` when the gaps total less than 1 s or no DI is given (the earlier "quietest 5 % + 6 dB" frames were mostly palm
-mutes and ring tails, which a gate never closes on). `diNoiseFloorDb` reports that floor (dBFS) for gate calibration. `lowDecayDbPerMs` is the regression slope
+status `n/a` when the gaps total less than 1 s (so on a dense DI with no real silence, e.g. the Gatecreeper cover) or no DI is given (the earlier "quietest 5 % + 6 dB" frames were mostly palm
+mutes and ring tails, which a gate never closes on). `diNoiseFloorDb` (5th-percentile 50 ms frame level, dBFS) is reporting only, for gate calibration. `lowDecayDbPerMs` is the regression slope
 (dB/ms) of the 80-160 Hz envelope over [peak+5 ms, min(peak+35 ms, next onset)] (>= 15 ms, else censored); the
 causal band-pass transient makes it read ~10-25 % shallower than the true decay, so compare presets, not
 absolute values.

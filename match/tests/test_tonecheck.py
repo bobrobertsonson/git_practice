@@ -263,7 +263,7 @@ def test_gap_noise_from_di_robust_and_na():
     rng = np.random.default_rng(SEED)
     n = FS * 20
     # DI: bursts with a -40 dB hiss floor between them; gate (ideal) closes output in gaps
-    di = 0.01 * rng.standard_normal(n)
+    di = 0.001 * rng.standard_normal(n)
     out = np.zeros(n)
     for k in range(10):
         s = int((1 + 2 * k) * FS)
@@ -272,7 +272,7 @@ def test_gap_noise_from_di_robust_and_na():
     out += 1e-4 * rng.standard_normal(n)  # output residue in gaps: -70 dB re active
     g = A.gap_noise_db(out, di, FS)
     assert g["value"] == pytest.approx(20 * np.log10(1e-4 / 0.3), abs=1.5)
-    assert -45 < g["diNoiseFloorDb"] < -35
+    assert -65 < g["diNoiseFloorDb"] < -55
     # no DI -> null
     assert A.gap_noise_db(out, None, FS)["value"] is None
     # steady DI: no frame can be < ... all frames equal -> everything within 6 dB (not "no gaps"); a DI
@@ -507,7 +507,7 @@ def test_gap_regions_real_silence_only():
     di, out = _gap_case([(20, -20.0, -10.0, -10.0),
                          (40, -60.0, -80.0, -45.0),     # 2.0 s real gap (first 50 ms = ringing tail, output -45)
                          (20, -20.0, -10.0, -10.0),
-                         (10, -52.0, -10.0, -10.0),     # 8 dB above the floor: quiet playing, not a gap
+                         (10, -45.0, -10.0, -10.0),     # above -50 dBFS: quiet playing, not a gap
                          (20, -20.0, -10.0, -10.0),
                          (2, -60.0, -80.0, -45.0),      # 100 ms < 120 ms: not a gap
                          (20, -20.0, -10.0, -10.0),
@@ -522,6 +522,13 @@ def test_gap_regions_real_silence_only():
     assert leg["value"] > g["value"]                               # the old definition counted tails
 
 
+def test_gap_noise_is_na_on_a_dense_di_with_quiet_playing():
+    """Floor is -40 dBFS (quiet playing, no silence): nothing is below the absolute -50 dBFS, so n/a."""
+    di, out = _gap_case([(40, -20.0, -10.0, -10.0), (30, -40.0, -30.0, -30.0), (40, -20.0, -10.0, -10.0)])
+    g = A.gap_noise_db(out, di, FS)
+    assert g["value"] is None and g["reason"] == "no gaps" and g["gapCount"] == 0
+
+
 def test_gap_noise_na_below_one_second_of_gaps():
     di, out = _gap_case([(40, -20.0, -10.0, -10.0), (10, -60.0, -80.0, -80.0), (40, -20.0, -10.0, -10.0)])
     g = A.gap_noise_db(out, di, FS)       # 0.5 s of silence (0.45 s after the skip)
@@ -532,7 +539,7 @@ def test_gap_noise_null_for_steady_di():
     rng = np.random.default_rng(SEED)
     di = 0.1 * rng.standard_normal(FS * 10)
     g = A.gap_noise_db(0.1 * di, di, FS)
-    assert g["value"] is None and g["reason"] == "no clear gaps"
+    assert g["value"] is None and g["reason"] == "no gaps"      # nothing below -50 dBFS
 
 
 def test_gap_rule_threshold_boundary():
