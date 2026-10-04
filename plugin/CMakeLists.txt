@@ -22,6 +22,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/Engine.cpp
   src/EngineLoader.cpp
   src/PlayAlong.cpp
+  src/SongDecoder.cpp
   src/PluginProcessor.cpp
   src/PlayAlongPanel.cpp
   src/PluginEditor.cpp
@@ -79,16 +80,42 @@ target_include_directories(SawbladePlugin PUBLIC src)
 target_compile_features(SawbladePlugin PUBLIC cxx_std_20)
 target_compile_definitions(SawbladePlugin PUBLIC ${SAWBLADE_JUCE_DEFS})
 target_link_libraries(SawbladePlugin
-  PRIVATE sawblade_core
+  PRIVATE sawblade_core $<$<BOOL:${SAWBLADE_WITH_SEPARATOR}>:sawblade_separator>
           juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
-          juce::juce_audio_utils SawbladeAssets
+          juce::juce_audio_utils juce::juce_audio_formats SawbladeAssets
   PUBLIC  juce::juce_recommended_config_flags)
 # NAM registers its architectures from static initializers: the archive must be linked whole into
 # every final binary (the shared code is a static library, so the format targets and the tests
 # add it themselves).
 foreach(_fmt ${SAWBLADE_PLUGIN_FORMATS})
-  target_link_libraries(SawbladePlugin_${_fmt} PRIVATE sawblade_core "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib)
+  target_link_libraries(SawbladePlugin_${_fmt} PRIVATE $<$<BOOL:${SAWBLADE_WITH_SEPARATOR}>:sawblade_separator> sawblade_core "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib)
 endforeach()
+
+# ONNX Runtime next to the plugin binary, found through $ORIGIN (Linux) / @loader_path (macOS):
+#   Linux  VST3  Sawblade.vst3/Contents/x86_64-linux/   (beside Sawblade.so)      Standalone  beside the executable
+#   macOS  VST3 / AU / app  <bundle>/Contents/Frameworks/  (rpath @loader_path/../Frameworks)
+# (The copy is made after the link; a macOS release build must (re)sign the bundle afterwards.)
+if(SAWBLADE_WITH_SEPARATOR)
+  foreach(_fmt ${SAWBLADE_PLUGIN_FORMATS})
+    if(APPLE)
+      set(_dest "$<TARGET_BUNDLE_CONTENT_DIR:SawbladePlugin_${_fmt}>/Frameworks")
+      set_property(TARGET SawbladePlugin_${_fmt} APPEND PROPERTY BUILD_RPATH "@loader_path/../Frameworks")
+      set_property(TARGET SawbladePlugin_${_fmt} APPEND PROPERTY INSTALL_RPATH "@loader_path/../Frameworks")
+    else()
+      if(_fmt STREQUAL "VST3")
+        set(_dest "$<TARGET_FILE_DIR:SawbladePlugin_${_fmt}>")
+      else()
+        set(_dest "$<TARGET_FILE_DIR:SawbladePlugin_${_fmt}>")
+      endif()
+      set_property(TARGET SawbladePlugin_${_fmt} APPEND PROPERTY BUILD_RPATH "$ORIGIN")
+      set_property(TARGET SawbladePlugin_${_fmt} APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
+    endif()
+    add_custom_command(TARGET SawbladePlugin_${_fmt} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_dest}"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SAWBLADE_ORT_LIBRARY}" "${_dest}/${SAWBLADE_ORT_SONAME}"
+      VERBATIM)
+  endforeach()
+endif()
 
 if(SAWBLADE_BUILD_TESTS)
   include(Catch)
@@ -105,10 +132,11 @@ if(SAWBLADE_BUILD_TESTS)
   target_include_directories(sawblade_plugin_tests PRIVATE src)
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})
   target_link_libraries(sawblade_plugin_tests PRIVATE
-    sawblade_core Catch2::Catch2WithMain SawbladeAssets
-    juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
+    $<$<BOOL:${SAWBLADE_WITH_SEPARATOR}>:sawblade_separator> sawblade_core Catch2::Catch2WithMain SawbladeAssets
+    juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events juce::juce_audio_formats
     juce::juce_recommended_config_flags
     "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib)
+  sawblade_ort_build_rpath(sawblade_plugin_tests)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Count mutex/rwlock acquisitions on the audio thread (tests/lock_guard.cpp).
     target_compile_definitions(sawblade_plugin_tests PRIVATE SAWBLADE_LOCK_WRAP=1)
@@ -135,10 +163,11 @@ if(SAWBLADE_BUILD_TESTS)
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
     SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots")
   target_link_libraries(sawblade_editor_tests PRIVATE
-    sawblade_core Catch2::Catch2WithMain SawbladeAssets
+    $<$<BOOL:${SAWBLADE_WITH_SEPARATOR}>:sawblade_separator> sawblade_core Catch2::Catch2WithMain SawbladeAssets
     juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
-    juce::juce_recommended_config_flags
+    juce::juce_audio_formats juce::juce_recommended_config_flags
     "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib)
+  sawblade_ort_build_rpath(sawblade_editor_tests)
   find_program(SAWBLADE_XVFB_RUN xvfb-run)
   if(SAWBLADE_XVFB_RUN AND NOT APPLE)
     set_property(TARGET sawblade_editor_tests PROPERTY CROSSCOMPILING_EMULATOR ${SAWBLADE_XVFB_RUN} -a)

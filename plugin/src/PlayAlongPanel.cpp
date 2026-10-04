@@ -75,8 +75,10 @@ struct PlayAlongPanel::Impl {
 
   juce::Label title, song, status, position, loopRead, standaloneNote;
   juce::Label capLoop, capCount, capGuitar, capLevel, capOffset;
-  juce::TextButton load, keepKeys, play, setA, setB, loop, countIn, mute, ghost, full, sync;
+  juce::TextButton load, cancel, model, keepKeys, play, setA, setB, loop, countIn, mute, ghost, full, sync;
   juce::Slider seek, bpm, level, offset;
+  double barProgress = 0.0;
+  juce::ProgressBar bar{barProgress};
   StatusDot led;
   std::unique_ptr<juce::FileChooser> chooser;
   bool updating = false;   // true while refresh() writes into the controls
@@ -126,7 +128,16 @@ struct PlayAlongPanel::Impl {
     led.setInterceptsMouseClicks(false, false);
     owner.addAndMakeVisible(led);
 
-    configure(load, "LOAD SONG", "Choose a folder of separated stems (drums, bass, vocals, other, guitar as .wav or .flac). You can also drop a folder on the plugin.");
+    configure(load, "LOAD SONG", "Choose a song file (mp3, wav, flac, m4a: separated into stems on this machine, once, then cached) or a folder of already separated stems (drums, bass, vocals, other, guitar as .wav or .flac). You can also drop either on the plugin.");
+    configure(cancel, "CANCEL", "Cancel the separation");
+    cancel.setVisible(false);
+    configure(model, "6-STEM", "Separation model for song files. 6-stem (htdemucs_6s, default) has a guitar stem. 4-stem (htdemucs, fallback): the 'other' stem is treated as the guitar. Click to switch.");
+    model.setTitle("Separation model");
+    bar.setPercentageDisplay(false);
+    bar.setColour(juce::ProgressBar::foregroundColourId, juce::Colour(0xff6b2f12));
+    bar.setColour(juce::ProgressBar::backgroundColourId, juce::Colour(0xff141210));
+    bar.setVisible(false);
+    owner.addAndMakeVisible(bar);
     configure(keepKeys, "KEEP KEYS", "Keep the 'other' stem (keys, synths) in the backing instead of treating it as the guitar. Reloads the song.", true);
     configure(play, "PLAY", "Play / pause the backing", false);
     configure(setA, "SET A", "Set loop start to the current position");
@@ -178,6 +189,8 @@ struct PlayAlongPanel::Impl {
 
   void wire() {
     load.onClick = [this] { owner.chooseFolder(); };
+    cancel.onClick = [this] { pa().cancelSeparation(); };
+    model.onClick = [this] { pa().setFourStemModel(!pa().settings().fourStemModel); };
     keepKeys.onClick = [this] { pa().setKeepOther(keepKeys.getToggleState()); };
     play.onClick = [this] {
       if (pa().snapshot().playing) pa().pause();
@@ -227,6 +240,7 @@ struct PlayAlongPanel::Impl {
     // song line
     juce::String songText = "No song loaded";
     if (st.state == PlayAlong::LoadStatus::State::Ready) songText = juce::String(st.songName) + "  " + timeText(st.lengthSeconds);
+    else if (!s.songFile.empty()) songText = juce::String(juce::File(s.songFile).getFileNameWithoutExtension());
     else if (!s.folder.empty()) songText = juce::String(baseName(s.folder));
     song.setText(songText, juce::dontSendNotification);
     song.setColour(juce::Label::textColourId, st.state == PlayAlong::LoadStatus::State::Ready ? L::text() : L::dimText());
@@ -235,6 +249,13 @@ struct PlayAlongPanel::Impl {
     juce::String msg;
     juce::Colour col = L::dimText();
     switch (st.state) {
+      case PlayAlong::LoadStatus::State::Separating: {
+        msg = "Separating " + juce::String(juce::roundToInt(st.separationFraction * 100.0)) + "%";
+        if (st.separationEtaSeconds >= 0.0) msg += "  (about " + juce::String(juce::roundToInt(st.separationEtaSeconds)) + " s left)";
+        col = L::warning();
+        break;
+      }
+      case PlayAlong::LoadStatus::State::Cancelled: msg = "Separation cancelled."; break;
       case PlayAlong::LoadStatus::State::Loading: msg = "Loading stems..."; col = L::warning(); break;
       case PlayAlong::LoadStatus::State::Failed: msg = juce::String(st.message); col = L::error(); break;
       case PlayAlong::LoadStatus::State::Ready:
@@ -247,12 +268,19 @@ struct PlayAlongPanel::Impl {
           msg = "4-stem song: 'other' is treated as the guitar.";
         }
         break;
-      case PlayAlong::LoadStatus::State::None: msg = "Drop a folder of stems here, or LOAD SONG."; break;
+      case PlayAlong::LoadStatus::State::None: msg = "Drop a song file or a folder of stems here, or LOAD SONG."; break;
     }
     if (st.state == PlayAlong::LoadStatus::State::Ready && msg.isEmpty() && !standalone && !s.hostSync)
       msg = "Backing is off. Enable SYNC TO HOST to follow the host transport.";
     status.setText(msg, juce::dontSendNotification);
+    status.setTooltip(msg);
     status.setColour(juce::Label::textColourId, col);
+    const bool separating = st.state == PlayAlong::LoadStatus::State::Separating;
+    barProgress = st.separationFraction;
+    bar.setVisible(separating);
+    cancel.setVisible(separating);
+    keepKeys.setVisible(!separating);
+    model.setButtonText(s.fourStemModel ? "4-STEM" : "6-STEM");
 
     // transport
     const bool plugin = !standalone;
@@ -297,9 +325,12 @@ struct PlayAlongPanel::Impl {
     const int w = kWidth;
     title.setBounds(m, 10, 110, 30);
     led.setBounds(138, 15, 20, 20);
-    song.setBounds(172, 10, 380, 30);
+    song.setBounds(172, 10, 280, 30);
+    model.setBounds(458, 10, 96, 30);
     status.setBounds(560, 10, 440, 30);
+    bar.setBounds(560, 40, 440, 8);
     keepKeys.setBounds(w - m - 120 - 8 - 104, 10, 104, 30);
+    cancel.setBounds(w - m - 120 - 8 - 104, 10, 104, 30);
     load.setBounds(w - m - 120, 10, 120, 30);
 
     play.setBounds(m, 52, 86, 34);
@@ -353,12 +384,14 @@ void PlayAlongPanel::resized() { impl_->layout(); }
 void PlayAlongPanel::refresh() { impl_->refresh(); }
 
 void PlayAlongPanel::chooseFolder() {
-  impl_->chooser = std::make_unique<juce::FileChooser>("Choose a folder of separated stems", juce::File(), "");
-  impl_->chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+  impl_->chooser = std::make_unique<juce::FileChooser>("Choose a song file or a folder of separated stems", juce::File(),
+                                                       "*.mp3;*.wav;*.flac;*.m4a;*.aac;*.aif;*.aiff;*.ogg");
+  impl_->chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles |
+                                  juce::FileBrowserComponent::canSelectDirectories,
                               [this](const juce::FileChooser& fc) {
                                 const juce::File f = fc.getResult();
-                                if (f == juce::File() || !f.isDirectory()) return;
-                                impl_->pa().loadFolder(f.getFullPathName().toStdString(), /*userInitiated=*/true);
+                                if (f == juce::File() || !(f.isDirectory() || f.existsAsFile())) return;
+                                impl_->pa().loadSong(f.getFullPathName().toStdString(), /*userInitiated=*/true);
                               });
 }
 

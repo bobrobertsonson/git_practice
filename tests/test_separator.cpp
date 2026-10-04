@@ -484,3 +484,48 @@ TEST_CASE("CLI: sawblade-stems and tonerender --separate", "[separator][cli]") {
     REQUIRE(runCmd(render + " --stems-out " + q(out) + " >/dev/null 2>&1") != 0);
   }
 }
+
+// Real model, gated: SAWBLADE_SEPARATOR_REAL_TEST=1. Separates a 10 s clip with the model from the model store
+// and nulls every stem against the spike's separator_onnx output for the same clip (<= -40 dB per stem).
+//   SAWBLADE_SEPARATOR_REAL_CLIP  44.1 kHz stereo WAV, e.g. a generated mixture:
+//       ffmpeg -f lavfi -i "anoisesrc=d=10:c=pink:r=44100:a=0.15" -f lavfi -i "sine=f=196:d=10:r=44100"
+//              -f lavfi -i "sine=f=1250:d=10:r=44100" -filter_complex "[0][1][2]amix=inputs=3:normalize=0,aformat=channel_layouts=stereo" clip.wav
+//   SAWBLADE_SEPARATOR_REAL_REF   directory with the spike's stems of that clip:
+//       <spike build>/spikes/separator/separator_onnx --model <models dir>/htdemucs_6s-core-opset17.onnx --in clip.wav --out-dir ref --threads 4
+//       (spike build: cmake -DSAWBLADE_BUILD_SEPARATOR_SPIKE=ON -DSAWBLADE_BUILD_SEPARATOR_ONNX=ON -DSAWBLADE_BUILD_TESTS=OFF, target separator_onnx)
+//   SAWBLADE_SEPARATOR_REAL_MODEL optional: htdemucs (4-stem; the spike reference must come from that model)
+TEST_CASE("Separator: real htdemucs model nulls against the spike driver (env-gated)", "[separator][real]") {
+  const char* gate = std::getenv("SAWBLADE_SEPARATOR_REAL_TEST");
+  const char* clip = std::getenv("SAWBLADE_SEPARATOR_REAL_CLIP");
+  const char* ref = std::getenv("SAWBLADE_SEPARATOR_REAL_REF");
+  if (!gate || std::string(gate) != "1") SKIP("set SAWBLADE_SEPARATOR_REAL_TEST=1 (and _CLIP, _REF) to run");
+  if (!clip || !ref) SKIP("SAWBLADE_SEPARATOR_REAL_CLIP and SAWBLADE_SEPARATOR_REAL_REF are required");
+  const char* mid = std::getenv("SAWBLADE_SEPARATOR_REAL_MODEL");
+  const SeparationModel m = (mid && std::string(mid) == "htdemucs") ? SeparationModel::Htdemucs4s : SeparationModel::Htdemucs6s;
+  const ModelStatus st = ModelStore().check(m);
+  if (!st.ok()) SKIP(st.message);
+
+  const AudioFile song = readAudioFile(clip);
+  REQUIRE(song.sampleRate == 44100.0);
+  REQUIRE(song.channels == 2);
+  const SeparationResult r = run(st.path, m, song, 4);
+  auto load = [&](const char* name) {
+    const AudioFile f = readAudioFile(fs::path(ref) / (std::string(name) + ".wav"));
+    return planar(f);
+  };
+  struct Pair { StemKind kind; const char* file; const char* extra; };
+  std::vector<Pair> pairs = {{StemKind::Drums, "drums", nullptr}, {StemKind::Bass, "bass", nullptr},
+                             {StemKind::Vocals, "vocals", nullptr}, {StemKind::Other, "other", m == SeparationModel::Htdemucs6s ? "piano" : nullptr}};
+  if (m == SeparationModel::Htdemucs6s) pairs.push_back({StemKind::Guitar, "guitar", nullptr});
+  for (const auto& p : pairs) {
+    StemAudio want = load(p.file);
+    if (p.extra) {
+      const StemAudio e = load(p.extra);
+      for (std::size_t c = 0; c < 2; ++c)
+        for (std::size_t i = 0; i < want[c].size(); ++i) want[c][i] += e[c][i];
+    }
+    const double db = nullDb(stem(r, p.kind), want);
+    INFO(p.file << ": null " << db << " dB");
+    REQUIRE(db <= -40.0);
+  }
+}
