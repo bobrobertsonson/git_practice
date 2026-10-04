@@ -111,6 +111,7 @@ StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate) {
 
   std::vector<std::pair<StemKind, fs::path>> files;
   std::vector<std::string> warnings;
+  std::array<std::string, kStemKindCount> firstNamed;  // first file that mapped to each named stem
   for (const auto& p : audioFiles) {
     const std::string base = lower(p.stem().string());
     StemKind kind = StemKind::Other;
@@ -119,7 +120,15 @@ StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate) {
     else if (base == "vocals") kind = StemKind::Vocals;
     else if (base == "other") kind = StemKind::Other;
     else if (base == "guitar" || base == "guitars") kind = StemKind::Guitar;
-    else warnings.push_back(p.filename().string() + ": unrecognised stem name; summed into 'other'");
+    else {
+      warnings.push_back(p.filename().string() + ": unrecognised stem name; summed into 'other'");
+      files.emplace_back(kind, p);
+      continue;
+    }
+    std::string& first = firstNamed[static_cast<std::size_t>(kind)];
+    if (!first.empty())
+      warnings.push_back(p.filename().string() + ": duplicate '" + stemKindName(kind) + "' stem (also " + first + "); summed");
+    else first = p.filename().string();
     files.emplace_back(kind, p);
   }
   if (files.empty()) fail("no .wav or .flac stems found in " + dir.string());

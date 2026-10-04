@@ -254,3 +254,23 @@ TEST_CASE("makeStemSet validates and pads", "[stems][factory]") {
   REQUIRE_THROWS_AS(makeStemSet(48000.0, a), std::runtime_error);
   REQUIRE(std::string(stemKindName(StemKind::Guitar)) == "guitar");
 }
+
+TEST_CASE("Directory scan warns when two files map to the same named stem (still summed)", "[stems][loader][dir]") {
+  StemTempDir t;
+  std::vector<std::int16_t> v(2000);
+  for (std::size_t i = 0; i < v.size(); ++i) v[i] = static_cast<std::int16_t>((i * 13) % 8000) - 4000;
+  const auto w = noise(2000, 61), g1 = noise(2000, 62), g2 = noise(2000, 63);
+  writeFlac16(t / "drums.flac", 48000, {v});
+  writeWavFloat32(t / "drums.wav", 48000.0, w);
+  writeWavFloat32(t / "guitar.wav", 48000.0, g1);
+  writeWavFloat32(t / "guitars.wav", 48000.0, g2);
+  const StemSet s = loadStemDirectory(t.dir, 48000.0);
+  REQUIRE(s.warnings.size() == 2);
+  REQUIRE(hasWarning(s, "drums.wav: duplicate 'drums' stem (also drums.flac); summed"));
+  REQUIRE(hasWarning(s, "guitars.wav: duplicate 'guitar' stem (also guitar.wav); summed"));
+  REQUIRE(s.sources[static_cast<int>(StemKind::Drums)].size() == 2);
+  for (std::size_t i = 0; i < 2000; i += 97) {
+    REQUIRE(s.audio[static_cast<int>(StemKind::Drums)][0][i] == static_cast<float>(v[i]) / 32768.0f + w[i]);
+    REQUIRE(s.audio[static_cast<int>(StemKind::Guitar)][1][i] == g1[i] + g2[i]);
+  }
+}

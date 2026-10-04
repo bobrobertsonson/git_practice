@@ -860,3 +860,96 @@ TEST_CASE("StemPlayer: with no set the stems are silent but count-in clicks stil
   REQUIRE(o.l[100] == p.accentClick()[100]);
   REQUIRE(*std::max_element(o.l.begin(), o.l.end()) > 0.1f);
 }
+
+// ---- first-set adoption (no set adopted yet) ----------------------------------------------------------
+TEST_CASE("StemPlayer: with no set adopted, the first set is adopted in any block and keeps the playhead", "[stemplayer][adopt]") {
+  StemPlayer p;
+  p.prepare({kFs, 512}, 0);
+  p.play();
+  run(p, 1000);
+  REQUIRE(p.position() == 1000);
+  REQUIRE_FALSE(p.hasStemSet());
+  p.setStemSet(std::make_unique<StemSet>(mkSet(kFs, {{StemKind::Drums, constant(5000, 0.5f)}})));
+  const Out o = run(p, 256);
+  REQUIRE(p.hasStemSet());
+  REQUIRE(p.position() == 1256);  // not reset
+  REQUIRE(o.l[0] == 0.5f);        // audible from the adoption block on (play fade long done)
+  REQUIRE(o.l[255] == 0.5f);
+  // A second set while playing waits (the stopped-only rule applies once a set is adopted).
+  p.setStemSet(std::make_unique<StemSet>(mkSet(kFs, {{StemKind::Drums, constant(9000, 0.5f)}})));
+  run(p, 100);
+  REQUIRE(p.stemSetLength() == 5000);
+}
+
+TEST_CASE("StemPlayer: first set arriving during a count-in; stale playhead reads silence", "[stemplayer][adopt]") {
+  StemPlayer p;
+  p.prepare({kFs, 512}, 0);
+  p.setCountIn(1, 240.0);
+  p.play();
+  run(p, 100);
+  REQUIRE(p.isCountingIn());
+  p.setStemSet(std::make_unique<StemSet>(mkSet(kFs, {{StemKind::Drums, constant(30000, 0.5f)}})));
+  run(p, 100);
+  REQUIRE(p.hasStemSet());
+  REQUIRE(p.isCountingIn());
+  REQUIRE(p.position() == 0);  // held during the count-in
+  const std::int64_t C = std::llround(4.0 * 60.0 * kFs / 240.0);
+  const Out o = run(p, static_cast<int>(C) + 400);
+  REQUIRE(o.l[static_cast<std::size_t>(C - 200 + 300)] == 0.5f);  // stems play after the count-in
+
+  // Playhead beyond the new set's length: silence, no out-of-bounds read.
+  StemPlayer q;
+  q.prepare({kFs, 512}, 0);
+  q.play();
+  run(q, 2000);
+  q.setStemSet(std::make_unique<StemSet>(mkSet(kFs, {{StemKind::Drums, constant(500, 1.0f)}})));
+  const Out s = run(q, 500);
+  for (float v : s.l) REQUIRE(v == 0.0f);
+  REQUIRE(q.atEnd());
+  q.pause();
+  run(q, 1000);
+  q.seek(0);
+  q.play();
+  REQUIRE(run(q, 400).l[399] == 1.0f);
+}
+
+TEST_CASE("StemPlayer: adopting a first set while playing does not allocate", "[stemplayer][alloc]") {
+  StemPlayer p;
+  p.prepare({kFs, 512}, 0);
+  p.play();
+  std::vector<float> l(512), r(512);
+  p.process(l.data(), r.data(), 512);
+  p.setStemSet(std::make_unique<StemSet>(mkSet(kFs, {{StemKind::Drums, noise(20000, 3)}})));
+  AllocGuard g;
+  p.process(l.data(), r.data(), 512);
+  p.process(l.data(), r.data(), 512);
+  REQUIRE(g.count() == 0);
+  REQUIRE(g.frees() == 0);
+  REQUIRE(p.hasStemSet());
+}
+
+// ---- host-follow: a second jump while the first crossfade is still running -------------------------------
+TEST_CASE("StemPlayer host-follow: a jump during a running crossfade is deferred and compensated", "[stemplayer][host]") {
+  const auto x = rampStem(30000);
+  auto p = make(mkSet(kFs, {{StemKind::Drums, x}}));
+  p->setTransportMode(TransportMode::HostFollow);
+  const int B = 64;
+  auto host = [](int b) {
+    const std::int64_t off = b < 40 ? 0 : (b < 42 ? 1200 : 3200);
+    return HostBlock{b * 64 + off, true};
+  };
+  const Out o = runHost(*p, 120, B, host);
+  const int N = samplesOf(kSeekFadeMs);
+  // First crossfade ends at sample 240 of the jump = block 43, sample 48. The deferred seek targets
+  // the host position of that very sample, with the old head at (first target + 240).
+  const std::int64_t t0 = 43 * 64 + 48;
+  const std::int64_t hostThen = 43 * 64 + 3200 + 48;
+  const std::int64_t oldHead = 40 * 64 + 1200 + N;
+  for (int k = 0; k < N; ++k) {
+    const double expect = fadeIn(k, N) * x[static_cast<std::size_t>(hostThen + k)] + fadeOut(k, N) * x[static_cast<std::size_t>(oldHead + k)];
+    REQUIRE(std::fabs(o.l[static_cast<std::size_t>(t0 + k)] - expect) < 1e-6);
+  }
+  for (int t = static_cast<int>(t0) + N; t < 120 * B; ++t)
+    REQUIRE(std::fabs(o.l[static_cast<std::size_t>(t)] - x[static_cast<std::size_t>(t + 3200)]) < 1e-6);
+  REQUIRE(p->position() == 120 * B + 3200);
+}

@@ -38,9 +38,13 @@ constexpr std::int64_t kDefaultHostJumpThreshold = 64;  // samples
 //    block, the last play()/pause() wins and seek() is applied before it.
 // A thread-safe command queue for the plugin is a later phase.
 //
-// Ramps (transport, stem gains, master) are sample-accurate linear ramps like Gain::rampToLinear
-// (the first ramped sample already moves one step; the last equals the target), computed in double
-// from an integer sample counter so the result does not depend on block size.
+// Ramps (transport, stem gains, master) follow the same linear law as Gain::rampToLinear (the first
+// ramped sample already moves one step; the last equals the target) but are double-precision and
+// counter-based (value = start + (target - start) * k / N), so the result is exact to ~1e-12 and
+// does not depend on block size.
+// Loop: a wrap happens when the playhead steps from b - 1 to b. A seek to exactly b (or beyond)
+// with a loop active therefore does not wrap; it plays on, like a playhead already at or beyond b
+// when the loop is set.
 class StemPlayer {
  public:
   StemPlayer();
@@ -58,7 +62,9 @@ class StemPlayer {
   // Publishes a set (lock-free, via SwapSlot). Throws std::invalid_argument if `set` is null or its
   // rate differs from the prepared rate. The audio thread adopts it only at the start of a block in
   // which the transport is fully stopped (paused, pause fade complete, not counting in); adoption
-  // resets the playhead to 0 and clears the loop. Retired sets are freed by collectGarbage().
+  // resets the playhead to 0 and clears the loop. Exception: when no set has been adopted yet, the
+  // first set is adopted at the start of any block, keeps the playhead where the transport is
+  // (outside [0, length] it just reads silence) and clears the loop and pending crossfade state. Retired sets are freed by collectGarbage().
   void setStemSet(std::unique_ptr<StemSet> set);
   void collectGarbage() noexcept { slot_.collectGarbage(); }
 

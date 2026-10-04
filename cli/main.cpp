@@ -154,8 +154,10 @@ BackingResult mixBacking(const Args& a, const sawblade::RenderResult& r) {
   {
     // Adopt the set and let the master-level ramp finish while stopped, so the level is exact from
     // the first played sample (a stopped player only runs its mix ramps).
-    std::vector<float> scratch(static_cast<std::size_t>(std::llround(kMixRampMs * 0.001 * r.sampleRate)) + 1, 0.0f);
-    player.process(scratch.data(), scratch.data(), static_cast<int>(scratch.size()));
+    // n may exceed the prepared maxBlockSize: process() accepts any n.
+    const auto n = static_cast<std::size_t>(std::llround(kMixRampMs * 0.001 * r.sampleRate)) + 1;
+    std::vector<float> scratchL(n, 0.0f), scratchR(n, 0.0f);
+    player.process(scratchL.data(), scratchR.data(), static_cast<int>(n));
   }
   player.play();
 

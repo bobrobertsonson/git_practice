@@ -118,7 +118,10 @@ void StemPlayer::setStemSet(std::unique_ptr<StemSet> set) {
 
 // ---- command application (audio thread) -------------------------------------------------------
 void StemPlayer::adoptIfStopped() noexcept {
-  if (advancing_ || countingIn_) return;
+  // With a set already adopted, a new one waits until the transport is fully stopped. With none
+  // adopted there is nothing to disturb, so it is adopted at the start of any block.
+  const bool replacing = set_ != nullptr;
+  if (replacing && (advancing_ || countingIn_)) return;
   const StemSet* s = slot_.current();
   if (s == nullptr || s == set_ || s->sampleRate != fs_) return;
   set_ = s;
@@ -132,7 +135,9 @@ void StemPlayer::adoptIfStopped() noexcept {
     ch_[ks * 2 + 1] = s->audio[ks][1].data();
     active_[static_cast<std::size_t>(nActive_++)] = k;
   }
-  pos_ = 0;
+  // Replacing a set resets the playhead; a first set keeps the transport's playhead (a position
+  // outside [0, length] just reads silence: reads are bounds-checked).
+  if (replacing) pos_ = 0;
   loopActive_ = false;
   wrapPending_ = false;
   xfading_ = false;
