@@ -9,7 +9,8 @@ from common import *
 
 W, L, S = 700.0, 700.0, 3
 BW, BD, BH = 760.0, 360.0, 760.0
-SPK = [(-180, 180), (180, 180), (-180, -180), (180, -180)]
+from cab_layout import CABS
+SPK = CABS['4x12']['speakers']
 BAFFLE_Z = -22.0
 GRILLE_TOP = -6.0
 LOGO = (262.0, -322.0)
@@ -113,7 +114,7 @@ def build(mats, mode):
         bpy.context.view_layer.update()
         t.scale = (min(1.0, 86 * MM / max(t.dimensions.x, 1e-9)),) * 2 + (1.0,)
         t.location = (LOGO[0] * MM, LOGO[1] * MM, (GRILLE_TOP + 1.95) * MM)
-    else:
+    elif not NO_MIC:
         # draggable mic: ~1 in off the grille plane, slightly off the dust cap of the upper-left driver, 30 deg off axis
         tip = Vector((-180 + 38, 180 + 6, GRILLE_TOP + 25.4))
         az = math.radians(135); tilt = math.radians(30)
@@ -135,14 +136,15 @@ def build(mats, mode):
             ob.parent = None
     return None
 
-LIFT = 60.0                              # mm, ortho/open views only (see _build)
+LIFT = CABS['4x12']['lift_mm']                              # mm, ortho/open views only (see _build)
 C_FONT = {}
+NO_MIC = '--no-mic' in __import__('sys').argv   # open view without the baked mic + boom (the plugin draws its own)
 SPEC = dict(
     name='cab', kind='cab', plate=(W, L, 4.0), art=art, ink_a='#7fd13b', ink_b='#e8e4d8', populate=None, build=None,
-    k=4.0, center=(0, 0, 0.38), modes=['hero', 'ortho', 'open'], ortho_res=(1400, 1400),
+    k=4.0, center=(0, 0, 0.38), modes=['hero', 'ortho', 'open'], ortho_res=CABS['4x12']['res'],
     fnames={'hero': 'cab_hero_3q.png', 'ortho': 'cab_front_ortho.png', 'open': 'cab_open_ortho.png'},
     hero=dict(kind='persp', loc=(1.15, -2.15, 1.25), target=(0, 0, 0.36), lens=70, k=4.0),
-    ortho=dict(kind='ortho', loc=(0, -4.0, (0.38 + LIFT * MM)), rot=(90, 0, 0), ortho_scale=0.86, k=4.0))
+    ortho=dict(kind='ortho', loc=(0, -4.0, (0.38 + LIFT * MM)), rot=(90, 0, 0), ortho_scale=CABS['4x12']['ortho_scale_m'], k=4.0))
 
 def _build(mats, mode):
     mats['grille'] = mat_grille(mats['art'], W, L, SPEC['ink_a'], SPEC['ink_b'])
@@ -158,6 +160,7 @@ SPEC['build'] = _build
 
 if __name__ == '__main__':
     import sys
+    sys.argv = [a for a in sys.argv if a != '--no-mic']
     # the stencil font is fetched by common.run(); expose its path for the logo plate
     fd = os.path.join(os.path.expanduser('~'), '.cache', 'pedal_b2_fonts')
     for i, a in enumerate(sys.argv):

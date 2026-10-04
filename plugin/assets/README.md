@@ -12,6 +12,8 @@ renders at build time. Total size is well under the 25 MB budget (checked by the
 |---|---|---|
 | `amp_saw.png`, `amp_body.png` | SAW / BODY amp head front panels | 660 px wide |
 | `cab_4x12.png` | 4x12 cab, grille on | 660 x 660 |
+| `cab_4x12_open.png` + `.json` | 4x12 cab, grille off, **no mic** (the mic page draws its own), opaque | 1328 x 1328 |
+| `cab_2x12_open.png` + `.json` | 2x12 cab, grille off, no mic | 1328 x 949 |
 | `pedal_saw.png` | STOCKHOLM SYNDROME pedal, top view | 360 px wide |
 | `pedal_body.png` | TIGHTEN pedal, top view | 280 px wide |
 | `knob_amp.png` + `.json` | chicken-head knob, 128 frames of 128 x 128, -135..+135 deg | strip |
@@ -20,7 +22,9 @@ renders at build time. Total size is well under the 25 MB budget (checked by the
 | `led_orange.png` + `.json` | LED, 2 frames (off, on), 64 x 64 | strip |
 
 Stored sizes are 2x the layout size (the editor lays out at 1280 x 800 and draws panels at half the stored
-width). Sidecar JSONs are copied unchanged from `ui_sprites.py`.
+width). Sidecar JSONs of the sprites are copied unchanged from `ui_sprites.py`. The open cab sidecars (mic page) list every
+driver's centre, cone radius and dust-cap radius in stored pixels, computed from the scripts' geometry by
+`design/render/cab_layout.py` (the scripts import their speaker positions, ortho scale and size from it).
 
 ## Regenerating
 
@@ -37,3 +41,8 @@ Exact command used for the committed files (2026-10-04, bpy 4.2.0, Cycles CPU, a
 128 px frames and 128 frames. `--scale 48` renders the ortho views at 768 / 672 / 576 / 480 px wide, just
 above the stored sizes, which are then downsampled with Lanczos on premultiplied alpha.
 `export_ui_assets.py --list` prints the file names the editor embeds.
+
+The two open cab views (`cab_*_open.*`, added with the mic page) were rendered with
+`export_ui_assets.py --open-cabs-only --work-dir <outside the repo>` at the default `--scale 100`
+and the scripts' default 40 Cycles samples (bpy 4.2.0, CPU, about 4 min and 3 min), i.e. full quality:
+the piece scripts run with `--mode open --no-mic`, then Lanczos down to 1328 px wide.
