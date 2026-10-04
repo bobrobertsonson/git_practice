@@ -22,6 +22,15 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/Engine.cpp
   src/EngineLoader.cpp
   src/PlayAlong.cpp
+  src/browser/T3kJson.cpp
+  src/browser/T3kRunner.cpp
+  src/browser/T3kClient.cpp
+  src/browser/BrowserSettings.cpp
+  src/browser/SlotTarget.cpp
+  src/browser/PreviewPlayer.cpp
+  src/browser/PreviewRender.cpp
+  src/browser/BrowserController.cpp
+  src/browser/CaptureBrowser.cpp
   src/PluginProcessor.cpp
   src/PlayAlongPanel.cpp
   src/PluginEditor.cpp
@@ -46,7 +55,10 @@ juce_add_binary_data(SawbladeAssets SOURCES
   assets/footswitch.png
   assets/footswitch.json
   assets/led_orange.png
-  assets/led_orange.json)
+  assets/led_orange.json
+  assets/preview_riff.wav)
+
+set_source_files_properties(src/browser/BrowserSettings.cpp PROPERTIES COMPILE_DEFINITIONS "SAWBLADE_REPO_DIR=\"${PROJECT_SOURCE_DIR}\"")
 
 # JUCE module sources are compiled into the same targets: -Werror applies to OUR files only.
 set_source_files_properties(${SAWBLADE_PLUGIN_SOURCES} src/PluginEntry.cpp PROPERTIES
@@ -90,6 +102,7 @@ foreach(_fmt ${SAWBLADE_PLUGIN_FORMATS})
   target_link_libraries(SawbladePlugin_${_fmt} PRIVATE sawblade_core "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib)
 endforeach()
 
+find_program(SAWBLADE_PYTHON NAMES python3 python)
 if(SAWBLADE_BUILD_TESTS)
   include(Catch)
   add_executable(sawblade_plugin_tests
@@ -98,9 +111,12 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_engine.cpp
     tests/test_processor.cpp
     tests/test_playalong.cpp
+    tests/test_browser_json.cpp
+    tests/test_browser_preview.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
+    tests/test_browser_json.cpp tests/test_browser_preview.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_plugin_tests PRIVATE src)
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})
@@ -119,7 +135,10 @@ if(SAWBLADE_BUILD_TESTS)
   target_include_directories(sawblade_plugin_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
   target_compile_definitions(sawblade_plugin_tests PRIVATE
     SAWBLADE_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
-    SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets")
+    SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
+    SAWBLADE_PLUGIN_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    SAWBLADE_RIFF_SCRIPT="${PROJECT_SOURCE_DIR}/design/render/make_preview_riff.py"
+    SAWBLADE_PYTHON_EXE="${SAWBLADE_PYTHON}")
   catch_discover_tests(sawblade_plugin_tests TEST_PREFIX "plugin: ")
 endif()
 
@@ -127,13 +146,15 @@ endif()
 # executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
 # compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
 if(SAWBLADE_BUILD_TESTS)
-  add_executable(sawblade_editor_tests tests/test_editor.cpp ${SAWBLADE_PLUGIN_SOURCES})
-  set_source_files_properties(tests/test_editor.cpp
+  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_editor_tests PRIVATE src)
-  target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS}
+  target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
-    SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots")
+    SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots"
+    SAWBLADE_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
+    SAWBLADE_FAKE_T3K="${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_t3k.py")
   target_link_libraries(sawblade_editor_tests PRIVATE
     sawblade_core Catch2::Catch2WithMain SawbladeAssets
     juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
@@ -146,7 +167,6 @@ if(SAWBLADE_BUILD_TESTS)
   catch_discover_tests(sawblade_editor_tests TEST_PREFIX "editor: ")
 
   # plugin/assets/ budget (< 25 MB) and every file the exporter lists exists.
-  find_program(SAWBLADE_PYTHON NAMES python3 python)
   if(SAWBLADE_PYTHON)
     add_test(NAME "editor: assets budget"
       COMMAND ${CMAKE_COMMAND} -DASSETS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/assets

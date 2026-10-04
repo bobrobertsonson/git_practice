@@ -15,6 +15,7 @@
 #include "EngineLoader.h"
 #include "PlayAlong.h"
 #include "PresetMapping.h"
+#include "browser/PreviewPlayer.h"
 #include "sawblade/swap_slot.h"
 
 namespace sawblade::plugin {
@@ -99,6 +100,8 @@ class SawbladeProcessor : public juce::AudioProcessor {
   // are safe from any non-audio thread.
   PlayAlong& playAlong() noexcept { return playAlong_; }
   const PlayAlong& playAlong() const noexcept { return playAlong_; }
+  // The capture browser's audition: plays a rendered riff instead of the rig (docs/specs/phase8_capture_browser.md).
+  PreviewPlayer& previewPlayer() noexcept { return preview_; }
 
 
   // Test hook (call with the audio thread idle): the current engine's applied live parameters and
@@ -133,6 +136,7 @@ class SawbladeProcessor : public juce::AudioProcessor {
   int maxBlock_ = 0;
   std::vector<float> mono_, backL_, backR_;  // rig mono, backing L / R (audio-thread scratch)
   PlayAlong playAlong_;
+  PreviewPlayer preview_;
 
   // Audio-thread state: the engine in use and, for kFadeSeconds after a swap, the outgoing one.
   // Neither reference is ever the last one (the loader keeps its own), so dropping them on the

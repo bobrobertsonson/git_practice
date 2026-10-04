@@ -5,6 +5,8 @@
 #include <cmath>
 
 #include "PlayAlongPanel.h"
+#include "browser/BrowserSettings.h"
+#include "browser/CaptureBrowser.h"
 #include "skin/FilmstripKnob.h"
 
 namespace sawblade::plugin {
@@ -119,7 +121,8 @@ class SawbladeEditor::Content : public juce::Component {
       l->setInterceptsMouseClicks(false, false);
       addAndMakeVisible(*l);
     }
-    configure(browse_, "BROWSE CAPTURES", "Browse TONE3000 captures", true);
+    configure(browse_, "BROWSE CAPTURES", "Browse TONE3000 captures", false);
+    browse_.onClick = [this] { openBrowser(); };
     configure(learn_, "LEARN GATE", "Learn the gate threshold from the input", true);
 
     auto addKnob = [this](const KnobDef& d) -> FilmstripKnob& {
@@ -255,6 +258,22 @@ class SawbladeEditor::Content : public juce::Component {
     playAlong_.setToggleState(open, juce::dontSendNotification);
   }
   bool playAlongOpen() const { return panel_->isVisible(); }
+
+  // The capture browser overlay for the selected piece (closed with its "< RIG" button).
+  void openBrowser() {
+    if (browser_ != nullptr) return;
+    static constexpr Slot kSlots[] = {Slot::SawAmp, Slot::BodyAmp, Slot::Cab, Slot::SawPedal, Slot::BodyPedal};  // Piece order
+    if (!browserSettings_) browserSettings_ = std::make_unique<BrowserSettings>();
+    browser_ = std::make_unique<CaptureBrowser>(processor_, *browserSettings_, kSlots[static_cast<size_t>(rig_.selected())]);
+    browser_->onClose = [this] {
+      browser_->setVisible(false);
+      juce::MessageManager::callAsync([safe = juce::Component::SafePointer<Content>(this)] {
+        if (safe != nullptr) safe->browser_.reset();
+      });
+    };
+    addAndMakeVisible(*browser_);
+    browser_->setBounds(0, 0, kDesignWidth, kDesignHeight);
+  }
   void refreshPanel() {
     if (panel_->isVisible()) panel_->refresh();
   }
@@ -312,6 +331,8 @@ class SawbladeEditor::Content : public juce::Component {
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
   juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_;
   std::unique_ptr<PlayAlongPanel> panel_;
+  std::unique_ptr<BrowserSettings> browserSettings_;
+  std::unique_ptr<CaptureBrowser> browser_;  // declared after the settings it uses
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
