@@ -3,17 +3,28 @@
 //   render(preset, audio, sample_rate, render_rate="auto", out_rate="input", block=256,
 //          base_dir=None, cache=None) -> (float32 ndarray, report dict)
 //   CaptureCache: loads each .nam / IR once, shared by any number of renders and threads.
+//   load_stems(dir, sample_rate) / stem_set_from_arrays(dict, sample_rate) -> StemSet, and
+//   StemPlayer (play-along backing, spec docs/specs/phase5_1_stemplayer.md section 5).
 //
 // The GIL is released for the whole parse + render; nothing in there touches Python objects.
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cmath>
+#include <algorithm>
+#include <cctype>
 #include <exception>
+#include <array>
+#include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "sawblade/capture_cache.h"
 #include "sawblade/render.h"
+#include "sawblade/stem_player.h"
+#include "sawblade/stem_set.h"
 
 namespace py = pybind11;
 using namespace sawblade;
@@ -106,6 +117,164 @@ py::tuple render(const py::object& preset, const py::array& audioIn, const py::o
   return py::make_tuple(out, py::module_::import("json").attr("loads")(report));
 }
 
+
+// ---- stems ------------------------------------------------------------------------------------
+StemKind parseKind(const std::string& name) {
+  std::string n = name;
+  std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (n == "drums") return StemKind::Drums;
+  if (n == "bass") return StemKind::Bass;
+  if (n == "vocals") return StemKind::Vocals;
+  if (n == "other") return StemKind::Other;
+  if (n == "guitar" || n == "guitars") return StemKind::Guitar;
+  throw py::value_error("unknown stem '" + name + "' (use drums, bass, vocals, other, guitar)");
+}
+
+StemAudio arrayToStem(const std::string& name, const py::array& in) {
+  if (in.dtype().kind() != 'f')
+    throw py::value_error("stem '" + name + "' must be a floating-point array (convert integer PCM first)");
+  const auto a = py::array_t<float, py::array::c_style | py::array::forcecast>::ensure(in);
+  if (!a) throw py::value_error("stem '" + name + "' could not be converted to float32");
+  StemAudio out;
+  if (a.ndim() == 1) {
+    out[0].assign(a.data(), a.data() + a.shape(0));
+    out[1] = out[0];
+  } else if (a.ndim() == 2 && a.shape(0) == 2) {
+    const auto n = static_cast<std::size_t>(a.shape(1));
+    out[0].assign(a.data(), a.data() + n);
+    out[1].assign(a.data() + n, a.data() + 2 * n);
+  } else {
+    throw py::value_error("stem '" + name + "' must have shape (n,) or (2, n)");
+  }
+  return out;
+}
+
+std::shared_ptr<StemSet> stemSetFromArrays(const py::dict& d, double sampleRate) {
+  std::array<std::optional<StemAudio>, kStemKindCount> audio;
+  for (const auto& kv : d) {
+    const std::string name = py::str(kv.first).cast<std::string>();
+    const StemKind k = parseKind(name);
+    if (audio[static_cast<std::size_t>(k)]) throw py::value_error("stem '" + name + "' given twice");
+    if (!py::isinstance<py::array>(kv.second)) throw py::type_error("stem '" + name + "' must be a numpy array");
+    audio[static_cast<std::size_t>(k)] = arrayToStem(name, py::reinterpret_borrow<py::array>(kv.second));
+  }
+  return std::make_shared<StemSet>(makeStemSet(sampleRate, audio));
+}
+
+// Python holds a StemSet by shared object; set_stem_set copies it into a fresh unique_ptr (fine off
+// the audio thread). The GIL is never released around the player, so process() and the producer
+// calls are serialised with each other, which is what StemPlayer's threading contract needs.
+struct PyStemPlayer : StemPlayer {
+  bool prepared = false;
+  void need() const {
+    if (!prepared) throw std::runtime_error("StemPlayer is not prepared: call prepare(sample_rate, max_block, max_rig_latency) first");
+  }
+};
+
+GuitarMode parseGuitarMode(std::string m) {
+  std::transform(m.begin(), m.end(), m.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (m == "muted" || m == "mute") return GuitarMode::Muted;
+  if (m == "ghost") return GuitarMode::Ghost;
+  if (m == "full") return GuitarMode::Full;
+  throw py::value_error("guitar mode must be muted, ghost or full");
+}
+
+TransportMode parseMode(std::string m) {
+  std::transform(m.begin(), m.end(), m.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (m == "free_run" || m == "freerun") return TransportMode::FreeRun;
+  if (m == "host_follow" || m == "hostfollow") return TransportMode::HostFollow;
+  throw py::value_error("transport mode must be free_run or host_follow");
+}
+
+void bindStems(py::module_& m) {
+  py::class_<StemSet, std::shared_ptr<StemSet>>(m, "StemSet", "Immutable stereo stems at one sample rate (load_stems / stem_set_from_arrays).")
+      .def_property_readonly("sample_rate", [](const StemSet& s) { return s.sampleRate; })
+      .def_property_readonly("length", [](const StemSet& s) { return s.length; })
+      .def_property_readonly("present",
+                             [](const StemSet& s) {
+                               std::vector<std::string> names;
+                               for (int k = 0; k < kStemKindCount; ++k)
+                                 if (s.present[static_cast<std::size_t>(k)]) names.push_back(stemKindName(static_cast<StemKind>(k)));
+                               return names;
+                             })
+      .def_property_readonly("warnings", [](const StemSet& s) { return s.warnings; })
+      .def("__repr__", [](const StemSet& s) {
+        return "<StemSet " + std::to_string(s.length) + " frames @ " + std::to_string(s.sampleRate) + " Hz>";
+      });
+
+  m.def(
+      "load_stems",
+      [](const py::object& dir, double sampleRate) {
+        const std::string path = py::str(py::module_::import("os").attr("fspath")(dir)).cast<std::string>();
+        std::shared_ptr<StemSet> out;
+        {
+          py::gil_scoped_release nogil;
+          out = std::make_shared<StemSet>(loadStemDirectory(path, sampleRate));
+        }
+        return out;
+      },
+      py::arg("dir"), py::arg("sample_rate"),
+      "Load the *.wav / *.flac stems of a directory (drums, bass, vocals, other, guitar|guitars; other audio files are\n"
+      "summed into 'other' with a warning), resampled to sample_rate. Raises RuntimeError on failure.");
+  m.def("stem_set_from_arrays", &stemSetFromArrays, py::arg("stems"), py::arg("sample_rate"),
+        "Build a StemSet from {name: float ndarray (n,) or (2, n)} already at sample_rate (padded to the longest).");
+
+  py::class_<PyStemPlayer>(m, "StemPlayer", "Play-along backing player (offline use: process(n) renders n frames).")
+      .def(py::init<>())
+      .def("prepare",
+           [](PyStemPlayer& p, double sampleRate, int maxBlock, int maxRigLatency) {
+             p.prepare({sampleRate, maxBlock}, maxRigLatency);
+             p.prepared = true;
+           },
+           py::arg("sample_rate"), py::arg("max_block"), py::arg("max_rig_latency") = 0)
+      .def("reset", [](PyStemPlayer& p) { p.need(); p.reset(); })
+      .def("set_stem_set",
+           [](PyStemPlayer& p, const StemSet& s) {
+             p.need();
+             p.setStemSet(std::make_unique<StemSet>(s));
+             p.collectGarbage();
+           },
+           py::arg("stem_set"), "Publish a copy of the set; it is adopted at the next process() while the transport is stopped.")
+      .def("process",
+           [](PyStemPlayer& p, int n) {
+             p.need();
+             if (n < 0) throw py::value_error("n must be >= 0");
+             py::array_t<float> out({static_cast<py::ssize_t>(2), static_cast<py::ssize_t>(n)});
+             float* d = out.mutable_data();
+             p.process(d, d + n, n);
+             p.collectGarbage();  // safe: the GIL serialises this with every other call
+             return out;
+           },
+           py::arg("n"), "Render n frames: float32 ndarray of shape (2, n).")
+      .def("play", [](PyStemPlayer& p) { p.need(); p.play(); })
+      .def("pause", [](PyStemPlayer& p) { p.need(); p.pause(); })
+      .def("seek", [](PyStemPlayer& p, long long pos) { p.need(); p.seek(pos); }, py::arg("pos"))
+      .def("set_loop", [](PyStemPlayer& p, long long a, long long b) { p.need(); return p.setLoop(a, b); }, py::arg("a"), py::arg("b"))
+      .def("clear_loop", [](PyStemPlayer& p) { p.need(); p.clearLoop(); })
+      .def("set_count_in", [](PyStemPlayer& p, int bars, double bpm, int beatsPerBar) { p.need(); p.setCountIn(bars, bpm, beatsPerBar); },
+           py::arg("bars"), py::arg("bpm"), py::arg("beats_per_bar") = 4)
+      .def("set_click_level_db", [](PyStemPlayer& p, double db) { p.need(); p.setClickLevelDb(db); }, py::arg("db"))
+      .def("set_stem_gain_db", [](PyStemPlayer& p, const std::string& k, double db) { p.need(); p.setStemGainDb(parseKind(k), db); }, py::arg("stem"), py::arg("db"))
+      .def("set_stem_mute", [](PyStemPlayer& p, const std::string& k, bool v) { p.need(); p.setStemMute(parseKind(k), v); }, py::arg("stem"), py::arg("mute"))
+      .def("set_stem_solo", [](PyStemPlayer& p, const std::string& k, bool v) { p.need(); p.setStemSolo(parseKind(k), v); }, py::arg("stem"), py::arg("solo"))
+      .def("set_master_level_db", [](PyStemPlayer& p, double db) { p.need(); p.setMasterLevelDb(db); }, py::arg("db"))
+      .def("set_guitar_mode", [](PyStemPlayer& p, const std::string& m) { p.need(); p.setGuitarMode(parseGuitarMode(m)); }, py::arg("mode"),
+           "\"muted\" (default), \"ghost\" (-12 dB) or \"full\".")
+      .def("set_rig_latency_samples", [](PyStemPlayer& p, int n) { p.need(); p.setRigLatencySamples(n); }, py::arg("samples"))
+      .def("set_transport_mode", [](PyStemPlayer& p, const std::string& m) { p.need(); p.setTransportMode(parseMode(m)); }, py::arg("mode"),
+           "\"free_run\" (default) or \"host_follow\".")
+      .def("set_host_position", [](PyStemPlayer& p, long long pos, bool playing) { p.need(); p.setHostPosition(pos, playing); },
+           py::arg("host_sample"), py::arg("host_playing"))
+      .def("set_host_jump_threshold_samples", [](PyStemPlayer& p, long long t) { p.need(); p.setHostJumpThresholdSamples(t); }, py::arg("samples"))
+      .def_property_readonly("position", [](const PyStemPlayer& p) { return p.position(); })
+      .def_property_readonly("is_playing", [](const PyStemPlayer& p) { return p.isPlaying(); })
+      .def_property_readonly("is_counting_in", [](const PyStemPlayer& p) { return p.isCountingIn(); })
+      .def_property_readonly("at_end", [](const PyStemPlayer& p) { return p.atEnd(); })
+      .def_property_readonly("stem_set_length", [](const PyStemPlayer& p) { return p.stemSetLength(); })
+      .def_property_readonly("rig_latency_samples", [](const PyStemPlayer& p) { return p.rigLatencySamples(); })
+      .def_property_readonly("latency_samples", [](const PyStemPlayer& p) { return p.latencySamples(); });
+}
+
 }  // namespace
 
 PYBIND11_MODULE(sawblade_core, m) {
@@ -178,4 +347,6 @@ cache        optional CaptureCache. Its invalidation is stat-gated (file size + 
 Returns (samples: float32 ndarray, report: dict). The report is the tonerender --report JSON
 (latencySamples, pathLatency, renderRate, timings, warnings, ...). The GIL is released while
 rendering. Raises PresetError (ValueError) or RenderIOError (OSError); both have `json_path`.)doc");
+
+  bindStems(m);
 }
