@@ -330,3 +330,107 @@ Files changed; design notes; latency per rate; alias table (per clip, boost, no-
 THD tables; clip-type numbers; the eye-vs-HM numbers of 3b; preset level changes and peaks;
 the pedal_fr commands; full ctest summary; commit hashes; decisions / questions for lead;
 the post-merge one-line edits list (ClipType → 7b's, cubic LED → quintic, HmVoicing).
+
+---
+
+# Part 2 (added after GO, 2026-10-04): integration with the landed phase 7b
+
+7b has landed on `origin/claude/sawblade-p7b-chainsaw-pedal` (`a0eae2e`): `pedal.hm` v2 with
+`HmVoicing`, `pedal.muff`, shared `ClipType`/`clipShapeSpec`/`DryDelay` in `pedal_common.h`,
+the generic live-parameter path (`Processor::setLiveParams`, `BlockType::liveParams`,
+`Chain::setBlockLiveParams`), the plugin CIRCUIT switch (`plugin/src/pedals/CircuitParams.*`,
+`CircuitFaces.*`, `PedalFace`, `AdvancedDrawer`), 15 presets in `presets/modeled/chainsaw/`
+and `docs/PEDALS.md`. Main-lead instruction: merge it into this branch first, then make `hmx`
+and `eye` **rows in 7b's tables, not a parallel mechanism**. The "do not touch" list of Part 1
+is lifted for the files named below; everything else in 7b stays as it landed.
+
+## 2.1 Merge
+`git merge origin/claude/sawblade-p7b-chainsaw-pedal` (a merge commit; this branch is pushed,
+never rebase it). Known conflicts and their resolutions:
+- `core/src/block_registry.cpp`: keep both sides' registrations (hm, ts, muff, hmx, eye).
+- `tests/CMakeLists.txt`: keep both test files (`test_pedals_7b.cpp`, `test_pedals_saw.cpp`).
+- `tests/tools/pedal_fr.cpp`: **take 7b's version** (it has `--preset`, `--block`, `--thd` and
+  the same string-param change).
+- `docs/specs/STATE.md`: keep the 7c content (7b's says "complete"; its REPORT holds the rest);
+  add one line that 7b is merged at `a0eae2e`.
+After the merge: full Release ctest must pass before any adaptation commit.
+
+## 2.2 Core adaptations (`pedal_hmx.*`, `pedal_eye.*`, `pedal_saw_params.*`)
+1. Delete `pedal_stages.h/.cpp` (and the CMake lines). Use `sawblade::ClipType`,
+   `clipShapeSpec`, `kClipNames`, `clipTypeName` and `DryDelay` from `pedal_common.h`. The hmx
+   `clip` becomes 7b's **4-way** enum (`silicon | led | asymmetric | soft`) so the shared CLIP
+   switch maps 1:1; the LED now uses 7b's order-2 shape through `clipShapeSpec` exactly like
+   `HmPedal` does. Re-measure and re-print the clip-type THD/RMS/alias numbers.
+2. `HmxPedal` reads every stock constant from `HmVoicing` (tightness law, `preHpfHz`,
+   `preLpfHz`, `g1BaseDb`, `kModes[Stock]` for `s1` / `interLpfHz` / `postLpfHz`,
+   `interstageDb`, `lowBaseDb`, `highBaseDb`, `highSlope`, `highQ`, `presenceQ`, `rolloffQ`,
+   `postQ1/2`). Hard-coded copies of those numbers are gone. `EyePedal` likewise (its 100 Hz
+   pre-clip corner and `10 + 4.2·gain` law stay its own constants, named in its header).
+3. **Live parameters**, 7b §3 pattern copied from `HmPedal`: `HmxPedal::setLiveParams` /
+   `EyePedal::setLiveParams` (store targets, dirty flag; gains ramp 20 ms, filter coefficients
+   redesigned once at block start when changed, enums immediate, no-op when the values equal
+   the current ones so static renders stay bit-identical). `hmxLiveParamDescs()` /
+   `eyeLiveParamDescs()` return `std::vector<LiveParamDesc>` in `HmxLive` / `EyeLive` order
+   (keys = JSON keys, ranges and defaults = the schema's, choices for `clip` and `boost`),
+   and the registry rows set `liveParams`. Keep the existing `*ParamsFromLive` /
+   `*LiveFromParams` converters (they now also serve the plugin).
+4. `pedal.hm` `mode`: **no change**. 7b's `stock | custom | modded` already is the requested
+   "standard | custom" (`stock` = standard). Say so in the report.
+
+## 2.3 Plugin integration (`plugin/src/pedals/*`, `plugin/src/PresetMapping.*`)
+- `Circuit`: append `ModdedSaw = 2`, `OneKnobSaw = 3`; `kNumCircuits = 4`;
+  `kMaxCircuitLive` over all four. `ParamIndex`: `kHmxFirst = kMuffFirst + kMuffNumLive`,
+  `kEyeFirst = kHmxFirst + kHmxNumLive`, `kNumParams = kEyeFirst + kEyeNumLive`. Ids `hmx<Key>`
+  / `eye<Key>` (`hmxLevel`, `hmxLow`, `hmxLowMid`, `hmxHighMid`, `hmxHigh`, `hmxDistortion`,
+  `hmxPresence`, `hmxTightness`, `hmxMix`, `hmxClip`, `hmxBoost`, `hmxLowMidFreq`,
+  `hmxHighMidFreq`; `eyeGain`, `eyeLevel`, `eyeTightness`). Display names "Modded Saw …" /
+  "One-Knob Saw …"; `sawCircuit` choices `Chainsaw`, `Big Fuzz`, `Modded Saw`, `One-Knob Saw`.
+  `CircuitInfo` rows, `circuitForBlockType`, `circuitParamSpec` from the core descriptor lists
+  (single source of truth), `switchCircuit` carry-over: level ↔ volume ↔ level, and `mix`,
+  `tightness`, `clip` where the target has them (the eye has no mix/clip: dropped).
+- `CircuitFaces` rows:
+
+| circuit | OLED | face knobs 1–6 | CLIP | FOCUS | drawer knobs | drawer switches |
+|---|---|---|---|---|---|---|
+| MODDED SAW (`pedal.hmx`) | `MODDED SAW` | LOW `hmxLow`, HIGH `hmxHigh`, DIST `hmxDistortion`, TIGHT `hmxTightness`, OUT `hmxLevel`, MIX `hmxMix` | `hmxClip` | `hmxBoost` labelled BOOST, values 0 / 1, threshold 0.5, readings OFF / ON | LOW-MID `hmxLowMid`, LM HZ `hmxLowMidFreq`, HIGH-MID `hmxHighMid`, HM HZ `hmxHighMidFreq`, PRESENCE `hmxPresence` | BOOST `hmxBoost` |
+| ONE-KNOB SAW (`pedal.eye`) | `ONE-KNOB SAW` | GAIN `eyeGain`, −1, −1, TIGHT `eyeTightness`, OUT `eyeLevel`, −1 | −1 (no CLIP switch) | `eyeTightness` labelled TIGHT, values 0 / 5, threshold 2.5, readings OFF / ON | (none) | (none) |
+
+  If `PedalSwitch` / `FaceSwitchSpec` hard-code the WIDE / NARROW readings, add two reading
+  strings to `FaceSwitchSpec` (defaults "WIDE" / "NARROW") — the smallest generalisation. The
+  face and drawer must handle `clipParam = −1`, empty knob positions and empty drawer lists
+  (hide the control; the OLED line 2 omits the clip field).
+- `docs/PEDALS.md`: replace the "coming" 7c paragraph with the two circuits (controls in player
+  terms, the face/drawer mapping above, the seven presets one line each). `presets/README.md`:
+  replace the 7c TODO rows with the seven presets (folders `presets/modeled/hmx/`, `eye/`; the
+  family bank is 22). `docs/PLUGIN.md`: one sentence that four circuits exist.
+
+## 2.4 Acceptance, Part 2 (on top of Part 1's; Part 1 tests keep passing after the merge)
+12. **Live parameters, core** (both pedals, `tests/test_pedals_saw.cpp`): (a) a loop calling
+    `setLiveParams()` with changing values (every index; enums cycling) between `process()`
+    calls allocates nothing (alloc guard); (b) a live change of `hmxDistortion` / `eyeGain`
+    changes the output RMS; of `hmxClip` changes the spectrum; of `hmxBoost` raises RMS;
+    (c) a `setLiveParams` with the current values leaves the static render bit-identical, and
+    the descriptor lists match `kHmxNumLive` / `kEyeNumLive` with keys equal to the JSON keys;
+    (d) a Chain `setBlockLiveParams` into an hmx block on path a works and is RT-safe.
+13. **Plugin, headless** (`sawblade_plugin_tests`, extend 7b's tests): with
+    `presets/modeled/hmx/arizona_mids.json` loaded, `sawCircuit = ModdedSaw`, the hmx set holds
+    the preset's values and `applyParams` writes them back; moving `hmxHighMid`, `hmxClip`,
+    `hmxBoost` changes the audio with `engineBuilds()` unchanged; the RT test passes under
+    moving hmx parameters. Same with `presets/modeled/eye/one_knob_max.json` and `eyeGain`.
+    `sawCircuit` cycles Chainsaw → Big Fuzz → Modded Saw → One-Knob Saw → Chainsaw, one rebuild
+    per step, carry-over as specified (eye: level only + tightness), state round-trips.
+14. **Editor** (`sawblade_editor_tests`, xvfb): every parameter has exactly one bound control
+    (amended counts); the face shows the MODDED SAW set after switching, the ONE-KNOB SAW face
+    has three knobs, no CLIP switch and an empty drawer; BOOST / TIGHT switches read OFF / ON
+    and write their values; OLED line 2 for the eye omits the clip; no UI-visible string holds a
+    trademark (add wrath, torcher, eyemaster, tc electronic, dunwich, abominable to 7b's list).
+    Screenshots to `${CMAKE_BINARY_DIR}/screenshots/`: `sawblade_face_moddedsaw_2x.png`,
+    `sawblade_drawer_moddedsaw_2x.png`, `sawblade_face_oneknob_2x.png` and 3x crops
+    `face_moddedsaw_crop.png`, `drawer_moddedsaw_crop.png`, `face_oneknob_crop.png`.
+15. pluginval strictness 10 on the VST3 if 7b's harness runs here; `-Werror`; full Release
+    ctest; Debug ASan/UBSan for the core tests.
+
+## 2.5 Report back (Part 2)
+The merge conflict resolutions; the deleted/replaced 7c shadow types; re-measured clip numbers
+(the LED is now quintic); the live-param design notes; the plugin table rows; screenshots;
+full ctest summary; commit hashes; decisions / questions for lead.
