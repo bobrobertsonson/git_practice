@@ -23,7 +23,8 @@ add_executable(sawblade_tests
   test_stem_set.cpp
   test_stem_player.cpp
   test_stem_cli.cpp
-  test_loudness.cpp)
+  test_loudness.cpp
+  test_pedals.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)
@@ -40,3 +41,8 @@ add_dependencies(sawblade_tests tonerender)
 # Deterministic fixture generator (run via scripts/regen_fixtures.sh; not part of ctest).
 add_executable(make_fixtures tools/make_fixtures.cpp)
 target_link_libraries(make_fixtures PRIVATE sawblade_core sawblade_warnings)
+
+# Developer tool (not installed): small-signal frequency response of the modeled pedals as CSV.
+add_executable(pedal_fr tools/pedal_fr.cpp)
+target_link_libraries(pedal_fr PRIVATE sawblade_core sawblade_warnings)
+target_include_directories(pedal_fr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
