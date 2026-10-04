@@ -61,6 +61,24 @@ Not found: any official multitracks/DIs for Rotten Sound, Harm's Way, Black Brea
 Entombed, Dismember. For these the plan is **reference mix only** (user supplies mp3s of the
 released songs) + the user's own DIs, matched against the reference.
 
+
+## Community list "Multis & DIs" (user-shared spreadsheet, 2026-10-04)
+
+The list has 521 songs; 83 of them are heavy songs with guitar DIs. Most heavy entries are
+Omega Station instrumental covers (same source as the Gatecreeper DIs). Picks downloaded
+for validation (local only, under `testdata/multis/`, catalogue in
+`testdata/multis/catalogue.json`):
+
+| Style | Songs |
+|---|---|
+| Chainsaw / powerviolence | Nails "Friend To All", "No Surrender", "I Will Not Follow"; Bloodbath "Ways To The Grave" |
+| Death (non-HM-2) | Bolt Thrower "Anti-Tank", "The Shreds Of Sanity", "Those Once Loyal"; Hypocrisy "A Coming Race"; Vader "Sword of the Witcher" |
+| Grind | Terrorizer "Fear Of Napalm" |
+| Black | Dissection "Retribution"; Darkthrone "Transilvanian Hunger"; Immortal "One By One" |
+| Doom / sludge (fuzz) | Electric Wizard "Dunwich"; Conan "Volt Thrower"; Crowbar "Planets Collide" |
+
+Entombed "Left Hand Path" (Death Lab Studio) needs the user to fill in a sign-up form.
+
 ## Priority for Sawblade validation (user, 2026-10-03: death metal over deathcore)
 1. Death metal DI→mix pairs first: Swedish/HM-2 (have Gatecreeper), US/Florida style,
    cavernous, melodic. Cambridge-MT Decypher "Unseen" (melodic death) is the free start.
