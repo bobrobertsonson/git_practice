@@ -20,6 +20,7 @@ Readers must reject `version` greater than they support and migrate lower versio
   "version": 1,                        // required, integer
   "name": "Gatecreeper-ish v1",        // required
   "notes": "",                         // optional free text
+  "category": "Death metal",           // optional UI metadata (see Category); not tone, ignored by the chain
   "input":  { "gainDb": 0.0 },         // optional
   "gate":   { ... },                   // optional; see Gate
   "paths":  { "a": Path, "b": Path },  // required; both keys required
@@ -133,6 +134,19 @@ modulation, long-release dynamics — are not; the export phase refuses or bypas
 }
 ```
 License + creator travel with every preset so exports can carry attribution.
+
+**Capture cache fallback.** When a capture's `file` does not exist and `source.provider` is `"tone3000"` with `id` and
+`modelId`, every core loader (tonerender, plugin, bindings) tries `<cacheRoot>/<id>/<modelId>.nam` (`.wav` for IRs).
+`cacheRoot` is `$SAWBLADE_CACHE_DIR` if set, else `~/.cache/sawblade/captures` (the same as `sawblade-t3k`). `sha256` is
+verified against the cached file; a mismatch is an error. A capture that is not cached either fails with the JSON path
+plus "not in the capture cache either; run: sawblade-t3k resolve <preset file>".
+
+## Category
+
+Optional top-level `"category": "<string>"`: a label for the preset browser. It is UI metadata, not tone: the chain and
+the render ignore it, and the writer writes it only when it is non-empty. Recommended values: "Death metal",
+"Swedish death (HM-2)", "Black metal", "Thrash", "Doom / Sludge / Fuzz", "Hardcore / Crust", "Grind",
+"Metalcore / Djent", "Nu-metal", "Prog", "Other". Every factory preset sets one.
 
 ## EqBand (RBJ biquads, cascaded in array order)
 

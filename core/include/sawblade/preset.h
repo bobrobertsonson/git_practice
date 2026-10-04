@@ -106,6 +106,7 @@ struct Preset {
   int version = kPresetVersion;
   std::string name;
   std::string notes;
+  std::string category;  // optional UI metadata (docs/PRESET_SCHEMA.md): not tone, ignored by the chain; "" = none
   double inputGainDb = 0.0;
   GateParams gate = [] { GateParams g; g.enabled = false; return g; }();
   PathPreset a, b;
@@ -141,6 +142,14 @@ class CaptureError : public std::runtime_error {
 // Load-time check of a capture: the file exists and, if `sha256` is set, hashes to it. Throws
 // CaptureError (a std::runtime_error) with the JSON path in the message.
 void verifyCapture(const Capture& c, const std::string& jsonPath);
+
+// The TONE3000 capture cache root, as match/sawblade_match/t3k/cache.py: $SAWBLADE_CACHE_DIR if set, else
+// ~/.cache/sawblade/captures. Layout: <root>/<tone id>/<model id>.nam (.wav for IRs).
+std::filesystem::path captureCacheRoot();
+// Where the capture's file really is: `resolvedPath` if it exists; else, for a TONE3000 capture with id and modelId,
+// the cached copy if that exists; else `resolvedPath`. IRs are recognised by the file extension (.wav / .flac).
+// Every core loader (verifyCapture, CaptureCache, the NAM block, IR loading) goes through this.
+std::filesystem::path locateCapture(const Capture& c);
 
 // Shared parse helpers (used by block-type parse hooks).
 Capture parseCapture(const nlohmann::json& j, const std::string& path, const std::filesystem::path& baseDir);

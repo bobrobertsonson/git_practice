@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Grind (Terrorizer-style)",
+  "category": "Grind",
   "notes": "DS-1 cranked into a JCM800 2203 crunch: raw, buzzy, mid-forward. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
   "gate": {
     "enabled": true,

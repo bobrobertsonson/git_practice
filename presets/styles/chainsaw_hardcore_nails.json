@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Chainsaw Hardcore (Nails-style)",
+  "category": "Hardcore / Crust",
   "notes": "HM-2 into a JCM800 2204: chainsaw edge with a fat low-mid push for powerviolence / metallic hardcore. Tighter gate for stops. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
   "gate": {
     "enabled": true,

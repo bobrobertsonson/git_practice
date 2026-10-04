@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Tight Body",
+  "category": "Metalcore / Djent",
   "notes": "Body-dominant for fast palm-muted/D-beat parts: extra low cut before the body amp, saw adds edge on top.",
   "gate": {
     "enabled": true,

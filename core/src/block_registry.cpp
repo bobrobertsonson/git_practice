@@ -30,7 +30,7 @@ std::unique_ptr<Processor> createNam(const Block& b, const BlockBuildContext& ct
   if (ctx.cache) return NamBlock::load(*ctx.cache->namModel(p.model, filePath), cfg);  // bypass: see Chain
   verifyCapture(p.model, filePath);
   try {
-    return NamBlock::load(p.model.resolvedPath, cfg);  // bypass is handled by the Chain
+    return NamBlock::load(locateCapture(p.model), cfg);  // bypass is handled by the Chain
   } catch (const std::exception& e) {
     throw CaptureError(filePath, e.what());
   }

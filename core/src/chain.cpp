@@ -25,7 +25,7 @@ std::shared_ptr<const IrData> loadCabIr(const Capture& c, const std::string& pat
   } else {
     verifyCapture(c, filePath);
     try {
-      ir = std::make_shared<const IrData>(loadIr(c.resolvedPath, sr, normalize));
+      ir = std::make_shared<const IrData>(loadIr(locateCapture(c), sr, normalize));
     } catch (const std::exception& e) {
       throw CaptureError(filePath, e.what());
     }
@@ -133,7 +133,7 @@ std::vector<NamRateProbe> probeNamRates(const Preset& p, CaptureCache* cache) {
         if (cache) {
           hz = cache->namModel(nam->model, filePath)->expectedSampleRate();
         } else {
-          hz = NamBlock::load(nam->model.resolvedPath, NamBlockConfig{})->expectedSampleRate();
+          hz = NamBlock::load(locateCapture(nam->model), NamBlockConfig{})->expectedSampleRate();
         }
       } catch (const CaptureError&) {
         throw;

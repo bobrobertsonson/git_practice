@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Black Metal (Darkthrone / Dissection-style)",
+  "category": "Black metal",
   "notes": "DS-1 into a Peavey 5150 lead channel through Greenbacks, low end trimmed: thin, buzzing, trebly but not fizzy. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
   "gate": {
     "enabled": true,

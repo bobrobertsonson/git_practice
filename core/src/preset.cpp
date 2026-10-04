@@ -1,6 +1,7 @@
 #include "sawblade/preset.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -328,6 +329,7 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
   }
   p.name = r.requireString("name");
   p.notes = r.string("notes", "");
+  p.category = r.string("category", "");
   if (auto in = r.optionalObject("input")) {
     p.inputGainDb = in->number("gainDb", 0.0, kGainLo, kGainHi);
     in->finish();
@@ -359,7 +361,7 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
 }
 
 nlohmann::json toJson(const Preset& p) {
-  return {{"schema", p.schema},
+  json j = {{"schema", p.schema},
           {"version", p.version},
           {"name", p.name},
           {"notes", p.notes},
@@ -372,16 +374,48 @@ nlohmann::json toJson(const Preset& p) {
           {"postEq", eqListJson(p.postEq)},
           {"busComp", toJson(p.busComp)},
           {"output", {{"gainDb", p.outputGainDb}}}};
+  if (!p.category.empty()) j["category"] = p.category;
+  return j;
+}
+
+fs::path captureCacheRoot() {
+  if (const char* e = std::getenv("SAWBLADE_CACHE_DIR"); e != nullptr && *e != '\0') return fs::path(e);
+#if defined(_WIN32)
+  const char* home = std::getenv("USERPROFILE");
+#else
+  const char* home = std::getenv("HOME");
+#endif
+  return (home != nullptr && *home != '\0' ? fs::path(home) : fs::path(".")) / ".cache" / "sawblade" / "captures";
+}
+
+namespace {
+bool isTone3000(const Capture& c) {
+  return c.source && c.source->provider == "tone3000" && !c.source->id.empty() && !c.source->modelId.empty();
+}
+}  // namespace
+
+fs::path locateCapture(const Capture& c) {
+  std::error_code ec;
+  if (fs::exists(c.resolvedPath, ec) || !isTone3000(c)) return c.resolvedPath;
+  std::string ext = c.resolvedPath.extension().string();
+  for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  const bool ir = ext == ".wav" || ext == ".flac";
+  const fs::path cached = captureCacheRoot() / c.source->id / (c.source->modelId + (ir ? ".wav" : ".nam"));
+  return fs::exists(cached, ec) ? cached : c.resolvedPath;
 }
 
 void verifyCapture(const Capture& c, const std::string& jsonPath) {
-  if (!fs::exists(c.resolvedPath))
-    throw CaptureError(jsonPath, jsonPath + ": file not found: " + c.resolvedPath.string());
+  const fs::path p = locateCapture(c);
+  if (!fs::exists(p)) {
+    std::string msg = jsonPath + ": file not found: " + c.resolvedPath.string();
+    if (isTone3000(c)) msg += " (not in the capture cache either; run: sawblade-t3k resolve <preset file>)";
+    throw CaptureError(jsonPath, msg);
+  }
   if (c.sha256.empty()) return;
-  const std::string got = sha256File(c.resolvedPath);
+  const std::string got = sha256File(p);
   if (got != c.sha256)
-    throw CaptureError(jsonPath, jsonPath + ": sha256 mismatch for " + c.resolvedPath.string() + " (expected " +
-                                     c.sha256 + ", got " + got + ")");
+    throw CaptureError(jsonPath, jsonPath + ": sha256 mismatch for " + p.string() + " (expected " + c.sha256 +
+                                     ", got " + got + ")");
 }
 
 Preset loadPresetFile(const fs::path& path) {
