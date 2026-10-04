@@ -32,6 +32,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "TakeRecorder.h"
 #include "sawblade/loudness.h"
 #include "sawblade/stem_player.h"
 #include "sawblade/stem_set.h"
@@ -214,6 +215,14 @@ class PlayAlong {
   // bl / br are overwritten with the backing for the same n samples. host.sample is the host position
   // of the first sample (ignored in Standalone mode).
   void process(const float* rig, float* bl, float* br, int n, const HostTransport& host) noexcept;
+  // The first part of process(): applies the queued commands, the rig latency and the host position for
+  // this block. Called before takeStartInfo(); process() then skips it for the same block.
+  void prepareBlock(const HostTransport& host) noexcept;
+  // Where the song is at the first sample of the block `prepareBlock` was just called for: the stem sample
+  // that plays then (player offset applied; the backing is delayed by the rig latency, which is exactly what
+  // lines the DI sample up with it). `running` = the backing is playing, not counting in, and (plugin mode)
+  // following the host.
+  TakeStartInfo takeStartInfo(const HostTransport& host) const noexcept;
 
  private:
   struct Request {
@@ -258,6 +267,7 @@ class PlayAlong {
   bool busy_ = false, stop_ = false, loadWanted_ = false, wantedUser_ = false;
 
   // Audio-thread state.
+  bool blockPrepared_ = false;
   int appliedLatency_ = 0;
   bool wantLoop_ = false, hostSync_ = false, followMode_ = false;
   std::int64_t loopA_ = 0, loopB_ = 0;

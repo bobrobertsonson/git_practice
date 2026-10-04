@@ -459,8 +459,7 @@ void PlayAlong::applyCommand(const PlayAlongCmd& c) noexcept {
   }
 }
 
-void PlayAlong::process(const float* rig, float* bl, float* br, int n, const HostTransport& host) noexcept {
-  loud_.process(rig, n);
+void PlayAlong::prepareBlock(const HostTransport& host) noexcept {
   PlayAlongCmd c;
   while (queue_.pop(c)) applyCommand(c);
 
@@ -476,6 +475,27 @@ void PlayAlong::process(const float* rig, float* bl, float* br, int n, const Hos
   }
   // Plugin: the backing is off until host sync is enabled (the player then just fades to silence).
   if (follow) player_.setHostPosition(host.sample, hostSync_ && host.playing);
+  blockPrepared_ = true;
+}
+
+TakeStartInfo PlayAlong::takeStartInfo(const HostTransport& host) const noexcept {
+  TakeStartInfo info;
+  info.hasSong = player_.hasStemSet();
+  if (!info.hasSong) return info;
+  info.stemSampleRate = rate_.load(std::memory_order_relaxed);
+  const bool follow = !standalone();
+  // Playhead p plays stem sample p - offset. In plugin mode the playhead is the host position.
+  const std::int64_t playhead = follow ? host.sample : player_.position();
+  info.running = follow ? (hostSync_ && host.playing) : (player_.isPlaying() && !player_.isCountingIn());
+  info.stemSampleIndex = playhead - player_.appliedStartOffsetSamples();
+  return info;
+}
+
+void PlayAlong::process(const float* rig, float* bl, float* br, int n, const HostTransport& host) noexcept {
+  loud_.process(rig, n);
+  if (!blockPrepared_) prepareBlock(host);
+  blockPrepared_ = false;
+  const bool follow = !standalone();
 
   player_.process(bl, br, n);
 

@@ -1,0 +1,994 @@
+#include "JobRunner.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <cctype>
+#include <cmath>
+#include <functional>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <deque>
+#include <fstream>
+#include <regex>
+#include <sstream>
+
+#include <nlohmann/json.hpp>
+
+#include "AppPaths.h"
+
+#if !JUCE_WINDOWS
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#ifndef SAWBLADE_SOURCE_DIR
+#define SAWBLADE_SOURCE_DIR ""
+#endif
+
+namespace sawblade::plugin {
+namespace fs = std::filesystem;
+using nlohmann::json;
+using namespace std::chrono_literals;
+
+namespace {
+
+constexpr std::size_t kLogTailLines = 40;
+constexpr auto kPollPeriod = 100ms;
+
+std::int64_t nowMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+std::string utcIso(std::int64_t ms) {
+  const std::time_t t = static_cast<std::time_t>(ms / 1000);
+  std::tm tm{};
+#if JUCE_WINDOWS
+  gmtime_s(&tm, &t);
+#else
+  gmtime_r(&t, &tm);
+#endif
+  char buf[32];
+  std::strftime(buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm);
+  return buf;
+}
+
+std::string readFile(const fs::path& p) {
+  std::ifstream f(p, std::ios::binary);
+  if (!f) return {};
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  return ss.str();
+}
+
+void writeAtomic(const fs::path& p, const std::string& text) {
+  const fs::path tmp = p.string() + ".tmp";
+  {
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    f << text;
+  }
+  std::error_code ec;
+  fs::rename(tmp, p, ec);
+}
+
+bool isExecutableFile(const fs::path& p) {
+  std::error_code ec;
+  if (!fs::is_regular_file(p, ec)) return false;
+#if JUCE_WINDOWS
+  return true;
+#else
+  return ::access(p.c_str(), X_OK) == 0;
+#endif
+}
+
+bool pidAlive(std::int64_t pid) {
+#if JUCE_WINDOWS
+  (void)pid;
+  return false;
+#else
+  if (pid <= 1) return false;
+  // A child of this process that has exited stays a zombie until it is waited for (kill(pid, 0) still
+  // succeeds): reap it here. ECHILD means it is not ours.
+  int status = 0;
+  const pid_t r = ::waitpid(static_cast<pid_t>(pid), &status, WNOHANG);
+  if (r == static_cast<pid_t>(pid)) return false;
+  if (r == 0) return true;
+  if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
+  return errno == EPERM;
+#endif
+}
+
+void signalPid(std::int64_t pid, bool hard) {
+#if JUCE_WINDOWS
+  (void)pid;
+  (void)hard;
+#else
+  if (pid > 1) ::kill(static_cast<pid_t>(pid), hard ? SIGKILL : SIGTERM);
+#endif
+}
+
+std::string trim(std::string s) {
+  const auto notSpace = [](unsigned char c) { return !std::isspace(c); };
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), notSpace));
+  s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
+  return s;
+}
+
+std::string lower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return s;
+}
+
+fs::path homeDir() {
+  const char* h = std::getenv("HOME");
+  return (h != nullptr && *h != '\0') ? fs::path(h) : fs::path("/tmp");
+}
+
+double num(const json& j, const char* key, double def) {
+  if (auto it = j.find(key); it != j.end() && it->is_number()) return it->get<double>();
+  return def;
+}
+
+}  // namespace
+
+const char* jobKindName(JobKind k) { return k == JobKind::Match ? "match" : "export"; }
+const char* jobStateName(JobState s) {
+  switch (s) {
+    case JobState::None: return "none";
+    case JobState::Starting: return "starting";
+    case JobState::Running: return "running";
+    case JobState::Succeeded: return "succeeded";
+    case JobState::Failed: return "failed";
+    case JobState::Cancelled: return "cancelled";
+  }
+  return "none";
+}
+
+// ---- settings ----------------------------------------------------------------------------------------------------
+fs::path MatchSettings::defaultMatchExecutable() { return fs::path(SAWBLADE_SOURCE_DIR) / "match" / ".venv" / "bin" / "sawblade-match"; }
+fs::path MatchSettings::defaultExportExecutable() { return fs::path(SAWBLADE_SOURCE_DIR) / "match" / ".venv" / "bin" / "sawblade-export"; }
+fs::path MatchSettings::defaultPoolManifest() { return homeDir() / ".cache" / "sawblade" / "captures" / "pool_manifest.json"; }
+
+MatchSettings::MatchSettings(const fs::path& file) : file_(file) {}
+MatchSettings::~MatchSettings() = default;
+
+void MatchSettings::setFile(const fs::path& file) {
+  file_ = file;
+  props_.reset();
+}
+
+juce::PropertiesFile& MatchSettings::props() const {
+  if (!props_) {
+    juce::PropertiesFile::Options o;
+    o.applicationName = "Sawblade";
+    o.storageFormat = juce::PropertiesFile::storeAsXML;
+    o.millisecondsBeforeSaving = 0;
+    props_ = std::make_unique<juce::PropertiesFile>(juce::File(file_.string()), o);
+  }
+  return *props_;
+}
+
+namespace {
+fs::path pathSetting(juce::PropertiesFile& p, const char* key, const fs::path& def) {
+  const juce::String v = p.getValue(key, juce::String());
+  return v.isEmpty() ? def : fs::path(v.toStdString());
+}
+void saveSetting(juce::PropertiesFile& p, const char* key, const juce::String& value) {
+  p.getFile().getParentDirectory().createDirectory();
+  p.setValue(key, value);
+  p.saveIfNeeded();
+}
+}  // namespace
+
+fs::path MatchSettings::matchExecutable() const { return pathSetting(props(), "matchExecutable", defaultMatchExecutable()); }
+fs::path MatchSettings::exportExecutable() const { return pathSetting(props(), "exportExecutable", defaultExportExecutable()); }
+fs::path MatchSettings::poolManifest() const { return pathSetting(props(), "poolManifest", defaultPoolManifest()); }
+std::string MatchSettings::selectedTake() const { return props().getValue("selectedTake", juce::String()).toStdString(); }
+
+void MatchSettings::setMatchExecutable(const fs::path& p) { saveSetting(props(), "matchExecutable", juce::String(p.string())); }
+void MatchSettings::setExportExecutable(const fs::path& p) { saveSetting(props(), "exportExecutable", juce::String(p.string())); }
+void MatchSettings::setPoolManifest(const fs::path& p) { saveSetting(props(), "poolManifest", juce::String(p.string())); }
+void MatchSettings::setSelectedTake(const std::string& name) { saveSetting(props(), "selectedTake", juce::String(name)); }
+
+// ---- pure helpers -------------------------------------------------------------------------------------------------
+bool parseProgressJson(const std::string& text, JobProgress& out) {
+  const json j = json::parse(text, nullptr, /*allow_exceptions=*/false);
+  if (!j.is_object()) return false;
+  JobProgress p;
+  if (auto it = j.find("stage"); it != j.end() && it->is_string()) p.stage = it->get<std::string>();
+  if (auto it = j.find("message"); it != j.end() && it->is_string()) p.message = it->get<std::string>();
+  p.fraction = num(j, "fraction", -1.0);
+  if (p.fraction > 1.0) p.fraction = 1.0;
+  p.etaSeconds = num(j, "etaSeconds", -1.0);
+  if (auto it = j.find("bestErrorDb"); it != j.end() && it->is_number()) p.bestErrorDb = it->get<double>();
+  out = std::move(p);
+  return true;
+}
+
+bool parseExportProgress(const std::string& text, JobProgress& out) {
+  const json j = json::parse(text, nullptr, /*allow_exceptions=*/false);
+  if (!j.is_object()) return false;
+  JobProgress p;
+  p.stage = "training";
+  const double epoch = num(j, "epoch", 0.0), elapsed = num(j, "elapsedTrainingS", 0.0);
+  double epochs = 0.0, maxMin = 0.0;
+  if (auto c = j.find("config"); c != j.end() && c->is_object()) {
+    epochs = num(*c, "epochs", 0.0);
+    maxMin = num(*c, "maxMinutes", 0.0);
+  }
+  double f = -1.0;
+  if (epochs > 0.0) f = epoch / epochs;
+  if (maxMin > 0.0) f = std::max(f, elapsed / (maxMin * 60.0));
+  if (f >= 0.0) p.fraction = std::min(f, 0.99);
+  if (p.fraction > 0.02 && elapsed > 0.0) p.etaSeconds = elapsed * (1.0 - p.fraction) / p.fraction;
+  std::ostringstream m;
+  m << "epoch " << static_cast<int>(epoch);
+  if (auto it = j.find("bestValEsr"); it != j.end() && it->is_number()) m << ", best val ESR " << it->get<double>();
+  p.message = m.str();
+  out = std::move(p);
+  return true;
+}
+
+void parseLogLine(JobKind kind, const std::string& rawLine, JobProgress& p) {
+  std::string line = trim(rawLine);
+  if (line.empty()) return;
+  // The matcher prefixes its lines with "[   12.3s] ".
+  static const std::regex prefix(R"(^\[\s*[0-9.]+s\]\s*)");
+  line = std::regex_replace(line, prefix, "");
+  if (line.empty()) return;
+  p.message = line;
+  const std::string l = lower(line);
+  if (kind == JobKind::Match) {
+    if (l.find("stage3") != std::string::npos || l.find("stage 3") != std::string::npos || l.rfind("selected:", 0) == 0) p.stage = "stage 3: verifying";
+    else if (l.find("stage2") != std::string::npos || l.find("stage 2") != std::string::npos) p.stage = "stage 2: fine-tuning";
+    else if (l.find("stage1") != std::string::npos || l.find("stage 1") != std::string::npos) p.stage = "stage 1: screening";
+    else if (l.rfind("done in", 0) == 0) p.stage = "done";
+    else if (p.stage.empty()) p.stage = "preparing";
+  } else {
+    if (l.find("epoch") != std::string::npos) p.stage = "training";
+    else if (l.rfind("trained in", 0) == 0 || l.find("validat") != std::string::npos) p.stage = "validating";
+    else if (p.stage.empty()) p.stage = "preparing";
+  }
+  p.fraction = -1.0;  // the log carries no fraction: indeterminate
+}
+
+namespace {
+std::string captureTitle(const json& c) {
+  if (!c.is_object()) return {};
+  if (auto it = c.find("title"); it != c.end() && it->is_string()) return it->get<std::string>();
+  if (auto it = c.find("model"); it != c.end() && it->is_string()) return it->get<std::string>();
+  return {};
+}
+
+std::string summarise(const std::string& topology, const json& caps) {
+  if (!caps.is_object()) return {};
+  auto get = [&](const char* k) {
+    auto it = caps.find(k);
+    return it == caps.end() ? std::string() : captureTitle(*it);
+  };
+  auto join = [](std::initializer_list<std::string> parts, const char* sep) {
+    std::string out;
+    for (const auto& p : parts) {
+      if (p.empty()) continue;
+      if (!out.empty()) out += sep;
+      out += p;
+    }
+    return out;
+  };
+  if (topology == "blend") {
+    const std::string a = join({get("a_pedal"), get("a_amp")}, " + "), b = join({get("b_pedal"), get("b_amp")}, " + ");
+    return join({a.empty() ? "" : "SAW " + a, b.empty() ? "" : "BODY " + b, get("cab")}, " | ");
+  }
+  return join({join({get("pedal"), get("pedal1"), get("pedal2"), get("amp")}, " + "), get("cab")}, " | ");
+}
+
+MatchCandidate candidateFrom(const json& j, int rank, const fs::path& dir, const char* fileKey) {
+  MatchCandidate c;
+  c.rank = rank;
+  c.errorDb = num(j, "loss", 0.0);
+  c.topology = j.value("topology", std::string());
+  c.blend = num(j, "blend", 0.0);
+  if (auto it = j.find("captures"); it != j.end()) c.captures = summarise(c.topology, *it);
+  if (auto it = j.find(fileKey); it != j.end() && it->is_string()) {
+    fs::path p = it->get<std::string>();
+    c.preset = p.is_absolute() ? p : dir / p;
+    std::error_code ec;
+    c.presetExists = fs::is_regular_file(c.preset, ec);
+  }
+  return c;
+}
+}  // namespace
+
+std::vector<MatchCandidate> parseMatchResult(const fs::path& resultJson, std::string* error) {
+  std::vector<MatchCandidate> out;
+  auto fail = [&](const std::string& m) {
+    if (error) *error = m;
+    return std::vector<MatchCandidate>{};
+  };
+  const std::string text = readFile(resultJson);
+  if (text.empty()) return fail("result.json is missing");
+  const json j = json::parse(text, nullptr, /*allow_exceptions=*/false);
+  if (!j.is_object()) return fail("result.json is not valid JSON");
+  const fs::path dir = resultJson.parent_path();
+  auto best = j.find("best");
+  if (best == j.end() || !best->is_object()) return fail("result.json has no best candidate");
+  out.push_back(candidateFrom(*best, 1, dir, "preset"));
+  if (auto alts = j.find("alternatives"); alts != j.end() && alts->is_array()) {
+    int rank = 2;
+    for (const auto& a : *alts)
+      if (a.is_object()) out.push_back(candidateFrom(a, rank++, dir, "file"));
+  }
+  return out;
+}
+
+ReferenceChoice chooseReferenceFile(const fs::path& folder) {
+  ReferenceChoice r;
+  std::error_code ec;
+  if (!fs::is_directory(folder, ec)) return r;
+  std::vector<fs::path> files;
+  for (fs::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+    if (!it->is_regular_file(ec)) continue;
+    const std::string e = lower(it->path().extension().string());
+    if (e == ".wav" || e == ".flac" || e == ".mp3" || e == ".aif" || e == ".aiff") files.push_back(it->path());
+  }
+  std::sort(files.begin(), files.end());
+  auto find = [&](std::initializer_list<const char*> stems) -> const fs::path* {
+    for (const char* s : stems)
+      for (const auto& f : files)
+        if (lower(f.stem().string()) == s) return &f;
+    return nullptr;
+  };
+  if (const fs::path* f = find({"guitar", "guitars"})) {
+    r = {*f, "guitar stem: " + f->filename().string(), true};
+  } else if (const fs::path* f2 = find({"other"})) {
+    r = {*f2, "'other' stem (no guitar stem): " + f2->filename().string(), true};
+  } else if (const fs::path* f3 = find({"mix", "mixture", "song", "full", "master"})) {
+    r = {*f3, "full mix: " + f3->filename().string(), true};
+  } else if (!files.empty()) {
+    r = {files.front(), "first audio file (no guitar or mix found): " + files.front().filename().string(), true};
+  }
+  return r;
+}
+
+// ---- job ---------------------------------------------------------------------------------------------------------
+struct JobRunner::HelpCache {
+  std::mutex m;
+  std::map<std::string, bool> listsProgressJson;
+};
+
+struct JobRunner::Job {
+  JobKind kind = JobKind::Match;
+  fs::path dir, outDir, progressFile;
+  std::string exe;
+  std::vector<std::string> args;          // after the executable
+  bool wantProgressJson = false;          // match: probe `--help` for --progress-json
+  std::shared_ptr<HelpCache> help;
+  std::chrono::milliseconds grace{2500};
+
+  mutable std::mutex m;      // snap
+  mutable std::mutex fileM;  // job.json writes
+  JobSnapshot snap;
+  std::int64_t startedMs = 0;
+  std::atomic<std::int64_t> finishedMs{0};  // written by the monitor, read by snapshot()
+  bool progressFileSeen = false;          // snap.progressJson and the file has been read at least once
+  std::vector<std::string> commandLine;
+
+  std::atomic<bool> cancelRequested{false}, stopMonitoring{false}, readerDone{false}, owned{true};
+  std::atomic<std::int64_t> pid{0};
+  std::unique_ptr<juce::ChildProcess> proc;
+  std::thread monitor;
+  std::int64_t logOffset = 0;             // attached jobs: how much of log.txt was read
+
+  void pushLine(const std::string& line) {
+    std::lock_guard<std::mutex> lk(m);
+    snap.logTail.push_back(line);
+    if (snap.logTail.size() > kLogTailLines) snap.logTail.erase(snap.logTail.begin());
+    if (!snap.progressJson || !progressFileSeen) {  // log lines also stand in until the first progress.json arrives
+      JobProgress p = snap.progress;
+      parseLogLine(kind, line, p);
+      snap.progress = std::move(p);
+    }
+  }
+
+  void setState(JobState s, const std::string& message = std::string()) {
+    std::lock_guard<std::mutex> lk(m);
+    snap.state = s;
+    if (!message.empty()) snap.message = message;
+  }
+  // A final state: job.json is written first, so whoever sees the state in snapshot() finds the file up to date.
+  void finish(JobState s, const std::string& message) {
+    JobSnapshot fin;
+    {
+      std::lock_guard<std::mutex> lk(m);
+      fin = snap;
+    }
+    fin.state = s;
+    if (!message.empty()) fin.message = message;
+    writeJobJson(&fin);
+    setState(s, message);
+  }
+
+  // `state` overrides the snapshot's (so a final state can reach job.json before it is visible through snapshot()).
+  void writeJobJson(const JobSnapshot* state = nullptr) const {
+    json j;
+    JobSnapshot s;
+    if (state != nullptr) {
+      s = *state;
+    } else {
+      std::lock_guard<std::mutex> lk(m);
+      s = snap;
+    }
+    j["version"] = 1;
+    j["kind"] = jobKindName(kind);
+    j["state"] = jobStateName(s.state);
+    j["pid"] = pid.load();
+    j["startedEpochMs"] = startedMs;
+    j["startedUtc"] = utcIso(startedMs);
+    if (finishedMs > 0) {
+      j["finishedUtc"] = utcIso(finishedMs.load());
+      j["finishedEpochMs"] = finishedMs.load();
+    }
+    j["exitCode"] = s.exitCode;
+    j["commandLine"] = commandLine;
+    j["jobDir"] = dir.string();
+    j["outDir"] = outDir.string();
+    j["progressMode"] = s.progressJson ? "json" : "log";
+    j["message"] = s.message;
+    j["reference"] = s.reference;
+    j["di"] = s.di;
+    j["exportMode"] = s.exportMode;
+    j["exportSize"] = s.exportSize;
+    std::lock_guard<std::mutex> fl(fileM);
+    writeAtomic(dir / "job.json", j.dump(2) + "\n");
+  }
+
+  void pollProgress() {
+    if (kind == JobKind::Match) {
+      bool useJson;
+      {
+        std::lock_guard<std::mutex> lk(m);
+        useJson = snap.progressJson;
+      }
+      if (!useJson) return;
+      JobProgress p;
+      if (parseProgressJson(readFile(progressFile), p)) {
+        std::lock_guard<std::mutex> lk(m);
+        snap.progress = std::move(p);
+        progressFileSeen = true;
+      }
+    } else {
+      JobProgress p;
+      if (parseExportProgress(readFile(outDir / "checkpoint" / "progress.json"), p)) {
+        std::lock_guard<std::mutex> lk(m);
+        // Keep the log-derived message when the file carries nothing newer; the file is authoritative for numbers.
+        snap.progress.fraction = p.fraction;
+        snap.progress.etaSeconds = p.etaSeconds;
+        snap.progress.bestErrorDb = p.bestErrorDb;
+        snap.progress.stage = p.stage;
+        snap.progress.message = p.message;
+      }
+    }
+  }
+
+  // Attached jobs have no pipe: follow log.txt instead.
+  void pollLogFile() {
+    std::ifstream f(dir / "log.txt", std::ios::binary);
+    if (!f) return;
+    f.seekg(0, std::ios::end);
+    const std::int64_t size = f.tellg();
+    if (size <= logOffset) return;
+    f.seekg(logOffset);
+    std::string chunk(static_cast<std::size_t>(size - logOffset), '\0');
+    f.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+    logOffset = size;
+    std::istringstream ss(chunk);
+    std::string line;
+    while (std::getline(ss, line)) pushLine(line);
+  }
+};
+
+namespace {
+
+// Does `exe --help` list --progress-json? Runs the program once per (path, mtime); called on a job thread.
+bool probeProgressJson(const std::string& exe, std::atomic<bool>& stop) {
+  juce::ChildProcess p;
+  if (!p.start(juce::StringArray{juce::String(exe), "--help"}, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr)) return false;
+  // The help text is small (it fits the pipe), so waiting for exit first cannot deadlock.
+  for (int waited = 0; waited < 600 && p.isRunning(); ++waited) {  // up to 60 s: Python + numpy start-up on a cold disk
+    if (stop.load()) {
+      p.kill();
+      return false;
+    }
+    std::this_thread::sleep_for(100ms);
+  }
+  if (p.isRunning()) {
+    p.kill();
+    return false;
+  }
+  return p.readAllProcessOutput().contains("--progress-json");
+}
+
+}  // namespace
+
+// ---- runner --------------------------------------------------------------------------------------------------------
+JobRunner::JobRunner(MatchSettings& settings, const fs::path& jobsDir) : settings_(settings), jobsDir_(jobsDir), help_(std::make_shared<HelpCache>()) {}
+
+JobRunner::~JobRunner() {
+  std::shared_ptr<Job> a, b;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    a = match_;
+    b = export_;
+  }
+  for (auto* j : {&a, &b}) {
+    if (!*j) continue;
+    (*j)->stopMonitoring = true;
+    if ((*j)->monitor.joinable()) (*j)->monitor.join();
+  }
+}
+
+void JobRunner::setJobsDir(const fs::path& dir) {
+  std::lock_guard<std::mutex> lk(m_);
+  jobsDir_ = dir;
+}
+fs::path JobRunner::jobsDir() const {
+  std::lock_guard<std::mutex> lk(m_);
+  return jobsDir_;
+}
+
+ToolCheck JobRunner::checkTools(JobKind kind) const {
+  ToolCheck t;
+  const fs::path exe = kind == JobKind::Match ? settings_.matchExecutable() : settings_.exportExecutable();
+  const char* name = kind == JobKind::Match ? "sawblade-match" : "sawblade-export";
+  if (!isExecutableFile(exe)) {
+    t.missing = ToolCheck::Missing::Executable;
+    t.message = std::string(name) + " was not found at " + exe.string() + ". Use Locate... to choose the executable (the match venv's bin folder).";
+    return t;
+  }
+  if (kind == JobKind::Match) {
+    std::error_code ec;
+    const fs::path pool = settings_.poolManifest();
+    if (!fs::is_regular_file(pool, ec)) {
+      t.missing = ToolCheck::Missing::Pool;
+      t.message = "The capture pool manifest was not found at " + pool.string() + ". Pull a pool with sawblade-t3k, or use Locate... to choose pool_manifest.json.";
+    }
+  }
+  return t;
+}
+
+namespace {
+fs::path newJobDirIn(const fs::path& root, const char* suffix) {
+  std::error_code ec;
+  fs::create_directories(root, ec);
+  std::time_t t = std::time(nullptr);
+  for (;; ++t) {
+    std::tm tm{};
+#if JUCE_WINDOWS
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof buf, "%Y%m%d-%H%M%S", &tm);
+    const fs::path d = root / (std::string(buf) + "-" + suffix);
+    if (!fs::exists(d, ec) && fs::create_directories(d, ec)) return d;
+    if (t > std::time(nullptr) + 600) return {};
+  }
+}
+}  // namespace
+
+void JobRunner::retire(std::shared_ptr<Job>& j) {
+  if (!j) return;
+  j->stopMonitoring = true;
+  if (j->monitor.joinable()) j->monitor.join();
+  j.reset();
+}
+
+bool JobRunner::startMatch(const MatchRequest& r, std::string* error) {
+  auto fail = [&](const std::string& m) {
+    if (error) *error = m;
+    return false;
+  };
+  if (const ToolCheck t = checkTools(JobKind::Match); !t.ok()) return fail(t.message);
+  std::error_code ec;
+  if (!fs::is_regular_file(r.di, ec)) return fail("The DI take was not found: " + r.di.string());
+  if (!fs::is_regular_file(r.ref, ec)) return fail("The reference file was not found: " + r.ref.string());
+  auto job = std::make_shared<Job>();
+  job->kind = JobKind::Match;
+  job->exe = settings_.matchExecutable().string();
+  job->wantProgressJson = true;
+  job->args = {"--di", r.di.string(), "--ref", r.ref.string(), "--ref-channel", "mid", "--pool", settings_.poolManifest().string()};
+  if (r.offsetMs) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.3f", *r.offsetMs);
+    job->args.insert(job->args.end(), {"--offset-ms", buf});
+  }
+  job->snap.reference = r.referenceLabel.empty() ? r.ref.filename().string() : r.referenceLabel;
+  job->snap.di = r.diLabel.empty() ? r.di.filename().string() : r.diLabel;
+  return launch(JobKind::Match, std::move(job), error);
+}
+
+bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
+  auto fail = [&](const std::string& m) {
+    if (error) *error = m;
+    return false;
+  };
+  if (const ToolCheck t = checkTools(JobKind::Export); !t.ok()) return fail(t.message);
+  std::error_code ec;
+  if (!fs::is_regular_file(r.preset, ec)) return fail("The preset to export was not found: " + r.preset.string());
+  auto job = std::make_shared<Job>();
+  job->kind = JobKind::Export;
+  job->exe = settings_.exportExecutable().string();
+  job->args = {r.preset.string(), "--mode", r.mode, "--size", r.size, "--device", "auto"};
+  if (r.di) job->args.insert(job->args.end(), {"--di", r.di->string()});
+  job->snap.exportMode = r.mode;
+  job->snap.exportSize = r.size;
+  job->snap.reference = r.preset.filename().string();
+  return launch(JobKind::Export, std::move(job), error);
+}
+
+bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* error) {
+  std::lock_guard<std::mutex> lk(m_);
+  if (slot(kind) && slot(kind)->snap.active()) {  // snap is only written by the job's threads under its own mutex
+    std::lock_guard<std::mutex> jl(slot(kind)->m);
+    if (slot(kind)->snap.active()) {
+      if (error) *error = std::string("A ") + jobKindName(kind) + " job is already running.";
+      return false;
+    }
+  }
+  const fs::path dir = newJobDirIn(jobsDir_, jobKindName(kind));
+  if (dir.empty()) {
+    if (error) *error = "Could not create a job folder in " + jobsDir_.string();
+    return false;
+  }
+  job->dir = dir;
+  job->outDir = kind == JobKind::Export ? dir / "export" : dir;
+  job->progressFile = dir / "progress.json";
+  job->help = help_;
+  job->grace = std::chrono::milliseconds(graceMs_.load());
+  job->startedMs = nowMs();
+  job->snap.kind = kind;
+  job->snap.dir = dir;
+  job->snap.outDir = job->outDir;
+  job->snap.state = JobState::Starting;
+  job->commandLine.push_back(job->exe);
+  for (const auto& a : job->args) job->commandLine.push_back(a);
+  job->args.insert(job->args.end(), {"--out", job->outDir.string()});
+  job->writeJobJson();
+  retire(slot(kind));
+  slot(kind) = job;
+  job->monitor = std::thread([job]() mutable {
+    // --- probe the executable for --progress-json (match only)
+    if (job->wantProgressJson) {
+      const std::string key = job->exe + "|" + std::to_string(juce::File(job->exe).getLastModificationTime().toMilliseconds());
+      bool has;
+      bool cached;
+      {
+        std::lock_guard<std::mutex> hl(job->help->m);
+        const auto it = job->help->listsProgressJson.find(key);
+        cached = it != job->help->listsProgressJson.end();
+        has = cached && it->second;
+      }
+      if (!cached) {
+        has = probeProgressJson(job->exe, job->stopMonitoring);
+        if (job->stopMonitoring) return;
+        std::lock_guard<std::mutex> hl(job->help->m);
+        job->help->listsProgressJson[key] = has;
+      }
+      if (has) {
+        job->args.insert(job->args.end(), {"--progress-json", job->progressFile.string()});
+        job->commandLine.push_back("--progress-json");
+        job->commandLine.push_back(job->progressFile.string());
+      }
+      std::lock_guard<std::mutex> sl(job->m);
+      job->snap.progressJson = has;
+    }
+    if (job->cancelRequested) {
+      job->finishedMs = nowMs();
+      job->finish(JobState::Cancelled, "Cancelled before it started.");
+      return;
+    }
+    // Match jobs write into their own folder; the exporter into <job>/export.
+    job->commandLine.clear();
+    job->commandLine.push_back(job->exe);
+    for (const auto& a : job->args) job->commandLine.push_back(a);
+    job->proc = std::make_unique<juce::ChildProcess>();
+    juce::StringArray argv;
+#if JUCE_WINDOWS
+    argv.add(juce::String(job->exe));
+    bool pidSeen = true;
+#else
+    argv.add("/bin/sh");
+    argv.add("-c");
+    argv.add("echo $$; exec \"$0\" \"$@\"");
+    argv.add(juce::String(job->exe));
+    bool pidSeen = false;
+#endif
+    for (const auto& a : job->args) argv.add(juce::String(a));
+    if (!job->proc->start(argv, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr)) {
+      job->finishedMs = nowMs();
+      job->finish(JobState::Failed, "Could not start " + job->exe);
+      return;
+    }
+    job->setState(JobState::Running);
+    job->writeJobJson();
+
+    // --- reader: drains the pipe so the child never blocks on a full pipe; also writes log.txt. It owns a
+    //     reference to the job, so it can outlive a runner that was destroyed while the child still runs.
+    std::thread([job, pidSeen]() mutable {
+      std::ofstream log(job->dir / "log.txt", std::ios::binary | std::ios::app);
+      std::string partial;
+      auto handle = [&](const std::string& line) {
+        if (!pidSeen) {
+          pidSeen = true;
+          const bool digits = !line.empty() && line.size() <= 12 && std::all_of(line.begin(), line.end(), [](unsigned char c) { return std::isdigit(c); });
+          if (digits) {
+            job->pid.store(std::stoll(line));
+            job->writeJobJson();
+            return;
+          }
+        }
+        log << line << '\n';
+        log.flush();
+        job->pushLine(line);
+      };
+      // juce::ChildProcess::readProcessOutput is an fread of the requested size: it waits until that many bytes
+      // arrived (or EOF). One byte at a time returns as soon as a line is available (FILE buffering keeps it cheap).
+      char ch;
+      while (job->proc->readProcessOutput(&ch, 1) == 1) {
+        if (ch != '\n') {
+          partial.push_back(ch);
+          continue;
+        }
+        if (!partial.empty() && partial.back() == '\r') partial.pop_back();
+        handle(partial);
+        partial.clear();
+      }
+      if (!partial.empty()) handle(partial);
+      job->readerDone = true;
+    }).detach();
+
+    // --- monitor
+    bool termSent = false, killSent = false;
+    std::chrono::steady_clock::time_point termAt;
+    while (!job->stopMonitoring) {
+      if (job->cancelRequested && !termSent) {
+        termSent = true;
+        termAt = std::chrono::steady_clock::now();
+        if (job->pid.load() > 1) signalPid(job->pid.load(), false);
+        else job->proc->kill();
+      }
+      if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace && job->proc->isRunning()) {
+        killSent = true;
+        job->proc->kill();
+      }
+      job->pollProgress();
+      if (!job->proc->isRunning()) break;
+      std::this_thread::sleep_for(kPollPeriod);
+    }
+    if (job->stopMonitoring && job->proc->isRunning()) return;  // runner destroyed: the job dir lets the next runner re-attach
+    for (int i = 0; i < 20 && !job->readerDone; ++i) std::this_thread::sleep_for(100ms);  // let the reader finish the last lines
+    job->pollProgress();
+    {
+      std::lock_guard<std::mutex> sl(job->m);
+      job->snap.exitCode = static_cast<int>(job->proc->getExitCode());
+    }
+    finalizeJob(*job);
+  });
+  return true;
+}
+
+// ---- finishing, re-attaching, queries -----------------------------------------------------------------------------
+void JobRunner::finalizeJob(Job& job) {
+  JobSnapshot s;
+  {
+    std::lock_guard<std::mutex> lk(job.m);
+    s = job.snap;
+  }
+  job.finishedMs = nowMs();
+  std::error_code ec;
+  // Did the tool leave its result behind?
+  std::vector<MatchCandidate> results;
+  std::string resultError;
+  bool artifacts;
+  if (job.kind == JobKind::Match) {
+    results = parseMatchResult(job.dir / "result.json", &resultError);
+    artifacts = !results.empty();
+  } else {
+    artifacts = fs::exists(job.outDir / "export_report.json", ec);
+    if (!artifacts)
+      for (fs::directory_iterator it(job.outDir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == ".nam") artifacts = true;
+    if (!artifacts) resultError = "The export finished but wrote no model.";
+  }
+  JobState state;
+  std::string message;
+  if (job.cancelRequested) {
+    state = JobState::Cancelled;
+    message = "Cancelled.";
+  } else if ((s.exitCode == 0 || (!job.owned && s.exitCode < 0)) && artifacts) {
+    state = JobState::Succeeded;
+  } else {
+    state = JobState::Failed;
+    // The CLIs print "error: ..." / "refused: ..." as their last words.
+    for (auto it = s.logTail.rbegin(); it != s.logTail.rend(); ++it) {
+      const std::string l = lower(trim(*it));
+      if (l.rfind("error", 0) == 0 || l.rfind("refused", 0) == 0) {
+        message = trim(*it);
+        break;
+      }
+    }
+    if (message.empty()) {
+      if (s.exitCode > 0) message = "The process exited with code " + std::to_string(s.exitCode) + ".";
+      else if (!resultError.empty()) message = resultError;
+      else message = "The process stopped without a result (the app was closed or it was killed).";
+      for (auto it = s.logTail.rbegin(); it != s.logTail.rend(); ++it)
+        if (!trim(*it).empty()) {
+          message += " Last output: " + trim(*it);
+          break;
+        }
+    }
+  }
+  JobSnapshot fin;
+  {
+    std::lock_guard<std::mutex> lk(job.m);
+    fin = job.snap;
+  }
+  fin.state = state;
+  if (!message.empty()) fin.message = message;
+  if (state == JobState::Succeeded) {
+    fin.results = std::move(results);
+    fin.progress.fraction = 1.0;
+    fin.progress.etaSeconds = 0.0;
+    fin.progress.stage = "done";
+  }
+  job.writeJobJson(&fin);  // the file first: whoever sees the final state in snapshot() finds job.json up to date
+  std::lock_guard<std::mutex> lk(job.m);
+  job.snap.state = fin.state;
+  job.snap.message = fin.message;
+  job.snap.results = std::move(fin.results);
+  job.snap.progress.fraction = fin.progress.fraction;
+  job.snap.progress.etaSeconds = fin.progress.etaSeconds;
+  job.snap.progress.stage = fin.progress.stage;
+}
+
+void JobRunner::monitorAttached(std::shared_ptr<Job> job) {
+  bool termSent = false, killSent = false;
+  std::chrono::steady_clock::time_point termAt;
+  while (!job->stopMonitoring) {
+    if (job->cancelRequested && !termSent) {
+      termSent = true;
+      termAt = std::chrono::steady_clock::now();
+      signalPid(job->pid.load(), false);
+    }
+    if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace && pidAlive(job->pid.load())) {
+      killSent = true;
+      signalPid(job->pid.load(), true);
+    }
+    job->pollLogFile();
+    job->pollProgress();
+    if (!pidAlive(job->pid.load())) break;
+    std::this_thread::sleep_for(kPollPeriod);
+  }
+  if (job->stopMonitoring) return;
+  job->pollLogFile();
+  job->pollProgress();
+  finalizeJob(*job);
+}
+
+void JobRunner::adopt(JobKind kind, const fs::path& dir) {
+  const json j = json::parse(readFile(dir / "job.json"), nullptr, /*allow_exceptions=*/false);
+  if (!j.is_object()) return;
+  auto job = std::make_shared<Job>();
+  job->kind = kind;
+  job->owned = false;
+  job->dir = dir;
+  job->outDir = j.value("outDir", dir.string());
+  job->progressFile = dir / "progress.json";
+  job->grace = std::chrono::milliseconds(graceMs_.load());
+  job->startedMs = j.value("startedEpochMs", static_cast<std::int64_t>(0));
+  job->pid = j.value("pid", static_cast<std::int64_t>(0));
+  if (auto it = j.find("commandLine"); it != j.end() && it->is_array())
+    for (const auto& a : *it)
+      if (a.is_string()) job->commandLine.push_back(a.get<std::string>());
+  const std::string state = j.value("state", std::string());
+  job->snap.kind = kind;
+  job->snap.dir = dir;
+  job->snap.outDir = job->outDir;
+  job->snap.progressJson = j.value("progressMode", std::string("log")) == "json";
+  job->snap.message = j.value("message", std::string());
+  job->snap.reference = j.value("reference", std::string());
+  job->snap.di = j.value("di", std::string());
+  job->snap.exportMode = j.value("exportMode", std::string());
+  job->snap.exportSize = j.value("exportSize", std::string());
+  job->snap.exitCode = j.value("exitCode", -1);
+  job->snap.pid = job->pid.load();
+  job->finishedMs = j.value("finishedEpochMs", static_cast<std::int64_t>(0));
+  const bool wasActive = state == "starting" || state == "running";
+  if (wasActive && pidAlive(job->pid.load())) {
+    job->snap.state = JobState::Running;
+    job->snap.progress.stage = "running";
+    job->pollLogFile();  // pick up what the log already says
+    job->pollProgress();
+    slot(kind) = job;
+    job->monitor = std::thread([job] { monitorAttached(job); });
+    return;
+  }
+  if (wasActive) {
+    job->snap.exitCode = -1;
+    finalizeJob(*job);  // the process is gone: succeeded if it left its result, else interrupted
+  } else if (state == "succeeded") {
+    job->snap.state = JobState::Succeeded;
+    if (kind == JobKind::Match) job->snap.results = parseMatchResult(dir / "result.json");
+    job->snap.progress.fraction = 1.0;
+    job->snap.progress.stage = "done";
+  } else if (state == "cancelled") {
+    job->snap.state = JobState::Cancelled;
+  } else {
+    job->snap.state = JobState::Failed;
+  }
+  slot(kind) = job;
+}
+
+void JobRunner::attachExisting() {
+  std::lock_guard<std::mutex> lk(m_);
+  std::error_code ec;
+  if (!fs::is_directory(jobsDir_, ec)) return;
+  std::vector<fs::path> dirs;
+  for (fs::directory_iterator it(jobsDir_, ec), end; !ec && it != end; it.increment(ec))
+    if (it->is_directory(ec) && fs::exists(it->path() / "job.json", ec)) dirs.push_back(it->path());
+  std::sort(dirs.begin(), dirs.end(), std::greater<>());
+  for (JobKind kind : {JobKind::Match, JobKind::Export}) {
+    if (slot(kind)) continue;
+    const std::string suffix = std::string("-") + jobKindName(kind);
+    for (const auto& d : dirs) {
+      const std::string n = d.filename().string();
+      if (n.size() > suffix.size() && n.compare(n.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        adopt(kind, d);
+        if (slot(kind)) break;
+      }
+    }
+  }
+}
+
+void JobRunner::cancel(JobKind kind) {
+  std::shared_ptr<Job> j;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    j = slot(kind);
+  }
+  if (j) j->cancelRequested = true;
+}
+
+JobSnapshot JobRunner::snapshot(JobKind kind) const {
+  std::shared_ptr<Job> j;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    j = slot(kind);
+  }
+  JobSnapshot s;
+  s.kind = kind;
+  if (!j) return s;
+  {
+    std::lock_guard<std::mutex> lk(j->m);
+    s = j->snap;
+  }
+  s.pid = j->pid.load();
+  const std::int64_t end = s.active() || j->finishedMs.load() == 0 ? nowMs() : j->finishedMs.load();
+  s.elapsedSeconds = j->startedMs > 0 ? std::max(0.0, static_cast<double>(end - j->startedMs) / 1000.0) : 0.0;
+  return s;
+}
+
+bool JobRunner::waitFinished(JobKind kind, std::chrono::milliseconds timeout) {
+  const auto end = std::chrono::steady_clock::now() + timeout;
+  for (;;) {
+    const JobSnapshot s = snapshot(kind);
+    if (!s.active()) return true;
+    if (std::chrono::steady_clock::now() > end) return false;
+    std::this_thread::sleep_for(20ms);
+  }
+}
+
+}  // namespace sawblade::plugin

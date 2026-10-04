@@ -13,7 +13,10 @@
 
 #include "Engine.h"
 #include "EngineLoader.h"
+#include "JobRunner.h"
 #include "PlayAlong.h"
+#include "PresetAudition.h"
+#include "TakeRecorder.h"
 #include "PresetMapping.h"
 #include "sawblade/swap_slot.h"
 
@@ -99,6 +102,17 @@ class SawbladeProcessor : public juce::AudioProcessor {
   // are safe from any non-audio thread.
   PlayAlong& playAlong() noexcept { return playAlong_; }
   const PlayAlong& playAlong() const noexcept { return playAlong_; }
+  // The DI take recorder (docs/PLUGIN.md "Record + Match"): taps the input before the rig, writes WAV + sidecar
+  // off the audio thread. Its control surface is safe from any non-audio thread.
+  // Record + Match (message thread): the settings (application properties, not part of the tone state), the
+  // match / export job runner, and the audition / A-B of match candidates. MATCH and EXPORT NAM are
+  // Standalone-only for now: matchEnabled() says whether this instance may start jobs.
+  MatchSettings& matchSettings() noexcept { return matchSettings_; }
+  JobRunner& jobs() noexcept { return jobs_; }
+  PresetAudition& audition() noexcept { return audition_; }
+  bool matchEnabled() const noexcept { return playAlong_.standalone(); }
+  TakeRecorder& recorder() noexcept { return recorder_; }
+  const TakeRecorder& recorder() const noexcept { return recorder_; }
 
 
   // Test hook (call with the audio thread idle): the current engine's applied live parameters and
@@ -133,6 +147,10 @@ class SawbladeProcessor : public juce::AudioProcessor {
   int maxBlock_ = 0;
   std::vector<float> mono_, backL_, backR_;  // rig mono, backing L / R (audio-thread scratch)
   PlayAlong playAlong_;
+  TakeRecorder recorder_;
+  MatchSettings matchSettings_;
+  JobRunner jobs_;
+  PresetAudition audition_;
 
   // Audio-thread state: the engine in use and, for kFadeSeconds after a swap, the outgoing one.
   // Neither reference is ever the last one (the loader keeps its own), so dropping them on the

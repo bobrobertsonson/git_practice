@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "AppPaths.h"
 #include "PluginEditor.h"
 #include "sawblade/preset.h"
 #include "sawblade/preset_reader.h"
@@ -36,7 +37,10 @@ SawbladeProcessor::SawbladeProcessor()
                                .withInput("Input", juce::AudioChannelSet::mono(), true)
                                .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts_(*this, nullptr, "SawbladeParameters", createLayout()),
-      preset_(makeInitPreset()) {
+      preset_(makeInitPreset()),
+      matchSettings_(defaultSettingsFile()),
+      jobs_(matchSettings_, defaultJobsDir()),
+      audition_(*this) {
   for (int i = 0; i < kNumParams; ++i) {
     const juce::String id = paramSpec(i).id;
     paramAtomic_[static_cast<std::size_t>(i)] = apvts_.getRawParameterValue(id);
@@ -288,6 +292,7 @@ void SawbladeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   }
   fadeLen_ = std::max(1, static_cast<int>(std::lround(kFadeSeconds * sampleRate)));
   playAlong_.prepare(sampleRate, std::min(samplesPerBlock, kMinChunk), static_cast<int>(std::lround(sampleRate)));  // up to 1 s of rig latency
+  recorder_.prepare(sampleRate);  // ring for the DI recorder (>= 2 s), writer thread
   {
     // Hosts may call prepareToPlay again with unchanged settings: the running engine is still
     // right (it handles any block size), so there is nothing to rebuild.
@@ -358,6 +363,19 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
       const float* l = buffer.getReadPointer(0) + pos;
       const float* r = buffer.getReadPointer(1) + pos;
       for (int i = 0; i < len; ++i) mono[i] = 0.5f * (l[i] + r[i]);
+    }
+    {
+      // DI recorder: the clean input, before the gate and the rig (mono is overwritten in place below).
+      // When a take begins in this chunk, the play-along reports the stem sample it plays at the chunk's first sample.
+      TakeStartInfo startInfo;
+      const TakeStartInfo* startPtr = nullptr;
+      if (recorder_.startPending()) {
+        const PlayAlong::HostTransport h{host.playing, host.sample + pos};
+        playAlong_.prepareBlock(h);
+        startInfo = playAlong_.takeStartInfo(h);
+        startPtr = &startInfo;
+      }
+      recorder_.process(mono, len, startPtr);
     }
     if (fading_) {
       std::memcpy(old, mono, static_cast<std::size_t>(len) * sizeof(float));

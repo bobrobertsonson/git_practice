@@ -11,8 +11,10 @@
 #                          into the test executable.
 #
 # Sources (src/): Engine (Chain + real-time rate conversion), EngineLoader (background builds +
-# lock-free swap), PresetMapping (parameters <-> preset), PluginProcessor, PluginEditor +
-# SawbladeLookAndFeel (the replaceable look), PluginEntry (createPluginFilter).
+# lock-free swap), PresetMapping (parameters <-> preset), PlayAlong (backing track), TakeRecorder (DI takes),
+# JobRunner (match / export child processes, settings), PresetAudition + MatchGlue (audition / A-B / apply, what MATCH
+# starts from), PluginProcessor, PluginEditor + PlayAlongPanel + MatchScreen + SawbladeLookAndFeel (the replaceable look),
+# PluginEntry (createPluginFilter).
 
 # Sources shared by the plugin and the tests. JUCE's own pattern is followed: JUCE modules are
 # compiled into every target that links them (so the plugin and the test executable each compile
@@ -22,6 +24,10 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/Engine.cpp
   src/EngineLoader.cpp
   src/PlayAlong.cpp
+  src/TakeRecorder.cpp
+  src/JobRunner.cpp
+  src/PresetAudition.cpp
+  src/MatchGlue.cpp
   src/PluginProcessor.cpp
   src/PlayAlongPanel.cpp
   src/PluginEditor.cpp
@@ -52,7 +58,8 @@ juce_add_binary_data(SawbladeAssets SOURCES
 set_source_files_properties(${SAWBLADE_PLUGIN_SOURCES} src/PluginEntry.cpp PROPERTIES
   COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
 
-set(SAWBLADE_JUCE_DEFS JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0 JUCE_STRICT_REFCOUNTEDPOINTER=1)
+set(SAWBLADE_JUCE_DEFS JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0 JUCE_STRICT_REFCOUNTEDPOINTER=1
+  SAWBLADE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")  # default location of match/.venv/bin/sawblade-match (JobRunner.cpp)
 
 # Linux: AU is macOS-only. VST3 + Standalone build everywhere.
 set(SAWBLADE_PLUGIN_FORMATS VST3 Standalone)
@@ -98,9 +105,10 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_engine.cpp
     tests/test_processor.cpp
     tests/test_playalong.cpp
+    tests/test_record_match.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
-    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
+    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp tests/test_record_match.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_plugin_tests PRIVATE src)
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})
