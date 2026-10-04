@@ -114,6 +114,7 @@ SlotBands SawbladeProcessor::postEqSlots() const {
 
 void SawbladeProcessor::loadPreset(Preset preset, bool keepMonitor) {
   auto c = std::make_shared<const Preset>(clampedToParams(std::move(preset)));
+  if (!keepMonitor) userLoadSerial_.fetch_add(1);
   bool buildNow;
   {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -136,6 +137,7 @@ void SawbladeProcessor::loadPreset(Preset preset, bool keepMonitor) {
 
 void SawbladeProcessor::restorePreset(Preset preset) {
   const Preset c = clampedToParams(std::move(preset));
+  userLoadSerial_.fetch_add(1);
   {
     std::lock_guard<std::mutex> lk(mutex_);
     wanted_.reset();

@@ -129,6 +129,9 @@ class SawbladeProcessor : public juce::AudioProcessor {
   // The loader request id the current preset was committed for (== the running engine's generation
   // once it has been published).
   std::uint64_t presetGeneration() const;
+  // Counts user preset loads and state restores (not the rig editor's structural edits): the editor
+  // resets its transient UI state (solo, remembered blend, ...) when it changes.
+  std::uint64_t userLoadSerial() const noexcept { return userLoadSerial_.load(); }
 
   // Test hook (call with the audio thread idle): the current engine's applied live parameters and
   // the baseline it was built with. Parameter updates must never move the first off the second.
@@ -162,6 +165,7 @@ class SawbladeProcessor : public juce::AudioProcessor {
   std::shared_ptr<const Preset> remeasureWanted_;  // the pending re-measure build, if any
   std::uint64_t presetGeneration_ = 0;     // loader request id of the committed preset (kNoGeneration: none yet)
   Monitor monitor_;
+  std::atomic<std::uint64_t> userLoadSerial_{0};
   rig::InputMeter inputMeter_;
 
   double hostRate_ = 0.0;
