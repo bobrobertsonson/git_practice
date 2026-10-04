@@ -158,7 +158,12 @@ tightness (|ΔH(1 kHz)| ≤ 1.0 dB re 400 Hz and ≤ 0.5 dB absolute); HM bias (
   fresh `453c7af` build, the m = 2 antiderivatives by hand, the RT path, the live index order, the
   bank values and the docs. Non-blocking items (a vacuous ramp assertion, LTAS band maxima, the
   continuity tolerance note, a 44.1 kHz alias print) were fixed in `99ce45e`.
-- **Task B (plugin)**: see the final commit list; verdict recorded below.
+- **Task B (plugin)**: **ACCEPT**, no must-fix. The reviewer rebuilt the plugin from scratch in a
+  worktree, ran all 295 tests including pluginval, read the RT path, the circuit-switch races,
+  the round trips, the face/drawer rules and the UI strings, and looked at the screenshots. Three
+  of its non-blocking items were then fixed in one commit (a circuit change landing during a
+  preset commit is retried instead of dropped; a failed circuit-switch build writes the parameter
+  back from the kept preset; a cross-thread circuit-switch test). Remaining notes are follow-ups.
 
 ## Follow-ups (proposed, not done)
 1. **Modded mode at 44.1 kHz.** With both stage trims at +12 dB the modded mode aliases at about
@@ -171,6 +176,12 @@ tightness (|ΔH(1 kHz)| ≤ 1.0 dB re 400 Hz and ≤ 0.5 dB absolute); HM bias (
 5. The face's lever captions and the OLED are code-drawn over the baked render; a re-render of
    `pedal_b2.py` with CIRCUIT / CLIP / FOCUS captions would remove the chips.
 6. 7c: `pedal.hmx`, `pedal.eye`, their presets (README TODO rows).
+7. Plugin notes from the task B review: Escape closes the drawer only while it has keyboard focus
+   (handle it at the editor level); `commit()` assigns the preset before writing the parameters,
+   so a state save landing in between carries the previous parameter set (pre-existing ordering,
+   more visible with the circuit switch); the outgoing engine receives the new circuit's default
+   live values during the 30 ms cross-fade (ramped, inaudible in practice); the OLED overlay
+   clips the bottom edge of the baked wordmark slightly.
 
 ## Process
 - **Wall-clock** (UTC, 2026-10-04): 13:40 orientation and spec; 14:30 scope change folded in;
@@ -178,10 +189,10 @@ tightness (|ΔH(1 kHz)| ≤ 1.0 dB re 400 Hz and ≤ 0.5 dB absolute); HM bias (
   18:49**; 19:05 task A reported; 18:51 HOLD from the main lead (session cap) applied after the
   round, STATE.md written; 19:16 GO; 19:20–19:35 fix rounds (muff gain, pickle_chainsaw);
   19:33 reviewer(A) and task B started in parallel (reviewer in a git worktree);
-  19:50 reviewer(A) REVISE → fixed 19:55; 20:12 task B reported; then the face fix, reviewer(B),
-  plots, Artifact, this report.
+  19:50 reviewer(A) REVISE → fixed 19:55; 20:12 task B reported; 20:20 face fix; 20:22–20:36
+  reviewer(B) ACCEPT; 20:40 three robustness fixes from its notes; plots, Artifact, this report.
 - **Review rounds**: task A 1 (REVISE on a lead-side spec lag; non-blocking items fixed);
-  task B 1 (below).
+  task B 1 (ACCEPT; three non-blocking items fixed afterwards).
 - **Blockers**: the usage limit (about 4 hours lost); JUCE's X11/freetype/ALSA dev packages and
   `ladspa-sdk` had to be installed before the plugin and pluginval would configure.
 - **Verification by the lead**: looked at every screenshot and plot; cross-checked the
