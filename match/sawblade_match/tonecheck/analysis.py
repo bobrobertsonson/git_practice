@@ -332,6 +332,27 @@ def low_tightness_ms(di, out, fs=ANALYSIS_RATE, **kw) -> dict:
     return low_end_decay(di, out, fs, **kw)[0]
 
 
+def fizz_texture(x: np.ndarray, mask: np.ndarray | None, fs: int = ANALYSIS_RATE) -> dict:
+    """High-frequency texture over the active Welch segments (same segments as the LTAS): median spectral flatness
+    5-10 kHz (noise-like fizz -> high, smooth amp+cab roll-off -> low) and the 8-12 kHz level re 1-3 kHz (dB)."""
+    nfft = NFFT
+    w = signal.get_window("hann", nfft, fftbins=True)
+    starts = list(range(0, len(x) - nfft + 1, HOP))
+    if mask is not None:
+        csum = np.concatenate([[0], np.cumsum(mask.astype(np.int64))])
+        keep = [s for s in starts if (csum[s + nfft] - csum[s]) >= SEG_ACTIVE_FRACTION * nfft]
+        starts = keep or starts
+    if not starts:
+        return {"flatness5to10k": None, "hf8to12DbRe1to3k": None, "nSegments": 0}
+    P = np.array([np.abs(np.fft.rfft(x[s:s + nfft] * w)) ** 2 for s in starts])
+    f = np.fft.rfftfreq(nfft, 1.0 / fs)
+    B = P[:, (f >= 5000) & (f < 10000)] + 1e-30
+    flat = float(np.median(np.exp(np.log(B).mean(axis=1)) / B.mean(axis=1)))
+    lv = lambda lo, hi: float(np.sum(P[:, (f >= lo) & (f < hi)]))
+    hf = 10 * np.log10(max(lv(8000, 12000), 1e-30) / max(lv(1000, 3000), 1e-30))
+    return {"flatness5to10k": flat, "hf8to12DbRe1to3k": float(hf), "nSegments": len(starts)}
+
+
 # --- whole-signal analysis --------------------------------------------------------------------------
 @dataclass
 class Analysis:
@@ -358,6 +379,7 @@ def analyze(x: np.ndarray, fs: int, targets: dict, di: tuple[np.ndarray, int] | 
         "buzz": {"value": buzz_flatness(freqs, psd)},
         "crestFactorDb": {"value": crest_factor_db(xa, mask)},
         "loudnessRangeLU": {"value": loudness_range_lu(xa)},
+        "fizzTexture": fizz_texture(xa, mask),
     }
     dia = to_analysis_rate(di[0], di[1]) if di is not None else None
     metrics["gapNoiseDb"] = gap_noise_db(xa, dia, ANALYSIS_RATE)

@@ -676,3 +676,11 @@ def test_generic_starter_needs_only_one_amp_and_one_cab(tmp_path):
                  plan=mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=2, gens_gain=1, gens_final=1))
     res = run_match(cfg, Log())
     assert res["starter"]["label"] == "generic starter baseline" and res["best"]["topology"] == "single"
+
+
+def test_gate_preset_passes_phase35_fields_through():
+    base = gate_preset(-50.0)
+    assert "mode" not in base  # default dict is unchanged: the core defaults preserve v1 behaviour
+    g = gate_preset(-50.0, {"mode": "expander", "ratio": 4.0, "keyHighPassHz": 120.0, "releaseCurve": "linear-db"})
+    assert g["mode"] == "expander" and g["ratio"] == 4.0 and g["keyHighPassHz"] == 120.0
+    assert g["releaseCurve"] == "linear-db" and g["releaseMs"] == base["releaseMs"]

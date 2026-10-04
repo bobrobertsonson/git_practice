@@ -29,7 +29,7 @@ def _score(eng: Engine, blocks, cab0, ex, tgt) -> float:
     core = eng.core_blocks(blocks, cab0, ex.x)
     y = ex.trim(eng.linear(cab0, DEFAULT_V, "a", core))
     f = L.features(y, tgt.starts, None)
-    return L.ltas_error(f.band_db, tgt.ref.band_db)[0]
+    return L.ltas_error(f.band_db, tgt.ref.band_db, tgt.hf_limit_hz)[0]
 
 
 def auto_n(n_ped_classes: int, n_amp_classes: int, cap_pairs: int) -> int:

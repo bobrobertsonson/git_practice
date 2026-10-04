@@ -69,11 +69,11 @@ def _band_arrays(sigs: list[np.ndarray], starts: np.ndarray):
     return mats, pw
 
 
-def single_errors(pw: np.ndarray, ref_db: np.ndarray) -> np.ndarray:
-    return np.array([L.ltas_error(10 * np.log10(np.maximum(p, 1e-30)), ref_db)[0] for p in pw])
+def single_errors(pw: np.ndarray, ref_db: np.ndarray, hf_limit_hz: float | None = None) -> np.ndarray:
+    return np.array([L.ltas_error(10 * np.log10(np.maximum(p, 1e-30)), ref_db, hf_limit_hz)[0] for p in pw])
 
 
-def blend_errors(mats, pw, ref_db) -> tuple[np.ndarray, np.ndarray]:
+def blend_errors(mats, pw, ref_db, hf_limit_hz: float | None = None) -> tuple[np.ndarray, np.ndarray]:
     """LTAS error (N, N) of (1-b) sig_i + b sig_j and the best blend; diagonal = inf."""
     N, nb = pw.shape
     C = np.zeros((N, N, nb))
@@ -85,7 +85,12 @@ def blend_errors(mats, pw, ref_db) -> tuple[np.ndarray, np.ndarray]:
     for beta in BLENDS:
         P = (1 - beta) ** 2 * pw[:, None, :] + beta ** 2 * pw[None, :, :] + 2 * beta * (1 - beta) * C
         d = 10 * np.log10(np.maximum(P, 1e-30)) - ref_db[None, None, :]
-        d -= (d * w).sum(-1, keepdims=True) / w.sum()
+        if hf_limit_hz is None:
+            d -= (d * w).sum(-1, keepdims=True) / w.sum()
+        else:       # fitted bands set the offset; ignored (HF) bands only count when above the reference
+            keep = L.BAND_UPPER <= hf_limit_hz
+            d -= (d[..., keep] * w[keep]).sum(-1, keepdims=True) / w[keep].sum()
+            d = np.where(keep, d, np.maximum(d, 0.0))
         e = np.sqrt((w * d * d).sum(-1) / w.sum())
         better = e < best
         best = np.where(better, e, best)
@@ -166,8 +171,8 @@ class Screener:
         self.log(f"stage1: pair cores done ({time.time() - t0:.0f}s)")
         lin = self._lin(cores)
         mats, pw = _band_arrays(lin, self.tgt.starts)
-        e1 = single_errors(pw, self.tgt.ref.band_db)
-        eb, bb = blend_errors(mats, pw, self.tgt.ref.band_db)
+        e1 = single_errors(pw, self.tgt.ref.band_db, self.tgt.hf_limit_hz)
+        eb, bb = blend_errors(mats, pw, self.tgt.ref.band_db, self.tgt.hf_limit_hz)
         del mats
         self.log(f"stage1: scored; best single {e1.min():.2f} dB, best blend {eb.min():.2f} dB ({time.time() - t0:.0f}s)")
         out: dict[str, list[Scored]] = {}
@@ -196,7 +201,7 @@ class Screener:
             c2 = self._cores(chains)
             l2 = self._lin(c2)
             _, pw2 = _band_arrays(l2, self.tgt.starts)
-            e2 = single_errors(pw2, self.tgt.ref.band_db)
+            e2 = single_errors(pw2, self.tgt.ref.band_db, self.tgt.hf_limit_hz)
             top = np.argsort(e2, kind="stable")[: plan.n_rescore_single]
             cands = [(Combo(chains[i][:2], chains[i][2], None, None, cab0), (c2[i],)) for i in top]
             out["single2"] = self._finish(cands, plan.n_cab_single, plan.top_k["single2"], t0, "single2")

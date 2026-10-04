@@ -70,7 +70,8 @@ def measure(label: str, x48: np.ndarray, targets: dict, mask: np.ndarray | None 
         note = "n/a: no onset source"
         none = {"nOnsets": 0, "nMeasured": 0, "nCensored": 0, "note": note}
         metrics = {"buzz": {"value": A.buzz_flatness(fr, psd)}, "lowTightnessMs": {"valueMs": None, **none},
-                   "lowDecayDbPerMs": {"value": None, **none}, "crestFactorDb": {"value": A.crest_factor_db(x48, mask)}}
+                   "lowDecayDbPerMs": {"value": None, **none}, "crestFactorDb": {"value": A.crest_factor_db(x48, mask)},
+                   "fizzTexture": A.fizz_texture(x48, mask)}
         return Measured(label, absdb, rel, list(A.NOMINAL_CENTRES), groups, evaluate_rules(groups, targets["rules"]),
                         metrics, nseg, frac, float(mask.sum() / A.ANALYSIS_RATE), warnings,
                         _chunk_spread(x48, mask, targets) if spread else None, source)
@@ -81,7 +82,8 @@ def measure(label: str, x48: np.ndarray, targets: dict, mask: np.ndarray | None 
     tight, decay = A.low_end_decay(x48, x48, A.ANALYSIS_RATE, onsets=onsets)
     metrics = {"buzz": {"value": A.buzz_flatness(fr, psd)},
                "lowTightnessMs": tight, "lowDecayDbPerMs": decay,
-               "crestFactorDb": {"value": A.crest_factor_db(x48, mask)}}
+               "crestFactorDb": {"value": A.crest_factor_db(x48, mask)},
+                   "fizzTexture": A.fizz_texture(x48, mask)}
     return Measured(label, absdb, rel, list(A.NOMINAL_CENTRES), groups, evaluate_rules(groups, targets["rules"]),
                     metrics, nseg, frac, float(mask.sum() / A.ANALYSIS_RATE), warnings,
                     _chunk_spread(x48, mask, targets) if spread else None, source)

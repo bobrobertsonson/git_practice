@@ -15,6 +15,13 @@ total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched
              level offset. Asymmetric because the reference mix also holds bass/drums/vocals: output energy above the
              reference counts 1.0, below it 0.3. Weight 0.25 / dB.
 * ``reg``    RMS of the EQ gains (dB), weight 0.02 (keeps EQs from becoming extreme on a short excerpt).
+* ``tex``    (phase 3.4, stem basis only) high-frequency texture: |flatness 5-10 kHz of output - of reference| (median over
+             the active Welch segments; weight 25 per unit) + |level 8-12 kHz re 1-3 kHz difference| (dB, weight 0.12).
+             Noise-like fizz has high flatness and a high 8-12 kHz level; real amp+cab guitar is smooth up there.
+* ``hf``     (phase 3.4, full-mix fallback basis) the reference then holds cymbals above ~5 kHz: the LTAS bands above
+             ``hf_limit_hz`` (4.5 kHz) are ignored by ``ltas`` and replaced by a one-sided ceiling (the render may be darker
+             than the reference there, never brighter), plus a one-sided 8-12 kHz level ceiling (weight 0.12 / dB). The
+             texture term is not used. The matched-pair STFT term is likewise limited to ``stft_fmax`` (a mix channel).
 """
 from __future__ import annotations
 
@@ -28,6 +35,12 @@ from ..tonecheck.cli import a_weight_db
 
 RATE = 48000
 W_LTAS, W_BUZZ, W_DECAY, W_STFT, W_REG = 1.0, 0.5, 2.0, 0.25, 0.02
+W_FLAT, W_HF = 25.0, 0.12
+HF_LIMIT_HZ = 4500.0           # full-mix fallback reference: LTAS above this is a one-sided ceiling, not a target
+STFT_FMAX_MIX = 4500.0         # matched-pair STFT upper edge when the matched channel is a full mix (cymbals above)
+TEX_FLAT_BAND = (5000.0, 10000.0)
+TEX_HF_BAND = (8000.0, 12000.0)
+TEX_REF_BAND = (1000.0, 3000.0)
 STFT_SIZES = (512, 2048, 8192)
 STFT_UNDER_WEIGHT = 0.3
 MIN_DECAY_ONSETS = 3
@@ -82,12 +95,27 @@ def band_db_from_psd(psd: np.ndarray) -> np.ndarray:
     return 10 * np.log10(np.maximum(BAND_W @ psd, 1e-30))
 
 
-def ltas_error(out_db: np.ndarray, ref_db: np.ndarray) -> tuple[float, float]:
-    """(A-weighted error dB after offset removal, offset dB = out - ref)."""
+BAND_UPPER = band_edges()[:, 1]
+
+
+def ltas_error(out_db: np.ndarray, ref_db: np.ndarray, hf_limit_hz: float | None = None) -> tuple[float, float]:
+    """(A-weighted error dB after offset removal, offset dB = out - ref).
+
+    ``hf_limit_hz``: bands whose upper edge is above it are not fitted; the offset comes from the fitted bands and the
+    ignored bands only count when the output is above the reference (one-sided ceiling)."""
     d = np.asarray(out_db) - np.asarray(ref_db)
-    off = float(np.sum(A_POWER_W * d) / np.sum(A_POWER_W))
+    w = A_POWER_W
+    if hf_limit_hz is None:
+        off = float(np.sum(w * d) / np.sum(w))
+        d = d - off
+        return float(np.sqrt(np.sum(w * d * d) / np.sum(w))), off
+    keep = BAND_UPPER <= hf_limit_hz
+    if not keep.any():
+        keep = np.ones_like(keep)
+    off = float(np.sum(w[keep] * d[keep]) / np.sum(w[keep]))
     d = d - off
-    return float(np.sqrt(np.sum(A_POWER_W * d * d) / np.sum(A_POWER_W))), off
+    d = np.where(keep, d, np.maximum(d, 0.0))
+    return float(np.sqrt(np.sum(w * d * d) / np.sum(w))), off
 
 
 @dataclass
@@ -96,6 +124,21 @@ class Features:
     buzz_db: float
     decay: float | None
     n_onsets: int = 0
+    flat: float = 0.0          # median spectral flatness 5-10 kHz over the active segments
+    hf_db: float = 0.0         # 8-12 kHz level re 1-3 kHz (dB, mean PSD of the active segments)
+
+
+def hf_texture(X: np.ndarray) -> tuple[float, float]:
+    """(median flatness 5-10 kHz over segments, 8-12 kHz level re 1-3 kHz in dB) from segment spectra (S, 4097)."""
+    P = np.abs(X) ** 2
+    sel = (_FREQS >= TEX_FLAT_BAND[0]) & (_FREQS < TEX_FLAT_BAND[1])
+    B = P[:, sel] + 1e-30
+    flat = float(np.median(np.exp(np.log(B).mean(axis=1)) / B.mean(axis=1)))
+
+    def lvl(lo, hi):
+        return float(np.sum(P[:, (_FREQS >= lo) & (_FREQS < hi)]))
+    hf = 10 * np.log10(max(lvl(*TEX_HF_BAND), 1e-30) / max(lvl(*TEX_REF_BAND), 1e-30))
+    return flat, float(hf)
 
 
 def features(x: np.ndarray, starts: np.ndarray, onsets: np.ndarray | None) -> Features:
@@ -107,7 +150,8 @@ def features(x: np.ndarray, starts: np.ndarray, onsets: np.ndarray | None) -> Fe
         _, d = low_end_decay(None, x, RATE, onsets=onsets)
         n = d["nMeasured"]
         decay = d["value"] if n >= MIN_DECAY_ONSETS else None
-    return Features(band_db_from_psd(psd), float(buzz), decay, n)
+    flat, hf = hf_texture(X)
+    return Features(band_db_from_psd(psd), float(buzz), decay, n, flat, hf)
 
 
 def _logmag(x: np.ndarray, n: int) -> np.ndarray:
@@ -115,7 +159,7 @@ def _logmag(x: np.ndarray, n: int) -> np.ndarray:
     return f, 20 * np.log10(np.maximum(np.abs(Z), 1e-7))
 
 
-def stft_loss(out: np.ndarray, ref: np.ndarray, active: np.ndarray | None = None) -> float:
+def stft_loss(out: np.ndarray, ref: np.ndarray, active: np.ndarray | None = None, fmax: float = 8000.0) -> float:
     """Asymmetric multi-resolution log-magnitude error (dB), see module docstring. ``out``/``ref`` aligned."""
     n = min(len(out), len(ref))
     out, ref = out[:n], ref[:n]
@@ -125,7 +169,7 @@ def stft_loss(out: np.ndarray, ref: np.ndarray, active: np.ndarray | None = None
             continue
         f, lo = _logmag(out, size)
         _, lr = _logmag(ref, size)
-        sel = (f >= 100) & (f <= 8000)
+        sel = (f >= 100) & (f <= fmax)
         lo, lr = lo[sel], lr[sel]
         cols = np.ones(lo.shape[1], bool)
         if active is not None:
@@ -151,6 +195,9 @@ class Target:
     onsets: np.ndarray | None           # DI onsets (s) in the excerpt timeline, for the output's lowDecay
     active: np.ndarray | None = None    # per-sample bool mask of the excerpt (for STFT frames)
     matched: np.ndarray | None = None   # reference channel aligned to the excerpt (matched pair only)
+    texture: bool = False               # stem basis: HF texture term (flatness 5-10 kHz, 8-12 kHz level) is a target
+    hf_limit_hz: float | None = None    # full-mix basis: LTAS above this is a one-sided ceiling (and 8-12 kHz too)
+    stft_fmax: float = 8000.0
 
 
 @dataclass
@@ -162,8 +209,10 @@ class LossResult:
     stft: float | None
     reg: float
     offset_db: float
+    tex: float = 0.0           # texture term (stem basis) or one-sided HF ceiling (full-mix fallback), weighted units
     weights: dict = field(default_factory=lambda: {"ltas": W_LTAS, "buzz": W_BUZZ, "decay": W_DECAY,
-                                                    "stft": W_STFT, "reg": W_REG})
+                                                    "stft": W_STFT, "reg": W_REG,
+                                                    "texFlat": W_FLAT, "texHf": W_HF})
 
     def as_dict(self) -> dict:
         return {k: (None if v is None else (float(v) if not isinstance(v, dict) else v))
@@ -172,18 +221,23 @@ class LossResult:
 
 def evaluate(out: np.ndarray, tgt: Target, eq_gains_db: np.ndarray | None = None) -> LossResult:
     f = features(out, tgt.starts, tgt.onsets)
-    ltas, off = ltas_error(f.band_db, tgt.ref.band_db)
+    ltas, off = ltas_error(f.band_db, tgt.ref.band_db, tgt.hf_limit_hz)
     buzz = abs(f.buzz_db - tgt.ref.buzz_db)
     decay = None
     if f.decay is not None and tgt.ref.decay is not None:
         decay = abs(f.decay - tgt.ref.decay)
-    stft = stft_loss(out, tgt.matched, tgt.active) if tgt.matched is not None else None
+    stft = stft_loss(out, tgt.matched, tgt.active, tgt.stft_fmax) if tgt.matched is not None else None
+    tex = 0.0
+    if tgt.texture:
+        tex = W_FLAT * abs(f.flat - tgt.ref.flat) + W_HF * abs(f.hf_db - tgt.ref.hf_db)
+    elif tgt.hf_limit_hz is not None:
+        tex = W_HF * max(0.0, f.hf_db - tgt.ref.hf_db)
     reg = float(np.sqrt(np.mean(np.square(eq_gains_db)))) if eq_gains_db is not None and len(eq_gains_db) else 0.0
-    total = W_LTAS * ltas + W_BUZZ * buzz + W_REG * reg
+    total = W_LTAS * ltas + W_BUZZ * buzz + W_REG * reg + tex
     if decay is not None:
         total += W_DECAY * decay
     if stft is not None:
         total += W_STFT * stft
     if not np.isfinite(total):
         total = np.inf          # non-finite renders are never selected
-    return LossResult(float(total), ltas, buzz, decay, stft, reg, off)
+    return LossResult(float(total), ltas, buzz, decay, stft, reg, off, float(tex))

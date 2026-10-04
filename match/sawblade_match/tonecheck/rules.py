@@ -66,3 +66,24 @@ def summarize(results: list[dict]) -> dict:
         counts[r["status"]] += 1
     overall = "fail" if counts["fail"] else ("marginal" if counts["marginal"] else "pass")
     return {**counts, "overall": overall}
+
+
+# Phase 3.4: texture rule on a metric (not a band-group relation). The ceiling is NOT approved yet: until the lead sets
+# ``metrics.fizzTexture.target`` in the targets file the rule reports the measured value with status "n/a".
+FIZZ_TEXTURE_PENDING = "pending lead approval"
+
+
+def fizz_texture_rule(metric: dict, targets: dict | None = None) -> dict:
+    """``fizz_texture``: median spectral flatness 5-10 kHz over playing segments <= ceiling (flatness, 0..1)."""
+    ceiling = ((targets or {}).get("metrics", {}).get("fizzTexture", {}) or {}).get("target")
+    val = metric.get("flatness5to10k")
+    row = {"id": "fizz_texture", "expr": "flatness5to10k <= ceiling", "group": "flatness5to10k", "op": "<=",
+           "value": None if val is None else round(val, 4), "threshold": ceiling, "toleranceDb": 0.0,
+           "valueStatus": "approved" if ceiling is not None else FIZZ_TEXTURE_PENDING,
+           "hf8to12DbRe1to3k": metric.get("hf8to12DbRe1to3k"),
+           "why": "noise-like fizz above 5 kHz sounds grainy/cheap; real amp+cab guitar is smooth there"}
+    if ceiling is None or val is None:
+        row.update(margin=None, status="n/a", reason=FIZZ_TEXTURE_PENDING if ceiling is None else "no data")
+    else:
+        row.update(margin=round(ceiling - val, 4), status="pass" if val <= ceiling else "fail")
+    return row

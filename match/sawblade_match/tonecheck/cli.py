@@ -12,7 +12,7 @@ import numpy as np
 from .analysis import NOMINAL_CENTRES, Analysis, analyze, read_mono
 from .plot import make_plot
 from .render import RenderError, find_targets, find_tonerender, render
-from .rules import evaluate_rules, load_targets, summarize
+from .rules import evaluate_rules, fizz_texture_rule, load_targets, summarize
 
 GATE_NOISE_TARGET_DB = -60.0
 
@@ -90,6 +90,7 @@ def check_audio(name: str, wav: Path, di_path: Path | None, refs: Sequence[tuple
     a = analyze(x, fs, targets, di=di)
     results = evaluate_rules(a.groups, targets["rules"])
     results.append(gap_rule(a.metrics["gapNoiseDb"]))
+    results.append(fizz_texture_rule(a.metrics["fizzTexture"], targets))
     report = {
         "schema": "sawblade.tonecheck_report", "version": 2, "name": name,
         "randomness": "none (analysis is deterministic; no seeds)",
@@ -140,7 +141,7 @@ def format_table(report: dict) -> str:
              f"fail {s['fail']}, n/a {s['n/a']})",
              f"{'rule':<20}{'expr':<26}{'value':>8}{'thresh':>8}{'margin':>8}{'tol':>5}  status"]
     for r in report["rules"]:
-        lines.append(f"{r['id']:<20}{r['expr']:<26}{_f(r['value'], '8.1f'):>8}{r['threshold']:>8.1f}"
+        lines.append(f"{r['id']:<20}{r['expr']:<26}{_f(r['value'], '8.1f'):>8}{_f(r['threshold'], '8.1f'):>8}"
                      f"{_f(r['margin'], '+8.1f'):>8}{r['toleranceDb']:>5.1f}  {r['status']}"
                      + (f" ({r['reason']})" if r.get("reason") else ""))
     m = report["metrics"]
@@ -148,6 +149,7 @@ def format_table(report: dict) -> str:
                  f" | lowDecayDbPerMs {_f(m['lowDecayDbPerMs'].get('value'), '.3f')}"
                  f" | crest {m['crestFactorDb']['value']:.1f} dB | LRA {_f(m['loudnessRangeLU']['value'], '.1f')} LU"
                  f" | gap {_f(m['gapNoiseDb']['value'], '.1f')} dB"
+                 f" | fizz flat {_f(m['fizzTexture']['flatness5to10k'], '.3f')} / 8-12k {_f(m['fizzTexture']['hf8to12DbRe1to3k'], '+.1f')} dB"
                  f" | DI floor {_f(m.get('diNoiseFloorDb', {}).get('value'), '.1f')} dBFS")
     for ref in report["references"]:
         lines.append(f"vs {Path(ref['path']).name} ({ref['channel']}): A-weighted error "

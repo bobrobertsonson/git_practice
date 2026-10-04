@@ -247,8 +247,10 @@ def test_end_to_end_fixtures(tmp_path):
     assert rc == 0
     rep = json.loads((tmp_path / "report.json").read_text())
     assert rep["tonerender"]["renderRate"] > 0
-    assert len(rep["rules"]) == len(TARGETS["rules"]) + 1
-    assert all(r["status"] in ("pass", "marginal", "fail") for r in rep["rules"])
+    assert len(rep["rules"]) == len(TARGETS["rules"]) + 2          # + gap_noise + fizz_texture (phase 3.4)
+    assert all(r["status"] in ("pass", "marginal", "fail") for r in rep["rules"] if r["id"] != "fizz_texture")
+    fz = [r for r in rep["rules"] if r["id"] == "fizz_texture"][0]
+    assert fz["status"] == "n/a" and fz["valueStatus"] == "pending lead approval" and fz["value"] is not None
     assert (tmp_path / "report.png").exists() and (tmp_path / "render.wav").exists()
     # batch mode
     rc = cli.main(["--presets", str(preset), str(REPO_ROOT / "tests/fixtures/presets/golden_perpath.json"),
@@ -292,7 +294,7 @@ def test_gap_noise_rule_na(tmp_path):
     exp = evaluate_rules(A.analyze(xa, FS, TARGETS).groups, TARGETS["rules"])
     for k in ("pass", "marginal", "fail"):
         assert rep["summary"][k] == sum(r["status"] == k for r in exp)
-    assert rep["summary"]["n/a"] == 1
+    assert rep["summary"]["n/a"] == 2        # gap_noise (no DI) + fizz_texture (ceiling pending lead approval)
     # n/a does not influence the overall verdict
     expected_overall = ("fail" if any(r["status"] == "fail" for r in exp) else
                         "marginal" if any(r["status"] == "marginal" for r in exp) else "pass")

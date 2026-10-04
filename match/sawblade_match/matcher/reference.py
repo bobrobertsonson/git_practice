@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from ..calibrate.channels import stem_guitar_signal
 from ..tonecheck.analysis import activity_mask, detect_onsets
 from . import loss as L
 from .engine import RATE, to48
@@ -28,6 +29,10 @@ class Reference:
     offset_given: bool = False      # False: unknown, searched in a wide window and refined
     sections: list[tuple[float, float]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    texture: bool = False           # stem basis: HF texture term is a target (loss.py)
+    hf_limit_hz: float | None = None    # full-mix basis: LTAS above this is a one-sided ceiling (loss.py)
+    matched_fmax: float = L.STFT_FMAX_MIX   # upper edge of the matched-pair STFT term (matched channel is a full mix)
+    stem_channel: str | None = None
 
 
 def _read(path: str | Path) -> tuple[np.ndarray, int]:
@@ -53,24 +58,31 @@ def find_stem(ref_path: Path, stems_dir: Path | None) -> Path | None:
 
 def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path | None = None,
                    matched: str | None = None, offset_ms: float | None = None,
-                   sections: list[tuple[float, float]] | None = None) -> Reference:
+                   sections: list[tuple[float, float]] | None = None,
+                   hf_limit_hz: float | None | str = "auto") -> Reference:
     """``channel`` for the LTAS target: auto (stem if cached, else side for stereo), side, left, right, mid.
+    ``hf_limit_hz`` (full-mix bases only; stems never get it): "auto" = 4.5 kHz one-sided ceiling for the automatic
+    fallback and for ``side`` (a mix's side channel still holds stereo cymbals), none for an explicitly chosen
+    left/right/mid channel (taken as given; pass a number to impose a limit); None = off.
     ``matched`` ("left"/"right"/"mono"): the reference is a time-aligned pair with the DI; that channel is the STFT
     target (the LTAS target still follows ``channel``)."""
     path = Path(path)
     x, fs = _read(path)
     notes: list[str] = []
     stereo = x.shape[1] >= 2
-    basis, off_db, sig = None, 0.0, None
+    basis, off_db, sig, stem_kind, auto_fallback = None, 0.0, None, None, False
     if channel in ("auto",):
         stem = find_stem(path, stems_dir)
         if stem is not None:
             sx, sfs = _read(stem)
-            # mean of two hard-panned uncorrelated guitars has the same power as the side channel -> same +3 dB
-            sig, basis, off_db = to48(sx.mean(axis=1), sfs), f"stem:{stem.name}", SIDE_POWER_TO_GUITAR_DB
-            notes.append("htdemucs 'other' stem used as the guitar isolation")
+            mono, kind, off_db, info = stem_guitar_signal(sx)
+            sig, basis, stem_kind = to48(mono, sfs), f"stem:{stem.name}", kind
+            notes.append(f"htdemucs 'other' stem used as the guitar isolation ({kind} channel of the stem, "
+                         f"side/mid {info['sideMidDb']:+.1f} dB)" if info["sideMidDb"] is not None else
+                         "htdemucs 'other' stem used as the guitar isolation (mono)")
         else:
             channel = "side" if stereo else "mid"
+            auto_fallback = True
     if sig is None:
         if channel == "side":
             if not stereo:
@@ -80,7 +92,16 @@ def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path |
             col = {"left": 0, "right": 1}.get(channel)
             m = x.mean(axis=1) if col is None else x[:, min(col, x.shape[1] - 1)]
             sig, basis = to48(m, fs), channel
-    ref = Reference(path.stem, str(path), basis, sig, off_db, notes=notes)
+    ref = Reference(path.stem, str(path), basis, sig, off_db, notes=notes, stem_channel=stem_kind)
+    if stem_kind is not None:
+        ref.texture = True
+    else:
+        lim = (L.HF_LIMIT_HZ if (auto_fallback or channel == "side") else None) if hf_limit_hz == "auto" else hf_limit_hz
+        ref.hf_limit_hz = None if lim is None else float(lim)
+        ref.matched_fmax = ref.hf_limit_hz if ref.hf_limit_hz is not None else 8000.0
+        if lim is not None:
+            notes.append(f"full-mix reference ({basis}): LTAS above {lim:g} Hz is a one-sided ceiling (render may be "
+                         "darker, never brighter); cymbals dominate there")
     if matched:
         col = {"left": 0, "right": 1, "mono": 0}[matched]
         ref.matched_sig = to48(x[:, min(col, x.shape[1] - 1)], fs)
@@ -149,4 +170,5 @@ def build_target(ref: Reference, ex: Excerpt, offset_samples: int | None = None)
         rstarts = L.segment_starts(len(ref.ltas_sig), rmask)
         ron = detect_onsets(ref.ltas_sig, RATE)
         rf = L.features(ref.ltas_sig, rstarts, ron if len(ron) else None)
-    return L.Target(starts, rf, onsets if len(onsets) else None, mask, matched)
+    return L.Target(starts, rf, onsets if len(onsets) else None, mask, matched, ref.texture, ref.hf_limit_hz,
+                    ref.matched_fmax)

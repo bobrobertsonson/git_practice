@@ -212,8 +212,18 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   `blend` A [pedal?] -> amp + B [pedal?] -> amp. All are searched; the final choice prefers the simplest topology within 0.1 dB
   of the best loss (single < single2 < blend), then the lighter model set within 0.05 dB, and `result.json` reports the best of
   every topology (`topologies`).
-* **Reference**: `--ref-channel auto` uses a cached htdemucs `other` stem (`testdata/stems/`) if present, else the side channel
-  `(L-R)/2` (output level +3 dB: two uncorrelated hard-panned guitars). `--matched left` makes the reference a time-aligned pair
+* **Reference** (phase 3.4, fizz fix): `--ref-channel auto` uses a cached htdemucs `other` stem (`testdata/stems/`) if present: its
+  side channel when the guitars are hard-panned (stem side/mid RMS >= -3 dB), else its mid (`calibrate/channels.py:stem_guitar_signal`;
+  per-guitar level +3.01 dB for side, 0 for mid). The full-mix side channel `(L-R)/2` is a fallback only (and so is an explicit
+  `--ref-channel side`): above 4.5 kHz it is dominated by cymbals, so the LTAS bands above 4.5 kHz are not fitted but get a
+  one-sided ceiling (the render may be darker, never brighter; `--ref-hf-limit HZ`, 0 = off; explicit left/right/mid are taken as
+  given), and the matched-pair STFT term stops at that limit too (the matched channel is a mix). On a stem basis a **texture term**
+  is added: |median spectral flatness 5-10 kHz diff| x 25 + |8-12 kHz level (re 1-3 kHz) diff| x 0.12 per dB over the playing
+  segments. `result.json -> reference` records `basis`, `stemChannel`, `bandLimitHz`, `textureTerm`, and the loss breakdown has `tex`.
+  Stage 2 also searches a post-EQ high shelf (3-7 kHz, -8..0 dB) and a post-EQ low-pass (5-12 kHz, 12 dB/oct; 12 kHz = off).
+  `sawblade-tonecheck` reports `fizz_texture` (flatness 5-10 kHz ceiling; value **pending lead approval**, reported as n/a until
+  `metrics.fizzTexture.target` is set in the targets file) and the `fizzTexture` metric. The old side-channel (+3 dB) basis is
+  otherwise unchanged. (`--ref-channel` previously preferred the stem as the mean of its channels.) `--matched left` makes the reference a time-aligned pair
   with the DI (STFT term against that mix channel, LTAS target = matching side segment). The DI->reference offset is searched
   within +-3 s (or +-250 ms around `--offset-ms`) and refined (about +-1 ms; distorted renders vs a mix are not sample-exact).
 * **Stage 1** (one guitar-dominant 6 s excerpt): every (pedal-or-none, amp) pair is rendered once through the C++ core; because
