@@ -68,13 +68,26 @@ std::optional<fs::path> PresetAudition::currentCandidateFile() const {
   if (state_.active && state_.onCandidate) file = state_.candidate;
   else if (!applied_.empty()) file = applied_;
   if (file.empty()) return std::nullopt;
-  if (proc_.status().loading) return file;
+  const auto st = proc_.status();
+  if (st.loading) return file;
+  // The comparison parses the candidate and serialises two presets: it is redone only when something it depends on
+  // changed (the file, the loaded engine, the preset name or a parameter value), not on every UI refresh.
+  CacheKey key;
+  key.file = file;
+  std::error_code ec;
+  key.mtime = fs::last_write_time(file, ec);
+  key.builds = proc_.engineBuilds();
+  key.presetName = st.presetName;
+  for (int i = 0; i < kNumParams; ++i) key.params.push_back(proc_.parameters().getRawParameterValue(paramSpec(i).id)->load());
+  if (cacheKey_ && *cacheKey_ == key) return cacheResult_ ? std::optional<fs::path>(file) : std::nullopt;
+  bool same = false;
   try {
-    const std::string wanted = presetToStateJson(clampedToParams(sawblade::loadPresetFile(file)));
-    if (wanted == presetToStateJson(proc_.currentPreset())) return file;
+    same = presetToStateJson(clampedToParams(sawblade::loadPresetFile(file))) == presetToStateJson(proc_.currentPreset());
   } catch (...) {
   }
-  return std::nullopt;
+  cacheKey_ = std::move(key);
+  cacheResult_ = same;
+  return same ? std::optional<fs::path>(file) : std::nullopt;
 }
 
 }  // namespace sawblade::plugin

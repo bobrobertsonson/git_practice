@@ -21,6 +21,9 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -95,20 +98,61 @@ bool isExecutableFile(const fs::path& p) {
 #endif
 }
 
-bool pidAlive(std::int64_t pid) {
+// When did process `pid` start (epoch ms)? -1 if unknown.
+std::int64_t processStartMs(std::int64_t pid) {
 #if JUCE_WINDOWS
   (void)pid;
+  return -1;
+#elif defined(__APPLE__)
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(pid)};
+  struct kinfo_proc kp {};
+  std::size_t len = sizeof kp;
+  if (::sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len == 0) return -1;
+  const auto& t = kp.kp_proc.p_starttime;
+  return static_cast<std::int64_t>(t.tv_sec) * 1000 + t.tv_usec / 1000;
+#else
+  std::ifstream st("/proc/" + std::to_string(pid) + "/stat");
+  std::string line;
+  if (!std::getline(st, line)) return -1;
+  const auto close = line.rfind(')');  // the command name may contain spaces and parentheses
+  if (close == std::string::npos) return -1;
+  std::istringstream rest(line.substr(close + 2));
+  std::string field;
+  long long startTicks = -1;
+  for (int i = 3; i <= 22 && (rest >> field); ++i)  // fields after "pid (comm)" start at 3 (state)
+    if (i == 22) startTicks = std::atoll(field.c_str());
+  if (startTicks < 0) return -1;
+  std::ifstream stat("/proc/stat");
+  long long btime = -1;
+  while (std::getline(stat, line))
+    if (line.rfind("btime ", 0) == 0) btime = std::atoll(line.c_str() + 6);
+  const long hz = ::sysconf(_SC_CLK_TCK);
+  if (btime < 0 || hz <= 0) return -1;
+  return btime * 1000 + startTicks * 1000 / hz;
+#endif
+}
+
+// Is `pid` still the tool this job.json describes, and alive? A child of this process is waited for (so a finished
+// one is reaped) and needs no identity check. For any other pid the process group must be the recorded one and the
+// start time must match the moment the tool was spawned: a pid that was reused by an unrelated process fails
+// this, and such a process is never signalled.
+bool jobProcessAlive(std::int64_t pid, std::int64_t pgid, std::int64_t spawnedMs) {
+#if JUCE_WINDOWS
+  (void)pid;
+  (void)pgid;
+  (void)spawnedMs;
   return false;
 #else
   if (pid <= 1) return false;
-  // A child of this process that has exited stays a zombie until it is waited for (kill(pid, 0) still
-  // succeeds): reap it here. ECHILD means it is not ours.
   int status = 0;
   const pid_t r = ::waitpid(static_cast<pid_t>(pid), &status, WNOHANG);
   if (r == static_cast<pid_t>(pid)) return false;
-  if (r == 0) return true;
-  if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
-  return errno == EPERM;
+  if (r == 0) return true;  // ours, running
+  if (::kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM) return false;
+  if (::getpgid(static_cast<pid_t>(pid)) != static_cast<pid_t>(pgid)) return false;
+  const std::int64_t started = processStartMs(pid);
+  constexpr std::int64_t kToleranceMs = 4000;  // /proc btime is whole seconds
+  return started >= 0 && spawnedMs > 0 && std::llabs(started - spawnedMs) <= kToleranceMs;
 #endif
 }
 
@@ -391,6 +435,7 @@ struct JobRunner::Job {
   std::atomic<bool> cancelRequested{false}, stopMonitoring{false}, owned{true};
   std::atomic<std::int64_t> pid{0};
   std::atomic<std::int64_t> pgid{0};
+  std::atomic<std::int64_t> spawnedMs{0};  // when the tool was spawned (identity check on re-attach)
   std::string logPartial;                 // an incomplete last line of log.txt
   std::thread monitor;
   std::int64_t logOffset = 0;             // how much of log.txt was read
@@ -439,6 +484,7 @@ struct JobRunner::Job {
     j["state"] = jobStateName(s.state);
     j["pid"] = pid.load();
     j["pgid"] = pgid.load();
+    j["spawnedEpochMs"] = spawnedMs.load();
     j["startedEpochMs"] = startedMs;
     j["startedUtc"] = utcIso(startedMs);
     if (finishedMs > 0) {
@@ -739,7 +785,25 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
       posix_spawn_file_actions_addopen(&fa, 1, logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
       posix_spawn_file_actions_adddup2(&fa, 1, 2);
       posix_spawnattr_setpgroup(&at, 0);
-      posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);
+      // The tool starts clean: no signal mask, default SIGPIPE / SIGTERM / SIGINT, and no inherited descriptors
+      // beyond 0, 1, 2 (the host's sockets, devices and files stay out of it).
+      sigset_t none, defaults;
+      sigemptyset(&none);
+      sigemptyset(&defaults);
+      sigaddset(&defaults, SIGPIPE);
+      sigaddset(&defaults, SIGTERM);
+      sigaddset(&defaults, SIGINT);
+      posix_spawnattr_setsigmask(&at, &none);
+      posix_spawnattr_setsigdefault(&at, &defaults);
+      short flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
+#if defined(__APPLE__)
+      flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#elif defined(__GLIBC__) && defined(__GLIBC_PREREQ)
+#if __GLIBC_PREREQ(2, 34)
+      posix_spawn_file_actions_addclosefrom_np(&fa, 3);
+#endif
+#endif
+      posix_spawnattr_setflags(&at, flags);
       std::vector<std::string> store;
       store.push_back(job->exe);
       for (const auto& a : job->args) store.push_back(a);
@@ -757,6 +821,7 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
     }
     job->pid.store(pid);
     job->pgid.store(pid);
+    job->spawnedMs.store(nowMs());
     job->setState(JobState::Running);
     job->writeJobJson();
 
@@ -839,8 +904,8 @@ void JobRunner::finalizeJob(Job& job) {
     }
     if (message.empty()) {
       if (s.exitCode > 0) message = "The process exited with code " + std::to_string(s.exitCode) + ".";
-      else if (!resultError.empty()) message = resultError;
-      else message = "The process stopped without a result (the app was closed or it was killed).";
+      else if (!resultError.empty() && job.owned) message = resultError;
+      else message = "The job was interrupted: its process is gone (the app was closed or it was killed) and it left no result.";
       for (auto it = s.logTail.rbegin(); it != s.logTail.rend(); ++it)
         if (!trim(*it).empty()) {
           message += " Last output: " + trim(*it);
@@ -874,23 +939,23 @@ void JobRunner::finalizeJob(Job& job) {
 void JobRunner::monitorAttached(std::shared_ptr<Job> job) {
   bool termSent = false, killSent = false;
   std::chrono::steady_clock::time_point termAt;
+  auto alive = [&] { return jobProcessAlive(job->pid.load(), job->pgid.load(), job->spawnedMs.load()); };
   while (!job->stopMonitoring) {
+    job->pollLogFile();
+    job->pollProgress();
+    if (!alive()) break;  // gone, or not our tool any more: never signalled
     if (job->cancelRequested && !termSent) {
       termSent = true;
       termAt = std::chrono::steady_clock::now();
       signalGroup(job->pgid.load(), false);
     }
-    if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace && pidAlive(job->pid.load())) {
+    if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace) {
       killSent = true;
       signalGroup(job->pgid.load(), true);
     }
-    job->pollLogFile();
-    job->pollProgress();
-    if (!pidAlive(job->pid.load())) break;
     std::this_thread::sleep_for(kPollPeriod);
   }
   if (job->stopMonitoring) return;
-  if (job->cancelRequested) signalGroup(job->pgid.load(), true);
   job->pollLogFile(/*flush=*/true);
   job->pollProgress();
   finalizeJob(*job);
@@ -909,6 +974,7 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
   job->startedMs = j.value("startedEpochMs", static_cast<std::int64_t>(0));
   job->pid = j.value("pid", static_cast<std::int64_t>(0));
   job->pgid = j.value("pgid", job->pid.load());
+  job->spawnedMs = j.value("spawnedEpochMs", job->startedMs);
   if (auto it = j.find("commandLine"); it != j.end() && it->is_array())
     for (const auto& a : *it)
       if (a.is_string()) job->commandLine.push_back(a.get<std::string>());
@@ -926,7 +992,7 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
   job->snap.pid = job->pid.load();
   job->finishedMs = j.value("finishedEpochMs", static_cast<std::int64_t>(0));
   const bool wasActive = state == "starting" || state == "running";
-  if (wasActive && pidAlive(job->pid.load())) {
+  if (wasActive && jobProcessAlive(job->pid.load(), job->pgid.load(), job->spawnedMs.load())) {
     job->snap.state = JobState::Running;
     job->snap.progress.stage = "running";
     job->pollLogFile();  // pick up what the log already says

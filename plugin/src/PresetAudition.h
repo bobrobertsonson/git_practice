@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "sawblade/preset.h"
 
@@ -39,7 +40,17 @@ class PresetAudition {
   std::optional<std::filesystem::path> currentCandidateFile() const;
 
  private:
+  struct CacheKey {
+    std::filesystem::path file;
+    std::filesystem::file_time_type mtime{};
+    std::uint64_t builds = 0;
+    std::string presetName;
+    std::vector<float> params;
+    bool operator==(const CacheKey&) const = default;
+  };
   SawbladeProcessor& proc_;
+  mutable std::optional<CacheKey> cacheKey_;
+  mutable bool cacheResult_ = false;
   State state_;
   Preset original_;
   std::filesystem::path applied_;

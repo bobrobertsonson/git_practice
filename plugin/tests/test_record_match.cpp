@@ -4,6 +4,7 @@
 // tools are synthesised into temp dirs at test time; nothing is committed.
 #include <signal.h>
 #include <sys/wait.h>
+#include <spawn.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -1335,4 +1336,70 @@ TEST_CASE("match: the written export source loads back with its capture paths re
   badIr.cab.enabled = false;  // a disabled cab is not exported
   CHECK(exportBlockedReason(badIr).empty());
   CHECK(exportBlockedReason(makeInitPreset()).empty());
+}
+
+TEST_CASE("runner: a job.json whose pid belongs to an unrelated process is never treated as running or signalled", "[match][runner][attach][pid]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  // An unrelated live process (not a child of this test) leading its own process group, as a real tool would.
+  pid_t victim = 0;
+  {
+    FILE* p = ::popen("python3 -c \"import subprocess; print(subprocess.Popen(['sleep','60'], start_new_session=True).pid)\"", "r");
+    REQUIRE(p != nullptr);
+    long v = 0;
+    REQUIRE(std::fscanf(p, "%ld", &v) == 1);
+    ::pclose(p);
+    victim = static_cast<pid_t>(v);
+  }
+  REQUIRE(victim > 1);
+  auto alive = [&] { return !processGone(victim); };
+
+  struct Case {
+    const char* dir;
+    std::int64_t pgid;
+    std::int64_t spawnedMs;
+    const char* what;
+  };
+  const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+  const Case cases[] = {
+      {"29990101-000000-match", victim, now - 3600 * 1000, "same pgid, started an hour before the recorded spawn"},
+      {"29990102-000000-match", ::getpgrp(), now, "right start time, different process group"},
+      {"29990103-000000-match", victim, 0, "no recorded spawn time"},
+  };
+  for (const Case& c : cases) {
+    INFO(c.what);
+    const fs::path dir = t.jobs / c.dir;
+    fs::create_directories(dir);
+    json j = {{"version", 1}, {"kind", "match"}, {"state", "running"}, {"pid", victim}, {"pgid", c.pgid},
+              {"startedEpochMs", c.spawnedMs}, {"spawnedEpochMs", c.spawnedMs}, {"outDir", dir.string()}};
+    std::ofstream(dir / "job.json") << j.dump();
+    JobRunner runner(t.settings, t.jobs);
+    runner.attachExisting();
+    JobSnapshot s = runner.snapshot(JobKind::Match);
+    CHECK(s.dir == dir);
+    CHECK(s.state == JobState::Failed);
+    CHECK(s.message.find("interrupted") != std::string::npos);
+    runner.cancel(JobKind::Match);
+    std::this_thread::sleep_for(400ms);
+    CHECK(alive());  // never signalled
+    fs::remove_all(dir);
+  }
+
+  // Control: the same process with a matching identity IS recognised (and then cancelled like a real tool).
+  {
+    const fs::path dir = t.jobs / "29990104-000000-match";
+    fs::create_directories(dir);
+    json j = {{"version", 1}, {"kind", "match"}, {"state", "running"}, {"pid", victim}, {"pgid", victim},
+              {"startedEpochMs", now}, {"spawnedEpochMs", now}, {"outDir", dir.string()}};
+    std::ofstream(dir / "job.json") << j.dump();
+    JobRunner runner(t.settings, t.jobs);
+    runner.setCancelGrace(300ms);
+    runner.attachExisting();
+    CHECK(runner.snapshot(JobKind::Match).state == JobState::Running);
+    runner.cancel(JobKind::Match);
+    REQUIRE(runner.waitFinished(JobKind::Match, 10000ms));
+    CHECK(runner.snapshot(JobKind::Match).state == JobState::Cancelled);
+    CHECK(waitUntil([&] { return processGone(victim); }, 5000ms));
+  }
+  ::kill(victim, SIGKILL);
 }

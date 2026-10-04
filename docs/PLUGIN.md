@@ -307,13 +307,17 @@ result). One match and one export can be active at the same time; a second job o
   pgid = pid), with stdout and stderr appended to `<job>/log.txt` (a file: a child that floods its output cannot stall,
   and the log survives the app). The monitor parses new complete lines of that file; stage and message come from them
   when there is no progress file.
+- *Spawn hygiene.* Empty signal mask, SIGPIPE / SIGTERM / SIGINT back to default, and no inherited descriptors beyond
+  0, 1, 2 (`POSIX_SPAWN_CLOEXEC_DEFAULT` on macOS, `addclosefrom_np` with glibc >= 2.34).
 - *Cancel.* SIGTERM to the whole process group, then SIGKILL to the group after 2.5 s, then a last group SIGKILL once the
   tool has exited, so helpers it started (worker processes) die with it. The job is then `cancelled` in job.json.
 - *Re-attach.* job.json stores `pid` and `pgid`. A job survives the app quitting (the tool keeps running, its output
-  keeps going to log.txt). A runner started later re-attaches by pid (`kill(pid, 0)`, reaping it if it is its own
-  child), follows log.txt and progress.json, cancels through the group, and when the pid is gone decides the final
+  keeps going to log.txt). A runner started later re-attaches by pid, after checking that it is still that tool: its own child is waited for;
+  any other pid must be in the recorded process group (`getpgid`) and have started within 4 s of the recorded
+  `spawnedEpochMs` (`/proc/<pid>/stat` + `btime` on Linux, `sysctl KERN_PROC_PID` on macOS). A reused pid fails the
+  check, is treated as gone and is never signalled. It then follows log.txt and progress.json, cancels through the group, and when the pid is gone decides the final
   state from the files: `result.json` (match) / `export_report.json` or a `.nam` (export) means succeeded, otherwise
-  failed ("stopped without a result"). Exit codes are only known for jobs the runner started itself.
+  failed ("interrupted"). Exit codes are only known for jobs the runner started itself.
 - *Tools and settings.* The matcher executable (default `<repo>/match/.venv/bin/sawblade-match`, `<repo>` from the build's
   source dir), the exporter (`.../sawblade-export`) and the pool manifest
   (`~/.cache/sawblade/captures/pool_manifest.json`) are settings in `juce::PropertiesFile` application properties
