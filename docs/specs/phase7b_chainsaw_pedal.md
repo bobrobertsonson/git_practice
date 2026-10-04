@@ -265,7 +265,7 @@ UI-visible `name` says "Big Fuzz" / "Fuzz"):
 
 | file | name | sustain / tone / scoop / volume | crunch / voice | tight | mix | clip | deep | notes |
 |---|---|---|---|---|---|---|---|---|
-| `pickle_chainsaw.json` | Big Fuzz Chainsaw | 10 / 5 / 8 / ≈6 | 7 / 6 | 3 | 100 | silicon | rolloffHz 7000 | a scooped, saturated fuzz chainsaw with no HM-2 in it (Swedish-style buzz from a muff-family fuzz); into a cranked British-style amp (JCM800 86089) with a V30 cab 45023 |
+| `pickle_chainsaw.json` | Big Fuzz Chainsaw | 10 / 4 / 8 / ≈6 | 7 / 6 | 3 | 100 | silicon | rolloffHz 6000 (lead decision after measurement: tone 7 / 10 kHz put 59 % of the cab-less energy in 80 Hz–4 kHz, tone 5 / 7 kHz 76 %, tone 4 / 6 kHz 86 %) | a scooped, saturated fuzz chainsaw with no HM-2 in it (Swedish-style buzz from a muff-family fuzz); into a cranked British-style amp (JCM800 86089) with a V30 cab 45023 |
 | `pickle_doom_saw.json` | Big Fuzz Doom Saw | 8 / 3 / 4 / ≈6 | 4 / 3 | 0 | 100 | soft | stackRatio 6, rolloffHz 7000 | low-voiced doom/sludge saw: mids shifted down, dark top, soft clip (Electric Wizard, Conan); low-gain amp |
 | `pickle_into_saw.json` | Fuzz Into Saw | 6 / 6 / 2 / ≈2 then HM | 5 / 5 | 2 | 100 | silicon | second block: `pedal.hm` low 8, high 9, dist 6, level 3, tight 0 | two circuits chained: a mild fuzz pushing the chainsaw for a thicker, more compressed buzz |
 
