@@ -35,6 +35,8 @@ class SawbladeEditor : public juce::AudioProcessorEditor, private juce::Timer {
   SawbladeLookAndFeel laf_;
   std::unique_ptr<Content> content_;
   juce::TooltipWindow tooltip_{this, 600};
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SawbladeEditor)
 };
 
 }  // namespace sawblade::plugin

@@ -96,6 +96,9 @@ class RigView::Cables : public juce::Component {
     cable({190, 600}, {120, 520}, {60, 420}, {70, 160}, L::saw());
     cable({392, 640}, {300, 560}, {230, 470}, {230, 330}, L::body());
   }
+
+ private:
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Cables)
 };
 
 // ---------------------------------------------------------------------------------------------

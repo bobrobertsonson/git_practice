@@ -30,6 +30,8 @@ class RigPiece : public juce::Component, public juce::SettableTooltipClient {
   Piece piece_;
   Panel panel_;
   float radius_;
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RigPiece)
 };
 
 // The left part of the main screen (940 x 742 design px): amp heads, cab, cables, pedalboard with
@@ -63,6 +65,8 @@ class RigView : public juce::Component {
   std::array<std::unique_ptr<LedIndicator>, 2> leds_;
   std::array<std::unique_ptr<juce::TextButton>, 2> addPedal_;
   Piece selected_ = Piece::SawPedal;
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RigView)
 };
 
 }  // namespace sawblade::plugin::skin

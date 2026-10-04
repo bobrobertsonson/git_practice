@@ -241,7 +241,7 @@ class SawbladeEditor::Content : public juce::Component {
  private:
   static juce::Rectangle<int> matchBox() { return {kInspX + 16, kDesignHeight - 14 - 64, kInspW - 32, 64}; }
   static constexpr int kMasterY = kTopBar + 328, kEqY = kTopBar + 424, kLearnY = kTopBar + 500;
-    static constexpr std::array<KnobDef, 5> kMaster{{{kInputGain, "INPUT", FilmstripKnob::Kind::Pedal, 0xffff6a1a},
+  static constexpr std::array<KnobDef, 5> kMaster{{{kInputGain, "INPUT", FilmstripKnob::Kind::Pedal, 0xffff6a1a},
                                                    {kGateThreshold, "GATE", FilmstripKnob::Kind::Pedal, 0xffff6a1a},
                                                    {kLevelA, "SAW", FilmstripKnob::Kind::Pedal, 0xffff6a1a},
                                                    {kLevelB, "BODY", FilmstripKnob::Kind::Pedal, 0xff4f8fd0},
@@ -293,6 +293,8 @@ class SawbladeEditor::Content : public juce::Component {
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Content)
 };
 
 // ---------------------------------------------------------------------------------------------

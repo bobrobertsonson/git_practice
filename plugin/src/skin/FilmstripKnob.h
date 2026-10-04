@@ -44,6 +44,8 @@ class FilmstripKnob : public juce::Slider {
   juce::Colour arc_;
   float lastY_ = 0.0f;
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment_;
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FilmstripKnob)
 };
 
 }  // namespace sawblade::plugin::skin

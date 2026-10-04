@@ -31,7 +31,14 @@ Ends with `Completed tests in pluginval / Fuzz parameters` then `SUCCESS`.
 ## Screenshots
 - /home/user/git_practice/build/screenshots/sawblade_skin_1x.png (1280x800)
 - /home/user/git_practice/build/screenshots/sawblade_skin_2x.png (2560x1600)
-They show the barbaric preset failing to load (captures are not in the sandbox), hence the red error line, `LAT 0` and blend 0 (the preset's own blend is 0.0).
+The test rig loads `presets/matched/barbaric_v4.json` only if every capture it references exists (paths.*.blocks[].model, cab.ir/irA/irB); the captures are not committed, so the screenshots are taken on the Init preset: no error line, `LAT 0`, blend 50/50.
+
+## Review round 1 changes
+- Rig only loads a preset whose captures all exist; stale comment fixed.
+- `JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR` on FilmstripKnob, FootswitchButton, LedIndicator, RigPiece, RigView, Cables, Content, SawbladeEditor.
+- `kMaster` indentation fixed.
+- Footswitch test produces the pressed state with a synthesised mouseDown (then mouseUp), not `setState`.
+- Full ctest after the changes: 197/197 passed.
 
 ## Decisions / questions for lead
 1. `createEditorIfNeeded()` is deprecated in this JUCE (`-Werror`); tests use `createEditorAndMakeActive()`.

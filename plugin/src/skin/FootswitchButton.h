@@ -23,6 +23,8 @@ class FootswitchButton : public juce::Button {
  private:
   LedIndicator* led_ = nullptr;
   juce::Image dark_;
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FootswitchButton)
 };
 
 }  // namespace sawblade::plugin::skin

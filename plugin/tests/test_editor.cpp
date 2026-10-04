@@ -38,8 +38,33 @@ std::vector<T*> all(juce::Component& root) {
   return v;
 }
 
-// A processor with its editor, the barbaric preset loaded when present (a missing capture shows as
-// a load error in the status line; that never fails a test).
+// True if every capture file the preset references (paths.*.blocks[].model.file, cab.ir/irA/irB .file;
+// relative to the preset's directory or absolute) exists.
+bool presetCapturesPresent(const std::filesystem::path& presetFile) {
+  const juce::var root = juce::JSON::parse(juce::File(presetFile.string()));
+  if (!root.isObject()) return false;
+  const auto dir = presetFile.parent_path();
+  auto exists = [&](const juce::var& ref) {
+    if (!ref.isObject()) return true;  // nothing referenced
+    const juce::String f = ref.getProperty("file", juce::var()).toString();
+    if (f.isEmpty()) return true;
+    std::filesystem::path q(f.toStdString());
+    return std::filesystem::exists(q.is_absolute() ? q : dir / q);
+  };
+  bool ok = true;
+  if (auto* paths = root.getProperty("paths", juce::var()).getDynamicObject())
+    for (const auto& kv : paths->getProperties()) {
+      const auto* blocks = kv.value.getProperty("blocks", juce::var()).getArray();
+      if (blocks != nullptr)
+        for (const auto& b : *blocks) ok = ok && exists(b.getProperty("model", juce::var()));
+    }
+  const juce::var cab = root.getProperty("cab", juce::var());
+  for (const char* k : {"ir", "irA", "irB"}) ok = ok && exists(cab.getProperty(k, juce::var()));
+  return ok;
+}
+
+// A processor with its editor. The barbaric preset is loaded only if all its captures exist (they are
+// not committed); otherwise the processor stays on Init. Either way the tests never fail on it.
 struct Rig {
   juce::ScopedJuceInitialiser_GUI gui;
   SawbladeProcessor proc;
@@ -48,7 +73,7 @@ struct Rig {
 
   Rig() {
     const auto preset = std::filesystem::path(SAWBLADE_PRESETS_DIR) / "matched" / "barbaric_v4.json";
-    if (std::filesystem::exists(preset)) proc.loadPresetFile(preset);
+    if (std::filesystem::exists(preset) && presetCapturesPresent(preset)) proc.loadPresetFile(preset);
     proc.waitForLoader(std::chrono::milliseconds(60000));
     proc.prepareToPlay(48000.0, 512);
     base.reset(proc.createEditorAndMakeActive());
@@ -268,9 +293,14 @@ TEST_CASE("footswitch press look and paired LED", "[editor]") {
   skin::FootswitchButton& fs = *switches[0];
 
   const auto up = fs.createComponentSnapshot(fs.getLocalBounds(), true, 1.0f);
-  fs.setState(juce::Button::buttonDown);
+  juce::Component& fsc = fs;  // Button's mouse handlers are protected; Component's are public and virtual
+  const auto centre = fs.getLocalBounds().toFloat().getCentre();
+  fsc.mouseDown(mouse(fs, centre, centre, false));
+  CHECK(fs.isDown());
   const auto down = fs.createComponentSnapshot(fs.getLocalBounds(), true, 1.0f);
-  fs.setState(juce::Button::buttonNormal);
+  fsc.mouseUp(mouse(fs, centre, centre, false));  // completes a click: toggles, then toggled back below
+  fs.setToggleState(true, juce::dontSendNotification);
+  fs.pairedLed()->setOn(true);
   int differing = 0;
   for (int y = 0; y < up.getHeight(); ++y)
     for (int x = 0; x < up.getWidth(); ++x)
@@ -284,10 +314,8 @@ TEST_CASE("footswitch press look and paired LED", "[editor]") {
   const bool on0 = fs.getToggleState();
   CHECK(led->isOn() == on0);
   auto click = [&] {  // a real click: mouse down + up inside the button
-    const auto centre = fs.getLocalBounds().toFloat().getCentre();
-    juce::Component& c = fs;  // Button's handlers are protected; Component's are public and virtual
-    c.mouseDown(mouse(fs, centre, centre, false));
-    c.mouseUp(mouse(fs, centre, centre, false));
+    fsc.mouseDown(mouse(fs, centre, centre, false));
+    fsc.mouseUp(mouse(fs, centre, centre, false));
   };
   click();
   CHECK(fs.getToggleState() == !on0);
