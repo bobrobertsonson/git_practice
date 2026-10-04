@@ -6,9 +6,15 @@
 namespace {
 thread_local bool g_armed = false;
 thread_local long g_count = 0;
+thread_local long g_frees = 0;
 
 inline void note() noexcept {
   if (g_armed) ++g_count;
+}
+
+inline void release(void* p) noexcept {
+  if (g_armed && p != nullptr) ++g_frees;
+  std::free(p);
 }
 
 void* allocate(std::size_t n) {
@@ -47,10 +53,12 @@ void* allocateAlignedNoThrow(std::size_t n, std::align_val_t al) noexcept {
 namespace sawblade::test {
 AllocGuard::AllocGuard() noexcept {
   g_count = 0;
+  g_frees = 0;
   g_armed = true;
 }
 AllocGuard::~AllocGuard() { g_armed = false; }
 long AllocGuard::count() const noexcept { return g_count; }
+long AllocGuard::frees() const noexcept { return g_frees; }
 }  // namespace sawblade::test
 
 void* operator new(std::size_t n) { return allocate(n); }
@@ -66,15 +74,15 @@ void* operator new[](std::size_t n, std::align_val_t a, const std::nothrow_t&) n
   return allocateAlignedNoThrow(n, a);
 }
 
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
-void operator delete(void* p, const std::nothrow_t&) noexcept { std::free(p); }
-void operator delete[](void* p, const std::nothrow_t&) noexcept { std::free(p); }
-void operator delete(void* p, std::align_val_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::align_val_t) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
-void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free(p); }
-void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete(void* p) noexcept { release(p); }
+void operator delete[](void* p) noexcept { release(p); }
+void operator delete(void* p, std::size_t) noexcept { release(p); }
+void operator delete[](void* p, std::size_t) noexcept { release(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { release(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { release(p); }
+void operator delete(void* p, std::align_val_t) noexcept { release(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { release(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept { release(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { release(p); }
+void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept { release(p); }
+void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { release(p); }
