@@ -1,10 +1,10 @@
-**Blocked on user:** (1) choose a fix for the one macOS ctest failure (below; DSP-adjacent, not applied); (2) the factory presets need the user's capture files in `presets/captures/` before they make sound.
+**Blocked on user:** (0) this Mac is not logged in to GitHub, so pushes fail until `gh auth login` + `gh auth setup-git`; (1) choose a fix for the one macOS ctest failure (below; DSP-adjacent, not applied); (2) the factory presets need the user's capture files in `presets/captures/` before they make sound.
 
 # Mac 1 build report
 
 | | |
 |---|---|
-| Main-branch commit built | `4f725fe` (`origin/claude/sawblade-plugin-setup-7k0b8q`) |
+| Main-branch commit built | `d310518` (`origin/claude/sawblade-plugin-setup-7k0b8q`; previous run: `4f725fe`, same results) |
 | macOS | 26.6 (25G72) |
 | Xcode | none; Command Line Tools only (Apple clang 21.0.0, clang-2100.0.123.102). Full Xcode not needed |
 | Chip | Apple M5 (arm64) |
@@ -13,7 +13,7 @@
 
 ## ctest
 
-`ctest --test-dir build-mac --output-on-failure`: **144 tests, 142 passed, 1 failed, 1 skipped.**
+`ctest --test-dir build-mac --output-on-failure`: **150 tests, 148 passed, 1 failed, 1 skipped.**
 
 - Skipped (expected): `plugin:test harness: LockGuard sees mutex acquisitions`, which runs on Linux only (`--wrap` linker flags).
 - Failed: `plugin:Processor: starts as a zero-latency pass-through (Init preset)` (`plugin/tests/test_processor.cpp:164`, `CHECK(y == x)`). The output is the input times 1.00000012f (one float ulp hot) on 989 of 1000 samples. Latency is correctly 0.
