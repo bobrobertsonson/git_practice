@@ -29,6 +29,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/browser/SlotTarget.cpp
   src/browser/PreviewPlayer.cpp
   src/browser/PreviewRender.cpp
+  src/browser/PreviewWorker.cpp
   src/browser/BrowserController.cpp
   src/browser/CaptureBrowser.cpp
   src/PluginProcessor.cpp

@@ -255,6 +255,21 @@ TEST_CASE("browser swap: USE on every piece kind goes through the loader and rou
     CHECK(got->source->creator == "creator");
     CHECK(got->source->license == "cc-by");
     CHECK(after == expect);  // every other block unchanged
+    if (!c.ir) {  // the swapped block keeps its gains, bypass, slot; only `model` differs
+      const auto& pb = t.path == 'a' ? before.a : before.b;
+      const auto& pa = t.path == 'a' ? after.a : after.b;
+      const auto& bb = pb.blocks[static_cast<std::size_t>(t.blockIndex)];
+      const auto& ab = pa.blocks[static_cast<std::size_t>(t.blockIndex)];
+      const auto& bp = static_cast<const NamBlockParams&>(*bb.params);
+      const auto& ap = static_cast<const NamBlockParams&>(*ab.params);
+      CHECK(ab.id == bb.id);
+      CHECK(ab.slot == bb.slot);
+      CHECK(ab.bypass == bb.bypass);
+      CHECK(ap.inputGainDb == bp.inputGainDb);
+      CHECK(ap.outputGainDb == bp.outputGainDb);
+      CHECK(ap.normalizeLoudness == bp.normalizeLoudness);
+      CHECK(ap.model.file != bp.model.file);
+    }
 
     // the saved state keeps it
     juce::MemoryBlock mb;

@@ -1,9 +1,12 @@
 // Capture browser (docs/specs/phase8_capture_browser.md): the child-process client against a fake CLI,
 // the controller (login, USE, PREVIEW) and the overlay UI. Needs a message loop and a display (xvfb-run).
 
+#include <atomic>
 #include <chrono>
+#include <thread>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <set>
 
@@ -172,9 +175,19 @@ TEST_CASE("t3k client: every command against the fake CLI", "[browser][client]")
   CHECK(lic.error.code == "license");
 
   CHECK(T3kClient::listArgs(T3kClient::Source::Search, "-x y", "amp", 20) ==
-        std::vector<std::string>{"search", "x y", "--json", "--limit", "20", "--gear", "amp"});
-  CHECK(T3kClient::listArgs(T3kClient::Source::Pool, "q", "", 5) ==
-        std::vector<std::string>{"list", "--source", "pool", "--json", "--query", "q", "--limit", "5"});
+        std::vector<std::string>{"search", "--json", "--limit", "20", "--gear", "amp", "--", "-x y"});
+  CHECK(T3kClient::listArgs(T3kClient::Source::Pool, "-q", "", 5) ==
+        std::vector<std::string>{"list", "--source", "pool", "--json", "--query=-q", "--limit", "5"});
+
+  // A query starting with '-' reaches the CLI intact.
+  TempDir logd;
+  rig.env.set("FAKE_T3K_LOG", (logd.dir / "log.txt").string());
+  auto dashed = await<T3kClient::Records>([&](auto cb) { c.list(T3kClient::Source::Search, "-fuzz --gear", "amp", 5, cb); });
+  CHECK(dashed.ok);
+  std::ifstream lf(logd.dir / "log.txt");
+  std::string line, last;
+  while (std::getline(lf, line)) last = line;
+  CHECK(last == R"(["search", "--json", "--limit", "5", "--gear", "amp", "--", "-fuzz --gear"])");
 }
 
 TEST_CASE("t3k client: errors, garbage, timeout, merged stderr, launch failure", "[browser][client]") {
@@ -298,9 +311,10 @@ TEST_CASE("browser: licences are shown on every card and in the selected panel; 
   REQUIRE(pumpUntil([&] { return licences().size() == 6; }));
   std::multiset<std::string> got, want;
   for (const auto& t : licences()) got.insert(t.toStdString());
-  for (const auto& r : ctl.state().records) want.insert(r.license);
+  for (const auto& r : ctl.state().records) want.insert(r.license.empty() ? "unknown licence" : r.license);
   CHECK(got == want);
   CHECK(got.count("cc-by-nc") == 1);
+  CHECK(got.count("unknown licence") == 1);  // the record with an empty licence
 
   // Selected panel: the licence, also for a record that fails the filter; models are listed.
   ctl.select(103);
@@ -453,4 +467,38 @@ TEST_CASE("browser: the editor's BROWSE CAPTURES opens the overlay for the selec
   CHECK(bs[0]->getWidth() == 1280);
   buttonTitled(*bs[0], juce::String::fromUTF8("\xe2\x80\xb9 RIG"))->triggerClick();
   REQUIRE(pumpUntil([&] { return allOf<CaptureBrowser>(*ed).empty(); }));
+}
+
+TEST_CASE("browser: destroying the browser during a slow render returns at once and never starts the preview", "[browser][preview]") {
+  Rig rig;
+  std::atomic<bool> rendering{false}, finished{false};
+  const auto t0 = std::chrono::steady_clock::now();
+  std::chrono::steady_clock::duration destroyTime{};
+  {
+    auto b = std::make_unique<CaptureBrowser>(rig.proc, *rig.settings, Slot::SawAmp);
+    auto& ctl = b->controller();
+    ctl.previewRender = [&](const Preset&, double, std::string&) {
+      rendering = true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+      finished = true;
+      return std::vector<float>(48000, 0.3f);
+    };
+    REQUIRE(pumpUntil([&] { return !ctl.state().records.empty() && !ctl.state().loading; }));
+    buttonTitled(*b, "Preview Boss HM-2w CHAINSAW")->triggerClick();
+    REQUIRE(pumpUntil([&] { return rendering.load(); }));
+    const auto d0 = std::chrono::steady_clock::now();
+    b.reset();
+    destroyTime = std::chrono::steady_clock::now() - d0;
+  }
+  CHECK(destroyTime < std::chrono::milliseconds(150));
+  CHECK_FALSE(finished.load());  // the render was still running when the destructor returned
+  REQUIRE(pumpUntil([&] { return finished.load(); }));
+  pumpFor(300);  // the result is dropped: no preview starts
+  CHECK_FALSE(rig.proc.previewPlayer().playing());
+  juce::AudioBuffer<float> buf(2, 512);
+  juce::MidiBuffer midi;
+  buf.clear();
+  rig.proc.processBlock(buf, midi);
+  CHECK(buf.getMagnitude(0, 512) < 0.05f);  // the rig (not the 0.3 preview)
+  (void)t0;
 }

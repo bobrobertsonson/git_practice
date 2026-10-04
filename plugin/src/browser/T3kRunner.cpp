@@ -131,7 +131,10 @@ void T3kRunner::execute(Job& job) {
           }
         }
       }
-      child.waitForProcessToFinish(2000);
+      // Shutdown: the child is killed and not waited for (the destructor must not stall); otherwise the exit
+      // code needs the wait (the pipe is at EOF, so the child is already gone or about to be).
+      if (alive_->load()) child.waitForProcessToFinish(2000);
+      else child.kill();
       {
         std::lock_guard<std::mutex> lk(procM_);
         child_ = nullptr;

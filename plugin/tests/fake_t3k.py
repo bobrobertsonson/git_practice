@@ -54,7 +54,7 @@ RECORDS = [
     rec(103, "Fuzz Drive NC", "nina", "cc-by-nc", passes=False),
     rec(104, "Tight Boost", "tom", "cco"),
     rec(105, "Dist Pedal SA", "sam", "cc-by-sa"),
-    rec(106, "Brown Machine", "bo", "t3k"),
+    rec(106, "Brown Machine", "bo", "")  # empty licence: the UI shows a fallback,
 ]
 IRS = [rec(201, "4x12 V30 SM57", "cabguy", "cc-by", gear="ir", models_count=0, a2_models_count=0, irs_count=6)]
 
@@ -92,6 +92,8 @@ elif cmd == "login":
 elif cmd in ("search", "list"):
     if not logged_in:
         err("not logged in", "auth")
+    if cmd == "search" and ("--" not in args or args.index("--") != len(args) - 2):
+        err("search: the query must follow '--'", "error")
     gear = args[args.index("--gear") + 1] if "--gear" in args else None
     recs = IRS if gear == "ir" else RECORDS
     if cmd == "list" and "--source" in args and args[args.index("--source") + 1] == "pool":

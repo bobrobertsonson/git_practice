@@ -61,22 +61,18 @@ void T3kClient::whoami(std::function<void(Reply<t3k::WhoAmI>)> cb) {
 
 std::vector<std::string> T3kClient::listArgs(Source source, const std::string& query, const std::string& gear, int limit) {
   std::vector<std::string> a;
-  if (source == Source::Search) {
-    std::string q = query;
-    q.erase(0, q.find_first_not_of('-'));  // a leading '-' would read as an option
-    a = {"search", q, "--json"};
-  } else {
-    a = {"list", "--source", source == Source::Pool ? "pool" : "favorites", "--json"};
-    if (!query.empty()) {
-      a.push_back("--query");
-      a.push_back(query);
-    }
-  }
+  if (source == Source::Search) a = {"search", "--json"};
+  else a = {"list", "--source", source == Source::Pool ? "pool" : "favorites", "--json"};
+  if (source != Source::Search && !query.empty()) a.push_back("--query=" + query);  // '=' keeps a leading '-' intact
   a.push_back("--limit");
   a.push_back(std::to_string(limit));
-  if (!gear.empty()) {  // nargs="+": last
+  if (!gear.empty()) {
     a.push_back("--gear");
     a.push_back(gear);
+  }
+  if (source == Source::Search) {  // the query verbatim, after "--" (it may start with '-')
+    a.push_back("--");
+    a.push_back(query);
   }
   return a;
 }

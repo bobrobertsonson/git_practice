@@ -9,20 +9,13 @@ namespace sawblade::plugin {
 BrowserController::BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot)
     : proc_(p), settings_(s), slot_(slot), client_([&s] { return s.executable(); }) {
   st_.gear = slotGear(slot);
-  pthread_ = std::thread([this] { previewWorker(); });
 }
 
 BrowserController::~BrowserController() {
   alive_->store(false);
   proc_.previewPlayer().stop();
-  {
-    std::lock_guard<std::mutex> lk(pm_);
-    pstop_ = true;
-    pending_.reset();
-  }
-  pcv_.notify_all();
   client_.cancelAll();
-  if (pthread_.joinable()) pthread_.join();
+  if (worker_) PreviewWorker::retire(std::move(worker_));  // never joins here
 }
 
 void BrowserController::changed() {
@@ -256,20 +249,31 @@ void BrowserController::preview() {
       if (!r) return fail(err);
       np = std::move(*r);
     }
-    PreviewJob job;
+    PreviewWorker::Job job;
     job.preset = std::move(np);
     const double hr = proc_.status().hostRate;
     job.hostRate = hr > 0.0 ? hr : 48000.0;
-    job.gen = ++previewGen_;
+    const std::uint64_t gen = ++previewGen_;
     proc_.previewPlayer().stop();
     st_.previewing = false;
     setStatus("Rendering the preview...");
     changed();
-    {
-      std::lock_guard<std::mutex> lk(pm_);
-      pending_ = std::move(job);
-    }
-    pcv_.notify_one();
+    job.alive = alive_;
+    job.render = previewRender;
+    job.onDone = [this, gen, rate = job.hostRate](std::vector<float> out, std::string err) {  // alive_ checked by the worker's callAsync
+      if (gen != previewGen_) return;
+      if (!err.empty() || out.empty()) return fail(err.empty() ? "the preview render is empty" : "Preview failed: " + err);
+      proc_.previewPlayer().start(std::move(out), rate);
+      st_.busy = false;
+      st_.previewing = true;
+      previewStarted_ = true;
+      previewSeenPlaying_ = false;
+      previewStartMs_ = juce::Time::getMillisecondCounter();
+      setStatus("Playing the preview");
+      changed();
+    };
+    if (!worker_) worker_ = std::make_shared<PreviewWorker>();
+    worker_->submit(std::move(job));
   });
 }
 
@@ -281,41 +285,6 @@ void BrowserController::stopPreview() {
   previewStarted_ = false;
   if (!st_.statusIsError) setStatus({});
   changed();
-}
-
-void BrowserController::previewWorker() {
-  for (;;) {
-    PreviewJob job;
-    {
-      std::unique_lock<std::mutex> lk(pm_);
-      pcv_.wait(lk, [&] { return pstop_ || pending_.has_value(); });
-      if (pstop_) return;
-      job = std::move(*pending_);
-      pending_.reset();
-    }
-    std::string err;
-    if (riff_.interleaved.empty()) {
-      try {
-        riff_ = embeddedPreviewRiff();
-      } catch (const std::exception& e) {
-        err = std::string("preview riff: ") + e.what();
-      }
-    }
-    std::vector<float> out;
-    if (err.empty()) out = renderPreview(job.preset, riff_, job.hostRate, &cache_, err);
-    juce::MessageManager::callAsync([this, alive = alive_, gen = job.gen, rate = job.hostRate, err, out = std::move(out)]() mutable {
-      if (!alive->load() || gen != previewGen_) return;
-      if (!err.empty() || out.empty()) return fail(err.empty() ? "the preview render is empty" : "Preview failed: " + err);
-      proc_.previewPlayer().start(std::move(out), rate);
-      st_.busy = false;
-      st_.previewing = true;
-      previewStarted_ = true;
-      previewSeenPlaying_ = false;
-      previewStartMs_ = juce::Time::getMillisecondCounter();
-      setStatus("Playing the preview");
-      changed();
-    });
-  }
 }
 
 void BrowserController::poll() {

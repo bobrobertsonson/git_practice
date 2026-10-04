@@ -17,6 +17,7 @@
 
 #include "BrowserSettings.h"
 #include "PluginProcessor.h"
+#include "PreviewWorker.h"
 #include "SlotTarget.h"
 #include "T3kClient.h"
 #include "sawblade/capture_cache.h"
@@ -55,6 +56,8 @@ class BrowserController {
   BrowserController& operator=(const BrowserController&) = delete;
 
   std::function<void()> onChange;
+  // Test seam: replaces the preview render (runs on the worker thread).
+  PreviewWorker::RenderFn previewRender;
 
   const State& state() const noexcept { return st_; }
   Slot slot() const noexcept { return slot_; }
@@ -87,17 +90,11 @@ class BrowserController {
   T3kClient& client() { return client_; }
 
  private:
-  struct PreviewJob {
-    Preset preset;
-    double hostRate = 48000.0;
-    std::uint64_t gen = 0;
-  };
   void changed();
   void fail(const std::string& text);
   void setStatus(const std::string& text, bool error = false);
   void handleError(const t3k::ErrorInfo& e);
   void fetchSelected(std::function<void(const t3k::FetchResult&)> then);
-  void previewWorker();
 
   SawbladeProcessor& proc_;
   BrowserSettings& settings_;
@@ -111,13 +108,7 @@ class BrowserController {
   bool previewStarted_ = false, previewSeenPlaying_ = false;
   juce::uint32 previewStartMs_ = 0;
 
-  CaptureCache cache_;
-  sawblade::AudioFile riff_;
-  std::mutex pm_;
-  std::condition_variable pcv_;
-  std::optional<PreviewJob> pending_;
-  bool pstop_ = false;
-  std::thread pthread_;
+  std::shared_ptr<PreviewWorker> worker_;
 };
 
 }  // namespace sawblade::plugin
