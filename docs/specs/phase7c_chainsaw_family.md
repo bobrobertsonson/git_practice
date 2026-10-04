@@ -1,0 +1,324 @@
+# Phase 7c: the chainsaw family — `pedal.hmx` (modded chainsaw) and `pedal.eye` (one-knob chainsaw), core
+
+## Why
+User requirement (relayed by the main lead, 2026-10-04): the modeled pedal family is the
+**chainsaw (buzzsaw) family only** — HM-2 and its derivatives, plus adjacent circuits. The
+earlier 7c plan (Zone / Rat) was dropped before implementation (`phase7c_zone_rat.md` is a
+stub). Research: `docs/research/chainsaw_pedals.md` on the main working branch. Its short
+list beyond the stock HM-2 and the big fuzz:
+
+1. **HM-2W "Custom" mode** — a parameter variant of the HM-2 model, not a new circuit.
+   **Delivered by phase 7b**, not here: `phase7b_chainsaw_pedal.md` §1.5 gives `pedal.hm` v2
+   `mode: stock | custom | modded` (custom = more stage-1 gain and a bigger low gyrator) and
+   §1.1 the tweakable low-shelf / high-mid parameters (`lowFreq`, `lowQ`, `highFreq`,
+   `highSpread`, `presenceFreq`, `presenceDb`, `gain1Db`, `gain2Db`). 7c adds **no code** to
+   `pedal.hm`; it contributes the custom-mode preset recipes in §5 for 7b's bank. Calibration
+   later against TONE3000 78122, 477, 5363, 74487, 88604, 34509.
+2. **Modded-HM-2 class** (Left Hand Wrath / Throne Torcher / Dunwich modded HM-2 / Angry Swede
+   V2) → **`pedal.hmx`**, this spec §2. Calibration later: 72990 (Throne Torcher) against stock
+   HM-2 captures 58569 / 6778 / 1104.
+3. **One-knob chainsaw** (TC Eyemaster-style) → **`pedal.eye`**, this spec §3. Calibration
+   later: 6380, 62523, 60618, 6547, 5893. Decision rule from the lead: if the sweep of the real
+   unit turns out identical to the HM model at all tens, this slot becomes the Boss HM-3
+   (2709, 1753). That comparison needs the captures, which are not in this container; §3
+   states exactly what differs by design and the report says so plainly.
+
+Generic UI names (no trademarks): `pedal.hmx` = **"modded chainsaw distortion"** (circuit
+label MODDED SAW), `pedal.eye` = **"one-knob chainsaw"** (circuit label ONE-KNOB SAW). No
+"Boss", "HM-2", "Wrath", "Torcher", "Eyemaster", "TC", "Dunwich", "Abominable", "Lone Wolf",
+"Decibelics" in code identifiers visible to users, preset names or docs headings.
+
+## Relationship to phase 7b (binding)
+7b (`claude/sawblade-p7b-chainsaw-pedal`, spec only so far) deepens `pedal.hm` to v2, adds
+`pedal.muff`, a generic live-parameter path (`Processor::setLiveParams`, `BlockType::liveParams`),
+the pedal face with a CIRCUIT switch, and a 15-preset bank in `presets/modeled/chainsaw/`. It
+names `pedal.hmx` / `pedal.eye` as the 7c circuits that drop into the switch. 7c is built on
+the **phase 7 base** (`453c7af`), in parallel, so:
+
+- **Do not touch** `pedal_hm.*`, `pedal_ts.*`, `pedal_common.h`, `pedal_params.*`,
+  `adaa_clipper.*`, `processor.h`, `chain.*`, `plugin/`, `match/`, `bindings/`,
+  `tests/test_pedals.cpp`, `presets/modeled/*.json`, `presets/README.md`, `docs/PEDALS.md`
+  (7b's), or the PedalHm/PedalTs section of `docs/PRESET_SCHEMA.md`.
+- Everything 7c shares with 7b in spirit (clip types, dry delay) lives in a **new** header in
+  its own namespace so both branches compile after the merge; the post-merge cleanup replaces
+  7c's copies with 7b's (`clipShapeSpec`, the order-2 LED shape, `HmVoicing`) — one-line edits
+  listed in the report.
+- Parameter conventions **identical to 7b's** so the face/drawer tables and the live path
+  map 1:1: knobs 0–10 (`double`), `tightness` 0–10 default 0 with `fc = 20·10^(t/10)` Hz,
+  `mix` **0–100 %** default 100 (wet proportion; dry latency-matched; when `mix == 100` the dry
+  branch is skipped so signed zeros are untouched), `level` `3·level − 24` dB on the wet path
+  only, enums as lower-case strings, `modelVersion: 1`, unknown keys / out-of-range / wrong
+  type / unknown enum → `PresetError`, `toJson()` writes every key.
+- A documented **live index order** per block (an `enum HmxLive`, `enum EyeLive` with
+  `kHmxNumLive` / `kEyeNumLive`) and pure converters `hmxParamsFromLive(const float*, int)` /
+  `hmxLiveFromParams(const HmxParams&, float*)` (same for eye), with no dependency on 7b's
+  types. 7b's `setLiveParams` is wired post-merge (not here); parameters are static per preset
+  in 7c and go through the Chain rebuild/swap.
+- Registry lines are aggregate-initialised `BlockType{{true}, parse, create}` so 7b's trailing
+  `liveParams` member merges without edits.
+
+## Files (names binding)
+```
+core/include/sawblade/pedal_stages.h     namespace sawblade::stages: ClipType, clipKnees(), clipTypeName(), parseClipType(), DryDelay
+core/src/pedal_stages.cpp
+core/include/sawblade/pedal_saw_params.h HmxParams, EyeParams, *BlockParams, parse*Block, live enums + converters
+core/src/pedal_saw_params.cpp            (may duplicate parseModelVersion/knob from pedal_params.cpp; include pedal_params.h for kPedalModelVersion, kKnob*, pedalLevelDb)
+core/include/sawblade/pedal_hmx.h  core/src/pedal_hmx.cpp     HmxPedal
+core/include/sawblade/pedal_eye.h  core/src/pedal_eye.cpp     EyePedal
+tests/test_pedals_saw.cpp
+presets/modeled/hmx/*.json  presets/modeled/eye/*.json       (own folders: 7b's test asserts exactly 15 files in presets/modeled/chainsaw/)
+```
+Plus: two includes + two lines in `core/src/block_registry.cpp`; `core/CMakeLists.txt`;
+`tests/CMakeLists.txt`; `tests/tools/pedal_fr.cpp` gets exactly 7b §6.1's first bullet (a
+`--param` value that does not parse fully as a number is passed as a JSON string) and the
+usage line lists the four pedal types; `docs/PRESET_SCHEMA.md` gets two block-table rows and a
+new section after PedalHm/PedalTs.
+
+## Conventions carried over from phase 7 (binding)
+`PedalImplConfig` (oversample / adaa / flatFilters) on both pedals; `flatFilters` bypasses
+every linear filter and EQ but keeps gains, clippers, pad, mix and level (latency test by
+construction). Nonlinear stages at 4x via `Oversampler4x` + `AdaaClipper`; **exactly two ADAA
+stages** per pedal, so the oversampled total is 200, `osPadding` = 0, and `latencySamples()` =
+**50 at every rate**, like `pedal.hm` (if this cannot hold, stop and report). No allocation /
+locks / I/O / exceptions / logging in `process()`; buffers sized in `prepare()`. Coefficients
+`double`, samples `float`. Parameter-dependent corners clamped to `min(fc, 0.45·rate)`.
+
+## 1. Shared stages (`pedal_stages.h/.cpp`, `namespace sawblade::stages`)
+
+### 1.1 `ClipType`
+```cpp
+enum class ClipType { Silicon, Led, Asymmetric };
+struct ClipKnees { double kPos, kNeg; };
+ClipKnees clipKnees(ClipType) noexcept;
+const char* clipTypeName(ClipType) noexcept;               // "silicon" | "led" | "asymmetric"
+std::optional<ClipType> parseClipType(std::string_view);
+```
+| `clip` | k+ | k− | models (same values as 7b §1.3) |
+|---|---|---|---|
+| `silicon` | 0.5 | 0.5 | stock silicon pair |
+| `led` | 1.4 | 1.4 | LED pair: later, louder, more open (7b uses a quintic for this one; here the cubic, swapped post-merge) |
+| `asymmetric` | 0.5 | 0.3 | Si + Ge pair: even harmonics, a little DC |
+
+These go into `AdaaClipper::setShape(kPos, kNeg)`. The header says the cubic shape is
+unchanged and names the post-merge replacement.
+
+### 1.2 `DryDelay`
+Integer delay of up to `kMax = 64` base-rate samples, `std::array` storage, `set(int)`,
+`reset()`, `process(float* io, int n) noexcept`. Carries the dry signal of `mix` by exactly
+`latencySamples()`. (`ShortDelay` tops out at 7; `DelayLine` is a heap `Processor`.)
+
+## 2. `pedal.hmx` — "modded chainsaw distortion"
+The stock HM core of phase 7 (`phase7_modeled_pedals.md` §2, constants restated below; when
+7b's `HmVoicing` table lands, `hmx` reads the shared constants from it) with the mods the
+modded-HM-2 class shares: **decoupled mids**, **presence**, **3-way clipping**, a **boost
+stage**, **clean blend**, and a **4-band EQ** (low, low-mid, high-mid, high). In the stock HM
+the HIGH knob drives both high gyrators (1.0 and 1.5 kHz) together; here the 1.0 kHz gyrator
+becomes the parametric HIGH-MID band and HIGH drives the 1.5 kHz gyrator alone — that is the
+"decoupling".
+
+| # | Stage | Rate | design |
+|---|---|---|---|
+| 1 | Dry tap | fs | raw input into the dry buffer (`mix`) |
+| 2 | Input | fs | 1st-order HPF `fT = 20·10^(tightness/10)` Hz (20 Hz at 0 = the stock coupling cap) |
+| 3 | Upsample | → OS | |
+| 4 | Pre-filter | OS | HPF 60 Hz, LPF 8 kHz (stock) |
+| 5 | Gain 1 | OS | `G1 dB = 6 + 4·distortion + (boost == on ? 9 : 0)` |
+| 6 | Clip 1 | OS | `AdaaClipper`, knees from `clip` |
+| 7 | Interstage | OS | LPF 5 kHz, +20 dB (stock) |
+| 8 | Clip 2 | OS | `AdaaClipper`, knees from `clip` |
+| 9 | Post-clip LPF | OS | 4th-order Butterworth 6.5 kHz (stock two biquads) |
+| 10 | Downsample | → fs | |
+| 10b | DC block | fs | 1st-order HPF 10 Hz (the asymmetric clip makes DC) |
+| 11 | EQ: low | fs | RBJ peak 100 Hz, Q 0.8, `−12 + 3·low` dB (stock low gyrator) |
+| 12 | EQ: low-mid | fs | RBJ peak `fLM = 200·3^(lowMidFreq/10)` Hz (200–600 Hz; 346 Hz at 5), Q 1.0, `2·(lowMid − 5)` dB (−10…+10; **0 dB at 5**) |
+| 13 | EQ: high-mid | fs | RBJ peak `fHM = 1000·1.6^((highMidFreq − 5)/5)` Hz (625 Hz–1.6 kHz; **1000 Hz at 5**), Q 1.2, `−8 + 2.2·highMid` dB (stock gyrator-A law) |
+| 14 | EQ: high | fs | RBJ peak 1500 Hz, Q 1.2, `−8 + 2.2·high` dB (stock gyrator B) |
+| 15 | Presence (fixed) | fs | RBJ peak 4800 Hz, Q 2.0, +8 dB (stock) |
+| 16 | Presence (shelf) | fs | RBJ high shelf 3500 Hz, Q 0.7071, `1.2·(presence − 5)` dB (−6…+6; **0 dB at 5**) |
+| 17 | Roll-off | fs | RBJ low-pass 9 kHz, Q 0.707 (stock) |
+| 18 | Level + mix | fs | `out = (1 − m)·dry[n − L] + m·levelGain·wet`, `m = mix/100`, `L = latencySamples()`; dry branch skipped when `mix == 100` |
+
+**Stock position.** With `highMid = high`, `highMidFreq = 5`, `lowMid = 5`, `presence = 5`,
+`boost = off`, `mix = 100`, `clip = silicon`, `tightness = 0`, the hmx equals `pedal.hm` at the
+same `low`/`high`/`distortion`/`level`: the two added bands are 0 dB (RBJ coefficients reduce
+to identity) and the DC blocker is the only extra stage. Acceptance 2a checks it within ±0.3 dB.
+
+Params (`HmxParams`; JSON keys; live index in this order):
+
+| # | key | type / range | default | stage |
+|---|---|---|---|---|
+| 0 | `level` | 0–10 | 5 | 18 |
+| 1 | `low` | 0–10 | 5 | 11 |
+| 2 | `lowMid` | 0–10 | 5 | 12 gain |
+| 3 | `highMid` | 0–10 | 5 | 13 gain |
+| 4 | `high` | 0–10 | 5 | 14 |
+| 5 | `distortion` | 0–10 | 5 | 5 |
+| 6 | `presence` | 0–10 | 5 | 16 |
+| 7 | `tightness` | 0–10 | 0 | 2 |
+| 8 | `mix` | 0–100 | 100 | 18 |
+| 9 | `clip` | `silicon` \| `led` \| `asymmetric` | `silicon` | 6, 8 |
+| 10 | `boost` | `off` \| `on` | `off` | 5 |
+| 11 | `lowMidFreq` | 0–10 | 5 | 12 frequency |
+| 12 | `highMidFreq` | 0–10 | 5 | 13 frequency |
+
+`boost` is a `bool` in `HmxParams`, a string enum in JSON (`"off"`/`"on"`; a JSON boolean is
+also accepted on parse, written as the string). Live values: enums as choice index, `boost` as
+0/1.
+
+## 3. `pedal.eye` — "one-knob chainsaw"
+A sealed all-tens chainsaw: the HM core with the colour-mix EQ **fixed at low = high = 10**,
+one `gain` knob, `level`, and a `tightness` low cut. Where it differs from `pedal.hm` at
+10/10/x by design, following what reviewers report of the real unit (more gain on tap, tighter
+low end; `docs/research/chainsaw_pedals.md`, UNVERIFIED):
+
+| # | Stage | Rate | design |
+|---|---|---|---|
+| 1 | Input | fs | 1st-order HPF `fT = 20·10^(tightness/10)` Hz |
+| 2 | Upsample | → OS | |
+| 3 | Pre-filter | OS | HPF **100 Hz** (stock 60: the tighter low end), LPF 8 kHz |
+| 4 | Gain 1 | OS | `G1 dB = 10 + 4.2·gain` (10–52 dB; stock 6–46) |
+| 5 | Clip 1 | OS | `AdaaClipper`, silicon 0.5/0.5 |
+| 6 | Interstage | OS | LPF 5 kHz, +20 dB |
+| 7 | Clip 2 | OS | `AdaaClipper`, silicon |
+| 8 | Post-clip LPF | OS | 4th-order Butterworth 6.5 kHz |
+| 9 | Downsample | → fs | |
+| 10 | Colour EQ, fixed | fs | the phase 7 biquad table at low = 10, high = 10 (`HmColorEq::bands(10, 10)` — reuse `HmColorEq` from `pedal_hm.h` by include only) |
+| 11 | Level | fs | `pedalLevelDb(level)` |
+
+No `mix` (the one-knob spirit; the face's MIX position is empty for this circuit).
+
+Params (`EyeParams`; live index in this order):
+
+| # | key | range | default | stage |
+|---|---|---|---|---|
+| 0 | `gain` | 0–10 | 5 | 4 |
+| 1 | `level` | 0–10 | 5 | 11 |
+| 2 | `tightness` | 0–10 | 0 | 1 |
+
+**What the report must say**: by construction `pedal.eye` is the HM EQ at all tens with a
+100 Hz pre-clip corner and +6 dB more gain range; acceptance 3b measures exactly that. Whether
+the real pedal differs more (or less) is for the capture calibration; if it does not, the slot
+becomes the HM-3 per the lead's rule.
+
+## 4. Registry, schema, tool
+- `BlockRegistry` constructor: `types_["pedal.hmx"] = BlockType{{/*namTrainable=*/true},
+  parseHmxBlock, createHmx};` and the same for `pedal.eye` (static, nonlinear, time-invariant).
+- `docs/PRESET_SCHEMA.md`: two block-table rows (latency "50 samples (at any rate)") and a new
+  section "PedalHmx (`type: "pedal.hmx"`) and PedalEye (`type: "pedal.eye"`)" after
+  PedalHm/PedalTs with the two param tables (ranges, defaults, formulas), the generic names, the
+  clip table, the stock-position statement, mix/dry alignment, latency, `namTrainable`, the
+  "not a capture of a real unit" note, and the preset folders.
+- `tests/tools/pedal_fr.cpp`: string `--param` values (7b §6.1 wording), usage lists
+  `pedal.hm|pedal.ts|pedal.hmx|pedal.eye`.
+
+## 5. Presets
+Rules as 7b §4: path a = the block, path b disabled, `blend: 0`, `align: off`, shared cab =
+`../../../tests/fixtures/ir/impulse.wav`, every key written explicitly, `notes` starts with the
+sound it chases (band names only in `notes`, never in `name`), amp suggestions by TONE3000 id
+where the sound needs an amp. The implementer may move `level` only, so that the fixture render
+peaks in **[−6, −0.5] dBFS**, and reports each change.
+
+`presets/modeled/hmx/` (modded chainsaw):
+
+| file | name | low / lowMid / highMid / high / dist / level | presence | tight | mix | clip | boost | lowMidFreq / highMidFreq | notes (sound) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `arizona_mids.json` | Arizona Mids | 8 / 5 / 9 / 7 / 9 / 3 | 8 | 3 | 80 | led | off | 5 / 6 | modern desert death metal: high-mids pushed, presence up, LED clip, 20 % clean (Gatecreeper-style, into a high-gain amp 88689) |
+| `boosted_blend.json` | Boosted Blend | 7 / 6 / 7 / 8 / 7 / 2 | 6 | 2 | 65 | silicon | on | 4 / 5 | boost stage on, 35 % clean blend: thicker, more compressed buzz that keeps pick attack (Throne-Torcher-style; mid-gain British amp 86089) |
+| `four_band_doom.json` | Four-Band Doom | 9 / 8 / 3 / 6 / 6 / 4 | 3 | 0 | 100 | asymmetric | off | 2 / 4 | doom/sludge saw: low-mids up at 250 Hz, high-mids scooped, dark presence, asymmetric clip (low-gain amp) |
+| `decoupled_crust.json` | Decoupled Crust | 5 / 4 / 10 / 10 / 9 / 4 | 7 | 5 | 100 | silicon | off | 5 / 7 | d-beat crust with the mids decoupled: 1.2 kHz bark, less low, tight (plexi-style amp 76884) |
+
+`presets/modeled/eye/` (one-knob chainsaw):
+
+| file | name | gain / level / tight | notes (sound) |
+|---|---|---|---|
+| `one_knob_max.json` | One-Knob Max | 10 / 2 / 0 | the sealed all-tens buzzsaw at full gain (Sunlight-studio era, into a small solid-state amp) |
+| `one_knob_tight.json` | One-Knob Tight | 8 / 3 / 7 | same voicing, tight low cut at 100 Hz input for modern palm-muted riffing |
+| `one_knob_crust.json` | One-Knob Crust | 3 / 5 / 2 | low-gain crust: the all-tens EQ with the clippers barely driven |
+
+Recipes for 7b's bank (`pedal.hm` v2, **no files here**; the family then totals 22 presets,
+15 from 7b + 7 here):
+
+| name | low / high / dist / level | mode | deep | sound |
+|---|---|---|---|---|
+| Sunlight All Tens | 10 / 10 / 10 / 2 | stock | — | = 7b `classic_buzzsaw.json` |
+| Stockholm Custom | 10 / 9 / 10 / 1 | custom | lowFreq 90 | custom-mode wall with the low gyrator a touch lower (cf. 7b `custom_wall.json`) |
+| Gothenburg Half-Mids | 8 / 5 / 8 / 4 | custom | highFreq 900, highSpread 1.4, presenceDb 6 | melodic-death: half the high-mids, custom gain |
+| Grind Buzz | 6 / 10 / 10 / 4 | custom | tightness 7, presenceFreq 5500, presenceDb 12 | custom-mode grind (cf. 7b `grind.json`) |
+
+## Acceptance (Catch2, `tests/test_pedals_saw.cpp`, tags `[pedal][saw]...`; fs = 48 kHz unless stated)
+Copy (do not include from `test_pedals.cpp`) the helpers you need: `measureThd`,
+`measureAliasDb`, `Fr`, `chainPreset`/`buildChain`, the flat registration pattern. Small-signal
+FR = impulse at −90 dBFS via `pedal_fr_util.h`. "Difference curve" = `FR(A) − FR(B)` per bin.
+
+1. **Shared stages.** `clipKnees` table; `parseClipType` round-trips the three names, rejects
+   `"soft"` and `"asym"`. `DryDelay` 50: impulse at index 50 bit-exact; chunking 1/7/64 identical.
+2. **`pedal.hmx` FR** (others default unless stated):
+   a. **Stock position**: hmx defaults vs `HmPedal` defaults, and hmx (low 10, highMid 10,
+      high 10, dist 10) vs `HmPedal` (10/10/10): |ΔH| ≤ 0.3 dB at 50, 100, 400, 1000, 1500,
+      4800, 8000 Hz (absolute, not re 400).
+   b. **Decoupling**: `highMidFreq` 0 (625 Hz): `FR(high 10) − FR(high 0)` at 1500 Hz ∈
+      [20, 24] dB and at 625 Hz ≤ 6 dB; `FR(highMid 10) − FR(highMid 0)` at 625 Hz ∈ [20, 24]
+      and at 1500 Hz ≤ 8 dB. `highMidFreq` 0 vs 10 (highMid 10): argmax of
+      `FR(highMid 10) − FR(highMid 5)` within ±5 % of 625 Hz and of 1600 Hz.
+   c. **Low-mid**: `FR(lowMid 10) − FR(lowMid 5)` at fLM ∈ [9.5, 10.5] dB for `lowMidFreq`
+      ∈ {0, 5, 10} (200 / 346 / 600 Hz), argmax within ±5 % of fLM; `FR(lowMid 0) −
+      FR(lowMid 5)` at fLM ∈ [−10.5, −9.5].
+   d. **Presence**: `FR(presence 10) − FR(presence 0)` ≥ +10 dB at 10 kHz, within ±1 dB at
+      400 Hz.
+   e. **Boost**: `FR(boost on) − FR(boost off)` ∈ [8.9, 9.1] dB at every bin 50 Hz–10 kHz
+      (small-signal: a pure gain); THD at −40 dBFS, dist 5: boost on ≥ off + 3 dB.
+   f. **Tightness**: 0 → 10: |H(50)| drops ≥ 8 dB re its own 1 kHz; |H(1 kHz)| absolute change
+      ≤ 0.5 dB (7b test 2 criteria).
+   g. **Mix**: `mix` 0, level 8: output = input delayed 50 samples within 1e-6; `mix` 50 =
+      0.5·(mix 0) + 0.5·(mix 100) within 1e-6 per sample on the fixture DI's first second;
+      `mix` 100 is bit-identical to a build that never allocates the dry path (i.e. skip-branch
+      correctness: compare against the same render with the dry buffer zeroed).
+3. **`pedal.eye` FR**:
+   a. **Gain law**: `FR(gain 10) − FR(gain 0)` at 1 kHz ∈ [41, 43] dB.
+   b. **Versus the HM at all tens** (both re their own |H(400)|; `HmPedal` 10/10/10 vs eye gain
+      10, tight 0): |ΔH| ≤ 0.5 dB at 400, 1000, 1500, 4800, 8000 Hz; ΔH(50 Hz) ≤ −2.5 dB and
+      ΔH(100 Hz) ≤ −1.2 dB (the 100 Hz pre-clip corner; lead estimates −3.1 and −1.7). Print
+      both curves' values at 50/100/200 Hz.
+   c. **Tightness** as 2f.
+4. **THD** (500 Hz sine; harmonics 2–20):
+   - **Monotonic**: hmx `distortion` and eye `gain` 0..10 at −20 and −40 dBFS: each step ≥
+     previous − 0.05 dB; span ≥ 6 dB at −40 dBFS. Print the tables.
+   - **Clip types** (hmx, dist 5, −20 dBFS): THD(led) ≤ THD(silicon) − 3 dB; RMS led >
+     silicon; `asymmetric` H2 > −40 dBc, `silicon` H2 < −70 dBc.
+5. **Aliasing** (phase 7 recipe): hmx at dist 10 for each clip type and with boost on; eye at
+   gain 10: all < −80 dB. With `oversample = adaa = false`: > −80 dB (sensitivity), both pedals.
+6. **Latency**: `latencySamples() == 50` at 44.1 / 48 / 96 / 192 kHz, both pedals, every clip
+   type, boost on/off; measured = reported with `flatFilters` (exact by construction, document);
+   hmx `mix` 0 and 100 both. Chain: path A = `[pedal.hmx]`, B = `[]` and A = `[pedal.eye]`, B
+   = `[]`: impulses aligned (flat registration `test.pedal_hmx_flat` / `test.pedal_eye_flat`).
+7. **Zero allocation**: `process()` standalone (varied block sizes) and in a Chain with hmx on
+   A and eye on B, under `AllocGuard`.
+8. **Block-size independence and determinism**: 5 s of the fixture DI, block sizes 1, 7, 64,
+   512, 4096 and two runs at 512, bit-identical, for hmx with each clip type (one preset each)
+   and the eye at gain 10.
+9. **Preset round-trip and errors**: parse → `toJson` → parse equal with and without explicit
+   params for both types, every enum value, `boost` as string and as JSON boolean (written back
+   as the string); `modelVersion: 2`, `distortion: 11`, `mix: 101`, `params.foo`, `params` not
+   an object, `clip: "soft"`, `clip: 1`, `boost: "maybe"` → `PresetError`. Registry has both
+   types, `namTrainable` true. Live converters round-trip every param (`hmxLiveFromParams` →
+   `hmxParamsFromLive` equals; same for eye) and the live index order matches the §2/§3 tables.
+10. **Presets**: every `presets/modeled/hmx/*.json` (4) and `presets/modeled/eye/*.json` (3)
+    parses, renders the fixture DI at 48 kHz, finite, peak in [−6, −0.5] dBFS; `name` free of
+    (case-insensitive) entombed, dismember, gatecreeper, nails, nasum, bloodbath, wolfbrigade,
+    disfear, trap them, rotten sound, carnage, nihilist, lik, electric wizard, conan, boss,
+    hm-2, wrath, torcher, eyemaster, dunwich, abominable, swollen, pickle, muff; `notes`
+    non-empty. The existing `presets/modeled/*.json` test still passes (it is non-recursive).
+11. Full suite passes; existing goldens unchanged; `-Werror` clean; Debug ASan/UBSan clean.
+
+## Developer plots (for the lead's report; CSVs into `build/fr_saw/`, not committed)
+- hmx: stock vs `HmPedal` default; `highMid` 0/5/10 at `highMidFreq` 0/5/10 (high 5);
+  `high` 0/10 at highMidFreq 0; `lowMid` 0/10 at `lowMidFreq` 0/5/10; `presence` 0/5/10; each
+  preset's settings; `clip=led dist=10`.
+- eye: `gain` 0/5/10; eye gain 10 vs `pedal.hm` 10/10/10; `tightness` 0/5/10.
+- Print from the tests: THD tables, alias figures, clip-type THD, preset render peaks.
+
+## Report back (dsp-engineer)
+Files changed; design notes; latency per rate; alias table (per clip, boost, no-OS/ADAA);
+THD tables; clip-type numbers; the eye-vs-HM numbers of 3b; preset level changes and peaks;
+the pedal_fr commands; full ctest summary; commit hashes; decisions / questions for lead;
+the post-merge one-line edits list (ClipType → 7b's, cubic LED → quintic, HmVoicing).
