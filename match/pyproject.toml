@@ -27,6 +27,16 @@ separation = [
   "torchaudio==2.5.1",
 ]
 
+# Separation models for the C++ ModelStore (phase 5.1b): `sawblade-models fetch` exports the ONNX core and verifies it
+# with onnxruntime. Install with: pip install -e 'match[models]' -c match/constraints-separation.txt
+models = [
+  "demucs==4.0.1",
+  "torch==2.5.1",
+  "torchaudio==2.5.1",
+  "onnx==1.23.1",
+  "onnxruntime==1.30.0",
+]
+
 # NAM export (phase 4): the NAM trainer. torch is shared with the separation extra (2.5.1, CPU is enough).
 # Install with: pip install -e 'match[export]' -c match/constraints-export.txt
 export = [
@@ -40,6 +50,7 @@ sawblade-tonecheck = "sawblade_match.tonecheck.cli:main"
 sawblade-calibrate = "sawblade_match.calibrate.cli:main"
 sawblade-match = "sawblade_match.matcher.cli:main"
 sawblade-export = "sawblade_match.export.cli:main"
+sawblade-models = "sawblade_match.models.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["sawblade_match*"]
