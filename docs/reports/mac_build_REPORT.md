@@ -1,10 +1,10 @@
-**Blocked on user:** (0) this Mac is not logged in to GitHub, so pushes fail until `gh auth login` + `gh auth setup-git`; (1) choose a fix for the one macOS ctest failure (below; DSP-adjacent, not applied); (2) the factory presets need the user's capture files in `presets/captures/` before they make sound.
+**Blocked on user:** (0) this Mac is not logged in to GitHub, so pushes fail until `gh auth login` + `gh auth setup-git`; (1) choose a fix for the one macOS ctest failure (below; DSP-adjacent, not applied); (2) to play a preset: `TONE3000_CLIENT_ID` + `sawblade-t3k login` (device flow) to fetch captures.
 
 # Mac 1 build report
 
 | | |
 |---|---|
-| Main-branch commit built | `435838a` (`origin/claude/sawblade-plugin-setup-7k0b8q`, Phase 5.1 StemPlayer merge) + fix `205d03b`. Earlier runs: `4f725fe`, `d310518` |
+| Main-branch commit built | `ee0291c` (`origin/claude/sawblade-plugin-setup-7k0b8q`) + fix `205d03b`. Earlier runs: `4f725fe`, `d310518`, `435838a` (that one needed the fix) |
 | macOS | 26.6 (25G72) |
 | Xcode | none; Command Line Tools only (Apple clang 21.0.0, clang-2100.0.123.102). Full Xcode not needed |
 | Chip | Apple M5 (arm64) |
@@ -56,6 +56,15 @@ open build-mac/plugin/SawbladePlugin_artefacts/Release/Standalone/Sawblade.app
 
 1. In the app, click **Options → Audio/MIDI Settings**. Pick your interface as input and output, and enable the guitar input channel. Turn off "Mute audio input" if it is shown, and use headphones or monitors, not the Mac's speakers, to avoid feedback. On first launch macOS asks for microphone (audio input) access; allow it.
 2. The app starts on the **Init** preset (clean pass-through).
-3. Click the preset-load button and choose **`presets/chainsaw_body.json`**: the default north-star blend (Saw 0.45 / Body 0.55, shared V30 cab, live-compatible). Try `swedeath_saw.json` for more chainsaw and `tight_body.json` for tighter palm mutes.
+3. Load **`presets/matched/barbaric_v4.json`** ("Barbaric Pleasures · matched v4"): the matcher's single-path tone, HM-2 (Boss HM-2 1985 MIJ TTSV10) into a JCM 800 2203, with a Mesa oversized 4x12 IR (shared cab). It references TONE3000 ids, so its captures can be fetched. Resolve it first, then load the **resolved** file with the preset-load button:
 
-**Before step 3 makes sound:** the factory presets point at local capture files that are not in the repo (TONE3000 terms). `presets/captures/` is empty on this Mac. Put these in it (see `presets/README.md` for what to pick on TONE3000): `saw_pedal_hm2_maxed.nam`, `saw_amp_lowgain.nam`, `body_boost_ts_tight.nam`, `body_amp_highgain.nam`, `cab_4x12_v30.wav`. Otherwise the load reports missing files and the app stays on its current preset.
+   ```
+   export TONE3000_CLIENT_ID=t3k_pub_...       # publishable key
+   match/.venv/bin/sawblade-t3k login          # device flow, approve in the browser
+   match/.venv/bin/sawblade-t3k resolve presets/matched/barbaric_v4.json
+   # -> presets/matched/barbaric_v4.resolved.json (absolute cache paths; git-ignored)
+   ```
+
+   All three captures are licensed `t3k`. The cache is `~/.cache/sawblade/captures/`.
+
+The factory presets (`presets/chainsaw_body.json`, `swedeath_saw.json`, `tight_body.json`) are blends, but they only name local files, not TONE3000 ids. They need these files placed by hand in `presets/captures/` (see `presets/README.md`): `saw_pedal_hm2_maxed.nam`, `saw_amp_lowgain.nam`, `body_boost_ts_tight.nam`, `body_amp_highgain.nam`, `cab_4x12_v30.wav`. Without them a load reports missing files and the app stays on its current preset.
