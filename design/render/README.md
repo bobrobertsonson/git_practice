@@ -9,7 +9,8 @@ torn tape, mis-registered second ink, scratched-through paint). No downloaded mo
 | `pedal_b2.py`       | STOCKHOLM SYNDROME pedal, 120x190x55 mm          | saw blade; orange + bone                  | `stockholm_hero_3q.png` 1600x1200, `stockholm_ortho.png` 1200x1800, `stockholm_knob_strip.png` 128x8192 |
 | `pedal_tighten.py`  | TIGHTEN boost pedal, 100x150x42 mm               | vise jaws + barbed wire; steel blue + bone| `tighten_hero_3q.png`, `tighten_ortho.png` 1000x1500 |
 | `pedal_fuzz.py`     | BOG BURIAL doom/sludge fuzz pedal, 120x150x50 mm (Big-Muff-style layout) | melting skull sinking into a bog + swamp sigils; acid green + rust on olive powder coat | `fuzz_hero_3q.png` 1600x1200, `fuzz_ortho.png` 1200x1500, `fuzz_knob_strip.png` 128x8192 |
-| `playalong_deck.py` | PLAY ALONG deck: battered 4-track cassette portastudio, 340x262 mm sloped top (8 deg), cassette well + cassette, piano-key transport, LOOP A/B, COUNT-IN, BACKING fader, GHOST/MUTE toggle, OLED counter, 5 stickers | reel-eyed tape skull + unspooling tape; riso pink + bone, plus full-colour crust stickers | `deck_hero_3q.png` 1600x1200, `deck_ortho.png` 1800x1400 (camera along the panel normal) |
+| `playalong_deck.py` | PLAY ALONG deck: battered 4-track cassette portastudio, 340x262 mm sloped top (10.5 deg), cassette well + cassette, piano-key transport, LOOP A/B, COUNT-IN, BACKING fader, GHOST/MUTE toggle, OLED counter, 5 stickers | reel-eyed tape skull + unspooling tape; riso pink + bone, plus full-colour crust stickers | `deck_hero_3q.png` 1600x1200, `deck_ortho.png` 1800x1400 (camera along the panel normal) |
+| `board_shot.py`     | Hero scene: road-worn black plywood pedalboard (chipped edges, gaffer tape, zip-tied right-angle-plug patch cables, PSU brick) carrying the PLAY ALONG deck, TIGHTEN, STOCKHOLM SYNDROME and BOG BURIAL on a dark stage floor; warm key / cool rim lights, subtle DoF | all four pieces via their `build()` | `board_hero.png` 2400x1200 (`--scale 40` preview; `--az/--el/--dist/--lens/--fstop` camera) |
 | `amp_saw.py`        | SAW amp head, 600x260x250 mm                     | jawbone teeth + cogs; rust orange + bone  | `saw_hero_3q.png`, `saw_ortho.png` 1600x700 (front panel) |
 | `amp_body.py`       | BODY amp head, same construction                 | anvil + hammer + chains; blood red + bone | `body_hero_3q.png`, `body_ortho.png` 1600x700 |
 | `cab_4x12.py`       | SAWBLADE 4x12 cab (760x760x360 mm, generic)      | howling wolf + crescent moon painted on woven grille cloth; bone + toxic green | `cab_hero_3q.png` 1600x1200, `cab_front_ortho.png` 1400x1400 (grille on), `cab_open_ortho.png` 1400x1400 (grille off, 4 drivers + mic) |
@@ -20,6 +21,15 @@ Heads and the cab share real-cab detail parts in `common.py`: tolex, metal corne
 
 `common.py` holds the shared toolkit (materials, knob/toggle/footswitch/LED/OLED/jewel parts, artwork generator,
 lighting/camera rig and the `run(spec)` driver); each piece script only defines its layout, motif and spec.
+
+## Importable `build()` (pedals and deck)
+
+`pedal_b2.py`, `pedal_tighten.py`, `pedal_fuzz.py` and `playalong_deck.py` each expose
+`build(mats=None, origin=(0,0,0), rot_z=0.0, mode='hero', ...)` and return a root empty (everything parented to it; `origin` in mm at the
+footprint centre on the base, `rot_z` in degrees). `build()` never touches camera, lights, world or render settings, so several pieces can
+share one scene (see `board_shot.py`). It calls `set_piece_dims` itself and makes its powder material afterwards, because the part
+builders read the shared `W_/L_/H_/Z` globals. `mats` comes from `common.make_standard_mats(...)` (pass the piece's LED colours); the
+face art is generated and cached in `mats`, or passed as `art_image`. The scripts' CLI output is unchanged.
 
 ## UI sprites (`ui_sprites.py`)
 
@@ -46,13 +56,13 @@ frame +135 deg. No cast shadow is baked in (the UI draws its own drop shadow). F
 
 ## Run
 
-Tested with the `bpy` wheel **4.2.0** on Python 3.11 (CPU, 3 threads, OpenImageDenoise).
+Tested with the `bpy` wheel **4.2.0** on Python 3.11 (CPU, 3 threads, OpenImageDenoise; the sprite renders in `ui_sprites.py` use `SPRITE_THREADS = 2`).
 
     python3.11 -m venv /path/outside/repo/venv
     /path/outside/repo/venv/bin/pip install bpy==4.2.0 numpy pillow
     /path/outside/repo/venv/bin/python design/render/amp_saw.py --mode all --out /path/outside/repo/out
 
-`--mode hero|ortho|strip|open|all` (strip only for `pedal_b2.py`, open only for the cab scripts), `--scale 40` renders a 40% preview,
+`--mode hero|ortho|strip|open|all` (strip only for `pedal_b2.py` and `pedal_fuzz.py`, open only for the cab scripts; `playalong_deck.py` takes hero|ortho|all; `board_shot.py` renders the hero only and takes no `--mode`), `--scale 40` renders a 40% preview,
 `--samples N` overrides sampling (default 40), `--dump-art` writes only the artwork channel PNG,
 `--font-dir` sets the font cache (default `~/.cache/pedal_b2_fonts`).
 

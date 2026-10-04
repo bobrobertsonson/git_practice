@@ -1038,7 +1038,7 @@ def run(spec):
     ortho_res, k, center, strip(bool)"""
     global W_, L_, H_, Z
     ap = argparse.ArgumentParser()
-    ap.add_argument('--mode', default='all', choices=['hero', 'ortho', 'strip', 'open', 'all'])
+    ap.add_argument('--mode', default='all', choices=(list(spec['modes']) + ['all']) if spec.get('modes') else ['hero', 'ortho', 'strip', 'open', 'all'])
     ap.add_argument('--out', required=True)
     ap.add_argument('--scale', type=int, default=100)
     ap.add_argument('--samples', type=int, default=0)
@@ -1079,7 +1079,7 @@ def run(spec):
         root = None
         if kind in ('pedal', 'cab'):
             pass
-        if kind == 'pedal':
+        if kind == 'pedal':       # legacy branch, kept for external specs (the in-repo pedals use kind='piece' + build())
             build_enclosure(mats['powder'], W_, L_, H_, r=spec.get('corner', 7.0), bev=spec.get('bevel', 1.0), nb=5)
             root = None
         elif kind == 'head':
@@ -1474,7 +1474,7 @@ def sticker_rgba(font_path, w_mm, h_mm, bg, ink, lines, ink2=None, glyph=None, s
     crease = blur(arr_of(cr), 0.5 * S * 0.3)
     col = col * (1 - 0.18 * wear * crease[..., None]) + 0.18 * wear * crease[..., None] * 0.9
     dirt = np.clip((n_big - 0.35) * 1.4, 0, 1) * 0.22 * wear + 0.10 * wear * (n_mid > 0.7)
-    col *= (1 - dirt)[..., None] * 1.0 + 0.0
+    col *= (1 - dirt)[..., None]
     col *= (1 - 0.12 * wear * (n_fine > 0.6) * (n_mid < 0.3))[..., None]
     # alpha: rect / round, ragged torn edge, chewed corners
     M_ = Image.new('L', (AW, AH), 0); dm = ImageDraw.Draw(M_)

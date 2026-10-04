@@ -511,7 +511,6 @@ def build(mats=None, origin=(0.0, 0.0, 0.0), rot_z=0.0, mode='hero', art_image=N
     panel.rotation_euler = (math.radians(SLOPE), 0, 0)
     panel.parent = root
     before = set(bpy.data.objects)
-    set_piece_dims(PW, PL, PT)
     powder = mat_powder(art_img, INK_PINK, INK_BONE, coat=0.0060, gain_a=0.95, gain_b=0.75)
     plate = build_enclosure(powder, PW, PL, PT, r=12.0, bev=1.4, nb=5, name='deck_panel_plate')
     # cassette well cut through the plate
@@ -544,7 +543,6 @@ def build(mats=None, origin=(0.0, 0.0, 0.0), rot_z=0.0, mode='hero', art_image=N
     stickers(mats, font)
     build_tape_strand(mats)
     parent_new(before, panel)
-    before2 = set(bpy.data.objects)
     fs = front_sticker(mats, font, zc)
     fs.parent = root
     root.location = (origin[0] * MM, origin[1] * MM, origin[2] * MM)
@@ -565,4 +563,4 @@ SPEC = dict(
     fnames=dict(hero='deck_hero_3q.png', ortho='deck_ortho.png'))
 
 if __name__ == '__main__':
-    run(SPEC)       # ortho is rendered straight down (the 10 deg panel slope is foreshortened by 1.5%)
+    run(SPEC)       # ortho is rendered straight down (the 10.5 deg panel slope is foreshortened by ~1.7%)
