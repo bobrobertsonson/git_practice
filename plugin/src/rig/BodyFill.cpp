@@ -55,6 +55,7 @@ BodyFill::~BodyFill() = default;  // T3kTool cancels and joins
 
 void BodyFill::cancel() {
   step_ = Step::Idle;
+  queued_.reset();
   ++run_;  // results of runs in flight are stale
   tool_.cancel();
   std::lock_guard<std::mutex> lk(m_);
@@ -69,7 +70,8 @@ bool BodyFill::waitToolIdle(std::chrono::milliseconds timeout) {
 
 void BodyFill::begin(const Preset& applied) {
   cancel();
-  expectedB_ = applied.b.blocks;
+  expectedB_ = applied.b;
+  expectedBlend_ = applied.blend;
   const int a = ampIndex(applied.a);
   aTitle_.clear();
   if (a >= 0)
@@ -80,12 +82,20 @@ void BodyFill::begin(const Preset& applied) {
 }
 
 void BodyFill::start(Step s, std::vector<std::string> args) {
-  // The previous run has finished (its completion is what led here), but T3kTool joins its thread lazily: retry briefly.
-  for (int i = 0; i < 500 && tool_.running(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  step_ = s;
   if (networkToolsDisabled()) {
     step_ = Step::Idle;
     return;
   }
+  // The previous run's completion is what led here, but T3kTool is still "running" until its thread ends: wait for the next tick.
+  if (tool_.running()) {
+    queued_ = std::make_pair(s, std::move(args));
+    return;
+  }
+  launch(s, std::move(args));
+}
+
+void BodyFill::launch(Step s, std::vector<std::string> args) {
   step_ = s;
   const std::uint64_t run = ++run_;
   ++runs_;
@@ -96,7 +106,7 @@ void BodyFill::start(Step s, std::vector<std::string> args) {
   if (!started) step_ = Step::Idle;
 }
 
-bool BodyFill::bodyUntouched(const Preset& cur) const { return cur.b.enabled && cur.b.blocks == expectedB_; }
+bool BodyFill::bodyUntouched(const Preset& cur) const { return cur.b.enabled && cur.b == expectedB_ && cur.blend == expectedBlend_; }
 
 void BodyFill::applyAmp(const Capture& model) {
   Preset cur = proc_.editBasePreset();
@@ -106,7 +116,8 @@ void BodyFill::applyAmp(const Capture& model) {
     if (const auto* nam = dynamic_cast<const NamBlockParams*>(cur.b.blocks[static_cast<std::size_t>(amp)].params.get()))
       if (nam->model.source && model.source && nam->model.source->id == model.source->id && nam->model.source->modelId == model.source->modelId) return;  // already there
   setBodyAmp(cur, model);
-  expectedB_ = cur.b.blocks;
+  expectedB_ = cur.b;
+  if (onBodyChanged) onBodyChanged(cur);
   proc_.loadPreset(std::move(cur), /*keepMonitor=*/true);  // coalesced with the BLEND edit: no undo entry of its own
 }
 
@@ -124,6 +135,11 @@ void BodyFill::fallback() {
 }
 
 void BodyFill::tick() {
+  if (queued_ && !tool_.running()) {
+    auto q = std::move(*queued_);
+    queued_.reset();
+    launch(q.first, std::move(q.second));
+  }
   Done d;
   {
     std::lock_guard<std::mutex> lk(m_);
@@ -138,7 +154,7 @@ void BodyFill::tick() {
       if (!s) return fallback();
       if (const auto c = cachedToneCapture(s->toneId, s->modelId)) {
         Capture cap = *c;
-        cap.source->title = s->title;
+        if (cap.source->title.empty()) cap.source->title = s->title;
         step_ = Step::Idle;
         return applyAmp(cap);
       }

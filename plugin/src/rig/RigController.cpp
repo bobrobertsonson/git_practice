@@ -7,6 +7,9 @@
 namespace sawblade::plugin::rig {
 
 RigController::RigController(SawbladeProcessor& p) : proc_(p), body_(p), loadSerial_(p.userLoadSerial()) {
+  body_.onBodyChanged = [this](const Preset& swapped) {  // the async amp swap: the fill's result moves with it
+    if (undo_) undo_->post = swapped;
+  };
   debounce_.fn = [this] { flushPending(); };
   learnTimer_.fn = [this] { finishLearn(); };
   lastBlend_ = [&] {
@@ -40,8 +43,10 @@ void RigController::flushPending() {
   debounce_.stopTimer();
   if (pending_.empty()) return;
   Preset p = proc_.editBasePreset();
+  const PathPreset bBefore = p.b;
   for (const auto& f : pending_) f(p);
   pending_.clear();
+  if (undo_ && p.b != bBefore) undo_.reset();  // path B was edited (blocks, BLEND on / off, ...): the fill is no longer the last word
   proc_.loadPreset(std::move(p), /*keepMonitor=*/true);
 }
 
@@ -96,7 +101,7 @@ void RigController::sync() {
   if (const auto serial = proc_.userLoadSerial(); serial != loadSerial_) {
     loadSerial_ = serial;
     resetTransient();
-    undo_.clear();  // another preset: the BLEND fill can no longer be undone, and its suggestion no longer applies
+    undo_.reset();  // another preset: the BLEND fill can no longer be undone, and its suggestion no longer applies
     body_.cancel();
   }
   body_.tick();
@@ -129,25 +134,26 @@ void RigController::setTopology(Topology t) {
     edit([t, restore](Preset& p) { rig::setTopology(p, t, restore); });
     return;
   }
-  undo_.push_back(cur);
-  if (undo_.size() > 8) undo_.erase(undo_.begin());
   const std::optional<Capture> amp = cachedToneCapture(kFallbackBodyTone);
   edit([t, restore, amp](Preset& p) {
     rig::setTopology(p, t, restore);
     fillBodyPath(p, amp);
   });
-  body_.begin(proc_.editBasePreset());
+  const Preset post = proc_.editBasePreset();
+  undo_ = UndoEntry{cur, post};  // replaces any older entry: a second fill never resurrects the first one's snapshot
+  body_.begin(post);
 }
 
 bool RigController::undo() {
   sync();
-  if (undo_.empty()) return false;
+  if (!undo_) return false;
+  flushPending();  // an edit still waiting for its debounce counts as an edit (and may drop the entry)
+  if (!undo_) return false;
+  UndoEntry e = std::move(*undo_);
+  undo_.reset();
   body_.cancel();
-  pending_.clear();
-  debounce_.stopTimer();
-  Preset p = std::move(undo_.back());
-  undo_.pop_back();
-  proc_.loadPreset(std::move(p), /*keepMonitor=*/true);
+  if (proc_.editBasePreset() != e.post) return false;  // something else changed since the fill: undoing would lose it
+  proc_.loadPreset(std::move(e.pre), /*keepMonitor=*/true);
   return true;
 }
 

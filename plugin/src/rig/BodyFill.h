@@ -10,6 +10,7 @@
 // Threading: begin() / tick() / cancel() on the message thread; tool completions are queued and applied by tick().
 
 #include <chrono>
+#include <functional>
 #include <filesystem>
 #include <mutex>
 #include <optional>
@@ -43,6 +44,8 @@ class BodyFill {
   void tick();
   void cancel();
   bool active() const noexcept { return step_ != Step::Idle; }
+  // Called (message thread) with the preset the swap submitted, so the owner can keep its undo entry in step.
+  std::function<void(const Preset&)> onBodyChanged;
   std::uint64_t toolRuns() const noexcept { return runs_; }
   // Tests: blocks until the tool run in flight (if any) has finished; its result still waits for tick().
   bool waitToolIdle(std::chrono::milliseconds timeout);
@@ -58,11 +61,14 @@ class BodyFill {
   void fallback();
   void applyAmp(const Capture& model);
   bool bodyUntouched(const Preset& cur) const;
+  void launch(Step s, std::vector<std::string> args);
 
   SawbladeProcessor& proc_;
   T3kTool tool_;
   Step step_ = Step::Idle;
-  std::vector<Block> expectedB_;  // path B as the last BodyFill edit left it
+  PathPreset expectedB_;  // path B (blocks, controls, EQ, level ...) and the blend as the last BodyFill edit left them
+  double expectedBlend_ = 0.0;
+  std::optional<std::pair<Step, std::vector<std::string>>> queued_;  // a step waiting for the tool to finish
   std::string aTitle_;
   std::uint64_t run_ = 0, runs_ = 0;
   std::mutex m_;

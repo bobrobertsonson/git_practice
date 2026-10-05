@@ -154,8 +154,19 @@ Then `BodyFill` (message thread; `RigController::sync()` ticks it) asks, through
 exactly what the fill left (nothing edited since, BLEND still on); a model that is not cached is fetched first (`fetch <tone> --model <id>`).
 `null`, an error or a failing fetch: the fallback amp is fetched if it is not already there. One tool run at a time; nothing runs without a tool.
 
-**Undo.** `RigController::undo()` restores the preset as it was before BLEND (the swap adds no entry of its own, so it is one step, also
-after the asynchronous replacement) and cancels a pending suggestion. The undo stack holds BLEND fills only and is cleared by a user preset load.
+**Cached captures carry their licence.** A cached model is only used if `<cache>/<tone>/meta.json` (written by `sawblade-t3k fetch`) has an entry for
+it; the capture then gets that entry's sha256 and the tone's title, creator (display name, else username), licence and url, so a `cc-by-nc` amp marks
+the rig non-commercial as any other capture does. A model file without an entry is not cached (it goes through `fetch`). With no model id the fill
+takes the smallest model id that has an entry and a file; `fetch` without `--model` takes the tone's first candidate, which may be another model.
+
+**Undo.** `RigController::undo()` restores the preset as it was before BLEND. There is ONE entry, {pre-BLEND preset, the preset the fill and its
+asynchronous amp swap left}; the swap updates it, so it is one step. `undo()` succeeds only while the rig still is exactly that: any other edit (path A,
+a parameter, path B's blocks / level / controls, BLEND off) or a user preset load drops the entry, and `undo()` then returns false and keeps the edit.
+A second fill replaces the entry. The suggestion is applied only if path B (all of it) and the blend are exactly what the fill left.
+
+**Tools and the network.** The ladder fetch, the missing-rung fetch and the BLEND tool runs are started by the plugin on its own, so they honour
+`SAWBLADE_NO_NETWORK=1` (set for every test and for pluginval) and need a configured, existing `sawblade-t3k`. `T3kTool` has no timeout: a tool
+that hangs keeps its slot (one run at a time) until it exits (proposal: a watchdog that cancels a run after a limit).
 
 ### Amp controls on the amp heads (v0.2 Task D)
 

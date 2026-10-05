@@ -252,6 +252,7 @@ TEST_CASE("Ladder processor: GAIN moves the rung, the preset records gainStep, s
   cache.put("m2", "linear_05_025.nam");
   cache.put("m3", "linear_identity.nam");
   TempDir t;
+  std::ofstream(t.dir / "none.json") << json{{"t3kExecutable", (t.dir / "gone" / "sawblade-t3k").string()}}.dump();
   EnvGuard noSettings("SAWBLADE_SETTINGS_FILE", (t.dir / "none.json").string());
   Host h(48000.0, 512);
   h.p.setLadderFetchEnabled(false);
@@ -429,7 +430,8 @@ TEST_CASE("Ladder processor: no rung is fetched when ladder fetching is off or n
   ALLOW_FAKE_TOOL;
   const LadderCache cache;
   TempDir t;
-  EnvGuard settings("SAWBLADE_SETTINGS_FILE", (t.dir / "none.json").string());  // default executable: not present in a test run
+  std::ofstream(t.dir / "none.json") << json{{"t3kExecutable", (t.dir / "gone" / "sawblade-t3k").string()}}.dump();
+  EnvGuard settings("SAWBLADE_SETTINGS_FILE", (t.dir / "none.json").string());  // an executable that does not exist
   Host h(48000.0, 512);
   h.load(writePreset(t.dir, "lad", ladderPreset("m1", true)));
   h.p.ladderTick();

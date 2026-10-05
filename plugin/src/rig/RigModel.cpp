@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <set>
 
 #include "sawblade/block_registry.h"
@@ -170,25 +171,44 @@ void setBodyAmp(Preset& p, const Capture& model) {
 
 std::optional<Capture> cachedToneCapture(const std::string& toneId, const std::string& modelId) {
   namespace fs = std::filesystem;
+  using nlohmann::json;
+  const auto plain = [](const std::string& t) { return !t.empty() && t.find_first_of("/\\.") == std::string::npos; };
   std::error_code ec;
+  if (!plain(toneId) || (!modelId.empty() && !plain(modelId))) return std::nullopt;
   const fs::path dir = captureCacheRoot() / toneId;
-  if (toneId.empty() || toneId.find_first_of("/\\.") != std::string::npos || !fs::is_directory(dir, ec)) return std::nullopt;
-  std::string pick;
-  if (!modelId.empty()) {
-    if (modelId.find_first_of("/\\.") != std::string::npos || !fs::exists(dir / (modelId + ".nam"), ec)) return std::nullopt;
-    pick = modelId;
-  } else {
-    for (const auto& e : fs::directory_iterator(dir, ec))
-      if (e.path().extension() == ".nam" && (pick.empty() || e.path().stem().string() < pick)) pick = e.path().stem().string();
+  // The cache entry is what `sawblade-t3k fetch` wrote: <tone>/meta.json names the model's file and sha256 and carries the tone's
+  // title / creator / licence / url. A model without a meta entry is not cached (fetch fills the entry, so the licence is never lost).
+  std::ifstream in(dir / "meta.json");
+  if (!in) return std::nullopt;
+  const json meta = json::parse(in, nullptr, /*allow_exceptions=*/false);
+  if (!meta.is_object() || !meta.contains("models") || !meta["models"].is_object()) return std::nullopt;
+  std::string pick = modelId;
+  if (pick.empty()) {  // the smallest model id with an entry and a file (the tool's fetch takes the tone's first candidate)
+    for (const auto& kv : meta["models"].items()) {
+      if (!plain(kv.key()) || !fs::exists(dir / (kv.key() + ".nam"), ec)) continue;
+      if (pick.empty() || kv.key().size() < pick.size() || (kv.key().size() == pick.size() && kv.key() < pick)) pick = kv.key();
+    }
     if (pick.empty()) return std::nullopt;
   }
+  if (!meta["models"].contains(pick) || !meta["models"][pick].is_object()) return std::nullopt;
+  const json& m = meta["models"][pick];
+  const std::string file = m.value("file", pick + ".nam");
+  if (!plain(fs::path(file).stem().string()) || file.find('/') != std::string::npos || !fs::exists(dir / file, ec)) return std::nullopt;
+  const auto str = [](const json& o, const char* k) { return o.is_object() && o.contains(k) && o[k].is_string() ? o[k].get<std::string>() : std::string(); };
+  const json tone = meta.contains("tone") ? meta["tone"] : json::object();
+  const json user = tone.is_object() && tone.contains("user") ? tone["user"] : json::object();
   Capture c;
-  c.resolvedPath = fs::absolute(dir / (pick + ".nam"), ec);
+  c.resolvedPath = fs::absolute(dir / file, ec);
   c.file = c.resolvedPath.string();
+  c.sha256 = str(m, "sha256");
   CaptureSource src;
   src.provider = "tone3000";
   src.id = toneId;
   src.modelId = pick;
+  src.title = str(tone, "title");
+  src.url = str(tone, "url");
+  src.license = str(tone, "license");
+  src.creator = !str(user, "display_name").empty() ? str(user, "display_name") : !str(user, "username").empty() ? str(user, "username") : str(meta, "creatorUsername");
   c.source = src;
   return c;
 }
