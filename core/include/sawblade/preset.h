@@ -90,6 +90,17 @@ struct AlignParams {
   bool operator==(const AlignParams&) const = default;
 };
 
+// Phase 10.1. Defaults when the keys are absent: mode off, law linear (legacy presets render
+// bit-identically). Trims are the stored values of `manual` mode, in [0, kMaxLevelTrimDb].
+enum class LevelMatchMode { Auto, Manual, Off };
+struct LevelMatch {
+  LevelMatchMode mode = LevelMatchMode::Off;
+  double trimADb = 0.0, trimBDb = 0.0;
+  bool operator==(const LevelMatch&) const = default;
+};
+constexpr double kMaxLevelTrimDb = 18.0;
+enum class BlendLaw { Linear, ConstantLoudness };
+
 enum class CabMode { Shared, PerPath };
 struct CabPreset {
   CabMode mode = CabMode::Shared;
@@ -110,6 +121,8 @@ struct Preset {
   PathPreset a, b;
   AlignParams align;
   double blend = 0.5;
+  BlendLaw blendLaw = BlendLaw::Linear;
+  LevelMatch levelMatch;
   CabPreset cab;
   std::vector<EqBand> postEq;
   BusCompParams busComp;

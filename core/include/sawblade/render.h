@@ -74,6 +74,7 @@ struct RenderResult {
   double renderRate = 0.0;     // the rate the chain ran at; info.* latencies are in samples at this rate
   double outputRate = 0.0;
   int blockSize = 0;
+  double blend = 0.5;          // the preset's blend (for the report)
   // Mono. Length N (the input length) when outputRate == inputRate, else round(N * out / in).
   // Advanced by info.latencySamples (at the render rate); resampling adds no delay.
   std::vector<float> samples;

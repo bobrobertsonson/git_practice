@@ -72,6 +72,18 @@ struct AlignResult {
   double peakCorrelation = 0.0;  // |normalized cross-correlation| at the chosen lag, 0..1
 };
 
+// Phase 10.1 level-match probe result (see Chain::resolveLevelMatch()).
+struct LevelMatchResult {
+  bool measured = false;                    // false: pass skipped (a path disabled / silent)
+  std::array<double, 2> measuredTrimDb{};   // from the probe, always (>= 0, one of them 0)
+  std::array<double, 2> trimDb{};           // in effect for the preset's mode (auto: measured)
+  std::array<double, 2> lufs{kNoLufs, kNoLufs};  // guitar segment per path (levelDb applied, no trim)
+  double sumLufs = kNoLufs;                 // aligned linear sum at blend 0.5 after trims
+  std::array<double, 5> makeupDb{};         // constant-loudness make-up at b = 0, .25, .5, .75, 1
+  std::vector<std::string> warnings;
+  static constexpr double kNoLufs = -1000.0;  // "not measured" (JSON null)
+};
+
 struct ChainInfo {
   std::array<int, 2> pathLatency{};      // sum of block latencies (+ own cab in perPath mode)
   std::array<int, 2> compensationDelay{};  // delay added so the shorter path meets the longer
@@ -79,6 +91,12 @@ struct ChainInfo {
   int latencySamples = 0;                // processing latency reported to the host (excludes alignDelay)
   AlignMode alignMode = AlignMode::Auto;
   AlignResult align;                     // the values in effect (resolved for auto)
+  LevelMatchMode levelMatchMode = LevelMatchMode::Off;
+  std::array<double, 2> trimDb{};        // level trims in effect (dB)
+  std::array<double, 2> lufs{LevelMatchResult::kNoLufs, LevelMatchResult::kNoLufs};
+  double sumLufs = LevelMatchResult::kNoLufs;
+  std::array<double, 5> makeupDb{};      // constant-loudness make-up at b = 0, .25, .5, .75, 1
+  BlendLaw blendLaw = BlendLaw::Linear;  // the preset's law (the live law may differ)
   bool liveCompatible = false;           // cab.mode == shared
   struct Exactness {
     bool withCab = true;
@@ -105,6 +123,7 @@ struct LiveParams {
   double outputGainDb = 0.0;
   double gateThresholdDb = -55.0;  // only audible when the preset's gate is enabled
   double blend = 0.5;              // 0 = path A only, 1 = path B only
+  BlendLaw blendLaw = BlendLaw::Linear;  // live: switching never rebuilds the chain
   double levelDbA = 0.0;
   double levelDbB = 0.0;
   // Live design of each band of the post EQ and of each path's pre / path EQ, by band index
@@ -175,6 +194,14 @@ class Chain {
   // Does not change the chain's settings; resets all state afterwards. Needs prepare().
   AlignResult resolveAlignment();
 
+  // Phase 10.1: renders the guitar-shaped probe segment through both paths at the blend point (same
+  // tap as alignment, gate bypassed, alignment applied as currently stored, each path's levelDb
+  // included, no trim), measures BS.1770 loudness per path and derives the trims and the
+  // constant-loudness make-up curve. Pure measurement: does not change the chain's settings except
+  // that prepare() then applies the result. Needs prepare(). Not RT-safe. With a path disabled
+  // returns a skipped (all-zero) result.
+  LevelMatchResult resolveLevelMatch();
+
   ChainInfo info() const;
 
   // Probe definition (exposed for documentation and tests).
@@ -182,6 +209,14 @@ class Chain {
   static constexpr double kProbeLevelDbfs = -18.0;  // RMS of the white noise before band-passing
   static constexpr double kProbeLowHz = 80.0, kProbeHighHz = 5000.0;
   static constexpr unsigned long long kProbeSeed = 1;
+  // Level-match guitar segment (Karplus-Strong palm-mute hits, see chain.cpp).
+  static constexpr double kLevelProbeSeconds = 1.5;
+  static constexpr double kLevelProbePeakDbfs = -12.0;
+  static constexpr unsigned long long kLevelProbeSeed = 2;
+  static constexpr int kLevelProbeHits = 8;
+  // The sum node runs 6 dB down (exactly x0.5); the output stage gives it back (exactly x2). The bus
+  // compressor threshold is referred to the pre-headroom level so presets keep their behaviour.
+  static constexpr double kHeadroomDb = -6.020599913279624;
 
  private:
   struct Path {
@@ -215,6 +250,11 @@ class Chain {
   void processChunk(const float* in, float* out, int n) noexcept;
   void renderPath(Path& p, float* io, int n, std::uint64_t counter, bool allowRamp) noexcept;
   void applyAlignment(const AlignResult& r);
+  void applyLevelMatch(const LevelMatchResult& r);
+  float levelTarget(std::size_t k, double levelDb, bool mute) const noexcept;
+  // Effective (headroom, law, make-up, polarity) A / B weights for blend `b`. RT-safe.
+  void blendWeights(double b, BlendLaw law, float& wa, float& wb) const noexcept;
+  void setBlendTargets(double b, BlendLaw law, bool ramp) noexcept;
   void processEq(ParametricEq& eq, EqRamps& rs, float* w, int n, std::uint64_t counter) noexcept;
   void applyLiveEq(EqRamps& rs, const std::vector<EqBand>& cfg, const LiveEq& oldL,
                    LiveEq& newL) noexcept;
@@ -230,8 +270,9 @@ class Chain {
   ParametricEq postEq_;
   BusCompressor comp_;
   bool compOn_ = false;
-  float blendA_ = 0.5f, blendB_ = 0.5f;        // targets (blendB_ carries the alignment polarity)
-  float blendCurA_ = 0.5f, blendCurB_ = 0.5f;  // current values while ramping
+  // Targets are the effective weights: 0.5 headroom x law x make-up (blendB_ carries the polarity).
+  float blendA_ = 0.25f, blendB_ = 0.25f;
+  float blendCurA_ = 0.25f, blendCurB_ = 0.25f;  // current values while ramping
   float blendStepA_ = 0.0f, blendStepB_ = 0.0f;
   int blendRamp_ = 0;                          // samples left in the blend ramp
   LiveParams live_;
@@ -240,12 +281,15 @@ class Chain {
   std::array<EqRamps, 2> preRamps_, pathRamps_;
   std::uint64_t eqCounter_ = 0;  // samples processed: the 32-sample EQ redesign grid is absolute
   AlignResult align_;
+  LevelMatchResult level_;
+  std::array<double, 2> trimDb_{};  // in effect (folded into each path's level gain)
   int latency_ = 0;
   int maxBlock_ = 0;
   bool prepared_ = false;
   std::vector<float> work_, bufA_, bufB_;
   std::vector<std::string> warnings_;       // static, from the preset and resources
   std::vector<std::string> alignWarnings_;  // from the last alignment
+  std::vector<std::string> levelWarnings_;   // from the last level match
 };
 
 }  // namespace sawblade

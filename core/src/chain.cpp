@@ -8,6 +8,7 @@
 
 #include "sawblade/capture_cache.h"
 #include "sawblade/ir.h"
+#include "sawblade/loudness.h"
 #include "sawblade/nam_block.h"
 
 namespace sawblade {
@@ -63,6 +64,48 @@ std::vector<float> makeProbe(double sr) {
   hp.process(x.data(), static_cast<int>(n));
   lp.process(x.data(), static_cast<int>(n));
   return x;
+}
+
+// Level-match guitar segment: kLevelProbeSeconds of Karplus-Strong palm-mute plucks, generated in
+// double at the chain's rate (no audio fixture). 8 hits 0.1875 s apart cycling the notes
+// A1 55 Hz, A1, D2 73.42 Hz, A1, A1, E2 82.41 Hz, A1, D2. Each hit: excitation = one period of
+// seeded (xorshift64*, seed kLevelProbeSeed, one stream across the hits) uniform noise in [-1, 1);
+// loop filter y[n] = g * 0.5 * (y[n-N] + y[n-N-1]) with N = round(sr / f) and the per-period loss
+// g = 10^(-12 / f), i.e. the string decays by 60 dB in 0.25 s (palm mute). Hits ring on and sum.
+// The segment is then scaled so that its peak is kLevelProbePeakDbfs.
+std::vector<float> makeLevelProbe(double sr) {
+  static constexpr double kNotes[Chain::kLevelProbeHits] = {55.0, 55.0, 73.42, 55.0, 55.0, 82.41, 55.0, 73.42};
+  static constexpr double kHitSpacingSeconds = 0.1875;
+  const auto n = static_cast<std::size_t>(std::llround(Chain::kLevelProbeSeconds * sr));
+  std::vector<double> x(n, 0.0);
+  std::uint64_t s = Chain::kLevelProbeSeed * 0x9E3779B97F4A7C15ull;
+  std::vector<double> y;
+  for (int h = 0; h < Chain::kLevelProbeHits; ++h) {
+    const double f = kNotes[h];
+    const auto start = static_cast<std::size_t>(std::llround(h * kHitSpacingSeconds * sr));
+    if (start >= n) break;
+    const auto period = static_cast<std::size_t>(std::max(2.0, std::round(sr / f)));
+    const double g = std::pow(10.0, -12.0 / f);
+    y.assign(n - start, 0.0);
+    for (std::size_t i = 0; i < y.size(); ++i) {
+      if (i < period) {
+        s ^= s >> 12;
+        s ^= s << 25;
+        s ^= s >> 27;
+        const std::uint64_t r = s * 0x2545F4914F6CDD1Dull;
+        y[i] = static_cast<double>(r >> 11) * (1.0 / 9007199254740992.0) * 2.0 - 1.0;
+      } else {
+        y[i] = g * 0.5 * (y[i - period] + (i > period ? y[i - period - 1] : 0.0));
+      }
+      x[start + i] += y[i];
+    }
+  }
+  double peak = 0.0;
+  for (double v : x) peak = std::max(peak, std::fabs(v));
+  const double scale = peak > 0.0 ? dbToLin(Chain::kLevelProbePeakDbfs) / peak : 0.0;
+  std::vector<float> out(n);
+  for (std::size_t i = 0; i < n; ++i) out[i] = static_cast<float>(x[i] * scale);
+  return out;
 }
 
 }  // namespace
@@ -153,6 +196,7 @@ LiveParams LiveParams::fromPreset(const Preset& p) {
   l.outputGainDb = p.outputGainDb;
   l.gateThresholdDb = p.gate.thresholdDb;
   l.blend = p.blend;
+  l.blendLaw = p.blendLaw;
   l.levelDbA = p.a.levelDb;
   l.levelDbB = p.b.levelDb;
   const auto fill = [](LiveEq& dst, const std::vector<EqBand>& src) {
@@ -191,7 +235,7 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
     } catch (const std::invalid_argument& e) {
       throw PresetError(pathName + ".eq", e.what());
     }
-    p.level.setGainLinear(static_cast<float>((pp[k]->invert ? -1.0 : 1.0) * dbToLin(pp[k]->levelDb)));
+    p.level.setGainLinear(levelTarget(k, pp[k]->levelDb, false));
     for (const auto& lb : p.blocks)
       if (!lb.processor) throw std::runtime_error("ChainResources contains a null block");
   }
@@ -214,13 +258,15 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
   outGain_.setGainDb(preset_.outputGainDb);
   gate_.setParams(preset_.gate);
   gateOn_ = preset_.gate.enabled;
-  comp_.setParams(preset_.busComp);
+  {
+    // The sum node runs kHeadroomDb down, so the threshold is referred to the pre-headroom level.
+    BusCompParams bp = preset_.busComp;
+    bp.thresholdDb += kHeadroomDb;
+    comp_.setParams(bp);
+  }
   compOn_ = preset_.busComp.enabled;
-  blendA_ = static_cast<float>(1.0 - preset_.blend);
-  blendB_ = static_cast<float>(preset_.blend);
-  blendCurA_ = blendA_;
-  blendCurB_ = blendB_;
   live_ = LiveParams::fromPreset(preset_);
+  setBlendTargets(live_.blend, live_.blendLaw, false);
 
   warnings_ = res_.warnings;
   for (std::size_t k = 0; k < 2; ++k) {
@@ -282,6 +328,8 @@ void Chain::prepare(const ProcessSpec& spec) {
 
   prepared_ = true;
   alignWarnings_.clear();
+  trimDb_ = {};
+  level_ = {};
   if (al.mode == AlignMode::Auto) {
     applyAlignment(resolveAlignment());
   } else if (al.mode == AlignMode::Manual) {
@@ -289,6 +337,60 @@ void Chain::prepare(const ProcessSpec& spec) {
   } else {
     applyAlignment({});
   }
+  applyLevelMatch(resolveLevelMatch());
+}
+
+float Chain::levelTarget(std::size_t k, double levelDb, bool mute) const noexcept {
+  if (mute) return 0.0f;
+  const bool invert = k == 0 ? preset_.a.invert : preset_.b.invert;
+  return static_cast<float>((invert ? -1.0 : 1.0) * dbToLin(levelDb + trimDb_[k]));
+}
+
+void Chain::blendWeights(double b, BlendLaw law, float& wa, float& wb) const noexcept {
+  double a = 1.0 - b, c = b, makeup = 1.0;
+  if (law == BlendLaw::ConstantLoudness) {
+    const double th = b * 1.5707963267948966;
+    a = std::cos(th);
+    c = std::sin(th);
+    // Make-up: linear in dB between the five measured points.
+    const double pos = std::min(std::max(b, 0.0), 1.0) * 4.0;
+    const int i = std::min(3, static_cast<int>(pos));
+    const double fr = pos - i;
+    const auto u = static_cast<std::size_t>(i);
+    makeup = dbToLin(level_.makeupDb[u] + fr * (level_.makeupDb[u + 1] - level_.makeupDb[u]));
+  }
+  wa = static_cast<float>(0.5 * a * makeup);  // 0.5 = the sum node's headroom (exact)
+  wb = static_cast<float>(0.5 * c * makeup) * (align_.invertB ? -1.0f : 1.0f);
+}
+
+void Chain::setBlendTargets(double b, BlendLaw law, bool ramp) noexcept {
+  float wa = 0.0f, wb = 0.0f;
+  blendWeights(b, law, wa, wb);
+  if (!ramp) {
+    blendA_ = blendCurA_ = wa;
+    blendB_ = blendCurB_ = wb;
+    blendRamp_ = 0;
+    return;
+  }
+  if (blendRamp_ <= 0) {  // otherwise continue from the current (mid-ramp) value
+    blendCurA_ = blendA_;
+    blendCurB_ = blendB_;
+  }
+  blendA_ = wa;
+  blendB_ = wb;
+  blendStepA_ = (blendA_ - blendCurA_) / static_cast<float>(rampSamples_);
+  blendStepB_ = (blendB_ - blendCurB_) / static_cast<float>(rampSamples_);
+  blendRamp_ = rampSamples_;
+}
+
+void Chain::applyLevelMatch(const LevelMatchResult& r) {
+  level_ = r;
+  trimDb_ = r.trimDb;
+  levelWarnings_ = r.warnings;
+  const double lv[2] = {live_.levelDbA, live_.levelDbB};
+  const bool mute[2] = {live_.muteA, live_.muteB};
+  for (std::size_t k = 0; k < 2; ++k) path_[k].level.setGainLinear(levelTarget(k, lv[k], mute[k]));
+  setBlendTargets(live_.blend, live_.blendLaw, false);
 }
 
 void Chain::applyAlignment(const AlignResult& r) {
@@ -296,9 +398,7 @@ void Chain::applyAlignment(const AlignResult& r) {
   path_[0].alignDelay = std::max(0, -r.delaySamplesB);
   path_[1].alignDelay = std::max(0, r.delaySamplesB);
   for (auto& p : path_) p.delay.setDelaySamples(p.compDelay + p.alignDelay);
-  blendB_ = static_cast<float>(live_.blend) * (r.invertB ? -1.0f : 1.0f);
-  blendCurB_ = blendB_;
-  blendRamp_ = 0;
+  setBlendTargets(live_.blend, live_.blendLaw, false);
   // Processing latency only; the alignment delay is part of the tone and is reported separately.
   const int total = std::max(path_[0].latency, path_[1].latency);
   latency_ = total + (cabShared_ ? cabShared_->latencySamples() : 0);
@@ -402,6 +502,81 @@ AlignResult Chain::resolveAlignment() {
   return result;
 }
 
+LevelMatchResult Chain::resolveLevelMatch() {
+  if (!prepared_) throw std::logic_error("Chain::resolveLevelMatch requires prepare()");
+  LevelMatchResult r;
+  if (!path_[0].enabled || !path_[1].enabled) return r;
+  const double sr = res_.sampleRate;
+
+  // Measure at the blend point with each path's levelDb but no trim, unmuted, gate bypassed.
+  const double lv[2] = {live_.levelDbA, live_.levelDbB};
+  const auto savedTrim = trimDb_;
+  trimDb_ = {};
+  for (std::size_t k = 0; k < 2; ++k) path_[k].level.setGainLinear(levelTarget(k, lv[k], false));
+  trimDb_ = savedTrim;
+  resetAll();
+
+  std::vector<float> probe = makeLevelProbe(sr);
+  inGain_.process(probe.data(), static_cast<int>(probe.size()));
+  const std::size_t n = probe.size();
+  std::vector<float> a(n), b(n), zeros(n, 0.0f);
+  for (std::size_t pos = 0; pos < n; pos += static_cast<std::size_t>(maxBlock_)) {
+    const int len = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(maxBlock_), n - pos));
+    std::copy_n(probe.data() + pos, len, bufA_.data());
+    std::copy_n(probe.data() + pos, len, bufB_.data());
+    renderPath(path_[0], bufA_.data(), len, 0, false);
+    renderPath(path_[1], bufB_.data(), len, 0, false);
+    std::copy_n(bufA_.data(), len, a.data() + pos);
+    std::copy_n(bufB_.data(), len, b.data() + pos);
+  }
+  resetAll();
+  const bool mute[2] = {live_.muteA, live_.muteB};
+  for (std::size_t k = 0; k < 2; ++k) path_[k].level.setGainLinear(levelTarget(k, lv[k], mute[k]));
+
+  const auto frames = static_cast<std::int64_t>(n);
+  const auto la = integratedLoudnessLufs(a.data(), zeros.data(), frames, sr);  // mono: right silent
+  const auto lb = integratedLoudnessLufs(b.data(), zeros.data(), frames, sr);
+  if (la) r.lufs[0] = *la;
+  if (lb) r.lufs[1] = *lb;
+  if (!la || !lb) {
+    if (!la) r.warnings.push_back("level match: path A is silent");
+    if (!lb) r.warnings.push_back("level match: path B is silent");
+    return r;
+  }
+  r.measured = true;
+  const double louder = std::max(*la, *lb);
+  r.measuredTrimDb = {std::min(kMaxLevelTrimDb, louder - *la), std::min(kMaxLevelTrimDb, louder - *lb)};
+  const LevelMatch& lm = preset_.levelMatch;
+  r.trimDb = lm.mode == LevelMatchMode::Auto     ? r.measuredTrimDb
+             : lm.mode == LevelMatchMode::Manual ? std::array<double, 2>{lm.trimADb, lm.trimBDb}
+                                                 : std::array<double, 2>{0.0, 0.0};
+
+  // Sums of the trimmed, aligned, polarity-corrected path outputs (in memory, no re-render).
+  const double ga = dbToLin(r.trimDb[0]);
+  const double gb = dbToLin(r.trimDb[1]) * (align_.invertB ? -1.0 : 1.0);
+  std::vector<float> sum(n);
+  const auto sumLufs = [&](double wa, double wb) {
+    for (std::size_t i = 0; i < n; ++i) sum[i] = static_cast<float>(wa * ga * a[i] + wb * gb * b[i]);
+    return integratedLoudnessLufs(sum.data(), zeros.data(), frames, sr);
+  };
+  if (const auto l = sumLufs(0.5, 0.5)) r.sumLufs = *l;
+  std::array<double, 5> L{};
+  bool ok = true;
+  for (std::size_t i = 0; i < 5; ++i) {
+    const double th = static_cast<double>(i) * 0.25 * 1.5707963267948966;
+    const auto l = sumLufs(std::cos(th), std::sin(th));
+    if (!l) ok = false;
+    else L[i] = *l;
+  }
+  if (ok) {
+    const double ref = 0.5 * (L[0] + L[4]);
+    for (std::size_t i = 0; i < 5; ++i) r.makeupDb[i] = std::min(12.0, std::max(-12.0, ref - L[i]));
+  } else {
+    r.warnings.push_back("level match: the probe sum is silent; make-up is 0");
+  }
+  return r;
+}
+
 ChainInfo Chain::info() const {
   ChainInfo i;
   for (std::size_t k = 0; k < 2; ++k) {
@@ -412,10 +587,17 @@ ChainInfo Chain::info() const {
   i.latencySamples = latency_;
   i.alignMode = preset_.align.mode;
   i.align = align_;
+  i.levelMatchMode = preset_.levelMatch.mode;
+  i.trimDb = trimDb_;
+  i.lufs = level_.lufs;
+  i.sumLufs = level_.sumLufs;
+  i.makeupDb = level_.makeupDb;
+  i.blendLaw = preset_.blendLaw;
   i.liveCompatible = preset_.cab.mode == CabMode::Shared;
   i.exportExactness = {true, i.liveCompatible};
   i.warnings = warnings_;
   i.warnings.insert(i.warnings.end(), alignWarnings_.begin(), alignWarnings_.end());
+  i.warnings.insert(i.warnings.end(), levelWarnings_.begin(), levelWarnings_.end());
   return i;
 }
 
@@ -526,24 +708,15 @@ void Chain::setLiveParams(const LiveParams& in) noexcept {
   for (std::size_t k = 0; k < 2; ++k) {
     if (lv[k] == old[k] && mute[k] == oldMute[k]) continue;
     if (mute[k] && mute[k] == oldMute[k]) continue;  // a level change while muted only moves the stored target
-    path_[k].level.rampToLinear(mute[k] ? 0.0f : (pp[k]->invert ? -1.0f : 1.0f) * lin(lv[k]), rampSamples_);
+    path_[k].level.rampToLinear(levelTarget(k, lv[k], mute[k]), rampSamples_);  // the trim stays
   }
   if (p.gateThresholdDb != live_.gateThresholdDb && std::isfinite(p.gateThresholdDb)) {
     GateParams g = gate_.params();
     g.thresholdDb = p.gateThresholdDb;
     gate_.setParams(g);
   }
-  if (p.blend != live_.blend) {
-    if (blendRamp_ <= 0) {  // otherwise continue from the current (mid-ramp) value
-      blendCurA_ = blendA_;
-      blendCurB_ = blendB_;
-    }
-    blendA_ = static_cast<float>(1.0 - p.blend);
-    blendB_ = static_cast<float>(p.blend) * (align_.invertB ? -1.0f : 1.0f);
-    blendStepA_ = (blendA_ - blendCurA_) / static_cast<float>(rampSamples_);
-    blendStepB_ = (blendB_ - blendCurB_) / static_cast<float>(rampSamples_);
-    blendRamp_ = rampSamples_;
-  }
+  if (p.blendLaw != BlendLaw::Linear && p.blendLaw != BlendLaw::ConstantLoudness) p.blendLaw = live_.blendLaw;
+  if (p.blend != live_.blend || p.blendLaw != live_.blendLaw) setBlendTargets(p.blend, p.blendLaw, true);
   applyLiveEq(postRamps_, preset_.postEq, live_.postEq, p.postEq);
   for (std::size_t k = 0; k < 2; ++k) {
     applyLiveEq(preRamps_[k], pp[k]->preEq, live_.preEq[k], p.preEq[k]);
@@ -647,7 +820,7 @@ void Chain::processChunk(const float* in, float* out, int n) noexcept {
   eqCounter_ += static_cast<std::uint64_t>(n);
   if (compOn_) comp_.process(w, n);
   outGain_.process(w, n);
-  std::copy(w, w + n, out);
+  for (int j = 0; j < n; ++j) out[j] = w[j] * 2.0f;  // gives back the sum node's 6 dB headroom (exact)
 }
 
 }  // namespace sawblade
