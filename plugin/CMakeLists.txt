@@ -251,8 +251,8 @@ endif()
 # executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
 # compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
 if(SAWBLADE_BUILD_TESTS)
-  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp ${SAWBLADE_PLUGIN_SOURCES})
-  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp
+  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
   # JUCE_MODAL_LOOPS_PERMITTED: the page tests pump the message loop (MessageManager::runDispatchLoopUntil).
