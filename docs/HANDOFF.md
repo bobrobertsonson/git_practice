@@ -85,7 +85,7 @@ htdemucs export, if re-exported). Env: `TONE3000_CLIENT_ID=<publishable t3k_pub_
 0. **First Mac run findings (2026-10-05, v0.1 at db0813e):** the Standalone opens on the
    `INIT` preset, which (like the four "Classic" library presets: Chainsaw + Body, Studio
    Split, Swedeath Saw, Tight Body) references placeholder capture files
-   (`presets/captures/saw_pedal_hm2_maxed.nam` etc.) that are not in the repo → red
+   (`presets/captures/saw_pedal_hm2_maxed.nam` etc.; fixed in v0.1.1: they now carry TONE3000 sources) that are not in the repo → red
    "file not found" on launch. Fix: make INIT capture-free (modeled chainsaw + repo IR) and
    either resolve the Classic presets through TONE3000 ids or move them out of the library.
    Also: the Settings CLIENT ID field starts empty (GUI apps do not read `.zshrc`); prefill
