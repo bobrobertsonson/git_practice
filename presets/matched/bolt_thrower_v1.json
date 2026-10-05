@@ -2,6 +2,7 @@
  "schema": "sawblade.preset",
  "version": 1,
  "name": "Sawblade match",
+ "category": "Death metal",
  "notes": "Matched by sawblade-match seed 1 against bolt_thrower__anti_tank.mp3 (stem:bolt_thrower__anti_tank.de56a42f844a.htdemucs.other.wav). Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.",
  "gate": {
   "enabled": true,
