@@ -123,6 +123,8 @@ struct PlayAlongPanel::Impl {
   std::uint64_t seenVersion = ~std::uint64_t{0};
   int refreshTick = 0;
   juce::String notice;
+  juce::String pickNotice;  // a rejected pick, shown in the status label for a few seconds
+  std::uint32_t pickNoticeUntil = 0;
   std::uint32_t noticeUntil = 0;
   juce::Slider seek, bpm, level, offset;
   double barProgress = 0.0;
@@ -176,8 +178,10 @@ struct PlayAlongPanel::Impl {
     led.setInterceptsMouseClicks(false, false);
     owner.addAndMakeVisible(led);
 
-    configure(chooseSong, juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"), "Choose a song file (wav, mp3, flac, m4a, aif, aac, ogg): it is separated into stems on this machine, once, then cached. You can also drop a song file or a stems folder on the plugin.");
-    configure(chooseStems, juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6"), "Choose a folder of already separated stems (drums, bass, vocals, other, guitar as .wav or .flac).");
+    configure(chooseSong, juce::String::fromUTF8("SONG FILE\xe2\x80\xa6"), "Choose a song file (wav, mp3, flac, m4a, aif, aac, ogg): it is separated into stems on this machine, once, then cached. You can also drop a song file or a stems folder on the plugin.");
+    configure(chooseStems, juce::String::fromUTF8("STEMS FOLDER\xe2\x80\xa6"), "Choose a folder of already separated stems (drums, bass, vocals, other, guitar as .wav or .flac).");
+    chooseSong.setTitle(juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"));  // the accessible name is the full action
+    chooseStems.setTitle(juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6"));
     configure(cancel, "CANCEL", "Cancel the separation");
     cancel.setVisible(false);
     configure(model, "6-STEM", "Separation model for song files. 6-stem (htdemucs_6s, default) has a guitar stem. 4-stem (htdemucs, fallback): the 'other' stem is treated as the guitar. Click to switch.");
@@ -515,6 +519,10 @@ struct PlayAlongPanel::Impl {
     }
     if (st.state == PlayAlong::LoadStatus::State::Ready && msg.isEmpty() && !standalone && !s.hostSync)
       msg = "Backing is off. Enable SYNC TO HOST to follow the host transport.";
+    if (pickNotice.isNotEmpty() && juce::Time::getMillisecondCounter() < pickNoticeUntil) {
+      msg = pickNotice;
+      col = L::error();
+    }
     status.setText(msg, juce::dontSendNotification);
     status.setTooltip(msg);
     status.setColour(juce::Label::textColourId, col);
@@ -569,11 +577,11 @@ struct PlayAlongPanel::Impl {
     const int w = kWidth;
     title.setBounds(m, 10, 110, 30);
     led.setBounds(138, 15, 20, 20);
-    song.setBounds(172, 10, 280, 30);
-    model.setBounds(458, 10, 96, 30);
-    constexpr int stemsW = 168, songW = 152, keepX = 1262 - stemsW - 8 - songW - 8 - 104;
-    status.setBounds(560, 10, keepX - 8 - 560, 30);
-    bar.setBounds(560, 40, keepX - 8 - 560, 8);
+    song.setBounds(172, 10, 200, 30);
+    model.setBounds(378, 10, 96, 30);
+    constexpr int stemsW = 138, songW = 112, statusX = 484, keepX = w - m - stemsW - 8 - songW - 8 - 104;
+    status.setBounds(statusX, 10, keepX - 8 - statusX, 30);  // >= 380 px: the longest hint must not ellipsize
+    bar.setBounds(statusX, 40, keepX - 8 - statusX, 8);
     keepKeys.setBounds(keepX, 10, 104, 30);
     cancel.setBounds(keepX, 10, 104, 30);
     chooseSong.setBounds(w - m - stemsW - 8 - songW, 10, songW, 30);
@@ -636,20 +644,34 @@ void PlayAlongPanel::showMatchArea() {
   impl_->refresh();
 }
 
-PlayAlongPanel::ChooserSpec PlayAlongPanel::chooserSpec(ChooserAction a) {
+PlayAlongPanel::ChooserSpec PlayAlongPanel::chooserSpec(ChooserAction a, bool mac) {
   if (a == ChooserAction::SongFile) {
-    // Lower- and upper-case spellings of every extension isSongFileName accepts: the macOS panel matches
-    // case-insensitively, the Linux / Windows ones may not.
-    juce::String filter;
-    for (const char* ext : {"wav", "mp3", "flac", "m4a", "aif", "aiff", "aac", "ogg"}) {
-      if (filter.isNotEmpty()) filter << ";";
-      filter << "*." << ext << ";*." << juce::String(ext).toUpperCase();
-    }
-    return {"Choose a song file", filter,
-            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles};
+    // JUCE matches filters case-insensitively on every platform, so lower-case extensions cover .WAV too.
+    // On macOS the filter is "*": JUCE then passes allowedFileTypes = nil and its panel delegate matches every
+    // file, so neither AppKit mechanism can disable a .wav; handlePicked() validates the pick instead.
+    const juce::String filter = mac ? juce::String("*") : juce::String("*.wav;*.mp3;*.flac;*.m4a;*.aif;*.aiff;*.aac;*.ogg");
+    return {"Choose a song file", filter, juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles};
   }
   return {"Choose a folder of separated stems", juce::String(),
           juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories};
+}
+
+bool PlayAlongPanel::handlePicked(ChooserAction a, const juce::File& f) {
+  if (f == juce::File()) return false;  // cancelled
+  const bool ok = a == ChooserAction::SongFile ? (f.existsAsFile() && isSongFileName(f.getFullPathName().toStdString()))
+                                               : f.isDirectory();
+  if (!ok) {
+    // Rejected before loadSong, which would treat a non-song name as a folder; the current song stays loaded.
+    impl_->pickNotice = a == ChooserAction::SongFile
+                            ? "Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file."
+                            : "Not a folder: choose a folder of separated stems.";
+    impl_->pickNoticeUntil = juce::Time::getMillisecondCounter() + 8000;
+    impl_->refresh();
+    return false;
+  }
+  impl_->pickNotice.clear();
+  impl_->pa().loadSong(f.getFullPathName().toStdString(), /*userInitiated=*/true);
+  return true;
 }
 
 bool PlayAlongPanel::isLoadableDrop(const juce::StringArray& files) {
@@ -674,11 +696,7 @@ void PlayAlongPanel::filesDropped(const juce::StringArray& files, int, int) { lo
 void PlayAlongPanel::launchChooser(ChooserAction a) {
   const ChooserSpec spec = chooserSpec(a);
   impl_->chooser = std::make_unique<juce::FileChooser>(spec.title, juce::File(), spec.filter);
-  impl_->chooser->launchAsync(spec.flags, [this](const juce::FileChooser& fc) {
-    const juce::File f = fc.getResult();
-    if (f == juce::File() || !(f.isDirectory() || f.existsAsFile())) return;
-    impl_->pa().loadSong(f.getFullPathName().toStdString(), /*userInitiated=*/true);
-  });
+  impl_->chooser->launchAsync(spec.flags, [this, a](const juce::FileChooser& fc) { handlePicked(a, fc.getResult()); });
 }
 
 void PlayAlongPanel::chooseSongFile() { launchChooser(ChooserAction::SongFile); }

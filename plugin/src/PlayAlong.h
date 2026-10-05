@@ -74,7 +74,7 @@ struct PlayAlongSettings {
   bool operator==(const PlayAlongSettings&) const = default;
   bool isDefault() const { return *this == PlayAlongSettings{}; }
 };
-// Audio files LOAD SONG separates (everything else is treated as a folder of stems): lower-case extension
+// Audio files CHOOSE SONG FILE separates (everything else is treated as a folder of stems): lower-case extension
 // with the dot. Whether the platform can decode it is decided at load time.
 bool isSongFileName(const std::string& path);
 
@@ -205,7 +205,7 @@ class PlayAlong {
   // loads also set the backing level once from the loudness rule (suggestedBackingLevelDb); state
   // restores and reloads never touch the level.
   void loadFolder(const std::string& folder, bool userInitiated);
-  // LOAD SONG: a folder is loadFolder; an audio file (isSongFileName) is separated on the separation thread
+  // CHOOSE SONG FILE / CHOOSE STEMS FOLDER / a drop: a folder is loadFolder; an audio file (isSongFileName) is separated on the separation thread
   // (stem cache first: a second load is instant) and then loaded exactly like a folder. Never throws.
   // Without SAWBLADE_WITH_SEPARATOR a file fails with "not available in this build".
   void loadSong(const std::string& path, bool userInitiated);
@@ -279,7 +279,7 @@ class PlayAlong {
 
   void push(const PlayAlongCmd& c);
   void applyAll();                         // pushes the whole settings state
-  // allowSeparate: only LOAD SONG and the model toggle may start a separation; a state restore, a rate
+  // allowSeparate: only choosing a song (or dropping one) and the model toggle may start a separation; a state restore, a rate
   // change or KEEP KEYS only use stems that are cached already (else NotSeparated).
   void requestLoad(bool user, bool allowSeparate = false);
   void requestSong(const PlayAlongSettings& s, OtherRole role, bool user, bool allowSeparate);

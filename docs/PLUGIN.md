@@ -180,11 +180,16 @@ loader, loudness), `plugin/src/PlayAlongPanel.{h,cpp}` (the panel).
 
 **Panel.** An overlay docked along the bottom of the 1280 x 800 design, toggled by the PLAY ALONG button in the top
 bar, closed by default (open / closed is UI state and is not saved). It uses the skin's palette and plain-widget
-drawing; no PLAY ALONG hardware render exists yet. Controls: CHOOSE SONG FILE… (files-only picker, audio filter) and CHOOSE STEMS FOLDER…
-(directories-only picker, no filter); a song file or stems folder dropped anywhere on the editor, including the panel itself
-(which is its own drop target), also loads it (`PlayAlongPanel::loadDroppedFiles`). Never combine files and directories in
-one native chooser with a type filter: the macOS panel greyed the .wav out (v0.2.1 Task G), play / pause, position display, seek bar, loop SET A / SET B / LOOP, COUNT-IN with BPM, guitar
+drawing; no PLAY ALONG hardware render exists yet. Controls: SONG FILE… (CHOOSE SONG FILE: files-only picker) and STEMS FOLDER… (CHOOSE STEMS FOLDER: directories-only
+picker, no filter), play / pause, position display, seek bar, loop SET A / SET B / LOOP, COUNT-IN with BPM, guitar
 stem MUTE / GHOST / FULL, KEEP KEYS, backing level, offset, and in the plugin SYNC TO HOST.
+
+A song file or stems folder dropped anywhere on the editor, including on the panel (which is also a drop target,
+structurally: JUCE already walked up to the editor), loads through `PlayAlongPanel::loadDroppedFiles`. The .wav was
+observed greyed out in the old combined files-and-folders chooser on macOS (user report, build e8945c2); the cause is not
+confirmed (see the Task G report). On macOS the song chooser therefore uses the filter "*" and validates the pick after
+the fact (a non-song file is refused with a message and the current song kept). A host that does not forward Finder drags
+into an out-of-process AU view (possibly Logic) cannot be fixed by the plugin: use the pickers there.
 
 **Standalone vs plugin.** `wrapperType == wrapperType_Standalone` (a processor built outside any wrapper, as in the
 tests, counts as a plugin; `PlayAlong::setStandalone` overrides it). Standalone: always enabled, free-run, the panel's

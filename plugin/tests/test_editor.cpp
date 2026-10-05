@@ -561,6 +561,65 @@ TEST_CASE("play-along: the panel exists, is closed by default and opens from the
   }
 }
 
+TEST_CASE("play-along: a rejected pick keeps the song and says why (v0.2.1 Task G)", "[editor][playalong]") {
+  using A = PlayAlongPanel::ChooserAction;
+  Rig rig;
+  TempFolder tmp;
+  rig.ed->setPlayAlongOpen(true);
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  auto& pa = rig.proc.playAlong();
+  const auto song = writeSyntheticSong(tmp.dir, "keep", 6.0);
+  CHECK(panel->handlePicked(A::StemsFolder, juce::File(juce::String(song.string()))));
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.settings().folder == song.string());
+
+  const auto txt = song / "notes.txt";
+  { std::ofstream(txt) << "x"; }
+  CHECK_FALSE(panel->handlePicked(A::SongFile, juce::File(juce::String(txt.string()))));      // a non-song file
+  CHECK_FALSE(panel->handlePicked(A::SongFile, juce::File(juce::String(song.string()))));     // a folder from the song picker
+  CHECK_FALSE(panel->handlePicked(A::StemsFolder, juce::File(juce::String(txt.string()))));   // a file from the folder picker
+  CHECK_FALSE(panel->handlePicked(A::SongFile, juce::File()));                               // cancelled
+  CHECK(pa.waitForLoader());
+  CHECK(pa.settings().folder == song.string());  // never reached loadSong -> loadFolder
+  CHECK(pa.settings().songFile.empty());
+  CHECK(pa.loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+  panel->handlePicked(A::SongFile, juce::File(juce::String(txt.string())));
+  panel->refresh();
+  CHECK(anyLabelContains(*panel, "Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file."));
+}
+
+TEST_CASE("play-along: the status messages fit the status label (v0.2.1 Task G)", "[editor][playalong]") {
+  Rig rig;
+  TempFolder tmp;
+  rig.ed->setPlayAlongOpen(true);
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  auto statusLabel = [&]() -> juce::Label* {
+    for (auto* l : all<juce::Label>(*panel))
+      if (l->getY() == 10 && l->getHeight() == 30 && l->getWidth() >= 380) return l;
+    return nullptr;
+  };
+  auto fits = [&](const juce::String& text) {
+    auto* l = statusLabel();
+    REQUIRE(l != nullptr);
+    INFO(text);
+    CHECK(juce::GlyphArrangement::getStringWidthInt(l->getFont(), text) <= l->getWidth() - 8);
+  };
+  panel->refresh();
+  REQUIRE(statusLabel() != nullptr);
+  CHECK(statusLabel()->getText().contains("Drop a song file"));  // None
+  fits(statusLabel()->getText());
+  fits("Backing is off. Enable SYNC TO HOST to follow the host transport.");
+  fits("Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file.");
+  const auto song = writeSyntheticSong(tmp.dir, "fit", 6.0);
+  rig.proc.playAlong().loadSong(song.string(), true);
+  REQUIRE(rig.proc.playAlong().waitForLoader());
+  panel->refresh();
+  fits(statusLabel()->getText());  // Ready
+  // The captions and the status label do not overlap.
+  for (auto* b : all<juce::Button>(*panel))
+    if (b->getY() == 10 && b->isVisible() && b->getTitle().startsWith("CHOOSE")) CHECK_FALSE(b->getBounds().intersects(statusLabel()->getBounds()));
+}
+
 TEST_CASE("play-along: the controls are bound to the processor", "[editor][playalong]") {
   Rig rig;
   TempFolder tmp;
@@ -687,31 +746,36 @@ TEST_CASE("play-along: the controls are bound to the processor", "[editor][playa
 
 TEST_CASE("play-along: the pickers are one-purpose choosers (v0.2.1 Task G)", "[editor][playalong]") {
   using A = PlayAlongPanel::ChooserAction;
-  const auto song = PlayAlongPanel::chooserSpec(A::SongFile);
-  // Files only: no directory flag, which is what made the macOS panel grey out the .wav.
-  CHECK((song.flags & juce::FileBrowserComponent::canSelectFiles) != 0);
-  CHECK((song.flags & juce::FileBrowserComponent::canSelectDirectories) == 0);
-  CHECK((song.flags & juce::FileBrowserComponent::openMode) != 0);
-  CHECK((song.flags & juce::FileBrowserComponent::saveMode) == 0);
-  juce::StringArray patterns;
-  patterns.addTokens(song.filter, ";", "");
-  patterns.removeEmptyStrings();
-  CHECK(patterns.size() >= 8);
-  for (const auto& p : patterns) {  // the form the macOS chooser can turn into an allowed-extensions list
-    INFO(p);
-    CHECK(p.startsWith("*."));
-    CHECK(p.lastIndexOfChar('*') == 0);
-  }
-  for (const char* name : {"a.wav", "a.WAV", "a.Wav", "a.mp3", "a.MP3", "a.flac", "a.m4a", "a.aif", "a.aiff", "a.aac", "a.ogg"}) {
-    INFO(name);
-    bool hit = false, hitCaseSensitive = false;
-    for (const auto& p : patterns) {
-      hit = hit || juce::String(name).matchesWildcard(p, true);
-      hitCaseSensitive = hitCaseSensitive || juce::String(name).matchesWildcard(p, false);
+  for (const bool mac : {false, true}) {
+    INFO("mac = " << mac);
+    const auto song = PlayAlongPanel::chooserSpec(A::SongFile, mac);
+    // Files only: no directory flag, which the macOS panel greyed the .wav out of.
+    CHECK((song.flags & juce::FileBrowserComponent::canSelectFiles) != 0);
+    CHECK((song.flags & juce::FileBrowserComponent::canSelectDirectories) == 0);
+    CHECK((song.flags & juce::FileBrowserComponent::openMode) != 0);
+    CHECK((song.flags & juce::FileBrowserComponent::saveMode) == 0);
+    juce::StringArray patterns;
+    patterns.addTokens(song.filter, ";", "");
+    patterns.removeEmptyStrings();
+    if (mac) {
+      CHECK(song.filter == "*");  // JUCE: allowedFileTypes = nil, the delegate matches every file
+    } else {
+      CHECK(patterns.size() == 8);
+      for (const auto& p : patterns) {  // the form the chooser can turn into an allowed-extensions list
+        INFO(p);
+        CHECK(p.startsWith("*."));
+        CHECK(p.lastIndexOfChar('*') == 0);
+        CHECK(p == p.toLowerCase());
+      }
     }
-    CHECK(hit);
-    if (juce::String(name) != "a.Wav") CHECK(hitCaseSensitive);  // a case-sensitive chooser still shows .WAV
-    CHECK(isSongFileName(name));                                   // the chooser and the loader agree
+    for (const char* name : {"a.wav", "a.WAV", "a.Wav", "a.mp3", "a.MP3", "a.flac", "a.m4a", "a.aif", "a.aiff", "a.aac", "a.ogg"}) {
+      INFO(name);
+      bool hit = false;
+      for (const auto& p : patterns) hit = hit || juce::String(name).matchesWildcard(p, true);  // JUCE matches ignoring case
+      CHECK(hit);
+      CHECK(isSongFileName(name));  // the chooser and the loader agree
+    }
+    CHECK_FALSE(isSongFileName("notes.txt"));
   }
   CHECK_FALSE(juce::String("notes.txt").matchesWildcard("*.wav;*.mp3", true));
 

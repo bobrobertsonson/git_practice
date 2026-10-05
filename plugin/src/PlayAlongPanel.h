@@ -40,7 +40,17 @@ class PlayAlongPanel : public juce::Component, public juce::FileDragAndDropTarge
     juce::String title, filter;  // filter: ';'-separated "*.ext" wildcards, empty = none
     int flags;                   // juce::FileBrowserComponent flags
   };
-  static ChooserSpec chooserSpec(ChooserAction a);  // pure: testable without a native dialog
+#if JUCE_MAC
+  static constexpr bool kIsMac = true;
+#else
+  static constexpr bool kIsMac = false;
+#endif
+  // Pure: testable without a native dialog. mac: the song chooser uses the filter "*" (no allowed-types list, the
+  // panel delegate accepts everything) and handlePicked validates the pick instead.
+  static ChooserSpec chooserSpec(ChooserAction a, bool mac = kIsMac);
+  // A chosen file / folder: validated (a non-song file or a non-folder is refused with a message in the status label and
+  // the current song is kept, never passed to loadSong), then loaded. Returns whether it was loaded. Empty file = cancelled.
+  bool handlePicked(ChooserAction a, const juce::File& f);
   void chooseSongFile();
   void chooseStemsFolder();
 
