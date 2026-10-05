@@ -26,6 +26,7 @@ import numpy as np
 from scipy import signal
 
 from .. import core as _core
+from .levelmatch import Levels, level_match
 from .space import Combo, build_preset, chain_blocks, manual_align, path_blocks, path_eq, post_eq
 
 RATE = 48000
@@ -162,9 +163,21 @@ class Engine:
         r = rep["align"]["resolved"]
         return manual_align(r["delaySamplesB"], r["invertB"])
 
+    def probe_levels(self, combo: Combo, v: dict, align: dict) -> Levels | None:
+        """Phase 10.1 level-match probe of a blend combo at blend 0.5 with the resolved alignment (no audio rendered).
+        None for single topologies (trims 0)."""
+        if combo.topology != "blend":
+            return None
+        p = build_preset(combo, {**v, "blend": 0.5}, gate=None, align=align)
+        return Levels.from_core(level_match(p, RATE, cache=self.cache))
+
     @staticmethod
-    def mix(a: np.ndarray, b: np.ndarray, blend: float, align: dict) -> np.ndarray:
-        """(1-blend)*A + blend*B with the manual alignment (+n delays B, -n delays A; invertB flips B)."""
+    def mix(a: np.ndarray, b: np.ndarray, blend: float, align: dict, levels: Levels | None = None) -> np.ndarray:
+        """(1-blend)*A + blend*B with the manual alignment (+n delays B, -n delays A; invertB flips B).
+        ``levels``: the trims are applied to A and B first, so ``blend`` is the level-matched linear blend."""
+        if levels is not None:
+            ga, gb = levels.gains
+            a, b = a * np.float32(ga), b * np.float32(gb)
         n = int(align.get("delaySamplesB", 0))
         b = -b if align.get("invertB") else b
         if n > 0:
@@ -173,10 +186,11 @@ class Engine:
             a = np.concatenate([np.zeros(-n, a.dtype), a[:n]])
         return ((1.0 - blend) * a + blend * b).astype(np.float32)
 
-    def emulate(self, combo: Combo, v: dict, core_a: np.ndarray, core_b: np.ndarray | None, align: dict) -> np.ndarray:
+    def emulate(self, combo: Combo, v: dict, core_a: np.ndarray, core_b: np.ndarray | None, align: dict,
+                levels: Levels | None = None) -> np.ndarray:
         """Output of the full chain from the core(s) (output gain not applied)."""
         a = self.linear(combo.cab, v, "a", core_a)
         if combo.topology != "blend":
             return a
         b = self.linear(combo.cab, v, "b", core_b)
-        return self.mix(a, b, v["blend"], align)
+        return self.mix(a, b, v["blend"], align, levels)

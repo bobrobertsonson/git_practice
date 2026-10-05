@@ -36,6 +36,12 @@ Topology topologyOf(const Preset& p) {
 
 void setTopology(Preset& p, Topology to, double blendIfRestored) {
   if (to == Topology::Blend) {
+    // Phase 10.1: a preset that carries neither level-match key (both at their defaults) gets the new-rig
+    // defaults when it first becomes a blend; presets that carry non-default values keep them.
+    if (!p.b.enabled && p.levelMatch.mode == LevelMatchMode::Off && p.blendLaw == BlendLaw::Linear) {
+      p.levelMatch.mode = LevelMatchMode::Auto;
+      p.blendLaw = BlendLaw::ConstantLoudness;
+    }
     p.b.enabled = true;
     if (p.blend == 0.0) p.blend = blendIfRestored;
     return;

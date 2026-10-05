@@ -497,7 +497,9 @@ active tab are UI state and are never saved. Spec: `docs/specs/phase10_rig_edito
   analytic response; drag a node (frequency + gain, or Q for high / low-pass), shift-drag or wheel (Q), double-click a node
   (on / off), right-click (type, remove), double-click empty space (add a band), `+ BAND`.
 - **BLEND.** Blend knob (`SAW 79 / BODY 21`), path levels with `M` / `S` (mute / solo, monitoring only), ALIGN
-  `AUTO | MANUAL | OFF` with the resolved values, nudge `-10 -1 +1 +10`, `INVERT B`, `RE-MEASURE`.
+  `AUTO | MANUAL | OFF` with the resolved values, nudge `-10 -1 +1 +10`, `INVERT B`, `RE-MEASURE`. Phase 10.1 adds a `LINEAR | CONSTANT` blend-law toggle next to the blend knob (a live edit, no
+  rebuild), a trim read-out under each path LEVEL knob (`+4.2 dB auto`, `+4.2 dB manual`, `0.0 dB off`, followed by ` · +1.0 dB` when
+  the player's own level offset is not zero) and `MATCH LEVELS`.
 - **CAB.** `SHARED | PER PATH`, `CAB ON`, IR cards with `CHOOSE...`; the notice `LIVE-COMPATIBLE: the no-cab NAM export is
   exact` (shared) or `STUDIO BLEND: only the with-cab NAM export is exact` (per path).
 - **GATE.** `GATE ON`, `GATE | EXPANDER`, THRESHOLD, HYSTERESIS, ATTACK, HOLD, RELEASE, RANGE, RATIO (expander only),
@@ -529,6 +531,12 @@ knob is disabled in the UI, but the host may still automate `blend`: with B disa
 **Alignment.** `AUTO` presets stay `AUTO` across loads; `RE-MEASURE` builds the engine in auto mode off the audio thread and
 writes `manual` values (`delaySamplesB`, `invertB`) back, without a further rebuild. Nudging or inverting while in `AUTO`
 switches to `MANUAL` seeded with the measured values.
+
+**Level match (phase 10.1).** The chain measures both paths with a guitar-shaped probe whenever it is built with both paths enabled
+(docs/PRESET_SCHEMA.md "Blend"). `MATCH LEVELS` builds the engine with `levelMatch` auto off the audio thread and writes the measured
+trims back as `levelMatch.mode = manual` without a further rebuild; a preset loaded in `auto` stays `auto` and the read-outs show the
+resolved trims. Turning a LEVEL knob never changes the trims. Switching a rig that carries neither level-match key (both at their
+defaults) to the BLEND topology sets `auto` + `constantLoudness`.
 
 **Gate LEARN.** The audio thread pushes one input peak per block into a lock-free ring (`rig/InputMeter.h`, 512 blocks);
 LEARN waits 1 s, takes the loudest peak since, and sets `gateThreshold = peak dB + input gain dB + 6 dB` (clamped to -80..-20; the gate sits after the input gain, the meter before it). The ring keeps only the last 512 blocks, so with 64-sample blocks at 48 kHz about 0.68 s is measured. The

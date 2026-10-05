@@ -145,6 +145,33 @@ def make_plan(preset: dict, mode: str, allow_inexact: bool = False) -> Plan:
     return plan
 
 
+def level_match_info(render_report: dict) -> dict | None:
+    """Trims and make-up the core measured (phase 10.1 render report: ``levelMatch`` and ``blend.makeupDb``); None for
+    older reports without them."""
+    lm = render_report.get("levelMatch")
+    if not isinstance(lm, dict):
+        return None
+    bl = render_report.get("blend")
+    bl = bl if isinstance(bl, dict) else {}
+    return {"mode": lm.get("mode"), "trimADb": lm.get("trimADb"), "trimBDb": lm.get("trimBDb"),
+            "blendLaw": bl.get("law"), "makeupDb": bl.get("makeupDb")}
+
+
+def level_match_lines(render_report: dict) -> list[str]:
+    """Console lines for the trims / make-up baked into the trained signal (empty when the report has none)."""
+    info = level_match_info(render_report)
+    if info is None:
+        return []
+    f = lambda x: "n/a" if x is None else f"{x:+.1f} dB"
+    line = f"level match ({info['mode']}): A {f(info['trimADb'])}, B {f(info['trimBDb'])}"
+    if info["blendLaw"]:
+        line += f"; blend law {info['blendLaw']}"
+    out = [line]
+    if info["makeupDb"]:
+        out.append("  make-up at blend 0/.25/.5/.75/1: " + ", ".join(f"{m:+.1f}" for m in info["makeupDb"]) + " dB")
+    return out
+
+
 def core_trainability_problems(report: dict) -> list[str]:
     """Render-report warnings that mean the C++ registry flags a block / the bus comp as not NAM-trainable."""
     return [w for w in report.get("warnings", []) if "not NAM-trainable" in w]

@@ -20,7 +20,7 @@ from .space import Combo, Space
 
 
 def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, align: dict, v0: dict, *,
-                 seed: int, gens_linear: int = 30, pop_linear: int = 16, gens_gain: int = 8, pop_gain: int = 8,
+                 seed: int, levels=None, gens_linear: int = 30, pop_linear: int = 16, gens_gain: int = 8, pop_gain: int = 8,
                  gens_final: int = 20, patience: int | None = None, patience_gain: int | None = None, tol: float = 0.0, on_gen=None,
                  gex=None, gtgt=None, short_linear: bool = False, log=print) -> tuple[dict, L.LossResult, dict]:
     t0 = time.time()
@@ -42,7 +42,7 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
         return r[0], (r[1] if len(r) > 1 else None)
 
     def score(vv, ca, cb, ex_=ex, tgt_=tgt):
-        y = ex_.trim(eng.emulate(combo, vv, ca, cb, align))
+        y = ex_.trim(eng.emulate(combo, vv, ca, cb, align, levels))
         return L.evaluate(y, tgt_, space.eq_gains(vv))
 
     def run_block(u, idx, popsize, gens, sigma, block, seed_off, cores=None, label=None, ctx=(ex, tgt)):

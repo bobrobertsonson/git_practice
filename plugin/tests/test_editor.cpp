@@ -1186,6 +1186,55 @@ TEST_CASE("rig editor: screenshots", "[editor][rig]") {
   }
 }
 
+TEST_CASE("rig editor: MATCH LEVELS fills the trim read-outs and the blend law round-trips through state", "[editor][rig][levelmatch]") {
+  json j = fxPreset();
+  j["paths"]["b"]["levelDb"] = -6.0;
+  j["levelMatch"] = {{"mode", "off"}};
+  j["blendLaw"] = "constantLoudness";
+  FxRig rig(j);
+  rig.open(rig::RigEditorPanel::Tab::Blend);
+  CHECK(anyLabelContains(*rig.ed, "0.0 dB off"));
+
+  juce::Button* match = buttonTitled(*rig.ed, "MATCH LEVELS");
+  REQUIRE(match != nullptr);
+  CHECK(match->isEnabled());
+  CHECK(match->getTooltip().isNotEmpty());
+  click(*match);
+  rig.wait();
+  rig.panel().refresh();
+  const Preset p = rig.proc.currentPreset();
+  CHECK(p.levelMatch.mode == LevelMatchMode::Manual);
+  CHECK(p.levelMatch.trimADb == Catch::Approx(0.0).margin(0.1));
+  CHECK(p.levelMatch.trimBDb == Catch::Approx(6.0).margin(0.1));
+  CHECK(anyLabelContains(*rig.ed, "manual"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "0.0 dB off"));
+  CHECK(anyLabelContains(*rig.ed, "+6.0 dB manual"));
+  CHECK(anyLabelContains(*rig.ed, juce::String::fromUTF8(" \xC2\xB7 -6.0 dB")));  // the player's offset, separately
+
+  // LINEAR / CONSTANT: a live edit (no rebuild), saved with the plugin state.
+  juce::Button* linear = buttonTitled(*rig.ed, "Blend law LINEAR");
+  juce::Button* constant = buttonTitled(*rig.ed, "Blend law CONSTANT");
+  REQUIRE(linear != nullptr);
+  REQUIRE(constant != nullptr);
+  const auto builds = rig.proc.engineBuilds();
+  click(*linear);
+  CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::Linear);
+  CHECK(rig.proc.engineBuilds() == builds);
+  {
+    juce::MemoryBlock state;
+    rig.proc.getStateInformation(state);
+    SawbladeProcessor other;
+    other.prepareToPlay(48000.0, 512);
+    other.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    REQUIRE(other.waitForLoader(std::chrono::milliseconds(60000)));
+    CHECK(other.currentPreset().blendLaw == BlendLaw::Linear);
+    CHECK(other.currentPreset().levelMatch.mode == LevelMatchMode::Manual);
+    CHECK(other.currentPreset().levelMatch.trimBDb == Catch::Approx(6.0).margin(0.1));
+  }
+  click(*constant);
+  CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::ConstantLoudness);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Pedal face and advanced drawer (docs/specs/phase7b_chainsaw_pedal.md, 5.3-5.6; acceptance 13).
 namespace {
@@ -2505,4 +2554,26 @@ TEST_CASE("match screen: an old PREVIEW shows that it is over 24 h old and is no
   rig.screen().refresh();
   CHECK(rig.proc.jobs().refineSnapshot().state == JobState::None);
   CHECK(anyLabelEquals(rig.screen(), "Preview is over 24 h old: re-run MATCH to refine."));
+}
+
+TEST_CASE("rig editor: CONSTANT on a legacy preset rebuilds once; on a measured engine it is live", "[editor][rig][levelmatch]") {
+  FxRig rig(fxPreset());  // no level-match keys: off + linear, never probed
+  rig.open(rig::RigEditorPanel::Tab::Blend);
+  CHECK_FALSE(rig.proc.status().info.levelMeasured);
+  juce::Button* linear = buttonTitled(*rig.ed, "Blend law LINEAR");
+  juce::Button* constant = buttonTitled(*rig.ed, "Blend law CONSTANT");
+  REQUIRE(linear != nullptr);
+  REQUIRE(constant != nullptr);
+  auto builds = rig.proc.engineBuilds();
+  click(*constant);
+  rig.wait();
+  CHECK(rig.proc.engineBuilds() == builds + 1);
+  CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::ConstantLoudness);
+  CHECK(rig.proc.status().info.levelMeasured);
+  builds = rig.proc.engineBuilds();
+  click(*linear);
+  click(*constant);
+  rig.wait();
+  CHECK(rig.proc.engineBuilds() == builds);
+  CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::ConstantLoudness);
 }

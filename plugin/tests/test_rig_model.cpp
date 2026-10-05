@@ -101,6 +101,21 @@ TEST_CASE("RigModel: topology round trip keeps every block", "[rig][model][topol
   CHECK(q.blend == 0.8);
 }
 
+TEST_CASE("RigModel: switching to Blend gives a preset with default level-match keys auto + constant loudness", "[rig][model][topology][levelmatch]") {
+  Preset p = rig();
+  setTopology(p, Topology::Single, 0.5);
+  setTopology(p, Topology::Blend, 0.5);
+  CHECK(p.levelMatch.mode == LevelMatchMode::Auto);
+  CHECK(p.blendLaw == BlendLaw::ConstantLoudness);
+  // Presets that carry their own values keep them.
+  Preset q = rig();
+  q.levelMatch = {LevelMatchMode::Manual, 1.0, 2.0};
+  setTopology(q, Topology::Single, 0.5);
+  setTopology(q, Topology::Blend, 0.5);
+  CHECK(q.levelMatch.mode == LevelMatchMode::Manual);
+  CHECK(q.blendLaw == BlendLaw::Linear);
+}
+
 TEST_CASE("RigModel: Single to SinglePlusTwoPedals with no bypassed pedal changes nothing", "[rig][model][topology]") {
   Preset p = rig();
   p.a.blocks.erase(p.a.blocks.begin() + 1);  // one pedal slot only

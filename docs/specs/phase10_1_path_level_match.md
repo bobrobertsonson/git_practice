@@ -87,3 +87,93 @@ Owner: `dsp-engineer`. Builds on phase 10 (rig editor) and the auto-align probe 
   `presets/matched/barbaric_v4.json` and one style preset, and a plot of output loudness vs
   blend for both laws.
 - Reviewer ACCEPT.
+
+## Lead implementation decisions (2026-10-04, binding for implementer and reviewer)
+
+These resolve the ambiguities in the sections above. Where they conflict with an earlier line,
+these win.
+
+### Probe and measurement
+
+- **One probe run, two segments.** `Chain::resolveAlignment()` keeps its recipe and result.
+  A new `Chain::resolveLevelMatch()` (not RT-safe, needs `prepare()`) renders the 1.5 s guitar
+  segment through both paths at the blend point (same tap as alignment, gate bypassed, current
+  latency compensation, *alignment applied* as resolved/stored so the sum is coherent), with
+  each path's `levelDb` from the preset included (the test "6 dB `levelDb` offset → trims
+  cancel it" requires this). Both resolvers run inside `prepare()`; the level-match pass runs
+  whenever **both paths are enabled**, regardless of `levelMatch.mode` and `blendLaw`, so a
+  live law toggle in the plugin always has a make-up curve to use. With one path enabled (single
+  topologies) trims and make-up are all 0 and the pass is skipped.
+- **Guitar segment** (`chain.cpp`, documented in a comment): 1.5 s, seed 2, Karplus–Strong
+  plucks; 8 hits at 0.1875 s spacing, notes cycling A1 55 Hz, A1, D2 73.42 Hz, A1, A1, E2
+  82.41 Hz, A1, D2; excitation = 1 period of seeded uniform noise; loop filter = two-tap
+  average with loss factor chosen so the string decays by 60 dB in about 0.25 s (palm mute);
+  generated in `double` at the chain's rate, then scaled so the segment's peak is −12 dBFS.
+  Expose `kLevelProbeSeconds = 1.5`, `kLevelProbePeakDbfs = -12`, `kLevelProbeSeed = 2`,
+  `kLevelProbeHits = 8` on `Chain`.
+- **Loudness**: `integratedLoudnessLufs` (mono: pass the same buffer as L and R, or add a mono
+  overload) over the full guitar segment of each path's output (`lufsA`, `lufsB`). If either is
+  `nullopt` (gated silence) → trims 0, make-up 0, warning "level match: path X is silent".
+- **Trims**: `trimA = max(0, lufsA_louder − lufsA)` etc.: the louder path gets 0, the quieter
+  the positive difference, clamped to +18 dB. `sumLufs` = loudness of the aligned,
+  polarity-corrected linear sum at `b = 0.5` after trims (report only).
+- **Make-up curve**: for `b ∈ {0, .25, .5, .75, 1}` form the equal-power sum
+  `cos(πb/2)·A' + sin(πb/2)·B'` of the *trimmed* (per the effective mode: resolved trims for
+  `auto`, stored for `manual`, 0 for `off`) aligned path outputs in memory (no re-render), measure
+  LUFS `L(b)`, and set `makeupDb[i] = Lref − L(b)` with `Lref = (L(0) + L(1)) / 2`, each clamped
+  to ±12 dB. Between the five points `m(b)` is linear in dB.
+
+### Signal path
+
+- **Trims** are folded into each path's existing `level` gain target
+  (`levelDb + trim + mute`), so no new stage and no latency. `LiveParams.levelDbA/B` remain the
+  taste offset on top; changing them never changes the trims.
+- **Blend law** becomes a *live* control: `LiveParams.blendLaw` (`Linear | ConstantLoudness`),
+  default from the preset. Weights at the target `b` are `(1−b, b)` or `(cos, sin)`; the make-up
+  linear gain at the target is `10^(m(b)/20)` (0 dB for linear). All three are ramped linearly
+  over `kLiveRampMs` exactly like today's `blendA_/blendB_`, so there is no per-sample `exp`
+  or interpolation on the audio thread. Polarity still rides on the B weight.
+- **Headroom**: the sum is multiplied by 0.5 (exact in float) and the output gain by 2. The bus
+  compressor's `thresholdDb` is referred to the *pre-headroom* level (internally −6 dB) so every
+  existing preset keeps its compressor behaviour; goldens must stay bit-identical (they do not
+  use the compressor; if one does, document the float tolerance). State this in
+  `docs/PRESET_SCHEMA.md`.
+
+### Schema, info, report, CLI, bindings
+
+- Preset: `LevelMatch { mode (Auto|Manual|Off), trimADb, trimBDb }` and
+  `BlendLaw { Linear, ConstantLoudness }`; `levelMatch.mode` defaults to `off`, `blendLaw` to
+  `linear`; the writer emits both keys always (round trip) — but a preset *read* without them
+  must render bit-identically. Trims parse in [0, 18].
+- `ChainInfo` gains `levelMatchMode`, `trimDb[2]` (in effect), `lufs[2]`, `sumLufs`,
+  `makeupDb[5]`, `blendLaw`. `AlignResult` is unchanged.
+- Render report JSON: `"levelMatch": { "mode", "trimADb", "trimBDb", "lufsA", "lufsB",
+  "sumLufs" }` and `"blend": { "value", "law", "makeupDb": [5] }`. `tonerender --report` writes
+  the JSON; the console summary adds one line `level match: A +x.x dB, B +y.y dB; make-up
+  [..]`.
+- pybind: `sawblade_core.level_match(preset, sample_rate, base_dir=None, cache=None) -> dict`
+  with `trimADb, trimBDb, lufsA, lufsB, sumLufs, makeupDb (list[5]), delaySamplesB, invertB`
+  — build the chain, `prepare()`, return the info; no audio rendered. The matcher uses this.
+
+### Plugin
+
+- `blendLaw` toggle is a live edit (snapshot), no engine rebuild. MATCH LEVELS runs the probe
+  on the loader thread like RE-MEASURE and writes the result back as `levelMatch.mode =
+  manual` with the measured trims (same convention as RE-MEASURE → `align.manual`). A preset
+  loaded in `auto` stays `auto` and the read-outs show the resolved trims from `ChainInfo`.
+- Read-out under each LEVEL knob: `"+4.2 dB auto"` / `"+4.2 dB manual"` / `"0.0 dB off"` plus
+  the user offset when non-zero: `"+4.2 dB auto · +1.0 dB"`.
+- "Default CONSTANT + auto for new rigs": when the rig editor switches a preset to the BLEND
+  topology and the preset carries neither key, set `auto` + `constantLoudness`. Presets that
+  carry the keys keep them.
+
+### Matcher
+
+- The matcher mixes paths in numpy; keep that. After captures are chosen, call
+  `sawblade_core.level_match` on the candidate preset (blend 0.5, align as the matcher resolved
+  it), apply the trims to the cached per-path renders, then fit the *linear* blend `b_lin` as
+  today and convert to the constant-loudness position with the same A:B ratio:
+  `b_cl = (2/π)·atan(b_lin / (1 − b_lin))` (clamped). Emit `levelMatch: { mode: "manual",
+  trimADb, trimBDb }`, `blend: b_cl`, `blendLaw: "constantLoudness"`. The Occam comparison
+  (`OCCAM_DB`) runs between the level-matched candidates. The export report prints the trims
+  and make-up from the render report.

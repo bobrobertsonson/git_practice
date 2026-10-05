@@ -26,6 +26,8 @@ Readers must reject `version` greater than they support and migrate lower versio
   "paths":  { "a": Path, "b": Path },  // required; both keys required
   "align":  { ... },                   // optional; see Align
   "blend":  0.5,                       // optional; 0 = only A, 1 = only B
+  "blendLaw": "linear",                // optional; "linear" | "constantLoudness"; see Blend
+  "levelMatch": { ... },               // optional; see Blend ("Level matching")
   "cab":    { ... },                   // required; see Cab
   "postEq": [ EqBand, ... ],           // optional, default []
   "busComp":{ ... },                   // optional; see Bus compressor
@@ -327,8 +329,70 @@ different latency calibration, pedal phase shifts, etc.).
 
 ## Blend
 
-`out = (1 − blend) · A + blend · B` (linear crossfade: aligned paths are highly correlated,
-so linear keeps level roughly constant; equal-power would bump the middle by up to 3 dB).
+```jsonc
+"blend": 0.5,                    // 0 = only A, 1 = only B (a scalar; host-automatable in the plugin)
+"blendLaw": "linear",            // "linear" (default when absent) | "constantLoudness"
+"levelMatch": {                  // optional; default { "mode": "off" }
+  "mode": "off",                 // "auto" | "manual" | "off"
+  "trimADb": 0.0, "trimBDb": 0.0 // manual trims in dB, each in [0, 18]
+}
+```
+
+Both keys are additive: a preset without them (every pre-10.1 preset, golden and export) has
+`levelMatch.mode = off` and `blendLaw = linear` and renders bit-identically to before. The writer
+always emits both keys. New presets written by the plugin (a rig first switched to BLEND) and by the
+matcher use `auto` / `manual` plus `constantLoudness`.
+
+**Blend law.** With `b = blend`, `A` / `B` the aligned, polarity-corrected path outputs (after trims):
+
+- `linear`: `(1 − b) · A + b · B`. Aligned paths are highly correlated, so the level stays roughly
+  constant only when the two paths are equally loud and coherent.
+- `constantLoudness`: equal-power crossfade `cos(πb/2) · A + sin(πb/2) · B` followed by a make-up gain
+  `m(b)` (dB) chosen so that the measured loudness of the output is the same at every `b` (below).
+
+The law is a live control in the plugin (no rebuild); the weights and the make-up gain are ramped
+linearly over 20 ms like the blend itself. The law and the make-up never add latency.
+
+**Level matching.** Mismatched path loudness makes BLEND useless (a scooped chainsaw path and a dense
+body path differ by 3 to 6 dB at equal peak), so the chain measures both paths when it is prepared, on
+the same occasions as auto alignment (preset load, capture swap; always on the background loader) and
+whenever both paths are enabled and (`levelMatch.mode` is not `off` or `blendLaw` is `constantLoudness`); a legacy-shaped
+preset (`off` + `linear`) never runs the probe, so it renders bit-identically to before (`levelMatch.measured` is false in the report). With a path disabled all trims and make-up are 0 and nothing is measured.
+The deterministic probe (documented in `core/src/chain.cpp`; no audio fixture):
+
+1. Alignment is resolved first (its own probe: 1.0 s noise). The level probe then renders a 1.5 s
+   guitar-shaped segment through both paths at the blend point (post path EQ, per-path IR in `perPath`
+   mode, gate bypassed, the alignment as resolved or stored, each path's `levelDb` included, no trim):
+   8 Karplus-Strong palm-mute plucks 0.1875 s apart (A1 55 Hz, A1, D2 73.42 Hz, A1, A1, E2 82.41 Hz, A1,
+   D2), seed 2, 60 dB decay in about 0.25 s, peak -12 dBFS.
+2. Loudness is BS.1770 integrated loudness (mono) of each path's output over that segment: `lufsA`,
+   `lufsB`.
+3. Trims: the louder path gets 0 dB, the quieter one the positive difference, clamped to +18 dB:
+   `trimADb`, `trimBDb`. In effect: `auto` uses the measured values, `manual` the stored ones, `off` 0.
+   A trim is folded into the path's level gain (`levelDb + trim`): no extra stage, no latency. The
+   player's `levelDb` stays on top as a taste offset and never changes the trims. If a path is silent
+   the trims and make-up are 0 and a warning is reported.
+4. Make-up: for `b` in {0, .25, .5, .75, 1} the equal-power sum of the trimmed aligned outputs is formed
+   in memory and measured (`L(b)`); `makeupDb[i] = Lref - L(b_i)` with `Lref = (L(0) + L(1)) / 2`, each
+   clamped to ±12 dB. Between the five points `m(b)` is linear in dB. `sumLufs` is the loudness of the
+   linear sum at `b = 0.5` after trims (report only).
+
+The rig editor's MATCH LEVELS runs this probe and stores the result as `levelMatch.mode = "manual"` with
+the measured trims (like RE-MEASURE does for `align`); a preset loaded in `auto` stays `auto`.
+
+**Sum headroom.** The sum node has 6 dB of fixed headroom: the blend weights include a factor 0.5 and
+the output stage multiplies by 2 (both exact in float, so every linear stage downstream is bit-transparent).
+The bus compressor's `thresholdDb` is referred to the pre-headroom level (the chain subtracts 6.0206 dB
+from it internally), so a preset keeps its compressor behaviour (float tolerance 1e-5).
+
+**Export.** The trained signal includes the trims and the make-up at the preset's `blend`; the export report
+prints them. The render report (`tonerender --report`) carries:
+
+```jsonc
+"levelMatch": { "mode": "auto", "measured": true, "trimADb": 2.02, "trimBDb": 0.0,
+                "lufsA": -12.26, "lufsB": -10.23, "sumLufs": -10.99 },  // lufs / sumLufs: null when not measured
+"blend": { "value": 0.5, "law": "constantLoudness", "makeupDb": [0.0, -1.7, -2.3, -1.7, 0.0] }
+```
 
 ## Cab
 
@@ -399,6 +463,7 @@ clamped (the plugin reader never throws). Songs and their stems are never stored
 - `latencySamples` per path and total: processing latency only (alignment delay is part of
   the tone and reported separately as `alignDelay`).
 - `align.resolved`: `{ delaySamplesB, invertB, peakCorrelation }`.
+- `levelMatch` (trims in effect, per-path LUFS, sum LUFS) and `blend.makeupDb[5]`: see Blend.
 
 ## Example
 

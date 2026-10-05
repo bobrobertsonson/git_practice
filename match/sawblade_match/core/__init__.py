@@ -66,4 +66,13 @@ load_stems = getattr(_core, "load_stems", None)
 stem_set_from_arrays = getattr(_core, "stem_set_from_arrays", None)
 integrated_loudness_lufs = getattr(_core, "integrated_loudness_lufs", None)
 
-__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError", "StemSet", "StemPlayer", "load_stems", "stem_set_from_arrays", "integrated_loudness_lufs"]
+__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError", "StemSet", "StemPlayer", "load_stems", "stem_set_from_arrays", "integrated_loudness_lufs", "level_match"]
+
+
+def level_match(preset, sample_rate, base_dir=None, cache=None) -> dict:
+    """Phase 10.1 level-match probe (``trimADb, trimBDb, lufsA, lufsB, sumLufs, makeupDb[5], delaySamplesB,
+    invertB``); no audio is rendered. Same argument conventions as ``render``."""
+    fn = getattr(_core, "level_match", None)
+    if fn is None:
+        raise ImportError("sawblade_core has no level_match (built before phase 10.1); rebuild the extension")
+    return fn(preset, sample_rate, base_dir=base_dir, cache=cache)

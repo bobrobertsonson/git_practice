@@ -198,6 +198,23 @@ json toJson(const AlignParams& a) {
           {"maxLagMs", a.maxLagMs}, {"delaySamplesB", a.delaySamplesB}, {"invertB", a.invertB}};
 }
 
+LevelMatch parseLevelMatch(JsonObject& root) {
+  LevelMatch l;
+  auto o = root.optionalObject("levelMatch");
+  if (!o) return l;
+  const std::string m = o->oneOf("mode", "off", {"auto", "manual", "off"});
+  l.mode = m == "auto" ? LevelMatchMode::Auto : m == "manual" ? LevelMatchMode::Manual : LevelMatchMode::Off;
+  l.trimADb = o->number("trimADb", 0.0, 0.0, kMaxLevelTrimDb);
+  l.trimBDb = o->number("trimBDb", 0.0, 0.0, kMaxLevelTrimDb);
+  o->finish();
+  return l;
+}
+
+json toJson(const LevelMatch& l) {
+  return {{"mode", l.mode == LevelMatchMode::Auto ? "auto" : l.mode == LevelMatchMode::Manual ? "manual" : "off"},
+          {"trimADb", l.trimADb}, {"trimBDb", l.trimBDb}};
+}
+
 CabPreset parseCab(JsonObject& root, const fs::path& baseDir) {
   CabPreset c;
   JsonObject o = root.requireObject("cab");
@@ -346,6 +363,9 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
   }
   p.align = parseAlign(r);
   p.blend = r.number("blend", 0.5, 0.0, 1.0);
+  p.blendLaw = r.oneOf("blendLaw", "linear", {"linear", "constantLoudness"}) == "linear" ? BlendLaw::Linear
+                                                                                          : BlendLaw::ConstantLoudness;
+  p.levelMatch = parseLevelMatch(r);
   p.cab = parseCab(r, baseDir);
   p.postEq = parseEqBandList(r, "postEq");
   p.busComp = parseBusComp(r);
@@ -370,6 +390,8 @@ nlohmann::json toJson(const Preset& p) {
           {"paths", {{"a", toJson(p.a)}, {"b", toJson(p.b)}}},
           {"align", toJson(p.align)},
           {"blend", p.blend},
+          {"blendLaw", p.blendLaw == BlendLaw::Linear ? "linear" : "constantLoudness"},
+          {"levelMatch", toJson(p.levelMatch)},
           {"cab", toJson(p.cab)},
           {"postEq", eqListJson(p.postEq)},
           {"busComp", toJson(p.busComp)},

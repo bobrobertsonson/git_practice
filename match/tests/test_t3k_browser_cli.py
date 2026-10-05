@@ -106,7 +106,7 @@ def test_fetch_model_not_in_list_is_not_found(run, world, tmp_path):
 
 def test_error_codes_auth_network_error(make_client, monkeypatch, capsys, world):
     monkeypatch.setattr(cli, "make_client", lambda: make_client(access=None))   # not logged in
-    assert cli.main(["models", "10", "--json"]) == 1
+    assert cli.main(["models", "10", "--json"]) == cli.EXIT_NOT_LOGGED_IN      # ReauthRequired: exit 4 (the plugin relies on it)
     assert json.loads(capsys.readouterr().out)["code"] == "auth"
 
     monkeypatch.delenv("TONE3000_CLIENT_ID", raising=False)
@@ -204,7 +204,7 @@ def test_search_json_error_object(run, world, monkeypatch):
     from sawblade_match.t3k.errors import ReauthRequired
     monkeypatch.setattr(cli, "make_client", lambda: (_ for _ in ()).throw(ReauthRequired("not logged in")))
     rc, out, _ = run("search", "x", "--json")
-    assert rc == 1 and out == {"error": "not logged in", "code": "auth"}
+    assert rc == cli.EXIT_NOT_LOGGED_IN and out == {"error": "not logged in", "code": "auth"}
 
 
 @pytest.fixture
