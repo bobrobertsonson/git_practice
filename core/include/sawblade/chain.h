@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "sawblade/amp_controls.h"
 #include "sawblade/block_registry.h"
 #include "sawblade/bus_comp.h"
 #include "sawblade/convolver.h"
@@ -135,6 +136,9 @@ struct LiveParams {
   std::array<LiveEq, 2> preEq{}, pathEq{};
   // Input / output gain of each block (by block index; `nam` blocks only, others ignore it).
   std::array<std::array<LiveBlock, kMaxBlocksPerPath>, 2> blocks{};
+  // Amp controls of each path ([0] = a, [1] = b); they act only on a path that has an amp block (ampIndex).
+  // Ramped like the other live gains (see AmpStage); out-of-range values are clamped, non-finite ones ignored.
+  std::array<AmpKnobs, 2> amp{};
   // Monitoring (not preset state): ramp the path's level to silence and back.
   bool muteA = false, muteB = false;
 
@@ -225,6 +229,8 @@ class Chain {
   struct Path {
     ParametricEq preEq, eq;
     std::vector<LoadedBlock> blocks;
+    AmpStage amp;       // GAIN before / tone stack + LEVEL after block `ampBlock`
+    int ampBlock = -1;  // ampIndex(path); -1 = no amp controls
     Gain level;
     std::unique_ptr<Convolver> cab;  // perPath mode only
     DelayLine delay;

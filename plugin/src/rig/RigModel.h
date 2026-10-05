@@ -18,8 +18,9 @@ namespace sawblade::plugin::rig {
 enum class Topology { Single, SinglePlusTwoPedals, Blend };
 
 // A path's amp is its last block with slot "amp", else its last `nam` block (-1: none). Every other
-// block is a pedal slot, whatever its type.
-int ampIndex(const PathPreset& p);
+// block is a pedal slot, whatever its type. The rule lives in core (sawblade::ampIndex, which the amp
+// controls of v0.2 use too); this is the same function, not a second copy.
+using sawblade::ampIndex;
 bool isPedalSlot(const PathPreset& p, int index);
 int activePedalSlots(const PathPreset& p);  // pedal-slot blocks that are not bypassed
 

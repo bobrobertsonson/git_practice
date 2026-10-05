@@ -11,15 +11,6 @@
 
 namespace sawblade::plugin::rig {
 // --- topology --------------------------------------------------------------------------------------
-int ampIndex(const PathPreset& p) {
-  const int n = static_cast<int>(p.blocks.size());
-  for (int i = n - 1; i >= 0; --i)
-    if (p.blocks[static_cast<std::size_t>(i)].slot == "amp") return i;
-  for (int i = n - 1; i >= 0; --i)
-    if (p.blocks[static_cast<std::size_t>(i)].type == "nam") return i;
-  return -1;
-}
-
 bool isPedalSlot(const PathPreset& p, int index) {
   return index >= 0 && index < static_cast<int>(p.blocks.size()) && index != ampIndex(p);
 }

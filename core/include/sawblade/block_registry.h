@@ -19,6 +19,12 @@ struct BlockTraits {
   bool namTrainable = true;
 };
 
+// The per-path amp control set (core/include/sawblade/amp_controls.h) is not a block type: the Chain owns it
+// and the block picker cannot insert it. Its traits live here, next to the registry's: latency 0, and
+// NAM-trainable because it is linear and time-invariant at fixed knobs (gain, shelves, a peak, a gain).
+inline constexpr BlockTraits kAmpControlsTraits{true};
+inline constexpr int kAmpControlsLatencySamples = 0;
+
 struct BlockBuildContext {
   double sampleRate = 0.0;
   std::vector<std::string>* warnings = nullptr;  // loaders append human-readable warnings

@@ -50,6 +50,19 @@ std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, do
 bool usesSharedCab(CabMode m) { return m != CabMode::PerPath; }
 
 // Deterministic white noise: xorshift64* (not <random>: distributions are implementation-defined).
+// Live amp knobs: non-finite values keep the old value, the rest is clamped to the knob range.
+void sanitizeAmp(AmpKnobs& n, const AmpKnobs& o) noexcept {
+  const auto fix = [](double& v, double old) {
+    v = std::isfinite(v) ? std::min(kAmpKnobMax, std::max(kAmpKnobMin, v)) : old;
+  };
+  fix(n.gain, o.gain);
+  fix(n.bass, o.bass);
+  fix(n.mid, o.mid);
+  fix(n.treble, o.treble);
+  fix(n.presence, o.presence);
+  fix(n.level, o.level);
+}
+
 std::vector<float> makeProbe(double sr) {
   const auto n = static_cast<std::size_t>(std::llround(Chain::kProbeSeconds * sr));
   // Uniform in [-1, 1) has RMS 1/sqrt(3); scale so the RMS is kProbeLevelDbfs.
@@ -227,6 +240,7 @@ LiveParams LiveParams::fromPreset(const Preset& p) {
     for (std::size_t i = 0; i < pp[k]->blocks.size() && i < l.blocks[k].size(); ++i)
       if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp[k]->blocks[i].params.get()))
         l.blocks[k][i] = {nam->inputGainDb, nam->outputGainDb};
+    l.amp[k] = pp[k]->ampControls.knobs();
   }
   return l;
 }
@@ -253,6 +267,8 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
       throw PresetError(pathName + ".eq", e.what());
     }
     p.level.setGainLinear(levelTarget(k, pp[k]->levelDb, false));
+    p.ampBlock = ampIndex(*pp[k]);
+    if (p.ampBlock >= 0) p.amp.setKnobsNow(pp[k]->ampControls.knobs());  // else stays neutral
     for (const auto& lb : p.blocks)
       if (!lb.processor) throw std::runtime_error("ChainResources contains a null block");
   }
@@ -323,6 +339,7 @@ void Chain::prepare(const ProcessSpec& spec) {
     p.preEq.prepare(spec);
     p.eq.prepare(spec);
     for (auto& lb : p.blocks) lb.processor->prepare(spec);
+    p.amp.prepare(spec);
     if (p.cab) p.cab->prepare(spec);
     p.level.prepare(spec);
     p.latency = 0;
@@ -435,6 +452,7 @@ void Chain::resetAll() {
     p.preEq.reset();
     p.eq.reset();
     for (auto& lb : p.blocks) lb.processor->reset();
+    p.amp.reset();
     if (p.cab) p.cab->reset();
     p.level.reset();
     p.delay.reset();
@@ -632,8 +650,12 @@ void Chain::renderPath(Path& p, float* io, int n, std::uint64_t counter, bool al
   const auto k = static_cast<std::size_t>(&p - path_.data());
   if (allowRamp) processEq(p.preEq, preRamps_[k], io, n, counter);
   else p.preEq.process(io, n);
-  for (auto& lb : p.blocks)
-    if (!lb.bypass) lb.processor->process(io, n);
+  for (std::size_t i = 0; i < p.blocks.size(); ++i) {
+    const bool amp = static_cast<int>(i) == p.ampBlock;  // the amp controls act around this block
+    if (amp) p.amp.processPre(io, n);
+    if (!p.blocks[i].bypass) p.blocks[i].processor->process(io, n);
+    if (amp) p.amp.processPost(io, n);
+  }
   if (allowRamp) processEq(p.eq, pathRamps_[k], io, n, counter);
   else p.eq.process(io, n);
   p.level.process(io, n);
@@ -742,6 +764,8 @@ void Chain::setLiveParams(const LiveParams& in) noexcept {
   if (p.blend != live_.blend || p.blendLaw != live_.blendLaw) setBlendTargets(p.blend, p.blendLaw, true);
   applyLiveEq(postRamps_, preset_.postEq, live_.postEq, p.postEq);
   for (std::size_t k = 0; k < 2; ++k) {
+    sanitizeAmp(p.amp[k], live_.amp[k]);
+    if (p.amp[k] != live_.amp[k] && path_[k].ampBlock >= 0) path_[k].amp.setKnobs(p.amp[k], rampSamples_);
     applyLiveEq(preRamps_[k], pp[k]->preEq, live_.preEq[k], p.preEq[k]);
     applyLiveEq(pathRamps_[k], pp[k]->eq, live_.pathEq[k], p.pathEq[k]);
     auto& blocks = path_[k].blocks;

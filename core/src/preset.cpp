@@ -25,6 +25,15 @@ bool operator==(const EqBand& a, const EqBand& b) {
   return a.type == b.type && a.freq == b.freq && a.gainDb == b.gainDb && a.q == b.q && a.enabled == b.enabled;
 }
 
+int ampIndex(const PathPreset& p) {
+  const int n = static_cast<int>(p.blocks.size());
+  for (int i = n - 1; i >= 0; --i)
+    if (p.blocks[static_cast<std::size_t>(i)].slot == "amp") return i;
+  for (int i = n - 1; i >= 0; --i)
+    if (p.blocks[static_cast<std::size_t>(i)].type == "nam") return i;
+  return -1;
+}
+
 bool Block::operator==(const Block& o) const {
   if (id != o.id || type != o.type || slot != o.slot || bypass != o.bypass) return false;
   if (!params || !o.params) return params == o.params;
@@ -157,6 +166,29 @@ json toJson(const Block& b) {
   return j;
 }
 
+AmpControls parseAmpControls(JsonObject& path) {
+  AmpControls c;
+  auto o = path.optionalObject("ampControls");
+  if (!o) return c;
+  c.gain = o->number("gain", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.bass = o->number("bass", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.mid = o->number("mid", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.treble = o->number("treble", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.presence = o->number("presence", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.level = o->number("level", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.gainStep = o->string("gainStep", "");
+  if (o->has("gainStep") && c.gainStep.empty()) throw PresetError(o->child("gainStep"), "must not be empty");
+  o->finish();
+  return c;
+}
+
+json toJson(const AmpControls& c) {
+  json j = {{"gain", c.gain}, {"bass", c.bass}, {"mid", c.mid},
+            {"treble", c.treble}, {"presence", c.presence}, {"level", c.level}};
+  if (!c.gainStep.empty()) j["gainStep"] = c.gainStep;
+  return j;
+}
+
 PathPreset parsePath(JsonObject& o, const fs::path& baseDir, std::set<std::string>& ids) {
   PathPreset p;
   p.role = o.oneOf("role", "", {"saw", "body"});
@@ -168,6 +200,7 @@ PathPreset parsePath(JsonObject& o, const fs::path& baseDir, std::set<std::strin
   p.eq = parseEqBandList(o, "eq");
   p.levelDb = o.number("levelDb", 0.0, kGainLo, kGainHi);
   p.invert = o.boolean("invert", false);
+  p.ampControls = parseAmpControls(o);
   o.finish();
   return p;
 }
@@ -178,6 +211,7 @@ json toJson(const PathPreset& p) {
   json j = {{"enabled", p.enabled}, {"preEq", eqListJson(p.preEq)}, {"blocks", blocks},
             {"eq", eqListJson(p.eq)}, {"levelDb", p.levelDb}, {"invert", p.invert}};
   if (!p.role.empty()) j["role"] = p.role;
+  if (!p.ampControls.isDefault()) j["ampControls"] = toJson(p.ampControls);
   return j;
 }
 

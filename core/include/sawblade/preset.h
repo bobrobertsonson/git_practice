@@ -9,15 +9,16 @@
 
 #include <nlohmann/json.hpp>
 
+#include "sawblade/amp_controls.h"
 #include "sawblade/bus_comp.h"
 #include "sawblade/eq.h"
 #include "sawblade/gate.h"
 #include "sawblade/preset_reader.h"
 
-// C++ mirror of docs/PRESET_SCHEMA.md, v1. Parsing is strict (see PresetError).
+// C++ mirror of docs/PRESET_SCHEMA.md, v2 (v1 files are still read). Parsing is strict (see PresetError).
 namespace sawblade {
 
-constexpr int kPresetVersion = 1;
+constexpr int kPresetVersion = 2;
 constexpr int kMaxBlocksPerPath = 8;
 
 bool operator==(const GateParams&, const GateParams&);
@@ -78,8 +79,13 @@ struct PathPreset {
   std::vector<EqBand> eq;
   double levelDb = 0.0;
   bool invert = false;
+  AmpControls ampControls;  // v2; all-default (and no gainStep) = absent in the file
   bool operator==(const PathPreset&) const = default;
 };
+
+// The block the path's amp controls act around: the last block with slot "amp", else the last "nam"
+// block; -1 if the path has none (it then has no amp controls). The one rule, shared with the rig UI.
+int ampIndex(const PathPreset& p);
 
 enum class AlignMode { Auto, Manual, Off };
 struct AlignParams {

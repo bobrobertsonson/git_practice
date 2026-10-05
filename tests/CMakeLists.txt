@@ -5,6 +5,7 @@ add_executable(sawblade_tests
   test_alloc_guard.cpp
   test_deps.cpp
   test_eq.cpp
+  test_amp_controls.cpp
   test_gate.cpp
   test_delay.cpp
   test_wav.cpp
