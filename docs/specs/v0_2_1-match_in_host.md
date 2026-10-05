@@ -76,6 +76,16 @@ The plugin's error text gives the one-line command for macOS (today it is cut of
 full command in a copyable field or the tooltip). Test: dry-run output of the script lists the step;
 `--no-models` omits it.
 
+## Task F — LOAD SONG refuses a folder that is not a stem set
+
+User (2026-10-05) picked `~/Desktop` in LOAD SONG; every audio file on the desktop was summed into
+"guitar" (a 40-minute "song"). A folder is accepted as stems only if **every** audio file in it has a
+recognised stem name (drums, bass, vocals, other, guitar, piano, with the existing aliases) and at least
+two are present; otherwise refuse with "This folder is not a set of separated stems. Choose the song
+file (mp3, wav, flac, m4a) instead." and keep the previous song. Same rule for a drop. Tests: a stems
+folder loads; a mixed folder (stems + one unrelated file) and a folder of unrelated files are refused
+and leave the loaded song untouched.
+
 ## Acceptance
 
 - New tests: MATCH enabled in plugin mode (editor, mouse-driven); two-instance job isolation; import of
