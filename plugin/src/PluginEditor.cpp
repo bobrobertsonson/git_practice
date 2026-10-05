@@ -436,9 +436,21 @@ class SawbladeEditor::Content : public juce::Component {
   // Cmd / Ctrl + Z: undo the last BLEND fill (RigController::undo) when there is one.
   bool handleKey(const juce::KeyPress& k) {
     if (!(k.getModifiers().isCommandDown() && !k.getModifiers().isShiftDown() && (k.getKeyCode() == 'z' || k.getKeyCode() == 'Z'))) return false;
+    // Keys bubble up from children that did not take them: a text field (a read-only one passes Cmd+Z on) or an open overlay is
+    // the user's current context, so it must never undo a BLEND fill underneath it.
+    if (dynamic_cast<juce::TextInputTarget*>(focusProbe_()) != nullptr) return false;
+    if (anyOverlayOpen()) return false;
     if (!rigController_->canUndo()) return false;
     return rigController_->undo();
   }
+  // The component that has the keyboard focus (tests replace it: a headless X server gives no window, so no focus).
+  std::function<juce::Component*()> focusProbe_ = [] { return juce::Component::getCurrentlyFocusedComponent(); };
+  bool anyOverlayOpen() const {
+    const auto vis = [](const juce::Component* c) { return c != nullptr && c->isVisible(); };
+    return vis(drawer_.get()) || vis(settingsPanel_.get()) || vis(about_.get()) || vis(presetBrowser_.get()) || vis(screen_.get()) ||
+           vis(exportPanel_.get()) || vis(micPage_.get()) || vis(browser_.get()) || vis(panel_.get());
+  }
+  void setFocusProbe(std::function<juce::Component*()> p) { focusProbe_ = std::move(p); }
   rig::RigController& rigControllerRef() { return *rigController_; }
   void mouseDown(const juce::MouseEvent& e) override {
     if (e.eventComponent != &ab_ || !e.mods.isPopupMenu()) return;
@@ -639,6 +651,7 @@ AbCompare& SawbladeEditor::abCompare() { return content_->abCompare(); }
 rig::AmpHead& SawbladeEditor::ampHead(int path) { return content_->ampHead(path); }
 rig::RigController& SawbladeEditor::rigController() { return content_->rigControllerRef(); }
 void SawbladeEditor::refreshNow() { content_->refresh(); }
+void SawbladeEditor::setFocusProbeForTests(std::function<juce::Component*()> probe) { content_->setFocusProbe(std::move(probe)); }
 bool SawbladeEditor::keyPressed(const juce::KeyPress& k) { return content_->handleKey(k); }
 void SawbladeEditor::openMatchScreen() { content_->openMatchScreen(); }
 bool SawbladeEditor::matchScreenOpen() const { return content_->matchScreenOpen(); }

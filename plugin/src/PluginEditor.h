@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -53,6 +54,7 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   rig::RigController& rigController();
   void refreshNow();
   bool keyPressed(const juce::KeyPress& k) override;
+  void setFocusProbeForTests(std::function<juce::Component*()> probe);
 
   // The cab mic page (mic/MicPage): an overlay over the rig + inspector, opened by double-clicking the cab; UI state, never saved.
   void setMicPageOpen(bool open);

@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include "ExportPanel.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "SettingsEnv.h"
@@ -296,6 +297,75 @@ TEST_CASE("amp head: Cmd / Ctrl + Z undoes the BLEND fill", "[ampd][editor]") {
   REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
   CHECK(rig.proc.currentPreset() == pre);
   CHECK_FALSE(rig.ed->keyPressed(undoKey));
+}
+
+TEST_CASE("amp head: Cmd / Ctrl + Z does not bubble into an undo from a focused text field or an open overlay", "[ampd][editor]") {
+  Rig rig;
+  rig.load(rigJson(true, false, false));
+  const Preset pre = rig.proc.currentPreset();
+  rig.ed->rigController().setTopology(rig::Topology::Blend);
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  const Preset filled = rig.proc.currentPreset();
+  REQUIRE(rig.ed->rigController().canUndo());
+  const juce::KeyPress undoKey('z', juce::ModifierKeys::commandModifier, 0);
+
+  // The real path is: a key press goes to the focused component and bubbles up through its parents to the editor (ComponentPeer does
+  // exactly this walk). A headless X server gives no window and so no focus: the walk is done here, and the focus is probed through
+  // the editor's test hook.
+  const auto bubble = [&](juce::Component& from) {
+    for (juce::Component* c = &from; c != nullptr; c = c->getParentComponent())
+      if (c->keyPressed(undoKey)) return true;
+    return false;
+  };
+
+  // 1. A read-only text editor has the focus: it does not take Cmd+Z (it is read-only), so the key bubbles up: not an undo.
+  juce::TextEditor field;
+  field.setReadOnly(true);
+  field.setText("read-only", false);
+  field.setBounds(10, 10, 100, 24);
+  rig.ed->addAndMakeVisible(field);
+  rig.ed->setFocusProbeForTests([&] { return static_cast<juce::Component*>(&field); });
+  CHECK_FALSE(field.keyPressed(undoKey));  // the field itself passes it on
+  CHECK_FALSE(bubble(field));
+  CHECK(rig.proc.currentPreset() == filled);
+  CHECK(rig.ed->rigController().canUndo());
+  rig.ed->setFocusProbeForTests([] { return static_cast<juce::Component*>(nullptr); });
+  rig.ed->removeChildComponent(&field);
+
+  // 2. An overlay is open: the editor does not undo underneath it, however the key arrives.
+  rig.ed->setSettingsOpen(true);
+  REQUIRE(rig.ed->settingsOpen());
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  CHECK_FALSE(bubble(*rig.ed));
+  CHECK(rig.proc.currentPreset() == filled);
+  CHECK(rig.ed->rigController().canUndo());
+  rig.ed->setSettingsOpen(false);
+  rig.ed->openExportPanel();
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  rig.ed->setPlayAlongOpen(true);
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  rig.ed->setPlayAlongOpen(false);
+  rig.ed->setBrowserOpen(true);
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  rig.ed->setBrowserOpen(false);
+  rig.ed->openMatchScreen();
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  rig.ed->setMicPageOpen(true);
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  rig.ed->setMicPageOpen(false);
+  CHECK(rig.proc.currentPreset() == filled);
+
+  // 3. Nothing open and no text focus: it does undo.
+  rig.ed->setRigEditorOpen(false);
+  rig.ed->setMicPageOpen(false);
+  rig.ed->setBrowserOpen(false);
+  rig.ed->setSettingsOpen(false);
+  rig.ed->setPlayAlongOpen(false);
+  rig.ed->exportPanel().setVisible(false);
+  rig.ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  CHECK(bubble(*rig.ed));
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(rig.proc.currentPreset() == pre);
 }
 
 TEST_CASE("amp head: screenshots of the rig page", "[ampd][editor]") {
