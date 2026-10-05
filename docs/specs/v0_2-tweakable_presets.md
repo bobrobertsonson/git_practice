@@ -107,3 +107,18 @@ behaviour). No pool / nothing cached → path B gets the TS + the first high-gai
   for `ampB_`; range 0–10, default 5; follow the existing PresetMapping / 1e-4 grid pattern; param-id
   stability test lists them literally.
 - Stay out of CMake dependency fetching and the About page (parallel v0.1.3 phase).
+
+### Task B — ladder parser (match-engineer)
+- New module `match/sawblade_match/t3k/ladder.py`: pure `parse_ladder(models, size) -> list[Rung] | None`
+  (`Rung = (model_id, gain: float, name)`, sorted by gain) and `gain_ladder(client, tone_id, size, architecture)`
+  that lists the tone's models and calls the parser. CLI: `sawblade-t3k ladder <tone_id> [--size S] --json`
+  emitting `{"tone_id", "size", "rungs":[{"model_id","gain","name"}]}` or `"rungs": null` — this is what the
+  plugin calls (same subprocess pattern as `resolve`).
+- **Never guess:** only models of the requested size (and architecture) count; each must yield exactly one gain
+  number from its name (`Gain 6`, `G6`, `gain=6`, `6 gain`, `Drive 7`, `@7`, `G 6.5`…); after removing that
+  number token the normalised names must be **identical** (so `Clean ch gain 5` vs `Lead ch gain 5`, or
+  `Crunch`/`Lead`, → no ladder); gains distinct; ≥ 2 rungs. Anything else → `None`.
+- Fixtures: `match/tests/fixtures/t3k_ladder/*.json` shaped exactly as the API's model-list response the client
+  already parses (respx, like `test_client.py`); hand-written from the real naming patterns, labelled as such
+  (no network recording available in this container). Cover: clean ladder, mixed sizes, channel names,
+  descriptive names, duplicate gains, single model, decimals.
