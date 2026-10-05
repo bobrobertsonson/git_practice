@@ -1,12 +1,12 @@
 # Phase 10.1 report: path level matching and the constant-loudness blend
 
 Spec: `docs/specs/phase10_1_path_level_match.md` (with the lead's binding implementation decisions at
-its end). Status: **REVIEW_STATUS**. Branch `claude/sawblade-p10-1-level-match`; no PR was opened.
+its end). Status: **accepted by the lead after reviewer ACCEPT (round 1, no must-fix items).**. Branch `claude/sawblade-p10-1-level-match`; no PR was opened.
 
 Commits: `831db45` (spec decisions), `5cce5fa` (plot script + demo blend preset), `ad6bcf2` / `ad12ebe`
 (matcher, merged in `8ed9ba3`), `5c6407e` (core), `ea5baa4` (CLI + bindings), `87652b9` (plugin),
 `50d0f14` (tests), `0828ff8` (schema docs), `c25ad9a` (plot), `0bf33fb` (legacy bit-identity fix).
-FINAL_COMMITS Total diff since the spec: 35 files, +1,646 / −59.
+`2b7124f` (this report, draft), `967395d` (real-binding `level_match` pytest, a reviewer suggestion), plus the final report commit. Total diff since the spec: 35 files, +1,646 / −59.
 
 ## What the user gets
 
@@ -140,18 +140,35 @@ expected program dependence of a fixed probe, and the spec test (±0.3 LU on the
   rebuilds once, on a measured engine not at all).
 - `build-clang` (clang, Release, plugin ON): **0 warnings**, ctest 378/378 (pluginval is registered only
   in the gcc tree).
-- `match/`: **pytest 319 passed, 14 skipped** against a real `sawblade_core` build (`build-py`); the skips
-  are the usual demucs / NAM-training / `SAWBLADE_TEST_TRAIN` ones. 12 new tests in
-  `match/tests/test_levelmatch.py`.
+- `match/`: **pytest 320 passed, 14 skipped** against a real `sawblade_core` build (`build-py`); the skips
+  are the usual demucs / NAM-training / `SAWBLADE_TEST_TRAIN` ones. 13 new tests in
+  `match/tests/test_levelmatch.py`, one against the real binding.
 - Goldens: `git diff --stat tests/golden` is empty.
-REVIEW_SECTION
+
+## Review
+
+Reviewer verdict **ACCEPT**, round 1, no must-fix items. The reviewer rebuilt both trees, ran a Debug
+ASan+UBSan core build (the level-match, chain, align, golden and preset tests pass with no sanitizer
+reports), confirmed the goldens and fixtures are untouched in git, that `golden_perpath` renders with
+max diff exactly 0, and called the real `sawblade_core.level_match` on the demo preset (same numbers as
+the table above). It checked the audio-thread path (`process`, `setLiveParams`, the weight ramps: all
+`noexcept`, no allocation, no locks), the probe recipe against the spec line by line, the headroom and
+compressor referral, the schema round trip, the plugin threading and the matcher algebra
+(`emit_gain_correction_db = −10·log10(b² + (1−b)²) + makeup(b_cl)`).
+
+Optional notes and what the lead did with them: (1) fill in this report (done); (2) test the real
+`level_match` binding (done: one pytest, skipped without the module); (3) the CLI prints the
+`level match:` line only with `--report`, which is the spec's item 9 reading, kept as is; (4) a silent
+path in `manual` mode drops the stored trims to 0 with a warning, as the spec words it; documented here.
 
 ## Process (honest note)
 
-- **Review rounds:** REVIEW_ROUNDS
+- **Review rounds:** 1 (ACCEPT on the first audit, after one implementer-reported deviation was fixed
+  before the audit).
 - **Wall-clock:** session start about 23:50 UTC (2026-10-04); spec decisions committed 23:56;
   matcher commits 00:03; core/CLI/plugin/tests/docs series 00:22; matcher merge and plot 00:24;
-  legacy bit-identity fix 00:49; reviewer dispatched 00:55; ACCEPT_TIME. Implementer time: about
+  legacy bit-identity fix 00:49; reviewer dispatched 00:55; ACCEPT 01:23; real-binding test and final report about 01:35. Elapsed about
+  1 h 45 min. Implementer time: about
   40 minutes for the C++ series (86 tool calls) plus about 10 minutes for the fix; matcher about 6
   minutes (39 tool calls). The implementer and the matcher engineer ran in parallel (the matcher in a
   git worktree, merged afterwards).
