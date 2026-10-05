@@ -1291,6 +1291,46 @@ TEST_CASE("21 state round trip", "[integration]") { runStep(kStateRoundtrip); }
 TEST_CASE("21b blend levels", "[integration]") { runStep(kLevels); }
 TEST_CASE("21c settings and About", "[integration]") { runStep(kSettings); }
 
+// B2b: the tool path is set once, in the Settings panel's match venv. The older stores (browser.settings, settings.json
+// t3kExecutable, the match settings file) hold no path of their own and read that value as their default, so the capture
+// browser, the mic page / preset browser (T3kTool), MATCH and EXPORT all follow it; an explicit override in an older store
+// still wins and clearing it falls back again.
+TEST_CASE("one tool path in Settings reaches the capture browser, the mic page, MATCH and EXPORT", "[integration]") {
+  Walk& w = walk();
+  auto& st = settings::Settings::shared();
+  auto sees = [&](const fs::path& dir) {
+    const fs::path b = dir / "bin";
+    CHECK(BrowserSettings::defaultExecutable() == (b / "sawblade-t3k").string());
+    BrowserSettings browser;  // the real file under the temp HOME: no override stored
+    CHECK(browser.executable() == (b / "sawblade-t3k").string());
+    CHECK(settings::t3kExecutable() == b / "sawblade-t3k");  // the mic page and the preset browser (T3kTool)
+    CHECK(w.proc.matchSettings().matchExecutable() == b / "sawblade-match");
+    CHECK(w.proc.matchSettings().exportExecutable() == b / "sawblade-export");
+  };
+  sees(w.tools.root);
+
+  // the user points Settings at another venv: everything follows at once
+  const fs::path other = w.root / "other_venv";
+  fs::create_directories(other / "bin");
+  REQUIRE(st.setMatchVenvDir(other).ok);
+  sees(other);
+
+  // an explicit override in an older store wins, and resetting it returns to the Settings value
+  {
+    BrowserSettings browser;
+    browser.setExecutable("/opt/custom/sawblade-t3k");
+    CHECK(browser.executable() == "/opt/custom/sawblade-t3k");
+    browser.reset();
+    CHECK(browser.executable() == (other / "bin" / "sawblade-t3k").string());
+  }
+  REQUIRE(settings::setT3kExecutable("/opt/custom2/sawblade-t3k"));
+  CHECK(settings::t3kExecutable() == "/opt/custom2/sawblade-t3k");
+  CHECK(st.matchVenvDir() == other);  // writing the older key kept the Settings value
+  REQUIRE(st.setMatchVenvDir(w.tools.root).ok);  // the other store's key is in the same file and survived the Settings write
+  CHECK(settings::t3kExecutable() == "/opt/custom2/sawblade-t3k");
+  REQUIRE(settings::setT3kExecutable(settings::defaultT3kExecutable()));
+}
+
 TEST_CASE("21c first run on a fresh app-data dir", "[integration]") {
   gWalk.reset();  // the walk's settings must not outlive this test's own
   SettingsEnv env(nullptr, /*isolateHome=*/true);  // no settings file: a first run
