@@ -1,23 +1,23 @@
 # kind|slug|YouTube search query or exact URL  (used by scripts/fetch_references.sh)
 # Replace a query with the exact URL once the dry run shows the right video.
 # Slugs follow testdata/ naming: <artist>__<song>.
-original|terrorizer__fear_of_napalm|Terrorizer Fear of Napalm World Downfall
-original|electric_wizard__dunwich|Electric Wizard Dunwich Dopethrone
-original|darkthrone__transilvanian_hunger|Darkthrone Transilvanian Hunger official audio
-original|crowbar__planets_collide|Crowbar Planets Collide Lifesblood for the Downtrodden
-original|bolt_thrower__the_shreds_of_sanity|Bolt Thrower The Shreds of Sanity Realm of Chaos
-original|bolt_thrower__those_once_loyal|Bolt Thrower Those Once Loyal official audio
-original|nails__no_surrender|Nails No Surrender Unsilent Death
-original|dissection__retribution|Dissection Retribution Storm of the Light's Bane
-original|conan__volt_thrower|Conan Volt Thrower Revengeance
-original|immortal__one_by_one|Immortal One by One Sons of Northern Darkness
-cover|terrorizer__fear_of_napalm|Omega Station Terrorizer Fear of Napalm cover
-cover|electric_wizard__dunwich|Omega Station Electric Wizard Dunwich cover
-cover|darkthrone__transilvanian_hunger|Omega Station Darkthrone Transilvanian Hunger cover
-cover|crowbar__planets_collide|Omega Station Crowbar Planets Collide cover
-cover|bolt_thrower__the_shreds_of_sanity|Omega Station Bolt Thrower The Shreds of Sanity cover
-cover|bolt_thrower__those_once_loyal|Omega Station Bolt Thrower Those Once Loyal cover
-cover|nails__no_surrender|Omega Station Nails No Surrender cover
-cover|dissection__retribution|Omega Station Dissection Retribution cover
-cover|conan__volt_thrower|Omega Station Conan Volt Thrower cover
-cover|immortal__one_by_one|Omega Station Immortal One by One cover
+original|terrorizer__fear_of_napalm|https://www.youtube.com/watch?v=AG-menlRlAg
+original|electric_wizard__dunwich|Electric Wizard "Dunwich" song audio -Dopethrone full album
+original|darkthrone__transilvanian_hunger|https://www.youtube.com/watch?v=KphlVeJX6fE
+original|crowbar__planets_collide|https://www.youtube.com/watch?v=EMZm_E0DRcU
+original|bolt_thrower__the_shreds_of_sanity|https://www.youtube.com/watch?v=48yoqqJu-c4
+original|bolt_thrower__those_once_loyal|https://www.youtube.com/watch?v=vo9SeGRlzao
+original|nails__no_surrender|NAILS "No Surrender" audio
+original|dissection__retribution|https://www.youtube.com/watch?v=WomnWQLXLes
+original|conan__volt_thrower|Conan "Volt Thrower" Revengeance album audio -video
+original|immortal__one_by_one|Immortal "One by One" audio
+cover|terrorizer__fear_of_napalm|https://www.youtube.com/watch?v=3jahu2EVI7I
+cover|electric_wizard__dunwich|https://www.youtube.com/watch?v=mCOAnrMweRk
+cover|darkthrone__transilvanian_hunger|https://www.youtube.com/watch?v=BS1xBxWTUIs
+cover|crowbar__planets_collide|https://www.youtube.com/watch?v=gu6OFtKQ7cE
+cover|bolt_thrower__the_shreds_of_sanity|https://www.youtube.com/watch?v=gli4W7lD-tk
+cover|bolt_thrower__those_once_loyal|https://www.youtube.com/watch?v=ewMZaVlHs5w
+cover|nails__no_surrender|https://www.youtube.com/watch?v=c-gKsqQ_gbk
+cover|dissection__retribution|https://www.youtube.com/watch?v=odeEwDFl3X8
+cover|conan__volt_thrower|https://www.youtube.com/watch?v=_StbQbWHAg8
+cover|immortal__one_by_one|https://www.youtube.com/watch?v=i1TwKqWeFrg
