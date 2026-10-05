@@ -90,7 +90,7 @@ sawblade-t3k login --json-events      # alias: --json
 
 With `--json`, stdout is exactly one JSON document (notes/logs go to stderr). Failure: exit 1 and
 `{"error": "<message>", "code": "license|auth|not_found|network|error"}` (also for `search --json`).
-Without `--json` behaviour is unchanged. Licence policy: `cc-by-nc*` captures are allowed, unknown licences are refused (code `license`); see "License policy" below.
+Without `--json` behaviour is unchanged. Licence policy: `cc-by-nc*` and unknown licences are refused (code `license`); see "License policy" below.
 
 * `models` -> `{"tone_id": int, "architecture": str, "models": [{"model_id": int, "name": str, "size": str|null}]}`
   (A2 then A1 candidates as `pull` picks; `""` and `[]` if none; empty `size` -> `null`).
@@ -110,11 +110,11 @@ Without `--json` behaviour is unchanged. Licence policy: `cc-by-nc*` captures ar
 
 ### License policy
 
-Sawblade is a personal, non-commercial project (CLAUDE.md "Capture licensing"), so tones licensed `t3k`, `cc-by`,
-`cc-by-sa`, `cc-by-nd`, `cco` and the non-commercial `cc-by-nc`, `cc-by-nc-sa`, `cc-by-nc-nd` are used. A passing `-nc`
-tone carries the flag `non_commercial` (anything derived from it is marked non-commercial; exports are for the user's own
-use). Unknown/empty licenses (reason `unknown_license:<lic>`) are excluded from the pool even if favorited, and
-`resolve`/downloads refuse them (also on cache hits). There is no override flag.
+Currently only tones licensed `t3k`, `cc-by`, `cc-by-sa`, `cc-by-nd` or `cco` are used.
+`cc-by-nc*` (reason `non_commercial_license:<lic>`) and unknown/empty licenses (`unknown_license:<lic>`) are
+excluded from the pool even if favorited, and `resolve`/downloads refuse them (code `license`, also on cache
+hits). There is no override flag. Enabling `cc-by-nc*` captures for this personal project is a pending change
+that needs the user's direct approval.
 
 ### Search and extra pool sources (opt-in, personal use)
 

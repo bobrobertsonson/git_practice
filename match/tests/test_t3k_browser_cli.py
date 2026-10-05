@@ -88,18 +88,13 @@ def test_fetch_defaults_to_first_candidate_and_ir_kind(run, world, tmp_path):
     assert out["kind"] == "ir" and out["gear"] == "ir" and out["path"].endswith("11/111.wav")
 
 
-def test_fetch_refuses_unknown_license(run, world, tmp_path):       # tone 13: unknown licence
+@pytest.mark.parametrize("tone", ["12", "13"])        # cc-by-nc and an unknown licence
+def test_fetch_refuses_nc_and_unknown_license(run, world, tmp_path, tone):
     cache = tmp_path / "cc"
-    rc, out, _ = run("fetch", "13", "--json", "--cache-dir", str(cache))
+    rc, out, _ = run("fetch", tone, "--json", "--cache-dir", str(cache))
     assert rc == 1 and out["code"] == "license" and "refused" in out["error"]
     assert not world.requests("download") and not world.requests("/models")
     assert not cache.exists() or not any(cache.rglob("*.*"))
-
-
-def test_fetch_allows_non_commercial_license(run, world, tmp_path):   # tone 12: cc-by-nc (personal project, CLAUDE.md)
-    cache = tmp_path / "cc"
-    rc, out, _ = run("fetch", "12", "--json", "--cache-dir", str(cache))
-    assert rc == 0 and out["source"]["license"] == "cc-by-nc" and world.requests("download")
 
 
 def test_fetch_model_not_in_list_is_not_found(run, world, tmp_path):
@@ -137,8 +132,8 @@ def test_error_codes_auth_network_error(make_client, monkeypatch, capsys, world)
 
 
 def test_text_errors_unchanged_without_json(run, world, capsys):
-    rc, out, err = run("fetch", "13")
-    assert rc == 1 and out is None and err.startswith("error: ") and "unknown_license" in err
+    rc, out, err = run("fetch", "12")
+    assert rc == 1 and out is None and err.startswith("error: ") and "non_commercial" in err
 
 
 def test_whoami_json(run, world):
@@ -154,8 +149,8 @@ def test_list_favorites_shape_filter_and_query(run, world):
     world.favorited = [good, nc, ir]
     rc, out, _ = run("list", "--source", "favorites", "--json")
     assert rc == 0
-    assert [(r["tone_id"], r["passes"]) for r in out][:2] == [(20, True), (21, True)]
-    assert "non_commercial" in out[1]["flags"] and "non_commercial" not in out[0]["flags"]
+    assert [(r["tone_id"], r["passes"]) for r in out][:2] == [(20, True), (21, False)]
+    assert out[1]["reasons"][0] == "non_commercial_license:cc-by-nc"
     # same record shape as `search --json`
     world.search_results = [good]
     search_rec = run("search", "x", "--json")[1][0]
@@ -271,12 +266,12 @@ def test_fetch_cache_hit_still_looks_up_tone_and_refuses_changed_license(run, wo
     rc, out, _ = run("fetch", "10", "--model", "102", "--json", "--cache-dir", cache)
     assert rc == 0 and len(world.requests(r"/tones/10$")) == before + 1      # tone lookup happens
     assert len(world.requests("download")) == 1
-    # the cached copy's tone licence is now unusable (and the live lookup agrees)
+    # the cached copy's tone licence is now non-commercial (and the live lookup agrees)
     meta_path = tmp_path / "cc" / "10" / "meta.json"
     meta = json.loads(meta_path.read_text())
-    meta["tone"]["license"] = "gpl-3"
+    meta["tone"]["license"] = "cc-by-nc"
     meta_path.write_text(json.dumps(meta))
-    world.tones[10]["license"] = "gpl-3"
+    world.tones[10]["license"] = "cc-by-nc"
     rc, out, _ = run("fetch", "10", "--model", "102", "--json", "--cache-dir", cache)
     assert rc == 1 and out["code"] == "license"
     assert len(world.requests("download")) == 1

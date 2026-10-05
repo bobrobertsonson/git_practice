@@ -43,8 +43,7 @@ def rec(i, title, creator, lic, gear="pedal", passes=True, **kw):
          "license": lic, "favorites_count": 10 * i, "downloads_count": 100 * i, "created_at": "2026-07-26T10:00:00Z",
          "models_count": 2, "a2_models_count": 2, "a1_models_count": 0, "irs_count": 0, "sizes": ["standard"],
          "url": f"https://www.tone3000.com/tones/{i}", "passes": passes,
-         "status": "included" if passes else "excluded", "reasons": [] if passes else ["below_popularity_floor"],
-         "flags": ["non_commercial"] if lic.startswith("cc-by-nc") else []}
+         "status": "included" if passes else "excluded", "reasons": [] if passes else ["licence cc-by-nc"], "flags": []}
     r.update(kw)
     return r
 
@@ -52,7 +51,7 @@ def rec(i, title, creator, lic, gear="pedal", passes=True, **kw):
 RECORDS = [
     rec(101, "Boss HM-2w CHAINSAW", "ebheron", "t3k"),
     rec(102, "Swedish Chainsaw åäö", "sven", "cc-by"),
-    rec(103, "Fuzz Drive NC", "nina", "cc-by-nc", passes=False),  # licence is fine (NC is allowed); fails the quality floor
+    rec(103, "Fuzz Drive NC", "nina", "cc-by-nc", passes=False),
     rec(104, "Tight Boost", "tom", "cco"),
     rec(105, "Dist Pedal SA", "sam", "cc-by-sa"),
     rec(106, "Brown Machine", "bo", "")  # empty licence: the UI shows a fallback,
@@ -109,11 +108,9 @@ elif cmd == "models":
         {"model_id": tid * 10 + 2, "name": "Lite", "size": None}]})
 elif cmd == "fetch":
     tid = int(args[1])
-    lic = {103: "cc-by-nc", 107: "unknown"}.get(tid, "cc-by")
-    # Like the real CLI (match/sawblade_match/t3k/licenses.py): cc-by-nc* is usable (personal project, CLAUDE.md); only an
-    # unknown licence is refused with code "license".
-    if lic == "unknown":
-        err(f"tone {tid} refused: unknown_license:unknown", "license")
+    lic = {103: "cc-by-nc"}.get(tid, "cc-by")
+    if lic == "cc-by-nc":
+        err("licence cc-by-nc is not allowed", "license")
     mid = int(args[args.index("--model") + 1]) if "--model" in args else tid * 10 + 1
     kind = os.environ.get("FAKE_T3K_KIND", "nam")
     default = os.path.join(ROOT, "tests", "fixtures", "nam", "linear_identity.nam")

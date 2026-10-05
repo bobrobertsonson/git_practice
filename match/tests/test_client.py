@@ -232,23 +232,15 @@ def test_unfollowed_redirect_is_error_and_writes_nothing(respx_mock, make_client
     assert not (tmp_path / "a.nam").exists()
 
 
-def test_ensure_capture_refuses_unknown_license_without_download(make_client, api, tmp_path):
+def test_ensure_capture_refuses_nc_license_without_download(make_client, api, tmp_path):
     from sawblade_match.t3k.errors import T3KError
     from sawblade_match.t3k.types import Model, Tone
-    t, m = tone_json(900, license="gpl-3"), model_json(9001, 900)
+    t, m = tone_json(900, license="cc-by-nc-sa"), model_json(9001, 900)
     api.add_tone(t, [m])
     cache = Cache(tmp_path / "c")
-    with pytest.raises(T3KError, match="unknown_license:gpl-3"):
+    with pytest.raises(T3KError, match="non_commercial_license:cc-by-nc-sa"):
         ensure_capture(make_client(), cache, Tone.from_json(t), Model.from_json(m))
     assert not api.requests("download") and not (tmp_path / "c" / "900").exists()
-
-
-def test_ensure_capture_allows_non_commercial_license(make_client, api, tmp_path):
-    from sawblade_match.t3k.types import Model, Tone
-    t, m = tone_json(902, license="cc-by-nc-sa"), model_json(9021, 902)
-    api.add_tone(t, [m])
-    ensure_capture(make_client(), Cache(tmp_path / "c"), Tone.from_json(t), Model.from_json(m))
-    assert api.requests("download")
 
 
 def test_ensure_capture_refuses_cached_nc_entry(make_client, api, tmp_path):
@@ -259,9 +251,9 @@ def test_ensure_capture_refuses_cached_nc_entry(make_client, api, tmp_path):
     cache, client = Cache(tmp_path / "c"), make_client()
     ensure_capture(client, cache, Tone.from_json(t), Model.from_json(m))     # fine while cc-by
     meta = cache.read_meta(901)
-    meta["tone"]["license"] = "gpl-3"                                          # cached meta now unusable
+    meta["tone"]["license"] = "cc-by-nc"                                      # cached meta now nc
     (cache.tone_dir(901) / "meta.json").write_text(json.dumps(meta))
     n = len(api.calls)
-    with pytest.raises(T3KError, match="unknown_license:gpl-3"):
+    with pytest.raises(T3KError, match="non_commercial_license:cc-by-nc"):
         ensure_capture(client, cache, Tone.from_json(t), Model.from_json(m))  # fresh tone says cc-by
     assert len(api.calls) == n

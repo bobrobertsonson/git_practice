@@ -1,7 +1,5 @@
 # Spec 8: capture browser in the plugin (Standalone first)
 
-> Superseded: cc-by-nc captures are allowed since 2026-10-03 (CLAUDE.md); see commit e1fbe51.
-
 Reference: `design/mockups/FullBrowse.dc.html` (layout reference only; the user owns the UI design).
 The user selects a pedal, amp or cab in the rig and clicks **BROWSE CAPTURES** (already in the
 inspector, currently disabled). A full-editor overlay lists TONE3000 captures for that slot; the user
@@ -19,8 +17,8 @@ Two parts, two implementers:
 done). This phase keeps that: `fetch` refuses nc, `search`/`list` keep marking nc as not passing.
 The plugin shows what the CLI says; it has **no licence logic of its own** besides displaying the
 `license` string. The mockup's "Sawblade is a commercial product" text is outdated: the footer note
-reads "Non-commercial (CC BY-NC) captures can't be used yet." When `licence_noncommercial.md` lands,
-only Python changes.
+reads "CC BY-NC captures are not enabled in this build." If CC BY-NC is enabled later (needs the
+user's approval), only Python changes.
 
 ## 8a. CLI additions (`match/sawblade_match/t3k/cli.py` + small helpers)
 

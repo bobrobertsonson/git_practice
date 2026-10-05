@@ -51,4 +51,4 @@ Uberschall Rev Blue (2023), CHAINSAW 2, JCM800 2210 (29 fav), Invective, 5150III
 Bandit Teal/Red, Revv Gen 120, JC-120 / JC-120B (full rig), ENGL Powerball (full rig),
 JCM800 @overmort (full rig), Swedish chainsaw 90' (full rig), Mesa OS V30 2012 (2025-03),
 Orange V30 (2023), Maxon OD808 packs, TS808 @wendycabs, older HM-2 packs (2023), and
-**BOSS HM-2 MiJ v2.0 @peterny — CC-BY-NC (non-commercial), non-commercial: usable in this personal project, anything derived is marked non-commercial**.
+**BOSS HM-2 MiJ v2.0 @peterny — CC-BY-NC (non-commercial), refused by the licence check for now (enabling CC-BY-NC is pending user approval)**.
