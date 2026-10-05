@@ -9,7 +9,7 @@ Spec: `docs/specs/v0_1_3-macos_green.md`. Branch `claude/sawblade-v0_1_3-macos-g
 |---|---|---|---|---|---|---|
 | 61 (37342304118), baseline | 257e4b6 | 45 / 694 failed | skipped | green | green | green |
 | 68 (37350475001) | ef4334e | 1 / 695 failed (level-match golden, 1.53e-7) | skipped | green | green | green |
-| 69 (37354616347) | 8dadbd8 | __RUN69_TEST__ | __RUN69_PLUGIN__ | __RUN69_GCC__ | __RUN69_CLANG__ | __RUN69_PY__ |
+| 69 (37354616347) | 8dadbd8 | 0 / 695 failed (green) | auval pass; pluginval AU + VST3 level 10 pass | green | green | green |
 
 Each fix below names the run-61 tests that failed before it and the run where they pass.
 
@@ -120,4 +120,6 @@ remains in CMake or CI.
 
 ## Final
 
-__FINAL__
+All acceptance criteria are met on 8dadbd8, the last code commit (CI run 69). The macOS arm64 Test step is green, and auval plus pluginval AU and VST3 (level 10) ran and passed for the first time. linux-gcc (ctest + pluginval 10), clang -Werror and python are green. No test was deleted, disabled or skipped, and no golden was regenerated. Exactly one tolerance changed, with the measured numbers above. The commits after 8dadbd8 are docs-only (this report).
+
+Manual follow-up on the user's Mac: confirm that the Standalone window title shows the stamp.
