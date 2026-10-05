@@ -11,6 +11,10 @@ from dataclasses import dataclass, field
 
 MODES = ("nocab", "withcab")
 
+# Cab modes that are live-compatible (one combined IR, so the no-cab export is exact). ``irMix`` is one convolver on
+# ``(1-mix)*irA + mix*irB``; the cab fold renders through the core, so it needs no special handling here.
+LIVE_CAB_MODES = frozenset({"shared", "irMix"})
+
 # Block types the Python side knows to be NAM-trainable.  The C++ registry is authoritative (its
 # ``namTrainable`` trait shows up as a "not NAM-trainable" render warning, see ``core_trainability_problems``);
 # a type that is neither here nor accepted by the core is refused.
@@ -83,7 +87,7 @@ def captures(preset: dict) -> list[tuple[str, dict]]:
     cab = preset.get("cab", {})
     if cab.get("mode") == "shared" and cab.get("ir"):
         out.append(("cab", cab["ir"]))
-    elif cab.get("mode") == "perPath":
+    elif cab.get("mode") in ("perPath", "irMix"):
         for k in ("irA", "irB"):
             if cab.get(k):
                 out.append((f"cab:{k}", cab[k]))
@@ -114,7 +118,7 @@ def make_plan(preset: dict, mode: str, allow_inexact: bool = False) -> Plan:
     release = float(comp.get("releaseMs", 100.0))
 
     if mode == "nocab":
-        if cab.get("mode") != "shared":
+        if cab.get("mode") not in LIVE_CAB_MODES:
             reasons.insert(0, STUDIO_MESSAGE)
         if comp_on:
             msg = ("bus compressor is enabled; it sits after the cab and is nonlinear, so a no-cab export cannot be "

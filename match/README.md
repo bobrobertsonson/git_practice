@@ -131,6 +131,22 @@ API terms before sharing anything that uses search.
 (honouring `Retry-After`); a 401 triggers one refresh + retry. The `X-Tone3000-Deprecations` response header is
 logged at WARNING. Use `-v` for INFO logs.
 
+### `pack`, progress lines and exit codes
+
+```
+sawblade-t3k pack TONE_ID [--cache-dir D] -o manifest.json [--progress-json]
+sawblade-t3k resolve PRESET [-o OUT] [--first-model] [--progress-json]
+```
+
+* `pack` downloads every model of an IR tone (one IR per model) into the cache and writes
+  `{ "toneId", "title", "creator", "license", "url", "models": [ { "modelId", "name", "file" (absolute), "sha256" } ] }`.
+  It refuses tones that are not IR tones. Licence rules are the same as for `resolve`.
+* `--progress-json` makes stdout JSON lines only (one per item, flushed); the human summary goes to stderr.
+  `pack`: `{"done": i, "total": n, "name": "<model name>"}` per model.
+  `resolve`: `{"done": i, "total": n, "capture": "<json path>", "title": "<tone title>"}` per TONE3000 capture.
+* **Exit codes (all commands):** `0` ok, `4` not logged in / re-auth required (no stored token, or the API
+  rejected it after refresh; run `sawblade-t3k login`), `1` any other error. The plugin relies on 4.
+
 ## Tone check (`sawblade-tonecheck`, phase 1.5 part B)
 
 ```

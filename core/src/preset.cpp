@@ -1,6 +1,7 @@
 #include "sawblade/preset.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -200,7 +201,10 @@ json toJson(const AlignParams& a) {
 CabPreset parseCab(JsonObject& root, const fs::path& baseDir) {
   CabPreset c;
   JsonObject o = root.requireObject("cab");
-  c.mode = o.requireOneOf("mode", {"shared", "perPath"}) == "shared" ? CabMode::Shared : CabMode::PerPath;
+  {
+    const std::string m = o.requireOneOf("mode", {"shared", "perPath", "irMix"});
+    c.mode = m == "shared" ? CabMode::Shared : m == "perPath" ? CabMode::PerPath : CabMode::IrMix;
+  }
   c.enabled = o.boolean("enabled", true);
   c.normalize = o.boolean("normalize", true);
   auto cap = [&](const char* key) {
@@ -213,18 +217,21 @@ CabPreset parseCab(JsonObject& root, const fs::path& baseDir) {
   } else {
     c.irA = cap("irA");
     c.irB = cap("irB");
+    if (c.mode == CabMode::IrMix) c.mix = o.number("mix", 0.5, 0.0, 1.0);  // rejected (unknown key) in other modes
   }
   o.finish();
   return c;
 }
 
 json toJson(const CabPreset& c) {
-  json j = {{"mode", c.mode == CabMode::Shared ? "shared" : "perPath"}, {"enabled", c.enabled}, {"normalize", c.normalize}};
+  json j = {{"mode", c.mode == CabMode::Shared ? "shared" : c.mode == CabMode::PerPath ? "perPath" : "irMix"},
+            {"enabled", c.enabled}, {"normalize", c.normalize}};
   if (c.mode == CabMode::Shared) {
     j["ir"] = toJson(c.ir);
   } else {
     j["irA"] = toJson(c.irA);
     j["irB"] = toJson(c.irB);
+    if (c.mode == CabMode::IrMix) j["mix"] = c.mix;
   }
   return j;
 }
@@ -322,6 +329,7 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
   }
   p.name = r.requireString("name");
   p.notes = r.string("notes", "");
+  p.category = r.string("category", "");
   if (auto in = r.optionalObject("input")) {
     p.inputGainDb = in->number("gainDb", 0.0, kGainLo, kGainHi);
     in->finish();
@@ -353,7 +361,7 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
 }
 
 nlohmann::json toJson(const Preset& p) {
-  return {{"schema", p.schema},
+  json j = {{"schema", p.schema},
           {"version", p.version},
           {"name", p.name},
           {"notes", p.notes},
@@ -366,16 +374,59 @@ nlohmann::json toJson(const Preset& p) {
           {"postEq", eqListJson(p.postEq)},
           {"busComp", toJson(p.busComp)},
           {"output", {{"gainDb", p.outputGainDb}}}};
+  if (!p.category.empty()) j["category"] = p.category;
+  return j;
+}
+
+fs::path captureCacheRoot() {
+  if (const char* e = std::getenv("SAWBLADE_CACHE_DIR"); e != nullptr && *e != '\0') return fs::path(e);
+#if defined(_WIN32)
+  const char* home = std::getenv("USERPROFILE");
+#else
+  const char* home = std::getenv("HOME");
+#endif
+  return (home != nullptr && *home != '\0' ? fs::path(home) : fs::path(".")) / ".cache" / "sawblade" / "captures";
+}
+
+namespace {
+// Ids come from preset JSON and become path components: only plain tokens (letters, digits, '_' and '-', no "..") are used.
+bool safeToken(const std::string& t) {
+  if (t.empty() || t.size() > 64 || t.find("..") != std::string::npos) return false;
+  for (char ch : t)
+    if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '-')) return false;
+  return true;
+}
+bool hasTone3000Ids(const Capture& c) {
+  return c.source && c.source->provider == "tone3000" && !c.source->id.empty() && !c.source->modelId.empty();
+}
+bool isTone3000(const Capture& c) { return hasTone3000Ids(c) && safeToken(c.source->id) && safeToken(c.source->modelId); }
+}  // namespace
+
+fs::path locateCapture(const Capture& c) {
+  std::error_code ec;
+  if (fs::exists(c.resolvedPath, ec) || !isTone3000(c)) return c.resolvedPath;
+  std::string ext = c.resolvedPath.extension().string();
+  for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  const bool ir = ext == ".wav" || ext == ".flac";
+  const fs::path cached = captureCacheRoot() / c.source->id / (c.source->modelId + (ir ? ".wav" : ".nam"));
+  return fs::exists(cached, ec) ? cached : c.resolvedPath;
+}
+
+std::string captureNotFoundMessage(const Capture& c, const std::string& jsonPath) {
+  std::string msg = jsonPath + ": file not found: " + c.resolvedPath.string();
+  if (isTone3000(c)) msg += " (not in the capture cache either; run: sawblade-t3k resolve <preset file>)";
+  else if (hasTone3000Ids(c)) msg += " (the capture cache was not tried: source.id / source.modelId must be plain letters, digits, '_' or '-')";
+  return msg;
 }
 
 void verifyCapture(const Capture& c, const std::string& jsonPath) {
-  if (!fs::exists(c.resolvedPath))
-    throw CaptureError(jsonPath, jsonPath + ": file not found: " + c.resolvedPath.string());
+  const fs::path p = locateCapture(c);
+  if (!fs::exists(p)) throw CaptureError(jsonPath, captureNotFoundMessage(c, jsonPath));
   if (c.sha256.empty()) return;
-  const std::string got = sha256File(c.resolvedPath);
+  const std::string got = sha256File(p);
   if (got != c.sha256)
-    throw CaptureError(jsonPath, jsonPath + ": sha256 mismatch for " + c.resolvedPath.string() + " (expected " +
-                                     c.sha256 + ", got " + got + ")");
+    throw CaptureError(jsonPath, jsonPath + ": sha256 mismatch for " + p.string() + " (expected " + c.sha256 +
+                                     ", got " + got + ")");
 }
 
 Preset loadPresetFile(const fs::path& path) {

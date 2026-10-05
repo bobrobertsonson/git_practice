@@ -13,11 +13,12 @@ from cab_4x12 import box_obj, bool_cut
 BW, BD, BH = 740.0, 290.0, 520.0
 GW, GL = 684.0, 468.0                    # grille cloth / art plate (mm)
 S = 3
-SPK = [(-165, 0), (165, 0)]
+from cab_layout import CABS
+SPK = CABS['2x12']['speakers']
 BAFFLE_Z = -22.0
 GRILLE_TOP = -6.0
 LOGO = (252.0, -192.0)
-LIFT = 50.0                              # mm, ortho views only (see _build)
+LIFT = CABS['2x12']['lift_mm']                              # mm, ortho views only (see _build)
 INK_A, INK_B = '#8f55b8', '#e8e4d8'      # bruise purple, bone
 
 def layout():
@@ -117,7 +118,7 @@ def build(mats, mode):
         bpy.context.view_layer.update()
         t.scale = (min(1.0, 86 * MM / max(t.dimensions.x, 1e-9)),) * 2 + (1.0,)
         t.location = (LOGO[0] * MM, LOGO[1] * MM, (GRILLE_TOP + 1.95) * MM)
-    else:
+    elif not NO_MIC:
         # mic ~1 in off the grille plane, just off the dust cap of the left driver, 30 deg off axis
         tip = Vector((-165 + 38, 6, GRILLE_TOP + 25.4))
         az = math.radians(135); tilt = math.radians(30)
@@ -139,12 +140,13 @@ def build(mats, mode):
     return None
 
 C_FONT = {}
+NO_MIC = '--no-mic' in __import__('sys').argv   # open view without the baked mic + boom (the plugin draws its own)
 SPEC = dict(
     name='cab2', kind='cab', plate=(GW, GL, 4.0), art=art, ink_a=INK_A, ink_b=INK_B, populate=None, build=None,
-    k=3.4, center=(0, 0, BH / 2 * MM), modes=['hero', 'ortho', 'open'], ortho_res=(1400, 1000),
+    k=3.4, center=(0, 0, BH / 2 * MM), modes=['hero', 'ortho', 'open'], ortho_res=CABS['2x12']['res'],
     fnames={'hero': 'cab2x12_hero_3q.png', 'ortho': 'cab2x12_front_ortho.png', 'open': 'cab2x12_open_ortho.png'},
     hero=dict(kind='persp', loc=(1.0, -1.85, 1.05), target=(0, 0, 0.25), lens=70, k=3.4),
-    ortho=dict(kind='ortho', loc=(0, -4.0, (BH / 2 + LIFT) * MM), rot=(90, 0, 0), ortho_scale=0.84, k=3.4))
+    ortho=dict(kind='ortho', loc=(0, -4.0, (BH / 2 + LIFT) * MM), rot=(90, 0, 0), ortho_scale=CABS['2x12']['ortho_scale_m'], k=3.4))
 
 def _build(mats, mode):
     mats['grille'] = mat_grille(mats['art'], GW, GL, SPEC['ink_a'], SPEC['ink_b'])
@@ -161,6 +163,7 @@ SPEC['build'] = _build
 
 if __name__ == '__main__':
     import sys
+    sys.argv = [a for a in sys.argv if a != '--no-mic']
     fd = os.path.join(os.path.expanduser('~'), '.cache', 'pedal_b2_fonts')
     for i, a in enumerate(sys.argv):
         if a == '--font-dir' and i + 1 < len(sys.argv):

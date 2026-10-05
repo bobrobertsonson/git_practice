@@ -25,7 +25,9 @@ add_executable(sawblade_tests
   test_stem_cli.cpp
   test_loudness.cpp
   test_pedals.cpp
-  test_pedals_7b.cpp)
+  test_pedals_7b.cpp
+  test_ir_mix.cpp
+  test_category_cache.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)

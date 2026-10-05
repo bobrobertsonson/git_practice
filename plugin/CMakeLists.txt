@@ -50,7 +50,18 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/rig/RigWidgets.cpp
   src/rig/SlotStrip.cpp
   src/rig/EqGraph.cpp
-  src/rig/RigEditorPanel.cpp)
+  src/rig/RigEditorPanel.cpp
+  src/mic/IrNameParser.cpp
+  src/mic/IrPack.cpp
+  src/mic/IrResponse.cpp
+  src/mic/MicSession.cpp
+  src/mic/MicPage.cpp
+  src/presets/T3kTool.cpp
+  src/presets/PresetLibrary.cpp
+  src/presets/PresetLoadFlow.cpp
+  src/presets/AbCompare.cpp
+  src/presets/PresetInfoPanel.cpp
+  src/presets/PresetBrowser.cpp)
 
 # UI renders embedded into the binary: an explicit list (not a glob) of everything in assets/.
 # Nothing renders at build time; design/render/export_ui_assets.py produced these files once.
@@ -58,6 +69,10 @@ juce_add_binary_data(SawbladeAssets SOURCES
   assets/amp_saw.png
   assets/amp_body.png
   assets/cab_4x12.png
+  assets/cab_4x12_open.png
+  assets/cab_4x12_open.json
+  assets/cab_2x12_open.png
+  assets/cab_2x12_open.json
   assets/pedal_saw.png
   assets/pedal_body.png
   assets/knob_amp.png
@@ -71,6 +86,9 @@ juce_add_binary_data(SawbladeAssets SOURCES
   assets/preview_riff.wav)
 
 set_source_files_properties(src/browser/BrowserSettings.cpp PROPERTIES COMPILE_DEFINITIONS "SAWBLADE_REPO_DIR=\"${PROJECT_SOURCE_DIR}\"")
+
+# The default sawblade-t3k location (T3kTool): <repo>/match/.venv/bin/sawblade-t3k.
+set_source_files_properties(src/presets/T3kTool.cpp PROPERTIES COMPILE_DEFINITIONS "SAWBLADE_REPO_DIR=\"${PROJECT_SOURCE_DIR}\"")
 
 # JUCE module sources are compiled into the same targets: -Werror applies to OUR files only.
 set_source_files_properties(${SAWBLADE_PLUGIN_SOURCES} src/PluginEntry.cpp PROPERTIES
@@ -128,10 +146,13 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_rig_model.cpp
     tests/test_rig_controller.cpp
     tests/test_pedal_face.cpp
+    tests/test_mic.cpp
+    tests/test_presets.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
     tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp tests/test_pedal_face.cpp
+    tests/test_mic.cpp tests/test_presets.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_plugin_tests PRIVATE src)
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1)
@@ -161,10 +182,11 @@ endif()
 # executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
 # compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
 if(SAWBLADE_BUILD_TESTS)
-  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp ${SAWBLADE_PLUGIN_SOURCES})
-  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp
+  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   target_include_directories(sawblade_editor_tests PRIVATE src)
+  # JUCE_MODAL_LOOPS_PERMITTED: the page tests pump the message loop (MessageManager::runDispatchLoopUntil).
   target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
     SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots"

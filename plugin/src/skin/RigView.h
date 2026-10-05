@@ -49,6 +49,7 @@ class RigView : public juce::Component {
   void select(Piece p);
   Piece selected() const noexcept { return selected_; }
   std::function<void(Piece)> onSelect;
+  std::function<void()> onCabOpen;  // double-click on the cab: opens the mic page
 
   void paint(juce::Graphics&) override;
   void paintOverChildren(juce::Graphics&) override;

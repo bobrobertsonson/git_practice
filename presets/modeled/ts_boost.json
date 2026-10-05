@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Modeled boost into chainsaw (pedal.ts + pedal.hm)",
+  "category": "Swedish death (HM-2)",
   "notes": "Green overdrive model (pedal.ts: drive 2, tone 6, level 8) as a tightening boost in front of the HM model at moderate settings. Single path, no captures: renders from files in this repo only. The cab slot holds the repo fixture identity IR (no cab colouring), a stand-in until a real cab IR is chosen. Starting hypotheses, not a tuned tone.",
   "paths": {
     "a": {

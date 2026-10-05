@@ -640,3 +640,44 @@ def test_resume_progress_is_written_atomically(tmp_path):
     assert R.read_progress(tmp_path) == {"epoch": 2} and [f.name for f in tmp_path.iterdir()] == ["progress.json"]
     (tmp_path / "progress.json").write_text("{trunc")
     assert R.read_progress(tmp_path) is None
+
+
+# ---------------------------------------------------------------- irMix cab mode (phase 9a)
+
+def irmix_preset(base: dict, mix: float = 0.3) -> dict:
+    p = copy.deepcopy(base)
+    ir = lambda n: {"file": str((PRESETS.parent / "ir" / n).resolve())}
+    p["cab"] = {"mode": "irMix", "irA": ir("ir_a.wav"), "irB": ir("ir_b.wav"), "mix": mix, "enabled": True,
+                "normalize": True}
+    return p
+
+
+def _core_supports_irmix(shared) -> bool:
+    try:
+        C.fold_cab_post_eq(irmix_preset(shared), PRESETS, CaptureCache())
+        return True
+    except Exception:                                      # noqa: BLE001 - any core refusal means "not yet"
+        return False
+
+
+def test_irmix_fold_is_the_mix_of_the_shared_folds(shared, cache):
+    """The cab fold renders through the core, so irMix needs no Python-side change: folding an irMix cab equals
+    (1-mix)*fold(shared irA) + mix*fold(shared irB) (the post EQ is linear)."""
+    if not _core_supports_irmix(shared):
+        pytest.skip("the bound sawblade_core does not support cab mode irMix yet")
+    mix = 0.3
+    p = irmix_preset(shared, mix)
+    h, info = C.fold_cab_post_eq(p, PRESETS, cache)
+    ha, _ = C.fold_cab_post_eq(_shared_with(shared, p["cab"]["irA"]), PRESETS, cache)
+    hb, _ = C.fold_cab_post_eq(_shared_with(shared, p["cab"]["irB"]), PRESETS, cache)
+    n = max(len(h), len(ha), len(hb))
+    pad = lambda x: np.pad(x.astype(np.float64), (0, n - len(x)))
+    want = (1 - mix) * pad(ha) + mix * pad(hb)
+    assert db(np.sum((pad(h) - want) ** 2), np.sum(want ** 2)) < -100.0
+    assert info["cabEnabled"] is True
+
+
+def _shared_with(base: dict, ir: dict) -> dict:
+    q = copy.deepcopy(base)
+    q["cab"] = {"mode": "shared", "ir": ir, "enabled": True, "normalize": True}
+    return q

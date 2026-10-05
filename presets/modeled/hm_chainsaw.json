@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Modeled chainsaw (pedal.hm)",
+  "category": "Swedish death (HM-2)",
   "notes": "Swedish chainsaw distortion model (pedal.hm), everything at 10 (level 2 keeps the peak just under full scale: the maxed colour-mix EQ is a big boost), single path, no captures: renders from files in this repo only. The cab slot holds the repo fixture identity IR (no cab colouring), a stand-in until a real cab IR is chosen. Knob values are starting hypotheses; the model is fitted against real captures in a later task (modelVersion).",
   "paths": {
     "a": {

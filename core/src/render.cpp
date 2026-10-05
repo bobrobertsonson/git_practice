@@ -44,7 +44,7 @@ std::vector<CaptureAttribution> attributions(const Preset& p) {
         collectCapture(out, JsonObject::index(std::string(names[k]) + ".blocks", i) + ".model", nam->model);
   if (p.cab.mode == CabMode::Shared) {
     collectCapture(out, "cab.ir", p.cab.ir);
-  } else {
+  } else {  // perPath and irMix
     collectCapture(out, "cab.irA", p.cab.irA);
     collectCapture(out, "cab.irB", p.cab.irB);
   }
@@ -250,6 +250,7 @@ nlohmann::json reportJson(const RenderResult& r) {
                  {"resolved", {{"delaySamplesB", i.align.delaySamplesB},
                                {"invertB", i.align.invertB},
                                {"peakCorrelation", i.align.peakCorrelation}}}}},
+      {"cabMode", i.cabMode},
       {"liveCompatible", i.liveCompatible},
       {"exportExactness", {{"withCab", i.exportExactness.withCab}, {"noCab", i.exportExactness.noCab}}},
       {"input", stats(r.input)},

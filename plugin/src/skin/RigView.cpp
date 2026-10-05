@@ -128,6 +128,10 @@ RigView::RigView() {
   make(Piece::SawPedal, Panel::PedalSaw, "SAW pedal: Stockholm Syndrome", 10.0f, sawPedal);
   make(Piece::BodyPedal, Panel::PedalBody, "BODY pedal: Tighten", 10.0f, bodyPedal);
 
+  piece(Piece::Cab).onDoubleClick = [this](Piece) {
+    if (onCabOpen) onCabOpen();
+  };
+  piece(Piece::Cab).setTooltip("4x12 cab (click to select, double-click for the mic page)");
   for (Piece p : {Piece::SawAmp, Piece::BodyAmp, Piece::Cab}) addAndMakeVisible(*pieces_[static_cast<size_t>(p)]);
   cables_ = std::make_unique<Cables>();
   cables_->setBounds(0, 0, kWidth, kHeight);

@@ -8,6 +8,7 @@
 
 #include "sawblade/capture_cache.h"
 #include "sawblade/ir.h"
+#include "sawblade/ir_mix.h"
 #include "sawblade/nam_block.h"
 
 namespace sawblade {
@@ -15,8 +16,8 @@ namespace {
 
 double dbToLin(double db) { return std::pow(10.0, db / 20.0); }
 
-std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, double sr, bool normalize,
-                                   std::vector<std::string>& warnings, CaptureCache* cache) {
+std::shared_ptr<const IrData> loadCabIr(const Capture& c, const std::string& path, double sr, bool normalize,
+                                        std::vector<std::string>& warnings, CaptureCache* cache) {
   const std::string filePath = path + ".file";
   std::shared_ptr<const IrData> ir;
   if (cache) {
@@ -24,16 +25,28 @@ std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, do
   } else {
     verifyCapture(c, filePath);
     try {
-      ir = std::make_shared<const IrData>(loadIr(c.resolvedPath, sr, normalize));
+      ir = std::make_shared<const IrData>(loadIr(locateCapture(c), sr, normalize));
     } catch (const std::exception& e) {
       throw CaptureError(filePath, e.what());
     }
   }
   for (const auto& w : ir->warnings) warnings.push_back(path + ": " + w);
+  return ir;
+}
+
+std::unique_ptr<Convolver> makeConvolver(const std::vector<float>& ir) {
   auto conv = std::make_unique<Convolver>();
-  conv->setIr(ir->samples);
+  conv->setIr(ir);
   return conv;
 }
+
+std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, double sr, bool normalize,
+                                   std::vector<std::string>& warnings, CaptureCache* cache) {
+  return makeConvolver(loadCabIr(c, path, sr, normalize, warnings, cache)->samples);
+}
+
+// shared and irMix both run one convolver after the blend.
+bool usesSharedCab(CabMode m) { return m != CabMode::PerPath; }
 
 // Deterministic white noise: xorshift64* (not <random>: distributions are implementation-defined).
 std::vector<float> makeProbe(double sr) {
@@ -92,6 +105,10 @@ ChainResources loadResources(const Preset& p, double sr, CaptureCache* cache) {
     // A disabled cab is never used (Chain ignores it): do not require its IR to exist.
   } else if (p.cab.mode == CabMode::Shared) {
     res.cabShared = loadCab(p.cab.ir, "cab.ir", sr, p.cab.normalize, res.warnings, cache);
+  } else if (p.cab.mode == CabMode::IrMix) {
+    const auto a = loadCabIr(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings, cache);
+    const auto b = loadCabIr(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings, cache);
+    res.cabShared = makeConvolver(mixIrs(a->samples, b->samples, p.cab.mix));
   } else {
     res.cabA = loadCab(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings, cache);
     res.cabB = loadCab(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings, cache);
@@ -116,7 +133,7 @@ std::vector<NamRateProbe> probeNamRates(const Preset& p, CaptureCache* cache) {
         if (cache) {
           hz = cache->namModel(nam->model, filePath)->expectedSampleRate();
         } else {
-          hz = NamBlock::load(nam->model.resolvedPath, NamBlockConfig{})->expectedSampleRate();
+          hz = NamBlock::load(locateCapture(nam->model), NamBlockConfig{})->expectedSampleRate();
         }
       } catch (const CaptureError&) {
         throw;
@@ -201,7 +218,7 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
     throw PresetError("postEq", e.what());
   }
   if (preset_.cab.enabled) {
-    if (preset_.cab.mode == CabMode::Shared) {
+    if (usesSharedCab(preset_.cab.mode)) {
       if (!res_.cabShared) throw std::runtime_error("ChainResources lacks the shared cab");
       cabShared_ = std::move(res_.cabShared);
     } else {
@@ -412,7 +429,8 @@ ChainInfo Chain::info() const {
   i.latencySamples = latency_;
   i.alignMode = preset_.align.mode;
   i.align = align_;
-  i.liveCompatible = preset_.cab.mode == CabMode::Shared;
+  i.cabMode = preset_.cab.mode == CabMode::Shared ? "shared" : preset_.cab.mode == CabMode::PerPath ? "perPath" : "irMix";
+  i.liveCompatible = usesSharedCab(preset_.cab.mode);
   i.exportExactness = {true, i.liveCompatible};
   i.warnings = warnings_;
   i.warnings.insert(i.warnings.end(), alignWarnings_.begin(), alignWarnings_.end());

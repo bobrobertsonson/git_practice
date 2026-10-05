@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Sludge (Crowbar-style)",
+  "category": "Doom / Sludge / Fuzz",
   "notes": "Mesa Dual Rectifier, no pedal, Mesa V30 cab: thick, saturated, low and slow. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
   "gate": {
     "enabled": true,

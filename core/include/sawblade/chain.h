@@ -79,7 +79,8 @@ struct ChainInfo {
   int latencySamples = 0;                // processing latency reported to the host (excludes alignDelay)
   AlignMode alignMode = AlignMode::Auto;
   AlignResult align;                     // the values in effect (resolved for auto)
-  bool liveCompatible = false;           // cab.mode == shared
+  std::string cabMode = "shared";        // "shared" | "perPath" | "irMix"
+  bool liveCompatible = false;           // cab.mode is shared or irMix (one cab IR after the blend)
   struct Exactness {
     bool withCab = true;
     bool noCab = false;
