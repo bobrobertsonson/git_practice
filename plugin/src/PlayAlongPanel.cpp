@@ -222,7 +222,7 @@ struct PlayAlongPanel::Impl {
     configure(deleteTake, "DELETE", "Delete the selected take (the audio file and its sidecar)");
     configure(useForMatch, "USE FOR MATCH", "Use the selected take as the DI for MATCH");
     configure(matchBtn, "MATCH", "Find the blend that sounds like the loaded song, from the selected take (Standalone app)");
-    configure(exportBtn, "EXPORT NAM", "Train a NAM model of the loaded preset for a loader pedal (Standalone app)");
+    configure(exportBtn, "EXPORT NAM", "Train a NAM model of the loaded preset for a loader pedal");
     rec.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a1712));
     rec.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb0a0));
     matchBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
@@ -320,10 +320,6 @@ struct PlayAlongPanel::Impl {
       if (owner.onMatch) owner.onMatch();
     };
     exportBtn.onClick = [this] {
-      if (!proc.matchEnabled()) {
-        showNotice("EXPORT NAM runs in the Standalone app: open the Standalone app.");
-        return;
-      }
       if (owner.onExport) owner.onExport();
     };
   }
@@ -388,7 +384,7 @@ struct PlayAlongPanel::Impl {
         col = L::warning();
       }
     } else if (!proc.matchEnabled()) {
-      info = "MATCH and EXPORT NAM: open the Standalone app.";
+      info = "MATCH: open the Standalone app.";
     } else {
       info = "REC saves the clean input. Choose a take, USE FOR MATCH, then MATCH.";
     }

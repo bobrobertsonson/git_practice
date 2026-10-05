@@ -14,6 +14,7 @@ namespace sawblade::plugin {
 class MicPage;
 class PresetBrowser;
 class AbCompare;
+class ExportPanel;
 
 // Skinned prototype of the main rig screen (design/mockups/RigReal.dc.html, spec
 // docs/specs/phase2_5_skin.md). A fixed 1280 x 800 design laid out in one content component that
@@ -55,9 +56,13 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   PresetBrowser& browser();
   AbCompare& abCompare();
 
-  // The MATCH / EXPORT NAM overlay (MatchScreen): opened from the play-along panel's buttons (Standalone only).
-  void openMatchScreen(bool exportMode);
+  // The MATCH overlay (MatchScreen): opened from the play-along panel's button (Standalone only).
+  void openMatchScreen();
   bool matchScreenOpen() const;
+  // The EXPORT NAM panel (ExportPanel): opened from the top bar and the play-along panel, Standalone and plugin alike.
+  void openExportPanel();
+  bool exportPanelOpen() const;
+  ExportPanel& exportPanel();
 
   // Dropping a folder (of stems) anywhere on the editor loads it as the song and opens the panel.
   bool isInterestedInFileDrag(const juce::StringArray& files) override;
