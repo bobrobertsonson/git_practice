@@ -82,11 +82,17 @@ htdemucs export, if re-exported). Env: `TONE3000_CLIENT_ID=<publishable t3k_pub_
 
 ## Open items, in priority order
 
+0. **First Mac run findings (2026-10-05, v0.1 at db0813e):** the Standalone opens on the
+   `INIT` preset, which (like the four "Classic" library presets: Chainsaw + Body, Studio
+   Split, Swedeath Saw, Tight Body) references placeholder capture files
+   (`presets/captures/saw_pedal_hm2_maxed.nam` etc.) that are not in the repo → red
+   "file not found" on launch. Fix: make INIT capture-free (modeled chainsaw + repo IR) and
+   either resolve the Classic presets through TONE3000 ids or move them out of the library.
+   Also: the Settings CLIENT ID field starts empty (GUI apps do not read `.zshrc`); prefill
+   from the token file / env when present. Matched + Styles presets load fine.
 1. User plays v0.1 in Logic (`scripts/mac_update.sh`), reports; fix round.
-2. **CC BY-NC captures**: policy is "allowed" (CLAUDE.md) but the t3k filter + browser still
-   refuse `cc-by-nc*`. The edit was blocked by the cloud permission classifier; do it in a
-   session where the user approves the edit directly. Mark derived presets/exports
-   non-commercial.
+2. CC BY-NC captures: enabled end to end (29ca1a0); derived presets/exports marked
+   non-commercial. Nothing pending here.
 3. 7.2: re-fit `pedal.hm` v3 / hmx / eye against the captures (`sawblade-calibrate pedal-fit`),
    update presets to real knob positions (7.1 proposals), then HmVoicing constants.
 4. Validation matches for the remaining songs as originals arrive (Terrorizer, Electric
