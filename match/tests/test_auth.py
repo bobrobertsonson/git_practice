@@ -174,3 +174,79 @@ def test_poll_survives_transient_errors(respx_mock):
         httpx.ConnectError("x"), httpx.Response(503), httpx.Response(200, json=tokens())])
     s = poll_for_session(http(), "cid", request_device_code_obj(), sleep=clock.sleep, now=clock, mono=clock)
     assert s.access_token == "a1"
+
+
+# ---- client_id persisted in the token file (read by the C++ settings) ----
+
+def _login(respx_mock, monkeypatch, tmp_path, cid, routes=True):
+    import functools
+    from sawblade_match.t3k import cli
+    from sawblade_match.t3k.auth import poll_for_session as real_poll
+    clock = FakeClock()
+    monkeypatch.setenv("TONE3000_BASE_URL", BASE)
+    monkeypatch.setenv("TONE3000_CLIENT_ID", cid)
+    monkeypatch.delenv("TONE3000_REFRESH_TOKEN", raising=False)
+    path = tmp_path / "cfg" / "tokens.json"
+    monkeypatch.setenv("SAWBLADE_T3K_TOKEN_FILE", str(path))
+    monkeypatch.setattr(cli, "poll_for_session",
+                        functools.partial(real_poll, sleep=clock.sleep, now=clock, mono=clock))
+    if routes:
+        respx_mock.post(DEV_URL).respond(200, json=device_body())
+        respx_mock.post(TOKEN_URL).respond(200, json=tokens())
+    return cli, path
+
+
+def test_login_stores_publishable_client_id(respx_mock, monkeypatch, tmp_path, capsys):
+    cli, path = _login(respx_mock, monkeypatch, tmp_path, "t3k_pub_abc")
+    assert cli.main(["login"]) == 0
+    assert json.loads(path.read_text())["client_id"] == "t3k_pub_abc"
+    assert TokenStore(path).load().client_id == "t3k_pub_abc"
+
+
+def test_login_with_secret_key_stores_nothing(respx_mock, monkeypatch, tmp_path, capsys):
+    cli, path = _login(respx_mock, monkeypatch, tmp_path, "t3k_cs_secret", routes=False)
+    assert cli.main(["login"]) != 0           # refused up front
+    assert not path.exists()
+    assert not respx_mock.calls               # no HTTP call at all
+
+
+def test_store_never_writes_secret_looking_client_id(store):
+    store.save(Session("a", "r", 1.0, client_id="t3k_cs_secret"))
+    assert "client_id" not in json.loads(store.path.read_text())
+    assert "t3k_cs_" not in store.path.read_text()
+
+
+def test_load_ignores_secret_client_id_in_file(store):
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text(json.dumps({"access_token": "a", "refresh_token": "r", "expires_at": 1.0,
+                                      "client_id": "t3k_cs_secret"}))
+    assert store.load().client_id is None
+
+
+def test_old_token_file_without_client_id_loads_and_refreshes(respx_mock, store):
+    clock = FakeClock()
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text(json.dumps({"access_token": "a1", "refresh_token": "r1", "expires_at": 0.0,
+                                      "token_type": "bearer", "scope": "read"}))
+    s = store.load()
+    assert s.access_token == "a1" and s.client_id is None
+    respx_mock.post(TOKEN_URL).respond(200, json=tokens("a2", "r2"))
+    tm = TokenManager("cid", http(), store, now=clock)
+    assert tm.get_access_token() == "a2"
+    on_disk = json.loads(store.path.read_text())
+    assert on_disk["refresh_token"] == "r2" and "client_id" not in on_disk
+
+
+def test_refresh_preserves_client_id(respx_mock, store):
+    clock = FakeClock()
+    respx_mock.post(TOKEN_URL).respond(200, json=tokens("a2", "r2"))
+    tm = TokenManager("cid", http(), store, now=clock)
+    tm.set_session(Session("a1", "r1", 0.0, client_id="t3k_pub_abc"))
+    assert tm.get_access_token() == "a2"
+    assert json.loads(store.path.read_text())["client_id"] == "t3k_pub_abc"
+    # a fresh manager (loads from disk) also keeps it across another rotation
+    respx_mock.post(TOKEN_URL).respond(200, json=tokens("a3", "r3"))
+    store.save(Session("a2", "r2", 0.0, client_id="t3k_pub_abc"))
+    tm2 = TokenManager("cid", http(), store, now=clock)
+    assert tm2.get_access_token() == "a3"
+    assert json.loads(store.path.read_text())["client_id"] == "t3k_pub_abc"

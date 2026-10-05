@@ -1,3 +1,4 @@
+#include "../PresetMapping.h"
 #include "IrPack.h"
 
 #include <algorithm>
@@ -182,7 +183,7 @@ IrPack IrPack::fromFolder(const fs::path& dir, std::string* error) {
 
 IrPack IrPack::single(const Capture& cap) {
   IrPack p;
-  if (cap.file.empty() && cap.resolvedPath.empty()) return p;  // no IR (the Init preset): nothing to place
+  if ((cap.file.empty() && cap.resolvedPath.empty()) || isNoCapture(cap)) return p;  // no IR (the Init preset): nothing to place
   p.info_.kind = PackInfo::Kind::Single;
   p.singleCapture_ = cap;
   PackModel m;

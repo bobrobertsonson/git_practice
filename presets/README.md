@@ -76,20 +76,22 @@ Phase 7c adds ten modded / one-knob presets and four calibrated CHAINSAW presets
 (`presets/modeled/chainsaw/` holds 7b's fifteen (model version 2, untouched); `presets/modeled/hmx/`, `eye/` and `hm_v3/` are 7c's, kept in
 their own folders because a test asserts exactly fifteen files in `chainsaw/`.)
 
-## Captures to fetch (not committed)
+## Classic presets and their TONE3000 captures (not committed)
 
-TONE3000 captures carry their own licenses and are **not** redistributed in this repo. Put
-the files in `presets/captures/` with these names (or edit the preset paths), and fill in each
-capture's `source` block (id, url, creator, license) in the preset.
+The four Classic presets (`chainsaw_body`, `studio_split`, `swedeath_saw`, `tight_body`) reference
+TONE3000 tones by id, exactly like the Matched presets. The capture files are **not** in this
+repo (TONE3000 captures carry their own licenses and are not redistributed). Fetch them with
+`sawblade-t3k resolve presets/chainsaw_body.json -o <out>.resolved.json` (use `sawblade-t3k login`
+once first), or just load the preset in the plugin's browser: it runs the same resolve flow.
 
-| File | What to look for on TONE3000 |
-|---|---|
-| `saw_pedal_hm2_maxed.nam` | HM-2-style pedal **alone** (pedal capture, no amp), Low/High at or near max, distortion high |
-| `saw_amp_lowgain.nam` | Clean-to-low-gain amp (Marshall- or solid-state-style), **no cab** (DI/amp-only capture), edge of breakup at most |
-| `body_boost_ts_tight.nam` | TS-style overdrive pedal alone: drive ~0, level high, tone ~noon |
-| `body_amp_highgain.nam` | Modern high-gain amp head, **no cab**, gain moderate (~5–6/10) — the boost supplies tightness |
-| `cab_4x12_v30.wav` | 4x12 with V30-type speakers, close dynamic mic, minimum-phase or tight onset |
-| `cab_4x12_greenback.wav` | 4x12 with Greenback-type speakers (studio_split only) |
+| Role | TONE3000 capture (tone id / model id) | Licence |
+|---|---|---|
+| Saw pedal (NAM) | 58569 / 496942 Boss HM-2 1985 MIJ TTSV10 | t3k |
+| Saw amp (NAM) | 86089 / 731435 Marshall JCM 800 2203 | t3k |
+| Body boost | none: the modeled `pedal.ts` block (drive 0, tone 5, level 8) | n/a |
+| Body amp (NAM) | 70977 / 584871 6505+ FULL Pack | t3k |
+| Cab IR (V30-style) | 84863 / 721117 Mesa Oversized SM57 and VR2 5150 Power | t3k |
+| Cab IR (Greenback, `studio_split` saw path) | 75087 / 656946 UK Greenback 1960TV M201 | t3k |
 
 Rules for choosing captures: amp captures must be **amp-only** (the cab comes from the IR);
 48 kHz NAM models; prefer standard WaveNet; avoid captures that include gates, reverb or

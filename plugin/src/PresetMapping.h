@@ -67,6 +67,12 @@ ParamValues paramsFromPreset(const Preset& p);
 // Writes parameter values into a preset (inverse of paramsFromPreset for the mapped fields).
 void applyParams(Preset& p, const ParamValues& v);
 
+// The placeholder file name of a capture slot that holds no capture (the schema requires a `file` even for a
+// disabled cab). It is not a file: nothing may display it, read it or write it out as a path.
+inline constexpr const char* kNoCaptureFile = "(none)";
+// True for a capture slot with no capture: an empty file or the placeholder.
+inline bool isNoCapture(const Capture& c) { return c.file.empty() || c.file == kNoCaptureFile; }
+
 // "Init": no blocks on either path, cab disabled. Passes audio through (50/50 blend of two
 // identical paths), zero latency, no files needed.
 Preset makeInitPreset();

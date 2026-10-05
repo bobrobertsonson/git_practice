@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include "PluginProcessor.h"
+#include "PresetMapping.h"
 #include "Sha256.h"
 
 namespace sawblade::plugin {
@@ -73,7 +74,7 @@ MatchPlan planMatch(SawbladeProcessor& p) {
 }
 
 std::string exportBlockedReason(const Preset& p) {
-  auto missing = [](const Capture& c) { return c.resolvedPath.empty(); };
+  auto missing = [](const Capture& c) { return c.resolvedPath.empty() || isNoCapture(c); };
   for (const PathPreset* path : {&p.a, &p.b})
     for (const auto& b : path->blocks)
       if (const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get()))

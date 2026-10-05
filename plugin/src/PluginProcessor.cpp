@@ -307,6 +307,15 @@ void SawbladeProcessor::setStateInformation(const void* data, int size) {
         j.erase(it);
         dropped = true;
       }
+    // States saved by builds before v0.1.1 hold the "no capture" placeholder as an absolute path ("<cwd>/(none)"):
+    // put it back to the bare placeholder, so it is never taken for a file.
+    if (auto cab = j.find("cab"); cab != j.end() && cab->is_object())
+      for (const char* key : {"ir", "irA", "irB"})
+        if (auto ir = cab->find(key); ir != cab->end() && ir->is_object())
+          if (auto f = ir->find("file"); f != ir->end() && f->is_string() && std::filesystem::path(f->get<std::string>()).filename() == kNoCaptureFile) {
+            *f = kNoCaptureFile;
+            dropped = true;
+          }
     if (dropped) s = j.dump();
   }
   loadPresetJson(s, base, nullptr, /*restore=*/true);

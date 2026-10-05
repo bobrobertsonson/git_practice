@@ -493,6 +493,64 @@ TEST_CASE("resolve flow: progress, success, not logged in, missing tool, and no 
   CHECK(outcomes.back().status == PresetLoadFlow::Outcome::Status::Invalid);
 }
 
+TEST_CASE("Classic factory presets resolve through TONE3000 like Matched ones: NeedsResolve when uncached, Direct and loadable when cached", "[presets][resolve][classic]") {
+  TempDir tmp;
+  EnvVar appdata("SAWBLADE_APPDATA", (tmp.dir / "data").string());
+  EnvVar cache("SAWBLADE_CACHE_DIR", (tmp.dir / "cache").string());
+  const fs::path factory = fs::path(SAWBLADE_PRESETS_DIR);
+  const char* const classics[] = {"chainsaw_body", "studio_split", "swedeath_saw", "tight_body"};
+
+  // Nothing cached: every Classic preset needs a resolve (not a red "file not found"), written under resolved/classic/.
+  for (const char* stem : classics) {
+    INFO(stem);
+    const LoadPlan plan = planPresetLoad(factory / (std::string(stem) + ".json"), SubBank::Classic);
+    CHECK(plan.kind == LoadPlan::Kind::NeedsResolve);
+    CHECK(plan.resolvedOut == tmp.dir / "data" / "resolved" / "classic" / (std::string(stem) + ".resolved.json"));
+  }
+
+  // The flow runs `sawblade-t3k resolve <preset> -o <out> --progress-json` and loads the result.
+  SawbladeProcessor proc;
+  proc.prepareToPlay(48000.0, 512);
+  REQUIRE(proc.loadPresetFile(writeIdentityPreset(tmp.dir, "init", 0)));
+  REQUIRE(proc.waitForLoader());
+  const fs::path prepared = writeResolvedCopy(tmp.dir);
+  const fs::path argsFile = tmp.dir / "args.txt";
+  fs::create_directories(tmp.dir / "data");
+  std::ofstream(tmp.dir / "data" / "settings.json")
+      << json{{"t3kExecutable", script(tmp.dir, "fake-t3k", "echo \"$@\" > \"" + argsFile.string() + "\"\ncp \"" + prepared.string() + "\" \"$4\"").string()}}.dump();
+  Queue queue;
+  std::vector<PresetLoadFlow::Outcome> outcomes;
+  PresetLoadFlow flow(proc, {nullptr, [&](const PresetLoadFlow::Outcome& o) { outcomes.push_back(o); }},
+                      [&](std::function<void()> f) { queue.post(std::move(f)); });
+  const fs::path chainsaw = factory / "chainsaw_body.json";
+  REQUIRE(flow.load(chainsaw, SubBank::Classic));
+  queue.pumpUntil([&] { return !outcomes.empty(); });
+  REQUIRE(outcomes.size() == 1);
+  CHECK(outcomes[0].status == PresetLoadFlow::Outcome::Status::Loaded);
+  CHECK(outcomes[0].message.empty());
+  std::string args;
+  std::getline(std::ifstream(argsFile), args);
+  CHECK(args == "resolve " + chainsaw.string() + " -o " + outcomes[0].loadedFile.string() + " --progress-json");
+  REQUIRE(proc.waitForLoader());
+
+  // Everything cached (stand-ins for `sawblade-t3k fetch`): Direct, and the real preset loads without error.
+  struct Pair { const char* id; const char* model; const char* ext; };
+  for (const Pair& c : {Pair{"58569", "496942", "nam"}, Pair{"86089", "731435", "nam"}, Pair{"70977", "584871", "nam"},
+                        Pair{"84863", "721117", "wav"}, Pair{"75087", "656946", "wav"}}) {
+    fs::create_directories(tmp.dir / "cache" / c.id);
+    fs::copy_file(kFixtures / (std::string(c.ext) == "nam" ? "nam/linear_identity.nam" : "ir/impulse.wav"),
+                  tmp.dir / "cache" / c.id / (std::string(c.model) + "." + c.ext));
+  }
+  for (const char* stem : classics) {
+    INFO(stem);
+    const fs::path pf = factory / (std::string(stem) + ".json");
+    CHECK(planPresetLoad(pf, SubBank::Classic).kind == LoadPlan::Kind::Direct);
+    REQUIRE(proc.loadPresetFile(pf));
+    REQUIRE(proc.waitForLoader());
+    CHECK(proc.status().error.empty());
+  }
+}
+
 TEST_CASE("resolve flow: cancel kills the tool and keeps the sound", "[presets][resolve]") {
   TempDir tmp;
   EnvVar appdata("SAWBLADE_APPDATA", (tmp.dir / "data").string());

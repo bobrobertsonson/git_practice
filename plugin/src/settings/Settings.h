@@ -53,6 +53,13 @@ std::optional<std::filesystem::path> detectMatchVenv(const Env&);
 bool containsSecretKey(std::string_view value);
 extern const char* const kSecretKeyMessage;
 
+// Where the effective TONE3000 client id came from.
+enum class ClientIdSource { None, Stored, Environment, TokenFile };
+struct ClientIdResolution {
+  std::string id;
+  ClientIdSource source = ClientIdSource::None;
+};
+
 class Settings {
  public:
   struct Listener {
@@ -86,7 +93,10 @@ class Settings {
   std::optional<std::filesystem::path> captureCacheDir() const;
   std::filesystem::path effectiveCaptureCacheDir() const;
   std::string tone3000ClientId() const;
-  std::string effectiveTone3000ClientId() const;  // stored, else TONE3000_CLIENT_ID (never a t3k_cs_ value)
+  // stored, else TONE3000_CLIENT_ID, else client_id from the token file (never a t3k_cs_ value; only that one
+  // key of the token file is ever read).
+  std::string effectiveTone3000ClientId() const;
+  ClientIdResolution resolveTone3000ClientId() const;  // the same, with the source
   std::string separationModel() const;
   std::optional<std::filesystem::path> takesDir() const;
   std::filesystem::path effectiveTakesDir() const;

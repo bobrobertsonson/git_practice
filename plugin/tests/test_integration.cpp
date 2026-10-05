@@ -1360,3 +1360,202 @@ TEST_CASE("21c first run on a fresh app-data dir", "[integration]") {
   CHECK(json::parse(std::ifstream(file))["firstRunCompleted"] == true);
   base.reset();
 }
+
+// ---- v0.1.1 Task A: the launch "file not found" error (docs/specs/v0_1_1-init_classic.md) ------------------------------------------
+namespace {
+
+// Every piece of text a panel can show about a file: labels, button texts and text fields (hidden overlays included: their
+// children keep their own visible flag, so closed panels are covered too).
+std::vector<juce::String> allShownTexts(juce::Component& root) {
+  std::vector<juce::String> t;
+  for (auto* l : all<juce::Label>(root))
+    if (l->isVisible()) t.push_back(l->getText());
+  for (auto* b : all<juce::Button>(root))
+    if (b->isVisible()) t.push_back(b->getButtonText());
+  for (auto* e : all<juce::TextEditor>(root))
+    if (e->isVisible()) t.push_back(e->getText());
+  return t;
+}
+
+// Text that reports a missing / unreadable file, or shows the INIT cab sentinel as if it were a file.
+bool reportsMissingFile(const juce::String& s) {
+  for (const char* phrase : {"(none)", "file not found", "file missing", "captures missing", "No such file", "cannot read the ir", "not a valid wav", "cannot open"})
+    if (s.containsIgnoreCase(phrase)) return true;
+  return false;
+}
+
+// `allowedName` empty: no text may report a missing file. Otherwise such text is allowed only when it names that file.
+void expectNoMissingFileText(juce::Component& root, const std::string& where, const juce::String& allowedName = {}) {
+  for (const auto& s : allShownTexts(root)) {
+    if (!reportsMissingFile(s)) continue;
+    if (allowedName.isNotEmpty() && s.contains(allowedName)) continue;
+    INFO(where << ": \"" << s.toStdString() << "\"");
+    CHECK_FALSE(reportsMissingFile(s));
+  }
+}
+
+}  // namespace
+
+TEST_CASE("launch: a clean first Standalone run shows no missing-file or (none) text on any panel", "[integration][launch]") {
+  gWalk.reset();
+  SettingsEnv env(nullptr, /*isolateHome=*/true);  // no settings file: a first run
+  EnvVar appData("SAWBLADE_APPDATA", (env.dir / "appdata").string());
+  juce::ScopedJuceInitialiser_GUI gui;
+  SawbladeProcessor proc;  // no saved state: the processor stays on the Init preset
+  proc.playAlong().setStandalone(true);
+  proc.prepareToPlay(48000.0, 512);
+  REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
+  std::unique_ptr<juce::AudioProcessorEditor> base(proc.createEditorAndMakeActive());
+  auto* ed = dynamic_cast<SawbladeEditor*>(base.get());
+  REQUIRE(ed != nullptr);
+  ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  pump(250);  // the editor's timer refreshes the status
+
+  CHECK(proc.status().presetName == "Init");
+  CHECK(proc.status().error.empty());
+  expectNoMissingFileText(*ed, "editor at launch");
+
+  // Settings (opens by itself on a first run): the checklist's captures row, then the About box's capture rows.
+  REQUIRE(ed->settingsOpen());
+  auto panels = all<settings::SettingsPanel>(*ed);
+  REQUIRE(panels.size() == 1);
+  panels[0]->refresh();
+  CHECK(panels[0]->checklistLight(2) != 3);  // 3 = Bad (see the editor tests): Init has no captures to be missing
+  expectNoMissingFileText(*ed, "settings checklist");
+  auto* about = buttonTitled(*ed, "About Sawblade...");
+  REQUIRE(about != nullptr);
+  click(*about);
+  REQUIRE(ed->aboutOpen());
+  expectNoMissingFileText(*ed, "About box");
+  click(*buttonTitled(*ed, "CLOSE"));
+  pump(80);
+
+  // Rig editor: every tab (the status line, the cab tab's file field).
+  ed->setRigEditorOpen(true);
+  for (auto t : {rig::RigEditorPanel::Tab::Chain, rig::RigEditorPanel::Tab::Eq, rig::RigEditorPanel::Tab::Blend, rig::RigEditorPanel::Tab::Cab,
+                 rig::RigEditorPanel::Tab::Gate, rig::RigEditorPanel::Tab::Comp}) {
+    ed->rigEditor().setTab(t);
+    ed->rigEditor().refresh();
+    INFO("rig tab " << static_cast<int>(t));
+    CHECK_FALSE(reportsMissingFile(ed->rigEditor().statusText()));
+    expectNoMissingFileText(*ed, "rig editor tab " + std::to_string(static_cast<int>(t)));
+  }
+  ed->setRigEditorOpen(false);
+
+  // Cab mic page.
+  ed->setMicPageOpen(true);
+  pump(250);
+  expectNoMissingFileText(*ed, "cab mic page");
+  ed->setMicPageOpen(false);
+
+  // Preset browser and its info panel (nothing is selected on a clean launch: Init is not a library entry).
+  ed->setBrowserOpen(true);
+  REQUIRE(pumpUntil([&] { return !ed->browser().scanning(); }));
+  pump(100);
+  CHECK(ed->browser().message().isEmpty());
+  CHECK_FALSE(reportsMissingFile(ed->browser().infoPanel().plainText()));
+  expectNoMissingFileText(*ed, "preset browser");
+  ed->setBrowserOpen(false);
+
+  CHECK(proc.status().error.empty());  // opening the panels did not start a load that failed
+  base.reset();
+}
+
+TEST_CASE("launch: a saved state whose captures no longer exist restores; only the load failure names the file", "[integration][launch]") {
+  gWalk.reset();
+  SettingsEnv env(kSettingsExist, /*isolateHome=*/true);
+  EnvVar appData("SAWBLADE_APPDATA", (env.dir / "appdata").string());
+  juce::ScopedJuceInitialiser_GUI gui;
+  const fs::path gone = env.dir / "moved_away";  // never created: the folder the captures used to live in
+  json state = {{"schema", "sawblade.preset"}, {"version", 1}, {"name", "Gone"},
+                {"paths", {{"a", {{"role", "saw"}, {"blocks", json::array({{{"id", "a1"}, {"type", "nam"}, {"slot", "amp"},
+                                                                          {"model", {{"file", (gone / "amp.nam").string()}}}}})}}},
+                           {"b", {{"role", "body"}, {"blocks", json::array({{{"id", "b1"}, {"type", "nam"}, {"slot", "amp"},
+                                                                          {"model", {{"file", (gone / "amp2.nam").string()}}}}})}}}}},
+                {"align", {{"mode", "off"}}},
+                {"blend", 0.5},
+                {"cab", {{"mode", "shared"}, {"ir", {{"file", (gone / "cab.wav").string()}}}}}};
+  const std::string text = state.dump(2);
+
+  SawbladeProcessor proc;
+  proc.playAlong().setStandalone(true);
+  proc.prepareToPlay(48000.0, 512);
+  proc.setStateInformation(text.data(), static_cast<int>(text.size()));  // never throws
+  REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(proc.currentPreset().name == "Gone");  // restored like a host session restore, even though it cannot be built
+  CHECK_FALSE(proc.status().error.empty());
+  CHECK(juce::String(proc.status().error).contains("amp.nam"));  // the failure names the file
+
+  std::unique_ptr<juce::AudioProcessorEditor> base(proc.createEditorAndMakeActive());
+  auto* ed = dynamic_cast<SawbladeEditor*>(base.get());
+  REQUIRE(ed != nullptr);
+  ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  pump(250);
+  CHECK(anyLabelContains(*ed, "amp.nam"));  // the editor's message line shows the load failure
+
+  // No other panel reports the missing file, except by naming it (the rig status line shows the same failure).
+  expectNoMissingFileText(*ed, "editor", "amp.nam");
+  ed->setRigEditorOpen(true);
+  ed->rigEditor().refresh();
+  expectNoMissingFileText(*ed, "rig editor", "amp.nam");
+  ed->setRigEditorOpen(false);
+  ed->setBrowserOpen(true);
+  REQUIRE(pumpUntil([&] { return !ed->browser().scanning(); }));
+  pump(100);
+  CHECK(ed->browser().message().isEmpty());
+  CHECK_FALSE(reportsMissingFile(ed->browser().infoPanel().plainText()));
+  ed->setBrowserOpen(false);
+  base.reset();
+}
+
+TEST_CASE("launch: a state saved by an older build with the absolutised \"(none)\" cab file shows no cab and no error", "[integration][launch]") {
+  gWalk.reset();
+  SettingsEnv env(kSettingsExist, /*isolateHome=*/true);
+  EnvVar appData("SAWBLADE_APPDATA", (env.dir / "appdata").string());
+  juce::ScopedJuceInitialiser_GUI gui;
+  json state = {{"schema", "sawblade.preset"}, {"version", 1}, {"name", "Init"},
+                {"paths", {{"a", {{"blocks", json::array()}}}, {"b", {{"blocks", json::array()}}}}},
+                {"align", {{"mode", "off"}}},
+                {"blend", 0.5},
+                {"cab", {{"enabled", false}, {"mode", "shared"}, {"ir", {{"file", (env.dir / "(none)").string()}}}}}};
+  const std::string text = state.dump(2);
+  SawbladeProcessor proc;
+  proc.playAlong().setStandalone(true);
+  proc.prepareToPlay(48000.0, 512);
+  proc.setStateInformation(text.data(), static_cast<int>(text.size()));
+  REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(proc.status().error.empty());
+  CHECK(proc.currentPreset().cab.ir.file == "(none)");
+  CHECK(exportBlockedReason(proc.currentPreset()).empty());
+
+  std::unique_ptr<juce::AudioProcessorEditor> base(proc.createEditorAndMakeActive());
+  auto* ed = dynamic_cast<SawbladeEditor*>(base.get());
+  REQUIRE(ed != nullptr);
+  ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  pump(250);
+  expectNoMissingFileText(*ed, "editor");
+  ed->setSettingsOpen(true);
+  auto* about = buttonTitled(*ed, "About Sawblade...");
+  REQUIRE(about != nullptr);
+  click(*about);
+  REQUIRE(ed->aboutOpen());
+  expectNoMissingFileText(*ed, "About box");
+  click(*buttonTitled(*ed, "CLOSE"));
+  pump(80);
+  ed->setSettingsOpen(false);
+  ed->setRigEditorOpen(true);
+  ed->rigEditor().setTab(rig::RigEditorPanel::Tab::Cab);
+  ed->rigEditor().refresh();
+  expectNoMissingFileText(*ed, "rig Cab tab");
+  ed->setRigEditorOpen(false);
+  ed->setMicPageOpen(true);
+  pump(250);
+  expectNoMissingFileText(*ed, "cab mic page");
+  ed->setMicPageOpen(false);
+  base.reset();
+
+  juce::MemoryBlock out;
+  proc.getStateInformation(out);
+  const json saved = json::parse(std::string(static_cast<const char*>(out.getData()), out.getSize()));
+  CHECK(saved["cab"]["ir"]["file"] == "(none)");  // written back verbatim, not absolutised
+}

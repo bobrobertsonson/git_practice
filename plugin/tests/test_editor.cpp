@@ -3266,6 +3266,58 @@ TEST_CASE("settings: a secret key in the client id field is refused", "[editor][
   CHECK(anyLabelContains(*rig.ed, "does not look like a publishable key"));
 }
 
+TEST_CASE("settings: an empty stored client id shows the effective one with a source caption; showing does not store it",
+          "[editor][settings][clientid]") {
+  Rig rig;
+  Settings& s = Settings::shared();
+  REQUIRE(s.tone3000ClientId().empty());
+  auto* field = fieldTitled(*rig.ed, "TONE3000 client id");
+  REQUIRE(field != nullptr);
+
+  // nothing anywhere: empty field, no caption
+  rig.ed->setSettingsOpen(true);
+  CHECK(field->getText().isEmpty());
+  CHECK_FALSE(anyLabelContains(*rig.ed, "from environment"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "from sawblade-t3k login"));
+
+  // from the login's token file (rig.env points SAWBLADE_T3K_TOKEN_FILE at <dir>/tokens.json)
+  std::ofstream(rig.env.dir / "tokens.json") << R"({"access_token":"A","refresh_token":"R","client_id":"t3k_pub_login"})";
+  rig.ed->setSettingsOpen(false);
+  rig.ed->setSettingsOpen(true);
+  CHECK(field->getText() == "t3k_pub_login");
+  CHECK(anyLabelContains(*rig.ed, "from sawblade-t3k login"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "from environment"));
+  // displaying it, and leaving the field untouched, stores nothing
+  REQUIRE(field->onFocusLost != nullptr);
+  field->onFocusLost();
+  field->onReturnKey();
+  CHECK(s.tone3000ClientId().empty());
+  std::ifstream none(rig.env.dir / "settings.json");
+  CHECK(std::string((std::istreambuf_iterator<char>(none)), {}).find("t3k_pub_login") == std::string::npos);
+
+  // the environment wins over the token file
+  ::setenv("TONE3000_CLIENT_ID", "t3k_pub_env", 1);
+  rig.ed->setSettingsOpen(false);
+  rig.ed->setSettingsOpen(true);
+  CHECK(field->getText() == "t3k_pub_env");
+  CHECK(anyLabelContains(*rig.ed, "from environment"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "from sawblade-t3k login"));
+  field->onFocusLost();
+  CHECK(s.tone3000ClientId().empty());
+
+  // typing exactly the env-provided id while nothing is stored is "unchanged": it is not stored
+  field->setText("t3k_pub_env", false);
+  field->onReturnKey();
+  CHECK(s.tone3000ClientId().empty());
+
+  // editing it stores the edit, and the caption goes away
+  field->setText("t3k_pub_mine", false);
+  field->onReturnKey();
+  CHECK(s.tone3000ClientId() == "t3k_pub_mine");
+  CHECK(field->getText() == "t3k_pub_mine");
+  CHECK_FALSE(anyLabelContains(*rig.ed, "from environment"));
+}
+
 TEST_CASE("settings: the login view shows the device code and URL; CANCEL ends the job", "[editor][settings][login]") {
   TempFolder tmp;
   const fs::path venv = makeFakeVenv(tmp.dir);

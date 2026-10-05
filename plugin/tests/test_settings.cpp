@@ -368,6 +368,130 @@ TEST_CASE("settings: the secret key is refused and never stored", "[settings][se
   CHECK(envP.effectiveTone3000ClientId() == "t3k_pub_fromenv");
 }
 
+// --- v0.1.1 Task C: the effective client id also falls back to the login's token file -------------
+TEST_CASE("effective client id: stored, then environment, then the token file's client_id", "[settings][clientid]") {
+  TempDir t;
+  const std::string tok = (t / "tok.json").string();
+  const char* const kTokens =
+      R"({"access_token":"ACCESS_SECRET","refresh_token":"REFRESH_SECRET","expires_at":1.0,"client_id":"t3k_pub_file"})";
+  touch(t / "tok.json", kTokens);
+  const std::map<std::string, std::string> tokOnly{{"SAWBLADE_T3K_TOKEN_FILE", tok}};
+
+  {  // token file only
+    Settings s(t / "s1.json", makeEnv(t.dir, tokOnly));
+    const auto r = s.resolveTone3000ClientId();
+    CHECK(r.id == "t3k_pub_file");
+    CHECK(r.source == ClientIdSource::TokenFile);
+    CHECK(s.effectiveTone3000ClientId() == "t3k_pub_file");
+  }
+  {  // environment beats the token file
+    auto vars = tokOnly;
+    vars["TONE3000_CLIENT_ID"] = "  t3k_pub_env ";
+    Settings s(t / "s2.json", makeEnv(t.dir, vars));
+    CHECK(s.resolveTone3000ClientId().id == "t3k_pub_env");
+    CHECK(s.resolveTone3000ClientId().source == ClientIdSource::Environment);
+  }
+  {  // stored beats both
+    auto vars = tokOnly;
+    vars["TONE3000_CLIENT_ID"] = "t3k_pub_env";
+    Settings s(t / "s3.json", makeEnv(t.dir, vars));
+    REQUIRE(s.setTone3000ClientId("t3k_pub_stored").ok);
+    CHECK(s.resolveTone3000ClientId().id == "t3k_pub_stored");
+    CHECK(s.resolveTone3000ClientId().source == ClientIdSource::Stored);
+  }
+  {  // nothing anywhere
+    Settings s(t / "s4.json", makeEnv(t.dir));
+    CHECK(s.resolveTone3000ClientId().id.empty());
+    CHECK(s.resolveTone3000ClientId().source == ClientIdSource::None);
+  }
+  {  // the default path is ~/.config/sawblade/t3k_tokens.json when SAWBLADE_T3K_TOKEN_FILE is unset
+    touch(t / "home" / ".config" / "sawblade" / "t3k_tokens.json", R"({"client_id":"t3k_pub_home"})");
+    Settings s(t / "s5.json", makeEnv(t.dir));
+    CHECK(s.effectiveTone3000ClientId() == "t3k_pub_home");
+  }
+  {  // a token file without client_id (older login) yields nothing
+    touch(t / "old.json", R"({"access_token":"A","refresh_token":"R","expires_at":1.0})");
+    Settings s(t / "s6.json", makeEnv(t.dir, {{"SAWBLADE_T3K_TOKEN_FILE", (t / "old.json").string()}}));
+    CHECK(s.effectiveTone3000ClientId().empty());
+  }
+}
+
+TEST_CASE("effective client id: a t3k_cs_ secret from any source is refused and the next source is used", "[settings][clientid]") {
+  TempDir t;
+  const std::string tok = (t / "tok.json").string();
+  touch(t / "tok.json", R"({"client_id":"T3K_CS_filesecret"})");
+
+  {  // token file secret -> empty
+    Settings s(t / "a.json", makeEnv(t.dir, {{"SAWBLADE_T3K_TOKEN_FILE", tok}}));
+    CHECK(s.effectiveTone3000ClientId().empty());
+  }
+  {  // env secret is skipped, the (good) token file is used
+    touch(t / "good.json", R"({"client_id":"t3k_pub_good"})");
+    Settings s(t / "b.json", makeEnv(t.dir, {{"TONE3000_CLIENT_ID", "t3k_cs_envsecret"}, {"SAWBLADE_T3K_TOKEN_FILE", (t / "good.json").string()}}));
+    CHECK(s.resolveTone3000ClientId().id == "t3k_pub_good");
+    CHECK(s.resolveTone3000ClientId().source == ClientIdSource::TokenFile);
+  }
+  {  // a secret stored by hand in settings.json is dropped by load(); env then supplies the id
+    touch(t / "c.json", R"({"version":1,"tone3000ClientId":"t3k_cs_stored"})");
+    Settings s(t / "c.json", makeEnv(t.dir, {{"TONE3000_CLIENT_ID", "t3k_pub_env"}}));
+    s.load();
+    CHECK(s.effectiveTone3000ClientId() == "t3k_pub_env");
+  }
+}
+
+TEST_CASE("effective client id: a missing, unreadable or corrupt token file gives empty and never throws", "[settings][clientid]") {
+  TempDir t;
+  auto idFor = [&](const fs::path& f) {
+    Settings s(t / "s.json", makeEnv(t.dir, {{"SAWBLADE_T3K_TOKEN_FILE", f.string()}}));
+    std::string id = "unset";
+    REQUIRE_NOTHROW(id = s.effectiveTone3000ClientId());
+    return id;
+  };
+  CHECK(idFor(t / "missing.json").empty());
+  touch(t / "empty.json", "");
+  CHECK(idFor(t / "empty.json").empty());
+  touch(t / "corrupt.json", R"({"access_token":"x","client_id":"t3k_pub_x")");  // truncated
+  CHECK(idFor(t / "corrupt.json").empty());
+  touch(t / "trailing.json", R"({"client_id":"t3k_pub_x"} junk)");
+  CHECK(idFor(t / "trailing.json").empty());
+  touch(t / "array.json", R"(["client_id","t3k_pub_x"])");
+  CHECK(idFor(t / "array.json").empty());
+  touch(t / "number.json", R"({"client_id":12})");
+  CHECK(idFor(t / "number.json").empty());
+  touch(t / "nested.json", R"({"other":{"client_id":"t3k_pub_nested"}})");  // only the top-level key counts
+  CHECK(idFor(t / "nested.json").empty());
+  touch(t / "after_obj.json", R"({"a":{"b":1},"client_id":"t3k_pub_x"})");  // depth restored after end_object
+  CHECK(idFor(t / "after_obj.json") == "t3k_pub_x");
+  touch(t / "objval.json", R"({"client_id":{"client_id":"t3k_pub_x"}})");
+  CHECK(idFor(t / "objval.json").empty());
+  touch(t / "binary.json", std::string("\x00\xff\xfe{{{", 6));
+  CHECK(idFor(t / "binary.json").empty());
+  fs::create_directories(t / "dir.json");  // a directory where the file should be
+  CHECK(idFor(t / "dir.json").empty());
+#ifndef _WIN32
+  if (::geteuid() != 0) {  // root can read a mode-000 file
+    touch(t / "noperm.json", R"({"client_id":"t3k_pub_x"})");
+    ::chmod((t / "noperm.json").c_str(), 0);
+    CHECK(idFor(t / "noperm.json").empty());
+    ::chmod((t / "noperm.json").c_str(), 0600);
+  }
+#endif
+}
+
+TEST_CASE("effective client id: the token file's access and refresh tokens are never read out", "[settings][clientid]") {
+  TempDir t;
+  touch(t / "tok.json", R"({"access_token":"t3k_pub_ACCESS","refresh_token":"REFRESH","client_id":"t3k_pub_ok"})");
+  Settings s(t / "s.json", makeEnv(t.dir, {{"SAWBLADE_T3K_TOKEN_FILE", (t / "tok.json").string()}}));
+  CHECK(s.effectiveTone3000ClientId() == "t3k_pub_ok");
+  // a file with tokens but no client_id never surfaces a token as the id, even one that looks publishable
+  touch(t / "tok2.json", R"({"access_token":"t3k_pub_ACCESS","refresh_token":"REFRESH"})");
+  Settings s2(t / "s2.json", makeEnv(t.dir, {{"SAWBLADE_T3K_TOKEN_FILE", (t / "tok2.json").string()}}));
+  CHECK(s2.effectiveTone3000ClientId().empty());
+  // resolving never writes it into settings.json
+  s.save();
+  CHECK_THAT(slurp(t / "s.json"), !ContainsSubstring("t3k_pub_ok"));
+}
+
 // --- 7 ------------------------------------------------------------------------------------------
 TEST_CASE("tool resolution: venv, then PATH, then an error that names Settings", "[settings][toolrunner]") {
   TempDir t;

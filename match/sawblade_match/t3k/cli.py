@@ -12,7 +12,7 @@ from typing import Sequence
 
 import httpx
 
-from .auth import (DEFAULT_BASE_URL, TokenManager, TokenStore, poll_for_session,
+from .auth import (DEFAULT_BASE_URL, TokenManager, TokenStore, poll_for_session, publishable_client_id,
                    request_device_code)
 from .cache import Cache
 from .client import T3KClient
@@ -94,6 +94,7 @@ def cmd_login(args: argparse.Namespace) -> int:
         print(f"Waiting for approval (expires in {int(dc.expires_in)} s)...", flush=True)
     session = poll_for_session(http, cid, dc)
     tm = TokenManager(cid, http, TokenStore())
+    session.client_id = publishable_client_id(cid)  # never a t3k_cs_ secret
     tm.set_session(session)
     if events:
         # The refresh token is saved by TokenStore and never printed here. The user fields are best

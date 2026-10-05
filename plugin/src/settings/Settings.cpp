@@ -61,6 +61,55 @@ bool validVenv(const Env& env, const fs::path& dir) { return env.exists && env.e
 
 bool containsSecretKey(std::string_view value) { return lower(value).find("t3k_cs_") != std::string::npos; }
 
+namespace {
+// Reads only the top-level "client_id" string of the sawblade-t3k token file. A SAX handler keeps that one
+// value and drops everything else as it streams past, so no token field is ever held. Missing, unreadable
+// or corrupt file, a non-string value, or a t3k_cs_ value: "".
+struct ClientIdOnly final : nlohmann::json_sax<nlohmann::json> {
+  using json = nlohmann::json;
+  int depth = 0;
+  bool wantNext = false;
+  std::string id;
+  bool null() override { wantNext = false; return true; }
+  bool boolean(bool) override { wantNext = false; return true; }
+  bool number_integer(json::number_integer_t) override { wantNext = false; return true; }
+  bool number_unsigned(json::number_unsigned_t) override { wantNext = false; return true; }
+  bool number_float(json::number_float_t, const std::string&) override { wantNext = false; return true; }
+  bool string(std::string& v) override {
+    if (wantNext && depth == 1) id = v;
+    wantNext = false;
+    return true;
+  }
+  bool binary(json::binary_t&) override { wantNext = false; return true; }
+  bool start_object(std::size_t) override { ++depth; wantNext = false; return true; }
+  bool end_object() override { --depth; return true; }
+  bool start_array(std::size_t) override { ++depth; wantNext = false; return true; }
+  bool end_array() override { --depth; return true; }
+  bool key(std::string& k) override {
+    wantNext = (depth == 1 && k == "client_id");
+    return true;
+  }
+  bool parse_error(std::size_t, const std::string&, const json::exception&) override { return false; }
+};
+
+std::string readTokenFileClientId(const fs::path& file) {
+  try {
+    std::error_code ec;
+    const auto size = fs::file_size(file, ec);
+    if (ec || size > (1u << 20)) return {};  // missing, or not a plausible token file
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return {};
+    ClientIdOnly h;
+    if (!nlohmann::json::sax_parse(in, &h)) return {};
+    std::string id = trim(h.id);
+    if (id.empty() || containsSecretKey(id)) return {};
+    return id;
+  } catch (...) {
+    return {};
+  }
+}
+}  // namespace
+
 // ---------------------------------------------------------------------------------------------
 Env Env::system() {
   Env e;
@@ -354,12 +403,17 @@ std::string Settings::tone3000ClientId() const {
   auto it = doc_.find("tone3000ClientId");
   return (it != doc_.end() && it->is_string()) ? it->get<std::string>() : std::string();
 }
-std::string Settings::effectiveTone3000ClientId() const {
-  std::string s = tone3000ClientId();
-  if (!s.empty()) return s;
-  if (auto v = env_.var("TONE3000_CLIENT_ID"); v && !containsSecretKey(*v)) return trim(*v);
+ClientIdResolution Settings::resolveTone3000ClientId() const {
+  if (std::string s = tone3000ClientId(); !s.empty() && !containsSecretKey(s)) return {s, ClientIdSource::Stored};
+  if (auto v = env_.var("TONE3000_CLIENT_ID")) {
+    const std::string t = trim(*v);
+    if (!t.empty() && !containsSecretKey(t)) return {t, ClientIdSource::Environment};
+  }
+  const std::string f = readTokenFileClientId(Paths::tokenFile(env_));
+  if (!f.empty()) return {f, ClientIdSource::TokenFile};
   return {};
 }
+std::string Settings::effectiveTone3000ClientId() const { return resolveTone3000ClientId().id; }
 std::string Settings::separationModel() const {
   std::lock_guard<std::mutex> lk(m_);
   auto it = doc_.find("separationModel");

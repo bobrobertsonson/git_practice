@@ -394,3 +394,45 @@ TEST_CASE("Factory presets in presets/ all parse (no resource loading)", "[prese
   }
   REQUIRE(count >= 4);
 }
+
+namespace {
+// Every object under `node` with a "file" key is a capture reference (model / ir / irA / irB). Appends a message per reference
+// that has neither a TONE3000 source nor a path into tests/fixtures/.
+void collectUnsourcedCaptures(const json& node, const fs::path& presetFile, std::vector<std::string>& bad) {
+  if (node.is_object()) {
+    if (node.contains("file") && node["file"].is_string()) {
+      const std::string file = node["file"].get<std::string>();
+      const std::string norm = (presetFile.parent_path() / file).lexically_normal().generic_string();
+      const bool fixture = norm.find("/tests/fixtures/") != std::string::npos;
+      bool sourced = false;
+      if (node.contains("source") && node["source"].is_object()) {
+        const auto& s = node["source"];
+        sourced = s.value("provider", "") == "tone3000" && s.contains("id") && s.contains("modelId");
+      }
+      if (!fixture && !sourced) bad.push_back(presetFile.generic_string() + " -> " + file);
+    }
+    for (const auto& kv : node.items()) collectUnsourcedCaptures(kv.value(), presetFile, bad);
+  } else if (node.is_array()) {
+    for (const auto& v : node) collectUnsourcedCaptures(v, presetFile, bad);
+  }
+}
+}  // namespace
+
+TEST_CASE("Factory presets: every capture reference has a TONE3000 source unless it points into tests/fixtures/", "[presets]") {
+  std::vector<std::string> bad;
+  int files = 0;
+  for (const auto& e : fs::recursive_directory_iterator(fs::path(SAWBLADE_PRESETS_DIR))) {
+    if (e.path().extension() != ".json") continue;
+    std::ifstream f(e.path());
+    REQUIRE(f);
+    collectUnsourcedCaptures(json::parse(f), e.path(), bad);
+    ++files;
+  }
+  REQUIRE(files >= 4);
+  INFO("placeholder capture references (no TONE3000 source, not under tests/fixtures/):\n" << [&] {
+    std::string m;
+    for (const auto& b : bad) m += "  " + b + "\n";
+    return m;
+  }());
+  CHECK(bad.empty());
+}
