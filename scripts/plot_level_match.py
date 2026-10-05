@@ -17,7 +17,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import wave
 from pathlib import Path
 
 import numpy as np
@@ -67,20 +66,13 @@ def integrated_lufs(x: np.ndarray, fs: float) -> float:
 
 
 def read_wav(path: Path) -> tuple[np.ndarray, float]:
-    with wave.open(str(path)) as w:
-        fs, n, ch, sw = w.getframerate(), w.getnframes(), w.getnchannels(), w.getsampwidth()
-        raw = w.readframes(n)
-    if sw == 4:
-        x = np.frombuffer(raw, dtype="<i4").astype(np.float64) / 2 ** 31
-    elif sw == 3:
-        a = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3)
-        x = (a[:, 0].astype(np.int32) | (a[:, 1].astype(np.int32) << 8) | (a[:, 2].astype(np.int8).astype(np.int32) << 16)).astype(np.float64) / 2 ** 23
-    elif sw == 2:
-        x = np.frombuffer(raw, dtype="<i2").astype(np.float64) / 2 ** 15
-    else:
-        raise SystemExit(f"unsupported sample width {sw}")
-    x = x.reshape(-1, ch)[:, 0]
-    return x, float(fs)
+    from scipy.io import wavfile
+    fs, x = wavfile.read(str(path))  # tonerender writes float32 WAV; integer formats are scaled
+    if x.ndim > 1:
+        x = x[:, 0]
+    if np.issubdtype(x.dtype, np.integer):
+        x = x.astype(np.float64) / float(2 ** (8 * x.dtype.itemsize - 1))
+    return x.astype(np.float64), float(fs)
 
 
 def absolutize(obj, base: Path):
