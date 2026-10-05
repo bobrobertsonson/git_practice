@@ -9,6 +9,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 #include <cerrno>
@@ -20,6 +21,9 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "AppPaths.h"
+#include "TakeRecorder.h"
+#include "about/CaptureList.h"
+#include "sawblade/preset.h"
 #include "presets/T3kTool.h"
 #include "settings/LoginFlow.h"
 #include "settings/Settings.h"
@@ -195,6 +199,13 @@ TEST_CASE("settings: paths follow the platform table", "[settings]") {
   const Env over = makeEnv(t.dir, {{"SAWBLADE_SETTINGS_FILE", "/o/s.json"}, {"SAWBLADE_T3K_TOKEN_FILE", "/o/tok.json"}}, true);
   CHECK(Paths::settingsFile(over) == fs::path("/o/s.json"));
   CHECK(Paths::tokenFile(over) == fs::path("/o/tok.json"));
+  // the takes default follows the same app-data rule (what TakeRecorder / defaultTakesDir() uses)
+  CHECK(Paths::takesDir(linux) == linux.home / ".local/share/sawblade/takes");
+  CHECK(Paths::takesDir(xdg) == fs::path("/xdg/sawblade/takes"));
+  CHECK(Paths::takesDir(appdata) == fs::path("/ad/takes"));
+  CHECK(Paths::takesDir(makeEnv(t.dir, {{"SAWBLADE_DATA_DIR", "/dd"}, {"XDG_DATA_HOME", "/xdg"}})) == fs::path("/dd/takes"));
+  CHECK(Paths::takesDir(makeEnv(t.dir, {{"SAWBLADE_APPDATA", "/ad"}, {"SAWBLADE_DATA_DIR", "/dd"}})) == fs::path("/ad/takes"));
+  CHECK(Paths::takesDir(mac) == mac.home / "Library/Application Support/Sawblade/takes");
 }
 
 // --- 3 ------------------------------------------------------------------------------------------
@@ -633,13 +644,18 @@ TEST_CASE("whoami --json parsing", "[settings][login]") {
 
 // --- unified app data dir and shared settings.json -------------------------------------------------------------------
 namespace {
-struct ScopedVar {
+struct ScopedVar {  // sets (or unsets, v == nullptr) a variable and restores the previous value
   std::string name;
+  std::optional<std::string> old;
   ScopedVar(std::string n, const std::string* v) : name(std::move(n)) {
+    if (const char* c = std::getenv(name.c_str())) old = c;
     if (v) ::setenv(name.c_str(), v->c_str(), 1);
     else ::unsetenv(name.c_str());
   }
-  ~ScopedVar() { ::unsetenv(name.c_str()); }
+  ~ScopedVar() {
+    if (old) ::setenv(name.c_str(), old->c_str(), 1);
+    else ::unsetenv(name.c_str());
+  }
 };
 }  // namespace
 
@@ -703,4 +719,221 @@ TEST_CASE("settings: T3kTool and the Settings store share settings.json, keep ea
   // clearing a key we own removes it even though the file still has it
   CHECK(s.setMatchVenvDir(std::nullopt).ok);
   CHECK_FALSE(nlohmann::json::parse(slurp(s.file())).contains("matchVenvDir"));
+}
+
+TEST_CASE("settings: the takes default equals defaultTakesDir() under Env::system() for every variable", "[settings]") {
+  TempDir t;
+  const std::string a = (t.dir / "a").string(), d = (t.dir / "d").string(), x = (t.dir / "x").string(), h = t.dir.string();
+  ScopedVar home("HOME", &h);
+  auto check = [] { CHECK(Paths::takesDir(Env::system()) == sawblade::plugin::defaultTakesDir()); };
+  {
+    ScopedVar v1("SAWBLADE_APPDATA", &a), v2("SAWBLADE_DATA_DIR", nullptr), v3("XDG_DATA_HOME", &x);
+    check();
+  }
+  {
+    ScopedVar v1("SAWBLADE_APPDATA", nullptr), v2("SAWBLADE_DATA_DIR", &d), v3("XDG_DATA_HOME", &x);
+    check();
+  }
+  {
+    ScopedVar v1("SAWBLADE_APPDATA", nullptr), v2("SAWBLADE_DATA_DIR", nullptr), v3("XDG_DATA_HOME", &x);
+    check();
+  }
+  {
+    ScopedVar v1("SAWBLADE_APPDATA", nullptr), v2("SAWBLADE_DATA_DIR", nullptr), v3("XDG_DATA_HOME", nullptr);
+    check();
+  }
+}
+
+TEST_CASE("TakeRecorder starts in the Settings takes folder and falls back to defaultTakesDir()", "[settings][takes]") {
+  TempDir t;
+  const std::string file = (t.dir / "s.json").string(), cleared;
+  ScopedVar f("SAWBLADE_SETTINGS_FILE", &file);
+  const std::string data = (t.dir / "data").string();
+  ScopedVar ad("SAWBLADE_APPDATA", &data);
+  Settings::resetSharedForTests();
+  CHECK(sawblade::plugin::TakeRecorder().takesDir() == t.dir / "data" / "takes");
+  REQUIRE(Settings::shared().setTakesDir(t.dir / "my takes").ok);
+  CHECK(sawblade::plugin::TakeRecorder().takesDir() == t.dir / "my takes");
+  Settings::resetSharedForTests();
+}
+
+TEST_CASE("settings: Settings::shared keeps load()'s error text (malformed file, dropped secret key)", "[settings]") {
+  TempDir t;
+  const std::string file = (t.dir / "s.json").string();
+  ScopedVar f("SAWBLADE_SETTINGS_FILE", &file);
+  {
+    std::ofstream(file) << "{ not json";
+    Settings::resetSharedForTests();
+    CHECK_THAT(Settings::shared().loadError(), ContainsSubstring("not valid JSON"));
+  }
+  {
+    std::ofstream(file) << R"({"version":1,"tone3000ClientId":"t3k_cs_nope"})";
+    Settings::resetSharedForTests();
+    CHECK_THAT(Settings::shared().loadError(), ContainsSubstring("secret key"));
+    CHECK(Settings::shared().tone3000ClientId().empty());
+  }
+  {
+    std::ofstream(file) << R"({"version":1})";
+    Settings::resetSharedForTests();
+    CHECK(Settings::shared().loadError().empty());
+  }
+  Settings::resetSharedForTests();
+}
+
+TEST_CASE("settings: a stored captureCacheDir reaches the core's captureCacheRoot(); clearing restores the environment", "[settings][cache]") {
+  TempDir t;
+  const std::string file = (t.dir / "s.json").string(), envCache = (t.dir / "envcache").string(), stored = (t.dir / "stored cache").string();
+  ScopedVar f("SAWBLADE_SETTINGS_FILE", &file), c("SAWBLADE_CACHE_DIR", &envCache);
+  Settings::resetSharedForTests();
+  CHECK(sawblade::captureCacheRoot() == fs::path(envCache));
+  REQUIRE(Settings::shared().setCaptureCacheDir(fs::path(stored)).ok);
+  CHECK(sawblade::captureCacheRoot() == fs::path(stored));
+  CHECK(Settings::shared().effectiveCaptureCacheDir() == fs::path(stored));
+  REQUIRE(Settings::shared().setCaptureCacheDir(std::nullopt).ok);
+  CHECK(sawblade::captureCacheRoot() == fs::path(envCache));
+  // set again, then drop the instance: the environment is restored as well; and a value found in the file on load applies
+  REQUIRE(Settings::shared().setCaptureCacheDir(fs::path(stored)).ok);
+  Settings::resetSharedForTests();
+  CHECK(sawblade::captureCacheRoot() == fs::path(envCache));
+  (void)Settings::shared();  // loads the file, which still holds the stored dir
+  CHECK(sawblade::captureCacheRoot() == fs::path(stored));
+  Settings::resetSharedForTests();
+  CHECK(sawblade::captureCacheRoot() == fs::path(envCache));
+}
+
+TEST_CASE("T3kTool's settings writer honours SAWBLADE_SETTINGS_FILE, creates 0600 and leaves no tmp file", "[settings][t3k]") {
+  TempDir t;
+  const std::string file = (t.dir / "cfg" / "own.json").string();
+  ScopedVar f("SAWBLADE_SETTINGS_FILE", &file);
+  CHECK(sawblade::plugin::settingsFile() == fs::path(file));
+  std::string err;
+  REQUIRE(sawblade::plugin::settings::setT3kExecutable("/a/sawblade-t3k", &err));
+  REQUIRE(sawblade::plugin::settings::setT3kExecutable("/b/sawblade-t3k", &err));
+  CHECK(nlohmann::json::parse(slurp(file))["t3kExecutable"] == "/b/sawblade-t3k");
+  struct stat st {};
+  REQUIRE(::stat(file.c_str(), &st) == 0);
+  CHECK((st.st_mode & 0777) == 0600);
+  for (const auto& e : fs::directory_iterator(t.dir / "cfg")) CHECK(e.path().filename() == "own.json");
+}
+
+// --- capture list: cache fallback, cab modes, URLs -----------------------------------------------------------------
+namespace {
+sawblade::Capture t3kCapture(const std::string& file, const std::string& id, const std::string& modelId, const std::string& url = "") {
+  sawblade::Capture c;
+  c.file = file;
+  c.resolvedPath = "/nonexistent/" + file;
+  sawblade::CaptureSource src;
+  src.provider = "tone3000";
+  src.id = id;
+  src.modelId = modelId;
+  src.title = "T " + file;
+  src.creator = "me";
+  src.license = "cc-by-nc";
+  src.url = url;
+  c.source = src;
+  return c;
+}
+}  // namespace
+
+TEST_CASE("about: a capture missing at its resolved path but present in the TONE3000 cache counts as on disk", "[settings][about]") {
+  TempDir t;
+  const std::string cache = (t.dir / "cache").string();
+  ScopedVar c("SAWBLADE_CACHE_DIR", &cache);
+  touch(t.dir / "cache" / "12" / "34.nam", "x");
+  sawblade::Preset p;
+  sawblade::Block b;
+  b.type = "nam";
+  b.slot = "amp";
+  auto params = std::make_shared<sawblade::NamBlockParams>();
+  params->model = t3kCapture("a.nam", "12", "34");
+  b.params = params;
+  p.a.blocks.push_back(b);
+  auto params2 = std::make_shared<sawblade::NamBlockParams>();
+  params2->model = t3kCapture("b.nam", "12", "99");  // not in the cache
+  sawblade::Block b2 = b;
+  b2.params = params2;
+  p.b.blocks.push_back(b2);
+  const auto rows = sawblade::plugin::about::listCaptures(p);
+  REQUIRE(rows.size() == 2);
+  CHECK(rows[0].onDisk);
+  CHECK_FALSE(rows[1].onDisk);
+}
+
+TEST_CASE("about: PerPath and IrMix list Cab A and Cab B; the URL falls back to the tone page; only http(s) is a web URL", "[settings][about]") {
+  sawblade::Preset p;
+  p.cab.mode = sawblade::CabMode::PerPath;
+  p.cab.irA = t3kCapture("a.wav", "5", "6");
+  p.cab.irB = t3kCapture("b.wav", "7", "8", "https://example.org/x");
+  auto rows = sawblade::plugin::about::listCaptures(p);
+  REQUIRE(rows.size() == 2);
+  CHECK(rows[0].slot == "Cab A");
+  CHECK(rows[1].slot == "Cab B");
+  CHECK(rows[0].url == "https://www.tone3000.com/tones/5");  // source.url empty
+  CHECK(rows[1].url == "https://example.org/x");
+  CHECK(rows[0].nonCommercial);
+  p.cab.mode = sawblade::CabMode::IrMix;
+  rows = sawblade::plugin::about::listCaptures(p);
+  REQUIRE(rows.size() == 2);
+  CHECK(rows[0].slot == "Cab A");
+  CHECK(rows[1].slot == "Cab B");
+
+  using sawblade::plugin::about::isWebUrl;
+  CHECK(isWebUrl("https://www.tone3000.com/device"));
+  CHECK(isWebUrl("HTTP://x.y"));
+  CHECK_FALSE(isWebUrl("file:///etc/passwd"));
+  CHECK_FALSE(isWebUrl("javascript:alert(1)"));
+  CHECK_FALSE(isWebUrl("ftp://x"));
+  CHECK_FALSE(isWebUrl("https://"));
+  CHECK_FALSE(isWebUrl(""));
+  CHECK_FALSE(isWebUrl("x-apple.systempreferences:foo"));
+}
+
+// --- ToolRunner hardening ------------------------------------------------------------------------------------------
+TEST_CASE("ToolRunner: redaction is case-insensitive and survives a very long token line", "[toolrunner][secret]") {
+  CHECK(redactSecrets("a T3K_CS_AbC b") == "a t3k_cs_[redacted] b");
+  CHECK(redactSecrets("t3K_Cs_x-y_z") == "t3k_cs_[redacted]");
+  CHECK(redactSecrets("t3k_pub_ok") == "t3k_pub_ok");
+  const std::string longTok = "x t3k_cs_" + std::string(2'000'000, 'A') + " y";
+  CHECK(redactSecrets(longTok) == "x t3k_cs_[redacted] y");
+  std::string many;
+  for (int i = 0; i < 20000; ++i) many += "t3k_cs_a ";
+  const std::string r = redactSecrets(many);
+  CHECK(r.find("t3k_cs_a") == std::string::npos);
+  RunnerFixture f;
+  auto c = f.run("upper_secret.sh");
+  REQUIRE(waitDone(*c, 5000ms));
+  CHECK(c->done->lines[0] == "token t3k_cs_[redacted] end");
+}
+
+TEST_CASE("ToolRunner: an executable path containing '=' is rejected with a clear message", "[toolrunner]") {
+  RunnerFixture f;
+  const fs::path dir = f.t.dir / "ve=nv";
+  fs::create_directories(dir);
+  fs::copy_file(tool("env.sh"), dir / "env.sh");
+  ToolRequest r;
+  r.tool = "x";
+  r.executable = dir / "env.sh";
+  auto c = runTool(f.runner, r);
+  REQUIRE(waitDone(*c, 5000ms));
+  CHECK(c->done->outcome == ToolResult::Outcome::StartFailed);
+  CHECK_THAT(c->done->error, ContainsSubstring("ve=nv"));
+  CHECK_THAT(c->done->error, ContainsSubstring("'='"));
+}
+
+TEST_CASE("ToolRunner: an environment value containing '=' arrives intact", "[toolrunner]") {
+  RunnerFixture f;
+  auto c = f.run("env.sh", {}, {{"EXTRA", "a=b=c"}});
+  REQUIRE(waitDone(*c, 5000ms));
+  REQUIRE(c->done->outcome == ToolResult::Outcome::Ok);
+  CHECK(c->done->lines[3] == "EXTRA=a=b=c");
+}
+
+TEST_CASE("ToolRunner: cancel and timeout after the child has finished never signal anything", "[toolrunner]") {
+  RunnerFixture f;
+  for (int i = 0; i < 20; ++i) {
+    auto c = f.run("exit3.sh", {}, {}, 50ms);
+    REQUIRE(waitDone(*c, 5000ms));
+    c->job->cancel();  // after reaping
+    CHECK(c->done->outcome == ToolResult::Outcome::NonZeroExit);
+  }
 }

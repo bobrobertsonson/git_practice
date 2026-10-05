@@ -1,4 +1,5 @@
 #include "TakeRecorder.h"
+#include "settings/Settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -160,7 +161,7 @@ struct TakeRecorder::OpenTake {
   bool failed = false;
 };
 
-TakeRecorder::TakeRecorder() : dir_(defaultTakesDir()) {}
+TakeRecorder::TakeRecorder() : dir_(settings::Settings::shared().effectiveTakesDir()) {}  // the Settings panel's takes folder, else defaultTakesDir()
 
 TakeRecorder::~TakeRecorder() {
   {

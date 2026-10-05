@@ -1,6 +1,7 @@
 #include "Settings.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -88,14 +89,18 @@ std::optional<std::string> Env::var(std::string_view name) const {
   return v;
 }
 
+// Same rule as appDataDir() in AppPaths.h, through the injectable Env.
+fs::path Paths::appDataDir(const Env& env) {
+  if (auto v = env.var("SAWBLADE_APPDATA")) return fs::path(*v);
+  if (auto v = env.var("SAWBLADE_DATA_DIR")) return fs::path(*v);
+  if (env.isMac) return env.home / "Library" / "Application Support" / "Sawblade";
+  if (auto x = env.var("XDG_DATA_HOME")) return fs::path(*x) / "sawblade";
+  return env.home / ".local" / "share" / "sawblade";
+}
+// The same file as presets/T3kTool's settingsFile(); both stores keep each other's keys.
 fs::path Paths::settingsFile(const Env& env) {
   if (auto v = env.var("SAWBLADE_SETTINGS_FILE")) return fs::path(*v);
-  // Same file as presets/T3kTool's settingsFile() (<appdata>/settings.json); both stores keep each other's keys.
-  if (auto v = env.var("SAWBLADE_APPDATA")) return fs::path(*v) / "settings.json";  // same order as appDataDir() in AppPaths.h
-  if (auto v = env.var("SAWBLADE_DATA_DIR")) return fs::path(*v) / "settings.json";
-  if (env.isMac) return env.home / "Library" / "Application Support" / "Sawblade" / "settings.json";
-  if (auto x = env.var("XDG_DATA_HOME")) return fs::path(*x) / "sawblade" / "settings.json";
-  return env.home / ".local" / "share" / "sawblade" / "settings.json";
+  return appDataDir(env) / "settings.json";
 }
 fs::path Paths::tokenFile(const Env& env) {
   if (auto v = env.var("SAWBLADE_T3K_TOKEN_FILE")) return fs::path(*v);
@@ -105,10 +110,7 @@ fs::path Paths::captureCacheDir(const Env& env) {
   if (auto v = env.var("SAWBLADE_CACHE_DIR")) return fs::path(*v);
   return env.home / ".cache" / "sawblade" / "captures";
 }
-fs::path Paths::takesDir(const Env& env) {
-  if (env.isMac) return env.home / "Library" / "Application Support" / "Sawblade" / "takes";
-  return env.home / ".local" / "share" / "sawblade" / "takes";
-}
+fs::path Paths::takesDir(const Env& env) { return appDataDir(env) / "takes"; }  // = defaultTakesDir() (TakeRecorder)
 
 std::optional<fs::path> detectMatchVenv(const Env& env) {
   if (auto v = env.var("SAWBLADE_MATCH_VENV")) {
@@ -137,6 +139,7 @@ Settings& Settings::shared() {
   if (!gShared) {
     const Env env = Env::system();
     gShared = std::make_unique<Settings>(Paths::settingsFile(env), env);
+    gShared->applyProcessEnv_ = true;
     gShared->load();
   }
   return *gShared;
@@ -175,13 +178,23 @@ std::string Settings::load() {
     firstRun_ = !existed;
   }
   doc_ = nlohmann::json::object();
-  if (!existed) return {};
+  loadError_.clear();
+  if (!existed) {
+    applyCacheEnv();
+    return {};
+  }
   std::string err;
+  auto finish = [this](std::string e) {  // records the error text and applies the cache-dir environment on every exit path
+    loadError_ = e;
+    applyCacheEnv();
+    return e;
+  };
   std::ifstream in(file_, std::ios::binary);
-  if (!in) return "Cannot read " + file_.string() + "; using defaults.";
+  if (!in) return finish("Cannot read " + file_.string() + "; using defaults.");
   std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   auto j = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
-  if (j.is_discarded() || !j.is_object()) return "Settings file " + file_.string() + " is not valid JSON; using defaults (the next change overwrites it).";
+  if (j.is_discarded() || !j.is_object())
+    return finish("Settings file " + file_.string() + " is not valid JSON; using defaults (the next change overwrites it).");
   doc_ = std::move(j);
   if (auto it = doc_.find("tone3000ClientId"); it != doc_.end()) {
     if (!it->is_string() || containsSecretKey(it->get<std::string>())) {
@@ -189,7 +202,7 @@ std::string Settings::load() {
       doc_.erase(it);
     }
   }
-  return err;
+  return finish(err);
 }
 
 std::string Settings::saveLocked() {
@@ -223,7 +236,12 @@ std::string Settings::saveLocked() {
     ::chmod(dir.c_str(), 0700);
 #endif
   }
-  const fs::path tmp = file_.string() + ".tmp";
+  static std::atomic<unsigned> tmpCounter{0};  // unique per write: concurrent writers never share a tmp file
+#ifndef _WIN32
+  const fs::path tmp = file_.string() + ".tmp." + std::to_string(::getpid()) + "." + std::to_string(tmpCounter.fetch_add(1));
+#else
+  const fs::path tmp = file_.string() + ".tmp." + std::to_string(tmpCounter.fetch_add(1));
+#endif
   const std::string text = doc_.dump(2) + "\n";
 #ifndef _WIN32
   const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
@@ -253,6 +271,11 @@ std::string Settings::saveLocked() {
     return "Cannot replace " + file_.string();
   }
   return {};
+}
+
+std::string Settings::loadError() const {
+  std::lock_guard<std::mutex> lk(m_);
+  return loadError_;
 }
 
 std::string Settings::save() {
@@ -371,7 +394,44 @@ Result Settings::setPathKey(const char* key, std::optional<fs::path> v) {
   return finish({});
 }
 Result Settings::setMatchVenvDir(std::optional<fs::path> v) { return setPathKey("matchVenvDir", std::move(v)); }
-Result Settings::setCaptureCacheDir(std::optional<fs::path> v) { return setPathKey("captureCacheDir", std::move(v)); }
+Result Settings::setCaptureCacheDir(std::optional<fs::path> v) {
+  Result r = setPathKey("captureCacheDir", std::move(v));
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    applyCacheEnv();
+  }
+  return r;
+}
+
+// The shared instance keeps the process environment in line with a stored captureCacheDir, so the core's
+// captureCacheRoot() (which reads only SAWBLADE_CACHE_DIR) and the child tools (ToolRunner passes the effective dir)
+// use the same folder. Clearing the override restores the previous value. Caller holds m_ (or is the constructor path).
+void Settings::applyCacheEnv() {
+  if (!applyProcessEnv_) return;
+  auto it = doc_.find("captureCacheDir");
+  const bool stored = it != doc_.end() && it->is_string() && !it->get<std::string>().empty();
+#ifndef _WIN32
+  if (stored) {
+    if (!savedCacheEnv_) {
+      const char* cur = std::getenv("SAWBLADE_CACHE_DIR");
+      savedCacheEnv_ = std::make_pair(cur != nullptr, std::string(cur != nullptr ? cur : ""));
+    }
+    ::setenv("SAWBLADE_CACHE_DIR", it->get<std::string>().c_str(), 1);
+  } else if (savedCacheEnv_) {
+    if (savedCacheEnv_->first) ::setenv("SAWBLADE_CACHE_DIR", savedCacheEnv_->second.c_str(), 1);
+    else ::unsetenv("SAWBLADE_CACHE_DIR");
+    savedCacheEnv_.reset();
+  }
+#else
+  (void)stored;
+#endif
+}
+
+Settings::~Settings() {
+  std::lock_guard<std::mutex> lk(m_);
+  doc_.erase("captureCacheDir");  // restores the environment the process had before we changed it
+  applyCacheEnv();
+}
 Result Settings::setTakesDir(std::optional<fs::path> v) { return setPathKey("takesDir", std::move(v)); }
 
 Result Settings::setTone3000ClientId(std::string v) {

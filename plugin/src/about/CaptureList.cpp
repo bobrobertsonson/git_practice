@@ -18,7 +18,7 @@ void add(std::vector<CaptureRow>& out, const std::string& slot, const sawblade::
   r.file = c.file;
   r.title = std::filesystem::path(c.file).filename().string();
   std::error_code ec;
-  r.onDisk = !c.resolvedPath.empty() && std::filesystem::exists(c.resolvedPath, ec);
+  r.onDisk = !c.resolvedPath.empty() && std::filesystem::exists(sawblade::locateCapture(c), ec);  // incl. the TONE3000 cache copy
   if (c.source) {
     r.hasSource = true;
     r.provider = c.source->provider;
@@ -34,6 +34,18 @@ void add(std::vector<CaptureRow>& out, const std::string& slot, const sawblade::
   out.push_back(std::move(r));
 }
 }  // namespace
+
+bool isWebUrl(const std::string& url) {
+  auto starts = [&](const char* prefix) {
+    size_t n = 0;
+    while (prefix[n] != '\0') ++n;
+    if (url.size() <= n) return false;  // needs something after the scheme
+    for (size_t i = 0; i < n; ++i)
+      if (std::tolower(static_cast<unsigned char>(url[i])) != prefix[i]) return false;
+    return true;
+  };
+  return starts("http://") || starts("https://");
+}
 
 std::vector<CaptureRow> listCaptures(const sawblade::Preset& preset) {
   std::vector<CaptureRow> out;

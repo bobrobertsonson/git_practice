@@ -21,6 +21,7 @@
 #include "mic/IrPack.h"
 #include "mic/IrResponse.h"
 #include "mic/MicSession.h"
+#include "SettingsEnv.h"
 #include "presets/T3kTool.h"
 #include "sawblade/sha256.h"
 #include "sawblade/wav_io.h"
@@ -582,6 +583,7 @@ TEST_CASE("a cached manifest is found by the cab's tone id", "[mic][session]") {
   s.adopt(q);
   CHECK(s.pack().info().kind == PackInfo::Kind::Single);
   ::unsetenv("SAWBLADE_APPDATA");
+  sawblade::plugin::settings::Settings::resetSharedForTests();
 }
 
 // ---- sawblade-t3k runner ------------------------------------------------------------------------------------------
@@ -745,6 +747,7 @@ TEST_CASE("T3kTool: destroying the tool while a child runs cancels it", "[t3k]")
 TEST_CASE("settings.json: the t3kExecutable key is read-modify-write and keeps unknown keys", "[t3k][settings]") {
   TempDir tmp;
   ::setenv("SAWBLADE_APPDATA", (tmp.dir / "data").string().c_str(), 1);
+  HookIsolation iso;
   CHECK(settingsFile() == tmp.dir / "data" / "settings.json");
   // default: <repo>/match/.venv/bin/sawblade-t3k
   CHECK(settings::t3kExecutable() == settings::defaultT3kExecutable());
@@ -772,6 +775,7 @@ TEST_CASE("settings.json: the t3kExecutable key is read-modify-write and keeps u
   std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   CHECK(content == "[1, 2, 3]");
   ::unsetenv("SAWBLADE_APPDATA");
+  sawblade::plugin::settings::Settings::resetSharedForTests();
 }
 
 TEST_CASE("a cached-but-unresolved cab IR previews and lays out through the capture cache", "[mic][session]") {

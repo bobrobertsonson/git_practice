@@ -3,6 +3,7 @@
 #   (unset)   whoami ok; login prints device_code and waits (the test cancels it)
 #   approve   login prints device_code then logged_in (with the user fields) and exits 0
 #   error     login prints device_code then {"error","code"} and exits 1; whoami prints an error line and exits 1
+#   badurl    login prints a device_code whose URLs are not http(s)
 #   loggedout whoami prints {"error","code":"auth"} and exits 4 (not logged in)
 DC='{"event": "device_code", "user_code": "ABCD-1234", "verification_uri": "https://www.tone3000.com/device", "verification_uri_complete": "https://www.tone3000.com/device?code=ABCD-1234", "expires_in": 600}'
 case "$1" in
@@ -14,6 +15,10 @@ case "$1" in
     esac
     echo '{"id": "u1", "username": "gatefan", "display_name": "Gate Fan", "token_file": "/tmp/none"}' ;;
   login)
+    if [ "$FAKE_T3K_MODE" = badurl ]; then
+      echo '{"event": "device_code", "user_code": "ABCD-1234", "verification_uri": "file:///etc/passwd", "verification_uri_complete": null, "expires_in": 600}'
+      exec sleep 30
+    fi
     echo "$DC"
     case "$FAKE_T3K_MODE" in
       approve) echo '{"event": "logged_in", "username": "gatefan", "display_name": "Gate Fan", "id": "u1", "token_file": "/tmp/none"}'; exit 0 ;;

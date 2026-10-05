@@ -32,6 +32,7 @@ class SettingsPanel : public juce::Component {
   void refresh();
 
   std::function<void()> onClosed;  // after close()
+  std::function<void(const std::string&)> onLaunchUrl;  // OPEN in the login box; default: the system browser (tests hook it)
   std::function<void()> onAbout;   // the footer's About Sawblade... button
 
   bool checklistExpanded() const;

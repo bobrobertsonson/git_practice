@@ -62,7 +62,7 @@ struct Row : public juce::Component {
     }
     if (!c.url.empty()) {
       link.setButtonText(ju(c.url));
-      link.setURL(juce::URL(ju(c.url)));
+      if (isWebUrl(c.url)) link.setURL(juce::URL(ju(c.url)));  // anything else is shown as text, never launched
       link.setTitle("Open " + ju(c.title) + " in the browser");
       link.setTooltip("Open this capture's TONE3000 page in your browser");
       link.setFont(L::monoFont(11.0f), false);

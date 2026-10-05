@@ -164,6 +164,7 @@ struct SettingsPanel::Impl : private juce::Timer {
   juce::TextEditor takesField;
   juce::TextButton takesBrowse, takesDefault, aboutBtn;
   juce::HyperlinkButton settingsFile;
+  juce::Label loadErr;  // the settings file's load error (malformed file, dropped secret key), red
 
   // state
   bool firstRunMode = false, expanded = false, building = true;
@@ -303,7 +304,9 @@ struct SettingsPanel::Impl : private juce::Timer {
     copyUrl.onClick = [this] { juce::SystemClipboard::copyTextToClipboard(ju(flow.url)); };
     styleButton(openBtn, "OPEN", "Open the verification page in your browser");
     openBtn.onClick = [this] {
-      if (!flow.openUrl.empty()) juce::URL(ju(flow.openUrl)).launchInDefaultBrowser();
+      if (!about::isWebUrl(flow.openUrl)) return;  // http(s) only; anything else is shown as text
+      if (owner.onLaunchUrl) owner.onLaunchUrl(flow.openUrl);
+      else juce::URL(ju(flow.openUrl)).launchInDefaultBrowser();
     };
     styleButton(cancelBtn, "CANCEL", "Cancel the login");
     cancelBtn.onClick = [this] { cancelLogin(); };
@@ -335,7 +338,7 @@ struct SettingsPanel::Impl : private juce::Timer {
 
     // separation
     caption(capSep, "SEPARATION MODEL");
-    styleCombo(sepCombo, "Separation model", "Model used to separate a song into stems");
+    styleCombo(sepCombo, "Separation model", "Model used to separate a song into stems: stored; applied by the separation phase (today the play-along 6-STEM button decides)");
     sepCombo.addItem("htdemucs_6s", 1);
     sepCombo.addItem("htdemucs", 2);
     sepCombo.addItem("htdemucs_ft", 3);
@@ -378,6 +381,9 @@ struct SettingsPanel::Impl : private juce::Timer {
     styleLabel(scaleNote, L::bodyFont(12.0f), L::dimText());
     scaleNote.setText("applies when the window is next opened", juce::dontSendNotification);
     add(scaleNote);
+    styleLabel(loadErr, L::bodyFont(12.0f), L::error());
+    loadErr.setTitle("Settings file problem");
+    add(loadErr);
 
     // footer
     settingsFile.setButtonText("Settings file: " + ju(s.file().string()));
@@ -613,6 +619,7 @@ struct SettingsPanel::Impl : private juce::Timer {
         case S::WaitingForApproval:
           loginCode.setText(ju(flow.code), juce::dontSendNotification);
           loginUrl.setText(ju(flow.url), juce::dontSendNotification);
+          openBtn.setEnabled(about::isWebUrl(flow.openUrl));
           for (juce::Component* c : std::initializer_list<juce::Component*>{&loginCode, &loginUrl, &copyCode, &copyUrl, &openBtn, &cancelBtn}) c->setVisible(true);
           updateCountdown();
           needScroll = true;
@@ -911,6 +918,18 @@ struct SettingsPanel::Impl : private juce::Timer {
     place(scaleCombo, m + 220, y, 140, 30);
     place(scaleNote, m + 374, y, w - 2 * m - 374, 30);
     y += 54;
+
+    // --- load error (shown only when load() reported one)
+    {
+      const std::string le = s.loadError();
+      loadErr.setText(ju(le), juce::dontSendNotification);
+      loadErr.setVisible(!le.empty());
+      loadErr.setMinimumHorizontalScale(1.0f);
+      if (!le.empty()) {
+        place(loadErr, m, y, w - 2 * m, 34);
+        y += 40;
+      }
+    }
 
     // --- footer
     place(settingsFile, m, y, w - 2 * m - 190, 28);

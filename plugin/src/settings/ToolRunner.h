@@ -76,7 +76,7 @@ class ToolRunner {
 
     mutable std::mutex m_;
     std::condition_variable cv_;
-    bool done_ = false;
+    bool done_ = false, reaped_ = false;  // reaped_: the child has been waited for; its pid must not be signalled any more
     std::atomic<bool> cancelled_{false}, timedOut_{false};
     std::unique_ptr<juce::ChildProcess> child_;
     ToolResult result_;

@@ -75,7 +75,10 @@ struct TempDir {
 struct EnvVar {
   std::string k;
   EnvVar(const std::string& key, const std::string& v) : k(key) { ::setenv(k.c_str(), v.c_str(), 1); }
-  ~EnvVar() { ::unsetenv(k.c_str()); }
+  ~EnvVar() {
+    ::unsetenv(k.c_str());
+    if (k == "SAWBLADE_APPDATA") sawblade::plugin::settings::Settings::resetSharedForTests();  // the cached settings file path may have followed it
+  }
 };
 
 // A loadable user preset (fixture captures, absolute paths).
@@ -124,6 +127,7 @@ struct Fixture {
     fs::create_directories(tmp.dir / "appdata");
     std::ofstream(tmp.dir / "appdata" / "settings.json") << json{{"factoryPresetDir", factory.string()}}.dump();
     appdata = std::make_unique<EnvVar>("SAWBLADE_APPDATA", (tmp.dir / "appdata").string());
+    ::unsetenv("SAWBLADE_SETTINGS_FILE");  // T3kTool reads <appdata>/settings.json (the Settings store keeps its cached file)
     writeUserPreset(tmp.dir / "appdata" / "presets", "User one", 0.2);
     writeUserPreset(tmp.dir / "appdata" / "presets", "User two", 0.8);
     proc.prepareToPlay(48000.0, 512);

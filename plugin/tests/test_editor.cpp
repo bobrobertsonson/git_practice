@@ -2245,6 +2245,82 @@ TEST_CASE("settings: login success with the merged logged_in shape, error line a
   }
 }
 
+TEST_CASE("settings: OPEN launches only http(s) URLs; other schemes stay text", "[editor][settings][login]") {
+  TempFolder tmp;
+  const fs::path venv = makeFakeVenv(tmp.dir);
+  const std::string json = settingsJsonWithVenv(venv);
+  for (const char* mode : {"", "badurl"}) {
+    FakeMode m(mode);
+    Rig rig(json.c_str());
+    rig.ed->setSettingsOpen(true);
+    SettingsPanel& panel = settingsPanelOf(*rig.ed);
+    std::vector<std::string> launched;
+    panel.onLaunchUrl = [&](const std::string& u) { launched.push_back(u); };
+    click(*buttonTitled(panel, "Log in to TONE3000"));
+    REQUIRE(pumpUntil([&] { return anyLabelContains(*rig.ed, "ABCD-1234"); }, 8000));
+    juce::Button* open = buttonTitled(panel, "OPEN");
+    REQUIRE(open != nullptr);
+    if (std::string(mode).empty()) {
+      CHECK(open->isEnabled());
+      click(*open);
+      REQUIRE(launched.size() == 1);
+      CHECK(launched[0] == "https://www.tone3000.com/device?code=ABCD-1234");
+    } else {
+      CHECK_FALSE(open->isEnabled());
+      open->triggerClick();
+      CHECK(launched.empty());
+      CHECK(anyLabelContains(*rig.ed, "file:///etc/passwd"));  // shown as text
+    }
+    click(*buttonTitled(panel, "CANCEL"));
+    CHECK(pumpUntil([&] { return !panel.loginRunning(); }, 5000));
+  }
+}
+
+TEST_CASE("settings: a malformed settings file or a dropped secret key shows its error in the panel", "[editor][settings]") {
+  {
+    Rig rig("{ this is not json");
+    rig.ed->setSettingsOpen(true);
+    CHECK(anyLabelContains(*rig.ed, "not valid JSON"));
+  }
+  {
+    Rig rig(R"({"version":1,"firstRunCompleted":true,"tone3000ClientId":"t3k_cs_leak"})");
+    rig.ed->setSettingsOpen(true);
+    CHECK(anyLabelContains(*rig.ed, "secret key"));
+    CHECK(anyLabelContains(*rig.ed, "ignored"));
+  }
+  {
+    Rig rig;
+    rig.ed->setSettingsOpen(true);
+    CHECK_FALSE(anyLabelContains(*rig.ed, "not valid JSON"));
+  }
+}
+
+TEST_CASE("about: a non-http source URL is shown as text and is not a link", "[editor][about]") {
+  Rig rig;
+  TempFolder tmp;
+  sawblade::Preset p;
+  p.name = "evil";
+  auto src = tone3000("101", "Evil", "x", "cc-by");
+  src.url = "file:///etc/passwd";
+  p.a.blocks.push_back(namBlock("a1", "pedal", makeCapture(tmp.dir, "evil.nam", true, src)));
+  p.cab.ir = makeCapture(tmp.dir, "cab.wav", true, tone3000("202", "4x12 IR", "cabber", "cc-by"));
+  rig.proc.restorePreset(p);
+  rig.proc.waitForLoader(std::chrono::milliseconds(20000));
+  rig.ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  rig.ed->setSettingsOpen(true);
+  click(*buttonTitled(*rig.ed, "About Sawblade..."));
+  REQUIRE(rig.ed->aboutOpen());
+  CHECK(anyLabelContains(*rig.ed, "Path A pedal: Evil"));
+  bool evilLink = false, goodLink = false;
+  for (auto* h : all<juce::HyperlinkButton>(*rig.ed)) {
+    if (h->getURL().toString(false).contains("file:")) evilLink = true;
+    if (h->getURL().toString(false) == "https://www.tone3000.com/tones/202") goodLink = true;
+  }
+  CHECK_FALSE(evilLink);
+  CHECK(goodLink);
+  click(*buttonTitled(*rig.ed, "CLOSE"));
+}
+
 TEST_CASE("settings: opening the panel raises it above the RIG overlay", "[editor][settings]") {
   Rig rig;
   rig.ed->setRigEditorOpen(true);

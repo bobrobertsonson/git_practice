@@ -1,7 +1,7 @@
 #include "ToolRunner.h"
 
 #include <algorithm>
-#include <regex>
+#include <cctype>
 #include <thread>
 
 #include <juce_core/juce_core.h>
@@ -10,10 +10,30 @@
 namespace sawblade::plugin::settings {
 namespace fs = std::filesystem;
 
+// A manual scan (no std::regex: its recursion can blow the stack on a very long token line). Case-insensitive.
 std::string redactSecrets(const std::string& line) {
-  if (line.find("t3k_cs_") == std::string::npos) return line;
-  static const std::regex re("t3k_cs_[A-Za-z0-9_-]+");
-  return std::regex_replace(line, re, "t3k_cs_[redacted]");
+  static const char kMarker[] = "t3k_cs_";
+  constexpr size_t kLen = sizeof(kMarker) - 1;
+  auto isTokenChar = [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '-'; };
+  auto markerAt = [&](size_t i) {
+    if (i + kLen > line.size()) return false;
+    for (size_t k = 0; k < kLen; ++k)
+      if (std::tolower(static_cast<unsigned char>(line[i + k])) != kMarker[k]) return false;
+    return true;
+  };
+  std::string out;
+  size_t i = 0;
+  while (i < line.size()) {
+    if (markerAt(i) && i + kLen < line.size() && isTokenChar(static_cast<unsigned char>(line[i + kLen]))) {
+      size_t j = i + kLen;
+      while (j < line.size() && isTokenChar(static_cast<unsigned char>(line[j]))) ++j;
+      out += "t3k_cs_[redacted]";
+      i = j;
+    } else {
+      out.push_back(line[i++]);
+    }
+  }
+  return out;
 }
 
 std::optional<nlohmann::json> extractJson(const std::vector<std::string>& lines) {
@@ -97,11 +117,17 @@ std::shared_ptr<ToolRunner::Job> ToolRunner::run(ToolRequest req, std::function<
     for (auto& kv : req.env) env[kv.first] = kv.second;
     auto& cmd = job->command_;
 #ifndef _WIN32
-    cmd.push_back("/usr/bin/env");
-    for (auto& kv : env) cmd.push_back(kv.first + "=" + kv.second);
+    if (exe.string().find('=') != std::string::npos) {  // `env` would read it as a KEY=VALUE assignment
+      job->result_.error = "cannot run " + exe.string() + ": the path contains '='. Move the match venv to a folder without '=' in its name.";
+    } else {
+      cmd.push_back("/usr/bin/env");
+      for (auto& kv : env) cmd.push_back(kv.first + "=" + kv.second);
+    }
 #endif
-    cmd.push_back(exe.string());
-    for (auto& a : req.args) cmd.push_back(a);
+    if (job->result_.error.empty()) {
+      cmd.push_back(exe.string());
+      for (auto& a : req.args) cmd.push_back(a);
+    }
   }
 
   {
@@ -118,7 +144,7 @@ std::shared_ptr<ToolRunner::Job> ToolRunner::run(ToolRequest req, std::function<
 void ToolRunner::Job::cancel() {
   cancelled_.store(true);
   std::lock_guard<std::mutex> lk(m_);
-  if (child_ && !done_) child_->kill();
+  if (child_ && !done_ && !reaped_) child_->kill();  // never signal a reaped (possibly reused) pid
 }
 
 bool ToolRunner::Job::isRunning() const {
@@ -158,7 +184,7 @@ void ToolRunner::Job::runWatchdog() {
   std::unique_lock<std::mutex> lk(m_);
   if (cv_.wait_for(lk, timeout_, [this] { return done_; })) return;
   timedOut_.store(true);
-  if (child_) child_->kill();
+  if (child_ && !reaped_) child_->kill();
 }
 
 void ToolRunner::Job::runWorker() {
@@ -177,7 +203,7 @@ void ToolRunner::Job::runWorker() {
       {
         std::lock_guard<std::mutex> lk(m_);
         child_ = std::move(proc);
-        if (cancelled_.load()) p->kill();
+        if (cancelled_.load() || timedOut_.load()) p->kill();
       }
       // JUCE reads through a FILE*: a block read would wait for the whole block, so read byte by byte
       // (stdio buffers underneath) to deliver each line as soon as it is complete.
@@ -197,6 +223,10 @@ void ToolRunner::Job::runWorker() {
       if (!p->waitForProcessToFinish(5000)) {
         p->kill();
         p->waitForProcessToFinish(2000);
+      }
+      {
+        std::lock_guard<std::mutex> lk(m_);
+        reaped_ = true;  // from here cancel() and the watchdog must not kill()
       }
       result_.exitCode = static_cast<int>(p->getExitCode());
       if (cancelled_.load()) result_.outcome = ToolResult::Outcome::Cancelled;

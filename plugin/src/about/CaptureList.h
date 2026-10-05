@@ -19,6 +19,10 @@ struct CaptureRow {
   bool nonCommercial = false;  // licence contains "-nc"
 };
 
+// True for http:// and https:// (scheme compared case-insensitively). Only such URLs are ever launched in a browser;
+// anything else (file:, javascript:, a custom scheme, plain text) is shown as text.
+bool isWebUrl(const std::string& url);
+
 // Every capture with a non-empty file: paths.a / paths.b NAM blocks in order, then the cab IR(s).
 std::vector<CaptureRow> listCaptures(const sawblade::Preset& preset);
 

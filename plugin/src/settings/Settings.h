@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -37,6 +38,7 @@ struct Result {
 
 // Where things live (all overridable by environment variables, see the table in docs/PLUGIN.md).
 struct Paths {
+  static std::filesystem::path appDataDir(const Env&);  // SAWBLADE_APPDATA, SAWBLADE_DATA_DIR, platform default (= AppPaths.h)
   static std::filesystem::path settingsFile(const Env&);
   static std::filesystem::path tokenFile(const Env&);
   static std::filesystem::path captureCacheDir(const Env&);
@@ -61,6 +63,7 @@ class Settings {
   static constexpr const char* kDefaultSeparationModel = "htdemucs_6s";
 
   explicit Settings(std::filesystem::path file, Env env = Env::system());  // does not touch disk
+  ~Settings();
   // The process-wide instance at Paths::settingsFile(Env::system()), load()ed on first use.
   static Settings& shared();
   // Test hook: forget the shared instance so the next shared() re-reads SAWBLADE_SETTINGS_FILE.
@@ -73,6 +76,8 @@ class Settings {
   bool isFirstRun() const;  // no file existed when this instance first load()ed
   void markFirstRunCompleted();
   std::string load();  // "" or an error text
+  // The text load() returned last time (malformed file, dropped secret key); the panel shows it.
+  std::string loadError() const;
   std::string save();  // "" or an error text
 
   std::optional<std::filesystem::path> matchVenvDir() const;
@@ -108,6 +113,7 @@ class Settings {
   Result setPathKey(const char* key, std::optional<std::filesystem::path> v);
   Result finish(Result r);  // save + notify
   void notify();
+  void applyCacheEnv();
   std::optional<std::filesystem::path> pathKey(const char* key) const;
 
   std::filesystem::path file_;
@@ -115,6 +121,9 @@ class Settings {
   mutable std::mutex m_;
   nlohmann::json doc_ = nlohmann::json::object();
   bool loadedOnce_ = false, firstRun_ = false;
+  std::string loadError_;
+  bool applyProcessEnv_ = false;  // only the shared() instance touches the process environment
+  std::optional<std::pair<bool, std::string>> savedCacheEnv_;  // SAWBLADE_CACHE_DIR before we overrode it
   std::vector<Listener*> listeners_;
 };
 

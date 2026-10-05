@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -21,7 +22,10 @@ namespace fs = std::filesystem;
 using nlohmann::json;
 
 // --- app data and settings ---------------------------------------------------------------------------------------
-fs::path settingsFile() { return appDataDir() / "settings.json"; }
+fs::path settingsFile() {
+  if (const char* o = std::getenv("SAWBLADE_SETTINGS_FILE"); o != nullptr && *o != '\0') return fs::path(o);  // as settings::Paths::settingsFile
+  return appDataDir() / "settings.json";
+}
 fs::path packCacheDir() { return appDataDir() / "packs"; }
 fs::path packManifestPath(const std::string& toneId) {
   std::string safe;
@@ -87,17 +91,34 @@ bool setT3kExecutable(const fs::path& exe, std::string* error) {
   if (!readSettings(j)) return fail("settings.json is not a JSON object; not overwritten: " + settingsFile().string());
   j["t3kExecutable"] = exe.string();
   std::error_code ec;
-  fs::create_directories(appDataDir(), ec);
-  if (ec) return fail("cannot create " + appDataDir().string() + ": " + ec.message());
-  const fs::path tmp = settingsFile().string() + ".tmp";
+  const fs::path dir = settingsFile().parent_path();
+  if (!dir.empty()) fs::create_directories(dir, ec);
+  if (ec) return fail("cannot create " + dir.string() + ": " + ec.message());
+  static std::atomic<unsigned> counter{0};
+  const fs::path tmp = settingsFile().string() + ".tmp." + std::to_string(::getpid()) + "." + std::to_string(counter.fetch_add(1));
+  const std::string text = j.dump(2) + "\n";
+#if !defined(_WIN32)
+  {  // created 0600 from the start: the shared settings file stays private (the phase 11 store writes it 0600 too)
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return fail("cannot write " + tmp.string());
+    size_t off = 0;
+    while (off < text.size()) {
+      const ssize_t n = ::write(fd, text.data() + off, text.size() - off);
+      if (n <= 0) {
+        ::close(fd);
+        fs::remove(tmp, ec);
+        return fail("cannot write " + tmp.string());
+      }
+      off += static_cast<size_t>(n);
+    }
+    ::close(fd);
+  }
+#else
   {
     std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
     if (!o) return fail("cannot write " + tmp.string());
-    o << j.dump(2) << '\n';
-    if (!o) return fail("cannot write " + tmp.string());
+    o << text;
   }
-#if !defined(_WIN32)
-  ::chmod(tmp.c_str(), 0600);  // the shared settings file stays private (the phase 11 store writes it 0600 too)
 #endif
   fs::rename(tmp, settingsFile(), ec);
   if (ec) return fail("cannot replace " + settingsFile().string() + ": " + ec.message());
