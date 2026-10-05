@@ -172,32 +172,32 @@ TEST_CASE("browser: the preset selector opens it, the banks and categories filte
   REQUIRE(f.ed->browserOpen());
   f.browser().scanBlocking();
   auto& lib = f.browser().library();
-  CHECK(lib.entries().size() == 14);  // 11 real + 1 synthetic factory + 2 user
-  CHECK(f.browser().visible().size() == 14);
+  CHECK(lib.entries().size() == 16);  // 13 real + 1 synthetic factory + 2 user
+  CHECK(f.browser().visible().size() == 16);
 
   f.browser().selectBankRow(1);  // Factory
-  CHECK(f.browser().visible().size() == 12);
+  CHECK(f.browser().visible().size() == 14);
   f.browser().selectBankRow(2);  // Classic
   CHECK(f.browser().visible().size() == 4);
   f.browser().selectBankRow(3);  // Styles
   CHECK(f.browser().visible().size() == 7);
-  f.browser().selectBankRow(4);  // Matched
-  CHECK(f.browser().visible().size() == 1);
+  f.browser().selectBankRow(4);  // Matched: barbaric_v4, bolt_thrower_v1, nails_v1
+  CHECK(f.browser().visible().size() == 3);
   f.browser().selectBankRow(5);  // User
   CHECK(f.browser().visible().size() == 2);
   f.browser().selectBankRow(1);
   const auto cats = f.browser().categoryRows();
-  CHECK(cats[0] == "All categories  (12)");
+  CHECK(cats[0] == "All categories  (14)");
   bool grind = false;
   for (const auto& c : cats) grind = grind || c == "Grind  (1)";
   CHECK(grind);
   f.browser().selectCategory("Death metal");
-  CHECK(f.browser().visible().size() == 4);  // studio_split, uk death, barbaric, the synthetic one
+  CHECK(f.browser().visible().size() == 5);  // studio_split, uk death, barbaric, matched bolt_thrower_v1, the synthetic one
   f.browser().setSearch("bolt");
-  CHECK(f.browser().visible().size() == 1);
+  CHECK(f.browser().visible().size() == 2);  // uk_death_bolt_thrower and matched bolt_thrower_v1
   f.browser().setSearch("");
   f.browser().selectCategory("");
-  CHECK(f.browser().visible().size() == 12);
+  CHECK(f.browser().visible().size() == 14);
 
   // close
   click(*f.browser().buttonTitled(juce::String::fromUTF8("\xe2\x80\xb9 BACK")));
@@ -276,7 +276,7 @@ TEST_CASE("browser: loading, stepping with the top-bar buttons, save as and dele
   f.browser().setTrashFunction([](const fs::path& p) { return fs::remove(p); });
   REQUIRE(f.browser().deleteSelected());
   CHECK_FALSE(fs::exists(f.tmp.dir / "appdata" / "presets" / "Renamed from the test.json"));
-  CHECK(f.browser().library().entries().size() == 14);
+  CHECK(f.browser().library().entries().size() == 16);
 }
 
 TEST_CASE("A/B button: shows A or B, switches the sound, replaced by browser loads on the active slot", "[editor][browser][ab]") {
@@ -320,7 +320,7 @@ TEST_CASE("browser: real factory entries show exactly the licences and creators 
     }
     ++checked;
   }
-  CHECK(checked == 11);
+  CHECK(checked == 13);
 }
 
 TEST_CASE("browser: screenshot with a factory category selected and the info panel on a capture with an NC tag", "[editor][browser][screenshot]") {
