@@ -37,7 +37,9 @@ from pathlib import Path
 
 import numpy as np
 
+from . import progress as PG
 from . import resume as R
+from . import stop as STOP
 
 # The training box is usually shared with other jobs: spinning OpenMP workers collapse (>5x slower epochs) as soon as one
 # of them is descheduled, so wait passively.  Effective only if torch has not been imported yet (the CLI guarantees that).
@@ -136,7 +138,7 @@ class TrainConfig:
 
 @dataclass
 class TrainResult:
-    nam_path: Path
+    nam_path: Path | None
     epochs_done: int
     best_epoch: int
     best_val_esr: float
@@ -150,7 +152,7 @@ class TrainResult:
 
 def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scratch, user_metadata=None,
               other_metadata=None, log=print, basename: str = "model", ckpt_dir=None, resume: bool = False,
-              identity: dict | None = None) -> TrainResult:
+              identity: dict | None = None, progress: PG.Progress | None = None) -> TrainResult:
     """Train one A1 WaveNet on (x, y) pairs (float32 mono, 48 kHz, sample aligned) and export ``<outdir>/<basename>.nam``.
 
     Seeded: ``pytorch_lightning.seed_everything(seed)`` before model init and shuffling.  CPU training is
@@ -162,6 +164,10 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
     ``best.ckpt`` and ``progress.json`` (``identity`` = preset/signal sha, mode, size is stored in it), all written
     atomically.  ``resume=True`` continues from ``last.ckpt``; ``cfg.max_minutes`` counts the elapsed training time of
     all sessions.
+
+    Cancel: when ``stop.stop_requested()`` (SIGINT) the trainer stops at the end of the current batch; the partial epoch
+    writes no checkpoint (``progress.json`` only gets ``"interrupted": true``), nothing is exported and the result has
+    ``stopped_by == "interrupt"`` and ``nam_path None``.  ``progress`` (optional) receives the train-stage updates.
     """
     cfg = cfg.resolved()
     import_nam()
@@ -217,6 +223,9 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
             self.prior_s = 0.0               # training time of earlier sessions
             self.t0 = time.time()
             self.improved = False
+            self.interrupted = False
+            self.start_epoch = 0             # epochs complete when this session started
+            self.start_elapsed = 0.0
 
         def elapsed(self) -> float:
             return self.prior_s + (time.time() - self.t0)
@@ -240,12 +249,33 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
             random.setstate(rng["python"])
             gen.set_state(rng["loader"])
 
+        def _report(self, trainer, batch_frac: float, force: bool) -> None:
+            if progress is None:
+                return
+            done = len(self.history)
+            el = self.elapsed()
+            best = min((r["valEsr"] for r in self.history), default=None)
+            eta = PG.eta_seconds(el - self.start_elapsed, done - self.start_epoch, done, cfg.epochs, el, cap_s)
+            t = PG.train_progress(done, batch_frac, cfg.epochs, el, cap_s)
+            progress.update("train", PG.stage_fraction("train", t), eta=eta, epoch=done, epochs=cfg.epochs,
+                            best_esr=best, resumable=(cdir / R.LAST).is_file(), force=force,
+                            message=f"epoch {min(done + 1, cfg.epochs)}/{cfg.epochs}")
+
         def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
+            if STOP.stop_requested():
+                self.interrupted = True
+                trainer.should_stop = True
+                return
             if self.elapsed() >= cap_s:
                 trainer.should_stop = True
+            self._report(trainer, (batch_idx + 1) / max(trainer.num_training_batches, 1), force=False)
+
+        def on_exception(self, trainer, module, exception):
+            if isinstance(exception, KeyboardInterrupt):
+                self.interrupted = True
 
         def on_validation_end(self, trainer, module):
-            if trainer.sanity_checking:
+            if trainer.sanity_checking or self.interrupted:
                 return
             m = trainer.callback_metrics
             row = {"epoch": trainer.current_epoch + 1, "valEsr": float(m["ESR"]), "valLoss": float(m["val_loss"]),
@@ -256,8 +286,14 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
             log(f"  epoch {row['epoch']:3d}  val ESR {row['valEsr']:.5f}  ({row['elapsedS']:.0f} s)")
             if cfg.target_esr is not None and row["valEsr"] <= cfg.target_esr:
                 trainer.should_stop = True
+            self._report(trainer, 0.0, force=True)
 
         def on_train_epoch_end(self, trainer, module):
+            if self.interrupted:                 # partial epoch: keep the last complete checkpoint untouched
+                prog = R.read_progress(cdir)
+                if prog is not None:
+                    R.write_progress(cdir, {**prog, "interrupted": True})
+                return
             tmp = cdir / (R.LAST + ".tmp")
             trainer.save_checkpoint(str(tmp))
             if self.improved:
@@ -271,6 +307,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
                                     "config": {"seed": cfg.seed, "batchSize": cfg.batch_size, "epochs": cfg.epochs,
                                                "lrGamma": cfg.lr_gamma, "maxMinutes": cfg.max_minutes,
                                                "threads": cfg.threads, "ny": cfg.ny, "device": device}})
+            self._report(trainer, 0.0, force=True)               # now resumable
 
     run = Run()
     resume_from = None
@@ -283,6 +320,8 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
         st = torch.load(resume_from, map_location="cpu", weights_only=False)["callbacks"][run.state_key]
         run.prior_s = float(st["elapsedS"])
         run.history = list(st["history"])
+    run.start_epoch = len(run.history)
+    run.start_elapsed = run.prior_s
     history = run.history
 
     log(f"training A1 WaveNet '{cfg.size}': {n_params} parameters, receptive field {rf}, "
@@ -294,9 +333,24 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
         trainer = pl.Trainer(max_epochs=cfg.epochs, accelerator=accel, devices=1, callbacks=[run], logger=False,
                              enable_checkpointing=False, enable_progress_bar=False, enable_model_summary=False, default_root_dir=str(scratch),
                              deterministic="warn", num_sanity_val_steps=0)
-        trainer.fit(model, dl_train, dl_val, ckpt_path=str(resume_from) if resume_from else None)
+        if STOP.stop_requested():
+            run.interrupted = True
+        else:
+            try:
+                trainer.fit(model, dl_train, dl_val, ckpt_path=str(resume_from) if resume_from else None)
+            except (KeyboardInterrupt, SystemExit):
+                # Lightning turns a KeyboardInterrupt into exit(1); our SIGINT handler normally prevents it, but a
+                # second SIGINT reaches here.  Anything else (a real SystemExit) propagates.
+                if not (run.interrupted or STOP.stop_requested()):
+                    raise
+                run.interrupted = True
     history = run.history                # load_state_dict replaces the list on resume
     wall = run.elapsed()
+    if run.interrupted:
+        best_row = min(history, key=lambda r: r["valLoss"]) if history else {}
+        return TrainResult(nam_path=None, epochs_done=len(history), best_epoch=best_row.get("epoch", 0),
+                           best_val_esr=best_row.get("valEsr", float("nan")), wall_s=wall, stopped_by="interrupt",
+                           params=n_params, receptive_field=int(rf), history=history, config={})
     best_path = cdir / R.BEST
     if not best_path.is_file():
         raise RuntimeError("training stopped before the first validation pass (time cap too small?)")
