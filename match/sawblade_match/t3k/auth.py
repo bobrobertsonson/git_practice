@@ -32,6 +32,19 @@ def default_token_path() -> Path:
     return Path.home() / ".config" / "sawblade" / "t3k_tokens.json"
 
 
+SECRET_KEY_PREFIX = "t3k_cs_"
+
+
+def publishable_client_id(value: object) -> str | None:
+    """The id if it is a usable publishable client id; None for empty/non-string/secret-looking values."""
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v or v.startswith(SECRET_KEY_PREFIX):
+        return None
+    return v
+
+
 @dataclass
 class Session:
     access_token: str
@@ -39,6 +52,7 @@ class Session:
     expires_at: float  # wall-clock epoch seconds
     token_type: str = "bearer"
     scope: str | None = None
+    client_id: str | None = None  # publishable id used at login; read by the C++ settings. Optional.
 
     def __repr__(self) -> str:  # never leak tokens through repr/tracebacks
         return f"Session(expires_at={self.expires_at}, scope={self.scope!r})"
@@ -67,7 +81,8 @@ class TokenStore:
             # Our format has expires_at; the lead's login script writes obtained_at + expires_in.
             exp = float(d["expires_at"]) if "expires_at" in d else float(d["obtained_at"]) + float(d["expires_in"])
             return Session(d["access_token"], d["refresh_token"], exp,
-                           d.get("token_type", "bearer"), d.get("scope"))
+                           d.get("token_type", "bearer"), d.get("scope"),
+                           publishable_client_id(d.get("client_id")))
         except (FileNotFoundError, KeyError, ValueError):
             return None
 
@@ -81,7 +96,11 @@ class TokenStore:
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w") as f:
-                json.dump(asdict(s), f)
+                d = asdict(s)
+                cid = publishable_client_id(d.pop("client_id", None))
+                if cid:
+                    d["client_id"] = cid
+                json.dump(d, f)
             os.replace(tmp, self.path)
         except BaseException:
             try:
@@ -237,6 +256,9 @@ class TokenManager:
         if r.status_code != 200:
             raise AuthError(f"token refresh failed: HTTP {r.status_code}")
         s = Session.from_token_response(r.json(), self._now(), prev_refresh=refresh_token)
+        prev = self._session
+        if prev is not None and prev.client_id:
+            s.client_id = prev.client_id  # keep the login's client id across rotations
         self._session = s
         self.store.save(s)  # persist rotation immediately
         log.debug("access token refreshed (expires_at=%s)", s.expires_at)
