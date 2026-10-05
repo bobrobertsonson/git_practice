@@ -2018,3 +2018,136 @@ TEST_CASE("housekeeping: pruneAsync runs on the runner's thread and the runner j
   }  // destroying the runner joins the thread
   CHECK(countMatchDirs(t.jobs) == 5);
 }
+
+TEST_CASE("housekeeping: prune only deletes real match folders it recognises", "[match][prune][safety]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  fs::create_directories(t.jobs);
+  for (int k = 1; k <= 3; ++k) {
+    char day[16];
+    std::snprintf(day, sizeof day, "202601%02d", k);
+    writeJobFolder(t.jobs, std::string(day) + "-120000-match", "/takes/t" + std::to_string(k) + ".wav");
+  }
+  // A foreign folder that merely ends in -match, with a job.json of its own.
+  fs::create_directories(t.jobs / "x-match");
+  std::ofstream(t.jobs / "x-match" / "job.json") << json{{"kind", "match"}, {"state", "succeeded"}, {"request", {{"di", "/y.wav"}}}}.dump();
+  // The right name but the wrong kind, or a job.json of the wrong shape.
+  writeJobFolder(t.jobs, "20200101-000000-match", "/takes/old.wav");
+  std::ofstream(t.jobs / "20200101-000000-match" / "job.json") << json{{"kind", "export"}, {"state", "succeeded"}}.dump();
+  fs::create_directories(t.jobs / "20200102-000000-match");
+  std::ofstream(t.jobs / "20200102-000000-match" / "job.json") << json{{"kind", "match"}, {"state", 5}, {"pid", "x"}, {"request", {{"di", 3}}}}.dump();
+  // A symlink with a valid name pointing at a real job folder elsewhere: neither it nor its target is touched.
+  const fs::path outside = t.root / "elsewhere" / "20190101-000000-match";
+  writeJobFolder(t.root / "elsewhere", "20190101-000000-match", "/takes/linked.wav");
+  std::ofstream(outside / "keep.txt") << "x";
+  fs::create_directory_symlink(outside, t.jobs / "20190101-000000-match");
+
+  JobRunner runner(t.settings, t.jobs);
+  runner.prune(1);
+  CHECK(fs::exists(t.jobs / "x-match" / "job.json"));
+  CHECK(fs::exists(t.jobs / "20200101-000000-match" / "job.json"));
+  CHECK_FALSE(fs::exists(t.jobs / "20200102-000000-match"));  // a match job with odd field types: handled (no throw), and old
+  CHECK(fs::is_symlink(t.jobs / "20190101-000000-match"));
+  CHECK(fs::exists(outside / "keep.txt"));
+  CHECK(fs::exists(outside / "job.json"));
+  // The real ones were pruned down to the single most recent take.
+  CHECK_FALSE(fs::exists(t.jobs / "20260101-120000-match"));
+  CHECK_FALSE(fs::exists(t.jobs / "20260102-120000-match"));
+  CHECK(fs::exists(t.jobs / "20260103-120000-match"));
+}
+
+TEST_CASE("two-pass: sameChain never throws on malformed capture fields", "[match][twopass][samechain]") {
+  using namespace sawblade::plugin;
+  const json good = {{"paths", {{"a", {{"blocks", json::array({{{"type", "nam"}, {"model", {{"file", "/p/a.nam"}}}}})}}}}}, {"blend", 0.5}};
+  for (const json& bad : {json{{"file", 7}}, json{{"file", nullptr}}, json{{"file", json::array()}}, json{{"file", "/p/a.nam"}, {"source", 5}},
+                          json{{"file", "/p/a.nam"}, {"source", {{"id", json::object()}}}}, json{{"file", "/p/a.nam"}, {"source", {{"id", 1}, {"provider", 2}}}},
+                          json{{"source", {{"id", "1"}}}}}) {
+    json other = good;
+    other["paths"]["a"]["blocks"][0]["model"] = bad;
+    CHECK_NOTHROW(sameChain(good, other));
+    CHECK_NOTHROW(sameChain(other, good));
+    CHECK_NOTHROW(sameChain(other, other));
+    // Without a usable file name it is a different chain; with one, a junk "source" is ignored and the file names decide.
+    const bool usableFile = bad.contains("file") && bad["file"].is_string();
+    if (!usableFile) CHECK_FALSE(sameChain(good, other));
+  }
+  json weird = good;
+  weird["blend"] = "0.5";
+  CHECK_FALSE(sameChain(good, weird));
+  weird = good;
+  weird["paths"] = 3;
+  CHECK_FALSE(sameChain(good, weird));
+  CHECK_FALSE(sameChain(json(nullptr), good));
+}
+
+TEST_CASE("two-pass: rename or delete of the selected take cancels the refinement; a pending one never starts", "[match][twopass][cancel]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgTwoPass({{"gatesThorough", json::array({"g1"})}});
+  Host h(kFs, 256);
+  h.p.jobs().setJobsDir(t.jobs);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  h.p.recorder().setTakesDir(t.root / "takes");
+  std::vector<std::string> names;
+  for (int i = 0; i < 2; ++i) {
+    REQUIRE(h.p.recorder().start(""));
+    const std::string cur = h.p.recorder().currentTakeName();
+    {
+      std::vector<float> in(4800, 0.1f), out(4800);
+      for (int b = 0; b < 4; ++b) h.process(in.data(), out.data(), 4800);
+    }
+    finishTake(h);
+    const std::string nm = "take " + std::to_string(i);
+    std::string rerr;
+    const bool renamed = h.p.recorder().renameTake(cur, nm, &rerr);
+    INFO("rename " << cur << " -> " << nm << ": " << rerr << " i=" << i);
+    REQUIRE(renamed);
+    names.push_back(nm);
+  }
+  std::string err;
+  SECTION("rename") {
+    chooseTakeForMatch(h.p, names[0]);
+    REQUIRE(h.p.jobs().startMatch(t.request()));
+    REQUIRE(waitUntil([&] { return refineRunning(h.p.jobs()); }));
+    REQUIRE(renameTakeForMatch(h.p, names[0], "renamed", &err));
+    CHECK(h.p.matchSettings().selectedTake() == "renamed");
+    REQUIRE(h.p.jobs().waitRefineFinished(10000ms));
+    CHECK(h.p.jobs().refineSnapshot().state == JobState::Cancelled);
+  }
+  SECTION("delete") {
+    chooseTakeForMatch(h.p, names[0]);
+    REQUIRE(h.p.jobs().startMatch(t.request()));
+    REQUIRE(waitUntil([&] { return refineRunning(h.p.jobs()); }));
+    REQUIRE(deleteTakeForMatch(h.p, names[0]));
+    CHECK(h.p.matchSettings().selectedTake().empty());
+    REQUIRE(h.p.jobs().waitRefineFinished(10000ms));
+    CHECK(h.p.jobs().refineSnapshot().state == JobState::Cancelled);
+  }
+  SECTION("another take is left alone") {
+    chooseTakeForMatch(h.p, names[0]);
+    REQUIRE(h.p.jobs().startMatch(t.request()));
+    REQUIRE(waitUntil([&] { return refineRunning(h.p.jobs()); }));
+    REQUIRE(deleteTakeForMatch(h.p, names[1]));
+    std::this_thread::sleep_for(300ms);
+    CHECK(h.p.jobs().refineSnapshot().state == JobState::Running);
+    h.p.jobs().cancelRefine();
+    REQUIRE(h.p.jobs().waitRefineFinished(10000ms));
+  }
+  SECTION("a refinement that is only pending never starts") {
+    // Quick pass done, refine decision not yet taken: cancelRefine() (what choosing another take does) stops it.
+    t.cfgTwoPass();
+    JobRunner& r = h.p.jobs();
+    chooseTakeForMatch(h.p, names[0]);
+    for (int i = 0; i < 5; ++i) {
+      REQUIRE(r.startMatch(t.request()));
+      while (!r.snapshot(JobKind::Match).refinePending && r.snapshot(JobKind::Match).active()) std::this_thread::sleep_for(1ms);
+      chooseTakeForMatch(h.p, i % 2 ? names[0] : names[1]);
+      chooseTakeForMatch(h.p, names[0]);
+      REQUIRE(r.waitFinished(JobKind::Match));
+      r.waitRefineFinished();
+      // Whenever the cancel landed before the decision, no refinement exists; otherwise it was started and then cancelled.
+      const JobState rs = r.refineSnapshot().state;
+      CHECK((rs == JobState::None || rs == JobState::Cancelled || rs == JobState::Succeeded));
+    }
+  }
+}

@@ -69,6 +69,11 @@ bool sameChainFiles(const std::filesystem::path& a, const std::filesystem::path&
 // would belong to the old take).
 void chooseTakeForMatch(SawbladeProcessor& p, const std::string& name);
 
+// Rename / delete of a take go through here: if it is the take selected for MATCH, a running or pending refinement is
+// cancelled first and the selection follows (the new name / none).
+bool renameTakeForMatch(SawbladeProcessor& p, const std::string& oldName, const std::string& newName, std::string* error = nullptr);
+bool deleteTakeForMatch(SawbladeProcessor& p, const std::string& name);
+
 // Loads the thorough pass's best candidate through the normal audition path and applies it (APPLY REFINED BEST).
 // False (and *error) if there is no refined result or it cannot be loaded.
 bool applyRefinedBest(SawbladeProcessor& p, std::string* error = nullptr);

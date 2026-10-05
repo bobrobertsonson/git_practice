@@ -290,11 +290,7 @@ struct PlayAlongPanel::Impl {
                            if (result != 1) return;
                            std::string err;
                            const std::string nn = w->getTextEditorContents("name").toStdString();
-                           if (proc.recorder().renameTake(n, nn, &err)) {
-                             if (proc.matchSettings().selectedTake() == n) proc.matchSettings().setSelectedTake(nn);
-                           } else {
-                             showNotice(juce::String(err));
-                           }
+                           if (!renameTakeForMatch(proc, n, nn, &err)) showNotice(juce::String(err));
                            refreshBand(true);
                          }),
                          true);
@@ -307,8 +303,7 @@ struct PlayAlongPanel::Impl {
       w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
       w->enterModalState(true, juce::ModalCallbackFunction::create([this, n](int result) {
                            if (result != 1) return;
-                           if (!proc.recorder().removeTake(n)) showNotice("Could not delete " + juce::String(n));
-                           if (proc.matchSettings().selectedTake() == n) proc.matchSettings().setSelectedTake({});
+                           if (!deleteTakeForMatch(proc, n)) showNotice("Could not delete " + juce::String(n));
                            refreshBand(true);
                          }),
                          true);

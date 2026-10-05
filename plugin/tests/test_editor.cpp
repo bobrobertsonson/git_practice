@@ -1407,3 +1407,28 @@ TEST_CASE("match screen: screenshots of PREVIEW with REFINING and of the REFINED
   savePng(refined, "sawblade_match_refined_1x.png");
   CHECK(nonBackgroundFraction(refined, {460, 220, 800, 440}) > 0.1);
 }
+
+TEST_CASE("match screen: a cancelled or failed refinement leaves a one-line note and the quick results", "[editor][match][twopass]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}});
+  startTwoPass(rig);
+  MatchScreen& screen = rig.screen();
+  CHECK_FALSE(anyLabelContains(screen, "Refinement cancelled"));
+  click(*rig.screenButton("CANCEL REFINE"));
+  REQUIRE(rig.proc.jobs().waitRefineFinished(10000ms));
+  screen.refresh();
+  CHECK(anyLabelEquals(screen, "Refinement cancelled"));
+  CHECK(resultsList(rig).getListBoxModel()->getNumRows() == 3);
+
+  // A failing thorough pass: the tool's error is shown.
+  rig.tools.cfgTwoPass({{"failThorough", true}});
+  click(*rig.screenButton("START MATCH"));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded; }));
+  REQUIRE(rig.proc.jobs().waitRefineFinished(15000ms));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().refineSnapshot().state == JobState::Failed; }));
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "Refinement failed: error: pool needs amps and cabs"));
+  CHECK(resultsList(rig).getListBoxModel()->getNumRows() == 3);
+  CHECK_FALSE(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+}

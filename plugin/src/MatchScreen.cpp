@@ -563,6 +563,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
             }
         if (pick >= 0) results.selectRow(pick);
         else results.deselectAllRows();
+        lastGoodRow = pick;  // the rows moved: remap, so a click on a header returns to the right candidate
         results.repaint();
       }
       // badges and the refinement bar on the results header
@@ -580,9 +581,18 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       previewBadge.setText(badge, juce::dontSendNotification);
       previewBadge.setColour(juce::Label::textColourId, bc);
       previewBadge.setTooltip(promoted ? "The applied preset is the same chain as the thorough pass's best." : refineReady ? "The thorough pass finished: see the REFINED section." : "Quick pass: preview results.");
-      refiningLabel.setVisible(refineActive);
+      // A thorough pass that ended without a result: one line on the header (the quick results stay).
+      const bool refineEnded = !refineActive && quickPass && (refine.state == JobState::Failed || refine.state == JobState::Cancelled);
+      refiningLabel.setVisible(refineActive || refineEnded);
       refineBar.setVisible(refineActive);
+      refiningLabel.setBounds(refineActive ? juce::Rectangle<int>(478 + 440, 224, 150, 18) : juce::Rectangle<int>(478 + 430, 224, 338, 18));
+      if (refineEnded) {
+        juce::String note = refine.state == JobState::Cancelled ? juce::String("Refinement cancelled") : "Refinement failed: " + juce::String(refine.message);
+        refiningLabel.setText(note, juce::dontSendNotification);
+        refiningLabel.setColour(juce::Label::textColourId, refine.state == JobState::Failed ? L::error() : L::warning());
+      }
       if (refineActive) {
+        refiningLabel.setColour(juce::Label::textColourId, L::saw());
         const double f = refine.progress.fraction;
         refiningLabel.setText(juce::String::fromUTF8("REFINING\xe2\x80\xa6") + (f >= 0.0 ? " " + juce::String(juce::roundToInt(std::min(1.0, f) * 100.0)) + "%" : juce::String()),
                               juce::dontSendNotification);

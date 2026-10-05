@@ -1273,12 +1273,15 @@ void JobRunner::cancel(JobKind kind) {
 }
 
 void JobRunner::cancelRefine() {
-  std::shared_ptr<Job> r;
+  std::shared_ptr<Job> r, q;
   {
     std::lock_guard<std::mutex> lk(m_);
     r = refine_;
+    q = match_;
   }
   if (r) r->cancelRequested = true;
+  // The quick pass just finished and the refinement is about to be decided: it must not start.
+  if (q && q->refinePending.load()) q->cancelRequested = true;
 }
 
 JobSnapshot JobRunner::snapshotOf(const std::shared_ptr<Job>& j, JobKind kind) const {
@@ -1382,19 +1385,26 @@ void JobRunner::prune(int keepTakes) {
   };
   std::map<std::string, Group> groups;
   for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+    // Only what this runner creates: a real directory (never a symlink: nothing is followed), named
+    // YYYYMMDD-HHMMSS...-match, whose job.json says kind "match".
     std::error_code e2;
-    if (!it->is_directory(e2)) continue;
+    if (fs::symlink_status(it->path(), e2).type() != fs::file_type::directory || e2) continue;
     const std::string name = it->path().filename().string();
-    static const std::string suffix = "-match";
-    if (name.size() <= suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
-    const json j = json::parse(readFile(it->path() / "job.json"), nullptr, /*allow_exceptions=*/false);
-    if (!j.is_object()) continue;  // not a job folder (or being written): never touched
-    std::string take = takeOf(j);
-    if (take.empty()) take = "dir:" + name;
-    Group& g = groups[take];
-    g.dirs.push_back(it->path());
-    if (name > g.newest) g.newest = name;
-    if (std::find(live.begin(), live.end(), it->path()) != live.end() || recordedRunning(j, it->path())) g.running = true;
+    static const std::regex shape(R"(^[0-9]{8}-[0-9]{6}.*-match$)");
+    if (!std::regex_match(name, shape)) continue;
+    try {
+      const json j = json::parse(readFile(it->path() / "job.json"), nullptr, /*allow_exceptions=*/false);
+      if (!j.is_object()) continue;  // not a job folder (or being written): never touched
+      if (auto k = j.find("kind"); k == j.end() || !k->is_string() || k->get<std::string>() != "match") continue;
+      std::string take = takeOf(j);
+      if (take.empty()) take = "dir:" + name;
+      Group& g = groups[take];
+      g.dirs.push_back(it->path());
+      if (name > g.newest) g.newest = name;
+      if (std::find(live.begin(), live.end(), it->path()) != live.end() || recordedRunning(j, it->path())) g.running = true;
+    } catch (const std::exception&) {
+      continue;  // a job.json of the wrong shape: left alone
+    }
   }
   std::vector<const Group*> ordered;
   for (const auto& kv : groups) ordered.push_back(&kv.second);
