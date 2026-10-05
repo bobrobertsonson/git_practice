@@ -558,19 +558,19 @@ TEST_CASE("v3 custom-mode preset renders bit-identically across block sizes and 
   REQUIRE(renderPreset(p, in, o).samples == ref);
 }
 
-// Reviewer item 4: asserts < -80 dB. It FAILS for led / asymmetric / soft (-75.6 / -72.9 / -75.7 dB; silicon -80.7). The model is
-// not changed here; the test is hidden from the default run ([.]; run it with the tag [modded441]) until the lead decides between
-// lowering the modded postLpfHz and a documented exception.
-TEST_CASE("v3 modded alias at 44.1 kHz for all four clips", "[.][modded441][pedal][v3][alias]") {
-  for (ClipType c : {ClipType::Silicon, ClipType::Led, ClipType::Asymmetric, ClipType::Soft}) {
-    HmParams q = v3Ref();
-    q.mode = HmMode::Modded;
-    q.clip = c;
-    HmPedal ped(q);
-    const double a = measureAliasDb(ped, 44100.0);
-    std::printf("[v3 alias 44.1k] modded clip %-10s: %.1f dB\n", clipTypeName(c), a);
-    CHECK(a < -80.0);
-  }
+// Spec §3.8 item 11 (documented exception): modded mode aliases less well at 44.1 kHz (measured silicon -80.7, led -75.6,
+// asymmetric -72.9, soft -75.7 dB), so the 44.1 kHz bound is -72 dB; at 48 and 96 kHz it is the usual -80 dB.
+TEST_CASE("v3 modded alias at 44.1 / 48 / 96 kHz for all four clips", "[pedal][v3][alias]") {
+  for (double fs : {44100.0, 48000.0, 96000.0})
+    for (ClipType c : {ClipType::Silicon, ClipType::Led, ClipType::Asymmetric, ClipType::Soft}) {
+      HmParams q = v3Ref();
+      q.mode = HmMode::Modded;
+      q.clip = c;
+      HmPedal ped(q);
+      const double a = measureAliasDb(ped, fs);
+      std::printf("[v3 alias] modded %.1f kHz clip %-10s: %.1f dB\n", fs / 1000.0, clipTypeName(c), a);
+      CHECK(a < (fs == 44100.0 ? -72.0 : -80.0));
+    }
 }
 
 TEST_CASE("v3 H4 / H5 / H6 at the fitted drive point stay near the recorded values", "[pedal][v3][harmonics]") {

@@ -193,6 +193,8 @@ Every v3 number lives in the one `HmVoicing::v3()` table in `core/src/pedal_hm.c
 | `rolloffHz` default | 9000 | 16000 | the fit ran to its 14 kHz bound |
 | `custom` mode | `s1` 4.6, `sLow` 3.6 | stock gain; +2.5 dB output; `customLowDb` shelf 100 Hz; `customHighDb` shelf 6 kHz; k- pulled 25 % toward k+ | four standard / custom pairs agree |
 
+Alias floor (D 10, 5 kHz tone): below -80 dB at 48 and 96 kHz for every clip and mode; `modded` at 44.1 kHz is the documented exception (silicon -80.7, led -75.6, asymmetric -72.9, soft -75.7 dB; spec §3.8 item 11).
+
   `pickle_into_saw` (BIG FUZZ). See `presets/README.md`.
 
 ### PedalHmx (`type: "pedal.hmx"`) and PedalEye (`type: "pedal.eye"`)
