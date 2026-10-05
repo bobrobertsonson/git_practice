@@ -44,14 +44,14 @@ def song():
     return di_full, distort(di_full, 2)
 
 
-@pytest.mark.parametrize("start_s", [23.417, 0.0, 47.9])
-def test_found_within_10_ms(song, start_s):
+@pytest.mark.parametrize("start_s", [23.417, 11.563, 47.985, 0.0])   # 47.985: 15 ms before ref_len - di_len
+def test_found_within_2_5_ms(song, start_s):
     di_full, ref = song
     a = int(round(start_s * FS))
     di = di_full[a:a + 12 * FS]
     r = resolve_offset(di, ref, FS, offset_given=False)
     assert r["mode"] == "whole_song"
-    assert abs(r["offset_ms"] - start_s * 1000) <= 10.0, r
+    assert abs(r["offset_ms"] - start_s * 1000) <= 2.5, r       # coarse + fine stage
     assert r["confidence"] >= offset.MIN_CONFIDENCE
     assert r["coarse_ms"] == pytest.approx(start_s * 1000, abs=10.0)
 
@@ -139,3 +139,69 @@ def test_cli_prints_failure_message(monkeypatch, capsys, tmp_path):
     rc = cli.main(["--di", "d.wav", "--ref", "r.wav", "--pool", "p.json", "--out", str(tmp_path)])
     assert rc != 0
     assert capsys.readouterr().err.strip() == "error: could not place the DI in the song: enter where it starts"
+
+
+def test_window_slack_boundary(song):
+    """2 s short -> window (the +-3 s search covers it); 3.5 s short -> whole-song search."""
+    di_full, ref = song
+    assert resolve_offset(di_full[:len(di_full) - 2 * FS], ref, FS, False)["mode"] == "window"
+    r = resolve_offset(di_full[:len(di_full) - int(3.5 * FS)], ref, FS, False)
+    assert r["mode"] == "whole_song" and abs(r["offset_ms"]) <= 2.5
+
+
+def test_result_never_exceeds_ref_minus_di(song):
+    di_full, ref = song
+    di = di_full[:len(di_full) - int(3.5 * FS)]
+    r = whole_song_search(di, ref, FS)
+    assert 0 <= r["offset"] <= len(ref) - len(di)
+    tail = di_full[len(di_full) - 20 * FS:]         # placed at the very end of the song
+    r = whole_song_search(tail, ref, FS)
+    assert r["offset"] <= len(ref) - len(tail)
+
+
+# ---- end to end through run_match (the fixture pool is the one test_matcher.py uses) ---------------------------------
+def _e2e_cfg(tmp_path, di_sig, ref_sig, name):
+    import soundfile as sf
+    from sawblade_match.matcher.reference import load_reference
+    from sawblade_match.matcher.run import Config
+    from test_matcher import fixture_pool, mkplan
+    d = tmp_path / name
+    d.mkdir()
+    sf.write(str(d / "di.wav"), di_sig, FS, subtype="FLOAT")
+    sf.write(str(d / "ref.wav"), ref_sig, FS, subtype="FLOAT")
+    ref = load_reference(d / "ref.wav", channel="mid", matched="mono", offset_ms=None)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0})
+    return Config(di=d / "di.wav", ref=ref, pool=fixture_pool(), out=d / "out", seed=1, excerpt_s=2.0, threads=2,
+                  plan=plan, write_audio=False, refine_offsets=True)
+
+
+def test_run_match_fails_for_an_unplaceable_di(tmp_path):
+    from sawblade_match.matcher.run import run_match
+    cfg = _e2e_cfg(tmp_path, synth_di(99, 10.0), distort(synth_di(1, 20.0), 2), "unrelated")   # 10 s short > 3 s
+    lines: list[str] = []
+    with pytest.raises(PlacementError) as e:
+        run_match(cfg, lines.append)
+    assert str(e.value) == PLACE_FAIL_MESSAGE
+    assert any(l.startswith("whole-song placement failed: r1 ") and "MIN_CONFIDENCE" in l for l in lines), lines
+
+
+def test_run_match_after_placement_refines_only_within_250_ms(tmp_path, monkeypatch):
+    """A confident whole-song placement must not be overridden by a louder decoy: the starter-render refinement gets a
+    +-250 ms window, not +-3 s."""
+    from sawblade_match.matcher import run as R
+    full = synth_di(1, 20.0)
+    a = int(7.3 * FS)
+    cfg = _e2e_cfg(tmp_path, full[a:a + 8 * FS], distort(full, 2), "placed")
+    calls = []
+
+    class Stop(RuntimeError):
+        pass
+
+    def spy(render, refsig, fs, coarse, start=0, search=None, **kw):
+        calls.append((coarse, search))
+        raise Stop()
+    monkeypatch.setattr(R, "refine_offset", spy)
+    with pytest.raises(Stop):
+        R.run_match(cfg, R.Log())
+    assert calls and calls[0][1] == int(R.PLACED_WINDOW_MS * FS / 1000) == int(0.25 * FS)
+    assert abs(1000.0 * calls[0][0] / FS - 7300) <= 2.5          # handed the coarse placement, not 0

@@ -17,7 +17,7 @@ from ..tonecheck.analysis import analyze
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
 from .engine import RATE, Engine, to48
-from .offset import refine_offset, resolve_offset
+from .offset import PlacementError, refine_offset, resolve_offset
 from .pool import Capture, Pool, default_cab, starter_choice
 from .profile import DEFAULT_BASE, derive_profile, load_profile, profile_path, save_profile
 from .excerpt import select_excerpt
@@ -240,7 +240,8 @@ def encode_mp3(wav: Path, mp3: Path, log) -> bool:
         return False
 
 
-HINT_WINDOW_MS = 20.0   # an explicit --offset-ms is trusted: both refinements search only +-20 ms around it
+PLACED_WINDOW_MS = 250.0   # after a confident whole-song placement the refinement searches only +-250 ms
+HINT_WINDOW_MS = 20.0  # an explicit --offset-ms is trusted: both refinements search only +-20 ms around it
 
 
 def _refine_native(render: np.ndarray, fs: int, ref_path: str, col: int, coarse_ms: float, search_ms: float = 250.0):
@@ -306,7 +307,14 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         # unknown offset + DI shorter than the song: whole-song coarse placement (raises PlacementError, a ValueError,
         # which the CLI prints as "error: could not place the DI in the song: enter where it starts")
         t_place = time.time()
-        offset_search = resolve_offset(di48, ref.matched_sig, RATE, ref.offset_given, ref.offset_samples)
+        try:
+            offset_search = resolve_offset(di48, ref.matched_sig, RATE, ref.offset_given, ref.offset_samples)
+        except PlacementError as e:
+            d = e.details       # one calibration line BEFORE the error line (the plugin shows the last line starting "error")
+            if d:
+                log(f"whole-song placement failed: r1 {d['r1']:.3f}, r2 {d['r2']:.3f}, sigma {d['sigma']:.4f}, "
+                    f"confidence {d['confidence']:.2f} < MIN_CONFIDENCE {d['minConfidence']:.1f}")
+            raise
         if offset_search["mode"] == "whole_song":
             ref.offset_samples = offset_search["offset_samples"]
             offset_search["searchSeconds"] = time.time() - t_place
@@ -342,7 +350,12 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
 
     def offset_from(y_full_excerpt, label):
         # unknown offset: +-3 s, then refined; given: only +-HINT_WINDOW_MS around the hint
-        search = int(HINT_WINDOW_MS * RATE / 1000) if ref.offset_given else int(3.0 * RATE)
+        if ref.offset_given:
+            search = int(HINT_WINDOW_MS * RATE / 1000)
+        elif offset_search is not None and offset_search["mode"] == "whole_song":
+            search = int(PLACED_WINDOW_MS * RATE / 1000)     # a confident placement: no jumping to a louder decoy
+        else:
+            search = int(3.0 * RATE)
         return refine_offset(ex.trim(y_full_excerpt), ref.matched_sig.astype(np.float64), RATE, ref.offset_samples,
                              start=ex.start, search=search)
 
@@ -356,6 +369,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             ref.offset_samples = r["offset"]
         if offset_search is not None and offset_search["mode"] != "given":
             offset_search["offset_ms"] = 1000.0 * ref.offset_samples / RATE      # after the refinement
+            offset_search["offset_samples"] = int(ref.offset_samples)
     lap("starterAndOffset")
     tgt = build_target(ref, ex)
     cex = ctgt = None

@@ -82,7 +82,12 @@ MIN_RIVAL_LAGS = 20
 
 
 class PlacementError(ValueError):
-    """The DI could not be placed in the song with enough confidence (message: PLACE_FAIL_MESSAGE)."""
+    """The DI could not be placed in the song with enough confidence (message: PLACE_FAIL_MESSAGE).
+    ``details`` holds the search numbers (r1, r2, sigma, confidence, minConfidence) for calibration logging."""
+
+    def __init__(self, message: str = PLACE_FAIL_MESSAGE, details: dict | None = None):
+        super().__init__(message)
+        self.details = details or {}
 
 
 def _log_env(x: np.ndarray, hop: int, detrend_frames: int, smooth_frames: int = 1) -> np.ndarray:
@@ -162,6 +167,7 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
     fh = int(round(FINE_HOP_S * fs))
     w = int(round(FINE_SEARCH_S * fs))
     lo, hi = max(0, coarse - w), min(len(ref) - len(di), coarse + w)
+    coarse = min(coarse, len(ref) - len(di))
     off = coarse
     if hi >= lo:
         seg = ref[lo:hi + len(di)]
@@ -170,6 +176,7 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
         if len(fb) >= 20 and len(fa) > len(fb):
             cf = _ncc_valid(fa, fb)
             off = lo + int(np.argmax(cf)) * fh
+    off = min(int(off), len(ref) - len(di))          # never place the DI past the end of the song
     return {"offset": int(off), "offsetMs": 1000.0 * off / fs, "coarseMs": 1000.0 * coarse / fs,
             "confidence": float(conf), "r1": r1, "r2": r2, "sigma": sigma, "ok": bool(conf >= min_confidence)}
 
@@ -182,8 +189,12 @@ def resolve_offset(di: np.ndarray, ref: np.ndarray, fs: int, offset_given: bool,
     * DI not shorter than ref (or at most WINDOW_SLACK_S shorter, which the +-3 s window already covers)
                                 -> {"mode": "window"}: the +-3 s search around 0, refined later.
     * otherwise                 -> whole-song search; below ``min_confidence`` raises PlacementError.
-    The returned dict is the result JSON's ``offset_search`` (``confidence`` is null unless mode is whole_song) plus
-    ``offset_samples`` (the coarse offset to hand to the refinement) and, for whole_song, ``coarse_ms``/``r1``/``r2``."""
+    The returned dict is the result JSON's ``offset_search``. Keys per mode:
+      given       mode, offset_ms, offset_samples (the hint), confidence (null)
+      window      mode, offset_ms, offset_samples (0 here), confidence (null)
+      whole_song  mode, offset_ms, offset_samples, confidence, coarse_ms, r1, r2, minConfidence, searchSeconds
+    Here offset_ms / offset_samples are the search's own answer (1 ms resolution); ``run_match`` overwrites them with the
+    value after the starter-render refinement for window and whole_song (``coarse_ms`` keeps the search's answer)."""
     if offset_given:
         return {"mode": "given", "offset_ms": 1000.0 * offset_samples / fs, "confidence": None,
                 "offset_samples": int(offset_samples)}
@@ -192,7 +203,8 @@ def resolve_offset(di: np.ndarray, ref: np.ndarray, fs: int, offset_given: bool,
                 "offset_samples": int(offset_samples)}
     r = whole_song_search(di, ref, fs, min_confidence)
     if not r["ok"]:
-        raise PlacementError(PLACE_FAIL_MESSAGE)
+        raise PlacementError(PLACE_FAIL_MESSAGE, {"r1": r["r1"], "r2": r["r2"], "sigma": r["sigma"],
+                                                  "confidence": r["confidence"], "minConfidence": min_confidence})
     return {"mode": "whole_song", "offset_ms": r["offsetMs"], "confidence": r["confidence"],
             "offset_samples": r["offset"], "coarse_ms": r["coarseMs"], "r1": r["r1"], "r2": r["r2"],
             "minConfidence": min_confidence}
