@@ -22,6 +22,7 @@ from .fetch import ensure_capture, list_candidates
 from .licenses import check_license
 from .filter import FilterConfig
 from .ids import require_id
+from .suggest import pool_candidates, suggest_body
 from .ladder import gain_ladder, parse_ladder
 from .pool import build_pool, write_manifest
 from .pack import build_pack
@@ -291,6 +292,18 @@ def cmd_ladder(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_suggest_body(args: argparse.Namespace) -> int:
+    """Offline: pick a body-path amp from the cached pool manifest; prints a JSON record or ``null``."""
+    cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
+    try:
+        manifest = json.loads((cache.root / "pool_manifest.json").read_text())
+    except (FileNotFoundError, ValueError):
+        manifest = None
+    pick = suggest_body(pool_candidates(manifest if isinstance(manifest, dict) else None, cache), args.a_title)
+    _emit(pick)
+    return 0
+
+
 def cmd_pack(args: argparse.Namespace) -> int:
     def on_progress(done: int, total: int, name: str) -> None:
         _progress_line({"done": done, "total": total, "name": name})
@@ -411,6 +424,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="default: the one `resolve` would use (A2, then A1)")
     ld.add_argument("--json", action="store_true", help="JSON output (the only format; accepted for symmetry)")
     ld.set_defaults(fn=cmd_ladder, json=True)
+
+    sb = sub.add_parser("suggest-body", help="suggest a high-gain body amp from the cached pool (offline)")
+    sb.add_argument("--a-title", default="", help="title of path A's amp capture (\"\" = unknown)")
+    sb.add_argument("--json", action="store_true", help="JSON output (the only format)")
+    sb.add_argument("--cache-dir")
+    sb.set_defaults(fn=cmd_suggest_body, json=True)
 
     k = sub.add_parser("pack", help="download every model of an IR tone and write a manifest")
     k.add_argument("tone_id")

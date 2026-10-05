@@ -155,6 +155,19 @@ the names are identical once that number is removed, the gains are distinct and 
 else is "no ladder" - it never guesses. Errors follow the usual `--json` `{"error","code"}` shape.
 Code: `sawblade_match/t3k/ladder.py` (`parse_ladder`, `gain_ladder`).
 
+### `suggest-body` (Task C pool rule)
+
+```
+sawblade-t3k suggest-body --a-title "<path A amp title>" [--cache-dir D] --json
+```
+
+Offline (reads `<cache>/pool_manifest.json` and the capture cache, no login). Prints one JSON line
+`{"tone_id", "model_id", "title", "cached"}` or `null` (no pool, or no high-gain amp in it). Candidates are the
+pool's amp models whose `classify(...)` is `amp_high`. Order: a different amp family from path A first, then
+already-cached captures, then pool order. Family key = the first `_HIGH_AMPS` match in the title (lower-cased,
+5150/5153/6505 -> `5150`, recto/dual -> `recto`) else the first alphabetic word of the title; an empty or unknown
+A title ranks nobody as "different". Code: `sawblade_match/t3k/suggest.py` (`suggest_body`, `pool_candidates`).
+
 ### `pack`, progress lines and exit codes
 
 ```
