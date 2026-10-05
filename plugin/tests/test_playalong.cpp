@@ -1043,7 +1043,9 @@ TEST_CASE("PlayAlong: a missing separation model gives the fetch command and no 
   const auto st = pa.loadStatus();
   CHECK(st.state == State::Failed);
   CHECK(st.modelMissing);
-  CHECK(st.fetchCommand == "match/.venv/bin/sawblade-models fetch --model htdemucs_6s");
+  CHECK(st.fetchCommand == sawblade::separationModelInstallCommand(sawblade::SeparationModel::Htdemucs6s));
+  CHECK(st.fetchCommand.find("pip install") != std::string::npos);
+  CHECK(st.fetchCommand.find("sawblade-models fetch --model htdemucs_6s") != std::string::npos);
   CHECK(st.message.find(st.fetchCommand) != std::string::npos);
   // A missing song file is a plain message.
   pa.loadSong((t.dir / "gone.mp3").string(), true);

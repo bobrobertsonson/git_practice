@@ -625,7 +625,7 @@ void PlayAlong::runSeparation(const SepRequest& r) {
   } catch (const SeparationCancelled&) {
     // Superseded or cancelled: whoever did that has set the status already.
   } catch (const ModelUnavailable& e) {
-    fail(e.status.message, true, separationModelFetchCommand(e.status.model));
+    fail(e.status.message, true, separationModelInstallCommand(e.status.model));
   } catch (const std::exception& e) {
     fail(std::string("Separation failed: ") + e.what(), false, "");
   } catch (...) {

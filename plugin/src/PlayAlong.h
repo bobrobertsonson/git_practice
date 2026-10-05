@@ -177,7 +177,8 @@ class PlayAlong {
     // State::Separating: progress of the job (separationEtaSeconds < 0: not known yet).
     double separationFraction = 0.0, separationEtaSeconds = -1.0;
     // State::Failed because the separation model is missing or wrong: `message` already ends with the
-    // exact command that fetches it, repeated in `fetchCommand` (run from the repository root).
+    // complete install + fetch command, repeated in `fetchCommand` (separationModelInstallCommand; run from the
+    // repository root). The panel shows it in a copyable field.
     bool modelMissing = false;
     std::string fetchCommand;
     bool cacheHit = false;                    // Ready: the stems came from the stem cache, no separation ran

@@ -130,6 +130,9 @@ TEST_CASE("ModelStore: directory resolution", "[separation][modelstore]") {
     REQUIRE(std::string(separationModelId(SeparationModel::Htdemucs6s)) == "htdemucs_6s");
     REQUIRE(std::string(separationModelId(SeparationModel::Htdemucs4s)) == "htdemucs");
     REQUIRE(separationModelFetchCommand(SeparationModel::Htdemucs6s) == "match/.venv/bin/sawblade-models fetch --model htdemucs_6s");
+    REQUIRE(separationModelInstallCommand(SeparationModel::Htdemucs6s) ==
+            "match/.venv/bin/pip install -e 'match[models]' -c match/constraints-separation.txt && "
+            "match/.venv/bin/sawblade-models fetch --model htdemucs_6s");
     REQUIRE(ModelStore("/m").modelPath(SeparationModel::Htdemucs4s) == fs::path("/m/htdemucs-core-opset17.onnx"));
     REQUIRE(std::string(separationModelPinnedSha256(SeparationModel::Htdemucs4s)) ==
             "79189af3c584b1a2145ae5e4182a50c0204f88b76e2829bd27e4d4a88ede427d");

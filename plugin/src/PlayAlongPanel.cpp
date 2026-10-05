@@ -113,6 +113,10 @@ struct PlayAlongPanel::Impl {
 
   juce::Label title, song, status, position, loopRead, standaloneNote;
   juce::Label capLoop, capCount, capGuitar, capLevel, capOffset;
+  // Model-missing error: the full install command in a read-only, selectable field plus a COPY button.
+  juce::TextEditor fetchField;
+  juce::TextButton fetchCopy;
+  bool fetchShown = false;
   juce::TextButton chooseSong, chooseStems, cancel, model, keepKeys, play, setA, setB, loop, countIn, mute, ghost, full, sync;
   // record / match band
   juce::Label capTakes, recTime, recInfo, emptyNote;
@@ -174,6 +178,19 @@ struct PlayAlongPanel::Impl {
       l->setInterceptsMouseClicks(false, false);
       owner.addAndMakeVisible(*l);
     }
+    fetchField.setName("fetchCommand");
+    fetchField.setMultiLine(false);
+    fetchField.setReadOnly(true);
+    fetchField.setCaretVisible(false);
+    fetchField.setSelectAllWhenFocused(true);
+    fetchField.setFont(L::monoFont(11.0f));
+    fetchField.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff141210));
+    fetchField.setColour(juce::TextEditor::textColourId, L::text());
+    fetchField.setColour(juce::TextEditor::outlineColourId, L::chipBorder());
+    fetchField.setTitle("Install command");
+    fetchField.setVisible(false);
+    owner.addChildComponent(fetchField);
+    owner.addChildComponent(fetchCopy);
     owner.addAndMakeVisible(position);
     led.setInterceptsMouseClicks(false, false);
     owner.addAndMakeVisible(led);
@@ -182,6 +199,8 @@ struct PlayAlongPanel::Impl {
     configure(chooseStems, juce::String::fromUTF8("STEMS FOLDER\xe2\x80\xa6"), "Choose a folder of already separated stems (drums, bass, vocals, other, guitar as .wav or .flac).");
     chooseSong.setTitle(juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"));  // the accessible name is the full action
     chooseStems.setTitle(juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6"));
+    configure(fetchCopy, "COPY", "Copy the install command to the clipboard");
+    fetchCopy.setVisible(false);
     configure(cancel, "CANCEL", "Cancel the separation");
     cancel.setVisible(false);
     configure(model, "6-STEM", "Separation model for song files. 6-stem (htdemucs_6s, default) has a guitar stem. 4-stem (htdemucs, fallback): the 'other' stem is treated as the guitar. Click to switch.");
@@ -435,6 +454,7 @@ struct PlayAlongPanel::Impl {
   void wire() {
     chooseSong.onClick = [this] { owner.chooseSongFile(); };
     chooseStems.onClick = [this] { owner.chooseStemsFolder(); };
+    fetchCopy.onClick = [this] { juce::SystemClipboard::copyTextToClipboard(fetchField.getText()); };
     cancel.onClick = [this] { pa().cancelSeparation(); };
     model.onClick = [this] { pa().setFourStemModel(!pa().settings().fourStemModel); };
     keepKeys.onClick = [this] { pa().setKeepOther(keepKeys.getToggleState()); };
@@ -529,6 +549,19 @@ struct PlayAlongPanel::Impl {
     }
     status.setText(msg, juce::dontSendNotification);
     status.setTooltip(msg);
+    // A missing model: the status line is one row; the complete command goes below it, selectable / copyable.
+    const bool showFetch = st.state == PlayAlong::LoadStatus::State::Failed && st.modelMissing && !st.fetchCommand.empty() &&
+                           pickNotice.isEmpty() && st.notice.empty();
+    if (showFetch && fetchField.getText() != juce::String(st.fetchCommand))
+      fetchField.setText(juce::String(st.fetchCommand), juce::dontSendNotification);
+    if (showFetch != fetchShown) {
+      fetchShown = showFetch;
+      layoutStatus();
+    }
+    fetchField.setVisible(showFetch);
+    fetchCopy.setVisible(showFetch);
+    fetchCopy.setTooltip(showFetch ? "Copy the install command to the clipboard.\n\n" + juce::String(st.message)
+                                   : juce::String("Copy the install command to the clipboard"));
     status.setColour(juce::Label::textColourId, col);
     const bool separating = st.state == PlayAlong::LoadStatus::State::Separating;
     barProgress = st.separationFraction;
@@ -576,6 +609,21 @@ struct PlayAlongPanel::Impl {
     refreshBand();
   }
 
+  // The status line, and below it (model missing only) the install command field and its COPY button.
+  void layoutStatus() {
+    constexpr int m = 18, stemsW = 138, songW = 112, statusX = 484;
+    const int keepX = kWidth - m - stemsW - 8 - songW - 8 - 104;
+    const int w = keepX - 8 - statusX;  // >= 380 px: the longest hint must not ellipsize
+    if (fetchShown) {
+      status.setBounds(statusX, 8, w, 20);
+      fetchField.setBounds(statusX, 30, w - 60, 20);
+      fetchCopy.setBounds(statusX + w - 56, 30, 56, 20);
+    } else {
+      status.setBounds(statusX, 10, w, 30);
+    }
+    bar.setBounds(statusX, 40, w, 8);
+  }
+
   void layout() {
     constexpr int m = 18;
     const int w = kWidth;
@@ -583,9 +631,8 @@ struct PlayAlongPanel::Impl {
     led.setBounds(138, 15, 20, 20);
     song.setBounds(172, 10, 200, 30);
     model.setBounds(378, 10, 96, 30);
-    constexpr int stemsW = 138, songW = 112, statusX = 484, keepX = w - m - stemsW - 8 - songW - 8 - 104;
-    status.setBounds(statusX, 10, keepX - 8 - statusX, 30);  // >= 380 px: the longest hint must not ellipsize
-    bar.setBounds(statusX, 40, keepX - 8 - statusX, 8);
+    constexpr int stemsW = 138, songW = 112, keepX = w - m - stemsW - 8 - songW - 8 - 104;
+    layoutStatus();
     keepKeys.setBounds(keepX, 10, 104, 30);
     cancel.setBounds(keepX, 10, 104, 30);
     chooseSong.setBounds(w - m - stemsW - 8 - songW, 10, songW, 30);

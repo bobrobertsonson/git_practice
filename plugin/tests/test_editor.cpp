@@ -13,6 +13,7 @@
 #include <set>
 #include <thread>
 #include <vector>
+#include <optional>
 #include <unistd.h>
 
 #include <catch2/catch_approx.hpp>
@@ -46,6 +47,7 @@
 #include "skin/SkinAssets.h"
 #include "fake_tools.h"
 #include "sawblade/wav_io.h"
+#include "sawblade/model_store.h"
 
 using namespace sawblade;
 using namespace sawblade::plugin;
@@ -623,6 +625,44 @@ TEST_CASE("play-along: a folder that is not a stem set is refused from the picke
   CHECK(pa.settings().folder == song.string());
   CHECK(pa.snapshot().hasSet);
 }
+
+#ifdef SAWBLADE_WITH_SEPARATOR
+TEST_CASE("play-along: a missing separation model shows the full install command in a copyable field (v0.2.1 Task E)", "[editor][playalong]") {
+  TempFolder tmp;
+  struct Env {
+    std::string k;
+    std::optional<std::string> old;
+    Env(const char* key, const std::string& v) : k(key) {
+      if (const char* o = std::getenv(key)) old = o;
+      ::setenv(key, v.c_str(), 1);
+    }
+    ~Env() {
+      if (old) ::setenv(k.c_str(), old->c_str(), 1);
+      else ::unsetenv(k.c_str());
+    }
+  } models("SAWBLADE_MODELS_DIR", (tmp.dir / "models").string()), stems("SAWBLADE_STEMS_DIR", (tmp.dir / "stems").string());
+  Rig rig;
+  auto& pa = rig.proc.playAlong();
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  const auto wav = tmp.dir / "song.wav";
+  std::vector<float> x(48000, 0.1f);
+  sawblade::writeWavFloat32Stereo(wav, 48000.0, x, x);
+  pa.loadSong(wav.string(), true);
+  REQUIRE(pa.waitForLoader());
+  REQUIRE(pa.loadStatus().modelMissing);
+  panel->refresh();
+
+  const std::string full = sawblade::separationModelInstallCommand(sawblade::SeparationModel::Htdemucs6s);
+  juce::TextEditor* field = nullptr;
+  for (auto* e : all<juce::TextEditor>(*panel))
+    if (e->getName() == "fetchCommand") field = e;
+  REQUIRE(field != nullptr);
+  CHECK(field->isVisible());
+  CHECK(field->isReadOnly());
+  CHECK(field->getText().toStdString() == full);  // no truncation
+  CHECK(pa.loadStatus().message.find(full) != std::string::npos);
+}
+#endif
 
 TEST_CASE("play-along: the status messages fit the status label (v0.2.1 Task G)", "[editor][playalong]") {
   Rig rig;
