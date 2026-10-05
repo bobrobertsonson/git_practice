@@ -1,9 +1,9 @@
 {
  "schema": "sawblade.preset",
  "version": 1,
- "name": "Sawblade match",
+ "name": "UK Death Fuzz Blend (match v1)",
  "category": "Death metal",
- "notes": "Matched by sawblade-match seed 1 against bolt_thrower__anti_tank.mp3 (stem:bolt_thrower__anti_tank.de56a42f844a.htdemucs.other.wav). Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.",
+ "notes": "Sawblade match, matched against Bolt Thrower – Anti-Tank. Matched by sawblade-match seed 1 against bolt_thrower__anti_tank.mp3 (stem:bolt_thrower__anti_tank.de56a42f844a.htdemucs.other.wav). Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.",
  "gate": {
   "enabled": true,
   "thresholdDb": -86.0,

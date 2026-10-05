@@ -1,9 +1,9 @@
 {
  "schema": "sawblade.preset",
  "version": 1,
- "name": "Sawblade match",
+ "name": "Hardcore Wall (match v1)",
  "category": "Hardcore / Crust",
- "notes": "Matched by sawblade-match seed 1 against nails__friend_to_all.mp3 (stem:nails__friend_to_all.04df49c52e7a.htdemucs.other.wav). Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.",
+ "notes": "Sawblade match, matched against Nails – Friend to All. Matched by sawblade-match seed 1 against nails__friend_to_all.mp3 (stem:nails__friend_to_all.04df49c52e7a.htdemucs.other.wav). Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.",
  "gate": {
   "enabled": true,
   "thresholdDb": -86.0,
