@@ -539,17 +539,25 @@ TEST_CASE("Ladder: hand-overs, flushes of a staged batch and evictions racing th
   const auto x = noise(512, 2);
   std::vector<float> y(512);
   LiveParams lp = c->liveParams();
+  // Run audio until the producer has really raced it: at least 3000 blocks AND at least 20 hand-overs observed (the producer thread may
+  // not even be scheduled while a fast machine runs 3000 blocks), bounded by a generous wall clock; only that bound fails the count.
+  long allocs = 0;
+  int blocks = 0;
+  const auto t0 = std::chrono::steady_clock::now();
   {
     AllocGuard g;
-    for (int i = 0; i < 3000; ++i) {
+    for (int i = 0; i < 3000 || handOvers.load() < 20; ++i, ++blocks) {
+      if ((i & 63) == 0 && std::chrono::steady_clock::now() - t0 > std::chrono::seconds(10)) break;
       lp.amp[0].gain = 5.0 + 5.0 * std::sin(i * 0.02);
       c->setLiveParams(lp);
       c->process(x.data(), y.data(), 1 + (i * 37) % 512);
     }
-    CHECK(g.count() == 0);
+    allocs = g.count();
   }
   stop.store(true);
   producer.join();
-  CHECK(handOvers.load() > 20);
+  INFO("audio blocks " << blocks << ", producer hand-overs " << handOvers.load() << ", audio-thread allocations " << allocs);
+  CHECK(allocs == 0);
+  CHECK(handOvers.load() >= 20);
   for (float v : y) REQUIRE(std::isfinite(v));
 }
