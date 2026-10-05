@@ -97,6 +97,16 @@ void Engine::setParams(const ParamValues& v, const LiveParams* extras, const Liv
   l.blend = v[kBlend];
   l.levelDbA = v[kLevelA];
   l.levelDbB = v[kLevelB];
+  for (int path = 0; path < 2; ++path) {
+    AmpKnobs& a = l.amp[static_cast<std::size_t>(path)];
+    const auto val = [&](int k) { return v[static_cast<std::size_t>(ampParam(path, k))]; };
+    a.gain = val(kAmpGain);
+    a.bass = val(kAmpBass);
+    a.mid = val(kAmpMid);
+    a.treble = val(kAmpTreble);
+    a.presence = val(kAmpPresence);
+    a.level = val(kAmpLevel);
+  }
   for (std::size_t k = 0; k < slotBand_.size(); ++k)
     if (slotBand_[k] >= 0) l.postEq[static_cast<std::size_t>(slotBand_[k])].gainDb = v[static_cast<std::size_t>(kPostEqFirst) + k];
   chain_->setLiveParams(l);

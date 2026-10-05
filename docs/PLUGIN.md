@@ -105,6 +105,7 @@ controls are host parameters:
 | `gateThreshold` | -80..-20 dB | `gate.thresholdDb` (audible when the preset's gate is enabled) |
 | `blend` | 0..1 | `blend` (0 = Saw only, 1 = Body only) |
 | `levelA`, `levelB` | -24..+12 dB | `paths.a/b.levelDb` |
+| `ampA_gain`, `ampA_bass`, `ampA_mid`, `ampA_treble`, `ampA_presence`, `ampA_level` and the same six with `ampB_` | 0..10, default 5 | `paths.a/b.ampControls.gain` ... `.level` (v0.2; see PRESET_SCHEMA.md "Amp controls"); they act only on a path that has an amp block. `gainStep` is preset state, not a parameter |
 | `postEq1..6` | -18..+18 dB | gain of the k-th gain-bearing band (peak/shelf, in order, skipping high/low-pass) of `postEq` |
 
 Loading a preset writes its values into the parameters (clamped to the ranges above and snapped to
