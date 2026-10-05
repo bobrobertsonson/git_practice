@@ -623,3 +623,12 @@ Decisions, all "measure where the physics is visible; models unchanged except wh
    recipes.
 10. Custom-mode crest (+0.1 dB vs stock; real units −0.6…−1.4 dB) is recorded as a re-fit item.
 No `[!shouldfail]` tests remain: each condition above is either asserted as amended or printed.
+11. **Modded mode alias at 44.1 kHz** (reviewer note, measured after acceptance): with the
+    asymmetric stage 2 and the 11 kHz post-clip filter, modded aliases at −80.7 (silicon),
+    −75.6 (led), −72.9 (asymmetric), −75.7 (soft) dB at 44.1 kHz; at 48 kHz and above it is
+    within the −80 dB budget. Options were a rate-aware post LPF (which would change the 48 kHz
+    sound or cost the mode's brightness) or a documented exception. Decision: **documented
+    exception** — the test stays in the default suite and asserts < −80 dB at 48/96 kHz and
+    **< −72 dB at 44.1 kHz** for modded only (the alias is still 55 dB below the no-OS/ADAA
+    floor and under a full-drive square-wave spectrum). No hidden or `[.]`-tagged tests. Re-fit
+    item: a 44.1 kHz-specific modded post LPF or 8x oversampling for the modded voicing.
