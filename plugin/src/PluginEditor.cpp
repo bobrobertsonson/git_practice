@@ -378,6 +378,7 @@ class SawbladeEditor::Content : public juce::Component {
   // The capture browser overlay for the selected piece (closed with its "< RIG" button).
   void openBrowser() {
     if (browser_ != nullptr) return;
+    closeOverlaysExcept(Overlay::None);  // the capture browser covers the whole editor: nothing stays open under it
     static constexpr Slot kSlots[] = {Slot::SawAmp, Slot::BodyAmp, Slot::Cab, Slot::SawPedal, Slot::BodyPedal};  // Piece order
     if (!browserSettings_) browserSettings_ = std::make_unique<BrowserSettings>();
     browser_ = std::make_unique<CaptureBrowser>(processor_, *browserSettings_, kSlots[static_cast<size_t>(rig_.selected())]);
@@ -391,6 +392,7 @@ class SawbladeEditor::Content : public juce::Component {
     browser_->setBounds(0, 0, kDesignWidth, kDesignHeight);
   }
   void setRigEditorOpen(bool open) {
+    if (open) closeOverlaysExcept(Overlay::Rig);
     rigPanel_->setVisible(open);
     if (open) {
       rigPanel_->refresh();
@@ -405,7 +407,7 @@ class SawbladeEditor::Content : public juce::Component {
     if (rigPanel_->isVisible()) rigPanel_->refresh();
   }
   void setBrowserOpen(bool open) {
-    if (open) micPage_->setVisible(false);
+    if (open) closeOverlaysExcept(Overlay::Browser);
     presetBrowser_->setVisible(open);
     if (open) {
       presetBrowser_->toFront(false);
@@ -433,7 +435,7 @@ class SawbladeEditor::Content : public juce::Component {
     });
   }
   void setMicPageOpen(bool open) {
-    if (open) presetBrowser_->setVisible(false);
+    if (open) closeOverlaysExcept(Overlay::Mic);
     micPage_->setVisible(open);
     if (open) {
       micPage_->toFront(false);
@@ -446,13 +448,13 @@ class SawbladeEditor::Content : public juce::Component {
     if (micPage_->isVisible()) micPage_->refresh();
   }
   void openMatchScreen() {
-    exportPanel_->setVisible(false);
+    closeOverlaysExcept(Overlay::Match);
     screen_->open();
     screen_->toFront(false);  // above an open rig editor / mic page / preset browser overlay
   }
   bool matchScreenOpen() const { return screen_->isVisible(); }
   void openExportPanel() {
-    screen_->setVisible(false);
+    closeOverlaysExcept(Overlay::Export);
     exportPanel_->open();
     exportPanel_->toFront(false);
   }
@@ -464,6 +466,20 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
  private:
+  // The full-width overlays are mutually exclusive: opening one closes the others (the RIG button follows). The settings panel and
+  // the play-along panel are not part of the group.
+  enum class Overlay { None, Rig, Mic, Browser, Match, Export };
+  void closeOverlaysExcept(Overlay keep) {
+    if (keep != Overlay::Rig) {
+      rigPanel_->setVisible(false);
+      rigButton_.setToggleState(false, juce::dontSendNotification);
+    }
+    if (keep != Overlay::Mic) micPage_->setVisible(false);
+    if (keep != Overlay::Browser) presetBrowser_->setVisible(false);
+    if (keep != Overlay::Match) screen_->setVisible(false);
+    if (keep != Overlay::Export) exportPanel_->setVisible(false);
+  }
+
   static juce::Rectangle<int> matchBox() { return {kInspX + 16, kDesignHeight - 14 - 64, kInspW - 32, 64}; }
   static constexpr int kMasterY = kTopBar + 328, kEqY = kTopBar + 424, kLearnY = kTopBar + 500;
   static constexpr std::array<KnobDef, 5> kMaster{{{kInputGain, "INPUT", FilmstripKnob::Kind::Pedal, 0xffff6a1a},

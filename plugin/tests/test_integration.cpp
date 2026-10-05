@@ -1076,34 +1076,52 @@ void step20Overlays(Walk& w) {
     return o;
   };
   CHECK(show("closed").count() == 0);
+  auto* rigBtn = buttonTitled(ed, "RIG");
+  REQUIRE(rigBtn != nullptr);
   ed.setRigEditorOpen(true);
   CHECK(show("rig").rig);
+  CHECK(rigBtn->getToggleState());
+  // exactly one overlay at a time: each one closes the others, and the RIG button follows
   ed.setMicPageOpen(true);
   {
     const auto o = show("rig, then the mic page");
     CHECK(o.mic);
-    // Today: the mic page and the preset browser close each other, nothing else is closed (B1).
-    CHECK(o.rig);
+    CHECK_FALSE(o.rig);
+    CHECK(o.count() == 1);
+    CHECK_FALSE(rigBtn->getToggleState());
   }
   ed.setBrowserOpen(true);
   {
     const auto o = show("then the preset browser");
     CHECK(o.browser);
-    CHECK_FALSE(o.mic);  // the browser closes the mic page ...
-    CHECK(o.rig);        // ... but not the rig editor (B1)
+    CHECK(o.count() == 1);
   }
   ed.openMatchScreen();
   {
     const auto o = show("then MATCH");
     CHECK(o.match);
-    CHECK(o.browser);  // (B1) the preset browser is still open under the match screen
-    CHECK(o.rig);
+    CHECK(o.count() == 1);
   }
+  ed.openExportPanel();
+  CHECK(show("then EXPORT NAM").exportPanel);
+  CHECK(w.overlays().count() == 1);
+  ed.setRigEditorOpen(true);  // the RIG button's own click path: the rig replaces the export panel
+  CHECK(show("then the rig again").rig);
+  CHECK(w.overlays().count() == 1);
+  CHECK(rigBtn->getToggleState());
+  // the capture browser closes them all too, and "< RIG" returns to the rig screen with nothing open
+  click(*buttonTitled(ed, "BROWSE CAPTURES"));
+  REQUIRE(pumpUntil([&] { return all<CaptureBrowser>(ed).size() == 1; }));
+  CHECK(show("then the capture browser").count() == 0);
+  CHECK_FALSE(rigBtn->getToggleState());
+  click(*buttonTitled(*all<CaptureBrowser>(ed)[0], juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
+  REQUIRE(pumpUntil([&] { return all<CaptureBrowser>(ed).empty(); }));
+  ed.setRigEditorOpen(true);
+  ed.openMatchScreen();
   shot(ed, "20_overlays");
-  ed.setRigEditorOpen(false);
-  ed.setBrowserOpen(false);
-  w.screen().close();
+  w.screen().close();  // closing returns to the rig screen: nothing else is open
   CHECK(show("closed again").count() == 0);
+  CHECK_FALSE(rigBtn->getToggleState());
 }
 
 void step21StateRoundtrip(Walk& w) {

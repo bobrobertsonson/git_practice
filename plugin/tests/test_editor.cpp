@@ -2303,6 +2303,17 @@ TEST_CASE("export panel: opens from the top bar in plugin mode; the mode default
   CHECK(rig.exportButton("WITH CAB")->getToggleState());
   CHECK(rig.proc.exportSettings().mode == "withcab");
 
+  // The overlays are exclusive: opening the export panel closes an open rig editor and the RIG button follows.
+  rig.ed->setRigEditorOpen(true);
+  rig.ed->openExportPanel();
+  CHECK_FALSE(rig.ed->rigEditorOpen());
+  CHECK_FALSE(buttonTitled(*rig.ed, "RIG")->getToggleState());
+  CHECK(rig.ed->exportPanelOpen());
+  rig.ed->setMicPageOpen(true);
+  CHECK_FALSE(rig.ed->exportPanelOpen());
+  rig.ed->setMicPageOpen(false);
+  rig.ed->openExportPanel();
+
   // CLOSE returns to the rig; the panel and the match screen are exclusive.
   click(*rig.exportButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
   CHECK_FALSE(rig.ed->exportPanelOpen());
