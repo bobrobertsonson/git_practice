@@ -30,6 +30,7 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
 
   void paint(juce::Graphics&) override;
   void resized() override;
+  void parentHierarchyChanged() override;  // Standalone: window title "Sawblade - version . sha . dirty flag"
 
   // Scale of the content component (editor width / 1280).
   double contentScale() const;

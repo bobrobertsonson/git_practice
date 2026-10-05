@@ -43,6 +43,15 @@ else()
   target_compile_options(sawblade_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
+# Floating-point contraction off for every target (ours, JUCE modules, NAM core, pffft, bindings): Apple clang on
+# arm64 fuses a*b+c into FMA by default, gcc on x86-64 does not, so without this the same preset renders a few ulps
+# differently per platform (goldens, exact silence, parameter round trips). Determinism per platform is unchanged.
+# Explicit FMA intrinsics (Eigen's NEON pmadd, vfmaq_f32) are not affected by the flag.
+option(SAWBLADE_FP_CONTRACT_OFF "Compile with -ffp-contract=off (bit-identical float results across compilers / CPUs)" ON)
+if(NOT MSVC AND SAWBLADE_FP_CONTRACT_OFF)
+  add_compile_options(-ffp-contract=off)
+endif()
+
 include(cmake/Dependencies.cmake)
 
 add_subdirectory(core)

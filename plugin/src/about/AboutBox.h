@@ -10,6 +10,9 @@
 
 namespace sawblade::plugin::about {
 
+// "version · short sha · clean/dirty" (BuildInfo.h, regenerated every build): the About line and the Standalone window title.
+juce::String buildStamp();
+
 // The About overlay (docs/specs/phase11_settings.md section 5): icon, version line, licence note, the
 // captures of the current preset with their creator / licence / link (the CLAUDE.md attribution rule made
 // visible) and docs/THIRD_PARTY.md. An overlay over the whole editor, not a window, so it works in every

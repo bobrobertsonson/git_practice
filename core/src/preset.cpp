@@ -438,20 +438,31 @@ nlohmann::json toJson(const Preset& p) {
 }
 
 namespace {
-std::mutex gCacheOverrideMutex;
-std::optional<fs::path> gCacheOverride;
+// Intentionally leaked: the plugin's Settings::shared() clears this override from its destructor during static
+// teardown (or when a DAW unloads the plugin), and that may run after this translation unit's statics are destroyed.
+// Locking a destroyed std::mutex throws on macOS (libc++: "mutex lock failed: Invalid argument").
+struct CacheOverrideState {
+  std::mutex m;
+  std::optional<fs::path> root;
+};
+CacheOverrideState& cacheOverrideState() {
+  static CacheOverrideState* const s = new CacheOverrideState;
+  return *s;
+}
 }  // namespace
 
 void setCaptureCacheRootOverride(std::optional<fs::path> root) {
-  std::lock_guard<std::mutex> lk(gCacheOverrideMutex);
+  CacheOverrideState& st = cacheOverrideState();
+  std::lock_guard<std::mutex> lk(st.m);
   if (root && root->empty()) root.reset();
-  gCacheOverride = std::move(root);
+  st.root = std::move(root);
 }
 
 fs::path captureCacheRoot() {
   {
-    std::lock_guard<std::mutex> lk(gCacheOverrideMutex);
-    if (gCacheOverride) return *gCacheOverride;
+    CacheOverrideState& st = cacheOverrideState();
+    std::lock_guard<std::mutex> lk(st.m);
+    if (st.root) return *st.root;
   }
   if (const char* e = std::getenv("SAWBLADE_CACHE_DIR"); e != nullptr && *e != '\0') return fs::path(e);
 #if defined(_WIN32)

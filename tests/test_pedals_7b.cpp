@@ -225,7 +225,7 @@ TEST_CASE("v1 modeled presets render bit-identically to the phase 7 goldens", "[
     REQUIRE(g.channels == 1);
     REQUIRE(g.sampleRate == r.sampleRate);
     REQUIRE(g.interleaved.size() == r.samples.size());
-    REQUIRE(g.interleaved == r.samples);  // tolerance 0
+    SAWBLADE_REQUIRE_SAME_SAMPLES(g.interleaved, r.samples);  // tolerance 0; a mismatch prints the first index and max |diff|
   }
 }
 

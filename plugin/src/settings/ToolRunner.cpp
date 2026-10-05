@@ -258,8 +258,9 @@ void ToolRunner::Job::runWorker() {
     std::lock_guard<std::mutex> lk(m_);
     dead = std::move(child_);
     done_ = true;
+    // Notify while holding the lock: a waiter may release the Job (destroying cv_ and m_) the moment it sees done_.
+    cv_.notify_all();
   }
-  cv_.notify_all();
 }
 
 }  // namespace sawblade::plugin::settings
