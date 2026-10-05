@@ -221,14 +221,14 @@ def path_blocks(combo: Combo, v: dict[str, float], path: str) -> list[dict]:
 
 
 def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align: dict, output_db: float = 0.0,
-                 name: str = "Matched tone", notes: str = "") -> dict:
+                 name: str = "Matched tone", notes: str = "", levels=None) -> dict:
     """Full ``sawblade.preset`` for a combo and physical parameter values (live-compatible shared cab)."""
     blend = combo.topology == "blend"
     pa = {"role": "saw" if blend else "body", "blocks": path_blocks(combo, v, "a"), "eq": path_eq(v, "a"),
           "levelDb": float(v.get("levelA", 0.0))}
     pb = ({"role": "body", "blocks": path_blocks(combo, v, "b"), "eq": path_eq(v, "b"), "levelDb": float(v["levelB"])}
           if blend else {"role": "body", "enabled": False, "blocks": []})
-    return {
+    p = {
         "schema": "sawblade.preset", "version": 1, "name": name, "notes": notes,
         "gate": gate if gate else {"enabled": False},
         "paths": {"a": pa, "b": pb},
@@ -237,6 +237,14 @@ def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align:
         "postEq": post_eq(v),
         "output": {"gainDb": float(output_db)},
     }
+    if blend and levels is not None:
+        # phase 10.1: ``v["blend"]`` is the level-matched *linear* blend fitted after the trims; emit the same A:B ratio on
+        # the constant-loudness law, with the trims as manual level match.
+        from .levelmatch import blend_to_constant_loudness
+        p["levelMatch"] = levels.preset_block()
+        p["blend"] = blend_to_constant_loudness(float(v["blend"]))
+        p["blendLaw"] = "constantLoudness"
+    return p
 
 
 def manual_align(delay_b: int = 0, invert_b: bool = False) -> dict:
