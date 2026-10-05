@@ -17,7 +17,7 @@ from ..tonecheck.analysis import analyze
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
 from .engine import RATE, Engine, to48
-from .offset import refine_offset
+from .offset import refine_offset, resolve_offset
 from .pool import Capture, Pool, default_cab, starter_choice
 from .profile import DEFAULT_BASE, derive_profile, load_profile, profile_path, save_profile
 from .excerpt import select_excerpt
@@ -301,6 +301,17 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         T[name] = T.get(name, 0.0) + now - t_mark
         t_mark = now
     cab0 = default_cab(pool.cabs)
+    offset_search = None
+    if ref.matched_sig is not None:
+        # unknown offset + DI shorter than the song: whole-song coarse placement (raises PlacementError, a ValueError,
+        # which the CLI prints as "error: could not place the DI in the song: enter where it starts")
+        t_place = time.time()
+        offset_search = resolve_offset(di48, ref.matched_sig, RATE, ref.offset_given, ref.offset_samples)
+        if offset_search["mode"] == "whole_song":
+            ref.offset_samples = offset_search["offset_samples"]
+            offset_search["searchSeconds"] = time.time() - t_place
+            log(f"whole-song placement: DI starts at {offset_search['offset_ms'] / 1000:.3f} s "
+                f"(confidence {offset_search['confidence']:.1f}, {offset_search['searchSeconds']:.2f} s)")
     window = None if cfg.window_s is None else (int(cfg.window_s[0] * RATE), int(cfg.window_s[1] * RATE))
     ex = make_excerpt(di48, cfg.excerpt_s, window=window, ref=ref)
     lap("excerpt")
@@ -323,6 +334,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     # ---- starter ("before") on the excerpt, which also gives the coarse offset refinement its render -----------------
     starter_p, starter_caps = starter_preset(pool, gate)
     result["starter"] = {"label": "generic starter baseline", "captures": starter_caps}
+    if offset_search is not None:
+        result["offset_search"] = offset_search
     y_st, rep_st = eng.render(starter_p, ex.x)
 
     hint_samples = ref.offset_samples if ref.offset_given else None
@@ -341,6 +354,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             f"[{r['method']}, env ratio {r['envPeakRatio']:.1f}, fine ratio {r.get('peakRatio', 0):.1f}]")
         if r["envPeakRatio"] >= 2.0:
             ref.offset_samples = r["offset"]
+        if offset_search is not None and offset_search["mode"] != "given":
+            offset_search["offset_ms"] = 1000.0 * ref.offset_samples / RATE      # after the refinement
     lap("starterAndOffset")
     tgt = build_target(ref, ex)
     cex = ctgt = None
