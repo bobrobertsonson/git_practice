@@ -3305,13 +3305,17 @@ TEST_CASE("settings: an empty stored client id shows the effective one with a so
   field->onFocusLost();
   CHECK(s.tone3000ClientId().empty());
 
+  // typing exactly the env-provided id while nothing is stored is "unchanged": it is not stored
+  field->setText("t3k_pub_env", false);
+  field->onReturnKey();
+  CHECK(s.tone3000ClientId().empty());
+
   // editing it stores the edit, and the caption goes away
   field->setText("t3k_pub_mine", false);
   field->onReturnKey();
   CHECK(s.tone3000ClientId() == "t3k_pub_mine");
   CHECK(field->getText() == "t3k_pub_mine");
   CHECK_FALSE(anyLabelContains(*rig.ed, "from environment"));
-  ::unsetenv("TONE3000_CLIENT_ID");
 }
 
 TEST_CASE("settings: the login view shows the device code and URL; CANCEL ends the job", "[editor][settings][login]") {

@@ -460,6 +460,10 @@ TEST_CASE("effective client id: a missing, unreadable or corrupt token file give
   CHECK(idFor(t / "number.json").empty());
   touch(t / "nested.json", R"({"other":{"client_id":"t3k_pub_nested"}})");  // only the top-level key counts
   CHECK(idFor(t / "nested.json").empty());
+  touch(t / "after_obj.json", R"({"a":{"b":1},"client_id":"t3k_pub_x"})");  // depth restored after end_object
+  CHECK(idFor(t / "after_obj.json") == "t3k_pub_x");
+  touch(t / "objval.json", R"({"client_id":{"client_id":"t3k_pub_x"}})");
+  CHECK(idFor(t / "objval.json").empty());
   touch(t / "binary.json", std::string("\x00\xff\xfe{{{", 6));
   CHECK(idFor(t / "binary.json").empty());
   fs::create_directories(t / "dir.json");  // a directory where the file should be
