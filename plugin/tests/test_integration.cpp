@@ -1254,26 +1254,26 @@ void runStep(Step s) {
 
 CATCH_REGISTER_LISTENER(WalkReleaser)
 
-TEST_CASE("integration: 01 main", "[integration]") { runStep(kMain); }
-TEST_CASE("integration: 02 preset browser", "[integration]") { runStep(kPresetBrowser); }
-TEST_CASE("integration: 03 A/B compare", "[integration]") { runStep(kAbCompare); }
-TEST_CASE("integration: 04-09 rig editor tabs", "[integration]") { runStep(kRigEditor); }
-TEST_CASE("integration: 10 pedal face and the CIRCUIT switch", "[integration]") { runStep(kPedal); }
-TEST_CASE("integration: 11 pedal drawer", "[integration]") { runStep(kDrawer); }
-TEST_CASE("integration: 12 capture browser", "[integration]") { runStep(kCaptureBrowser); }
-TEST_CASE("integration: 13 mic page", "[integration]") { runStep(kMicPage); }
-TEST_CASE("integration: 14 play-along", "[integration]") { runStep(kPlayAlong); }
-TEST_CASE("integration: 15 record", "[integration]") { runStep(kRecord); }
-TEST_CASE("integration: 16 match progress", "[integration]") { runStep(kMatchProgress); }
-TEST_CASE("integration: 17 match results", "[integration]") { runStep(kMatchResults); }
-TEST_CASE("integration: 18 export", "[integration]") { runStep(kExport); }
-TEST_CASE("integration: 19 separation from a song file", "[integration]") { runStep(kSeparation); }
-TEST_CASE("integration: 20 overlays", "[integration]") { runStep(kOverlays); }
-TEST_CASE("integration: 21 state round trip", "[integration]") { runStep(kStateRoundtrip); }
-TEST_CASE("integration: 21b blend levels", "[integration]") { runStep(kLevels); }
-TEST_CASE("integration: 21c settings and About", "[integration]") { runStep(kSettings); }
+TEST_CASE("01 main", "[integration]") { runStep(kMain); }
+TEST_CASE("02 preset browser", "[integration]") { runStep(kPresetBrowser); }
+TEST_CASE("03 A/B compare", "[integration]") { runStep(kAbCompare); }
+TEST_CASE("04-09 rig editor tabs", "[integration]") { runStep(kRigEditor); }
+TEST_CASE("10 pedal face and the CIRCUIT switch", "[integration]") { runStep(kPedal); }
+TEST_CASE("11 pedal drawer", "[integration]") { runStep(kDrawer); }
+TEST_CASE("12 capture browser", "[integration]") { runStep(kCaptureBrowser); }
+TEST_CASE("13 mic page", "[integration]") { runStep(kMicPage); }
+TEST_CASE("14 play-along", "[integration]") { runStep(kPlayAlong); }
+TEST_CASE("15 record", "[integration]") { runStep(kRecord); }
+TEST_CASE("16 match progress", "[integration]") { runStep(kMatchProgress); }
+TEST_CASE("17 match results", "[integration]") { runStep(kMatchResults); }
+TEST_CASE("18 export", "[integration]") { runStep(kExport); }
+TEST_CASE("19 separation from a song file", "[integration]") { runStep(kSeparation); }
+TEST_CASE("20 overlays", "[integration]") { runStep(kOverlays); }
+TEST_CASE("21 state round trip", "[integration]") { runStep(kStateRoundtrip); }
+TEST_CASE("21b blend levels", "[integration]") { runStep(kLevels); }
+TEST_CASE("21c settings and About", "[integration]") { runStep(kSettings); }
 
-TEST_CASE("integration: 21c first run on a fresh app-data dir", "[integration]") {
+TEST_CASE("21c first run on a fresh app-data dir", "[integration]") {
   gWalk.reset();  // the walk's settings must not outlive this test's own
   SettingsEnv env(nullptr, /*isolateHome=*/true);  // no settings file: a first run
   EnvVar appData("SAWBLADE_APPDATA", (env.dir / "appdata").string());

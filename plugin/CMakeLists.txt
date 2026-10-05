@@ -311,6 +311,16 @@ if(SAWBLADE_BUILD_TESTS)
     set_property(TARGET sawblade_integration_tests PROPERTY CROSSCOMPILING_EMULATOR ${SAWBLADE_XVFB_RUN} -a)
   endif()
   catch_discover_tests(sawblade_integration_tests TEST_PREFIX "integration: " TEST_SPEC "[integration]")
+
+  # The built Standalone app opens its window under xvfb, stays alive for 6 s, is captured with ImageMagick and ends on SIGTERM.
+  # Needs the Standalone format target (Linux / macOS dev machines without a display server skip it).
+  find_program(SAWBLADE_IMPORT_EXE import)
+  if(SAWBLADE_XVFB_RUN AND SAWBLADE_IMPORT_EXE AND NOT APPLE AND "Standalone" IN_LIST SAWBLADE_PLUGIN_FORMATS)
+    add_test(NAME "integration: standalone launches"
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/standalone_launch.sh ${SAWBLADE_XVFB_RUN} ${SAWBLADE_IMPORT_EXE}
+              "$<TARGET_FILE:SawbladePlugin_Standalone>" ${CMAKE_BINARY_DIR}/screenshots/v01/22_standalone.png)
+    set_tests_properties("integration: standalone launches" PROPERTIES TIMEOUT 60 DEPENDS SawbladePlugin_Standalone)
+  endif()
 endif()
 
 # Optional: validate the built VST3 with pluginval (https://github.com/Tracktion/pluginval).
