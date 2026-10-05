@@ -1,5 +1,7 @@
 # Sawblade
 
+[![CI](https://github.com/bobrobertsonson/git_practice/actions/workflows/ci.yml/badge.svg?branch=claude%2Fsawblade-plugin-setup-7k0b8q)](https://github.com/bobrobertsonson/git_practice/actions/workflows/ci.yml?query=branch%3Aclaude%2Fsawblade-plugin-setup-7k0b8q)
+
 Sawblade is a guitar plugin project (AU/VST3 first, AAX later) that builds **blended high-gain
 chains** from [TONE3000](https://www.tone3000.com) NAM captures, matches them to a reference
 song, and exports the result as a trainable NAM model for live loader pedals. The north-star

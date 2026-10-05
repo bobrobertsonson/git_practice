@@ -12,6 +12,9 @@
 #include <string>
 #include <vector>
 
+#ifdef SAWBLADE_WITH_SEPARATOR
+#include "separate_cli.h"
+#endif
 #include "sawblade/render.h"
 #include "sawblade/stem_player.h"
 #include "sawblade/stem_set.h"
@@ -47,7 +50,12 @@ void usage(std::ostream& os) {
         "  sounds at song time `ms`. Positive: the stems lead (stem audio from `ms` plays at t = 0); negative:\n"
         "  the DI starts before the song, so the backing begins `-ms` into the render. Default 0.\n"
         "  The options above need --backing (else exit 2). The report gains a \"backing\" object.\n"
-        "exit codes: 0 ok, 2 usage, 3 preset error, 4 I/O or model error\n";
+        "       tonerender --separate SONG --stems-out DIR [--model htdemucs_6s|htdemucs] [--threads N]\n"
+        "exit codes: 0 ok, 2 usage, 3 preset error, 4 I/O or model error\n"
+        "--separate SONG: stem separation instead of a render. Separates a song (mp3, wav, flac) with the\n"
+        "  on-device htdemucs model into DIR (drums, bass, vocals, other[, guitar] .wav; float32, 44.1 kHz),\n"
+        "  through the stem cache. Needs the model (printed fetch command if missing: exit 3). Same as the\n"
+        "  sawblade-stems tool. Not available when built with SAWBLADE_WITH_SEPARATOR=OFF.\n";
 }
 
 struct Args {
@@ -229,9 +237,50 @@ nlohmann::json backingReport(const Args& a, const BackingResult& b) {
           {"outputChannels", 2}};
 }
 
+// `tonerender --separate SONG --stems-out DIR [--model M] [--threads N]`.
+int separateMode(int argc, char** argv) {
+#ifdef SAWBLADE_WITH_SEPARATOR
+  std::string song, out, model = "htdemucs_6s", threads;
+  for (int i = 1; i < argc; ++i) {
+    const std::string k = argv[i];
+    if (k == "--help" || k == "-h") {
+      usage(std::cout);
+      return kExitOk;
+    }
+    if (k != "--separate" && k != "--stems-out" && k != "--model" && k != "--threads") {
+      std::cerr << "tonerender: " << k << " cannot be combined with --separate\n";
+      usage(std::cerr);
+      return kExitUsage;
+    }
+    if (i + 1 >= argc) {
+      std::cerr << "tonerender: missing value for " << k << "\n";
+      return kExitUsage;
+    }
+    const std::string v = argv[++i];
+    if (k == "--separate") song = v;
+    else if (k == "--stems-out") out = v;
+    else if (k == "--model") model = v;
+    else threads = v;
+  }
+  if (song.empty() || out.empty()) {
+    std::cerr << "tonerender: --separate needs a song and --stems-out DIR\n";
+    usage(std::cerr);
+    return kExitUsage;
+  }
+  return sawblade_cli::runSeparate("tonerender", song, out, model, threads);
+#else
+  (void)argc;
+  (void)argv;
+  std::cerr << "tonerender: error: separation is not available in this build (configure with -DSAWBLADE_WITH_SEPARATOR=ON)\n";
+  return kExitIo;
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
+  for (int i = 1; i < argc; ++i)
+    if (std::string(argv[i]) == "--separate") return separateMode(argc, argv);
   Args args;
   if (const std::string err = parseArgs(argc, argv, args); !err.empty()) {
     std::cerr << "tonerender: " << err << "\n";

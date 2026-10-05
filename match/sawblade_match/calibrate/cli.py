@@ -220,6 +220,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "pedal-fit":   # phase 7.1: fit pedal.hm to captures of real HM-2 pedals
+        from . import pedal_fit
+        return pedal_fit.main(args[1:])
     a = build_parser().parse_args(argv)
     try:
         return run(a)

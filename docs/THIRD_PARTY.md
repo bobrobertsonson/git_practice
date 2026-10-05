@@ -23,6 +23,7 @@ exact commits. Headers are exposed as `SYSTEM`; third-party code is compiled wit
 | PFFFT (marton78/pffft) | `aa16fd3db58de4ba5dae8b0438440bb9da46b6fa` (v1.1.0-58) | BSD-style (FFTPACK/Pommier; see `LICENSE.txt` in the repo) | FFT for the partitioned convolver (T2). Float-only C sources (SIMD auto-selected by the library) `pffft.c` + `pffft_common.c` only. |
 | JUCE | 8.0.15, `91ad83ae34a81e0833b1a2b0866f54846370ae53` (release tag `8.0.15`, github.com/juce-framework/JUCE; shallow fetch of the pinned commit) | **AGPLv3 or commercial (every module we link declares `AGPLv3/Commercial`). A commercial licence is required before distribution; see the gate above.** Bundled third-party code inside JUCE (VST3 SDK, FreeType/HarfBuzz/SheenBidi, LV2 libraries, ...) has its own licences and must be audited before any redistribution. | Plugin only (`SAWBLADE_BUILD_PLUGIN=ON`): AudioProcessor, parameters (APVTS), editor, VST3 / AU / Standalone wrappers. Modules used: juce_audio_processors, juce_gui_basics, juce_data_structures, juce_events, juce_audio_utils (Standalone), juce_audio_plugin_client, and their dependencies. Not used by `core/`, `cli/` or `match/`. |
 | SHA-256 | Written for Sawblade (`core/src/sha256.cpp`, FIPS 180-4; nothing vendored) | n/a (project code) | Capture `sha256` verification (T3). Verified against the FIPS test vectors in `tests/test_preset.cpp`. |
+| Oversampler4x / AdaaClipper / pedal.hm / pedal.ts | Written for Sawblade (`core/src/oversampler.cpp`, `adaa_clipper.cpp`, `pedal_*.cpp`; nothing vendored) | n/a (project code) | Modeled pedal blocks (phase 7). Kaiser-windowed half-band FIR design (Kaiser 1974 / Oppenheim-Schafer) and second-order antiderivative anti-aliasing after Parker, Esqueda, Bilbao, "Reducing the aliasing of nonlinear waveshaping using continuous-time convolution" (DAFx 2016): published algorithms, reimplemented, no third-party code or new dependency. |
 | dr_wav (mackron/dr_libs) | `dfe8377631000664666519fdb83da193fd8037f4` | Public domain or MIT-0 (choice) | WAV read/write (`core/src/wav_io.cpp`; implementation TU `core/src/dr_wav_impl.cpp`). |
 | dr_flac (mackron/dr_libs) | `dfe8377631000664666519fdb83da193fd8037f4` (same checkout as dr_wav) | Public domain or MIT-0 (choice) | FLAC decoding for stem files (`readAudioFile`, `core/src/wav_io.cpp`; implementation TU `core/src/dr_flac_impl.cpp`, built in the third-party `sawblade_dr_wav` library with warnings off). |
 | pybind11 | v3.0.4, `d03662f0984f652b60e7ddce53d3868002275197` (pybind/pybind11) | BSD-3-Clause | Python bindings (`bindings/python`, module `sawblade_core`). Fetched only with `-DSAWBLADE_BUILD_PYTHON=ON` (off by default); headers exposed as `SYSTEM`. |
@@ -58,7 +59,7 @@ here is bundled with, or required by, the plugin.
 | demucs | 4.0.1 | MIT (facebookresearch/demucs) | Stem separation of the reference mixes (htdemucs "other" stem ~ guitars). Pulls dora-search, julius, lameenc, openunmix, einops, omegaconf, ... (see the constraints file). |
 | torch | 2.5.1 | BSD-3-Clause (wheel bundles NVIDIA CUDA libraries under their own licenses; run on CPU) | Demucs inference |
 | torchaudio | 2.5.1 | BSD-2-Clause | Demucs dependency |
-| htdemucs weights (`955717e8-8726e21a.th`) | htdemucs | Released with the Demucs repository (MIT); a separate weights licence is not stated - confirm before any redistribution | Downloaded at first use by `demucs.pretrained.get_model` from `https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/` into `~/.cache/torch/hub/checkpoints/`. Not committed, not redistributed. Used only to measure reference audio. |
+| htdemucs weights (`955717e8-8726e21a.th`) | htdemucs | Released with the Demucs repository (MIT); a separate weights licence is not stated - confirm before any redistribution | Downloaded at first use by `demucs.pretrained.get_model` from `https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/` into `~/.cache/torch/hub/checkpoints/` (calibration). `sawblade-models fetch` caches the official checkpoints itself, under `<models dir>/checkpoints/hub/checkpoints/` (sha256-pinned), and exports the ONNX files from them. Not committed, not redistributed. |
 
 ### Optional: `match[export]` (NAM export, `sawblade-export`)
 
@@ -117,7 +118,7 @@ meaningful with `SAWBLADE_BUILD_SEPARATOR_SPIKE=ON`). With the spike option OFF 
 | `onnx` 1.23.1, `onnxruntime` 1.30.0 (Python wheels) | exact pins in the venv (`pip install onnx==1.23.1 onnxruntime==1.30.0`) | `onnx`: Apache-2.0 (`License-Expression` in its wheel metadata). `onnxruntime`: MIT (wheel metadata). | Export checking and ORT-vs-torch verification in `scripts/export_onnx.py`. Dev venv only, never shipped. |
 | sevagh/demucs.onnx | not used | n/a | Nothing was read or copied from it; `scripts/export_onnx.py` is our own wrapper around demucs 4.0.1's `HTDemucs.forward`. |
 
-The exported `*.onnx` files (`~/.cache/sawblade/separator/onnx/`) are derivative weights: same treatment as the
+The exported `*.onnx` files (spike: `~/.cache/sawblade/separator/onnx/`; product: the models dir, `~/.local/share/sawblade/models/` or `~/Library/Application Support/Sawblade/models/`, written by `sawblade-models fetch`) are derivative weights: same treatment as the
 ggml files (never committed, never redistributed; `.gitignore` covers `*.onnx`, `*.ort`, `*.tgz`).
 
 ### Model weights (downloaded, never committed, never redistributed)
@@ -151,3 +152,15 @@ weights and get the same treatment.
 |------|-------|
 | "Music Delta - 80s Rock" 6.8 s MUSDB18-7 sample clip (from `sigsep/sigsep-mus-eval` at `2716132b2f4125d4174b99d01fb5ed2e9de17adb`, `tests/data/MUSDB18-7-SAMPLE/train/`) | The museval repo is MIT; that does not cover the audio. SigSep's `tracklist.csv`: source MedleyDB, licence **CC BY-NC-SA** (MedleyDB, Bittner et al.). MUSDB18 overall: academic use only. Personal evaluation only; not redistributed, not committed. |
 | Synthetic 36 s mixture (`scripts/make_material.py`) | Generated locally by our own script; no third-party audio. |
+
+## On-device separation (phase 5.1b, `SAWBLADE_WITH_SEPARATOR`)
+
+| Name | Version | License | Use |
+|------|---------|---------|-----|
+| ONNX Runtime (microsoft/onnxruntime) | `1.30.0`, official tarballs pinned by `URL_HASH` in `cmake/Dependencies.cmake`: Linux x64 `onnxruntime-linux-x64-1.30.0.tgz` sha256 `a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd`; macOS arm64 `onnxruntime-osx-arm64-1.30.0.tgz` sha256 `6ebb5062a934537c352937821f9fe9718e7de1a2db1122a93dd363ffd53a7012` (no universal2 build of 1.30.0 exists; Intel Macs are not supported by the separator) | MIT. The tarball's `ThirdPartyNotices.txt` (protobuf, Eigen, GSL, re2, ...) must accompany any redistributed plugin that bundles the shared library. | CPU execution provider, shared library copied next to the plugin binary / into `Contents/Frameworks`. Fetched at configure time only when `SAWBLADE_WITH_SEPARATOR=ON` (default ON with the plugin). |
+| dr_mp3 (mackron/dr_libs) | `dfe8377631000664666519fdb83da193fd8037f4` (same checkout as dr_wav) | Public domain or MIT-0 (choice) | MP3 decoding (`readAudioFile`; implementation TU `core/src/dr_mp3_impl.cpp`, third-party library with warnings off). |
+| PFFFT | the existing pin | BSD-style | STFT / iSTFT in `core/src/separator.cpp`. |
+| htdemucs / htdemucs_6s ONNX | exported on the user's machine by `sawblade-models fetch` into the models dir; pinned sha256 `79189af3...427d` (htdemucs) and `d23996ba...6132` (htdemucs_6s) | Weights licence: **none stated** (repository is MIT; trained on MUSDB18-HQ, academic use only), as the 5.0/5.1a spike found. Fine for personal non-commercial use; confirm before any redistribution. | Never committed, never bundled, never redistributed. |
+
+The stem cache (`<data dir>/stems/`) holds the user's own separated songs as 32-bit float WAV; it is never committed.
+Test audio for the separator tests is generated at test time (the mp3 fixture with the system `ffmpeg`, skipped when absent).

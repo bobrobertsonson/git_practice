@@ -237,7 +237,7 @@ guitar file loads `other` as the guitar stem, so MUTE removes it. KEEP KEYS load
 folder). A real `guitar`/`guitars` file always wins.
 
 **State.** Plugin state is the preset JSON plus an optional top-level `playAlong` object (folder, offsetMs, loop, countIn,
-guitarMode, backingLevelDb, otherRole, hostSync; see `docs/PRESET_SCHEMA.md`). It is written only once the play-along has
+guitarMode, backingLevelDb, otherRole, hostSync, and, only when set, `songFile` and `separationModel` (`"htdemucs"` = the 4-stem fallback); see `docs/PRESET_SCHEMA.md`). It is written only once the play-along has
 been touched, so untouched sessions save exactly the preset, and a state without it leaves the play-along as it is.
 Restoring a folder starts a background load (after `prepareToPlay` when the rate is not known yet); a missing, empty
 or undecodable folder shows a message in the panel and never throws; the saved path is kept. Nothing from a song is ever
@@ -247,15 +247,180 @@ saved in the state, only its path.
 is adopted when the host stops. Toggling KEEP KEYS reloads the song (decode time; resampling too if the files are not at
 the host rate). The whole song is held in memory at the host rate (5.1 open question 1).
 
+### Capture browser (phase 8b, `plugin/src/browser/`)
+
+BROWSE CAPTURES (inspector) opens a full-editor overlay (`CaptureBrowser`) for the selected rig piece; spec
+`docs/specs/phase8_capture_browser.md`. Layers, bottom to top:
+
+- `T3kRunner`: runs `sawblade-t3k` (a `juce::ChildProcess`, stdout + stderr merged) on one worker thread with a
+  watchdog thread that kills the child at the per-job deadline (30 s queries, 120 s fetch, login = code expiry).
+  Results reach the message thread through `callAsync` behind an "alive" flag, so nothing is delivered after
+  destruction. A newer job with the same supersede key replaces a queued older one.
+- `T3kJson` (pure) parses the CLI's JSON contract; `T3kClient` builds the argv per command and maps a run to a
+  parsed struct or an error (`launch`, `timeout`, `parse`, `exit` plus the CLI's own codes). A non-zero exit with no
+  error object shows the output tail. Login output is never kept: only parsed `device_code` / `logged_in` lines
+  are used.
+- `BrowserSettings`: the executable path (`<app-data>/Sawblade/browser.settings`, not plugin state). Default
+  `<repo>/match/.venv/bin/sawblade-t3k` (`SAWBLADE_REPO_DIR`).
+- `SlotTarget` (pure): rig piece -> preset capture; `withCapture` substitutes a fetched file (and `source`) into a
+  copy of the preset. USE hands that copy to `SawbladeProcessor::loadPreset` (the normal background build +
+  lock-free swap).
+- `BrowserController` holds the state (login, query, records, selection, models, status) and runs USE / PREVIEW;
+  `CaptureBrowser` only shows it.
+- Preview: the candidate preset is rendered with `renderPreset` on a preview worker (the embedded
+  `preview_riff.wav` at the host rate, peak-normalised to -3 dBFS) and handed to the processor's `PreviewPlayer`
+  (a `SwapSlot` of immutable buffers). `PreviewPlayer::process`, the only audio-thread code of the feature, runs at
+  the end of `processBlock`: it cross-fades the rig output into the preview over 10 ms, plays it dual-mono, and
+  fades back at the end or on `stop()`. No allocation, no locks (covered by the alloc / lock harness); the preview
+  adds no host-reported latency.
+
+### Live pedal parameters, the circuit switch and the pedal face (phase 7b)
+
+The two modeled-pedal circuits (CHAINSAW = `pedal.hm`, BIG FUZZ = `pedal.muff`) each have their own host-parameter set
+(`hm*` / `muff*`, built from the core's live-parameter descriptors in `plugin/src/pedals/CircuitParams`), plus the
+`sawCircuit` choice. The sets control the first circuit block of the preset (path a, then b) and are inert when there is
+none. Every circuit parameter is live: `Engine::setParams` forwards the active set to `Chain::setBlockLiveParams` when a
+value changed (core ramps gains over 20 ms; no rebuild, no allocation or lock on the audio thread). `sawCircuit` is the one
+parameter that rebuilds: the processor swaps the block type (level/volume, mix, tightness and clip carried over, the rest
+at defaults) and hands the new preset to the loader like any preset load (build off-thread, cross-fade). A change coming
+from a non-message thread is flagged and handled by a message-thread timer. The saved state is the preset, so it always
+carries the block type that is playing. The editor adds `PedalFace` (live controls laid over the SAW pedal render: six
+knobs, CLIP and FOCUS switches, the CIRCUIT switch, label chips, OLED overlay) and `AdvancedDrawer` (deep controls, slides
+out to the right of the pedal on double-click; close with a second double-click, the x or Escape; UI state, never saved).
+Both are driven by one table row per circuit (`CircuitFaces`). A preset chaining two circuits exposes the first one.
+
+### Record + Match (phase 6a)
+
+The loop: play along to a song, record the clean DI, MATCH it against the song, audition the results, apply one, keep
+playing. Spec: `docs/specs/phase6a_record_match_plugin.md`. Code: `plugin/src/TakeRecorder.{h,cpp}` (recorder, JUCE-free),
+`JobRunner.{h,cpp}` (child processes, settings, parsers), `MatchGlue.{h,cpp}` (what MATCH / EXPORT start from),
+`PresetAudition.{h,cpp}` (audition / A-B / apply), `MatchScreen.{h,cpp}` (the overlay), and the record band at the bottom of
+`PlayAlongPanel`.
+
+**Recorder.** REC in the play-along panel records the plugin's **input**: the clean DI, before the gate and the rig (a
+stereo input is summed to mono exactly as the rig does). The audio thread pushes each block into a preallocated lock-free
+ring (the next power of two above 2 s at the host rate: 131072 samples at 48 kHz, allocated in `prepareToPlay`); a writer
+thread drains it into a **32-bit float mono WAV** and writes the sidecar when the take ends. Takes live in
+`~/Library/Application Support/Sawblade/takes/` (macOS) or `~/.local/share/sawblade/takes/` (Linux); the environment
+variable `SAWBLADE_DATA_DIR` replaces the `Sawblade` / `sawblade` root, and `TakeRecorder::setTakesDir` overrides the folder
+(tests). Nothing on the audio thread allocates, locks or does I/O: a take starts and stops at a block boundary through a
+small preallocated event queue, and a full ring never blocks. A block the ring cannot take is dropped, counted
+(`overruns`, shown in the panel and stored in the sidecar) and the writer later pads the file with the same number of
+zeros, so the take stays on the DI timeline and `lengthSamples` is always the number of samples that went by. Only a take
+that has ended has a sidecar, so a take in progress never shows up in the list.
+
+Sidecar `<take>.json`:
+
+```json
+{ "version": 1, "sampleRate": 48000.0, "channels": 1, "lengthSamples": 480000, "overruns": 0, "droppedSamples": 0,
+  "playAlong": { "running": true, "stemSampleIndex": 1507200, "stemSampleRate": 48000.0, "songFolder": "/songs/x" },
+  "createdUtc": "2026-10-04T12:00:00.000Z" }
+```
+
+`playAlong` is `null` when no song was loaded. `songFolder` is the stems directory that was playing: the folder for a song loaded as a folder, and the separation cache directory when the song came from a file (LOAD SONG on an audio file); MATCH uses it as the reference. `stemSampleIndex` is the stem sample that plays at the take's **first
+sample**: the playhead (the player's position in Standalone, the host position in plugin mode) minus the applied player
+offset, so the offset setting is already in it. The backing is delayed by the rig latency, which is exactly what lines the
+DI sample up with the stem sample the player plays at that moment. `running` is false when the backing was paused, counting
+in, or (plugin mode) not following the host: the index is then only where the playhead was, and MATCH does not use it.
+`droppedSamples` is an addition to the spec's field list. The matcher's `--offset-ms` is
+`stemSampleIndex / stemSampleRate * 1000` (the DI starts that far into the song). A loop that wraps during the take
+breaks the single offset (the take is one straight run of the DI; the offset is valid until the first wrap).
+
+**Panel.** The play-along panel is 112 px taller (`PlayAlongPanel::kHeight` = 170 + 112); the new band holds REC / STOP with
+a timer and a lamp, the take list (name, length, position in the song, overruns, a tag on the one used for MATCH), RENAME,
+DELETE (both confirm in a dialog), USE FOR MATCH, MATCH and EXPORT NAM. The selection used for MATCH is a setting, not tone
+state.
+
+**Standalone only.** MATCH and EXPORT NAM run the Python tools, so for now they are Standalone-only: `matchEnabled()` is
+`playAlong().standalone()` (a processor outside the Standalone wrapper counts as a plugin). In plugin mode the two buttons
+only show "... runs in the Standalone app: open the Standalone app." Recording works in both.
+
+**Job runner.** `JobRunner` (owned by the processor, so jobs survive the editor and the panel closing) starts
+`sawblade-match` and `sawblade-export` with `juce::ChildProcess`. Every job has a folder
+`<app data>/jobs/<timestamp>-match|export/` with `job.json` (kind, state, pid, start / finish time, exit code, the command
+line, the progress mode), `log.txt` (the child's output) and the tool's own files. The folder is the source of truth: a runner that finds a
+`running` job whose pid is alive monitors it again (`attachExisting()`, called when the screen opens), a finished one is
+loaded with its results, and a `running` job whose process is gone is reported as failed (or as succeeded if it left its
+result). One match and one export can be active at the same time; a second job of the same kind is refused.
+
+- *Threads.* The message thread only starts, cancels and copies snapshots. Each job has one monitor thread (probe,
+  launch, follow the log and the progress file, notice the exit). There is no pipe and no reader thread.
+- *Process.* The tool is started with `posix_spawn` as the leader of its own process group (`POSIX_SPAWN_SETPGROUP`, so
+  pgid = pid), with stdout and stderr appended to `<job>/log.txt` (a file: a child that floods its output cannot stall,
+  and the log survives the app). The monitor parses new complete lines of that file; stage and message come from them
+  when there is no progress file.
+- *Spawn hygiene.* Empty signal mask, SIGPIPE / SIGTERM / SIGINT back to default, and no inherited descriptors beyond
+  0, 1, 2 (`POSIX_SPAWN_CLOEXEC_DEFAULT` on macOS, `addclosefrom_np` with glibc >= 2.34).
+- *Cancel.* SIGTERM to the whole process group, then SIGKILL to the group after 2.5 s, then a last group SIGKILL once the
+  tool has exited, so helpers it started (worker processes) die with it. The job is then `cancelled` in job.json.
+- *Re-attach.* job.json stores `pid` and `pgid`. A job survives the app quitting (the tool keeps running, its output
+  keeps going to log.txt). A runner started later re-attaches by pid, after checking that it is still that tool: its own child is waited for;
+  any other pid must be in the recorded process group (`getpgid`) and have started within 4 s of the recorded
+  `spawnedEpochMs` (`/proc/<pid>/stat` + `btime` on Linux, `sysctl KERN_PROC_PID` on macOS). A reused pid fails the
+  check, is treated as gone and is never signalled. It then follows log.txt and progress.json, cancels through the group, and when the pid is gone decides the final
+  state from the files: `result.json` (match) / `export_report.json` or a `.nam` (export) means succeeded, otherwise
+  failed ("interrupted"). Exit codes are only known for jobs the runner started itself.
+- *Tools and settings.* The matcher executable (default `<repo>/match/.venv/bin/sawblade-match`, `<repo>` from the build's
+  source dir), the exporter (`.../sawblade-export`) and the pool manifest
+  (`~/.cache/sawblade/captures/pool_manifest.json`) are settings in `juce::PropertiesFile` application properties
+  (`<app data>/settings.properties`), **not** in the preset or the plugin state: the tone state bytes are unchanged. A
+  missing or non-executable tool, or a missing pool, gives a clear message and a LOCATE... button (async file chooser).
+- *Progress.* The runner runs `<exe> --help` once per executable. If it lists `--progress-json`, the matcher is started with
+  `--progress-json <job>/progress.json` and that file (`{stage, fraction, etaSeconds, bestErrorDb, message}`, partial or
+  missing reads ignored) feeds the bar, the stage, the ETA and the best error. Otherwise the log lines give the stage
+  (`stage2` / `stage3` markers), the last line as the message and an indeterminate bar, with no ETA. The exporter's progress
+  is `<out>/checkpoint/progress.json` (epoch against the epoch or minute budget).
+
+**MATCH.** The screen (after `design/mockups/FullMatch.dc.html`, in the plugin's skin) shows the reference, the DI take and
+the tools, a progress bar with stage, message, ETA and best error, CANCEL, and the results. The command line is
+`sawblade-match --di <take.wav> --ref <stem file> --ref-channel mid --pool <manifest> [--offset-ms <ms>] --out <job dir>
+[--progress-json <job>/progress.json]`:
+
+- the reference is the loaded song folder's guitar stem (`guitar` / `guitars`), else `other`, else a mix, else the first
+  audio file; the label on the screen says which. `--stems-dir` is not passed (it is the calibrate stem cache);
+- `--offset-ms` comes from the take's sidecar and is omitted when no backing was running or when the take was recorded
+  against another song (the matcher then searches within +-3 s).
+
+The results (`result.json`: `best` and `alternatives`, `loss` shown as dB, `topology`, a captures summary) list the matcher's
+choice first. **AUDITION** loads the candidate's `*.preset.resolved.json` through the processor's normal off-thread preset
+load (the EngineLoader builds it, the audio thread cross-fades) and keeps the preset that was current before the first
+audition; **A / B** switches between that preset (A) and the candidate (B); **APPLY** makes the selected candidate the
+current preset (what a normal preset load leaves; the audition ends); **REVERT** goes back to A. Auditioning is a real load:
+the plugin state holds whichever side is playing.
+
+**EXPORT NAM.** The same screen in export mode: NO CAB / WITH CAB (the hint says which is exact for the current blend: a
+live blend, both paths on one cab, is exact without the cab; a studio blend only with it), FEATHER / LITE / STANDARD, device
+`auto` (the tool's default; `--device auto` is passed), the licence note of the export, progress, and REVEAL
+(`File::revealToUser` on the result folder). It runs `sawblade-export <preset> --mode <m> --size <s> --device auto
+[--di <selected take>] --out <job>/export`. The preset is the auditioned / applied candidate's resolved file when that is what
+is still exactly the current preset (compared as state JSON, so any later preset load or parameter change forgets the association), otherwise the current preset written to `<jobs>/inputs/` (so the export is what is playing, parameter changes included).
+The selected take is also passed as the validation DI. A capture without a file (NAM model, or the cab IR while the cab is on) blocks the export with a message instead of launching; the written file keeps absolute capture paths (tested by loading it back with `loadPresetFile`).
+
+**Tests.** `plugin/tests/test_record_match.cpp` (headless; recorder: no allocation or lock while recording, WAV bit-exact for
+mixed block sizes, overrun counting with a stalled writer and the silence padding, a take shorter than a writer pass, the
+sidecar offset with a running StemPlayer in Standalone and host-follow modes, rename / delete, re-prepare; runner against a fake
+child written at test time (`plugin/tests/fake_tools.h`, a Python script that answers `--help` with and without
+`--progress-json`, writes progress.json, log lines, result.json and presets, and can wait on gate files): progress in both
+modes, the command line, result list, cancel (SIGTERM and the SIGKILL escalation), failure message, missing tools, re-attach to
+a running and a finished job, a re-attached cancel, a child that floods the pipe, export progress; settings persistence;
+audition / A-B / apply; the plugin-mode gating) and the editor tests in `plugin/tests/test_editor.cpp` (the band, the
+Standalone-only buttons, the missing-tool message, a job that survives the editor, and the screenshots
+`build/screenshots/sawblade_record_armed_1x.png`, `sawblade_match_progress_1x.png`, `sawblade_match_results_1x.png`,
+`sawblade_export_progress_1x.png`). All test data is synthesised into temp dirs; `SAWBLADE_DATA_DIR` keeps the default
+locations out of the home folder.
+
+**Known limits.** MATCH / EXPORT are Standalone-only. The take list is rescanned when the recorder changes it and every 10 s while the panel is open. Takes and job folders are never deleted by the plugin.
+
 ### Editor
 
 A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, spec
 `docs/specs/phase2_5_skin.md`); the final UI is the user's design. A fixed 1280 x 800 design laid out in one
 content component that the editor scales with an `AffineTransform` (resizable, fixed 1.6 aspect, 640x400 to
 2560x1600). It reads `status()` and the APVTS only. Layout: top bar (preset button opening the preset file chooser,
-latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM), rig area (amp heads, cab, pedalboard
+latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM; MATCH and EXPORT NAM are opened from the
+play-along panel, see Record + Match), rig area (amp heads, cab, pedalboard
 with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
-knobs; all 12 parameters are bound to exactly one knob each). The top bar also carries the gear button (title
+knobs; all 12 parameters are bound to exactly one knob each outside the rig panel). The top bar also carries the gear button (title
 "Settings", after PLAY ALONG) that toggles the Settings overlay (below). To make room for it the preset button is 214
 design px wide (was 240) and the latency chip 136 (was 170). The window opens at 1280 x 800 times the `uiScale` setting
 (0.5 to 2.0, default 1.0).
@@ -264,7 +429,114 @@ Pictures come from `plugin/assets/` (our own renders, embedded with `juce_add_bi
 `plugin/src/skin/`: `SkinAssets` (decodes the PNGs and JSON sidecars once), `FilmstripKnob`, `FootswitchButton`,
 `LedIndicator`, `RigView`. Colours, fonts and plain-widget drawing are in `SawbladeLookAndFeel`. Placeholders
 (disabled, titled, with a tooltip saying so): A/B, MATCH, EXPORT NAM, previous / next preset, BROWSE CAPTURES,
-LEARN GATE, "+ PEDAL", CPU readout, the footswitch (visual bypass only).
+"+ PEDAL", CPU readout, the footswitch (visual bypass only).
+
+### Rig editor (phase 10)
+
+The RIG button in the top bar (next to PLAY ALONG) opens an overlay of 940 x 742 design px exactly over the rig area
+(the inspector stays visible). It makes every blend feature of the engine usable from the UI; open / closed and the
+active tab are UI state and are never saved. Spec: `docs/specs/phase10_rig_editor.md`. Code: `plugin/src/rig/`.
+
+- **Top strip.** Topology `SINGLE | SINGLE + 2 PEDALS | BLEND`, tabs `CHAIN | EQ | BLEND | CAB | GATE | COMP`, one status
+  line (loading / error / first warning, or the last message of a failed ADD).
+- **CHAIN.** Two lanes, `A . SAW` and `B . BODY`, of block cards in preset order (max 8): slot and type, title and
+  credit from the capture metadata (`@creator . licence . VIA TONE3000`, `LOCAL FILE`), BYPASS, an INPUT knob (nam blocks,
+  live), move left / right, remove, and `+ ADD`, whose menu lists `BlockRegistry::typeNames()` (a new block type, for
+  example a modelled pedal, appears without UI changes; `nam` opens a `.nam` chooser, `eq` adds a flat band). A pedal is
+  inserted in front of the path's amp. In the single topologies lane B shows only `BLEND OFF - choose BLEND above to use
+  path B` (its blocks are kept).
+- **EQ.** `A PRE | A POST | B PRE | B POST | POST`; the graph (`EqGraph.h` documents the pixel mapping) draws the combined
+  analytic response; drag a node (frequency + gain, or Q for high / low-pass), shift-drag or wheel (Q), double-click a node
+  (on / off), right-click (type, remove), double-click empty space (add a band), `+ BAND`.
+- **BLEND.** Blend knob (`SAW 79 / BODY 21`), path levels with `M` / `S` (mute / solo, monitoring only), ALIGN
+  `AUTO | MANUAL | OFF` with the resolved values, nudge `-10 -1 +1 +10`, `INVERT B`, `RE-MEASURE`.
+- **CAB.** `SHARED | PER PATH`, `CAB ON`, IR cards with `CHOOSE...`; the notice `LIVE-COMPATIBLE: the no-cab NAM export is
+  exact` (shared) or `STUDIO BLEND: only the with-cab NAM export is exact` (per path).
+- **GATE.** `GATE ON`, `GATE | EXPANDER`, THRESHOLD, HYSTERESIS, ATTACK, HOLD, RELEASE, RANGE, RATIO (expander only),
+  KEY HPF (bottom = off), release curve, LEARN. **COMP.** `COMP ON`, THRESHOLD, RATIO, KNEE, ATTACK, RELEASE, MAKEUP; a
+  release above 150 ms shows `release > 150 ms: not NAM-trainable`.
+
+**How edits reach the engine.**
+
+| edit | path |
+|---|---|
+| block add / remove / move / bypass, topology, band type / on-off / add / remove, cab mode / IR / on-off, align mode, gate and comp settings (except the threshold) | structural: `RigController::edit` -> `SawbladeProcessor::loadPreset` -> loader thread build (models and IRs come from the loader's persistent `CaptureCache`) -> 30 ms cross-fade. Knobs submit on drag end, wheel / typed values after a 150 ms debounce; a failed build keeps the previous preset and shows the error |
+| EQ frequency / Q, gain of a pre / path EQ band or of a post band without a parameter slot, nam block input gain | live: `applyLiveEdit` -> `LiveSnapshot` (a second `SwapSlot`, published under the processor mutex, tagged with the engine generation) -> `Chain::setLiveParams` ramps (20 ms; gains in dB, frequency in log2, Q in log, on the absolute 32-sample redesign grid), no rebuild |
+| blend, path levels, gate threshold, input / output gain, the six post EQ slot gains | host parameters (automatable), unchanged: the 12 parameters and their ids do not change |
+| mute / solo | transient monitor state (`setMonitor`): ramps the path level to 0; cleared by user loads and state restores, kept by the editor's structural edits and by rebuilds |
+
+A live edit made while a structural load is in flight can be overwritten when that load commits (EQ drags are absolute
+and heal on the next mouse move). Everything the panel edits lives in the preset and round-trips through
+`getStateInformation` / `setStateInformation`; transient and never saved: mute / solo, the open panel and tab, the
+SINGLE + 2 PEDALS choice while the preset reads SINGLE, the remembered blend. The engine's alignment, latency and
+`status().generation` are reported per block as before; re-measuring never runs on the audio thread.
+
+**Topology rules** (`rig/RigModel.h`). A path's amp is its last `slot: "amp"` block, else its last `nam` block; every other block is a pedal slot.
+`BLEND` iff path B is enabled; else `SINGLE + 2 PEDALS` iff path A has two or more non-bypassed pedal slots. Going to
+SINGLE or SINGLE + 2 PEDALS disables B and sets `blend = 0` (the chain computes `(1-blend)*A + blend*B`, so a disabled B
+at 0.5 would halve A); B's blocks are kept. Going to SINGLE bypasses the extra pedal slots of A (never deletes), going to
+SINGLE + 2 PEDALS un-bypasses one. Going back to BLEND restores the remembered blend. In the single topologies the blend
+knob is disabled in the UI, but the host may still automate `blend`: with B disabled the output is `(1-blend)*A`.
+
+**Alignment.** `AUTO` presets stay `AUTO` across loads; `RE-MEASURE` builds the engine in auto mode off the audio thread and
+writes `manual` values (`delaySamplesB`, `invertB`) back, without a further rebuild. Nudging or inverting while in `AUTO`
+switches to `MANUAL` seeded with the measured values.
+
+**Gate LEARN.** The audio thread pushes one input peak per block into a lock-free ring (`rig/InputMeter.h`, 512 blocks);
+LEARN waits 1 s, takes the loudest peak since, and sets `gateThreshold = peak dB + input gain dB + 6 dB` (clamped to -80..-20; the gate sits after the input gain, the meter before it). The ring keeps only the last 512 blocks, so with 64-sample blocks at 48 kHz about 0.68 s is measured. The
+inspector's LEARN GATE button does the same.
+
+### Cab mic page (phase 9a)
+
+Double-click the cab in the rig to open the mic page (an overlay over the rig and inspector; "< RIG" closes it; open /
+closed is UI state and is never saved). Code: `plugin/src/mic/`.
+
+- **IR pack:** one TONE3000 IR tone with many models (one IR per model), or a local folder of `.wav` files, or just the cab's
+  current IR. `IrNameParser` reads each model name (speaker type and slot, mic model and type, distance, position, cab
+  size; tolerant, unknown tokens are ignored). `IrPack` maps every model to a point on the open cab view using the sidecar
+  (`assets/cab_*_open.json`: driver centres and cone radii in image pixels): the speaker slot picks the driver, the position
+  gives the offset from the dust cap as a fraction of the cone radius (cap 0, cap edge 0.3, cone 0.6, edge 0.9, off axis
+  0.6; a bare position number spreads over 0..0.9; unknown 0.3), towards the cab centre. Models at the same point are
+  one dot. The 2x12 view is used when most models that name a cab size say 2x12.
+- **Snap:** the mic follows the mouse; on mouse-up it snaps to the nearest dot (ties to the lower model) and loads the
+  dot's model with the current mic and the nearest distance (else its first model). Nothing loads while dragging.
+- **Loading** goes through `SawbladeProcessor::loadPreset` (the normal off-thread build and the 30 ms equal-power swap);
+  `MicSession` builds the preset from `currentPreset()` with only the cab replaced. A/B toggles the last two chosen IRs
+  of the active mic, NEXT POSITION goes to the next dot.
+- **BLEND 2 MICS** switches the cab to `irMix` (`irA` = current IR, `irB` = the same IR, mix 0.5), adds a second draggable
+  mic and the MIX fader (not a host parameter; at most one rebuild per 150 ms while dragging, one on release). BLEND off
+  returns to `shared` with `irA`. An `irMix` preset opens with BLEND on. In `perPath` mode the page is read-only.
+- **LOAD PACK** (shown when the cab's capture has a TONE3000 tone id) runs `sawblade-t3k pack <toneId> -o
+  <appdata>/sawblade/packs/<toneId>.json --progress-json` (`presets/T3kTool`) on a background thread with a progress bar and
+  CANCEL; the manifest is cached and found again by the cab's tone id on reopen. The executable is
+  `t3kExecutable` in `<appdata>/sawblade/settings.json` (default `<repo>/match/.venv/bin/sawblade-t3k`; LOCATE... saves
+  it). Exit code 4 means "not logged in" (run `sawblade-t3k login` in a terminal). `<appdata>` is
+  `~/.local/share/sawblade` (Linux), `~/Library/Application Support/Sawblade` (macOS); `SAWBLADE_APPDATA` overrides it.
+
+### Preset browser, factory presets, A/B compare (phase 9b)
+
+Code: `plugin/src/presets/` (`PresetLibrary`, `PresetLoadFlow`, `AbCompare`, `PresetBrowser`, `PresetInfoPanel`, `T3kTool`).
+
+- **Browser:** clicking the top-bar preset selector opens an overlay over the rig and inspector: search, banks (Factory: Classic /
+  Styles / Matched; User), the categories present with counts, the preset list (double-click loads), and the info panel (name,
+  category, bank, file, notes, and every capture of path A, path B and the cab with title, @creator, licence, TONE3000 URL, a
+  NON-COMMERCIAL tag when the licence contains `nc`, or "local file: no attribution recorded"). LOAD FILE... keeps the file chooser.
+  The footer has SAVE, SAVE AS, RENAME, DELETE (user presets only; delete moves the file to the OS trash) and the resolve status.
+- **Banks:** factory presets are `presets/*.json`, `presets/styles/*.json`, `presets/matched/*.json` (key `factoryPresetDir` in
+  `settings.json`, default `<repo>/presets`); user presets are `<appdata>/sawblade/presets/*.json`. `*.resolved.json` files are never
+  listed; an unparseable file is listed greyed out with its error. Scanning runs on a background thread and parses without loading
+  captures. An uncategorised preset shows as "Uncategorised" (in `matched/`: "Matched").
+- **Search:** case-insensitive, whitespace-separated terms ANDed over name, category, notes and capture titles / creators.
+- **Resolve on load:** a preset with a TONE3000 capture whose file is missing (and not in the capture cache) is resolved first with
+  `sawblade-t3k resolve <preset> -o <appdata>/sawblade/resolved/<bank>/<stem>.resolved.json --progress-json`; progress shows in the
+  footer ("Resolving 2/5: <title>") with CANCEL, exit 4 shows the not-logged-in message, a missing tool shows LOCATE.... The current
+  sound is unchanged until the resolved preset has loaded. A resolved file that is newer than the preset and complete is used with
+  no child process. The core loader also finds a TONE3000 capture in the capture cache (`$SAWBLADE_CACHE_DIR`, else
+  `~/.cache/sawblade/captures/<id>/<modelId>.nam|.wav`) when its file is missing (docs/PRESET_SCHEMA.md).
+- **Previous / next** (the top-bar < > buttons) step through the browser's filtered list, wrapping.
+- **A/B compare:** the top-bar button shows A or B. Switching stores the current preset (with its parameter values) in the active
+  slot, activates the other (an empty B starts as a copy) and loads it: one engine build and the 30 ms swap. A browser load replaces
+  the active slot only. Right-click: Copy A to B, Copy B to A, Reset compare. Not saved in the plugin state.
 
 ### Settings, ToolRunner, first run, About (phase 11)
 
@@ -279,7 +551,7 @@ keep off the real home directory. `Env` (home, executable, source dir, `getenv`,
 
 | what | default | override |
 |---|---|---|
-| settings | macOS `~/Library/Application Support/Sawblade/settings.json`; Linux `$XDG_CONFIG_HOME/sawblade/settings.json`, else `~/.config/sawblade/settings.json` | `SAWBLADE_SETTINGS_FILE` |
+| settings | macOS `~/Library/Application Support/Sawblade/settings.json`; Linux `$XDG_DATA_HOME/sawblade/settings.json`, else `~/.local/share/sawblade/settings.json` (the same file `presets/T3kTool` and phase 9 use; each store keeps the other's keys); `SAWBLADE_APPDATA` moves the whole app-data dir | `SAWBLADE_SETTINGS_FILE` |
 | TONE3000 token file (the one `sawblade-t3k` writes) | `~/.config/sawblade/t3k_tokens.json` on all platforms | `SAWBLADE_T3K_TOKEN_FILE` |
 | capture cache | `~/.cache/sawblade/captures` | `SAWBLADE_CACHE_DIR` |
 | takes (recordings) | macOS `~/Library/Application Support/Sawblade/takes`; Linux `~/.local/share/sawblade/takes` | the `takesDir` key |
@@ -377,20 +649,58 @@ committed files (ctest `plugin: app icon is reproducible`; skipped with exit 77 
 ## Tests
 
 `sawblade_editor_tests` (`plugin/tests/test_editor.cpp`, ctest prefix `editor: `, run under `xvfb-run -a` when
-available): snapshots to `build/screenshots/sawblade_skin_{1x,2x}.png`, resizing, parameter bindings, filmstrip
+available; the rig editor tests write `build/screenshots/rig_{single,blend,eq,gate}.png` plus `rig_tab_*.png`): snapshots to `build/screenshots/sawblade_skin_{1x,2x}.png`, resizing, parameter bindings, filmstrip
 mapping, knob interaction, footswitch / LED, accessibility, and the `plugin/assets/` budget (< 25 MB). The play-along
 tests cover the panel (exists, closed by default, opens from the top bar), its controls bound to the processor, folder
-drop, the missing-folder message, and screenshots `build/screenshots/sawblade_playalong_{closed,open}_1x.png`. The phase 11
+drop, the missing-folder message, and screenshots `build/screenshots/sawblade_playalong_{closed,open}_1x.png`.
+`plugin/tests/test_mic_page.cpp` covers the mic page (open from the rig, dots, drag and snap, fields and combo boxes, BLEND
+and the MIX fader, read-only studio mode, LOAD IR FOLDER, LOAD PACK through a fake `sawblade-t3k`) and the screenshots
+`build/screenshots/sawblade_micpage_{rig,single,blend}_1x.png`.
+`plugin/tests/test_presets.cpp` (library, user operations, A/B, resolve flow with fake executables, info panel) and
+`plugin/tests/test_preset_browser.cpp` (the browser, stepping, the A/B button, screenshot `sawblade_browser_1x.png`) cover phase 9b. The Record + Match tests are described in that section.
+The phase 11
 editor tests (each points `SAWBLADE_SETTINGS_FILE` at a temp file) cover the gear button, the first-run checklist, the
 secret-key refusal, the login view against a fake `sawblade-t3k` (`plugin/tests/tools/fake_t3k.sh`), the checklist lights,
 the About box and the icon PNGs, with screenshots `sawblade_{settings,firstrun,login,about}_1x.png` in the screenshot
 directory.
 
-`sawblade_plugin_tests` (headless): `plugin/tests/test_engine.cpp` (Engine, no JUCE),
-`plugin/tests/test_processor.cpp` (the processor driven like a host), `plugin/tests/test_settings.cpp` (the settings store, auto-detect order, secret-key rule, `ToolRunner` against the fake
-scripts in `plugin/tests/tools/`, `LoginFlow`) and `plugin/tests/test_playalong.cpp` (the backing:
+`sawblade_plugin_tests` (headless): `plugin/tests/test_rig_model.cpp` and `plugin/tests/test_rig_controller.cpp` (rig
+model, controller, live edits, mutes, re-measure, blend automation, concurrent-edit RT test, LEARN),
+`plugin/tests/test_mic.cpp` (IR name parser, pack and dot layout, snapping, choosing
+models through the processor, the `sawblade-t3k` runner and settings, with fake executables), `plugin/tests/test_engine.cpp` (Engine, no JUCE),
+`plugin/tests/test_processor.cpp` (the processor driven like a host) and `plugin/tests/test_settings.cpp` (the settings store, auto-detect order, secret-key rule, `ToolRunner` against the fake scripts in `plugin/tests/tools/`, `LoginFlow`) and `plugin/tests/test_playalong.cpp` (the backing:
 level rule, queue, Standalone and host-follow transport, rig-latency alignment, offset, state, zero allocations and
 locks with the backing playing; stems are synthesised into a temp dir, no audio is committed). Audio-thread rules are
 enforced with the existing `AllocGuard` plus `LockGuard` (`plugin/tests/lock_guard.cpp`, counts
 `pthread_mutex_lock`/`trylock`/rwlock via linker `--wrap`; Linux only, skipped elsewhere). Core
 additions are tested in `tests/test_rt_resample.cpp` and `tests/test_chain_live.cpp`.
+
+### Song files: on-device separation (phase 5.1b)
+
+LOAD SONG (picker and drag-and-drop) accepts an audio file as well as a stems folder. A file (mp3, wav, flac; m4a / aac /
+aiff / ogg through JUCE's `AudioFormatManager`, i.e. CoreAudio on macOS) is separated by the htdemucs ONNX model
+(ONNX Runtime CPU EP, `core/src/separator.cpp`) on a **separation thread** (`PlayAlong`, started on the first song file;
+never the audio or message thread), written to the stem cache, and the cache directory then goes through the unchanged 5.2
+loader. The panel shows progress with an ETA and a CANCEL button; the second load of the same file (same bytes, same
+model) is a cache hit and takes a hash of the file. Cancel (CANCEL, a newer request, or destroying the processor) stops
+within about one network evaluation (`RunOptions::SetTerminate`), leaves nothing in the cache, and goes back to the
+previous song. Closing the editor does not cancel: the job belongs to the processor and finishes in the background.
+Host-friendly: the plugin separates with max(1, cores/2) threads on a lowered-priority thread (the CLI uses cores - 1). A
+state restore only uses stems that are already cached; with a cache miss the panel says "Song not separated yet - LOAD SONG
+to separate it" and nothing is separated until the user loads the song. Separation streams the stems into the cache as
+they become final, so peak memory does not grow with the song's length (ONNX Runtime's working set dominates).
+
+The 6/4-stem toggle beside the song name picks the model (6-stem `htdemucs_6s`, default, has a guitar stem; 4-stem
+`htdemucs`: `other` is treated as the guitar as in 5.2). With a 6-stem model piano is summed into `other`.
+
+Model files are never bundled. They live in `$SAWBLADE_MODELS_DIR`, else `~/Library/Application Support/Sawblade/models/`
+(macOS) / `$XDG_DATA_HOME/sawblade/models/` or `~/.local/share/sawblade/models/`, as `<id>-core-opset17.onnx` plus a
+`.sha256` sidecar, and are fetched with `match/.venv/bin/sawblade-models fetch --model htdemucs_6s` (run from the repository
+root). If the model is missing the panel says so with that command; nothing crashes. The stem cache is
+`$SAWBLADE_STEMS_DIR`, else the models dir's sibling `stems/` (32-bit float WAV, one directory per
+`sha256(file)-<model>`).
+
+Build: `SAWBLADE_WITH_SEPARATOR` (default ON with `SAWBLADE_BUILD_PLUGIN`, else OFF) fetches the pinned ONNX Runtime 1.30.0
+and copies its shared library (plus its LICENSE and ThirdPartyNotices.txt) next to the plugin binary (`$ORIGIN`; `Contents/Frameworks` + `@loader_path/../Frameworks`
+on macOS). With it OFF the plugin shows "Separation is not available in this build." for a song file. CLI: `tonerender
+--separate SONG --stems-out DIR` and `sawblade-stems SONG DIR [--model htdemucs_6s|htdemucs] [--threads N]`.

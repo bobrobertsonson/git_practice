@@ -1,9 +1,24 @@
 #include "PlayAlong.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <thread>
+
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#elif defined(__APPLE__)
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif
+
+#ifdef SAWBLADE_WITH_SEPARATOR
+#include "sawblade/separate_song.h"
+#endif
 
 namespace sawblade::plugin {
 namespace {
@@ -28,6 +43,18 @@ std::string prettyLoadError(std::string e, const std::string& folder) {
   return e;
 }
 
+// The separation thread runs at lowered priority so a host's audio and UI keep priority (ONNX Runtime's pool
+// threads are created from it and inherit the setting). Best effort.
+void lowerThreadPriority() {
+#if defined(__linux__)
+  (void)setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);
+#elif defined(__APPLE__)
+  (void)pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#endif
+}
+
+std::string songNameOf(const std::string& file) { return std::filesystem::path(file).stem().string(); }
+
 constexpr double kAbsGateLufs = -70.0, kRelGateLu = -10.0, kBs1770Offset = -0.691;
 
 }  // namespace
@@ -42,6 +69,9 @@ nlohmann::json playAlongToJson(const PlayAlongSettings& s) {
                       {"backingLevelDb", s.levelDb},
                       {"otherRole", s.keepOther ? "other" : "guitar"},
                       {"hostSync", s.hostSync}};
+  // Optional keys (5.1b): present only when they differ from the defaults, so older sessions stay as they were.
+  if (!s.songFile.empty()) j["songFile"] = s.songFile;
+  if (s.fourStemModel) j["separationModel"] = separationModelId(SeparationModel::Htdemucs4s);
   if (s.loopAMs >= 0.0) j["loop"]["aMs"] = s.loopAMs;
   if (s.loopBMs >= 0.0) j["loop"]["bMs"] = s.loopBMs;
   return j;
@@ -58,6 +88,10 @@ PlayAlongSettings playAlongFromJson(const nlohmann::json& j) {
     if (auto it = o.find(k); it != o.end() && it->is_boolean()) dst = it->get<bool>();
   };
   if (auto it = j.find("folder"); it != j.end() && it->is_string()) s.folder = it->get<std::string>();
+  if (auto it = j.find("songFile"); it != j.end() && it->is_string()) s.songFile = it->get<std::string>();
+  if (auto it = j.find("separationModel"); it != j.end() && it->is_string())
+    s.fourStemModel = it->get<std::string>() == separationModelId(SeparationModel::Htdemucs4s);
+  if (!s.songFile.empty()) s.folder.clear();  // exclusive: a song file wins over a stale folder
   num(j, "offsetMs", s.offsetMs, -kOffsetLimitMs, kOffsetLimitMs);
   if (auto it = j.find("loop"); it != j.end() && it->is_object()) {
     flag(*it, "on", s.loopOn);
@@ -78,6 +112,13 @@ PlayAlongSettings playAlongFromJson(const nlohmann::json& j) {
   if (auto it = j.find("otherRole"); it != j.end() && it->is_string()) s.keepOther = it->get<std::string>() == "other";
   flag(j, "hostSync", s.hostSync);
   return s;
+}
+
+bool isSongFileName(const std::string& path) {
+  std::string ext = std::filesystem::path(path).extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return ext == ".mp3" || ext == ".wav" || ext == ".flac" || ext == ".m4a" || ext == ".aac" || ext == ".aif" || ext == ".aiff" ||
+         ext == ".ogg";
 }
 
 double suggestedBackingLevelDb(std::optional<double> rigLufs, std::optional<double> backingLufs) {
@@ -130,6 +171,15 @@ std::optional<double> RigLoudness::lufs() const noexcept {
 PlayAlong::PlayAlong() { thread_ = std::thread([this] { loaderMain(); }); }
 
 PlayAlong::~PlayAlong() {
+  {  // the separation worker first: it hands its result to the loader
+    std::lock_guard<std::mutex> lk(sepM_);
+    sepStop_ = true;
+    sepPending_.reset();
+    ++sepId_;
+    if (sepRunningToken_) sepRunningToken_->cancel();
+  }
+  sepCv_.notify_all();
+  if (sepThread_.joinable()) sepThread_.join();
   {
     std::lock_guard<std::mutex> lk(loaderM_);
     stop_ = true;
@@ -276,8 +326,68 @@ void PlayAlong::loadFolder(const std::string& folder, bool userInitiated) {
   {
     std::lock_guard<std::mutex> lk(m_);
     settings_.folder = folder;
+    settings_.songFile.clear();
   }
   requestLoad(userInitiated);
+}
+
+void PlayAlong::loadSong(const std::string& path, bool userInitiated) {
+  std::error_code ec;
+  if (!isSongFileName(path) || std::filesystem::is_directory(std::filesystem::path(path), ec)) {
+    loadFolder(path, userInitiated);
+    return;
+  }
+  std::string prevFolder, prevSong;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    prevFolder = settings_.folder;
+    prevSong = settings_.songFile;
+    settings_.songFile = path;
+    settings_.folder.clear();
+  }
+  PlayAlongSettings s = settings();
+  {
+    std::lock_guard<std::mutex> lk(sepM_);
+    sepPrevFolder_ = prevFolder;
+    sepPrevSong_ = prevSong;
+  }
+  requestSong(s, s.keepOther ? OtherRole::Other : OtherRole::Guitar, userInitiated, /*allowSeparate=*/true);
+}
+
+void PlayAlong::setFourStemModel(bool fourStem) {
+  bool changed, haveSong;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    changed = settings_.fourStemModel != fourStem;
+    settings_.fourStemModel = fourStem;
+    haveSong = !settings_.songFile.empty();
+  }
+  if (changed && haveSong) requestLoad(false, /*allowSeparate=*/true);  // the user picked another model
+}
+
+void PlayAlong::setSongDecoder(SongDecoder d) {
+  std::lock_guard<std::mutex> lk(sepM_);
+  decoder_ = std::move(d);
+}
+
+void PlayAlong::cancelSeparation() {
+  std::string prevFolder, prevSong;
+  {
+    std::lock_guard<std::mutex> lk(sepM_);
+    const bool active = sepPending_.has_value() || sepRunningToken_ != nullptr;
+    if (!active) return;
+    sepPending_.reset();
+    ++sepId_;  // whatever the running job produces is dropped
+    if (sepRunningToken_) sepRunningToken_->cancel();
+    prevFolder = sepPrevFolder_;
+    prevSong = sepPrevSong_;
+    std::lock_guard<std::mutex> lk2(m_);  // sepM_ -> m_, the same order as the job's hand-off
+    settings_.folder = prevFolder;
+    settings_.songFile = prevSong;
+    status_ = LoadStatus{};
+    status_.state = LoadStatus::State::Cancelled;
+    status_.message = "Separation cancelled.";
+  }
 }
 
 void PlayAlong::restore(const PlayAlongSettings& in) {
@@ -298,9 +408,24 @@ PlayAlongSettings PlayAlong::settings() const {
   return settings_;
 }
 
-PlayAlong::LoadStatus PlayAlong::loadStatus() const {
+std::string PlayAlong::activeStemsDir() const {
   std::lock_guard<std::mutex> lk(m_);
-  return status_;
+  if (!settings_.songFile.empty())
+    return (songDirFile_ == settings_.songFile && songDirFourStem_ == settings_.fourStemModel) ? songDir_ : std::string();
+  return settings_.folder;
+}
+
+PlayAlong::LoadStatus PlayAlong::loadStatus() const {
+  LoadStatus st;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    st = status_;
+  }
+  if (st.state == LoadStatus::State::Separating) {
+    st.separationFraction = sepFraction_.load(std::memory_order_relaxed);
+    st.separationEtaSeconds = sepEta_.load(std::memory_order_relaxed);
+  }
+  return st;
 }
 
 PlayAlong::Snapshot PlayAlong::snapshot() const noexcept {
@@ -320,25 +445,48 @@ PlayAlong::Snapshot PlayAlong::snapshot() const noexcept {
 }
 
 bool PlayAlong::waitForLoader(std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  {
+    std::unique_lock<std::mutex> lk(sepM_);
+    if (!sepIdleCv_.wait_until(lk, deadline, [this] { return !sepPending_ && !sepBusy_; })) return false;
+  }
   std::unique_lock<std::mutex> lk(loaderM_);
-  return idleCv_.wait_for(lk, timeout, [this] { return !pending_ && !busy_; });
+  return idleCv_.wait_until(lk, deadline, [this] { return !pending_ && !busy_; });
 }
 
 // ---- loading --------------------------------------------------------------------------------------
-void PlayAlong::requestLoad(bool user) {
-  std::string folder;
-  OtherRole role;
+void PlayAlong::requestLoad(bool user, bool allowSeparate) {
+  PlayAlongSettings s;
   {
     std::lock_guard<std::mutex> lk(m_);
-    folder = settings_.folder;
-    role = settings_.keepOther ? OtherRole::Other : OtherRole::Guitar;
-    if (folder.empty()) {
-      status_ = LoadStatus{};
-      return;
-    }
-    status_.state = LoadStatus::State::Loading;
-    status_.message.clear();
+    s = settings_;
   }
+  const OtherRole role = s.keepOther ? OtherRole::Other : OtherRole::Guitar;
+  if (!s.songFile.empty()) {
+    {
+      std::lock_guard<std::mutex> lk(sepM_);
+      sepPrevFolder_ = s.folder;  // nothing to go back to: a cancel keeps the settings as they are
+      sepPrevSong_ = s.songFile;
+    }
+    requestSong(s, role, user, allowSeparate);
+    return;
+  }
+  supersedeSeparation();  // a folder (or nothing) replaces a song file that is still being separated
+  if (s.folder.empty()) {
+    std::lock_guard<std::mutex> lk(m_);
+    status_ = LoadStatus{};
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    status_ = LoadStatus{};
+    status_.state = LoadStatus::State::Loading;
+  }
+  submitLoad(s.folder, "", role, user, /*cacheHit=*/false);
+}
+
+// The load part of requestLoad: hands `dir` to the loader thread (or parks it until prepare()).
+void PlayAlong::submitLoad(const std::string& dir, const std::string& name, OtherRole role, bool user, bool cacheHit) {
   std::lock_guard<std::mutex> lk(loaderM_);
   const double rate = rate_.load();
   if (rate <= 0.0) {  // not prepared yet: prepare() submits it
@@ -347,8 +495,146 @@ void PlayAlong::requestLoad(bool user) {
     return;
   }
   loadWanted_ = false;
-  pending_ = Request{folder, rate, role, user, ++requestId_};
+  pending_ = Request{dir, name, rate, role, user, ++requestId_, cacheHit};
   loaderCv_.notify_one();
+}
+
+void PlayAlong::supersedeSeparation() {
+  std::lock_guard<std::mutex> lk(sepM_);
+  sepPending_.reset();
+  ++sepId_;
+  if (sepRunningToken_) sepRunningToken_->cancel();
+}
+
+// ---- separation --------------------------------------------------------------------------------------
+void PlayAlong::requestSong(const PlayAlongSettings& s, OtherRole role, bool user, bool allowSeparate) {
+  namespace fs = std::filesystem;
+  std::string dir;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    std::error_code ec;
+    if (songDirFile_ == s.songFile && songDirFourStem_ == s.fourStemModel && !songDir_.empty() &&
+        fs::is_directory(fs::path(songDir_), ec))
+      dir = songDir_;  // separated already in this session (KEEP KEYS, a rate change, a restore)
+    status_ = LoadStatus{};
+    status_.state = (dir.empty() && allowSeparate) ? LoadStatus::State::Separating : LoadStatus::State::Loading;
+  }
+  if (!dir.empty()) {
+    supersedeSeparation();
+    submitLoad(dir, songNameOf(s.songFile), role, user, /*cacheHit=*/true);
+    return;
+  }
+  sepFraction_.store(0.0);
+  sepEta_.store(-1.0);
+  SepRequest r;
+  r.file = s.songFile;
+  r.fourStem = s.fourStemModel;
+  r.role = role;
+  r.user = user;
+  r.allowSeparate = allowSeparate;
+  r.token = std::make_shared<CancelToken>();
+  {
+    std::lock_guard<std::mutex> lk(sepM_);
+    if (sepStop_) return;
+    if (sepRunningToken_) sepRunningToken_->cancel();  // the older job is superseded
+    r.id = ++sepId_;
+    sepPending_ = std::move(r);
+    if (!sepThread_.joinable()) sepThread_ = std::thread([this] { separationMain(); });
+  }
+  sepCv_.notify_one();
+}
+
+void PlayAlong::separationMain() {
+  lowerThreadPriority();
+  std::unique_lock<std::mutex> lk(sepM_);
+  while (!sepStop_) {
+    if (!sepPending_) {
+      sepCv_.wait(lk);
+      continue;
+    }
+    const SepRequest r = *sepPending_;
+    sepPending_.reset();
+    sepRunningToken_ = r.token;
+    sepBusy_ = true;
+    lk.unlock();
+    runSeparation(r);
+    lk.lock();
+    sepRunningToken_.reset();
+    sepBusy_ = false;
+    sepIdleCv_.notify_all();
+  }
+}
+
+void PlayAlong::runSeparation(const SepRequest& r) {
+  namespace fs = std::filesystem;
+  auto current = [&] { return r.id == sepId_; };  // call with sepM_ held
+  auto fail = [&](const std::string& message, bool modelMissing, const std::string& fetch) {
+    std::lock_guard<std::mutex> lk(sepM_);
+    if (!current()) return;
+    std::lock_guard<std::mutex> lk2(m_);
+    status_ = LoadStatus{};
+    status_.state = LoadStatus::State::Failed;
+    status_.message = message;
+    status_.modelMissing = modelMissing;
+    status_.fetchCommand = fetch;
+  };
+#ifdef SAWBLADE_WITH_SEPARATOR
+  try {
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::path(r.file), ec)) {
+      fail("Song file not found: " + r.file, false, "");
+      return;
+    }
+    SeparateSongOptions o;
+    o.model = r.fourStem ? SeparationModel::Htdemucs4s : SeparationModel::Htdemucs6s;
+    o.threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);  // leave the host room
+    o.cacheOnly = !r.allowSeparate;
+    {
+      std::lock_guard<std::mutex> lk(sepM_);
+      o.decoder = decoder_;
+    }
+    const SeparateSongResult res = separateSong(
+        fs::path(r.file), o,
+        [this, &r](double f, double eta) {
+          if (r.id != sepId_.load(std::memory_order_relaxed)) return;  // superseded: the newer job owns the numbers
+          sepFraction_.store(f, std::memory_order_relaxed);
+          sepEta_.store(eta, std::memory_order_relaxed);
+        },
+        *r.token);
+    // Hand the cache directory to the loader under sepM_, so a concurrent cancelSeparation() either
+    // happens before (and the result is dropped) or after (and finds nothing left to cancel).
+    std::lock_guard<std::mutex> lk(sepM_);
+    if (!current()) return;
+    {
+      std::lock_guard<std::mutex> lk2(m_);
+      songDir_ = res.stemsDir.string();
+      songDirFile_ = r.file;
+      songDirFourStem_ = r.fourStem;
+      status_ = LoadStatus{};
+      status_.state = LoadStatus::State::Loading;
+    }
+    sepRunningToken_.reset();  // nothing to cancel any more
+    submitLoad(res.stemsDir.string(), songNameOf(r.file), r.role, r.user, res.cacheHit);
+  } catch (const NotCached&) {
+    std::lock_guard<std::mutex> lk(sepM_);
+    if (!current()) return;
+    std::lock_guard<std::mutex> lk2(m_);
+    status_ = LoadStatus{};
+    status_.state = LoadStatus::State::NotSeparated;
+    status_.message = "Song not separated yet - LOAD SONG to separate it";
+  } catch (const SeparationCancelled&) {
+    // Superseded or cancelled: whoever did that has set the status already.
+  } catch (const ModelUnavailable& e) {
+    fail(e.status.message, true, separationModelFetchCommand(e.status.model));
+  } catch (const std::exception& e) {
+    fail(std::string("Separation failed: ") + e.what(), false, "");
+  } catch (...) {
+    fail("Separation failed.", false, "");
+  }
+#else
+  (void)fs::path();
+  fail("Separation is not available in this build.", false, "");
+#endif
 }
 
 void PlayAlong::loaderMain() {
@@ -402,8 +688,10 @@ void PlayAlong::runLoad(const Request& r) {
 
   LoadStatus st;
   st.state = LoadStatus::State::Ready;
-  st.songName = fs::path(r.folder).filename().string();
+  st.songName = r.name;
+  if (st.songName.empty()) st.songName = fs::path(r.folder).filename().string();
   if (st.songName.empty()) st.songName = fs::path(r.folder).parent_path().filename().string();
+  st.cacheHit = r.cacheHit;
   st.warnings = set->warnings;
   st.backingLufs = set->backingLoudnessLufs;
   st.lengthSeconds = static_cast<double>(set->length) / r.rate;
@@ -459,8 +747,7 @@ void PlayAlong::applyCommand(const PlayAlongCmd& c) noexcept {
   }
 }
 
-void PlayAlong::process(const float* rig, float* bl, float* br, int n, const HostTransport& host) noexcept {
-  loud_.process(rig, n);
+void PlayAlong::prepareBlock(const HostTransport& host) noexcept {
   PlayAlongCmd c;
   while (queue_.pop(c)) applyCommand(c);
 
@@ -476,6 +763,27 @@ void PlayAlong::process(const float* rig, float* bl, float* br, int n, const Hos
   }
   // Plugin: the backing is off until host sync is enabled (the player then just fades to silence).
   if (follow) player_.setHostPosition(host.sample, hostSync_ && host.playing);
+  blockPrepared_ = true;
+}
+
+TakeStartInfo PlayAlong::takeStartInfo(const HostTransport& host) const noexcept {
+  TakeStartInfo info;
+  info.hasSong = player_.hasStemSet();
+  if (!info.hasSong) return info;
+  info.stemSampleRate = rate_.load(std::memory_order_relaxed);
+  const bool follow = !standalone();
+  // Playhead p plays stem sample p - offset. In plugin mode the playhead is the host position.
+  const std::int64_t playhead = follow ? host.sample : player_.position();
+  info.running = follow ? (hostSync_ && host.playing) : (player_.isPlaying() && !player_.isCountingIn());
+  info.stemSampleIndex = playhead - player_.appliedStartOffsetSamples();
+  return info;
+}
+
+void PlayAlong::process(const float* rig, float* bl, float* br, int n, const HostTransport& host) noexcept {
+  loud_.process(rig, n);
+  if (!blockPrepared_) prepareBlock(host);
+  blockPrepared_ = false;
+  const bool follow = !standalone();
 
   player_.process(bl, br, n);
 

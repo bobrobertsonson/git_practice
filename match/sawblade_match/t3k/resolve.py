@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .cache import Cache
 from .client import T3KClient
@@ -70,11 +70,17 @@ def resolve_capture(client: T3KClient, cache: Cache, cap: dict, first_model: boo
     src["license"] = t.get("license", src.get("license"))
 
 
-def resolve_preset(client: T3KClient, cache: Cache, preset: dict, first_model: bool = False) -> list[str]:
-    """Rewrite ``preset`` in place; returns the JSON paths of the captures that were resolved."""
+def resolve_preset(client: T3KClient, cache: Cache, preset: dict, first_model: bool = False,
+                   progress: Callable[[int, int, str, dict], None] | None = None) -> list[str]:
+    """Rewrite ``preset`` in place; returns the JSON paths of the captures that were resolved.
+
+    ``progress(done, total, json_path, capture)`` is called after each capture is resolved (``done`` is 1-based).
+    """
     caps = _captures(preset)
-    for _, cap in caps:
+    for i, (path, cap) in enumerate(caps, 1):
         resolve_capture(client, cache, cap, first_model)
+        if progress:
+            progress(i, len(caps), path, cap)
     return [p for p, _ in caps]
 
 
@@ -85,13 +91,14 @@ def default_output(preset_path: Path) -> Path:
 
 
 def resolve_file(client: T3KClient, cache: Cache, preset_path: Path, out_path: Path | None = None,
-                 first_model: bool = False) -> list[str]:
+                 first_model: bool = False,
+                 progress: Callable[[int, int, str, dict], None] | None = None) -> list[str]:
     preset_path = Path(preset_path)
     dest = Path(out_path or default_output(preset_path))
     if dest.resolve() == preset_path.resolve():
         raise T3KError("output path equals the input preset; refusing to overwrite it")
     preset = json.loads(preset_path.read_text())
-    done = resolve_preset(client, cache, preset, first_model)
+    done = resolve_preset(client, cache, preset, first_model, progress)
     fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.")
     try:
         with os.fdopen(fd, "w") as f:

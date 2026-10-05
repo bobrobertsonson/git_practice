@@ -630,3 +630,10 @@ TEST_CASE("Chain: output is independent of block size", "[chain][blocksize]") {
     }
   }
 }
+
+TEST_CASE("BlockRegistry::typeNames lists the registered types, sorted", "[registry]") {
+  const auto names = BlockRegistry::instance().typeNames();
+  CHECK(std::is_sorted(names.begin(), names.end()));
+  CHECK(std::find(names.begin(), names.end(), "nam") != names.end());
+  CHECK(std::find(names.begin(), names.end(), "eq") != names.end());
+}

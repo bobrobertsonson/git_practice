@@ -8,6 +8,7 @@
 
 #include "sawblade/capture_cache.h"
 #include "sawblade/ir.h"
+#include "sawblade/ir_mix.h"
 #include "sawblade/nam_block.h"
 
 namespace sawblade {
@@ -15,8 +16,8 @@ namespace {
 
 double dbToLin(double db) { return std::pow(10.0, db / 20.0); }
 
-std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, double sr, bool normalize,
-                                   std::vector<std::string>& warnings, CaptureCache* cache) {
+std::shared_ptr<const IrData> loadCabIr(const Capture& c, const std::string& path, double sr, bool normalize,
+                                        std::vector<std::string>& warnings, CaptureCache* cache) {
   const std::string filePath = path + ".file";
   std::shared_ptr<const IrData> ir;
   if (cache) {
@@ -24,16 +25,28 @@ std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, do
   } else {
     verifyCapture(c, filePath);
     try {
-      ir = std::make_shared<const IrData>(loadIr(c.resolvedPath, sr, normalize));
+      ir = std::make_shared<const IrData>(loadIr(locateCapture(c), sr, normalize));
     } catch (const std::exception& e) {
       throw CaptureError(filePath, e.what());
     }
   }
   for (const auto& w : ir->warnings) warnings.push_back(path + ": " + w);
+  return ir;
+}
+
+std::unique_ptr<Convolver> makeConvolver(const std::vector<float>& ir) {
   auto conv = std::make_unique<Convolver>();
-  conv->setIr(ir->samples);
+  conv->setIr(ir);
   return conv;
 }
+
+std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, double sr, bool normalize,
+                                   std::vector<std::string>& warnings, CaptureCache* cache) {
+  return makeConvolver(loadCabIr(c, path, sr, normalize, warnings, cache)->samples);
+}
+
+// shared and irMix both run one convolver after the blend.
+bool usesSharedCab(CabMode m) { return m != CabMode::PerPath; }
 
 // Deterministic white noise: xorshift64* (not <random>: distributions are implementation-defined).
 std::vector<float> makeProbe(double sr) {
@@ -92,6 +105,10 @@ ChainResources loadResources(const Preset& p, double sr, CaptureCache* cache) {
     // A disabled cab is never used (Chain ignores it): do not require its IR to exist.
   } else if (p.cab.mode == CabMode::Shared) {
     res.cabShared = loadCab(p.cab.ir, "cab.ir", sr, p.cab.normalize, res.warnings, cache);
+  } else if (p.cab.mode == CabMode::IrMix) {
+    const auto a = loadCabIr(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings, cache);
+    const auto b = loadCabIr(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings, cache);
+    res.cabShared = makeConvolver(mixIrs(a->samples, b->samples, p.cab.mix));
   } else {
     res.cabA = loadCab(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings, cache);
     res.cabB = loadCab(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings, cache);
@@ -116,7 +133,7 @@ std::vector<NamRateProbe> probeNamRates(const Preset& p, CaptureCache* cache) {
         if (cache) {
           hz = cache->namModel(nam->model, filePath)->expectedSampleRate();
         } else {
-          hz = NamBlock::load(nam->model.resolvedPath, NamBlockConfig{})->expectedSampleRate();
+          hz = NamBlock::load(locateCapture(nam->model), NamBlockConfig{})->expectedSampleRate();
         }
       } catch (const CaptureError&) {
         throw;
@@ -155,7 +172,18 @@ LiveParams LiveParams::fromPreset(const Preset& p) {
   l.blend = p.blend;
   l.levelDbA = p.a.levelDb;
   l.levelDbB = p.b.levelDb;
-  for (std::size_t i = 0; i < p.postEq.size() && i < l.postEqGainDb.size(); ++i) l.postEqGainDb[i] = p.postEq[i].gainDb;
+  const auto fill = [](LiveEq& dst, const std::vector<EqBand>& src) {
+    for (std::size_t i = 0; i < src.size() && i < dst.size(); ++i) dst[i] = {src[i].freq, src[i].gainDb, src[i].q};
+  };
+  fill(l.postEq, p.postEq);
+  const PathPreset* pp[2] = {&p.a, &p.b};
+  for (std::size_t k = 0; k < 2; ++k) {
+    fill(l.preEq[k], pp[k]->preEq);
+    fill(l.pathEq[k], pp[k]->eq);
+    for (std::size_t i = 0; i < pp[k]->blocks.size() && i < l.blocks[k].size(); ++i)
+      if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp[k]->blocks[i].params.get()))
+        l.blocks[k][i] = {nam->inputGainDb, nam->outputGainDb};
+  }
   return l;
 }
 
@@ -190,7 +218,7 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
     throw PresetError("postEq", e.what());
   }
   if (preset_.cab.enabled) {
-    if (preset_.cab.mode == CabMode::Shared) {
+    if (usesSharedCab(preset_.cab.mode)) {
       if (!res_.cabShared) throw std::runtime_error("ChainResources lacks the shared cab");
       cabShared_ = std::move(res_.cabShared);
     } else {
@@ -342,8 +370,8 @@ AlignResult Chain::resolveAlignment() {
     const int len = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(maxBlock_), n - pos));
     std::copy_n(probe.data() + pos, len, bufA_.data());
     std::copy_n(probe.data() + pos, len, bufB_.data());
-    renderPath(path_[0], bufA_.data(), len);
-    renderPath(path_[1], bufB_.data(), len);
+    renderPath(path_[0], bufA_.data(), len, 0, false);
+    renderPath(path_[1], bufB_.data(), len, 0, false);
     for (int i = 0; i < len; ++i) {
       a[pos + static_cast<std::size_t>(i)] = bufA_[static_cast<std::size_t>(i)];
       b[pos + static_cast<std::size_t>(i)] = bufB_[static_cast<std::size_t>(i)];
@@ -401,37 +429,123 @@ ChainInfo Chain::info() const {
   i.latencySamples = latency_;
   i.alignMode = preset_.align.mode;
   i.align = align_;
-  i.liveCompatible = preset_.cab.mode == CabMode::Shared;
+  i.cabMode = preset_.cab.mode == CabMode::Shared ? "shared" : preset_.cab.mode == CabMode::PerPath ? "perPath" : "irMix";
+  i.liveCompatible = usesSharedCab(preset_.cab.mode);
   i.exportExactness = {true, i.liveCompatible};
   i.warnings = warnings_;
   i.warnings.insert(i.warnings.end(), alignWarnings_.begin(), alignWarnings_.end());
   return i;
 }
 
-void Chain::renderPath(Path& p, float* io, int n) noexcept {
+void Chain::renderPath(Path& p, float* io, int n, std::uint64_t counter, bool allowRamp) noexcept {
   if (!p.enabled) {
     std::fill(io, io + n, 0.0f);
     return;
   }
-  p.preEq.process(io, n);
+  const auto k = static_cast<std::size_t>(&p - path_.data());
+  if (allowRamp) processEq(p.preEq, preRamps_[k], io, n, counter);
+  else p.preEq.process(io, n);
   for (auto& lb : p.blocks)
     if (!lb.bypass) lb.processor->process(io, n);
-  p.eq.process(io, n);
+  if (allowRamp) processEq(p.eq, pathRamps_[k], io, n, counter);
+  else p.eq.process(io, n);
   p.level.process(io, n);
   if (p.cab) p.cab->process(io, n);
   p.delay.process(io, n);
 }
 
-void Chain::setLiveParams(const LiveParams& p) noexcept {
+namespace {
+
+void advanceRamp(double& cur, double target, double step, int& remaining) noexcept {
+  if (remaining <= 0) return;
+  if (remaining <= Chain::kEqSubBlock) {
+    cur = target;
+    remaining = 0;
+  } else {
+    cur += step * Chain::kEqSubBlock;
+    remaining -= Chain::kEqSubBlock;
+  }
+}
+
+}  // namespace
+
+void Chain::applyLiveEq(EqRamps& rs, const std::vector<EqBand>& cfg, const LiveEq& oldL,
+                        LiveEq& newL) noexcept {
+  const double fs = res_.sampleRate;
+  const auto n = std::min(cfg.size(), newL.size());
+  for (std::size_t i = 0; i < n; ++i) {
+    const LiveEqBand& o = oldL[i];
+    LiveEqBand& nw = newL[i];
+    // Reject invalid values (keep the old ones); a band without a freq (0) is not live.
+    if (!(nw.freq >= 10.0 && nw.freq < 0.49 * fs)) nw.freq = o.freq;
+    if (!std::isfinite(nw.gainDb)) nw.gainDb = o.gainDb;
+    if (!(nw.q >= 0.05 && nw.q <= 36.0)) nw.q = o.q;
+    const EqBand& c = cfg[i];
+    if (!c.enabled || o.freq <= 0.0 || nw.freq <= 0.0) continue;
+    const bool pass = c.type == EqType::HighPass || c.type == EqType::LowPass;
+    const bool gCh = !pass && nw.gainDb != o.gainDb;
+    const bool fCh = nw.freq != o.freq;
+    const bool qCh = nw.q != o.q;
+    if (!gCh && !fCh && !qCh) continue;
+    BandRamp& b = rs.band[i];
+    if (!b.active()) {
+      b.gNow = o.gainDb;
+      b.fNow = o.freq;
+      b.qNow = o.q;
+      b.shape = false;
+      ++rs.active;
+    }
+    const auto start = [this](Ramp1& r, double from, double to) {
+      if (r.remaining <= 0) r.cur = from;
+      r.target = to;
+      r.step = (to - r.cur) / static_cast<double>(rampSamples_);
+      r.remaining = rampSamples_;
+    };
+    if (gCh) start(b.gain, o.gainDb, nw.gainDb);
+    if (fCh) {
+      start(b.logF, std::log2(o.freq), std::log2(nw.freq));
+      b.shape = true;
+    }
+    if (qCh) {
+      start(b.logQ, std::log(o.q), std::log(nw.q));
+      b.shape = true;
+    }
+    // Linear targets, so a finished ramp lands exactly on the requested value.
+    if (fCh) b.fTarget = nw.freq;
+    if (qCh) b.qTarget = nw.q;
+  }
+}
+
+void Chain::presetMutes(bool a, bool b) noexcept {
+  live_.muteA = a;
+  live_.muteB = b;
+  if (a) path_[0].level.setGainLinear(0.0f);
+  if (b) path_[1].level.setGainLinear(0.0f);
+}
+
+void Chain::setBlockLiveParams(int path, int blockIndex, const float* v, int n) noexcept {
+  if (path < 0 || path > 1 || blockIndex < 0) return;
+  auto& blocks = path_[static_cast<std::size_t>(path)].blocks;
+  if (static_cast<std::size_t>(blockIndex) >= blocks.size()) return;
+  if (auto* p = blocks[static_cast<std::size_t>(blockIndex)].processor.get()) p->setLiveParams(v, n);
+}
+
+void Chain::setLiveParams(const LiveParams& in) noexcept {
   if (!prepared_) return;
+  LiveParams p = in;
   const auto lin = [](double db) { return static_cast<float>(std::pow(10.0, db / 20.0)); };
   if (p.inputGainDb != live_.inputGainDb) inGain_.rampToLinear(lin(p.inputGainDb), rampSamples_);
   if (p.outputGainDb != live_.outputGainDb) outGain_.rampToLinear(lin(p.outputGainDb), rampSamples_);
   const double lv[2] = {p.levelDbA, p.levelDbB};
   const double old[2] = {live_.levelDbA, live_.levelDbB};
+  const bool mute[2] = {p.muteA, p.muteB};
+  const bool oldMute[2] = {live_.muteA, live_.muteB};
   const PathPreset* pp[2] = {&preset_.a, &preset_.b};
-  for (std::size_t k = 0; k < 2; ++k)
-    if (lv[k] != old[k]) path_[k].level.rampToLinear((pp[k]->invert ? -1.0f : 1.0f) * lin(lv[k]), rampSamples_);
+  for (std::size_t k = 0; k < 2; ++k) {
+    if (lv[k] == old[k] && mute[k] == oldMute[k]) continue;
+    if (mute[k] && mute[k] == oldMute[k]) continue;  // a level change while muted only moves the stored target
+    path_[k].level.rampToLinear(mute[k] ? 0.0f : (pp[k]->invert ? -1.0f : 1.0f) * lin(lv[k]), rampSamples_);
+  }
   if (p.gateThresholdDb != live_.gateThresholdDb && std::isfinite(p.gateThresholdDb)) {
     GateParams g = gate_.params();
     g.thresholdDb = p.gateThresholdDb;
@@ -448,49 +562,56 @@ void Chain::setLiveParams(const LiveParams& p) noexcept {
     blendStepB_ = (blendB_ - blendCurB_) / static_cast<float>(rampSamples_);
     blendRamp_ = rampSamples_;
   }
-  for (std::size_t i = 0; i < p.postEqGainDb.size(); ++i) {
-    if (p.postEqGainDb[i] == live_.postEqGainDb[i] || !std::isfinite(p.postEqGainDb[i])) continue;
-    EqRamp& r = eqRamp_[i];
-    if (r.remaining <= 0) {
-      r.cur = live_.postEqGainDb[i];
-      ++eqRamping_;
+  applyLiveEq(postRamps_, preset_.postEq, live_.postEq, p.postEq);
+  for (std::size_t k = 0; k < 2; ++k) {
+    applyLiveEq(preRamps_[k], pp[k]->preEq, live_.preEq[k], p.preEq[k]);
+    applyLiveEq(pathRamps_[k], pp[k]->eq, live_.pathEq[k], p.pathEq[k]);
+    auto& blocks = path_[k].blocks;
+    for (std::size_t i = 0; i < blocks.size() && i < p.blocks[k].size(); ++i) {
+      LiveBlock& nb = p.blocks[k][i];
+      const LiveBlock& ob = live_.blocks[k][i];
+      if (!std::isfinite(nb.inputGainDb)) nb.inputGainDb = ob.inputGainDb;
+      if (!std::isfinite(nb.outputGainDb)) nb.outputGainDb = ob.outputGainDb;
+      if (nb != ob) blocks[i].processor->setLiveGainsDb(nb.inputGainDb, nb.outputGainDb, rampSamples_);
     }
-    r.target = p.postEqGainDb[i];
-    r.step = (r.target - r.cur) / static_cast<double>(rampSamples_);
-    r.remaining = rampSamples_;
   }
   live_ = p;
 }
 
-void Chain::processPostEq(float* w, int n) noexcept {
-  if (eqRamping_ == 0) {
-    postEq_.process(w, n);
-    eqCounter_ += static_cast<std::uint64_t>(n);
+void Chain::processEq(ParametricEq& eq, EqRamps& rs, float* w, int n, std::uint64_t counter) noexcept {
+  if (rs.active == 0) {
+    eq.process(w, n);
     return;
   }
   // The redesign grid is absolute (multiples of kEqSubBlock of the running sample counter), so the
   // result does not depend on how the host splits the stream into blocks.
   int pos = 0;
   while (pos < n) {
-    const int phase = static_cast<int>(eqCounter_ % static_cast<std::uint64_t>(kEqSubBlock));
-    if (phase == 0) {
-      for (std::size_t i = 0; i < eqRamp_.size(); ++i) {
-        EqRamp& r = eqRamp_[i];
-        if (r.remaining <= 0) continue;
-        if (r.remaining <= kEqSubBlock) {
-          r.cur = r.target;
-          r.remaining = 0;
-          --eqRamping_;
-        } else {
-          r.cur += r.step * kEqSubBlock;
-          r.remaining -= kEqSubBlock;
+    const int phase = static_cast<int>(counter % static_cast<std::uint64_t>(kEqSubBlock));
+    if (phase == 0 && rs.active > 0) {
+      for (std::size_t i = 0; i < rs.band.size(); ++i) {
+        BandRamp& b = rs.band[i];
+        if (!b.active()) continue;
+        if (b.gain.remaining > 0) {
+          advanceRamp(b.gain.cur, b.gain.target, b.gain.step, b.gain.remaining);
+          b.gNow = b.gain.cur;
         }
-        postEq_.setBandGainDb(static_cast<int>(i), r.cur);
+        if (b.logF.remaining > 0) {
+          advanceRamp(b.logF.cur, b.logF.target, b.logF.step, b.logF.remaining);
+          b.fNow = b.logF.remaining == 0 ? b.fTarget : std::exp2(b.logF.cur);
+        }
+        if (b.logQ.remaining > 0) {
+          advanceRamp(b.logQ.cur, b.logQ.target, b.logQ.step, b.logQ.remaining);
+          b.qNow = b.logQ.remaining == 0 ? b.qTarget : std::exp(b.logQ.cur);
+        }
+        if (b.shape) eq.setBand(static_cast<int>(i), b.fNow, b.gNow, b.qNow);
+        else eq.setBandGainDb(static_cast<int>(i), b.gNow);
+        if (!b.active()) --rs.active;
       }
     }
     const int len = std::min(n - pos, kEqSubBlock - phase);
-    postEq_.process(w + pos, len);
-    eqCounter_ += static_cast<std::uint64_t>(len);
+    eq.process(w + pos, len);
+    counter += static_cast<std::uint64_t>(len);
     pos += len;
   }
 }
@@ -518,8 +639,8 @@ void Chain::processChunk(const float* in, float* out, int n) noexcept {
   if (gateOn_) gate_.processKeyed(w, w, n);
   std::copy(w, w + n, a);
   std::copy(w, w + n, b);
-  renderPath(path_[0], a, n);
-  renderPath(path_[1], b, n);
+  renderPath(path_[0], a, n, eqCounter_, true);
+  renderPath(path_[1], b, n, eqCounter_, true);
   int i = 0;
   if (blendRamp_ > 0) {
     const int r = std::min(blendRamp_, n);
@@ -540,7 +661,8 @@ void Chain::processChunk(const float* in, float* out, int n) noexcept {
   const float ga = blendA_, gb = blendB_;
   for (; i < n; ++i) w[i] = ga * a[i] + gb * b[i];
   if (cabShared_) cabShared_->process(w, n);
-  processPostEq(w, n);
+  processEq(postEq_, postRamps_, w, n, eqCounter_);
+  eqCounter_ += static_cast<std::uint64_t>(n);
   if (compOn_) comp_.process(w, n);
   outGain_.process(w, n);
   std::copy(w, w + n, out);

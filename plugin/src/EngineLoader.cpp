@@ -66,7 +66,7 @@ void EngineLoader::run() {
     out.wanted = req.wanted;
     std::unique_ptr<Engine> engine;
     try {
-      engine = Engine::build(req.preset, req.hostRate, req.maxBlock);
+      engine = Engine::build(req.preset, req.hostRate, req.maxBlock, &cache_);
       out.built = true;
     } catch (const std::exception& e) {
       out.error = e.what();
@@ -75,7 +75,7 @@ void EngineLoader::run() {
     }
     if (!engine && req.fallbackToInit) {
       try {
-        engine = Engine::build(initRequest(req).preset, req.hostRate, req.maxBlock);
+        engine = Engine::build(initRequest(req).preset, req.hostRate, req.maxBlock, &cache_);
       } catch (...) {
       }
     }
@@ -95,7 +95,9 @@ void EngineLoader::run() {
       out.modelRate = engine->modelRate();
       out.info = engine->chainInfo();
       out.presetName = engine->presetName();
-      if (out.built && req.beforePublish) req.beforePublish();
+      engine->setGeneration(id);
+      if (out.built && req.configure) req.configure(*engine);
+      if (out.built && req.beforePublish) req.beforePublish(id);
       std::shared_ptr<Engine> shared = std::move(engine);
       owned_.push_back(shared);
       slot_.publish(std::make_unique<EngineRef>(EngineRef{std::move(shared)}));

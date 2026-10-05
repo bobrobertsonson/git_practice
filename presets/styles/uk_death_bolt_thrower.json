@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "UK Death (Bolt Thrower-style)",
+  "category": "Death metal",
   "notes": "RAT into a Marshall JCM900 crunch through Greenbacks: warm, mid-heavy, no HM-2. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
   "gate": {
     "enabled": true,

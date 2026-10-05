@@ -24,6 +24,16 @@ option(SAWBLADE_BUILD_PYTHON "Build the sawblade_core Python extension module" O
 # fetches and builds nothing extra. See spikes/separator/README.md.
 option(SAWBLADE_BUILD_SEPARATOR_SPIKE "Build the demucs.cpp stem-separation spike (spikes/separator)" OFF)
 
+# Phase 5.1b: on-device stem separation (ONNX Runtime CPU EP, htdemucs). Defaults ON when the plugin is
+# built (it needs it for "load any mp3") and OFF otherwise. OFF: nothing is downloaded, core / CLI / plugin
+# build without ONNX Runtime and a song file cannot be separated ("separation not available in this build").
+# ON: the pinned official ONNX Runtime release is fetched at configure time (cmake/Dependencies.cmake).
+set(_sawblade_sep_default OFF)
+if(SAWBLADE_BUILD_PLUGIN)
+  set(_sawblade_sep_default ON)
+endif()
+option(SAWBLADE_WITH_SEPARATOR "Build the ONNX Runtime stem separator (sawblade_separator, sawblade-stems, tonerender --separate)" ${_sawblade_sep_default})
+
 # Warnings-as-errors apply to Sawblade targets only: link this interface target into them.
 # Third-party targets never link it and expose their headers as SYSTEM.
 add_library(sawblade_warnings INTERFACE)

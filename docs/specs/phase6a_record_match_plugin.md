@@ -49,3 +49,22 @@ that DI against the song → audition the results → apply one → keep playing
   progress, the result list.
 - **Plugin mode:** recording works in plugin mode too, but MATCH/EXPORT are Standalone-only
   for now; in the plugin they show "open the Standalone app".
+
+## Lead refinements (6a implementation, 2026-10-04)
+Only where the spec as written cannot run against today's `sawblade-match`:
+- **`--pool` is required** by `sawblade-match`. A second settings field holds the pool
+  manifest path, default `~/.cache/sawblade/captures/pool_manifest.json`; a missing file gets
+  the same clear message + "Locate…" as a missing executable.
+- **Reference.** `sawblade-match --stems-dir` is a calibrate stem *cache keyed by the
+  reference's file name*, not a song folder, and `--ref` is required. So the runner passes
+  `--ref <stem file>` with `--ref-channel mid`, choosing the song folder's guitar stem
+  (`guitar`/`guitars`), else `other`, else the mix/first audio file (shown in the screen).
+  `--stems-dir` is not passed.
+- **Offset.** `--offset-ms` = sidecar stem sample index / stem rate × 1000 (the matcher's sign:
+  the DI starts that far into the song). No sidecar (no play-along running) → no `--offset-ms`.
+- **Progress.** If the executable's `--help` lists `--progress-json`, pass it and read
+  `{stage, fraction, etaSeconds, bestErrorDb, message}`; otherwise parse the child's stdout/
+  stderr log lines (stage names, last line as message, indeterminate fraction) and finish on
+  `result.json`. The fake child in tests covers both modes.
+- **Results** come from `result.json` (`best`/`alternatives`, `loss` shown as error dB,
+  `topology`) and the `*.preset.resolved.json` files beside it.

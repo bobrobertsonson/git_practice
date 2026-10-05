@@ -1,0 +1,55 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Early Raw Demo",
+  "category": "Swedish death (HM-2)",
+  "notes": "Early demo-tape rawness: lower gain, more mid, less top (Nihilist and Carnage demos). Low gyrator moved up to 110 Hz, presence trimmed to 6 dB. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 2,
+          "params": {
+            "level": 6.26,
+            "low": 7,
+            "high": 6,
+            "distortion": 6,
+            "tightness": 0,
+            "mix": 100,
+            "mode": "stock",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 110,
+            "lowQ": 0.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 4800,
+            "presenceDb": 6,
+            "rolloffHz": 9000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  }
+}

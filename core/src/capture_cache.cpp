@@ -35,9 +35,8 @@ namespace {
 template <class Entry>
 void validate(Entry& e, const Capture& c, const std::string& jsonPath) {
   std::error_code ec;
-  const fs::path& p = c.resolvedPath;
-  if (!fs::exists(p, ec))
-    throw CaptureError(jsonPath, jsonPath + ": file not found: " + p.string());
+  const fs::path p = locateCapture(c);
+  if (!fs::exists(p, ec)) throw CaptureError(jsonPath, captureNotFoundMessage(c, jsonPath));
   const std::uintmax_t size = fs::file_size(p, ec);
   const fs::file_time_type mtime = ec ? fs::file_time_type{} : fs::last_write_time(p, ec);
   if (!e.known || ec || size != e.size || mtime != e.mtime) {
@@ -61,7 +60,7 @@ void validate(Entry& e, const Capture& c, const std::string& jsonPath) {
                                      ", got " + e.sha + ")");
 }
 
-std::string keyOf(const Capture& c) { return fs::absolute(c.resolvedPath).lexically_normal().string(); }
+std::string keyOf(const Capture& c) { return fs::absolute(locateCapture(c)).lexically_normal().string(); }
 
 }  // namespace
 
@@ -75,7 +74,7 @@ std::shared_ptr<const NamModel> CaptureCache::namModel(const Capture& c, const s
   }
   ++misses_;
   try {
-    e->nam = NamModel::load(c.resolvedPath);
+    e->nam = NamModel::load(locateCapture(c));
   } catch (const std::exception& ex) {
     throw CaptureError(jsonPath, ex.what());
   }
@@ -94,7 +93,7 @@ std::shared_ptr<const IrData> CaptureCache::ir(const Capture& c, const std::stri
   }
   ++misses_;
   try {
-    auto data = std::make_shared<const IrData>(loadIr(c.resolvedPath, targetRate, normalize));
+    auto data = std::make_shared<const IrData>(loadIr(locateCapture(c), targetRate, normalize));
     e->irs.emplace(k, data);
     return data;
   } catch (const std::exception& ex) {

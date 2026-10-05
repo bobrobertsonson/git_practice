@@ -4,9 +4,18 @@
 #include <array>
 #include <cmath>
 
+#include "MatchScreen.h"
 #include "PlayAlongPanel.h"
 #include "about/AboutBox.h"
 #include "settings/SettingsPanel.h"
+#include "browser/BrowserSettings.h"
+#include "browser/CaptureBrowser.h"
+#include "pedals/AdvancedDrawer.h"
+#include "pedals/PedalFace.h"
+#include "rig/RigController.h"
+#include "mic/MicPage.h"
+#include "presets/AbCompare.h"
+#include "presets/PresetBrowser.h"
 #include "skin/FilmstripKnob.h"
 
 namespace sawblade::plugin {
@@ -62,9 +71,17 @@ class SawbladeEditor::Content : public juce::Component {
     wordmark_.setTransform(juce::AffineTransform::rotation(-0.026f, 95.0f, 21.0f));
     addAndMakeVisible(wordmark_);
 
-    configure(prev_, juce::String::fromUTF8("\xe2\x80\xb9"), "Previous preset", true);
-    configure(next_, juce::String::fromUTF8("\xe2\x80\xba"), "Next preset", true);
-    configure(ab_, "A / B", "A/B compare", true);
+    configure(prev_, juce::String::fromUTF8("\xe2\x80\xb9"), "Previous preset in the browser's list", false);
+    configure(next_, juce::String::fromUTF8("\xe2\x80\xba"), "Next preset in the browser's list", false);
+    configure(ab_, "A", "A/B compare: switch between two versions of the sound (right-click: copy A to B, B to A, reset)", false);
+    ab_.setTitle("A/B compare");
+    ab_.onClick = [this] {
+      abCompare_.toggle();
+      ab_.setButtonText(abCompare_.label());
+    };
+    ab_.addMouseListener(this, false);
+    prev_.onClick = [this] { stepPreset(-1); };
+    next_.onClick = [this] { stepPreset(+1); };
     configure(match_, "MATCH", "Match to a reference", true);
     configure(export_, "EXPORT NAM", "Export as NAM model", true);
     configure(playAlong_, "PLAY ALONG", "Show / hide the play-along panel: a backing track from separated stems to play over", false);
@@ -76,14 +93,18 @@ class SawbladeEditor::Content : public juce::Component {
     settingsBtn_.setClickingTogglesState(true);
     settingsBtn_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
     settingsBtn_.onClick = [this] { setSettingsOpen(settingsBtn_.getToggleState()); };
+    configure(rigButton_, "RIG", "Show / hide the rig editor: topology, blocks, EQs, blend and alignment, cab, gate and compressor", false);
+    rigButton_.setClickingTogglesState(true);
+    rigButton_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
+    rigButton_.onClick = [this] { setRigEditorOpen(rigButton_.getToggleState()); };
     match_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
     match_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb27a));
     export_.setColour(juce::TextButton::buttonColourId, L::saw());
     export_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff140a04));
 
     presetButton_.setTitle("Preset");
-    presetButton_.setTooltip("Load a preset file...");
-    presetButton_.onClick = [this] { chooseFile(); };
+    presetButton_.setTooltip("Open the preset browser");
+    presetButton_.onClick = [this] { setBrowserOpen(!presetBrowser_->isVisible()); };
     addAndMakeVisible(presetButton_);
 
     for (juce::Label* c : {&latChip_, &modeChip_}) {
@@ -126,8 +147,14 @@ class SawbladeEditor::Content : public juce::Component {
       l->setInterceptsMouseClicks(false, false);
       addAndMakeVisible(*l);
     }
-    configure(browse_, "BROWSE CAPTURES", "Browse TONE3000 captures", true);
-    configure(learn_, "LEARN GATE", "Learn the gate threshold from the input", true);
+    configure(browse_, "BROWSE CAPTURES", "Browse TONE3000 captures", false);
+    browse_.onClick = [this] { openBrowser(); };
+    configure(learn_, "LEARN GATE", "Learn the gate threshold: stay silent for 1 s, the threshold is set 6 dB above your noise", false);
+    learn_.onClick = [this] {
+      rigController_->learnGate();
+      learnShownUntil_ = juce::Time::getMillisecondCounter() + 9000;
+      updateReadouts();
+    };
 
     auto addKnob = [this](const KnobDef& d) -> FilmstripKnob& {
       const ParamSpec& s = paramSpec(d.param);
@@ -141,9 +168,37 @@ class SawbladeEditor::Content : public juce::Component {
     for (int k = 0; k < kPostEqSlots; ++k) addKnob({kPostEqFirst + k, nullptr, FilmstripKnob::Kind::Pedal, 0xffff6a1a});
     knobs_[kGateThreshold]->onValueChange = [this] { updateReadouts(); };
 
+    // The live pedal controls: the face over the SAW pedal render, the advanced drawer to its right.
+    face_ = std::make_unique<PedalFace>(processor_);
+    addChildComponent(*face_);
+    drawer_ = std::make_unique<AdvancedDrawer>(processor_);
+    addChildComponent(*drawer_);
+    auto& sawPedal = rig_.piece(Piece::SawPedal);
+    sawPedal.setTooltip(sawPedal.getTitle() + " (click to select, double-click for the advanced controls)");
+    sawPedal.onDoubleClick = [this](Piece) { drawer_->toggle(); };
+
     panel_ = std::make_unique<PlayAlongPanel>(processor_);
     panel_->setVisible(false);
-    addChildComponent(*panel_);  // last child: on top of the rig and the inspector
+    addChildComponent(*panel_);  // on top of the rig and the inspector
+
+    rigController_ = std::make_unique<rig::RigController>(processor_);
+    rigPanel_ = std::make_unique<rig::RigEditorPanel>(processor_, *rigController_);
+    rigPanel_->setVisible(false);
+    addChildComponent(*rigPanel_);  // last child; opening either overlay brings it to the front
+    micPage_ = std::make_unique<MicPage>(processor_);
+    micPage_->setVisible(false);
+    micPage_->onClose = [this] { setMicPageOpen(false); };
+    rig_.onCabOpen = [this] { setMicPageOpen(true); };
+    addChildComponent(*micPage_);
+    presetBrowser_ = std::make_unique<PresetBrowser>(processor_);
+    presetBrowser_->setVisible(false);
+    presetBrowser_->onClose = [this] { setBrowserOpen(false); };
+    presetBrowser_->onLoadFile = [this] { chooseFile(); };
+    addChildComponent(*presetBrowser_);  // last child: on top of everything below the top bar
+    screen_ = std::make_unique<MatchScreen>(processor_);
+    addChildComponent(*screen_);  // last child: covers everything below the top bar
+    panel_->onMatch = [this] { openMatchScreen(false); };
+    panel_->onExport = [this] { openMatchScreen(true); };
 
     settingsPanel_ = std::make_unique<settings::SettingsPanel>(processor_, settings::Settings::shared());
     settingsPanel_->setVisible(false);
@@ -192,12 +247,13 @@ class SawbladeEditor::Content : public juce::Component {
     wordmark_.setBounds(18, 8, 190, 42);
     int x = 226;
     prev_.setBounds(x, y, 34, h);
-    presetButton_.setBounds(x + 34, y, 214, h);
-    next_.setBounds(x + 34 + 214, y, 34, h);
-    x += 34 + 214 + 34 + 12;
-    ab_.setBounds(x, y, 70, h);
-    playAlong_.setBounds(x + 70 + 12, y, 104, h);
-    settingsBtn_.setBounds(x + 70 + 12 + 104 + 12, y, 34, h);
+    presetButton_.setBounds(x + 34, y, 170, h);
+    next_.setBounds(x + 34 + 170, y, 34, h);
+    x += 34 + 170 + 34 + 12;
+    ab_.setBounds(x, y, 52, h);
+    playAlong_.setBounds(x + 52 + 12, y, 104, h);
+    rigButton_.setBounds(x + 52 + 12 + 104 + 12, y, 64, h);
+    settingsBtn_.setBounds(x + 52 + 12 + 104 + 12 + 64 + 12, y, 34, h);
     int r = kDesignWidth - 18;
     export_.setBounds(r - 130, y, 130, h);
     r -= 130 + 12;
@@ -208,9 +264,18 @@ class SawbladeEditor::Content : public juce::Component {
     latChip_.setBounds(r - 136, y + 2, 136, 30);
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
+    {
+      const auto pedal = rig_.piece(Piece::SawPedal).getBounds() + rig_.getPosition();
+      face_->setBounds(pedal);
+      drawer_->setAnchor(pedal, rig_.getBounds().withTrimmedRight(24));
+    }
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
+    screen_->setBounds(0, kTopBar, MatchScreen::kWidth, kDesignHeight - kTopBar);
     settingsPanel_->setBounds(0, kTopBar, settings::SettingsPanel::kWidth, settings::SettingsPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
+    rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
+    micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
+    presetBrowser_->setBounds(0, kTopBar, PresetBrowser::kWidth, PresetBrowser::kHeight);
 
     const int ix = kInspX + 16, iw = kInspW - 32;
     selKind_.setBounds(ix, kTopBar + 14, iw, 16);
@@ -251,24 +316,38 @@ class SawbladeEditor::Content : public juce::Component {
       message_.setText({}, juce::dontSendNotification);
     }
 
+    // Single topologies: path B is off, so its level and the blend are not editable (spec 4.1).
+    const bool blendOn = rig::topologyOf(processor_.editBasePreset()) == rig::Topology::Blend;
+    knobs_[kBlend]->setEnabled(blendOn);
+    knobs_[kLevelB]->setEnabled(blendOn);
+
     const SlotBands bands = processor_.postEqSlots();
     for (int k = 0; k < kPostEqSlots; ++k) knobs_[static_cast<size_t>(kPostEqFirst + k)]->setEnabled(bands[static_cast<size_t>(k)] >= 0);
     updateReadouts();
+    face_->refresh();
+    if (drawer_->isVisible()) drawer_->refresh();
     if (settingsPanel_ && settingsPanel_->isVisible()) settingsPanel_->refresh();
   }
 
   void updateReadouts() {
     const double b = knobs_[kBlend]->getValue();
+    const bool showLearn = rigController_ && (rigController_->learning() ||
+                                              (rigController_->learnStatus().size() > 0 && static_cast<juce::int32>(learnShownUntil_ - juce::Time::getMillisecondCounter()) > 0));
     blendRead_.setText("SAW " + juce::String(juce::roundToInt((1.0 - b) * 100.0)) + " / BODY " + juce::String(juce::roundToInt(b * 100.0)),
                        juce::dontSendNotification);
-    thr_.setText("thr " + juce::String(knobs_[kGateThreshold]->getValue(), 1) + " dB", juce::dontSendNotification);
+    thr_.setText(showLearn ? juce::String(rigController_->learnStatus())
+                           : "thr " + juce::String(knobs_[kGateThreshold]->getValue(), 1) + " dB",
+                 juce::dontSendNotification);
   }
 
   skin::RigView& rig() { return rig_; }
 
   void setPlayAlongOpen(bool open) {
     panel_->setVisible(open);
-    if (open) panel_->refresh();
+    if (open) {
+      panel_->refresh();
+      panel_->toFront(false);
+    }
     playAlong_.setToggleState(open, juce::dontSendNotification);
   }
   bool playAlongOpen() const { return panel_->isVisible(); }
@@ -279,9 +358,83 @@ class SawbladeEditor::Content : public juce::Component {
   }
   bool settingsOpen() const { return settingsPanel_->isVisible(); }
   bool aboutOpen() const { return about_ != nullptr && about_->isVisible(); }
+
+  // The capture browser overlay for the selected piece (closed with its "< RIG" button).
+  void openBrowser() {
+    if (browser_ != nullptr) return;
+    static constexpr Slot kSlots[] = {Slot::SawAmp, Slot::BodyAmp, Slot::Cab, Slot::SawPedal, Slot::BodyPedal};  // Piece order
+    if (!browserSettings_) browserSettings_ = std::make_unique<BrowserSettings>();
+    browser_ = std::make_unique<CaptureBrowser>(processor_, *browserSettings_, kSlots[static_cast<size_t>(rig_.selected())]);
+    browser_->onClose = [this] {
+      browser_->setVisible(false);
+      juce::MessageManager::callAsync([safe = juce::Component::SafePointer<Content>(this)] {
+        if (safe != nullptr) safe->browser_.reset();
+      });
+    };
+    addAndMakeVisible(*browser_);
+    browser_->setBounds(0, 0, kDesignWidth, kDesignHeight);
+  }
+  void setRigEditorOpen(bool open) {
+    rigPanel_->setVisible(open);
+    if (open) {
+      rigPanel_->refresh();
+      rigPanel_->toFront(false);
+    }
+    rigButton_.setToggleState(open, juce::dontSendNotification);
+  }
+  bool rigEditorOpen() const { return rigPanel_->isVisible(); }
+  rig::RigEditorPanel& rigEditor() { return *rigPanel_; }
   void refreshPanel() {
     if (panel_->isVisible()) panel_->refresh();
+    if (rigPanel_->isVisible()) rigPanel_->refresh();
   }
+  void setBrowserOpen(bool open) {
+    if (open) micPage_->setVisible(false);
+    presetBrowser_->setVisible(open);
+    if (open) {
+      presetBrowser_->toFront(false);
+      presetBrowser_->open();
+    }
+  }
+  bool browserOpen() const { return presetBrowser_->isVisible(); }
+  PresetBrowser& browser() { return *presetBrowser_; }
+  AbCompare& abCompare() { return abCompare_; }
+  void stepPreset(int dir) {
+    if (presetBrowser_->library().entries().empty()) presetBrowser_->scanBlocking();
+    presetBrowser_->step(dir);
+  }
+  void mouseDown(const juce::MouseEvent& e) override {
+    if (e.eventComponent != &ab_ || !e.mods.isPopupMenu()) return;
+    juce::PopupMenu m;
+    m.addItem(1, juce::String::fromUTF8("Copy A \xe2\x86\x92 B"));
+    m.addItem(2, juce::String::fromUTF8("Copy B \xe2\x86\x92 A"));
+    m.addItem(3, "Reset compare");
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&ab_), [this](int r) {
+      if (r == 1) abCompare_.copyAToB();
+      else if (r == 2) abCompare_.copyBToA();
+      else if (r == 3) abCompare_.reset();
+      ab_.setButtonText(abCompare_.label());
+    });
+  }
+  void setMicPageOpen(bool open) {
+    if (open) presetBrowser_->setVisible(false);
+    micPage_->setVisible(open);
+    if (open) {
+      micPage_->toFront(false);
+      micPage_->open();
+    }
+  }
+  bool micPageOpen() const { return micPage_->isVisible(); }
+  MicPage& micPage() { return *micPage_; }
+  void refreshMicPage() {
+    if (micPage_->isVisible()) micPage_->refresh();
+  }
+  void openMatchScreen(bool exportMode) {
+    screen_->open(exportMode ? MatchScreen::Mode::Export : MatchScreen::Mode::Match);
+    screen_->toFront(false);  // above an open rig editor / mic page / preset browser overlay
+  }
+  bool matchScreenOpen() const { return screen_->isVisible(); }
+  void refreshScreen() { screen_->refresh(); }
 
  private:
   static juce::Rectangle<int> matchBox() { return {kInspX + 16, kDesignHeight - 14 - 64, kInspW - 32, 64}; }
@@ -332,10 +485,21 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
   SawbladeProcessor& processor_;
+  AbCompare abCompare_{processor_};
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
-  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, settingsBtn_;
+  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, settingsBtn_;
+  juce::uint32 learnShownUntil_ = 0;
+  std::unique_ptr<PedalFace> face_;
+  std::unique_ptr<AdvancedDrawer> drawer_;
   std::unique_ptr<PlayAlongPanel> panel_;
+  std::unique_ptr<BrowserSettings> browserSettings_;
+  std::unique_ptr<CaptureBrowser> browser_;  // declared after the settings it uses
+  std::unique_ptr<rig::RigController> rigController_;  // before the panel that uses it
+  std::unique_ptr<rig::RigEditorPanel> rigPanel_;
+  std::unique_ptr<MicPage> micPage_;
+  std::unique_ptr<PresetBrowser> presetBrowser_;
+  std::unique_ptr<MatchScreen> screen_;
   std::unique_ptr<settings::SettingsPanel> settingsPanel_;
   std::unique_ptr<about::AboutBox> about_;
   skin::RigView rig_;
@@ -377,26 +541,44 @@ double SawbladeEditor::contentScale() const { return static_cast<double>(getWidt
 skin::Piece SawbladeEditor::selectedPiece() const { return content_->rig().selected(); }
 
 void SawbladeEditor::timerCallback() {
-  if ((tick_++ & 3) == 0) content_->refresh();  // 4 Hz; the open play-along panel refreshes at the full rate
+  if ((tick_++ & 3) == 0) {  // 4 Hz; the open play-along panel refreshes at the full rate
+    content_->refresh();
+    content_->refreshMicPage();
+    content_->refreshScreen();
+  }
   content_->refreshPanel();
 }
 
 void SawbladeEditor::setPlayAlongOpen(bool open) { content_->setPlayAlongOpen(open); }
+void SawbladeEditor::setRigEditorOpen(bool open) { content_->setRigEditorOpen(open); }
+bool SawbladeEditor::rigEditorOpen() const { return content_->rigEditorOpen(); }
+rig::RigEditorPanel& SawbladeEditor::rigEditor() { return content_->rigEditor(); }
 bool SawbladeEditor::playAlongOpen() const { return content_->playAlongOpen(); }
 void SawbladeEditor::setSettingsOpen(bool open) { content_->setSettingsOpen(open); }
 bool SawbladeEditor::settingsOpen() const { return content_->settingsOpen(); }
 bool SawbladeEditor::aboutOpen() const { return content_->aboutOpen(); }
+void SawbladeEditor::setMicPageOpen(bool open) { content_->setMicPageOpen(open); }
+bool SawbladeEditor::micPageOpen() const { return content_->micPageOpen(); }
+MicPage& SawbladeEditor::micPage() { return content_->micPage(); }
+void SawbladeEditor::setBrowserOpen(bool open) { content_->setBrowserOpen(open); }
+bool SawbladeEditor::browserOpen() const { return content_->browserOpen(); }
+PresetBrowser& SawbladeEditor::browser() { return content_->browser(); }
+AbCompare& SawbladeEditor::abCompare() { return content_->abCompare(); }
+void SawbladeEditor::openMatchScreen(bool exportMode) {
+  content_->openMatchScreen(exportMode);
+}
+bool SawbladeEditor::matchScreenOpen() const { return content_->matchScreenOpen(); }
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
   for (const auto& f : files)
-    if (juce::File(f).isDirectory()) return true;
+    if (juce::File(f).isDirectory() || isSongFileName(f.toStdString())) return true;
   return false;
 }
 
 void SawbladeEditor::filesDropped(const juce::StringArray& files, int, int) {
   for (const auto& f : files) {
-    if (!juce::File(f).isDirectory()) continue;
-    processor_.playAlong().loadFolder(f.toStdString(), /*userInitiated=*/true);
+    if (!juce::File(f).isDirectory() && !isSongFileName(f.toStdString())) continue;
+    processor_.playAlong().loadSong(f.toStdString(), /*userInitiated=*/true);
     setPlayAlongOpen(true);
     return;
   }

@@ -20,6 +20,7 @@ Readers must reject `version` greater than they support and migrate lower versio
   "version": 1,                        // required, integer
   "name": "Gatecreeper-ish v1",        // required
   "notes": "",                         // optional free text
+  "category": "Death metal",           // optional UI metadata (see Category); not tone, ignored by the chain
   "input":  { "gainDb": 0.0 },         // optional
   "gate":   { ... },                   // optional; see Gate
   "paths":  { "a": Path, "b": Path },  // required; both keys required
@@ -88,18 +89,23 @@ Every block shares these fields; the rest depend on `type`:
 }
 ```
 
-Block types in v1:
+Block types:
 
-| `type` | Purpose | Type-specific fields |
-|---|---|---|
-| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below |
-| `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` |
+| `type` | Purpose | Type-specific fields | NAM-trainable | Latency |
+|---|---|---|---|---|
+| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below | yes | the model's |
+| `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` | yes | 0 |
+| `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology), the CHAINSAW circuit | `modelVersion` (1 or 2), `params`; see PedalHm below | yes | 50 samples (at any rate) |
+| `pedal.muff` | Modeled "big fuzz" (Big-Muff-family topology), the BIG FUZZ circuit | `modelVersion` (1), `params`; see PedalMuff below | yes | 50 samples (at any rate) |
+| `pedal.ts` | Modeled "green overdrive" (Tube-Screamer topology) | `modelVersion`, `params`; see PedalTs below | yes | 50 samples (at any rate) |
 
-Unknown `type` values are a parse error in v1. Future types (modeled pedal recreations, e.g.
-`"type": "pedal.hm"` with `"params": { ... }` and `"modelVersion": 1`) are added to the
-registry without changing this schema's shape. Each registered type declares in code:
-latency, and whether it is **NAM-trainable** (time-based effects — delay, reverb,
-modulation, long-release dynamics — are not; the export phase refuses or bypasses them).
+Unknown `type` values are a parse error. New block types (further modeled pedal recreations)
+are added to the registry without changing this schema's shape: they use `"params": { ... }`
+and `"modelVersion": N`. Each registered type declares in code: latency, and whether it is
+**NAM-trainable** (time-based effects — delay, reverb, modulation, long-release dynamics — are
+not; the export phase refuses or bypasses them). The modeled pedals are DSP models, not
+captures: they are static, nonlinear and time-invariant, so they are NAM-trainable, and they
+carry no TONE3000 license or creator. UI names are generic descriptors (no trademarks).
 
 ### NamBlock (`type: "nam"`)
 
@@ -114,6 +120,128 @@ modulation, long-release dynamics — are not; the export phase refuses or bypas
   "model": Capture
 }
 ```
+
+### PedalHm (`type: "pedal.hm"`), PedalMuff (`type: "pedal.muff"`) and PedalTs (`type: "pedal.ts"`)
+
+Modeled pedals (DSP, no capture files). Generic UI names: `pedal.hm` = **"Swedish chainsaw
+distortion"** (CHAINSAW circuit), `pedal.muff` = **"big fuzz"** (BIG FUZZ circuit), `pedal.ts` =
+**"green overdrive"**. Typical `slot`: `"pedal"` for the first two, `"boost"` for the TS model, but
+any slot is accepted. The player-facing description of every control is in `docs/PEDALS.md`.
+
+```jsonc
+{ "id": "a1", "type": "pedal.hm", "slot": "pedal", "bypass": false,
+  "modelVersion": 2,                    // optional, default 1 (the phase 7 four-knob object)
+  "params": { "level": 2, "low": 10, "high": 10, "distortion": 10, "mode": "stock", "clip": "silicon" } }
+{ "id": "a1", "type": "pedal.muff", "slot": "pedal", "modelVersion": 1,
+  "params": { "sustain": 10, "tone": 7, "scoop": 8, "volume": 4 } }
+{ "id": "b1", "type": "pedal.ts", "slot": "boost",
+  "modelVersion": 1, "params": { "drive": 2, "tone": 6, "level": 8 } }
+```
+
+#### `pedal.hm` parameters
+
+| key | type / range | default | meaning |
+|---|---|---|---|
+| `level` | 0-10 | 5 | output level, `3*level - 24` dB (0 dB at 8); wet path only |
+| `low` | 0-10 | 5 | low gyrator gain, `-12 + s_low*low` dB |
+| `high` | 0-10 | 5 | both high gyrators, `-8 + 2.2*high` dB |
+| `distortion` | 0-10 | 5 | stage-1 gain, `6 + s1*distortion + gain1Db` dB |
+| `tightness` | 0-10 | 0 | input high-pass `20 * 10^(tightness/10)` Hz (20-200 Hz); the dry signal is tapped before it |
+| `mix` | 0-100 (%) | 100 | wet proportion; `out = (1-m)*dry[n-50] + m*level*wet` |
+| `mode` | `stock` \| `custom` \| `modded` | `stock` | `custom`: `s_low` 3.6, `s1` 4.6 (more low and gain); `modded`: interstage and post-clip LPFs at 9 kHz |
+| `clip` | `silicon` \| `led` \| `asymmetric` \| `soft` | `silicon` | clipper of stage 1 (and stage 2 while `clip2` is `follow`) |
+| `clip2` | `follow` \| the four clip names | `follow` | clipper of stage 2 |
+| `lowFreq` | 60-160 Hz | 100 | low gyrator centre |
+| `lowQ` | 0.5-2.0 | 0.8 | low gyrator Q (wide 0.8, narrow 1.6) |
+| `highFreq` | 800-2000 Hz | 1000 | high gyrator A centre |
+| `highSpread` | 1.0-2.0 | 1.5 | gyrator B centre = `highFreq * highSpread` |
+| `presenceFreq` | 3000-7000 Hz | 4800 | presence peak centre (Q 2) |
+| `presenceDb` | 0-16 dB | 8 | presence peak gain |
+| `rolloffHz` | 4000-12000 Hz | 9000 | output low-pass corner |
+| `gain1Db` | -12..+12 dB | 0 | trim on the stage-1 gain |
+| `gain2Db` | -12..+12 dB | 0 | trim on the interstage gain (stock +20 dB) |
+| `bias` | 0-10 | 0 | asymmetry: negative knee scaled by `1 - 0.5*bias/10` on both stages |
+
+All fixed voicing constants (pre-filter corners, mode LPF corners, interstage gain, gyrator Qs, mode
+slopes) live in the `HmVoicing` table in `core/include/sawblade/pedal_hm.h`.
+
+**Versions.** `modelVersion` 1 (the default when absent) may set only `level`, `low`, `high`,
+`distortion`; any other key is a PresetError. A v1 block maps onto the v2 defaults and renders
+**bit-identically** to the phase 7 implementation (golden `tests/golden/hm_chainsaw_v1.wav`,
+`ts_boost_v1.wav`). `modelVersion` 2 may set any key. `toJson()` always writes `modelVersion: 2`
+with every key (enums as strings), so parse -> write -> parse is exact. Any other version (0, 3)
+is a PresetError.
+
+#### `pedal.muff` parameters (`modelVersion` 1)
+
+| key | type / range | default | meaning |
+|---|---|---|---|
+| `volume` | 0-10 | 5 | output level, `3*volume - 24` dB (wet only) |
+| `sustain` | 0-10 | 5 | stage-A gain, `6 + 3*sustain` dB |
+| `tone` | 0-10 | 5 | tone-stack blend, dark -> bright |
+| `scoop` | 0-10 | 3 | extra mid notch at the stack centre, `-1.6*scoop` dB |
+| `crunch` | 0-10 | 5 | clipping compression: both knees x `1.2 - 0.08*crunch` |
+| `voice` | 0-10 | 5 | stack centre `860 * 2^((voice-5)/5)` Hz (430 Hz .. 1.72 kHz) |
+| `tightness` | 0-10 | 0 | input high-pass as in `pedal.hm` |
+| `mix` | 0-100 (%) | 100 | wet proportion |
+| `clip`, `clip2` | as `pedal.hm` | `silicon`, `follow` | stage A / stage B clipper |
+| `stackRatio` | 2.0-8.0 | 4.4 | stack corner ratio `fH/fL` (scoop width) |
+| `rolloffHz` | 4000-12000 Hz | 10000 | output low-pass corner |
+| `gain2Db` | -12..+12 dB | 0 | trim on the stage-B gain (stock +18 dB) |
+| `bias` | 0-10 | 0 | asymmetry as `pedal.hm` |
+
+`modelVersion: 2` on `pedal.muff` is a PresetError.
+
+#### The clip table (shared by both circuits)
+
+| `clip` | knees k+ / k- | shape order | character |
+|---|---|---|---|
+| `silicon` | 0.5 / 0.5 | cubic | stock diode pair |
+| `led` | 1.4 / 1.4 | quintic | louder, harder knee |
+| `asymmetric` | 0.5 / 0.3 | cubic | even harmonics |
+| `soft` | 0.3 / 0.3 | cubic | earlier, rounder, quieter |
+
+Cubic: `c(u) = u - u^3/(3k^2)`, saturating at `2k/3`. Quintic: `c(u) = u - u^5/(5k^4)`, saturating at
+`4k/5`, slope `1 - (u/k)^4`.
+
+#### `pedal.ts` parameters
+
+| Param | Range | Default | Meaning |
+|---|---|---|---|
+| `drive` | 0-10 | 5 | feedback-loop gain, `Rd/4.7k` with `Rd = 51k + 500k*drive/10` |
+| `tone` | 0-10 | 5 | 1st-order low-pass, 723 Hz .. 7.23 kHz |
+| `level` | 0-10 | 5 | output level, `3*level - 24` dB |
+
+#### Rules common to the modeled pedals
+
+- Out of range, wrong type, an unknown enum string, an unknown key inside `params` (including
+  another type's key), or a `params` that is not an object, is a PresetError (exit 3). A preset
+  naming a `modelVersion` this build does not know is rejected instead of silently sounding
+  different; a later re-fit that changes the sound bumps it.
+- **Live parameters.** `pedal.hm` and `pedal.muff` can move every parameter while running
+  (`Processor::setLiveParams`, descriptors in `BlockType::liveParams`, `Chain::setBlockLiveParams`;
+  the plugin uses it). Gains ramp over 20 ms; filter coefficients are redesigned once at the next
+  block start (a small step is possible); enums and the clip knees apply immediately. With no live
+  change the render is bit-identical to a static build. `pedal.ts` is not live. Presets themselves
+  stay static.
+- Internals: the nonlinear stages run at 4x oversampling (linear-phase half-band FIRs) with
+  second-order antiderivative anti-aliasing (ADAA2); aliasing is below -80 dB at maximum gain
+  (see the phase 7b report for the table).
+- **Latency: 50 samples at every sample rate** for every mode and clip (oversampler round trip +
+  two ADAA samples, padded to a whole number of base-rate samples; IIR group delay is not counted;
+  the clean-mix dry path is delayed by the same 50). It is reported through the block's
+  `latencySamples()`, so `pathLatency`, `compensationDelay` and the plugin's reported latency
+  include it; a bypassed block adds none. In a preset with a pedal on one path only, the other
+  path is delayed by the same amount.
+- `namTrainable: true` for all three (static, nonlinear, time-invariant).
+- None of the models is a capture of a real unit; a later task fits them to captures and bumps
+  `modelVersion` if the sound changes.
+- Examples that render with files in this repo only: `presets/modeled/hm_chainsaw.json`,
+  `presets/modeled/ts_boost.json` (v1) and the bank `presets/modeled/chainsaw/*.json`:
+  `classic_buzzsaw`, `early_raw_demo`, `dbeat_crust`, `powerviolence_hardcore`, `grind`,
+  `death_n_roll`, `modern_tight_swedish`, `blend_partner`, `custom_wall`, `modded_nasty`,
+  `bass_chainsaw`, `clean_mix_texture` (CHAINSAW) and `pickle_chainsaw`, `pickle_doom_saw`,
+  `pickle_into_saw` (BIG FUZZ). See `presets/README.md`.
 
 ### Capture (shared by NAM models and IRs)
 
@@ -133,6 +261,19 @@ modulation, long-release dynamics — are not; the export phase refuses or bypas
 }
 ```
 License + creator travel with every preset so exports can carry attribution.
+
+**Capture cache fallback.** When a capture's `file` does not exist and `source.provider` is `"tone3000"` with `id` and
+`modelId`, every core loader (tonerender, plugin, bindings) tries `<cacheRoot>/<id>/<modelId>.nam` (`.wav` for IRs).
+`cacheRoot` is `$SAWBLADE_CACHE_DIR` if set, else `~/.cache/sawblade/captures` (the same as `sawblade-t3k`). `sha256` is
+verified against the cached file; a mismatch is an error. A capture that is not cached either fails with the JSON path
+plus "not in the capture cache either; run: sawblade-t3k resolve <preset file>".
+
+## Category
+
+Optional top-level `"category": "<string>"`: a label for the preset browser. It is UI metadata, not tone: the chain and
+the render ignore it, and the writer writes it only when it is non-empty. Recommended values: "Death metal",
+"Swedish death (HM-2)", "Black metal", "Thrash", "Doom / Sludge / Fuzz", "Hardcore / Crust", "Grind",
+"Metalcore / Djent", "Nu-metal", "Prog", "Other". Every factory preset sets one.
 
 ## EqBand (RBJ biquads, cascaded in array order)
 
@@ -166,8 +307,9 @@ different latency calibration, pedal phase shifts, etc.).
   including each path's own IR in `perPath` mode (different IRs carry different mic/onset
   delays, which must be aligned too). The lag maximizing |cross-correlation| within
   ±`maxLagMs` sets `delaySamplesB`; a negative peak sets `invertB = true`. The resolved
-  values are written to the render report (and in the plugin, back into the preset as
-  `manual`, so a preset always replays identically).
+  values are written to the render report. In the plugin a preset that is `auto` at load time stays `auto`
+  (it re-resolves deterministically on every load); only the rig editor's RE-MEASURE writes the result back
+  into the preset as `manual`, with the measured `delaySamplesB` / `invertB`.
 - `manual`: use the stored values. `off`: no alignment beyond latency compensation.
 
 ## Blend
@@ -180,12 +322,21 @@ so linear keeps level roughly constant; equal-power would bump the middle by up 
 ```jsonc
 "cab": { "mode": "shared",  "ir": Capture, "enabled": true }                 // live-compatible
 "cab": { "mode": "perPath", "irA": Capture, "irB": Capture, "enabled": true } // studio blend
+"cab": { "mode": "irMix", "irA": Capture, "irB": Capture, "mix": 0.5, "enabled": true } // two mics, one cab
 ```
 - `shared`: the blended signal is convolved with one IR. **Live-compatible**: a no-cab NAM
   export (`blend` of the two paths before the cab) plus that IR (convolved with post EQ) is
   exact.
 - `perPath`: each path is convolved with its own IR before the blend. **Studio blend**: only
   the with-cab export is exact. The UI must state this.
+- `irMix`: two IRs (typically two mic shots of one cab) combined into **one** IR,
+  `h = (1 − mix) · hA + mix · hB`. Each IR is loaded exactly as in `shared` (left channel,
+  resampled, truncated to 2.0 s, L2-normalised when `normalize` is true); the shorter one is
+  zero-padded; the sum is **not** re-normalised. `mix` is in [0, 1] (default 0.5; out of range is
+  a preset error), `irA` and `irB` are both required, and the strict-key rules hold: `ir` is
+  rejected in `irMix` mode and `mix` in the other modes. One convolver runs on `h` at the same
+  place in the chain and with the same latency as `shared`. It is still one combined IR, so
+  the no-cab export is exact (**live-compatible**).
 - IR files: mono WAV (stereo → left channel used, with a warning), any rate (resampled at
   load), truncated to 2.0 s max, normalized so the IR's L2 norm equals 1 unless
   `"normalize": false` is set on the cab object.
@@ -220,13 +371,17 @@ clamped (the plugin reader never throws). Songs and their stems are never stored
   "guitarMode": "mute",                 // "mute" | "ghost" | "full": what the song's own guitar stem does
   "backingLevelDb": 0.0,                // -40..+6; a state restore keeps it (the loudness suggestion is for user loads)
   "otherRole": "guitar",                // "guitar": a 4-stem `other` is the guitar | "other": keep it (KEEP KEYS)
+  "songFile": "/path/song.mp3",         // optional, only when a song FILE was loaded (separated on this machine; exclusive with folder)
+  "separationModel": "htdemucs",        // optional, only when the 4-stem fallback is chosen (default htdemucs_6s)
   "hostSync": false                     // plugin only: follow the host transport
 }
 ```
 
 ## Derived properties (not stored; reported by tonerender / plugin)
 
-- `liveCompatible` = `cab.mode == "shared"`.
+- `liveCompatible` = `cab.mode` is `"shared"` or `"irMix"`.
+- `cabMode` (render report): `"shared"`, `"perPath"` or `"irMix"`; the report's `captures` lists
+  `cab.irA` and `cab.irB` for `irMix`.
 - `exportExactness`: `{ "withCab": true, "noCab": liveCompatible }`.
 - `latencySamples` per path and total: processing latency only (alignment delay is part of
   the tone and reported separately as `alignDelay`).

@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Fuzz Doom (Electric Wizard / Conan-style)",
+  "category": "Doom / Sludge / Fuzz",
   "notes": "Sovtek tall-font Big Muff into a Sunn Model T at low gain, Orange V30 cab: huge, dark, woolly. Lead-designed starter preset (not matched). Captures referenced by TONE3000 id.",
   "gate": {
     "enabled": true,

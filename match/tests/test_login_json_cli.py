@@ -55,15 +55,16 @@ def test_whoami_json_error_shape(respx_mock, monkeypatch, capsys):
     monkeypatch.delenv("TONE3000_CLIENT_ID")
     assert cli.main(["whoami", "--json"]) == 1
     out, objs = lines(capsys)
-    assert len(objs) == 1 and list(objs[0]) == ["error"] and "TONE3000_CLIENT_ID" in objs[0]["error"]
+    assert len(objs) == 1 and set(objs[0]) == {"error", "code"} and objs[0]["code"] == "auth"
+    assert "TONE3000_CLIENT_ID" in objs[0]["error"]
 
 
 def test_whoami_json_api_error(api, respx_mock, make_client, monkeypatch, capsys):
     respx_mock.post(TOK_URL).respond(400, json={"error": "invalid_grant"})
     monkeypatch.setattr(cli, "make_client", lambda: make_client(access="wrong"))
-    assert cli.main(["whoami", "--json"]) == 1
+    assert cli.main(["whoami", "--json"]) == cli.EXIT_NOT_LOGGED_IN
     _, objs = lines(capsys)
-    assert len(objs) == 1 and set(objs[0]) == {"error"} and objs[0]["error"]
+    assert len(objs) == 1 and set(objs[0]) == {"error", "code"} and objs[0]["error"]
 
 
 def test_whoami_plain_unchanged(api, make_client, monkeypatch, capsys):
@@ -97,7 +98,8 @@ def test_login_json_failure_is_json(respx_mock, capsys):
     respx_mock.post(TOK_URL).respond(400, json={"error": "access_denied"})
     assert cli.main(["login", "--json"]) == 1
     out, objs = lines(capsys)
-    assert [o["event"] for o in objs] == ["device_code", "error"] and "declined" in objs[1]["message"]
+    assert objs[0]["event"] == "device_code" and len(objs) == 2
+    assert set(objs[1]) == {"error", "code"} and "declined" in objs[1]["error"]
     assert NEW_REFRESH not in out
 
 
@@ -105,11 +107,11 @@ def test_login_json_device_error_and_missing_env(respx_mock, monkeypatch, capsys
     respx_mock.post(DEV_URL).respond(500, json={})
     assert cli.main(["login", "--json"]) == 1
     _, objs = lines(capsys)
-    assert len(objs) == 1 and objs[0]["event"] == "error"
+    assert len(objs) == 1 and set(objs[0]) == {"error", "code"}
     monkeypatch.delenv("TONE3000_CLIENT_ID")
     assert cli.main(["login", "--json"]) == 1
     _, objs = lines(capsys)
-    assert objs[0]["event"] == "error" and "TONE3000_CLIENT_ID" in objs[0]["message"]
+    assert objs[0]["code"] == "auth" and "TONE3000_CLIENT_ID" in objs[0]["error"]
 
 
 def test_login_plain_still_prints_refresh_token(respx_mock, capsys):
@@ -125,7 +127,7 @@ def test_login_json_unexpected_exception_is_one_error_line(monkeypatch, capsys):
     monkeypatch.setattr(cli, "request_device_code", boom)
     assert cli.main(["login", "--json"]) == 1
     out, objs = lines(capsys)
-    assert objs == [{"event": "error", "message": "boom"}]
+    assert objs == [{"error": "RuntimeError: boom", "code": "error"}]
 
 
 def test_whoami_json_unexpected_exception_is_one_error_line(monkeypatch, capsys):
@@ -134,7 +136,7 @@ def test_whoami_json_unexpected_exception_is_one_error_line(monkeypatch, capsys)
     monkeypatch.setattr(cli.T3KClient, "get_user", boom)
     assert cli.main(["whoami", "--json"]) == 1
     out, objs = lines(capsys)
-    assert objs == [{"error": "boom"}]
+    assert objs == [{"error": "RuntimeError: boom", "code": "error"}]
 
 
 def test_login_json_token_store_failure(respx_mock, monkeypatch, capsys):
@@ -145,7 +147,8 @@ def test_login_json_token_store_failure(respx_mock, monkeypatch, capsys):
     monkeypatch.setattr(cli.TokenStore, "save", fail)
     assert cli.main(["login", "--json"]) == 1
     out, objs = lines(capsys)
-    assert [o["event"] for o in objs] == ["device_code", "error"] and "disk full" in objs[1]["message"]
+    assert objs[0]["event"] == "device_code" and len(objs) == 2
+    assert set(objs[1]) == {"error", "code"} and "disk full" in objs[1]["error"]
     assert NEW_REFRESH not in out and NEW_ACCESS not in out
 
 
@@ -182,3 +185,20 @@ def test_whoami_json_with_env_seed_stdout_all_json(api, respx_mock, monkeypatch,
     cli.main(["whoami", "--json"])
     out, objs = lines(capsys)          # every line parses as JSON
     assert len(objs) == 1 and SECRET_REFRESH not in out and "ref-ROT" not in out
+
+
+def test_login_json_events_alias_same_output(respx_mock, capsys):
+    mock_flow(respx_mock)
+    assert cli.main(["login", "--json-events"]) == 0
+    _, objs = lines(capsys)
+    assert [o["event"] for o in objs] == ["device_code", "logged_in"] and objs[1]["username"] == "alice"
+
+
+def test_login_json_user_fetch_failure_still_logged_in(respx_mock, capsys):
+    mock_flow(respx_mock)
+    respx_mock.get(f"{BASE}/api/v1/user").respond(500, json={})
+    assert cli.main(["login", "--json"]) == 0
+    out, objs = lines(capsys)
+    assert [o["event"] for o in objs] == ["device_code", "logged_in"]
+    assert set(objs[1]) == {"event", "token_file"}
+    assert NEW_REFRESH not in out and NEW_ACCESS not in out

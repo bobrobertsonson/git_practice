@@ -90,9 +90,11 @@ std::optional<std::string> Env::var(std::string_view name) const {
 
 fs::path Paths::settingsFile(const Env& env) {
   if (auto v = env.var("SAWBLADE_SETTINGS_FILE")) return fs::path(*v);
+  // Same file as presets/T3kTool's settingsFile() (<appdata>/settings.json); both stores keep each other's keys.
+  if (auto v = env.var("SAWBLADE_APPDATA")) return fs::path(*v) / "settings.json";
   if (env.isMac) return env.home / "Library" / "Application Support" / "Sawblade" / "settings.json";
-  if (auto x = env.var("XDG_CONFIG_HOME")) return fs::path(*x) / "sawblade" / "settings.json";
-  return env.home / ".config" / "sawblade" / "settings.json";
+  if (auto x = env.var("XDG_DATA_HOME")) return fs::path(*x) / "sawblade" / "settings.json";
+  return env.home / ".local" / "share" / "sawblade" / "settings.json";
 }
 fs::path Paths::tokenFile(const Env& env) {
   if (auto v = env.var("SAWBLADE_T3K_TOKEN_FILE")) return fs::path(*v);
@@ -191,6 +193,26 @@ std::string Settings::load() {
 
 std::string Settings::saveLocked() {
   doc_["version"] = 1;
+  {
+    // Read-modify-write: another store (presets/T3kTool: t3kExecutable, factoryPresetDir) may have written keys since
+    // we loaded. The file wins for keys we do not own; for our own keys the in-memory document wins (including removal).
+    static const char* const kOwned[] = {"version",    "matchVenvDir", "captureCacheDir", "tone3000ClientId", "separationModel",
+                                         "takesDir",   "theme",        "uiScale",         "firstRunCompleted"};
+    std::ifstream in(file_, std::ios::binary);
+    if (in) {
+      const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      auto disk = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
+      if (disk.is_object()) {
+        for (const char* k : kOwned) {
+          disk.erase(k);
+          if (auto it = doc_.find(k); it != doc_.end()) disk[k] = *it;
+        }
+        for (auto it = doc_.begin(); it != doc_.end(); ++it)
+          if (!disk.contains(it.key()) && std::find(std::begin(kOwned), std::end(kOwned), it.key()) == std::end(kOwned)) disk[it.key()] = it.value();
+        doc_ = std::move(disk);
+      }
+    }
+  }
   std::error_code ec;
   const fs::path dir = file_.parent_path();
   if (!dir.empty() && !fs::exists(dir, ec)) {

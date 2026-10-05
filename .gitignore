@@ -12,3 +12,8 @@ testdata/
 .claude/worktrees/
 calibration_out/
 .mac_update_last
+
+# Model / runtime binaries (derivative weights, ONNX Runtime tarballs): never committed
+*.onnx
+*.ort
+*.tgz

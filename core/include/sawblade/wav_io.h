@@ -15,8 +15,10 @@ struct AudioFile {
 // Throws std::runtime_error (message contains the path) on any failure.
 AudioFile readWav(const std::filesystem::path& path);
 
-// Load-time only. Reads a WAV (readWav) or FLAC file, chosen by the extension (".wav" / ".flac",
-// case-insensitive); FLAC is decoded to float in [-1, 1] (16/24-bit exact). Throws
+// Load-time only. Reads a WAV (readWav), FLAC or MP3 file, chosen by the extension (".wav" / ".flac" /
+// ".mp3", case-insensitive); FLAC is decoded to float in [-1, 1] (16/24-bit exact), MP3 with dr_mp3
+// (the decoder's delay / padding frames are not trimmed). m4a / aac are not supported in core (the
+// plugin decodes them with the platform decoder). Throws
 // std::runtime_error (message contains the path) for any other extension or on decode failure.
 AudioFile readAudioFile(const std::filesystem::path& path);
 

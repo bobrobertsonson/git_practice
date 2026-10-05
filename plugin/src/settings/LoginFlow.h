@@ -12,8 +12,9 @@ namespace sawblade::plugin::settings {
 // `sawblade-t3k login --json` (docs/specs/phase11_settings.md section 8):
 //   {"event":"device_code","user_code":..,"verification_uri":..,"verification_uri_complete":..|null,"expires_in":N}
 //   {"event":"logged_in","username":..,"display_name":..,"id":..,"token_file":..}
-//   {"event":"error","message":..}
-// Lines that are not JSON objects with an "event" are ignored (log noise).
+//   {"error":"<msg>","code":"auth|network|..."}      (the CLI's error shape; {"event":"error","message":..} is accepted too)
+// `--json` is an alias of `--json-events`; username / display_name / id / token_file on logged_in are optional.
+// Lines that are not JSON objects with an "event" or "error" key are ignored (log noise). Exit code 4 means "not logged in".
 struct LoginFlow {
   enum class State { Idle, Starting, WaitingForApproval, LoggedIn, Failed };
   State state = State::Idle;
@@ -27,12 +28,19 @@ struct LoginFlow {
   // Returns true if the state or any field changed.
   bool feedLine(const std::string& line) {
     auto j = nlohmann::json::parse(line, nullptr, false);
-    if (j.is_discarded() || !j.is_object() || !j.contains("event") || !j["event"].is_string()) return false;
-    const std::string ev = j["event"].get<std::string>();
+    if (j.is_discarded() || !j.is_object()) return false;
     auto str = [&](const char* k) {
       auto it = j.find(k);
       return (it != j.end() && it->is_string()) ? it->get<std::string>() : std::string();
     };
+    if (j.contains("error") && j["error"].is_string()) {  // upstream's error line
+      message = str("error");
+      if (message.empty()) message = "login failed";
+      state = State::Failed;
+      return true;
+    }
+    if (!j.contains("event") || !j["event"].is_string()) return false;
+    const std::string ev = j["event"].get<std::string>();
     if (ev == "device_code") {
       code = str("user_code");
       url = str("verification_uri");
@@ -66,10 +74,15 @@ struct LoginFlow {
       return;
     }
     state = State::Failed;
+    if (r.exitCode == 4) {
+      message = "not logged in";
+      return;
+    }
     message = !r.error.empty() ? r.error : (r.lines.empty() ? "login ended without a result" : r.lines.back());
   }
 
   std::string loggedInText() const {
+    if (loggedInAs.empty()) return displayName.empty() ? "Logged in" : "Logged in as " + displayName;
     std::string s = "Logged in as @" + loggedInAs;
     if (!displayName.empty()) s += " (" + displayName + ")";
     return s;
@@ -97,7 +110,8 @@ inline WhoamiResult parseWhoami(const ToolResult& r) {
       return w;
     }
   }
-  if (!r.error.empty()) w.text = r.error;
+  if (r.exitCode == 4) w.text = "not logged in";
+  else if (!r.error.empty()) w.text = r.error;
   else if (!r.lines.empty()) w.text = r.lines.back();
   else w.text = "whoami failed (exit " + std::to_string(r.exitCode) + ")";
   return w;

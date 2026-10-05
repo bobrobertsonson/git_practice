@@ -4,7 +4,7 @@ Deliberately has no bypass and no CLI flag.
 """
 from __future__ import annotations
 
-from .errors import T3KError
+from .errors import LicenseRefused
 
 ALLOWED_LICENSES = frozenset({"t3k", "cc-by", "cc-by-sa", "cc-by-nd", "cco"})
 
@@ -22,5 +22,5 @@ def license_problem(lic: str | None) -> str | None:
 def check_license(lic: str | None, what: str = "capture") -> None:
     p = license_problem(lic)
     if p:
-        raise T3KError(f"{what} refused: {p} (Sawblade is commercial; allowed: "
+        raise LicenseRefused(f"{what} refused: {p} (Sawblade is commercial; allowed: "
                        f"{', '.join(sorted(ALLOWED_LICENSES))})")

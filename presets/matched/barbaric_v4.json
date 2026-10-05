@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Barbaric Pleasures \u00b7 matched v4",
+  "category": "Death metal",
   "notes": "Matched by sawblade-match seed 1 against barbaric_pleasures_original.mp3 (stem:barbaric_pleasures_original.e7a5dcc5648f.htdemucs.other.wav). Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.",
   "gate": {
     "enabled": true,

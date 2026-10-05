@@ -1,0 +1,85 @@
+#pragma once
+
+// Small widgets of the rig editor, all in the SawbladeLookAndFeel palette: a segmented button group, an
+// LED-style toggle, and a preset-only knob (an unbound FilmstripKnob with caption and value text).
+
+#include <functional>
+#include <vector>
+
+#include <juce_gui_basics/juce_gui_basics.h>
+
+#include "SawbladeLookAndFeel.h"
+#include "rig/RigController.h"
+#include "skin/FilmstripKnob.h"
+
+namespace sawblade::plugin::rig {
+
+// A row of mutually exclusive buttons (topology, tabs, EQ target, cab mode, ...).
+class Segmented : public juce::Component {
+ public:
+  struct Item {
+    juce::String text, title, tooltip;
+    float weight = 1.0f;  // relative width
+  };
+  Segmented() = default;
+  void setItems(const std::vector<Item>& items, juce::Colour onColour = juce::Colour(0xff6b2f12));
+  int size() const noexcept { return static_cast<int>(buttons_.size()); }
+  int selected() const noexcept { return selected_; }
+  // Highlights item `i` (-1: none). With `notify` the onChange callback runs as for a click.
+  void setSelected(int i, bool notify = false);
+  juce::TextButton& button(int i) { return *buttons_[static_cast<std::size_t>(i)]; }
+  void setItemEnabled(int i, bool on) { button(i).setEnabled(on); }
+  std::function<void(int)> onChange;
+  void resized() override;
+
+ private:
+  std::vector<std::unique_ptr<juce::TextButton>> buttons_;
+  std::vector<float> weights_;
+  int selected_ = -1;
+};
+
+// "● TEXT": a toggle that lights its LED when on.
+class LedToggle : public juce::Button {
+ public:
+  LedToggle(const juce::String& text, const juce::String& tooltip, juce::Colour onColour = SawbladeLookAndFeel::saw());
+  void paintButton(juce::Graphics&, bool over, bool down) override;
+
+ private:
+  juce::Colour on_;
+};
+
+// A knob for a preset-only value. Structural knobs (the default) submit on drag end, or debounced for
+// wheel / typed / double-click values; live knobs call the controller's live edit on every change.
+class PresetKnob : public juce::Component {
+ public:
+  using Apply = std::function<void(Preset&, double)>;
+  using Format = std::function<juce::String(double)>;
+
+  PresetKnob(RigController& c, const juce::String& caption, skin::FilmstripKnob::Kind kind, juce::Colour arc,
+             const skin::FilmstripKnob::Range& range, Apply apply, bool live = false, Format format = {});
+
+  skin::FilmstripKnob& knob() noexcept { return knob_; }
+  const skin::FilmstripKnob& knob() const noexcept { return knob_; }
+  // Shows the value the preset holds (no edit is submitted). Ignored while the user is turning the
+  // knob or an edit of this knob is pending.
+  void setValueFromPreset(double v);
+  double value() const { return knob_.getValue(); }
+  juce::String valueText() const { return value_.getText(); }
+  void setCaption(const juce::String& s) { caption_.setText(s, juce::dontSendNotification); }
+
+  void resized() override;
+
+ private:
+  void updateText();
+  void submit(bool debounced);
+
+  RigController& controller_;
+  skin::FilmstripKnob knob_;
+  juce::Label caption_, value_;
+  Apply apply_;
+  Format format_;
+  bool live_ = false, dragging_ = false, updating_ = false;
+  double shown_ = 0.0;
+};
+
+}  // namespace sawblade::plugin::rig

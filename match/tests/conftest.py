@@ -102,6 +102,8 @@ class FakeApi:
             return httpx.Response(200, json={"data": self.latest})
         if m := re.fullmatch(r"/api/v1/tones/(\d+)", p):
             assert "architecture" in q
+            if int(m[1]) not in self.tones:
+                return httpx.Response(404, json={"error": "not found"})
             return httpx.Response(200, json=self.tones[int(m[1])])
         if p == "/api/v1/models":
             assert "architecture" in q, "architecture must always be passed"

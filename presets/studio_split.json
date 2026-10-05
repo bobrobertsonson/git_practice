@@ -2,6 +2,7 @@
   "schema": "sawblade.preset",
   "version": 1,
   "name": "Studio Split",
+  "category": "Death metal",
   "notes": "Studio blend: per-path cabs (Greenback-style on saw, V30-style on body). Only the with-cab NAM export is exact.",
   "gate": {
     "enabled": true,

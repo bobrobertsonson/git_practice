@@ -7,6 +7,8 @@
 #include <thread>
 
 #include "PlayAlong.h"
+#include "onnx_synth.h"
+#include "sawblade/sha256.h"
 #include "processor_harness.h"
 #include "sawblade/loudness.h"
 #include "sawblade/wav_io.h"
@@ -818,3 +820,225 @@ TEST_CASE("PlayAlong: a non-object playAlong in the state is ignored and the ton
     CHECK(b.playAlong().settings().isDefault());
   }
 }
+
+// ---- song files: on-device separation (phase 5.1b) --------------------------------------------------------
+namespace {
+
+struct EnvVar {
+  std::string name;
+  std::optional<std::string> old;
+  EnvVar(const std::string& n, const std::string& v) : name(n) {
+    if (const char* o = std::getenv(n.c_str())) old = o;
+    ::setenv(n.c_str(), v.c_str(), 1);
+  }
+  ~EnvVar() {
+    if (old) ::setenv(name.c_str(), old->c_str(), 1);
+    else ::unsetenv(name.c_str());
+  }
+};
+
+// Synthetic htdemucs-shaped models (tests/onnx_synth.h) with a sidecar, so the store accepts them.
+void writeSynthModel(const fs::path& dir, const char* id, std::size_t sources) {
+  fs::create_directories(dir);
+  const std::vector<float> t(sources, 0.5f), f(sources, 0.0f);
+  const std::string bytes = sawblade::test::onnx_synth::buildCoreModel(t, f);
+  const fs::path p = dir / (std::string(id) + "-core-opset17.onnx");
+  sawblade::test::onnx_synth::write(p, bytes);
+  std::ofstream(p.string() + ".sha256") << sawblade::sha256Hex(bytes.data(), bytes.size()) << "\n";
+}
+
+fs::path writeSongFile(const fs::path& dir, double seconds) {
+  const std::size_t n = static_cast<std::size_t>(seconds * 44100.0);
+  const fs::path p = dir / "my song.wav";
+  writeWavFloat32Stereo(p, 44100.0, noise(n, 3, 0.3f), noise(n, 4, 0.3f));
+  return p;
+}
+
+}  // namespace
+
+TEST_CASE("PlayAlong: state JSON carries songFile / separationModel only when set", "[playalong][separation][state]") {
+  using namespace sawblade::plugin;
+  PlayAlongSettings d;
+  CHECK(d.isDefault());
+  const auto jd = playAlongToJson(d);
+  CHECK_FALSE(jd.contains("songFile"));
+  CHECK_FALSE(jd.contains("separationModel"));
+  PlayAlongSettings s;
+  s.songFile = "/music/a.mp3";
+  s.fourStemModel = true;
+  CHECK_FALSE(s.isDefault());
+  const PlayAlongSettings back = playAlongFromJson(playAlongToJson(s));
+  CHECK(back == s);
+  CHECK(playAlongToJson(s)["separationModel"] == "htdemucs");
+  CHECK(isSongFileName("/x/Song.MP3"));
+  CHECK(isSongFileName("a.m4a"));
+  CHECK_FALSE(isSongFileName("/x/stems"));
+  // A wrong-typed value keeps the default.
+  CHECK(playAlongFromJson(nlohmann::json{{"songFile", 3}, {"separationModel", 4}}).isDefault());
+}
+
+#ifdef SAWBLADE_WITH_SEPARATOR
+TEST_CASE("PlayAlong: a song file is separated, cached and loaded like a folder", "[playalong][separation]") {
+  using State = PlayAlong::LoadStatus::State;
+  TempDir t;
+  EnvVar m("SAWBLADE_MODELS_DIR", (t.dir / "models").string());
+  EnvVar c("SAWBLADE_STEMS_DIR", (t.dir / "stems").string());
+  writeSynthModel(t.dir / "models", "htdemucs_6s", 6);
+  writeSynthModel(t.dir / "models", "htdemucs", 4);
+  const fs::path song = writeSongFile(t.dir, 4.0);
+  Host h(kFs, 512);
+  PlayAlong& pa = h.p.playAlong();
+
+  pa.loadSong(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  auto st = pa.loadStatus();
+  REQUIRE(st.state == State::Ready);
+  CHECK(st.songName == "my song");
+  CHECK_FALSE(st.cacheHit);
+  CHECK(st.hasGuitarStem);
+  { std::vector<float> y; h.run(noise(1024, 1, 0.1f), y, {512}); }  // the snapshot is published by the audio thread
+  CHECK(pa.snapshot().hasSet);
+  CHECK(pa.settings().songFile == song.string());
+  CHECK(pa.settings().folder.empty());
+  CHECK_FALSE(pa.settings().isDefault());
+
+  pa.loadSong(song.string(), true);  // second load: the session already has the stems
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == State::Ready);
+  CHECK(pa.loadStatus().cacheHit);
+
+  // A fresh processor (new session) hits the on-disk cache: no separation, so the model is not needed.
+  fs::remove_all(t.dir / "models");
+  Host h2(kFs, 512);
+  PlayAlongSettings s;
+  s.songFile = song.string();
+  h2.p.playAlong().restore(s);
+  REQUIRE(h2.p.playAlong().waitForLoader());
+  CHECK(h2.p.playAlong().loadStatus().state == State::Ready);
+  CHECK(h2.p.playAlong().loadStatus().cacheHit);
+
+  // The 4-stem model is a different cache key; its 'other' becomes the guitar. Needs its model again.
+  writeSynthModel(t.dir / "models", "htdemucs", 4);
+  pa.setFourStemModel(true);
+  REQUIRE(pa.waitForLoader());
+  st = pa.loadStatus();
+  CHECK(st.state == State::Ready);
+  CHECK(st.otherMappedToGuitar);
+  CHECK(pa.settings().fourStemModel);
+}
+
+TEST_CASE("PlayAlong: a state restore with a stem-cache miss does not separate; LOAD SONG does", "[playalong][separation]") {
+  using State = PlayAlong::LoadStatus::State;
+  TempDir t;
+  EnvVar m("SAWBLADE_MODELS_DIR", (t.dir / "models").string());
+  EnvVar c("SAWBLADE_STEMS_DIR", (t.dir / "stems").string());
+  writeSynthModel(t.dir / "models", "htdemucs_6s", 6);
+  const fs::path song = writeSongFile(t.dir, 2.0);
+  Host h(kFs, 512);
+  PlayAlong& pa = h.p.playAlong();
+  PlayAlongSettings s;
+  s.songFile = song.string();
+  pa.restore(s);
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == State::NotSeparated);
+  CHECK(pa.loadStatus().message.find("LOAD SONG") != std::string::npos);
+  CHECK(pa.settings().songFile == song.string());  // kept
+  CHECK_FALSE(fs::exists(t.dir / "stems"));          // nothing was separated
+  pa.loadSong(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == State::Ready);
+  CHECK_FALSE(pa.loadStatus().cacheHit);
+}
+
+TEST_CASE("PlayAlong: a missing separation model gives the fetch command and no crash", "[playalong][separation]") {
+  using State = PlayAlong::LoadStatus::State;
+  TempDir t;
+  EnvVar m("SAWBLADE_MODELS_DIR", (t.dir / "models").string());
+  EnvVar c("SAWBLADE_STEMS_DIR", (t.dir / "stems").string());
+  const fs::path song = writeSongFile(t.dir, 1.0);
+  Host h(kFs, 512);
+  PlayAlong& pa = h.p.playAlong();
+  REQUIRE_NOTHROW(pa.loadSong(song.string(), true));
+  REQUIRE(pa.waitForLoader());
+  const auto st = pa.loadStatus();
+  CHECK(st.state == State::Failed);
+  CHECK(st.modelMissing);
+  CHECK(st.fetchCommand == "match/.venv/bin/sawblade-models fetch --model htdemucs_6s");
+  CHECK(st.message.find(st.fetchCommand) != std::string::npos);
+  // A missing song file is a plain message.
+  pa.loadSong((t.dir / "gone.mp3").string(), true);
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == State::Failed);
+  CHECK(pa.loadStatus().message.find("not found") != std::string::npos);
+  // The audio path is unaffected.
+  const auto x = noise(2048, 3, 0.4f);
+  std::vector<float> y;
+  h.run(x, y, {512});
+  CHECK(y == x);
+}
+
+TEST_CASE("PlayAlong: cancel mid-job, a folder replaces a job, and destruction mid-job joins", "[playalong][separation][cancel]") {
+  using State = PlayAlong::LoadStatus::State;
+  TempDir t;
+  EnvVar m("SAWBLADE_MODELS_DIR", (t.dir / "models").string());
+  EnvVar c("SAWBLADE_STEMS_DIR", (t.dir / "stems").string());
+  writeSynthModel(t.dir / "models", "htdemucs_6s", 6);
+  const fs::path song = writeSongFile(t.dir, 40.0);
+  const fs::path folder = writeSong(t.dir, "stemsong", rampStems(48000));
+
+  auto waitSeparating = [](PlayAlong& pa) {
+    for (int i = 0; i < 5000; ++i) {
+      const auto s = pa.loadStatus();
+      if (s.state == State::Separating && s.separationFraction > 0.0) return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+  };
+  const auto cacheEntries = [&] {
+    std::size_t n = 0;
+    if (fs::exists(t.dir / "stems"))
+      for (const auto& e : fs::directory_iterator(t.dir / "stems")) { (void)e; ++n; }
+    return n;
+  };
+
+  SECTION("CANCEL: status Cancelled, previous song kept, nothing cached") {
+    Host h(kFs, 512);
+    PlayAlong& pa = h.p.playAlong();
+    pa.loadFolder(folder.string(), true);
+    REQUIRE(pa.waitForLoader());
+    pa.loadSong(song.string(), true);
+    REQUIRE(waitSeparating(pa));
+    CHECK(pa.loadStatus().separationEtaSeconds >= 0.0);
+    pa.cancelSeparation();
+    CHECK(pa.loadStatus().state == State::Cancelled);
+    REQUIRE(pa.waitForLoader(std::chrono::seconds(20)));
+    CHECK(pa.loadStatus().state == State::Cancelled);
+    CHECK(pa.settings().folder == folder.string());
+    CHECK(pa.settings().songFile.empty());
+    { std::vector<float> y; h.run(noise(1024, 1, 0.1f), y, {512}); }
+    CHECK(pa.snapshot().hasSet);
+    CHECK(cacheEntries() == 0);
+  }
+  SECTION("loading a folder while separating replaces the job") {
+    Host h(kFs, 512);
+    PlayAlong& pa = h.p.playAlong();
+    pa.loadSong(song.string(), true);
+    REQUIRE(waitSeparating(pa));
+    pa.loadFolder(folder.string(), true);
+    REQUIRE(pa.waitForLoader(std::chrono::seconds(20)));
+    CHECK(pa.loadStatus().state == State::Ready);
+    CHECK(pa.settings().folder == folder.string());
+    CHECK(cacheEntries() == 0);
+  }
+  SECTION("destroying the processor mid-job cancels and joins") {
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+      Host h(kFs, 512);
+      h.p.playAlong().loadSong(song.string(), true);
+      REQUIRE(waitSeparating(h.p.playAlong()));
+    }
+    CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 20.0);
+    CHECK(cacheEntries() == 0);
+  }
+}
+#endif

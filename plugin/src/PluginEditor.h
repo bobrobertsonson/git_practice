@@ -6,9 +6,14 @@
 
 #include "PluginProcessor.h"
 #include "SawbladeLookAndFeel.h"
+#include "rig/RigEditorPanel.h"
 #include "skin/RigView.h"
 
 namespace sawblade::plugin {
+
+class MicPage;
+class PresetBrowser;
+class AbCompare;
 
 // Skinned prototype of the main rig screen (design/mockups/RigReal.dc.html, spec
 // docs/specs/phase2_5_skin.md). A fixed 1280 x 800 design laid out in one content component that
@@ -32,6 +37,27 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   // The PLAY ALONG overlay (PlayAlongPanel): closed by default; open / closed is UI state, never saved.
   void setPlayAlongOpen(bool open);
   bool playAlongOpen() const;
+
+  // The RIG overlay (rig::RigEditorPanel): every blend feature of the engine. Closed by default; open / closed
+  // and the active tab are UI state, never saved.
+  void setRigEditorOpen(bool open);
+  bool rigEditorOpen() const;
+  rig::RigEditorPanel& rigEditor();
+
+  // The cab mic page (mic/MicPage): an overlay over the rig + inspector, opened by double-clicking the cab; UI state, never saved.
+  void setMicPageOpen(bool open);
+  bool micPageOpen() const;
+  MicPage& micPage();
+
+  // The preset browser overlay (presets/PresetBrowser), opened from the top-bar preset selector, and the A/B compare slots.
+  void setBrowserOpen(bool open);
+  bool browserOpen() const;
+  PresetBrowser& browser();
+  AbCompare& abCompare();
+
+  // The MATCH / EXPORT NAM overlay (MatchScreen): opened from the play-along panel's buttons (Standalone only).
+  void openMatchScreen(bool exportMode);
+  bool matchScreenOpen() const;
 
   // The Settings overlay (settings::SettingsPanel, phase 11) and the About box over it; UI state, never saved.
   void setSettingsOpen(bool open);

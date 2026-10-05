@@ -36,13 +36,14 @@ Containers are ephemeral: `login` prints the refresh token **once**. Save it as 
 `TONE3000_REFRESH_TOKEN` secret and a fresh container logs in without the device step (stored tokens,
 when present, win over the env seed). Access tokens and Authorization headers are never printed or logged.
 
-`login --json` and `whoami --json` are the machine-readable forms used by the plugin's Settings panel.
-`login --json` prints one JSON object per line on stdout, flushed immediately: a `device_code` event
+`login --json` (alias of `login --json-events`) and `whoami --json` are the machine-readable forms used by the
+plugin. `login --json` prints one JSON object per line on stdout, flushed immediately: a `device_code` event
 (`user_code`, `verification_uri`, `verification_uri_complete` or null, `expires_in`), then `logged_in`
-(`username`, `display_name`, `id`, `token_file`); failures are `{"event": "error", "message": ...}` with exit
-status 1. `whoami --json` prints one line `{"username", "display_name", "id", "token_file"}`, or
-`{"error": ...}` with exit status 1. In `--json` mode nothing but JSON goes to stdout and the refresh token is
-never printed (it is only in the token file); plain-text `login` still prints it for the container workflow.
+(`username`, `display_name`, `id`, `token_file`; the user fields are omitted if the profile fetch fails after a
+successful login). `whoami --json` prints one line `{"id", "username", "display_name", "token_file"}`. Failures
+in `--json` mode print one `{"error", "code"}` line and exit 1 (4 if not logged in). Nothing but JSON goes to
+stdout and the refresh token is never printed (it is only in the token file); plain-text `login` still prints it
+for the container workflow.
 
 ## Usage
 
@@ -77,6 +78,36 @@ sawblade-t3k resolve presets/chainsaw_body.json [--first-model]   # -> presets/c
 * Cache: `~/.cache/sawblade/captures/<tone_id>/<model_id>.<nam|wav>` + `meta.json` (override with
   `SAWBLADE_CACHE_DIR`). Files are sha256-verified on every hit.
 
+### Capture browser commands (spec 8a, used by the plugin)
+
+```
+sawblade-t3k models TONE_ID --json
+sawblade-t3k fetch TONE_ID [--model MODEL_ID] [--cache-dir DIR] --json
+sawblade-t3k list --source favorites|pool [--query Q] [--gear amp pedal ir] [--limit N] [--cache-dir DIR] --json
+sawblade-t3k whoami --json
+sawblade-t3k login --json-events      # alias: --json
+```
+
+With `--json`, stdout is exactly one JSON document (notes/logs go to stderr). Failure: exit 1 and
+`{"error": "<message>", "code": "license|auth|not_found|network|error"}` (also for `search --json`).
+Without `--json` behaviour is unchanged. Licence policy is unchanged (`cc-by-nc*`/unknown refused, code `license`).
+
+* `models` -> `{"tone_id": int, "architecture": str, "models": [{"model_id": int, "name": str, "size": str|null}]}`
+  (A2 then A1 candidates as `pull` picks; `""` and `[]` if none; empty `size` -> `null`).
+* `fetch` -> `{"tone_id", "model_id", "path" (absolute), "sha256", "kind": "nam"|"ir", "gear",
+  "source": {"provider": "tone3000", "id", "modelId", "url", "title", "creator", "license"}}`
+  (`source` = preset `CaptureSource`). The licence is checked before any download; `--model` must be one
+  of `models`' ids, else `not_found`; a cache hit downloads nothing.
+* `list` -> array of the same records as `search --json` (`tone_id, title, creator, gear, format, license,
+  favorites_count, downloads_count, created_at, models_count, a2_models_count, a1_models_count, irs_count,
+  sizes, url, passes, status, reasons, flags`). `favorites` uses the API; `pool` reads
+  `<cache>/pool_manifest.json` (its included tones, no network; missing/corrupt -> `[]`; fields the
+  manifest lacks are `null`).
+* `whoami --json` -> `{"id", "username", "display_name"}`.
+* `login --json-events` prints JSON lines `{"event":"device_code","verification_uri",
+  "verification_uri_complete","user_code","expires_in"}` then `{"event":"logged_in"}`. The refresh token is
+  saved by the token store and never printed.
+
 ### License policy
 
 Sawblade is commercial, so only tones licensed `t3k`, `cc-by`, `cc-by-sa`, `cc-by-nd` or `cco` are used.
@@ -108,6 +139,22 @@ API terms before sharing anything that uses search.
 100 requests/min client-side token bucket; 429 and 502/503/504 are retried with exponential backoff
 (honouring `Retry-After`); a 401 triggers one refresh + retry. The `X-Tone3000-Deprecations` response header is
 logged at WARNING. Use `-v` for INFO logs.
+
+### `pack`, progress lines and exit codes
+
+```
+sawblade-t3k pack TONE_ID [--cache-dir D] -o manifest.json [--progress-json]
+sawblade-t3k resolve PRESET [-o OUT] [--first-model] [--progress-json]
+```
+
+* `pack` downloads every model of an IR tone (one IR per model) into the cache and writes
+  `{ "toneId", "title", "creator", "license", "url", "models": [ { "modelId", "name", "file" (absolute), "sha256" } ] }`.
+  It refuses tones that are not IR tones. Licence rules are the same as for `resolve`.
+* `--progress-json` makes stdout JSON lines only (one per item, flushed); the human summary goes to stderr.
+  `pack`: `{"done": i, "total": n, "name": "<model name>"}` per model.
+  `resolve`: `{"done": i, "total": n, "capture": "<json path>", "title": "<tone title>"}` per TONE3000 capture.
+* **Exit codes (all commands):** `0` ok, `4` not logged in / re-auth required (no stored token, or the API
+  rejected it after refresh; run `sawblade-t3k login`), `1` any other error. The plugin relies on 4.
 
 ## Tone check (`sawblade-tonecheck`, phase 1.5 part B)
 
@@ -221,9 +268,11 @@ libraries although inference runs on CPU). The real-demucs test runs only with `
 sawblade-match --di Guitar_L.wav [--di-r Guitar_R.wav] --ref REF.mp3 --pool ~/.cache/sawblade/captures/pool_manifest.json
                [--matched left|right|mono] [--offset-ms N] [--ref-channel auto|side|left|right|mid] [--ref-section A:B ...]
                [--stems-dir DIR] [--profile derived|<id>|PATH] [--base-profile swedish_death_hm2] [--prescreen N]
-               [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 3] [--threads 4]
+               [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 3] [--threads|--jobs 4]
+               [--quick | --thorough] [--progress-json PATH] [--listen]
 python -m sawblade_match.matcher.known_answer --pool ... --di Guitar_L.wav --out DIR [--seed 1] [--topology blend|single|single2]
 python -m sawblade_match.matcher.recall --run RUN_DIR --di ... --ref ... [--matched left] --pool ... --ns 2,3,4,6,9
+               [--quick [--coarse-s S]] [--old-pool] [--quick-run QUICK_RUN_DIR]
 ```
 
 Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a build) and a pool whose captures are downloaded
@@ -275,12 +324,46 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
 * **Output** (`--out`, default `~/.cache/sawblade/match_runs/<timestamp>`, never in the repo): `best.preset.resolved.json`
   (absolute capture paths + TONE3000 `source` ids/modelIds), `best.preset.json` (portable names), `alt1..5`, `result.json` (loss
   breakdown, topology, captures with gear class and size category, offsets, before/after, plan, timings, profile),
-  `tonecheck/*`, `render_*.wav`, `listen/*.wav|mp3` (L/R DIs panned, peak-normalised to -1 dBFS; gain in result.json).
+  `tonecheck/*`, `render_*.wav`, and with `--listen` `listen/*.wav|mp3` (L/R DIs panned, peak-normalised to -1 dBFS; gain in
+  result.json; without `--listen` no listening files are made, in either mode (intentional default change); the R render is still made with `--di-r`, since the clip guard uses max(L, R)).
   Exported/derived models from TONE3000 captures are for the user's own use only.
 
 Cost model: one 4-NAM render runs at ~0.6x real time per core. The default plan (703 pair renders of a 6.5 s excerpt, 3 + 2 + 1
 CMA-ES refined combos, 3 full-length renders) measured 20.7 min (original) and 25.9 min (cover mix) on 4 shared cores;
 `--budget` scales every count (`--budget 0.05` ~ 4 min).
+
+### Quick mode, progress file, timings (phase 6b)
+
+`--thorough` (default) is the search above and the documented final match. `--quick` is PREVIEW quality (about 5x less CPU,
+within 1 dB A-weighted of thorough on the two test references; the original 0.15 dB target was not met: 4 pedals per class in
+the pre-screen drops the cover's HM-2+JMP winner and the excerpt loss predicts the full-song error poorly; see
+`docs/specs/phase6b_matcher_speed_REPORT.md`). It omits two-pedal chains (`single2`) unless `--top-k 4`. It is the fast preset (spec `docs/specs/phase6b_matcher_speed.md`); the
+levers that were measured and kept (`Plan.quick`, `matcher/run.py`):
+
+* **Capped pre-screen, always on** (`capped_prescreen`): per-class quotas, pedals 4 per class and the rest of the pair cap (380) spent
+  on amps, scored on a 2.5 s window (a 1.5 s window made the ranking unstable: single/blend recall collapsed on the old pool);
+* **two-pass pair screen** (`coarse_s`, `coarse_keep`): every surviving pair is rendered on the coarse 2.5 s window (the densest part
+  of the excerpt), singles and pair x pair blends are scored from it, and only the best 8 % (min 32; singles, and both members of
+  the best blends) are rendered on the full 6 s excerpt and re-scored;
+* **NAM-core memo** (`Engine.core_blocks`): a chain rendered by the pre-screen on an excerpt is not rendered again by the pair
+  pass (bit-identical, LRU 400 MB; `result.json -> timings.coreCache`);
+* **stage 2** (`gain_s`, `short_linear`, `patience*`): the first linear block and the gain block run on a 2.5 s window, the last
+  linear block on the full excerpt; CMA-ES stops on a plateau (`cma.minimize(patience, tol)`); fewer re-scores (16/12) and cab
+  sweeps (3/2); refined combos: 2 blend + 2 single, no two-pedal chains (`--top-k 4` brings one back);
+* **no full-length "before" render and no listening files** unless `--listen` (the "before" is then `null`; the
+  excerpt loss of the starter is still in `result.json -> starter`);
+* tried and dropped: a blend-aware pre-screen (`Plan.blend_aware`, extras ranked by the best blend a capture takes part in: no recall
+  gain at the same pair budget, kept as an option) and a process pool (`--jobs` is an alias of `--threads`: the C++ renderer
+  releases the GIL and scales with the cores, so processes would only copy the models).
+
+`result.json -> timings` has the per-stage seconds (reference load, excerpt, starter + offset, target + profile, stage 1 broken
+down into pre-screen / coarse pass / full pass / scoring / re-score / two-pedal chains, stage 2 per combo, full-length renders,
+tonecheck, final offsets, outputs, listening, `cpuSeconds`), and `mode`.
+
+`--progress-json PATH` writes `{"stage", "fraction", "etaSeconds", "bestErrorDb", "message"}` (plus `elapsedSeconds`, `done`)
+atomically (temp file + rename) on every state change and at least every 0.5 s; stages `prepare, prescreen, screen, refine,
+finalize`, weighted by the measured time profile of the mode; `bestErrorDb` is the best LTAS error so far, then the final
+A-weighted error; on failure `message` starts with `error:`.
 
 ## NAM export (`sawblade-export`, phase 4)
 
@@ -370,3 +453,35 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   models of heavy two-path high-gain chains normally need hundreds of epochs on a GPU. The same code trains on a GPU box unchanged
   with `--device cuda` or `--device mps` (default auto).
   `--batch-size 4` gave a better ESR per minute in a 10-minute trial (0.51 vs ~0.58 at the same time) but did not change the picture.
+
+## Separation models (`sawblade-models`)
+
+The C++ `ModelStore` (stem separation, phase 5.1b) expects the ONNX core of the separation models in the
+per-user models dir. Nothing is committed or bundled; this tool builds them locally.
+
+One-time venv setup (from the repo root). torch comes from PyPI (CUDA wheels, ~3 GB download; CPU is all that
+is used). The `models` extra pins torch 2.5.1, demucs 4.0.1, onnx 1.23.1 and onnxruntime 1.30.0; the constraints
+file pins the resolved set (linux x86_64):
+
+```
+python3.11 -m venv match/.venv
+match/.venv/bin/pip install -e 'match[models]' -c match/constraints-separation.txt
+match/.venv/bin/pip cache purge          # optional: reclaim pip's download cache
+```
+
+Then:
+
+```
+match/.venv/bin/sawblade-models fetch --model htdemucs_6s     # default; also: htdemucs | all
+match/.venv/bin/sawblade-models status
+```
+
+* Models dir: `$SAWBLADE_MODELS_DIR`, else macOS `~/Library/Application Support/Sawblade/models/`, else Linux
+  `$XDG_DATA_HOME/sawblade/models/` or `~/.local/share/sawblade/models/`. `--dir` overrides for one call.
+* `fetch` downloads the official checkpoint from dl.fbaipublicfiles.com (sha256 pinned; cached under
+  `<dir>/checkpoints/`, skipped when present and correct, partial downloads deleted on failure), exports
+  `<dir>/<id>-core-opset17.onnx` (torch legacy exporter, opset 17, fixed shapes), checks onnxruntime against torch
+  on a seeded synthetic segment (fails if the residual is worse than -60 dB), and only then writes
+  `<id>-core-opset17.onnx.sha256`. The export is reproducible; its hash is compared with the pin from
+  `spikes/separator/RESULTS.md` (a mismatch on another platform is a warning, not a failure).
+* Never commit the checkpoints or ONNX files.

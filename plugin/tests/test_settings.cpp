@@ -181,10 +181,12 @@ TEST_CASE("settings: defaults with no file; a malformed file gives defaults, an 
 TEST_CASE("settings: paths follow the platform table", "[settings]") {
   TempDir t;
   const Env linux = makeEnv(t.dir);
-  CHECK(Paths::settingsFile(linux) == linux.home / ".config/sawblade/settings.json");
+  CHECK(Paths::settingsFile(linux) == linux.home / ".local/share/sawblade/settings.json");
   CHECK(Paths::tokenFile(linux) == linux.home / ".config/sawblade/t3k_tokens.json");
-  const Env xdg = makeEnv(t.dir, {{"XDG_CONFIG_HOME", "/xdg"}});
-  CHECK(Paths::settingsFile(xdg) == fs::path("/xdg/sawblade/settings.json"));
+  const Env xdg = makeEnv(t.dir, {{"XDG_DATA_HOME", "/xdg"}});
+  CHECK(Paths::settingsFile(xdg) == fs::path("/xdg/sawblade/settings.json"));  // same file as presets/T3kTool settingsFile()
+  const Env appdata = makeEnv(t.dir, {{"SAWBLADE_APPDATA", "/ad"}});
+  CHECK(Paths::settingsFile(appdata) == fs::path("/ad/settings.json"));
   CHECK(Paths::tokenFile(xdg) == xdg.home / ".config/sawblade/t3k_tokens.json");  // the Python tools ignore XDG
   const Env mac = makeEnv(t.dir, {}, true);
   CHECK(Paths::settingsFile(mac) == mac.home / "Library/Application Support/Sawblade/settings.json");
