@@ -58,3 +58,8 @@ Behaviour change (intentional, lead): listening files and the stereo listening r
 gate_preset clamps the DI floor at -90 dBFS (threshold >= -86) for digital-silence DIs; unit-tested.
 Tests: `pytest match/` 312 passed, 7 skipped, 1 failed (`test_numpy_scalars_accepted`, stale `core_snapshot` .so only; passes
 against the repo build); `test_speed.py` + `test_matcher.py` 56 passed.
+
+## Follow-up (phase 12 end-to-end run)
+With 10.1's path levels in the loss, `--quick` on the known-answer fixture is 0.684 dB A-weighted vs `--thorough` 0.255 dB at
+seed 7 (was 0.350 vs 0.288; other seeds 0.32-0.69). That is within the accepted 1 dB criterion. Proposed, not done now:
+"6b.1: re-probe levels after quick's short-linear stage".
