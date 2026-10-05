@@ -52,6 +52,7 @@ SawbladeProcessor::SawbladeProcessor()
   fadeBuf_.assign(kMinChunk, 0.0f);
   playAlong_.setStandalone(wrapperType == wrapperType_Standalone);
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
+  jobs_.pruneAsync();  // old match job folders: on the runner's own thread, not here
 }
 
 SawbladeProcessor::~SawbladeProcessor() {

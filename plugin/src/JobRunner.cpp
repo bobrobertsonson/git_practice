@@ -136,18 +136,25 @@ std::int64_t processStartMs(std::int64_t pid) {
 // one is reaped) and needs no identity check. For any other pid the process group must be the recorded one and the
 // start time must match the moment the tool was spawned: a pid that was reused by an unrelated process fails
 // this, and such a process is never signalled.
-bool jobProcessAlive(std::int64_t pid, std::int64_t pgid, std::int64_t spawnedMs) {
+//
+// reap = false (housekeeping, which must not steal the exit status of a child that another runner in this process
+// is waiting for): no waitpid, so an exited child that nobody has reaped yet still counts as alive, which is the safe
+// answer for "may I delete this job".
+bool jobProcessAlive(std::int64_t pid, std::int64_t pgid, std::int64_t spawnedMs, bool reap = true) {
 #if JUCE_WINDOWS
   (void)pid;
   (void)pgid;
   (void)spawnedMs;
+  (void)reap;
   return false;
 #else
   if (pid <= 1) return false;
-  int status = 0;
-  const pid_t r = ::waitpid(static_cast<pid_t>(pid), &status, WNOHANG);
-  if (r == static_cast<pid_t>(pid)) return false;
-  if (r == 0) return true;  // ours, running
+  if (reap) {
+    int status = 0;
+    const pid_t r = ::waitpid(static_cast<pid_t>(pid), &status, WNOHANG);
+    if (r == static_cast<pid_t>(pid)) return false;
+    if (r == 0) return true;  // ours, running
+  }
   if (::kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM) return false;
   if (::getpgid(static_cast<pid_t>(pid)) != static_cast<pid_t>(pgid)) return false;
   const std::int64_t started = processStartMs(pid);
@@ -212,11 +219,13 @@ MatchSettings::MatchSettings(const fs::path& file) : file_(file) {}
 MatchSettings::~MatchSettings() = default;
 
 void MatchSettings::setFile(const fs::path& file) {
+  std::lock_guard<std::mutex> lk(m_);
   file_ = file;
   props_.reset();
 }
 
 juce::PropertiesFile& MatchSettings::props() const {
+  std::lock_guard<std::mutex> lk(m_);
   if (!props_) {
     juce::PropertiesFile::Options o;
     o.applicationName = "Sawblade";
@@ -243,11 +252,13 @@ fs::path MatchSettings::matchExecutable() const { return pathSetting(props(), "m
 fs::path MatchSettings::exportExecutable() const { return pathSetting(props(), "exportExecutable", defaultExportExecutable()); }
 fs::path MatchSettings::poolManifest() const { return pathSetting(props(), "poolManifest", defaultPoolManifest()); }
 std::string MatchSettings::selectedTake() const { return props().getValue("selectedTake", juce::String()).toStdString(); }
+bool MatchSettings::autoRefine() const { return props().getBoolValue("autoRefine", true); }
 
 void MatchSettings::setMatchExecutable(const fs::path& p) { saveSetting(props(), "matchExecutable", juce::String(p.string())); }
 void MatchSettings::setExportExecutable(const fs::path& p) { saveSetting(props(), "exportExecutable", juce::String(p.string())); }
 void MatchSettings::setPoolManifest(const fs::path& p) { saveSetting(props(), "poolManifest", juce::String(p.string())); }
 void MatchSettings::setSelectedTake(const std::string& name) { saveSetting(props(), "selectedTake", juce::String(name)); }
+void MatchSettings::setAutoRefine(bool on) { saveSetting(props(), "autoRefine", on ? "1" : "0"); }
 
 // ---- pure helpers -------------------------------------------------------------------------------------------------
 bool parseProgressJson(const std::string& text, JobProgress& out) {
@@ -410,9 +421,13 @@ ReferenceChoice chooseReferenceFile(const fs::path& folder) {
 }
 
 // ---- job ---------------------------------------------------------------------------------------------------------
+// What `<tool> --help` lists (probed once per executable path and modification time).
+struct HelpInfo {
+  bool progressJson = false, quick = false, thorough = false;
+};
 struct JobRunner::HelpCache {
   std::mutex m;
-  std::map<std::string, bool> listsProgressJson;
+  std::map<std::string, HelpInfo> info;
 };
 
 struct JobRunner::Job {
@@ -420,7 +435,10 @@ struct JobRunner::Job {
   fs::path dir, outDir, progressFile;
   std::string exe;
   std::vector<std::string> args;          // after the executable
-  bool wantProgressJson = false;          // match: probe `--help` for --progress-json
+  bool wantProgressJson = false;          // match: probe `--help` for --progress-json, --quick and --thorough
+  bool wantQuickPass = false;             // startMatch: run --quick (then --thorough) if the tool lists both
+  bool thoroughPass = false;              // the refinement: run --thorough
+  MatchRequest request;                   // match: what it was started with (the refinement reuses it)
   std::shared_ptr<HelpCache> help;
   std::chrono::milliseconds grace{2500};
 
@@ -432,7 +450,7 @@ struct JobRunner::Job {
   bool progressFileSeen = false;          // snap.progressJson and the file has been read at least once
   std::vector<std::string> commandLine;
 
-  std::atomic<bool> cancelRequested{false}, stopMonitoring{false}, owned{true};
+  std::atomic<bool> cancelRequested{false}, stopMonitoring{false}, owned{true}, refinePending{false};
   std::atomic<std::int64_t> pid{0};
   std::atomic<std::int64_t> pgid{0};
   std::atomic<std::int64_t> spawnedMs{0};  // when the tool was spawned (identity check on re-attach)
@@ -501,6 +519,14 @@ struct JobRunner::Job {
     j["di"] = s.di;
     j["exportMode"] = s.exportMode;
     j["exportSize"] = s.exportSize;
+    if (!s.pass.empty()) j["pass"] = s.pass;
+    if (!s.pairName.empty()) j["pair"] = s.pairName;
+    if (!s.refineNote.empty()) j["refineNote"] = s.refineNote;
+    if (kind == JobKind::Match) {
+      json r = {{"di", request.di.string()}, {"ref", request.ref.string()}, {"referenceLabel", request.referenceLabel}, {"diLabel", request.diLabel}};
+      if (request.offsetMs) r["offsetMs"] = *request.offsetMs;
+      j["request"] = std::move(r);
+    }
     std::lock_guard<std::mutex> fl(fileM);
     writeAtomic(dir / "job.json", j.dump(2) + "\n");
   }
@@ -564,23 +590,25 @@ struct JobRunner::Job {
 
 namespace {
 
-// Does `exe --help` list --progress-json? Runs the program once per (path, mtime); called on a job thread.
-bool probeProgressJson(const std::string& exe, std::atomic<bool>& stop) {
+// What does `exe --help` list? Runs the program once per (path, mtime); called on a job thread. Nothing listed if
+// it cannot be run.
+HelpInfo probeHelp(const std::string& exe, std::atomic<bool>& stop) {
   juce::ChildProcess p;
-  if (!p.start(juce::StringArray{juce::String(exe), "--help"}, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr)) return false;
+  if (!p.start(juce::StringArray{juce::String(exe), "--help"}, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr)) return {};
   // The help text is small (it fits the pipe), so waiting for exit first cannot deadlock.
   for (int waited = 0; waited < 600 && p.isRunning(); ++waited) {  // up to 60 s: Python + numpy start-up on a cold disk
     if (stop.load()) {
       p.kill();
-      return false;
+      return {};
     }
     std::this_thread::sleep_for(100ms);
   }
   if (p.isRunning()) {
     p.kill();
-    return false;
+    return {};
   }
-  return p.readAllProcessOutput().contains("--progress-json");
+  const juce::String help = p.readAllProcessOutput();
+  return {help.contains("--progress-json"), help.contains("--quick"), help.contains("--thorough")};
 }
 
 }  // namespace
@@ -589,17 +617,26 @@ bool probeProgressJson(const std::string& exe, std::atomic<bool>& stop) {
 JobRunner::JobRunner(MatchSettings& settings, const fs::path& jobsDir) : settings_(settings), jobsDir_(jobsDir), help_(std::make_shared<HelpCache>()) {}
 
 JobRunner::~JobRunner() {
-  std::shared_ptr<Job> a, b;
+  std::vector<std::shared_ptr<Job>> jobs;
   {
     std::lock_guard<std::mutex> lk(m_);
-    a = match_;
-    b = export_;
+    closing_ = true;  // a monitor that is about to start a refinement must not
+    for (auto* j : {&match_, &export_, &refine_})
+      if (*j) jobs.push_back(*j);
+    for (auto& g : graveyard_) jobs.push_back(g);
   }
-  for (auto* j : {&a, &b}) {
-    if (!*j) continue;
-    (*j)->stopMonitoring = true;
-    if ((*j)->monitor.joinable()) (*j)->monitor.join();
+  for (auto& j : jobs) {
+    // A cancelled refinement that has not been signalled yet still gets its SIGTERM (a running job is otherwise left alone).
+    bool active;
+    {
+      std::lock_guard<std::mutex> jl(j->m);
+      active = j->snap.active();
+    }
+    if (j->cancelRequested && j->pid.load() > 1 && active) signalGroup(j->pgid.load(), false);
+    j->stopMonitoring = true;
+    if (j->monitor.joinable()) j->monitor.join();
   }
+  if (pruneThread_.joinable()) pruneThread_.join();
 }
 
 void JobRunner::setJobsDir(const fs::path& dir) {
@@ -659,6 +696,40 @@ void JobRunner::retire(std::shared_ptr<Job>& j) {
   j.reset();
 }
 
+// Joins the cancelled refinements that have died (their monitor has finished).
+void JobRunner::reapGraveyard() {
+  for (auto it = graveyard_.begin(); it != graveyard_.end();) {
+    bool active;
+    {
+      std::lock_guard<std::mutex> jl((*it)->m);
+      active = (*it)->snap.active();
+    }
+    if (active) {
+      ++it;
+      continue;
+    }
+    if ((*it)->monitor.joinable()) (*it)->monitor.join();
+    it = graveyard_.erase(it);
+  }
+}
+
+std::shared_ptr<JobRunner::Job> JobRunner::makeMatchJob(const MatchRequest& r) const {
+  auto job = std::make_shared<Job>();
+  job->kind = JobKind::Match;
+  job->exe = settings_.matchExecutable().string();
+  job->wantProgressJson = true;
+  job->request = r;
+  job->args = {"--di", r.di.string(), "--ref", r.ref.string(), "--ref-channel", "mid", "--pool", settings_.poolManifest().string()};
+  if (r.offsetMs) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.3f", *r.offsetMs);
+    job->args.insert(job->args.end(), {"--offset-ms", buf});
+  }
+  job->snap.reference = r.referenceLabel.empty() ? r.ref.filename().string() : r.referenceLabel;
+  job->snap.di = r.diLabel.empty() ? r.di.filename().string() : r.diLabel;
+  return job;
+}
+
 bool JobRunner::startMatch(const MatchRequest& r, std::string* error) {
   auto fail = [&](const std::string& m) {
     if (error) *error = m;
@@ -668,19 +739,10 @@ bool JobRunner::startMatch(const MatchRequest& r, std::string* error) {
   std::error_code ec;
   if (!fs::is_regular_file(r.di, ec)) return fail("The DI take was not found: " + r.di.string());
   if (!fs::is_regular_file(r.ref, ec)) return fail("The reference file was not found: " + r.ref.string());
-  auto job = std::make_shared<Job>();
-  job->kind = JobKind::Match;
-  job->exe = settings_.matchExecutable().string();
-  job->wantProgressJson = true;
-  job->args = {"--di", r.di.string(), "--ref", r.ref.string(), "--ref-channel", "mid", "--pool", settings_.poolManifest().string()};
-  if (r.offsetMs) {
-    char buf[64];
-    std::snprintf(buf, sizeof buf, "%.3f", *r.offsetMs);
-    job->args.insert(job->args.end(), {"--offset-ms", buf});
-  }
-  job->snap.reference = r.referenceLabel.empty() ? r.ref.filename().string() : r.referenceLabel;
-  job->snap.di = r.diLabel.empty() ? r.di.filename().string() : r.diLabel;
-  return launch(JobKind::Match, std::move(job), error);
+  auto job = makeMatchJob(r);
+  job->wantQuickPass = true;  // unless the tool's --help lacks --quick / --thorough: then a single run, as in phase 6a
+  std::lock_guard<std::mutex> lk(m_);
+  return launchLocked(Slot::Match, std::move(job), error);
 }
 
 bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
@@ -699,15 +761,17 @@ bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
   job->snap.exportMode = r.mode;
   job->snap.exportSize = r.size;
   job->snap.reference = r.preset.filename().string();
-  return launch(JobKind::Export, std::move(job), error);
+  std::lock_guard<std::mutex> lk(m_);
+  return launchLocked(Slot::Export, std::move(job), error);
 }
 
-bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* error) {
-  std::lock_guard<std::mutex> lk(m_);
-  if (slot(kind) && slot(kind)->snap.active()) {  // snap is only written by the job's threads under its own mutex
-    std::lock_guard<std::mutex> jl(slot(kind)->m);
-    if (slot(kind)->snap.active()) {
-      if (error) *error = std::string("A ") + jobKindName(kind) + " job is already running.";
+bool JobRunner::launchLocked(Slot sl, std::shared_ptr<Job> job, std::string* error) {
+  const JobKind kind = job->kind;
+  std::shared_ptr<Job>& cur = slot(sl);
+  if (cur) {  // snap is only written by the job's threads under its own mutex
+    std::lock_guard<std::mutex> jl(cur->m);
+    if (cur->snap.active()) {
+      if (error) *error = sl == Slot::Refine ? std::string("A refinement is already running.") : std::string("A ") + jobKindName(kind) + " job is already running.";
       return false;
     }
   }
@@ -730,33 +794,57 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
   for (const auto& a : job->args) job->commandLine.push_back(a);
   job->args.insert(job->args.end(), {"--out", job->outDir.string()});
   job->writeJobJson();
-  retire(slot(kind));
-  slot(kind) = job;
-  job->monitor = std::thread([job]() mutable {
-    // --- probe the executable for --progress-json (match only)
+  reapGraveyard();
+  if (sl == Slot::Match && refine_) {
+    // A new MATCH ends the old refinement: it is cancelled (it keeps dying on its own monitor thread) and forgotten.
+    bool active;
+    {
+      std::lock_guard<std::mutex> jl(refine_->m);
+      active = refine_->snap.active();
+    }
+    if (active) {
+      refine_->cancelRequested = true;
+      graveyard_.push_back(std::move(refine_));
+      refine_.reset();
+    } else {
+      retire(refine_);
+    }
+  }
+  retire(cur);
+  cur = job;
+  job->monitor = std::thread([this, job]() mutable {
+    // --- probe the executable's --help (match only): --progress-json, and --quick / --thorough
     if (job->wantProgressJson) {
       const std::string key = job->exe + "|" + std::to_string(juce::File(job->exe).getLastModificationTime().toMilliseconds());
-      bool has;
+      HelpInfo info;
       bool cached;
       {
         std::lock_guard<std::mutex> hl(job->help->m);
-        const auto it = job->help->listsProgressJson.find(key);
-        cached = it != job->help->listsProgressJson.end();
-        has = cached && it->second;
+        const auto it = job->help->info.find(key);
+        cached = it != job->help->info.end();
+        if (cached) info = it->second;
       }
       if (!cached) {
-        has = probeProgressJson(job->exe, job->stopMonitoring);
+        info = probeHelp(job->exe, job->stopMonitoring);
         if (job->stopMonitoring) return;
         std::lock_guard<std::mutex> hl(job->help->m);
-        job->help->listsProgressJson[key] = has;
+        job->help->info[key] = info;
       }
-      if (has) {
+      bool quick = false;
+      if (job->thoroughPass) {
+        job->args.insert(job->args.end(), {"--thorough"});
+      } else if (job->wantQuickPass && info.quick && info.thorough) {
+        job->args.insert(job->args.end(), {"--quick"});
+        quick = true;
+      }
+      if (info.progressJson) {
         job->args.insert(job->args.end(), {"--progress-json", job->progressFile.string()});
         job->commandLine.push_back("--progress-json");
         job->commandLine.push_back(job->progressFile.string());
       }
       std::lock_guard<std::mutex> sl(job->m);
-      job->snap.progressJson = has;
+      job->snap.progressJson = info.progressJson;
+      if (quick) job->snap.pass = "quick";
     }
     if (job->cancelRequested) {
       job->finishedMs = nowMs();
@@ -857,9 +945,22 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
       job->snap.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : -1);
     }
 #endif
-    finalizeJob(*job);
+    finishAndRefine(job);
   });
   return true;
+}
+
+// The end of a job's monitor: record the result; after a quick pass, decide on the refinement. refinePending is set
+// before the final state becomes visible, so nobody sees "quick finished" without the refinement being accounted for.
+void JobRunner::finishAndRefine(const std::shared_ptr<Job>& job) {
+  bool quick;
+  {
+    std::lock_guard<std::mutex> lk(job->m);
+    quick = job->snap.pass == "quick";
+  }
+  if (quick && !job->cancelRequested) job->refinePending = true;
+  finalizeJob(*job);
+  if (quick) refineAfter(job);
 }
 
 // ---- finishing, re-attaching, queries -----------------------------------------------------------------------------
@@ -958,12 +1059,63 @@ void JobRunner::monitorAttached(std::shared_ptr<Job> job) {
   if (job->stopMonitoring) return;
   job->pollLogFile(/*flush=*/true);
   job->pollProgress();
-  finalizeJob(*job);
+  finishAndRefine(job);
 }
 
-void JobRunner::adopt(JobKind kind, const fs::path& dir) {
+// After a quick pass succeeded: start the thorough pass on the same take, reference and offset, if auto-refine is on.
+// Runs on the quick job's monitor thread. It waits for the runner's mutex with try_lock so that a message thread that
+// is replacing or joining this job (retire sets stopMonitoring first) can never deadlock against it.
+void JobRunner::refineAfter(const std::shared_ptr<Job>& quick) {
+  struct Done {
+    Job& j;
+    ~Done() { j.refinePending = false; }
+  } done{*quick};
+  std::unique_lock<std::mutex> lk(m_, std::defer_lock);
+  while (!lk.try_lock()) {
+    if (quick->stopMonitoring) return;
+    std::this_thread::sleep_for(5ms);
+  }
+  if (closing_ || quick->stopMonitoring || quick->cancelRequested || match_ != quick) return;  // cancelled, or a newer MATCH took over
+  {
+    std::lock_guard<std::mutex> jl(quick->m);
+    if (quick->snap.state != JobState::Succeeded) return;
+  }
+  if (!settings_.autoRefine()) return;
+  startRefineLocked(quick);
+}
+
+bool JobRunner::startRefineLocked(const std::shared_ptr<Job>& quick) {
+  std::string note;
+  std::error_code ec;
+  if (const ToolCheck t = checkTools(JobKind::Match); !t.ok()) {
+    note = t.message;
+  } else if (!fs::is_regular_file(quick->request.di, ec) || !fs::is_regular_file(quick->request.ref, ec)) {
+    note = "the DI take or the reference file is gone";
+  } else {
+    auto job = makeMatchJob(quick->request);
+    job->thoroughPass = true;
+    job->snap.pass = "thorough";
+    job->snap.pairName = quick->dir.filename().string();
+    if (launchLocked(Slot::Refine, job, &note)) {
+      {
+        std::lock_guard<std::mutex> jl(quick->m);
+        quick->snap.pairName = job->dir.filename().string();
+      }
+      quick->writeJobJson();
+      return true;
+    }
+  }
+  {
+    std::lock_guard<std::mutex> jl(quick->m);
+    quick->snap.refineNote = "The refinement could not start: " + note;
+  }
+  quick->writeJobJson();
+  return false;
+}
+
+std::shared_ptr<JobRunner::Job> JobRunner::adoptJob(JobKind kind, const fs::path& dir) {
   const json j = json::parse(readFile(dir / "job.json"), nullptr, /*allow_exceptions=*/false);
-  if (!j.is_object()) return;
+  if (!j.is_object()) return nullptr;
   auto job = std::make_shared<Job>();
   job->kind = kind;
   job->owned = false;
@@ -978,6 +1130,13 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
   if (auto it = j.find("commandLine"); it != j.end() && it->is_array())
     for (const auto& a : *it)
       if (a.is_string()) job->commandLine.push_back(a.get<std::string>());
+  if (auto it = j.find("request"); it != j.end() && it->is_object()) {
+    job->request.di = it->value("di", std::string());
+    job->request.ref = it->value("ref", std::string());
+    job->request.referenceLabel = it->value("referenceLabel", std::string());
+    job->request.diLabel = it->value("diLabel", std::string());
+    if (auto o = it->find("offsetMs"); o != it->end() && o->is_number()) job->request.offsetMs = o->get<double>();
+  }
   const std::string state = j.value("state", std::string());
   job->snap.kind = kind;
   job->snap.dir = dir;
@@ -988,6 +1147,9 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
   job->snap.di = j.value("di", std::string());
   job->snap.exportMode = j.value("exportMode", std::string());
   job->snap.exportSize = j.value("exportSize", std::string());
+  job->snap.pass = j.value("pass", std::string());
+  job->snap.pairName = j.value("pair", std::string());
+  job->snap.refineNote = j.value("refineNote", std::string());
   job->snap.exitCode = j.value("exitCode", -1);
   job->snap.pid = job->pid.load();
   job->finishedMs = j.value("finishedEpochMs", static_cast<std::int64_t>(0));
@@ -997,9 +1159,8 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
     job->snap.progress.stage = "running";
     job->pollLogFile();  // pick up what the log already says
     job->pollProgress();
-    slot(kind) = job;
-    job->monitor = std::thread([job] { monitorAttached(job); });
-    return;
+    job->monitor = std::thread([this, job] { monitorAttached(job); });
+    return job;
   }
   if (wasActive) {
     job->snap.exitCode = -1;
@@ -1014,7 +1175,56 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
   } else {
     job->snap.state = JobState::Failed;
   }
-  slot(kind) = job;
+  return job;
+}
+
+// `job` is the newest match job on disk. Rebuilds the pair around it: a thorough job gets its quick partner (the
+// "pair" in job.json), a quick job its thorough one (its own "pair", else a thorough job that names it). A quick job
+// that finished with no thorough partner, and auto-refine on, starts the refinement now (once: after that the
+// thorough job's folder exists, whatever became of it). A quick job that is still running starts it itself when it ends.
+void JobRunner::adoptMatchGroup(std::shared_ptr<Job> job, const std::vector<fs::path>& dirs) {
+  const fs::path root = job->dir.parent_path();
+  std::string pass, pair;
+  {
+    std::lock_guard<std::mutex> jl(job->m);
+    pass = job->snap.pass;
+    pair = job->snap.pairName;
+  }
+  if (pass == "thorough") {
+    std::shared_ptr<Job> quick;
+    if (!pair.empty() && fs::exists(root / pair / "job.json")) quick = adoptJob(JobKind::Match, root / pair);
+    if (quick) {
+      match_ = quick;
+      refine_ = job;
+    } else {
+      match_ = job;  // its quick partner is gone: shown as a plain result
+    }
+    return;
+  }
+  match_ = job;
+  if (pass != "quick") return;
+  const std::string myName = job->dir.filename().string();
+  if (pair.empty()) {  // the quick job's own json predates the thorough job's start: look for a thorough job that names it
+    for (const auto& d : dirs) {
+      if (d.filename().string() <= myName) continue;
+      const json j = json::parse(readFile(d / "job.json"), nullptr, /*allow_exceptions=*/false);
+      if (j.is_object() && j.value("pass", std::string()) == "thorough" && j.value("pair", std::string()) == myName) {
+        pair = d.filename().string();
+        break;
+      }
+    }
+  }
+  if (!pair.empty() && fs::exists(root / pair / "job.json")) {
+    refine_ = adoptJob(JobKind::Match, root / pair);
+    return;
+  }
+  if (!pair.empty()) return;  // the refinement was started and its folder pruned or removed: not started again
+  JobState st;
+  {
+    std::lock_guard<std::mutex> jl(job->m);
+    st = job->snap.state;
+  }
+  if (st == JobState::Succeeded && settings_.autoRefine()) startRefineLocked(job);
 }
 
 void JobRunner::attachExisting() {
@@ -1025,34 +1235,53 @@ void JobRunner::attachExisting() {
   for (fs::directory_iterator it(jobsDir_, ec), end; !ec && it != end; it.increment(ec))
     if (it->is_directory(ec) && fs::exists(it->path() / "job.json", ec)) dirs.push_back(it->path());
   std::sort(dirs.begin(), dirs.end(), std::greater<>());
-  for (JobKind kind : {JobKind::Match, JobKind::Export}) {
-    if (slot(kind)) continue;
-    const std::string suffix = std::string("-") + jobKindName(kind);
-    for (const auto& d : dirs) {
-      const std::string n = d.filename().string();
-      if (n.size() > suffix.size() && n.compare(n.size() - suffix.size(), suffix.size(), suffix) == 0) {
-        adopt(kind, d);
-        if (slot(kind)) break;
+  auto endsWith = [](const std::string& n, const std::string& suffix) { return n.size() > suffix.size() && n.compare(n.size() - suffix.size(), suffix.size(), suffix) == 0; };
+  if (!export_)
+    for (const auto& d : dirs)
+      if (endsWith(d.filename().string(), "-export")) {
+        export_ = adoptJob(JobKind::Export, d);
+        if (export_) break;
       }
-    }
-  }
+  if (!match_ && !refine_)
+    for (const auto& d : dirs)
+      if (endsWith(d.filename().string(), "-match")) {
+        if (auto job = adoptJob(JobKind::Match, d)) {
+          adoptMatchGroup(std::move(job), dirs);
+          break;
+        }
+      }
 }
 
 void JobRunner::cancel(JobKind kind) {
-  std::shared_ptr<Job> j;
+  std::shared_ptr<Job> j, r;
   {
     std::lock_guard<std::mutex> lk(m_);
-    j = slot(kind);
+    j = kind == JobKind::Match ? match_ : export_;
+    if (kind == JobKind::Match) r = refine_;
   }
-  if (j) j->cancelRequested = true;
+  if (j) {
+    // A finished quick pass is left as it is (its results stay); only an active one, or one whose refinement is about
+    // to be decided, is cancelled: then no refinement starts.
+    bool live = kind == JobKind::Export;
+    if (!live) {
+      std::lock_guard<std::mutex> lk(j->m);
+      live = j->snap.active() || j->refinePending.load();
+    }
+    if (live) j->cancelRequested = true;
+  }
+  if (r) r->cancelRequested = true;
 }
 
-JobSnapshot JobRunner::snapshot(JobKind kind) const {
-  std::shared_ptr<Job> j;
+void JobRunner::cancelRefine() {
+  std::shared_ptr<Job> r;
   {
     std::lock_guard<std::mutex> lk(m_);
-    j = slot(kind);
+    r = refine_;
   }
+  if (r) r->cancelRequested = true;
+}
+
+JobSnapshot JobRunner::snapshotOf(const std::shared_ptr<Job>& j, JobKind kind) const {
   JobSnapshot s;
   s.kind = kind;
   if (!j) return s;
@@ -1061,19 +1290,129 @@ JobSnapshot JobRunner::snapshot(JobKind kind) const {
     s = j->snap;
   }
   s.pid = j->pid.load();
+  s.refinePending = j->refinePending.load();
   const std::int64_t end = s.active() || j->finishedMs.load() == 0 ? nowMs() : j->finishedMs.load();
   s.elapsedSeconds = j->startedMs > 0 ? std::max(0.0, static_cast<double>(end - j->startedMs) / 1000.0) : 0.0;
   return s;
+}
+
+JobSnapshot JobRunner::snapshot(JobKind kind) const {
+  std::shared_ptr<Job> j;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    j = kind == JobKind::Match ? match_ : export_;
+  }
+  return snapshotOf(j, kind);
+}
+
+JobSnapshot JobRunner::refineSnapshot() const {
+  std::shared_ptr<Job> j;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    j = refine_;
+  }
+  return snapshotOf(j, JobKind::Match);
 }
 
 bool JobRunner::waitFinished(JobKind kind, std::chrono::milliseconds timeout) {
   const auto end = std::chrono::steady_clock::now() + timeout;
   for (;;) {
     const JobSnapshot s = snapshot(kind);
-    if (!s.active()) return true;
+    if (!s.active() && !s.refinePending) return true;
     if (std::chrono::steady_clock::now() > end) return false;
     std::this_thread::sleep_for(20ms);
   }
+}
+
+bool JobRunner::waitRefineFinished(std::chrono::milliseconds timeout) {
+  const auto end = std::chrono::steady_clock::now() + timeout;
+  for (;;) {
+    const JobSnapshot q = snapshot(JobKind::Match), r = refineSnapshot();
+    if (!r.active() && !q.refinePending) return true;
+    if (std::chrono::steady_clock::now() > end) return false;
+    std::this_thread::sleep_for(20ms);
+  }
+}
+
+// ---- housekeeping -------------------------------------------------------------------------------------------------
+namespace {
+// The DI path a match job was started with: job.json's request, else the --di in its command line (phase 6a jobs).
+std::string takeOf(const json& j) {
+  if (auto r = j.find("request"); r != j.end() && r->is_object())
+    if (auto d = r->find("di"); d != r->end() && d->is_string() && !d->get<std::string>().empty()) return d->get<std::string>();
+  if (auto c = j.find("commandLine"); c != j.end() && c->is_array())
+    for (std::size_t i = 0; i + 1 < c->size(); ++i)
+      if ((*c)[i].is_string() && (*c)[i].get<std::string>() == "--di" && (*c)[i + 1].is_string()) return (*c)[i + 1].get<std::string>();
+  return {};
+}
+
+// Does job.json describe a job that may still be running? (A process that is alive and is the recorded tool, or a job
+// that was written a moment ago and has not spawned yet.)
+bool recordedRunning(const json& j, const fs::path& dir) {
+  const std::string state = j.value("state", std::string());
+  if (state != "starting" && state != "running") return false;
+  const std::int64_t pid = j.value("pid", static_cast<std::int64_t>(0));
+  if (pid > 1) return jobProcessAlive(pid, j.value("pgid", pid), j.value("spawnedEpochMs", static_cast<std::int64_t>(0)), /*reap=*/false);
+  std::error_code ec;
+  const auto age = fs::file_time_type::clock::now() - fs::last_write_time(dir / "job.json", ec);
+  return !ec && age < std::chrono::minutes(5);
+}
+}  // namespace
+
+void JobRunner::prune(int keepTakes) {
+  fs::path root;
+  std::vector<fs::path> live;  // jobs this runner is running right now
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    root = jobsDir_;
+    std::vector<std::shared_ptr<Job>> mine{match_, refine_};
+    mine.insert(mine.end(), graveyard_.begin(), graveyard_.end());
+    for (const auto& j : mine) {
+      if (!j) continue;
+      std::lock_guard<std::mutex> jl(j->m);
+      if (j->snap.active() || j->refinePending.load()) live.push_back(j->dir);
+    }
+  }
+  std::error_code ec;
+  if (!fs::is_directory(root, ec)) return;
+  struct Group {
+    std::string newest;
+    std::vector<fs::path> dirs;
+    bool running = false;
+  };
+  std::map<std::string, Group> groups;
+  for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+    std::error_code e2;
+    if (!it->is_directory(e2)) continue;
+    const std::string name = it->path().filename().string();
+    static const std::string suffix = "-match";
+    if (name.size() <= suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+    const json j = json::parse(readFile(it->path() / "job.json"), nullptr, /*allow_exceptions=*/false);
+    if (!j.is_object()) continue;  // not a job folder (or being written): never touched
+    std::string take = takeOf(j);
+    if (take.empty()) take = "dir:" + name;
+    Group& g = groups[take];
+    g.dirs.push_back(it->path());
+    if (name > g.newest) g.newest = name;
+    if (std::find(live.begin(), live.end(), it->path()) != live.end() || recordedRunning(j, it->path())) g.running = true;
+  }
+  std::vector<const Group*> ordered;
+  for (const auto& kv : groups) ordered.push_back(&kv.second);
+  std::sort(ordered.begin(), ordered.end(), [](const Group* a, const Group* b) { return a->newest > b->newest; });
+  for (std::size_t i = static_cast<std::size_t>(std::max(0, keepTakes)); i < ordered.size(); ++i) {
+    if (ordered[i]->running) continue;
+    for (const auto& d : ordered[i]->dirs) fs::remove_all(d, ec);
+  }
+}
+
+void JobRunner::pruneAsync(int keepTakes) {
+  if (!pruneDone_.load()) return;  // the previous one is still going: once per start-up is enough
+  if (pruneThread_.joinable()) pruneThread_.join();
+  pruneDone_ = false;
+  pruneThread_ = std::thread([this, keepTakes] {
+    prune(keepTakes);
+    pruneDone_ = true;
+  });
 }
 
 }  // namespace sawblade::plugin
