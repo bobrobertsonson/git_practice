@@ -7,6 +7,24 @@ Artifact with the screenshots and the checklist: https://claude.ai/artifact/JVLr
 env-gated skips: the real htdemucs model, the Pillow icon reproducibility check), pluginval VST3 strictness 10 passing
 in both builds, `match/` pytest: 413 passed / 7 skipped (`-k "not speed"`) at the p11 round; after the B6/B7 rounds the suite (excluding the 15-minute `test_speed.py`, which passed at 10.1, and `test_calibrate`) exits 0 with no failures.
 
+## Mac quick start
+
+On the Apple Silicon Mac (first time: `docs/MAC.md` "First time" — Command Line Tools, `brew install cmake ninja
+python@3.11 git`, clone to `~/sawblade`, `python3.11 -m venv match/.venv && match/.venv/bin/pip install -e match`,
+`match/.venv/bin/sawblade-t3k login`):
+
+```
+cd ~/sawblade && git pull
+scripts/mac_update.sh --standalone        # pull, configure + build Release, install AU + VST3, auval, resolve presets, open the app
+# later updates: scripts/mac_update.sh      (add --no-resolve to skip TONE3000, --clean after a dependency change)
+```
+
+Then in Logic Pro: Settings > Plug-in Manager > Reset & Rescan Selection for Sawblade (restart Logic if it is not
+listed), insert Sawblade (AU, "Swbl") on a guitar DI track, open the editor. Load a tone first from the preset box in
+the top bar: `presets/styles/uk_death_bolt_thrower.json` (a blend; the resolve step has fetched its captures) or
+`presets/modeled/hm_chainsaw.json` (a modeled chainsaw, no captures needed). Then PLAY ALONG to load a song folder or
+file, RIG to edit the chain, the gear button for Settings. Intel Macs: configure with `-DSAWBLADE_WITH_SEPARATOR=OFF`.
+
 ## What is in the branch
 
 | merge | branch | reviewer | ctest after |
@@ -85,8 +103,11 @@ Fixed in this pass (each commit carries a test that fails without the fix):
 4. Export ETA was -1 for the first minutes and after a resume: seeded from the checkpoint's per-epoch time or the first
    partial epoch (e0caa51).
 5. `standalone_launch.sh` leaked its temp dir (exec before the trap) and could orphan the app on a ctest timeout (95f4cd2, 204c1a3).
-6. The capture browser still said CC BY-NC captures cannot be used, and the fake refused them; CLAUDE.md allows them,
-   marking derived presets and exports non-commercial (e1fbe51).
+6. **Pending user-approved change (not shipped):** CC BY-NC captures. CLAUDE.md allows them for this personal project, but
+   the lead ruled that enabling them in the t3k licence filter, the fake and the capture browser needs the user's direct
+   approval; the change (e1fbe51) was reverted (6e7ce8c). The browser now says "CC BY-NC captures are not enabled in
+   this build." Enabling it is a one-commit change: `match/sawblade_match/t3k/licenses.py`, `plugin/tests/fake_t3k.py`,
+   the browser note, and the tests that pin the refusal.
 7. The BLEND tab's law button truncated to "CONST..." at 1x (6997bc5).
 8. The mode chip said STUDIO for a rig without a cab; a cab-less rig is live-compatible (c47595a, e9f346a).
 
