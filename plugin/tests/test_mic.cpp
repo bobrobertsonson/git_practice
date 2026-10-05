@@ -641,8 +641,8 @@ TEST_CASE("T3kTool: progress lines, arguments and a clean exit", "[t3k]") {
                                    "echo '{\"done\": 2, \"total\": 3, \"name\": \"b\"}'\n"
                                    "echo '{\"done\": 3, \"total\": 3, \"name\": \"c\"}'\n"
                                    "exit 0");
+  Run r;  // before the tool: the tool's thread calls back into r until the tool is destroyed
   T3kTool tool;
-  Run r;
   REQUIRE(start(tool, r, T3kTool::packArgs("1234", tmp.dir / "m.json"), exe));
   REQUIRE(r.wait());
   CHECK(r.result.status == T3kTool::Status::Ok);
@@ -663,8 +663,8 @@ TEST_CASE("T3kTool: exit 4 is 'not logged in', exit 1 shows the last stderr line
   TempDir tmp;
   {
     const fs::path exe = writeScript(tmp.dir, "login", "echo 'token expired' >&2\nexit 4");
+    Run r;  // before the tool: the tool's thread calls back into r until the tool is destroyed
     T3kTool tool;
-    Run r;
     REQUIRE(start(tool, r, {"pack", "1"}, exe));
     REQUIRE(r.wait());
     CHECK(r.result.status == T3kTool::Status::NotLoggedIn);
@@ -673,8 +673,8 @@ TEST_CASE("T3kTool: exit 4 is 'not logged in', exit 1 shows the last stderr line
   }
   {
     const fs::path exe = writeScript(tmp.dir, "boom", "echo 'first line' >&2\necho 'error: the pack has no models' >&2\nexit 1");
+    Run r;  // before the tool: the tool's thread calls back into r until the tool is destroyed
     T3kTool tool;
-    Run r;
     REQUIRE(start(tool, r, {"pack", "1"}, exe));
     REQUIRE(r.wait());
     CHECK(r.result.status == T3kTool::Status::Failed);
@@ -683,8 +683,8 @@ TEST_CASE("T3kTool: exit 4 is 'not logged in', exit 1 shows the last stderr line
   }
   {
     const fs::path exe = writeScript(tmp.dir, "silent", "exit 3");
+    Run r;  // before the tool: the tool's thread calls back into r until the tool is destroyed
     T3kTool tool;
-    Run r;
     REQUIRE(start(tool, r, {"pack", "1"}, exe));
     REQUIRE(r.wait());
     CHECK(r.result.status == T3kTool::Status::Failed);
@@ -694,8 +694,8 @@ TEST_CASE("T3kTool: exit 4 is 'not logged in', exit 1 shows the last stderr line
 
 TEST_CASE("T3kTool: a missing executable is reported clearly, not run", "[t3k]") {
   TempDir tmp;
+  Run r;  // before the tool: the tool's thread calls back into r until the tool is destroyed
   T3kTool tool;
-  Run r;
   const fs::path exe = tmp.dir / "no" / "sawblade-t3k";
   REQUIRE(start(tool, r, {"pack", "1"}, exe));
   REQUIRE(r.wait());
@@ -713,8 +713,8 @@ TEST_CASE("T3kTool: a missing executable is reported clearly, not run", "[t3k]")
 TEST_CASE("T3kTool: cancel kills the child and reports Cancelled", "[t3k]") {
   TempDir tmp;
   const fs::path exe = writeScript(tmp.dir, "slow", "echo '{\"done\": 1, \"total\": 9, \"name\": \"a\"}'\nexec sleep 60");
+  Run r;  // before the tool: the tool's thread calls back into r until the tool is destroyed
   T3kTool tool;
-  Run r;
   REQUIRE(start(tool, r, {"pack", "1"}, exe));
   REQUIRE(tool.running());
   CHECK_FALSE(start(tool, r, {"pack", "2"}, exe));  // one run at a time
@@ -737,8 +737,8 @@ TEST_CASE("T3kTool: destroying the tool while a child runs cancels it", "[t3k]")
   const fs::path exe = writeScript(tmp.dir, "slow", "exec sleep 60");
   const auto t0 = std::chrono::steady_clock::now();
   {
+    Run r;  // before the tool: the tool's thread calls back into r until the tool is destroyed
     T3kTool tool;
-    Run r;
     REQUIRE(start(tool, r, {}, exe));
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }

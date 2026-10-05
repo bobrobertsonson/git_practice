@@ -181,29 +181,39 @@ std::optional<fs::path> detectMatchVenv(const Env& env) {
 Settings::Settings(fs::path file, Env env) : file_(std::move(file)), env_(std::move(env)) {}
 
 namespace {
-std::mutex gSharedMutex;
-std::unique_ptr<Settings> gShared;
+// Intentionally leaked (never destroyed by static teardown): ~Settings locks its own mutex and the core's cache-override
+// mutex, and a DAW unloading the plugin or the process exiting could otherwise destroy those first. Locking a destroyed
+// std::mutex throws on macOS (libc++: "mutex lock failed: Invalid argument"). resetSharedForTests() still destroys it.
+struct SharedState {
+  std::mutex m;
+  std::unique_ptr<Settings> instance;
+};
+SharedState& sharedState() {
+  static SharedState* const s = new SharedState;
+  return *s;
+}
 }  // namespace
 
 Settings& Settings::shared() {
-  std::lock_guard<std::mutex> lk(gSharedMutex);
-  if (!gShared) {
+  std::lock_guard<std::mutex> lk(sharedState().m);
+  auto& inst = sharedState().instance;
+  if (!inst) {
     const Env env = Env::system();
-    gShared = std::make_unique<Settings>(Paths::settingsFile(env), env);
-    gShared->applyProcessEnv_ = true;
-    gShared->load();
+    inst = std::make_unique<Settings>(Paths::settingsFile(env), env);
+    inst->applyProcessEnv_ = true;
+    inst->load();
   }
-  return *gShared;
+  return *inst;
 }
 
 bool Settings::sharedExistsForTests() {
-  std::lock_guard<std::mutex> lk(gSharedMutex);
-  return gShared != nullptr;
+  std::lock_guard<std::mutex> lk(sharedState().m);
+  return sharedState().instance != nullptr;
 }
 
 void Settings::resetSharedForTests() {
-  std::lock_guard<std::mutex> lk(gSharedMutex);
-  gShared.reset();
+  std::lock_guard<std::mutex> lk(sharedState().m);
+  sharedState().instance.reset();
 }
 
 bool Settings::fileExists() const {
