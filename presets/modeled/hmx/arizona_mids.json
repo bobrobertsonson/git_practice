@@ -25,7 +25,8 @@
             "clip": "led",
             "boost": "off",
             "lowMidFreq": 5,
-            "highMidFreq": 6
+            "highMidFreq": 6,
+            "midVoice": "stock"
           }
         }
       ]

@@ -25,7 +25,8 @@
             "clip": "asymmetric",
             "boost": "off",
             "lowMidFreq": 2,
-            "highMidFreq": 4
+            "highMidFreq": 4,
+            "midVoice": "stock"
           }
         }
       ]

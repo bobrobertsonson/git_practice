@@ -25,7 +25,8 @@
             "clip": "silicon",
             "boost": "on",
             "lowMidFreq": 4,
-            "highMidFreq": 5
+            "highMidFreq": 5,
+            "midVoice": "stock"
           }
         }
       ]
