@@ -1270,6 +1270,34 @@ TEST_CASE("runner: a new runner re-attaches to a running job and to finished one
   CHECK(s.results[0].errorDb == Catch::Approx(3.21));
 }
 
+TEST_CASE("runner: a re-attached export gets the export grace period, not the match one", "[match][runner][export][attach][cancel]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1", "g2"})}, {"ignoreInt", true}});
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.exportsRoot = t.root / "exports";
+  fs::path run;
+  std::int64_t pid = 0;
+  {
+    JobRunner first(t.settings, t.jobs);
+    REQUIRE(first.startExport(er));
+    REQUIRE(waitUntil([&] { return first.snapshot(JobKind::Export).progress.epoch == 3; }));
+    run = first.snapshot(JobKind::Export).outDir;
+    pid = first.snapshot(JobKind::Export).pid;
+  }
+  JobRunner second(t.settings, t.jobs);  // default grace periods: 2.5 s for MATCH, 15 s for an export
+  second.attachExisting();
+  REQUIRE(second.snapshot(JobKind::Export).state == JobState::Running);
+  second.cancel(JobKind::Export);
+  // The fake ignores SIGINT. With the export grace (15 s) no SIGTERM follows within 4 s; with the match grace (2.5 s) it would.
+  REQUIRE(waitUntil([&] { return fs::exists(run / "signals.json"); }));
+  std::this_thread::sleep_for(4s);
+  CHECK(readJson(run / "signals.json") == json::array({"SIGINT"}));
+  ::kill(static_cast<pid_t>(pid), SIGKILL);
+  REQUIRE(second.waitFinished(JobKind::Export, 10000ms));
+}
+
 TEST_CASE("runner: a re-attached job can be cancelled, and a job whose process died is reported", "[match][runner][attach]") {
   using namespace sawblade::plugin;
   FakeTools t;

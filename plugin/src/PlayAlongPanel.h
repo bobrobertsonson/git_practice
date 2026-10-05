@@ -29,8 +29,8 @@ class PlayAlongPanel : public juce::Component {
   // The top bar's MATCH button: the panel (with its record + match band) is already open; in plugin mode this shows the
   // same "open the Standalone app" note as the panel's MATCH button, in Standalone it only brings the band up to date.
   void showMatchArea();
-  // The MATCH / EXPORT NAM buttons open the match screen (the editor wires these). In plugin mode (not
-  // Standalone) they only show a note: open the Standalone app.
+  // MATCH opens the match screen and EXPORT NAM opens the export panel (the editor wires both). In plugin mode (not
+  // Standalone) MATCH only shows a note: open the Standalone app; EXPORT NAM works in a host too.
   std::function<void()> onMatch, onExport;
   // Opens the folder picker (asynchronous); a chosen folder is loaded as a user-initiated load.
   void chooseFolder();

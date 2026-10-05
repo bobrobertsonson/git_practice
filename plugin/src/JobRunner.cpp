@@ -237,7 +237,7 @@ void MatchSettings::setFile(const fs::path& file) {
 
 std::shared_ptr<juce::PropertiesFile> MatchSettings::props() const {
   // The caller keeps the file alive: a concurrent setFile() only replaces the member.
-std::lock_guard<std::mutex> lk(m_);
+  std::lock_guard<std::mutex> lk(m_);
   if (!props_) {
     juce::PropertiesFile::Options o;
     o.applicationName = "Sawblade";
@@ -1344,7 +1344,7 @@ std::shared_ptr<JobRunner::Job> JobRunner::adoptJob(JobKind kind, const fs::path
   job->dir = dir;
   job->outDir = j.value("outDir", dir.string());
   job->progressFile = dir / "progress.json";
-  job->grace = std::chrono::milliseconds(graceMs_.load());
+  job->grace = std::chrono::milliseconds(kind == JobKind::Export ? exportGraceMs_.load() : graceMs_.load());
   job->startedMs = j.value("startedEpochMs", static_cast<std::int64_t>(0));
   job->pid = j.value("pid", static_cast<std::int64_t>(0));
   job->pgid = j.value("pgid", job->pid.load());
@@ -1384,7 +1384,6 @@ std::shared_ptr<JobRunner::Job> JobRunner::adoptJob(JobKind kind, const fs::path
     job->snap.accepted = j.value("accepted", std::string());
     job->snap.resumable = j.value("resumable", false);
     job->snap.sidecar = j.value("sidecar", std::string());
-    job->snap.di = j.value("di", std::string());
     job->settings = &settings_;
   }
   job->snap.pid = job->pid.load();
