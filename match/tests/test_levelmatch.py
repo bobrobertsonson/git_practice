@@ -165,3 +165,21 @@ def test_emitted_blend_preset_keys_and_single_path_unchanged():
     single = Combo((), combo.a_amp, None, None, combo.cab)
     ps = build_preset(single, Space.for_combo(single).default(), gate=None, align=manual_align(), levels=levels)
     assert "levelMatch" not in ps and "blendLaw" not in ps and ps["blend"] == 0.0
+
+
+def test_level_match_real_binding_on_demo_preset():
+    """End to end against the built sawblade_core (no fakes); the module-level importorskip skips it without the core."""
+    import json
+    preset_path = REPO / "presets" / "modeled" / "saw_body_blend_demo.json"
+    preset = json.loads(preset_path.read_text())
+    r = core.level_match(preset, 48000, base_dir=str(preset_path.parent))
+    assert r["trimADb"] == pytest.approx(2.02, abs=0.05)
+    assert r["trimBDb"] == 0.0
+    mk = r["makeupDb"]
+    assert len(mk) == 5
+    assert abs(mk[0]) < 0.01 and abs(mk[-1]) < 0.01
+    assert mk[2] == pytest.approx(-2.25, abs=0.05)
+    assert r["lufsA"] < r["lufsB"]
+    assert isinstance(r["invertB"], bool)
+    assert isinstance(r["delaySamplesB"], int)
+    assert isinstance(r["warnings"], list)
