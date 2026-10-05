@@ -86,6 +86,20 @@ file (mp3, wav, flac, m4a) instead." and keep the previous song. Same rule for a
 folder loads; a mixed folder (stems + one unrelated file) and a folder of unrelated files are refused
 and leave the loaded song untouched.
 
+## Task G (first) — LOAD SONG / drop cannot pick a .wav on macOS
+
+User (2026-10-05, macOS arm64, build e8945c2): in LOAD SONG the .wav is greyed out in the file dialog,
+and dropping it on the window does nothing. Picking a folder works. `isSongFileName` accepts `.wav`, so
+the suspects are the platform layer: the `FileChooser` built with `canSelectFiles | canSelectDirectories`
+plus a `;`-separated filter (`PlayAlongPanel::chooseFolder`), and the editor's file-drag interest when the
+drop lands on a child component (the play-along panel) or when the host (Logic, AUHostingService)
+filters drags. Root-cause it first; report whether Logic and the Standalone app behave differently.
+Fix candidates: two explicit buttons (CHOOSE SONG FILE… files-only chooser; CHOOSE STEMS FOLDER…
+directories-only) and a `FileDragAndDropTarget` on the play-along panel itself. Tests: chooser
+configuration (files-only accepts .wav/.WAV/.mp3/.flac/.m4a/.aif), drop onto the panel and onto the rig
+area both load a song; a macOS CI step that drives the chooser is not required, but the report must
+state how the fix was checked on macOS (screenshot or the user's confirmation).
+
 ## Acceptance
 
 - New tests: MATCH enabled in plugin mode (editor, mouse-driven); two-instance job isolation; import of
