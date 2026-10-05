@@ -571,7 +571,8 @@ active tab are UI state and are never saved. Spec: `docs/specs/phase10_rig_edito
   rebuild), a trim read-out under each path LEVEL knob (`+4.2 dB auto`, `+4.2 dB manual`, `0.0 dB off`, followed by ` · +1.0 dB` when
   the player's own level offset is not zero) and `MATCH LEVELS`.
 - **CAB.** `SHARED | PER PATH`, `CAB ON`, IR cards with `CHOOSE...`; the notice `LIVE-COMPATIBLE: the no-cab NAM export is
-  exact` (shared) or `STUDIO BLEND: only the with-cab NAM export is exact` (per path).
+  exact` (shared, or any cab mode with `CAB ON` off: a cab-less rig is live-compatible) or `STUDIO BLEND: only the with-cab
+  NAM export is exact` (per path with the cab on).
 - **GATE.** `GATE ON`, `GATE | EXPANDER`, THRESHOLD, HYSTERESIS, ATTACK, HOLD, RELEASE, RANGE, RATIO (expander only),
   KEY HPF (bottom = off), release curve, LEARN. **COMP.** `COMP ON`, THRESHOLD, RATIO, KNEE, ATTACK, RELEASE, MAKEUP; a
   release above 150 ms shows `release > 150 ms: not NAM-trainable`.

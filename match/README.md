@@ -90,7 +90,7 @@ sawblade-t3k login --json-events      # alias: --json
 
 With `--json`, stdout is exactly one JSON document (notes/logs go to stderr). Failure: exit 1 and
 `{"error": "<message>", "code": "license|auth|not_found|network|error"}` (also for `search --json`).
-Without `--json` behaviour is unchanged. Licence policy is unchanged (`cc-by-nc*`/unknown refused, code `license`).
+Without `--json` behaviour is unchanged. Licence policy: `cc-by-nc*` captures are allowed, unknown licences are refused (code `license`); see "License policy" below.
 
 * `models` -> `{"tone_id": int, "architecture": str, "models": [{"model_id": int, "name": str, "size": str|null}]}`
   (A2 then A1 candidates as `pull` picks; `""` and `[]` if none; empty `size` -> `null`).

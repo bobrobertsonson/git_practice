@@ -1,4 +1,5 @@
 #include "CaptureList.h"
+#include "../presets/PresetLibrary.h"
 
 #include <algorithm>
 #include <cctype>
@@ -27,9 +28,7 @@ void add(std::vector<CaptureRow>& out, const std::string& slot, const sawblade::
     r.license = c.source->license;
     r.url = c.source->url;
     if (r.url.empty() && c.source->provider == "tone3000" && !c.source->id.empty()) r.url = "https://www.tone3000.com/tones/" + c.source->id;
-    std::string l = r.license;
-    std::transform(l.begin(), l.end(), l.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    r.nonCommercial = l.find("-nc") != std::string::npos;
+    r.nonCommercial = nonCommercialLicense(r.license);
   }
   out.push_back(std::move(r));
 }

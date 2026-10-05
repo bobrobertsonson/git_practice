@@ -453,7 +453,8 @@ struct CabPage : Page {
     shared->set(p.cab.ir);
     cardA->set(p.cab.irA);
     cardB->set(p.cab.irB);
-    if (perPath) {
+    // Same rule as the mode chip and exportExactness: a cab-less rig is live-compatible whatever the cab mode.
+    if (perPath && p.cab.enabled) {
       notice.setText("STUDIO BLEND: only the with-cab NAM export is exact", juce::dontSendNotification);
       notice.setColour(juce::Label::textColourId, L::studio());
     } else {

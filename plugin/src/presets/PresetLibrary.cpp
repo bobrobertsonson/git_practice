@@ -44,7 +44,11 @@ LibraryConfig defaultLibraryConfig() {
   return c;
 }
 
-bool nonCommercialLicense(const std::string& license) { return lower(license).find("nc") != std::string::npos; }
+// The one non-commercial test: a "cc-by-nc*" licence (also matches "-nc" anywhere, e.g. "cc-by-nc-sa").
+bool nonCommercialLicense(const std::string& license) {
+  const std::string l = lower(license);
+  return l.rfind("cc-by-nc", 0) == 0 || l.find("-nc") != std::string::npos;
+}
 
 static CaptureSummary summary(const std::string& where, const Capture& c) {
   CaptureSummary s;

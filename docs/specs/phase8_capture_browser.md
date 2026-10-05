@@ -1,5 +1,7 @@
 # Spec 8: capture browser in the plugin (Standalone first)
 
+> Superseded: cc-by-nc captures are allowed since 2026-10-03 (CLAUDE.md); see commit e1fbe51.
+
 Reference: `design/mockups/FullBrowse.dc.html` (layout reference only; the user owns the UI design).
 The user selects a pedal, amp or cab in the rig and clicks **BROWSE CAPTURES** (already in the
 inspector, currently disabled). A full-editor overlay lists TONE3000 captures for that slot; the user

@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "AppPaths.h"
+#include "presets/PresetLibrary.h"
 #include "PluginProcessor.h"
 #include "sawblade/bus_comp.h"
 
@@ -15,11 +16,7 @@ std::string LicenceLine::text() const {
 }
 
 namespace {
-bool isNc(const std::string& license) {
-  std::string l;
-  for (char c : license) l.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-  return l.rfind("cc-by-nc", 0) == 0;
-}
+bool isNc(const std::string& license) { return nonCommercialLicense(license); }
 
 LicenceLine lineFor(const Capture& c) {
   LicenceLine l;

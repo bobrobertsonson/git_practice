@@ -1078,6 +1078,24 @@ TEST_CASE("rig editor: topology and cab buttons change the preset through the lo
   panel.refresh();
   CHECK(rig.proc.currentPreset().cab.mode == CabMode::Shared);
   CHECK(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE: the no-cab NAM export is exact"));
+
+  // Per path with the cab switched off is a cab-less rig: the notice follows the chip (LIVE-COMPATIBLE), not the mode alone.
+  click(panel.cabModeButton(CabMode::PerPath));
+  rig.wait();
+  panel.refresh();
+  CHECK(anyLabelContains(*rig.ed, "STUDIO BLEND: only the with-cab NAM export is exact"));
+  juce::Button* cabOn = nullptr;
+  for (auto* b : all<juce::Button>(panel))
+    if (b->getButtonText() == "CAB ON" || b->getTitle() == "CAB ON") cabOn = b;
+  REQUIRE(cabOn != nullptr);
+  REQUIRE(rig.proc.currentPreset().cab.enabled);
+  click(*cabOn);
+  rig.wait();
+  panel.refresh();
+  CHECK(rig.proc.currentPreset().cab.mode == CabMode::PerPath);
+  CHECK_FALSE(rig.proc.currentPreset().cab.enabled);
+  CHECK(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE: the no-cab NAM export is exact"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "STUDIO BLEND"));
 }
 
 namespace {
