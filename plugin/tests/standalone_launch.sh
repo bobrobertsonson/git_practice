@@ -3,14 +3,18 @@
 # the X root with ImageMagick, checks the process is still alive at capture time and that SIGTERM ends it.
 # usage: standalone_launch.sh <xvfb-run> <import> <Sawblade executable> <out.png>
 XVFB=$1; IMPORT=$2; EXE=$3; OUT=$4
-[ -x "$EXE" ] || { echo "no executable: $EXE"; exit 1; }
+# 77 = ctest SKIP_RETURN_CODE (Standalone format not built).
+[ -x "$EXE" ] || { echo "SKIP: Standalone executable not built: $EXE"; exit 77; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# xvfb-run runs in the background so a SIGTERM/SIGINT (ctest timeout) reaches this shell, which then stops it and cleans up.
+trap '[ -n "$xp" ] && kill -TERM "$xp" 2>/dev/null; wait "$xp" 2>/dev/null; exit 143' TERM INT
 mkdir -p "$(dirname "$OUT")" "$tmp/home"
 export HOME="$tmp/home" SAWBLADE_DATA_DIR="$tmp/data" SAWBLADE_APPDATA="$tmp/data" SAWBLADE_CACHE_DIR="$tmp/cache" \
        SAWBLADE_SETTINGS_FILE="$tmp/settings.json" SAWBLADE_STEMS_DIR="$tmp/stems"
 export XVFB EXE OUT IMPORT
-exec "$XVFB" -a -s "-screen 0 1400x900x24" bash -c '
+"$XVFB" -a -s "-screen 0 1400x900x24" bash -c '
+  trap "kill -KILL \$pid 2>/dev/null" EXIT
   "$EXE" > "'"$tmp"'/app.log" 2>&1 &
   pid=$!
   sleep 6
@@ -24,4 +28,7 @@ exec "$XVFB" -a -s "-screen 0 1400x900x24" bash -c '
   [ $rc -eq 0 ] || [ $rc -eq 143 ] || { echo "FAIL: unexpected exit status"; cat "'"$tmp"'/app.log"; exit 1; }
   [ -s "$OUT" ] || { echo "FAIL: empty screenshot"; exit 1; }
   echo "app log:"; cat "'"$tmp"'/app.log"
-'
+' &
+xp=$!
+wait "$xp"; rc=$?
+exit $rc
