@@ -58,10 +58,10 @@ class MatchSettings {
   static std::filesystem::path defaultPoolManifest();
 
  private:
-  juce::PropertiesFile& props() const;
+  std::shared_ptr<juce::PropertiesFile> props() const;
   std::filesystem::path file_;
   mutable std::mutex m_;  // props_ is created on first use, possibly from a job's monitor thread
-  mutable std::unique_ptr<juce::PropertiesFile> props_;
+  mutable std::shared_ptr<juce::PropertiesFile> props_;
 };
 
 enum class JobKind { Match, Export };

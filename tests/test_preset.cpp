@@ -116,6 +116,17 @@ TEST_CASE("Preset: the plugin's playAlong UI state is accepted, ignored and neve
   REQUIRE_THROWS_AS(parsePreset(j, "/base"), PresetError);
 }
 
+TEST_CASE("Preset: the plugin's export-panel UI state is accepted, ignored and never written", "[preset][export]") {
+  json j = minimal();
+  const Preset plain = parsePreset(j, "/base");
+  j["export"] = {{"mode", "withcab"}, {"size", "lite"}, {"diSource", "builtin"}, {"compChoice", "keep"}, {"outputFolder", "/x"}, {"future", 1}};
+  const Preset withState = parsePreset(j, "/base");
+  REQUIRE(withState == plain);
+  REQUIRE_FALSE(toJson(withState).contains("export"));
+  j["export"] = "withcab";  // a structured object, not a free-form value
+  REQUIRE_THROWS_AS(parsePreset(j, "/base"), PresetError);
+}
+
 TEST_CASE("Preset: round trip parse(toJson(p)) == p", "[preset]") {
   SECTION("schema example") {
     const Preset p = loadPresetFile(kPresets / "schema_example.json");

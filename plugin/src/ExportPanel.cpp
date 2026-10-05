@@ -165,6 +165,21 @@ struct ExportPanel::Impl {
   std::string exportError;
   ExportPlan plan;
   ResumeOffer resumeOffer;
+  // planExport / findResumableExport rebuild the preset JSON and hash it: recomputed only when something they depend on
+  // changed (a preset load, the settings, the takes folder, the job), and at most once a second otherwise (a live edit
+  // in the rig editor changes the preset without any of those).
+  struct PlanKey {
+    std::uint64_t userLoad = 0, generation = 0, settingsSerial = 0;
+    int jobState = -1;
+    std::string jobDir;
+    bool jobResumable = false;
+    long long takesStamp = 0;
+    std::size_t takesCount = 0;
+    bool operator==(const PlanKey&) const = default;
+  };
+  PlanKey planKey;
+  bool planValid = false;
+  juce::uint32 planAt = 0;
 
   juce::Label title, subtitle;
   juce::TextButton closeBtn;
@@ -426,8 +441,27 @@ struct ExportPanel::Impl {
     if (proc.exportSettingsSerial() != seenSerial) loadSettings();
     const JobSnapshot snap = proc.jobs().snapshot(JobKind::Export);
     const ToolCheck tools = proc.jobs().checkTools(JobKind::Export);
-    plan = planExport(proc, cur);
-    resumeOffer = findResumableExport(proc);
+    {
+      PlanKey k;
+      k.userLoad = proc.userLoadSerial();
+      k.generation = proc.presetGeneration();
+      k.settingsSerial = proc.exportSettingsSerial();
+      k.jobState = static_cast<int>(snap.state);
+      k.jobDir = snap.dir.string();
+      k.jobResumable = snap.resumable;
+      std::error_code ec;
+      const fs::path takes = proc.recorder().takesDir();
+      if (const auto t = fs::last_write_time(takes, ec); !ec) k.takesStamp = static_cast<long long>(t.time_since_epoch().count());
+      for (fs::directory_iterator it(takes, ec), end; !ec && it != end; it.increment(ec)) ++k.takesCount;
+      const juce::uint32 now = juce::Time::getMillisecondCounter();
+      if (!planValid || !(k == planKey) || now - planAt > 1000u) {
+        plan = planExport(proc, cur);
+        resumeOffer = findResumableExport(proc);
+        planKey = k;
+        planValid = true;
+        planAt = now;
+      }
+    }
     const RigSummary& rig = plan.rig;
     const bool active = snap.active();
     const View newView = active ? View::Training : snap.state == JobState::Succeeded ? View::Result : View::Configure;
@@ -545,7 +579,9 @@ struct ExportPanel::Impl {
     setText(message, msg);
     setColour(message, msgColour);
     exeLocate.setVisible(tools.missing == ToolCheck::Missing::Executable);
-    trainBtn.setEnabled(tools.ok() && !active && plan.blocked.empty());
+    // WITH CAB with a comp whose release cannot be trained: the exporter would refuse, so do not start (the note says why).
+    const bool refused = plan.mode == "withcab" && rig.compOn && !rig.compTrainable;
+    trainBtn.setEnabled(tools.ok() && !active && plan.blocked.empty() && !refused);
     const bool offer = resumeOffer.available && !active;
     resumeBtn.setVisible(offer);
     resumeBtn.setEnabled(tools.ok() && offer);
@@ -711,6 +747,7 @@ ExportSettings ExportPanel::settings() const { return impl_->cur; }
 
 void ExportPanel::open() {
   impl_->exportError.clear();
+  impl_->planValid = false;
   impl_->proc.jobs().attachExisting();
   impl_->loadSettings();
   setVisible(true);

@@ -2080,6 +2080,12 @@ TEST_CASE("export panel: the comp row appears only with the comp on and follows 
   rig.loadRig("slow", false, true, 400.0);
   panel.refresh();
   CHECK(anyLabelContains(panel, "Refused: the bus comp release (400 ms) is over 150 ms"));
+  CHECK_FALSE(rig.exportButton("TRAIN EXPORT")->isEnabled());  // the exporter would refuse: not started
+  rig.loadRig("fast", false, true, 80.0);
+  panel.refresh();
+  CHECK(rig.exportButton("TRAIN EXPORT")->isEnabled());
+  rig.loadRig("slow2", false, true, 400.0);
+  panel.refresh();
   rig.loadRig("studiocomp", true, true, 80.0);  // a studio blend is WITH CAB whatever was saved
   panel.refresh();
   CHECK_FALSE(rig.visible("KEEP COMP"));

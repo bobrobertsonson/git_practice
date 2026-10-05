@@ -220,16 +220,17 @@ void MatchSettings::setFile(const fs::path& file) {
   props_.reset();
 }
 
-juce::PropertiesFile& MatchSettings::props() const {
+std::shared_ptr<juce::PropertiesFile> MatchSettings::props() const {
+  // The caller keeps the file alive: a concurrent setFile() only replaces the member.
   std::lock_guard<std::mutex> lk(m_);
   if (!props_) {
     juce::PropertiesFile::Options o;
     o.applicationName = "Sawblade";
     o.storageFormat = juce::PropertiesFile::storeAsXML;
     o.millisecondsBeforeSaving = 0;
-    props_ = std::make_unique<juce::PropertiesFile>(juce::File(file_.string()), o);
+    props_ = std::make_shared<juce::PropertiesFile>(juce::File(file_.string()), o);
   }
-  return *props_;
+  return props_;
 }
 
 namespace {
@@ -244,22 +245,22 @@ void saveSetting(juce::PropertiesFile& p, const char* key, const juce::String& v
 }
 }  // namespace
 
-fs::path MatchSettings::matchExecutable() const { return pathSetting(props(), "matchExecutable", defaultMatchExecutable()); }
-fs::path MatchSettings::exportExecutable() const { return pathSetting(props(), "exportExecutable", defaultExportExecutable()); }
-fs::path MatchSettings::poolManifest() const { return pathSetting(props(), "poolManifest", defaultPoolManifest()); }
-std::string MatchSettings::selectedTake() const { return props().getValue("selectedTake", juce::String()).toStdString(); }
+fs::path MatchSettings::matchExecutable() const { return pathSetting(*props(), "matchExecutable", defaultMatchExecutable()); }
+fs::path MatchSettings::exportExecutable() const { return pathSetting(*props(), "exportExecutable", defaultExportExecutable()); }
+fs::path MatchSettings::poolManifest() const { return pathSetting(*props(), "poolManifest", defaultPoolManifest()); }
+std::string MatchSettings::selectedTake() const { return props()->getValue("selectedTake", juce::String()).toStdString(); }
 
 double MatchSettings::exportWallSeconds(const std::string& size) const {
-  return props().getDoubleValue(juce::String("exportWallSeconds.") + juce::String(size), 0.0);
+  return props()->getDoubleValue(juce::String("exportWallSeconds.") + juce::String(size), 0.0);
 }
 void MatchSettings::setExportWallSeconds(const std::string& size, double seconds) {
-  saveSetting(props(), (std::string("exportWallSeconds.") + size).c_str(), juce::String(seconds, 1));
+  saveSetting(*props(), (std::string("exportWallSeconds.") + size).c_str(), juce::String(seconds, 1));
 }
 
-void MatchSettings::setMatchExecutable(const fs::path& p) { saveSetting(props(), "matchExecutable", juce::String(p.string())); }
-void MatchSettings::setExportExecutable(const fs::path& p) { saveSetting(props(), "exportExecutable", juce::String(p.string())); }
-void MatchSettings::setPoolManifest(const fs::path& p) { saveSetting(props(), "poolManifest", juce::String(p.string())); }
-void MatchSettings::setSelectedTake(const std::string& name) { saveSetting(props(), "selectedTake", juce::String(name)); }
+void MatchSettings::setMatchExecutable(const fs::path& p) { saveSetting(*props(), "matchExecutable", juce::String(p.string())); }
+void MatchSettings::setExportExecutable(const fs::path& p) { saveSetting(*props(), "exportExecutable", juce::String(p.string())); }
+void MatchSettings::setPoolManifest(const fs::path& p) { saveSetting(*props(), "poolManifest", juce::String(p.string())); }
+void MatchSettings::setSelectedTake(const std::string& name) { saveSetting(*props(), "selectedTake", juce::String(name)); }
 
 // ---- pure helpers -------------------------------------------------------------------------------------------------
 bool parseProgressJson(const std::string& text, JobProgress& out) {
