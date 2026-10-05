@@ -268,8 +268,8 @@ bool appliedQuickIsRefinedBest(SawbladeProcessor& p, const JobSnapshot& quick, c
   static thread_local bool lastResult = false;
   const fs::path best = refine.results.front().preset;
   std::error_code ec;
-  const std::string key = applied->string() + "|" + best.string() + "|" + std::to_string(fs::last_write_time(best, ec).time_since_epoch().count()) + "|" +
-                          std::to_string(fs::last_write_time(*applied, ec).time_since_epoch().count());
+  const std::string key = applied->string() + "|" + best.string() + "|" + std::to_string(static_cast<long long>(fs::last_write_time(best, ec).time_since_epoch().count())) + "|" +
+                          std::to_string(static_cast<long long>(fs::last_write_time(*applied, ec).time_since_epoch().count()));
   if (key == lastKey) return lastResult;
   lastKey = key;
   lastResult = sameChainFiles(*applied, best);
