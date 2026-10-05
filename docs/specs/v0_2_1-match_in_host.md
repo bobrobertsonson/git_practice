@@ -65,6 +65,17 @@ there. Fix:
 - Mouse-driven editor test: from a fresh state, a user can load a song, import a DI and start a match
   without leaving the MATCH screen.
 
+## Task E — the separation model is installed by the update script
+
+User (2026-10-05) hit "Separation model htdemucs_6s not found" on LOAD SONG: nothing on the Mac path
+installs it. `scripts/mac_update.sh` gains a step: if `sawblade-models status` reports the default model
+missing, install the `models` extra into `match/.venv` (macOS arm64: no Linux constraints file; add a
+`match/constraints-separation-macos.txt` only if pins are needed and record why) and run
+`sawblade-models fetch --model htdemucs_6s`; `--no-models` skips it; idempotent and fast when present.
+The plugin's error text gives the one-line command for macOS (today it is cut off in the panel: show the
+full command in a copyable field or the tooltip). Test: dry-run output of the script lists the step;
+`--no-models` omits it.
+
 ## Acceptance
 
 - New tests: MATCH enabled in plugin mode (editor, mouse-driven); two-instance job isolation; import of
