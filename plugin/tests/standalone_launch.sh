@@ -7,13 +7,15 @@ XVFB=$1; IMPORT=$2; EXE=$3; OUT=$4
 [ -x "$EXE" ] || { echo "SKIP: Standalone executable not built: $EXE"; exit 77; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-# xvfb-run runs in the background so a SIGTERM/SIGINT (ctest timeout) reaches this shell, which then stops it and cleans up.
-trap '[ -n "$xp" ] && kill -TERM "$xp" 2>/dev/null; wait "$xp" 2>/dev/null; exit 143' TERM INT
-mkdir -p "$(dirname "$OUT")" "$tmp/home"
+# xvfb-run runs in the background, in its own process group (setsid), so a SIGTERM/SIGINT (ctest timeout) reaches this shell,
+# which then TERMs the whole group (xvfb-run, Xvfb, the app) so no Xvfb is orphaned, and cleans up.
+trap 'if [ -n "$xp" ]; then kill -TERM -- -"$xp" 2>/dev/null || pkill -TERM -P "$xp" 2>/dev/null; wait "$xp" 2>/dev/null; fi; exit 143' TERM INT
+mkdir -p "$(dirname "$OUT")" "$tmp/home" "$tmp/xtmp"
 export HOME="$tmp/home" SAWBLADE_DATA_DIR="$tmp/data" SAWBLADE_APPDATA="$tmp/data" SAWBLADE_CACHE_DIR="$tmp/cache" \
        SAWBLADE_SETTINGS_FILE="$tmp/settings.json" SAWBLADE_STEMS_DIR="$tmp/stems"
 export XVFB EXE OUT IMPORT
-"$XVFB" -a -s "-screen 0 1400x900x24" bash -c '
+# TMPDIR inside $tmp: xvfb-run's own temp dir (auth file) is then removed with $tmp even when it is killed before its EXIT trap runs.
+TMPDIR="$tmp/xtmp" setsid "$XVFB" -a -s "-screen 0 1400x900x24" bash -c '
   trap "kill -KILL \$pid 2>/dev/null" EXIT
   "$EXE" > "'"$tmp"'/app.log" 2>&1 &
   pid=$!
