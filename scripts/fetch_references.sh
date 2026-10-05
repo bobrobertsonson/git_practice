@@ -7,7 +7,8 @@
 #   scripts/fetch_references.sh --go       # download everything not already on disk
 #   scripts/fetch_references.sh --go nails__no_surrender   # only these slugs
 #
-# Needs yt-dlp and ffmpeg (Mac: brew install yt-dlp ffmpeg).
+# Needs yt-dlp, ffmpeg and a JS runtime for YouTube (Mac: brew install yt-dlp ffmpeg deno;
+# keep yt-dlp current: brew upgrade yt-dlp).
 # Entries come from scripts/reference_sources.txt: "kind|slug|query-or-URL". A search query
 # picks the top YouTube result, so run the dry run first and replace any wrong pick with
 # the exact URL. Override the list with REFERENCE_SOURCES=<file>.
@@ -73,7 +74,7 @@ while IFS='|' read -r kind slug src || [[ -n "$kind" ]]; do
 
   mkdir -p "$(dirname "$dest")"
   # Best audio stream, decoded once to WAV (no second lossy encode); keep the source URL beside it.
-  if "$ytdlp" --no-warnings --no-playlist -f bestaudio -x --audio-format wav \
+  if "$ytdlp" --no-warnings --no-playlist -f 'bestaudio/best' -x --audio-format wav \
       --print-to-file '%(webpage_url)s %(title)s' "${dest%.wav}.source.txt" \
       -o "${dest%.wav}.%(ext)s" "$target"; then
     echo "got   $kind $slug -> ${dest#"$repo"/}"
