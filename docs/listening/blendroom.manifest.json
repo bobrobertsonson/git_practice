@@ -1,0 +1,215 @@
+{
+ "format": "stereo 44.1kHz mp3 160kbps; gains are dB applied to source/render (guitar, di targeted RMS = backing RMS -3 dB; di/backing peak-limited to 0.98 so di gain can be lower)",
+ "songs": [
+  {
+   "key": "gatecreeper__barbaric_pleasures",
+   "title": "Barbaric Pleasures (cover)",
+   "artist": "Gatecreeper",
+   "style": "chainsaw HM-2 + high-gain body (matched)",
+   "durationS": 174.857,
+   "notes": "Backing = demucs stems drums+bass+vocals (guitars removed), trimmed 0.16771 s to align with DIs; backing peak -3 dBFS.",
+   "guitarPreset": "~/.cache/sawblade/match_runs/original_v4/best.preset.resolved.json",
+   "gains": {
+    "backingDb": 0.74,
+    "guitarDb": -7.46,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "nails__friend_to_all_real",
+   "title": "Friend to All (matched to the record)",
+   "artist": "Nails",
+   "style": "hardcore chainsaw \u2014 matcher v1 vs the real record",
+   "durationS": 48.22,
+   "notes": "guitar = your DI through the preset the matcher fitted against the REAL Nails guitar stem (LTAS err 2.8 dB vs 4.4 dB for the hand preset); backing = the cover's own drums+bass (the record isn't tempo-locked to the cover, so its backing can't be used without warping)",
+   "guitarPreset": "nails_v1 best: DS-1 \u2192 6505+ Boost-S-MercilessDrive \u2192 Marshall 1960TV Greenback M201",
+   "gains": {
+    "backingDb": 0,
+    "guitarDb": -5.66,
+    "diDb": 1.81
+   }
+  },
+  {
+   "key": "bolt_thrower__anti_tank_real",
+   "title": "Anti-Tank (Dead Armour) (matched to the record)",
+   "artist": "Bolt Thrower",
+   "style": "UK death \u2014 matcher v1 vs the real record",
+   "durationS": 269.29,
+   "notes": "backing = the REAL record's drums+bass+vocals, time-mapped to the cover DI (constant 0.8% stretch, within \u00b120 ms); guitar = your rhythm DI through the preset the matcher fitted against the real guitar stem (LTAS err 1.5 dB vs 9.2 dB for the hand preset)",
+   "guitarPreset": "bolt_thrower_v1 best: Hizumitas fuzz \u2192 JCM800 2204 blend (A: Vol5/Sus3/Tone3, B: Tone0, 47/53) \u2192 Celestion V30 Mesa 4x12 SM57",
+   "gains": {
+    "backingDb": 0,
+    "guitarDb": 0,
+    "diDb": 0
+   }
+  },
+  {
+   "key": "bolt_thrower__anti_tank",
+   "title": "Anti-Tank",
+   "artist": "Bolt Thrower",
+   "style": "Death Metal",
+   "durationS": 269.291,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/uk_death_bolt_thrower.resolved.json",
+   "gains": {
+    "backingDb": -5.69,
+    "guitarDb": -9.76,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "bolt_thrower__the_shreds_of_sanity",
+   "title": "The Shreds Of Sanity",
+   "artist": "Bolt Thrower",
+   "style": "Death Metal",
+   "durationS": 203.284,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar rendered fresh with this preset.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/uk_death_bolt_thrower.resolved.json",
+   "gains": {
+    "backingDb": -5.26,
+    "guitarDb": -10.47,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "bolt_thrower__those_once_loyal",
+   "title": "Those Once Loyal",
+   "artist": "Bolt Thrower",
+   "style": "Death Metal",
+   "durationS": 240.0,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/uk_death_bolt_thrower.resolved.json",
+   "gains": {
+    "backingDb": -5.0,
+    "guitarDb": -11.25,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "conan__volt_thrower",
+   "title": "Volt Thrower",
+   "artist": "Conan",
+   "style": "Doom Metal",
+   "durationS": 182.769,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/fuzz_doom_electric_wizard.resolved.json",
+   "gains": {
+    "backingDb": -4.92,
+    "guitarDb": -12.97,
+    "diDb": 0.51
+   }
+  },
+  {
+   "key": "crowbar__planets_collide",
+   "title": "Planets Collide",
+   "artist": "Crowbar",
+   "style": "Sludge Metal",
+   "durationS": 280.909,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/sludge_crowbar.resolved.json",
+   "gains": {
+    "backingDb": -5.26,
+    "guitarDb": -11.39,
+    "diDb": 1.91
+   }
+  },
+  {
+   "key": "darkthrone__transilvanian_hunger",
+   "title": "Transilvanian Hunger",
+   "artist": "Darkthrone",
+   "style": "Black Metal",
+   "durationS": 370.666,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/black_metal_raw.resolved.json",
+   "gains": {
+    "backingDb": -5.32,
+    "guitarDb": -7.16,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "dissection__retribution",
+   "title": "Retribution - Storm Of The Light's Bane",
+   "artist": "Dissection",
+   "style": "Melodic Black Metal",
+   "durationS": 297.543,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/black_metal_raw.resolved.json",
+   "gains": {
+    "backingDb": -5.65,
+    "guitarDb": -8.05,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "electric_wizard__dunwich",
+   "title": "Dunwich",
+   "artist": "Electric Wizard",
+   "style": "Doom Metal",
+   "durationS": 305.806,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/fuzz_doom_electric_wizard.resolved.json",
+   "gains": {
+    "backingDb": -5.14,
+    "guitarDb": -12.33,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "immortal__one_by_one",
+   "title": "One By One",
+   "artist": "Immortal",
+   "style": "Black Metal",
+   "durationS": 289.808,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar rendered fresh with this preset.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/black_metal_raw.resolved.json",
+   "gains": {
+    "backingDb": -5.38,
+    "guitarDb": -8.08,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "nails__friend_to_all",
+   "title": "Friend To All",
+   "artist": "Nails",
+   "style": "Powerviolence",
+   "durationS": 48.222,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/chainsaw_hardcore_nails.resolved.json",
+   "gains": {
+    "backingDb": -5.47,
+    "guitarDb": -8.36,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "nails__no_surrender",
+   "title": "No Surrender",
+   "artist": "Nails",
+   "style": "Powerviolence",
+   "durationS": 59.479,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/chainsaw_hardcore_nails.resolved.json",
+   "gains": {
+    "backingDb": -5.21,
+    "guitarDb": -12.34,
+    "diDb": -0.18
+   }
+  },
+  {
+   "key": "terrorizer__fear_of_napalm",
+   "title": "Fear Of Napalm",
+   "artist": "Terrorizer",
+   "style": "Grindcore",
+   "durationS": 179.614,
+   "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
+   "guitarPreset": "/home/user/git_practice/presets/styles/grind_terrorizer.resolved.json",
+   "gains": {
+    "backingDb": -5.47,
+    "guitarDb": -7.49,
+    "diDb": -0.18
+   }
+  }
+ ]
+}

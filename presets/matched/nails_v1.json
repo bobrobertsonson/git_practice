@@ -1,0 +1,144 @@
+{
+ "schema": "sawblade.preset",
+ "version": 1,
+ "name": "Sawblade match",
+ "notes": "Matched by sawblade-match seed 1 against nails__friend_to_all.mp3 (stem:nails__friend_to_all.04df49c52e7a.htdemucs.other.wav). Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.",
+ "gate": {
+  "enabled": true,
+  "thresholdDb": -86.0,
+  "hysteresisDb": 6.0,
+  "attackMs": 0.5,
+  "holdMs": 40.0,
+  "releaseMs": 150.0,
+  "rangeDb": -50.0
+ },
+ "paths": {
+  "a": {
+   "role": "body",
+   "blocks": [
+    {
+     "id": "a1",
+     "type": "nam",
+     "slot": "pedal",
+     "model": {
+      "file": "captures/67423_512650.nam",
+      "source": {
+       "provider": "tone3000",
+       "id": "67423",
+       "modelId": "512650",
+       "url": "https://www.tone3000.com/tones/boss-distortion-ds-1--67423",
+       "title": "Boss Distortion DS-1 ",
+       "creator": "drprophecystudio",
+       "license": "t3k"
+      }
+     }
+    },
+    {
+     "id": "a2",
+     "type": "nam",
+     "slot": "amp",
+     "model": {
+      "file": "captures/70977_584871.nam",
+      "source": {
+       "provider": "tone3000",
+       "id": "70977",
+       "modelId": "584871",
+       "url": "https://www.tone3000.com/tones/6505-full-pack-70977",
+       "title": "6505+ FULL Pack",
+       "creator": "AmpsPedalsPickups",
+       "license": "t3k"
+      }
+     },
+     "normalizeLoudness": true
+    }
+   ],
+   "eq": [
+    {
+     "type": "highPass",
+     "freq": 54.45397453820139,
+     "q": 0.707
+    },
+    {
+     "type": "peak",
+     "freq": 198.82592691453166,
+     "gainDb": -1.4009688738083756,
+     "q": 1.0
+    },
+    {
+     "type": "peak",
+     "freq": 1349.8110541828523,
+     "gainDb": 0.2898977981800659,
+     "q": 1.0
+    },
+    {
+     "type": "peak",
+     "freq": 3158.7959091447888,
+     "gainDb": 1.1084603461902738,
+     "q": 1.0
+    },
+    {
+     "type": "lowPass",
+     "freq": 10367.366847208892,
+     "q": 0.707
+    }
+   ],
+   "levelDb": 0.0
+  },
+  "b": {
+   "role": "body",
+   "enabled": false,
+   "blocks": []
+  }
+ },
+ "align": {
+  "mode": "manual",
+  "delaySamplesB": 0,
+  "invertB": false
+ },
+ "blend": 0.0,
+ "cab": {
+  "mode": "shared",
+  "ir": {
+   "file": "captures/75087_656965.wav",
+   "source": {
+    "provider": "tone3000",
+    "id": "75087",
+    "modelId": "656965",
+    "url": "https://www.tone3000.com/tones/uk-greenback-marshall-1960tv-4x12-m201-75087",
+    "title": "UK Greenback - Marshall 1960TV 4x12 M201",
+    "creator": "OutmodedElectronics",
+    "license": "t3k"
+   }
+  },
+  "enabled": true
+ },
+ "postEq": [
+  {
+   "type": "peak",
+   "freq": 303.4218976934399,
+   "gainDb": -2.7248931776632768,
+   "q": 1.0
+  },
+  {
+   "type": "peak",
+   "freq": 612.297775387218,
+   "gainDb": 0.41622669413813895,
+   "q": 1.0
+  },
+  {
+   "type": "peak",
+   "freq": 5890.417201491673,
+   "gainDb": -2.2394250667279714,
+   "q": 1.0
+  },
+  {
+   "type": "highShelf",
+   "freq": 5176.787353272474,
+   "gainDb": -1.276178179218146,
+   "q": 0.707
+  }
+ ],
+ "output": {
+  "gainDb": -2.0102542239110077
+ }
+}

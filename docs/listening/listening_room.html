@@ -1,0 +1,168 @@
+<title>Sawblade Listening Room</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&family=Barlow+Condensed:wght@500;600;700&family=Share+Tech+Mono&display=swap">
+<style>
+/* Layout: one narrow column of takes, grouped newest-first, like a session's take sheet */
+:root{
+  --bg:#0d0c0a; --panel:#171512; --line:#2c2823; --fg:#ece5d6; --muted:#a59c8b; --saw:#ff6a1a; --new:#7fd13b;
+  --display:'Allerta Stencil','Arial Narrow',sans-serif;
+  --body:'Barlow Condensed','Arial Narrow',system-ui,sans-serif;
+  --mono:'Share Tech Mono',ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.4}
+.wrap{max-width:640px;margin:0 auto;padding-inline:16px;padding-block:28px 48px;display:flex;flex-direction:column;gap:28px}
+h1{font-family:var(--display);font-weight:400;font-size:34px;letter-spacing:.06em;color:var(--saw);margin:0;transform:rotate(-1deg);text-wrap:balance}
+.lede{margin:6px 0 0;color:var(--muted);max-width:60ch}
+section{display:flex;flex-direction:column;gap:10px}
+h2{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0;font-weight:700}
+.take{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.take.new{border-color:var(--new)}
+.row{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px}
+.name{font-weight:700;font-size:19px;min-width:0}
+.tag{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.badge{font-size:11px;font-weight:700;letter-spacing:.14em;padding:2px 6px;border-radius:3px;background:var(--new);color:var(--bg)}
+.note{color:var(--muted);font-size:15px;margin:0}
+audio{width:100%;height:40px}
+.ask{border-left:3px solid var(--saw);padding:4px 0 4px 12px;color:var(--fg);margin:0}
+.status{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.st{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.st b{font-size:15px}.st span{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--saw)}.dot.ok{background:var(--new)}
+</style>
+<div class="wrap">
+  <header>
+    <h1>SAWBLADE · LISTENING ROOM</h1>
+    <p class="lede">Every test render so far, newest first. Input is the Gatecreeper "Barbaric Pleasures" cover DIs (left and right guitars), through chains the matcher picked from TONE3000 captures.</p>
+  </header>
+
+  <section>
+    <h2>Status · updated Oct 4, 14:00 UTC</h2>
+    <div class="status">
+      <div class="st"><b><i class="dot"></i>Record + MATCH in plugin</b><span>building</span></div>
+      <div class="st"><b><i class="dot"></i>Full rig editor (blend, EQ, align)</b><span>building</span></div>
+      <div class="st"><b><i class="dot"></i>Capture browser</b><span>building</span></div>
+      <div class="st"><b><i class="dot"></i>Mic placement + presets</b><span>building</span></div>
+      <div class="st"><b><i class="dot"></i>Modeled HM-2 / TS pedals</b><span>building</span></div>
+      <div class="st"><b><i class="dot"></i>Faster matcher (&lt;5 min)</b><span>in progress</span></div>
+      <div class="st"><b><i class="dot"></i>CI (Mac + Linux builds)</b><span>building</span></div>
+      <div class="st"><b><i class="dot"></i>Footswitch redesign</b><span>rendering</span></div>
+
+      <div class="st"><b><i class="dot ok"></i>Plugin skin + play-along panel</b><span>done · 237 tests pass</span></div>
+      <div class="st"><b><i class="dot ok"></i>Matcher cleanup + TONE3000 search</b><span>done · pool 77 captures</span></div>
+      <div class="st"><b><i class="dot ok"></i>Fizz fix</b><span>v4 done, pushed</span></div>
+      <div class="st"><b><i class="dot ok"></i>Gate upgrade</b><span>done</span></div>
+      <div class="st"><b><i class="dot ok"></i>NAM export</b><span>tool done</span><span></span></div>
+      <div class="st"><b><i class="dot ok"></i>UI knobs, LEDs, 2x12 cab</b><span>done</span></div>
+      <div class="st"><b><i class="dot"></i>Load any mp3 (separator)</b><span>ONNX engine chosen · building into plugin</span></div>
+      <div class="st"><b><i class="dot ok"></i>Cloud: stem player</b><span>done + loudness add-on</span></div>
+            <div class="st"><b><i class="dot ok"></i>NAM export of v4</b><span>done · 0.45 dB (passes), ESR 0.078</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Play-along preview · the new stem player</h2>
+    <p class="note">This is the play-along feature, rendered offline through the stem player built tonight. The cover song is separated into stems, its guitars are removed, and your DI plays over the backing through the v4 tone. In the plugin this happens live while you play.</p>
+    <div class="take new"><div class="row"><span class="name">Song's guitars muted</span><span class="badge">NEW</span><span class="tag">v4 rig + drums, bass and vocals</span></div><audio controls preload="none" src="audio/pa/pa_mute.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">"Ghost" guide</span><span class="badge">NEW</span><span class="tag">the song's guitars quietly underneath (−12 dB)</span></div><audio controls preload="none" src="audio/pa/pa_ghost.mp3"></audio></div>
+  </section>
+
+  <section>
+    <h2>New styles · starter presets on real DIs</h2>
+    <p class="note">I designed these presets by hand. They aren't matched to anything yet; matching needs the original songs. Each one runs through that song's real guitar DIs (Omega Station covers), 60 seconds, guitars only. Tell me which styles are close and which miss.</p>
+    <div class="take new"><div class="row"><span class="name">Nails · Friend To All</span><span class="badge">NEW</span><span class="tag">Chainsaw hardcore (Nails-style): HM-2 1985 → JCM800 2204 → Mesa V30</span></div><audio controls preload="none" src="audio/styles/chainsaw_hardcore_nails__nails__friend_to_all.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Nails · No Surrender</span><span class="badge">NEW</span><span class="tag">Chainsaw hardcore (Nails-style): HM-2 1985 → JCM800 2204 → Mesa V30</span></div><audio controls preload="none" src="audio/styles/chainsaw_hardcore_nails__nails__no_surrender.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Bolt Thrower · Anti-Tank</span><span class="badge">NEW</span><span class="tag">UK death (Bolt Thrower-style): RAT 2 → JCM900 crunch → Greenbacks</span></div><audio controls preload="none" src="audio/styles/uk_death_bolt_thrower__bolt_thrower__anti_tank.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Bolt Thrower · Those Once Loyal</span><span class="badge">NEW</span><span class="tag">UK death (Bolt Thrower-style): RAT 2 → JCM900 crunch → Greenbacks</span></div><audio controls preload="none" src="audio/styles/uk_death_bolt_thrower__bolt_thrower__those_once_loyal.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Terrorizer · Fear Of Napalm</span><span class="badge">NEW</span><span class="tag">Grind (Terrorizer-style): DS-1 → JCM800 2203 crunch → V30</span></div><audio controls preload="none" src="audio/styles/grind_terrorizer__terrorizer__fear_of_napalm.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Electric Wizard · Dunwich</span><span class="badge">NEW</span><span class="tag">Fuzz doom (Electric Wizard / Conan-style): Sovtek Big Muff → Sunn Model T → Orange V30</span></div><audio controls preload="none" src="audio/styles/fuzz_doom_electric_wizard__electric_wizard__dunwich.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Conan · Volt Thrower</span><span class="badge">NEW</span><span class="tag">Fuzz doom (Electric Wizard / Conan-style): Sovtek Big Muff → Sunn Model T → Orange V30</span></div><audio controls preload="none" src="audio/styles/fuzz_doom_electric_wizard__conan__volt_thrower.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Crowbar · Planets Collide</span><span class="badge">NEW</span><span class="tag">Sludge (Crowbar-style): Mesa Dual Rectifier → Mesa V30</span></div><audio controls preload="none" src="audio/styles/sludge_crowbar__crowbar__planets_collide.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Darkthrone · Transilvanian Hunger</span><span class="badge">NEW</span><span class="tag">Black metal (Darkthrone / Dissection-style): DS-1 → 5150 → Greenbacks, lows trimmed</span></div><audio controls preload="none" src="audio/styles/black_metal_raw__darkthrone__transilvanian_hunger.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Dissection · Retribution</span><span class="badge">NEW</span><span class="tag">Black metal (Darkthrone / Dissection-style): DS-1 → 5150 → Greenbacks, lows trimmed</span></div><audio controls preload="none" src="audio/styles/black_metal_raw__dissection__retribution.mp3"></audio></div>
+  </section>
+
+  <section>
+    <h2>Fizz fixed · v4 · matched to the real guitars, not the cymbals</h2>
+    <p class="note">The matcher now listens to the record's separated guitars. Both matches came out as a single path: an HM-2 into a cranked Marshall 2203, which is the classic recipe. The top end now measures within 1 dB of the real guitars, and the grain is as smooth as the record's (0.012 vs 0.010; v3 was 0.169).</p>
+    <div class="take new"><div class="row"><span class="name">v4 · in the band</span><span class="badge">NEW</span><span class="tag">HM-2 1985 → JCM800 2203 crunch → V30 4x12</span></div>
+      <audio controls preload="none" src="audio/ctx/orig_v4.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Cover v3 · in the band</span><span class="badge">NEW</span><span class="tag">HM-2 Extreme → JMP 2203 → Greenback 4x12</span></div>
+      <audio controls preload="none" src="audio/ctx/cover_v3.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">v4 · guitars alone</span><span class="badge">NEW</span></div>
+      <audio controls preload="none" src="audio/matched_to_ORIGINAL_v4.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Cover v3 · guitars alone</span><span class="badge">NEW</span></div>
+      <audio controls preload="none" src="audio/matched_to_COVER_MIX_v3.mp3"></audio></div>
+    <p class="ask">Compare these with the cover's real mix and with the first render, under "In context" below. Is the cheap sound gone?</p>
+  </section>
+
+  <section>
+    <h2>In context · your guitars under the cover's drums, bass and vocals</h2>
+    <p class="note">The same 60 seconds each time. The backing is separated from the cover's own mix, and every version is level-matched. Start with the reference, then compare.</p>
+    <div class="take"><div class="row"><span class="name">Reference: the cover's real mix</span></div><audio controls preload="none" src="audio/ctx/00_cover_mix_reference.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">First render (hand-built)</span><span class="badge">NEW</span></div><audio controls preload="none" src="audio/ctx/v0_handbuilt.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Matched to original · v2</span><span class="badge">NEW</span></div><audio controls preload="none" src="audio/ctx/orig_v2.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Matched to original · v3</span><span class="badge">NEW</span></div><audio controls preload="none" src="audio/ctx/orig_v3.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">v3 · tamed top end</span><span class="badge">NEW</span></div><audio controls preload="none" src="audio/ctx/orig_v3_tamed.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Matched to cover mix · v2</span><span class="badge">NEW</span></div><audio controls preload="none" src="audio/ctx/cover_v2.mp3"></audio></div>
+    <p class="ask">Which one sits best in the band? Your pick sets what the fizz fix aims for.</p>
+  </section>
+
+  <section>
+    <h2>NAM export of v4 · trained overnight</h2>
+    <div class="take new"><div class="row"><span class="name">Full v4 rig, then the single .nam model</span><span class="badge">NEW</span><span class="tag">CPU, 6.4 h, 250 epochs</span></div>
+      <p class="note">Spectrum match passes: 0.45 dB off (target ≤ 0.5). Waveform error is 0.078 (target 0.02). That's 5× better than last night's test, but a GPU would get it all the way. Listen for whether you can hear a difference at all.</p>
+      <audio controls preload="none" src="audio/export_v4_ab.mp3"></audio></div>
+  </section>
+
+  <section>
+    <h2>NAM export · first test (under-trained)</h2>
+    <div class="take new"><div class="row"><span class="name">Full rig, then the trained .nam model</span><span class="badge">NEW</span><span class="tag">CPU, 49 min, not finished training</span></div>
+      <p class="note">First the real Sawblade chain, then after a short gap the single NAM model trained from it, level-matched. This test machine has no GPU, so the model is clearly under-trained. Listen for whether the character is heading the right way, not for a finished result.</p>
+      <audio controls preload="none" src="audio/export_standard_ab.mp3"></audio></div>
+  </section>
+
+  <section>
+    <h2>Fizz check · same v3 chain, top end tamed</h2>
+    <p class="note">You said the newer matches are fizzier and less polished than the earlier ones. These keep the v3 chain and cut the top end, to see whether EQ alone fixes it or whether the gear choice needs to change.</p>
+    <div class="take new"><div class="row"><span class="name">v3 · tamed</span><span class="badge">NEW</span><span class="tag">−3 dB shelf at 4.5 kHz + roll-off at 7.5 kHz</span></div>
+      <audio controls preload="none" src="audio/v3_tamed.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">v3 · dark</span><span class="badge">NEW</span><span class="tag">−4 dB shelf at 4 kHz + roll-off at 6 kHz</span></div>
+      <audio controls preload="none" src="audio/v3_dark.mp3"></audio></div>
+    <p class="ask">Compare both with "First render" at the bottom of the page. If they're still grainier than it, the fizz comes from the gear chain, not the EQ.</p>
+  </section>
+
+  <section>
+    <h2>Latest matches · new matcher (no HM-2 lock)</h2>
+    <div class="take new"><div class="row"><span class="name">Matched to the original song</span><span class="badge">NEW</span><span class="tag">v3 · 1.11 dB off</span></div>
+      <p class="note">HM-2w CHAINSAW into a 6505+ and a 5150III, blended 56/44, Marshall G12 cab.</p>
+      <audio controls preload="none" src="audio/matched_to_ORIGINAL_v3.mp3"></audio></div>
+    <div class="take new"><div class="row"><span class="name">Matched to the cover's mix</span><span class="badge">NEW</span><span class="tag">v2 · 1.44 dB off</span></div>
+      <p class="note">HM-2 Extreme into a 6505+ and a 5150III, blended 65/35, Marshall G12 cab.</p>
+      <audio controls preload="none" src="audio/matched_to_COVER_MIX_v2.mp3"></audio></div>
+    <p class="ask">Tell me: is v3 closer to the record than v2 below? What's off — fizz, thump, too much or too little chainsaw?</p>
+  </section>
+
+  <section>
+    <h2>Earlier matches</h2>
+    <div class="take"><div class="row"><span class="name">Matched to the original</span><span class="tag">v2 · 1.53 dB off</span></div>
+      <audio controls preload="none" src="audio/matched_to_ORIGINAL_v2.mp3"></audio></div>
+    <div class="take"><div class="row"><span class="name">Matched to the original</span><span class="tag">v1</span></div>
+      <audio controls preload="none" src="audio/matched_to_ORIGINAL_v1.mp3"></audio></div>
+    <div class="take"><div class="row"><span class="name">Matched to the cover's mix</span><span class="tag">v1 · 1.59 dB off</span></div>
+      <audio controls preload="none" src="audio/matched_to_COVER_MIX_v1.mp3"></audio></div>
+  </section>
+
+  <section>
+    <h2>Gate A/B · same riff, four gate settings</h2>
+    <div class="take"><div class="row"><span class="name">1 · Gate off</span></div><audio controls preload="none" src="audio/gate_AB_1_off.mp3"></audio></div>
+    <div class="take"><div class="row"><span class="name">2 · Original gate (too strong)</span></div><audio controls preload="none" src="audio/gate_AB_2_current.mp3"></audio></div>
+    <div class="take"><div class="row"><span class="name">3 · Medium</span><span class="tag">your pick</span></div><audio controls preload="none" src="audio/gate_AB_3_medium.mp3"></audio></div>
+    <div class="take"><div class="row"><span class="name">4 · Gentle</span></div><audio controls preload="none" src="audio/gate_AB_4_gentle.mp3"></audio></div>
+  </section>
+
+  <section>
+    <h2>First render · hand-built preset</h2>
+    <div class="take"><div class="row"><span class="name">Chainsaw + body, v0</span></div><audio controls preload="none" src="audio/sawblade_listen_v0_guitars.mp3"></audio></div>
+    <div class="take"><div class="row"><span class="name">Same, gate off</span></div><audio controls preload="none" src="audio/sawblade_listen_v0_gate_OFF.mp3"></audio></div>
+  </section>
+</div>
