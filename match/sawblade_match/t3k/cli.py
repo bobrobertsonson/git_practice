@@ -22,7 +22,7 @@ from .fetch import ensure_capture, list_candidates
 from .licenses import check_license
 from .filter import FilterConfig
 from .ids import require_id
-from .ladder import gain_ladder
+from .ladder import gain_ladder, parse_ladder
 from .pool import build_pool, write_manifest
 from .pack import build_pack
 from .resolve import default_output, resolve_file
@@ -278,13 +278,13 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def cmd_ladder(args: argparse.Namespace) -> int:
     """Gain ladder of a tone as one JSON document: ``rungs`` is null when there is no (unambiguous) ladder."""
+    tone_id = require_id(args.tone_id, "tone id")      # validate before touching auth
     client = make_client()
-    tone_id = require_id(args.tone_id, "tone id")
-    arch = args.architecture
-    if arch is None:                       # same architecture choice as `resolve` (A2, then A1)
+    if args.architecture is None:          # same architecture choice as `resolve` (A2, then A1)
         found = list_candidates(client, client.get_tone(tone_id))
-        arch = found[0] if found else None
-    rungs = gain_ladder(client, tone_id, args.size, arch) if arch is not None else None
+        rungs = parse_ladder(found[1], args.size, found[0]) if found else None   # models already listed
+    else:
+        rungs = gain_ladder(client, tone_id, args.size, args.architecture)
     _emit({"tone_id": tone_id, "size": args.size,
            "rungs": None if rungs is None else
            [{"model_id": str(r.model_id), "gain": r.gain, "name": r.name} for r in rungs]})

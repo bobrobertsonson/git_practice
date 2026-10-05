@@ -146,6 +146,46 @@ def test_cli_ladder_null_and_size(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == {"tone_id": "1004", "size": "standard", "rungs": None}
 
 
-def test_cli_ladder_bad_id_is_json_error(capsys):
+def test_cli_ladder_bad_id_is_json_error_without_login(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise AssertionError("make_client must not be called for an invalid id")
+    monkeypatch.setattr(cli, "make_client", boom)
     assert cli.main(["ladder", "12x", "--json"]) == 1
     assert json.loads(capsys.readouterr().out)["code"] == "error"
+
+
+def _tone_and_models_client(fixture: str | None, seen: list, a2: int = 1, a1: int = 0) -> T3KClient:
+    """Serves GET tones/{id} (with architecture counts) and GET models (one fixture for A2, empty for A1)."""
+    from conftest import tone_json
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append((req.url.path, dict(req.url.params)))
+        if req.url.path.startswith("/api/v1/tones/"):
+            return httpx.Response(200, json=tone_json(1001, a2=a2, a1=a1))
+        arch = req.url.params["architecture"]
+        if fixture and arch == "2":
+            return httpx.Response(200, json=json.loads((FIX / f"{fixture}.json").read_text()))
+        return httpx.Response(200, json={"data": [], "page": 1, "total_pages": 1})
+    http = httpx.Client(base_url=BASE, transport=httpx.MockTransport(handler))
+    tm = TokenManager("t3k_pub_test", http, _NoStore(), None, now=lambda: 1000.0)
+    tm.set_session(Session("tok", "ref", 10 ** 9))
+    return T3KClient(tm, BASE, http=http, sleep=lambda s: None, clock=lambda: 1000.0)
+
+
+def test_cli_ladder_default_architecture_lists_models_once(monkeypatch, capsys):
+    seen: list = []
+    monkeypatch.setattr(cli, "make_client", lambda *a, **k: _tone_and_models_client("clean_ladder", seen))
+    assert cli.main(["ladder", "1001", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [r["gain"] for r in out["rungs"]] == [3.0, 5.0, 7.0, 9.0]
+    model_calls = [c for c in seen if c[0] == "/api/v1/models"]
+    assert len(model_calls) == 1 and model_calls[0][1]["architecture"] == "2"
+
+
+def test_cli_ladder_no_models_is_null(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "make_client", lambda *a, **k: _tone_and_models_client(None, [], a2=0, a1=0))
+    assert cli.main(["ladder", "1001", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"tone_id": "1001", "size": "standard", "rungs": None}
+    monkeypatch.setattr(cli, "make_client", lambda *a, **k: _tone_and_models_client(None, [], a2=1, a1=0))
+    assert cli.main(["ladder", "1001", "--json"]) == 0      # tone claims A2 models but lists none
+    assert json.loads(capsys.readouterr().out)["rungs"] is None
