@@ -100,6 +100,7 @@ void EngineLoader::run() {
       if (out.built && req.beforePublish) req.beforePublish(id);
       std::shared_ptr<Engine> shared = std::move(engine);
       owned_.push_back(shared);
+      out.engine = shared;
       slot_.publish(std::make_unique<EngineRef>(EngineRef{std::move(shared)}));
       out.published = true;
       builds_.fetch_add(1);

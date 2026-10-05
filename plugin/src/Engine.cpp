@@ -45,6 +45,7 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
   e->modelRate_ = modelRate;
 
   const Preset clamped = clampedToParams(preset);  // engine baseline == parameter values
+  e->preset_ = clamped;
   e->baseline_ = LiveParams::fromPreset(clamped);
   e->slotBand_ = postEqSlotBands(clamped);
   e->circuit_ = findCircuitBlock(clamped);
@@ -55,7 +56,8 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
 
   if (!e->resampling_) {
     e->chain_ = std::make_unique<Chain>(clamped, std::move(res));
-    e->chain_->prepare({modelRate, e->hostMax_});
+    e->spec_ = {modelRate, e->hostMax_};
+    e->chain_->prepare(e->spec_);
     e->latency_.chainModelSamples = e->chain_->latencySamples();
     e->latency_.total = e->latency_.chainModelSamples;
     e->latency_.resamplerHostSamples = 0;
@@ -65,7 +67,8 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
     e->down_.prepare(hostRate, modelRate, r1, e->hostMax_);
     const int modelMax = e->down_.maxOutputFor(e->hostMax_);
     e->chain_ = std::make_unique<Chain>(clamped, std::move(res));
-    e->chain_->prepare({modelRate, modelMax});
+    e->spec_ = {modelRate, modelMax};
+    e->chain_->prepare(e->spec_);
     const int C = e->chain_->latencySamples();
     e->up_.prepare(modelRate, hostRate, r2, modelMax);
     // Total delay in host samples: H1 + (C + H2 + s2/L2) * L2/M2. Choose s2 so it is an integer.
@@ -82,7 +85,74 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
     e->fifo_.assign(static_cast<std::size_t>(e->hostMax_) + e->tmp_.size() + 8, 0.0f);
   }
   e->info_ = e->chain_->info();
+  e->refreshRungs(&cache);  // cached rung models are loaded before the engine is published
   return e;
+}
+
+std::vector<std::string> Engine::ladderMessages() const {
+  std::lock_guard<std::mutex> lk(ladderMutex_);
+  return ladderMessages_;
+}
+
+int Engine::refreshRungs(CaptureCache* cache) {
+  int missing = 0;
+  for (int path = 0; path < 2; ++path) {
+    const LadderState st = chain_->ladderState(path);
+    LadderBlock* lb = chain_->ladderBlock(path);
+    if (!st.has || lb == nullptr) continue;
+    const PathPreset& pp = path == 0 ? preset_.a : preset_.b;
+    const auto* nam = dynamic_cast<const NamBlockParams*>(pp.blocks[static_cast<std::size_t>(ampIndex(pp))].params.get());
+    if (nam == nullptr) continue;
+    const int n = st.rungCount;
+    const int center = st.target >= 0 ? st.target : st.committed;
+    // The kMaxLoadedRungs rungs nearest the one the knob asks for; the sounding rung is always kept.
+    std::vector<int> order(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) order[static_cast<std::size_t>(i)] = i;
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return std::abs(a - center) < std::abs(b - center); });
+    std::uint64_t want = 0;
+    for (int i = 0; i < std::min(n, kMaxLoadedRungs); ++i) want |= 1ull << order[static_cast<std::size_t>(i)];
+    for (int keep : {st.committed, st.active}) {
+      if (keep < 0 || (want >> keep & 1ull)) continue;
+      for (int i = std::min(n, kMaxLoadedRungs) - 1; i >= 0; --i) {  // swap out the farthest wanted rung
+        const int far = order[static_cast<std::size_t>(i)];
+        if (far != st.committed && far != st.active) {
+          want &= ~(1ull << far);
+          break;
+        }
+      }
+      want |= 1ull << keep;
+    }
+    const std::uint64_t known = lb->knownMask();
+    const std::uint64_t rejected = lb->rejectedMask();
+    std::vector<LadderBlock::Entry> entries;
+    for (int r = 0; r < n; ++r) {
+      const bool wanted = (want >> r & 1ull) != 0, have = (known >> r & 1ull) != 0;
+      if (wanted && !have && (rejected >> r & 1ull) == 0) {
+        std::string why;
+        auto proc = buildRungProcessor(*nam, r, spec_, cache, &why);
+        if (proc) {
+          entries.push_back({r, std::move(proc)});
+        } else {
+          ++missing;
+          if (locateRungFile(nam->model, nam->model.ladder[static_cast<std::size_t>(r)])) {  // cached but unusable: say why, once
+            std::lock_guard<std::mutex> lk(ladderMutex_);
+            const std::string m = std::string(path == 0 ? "a" : "b") + ": " + why;
+            if (std::find(ladderMessages_.begin(), ladderMessages_.end(), m) == ladderMessages_.end()) ladderMessages_.push_back(m);
+          }
+        }
+      } else if (!wanted && have && r != st.committed && r != st.active && r != st.target) {
+        entries.push_back({r, nullptr});
+      }
+    }
+    lb->publishRungs(std::move(entries));  // also retries a staged hand-over
+    for (int r = 0; r < n; ++r)
+      if ((lb->rejectedMask() >> r & 1ull) != 0 && (rejected >> r & 1ull) == 0) {
+        std::lock_guard<std::mutex> lk(ladderMutex_);
+        ladderMessages_.push_back(std::string(path == 0 ? "a" : "b") + ": rung " + nam->model.ladder[static_cast<std::size_t>(r)].modelId +
+                                  " has a different latency than the block and was dropped");
+      }
+  }
+  return missing;
 }
 
 void Engine::setParams(const ParamValues& v, const LiveParams* extras, const LiveParams* mutesFrom) noexcept {

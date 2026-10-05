@@ -152,6 +152,124 @@ void SawbladeProcessor::parameterChanged(const juce::String&, float value) {
 void SawbladeProcessor::timerCallback() {
   if (committing_.load() > 0) return;
   if (circuitDirty_.exchange(false)) circuitChanged();
+  ladderTick();
+}
+
+// --- gain ladders -------------------------------------------------------------------------------
+SawbladeProcessor::LadderInfo SawbladeProcessor::ladderInfo(int path) const {
+  LadderInfo li;
+  std::shared_ptr<Engine> e;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    e = published_.lock();
+  }
+  if (!e || path < 0 || path > 1) return li;
+  const LadderState st = e->ladderState(path);
+  if (!st.has) return li;
+  const PathPreset& pp = path == 0 ? e->builtPreset().a : e->builtPreset().b;
+  const auto* nam = dynamic_cast<const NamBlockParams*>(pp.blocks[static_cast<std::size_t>(ampIndex(pp))].params.get());
+  if (!nam) return li;
+  const auto& l = nam->model.ladder;
+  li.has = true;
+  li.rungCount = st.rungCount;
+  li.activeIndex = st.committed;
+  li.targetIndex = st.target;
+  li.pending = st.pending;
+  li.activeGain = l[static_cast<std::size_t>(st.committed)].gain;
+  li.activeName = l[static_cast<std::size_t>(st.committed)].name;
+  li.activeModelId = l[static_cast<std::size_t>(st.committed)].modelId;
+  li.targetName = l[static_cast<std::size_t>(st.target)].name;
+  li.targetModelId = l[static_cast<std::size_t>(st.target)].modelId;
+  li.missingRungs = rungs_.missingRungs();
+  return li;
+}
+
+// Moving GAIN moves the active rung (audio thread); the preset records it as `gainStep`, so a save / reload / offline
+// render uses the same rung. Only for the engine that matches the committed preset.
+void SawbladeProcessor::ladderWriteBack(const std::shared_ptr<Engine>& e) {
+  std::lock_guard<std::mutex> lk(mutex_);
+  if (presetGeneration_ != e->generation()) return;
+  for (int k = 0; k < 2; ++k) {
+    const LadderState st = e->ladderState(k);
+    if (!st.has) continue;
+    const PathPreset& built = k == 0 ? e->builtPreset().a : e->builtPreset().b;
+    const auto* nam = dynamic_cast<const NamBlockParams*>(built.blocks[static_cast<std::size_t>(ampIndex(built))].params.get());
+    if (!nam) continue;
+    AmpControls& ac = (k == 0 ? preset_.a : preset_.b).ampControls;
+    const std::string& id = nam->model.ladder[static_cast<std::size_t>(st.committed)].modelId;
+    if (st.committed == st.own && ac.gainStep.empty()) continue;  // never moved off the block's own capture
+    if (ac.gainStep != id) ac.gainStep = id;
+  }
+}
+
+void SawbladeProcessor::ladderTick() {
+  // 1. A fetched ladder goes into the preset (and rebuilds once, keeping the monitor state).
+  std::vector<LadderFetchResult> done;
+  {
+    std::lock_guard<std::mutex> lk(fetchMutex_);
+    done.swap(fetched_);
+  }
+  for (const LadderFetchResult& r : done) {
+    if (r.rungs.empty()) continue;
+    Preset p = editBasePreset();
+    if (applyLadderToPreset(p, r.toneId, r.rungs)) loadPreset(std::move(p), /*keepMonitor=*/true);
+  }
+  // 2. The next ladder to fetch (one run at a time, once per tone per session).
+  if (ladderFetch_.load() && !fetchRunning_.load() && !ladderTool_.running()) {
+    for (const std::string& id : toneIdsNeedingLadder(editBasePreset())) {
+      if (!ladderTried_.insert(id).second) continue;
+      std::error_code ec;
+      if (!std::filesystem::exists(settings::t3kExecutable(), ec)) break;  // no tool: nothing to ask
+      fetchRunning_.store(true);
+      ladderFetches_.fetch_add(1);
+      const bool started = ladderTool_.start(
+          ladderArgs(id), nullptr,
+          [this, id](const T3kTool::Result& res) {  // background thread
+            LadderFetchResult r;
+            if (res.status == T3kTool::Status::Ok) r = parseLadderOutput(res.output);
+            r.toneId = id;
+            {
+              std::lock_guard<std::mutex> lk(fetchMutex_);
+              fetched_.push_back(std::move(r));
+            }
+            fetchRunning_.store(false);
+          });
+      if (!started) fetchRunning_.store(false);
+      break;
+    }
+  }
+  // 3. The running engine's rungs: write the active one back, keep the nearest models loaded.
+  std::shared_ptr<Engine> e;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    e = published_.lock();
+  }
+  if (!e) return;
+  bool any = false;
+  std::uint64_t key = 0;
+  for (int k = 0; k < 2; ++k) {
+    const LadderState st = e->ladderState(k);
+    if (!st.has) continue;
+    any = true;
+    key = key * 131 + static_cast<std::uint64_t>(st.target + 1) * 7 + static_cast<std::uint64_t>(st.committed + 1) + (st.pending ? 1000 : 0);
+  }
+  if (!any) return;
+  ladderWriteBack(e);
+  key ^= reinterpret_cast<std::uintptr_t>(e.get());
+  if (key != lastRungKey_ || ++rungTicks_ >= 30) {  // on a change, else every 3 s (picks up newly cached rungs)
+    lastRungKey_ = key;
+    rungTicks_ = 0;
+    rungs_.request(e);
+  }
+}
+
+bool SawbladeProcessor::waitForLadderWork(std::chrono::milliseconds timeout) {
+  const auto end = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < end) {
+    if (!fetchRunning_.load() && !ladderTool_.running() && rungs_.waitIdle(std::chrono::milliseconds(20))) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return false;
 }
 
 // The user (or the host) moved the CIRCUIT switch: if it names a different circuit than the preset's
@@ -427,6 +545,7 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     restoreCircuit = true;
   }
   if (o.published) {
+    published_ = o.engine;
     status_.latencySamples = o.latencySamples;
     status_.hostRate = o.hostRate;
     status_.builtMaxBlock = o.maxBlock;

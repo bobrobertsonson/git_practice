@@ -118,6 +118,29 @@ byte-stable). Smoothing lives in `Chain::setLiveParams`: input/output gain, path
 ramp linearly per sample over 20 ms (block-size independent); post-EQ gains ramp in dB with the
 band redesigned every 32 samples; the gate threshold moves immediately.
 
+### Gain ladders (v0.2 Task B)
+
+A TONE3000 amp capture can carry a **gain ladder** (`model.ladder`, see PRESET_SCHEMA.md "Gain ladder"): the other models
+of the tone that are the same amp at other gain settings. In the plugin:
+
+- **Fetch.** `SawbladeProcessor::ladderTick()` (the 10 Hz timer; tests call it) runs `sawblade-t3k ladder <tone id> --size standard --json`
+  on a background thread for an amp capture that has a TONE3000 source but no ladder, once per tone per session
+  (`setLadderFetchEnabled(false)` switches it off). The result (`rungs: null` = no ladder, stored as absent) is applied with one
+  rebuild; a path whose GAIN is untouched gets the knob placed at the own rung's position, so its sound does not change.
+  The model size is the tool's default (`standard`): the capture's own size is not recorded in the preset.
+- **Preload.** `Engine::build` and the `RungPreloader` thread load the cached rung models nearest the rung the GAIN knob asks for
+  (at most 8 at a time; a longer ladder keeps the 8 nearest, the sounding rung always stays) and hand them to the audio thread
+  through the block's `SwapSlot`; replaced models are freed on the loader thread. A rung that is not cached leaves the block on its
+  current rung (GAIN is drive-only) and `LadderInfo::pending` / `missingRungs` say so; the rung files come from the capture cache by
+  model id (`sawblade-t3k resolve` fills it).
+- **Swap.** Moving GAIN picks the rung (hysteresis 0.15 past the midpoint) and the residual drive; the incoming model runs on the
+  signal for 10 ms (output discarded, so its state is warm), then an equal-power crossfade of 20 ms. No allocation, no lock, latency
+  unchanged (a rung with another latency is dropped and reported in `Engine::ladderMessages()`).
+- **Record.** The active rung is written back as `ampControls.gainStep` by `ladderTick()` once GAIN has moved it off the block's own
+  capture; a restored session or an offline render starts on that rung.
+- **For the UI (Task D).** `SawbladeProcessor::ladderInfo(path)`: `has`, `rungCount`, `activeIndex` / `activeName` / `activeGain` /
+  `activeModelId` (e.g. "Gain 6"), `targetIndex` / `targetName`, `pending` (the "rung pending" flag), `missingRungs`.
+
 ### Latency accounting (exact, in host samples)
 
 ```
