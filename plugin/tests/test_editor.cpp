@@ -1227,6 +1227,24 @@ TEST_CASE("rig editor: MATCH LEVELS fills the trim read-outs and the blend law r
   juce::Button* constant = buttonTitled(*rig.ed, "Blend law CONSTANT");
   REQUIRE(linear != nullptr);
   REQUIRE(constant != nullptr);
+  {  // Layout: each label fits its button in full (no "CONST..."), and the row clears the PATH LEVELS knobs.
+    for (juce::Button* b : {linear, constant}) {
+      auto* tb = dynamic_cast<juce::TextButton*>(b);
+      REQUIRE(tb != nullptr);
+      const juce::Font f = tb->getLookAndFeel().getTextButtonFont(*tb, tb->getHeight());
+      const float textW = juce::GlyphArrangement::getStringWidth(f, tb->getButtonText());
+      INFO(tb->getButtonText() << " button " << tb->getWidth() << " text " << textW);
+      CHECK(static_cast<float>(tb->getWidth()) >= textW + 16.0f);
+    }
+    const auto lb = rig.ed->getLocalArea(linear, linear->getLocalBounds());
+    const auto cb = rig.ed->getLocalArea(constant, constant->getLocalBounds());
+    CHECK_FALSE(lb.intersects(cb));
+    juce::Label* sawLevel = nullptr;
+    for (auto* l : all<juce::Label>(*rig.ed)) if (l->getText() == "SAW LEVEL") sawLevel = l;
+    REQUIRE(sawLevel != nullptr);
+    const auto sb = rig.ed->getLocalArea(sawLevel, sawLevel->getLocalBounds());
+    CHECK(cb.getRight() + 8 <= sb.getX());
+  }
   const auto builds = rig.proc.engineBuilds();
   click(*linear);
   CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::Linear);

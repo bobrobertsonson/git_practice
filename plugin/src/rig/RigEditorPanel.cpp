@@ -262,8 +262,8 @@ struct BlendPage : Page {
     setup(matchLevels, "MATCH LEVELS", "Measure both paths with a guitar-shaped probe and store the level trims that equalize them (manual)");
     matchLevels.onClick = [this] { controller.matchLevels(); };
     addAndMakeVisible(matchLevels);
-    law.setItems({{"LINEAR", "Blend law LINEAR", "Linear crossfade: the loudness can change with BLEND"},
-                  {"CONSTANT", "Blend law CONSTANT", "Equal-power crossfade with make-up gain: the loudness stays the same at every BLEND"}});
+    law.setItems({{"LINEAR", "Blend law LINEAR", "Linear crossfade: the loudness can change with BLEND", 1.0f},
+                  {"CONSTANT", "Blend law CONSTANT", "Equal-power crossfade with make-up gain: the loudness stays the same at every BLEND", 1.35f}});
     law.onChange = [this](int i) { controller.setBlendLaw(i == 0 ? BlendLaw::Linear : BlendLaw::ConstantLoudness); };
     addAndMakeVisible(law);
     for (juce::Label* l : {&trimReadA, &trimReadB}) {
@@ -337,7 +337,7 @@ struct BlendPage : Page {
   }
   void paint(juce::Graphics& g) override {
     group(g, "BLEND", 16, 12);
-    group(g, "PATH LEVELS", 330, 12);
+    group(g, "PATH LEVELS", 410, 12);
     group(g, "ALIGN", 16, 250);
     g.setColour(L::rule());
     g.drawHorizontalLine(240, 16.0f, static_cast<float>(getWidth() - 16));
@@ -345,21 +345,21 @@ struct BlendPage : Page {
   void resized() override {
     blend.setBounds(16, 34, 150, 170);
     blendRead.setBounds(16, 206, 220, 24);
-    levelA.setBounds(330, 40, 110, 120);
-    levelB.setBounds(470, 40, 110, 120);
-    mute[0]->setBounds(332, 170, 50, 28);
-    solo[0]->setBounds(388, 170, 50, 28);
-    mute[1]->setBounds(472, 170, 50, 28);
-    solo[1]->setBounds(528, 170, 50, 28);
+    levelA.setBounds(410, 40, 110, 120);
+    levelB.setBounds(550, 40, 110, 120);
+    mute[0]->setBounds(412, 170, 50, 28);
+    solo[0]->setBounds(468, 170, 50, 28);
+    mute[1]->setBounds(552, 170, 50, 28);
+    solo[1]->setBounds(608, 170, 50, 28);
     align.setBounds(16, 274, 300, 32);
     alignRead.setBounds(332, 274, 560, 32);
     for (int i = 0; i < 4; ++i) nudge[i].setBounds(16 + i * 58, 326, 54, 32);
     invert->setBounds(260, 326, 130, 32);
     remeasure.setBounds(402, 326, 140, 32);
     matchLevels.setBounds(552, 326, 150, 32);
-    law.setBounds(172, 44, 148, 32);
-    trimReadA.setBounds(320, 204, 130, 16);
-    trimReadB.setBounds(460, 204, 130, 16);
+    law.setBounds(176, 44, 216, 32);  // LINEAR | CONSTANT sized to their text, clear of PATH LEVELS (x 410)
+    trimReadA.setBounds(400, 204, 130, 16);
+    trimReadB.setBounds(540, 204, 130, 16);
   }
   RigController& controller;
   SawbladeProcessor& proc;
