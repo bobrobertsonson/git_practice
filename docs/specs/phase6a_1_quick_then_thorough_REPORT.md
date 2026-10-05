@@ -134,3 +134,30 @@ Commits:
    - the progress fields match `{stage, fraction, etaSeconds, bestErrorDb, message}`;
    - quick and thorough both write `result.json` in the 6a shape (`best`/`alternatives`, `loss`, `topology`).
 5. **Nits** from round 2 (the prune comment, the hard-coded label coordinate) can ride the next plugin change.
+
+## Follow-up: main lead's answers (2026-10-05), commit `d6e01c0`
+The main lead answered the open questions above:
+1. **Top-bar MATCH, done.** In Standalone the top-bar MATCH button now opens the match screen directly. Plugin
+   mode is unchanged: it opens the panel and shows the "open the Standalone app" note.
+2. **Refine age limit, done.**
+   - `kRefineMaxAgeHours = 24`.
+   - On re-attach, a finished quick job older than 24 h with no thorough partner does not start a refine. Its
+     results header shows "Preview is over 24 h old: re-run MATCH to refine."
+   - Age is measured from the finish time, falling back to the spawn time, then the start time. All of these are
+     epoch ms.
+   - A future or clock-skewed timestamp gives a negative age. It refines once and never loops.
+   - Tests cover 23 h (it refines) and 25 h (it does not, and shows the note). Times are faked in `job.json`.
+3. **Known edge case, not handled.** If the plugin and the Standalone are open at the same time, both could
+   re-attach to the same finished quick job and start the same refine.
+4. The first real run after 6b is on the v0.1 Mac checklist.
+
+The round-2 nits are also fixed: the prune comment now states the real rules, and the label position is a
+`kRightX` constant.
+
+**Tests at `d6e01c0`:**
+- Full ctest: 306/306, from the implementer and the reviewer.
+- The affected tests passed 3 out of 3.
+- clang `-Werror`: the plugin and editor tests built with 0 warnings and pass (implementer). The reviewer
+  compiled them with 0 warnings.
+
+**Reviewer: ACCEPT.** Optional untested cases: the spawn-time fallback and a future timestamp.
