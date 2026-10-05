@@ -6,6 +6,8 @@
 #include "SawbladeLookAndFeel.h"
 
 namespace sawblade::plugin::about {
+juce::String buildStamp() { return juce::String(kVersion) + juce::String::fromUTF8(" \xc2\xb7 ") + kGitSha + juce::String::fromUTF8(" \xc2\xb7 ") + kGitDirty; }
+
 namespace {
 using L = SawbladeLookAndFeel;
 juce::String ju(const std::string& s) { return juce::String::fromUTF8(s.c_str()); }
@@ -103,7 +105,7 @@ AboutBox::AboutBox(SawbladeProcessor& p, settings::Settings& s) : impl_(std::mak
   i.name.setText("SAWBLADE", juce::dontSendNotification);
   i.name.setFont(L::wordmarkFont());
   i.name.setColour(juce::Label::textColourId, L::saw());
-  i.version.setText(juce::String("Sawblade ") + kVersion + kDot + kGitHash + kDot + "built " + kBuildDate, juce::dontSendNotification);
+  i.version.setText(juce::String("Sawblade ") + kVersion + kDot + kGitSha + kDot + kGitDirty + kDot + "built " + kBuildDate, juce::dontSendNotification);
   i.version.setTitle("Version");
   i.version.setFont(L::monoFont(13.0f));
   i.version.setColour(juce::Label::textColourId, L::text());

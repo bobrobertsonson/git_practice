@@ -1,5 +1,8 @@
 #pragma once
 
+#include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <numbers>
@@ -41,5 +44,25 @@ void processChunked(Proc& p, std::vector<float>& x, const std::vector<int>& size
     pos += n;
   }
 }
+
+// Exact comparison of two renders (tolerance 0) that, on a mismatch, reports the first differing index and the
+// maximum |difference| instead of letting Catch print both arrays. Call inside a TEST_CASE (uses INFO / REQUIRE).
+#define SAWBLADE_REQUIRE_SAME_SAMPLES(expected, actual)                                                           \
+  do {                                                                                                            \
+    const auto& sbE_ = (expected);                                                                                \
+    const auto& sbA_ = (actual);                                                                                  \
+    REQUIRE(sbE_.size() == sbA_.size());                                                                          \
+    std::size_t sbFirst_ = sbE_.size(), sbCount_ = 0;                                                             \
+    double sbMax_ = 0.0;                                                                                          \
+    for (std::size_t sbI_ = 0; sbI_ < sbE_.size(); ++sbI_) {                                                      \
+      if (sbE_[sbI_] == sbA_[sbI_]) continue;                                                                     \
+      if (sbFirst_ == sbE_.size()) sbFirst_ = sbI_;                                                               \
+      ++sbCount_;                                                                                                 \
+      sbMax_ = std::max(sbMax_, std::fabs(static_cast<double>(sbE_[sbI_]) - static_cast<double>(sbA_[sbI_])));    \
+    }                                                                                                             \
+    INFO("samples differing: " << sbCount_ << " of " << sbE_.size() << ", first at index " << sbFirst_            \
+                               << ", max |diff| = " << sbMax_);                                                   \
+    REQUIRE(sbCount_ == 0);                                                                                       \
+  } while (0)
 
 }  // namespace sawblade::test

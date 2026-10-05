@@ -79,24 +79,29 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/presets/PresetInfoPanel.cpp
   src/presets/PresetBrowser.cpp)
 
-# BuildInfo.h (version, git hash, UTC date) is generated at configure time for the About box.
-set(SAWBLADE_GIT_HASH "unknown")
+# BuildInfo.h (version, git sha, dirty flag, UTC date) for the About box and the Standalone title.
+# Regenerated on EVERY build by the SawbladeBuildInfo target (cmake/GenBuildInfo.cmake), so it cannot go
+# stale when HEAD moves without a reconfigure. The script only rewrites the header when its content changed,
+# so an unchanged stamp recompiles nothing.
 find_package(Git QUIET)
-if(GIT_FOUND)
-  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-                  OUTPUT_VARIABLE _hash OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE _rc)
-  if(_rc EQUAL 0 AND NOT _hash STREQUAL "")
-    set(SAWBLADE_GIT_HASH "${_hash}")
-    execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-                    OUTPUT_VARIABLE _dirty OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    if(NOT _dirty STREQUAL "")
-      set(SAWBLADE_GIT_HASH "${SAWBLADE_GIT_HASH}-dirty")
-    endif()
-  endif()
-endif()
-string(TIMESTAMP SAWBLADE_BUILD_DATE "%Y-%m-%d" UTC)
-configure_file(src/about/BuildInfo.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/BuildInfo.h @ONLY)
 set(SAWBLADE_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(SAWBLADE_BUILDINFO_HEADER ${SAWBLADE_GENERATED_DIR}/BuildInfo.h)
+set(SAWBLADE_BUILDINFO_ARGS
+  -DSRC_DIR=${PROJECT_SOURCE_DIR}
+  -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/src/about/BuildInfo.h.in
+  -DOUT=${SAWBLADE_BUILDINFO_HEADER}
+  -DVERSION=${PROJECT_VERSION})
+if(GIT_FOUND)
+  list(APPEND SAWBLADE_BUILDINFO_ARGS -DGIT_EXECUTABLE=${GIT_EXECUTABLE})
+endif()
+# Also at configure time, so the header exists before the first build.
+execute_process(COMMAND ${CMAKE_COMMAND} ${SAWBLADE_BUILDINFO_ARGS} -P ${PROJECT_SOURCE_DIR}/cmake/GenBuildInfo.cmake)
+add_custom_target(SawbladeBuildInfo ALL
+  COMMAND ${CMAKE_COMMAND} ${SAWBLADE_BUILDINFO_ARGS} -P ${PROJECT_SOURCE_DIR}/cmake/GenBuildInfo.cmake
+  BYPRODUCTS ${SAWBLADE_BUILDINFO_HEADER}
+  COMMENT "Stamping BuildInfo.h"
+  VERBATIM)
+
 
 # UI renders embedded into the binary: an explicit list (not a glob) of everything in assets/.
 # Nothing renders at build time; design/render/export_ui_assets.py produced these files once.
@@ -156,6 +161,7 @@ juce_add_plugin(SawbladePlugin
   ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/icon_256.png"
   COPY_PLUGIN_AFTER_BUILD FALSE)
 
+add_dependencies(SawbladePlugin SawbladeBuildInfo)
 target_sources(SawbladePlugin PRIVATE ${SAWBLADE_PLUGIN_SOURCES} src/PluginEntry.cpp)
 target_include_directories(SawbladePlugin PUBLIC src ${SAWBLADE_GENERATED_DIR})
 target_compile_features(SawbladePlugin PUBLIC cxx_std_20)
@@ -221,6 +227,7 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp tests/test_pedal_face.cpp
     tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_settings.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
+  add_dependencies(sawblade_plugin_tests SawbladeBuildInfo)
   target_include_directories(sawblade_plugin_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
   target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
     SAWBLADE_TEST_TOOLS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/tools")
@@ -254,6 +261,7 @@ if(SAWBLADE_BUILD_TESTS)
   add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
+  add_dependencies(sawblade_editor_tests SawbladeBuildInfo)
   target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
   # JUCE_MODAL_LOOPS_PERMITTED: the page tests pump the message loop (MessageManager::runDispatchLoopUntil).
   target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
@@ -293,6 +301,7 @@ endif()
 if(SAWBLADE_BUILD_TESTS)
   add_executable(sawblade_integration_tests tests/test_integration.cpp ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(tests/test_integration.cpp PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
+  add_dependencies(sawblade_integration_tests SawbladeBuildInfo)
   target_include_directories(sawblade_integration_tests PRIVATE src ${SAWBLADE_GENERATED_DIR} ${PROJECT_SOURCE_DIR}/tests)
   target_compile_definitions(sawblade_integration_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
     SAWBLADE_TEST_TOOLS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/tools"

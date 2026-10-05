@@ -6,7 +6,7 @@ set(FETCHCONTENT_QUIET ON)
 # SOURCE_SUBDIR points at a directory with no CMakeLists.txt so FetchContent_MakeAvailable
 # only downloads; we build these ourselves (header-only or hand-written targets below).
 FetchContent_Declare(eigen
-  GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+  GIT_REPOSITORY https://github.com/eigen-mirror/eigen.git
   GIT_TAG        3147391d946bb4b6c68edd901f2add6ac1f31f8c # 3.4.0
   GIT_SHALLOW    OFF
   SOURCE_SUBDIR  _no_cmake)
@@ -17,6 +17,7 @@ FetchContent_Declare(nlohmann_json
 FetchContent_Declare(nam_core
   GIT_REPOSITORY https://github.com/sdatkinson/NeuralAmpModelerCore.git
   GIT_TAG        0b3d3c97b0859a3a8c92a8628c4dd89a25eb5842
+  GIT_SUBMODULES ""  # its Eigen submodule points at gitlab.com and is unused (we pin Eigen above); AudioDSPTools is unused
   SOURCE_SUBDIR  _no_cmake)
 FetchContent_Declare(pffft
   GIT_REPOSITORY https://github.com/marton78/pffft.git
@@ -37,7 +38,7 @@ target_include_directories(sawblade_json SYSTEM INTERFACE
   "${nlohmann_json_SOURCE_DIR}/single_include/nlohmann")
 add_library(nlohmann_json::nlohmann_json ALIAS sawblade_json)
 
-# --- Eigen 3.4.0 from gitlab (header-only, MPL2). NAM core's Eigen submodule is NOT used. ---
+# --- Eigen 3.4.0 from the GitHub mirror eigen-mirror/eigen (header-only, MPL2). NAM core's Eigen submodule is NOT used. ---
 add_library(sawblade_eigen INTERFACE)
 target_include_directories(sawblade_eigen SYSTEM INTERFACE "${eigen_SOURCE_DIR}")
 

@@ -1215,11 +1215,24 @@ TEST_CASE("rig editor: screenshots", "[editor][rig]") {
     // Single: lane B shows the BLEND OFF note.
     click(rig.panel().topologyButton(rig::Topology::Single));
     rig.wait();
-    // let the async parameter attachments land: queued messages run before the stop request
-    juce::MessageManager::callAsync([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
-    juce::MessageManager::getInstance()->runDispatchLoop();
+    // Let the async parameter attachments land. Pump with runDispatchLoopUntil (as every other editor test does):
+    // MessageManager::runDispatchLoop() is `[NSApp run]` on macOS, which does not return for a callAsync'd
+    // stopDispatchLoop() in a headless test process (and leaves quitMessagePosted set), so the knob was still at its
+    // default 0.5 there. Bounded: the attachments normally land in the first pass or two.
+    for (int pass = 0; pass < 50; ++pass) {
+      juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+      bool landed = true;
+      for (auto* k : all<skin::FilmstripKnob>(*rig.ed))
+        if (k->paramId() == "blend" && k->getValue() != 0.0) landed = false;
+      if (landed) break;
+    }
+    int blendKnobs = 0;
     for (auto* k : all<skin::FilmstripKnob>(*rig.ed))
-      if (k->paramId() == "blend") CHECK(k->getValue() == 0.0);
+      if (k->paramId() == "blend") {
+        ++blendKnobs;
+        CHECK(k->getValue() == 0.0);
+      }
+    REQUIRE(blendKnobs >= 1);
     const juce::Image single = rig.snapshot("rig_single.png");
     CHECK(nonBackgroundFraction(single, {0, 58, 940, 742}) > 0.04);
     CHECK(anyLabelContains(*rig.ed, "BLEND OFF"));
@@ -3563,7 +3576,8 @@ TEST_CASE("settings: the About box lists the preset's captures with creator, lic
   CHECK(anyLabelContains(*rig.ed, juce::String("Sawblade ") + ver));
   CHECK(std::string(sawblade::plugin::about::kGitHash).size() > 0);
   CHECK(std::string(sawblade::plugin::about::kBuildDate).size() > 0);
-  CHECK(anyLabelContains(*rig.ed, sawblade::plugin::about::kGitHash));
+  CHECK(anyLabelContains(*rig.ed, sawblade::plugin::about::kGitSha));
+  CHECK(anyLabelContains(*rig.ed, sawblade::plugin::about::kGitDirty));
   CHECK(anyLabelContains(*rig.ed, sawblade::plugin::about::kBuildDate));
   CHECK(anyLabelContains(*rig.ed, "AGPLv3 for personal, non-commercial use"));
   CHECK(anyLabelContains(*rig.ed, "Sawblade is not sold"));
