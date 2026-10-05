@@ -331,9 +331,10 @@ a timer and a lamp, the take list (name, length, position in the song, overruns,
 DELETE (both confirm in a dialog), USE FOR MATCH, MATCH and EXPORT NAM. The selection used for MATCH is a setting, not tone
 state.
 
-**Standalone only.** MATCH and EXPORT NAM run the Python tools, so for now they are Standalone-only: `matchEnabled()` is
-`playAlong().standalone()` (a processor outside the Standalone wrapper counts as a plugin). In plugin mode the two buttons
-only show "... runs in the Standalone app: open the Standalone app." Recording works in both.
+**MATCH is Standalone only.** MATCH runs the Python matcher, so for now it is Standalone-only: `matchEnabled()` is
+`playAlong().standalone()` (a processor outside the Standalone wrapper counts as a plugin). In plugin mode the button
+only shows "MATCH runs in the Standalone app: open the Standalone app." Recording works in both. EXPORT NAM is available
+in both (phase 12, "NAM export" below).
 
 **Job runner.** `JobRunner` (owned by the processor, so jobs survive the editor and the panel closing) starts
 `sawblade-match` and `sawblade-export` with `juce::ChildProcess`. Every job has a folder
@@ -388,13 +389,9 @@ audition; **A / B** switches between that preset (A) and the candidate (B); **AP
 current preset (what a normal preset load leaves; the audition ends); **REVERT** goes back to A. Auditioning is a real load:
 the plugin state holds whichever side is playing.
 
-**EXPORT NAM.** The same screen in export mode: NO CAB / WITH CAB (the hint says which is exact for the current blend: a
-live blend, both paths on one cab, is exact without the cab; a studio blend only with it), FEATHER / LITE / STANDARD, device
-`auto` (the tool's default; `--device auto` is passed), the licence note of the export, progress, and REVEAL
-(`File::revealToUser` on the result folder). It runs `sawblade-export <preset> --mode <m> --size <s> --device auto
-[--di <selected take>] --out <job>/export`. The preset is the auditioned / applied candidate's resolved file when that is what
-is still exactly the current preset (compared as state JSON, so any later preset load or parameter change forgets the association), otherwise the current preset written to `<jobs>/inputs/` (so the export is what is playing, parameter changes included).
-The selected take is also passed as the validation DI. A capture without a file (NAM model, or the cab IR while the cab is on) blocks the export with a message instead of launching; the written file keeps absolute capture paths (tested by loading it back with `loadPresetFile`).
+**EXPORT NAM** moved to its own panel in phase 12 (see "NAM export (phase 12)" below); `MatchScreen` is MATCH only. The
+export source (the auditioned / applied candidate's resolved file, else the current preset written to `<jobs>/inputs/`) and
+the check that blocks a capture without a file are unchanged.
 
 **Tests.** `plugin/tests/test_record_match.cpp` (headless; recorder: no allocation or lock while recording, WAV bit-exact for
 mixed block sizes, overrun counting with a stalled writer and the silence padding, a take shorter than a writer pass, the
@@ -406,10 +403,81 @@ a running and a finished job, a re-attached cancel, a child that floods the pipe
 audition / A-B / apply; the plugin-mode gating) and the editor tests in `plugin/tests/test_editor.cpp` (the band, the
 Standalone-only buttons, the missing-tool message, a job that survives the editor, and the screenshots
 `build/screenshots/sawblade_record_armed_1x.png`, `sawblade_match_progress_1x.png`, `sawblade_match_results_1x.png`,
-`sawblade_export_progress_1x.png`). All test data is synthesised into temp dirs; `SAWBLADE_DATA_DIR` keeps the default
+`sawblade_export_progress_1x.png` is gone with the export mode: the export tests are in "NAM export (phase 12)"). All test data is synthesised into temp dirs; `SAWBLADE_DATA_DIR` keeps the default
 locations out of the home folder.
 
-**Known limits.** MATCH / EXPORT are Standalone-only. The take list is rescanned when the recorder changes it and every 10 s while the panel is open. Takes and job folders are never deleted by the plugin.
+**Known limits.** MATCH is Standalone-only. The take list is rescanned when the recorder changes it and every 10 s while the panel is open. Takes and job folders are never deleted by the plugin.
+
+### NAM export (phase 12)
+
+Spec `docs/specs/phase12_export_in_plugin.md`. `ExportPanel.{h,cpp}` (the skin; layout after `design/mockups/FullExport.dc.html`),
+`ExportGlue.{h,cpp}` (what the panel shows and what it starts), `ExportSettings.{h,cpp}` (the saved settings), `Sha256.h`,
+and the export half of `JobRunner`. EXPORT NAM opens from the top bar and from the play-along panel, in the Standalone app
+and in a host alike (no Standalone gating). The job runs in the processor's `JobRunner`, so it survives the panel and the
+editor closing; the audio thread never touches the panel, the runner or the sidecar (a test runs `processBlock` under the
+allocation and lock guards while a fake export job runs and the panel's glue is polled on another thread).
+
+**Panel.** Three views, driven by the export job's snapshot:
+- *Configure*: the two mode cards of the mockup (NO-CAB + IR, WITH CAB) plus the STUDIO BLEND information card, SIZE
+  (FEATHER / LITE / STANDARD, each with "last run: N min" or "no run yet" from `MatchSettings` `exportWallSeconds.<size>`),
+  VALIDATION DI (LAST TAKE = the newest take, shown by name, else BUILT-IN SIGNAL), BUS COMP (only when the comp is on),
+  OUTPUT FOLDER (default `<app data>/exports`, CHOOSE...), the rig summary (blocks per path, cab mode), "what goes into the
+  model" (gate left out, the comp line depends on the comp and its release, time effects none), the credits (title - creator
+  (licence) per capture; a NON-COMMERCIAL badge if any capture is `cc-by-nc*`; the file stem then gets `-nc`), the personal-use
+  notice, TRAIN EXPORT, and RESUME when a cancelled run of this rig can continue (epoch N of M, mode, size).
+- *Training*: stage, progress bar, `epoch N / M`, best ESR, elapsed / ETA, CANCEL.
+- *Result*: MET (green) / NOT MET (red) / NOT JUDGED (amber), held-out ESR and DI LTAS error with their limits, the model
+  path, the sidecar path, REVEAL (`File::revealToUser` on the `.nam`), OPEN FOLDER, A/B LISTEN (opens
+  `listen/ab_original_then_export.mp3`, else `.wav`, with the system player; hidden when neither exists; there is no in-plugin
+  playback), the licence note.
+
+**Mode and comp rules.** A rig whose no-cab export is exact (shared cab, `irMix`, or no cab) defaults to NO CAB; per-path cabs
+(studio blend) default to WITH CAB and the NO CAB card is disabled. A mode saved in the state is honoured only while it is exact
+for the loaded rig. Comp on, NO CAB: DROP COMP (default, exact: the exported preset has `busComp.enabled = false`, since
+`sawblade-export` refuses a no-cab export of a rig with the comp on) or KEEP COMP (`--allow-inexact`, the comp stays in the preset
+and the error is reported). Comp on, WITH CAB: trained into the model if the release is <= 150 ms, else the panel shows the
+refusal note (the exporter refuses). The gate is always left out by the exporter.
+
+**Runner contract (`JobRunner::startExport`).** `sawblade-export <preset> --mode m --size s --device auto --require-accept
+[--di <take wav> | --di builtin] [--allow-inexact] (--exports-root <root> | --resume <dir>) --progress-json <job>/progress.json`
+(`--progress-json` only if `--help` lists it, probed once per executable like MATCH; without it the 4.1 checkpoint
+`progress.json` is the fallback, and the run folder is found by scanning the exports root for the newest folder created after the
+job started). `--out` is no longer passed: the exporter names its folder and reports it as `outDir` in the progress file.
+Progress keys parsed into `JobProgress`: `stage` (plan / signal / render / train / validate / done / cancelled / error),
+`fraction`, `etaSeconds`, `epoch`, `epochs`, `bestEsr`, `resumable`, `outDir`, `message`. The default exports root (no
+`exportsRoot` in the request) is `<job>/export`.
+- *Cancel* of an export job: SIGINT to the process group, SIGTERM after the grace period (default 15 s for exports), SIGKILL
+  after another (MATCH is unchanged: SIGTERM, SIGKILL). Exit 130 or a cancelled job = `Cancelled`; the checkpoint stays.
+- *Exit codes*: 0 with a result = `Succeeded`; 2 with `export_report.json` = `Succeeded`, `accepted = "NOT MET"`; 1 or no result =
+  `Failed` with the exporter's `error:` / `refused:` line.
+- *Result*: `export_report.json` -> `validation.acceptance.{status,summary,heldOutEsr,diLtasDb,esrLimit,ltasLimitDb}`,
+  `training.namFile`, `nonCommercial`, `totalWallSeconds` (else `training.wallSeconds`, written to `exportWallSeconds.<size>`).
+
+**job.json** (export jobs, besides the match fields): `sourcePreset`, `sourceSha256` (sha256 of the resolved preset file's
+bytes: the "same rig" key), `exportsRoot`, `allowInexact`, `diBuiltin`, `outDir` (written as soon as it is known), and on
+finish `accepted` (`"met"` / `"NOT MET"` / `"not judged"`), `resumable`, `sidecar`.
+
+**Sidecar.** On `Succeeded` (met or not) the monitor thread copies the resolved preset file that was exported to
+`<outDir>/<nam stem>.sawblade.json`, byte for byte. The preset written for an export is named by the hash of its bytes
+(`<jobs>/inputs/<sha16>.preset.json`), so the same rig is always the same file and key.
+
+**RESUME.** Offered when the newest export job is `Cancelled`, `outDir/checkpoint/progress.json` exists without `complete`, and
+the key of what would be exported now (with the comp handled as that run handled it) equals the job's `sourceSha256`. It starts
+`--resume <outDir>` with that run's mode and size (and validation take, if it still exists); the exporter's own identity check
+is the final guard and its refusal text is shown.
+
+**Plugin state.** An optional `"export"` object `{mode, size, diSource, compChoice, outputFolder}` beside `playAlong`
+(`mode` empty = follow the rig; omitted when all defaults; a non-object value is dropped; unknown values keep the defaults;
+nothing goes into the preset). The core preset parser accepts and ignores the key like `playAlong`
+(`docs/PRESET_SCHEMA.md`).
+
+**Tests.** Runner (`test_record_match.cpp`, fake exporter in `fake_tools.h` that follows this contract: progress shape, SIGINT
+leaves `checkpoint/progress.json` + `last.ckpt` and records the signals it got in `signals.json`, exit 0 / 2 / 130 / 1, `.nam`
+with a `metadata.sawblade` block, report, listening file): progress to the snapshot, the command line, cancel with SIGINT and the
+escalation, resume, NOT MET / MET / not judged, the byte-identical sidecar, wall times, the glue (request, deterministic key,
+RESUME lookup) and the allocation / lock guard. Editor (`test_editor.cpp`): opening from the top bar, mode defaults, comp row,
+licences and NC badge, the state round trip, training / cancel / RESUME / result buttons, and the screenshots
+`export_configure.png`, `export_training.png`, `export_result.png` (+ `export_result_not_met.png`) in `build/screenshots/`.
 
 ### Editor
 
@@ -417,15 +485,15 @@ A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, sp
 `docs/specs/phase2_5_skin.md`); the final UI is the user's design. A fixed 1280 x 800 design laid out in one
 content component that the editor scales with an `AffineTransform` (resizable, fixed 1.6 aspect, 640x400 to
 2560x1600). It reads `status()` and the APVTS only. Layout: top bar (preset button opening the preset file chooser,
-latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM; MATCH and EXPORT NAM are opened from the
-play-along panel, see Record + Match), rig area (amp heads, cab, pedalboard
+latency chip, LIVE / STUDIO chip, a placeholder for MATCH (opened from the play-along panel, see Record + Match) and
+EXPORT NAM, which opens the export panel), rig area (amp heads, cab, pedalboard
 with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
 knobs; all 12 parameters are bound to exactly one knob each outside the rig panel).
 
 Pictures come from `plugin/assets/` (our own renders, embedded with `juce_add_binary_data`). Controls live in
 `plugin/src/skin/`: `SkinAssets` (decodes the PNGs and JSON sidecars once), `FilmstripKnob`, `FootswitchButton`,
 `LedIndicator`, `RigView`. Colours, fonts and plain-widget drawing are in `SawbladeLookAndFeel`. Placeholders
-(disabled, titled, with a tooltip saying so): A/B, MATCH, EXPORT NAM, previous / next preset, BROWSE CAPTURES,
+(disabled, titled, with a tooltip saying so): MATCH, previous / next preset, BROWSE CAPTURES,
 "+ PEDAL", CPU readout, the footswitch (visual bypass only).
 
 ### Rig editor (phase 10)

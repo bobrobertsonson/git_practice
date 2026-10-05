@@ -18,6 +18,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "ExportPanel.h"
 #include "MatchScreen.h"
 #include "PlayAlongPanel.h"
 #include "PluginEditor.h"
@@ -1628,6 +1629,8 @@ struct MatchRig : Rig {
   MatchScreen& screen() { return *all<MatchScreen>(*ed).at(0); }
   PlayAlongPanel& panel() { return *all<PlayAlongPanel>(*ed).at(0); }
   juce::Button* screenButton(const juce::String& title) { return buttonTitled(screen(), title); }
+  ExportPanel& exportPanel() { return ed->exportPanel(); }
+  juce::Button* exportButton(const juce::String& title) { return buttonTitled(exportPanel(), title); }
 };
 
 juce::Image shot(SawbladeEditor& ed) {
@@ -1712,7 +1715,7 @@ TEST_CASE("record: an overrun shows in the panel", "[editor][record]") {
   CHECK(takes[0].overruns == 8);
 }
 
-TEST_CASE("record/match: in plugin mode MATCH and EXPORT NAM say to open the Standalone app", "[editor][record][match]") {
+TEST_CASE("record/match: in plugin mode MATCH says to open the Standalone app; EXPORT NAM works everywhere", "[editor][record][match]") {
   MatchRig rig;
   rig.ed->setPlayAlongOpen(true);
   REQUIRE_FALSE(rig.proc.matchEnabled());
@@ -1722,33 +1725,35 @@ TEST_CASE("record/match: in plugin mode MATCH and EXPORT NAM say to open the Sta
   rig.panel().refresh();
   CHECK_FALSE(rig.ed->matchScreenOpen());
   CHECK(anyLabelContains(rig.panel(), "Standalone app"));
+  // EXPORT NAM opens its panel in plugin mode too, with no Standalone notice.
   click(*exportBtn);
-  rig.panel().refresh();
+  CHECK(rig.ed->exportPanelOpen());
   CHECK_FALSE(rig.ed->matchScreenOpen());
-  CHECK(anyLabelContains(rig.panel(), "Standalone app"));
-  CHECK(anyLabelContains(rig.panel(), "EXPORT NAM runs"));
+  CHECK_FALSE(anyLabelContains(rig.panel(), "EXPORT NAM runs"));
+  click(*rig.exportButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
+  CHECK_FALSE(rig.ed->exportPanelOpen());
   // Recording still works in plugin mode.
   click(*buttonTitled(rig.panel(), "REC"));
   CHECK(rig.proc.recorder().state() == TakeRecorder::State::Armed);
   click(*buttonTitled(rig.panel(), "REC"));  // the same button, now labelled STOP
   CHECK(rig.proc.recorder().state() == TakeRecorder::State::Idle);
 
-  // Standalone: the buttons open the screen.
+  // Standalone: MATCH opens the screen (which no longer has an export mode).
   rig.proc.playAlong().setStandalone(true);
   click(*match);
   CHECK(rig.ed->matchScreenOpen());
-  CHECK(rig.screen().mode() == MatchScreen::Mode::Match);
+  CHECK_FALSE(rig.ed->exportPanelOpen());
   click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
   CHECK_FALSE(rig.ed->matchScreenOpen());
   click(*exportBtn);
-  CHECK(rig.ed->matchScreenOpen());
-  CHECK(rig.screen().mode() == MatchScreen::Mode::Export);
+  CHECK(rig.ed->exportPanelOpen());
+  CHECK_FALSE(rig.ed->matchScreenOpen());
 }
 
 TEST_CASE("match screen: a missing executable or pool shows a clear message and a Locate button", "[editor][match]") {
   MatchRig rig;
   rig.proc.playAlong().setStandalone(true);
-  rig.ed->openMatchScreen(false);
+  rig.ed->openMatchScreen();
   MatchScreen& screen = rig.screen();
   auto* start = rig.screenButton("START MATCH");
   REQUIRE(start != nullptr);
@@ -1787,7 +1792,7 @@ TEST_CASE("match screen: a job survives closing the editor and the reopened scre
   rig.proc.matchSettings().setSelectedTake(rec.listTakes().at(0).name);
 
   rig.tools.cfgMatch({{"progressJson", true}, {"gates", nlohmann::json::array({"g2"})}});
-  rig.ed->openMatchScreen(false);
+  rig.ed->openMatchScreen();
   auto* start = rig.screenButton("START MATCH");
   REQUIRE(start != nullptr);
   REQUIRE(start->isEnabled());
@@ -1802,7 +1807,7 @@ TEST_CASE("match screen: a job survives closing the editor and the reopened scre
   rig.base.reset(rig.proc.createEditorAndMakeActive());
   rig.ed = dynamic_cast<SawbladeEditor*>(rig.base.get());
   REQUIRE(rig.ed != nullptr);
-  rig.ed->openMatchScreen(false);
+  rig.ed->openMatchScreen();
   CHECK(anyLabelContains(rig.screen(), "stage 2: fine-tuning"));
   CHECK(anyLabelContains(rig.screen(), "refining 1/3"));
   CHECK(rig.screenButton("CANCEL")->isEnabled());
@@ -1927,35 +1932,413 @@ TEST_CASE("record + match: screenshots of REC armed, the match progress and the 
   CHECK(proc.status().presetName == "match alt 1");
   CHECK_FALSE(rig.proc.audition().state().active);
   CHECK(anyLabelContains(screen, "Applied"));
+}
 
-  // EXPORT NAM on the applied preset: mode / size choice, device auto, progress from the checkpoint, Reveal.
-  click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
-  rig.tools.cfgExport({{"gates", nlohmann::json::array({"g2"})}});
-  click(*buttonTitled(rig.panel(), "EXPORT NAM"));
-  REQUIRE(rig.ed->matchScreenOpen());
-  CHECK(rig.screen().mode() == MatchScreen::Mode::Export);
-  screen.refresh();
-  CHECK(anyLabelContains(screen, "match_alt") == false);
-  CHECK(anyLabelContains(screen, "Matched preset:"));
-  click(*rig.screenButton("WITH CAB"));
-  click(*rig.screenButton("LITE"));
-  click(*rig.screenButton("TRAIN EXPORT"));
-  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Export).progress.fraction > 0.29; }));
-  screen.refresh();
-  CHECK(anyLabelContains(screen, "training"));
-  CHECK(anyLabelContains(screen, "epoch 7"));
-  const auto exportSnap = rig.proc.jobs().snapshot(JobKind::Export);
-  CHECK(exportSnap.exportMode == "withcab");
-  CHECK(exportSnap.exportSize == "lite");
-  savePng(shot(*rig.ed), "sawblade_export_progress_1x.png");
-  fs::path revealed;
-  screen.reveal = [&](const juce::File& f) { revealed = fs::path(f.getFullPathName().toStdString()); };
-  CHECK_FALSE(rig.screenButton("REVEAL")->isEnabled());
-  fake_tools::release(exportSnap.outDir, "g2");
-  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export));
-  screen.refresh();
-  CHECK(anyLabelContains(screen, "Model written to"));
-  REQUIRE(rig.screenButton("REVEAL")->isEnabled());
-  click(*rig.screenButton("REVEAL"));
-  CHECK(revealed == exportSnap.outDir);
+// ---- NAM export panel (docs/specs/phase12_export_in_plugin.md) -----------------------------------------------------
+namespace {
+
+// A preset on the identity fixtures whose captures carry TONE3000 sources (title, creator, licence).
+fs::path writeExportRig(const fs::path& dir, const std::string& name, bool perPath, bool comp, double releaseMs, const std::string& license) {
+  using nlohmann::json;
+  const std::string nam = (fs::path(SAWBLADE_FIXTURES_DIR) / "nam" / "linear_identity.nam").string();
+  const std::string ir = (fs::path(SAWBLADE_FIXTURES_DIR) / "ir" / "impulse.wav").string();
+  auto cap = [&](const std::string& file, const std::string& id, const std::string& title, const std::string& creator, const std::string& lic) {
+    return json{{"file", file}, {"source", {{"provider", "tone3000"}, {"id", id}, {"title", title}, {"creator", creator}, {"license", lic}}}};
+  };
+  auto block = [&](const std::string& id, const std::string& slot, json model) { return json{{"id", id}, {"type", "nam"}, {"slot", slot}, {"model", std::move(model)}}; };
+  json j = {{"schema", "sawblade.preset"}, {"version", 1}, {"name", name},
+            {"paths", {{"a", {{"role", "saw"}, {"blocks", json::array({block("a1", "pedal", cap(nam, "11", "HM-2w CHAINSAW", "@ebheron", license)),
+                                                                     block("a2", "amp", cap(nam, "12", "JCM800 2203", "@sarcobe", "t3k"))})}}},
+                       {"b", {{"role", "body"}, {"blocks", json::array({block("b1", "amp", cap(nam, "13", "5150III Ivory", "@AmpsPedalsPickups", "cc-by"))})}}}}},
+            {"align", {{"mode", "off"}}},
+            {"blend", 0.5},
+            {"postEq", json::array()}};
+  if (perPath) j["cab"] = {{"mode", "perPath"}, {"irA", cap(ir, "21", "V30 Mesa 4x12 A", "@OutmodedElectronics", "t3k")}, {"irB", cap(ir, "22", "V30 Mesa 4x12 B", "@OutmodedElectronics", "t3k")}};
+  else j["cab"] = {{"mode", "shared"}, {"ir", cap(ir, "21", "V30 Mesa 4x12", "@OutmodedElectronics", "t3k")}};
+  if (comp) j["busComp"] = {{"enabled", true}, {"releaseMs", releaseMs}};
+  const fs::path p = dir / (name + ".json");
+  std::ofstream(p) << j.dump(2);
+  return p;
+}
+
+std::string readFileText(const fs::path& p) {
+  std::ifstream f(p, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+juce::Button* topBarButton(juce::Component& root, const juce::String& title) {
+  for (auto* b : all<juce::Button>(root))
+    if (b->getTitle() == title && b->findParentComponentOfClass<PlayAlongPanel>() == nullptr) return b;
+  return nullptr;
+}
+
+struct ExportRig : MatchRig {
+  fs::path exportsDir = tmp.dir / "exports";
+  ExportRig() {
+    ExportSettings s = proc.exportSettings();
+    s.outputFolder = exportsDir.string();
+    proc.setExportSettings(s);
+  }
+  void loadRig(const std::string& name, bool perPath, bool comp = false, double releaseMs = 80.0, const std::string& license = "cc-by") {
+    load(writeExportRig(tmp.dir, name, perPath, comp, releaseMs, license));
+  }
+  void openPanel() {
+    click(*topBarButton(*ed, "EXPORT NAM"));
+    REQUIRE(ed->exportPanelOpen());
+  }
+  bool visible(const juce::String& title) {
+    auto* b = exportButton(title);
+    return b != nullptr && b->isVisible();
+  }
+};
+
+}  // namespace
+
+TEST_CASE("export panel: opens from the top bar in plugin mode; the mode default follows the cab mode", "[editor][export]") {
+  ExportRig rig;
+  REQUIRE_FALSE(rig.proc.matchEnabled());  // plugin mode: no Standalone gating for EXPORT
+  auto* top = topBarButton(*rig.ed, "EXPORT NAM");
+  REQUIRE(top != nullptr);
+  CHECK(top->isEnabled());
+  CHECK(top->getTooltip().isNotEmpty());
+  CHECK_FALSE(rig.ed->exportPanelOpen());
+
+  rig.loadRig("live", /*perPath=*/false);
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(panel.view() == ExportPanel::View::Configure);
+  CHECK(rig.exportButton("NO CAB")->isEnabled());
+  CHECK(rig.exportButton("NO CAB")->getToggleState());
+  CHECK_FALSE(rig.exportButton("WITH CAB")->getToggleState());
+  CHECK(anyLabelContains(panel, "shared IR"));
+  CHECK(anyLabelContains(panel, "SAW"));
+  CHECK(anyLabelContains(panel, "BODY"));
+  CHECK(panel.settings().mode.empty());  // the default is not a saved choice
+
+  // Studio blend (per-path cabs): WITH CAB, and the NO CAB card is disabled.
+  rig.loadRig("studio", /*perPath=*/true);
+  panel.refresh();
+  CHECK_FALSE(rig.exportButton("NO CAB")->isEnabled());
+  CHECK_FALSE(rig.exportButton("NO CAB")->getToggleState());
+  CHECK(rig.exportButton("WITH CAB")->getToggleState());
+  CHECK(rig.exportButton("WITH CAB")->isEnabled());
+  CHECK(anyLabelContains(panel, "one IR per path"));
+  click(*rig.exportButton("NO CAB"));  // refused: it would not be exact
+  CHECK(rig.exportButton("WITH CAB")->getToggleState());
+  CHECK(panel.settings().mode.empty());
+
+  // A saved mode is honoured only while it is exact for the loaded rig.
+  ExportSettings s = rig.proc.exportSettings();
+  s.mode = "nocab";
+  rig.proc.setExportSettings(s);
+  panel.refresh();
+  CHECK(rig.exportButton("WITH CAB")->getToggleState());
+  rig.loadRig("live2", false);
+  panel.refresh();
+  CHECK(rig.exportButton("NO CAB")->getToggleState());
+  click(*rig.exportButton("WITH CAB"));
+  CHECK(rig.exportButton("WITH CAB")->getToggleState());
+  CHECK(rig.proc.exportSettings().mode == "withcab");
+
+  // CLOSE returns to the rig; the panel and the match screen are exclusive.
+  click(*rig.exportButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
+  CHECK_FALSE(rig.ed->exportPanelOpen());
+  rig.proc.playAlong().setStandalone(true);
+  rig.ed->openMatchScreen();
+  rig.ed->openExportPanel();
+  CHECK_FALSE(rig.ed->matchScreenOpen());
+  CHECK(rig.ed->exportPanelOpen());
+}
+
+TEST_CASE("export panel: the comp row appears only with the comp on and follows the mode", "[editor][export]") {
+  ExportRig rig;
+  rig.loadRig("nocomp", false);
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK_FALSE(rig.visible("DROP COMP"));
+  CHECK_FALSE(rig.visible("KEEP COMP"));
+  CHECK_FALSE(anyLabelContains(panel, "BUS COMP"));
+  CHECK(anyLabelContains(panel, "off in this rig"));
+
+  rig.loadRig("comp", false, /*comp=*/true, 80.0);
+  panel.refresh();
+  CHECK(anyLabelContains(panel, "BUS COMP"));
+  CHECK(rig.visible("DROP COMP"));
+  CHECK(rig.visible("KEEP COMP"));
+  CHECK(rig.exportButton("DROP COMP")->getToggleState());  // exact by default
+  CHECK(anyLabelContains(panel, "DROP:"));
+  click(*rig.exportButton("KEEP COMP"));
+  CHECK(rig.proc.exportSettings().compChoice == "keep");
+  CHECK(anyLabelContains(panel, "inexact"));
+  click(*rig.exportButton("DROP COMP"));
+  CHECK(rig.proc.exportSettings().compChoice == "drop");
+
+  // WITH CAB: the comp is trained in (release <= 150 ms): no choice, a note.
+  click(*rig.exportButton("WITH CAB"));
+  CHECK_FALSE(rig.visible("DROP COMP"));
+  CHECK(anyLabelContains(panel, "trained into the model (release 80 ms"));
+  rig.loadRig("slow", false, true, 400.0);
+  panel.refresh();
+  CHECK(anyLabelContains(panel, "Refused: the bus comp release (400 ms) is over 150 ms"));
+  rig.loadRig("studiocomp", true, true, 80.0);  // a studio blend is WITH CAB whatever was saved
+  panel.refresh();
+  CHECK_FALSE(rig.visible("KEEP COMP"));
+  CHECK(anyLabelContains(panel, "trained into the model"));
+}
+
+TEST_CASE("export panel: credits list every capture with its licence; a non-commercial capture shows the badge", "[editor][export]") {
+  ExportRig rig;
+  rig.loadRig("cc", false, false, 80.0, "cc-by");
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(anyLabelContains(panel, "HM-2w CHAINSAW - @ebheron (cc-by)"));
+  CHECK(anyLabelContains(panel, "JCM800 2203 - @sarcobe (t3k)"));
+  CHECK(anyLabelContains(panel, "5150III Ivory - @AmpsPedalsPickups (cc-by)"));
+  CHECK(anyLabelContains(panel, "V30 Mesa 4x12 - @OutmodedElectronics (t3k)"));
+  CHECK_FALSE(anyLabelContains(panel, "NON-COMMERCIAL"));
+  CHECK(anyLabelContains(panel, "for your own use"));  // the personal-use notice
+  rig.loadRig("nc", false, false, 80.0, "cc-by-nc-sa");
+  panel.refresh();
+  CHECK(anyLabelContains(panel, "HM-2w CHAINSAW - @ebheron (cc-by-nc-sa)"));
+  CHECK(anyLabelContains(panel, "NON-COMMERCIAL"));
+  CHECK(anyLabelContains(panel, "nc-nocab-standard.nam"));  // the file name gets the -nc suffix
+}
+
+TEST_CASE("export panel: sizes show the last run time; DI follows the takes; the settings survive a state round trip", "[editor][export][state]") {
+  ExportRig rig;
+  rig.loadRig("rig", false);
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(anyLabelContains(panel, "no run yet"));
+  rig.proc.matchSettings().setExportWallSeconds("lite", 12.0 * 60.0);
+  panel.refresh();
+  CHECK(anyLabelContains(panel, "last run: 12 min"));
+  // No take: the built-in signal, LAST TAKE is disabled.
+  CHECK_FALSE(rig.exportButton("LAST TAKE")->isEnabled());
+  CHECK(rig.exportButton("BUILT-IN SIGNAL")->getToggleState());
+  CHECK(anyLabelContains(panel, "no take yet"));
+  auto& rec = rig.proc.recorder();
+  REQUIRE(rec.start(""));
+  feedSeconds(rig.proc, 1.0);
+  rec.stop();
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  panel.refresh();
+  const std::string take = rec.listTakes().at(0).name;
+  CHECK(rig.exportButton("LAST TAKE")->isEnabled());
+  CHECK(rig.exportButton("LAST TAKE")->getToggleState());
+  CHECK(anyLabelContains(panel, juce::String(take)));
+
+  // Defaults are not saved.
+  juce::MemoryBlock block;
+  rig.proc.setExportSettings(ExportSettings{});
+  rig.proc.getStateInformation(block);
+  CHECK_FALSE(nlohmann::json::parse(block.toString().toStdString()).contains("export"));
+
+  click(*rig.exportButton("FEATHER"));
+  click(*rig.exportButton("BUILT-IN SIGNAL"));
+  click(*rig.exportButton("WITH CAB"));
+  ExportSettings s = rig.proc.exportSettings();
+  s.outputFolder = (rig.tmp.dir / "elsewhere").string();
+  s.compChoice = "keep";
+  rig.proc.setExportSettings(s);
+  rig.proc.getStateInformation(block);
+  const auto j = nlohmann::json::parse(block.toString().toStdString());
+  REQUIRE(j.contains("export"));
+  CHECK(j["export"]["mode"] == "withcab");
+  CHECK(j["export"]["size"] == "feather");
+  CHECK(j["export"]["diSource"] == "builtin");
+  CHECK(j["export"]["compChoice"] == "keep");
+  CHECK(j["export"]["outputFolder"] == (rig.tmp.dir / "elsewhere").string());
+
+  // A second processor restores it into its panel.
+  ExportRig other;
+  other.proc.setStateInformation(block.getData(), static_cast<int>(block.getSize()));
+  REQUIRE(other.proc.waitForLoader());
+  CHECK(other.proc.exportSettings() == s);
+  other.openPanel();
+  CHECK(other.exportPanel().settings() == s);
+  CHECK(other.exportButton("FEATHER")->getToggleState());
+  CHECK_FALSE(other.exportButton("STANDARD")->getToggleState());
+  CHECK(other.exportButton("WITH CAB")->getToggleState());
+  CHECK(anyLabelContains(other.exportPanel(), "elsewhere"));
+
+  // A state whose `export` is not an object is dropped; the rest still loads.
+  auto bad = j;
+  bad["export"] = 5;
+  const std::string text = bad.dump();
+  other.proc.setStateInformation(text.data(), static_cast<int>(text.size()));
+  CHECK(other.proc.exportSettings().isDefault());
+  // Unknown values keep their defaults.
+  bad["export"] = {{"size", "huge"}, {"mode", "sideways"}, {"diSource", "builtin"}};
+  const std::string text2 = bad.dump();
+  other.proc.setStateInformation(text2.data(), static_cast<int>(text2.size()));
+  CHECK(other.proc.exportSettings().size == "standard");
+  CHECK(other.proc.exportSettings().mode.empty());
+  CHECK(other.proc.exportSettings().diSource == "builtin");
+}
+
+TEST_CASE("export panel: training, cancel, RESUME, the result and its buttons", "[editor][export][runner]") {
+  ExportRig rig;
+  rig.loadRig("rig", false);
+  rig.tools.cfgExport({{"progressJson", true}, {"gates", nlohmann::json::array({"g1"})}, {"exit", 2}, {"listen", "wav"}});
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(rig.exportButton("TRAIN EXPORT")->isEnabled());
+  CHECK_FALSE(rig.visible("RESUME"));
+  click(*rig.exportButton("STANDARD"));
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  panel.refresh();
+  CHECK(panel.view() == ExportPanel::View::Training);
+  CHECK(anyLabelContains(panel, "epoch 3 / 10"));
+  CHECK(anyLabelContains(panel, "best ESR 0.0105"));
+  CHECK(anyLabelContains(panel, "ETA 00:42"));
+  CHECK(anyLabelContains(panel, "Training"));
+  CHECK(rig.exportButton("CANCEL")->isEnabled());
+  CHECK_FALSE(rig.exportButton("TRAIN EXPORT")->isEnabled());
+  const auto argv = rig.proc.jobs().snapshot(JobKind::Export);
+  const fs::path run = argv.outDir;
+  CHECK(run.parent_path() == rig.exportsDir);
+
+  click(*rig.exportButton("CANCEL"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  CHECK(panel.view() == ExportPanel::View::Configure);
+  CHECK(anyLabelContains(panel, "Cancelled"));
+  REQUIRE(rig.visible("RESUME"));
+  CHECK(rig.exportButton("RESUME")->getButtonText().contains("epoch 3 of 10"));
+  CHECK(rig.exportButton("RESUME")->getButtonText().contains("STANDARD"));
+  CHECK(nlohmann::json::parse(readFileText(run / "signals.json")) == nlohmann::json::array({"SIGINT"}));
+
+  // A different rig has no RESUME for this run.
+  rig.loadRig("another", true);
+  panel.refresh();
+  CHECK_FALSE(rig.visible("RESUME"));
+  rig.loadRig("rig", false);
+  panel.refresh();
+  REQUIRE(rig.visible("RESUME"));
+
+  rig.tools.cfgExport({{"progressJson", true}, {"exit", 2}, {"listen", "wav"}});
+  click(*rig.exportButton("RESUME"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  const auto resumedArgv = nlohmann::json::parse(readFileText(run / "argv.json"))["argv"];
+  CHECK(std::find(resumedArgv.begin(), resumedArgv.end(), run.string()) != resumedArgv.end());
+  CHECK(std::find(resumedArgv.begin(), resumedArgv.end(), "--resume") != resumedArgv.end());
+
+  // Result: exit 2 = NOT MET, files written.
+  CHECK(panel.view() == ExportPanel::View::Result);
+  CHECK(anyLabelContains(panel, "NOT MET"));
+  CHECK(anyLabelContains(panel, "held-out ESR   0.0345   (limit 0.020)"));
+  CHECK(anyLabelContains(panel, "DI LTAS error  0.92 dB (limit 0.50 dB)"));
+  CHECK(anyLabelContains(panel, "-nocab-standard.nam"));  // the resumed run keeps its own mode and size
+  CHECK(anyLabelContains(panel, ".sawblade.json"));
+  CHECK(anyLabelContains(panel, "for your own use"));
+  fs::path revealed, opened, played;
+  panel.reveal = [&](const juce::File& f) { revealed = fs::path(f.getFullPathName().toStdString()); };
+  panel.openFolder = [&](const juce::File& f) { opened = fs::path(f.getFullPathName().toStdString()); };
+  panel.openFile = [&](const juce::File& f) { played = fs::path(f.getFullPathName().toStdString()); };
+  for (const char* t : {"REVEAL", "OPEN FOLDER", "A/B LISTEN"}) {
+    INFO(t);
+    REQUIRE(rig.visible(t));
+    CHECK(rig.exportButton(t)->isEnabled());
+  }
+  click(*rig.exportButton("REVEAL"));
+  CHECK(revealed.parent_path() == run);
+  CHECK(revealed.extension() == ".nam");
+  click(*rig.exportButton("OPEN FOLDER"));
+  CHECK(opened == run);
+  click(*rig.exportButton("A/B LISTEN"));
+  CHECK(played == run / "listen" / "ab_original_then_export.wav");
+  const auto snap = rig.proc.jobs().snapshot(JobKind::Export);
+  CHECK(snap.accepted == "NOT MET");
+  CHECK(fs::exists(snap.sidecar));
+  CHECK(rig.proc.matchSettings().exportWallSeconds("standard") > 0.0);
+
+  // MET (exit 0) in the green, the A/B button hidden when there is no listening file.
+  rig.tools.cfgExport({{"progressJson", true}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  CHECK(panel.view() == ExportPanel::View::Result);
+  CHECK(anyLabelContains(panel, "MET"));
+  CHECK_FALSE(anyLabelContains(panel, "NOT MET"));
+  CHECK_FALSE(rig.visible("A/B LISTEN"));
+  CHECK(anyLabelContains(panel, "last run: 3 min"));  // 150 s of wall time
+}
+
+TEST_CASE("export panel: a missing exporter shows a message and LOCATE; a refusal shows its message", "[editor][export]") {
+  ExportRig rig;
+  rig.loadRig("rig", false);
+  rig.proc.matchSettings().setExportExecutable(rig.tmp.dir / "nowhere" / "sawblade-export");
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK_FALSE(rig.exportButton("TRAIN EXPORT")->isEnabled());
+  CHECK(anyLabelContains(panel, "sawblade-export was not found"));
+  CHECK(rig.visible("LOCATE..."));
+  rig.proc.matchSettings().setExportExecutable(rig.tools.exporter);
+  panel.refresh();
+  CHECK(rig.exportButton("TRAIN EXPORT")->isEnabled());
+  CHECK_FALSE(rig.visible("LOCATE..."));
+  rig.tools.cfgExport({{"progressJson", true}, {"fail", true}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  CHECK(panel.view() == ExportPanel::View::Configure);
+  CHECK(anyLabelContains(panel, "Failed"));
+  CHECK(anyLabelContains(panel, "error: the preset has no cab"));
+}
+
+TEST_CASE("export panel: screenshots of the configure, training and result views", "[editor][export][screenshot]") {
+  ExportRig rig;
+  rig.ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  rig.loadRig("Gatecreeper-style blend", false, /*comp=*/true, 80.0, "cc-by-nc");
+  auto& rec = rig.proc.recorder();
+  REQUIRE(rec.start(""));
+  feedSeconds(rig.proc, 1.0);
+  rec.stop();
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  std::string err;
+  REQUIRE(rec.renameTake(rec.currentTakeName(), "verse riff", &err));
+  rig.proc.matchSettings().setExportWallSeconds("standard", 25.0 * 60.0);
+  rig.proc.matchSettings().setExportWallSeconds("lite", 9.0 * 60.0);
+  rig.tools.cfgExport({{"progressJson", true}, {"gates", nlohmann::json::array({"g1", "g2"})}, {"listen", "wav"}, {"nonCommercial", true}});
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  panel.refresh();
+  const juce::Image configure = shot(*rig.ed);
+  savePng(configure, "export_configure.png");
+  CHECK(nonBackgroundFraction(configure, {0, 58, 1280, 742}) > 0.05);
+  CHECK(panel.view() == ExportPanel::View::Configure);
+
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  const fs::path run = rig.proc.jobs().snapshot(JobKind::Export).outDir;
+  fake_tools::release(run, "g1");
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Export).progress.epoch == 7; }));
+  std::this_thread::sleep_for(1200ms);  // some elapsed time to show
+  panel.refresh();
+  CHECK(panel.view() == ExportPanel::View::Training);
+  const juce::Image training = shot(*rig.ed);
+  savePng(training, "export_training.png");
+  CHECK(nonBackgroundFraction(training, {860, 58, 400, 300}) > 0.03);
+
+  fake_tools::release(run, "g2");
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  CHECK(panel.view() == ExportPanel::View::Result);
+  CHECK(anyLabelContains(panel, "MET"));
+  const juce::Image result = shot(*rig.ed);
+  savePng(result, "export_result.png");
+  CHECK(nonBackgroundFraction(result, {860, 58, 400, 300}) > 0.03);
+
+  // The same view for a run that missed the acceptance limits.
+  rig.tools.cfgExport({{"progressJson", true}, {"exit", 2}, {"nonCommercial", true}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  CHECK(anyLabelContains(panel, "NOT MET"));
+  savePng(shot(*rig.ed), "export_result_not_met.png");
 }

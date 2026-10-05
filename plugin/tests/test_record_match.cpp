@@ -19,6 +19,7 @@
 #include <thread>
 
 #include "JobRunner.h"
+#include "ExportGlue.h"
 #include "MatchGlue.h"
 #include "Sha256.h"
 #include "PresetAudition.h"
@@ -1724,4 +1725,287 @@ TEST_CASE("runner: a job.json whose pid belongs to an unrelated process is never
     CHECK(waitUntil([&] { return processGone(victim); }, 5000ms));
   }
   ::kill(victim, SIGKILL);
+}
+
+// ---- NAM export glue (docs/specs/phase12_export_in_plugin.md) --------------------------------------------------------------
+namespace {
+
+// A preset on the identity fixtures whose captures carry TONE3000 sources; optional bus comp and cab mode.
+fs::path writeSourcedRig(const fs::path& dir, const std::string& name, bool perPath, bool comp, const std::string& license = "cc-by-nc") {
+  registerLatencyStub();
+  const std::string nam = (kFixtures / "nam" / "linear_identity.nam").string();
+  const std::string ir = (kFixtures / "ir" / "impulse.wav").string();
+  auto cap = [&](const std::string& file, const std::string& id, const std::string& title, const std::string& creator, const std::string& lic) {
+    return json{{"file", file}, {"source", {{"provider", "tone3000"}, {"id", id}, {"title", title}, {"creator", creator}, {"license", lic}}}};
+  };
+  auto block = [&](const std::string& id, json model) { return json{{"id", id}, {"type", "nam"}, {"model", std::move(model)}}; };
+  json j = {{"schema", "sawblade.preset"}, {"version", 1}, {"name", name},
+            {"paths", {{"a", {{"role", "saw"}, {"blocks", json::array({block("a1", cap(nam, "11", "HM-2w", "@ebheron", license))})}}},
+                       {"b", {{"role", "body"}, {"blocks", json::array({block("b1", cap(nam, "13", "5150III", "@amps", "cc-by"))})}}}}},
+            {"align", {{"mode", "off"}}},
+            {"blend", 0.5}};
+  if (perPath) j["cab"] = {{"mode", "perPath"}, {"irA", cap(ir, "21", "V30 A", "@v", "t3k")}, {"irB", cap(ir, "22", "V30 B", "@v", "t3k")}};
+  else j["cab"] = {{"mode", "shared"}, {"ir", cap(ir, "21", "V30", "@v", "t3k")}};
+  if (comp) j["busComp"] = {{"enabled", true}, {"releaseMs", 80.0}};
+  const fs::path p = dir / (name + ".json");
+  std::ofstream(p) << j.dump(2);
+  return p;
+}
+
+}  // namespace
+
+TEST_CASE("export glue: the rig summary lists licences, flags non-commercial and decides the exact mode", "[export][glue]") {
+  using namespace sawblade::plugin;
+  TempDir tmp;
+  Host h(kFs, 256);
+  h.load(writeSourcedRig(tmp.dir, "live", false, true));
+  RigSummary r = summariseRig(h.p.currentPreset());
+  CHECK(r.noCabExact);
+  CHECK(r.compOn);
+  CHECK(r.compTrainable);
+  CHECK(r.compReleaseMs == Catch::Approx(80.0));
+  CHECK(r.nonCommercial);
+  REQUIRE(r.licences.size() == 3);
+  CHECK(r.licences[0].text() == "HM-2w - @ebheron (cc-by-nc)");
+  CHECK(r.licences[1].text() == "5150III - @amps (cc-by)");
+  CHECK(r.licences[2].text() == "V30 - @v (t3k)");
+  REQUIRE(r.chainLines.size() == 2);
+  CHECK(r.chainLines[0].find("SAW") == 0);
+  CHECK(r.chainLines[0].find("HM-2w") != std::string::npos);
+  CHECK(r.chainLines[1].find("BODY") == 0);
+  CHECK(defaultExportMode(r) == "nocab");
+
+  h.load(writeSourcedRig(tmp.dir, "studio", true, false, "cc-by"));
+  r = summariseRig(h.p.currentPreset());
+  CHECK_FALSE(r.noCabExact);
+  CHECK_FALSE(r.compOn);
+  CHECK_FALSE(r.nonCommercial);
+  CHECK(r.licences.size() == 4);  // two paths + two cab IRs
+  CHECK(defaultExportMode(r) == "withcab");
+  ExportSettings s;
+  s.mode = "nocab";  // saved earlier, no longer exact
+  CHECK(effectiveExportMode(s, r) == "withcab");
+  s.mode = "withcab";
+  CHECK(effectiveExportMode(s, r) == "withcab");
+
+  // An irMix cab is one convolver: the no-cab export is exact. A capture without a TONE3000 source says so.
+  Preset p = h.p.currentPreset();
+  p.cab.mode = CabMode::IrMix;
+  CHECK(summariseRig(p).noCabExact);
+  p.cab.enabled = false;
+  p.cab.mode = CabMode::PerPath;
+  CHECK(summariseRig(p).noCabExact);  // no cab at all
+  Preset init = makeInitPreset();
+  CHECK(summariseRig(init).chainLines.size() >= 1);
+}
+
+TEST_CASE("export glue: the request is built from the settings; the same rig is always the same file and key", "[export][glue]") {
+  using namespace sawblade::plugin;
+  TempDir tmp;
+  Host h(kFs, 256);
+  h.p.jobs().setJobsDir(tmp.dir / "jobs");
+  h.p.recorder().setTakesDir(tmp.dir / "takes");
+  h.load(writeSourcedRig(tmp.dir, "live", false, true));
+  ExportSettings s;
+  s.outputFolder = (tmp.dir / "exports").string();
+  ExportPlan plan = planExport(h.p, s);
+  CHECK(plan.mode == "nocab");
+  CHECK(plan.dropComp);  // the comp sits after the cab: DROP is exact and the default
+  CHECK_FALSE(plan.allowInexact);
+  CHECK(plan.diBuiltin);  // no take yet
+  CHECK_FALSE(plan.take);
+  CHECK(plan.exportsRoot == tmp.dir / "exports");
+  CHECK(plan.blocked.empty());
+  CHECK(plan.sourceSha256.size() == 64);
+  CHECK_FALSE(fs::exists(tmp.dir / "jobs" / "inputs"));  // planning writes nothing
+
+  ExportRequest r;
+  std::string err;
+  REQUIRE(buildExportRequest(h.p, s, plan, r, &err));
+  CHECK(r.mode == "nocab");
+  CHECK(r.size == "standard");
+  CHECK(r.diBuiltin);
+  CHECK_FALSE(r.di);
+  CHECK(r.exportsRoot == tmp.dir / "exports");
+  CHECK_FALSE(r.allowInexact);
+  CHECK(r.preset.parent_path() == tmp.dir / "jobs" / "inputs");
+  CHECK(sha256Hex(readText(r.preset)) == plan.sourceSha256);
+  CHECK(readJson(r.preset)["busComp"]["enabled"] == false);  // dropped in what is trained
+  CHECK(readJson(r.preset)["name"] == "live");
+  // Deterministic: the same rig again is the same file with the same bytes.
+  ExportRequest r2;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), r2, &err));
+  CHECK(r2.preset == r.preset);
+  CHECK(readText(r2.preset) == readText(r.preset));
+  // The live rig itself is not changed by dropping the comp in the export.
+  CHECK(h.p.currentPreset().busComp.enabled);
+
+  // KEEP COMP: inexact, the comp stays in the preset and --allow-inexact is passed.
+  s.compChoice = "keep";
+  plan = planExport(h.p, s);
+  CHECK_FALSE(plan.dropComp);
+  CHECK(plan.allowInexact);
+  ExportRequest keep;
+  REQUIRE(buildExportRequest(h.p, s, plan, keep, &err));
+  CHECK(keep.allowInexact);
+  CHECK(keep.preset != r.preset);
+  CHECK(readJson(keep.preset)["busComp"]["enabled"] == true);
+  CHECK(plan.sourceSha256 != sha256Hex(readText(r.preset)));
+  // WITH CAB trains the comp in: nothing to drop, nothing inexact.
+  s.mode = "withcab";
+  plan = planExport(h.p, s);
+  CHECK(plan.mode == "withcab");
+  CHECK_FALSE(plan.dropComp);
+  CHECK_FALSE(plan.allowInexact);
+
+  // DI: the newest take when there is one (and it is chosen), else the built-in signal.
+  const std::vector<float> in(256, 0.0f);
+  std::vector<float> out(256);
+  REQUIRE(h.p.recorder().start(""));
+  h.process(in.data(), out.data(), 256);
+  finishTake(h);
+  s = ExportSettings{};
+  s.outputFolder = (tmp.dir / "exports").string();
+  s.size = "lite";
+  plan = planExport(h.p, s);
+  REQUIRE(plan.take);
+  CHECK_FALSE(plan.diBuiltin);
+  ExportRequest withTake;
+  REQUIRE(buildExportRequest(h.p, s, plan, withTake, &err));
+  CHECK(withTake.size == "lite");
+  REQUIRE(withTake.di);
+  CHECK(*withTake.di == plan.take->wav);
+  CHECK_FALSE(withTake.diBuiltin);
+  s.diSource = "builtin";
+  plan = planExport(h.p, s);
+  CHECK(plan.diBuiltin);
+  CHECK(plan.take);
+}
+
+TEST_CASE("export glue: RESUME is offered for a cancelled run of the same rig and starts with --resume", "[export][glue][cancel]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  Host h(kFs, 256);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  h.p.jobs().setJobsDir(t.jobs);
+  const fs::path live = writeSourcedRig(t.root, "live", false, false, "cc-by");
+  const fs::path studio = writeSourcedRig(t.root, "studio", true, false, "cc-by");
+  h.load(live);
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1"})}});
+  ExportSettings s;
+  s.outputFolder = (t.root / "exports").string();
+  s.size = "lite";
+  CHECK_FALSE(findResumableExport(h.p).available);  // no run at all
+  ExportRequest r;
+  std::string err;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), r, &err));
+  REQUIRE(h.p.jobs().startExport(r, &err));
+  REQUIRE(waitUntil([&] { return h.p.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  CHECK_FALSE(findResumableExport(h.p).available);  // running, not cancelled
+  const fs::path run = h.p.jobs().snapshot(JobKind::Export).outDir;
+  h.p.jobs().cancel(JobKind::Export);
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Export));
+
+  ResumeOffer o = findResumableExport(h.p);
+  REQUIRE(o.available);
+  CHECK(o.dir == run);
+  CHECK(o.epoch == 3);
+  CHECK(o.epochs == 10);
+  CHECK(o.mode == "nocab");
+  CHECK(o.size == "lite");
+
+  // Another rig: no offer. Back to the first one (written again, same bytes): offered again.
+  h.load(studio);
+  CHECK_FALSE(findResumableExport(h.p).available);
+  h.load(live);
+  REQUIRE(findResumableExport(h.p).available);
+  // A damaged or completed checkpoint is not offered.
+  const std::string ck = readText(run / "checkpoint" / "progress.json");
+  json done = json::parse(ck);
+  done["complete"] = true;
+  std::ofstream(run / "checkpoint" / "progress.json") << done.dump();
+  CHECK_FALSE(findResumableExport(h.p).available);
+  std::ofstream(run / "checkpoint" / "progress.json") << ck;
+  REQUIRE(findResumableExport(h.p).available);
+
+  t.cfgExport({{"progressJson", true}});
+  o = findResumableExport(h.p);
+  ExportRequest rr;
+  REQUIRE(buildResumeRequest(h.p, o, rr, &err));
+  CHECK(rr.resumeDir == run);
+  CHECK(rr.mode == "nocab");
+  CHECK(rr.size == "lite");
+  CHECK(rr.preset == r.preset);  // the very same file as the cancelled run
+  REQUIRE(h.p.jobs().startExport(rr, &err));
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Export));
+  const JobSnapshot s2 = h.p.jobs().snapshot(JobKind::Export);
+  CHECK(s2.state == JobState::Succeeded);
+  CHECK(s2.outDir == run);
+  CHECK(after(argvOf(run), "--resume") == run.string());
+  CHECK_FALSE(findResumableExport(h.p).available);  // finished: nothing left to resume
+}
+
+TEST_CASE("export: no allocations or locks on the audio thread while an export runs and the panel's glue is polled", "[export][rt]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  Host h(kFs, 256);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  h.p.jobs().setJobsDir(t.jobs);
+  h.p.recorder().setTakesDir(t.root / "takes");
+  h.load(writeSourcedRig(t.root, "live", false, true));
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1", "g2"})}});
+  ExportSettings s;
+  s.outputFolder = (t.root / "exports").string();
+  ExportRequest r;
+  std::string err;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), r, &err));
+  REQUIRE(h.p.jobs().startExport(r, &err));
+
+  // What the open panel does on its refresh timer, as fast as it can, on another thread.
+  std::atomic<bool> stop{false};
+  std::atomic<long> polls{0};
+  std::thread panel([&] {
+    while (!stop.load()) {
+      const ExportPlan plan = planExport(h.p, s);
+      (void)findResumableExport(h.p);
+      (void)h.p.jobs().snapshot(JobKind::Export);
+      (void)h.p.jobs().checkTools(JobKind::Export);
+      (void)h.p.matchSettings().exportWallSeconds("standard");
+      (void)h.p.exportSettings();
+      (void)plan;
+      ++polls;
+      std::this_thread::sleep_for(2ms);
+    }
+  });
+  const auto x = signal(256, 5);
+  std::size_t at = 0;
+  std::vector<float> in(x.begin(), x.end());
+  std::size_t pos = 0;
+  REQUIRE(waitUntil([&] { return h.p.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  for (int i = 0; i < 400; ++i) {
+    runBlocks(h, in, pos, 1, 256);
+    pos = 0;
+    if (i % 50 == 0) std::this_thread::sleep_for(5ms);
+  }
+  (void)at;
+  const fs::path run = h.p.jobs().snapshot(JobKind::Export).outDir;
+  release(run, "g1");
+  REQUIRE(waitUntil([&] { return h.p.jobs().snapshot(JobKind::Export).progress.epoch == 7; }));
+  for (int i = 0; i < 400; ++i) {
+    runBlocks(h, in, pos, 1, 256);
+    pos = 0;
+  }
+  release(run, "g2");
+  while (h.p.jobs().snapshot(JobKind::Export).active()) {  // the finish (sidecar copy, report parse) happens on the runner's thread
+    runBlocks(h, in, pos, 1, 256);
+    pos = 0;
+    std::this_thread::sleep_for(2ms);
+  }
+  stop = true;
+  panel.join();
+  CHECK(polls.load() > 5);
+  CHECK(h.p.jobs().snapshot(JobKind::Export).state == JobState::Succeeded);
+  CHECK(h.allocs == 0);
+  CHECK(h.locks == 0);
+  CHECK_FALSE(h.nonFinite);
 }
