@@ -83,3 +83,27 @@ behaviour). No pool / nothing cached → path B gets the TS + the first high-gai
   failures versus the v0.1.3 baseline.
 - Report `docs/specs/v0_2-tweakable_presets_REPORT.md` with reviewer verdicts, screenshots, and
   proposals (art needed, controls the user may want next).
+
+## Lead decisions (implementation notes, binding for the implementer)
+
+### Task A
+- **Amp locator moves to core.** `rig::ampIndex` (last block with slot `amp`, else last `nam`) becomes
+  `sawblade::ampIndex(const PathPreset&)` in core; `rig::ampIndex` delegates to it. One rule, one place.
+- **Not a user block type.** The amp control set is a path-level stage owned by the path (gain before the
+  amp block; tone stack + LEVEL after it, before the path EQ), not something the block picker can insert.
+  Its traits (latency 0, NAM-trainable: linear/time-invariant at fixed knobs) are declared in core next to
+  the block registry and asserted by a test; NAM export renders through it (check the export path uses the
+  same processor; add a test if it does not obviously).
+- **Mapping:** knob k in [0,10]; GAIN/BASS/MID/TREBLE/LEVEL dB = (k − 5) · 2.4; PRESENCE dB = (k − 5) · 1.8.
+- **Exact neutral:** when every knob of a path is at 5 and no smoothing ramp is in flight the stage is skipped
+  entirely (no filter runs) — that is what makes legacy presets bit-identical, not unity coefficients.
+- **Smoothing must be block-size independent:** targets ramp per sample; filter coefficients are recomputed
+  on a fixed sample grid counted from `prepare()` (e.g. every 32 samples), never per host block.
+- **Schema:** `kPresetVersion` → 2; reader accepts 1 and 2; writer emits 2 and omits `ampControls` when all
+  values are default and `gainStep` is absent. `gainStep` (string, TONE3000 model id) is parsed, validated as a
+  string and round-tripped in Task A; it has no effect until Task B. Out-of-range knob values are a
+  `PresetError` naming the field.
+- **Host params:** ids `ampA_gain, ampA_bass, ampA_mid, ampA_treble, ampA_presence, ampA_level` and the same
+  for `ampB_`; range 0–10, default 5; follow the existing PresetMapping / 1e-4 grid pattern; param-id
+  stability test lists them literally.
+- Stay out of CMake dependency fetching and the About page (parallel v0.1.3 phase).
