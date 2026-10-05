@@ -370,3 +370,68 @@ TEST_CASE("Ladder processor: no ladder when the tool says none, fails, or is mis
   CHECK(tryTool("echo boom >&2; exit 1", true) == 1);
   CHECK(tryTool("", false) == 0);  // no executable: nothing is started
 }
+
+TEST_CASE("Ladder processor: missing rung models are fetched one at a time through sawblade-t3k fetch, then picked up", "[ladder][plugin][processor]") {
+  const LadderCache cache;  // empty: the own model m1 is the preset's file, m2 and m3 are missing
+  TempDir t;
+  const fs::path log = t.dir / "calls.log";
+  const fs::path exe = t.dir / "fake-t3k";
+  // `fetch <tone> --model <id> --json --cache-dir <dir>`: puts a fixture model into <dir>/<tone>/<id>.nam.
+  std::ofstream(exe) << "#!/bin/sh\necho \"$@\" >> '" << log.string() << "'\nif [ \"$1\" = fetch ]; then mkdir -p \"$7/$2\"; cp '"
+                     << (kFixtures / "nam" / "linear_identity.nam").string() << "' \"$7/$2/$4.nam\"; echo '{}'; fi\n";
+  fs::permissions(exe, fs::perms::owner_all);
+  std::ofstream(t.dir / "settings.json") << json{{"t3kExecutable", exe.string()}}.dump();
+  EnvGuard settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
+  Host h(48000.0, 512);
+  h.load(writePreset(t.dir, "lad", ladderPreset("m1", true)));
+  CHECK(h.p.ladderInfo(0).missingRungs == 0);
+  const auto x = noise(4096, 3, 0.2f);
+  std::vector<float> y;
+  for (int i = 0; i < 8 && h.p.rungFetches() < 2; ++i) {
+    h.p.ladderTick();  // starts at most one fetch
+    CHECK(h.p.rungFetches() <= 2);
+    REQUIRE(h.p.waitForLadderWork());
+    h.run(x, y, {512});
+  }
+  CHECK(h.p.rungFetches() == 2);
+  CHECK(h.p.ladderFetches() == 0);  // the preset already had its ladder
+  CHECK(fs::exists(cache.dir / "T1" / "m2.nam"));
+  CHECK(fs::exists(cache.dir / "T1" / "m3.nam"));
+  h.p.ladderTick();  // the rung loader is asked at once
+  REQUIRE(h.p.waitForLadderWork());
+  h.run(x, y, {512});
+  h.p.ladderTick();
+  CHECK(h.p.rungFetches() == 2);  // never fetched twice
+  h.setParam(ampParam(0, kAmpGain), 10.0);
+  h.run(x, y, {512});
+  h.run(x, y, {512});
+  const auto info = h.p.ladderInfo(0);
+  CHECK(info.activeIndex == 2);
+  CHECK_FALSE(info.pending);
+  // The calls were exactly the two fetches of the missing rungs (nearest the sounding rung first).
+  std::ifstream in(log);
+  std::string l1, l2, l3;
+  std::getline(in, l1);
+  std::getline(in, l2);
+  CHECK(l1.find("fetch T1 --model m2 --json --cache-dir") == 0);
+  CHECK(l2.find("fetch T1 --model m3 --json --cache-dir") == 0);
+  CHECK_FALSE(std::getline(in, l3));
+}
+
+TEST_CASE("Ladder processor: no rung is fetched when ladder fetching is off or no tool exists", "[ladder][plugin][processor]") {
+  const LadderCache cache;
+  TempDir t;
+  EnvGuard settings("SAWBLADE_SETTINGS_FILE", (t.dir / "none.json").string());  // default executable: not present in a test run
+  Host h(48000.0, 512);
+  h.load(writePreset(t.dir, "lad", ladderPreset("m1", true)));
+  h.p.ladderTick();
+  CHECK(h.p.rungFetches() == 0);
+  const fs::path exe = t.dir / "tool";
+  std::ofstream(exe) << "#!/bin/sh\nexit 0\n";
+  fs::permissions(exe, fs::perms::owner_all);
+  std::ofstream(t.dir / "s2.json") << json{{"t3kExecutable", exe.string()}}.dump();
+  EnvGuard s2("SAWBLADE_SETTINGS_FILE", (t.dir / "s2.json").string());
+  h.p.setLadderFetchEnabled(false);
+  h.p.ladderTick();
+  CHECK(h.p.rungFetches() == 0);
+}

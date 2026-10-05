@@ -544,11 +544,14 @@ TEST_CASE("Amp controls schema: every committed preset reads at neutral defaults
   CHECK(n >= 40);
 }
 
-TEST_CASE("Amp controls: every committed preset renders bit-identically with and without explicit default ampControls", "[amp][preset][neutral][render]") {
-  // Every JSON under presets/, its NAM captures swapped for the linear_identity fixture and its IRs for a fixture IR
-  // (the real captures are not in the repo), rendered as committed and with `ampControls` spelled out at the defaults on
-  // both paths: the neutral stage is skipped entirely, so the two renders must be identical bit for bit. (Against a build
-  // without the feature the same holds: verified by rendering all presets with the pre-v0.2 tonerender, see the report.)
+TEST_CASE("Amp controls: every committed preset is parse-equivalent with explicit default ampControls and renders through the new chain at defaults", "[amp][preset][neutral][render]") {
+  // What this proves, and what it does not. Every JSON under presets/, its NAM captures swapped for the linear_identity
+  // fixture and its IRs for a fixture IR (the real captures are not in the repo), is parsed as committed and with `ampControls`
+  // spelled out at the defaults on both paths: the two presets must be equal (parse-equivalence), and both render through the
+  // new chain at the defaults to the same samples. Because the presets are equal that second comparison is a determinism check
+  // of the new chain, not a comparison against a build without the feature. The bit-identity against the pre-v0.2 renderer was
+  // the ad-hoc check recorded in the Task A report: all 77 renders (32 as committed + 45 with stand-in captures) of a
+  // pre-v0.2 tonerender compared byte for byte with this build.
   const fs::path fx = fs::path(SAWBLADE_FIXTURES_DIR);
   AudioFile in;
   in.sampleRate = kFs;
@@ -575,7 +578,7 @@ TEST_CASE("Amp controls: every committed preset renders bit-identically with and
       explicitDefaults["paths"][k]["ampControls"] = {{"gain", 5}, {"bass", 5}, {"mid", 5}, {"treble", 5}, {"presence", 5}, {"level", 5}};
     const Preset p0 = parsePreset(j, e.path().parent_path());
     const Preset p1 = parsePreset(explicitDefaults, e.path().parent_path());
-    REQUIRE(p0 == p1);  // spelled-out defaults are the same preset
+    REQUIRE(p0 == p1);  // parse-equivalence: spelled-out defaults are the same preset
     const RenderResult r0 = renderPreset(p0, in);
     const RenderResult r1 = renderPreset(p1, in);
     REQUIRE(r0.samples.size() == in.interleaved.size());

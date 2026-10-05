@@ -202,7 +202,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void setLadderFetchEnabled(bool on) noexcept { ladderFetch_.store(on); }
   // Blocks until no ladder fetch is running and the rung loader is idle (tests); a fetched result still waits for ladderTick().
   bool waitForLadderWork(std::chrono::milliseconds timeout = std::chrono::milliseconds(20000));
-  std::uint64_t ladderFetches() const noexcept { return ladderFetches_.load(); }  // tool runs started
+  std::uint64_t ladderFetches() const noexcept { return ladderFetches_.load(); }  // `ladder` tool runs started
+  std::uint64_t rungFetches() const noexcept { return rungFetches_.load(); }      // `fetch` runs started for missing rung models
 
   // Test hook: a CIRCUIT edit from another thread (or during a commit) is waiting for the timer. Commit's own
   // writes of the parameters never set it.
@@ -226,6 +227,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void circuitChanged();
 
   void ladderWriteBack(const std::shared_ptr<Engine>& e);
+  void fetchMissingRung(const Engine& e);
 
   juce::AudioProcessorValueTreeState apvts_;
   std::array<std::atomic<float>*, kNumParams> paramAtomic_{};
@@ -245,7 +247,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
   Monitor monitor_;
   std::weak_ptr<Engine> published_;  // the latest published engine, for message-thread readers (mutex_)
   std::atomic<bool> ladderFetch_{true};
-  std::atomic<std::uint64_t> ladderFetches_{0};
+  std::atomic<std::uint64_t> ladderFetches_{0}, rungFetches_{0};
+  std::atomic<bool> rungArrived_{false};  // a rung `fetch` finished: ask the rung loader at once
+  std::set<std::string> rungTried_;       // "tone:model" already fetched (or failed) this session (message thread only)
   std::set<std::string> ladderTried_;  // tone ids already asked about (message thread only)
   std::mutex fetchMutex_;
   std::vector<LadderFetchResult> fetched_;  // results waiting for the message thread

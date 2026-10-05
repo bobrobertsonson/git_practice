@@ -132,7 +132,7 @@ of the tone that are the same amp at other gain settings. In the plugin:
   (at most 8 at a time; a longer ladder keeps the 8 nearest, the sounding rung always stays) and hand them to the audio thread
   through the block's `SwapSlot`; replaced models are freed on the loader thread. A rung that is not cached leaves the block on its
   current rung (GAIN is drive-only) and `LadderInfo::pending` / `missingRungs` say so; the rung files come from the capture cache by
-  model id (`sawblade-t3k resolve` fills it).
+  model id. A missing rung of the nearest eight is fetched in the background with `sawblade-t3k fetch <tone> --model <id> --json --cache-dir <cache>` (the tool the resolve flow uses): at most one run in flight, once per rung per session, only when the tool is configured and exists, never on the audio thread; the rung loader picks the file up as soon as the run ends.
 - **Swap.** Moving GAIN picks the rung (hysteresis 0.15 past the midpoint) and the residual drive; the incoming model runs on the
   signal for 10 ms (output discarded, so its state is warm), then an equal-power crossfade of 20 ms. No allocation, no lock, latency
   unchanged (a rung with another latency is dropped and reported in `Engine::ladderMessages()`).

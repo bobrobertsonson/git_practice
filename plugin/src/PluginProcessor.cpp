@@ -255,11 +255,51 @@ void SawbladeProcessor::ladderTick() {
   }
   if (!any) return;
   ladderWriteBack(e);
+  fetchMissingRung(*e);
+  if (rungArrived_.exchange(false)) lastRungKey_ = ~0ull;
   key ^= reinterpret_cast<std::uintptr_t>(e.get());
   if (key != lastRungKey_ || ++rungTicks_ >= 30) {  // on a change, else every 3 s (picks up newly cached rungs)
     lastRungKey_ = key;
     rungTicks_ = 0;
     rungs_.request(e);
+  }
+}
+
+// A ladder rung whose model is not in the capture cache is fetched through `sawblade-t3k fetch <tone> --model <id>` (the
+// same tool the resolve flow uses), one at a time, nearest the sounding rung first, once per rung per session. Only if the
+// tool is configured and exists; never on the audio thread. The rung loader picks the file up when it arrives.
+void SawbladeProcessor::fetchMissingRung(const Engine& e) {
+  if (!ladderFetch_.load() || fetchRunning_.load() || ladderTool_.running()) return;
+  std::error_code ec;
+  if (!std::filesystem::exists(settings::t3kExecutable(), ec)) return;
+  for (int k = 0; k < 2; ++k) {
+    const LadderState st = e.ladderState(k);
+    if (!st.has) continue;
+    const PathPreset& pp = k == 0 ? e.builtPreset().a : e.builtPreset().b;
+    const auto* nam = dynamic_cast<const NamBlockParams*>(pp.blocks[static_cast<std::size_t>(ampIndex(pp))].params.get());
+    if (!nam || !nam->model.source || nam->model.source->provider != "tone3000") continue;
+    const auto& l = nam->model.ladder;
+    std::vector<int> order(l.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return std::abs(a - st.target) < std::abs(b - st.target); });
+    for (int i = 0; i < std::min(static_cast<int>(l.size()), kMaxLoadedRungs); ++i) {  // only the rungs that would be loaded
+      const int ri = order[static_cast<std::size_t>(i)];
+      const LadderRung& r = l[static_cast<std::size_t>(ri)];
+      if (ri == st.own) continue;  // the block's own capture is a file of the preset, not a cache entry
+      if (locateRungFile(nam->model, r)) continue;
+      const std::string tone = nam->model.source->id;
+      if (!rungTried_.insert(tone + ":" + r.modelId).second) continue;
+      fetchRunning_.store(true);
+      rungFetches_.fetch_add(1);
+      const bool started = ladderTool_.start(
+          {"fetch", tone, "--model", r.modelId, "--json", "--cache-dir", captureCacheRoot().string()}, nullptr,
+          [this](const T3kTool::Result&) {  // background thread: success or not, the rung loader looks again
+            rungArrived_.store(true);
+            fetchRunning_.store(false);
+          });
+      if (!started) fetchRunning_.store(false);
+      return;
+    }
   }
 }
 
