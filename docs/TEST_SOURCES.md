@@ -86,3 +86,12 @@ Entombed "Left Hand Path" (Death Lab Studio) needs the user to fill in a sign-up
    DIs (check before subscribing); the ABR / Suicide Silence / HLB sessions are deathcore /
    metalcore and are deferred.
 3. User's own DIs playing death metal riffs + north-star reference songs per substyle.
+
+## Fetching the remaining originals + cover mixes
+
+`scripts/fetch_references.sh` (list: `scripts/reference_sources.txt`) pulls each song's original
+to `testdata/originals/<slug>.wav` and the Omega Station cover mix to
+`testdata/multis/<slug>/cover_mix.wav` with yt-dlp. Dry run first (shows the video each search
+picks), replace wrong picks with exact URLs, then `--go`. YouTube audio is lossy (~130 kbps
+Opus, ~16–20 kHz low-pass): prefer a lossless purchase where one exists and ignore > 16 kHz
+when matching against a YouTube rip. Personal evaluation only; never commit the audio.
