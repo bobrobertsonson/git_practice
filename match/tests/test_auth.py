@@ -178,7 +178,7 @@ def test_poll_survives_transient_errors(respx_mock):
 
 # ---- client_id persisted in the token file (read by the C++ settings) ----
 
-def _login(respx_mock, monkeypatch, tmp_path, cid):
+def _login(respx_mock, monkeypatch, tmp_path, cid, routes=True):
     import functools
     from sawblade_match.t3k import cli
     from sawblade_match.t3k.auth import poll_for_session as real_poll
@@ -190,8 +190,9 @@ def _login(respx_mock, monkeypatch, tmp_path, cid):
     monkeypatch.setenv("SAWBLADE_T3K_TOKEN_FILE", str(path))
     monkeypatch.setattr(cli, "poll_for_session",
                         functools.partial(real_poll, sleep=clock.sleep, now=clock, mono=clock))
-    respx_mock.post(DEV_URL).respond(200, json=device_body())
-    respx_mock.post(TOKEN_URL).respond(200, json=tokens())
+    if routes:
+        respx_mock.post(DEV_URL).respond(200, json=device_body())
+        respx_mock.post(TOKEN_URL).respond(200, json=tokens())
     return cli, path
 
 
@@ -203,9 +204,10 @@ def test_login_stores_publishable_client_id(respx_mock, monkeypatch, tmp_path, c
 
 
 def test_login_with_secret_key_stores_nothing(respx_mock, monkeypatch, tmp_path, capsys):
-    cli, path = _login(respx_mock, monkeypatch, tmp_path, "t3k_cs_secret")
+    cli, path = _login(respx_mock, monkeypatch, tmp_path, "t3k_cs_secret", routes=False)
     assert cli.main(["login"]) != 0           # refused up front
     assert not path.exists()
+    assert not respx_mock.calls               # no HTTP call at all
 
 
 def test_store_never_writes_secret_looking_client_id(store):
