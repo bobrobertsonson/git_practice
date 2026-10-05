@@ -8,15 +8,17 @@
 
 // Preset-side parameters of the modeled pedal blocks (docs/PRESET_SCHEMA.md).
 //  * pedal.ts: three 0..10 knobs, modelVersion 1.
-//  * pedal.hm: modelVersion 2 (v1 presets, which may set only the four stock knobs, map onto the v2
-//    defaults and render bit-identically to phase 7).
+//  * pedal.hm: modelVersion 3 (the calibrated voicing of phase 7c part 3), 2 (the phase 7b voicing) and
+//    1 (phase 7: may set only the four stock knobs, maps onto the v2 defaults). Versions 1 and 2 render
+//    bit-identically to before version 3 existed; a block built from HmParams{} is version 3.
 //  * pedal.muff: modelVersion 1.
 // Any other modelVersion is a PresetError, so a later re-fit can bump it without silently changing
 // old presets.
 namespace sawblade {
 
 constexpr int kPedalModelVersion = 1;  // pedal.ts
-constexpr int kHmModelVersion = 2;     // pedal.hm (1 is still read)
+constexpr int kHmModelVersion = 3;     // pedal.hm: current (1 and 2 are still read)
+constexpr int kHmModelVersionV2 = 2;
 constexpr int kMuffModelVersion = 1;   // pedal.muff
 constexpr double kKnobMin = 0.0, kKnobMax = 10.0, kKnobDefault = 5.0;
 
@@ -30,9 +32,20 @@ struct HmParams {
   ClipType clip = ClipType::Silicon;
   Clip2Type clip2 = Clip2Type::Follow;
   double lowFreq = 100.0, lowQ = 0.8, highFreq = 1000.0, highSpread = 1.5;
-  double presenceFreq = 4800.0, presenceDb = 8.0, rolloffHz = 9000.0;
+  double presenceFreq = 4800.0, presenceDb = 8.0, rolloffHz = 16000.0;  // v3 default (v2: 9000)
   double gain1Db = 0.0, gain2Db = 0.0, bias = 0.0;
+  // Version 3 only: preset-static trims of `custom` mode (not live, not on the face or drawer).
+  double customLowDb = 3.2, customHighDb = 3.0;
+  // 3 = the calibrated voicing (default), 2 = the phase 7 / 7b voicing (a v1 preset reads as 2).
+  int modelVersion = 3;
   bool operator==(const HmParams&) const = default;
+  // The phase 7b parameter set: version 2, roll-off 9 kHz.
+  static HmParams v2() noexcept {
+    HmParams p;
+    p.modelVersion = 2;
+    p.rolloffHz = 9000.0;
+    return p;
+  }
 };
 
 struct MuffParams {

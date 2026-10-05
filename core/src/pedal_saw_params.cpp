@@ -47,6 +47,7 @@ constexpr Spec kHmxSpec[kHmxNumLive] = {
     {"boost", "Boost", 0, 1, 0},
     {"lowMidFreq", "Low-Mid Freq", 0, 10, 5},
     {"highMidFreq", "High-Mid Freq", 0, 10, 5},
+    {"midVoice", "Mid Voice", 0, 2, 0},
 };
 constexpr Spec kEyeSpec[kEyeNumLive] = {
     {"gain", "Gain", 0, 10, 5},
@@ -63,6 +64,7 @@ std::vector<LiveParamDesc> hmxLiveParamDescs() {
     std::vector<std::string> c;
     if (i == kHmxClip) c.assign(kClipNames, kClipNames + kNumClipTypes);
     if (i == kHmxBoost) c = {"off", "on"};
+    if (i == kHmxMidVoice) c.assign(kMidVoiceNames, kMidVoiceNames + kNumMidVoices);
     d.push_back({s.key, s.name, s.min, s.max, s.def, std::move(c)});
   }
   return d;
@@ -107,6 +109,11 @@ std::shared_ptr<const BlockParams> parseHmxBlock(JsonObject& o, const std::files
     }
     p.lowMidFreq = knob(*po, "lowMidFreq");
     p.highMidFreq = knob(*po, "highMidFreq");
+    {
+      const std::string v = po->oneOf("midVoice", "stock", {"stock", "low", "high"});
+      for (int i = 0; i < kNumMidVoices; ++i)
+        if (v == kMidVoiceNames[i]) p.midVoice = static_cast<MidVoice>(i);
+    }
     po->finish();
   }
   return b;
@@ -143,7 +150,8 @@ nlohmann::json HmxBlockParams::toJson() const {
             {"clip", clipTypeName(p.clip)},
             {"boost", p.boost ? "on" : "off"},
             {"lowMidFreq", p.lowMidFreq},
-            {"highMidFreq", p.highMidFreq}}}};
+            {"highMidFreq", p.highMidFreq},
+            {"midVoice", kMidVoiceNames[static_cast<int>(p.midVoice)]}}}};
 }
 
 bool EyeBlockParams::equals(const BlockParams& other) const {
@@ -171,6 +179,7 @@ HmxParams hmxParamsFromLive(const float* v, int n) noexcept {
   p.boost = liveKnob(v, n, kHmxBoost, 0.0, 0.0, 1.0) >= 0.5;
   p.lowMidFreq = liveKnob(v, n, kHmxLowMidFreq, p.lowMidFreq, kKnobMin, kKnobMax);
   p.highMidFreq = liveKnob(v, n, kHmxHighMidFreq, p.highMidFreq, kKnobMin, kKnobMax);
+  p.midVoice = static_cast<MidVoice>(std::lround(liveKnob(v, n, kHmxMidVoice, 0.0, 0.0, kNumMidVoices - 1.0)));
   return p;
 }
 
@@ -188,6 +197,7 @@ void hmxLiveFromParams(const HmxParams& p, float* v) noexcept {
   v[kHmxBoost] = p.boost ? 1.0f : 0.0f;
   v[kHmxLowMidFreq] = static_cast<float>(p.lowMidFreq);
   v[kHmxHighMidFreq] = static_cast<float>(p.highMidFreq);
+  v[kHmxMidVoice] = static_cast<float>(static_cast<int>(p.midVoice));
 }
 
 EyeParams eyeParamsFromLive(const float* v, int n) noexcept {

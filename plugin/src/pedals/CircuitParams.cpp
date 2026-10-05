@@ -157,6 +157,7 @@ double hmxField(const HmxParams& p, int i) {
     case kHmxBoost: return p.boost ? 1.0 : 0.0;
     case kHmxLowMidFreq: return p.lowMidFreq;
     case kHmxHighMidFreq: return p.highMidFreq;
+    case kHmxMidVoice: return static_cast<int>(p.midVoice);
   }
   return 0.0;
 }
@@ -176,6 +177,7 @@ void setHmxField(HmxParams& p, int i, double v) {
     case kHmxBoost: p.boost = std::isfinite(v) && v >= 0.5; break;
     case kHmxLowMidFreq: p.lowMidFreq = v; break;
     case kHmxHighMidFreq: p.highMidFreq = v; break;
+    case kHmxMidVoice: p.midVoice = enumFrom<MidVoice>(v, kNumMidVoices - 1); break;
     default: break;
   }
 }
@@ -228,7 +230,10 @@ ParamSpec circuitParamSpec(int index) {
     std::string id = d.key;
     id[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[0])));
     id = kIdPrefix[c] + id;
-    return {id, std::string(ci.choiceName) + " " + d.name, d.choices.empty() ? unitFor(c, d.key) : "", d.min, d.max, d.def, d.choices};
+    std::vector<std::string> choices = d.choices;
+    if (d.key == "midVoice")  // spec 3.7: the voicing names read Stock / Low / High
+      for (std::string& ch : choices) ch[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(ch[0])));
+    return {id, std::string(ci.choiceName) + " " + d.name, d.choices.empty() ? unitFor(c, d.key) : "", d.min, d.max, d.def, choices};
   }
   return {};
 }

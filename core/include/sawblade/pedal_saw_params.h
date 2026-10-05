@@ -15,12 +15,17 @@ namespace sawblade {
 
 constexpr double kSawTightnessDefault = 0.0, kSawMixMin = 0.0, kSawMixMax = 100.0, kSawMixDefault = 100.0;
 
+enum class MidVoice : int { Stock = 0, Low = 1, High = 2 };
+constexpr int kNumMidVoices = 3;
+inline constexpr const char* kMidVoiceNames[kNumMidVoices] = {"stock", "low", "high"};
+
 struct HmxParams {
   double level = 5.0, low = 5.0, lowMid = 5.0, highMid = 5.0, high = 5.0, distortion = 5.0, presence = 5.0;
   double tightness = kSawTightnessDefault, mix = kSawMixDefault;
   ClipType clip = ClipType::Silicon;
   bool boost = false;
   double lowMidFreq = 5.0, highMidFreq = 5.0;
+  MidVoice midVoice = MidVoice::Stock;  // base centre and Q of the HIGH-MID band (7c part 3, 3.7)
   bool operator==(const HmxParams&) const = default;
 };
 
@@ -46,7 +51,7 @@ std::shared_ptr<const BlockParams> parseEyeBlock(JsonObject& o, const std::files
 
 // Live parameter index order (the order of the spec tables), the Processor::setLiveParams order.
 // Doubles are narrowed to float, enums are the choice index (clip: silicon 0, led 1, asymmetric 2,
-// soft 3), boost is 0/1. The *FromLive converters read min(n, kNumLive) values (missing ones keep their
+// soft 3), boost is 0/1, midVoice is the choice index (stock 0, low 1, high 2). The *FromLive converters read min(n, kNumLive) values (missing ones keep their
 // defaults), clamp knobs to their ranges, round enums to the nearest valid index and treat
 // boost >= 0.5 as on; they never throw.
 enum HmxLive {
@@ -63,6 +68,7 @@ enum HmxLive {
   kHmxBoost,
   kHmxLowMidFreq,
   kHmxHighMidFreq,
+  kHmxMidVoice,  // appended last (7c part 3): choice 0/1/2 = stock/low/high
   kHmxNumLive
 };
 enum EyeLive { kEyeGain = 0, kEyeLevel, kEyeTightness, kEyeNumLive };

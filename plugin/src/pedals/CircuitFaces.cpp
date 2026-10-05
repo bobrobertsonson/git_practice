@@ -48,7 +48,7 @@ const std::array<CircuitFace, kNumCircuits>& faces() {
         {hx(kHmxHighMid), "HIGH-MID"},
         {hx(kHmxHighMidFreq), "HM HZ"},
         {hx(kHmxPresence), "PRESENCE"}},
-       {{hx(kHmxBoost), "BOOST"}}},
+       {{hx(kHmxBoost), "BOOST"}, {hx(kHmxMidVoice), "VOICE"}}},
       {"pedal.eye",
        "ONE-KNOB SAW",
        {{{ey(kEyeGain), "GAIN"}, {-1, ""}, {-1, ""}, {ey(kEyeTightness), "TIGHT"}, {ey(kEyeLevel), "OUT"}, {-1, ""}}},

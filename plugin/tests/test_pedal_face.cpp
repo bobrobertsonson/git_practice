@@ -84,7 +84,7 @@ TEST_CASE("Circuit params: the parameter table follows the core descriptors", "[
     CHECK(s.min == hx[static_cast<std::size_t>(k)].min);
     CHECK(s.max == hx[static_cast<std::size_t>(k)].max);
     CHECK(s.def == hx[static_cast<std::size_t>(k)].def);
-    CHECK(s.choices == hx[static_cast<std::size_t>(k)].choices);
+    if (k != kHmxMidVoice) CHECK(s.choices == hx[static_cast<std::size_t>(k)].choices);  // midVoice reads Stock / Low / High
     CHECK(s.name.rfind("Modded Saw ", 0) == 0);
   }
   for (int k = 0; k < kEyeNumLive; ++k) {
@@ -97,12 +97,14 @@ TEST_CASE("Circuit params: the parameter table follows the core descriptors", "[
   }
   // The 7c ids listed in the spec 2.3, in order.
   const char* hmxIds[] = {"hmxLevel", "hmxLow", "hmxLowMid", "hmxHighMid", "hmxHigh", "hmxDistortion", "hmxPresence",
-                          "hmxTightness", "hmxMix", "hmxClip", "hmxBoost", "hmxLowMidFreq", "hmxHighMidFreq"};
+                          "hmxTightness", "hmxMix", "hmxClip", "hmxBoost", "hmxLowMidFreq", "hmxHighMidFreq", "hmxMidVoice"};
   for (int k = 0; k < kHmxNumLive; ++k) CHECK(paramSpec(hmxP(k)).id == hmxIds[k]);
   const char* eyeIds[] = {"eyeGain", "eyeLevel", "eyeTightness"};
   for (int k = 0; k < kEyeNumLive; ++k) CHECK(paramSpec(eyeP(k)).id == eyeIds[k]);
   CHECK(paramSpec(hmxP(kHmxClip)).choices == std::vector<std::string>{"silicon", "led", "asymmetric", "soft"});
   CHECK(paramSpec(hmxP(kHmxBoost)).choices == std::vector<std::string>{"off", "on"});
+  CHECK(paramSpec(hmxP(kHmxMidVoice)).choices == std::vector<std::string>{"Stock", "Low", "High"});
+  CHECK(paramSpec(hmxP(kHmxMidVoice)).name == "Modded Saw Mid Voice");
   CHECK(paramSpec(hmxP(kHmxMix)).unit == "%");
   CHECK(paramSpec(hmxP(kHmxLowMidFreq)).unit.empty());  // a 0..10 knob, not Hz
   CHECK(paramSpec(hmxP(kHmxHighMidFreq)).unit.empty());
@@ -264,7 +266,7 @@ TEST_CASE("Circuit faces: every table entry names a real parameter of its circui
   CHECK(hx.focus.narrowValue == 1.0);
   CHECK(hx.focus.threshold == 0.5);
   CHECK(hx.drawerKnobs.size() == 5);
-  CHECK(hx.drawerSwitches.size() == 1);
+  CHECK(hx.drawerSwitches.size() == 2);  // BOOST, VOICE
   const CircuitFace& ey = circuitFace(Circuit::OneKnobSaw);
   CHECK(ey.clipParam == -1);
   CHECK(ey.focus.param == eyeP(kEyeTightness));
@@ -397,7 +399,7 @@ TEST_CASE("Pedal params: a modelVersion 1 preset reads the v2 defaults", "[pedal
   Host h(48000.0, 512);
   h.load(fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "hm_chainsaw.json");
   CHECK(h.param(kSawCircuit) == 0.0);
-  const HmParams def;
+  const HmParams def = HmParams::v2();  // a v1 preset reads as the v2 voicing (HmParams{} is v3 since 7c part 3)
   CHECK(h.param(hmP(kHmLevel)) == Catch::Approx(hm->p.level).margin(1e-4));
   CHECK(h.param(hmP(kHmLow)) == Catch::Approx(hm->p.low).margin(1e-4));
   CHECK(h.param(hmP(kHmDistortion)) == Catch::Approx(hm->p.distortion).margin(1e-4));
@@ -808,5 +810,6 @@ TEST_CASE("Pedal params: the CIRCUIT switch cycles all four circuits, one rebuil
   HmParams sexp;
   sexp.level = 3.25; sexp.tightness = 4.5;
   CHECK(sp->p == sexp);
+  CHECK(sp->p.modelVersion == 3);  // a switch to Chainsaw builds the calibrated (v3) voicing
   CHECK(h.allocs == 0);
 }

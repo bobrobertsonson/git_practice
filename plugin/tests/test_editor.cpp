@@ -1166,6 +1166,17 @@ TEST_CASE("pedal face 7c: the MODDED SAW face, its BOOST switch and the OLED", "
   for (auto* sw : all<PedalSwitch>(drawer))
     if (sw->isVisible()) {
       ++visible;
+      if (sw->paramId() == "hmxMidVoice") {  // VOICE: Stock / Low / High
+        CHECK(sw->valueText() == "STOCK");
+        press(*sw);
+        CHECK_THAT(getParam(rig, hmxP(kHmxMidVoice)), WithinAbs(1.0, 1e-4));
+        CHECK(sw->valueText() == "LOW");
+        press(*sw);
+        CHECK(sw->valueText() == "HIGH");
+        press(*sw);
+        CHECK(sw->valueText() == "STOCK");
+        continue;
+      }
       CHECK(sw->paramId() == "hmxBoost");
       CHECK(sw->valueText() == "OFF");
       press(*sw);
@@ -1173,7 +1184,7 @@ TEST_CASE("pedal face 7c: the MODDED SAW face, its BOOST switch and the OLED", "
       CHECK(sw->valueText() == "ON");
       CHECK(boost.valueText() == "ON");  // the face switch follows
     }
-  CHECK(visible == 1);
+  CHECK(visible == 2);  // BOOST and VOICE
   CHECK(drawer.title().containsIgnoreCase("modded saw"));
   // drawer knobs move their parameters
   for (auto* k : all<skin::FilmstripKnob>(drawer))
@@ -1283,8 +1294,8 @@ TEST_CASE("pedal face: titles and tooltips on every new control; no trademark in
     CHECK(k->getTitle().isNotEmpty());
     CHECK(k->getTooltip().isNotEmpty());
   }
-  // CIRCUIT; face CLIP (three circuits have one) + FOCUS (all four); drawer MODE + CLIP 2 (chainsaw), CLIP 2 (big fuzz), BOOST (modded saw)
-  CHECK(all<PedalSwitch>(*rig.ed).size() == 1 + 3 + kNumCircuits + 4);
+  // CIRCUIT; face CLIP (three circuits have one) + FOCUS (all four); drawer MODE + CLIP 2 (chainsaw), CLIP 2 (big fuzz), BOOST + VOICE (modded saw)
+  CHECK(all<PedalSwitch>(*rig.ed).size() == 1 + 3 + kNumCircuits + 5);
   CHECK(faceOf(rig).getTitle().isNotEmpty());
   CHECK(drawerOf(rig).getTitle().isNotEmpty());
 
