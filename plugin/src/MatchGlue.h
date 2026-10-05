@@ -41,11 +41,15 @@ struct ExportSource {
   bool ok = false;
   std::string message;
   std::filesystem::path file;          // resolved preset JSON handed to sawblade-export
+  std::string sha256;                  // of the file's bytes: the "same rig" key
   std::string description;
 };
 // The auditioned / applied candidate's resolved preset if that is what is loaded, else the current preset
-// written to <jobs>/inputs/ (so the export is exactly what is playing, parameter changes included).
-ExportSource prepareExportSource(SawbladeProcessor& p);
+// written to <jobs>/inputs/<sha256 prefix>.preset.json (so the export is exactly what is playing, parameter changes
+// included, and the same rig is always the same file). `dropComp`: the bus comp is switched off in what is written
+// (a no-cab export cannot contain it; sawblade-export refuses a no-cab export of a rig with the comp on otherwise).
+// `write` false: nothing is written (the key and the path the file would have).
+ExportSource prepareExportSource(SawbladeProcessor& p, bool dropComp = false, bool write = true);
 
 // ---- two-pass MATCH (docs/specs/phase6a_1_quick_then_thorough.md) ----------------------------------------------------
 

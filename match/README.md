@@ -362,13 +362,25 @@ A-weighted error; on failure `message` starts with `error:`.
 pip install -e 'match[export]' -c match/constraints-export.txt     # neural-amp-modeler 0.13.0; torch stays 2.5.1 (CPU)
 sawblade-export PRESET.resolved.json [--mode nocab|withcab] [--size feather|lite|standard] [--epochs N] [--max-minutes M]
                 [--seed 0] [--signal-seed 1] [--threads 4] [--allow-inexact] [--target-esr E] [--out DIR] [--name STEM]
-                [--di Guitar_L.wav] [--no-validate] [--resume DIR|auto] [--keep-scratch]
+                [--di Guitar_L.wav|builtin] [--no-validate] [--resume DIR|auto] [--keep-scratch]
+                [--exports-root DIR] [--progress-json PATH] [--require-accept]
 ```
 
 Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.resolved.json`. Default output
 `~/.cache/sawblade/exports/<name>-<mode>-<size>-<timestamp>/` (never the repo): `<name>-<mode>-<size>.nam`, `<name>-nocab.ir.wav`
-(nocab), `export_report.json`, `validation_renders/*.wav`, `listen/ab_original_then_export.{wav,mp3}`. Exit 0 = done, 2 = refused
-(message on stderr), 3 = error. Exported models are derived from TONE3000 captures: **personal use only**.
+(nocab), `export_report.json`, `validation_renders/*.wav`, `listen/ab_original_then_export.{wav,mp3}`. Exit codes: 0 = finished (acceptance met, or not
+judged for feather/lite), 2 = trained but acceptance NOT MET (only with `--require-accept`; the files and the full report are still
+written), 1 = refused or error (message on stderr), 130 = interrupted.
+`--exports-root DIR` puts the output directory at `DIR/<name>-<mode>-<size>-<ts>` (`--out` overrides it; `--resume auto` searches it).
+When any capture is `cc-by-nc*`, the file stem (`--name` or the preset slug) gets `-nc` (`.nam`, IR and directory names).
+`--di builtin` (also the fallback when the default test DI is missing, with a log line) validates and builds the listening file from
+an excerpt of the built-in held-out signal; the report says `diExcerpt.excerpt.file = "builtin"`.
+`--progress-json PATH` writes `{stage, fraction, etaSeconds, epoch, epochs, bestEsr, message, outDir, resumable, elapsedSeconds}`
+atomically (stages plan, signal, render, train, validate, done / cancelled / error; `fraction` never decreases: train is 0.10-0.90,
+validate 0.90-0.99; at most once a second while training, immediately on stage changes and epoch ends, once more at exit).
+SIGINT (Ctrl-C) cancels: the trainer stops at the end of the current batch, the partial epoch writes no checkpoint (the last
+complete epoch stays, `progress.json` gets `"interrupted": true`), validation and the report are skipped, the progress file says
+`cancelled` with `resumable: true`, exit 130; continue with `--resume`. A second Ctrl-C raises the usual KeyboardInterrupt. Exported models are derived from TONE3000 captures: **personal use only**.
 
 * **Modes.** `nocab` (default; needs `cab.mode == "shared"`): the model is everything from input gain to the blend, plus the
   output gain; the shared cab IR and the post EQ are *folded* into one IR (below). Requires the bus comp **off** (it sits after the cab
@@ -410,7 +422,7 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   `sawblade-export PRESET --mode nocab --size standard --epochs 250 --max-minutes 420 ... --resume <out dir>` (the run's output
   directory, e.g. `~/.cache/sawblade/exports/<name>-<mode>-<size>-<ts>`) or `--resume auto` (the newest unfinished run in the
   exports dir with the same preset, mode, size, signal and training settings; otherwise it starts fresh; either way the CLI prints
-  which happened). It is refused (exit 2, message on stderr) if the preset sha, signal sha, size, mode, seed, batch size, epochs or
+  which happened). It is refused (exit 1, message on stderr) if the preset sha, signal sha, size, mode, seed, batch size, epochs or
   lr gamma differ, or if `--out` names another directory. `--max-minutes` counts the training time of all sessions together. On CPU
   with the same thread count a resumed run is bit-identical to an uninterrupted one (test). The checkpoint dir is removed after a
   successful export; `--keep-scratch` keeps it (marked complete, so `auto` never picks it). Runs started before 4.1 have no checkpoint
@@ -430,7 +442,7 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   loads in the core's `NamBlock`, the plugin's engine). Metrics: ESR (broadband, level-sensitive) and the A-weighted 1/3-octave LTAS
   error (tonecheck's `--ref` definition: bands 80 Hz-8 kHz, both spectra normalised at 1 kHz). The DI excerpt is also compared with the
   *gated* original. Acceptance for `standard`: ESR <= 0.02 on the held-out segment and LTAS error <= 0.5 dB on the DI excerpt; the
-  report has `validation.acceptance.status` (`met` / `NOT MET` / `not judged (non-standard size)`) and a one-line summary, which the CLI prints; `--require-accept` exits 4 unless `met`.
+  report has `validation.acceptance.status` (`met` / `NOT MET` / `not judged (non-standard size)`) and a one-line summary, which the CLI prints; `--require-accept` exits 2 when the status is `NOT MET`.
 * **Listening file.** `listen/ab_original_then_export.mp3`: the DI excerpt through the original chain, 0.8 s gap, then the export
   (RMS-matched to the original; the gain is in the report). The gate is bypassed in both.
 * **Budget and measured results (CPU only).** Defaults: feather 40 epochs / 15 min, lite 30 epochs / 30 min, standard 22 epochs /

@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 
+#include "ExportPanel.h"
 #include "MatchScreen.h"
 #include "PlayAlongPanel.h"
 #include "browser/BrowserSettings.h"
@@ -83,13 +84,14 @@ class SawbladeEditor::Content : public juce::Component {
     configure(match_, "MATCH", "Standalone app: open the MATCH screen. In a plugin: open the play-along panel's record + match area (MATCH runs in the Standalone app)", false);
     match_.onClick = [this] {
       if (processor_.matchEnabled()) {
-        openMatchScreen(false);
+        openMatchScreen();
         return;
       }
       setPlayAlongOpen(true);  // plugin mode: the panel's note says to open the Standalone app
       panel_->showMatchArea();
     };
-    configure(export_, "EXPORT NAM", "Export as NAM model", true);
+    configure(export_, "EXPORT NAM", "Train a NAM model of this rig for a loader pedal", false);
+    export_.onClick = [this] { openExportPanel(); };
     configure(playAlong_, "PLAY ALONG", "Show / hide the play-along panel: a backing track from separated stems to play over", false);
     playAlong_.setClickingTogglesState(true);
     playAlong_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
@@ -198,8 +200,10 @@ class SawbladeEditor::Content : public juce::Component {
     addChildComponent(*presetBrowser_);  // last child: on top of everything below the top bar
     screen_ = std::make_unique<MatchScreen>(processor_);
     addChildComponent(*screen_);  // last child: covers everything below the top bar
-    panel_->onMatch = [this] { openMatchScreen(false); };
-    panel_->onExport = [this] { openMatchScreen(true); };
+    exportPanel_ = std::make_unique<ExportPanel>(processor_);
+    addChildComponent(*exportPanel_);  // last child: covers everything below the top bar
+    panel_->onMatch = [this] { openMatchScreen(); };
+    panel_->onExport = [this] { openExportPanel(); };
 
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
@@ -264,6 +268,7 @@ class SawbladeEditor::Content : public juce::Component {
     }
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     screen_->setBounds(0, kTopBar, MatchScreen::kWidth, kDesignHeight - kTopBar);
+    exportPanel_->setBounds(0, kTopBar, ExportPanel::kWidth, kDesignHeight - kTopBar);
     message_.setBounds(34, kTopBar + 14, 860, 20);
     rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
     micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
@@ -413,12 +418,23 @@ class SawbladeEditor::Content : public juce::Component {
   void refreshMicPage() {
     if (micPage_->isVisible()) micPage_->refresh();
   }
-  void openMatchScreen(bool exportMode) {
-    screen_->open(exportMode ? MatchScreen::Mode::Export : MatchScreen::Mode::Match);
+  void openMatchScreen() {
+    exportPanel_->setVisible(false);
+    screen_->open();
     screen_->toFront(false);  // above an open rig editor / mic page / preset browser overlay
   }
   bool matchScreenOpen() const { return screen_->isVisible(); }
-  void refreshScreen() { screen_->refresh(); }
+  void openExportPanel() {
+    screen_->setVisible(false);
+    exportPanel_->open();
+    exportPanel_->toFront(false);
+  }
+  bool exportPanelOpen() const { return exportPanel_->isVisible(); }
+  ExportPanel& exportPanel() { return *exportPanel_; }
+  void refreshScreen() {
+    screen_->refresh();
+    exportPanel_->refresh();
+  }
 
  private:
   static juce::Rectangle<int> matchBox() { return {kInspX + 16, kDesignHeight - 14 - 64, kInspW - 32, 64}; }
@@ -484,6 +500,7 @@ class SawbladeEditor::Content : public juce::Component {
   std::unique_ptr<MicPage> micPage_;
   std::unique_ptr<PresetBrowser> presetBrowser_;
   std::unique_ptr<MatchScreen> screen_;
+  std::unique_ptr<ExportPanel> exportPanel_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -542,10 +559,11 @@ void SawbladeEditor::setBrowserOpen(bool open) { content_->setBrowserOpen(open);
 bool SawbladeEditor::browserOpen() const { return content_->browserOpen(); }
 PresetBrowser& SawbladeEditor::browser() { return content_->browser(); }
 AbCompare& SawbladeEditor::abCompare() { return content_->abCompare(); }
-void SawbladeEditor::openMatchScreen(bool exportMode) {
-  content_->openMatchScreen(exportMode);
-}
+void SawbladeEditor::openMatchScreen() { content_->openMatchScreen(); }
 bool SawbladeEditor::matchScreenOpen() const { return content_->matchScreenOpen(); }
+void SawbladeEditor::openExportPanel() { content_->openExportPanel(); }
+bool SawbladeEditor::exportPanelOpen() const { return content_->exportPanelOpen(); }
+ExportPanel& SawbladeEditor::exportPanel() { return content_->exportPanel(); }
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
   for (const auto& f : files)

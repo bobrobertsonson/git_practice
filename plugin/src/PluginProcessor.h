@@ -14,6 +14,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "Engine.h"
+#include "ExportSettings.h"
 #include "EngineLoader.h"
 #include "JobRunner.h"
 #include "PlayAlong.h"
@@ -123,12 +124,17 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // The DI take recorder (docs/PLUGIN.md "Record + Match"): taps the input before the rig, writes WAV + sidecar
   // off the audio thread. Its control surface is safe from any non-audio thread.
   // Record + Match (message thread): the settings (application properties, not part of the tone state), the
-  // match / export job runner, and the audition / A-B of match candidates. MATCH and EXPORT NAM are
-  // Standalone-only for now: matchEnabled() says whether this instance may start jobs.
+  // match / export job runner, and the audition / A-B of match candidates. MATCH is Standalone-only for now:
+  // matchEnabled() says whether this instance may start a match job. EXPORT NAM works everywhere.
   MatchSettings& matchSettings() noexcept { return matchSettings_; }
   JobRunner& jobs() noexcept { return jobs_; }
   PresetAudition& audition() noexcept { return audition_; }
   bool matchEnabled() const noexcept { return playAlong_.standalone(); }
+  // EXPORT NAM (phase 12) is available in plugin mode and in the Standalone app alike. The panel's last settings are
+  // UI state (plugin state `export`, never the preset); any non-audio thread.
+  ExportSettings exportSettings() const;
+  void setExportSettings(const ExportSettings& s);
+  std::uint64_t exportSettingsSerial() const noexcept { return exportSerial_.load(); }
   TakeRecorder& recorder() noexcept { return recorder_; }
   const TakeRecorder& recorder() const noexcept { return recorder_; }
 
@@ -217,6 +223,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
   int maxBlock_ = 0;
   std::vector<float> mono_, backL_, backR_;  // rig mono, backing L / R (audio-thread scratch)
   PlayAlong playAlong_;
+  mutable std::mutex exportMutex_;  // exportSettings_; never taken on the audio thread
+  ExportSettings exportSettings_;
+  std::atomic<std::uint64_t> exportSerial_{0};
   PreviewPlayer preview_;
   TakeRecorder recorder_;
   MatchSettings matchSettings_;

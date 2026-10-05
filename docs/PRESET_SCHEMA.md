@@ -32,7 +32,8 @@ Readers must reject `version` greater than they support and migrate lower versio
   "postEq": [ EqBand, ... ],           // optional, default []
   "busComp":{ ... },                   // optional; see Bus compressor
   "output": { "gainDb": 0.0 },         // optional
-  "playAlong": { ... }                 // optional; plugin UI state, see Play-along (not tone)
+  "playAlong": { ... },                // optional; plugin UI state, see Play-along (not tone)
+  "export": { ... }                    // optional; plugin UI state of the export panel (not tone): mode, size, diSource, compChoice, outputFolder
 }
 ```
 
@@ -451,6 +452,22 @@ clamped (the plugin reader never throws). Songs and their stems are never stored
   "songFile": "/path/song.mp3",         // optional, only when a song FILE was loaded (separated on this machine; exclusive with folder)
   "separationModel": "htdemucs",        // optional, only when the 4-stem fallback is chosen (default htdemucs_6s)
   "hostSync": false                     // plugin only: follow the host transport
+}
+```
+
+## Export panel (`export`, plugin UI state, not tone)
+
+Like `playAlong`: written only by the plugin's state, omitted while every field is a default, accepted (it must be an object)
+and ignored by the core parser, never part of the tone or of a resolved preset. Wrong-typed or unknown values keep their defaults.
+
+```jsonc
+"export": {
+  "mode": "",                // "" = follow the rig (shared cab: "nocab", per-path cabs: "withcab") | "nocab" | "withcab";
+                             // a saved mode applies only while it is exact for the loaded rig
+  "size": "standard",        // "feather" | "lite" | "standard"
+  "diSource": "take",        // "take" (newest take, else the built-in signal) | "builtin"
+  "compChoice": "drop",      // no-cab export of a rig with the bus comp on: "drop" (exact) | "keep" (inexact, --allow-inexact)
+  "outputFolder": ""         // "" = <app data>/exports
 }
 ```
 

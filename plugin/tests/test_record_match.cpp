@@ -19,7 +19,9 @@
 #include <thread>
 
 #include "JobRunner.h"
+#include "ExportGlue.h"
 #include "MatchGlue.h"
+#include "Sha256.h"
 #include "PresetAudition.h"
 #include "TakeRecorder.h"
 #include "fake_tools.h"
@@ -140,6 +142,13 @@ std::int64_t grandchildPid(const fs::path& outDir) {
   std::int64_t p = 0;
   f >> p;
   return p;
+}
+
+std::string readText(const fs::path& p) {
+  std::ifstream f(p, std::ios::binary);
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  return ss.str();
 }
 
 std::vector<std::string> argvOf(const fs::path& outDir) {
@@ -861,10 +870,10 @@ TEST_CASE("runner: settings persist in application properties", "[match][runner]
   CHECK(again.selectedTake() == "take-7");
 }
 
-TEST_CASE("runner: export reads the checkpoint progress, passes mode, size and device auto", "[match][runner][export]") {
+TEST_CASE("runner: an exporter without --progress-json is followed through its checkpoint; mode, size and device auto are passed", "[match][runner][export]") {
   using namespace sawblade::plugin;
   FakeTools t;
-  t.cfgExport({{"gates", json::array({"g1", "g2"})}});
+  t.cfgExport({{"gates", json::array({"g1", "g2"})}});  // no progressJson: the 4.1 checkpoint parser is the fallback
   JobRunner runner(t.settings, t.jobs);
   ExportRequest er;
   er.preset = t.presetSrc;
@@ -875,20 +884,30 @@ TEST_CASE("runner: export reads the checkpoint progress, passes mode, size and d
   REQUIRE(runner.startExport(er, &err));
   JobSnapshot s = runner.snapshot(JobKind::Export);
   CHECK(s.dir.filename().string().substr(s.dir.filename().string().size() - 7) == "-export");
-  CHECK(s.outDir == s.dir / "export");
+  CHECK(s.exportsRoot == s.dir / "export");  // the default root is inside the job folder
   REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.fraction > 0.29; }));
   s = runner.snapshot(JobKind::Export);
+  CHECK_FALSE(s.progressJson);
   CHECK(s.progress.fraction == Catch::Approx(0.3));
   CHECK(s.progress.stage == "training");
   CHECK(s.progress.etaSeconds == Catch::Approx(210.0));
+  CHECK(s.progress.epoch == 3);
+  CHECK(s.progress.epochs == 10);
+  REQUIRE(s.progress.bestEsr);
+  CHECK(*s.progress.bestEsr == Catch::Approx(0.0105));
   CHECK(s.exportMode == "withcab");
   CHECK(s.exportSize == "lite");
+  REQUIRE_FALSE(s.outDir.empty());  // found by looking for the folder the exporter made in the exports root
+  CHECK(s.outDir.parent_path() == s.dir / "export");
   const auto argv = argvOf(s.outDir);
   CHECK(argv.at(0) == t.presetSrc.string());
   CHECK(after(argv, "--mode") == "withcab");
   CHECK(after(argv, "--size") == "lite");
   CHECK(after(argv, "--device") == "auto");  // never a hard-wired cuda / mps
-  CHECK(after(argv, "--out") == s.outDir.string());
+  CHECK(after(argv, "--exports-root") == (s.dir / "export").string());
+  CHECK_FALSE(has(argv, "--out"));  // the exporter names its own folder
+  CHECK(has(argv, "--require-accept"));
+  CHECK_FALSE(has(argv, "--progress-json"));
   CHECK(after(argv, "--di") == t.di.string());
 
   release(s.outDir, "g1");
@@ -897,10 +916,314 @@ TEST_CASE("runner: export reads the checkpoint progress, passes mode, size and d
   REQUIRE(runner.waitFinished(JobKind::Export));
   s = runner.snapshot(JobKind::Export);
   CHECK(s.state == JobState::Succeeded);
-  CHECK(fs::exists(s.outDir / "model.nam"));
+  CHECK(fs::exists(s.outDir / "seed-withcab-lite.nam"));
   CHECK(s.progress.fraction == 1.0);
   // A match and an export are separate jobs: the match slot is untouched.
   CHECK(runner.snapshot(JobKind::Match).state == JobState::None);
+}
+
+TEST_CASE("runner: export progress (--progress-json) carries epoch, best ESR, ETA and the output folder", "[match][runner][export][progress]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1", "g2"})}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.size = "standard";
+  er.diBuiltin = true;
+  er.allowInexact = true;
+  er.exportsRoot = t.root / "my exports";
+  std::string err;
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.epoch == 3; }));
+  JobSnapshot s = runner.snapshot(JobKind::Export);
+  CHECK(s.progressJson);
+  CHECK(s.progress.stage == "train");
+  CHECK(s.progress.epochs == 10);
+  CHECK(s.progress.fraction == Catch::Approx(0.1 + 0.8 * 0.3));
+  CHECK(s.progress.etaSeconds == Catch::Approx(42.0));
+  REQUIRE(s.progress.bestEsr);
+  CHECK(*s.progress.bestEsr == Catch::Approx(0.0105));
+  CHECK(s.progress.message == "epoch 3");
+  CHECK(s.progress.resumable);
+  REQUIRE_FALSE(s.outDir.empty());
+  CHECK(s.outDir.parent_path() == t.root / "my exports");
+  CHECK(s.exportsRoot == t.root / "my exports");
+  CHECK(s.allowInexact);
+  CHECK(s.diBuiltin);
+  CHECK(s.sourceSha256 == sawblade::plugin::sha256Hex(readText(t.presetSrc)));
+
+  const auto argv = argvOf(s.outDir);
+  CHECK(after(argv, "--progress-json") == (s.dir / "progress.json").string());
+  CHECK(after(argv, "--exports-root") == (t.root / "my exports").string());
+  CHECK(after(argv, "--di") == "builtin");
+  CHECK(has(argv, "--allow-inexact"));
+  CHECK(has(argv, "--require-accept"));
+  CHECK_FALSE(has(argv, "--out"));
+  CHECK_FALSE(has(argv, "--resume"));
+  // job.json is the source of truth for a runner that starts later.
+  const json jj = readJson(s.dir / "job.json");
+  CHECK(jj["kind"] == "export");
+  CHECK(jj["progressMode"] == "json");
+  CHECK(jj["sourceSha256"] == s.sourceSha256);
+  CHECK(jj["exportsRoot"] == (t.root / "my exports").string());
+  CHECK(jj["allowInexact"] == true);
+  CHECK(jj["outDir"] == s.outDir.string());
+
+  release(s.outDir, "g1");
+  REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.epoch == 7; }));
+  release(s.outDir, "g2");
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Succeeded);
+  CHECK(s.accepted == "met");
+  CHECK(s.progress.fraction == 1.0);
+  CHECK_FALSE(s.resumable);
+  const json fin = readJson(s.dir / "job.json");
+  CHECK(fin["state"] == "succeeded");
+  CHECK(fin["accepted"] == "met");
+  CHECK(fin["resumable"] == false);
+  CHECK(fin["outDir"] == s.outDir.string());
+  CHECK(fin["exitCode"] == 0);
+  // The wall time of the run is kept per size for the panel's "last run".
+  CHECK(t.settings.exportWallSeconds("standard") == Catch::Approx(150.0));
+  CHECK(t.settings.exportWallSeconds("lite") == 0.0);
+}
+
+TEST_CASE("runner: cancelling an export sends SIGINT and leaves the checkpoint; the same rig can resume", "[match][runner][export][cancel]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1"})}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "withcab";
+  er.size = "lite";
+  er.exportsRoot = t.root / "exports";
+  REQUIRE(runner.startExport(er));
+  REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.epoch == 3; }));
+  const fs::path run = runner.snapshot(JobKind::Export).outDir;
+  runner.cancel(JobKind::Export);
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  JobSnapshot s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Cancelled);
+  CHECK(s.exitCode == 130);
+  CHECK(s.resumable);
+  CHECK(s.outDir == run);
+  CHECK(s.progress.stage == "cancelled");
+  // The child saw exactly one SIGINT (no SIGTERM, no SIGKILL) and kept its checkpoint.
+  const json sig = readJson(run / "signals.json");
+  REQUIRE(sig.is_array());
+  CHECK(sig == json::array({"SIGINT"}));
+  CHECK(fs::exists(run / "checkpoint" / "last.ckpt"));
+  const json ck = readJson(run / "checkpoint" / "progress.json");
+  CHECK(ck["epoch"] == 3);
+  CHECK(ck["interrupted"] == true);
+  CHECK_FALSE(ck["complete"].get<bool>());
+  CHECK_FALSE(fs::exists(run / "export_report.json"));
+  const json jj = readJson(s.dir / "job.json");
+  CHECK(jj["state"] == "cancelled");
+  CHECK(jj["resumable"] == true);
+  CHECK(jj["outDir"] == run.string());
+  CHECK(readCheckpoint(run).resumable);
+  CHECK(readCheckpoint(run).epoch == 3);
+  CHECK(readCheckpoint(run).epochs == 10);
+
+  // A new runner (the app was restarted) sees the cancelled run and its checkpoint.
+  {
+    JobRunner again(t.settings, t.jobs);
+    again.attachExisting();
+    const JobSnapshot a = again.snapshot(JobKind::Export);
+    CHECK(a.state == JobState::Cancelled);
+    CHECK(a.resumable);
+    CHECK(a.outDir == run);
+    CHECK(a.sourceSha256 == s.sourceSha256);
+    CHECK(a.exportMode == "withcab");
+    CHECK(a.exportSize == "lite");
+  }
+
+  // RESUME: the same folder, --resume <dir>, no --exports-root; the run continues from its checkpoint.
+  t.cfgExport({{"progressJson", true}});
+  ExportRequest rr;
+  rr.preset = t.presetSrc;
+  rr.mode = "withcab";
+  rr.size = "lite";
+  rr.resumeDir = run;
+  rr.exportsRoot = t.root / "exports";
+  REQUIRE(runner.startExport(rr));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Succeeded);
+  CHECK(s.outDir == run);
+  const auto argv = argvOf(run);
+  CHECK(after(argv, "--resume") == run.string());
+  CHECK_FALSE(has(argv, "--exports-root"));
+  CHECK_FALSE(has(argv, "--out"));
+  CHECK(fs::exists(run / "seed-withcab-lite.nam"));
+  CHECK_FALSE(fs::exists(run / "checkpoint"));  // finished: the checkpoint is gone
+  CHECK(runner.snapshot(JobKind::Export).accepted == "not judged");  // lite is not judged
+}
+
+TEST_CASE("runner: an unknown run folder cannot be resumed", "[match][runner][export]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest rr;
+  rr.preset = t.presetSrc;
+  rr.resumeDir = t.root / "nowhere";
+  std::string err;
+  CHECK_FALSE(runner.startExport(rr, &err));
+  CHECK(err.find("to resume was not found") != std::string::npos);
+}
+
+TEST_CASE("runner: exit 2 with a report is a finished export that is NOT MET; the report is parsed", "[match][runner][export][accept]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"exit", 2}, {"listen", "wav"}, {"nonCommercial", true}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.size = "standard";
+  er.exportsRoot = t.root / "exports";
+  REQUIRE(runner.startExport(er));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const JobSnapshot s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Succeeded);  // the files are written
+  CHECK(s.exitCode == 2);
+  CHECK(s.accepted == "NOT MET");
+  CHECK(s.message.empty());
+  REQUIRE(s.result.haveReport);
+  CHECK(s.result.status == "NOT MET");
+  CHECK(s.result.summary.find("NOT MET") != std::string::npos);
+  REQUIRE(s.result.heldOutEsr);
+  CHECK(*s.result.heldOutEsr == Catch::Approx(0.0345));
+  CHECK(*s.result.diLtasDb == Catch::Approx(0.92));
+  CHECK(*s.result.esrLimit == Catch::Approx(0.02));
+  CHECK(*s.result.ltasLimitDb == Catch::Approx(0.5));
+  CHECK(s.result.nonCommercial);
+  CHECK(s.result.wallSeconds == Catch::Approx(150.0));
+  CHECK(s.result.namFile == "seed-nc-nocab-standard.nam");
+  CHECK(s.result.listen == s.outDir / "listen" / "ab_original_then_export.wav");
+  CHECK(fs::exists(s.outDir / s.result.namFile));
+  CHECK(readJson(s.dir / "job.json")["accepted"] == "NOT MET");
+  CHECK(readJson(s.dir / "job.json")["exitCode"] == 2);
+  CHECK(t.settings.exportWallSeconds("standard") == Catch::Approx(150.0));  // a NOT MET run still counts for "last run"
+  // The model's metadata carries the Sawblade block.
+  const json nam = readJson(s.outDir / s.result.namFile);
+  CHECK(nam["metadata"]["sawblade"]["exporter"] == "sawblade-export");
+  CHECK(nam["metadata"]["sawblade"]["nonCommercial"] == true);
+}
+
+TEST_CASE("runner: exit 0 is MET; a non-standard size is not judged; the A/B file prefers mp3", "[match][runner][export][accept]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"listen", "mp3"}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.size = "standard";
+  er.exportsRoot = t.root / "exports";
+  REQUIRE(runner.startExport(er));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  JobSnapshot s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Succeeded);
+  CHECK(s.exitCode == 0);
+  CHECK(s.accepted == "met");
+  CHECK(s.result.status == "MET");
+  CHECK(*s.result.heldOutEsr == Catch::Approx(0.0123));
+  CHECK(s.result.listen.extension() == ".mp3");
+  // Both files: the mp3 wins.
+  std::ofstream(s.outDir / "listen" / "ab_original_then_export.wav") << "x";
+  CHECK(readExportResult(s.outDir).listen.extension() == ".mp3");
+  fs::remove(s.outDir / "listen" / "ab_original_then_export.mp3");
+  CHECK(readExportResult(s.outDir).listen.extension() == ".wav");
+  fs::remove(s.outDir / "listen" / "ab_original_then_export.wav");
+  CHECK(readExportResult(s.outDir).listen.empty());
+
+  er.size = "feather";
+  REQUIRE(runner.startExport(er));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Succeeded);
+  CHECK(s.accepted == "not judged");
+  CHECK(s.result.status == "NOT JUDGED");
+  CHECK(t.settings.exportWallSeconds("feather") == Catch::Approx(150.0));
+}
+
+TEST_CASE("runner: the sidecar is the resolved preset, byte for byte, next to the model", "[match][runner][export][sidecar]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"exit", 2}});  // NOT MET gets its sidecar too
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.size = "standard";
+  er.exportsRoot = t.root / "exports";
+  REQUIRE(runner.startExport(er));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const JobSnapshot s = runner.snapshot(JobKind::Export);
+  REQUIRE(s.state == JobState::Succeeded);
+  CHECK(s.sidecar == s.outDir / "seed-nocab-standard.sawblade.json");
+  REQUIRE(fs::exists(s.sidecar));
+  CHECK(readText(s.sidecar) == readText(t.presetSrc));
+  CHECK(readJson(s.dir / "job.json")["sidecar"] == s.sidecar.string());
+  // The model's own metadata names the same preset (sha256 of those bytes).
+  const json nam = readJson(s.outDir / "seed-nocab-standard.nam");
+  CHECK(nam["metadata"]["sawblade"]["preset"]["sha256"] == s.sourceSha256);
+}
+
+TEST_CASE("runner: a refused export is Failed with the exporter's message; no sidecar", "[match][runner][export]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"fail", true}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.exportsRoot = t.root / "exports";
+  REQUIRE(runner.startExport(er));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const JobSnapshot s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Failed);
+  CHECK(s.exitCode == 1);
+  CHECK(s.message == "error: the preset has no cab");
+  CHECK(s.sidecar.empty());
+  CHECK(s.accepted.empty());
+  CHECK(s.progress.stage == "error");
+}
+
+TEST_CASE("runner: an export that ignores SIGINT is escalated to SIGTERM, then SIGKILL", "[match][runner][export][cancel]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.exportsRoot = t.root / "exports";
+  for (const bool ignoreTerm : {false, true}) {
+    // The fake records SIGINT and carries on: after the grace period the runner sends SIGTERM (the fake then stops at its
+    // gate, exit 130); a fake that ignores that too is killed after another grace period.
+    t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1", "g2"})}, {"ignoreInt", true}, {"ignoreTerm", ignoreTerm}});
+    JobRunner runner(t.settings, t.jobs);
+    runner.setCancelGrace(300ms);
+    REQUIRE(runner.startExport(er));
+    REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.epoch == 3; }));
+    const fs::path run = runner.snapshot(JobKind::Export).outDir;
+    runner.cancel(JobKind::Export);
+    REQUIRE(runner.waitFinished(JobKind::Export, 20000ms));
+    const JobSnapshot s = runner.snapshot(JobKind::Export);
+    CHECK(s.state == JobState::Cancelled);
+    if (ignoreTerm) {
+      CHECK(s.exitCode == 128 + SIGKILL);
+      CHECK(readJson(run / "signals.json") == json::array({"SIGINT"}));
+    } else {
+      CHECK(s.exitCode == 130);
+      CHECK(readJson(run / "signals.json") == json::array({"SIGINT", "SIGTERM"}));
+    }
+    CHECK(s.resumable);  // the checkpoint of epoch 3 is still there either way
+  }
 }
 
 TEST_CASE("runner: a new runner re-attaches to a running job and to finished ones", "[match][runner][attach]") {
@@ -1487,6 +1810,33 @@ void writeJobFolder(const fs::path& jobs, const std::string& name, const std::st
   json j = {{"version", 1}, {"kind", "match"}, {"state", state}, {"pid", 0}, {"commandLine", json::array({"sawblade-match", "--di", di})}, {"request", {{"di", di}}}};
   if (!pass.empty()) j["pass"] = pass;
   std::ofstream(d / "job.json") << j.dump();
+}
+
+}  // namespace
+
+// ---- NAM export glue (docs/specs/phase12_export_in_plugin.md) --------------------------------------------------------------
+namespace {
+
+// A preset on the identity fixtures whose captures carry TONE3000 sources; optional bus comp and cab mode.
+fs::path writeSourcedRig(const fs::path& dir, const std::string& name, bool perPath, bool comp, const std::string& license = "cc-by-nc") {
+  registerLatencyStub();
+  const std::string nam = (kFixtures / "nam" / "linear_identity.nam").string();
+  const std::string ir = (kFixtures / "ir" / "impulse.wav").string();
+  auto cap = [&](const std::string& file, const std::string& id, const std::string& title, const std::string& creator, const std::string& lic) {
+    return json{{"file", file}, {"source", {{"provider", "tone3000"}, {"id", id}, {"title", title}, {"creator", creator}, {"license", lic}}}};
+  };
+  auto block = [&](const std::string& id, json model) { return json{{"id", id}, {"type", "nam"}, {"model", std::move(model)}}; };
+  json j = {{"schema", "sawblade.preset"}, {"version", 1}, {"name", name},
+            {"paths", {{"a", {{"role", "saw"}, {"blocks", json::array({block("a1", cap(nam, "11", "HM-2w", "@ebheron", license))})}}},
+                       {"b", {{"role", "body"}, {"blocks", json::array({block("b1", cap(nam, "13", "5150III", "@amps", "cc-by"))})}}}}},
+            {"align", {{"mode", "off"}}},
+            {"blend", 0.5}};
+  if (perPath) j["cab"] = {{"mode", "perPath"}, {"irA", cap(ir, "21", "V30 A", "@v", "t3k")}, {"irB", cap(ir, "22", "V30 B", "@v", "t3k")}};
+  else j["cab"] = {{"mode", "shared"}, {"ir", cap(ir, "21", "V30", "@v", "t3k")}};
+  if (comp) j["busComp"] = {{"enabled", true}, {"releaseMs", 80.0}};
+  const fs::path p = dir / (name + ".json");
+  std::ofstream(p) << j.dump(2);
+  return p;
 }
 
 }  // namespace
@@ -2243,4 +2593,260 @@ TEST_CASE("two-pass: a quick job older than 24 h is not refined on re-attach; on
       CHECK(runner.snapshot(JobKind::Match).refineNote == "Preview is over 24 h old: re-run MATCH to refine.");
     }
   }
+}
+
+TEST_CASE("export glue: the rig summary lists licences, flags non-commercial and decides the exact mode", "[export][glue]") {
+  using namespace sawblade::plugin;
+  TempDir tmp;
+  Host h(kFs, 256);
+  h.load(writeSourcedRig(tmp.dir, "live", false, true));
+  RigSummary r = summariseRig(h.p.currentPreset());
+  CHECK(r.noCabExact);
+  CHECK(r.compOn);
+  CHECK(r.compTrainable);
+  CHECK(r.compReleaseMs == Catch::Approx(80.0));
+  CHECK(r.nonCommercial);
+  REQUIRE(r.licences.size() == 3);
+  CHECK(r.licences[0].text() == "HM-2w - @ebheron (cc-by-nc)");
+  CHECK(r.licences[1].text() == "5150III - @amps (cc-by)");
+  CHECK(r.licences[2].text() == "V30 - @v (t3k)");
+  REQUIRE(r.chainLines.size() == 2);
+  CHECK(r.chainLines[0].find("SAW") == 0);
+  CHECK(r.chainLines[0].find("HM-2w") != std::string::npos);
+  CHECK(r.chainLines[1].find("BODY") == 0);
+  CHECK(defaultExportMode(r) == "nocab");
+
+  h.load(writeSourcedRig(tmp.dir, "studio", true, false, "cc-by"));
+  r = summariseRig(h.p.currentPreset());
+  CHECK_FALSE(r.noCabExact);
+  CHECK_FALSE(r.compOn);
+  CHECK_FALSE(r.nonCommercial);
+  CHECK(r.licences.size() == 4);  // two paths + two cab IRs
+  CHECK(defaultExportMode(r) == "withcab");
+  ExportSettings s;
+  s.mode = "nocab";  // saved earlier, no longer exact
+  CHECK(effectiveExportMode(s, r) == "withcab");
+  s.mode = "withcab";
+  CHECK(effectiveExportMode(s, r) == "withcab");
+
+  // An irMix cab is one convolver: the no-cab export is exact. A capture without a TONE3000 source says so.
+  Preset p = h.p.currentPreset();
+  p.cab.mode = CabMode::IrMix;
+  CHECK(summariseRig(p).noCabExact);
+  p.cab.enabled = false;
+  p.cab.mode = CabMode::PerPath;
+  CHECK(summariseRig(p).noCabExact);  // no cab at all
+  Preset init = makeInitPreset();
+  CHECK(summariseRig(init).chainLines.size() >= 1);
+}
+
+TEST_CASE("export glue: the request is built from the settings; the same rig is always the same file and key", "[export][glue]") {
+  using namespace sawblade::plugin;
+  TempDir tmp;
+  Host h(kFs, 256);
+  h.p.jobs().setJobsDir(tmp.dir / "jobs");
+  h.p.recorder().setTakesDir(tmp.dir / "takes");
+  h.load(writeSourcedRig(tmp.dir, "live", false, true));
+  ExportSettings s;
+  s.outputFolder = (tmp.dir / "exports").string();
+  ExportPlan plan = planExport(h.p, s);
+  CHECK(plan.mode == "nocab");
+  CHECK(plan.dropComp);  // the comp sits after the cab: DROP is exact and the default
+  CHECK_FALSE(plan.allowInexact);
+  CHECK(plan.diBuiltin);  // no take yet
+  CHECK_FALSE(plan.take);
+  CHECK(plan.exportsRoot == tmp.dir / "exports");
+  CHECK(plan.blocked.empty());
+  CHECK(plan.sourceSha256.size() == 64);
+  CHECK_FALSE(fs::exists(tmp.dir / "jobs" / "inputs"));  // planning writes nothing
+
+  ExportRequest r;
+  std::string err;
+  REQUIRE(buildExportRequest(h.p, s, plan, r, &err));
+  CHECK(r.mode == "nocab");
+  CHECK(r.size == "standard");
+  CHECK(r.diBuiltin);
+  CHECK_FALSE(r.di);
+  CHECK(r.exportsRoot == tmp.dir / "exports");
+  CHECK_FALSE(r.allowInexact);
+  CHECK(r.preset.parent_path() == tmp.dir / "jobs" / "inputs");
+  CHECK(sha256Hex(readText(r.preset)) == plan.sourceSha256);
+  CHECK(readJson(r.preset)["busComp"]["enabled"] == false);  // dropped in what is trained
+  CHECK(readJson(r.preset)["name"] == "live");
+  // Deterministic: the same rig again is the same file with the same bytes.
+  ExportRequest r2;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), r2, &err));
+  CHECK(r2.preset == r.preset);
+  CHECK(readText(r2.preset) == readText(r.preset));
+  // The live rig itself is not changed by dropping the comp in the export.
+  CHECK(h.p.currentPreset().busComp.enabled);
+
+  // KEEP COMP: inexact, the comp stays in the preset and --allow-inexact is passed.
+  s.compChoice = "keep";
+  plan = planExport(h.p, s);
+  CHECK_FALSE(plan.dropComp);
+  CHECK(plan.allowInexact);
+  ExportRequest keep;
+  REQUIRE(buildExportRequest(h.p, s, plan, keep, &err));
+  CHECK(keep.allowInexact);
+  CHECK(keep.preset != r.preset);
+  CHECK(readJson(keep.preset)["busComp"]["enabled"] == true);
+  CHECK(plan.sourceSha256 != sha256Hex(readText(r.preset)));
+  // WITH CAB trains the comp in: nothing to drop, nothing inexact.
+  s.mode = "withcab";
+  plan = planExport(h.p, s);
+  CHECK(plan.mode == "withcab");
+  CHECK_FALSE(plan.dropComp);
+  CHECK_FALSE(plan.allowInexact);
+
+  // DI: the newest take when there is one (and it is chosen), else the built-in signal.
+  const std::vector<float> in(256, 0.0f);
+  std::vector<float> out(256);
+  REQUIRE(h.p.recorder().start(""));
+  h.process(in.data(), out.data(), 256);
+  finishTake(h);
+  s = ExportSettings{};
+  s.outputFolder = (tmp.dir / "exports").string();
+  s.size = "lite";
+  plan = planExport(h.p, s);
+  REQUIRE(plan.take);
+  CHECK_FALSE(plan.diBuiltin);
+  ExportRequest withTake;
+  REQUIRE(buildExportRequest(h.p, s, plan, withTake, &err));
+  CHECK(withTake.size == "lite");
+  REQUIRE(withTake.di);
+  CHECK(*withTake.di == plan.take->wav);
+  CHECK_FALSE(withTake.diBuiltin);
+  s.diSource = "builtin";
+  plan = planExport(h.p, s);
+  CHECK(plan.diBuiltin);
+  CHECK(plan.take);
+}
+
+TEST_CASE("export glue: RESUME is offered for a cancelled run of the same rig and starts with --resume", "[export][glue][cancel]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  Host h(kFs, 256);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  h.p.jobs().setJobsDir(t.jobs);
+  const fs::path live = writeSourcedRig(t.root, "live", false, false, "cc-by");
+  const fs::path studio = writeSourcedRig(t.root, "studio", true, false, "cc-by");
+  h.load(live);
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1"})}});
+  ExportSettings s;
+  s.outputFolder = (t.root / "exports").string();
+  s.size = "lite";
+  CHECK_FALSE(findResumableExport(h.p).available);  // no run at all
+  ExportRequest r;
+  std::string err;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), r, &err));
+  REQUIRE(h.p.jobs().startExport(r, &err));
+  REQUIRE(waitUntil([&] { return h.p.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  CHECK_FALSE(findResumableExport(h.p).available);  // running, not cancelled
+  const fs::path run = h.p.jobs().snapshot(JobKind::Export).outDir;
+  h.p.jobs().cancel(JobKind::Export);
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Export));
+
+  ResumeOffer o = findResumableExport(h.p);
+  REQUIRE(o.available);
+  CHECK(o.dir == run);
+  CHECK(o.epoch == 3);
+  CHECK(o.epochs == 10);
+  CHECK(o.mode == "nocab");
+  CHECK(o.size == "lite");
+
+  // Another rig: no offer. Back to the first one (written again, same bytes): offered again.
+  h.load(studio);
+  CHECK_FALSE(findResumableExport(h.p).available);
+  h.load(live);
+  REQUIRE(findResumableExport(h.p).available);
+  // A damaged or completed checkpoint is not offered.
+  const std::string ck = readText(run / "checkpoint" / "progress.json");
+  json done = json::parse(ck);
+  done["complete"] = true;
+  std::ofstream(run / "checkpoint" / "progress.json") << done.dump();
+  CHECK_FALSE(findResumableExport(h.p).available);
+  std::ofstream(run / "checkpoint" / "progress.json") << ck;
+  REQUIRE(findResumableExport(h.p).available);
+
+  t.cfgExport({{"progressJson", true}});
+  o = findResumableExport(h.p);
+  ExportRequest rr;
+  REQUIRE(buildResumeRequest(h.p, o, rr, &err));
+  CHECK(rr.resumeDir == run);
+  CHECK(rr.mode == "nocab");
+  CHECK(rr.size == "lite");
+  CHECK(rr.preset == r.preset);  // the very same file as the cancelled run
+  REQUIRE(h.p.jobs().startExport(rr, &err));
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Export));
+  const JobSnapshot s2 = h.p.jobs().snapshot(JobKind::Export);
+  CHECK(s2.state == JobState::Succeeded);
+  CHECK(s2.outDir == run);
+  CHECK(after(argvOf(run), "--resume") == run.string());
+  CHECK_FALSE(findResumableExport(h.p).available);  // finished: nothing left to resume
+}
+
+TEST_CASE("export: no allocations or locks on the audio thread while an export runs and the panel's glue is polled", "[export][rt]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  Host h(kFs, 256);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  h.p.jobs().setJobsDir(t.jobs);
+  h.p.recorder().setTakesDir(t.root / "takes");
+  h.load(writeSourcedRig(t.root, "live", false, true));
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1", "g2"})}});
+  ExportSettings s;
+  s.outputFolder = (t.root / "exports").string();
+  ExportRequest r;
+  std::string err;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), r, &err));
+  REQUIRE(h.p.jobs().startExport(r, &err));
+
+  // What the open panel does on its refresh timer, as fast as it can, on another thread.
+  std::atomic<bool> stop{false};
+  std::atomic<long> polls{0};
+  std::thread panel([&] {
+    while (!stop.load()) {
+      const ExportPlan plan = planExport(h.p, s);
+      (void)findResumableExport(h.p);
+      (void)h.p.jobs().snapshot(JobKind::Export);
+      (void)h.p.jobs().checkTools(JobKind::Export);
+      (void)h.p.matchSettings().exportWallSeconds("standard");
+      (void)h.p.exportSettings();
+      (void)plan;
+      ++polls;
+      std::this_thread::sleep_for(2ms);
+    }
+  });
+  const auto x = signal(256, 5);
+  std::size_t at = 0;
+  std::vector<float> in(x.begin(), x.end());
+  std::size_t pos = 0;
+  REQUIRE(waitUntil([&] { return h.p.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  for (int i = 0; i < 400; ++i) {
+    runBlocks(h, in, pos, 1, 256);
+    pos = 0;
+    if (i % 50 == 0) std::this_thread::sleep_for(5ms);
+  }
+  (void)at;
+  const fs::path run = h.p.jobs().snapshot(JobKind::Export).outDir;
+  release(run, "g1");
+  REQUIRE(waitUntil([&] { return h.p.jobs().snapshot(JobKind::Export).progress.epoch == 7; }));
+  for (int i = 0; i < 400; ++i) {
+    runBlocks(h, in, pos, 1, 256);
+    pos = 0;
+  }
+  release(run, "g2");
+  while (h.p.jobs().snapshot(JobKind::Export).active()) {  // the finish (sidecar copy, report parse) happens on the runner's thread
+    runBlocks(h, in, pos, 1, 256);
+    pos = 0;
+    std::this_thread::sleep_for(2ms);
+  }
+  stop = true;
+  panel.join();
+  CHECK(polls.load() > 5);
+  CHECK(h.p.jobs().snapshot(JobKind::Export).state == JobState::Succeeded);
+  CHECK(h.allocs == 0);
+  CHECK(h.locks == 0);
+  CHECK_FALSE(h.nonFinite);
 }

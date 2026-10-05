@@ -13,7 +13,7 @@
 # Sources (src/): Engine (Chain + real-time rate conversion), EngineLoader (background builds +
 # lock-free swap), PresetMapping (parameters <-> preset), PlayAlong (backing track), TakeRecorder (DI takes),
 # JobRunner (match / export child processes, settings), PresetAudition + MatchGlue (audition / A-B / apply, what MATCH
-# starts from), PluginProcessor, PluginEditor + PlayAlongPanel + MatchScreen + SawbladeLookAndFeel (the replaceable look),
+# starts from), PluginProcessor, PluginEditor + PlayAlongPanel + MatchScreen + ExportPanel (NAM export, phase 12; ExportGlue + ExportSettings behind it) + SawbladeLookAndFeel (the replaceable look),
 # PluginEntry (createPluginFilter).
 
 # Sources shared by the plugin and the tests. JUCE's own pattern is followed: JUCE modules are
@@ -43,10 +43,13 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/JobRunner.cpp
   src/PresetAudition.cpp
   src/MatchGlue.cpp
+  src/ExportSettings.cpp
+  src/ExportGlue.cpp
   src/SongDecoder.cpp
   src/PluginProcessor.cpp
   src/PlayAlongPanel.cpp
   src/MatchScreen.cpp
+  src/ExportPanel.cpp
   src/PluginEditor.cpp
   src/skin/SkinAssets.cpp
   src/skin/FilmstripKnob.cpp

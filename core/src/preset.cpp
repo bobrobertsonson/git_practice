@@ -376,6 +376,8 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
   // Plugin UI state (docs/PRESET_SCHEMA.md "playAlong"): not tone, so it is accepted and ignored here and
   // never written back. The matcher and the NAM export read presets through this parser.
   (void)r.optionalObject("playAlong");
+  // Likewise the export panel's last settings (docs/PRESET_SCHEMA.md "export").
+  (void)r.optionalObject("export");
   r.finish();
   return p;
 }

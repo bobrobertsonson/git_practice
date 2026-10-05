@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 import types
 import os
 from pathlib import Path
@@ -341,13 +342,13 @@ def test_cli_refuses_studio_nocab_before_any_work(capsys, tmp_path):
     from sawblade_match.export.cli import main
     rc = main([str(PRESETS / "golden_perpath.json"), "--mode", "nocab", "--out", str(tmp_path / "o")])
     err = capsys.readouterr().err
-    assert rc == 2 and "only the with-cab export is exact for studio blends" in err
+    assert rc == 1 and "only the with-cab export is exact for studio blends" in err
 
 
 def test_cli_refuses_comp_nocab(capsys, tmp_path):
     from sawblade_match.export.cli import main
     rc = main([str(PRESETS / "golden_shared.json"), "--out", str(tmp_path / "o")])
-    assert rc == 2 and "bus compressor" in capsys.readouterr().err
+    assert rc == 1 and "bus compressor" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------- training smoke (slow, opt-in)
@@ -472,22 +473,37 @@ class _FakeTrain:
 
     def __init__(self):
         self.calls = []
+        self.interrupt = False
+        self.late_stop = False
 
     def __call__(self, x, y, v, yv, cfg, outdir, scratch, user_metadata=None, other_metadata=None, log=print,
-                 basename="model", ckpt_dir=None, resume=False, identity=None):
+                 basename="model", ckpt_dir=None, resume=False, identity=None, progress=None):
+        from sawblade_match.export import progress as PG
         from sawblade_match.export import resume as R
+        from sawblade_match.export import stop as STOP
         self.calls.append({"outdir": Path(outdir), "resume": resume, "ckpt_dir": Path(ckpt_dir), "identity": identity,
-                           "cfg": cfg})
+                           "cfg": cfg, "progress": progress})
         Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
         (Path(ckpt_dir) / R.LAST).write_bytes(b"x")
         r = cfg.resolved()
         R.write_progress(ckpt_dir, {**identity, "epoch": 2, "complete": False, "elapsedTrainingS": 1.0,
                                     "config": {"seed": cfg.seed, "batchSize": cfg.batch_size, "epochs": r.epochs,
                                                "lrGamma": r.lr_gamma}})
+        if progress is not None:
+            progress.update("train", PG.stage_fraction("train", 0.5), epoch=1, epochs=r.epochs, best_esr=0.5, eta=30,
+                            resumable=True, force=True)
+        if self.interrupt:                       # SIGINT mid-epoch 3: the partial epoch must not touch the checkpoint
+            STOP.request_stop()
+            R.write_progress(ckpt_dir, {**R.read_progress(ckpt_dir), "interrupted": True})
+            from sawblade_match.export.train import TrainResult
+            return TrainResult(nam_path=None, epochs_done=2, best_epoch=2, best_val_esr=0.5, wall_s=1.0,
+                               stopped_by="interrupt", params=1, receptive_field=1, history=[], config={})
         p = Path(outdir) / f"{basename}.nam"
         p.write_text(json.dumps({"architecture": "WaveNet", "weights": [0.0],
                                  "metadata": {"sawblade": dict(other_metadata["sawblade"])}}))
         from sawblade_match.export.train import TrainResult
+        if self.late_stop:                       # SIGINT the trainer never consumed (e.g. during its final epoch)
+            STOP.request_stop()
         return TrainResult(nam_path=p, epochs_done=2, best_epoch=2, best_val_esr=0.5, wall_s=1.0, stopped_by="max_epochs",
                            params=1, receptive_field=1, history=[], config={})
 
@@ -496,11 +512,22 @@ class _FakeTrain:
 def mocked_export(tmp_path, monkeypatch, shared):
     from sawblade_match.export import run as RUN
     from sawblade_match.export import train as T
-    _need_nam(T)
+    try:
+        T.import_nam()
+    except RuntimeError:                       # no neural-amp-modeler here: stub the metadata classes run_export uses
+        meta = types.ModuleType("nam.models.metadata")
+        meta.UserMetadata = lambda **kw: types.SimpleNamespace(**kw)
+        meta.GearType = lambda v: v
+        meta.ToneType = types.SimpleNamespace(HI_GAIN="hi_gain")
+        for k, m in (("nam", types.ModuleType("nam")), ("nam.models", types.ModuleType("nam.models")),
+                     ("nam.models.metadata", meta)):
+            monkeypatch.setitem(sys.modules, k, m)
+        monkeypatch.setattr(RUN.T, "import_nam", lambda: sys.modules["nam"])
     fake = _FakeTrain()
     sinfo = {"trainSha256": "t" * 64, "validSha256": "v" * 64,
              "train": {"rmsDbfs": -20.0, "peakDbfs": -3.0}, "valid": {}}
     state = {"sinfo": sinfo}
+    real_targets = RUN._cached_targets
     monkeypatch.setattr(RUN.T, "train_nam", fake)
     monkeypatch.setattr(RUN, "probe_report", lambda *a, **k: {"warnings": []})
     monkeypatch.setattr(RUN, "_cached_signal", lambda spec, log: (np.zeros(10, np.float32), np.zeros(10, np.float32),
@@ -521,7 +548,7 @@ def mocked_export(tmp_path, monkeypatch, shared):
         kw.setdefault("size", "feather")
         kw.setdefault("mode", "nocab")
         return RUN.run_export(pj, validate=False, log=lambda *_: None, exports_root=tmp_path / "exports", **kw)
-    return types.SimpleNamespace(go=go, fake=fake, tmp=tmp_path, sinfo=state, preset=p, RUN=RUN)
+    return types.SimpleNamespace(go=go, fake=fake, tmp=tmp_path, sinfo=state, preset=p, RUN=RUN, real_targets=real_targets)
 
 
 def _unfinished(mocked, name, **over):
@@ -600,7 +627,7 @@ def test_mock_cli_refusal_exit_code_and_resume_flag(mx, capsys, monkeypatch):
     d = _unfinished(mx, "run-a", mode="withcab")
     pj = mx.tmp / "preset.json"
     rc = cli.main([str(pj), "--size", "feather", "--resume", str(d), "--no-validate"])
-    assert rc == 2 and "mode differs" in capsys.readouterr().err
+    assert rc == 1 and "mode differs" in capsys.readouterr().err
     assert cli.build_parser().parse_args([str(pj), "--resume", "auto"]).resume == "auto"
 
 
@@ -681,3 +708,298 @@ def _shared_with(base: dict, ir: dict) -> dict:
     q = copy.deepcopy(base)
     q["cab"] = {"mode": "shared", "ir": ir, "enabled": True, "normalize": True}
     return q
+
+
+# ---------------------------------------------------------------- phase 12 CLI contract (mocked trainer)
+
+def _cli(mx, *extra):
+    from sawblade_match.export import cli
+    return cli.main([str(mx.tmp / "preset.json"), "--size", "feather", "--exports-root", str(mx.tmp / "exports"), *extra])
+
+
+def _fake_validation(mx, monkeypatch, esr_value=0.5):
+    """Replace the core-rendering parts of validation by canned numbers; records what the DI step received."""
+    seen = {}
+    RUN = mx.RUN
+
+    def compare(name, x, in_rate, *a, **k):
+        seen[name] = (len(x), in_rate)
+        return {"esr": esr_value, "ltas": {"aWeightedErrorDb": 0.1}}, np.zeros(4, np.float32), np.zeros(4, np.float32)
+    monkeypatch.setattr(RUN.V, "compare_signals", compare)
+    monkeypatch.setattr(RUN.V, "export_check_preset", lambda *a, **k: {})
+    monkeypatch.setattr(RUN, "load_targets", lambda *a, **k: {})
+    monkeypatch.setattr(RUN, "listening_ab", lambda *a, **k: {"files": []})
+    return seen
+
+
+def test_cli_progress_json_end_to_end_and_default_dir_under_exports_root(mx):
+    pj = mx.tmp / "progress.json"
+    assert _cli(mx, "--no-validate", "--progress-json", str(pj)) == 0
+    d = json.loads(pj.read_text())
+    assert d["stage"] == "done" and d["fraction"] == 1.0 and d["etaSeconds"] == 0 and d["resumable"] is False
+    out = Path(d["outDir"])
+    assert out.parent == (mx.tmp / "exports").resolve() and (out / "export_report.json").is_file()
+    assert "-nocab-feather-" in out.name
+    prog = mx.fake.calls[-1]["progress"]
+    assert prog.state["epoch"] == 2 and prog.state["bestEsr"] == 0.5
+    print(json.dumps(d, indent=2))
+
+
+def test_progress_stages_are_written_in_order_and_fraction_never_decreases(mx, monkeypatch):
+    import sawblade_match.export.progress as PGm
+    seen = []
+    orig = PGm.atomic_write_text
+
+    def spy(path, text):
+        seen.append(json.loads(text))
+        orig(path, text)
+    monkeypatch.setattr(PGm, "atomic_write_text", spy)
+    mx.go(progress_json=str(mx.tmp / "p.json"))
+    stages = [s["stage"] for s in seen]
+    assert [x for i, x in enumerate(stages) if i == 0 or stages[i - 1] != x] == ["plan", "signal", "render", "train",
+                                                                                 "done"]
+    fr = [s["fraction"] for s in seen]
+    assert fr == sorted(fr) and fr[-1] == 1.0 and all(s["outDir"] for s in seen[2:])
+
+
+def test_no_progress_file_without_flag(mx):
+    mx.go()
+    assert not (mx.tmp / "p.json").exists() and mx.fake.calls[-1]["progress"].path is None
+
+
+def test_error_writes_error_stage_and_exits_1(mx, capsys):
+    pj = mx.tmp / "progress.json"
+    rc = _cli(mx, "--no-validate", "--resume", str(mx.tmp / "nowhere"), "--progress-json", str(pj))
+    assert rc == 1 and "no checkpoint" in capsys.readouterr().err
+    d = json.loads(pj.read_text())
+    assert d["stage"] == "error" and "no checkpoint" in d["message"]
+
+
+def test_require_accept_without_validation_is_an_error(mx):
+    pj = mx.tmp / "progress.json"
+    assert _cli(mx, "--no-validate", "--require-accept", "--progress-json", str(pj)) == 1
+    assert json.loads(pj.read_text())["stage"] == "error" and not mx.fake.calls
+
+
+def test_exit_2_not_met_with_complete_report_and_exit_0_otherwise(mx, monkeypatch, capsys):
+    _fake_validation(mx, monkeypatch, esr_value=0.5)                      # standard limit 0.02 -> NOT MET
+    assert _cli(mx, "--size", "standard", "--require-accept", "--di", "builtin") == 2
+    assert "NOT MET" in capsys.readouterr().err
+    rep = json.loads(next((mx.tmp / "exports").glob("*/export_report.json")).read_text())
+    assert rep["validation"]["acceptance"]["status"] == "NOT MET" and rep["training"]["stoppedBy"] == "max_epochs"
+    assert rep["validation"]["heldOut"] and rep["validation"]["diExcerpt"] and rep["validation"]["listening"]
+    assert _cli(mx, "--size", "standard", "--di", "builtin") == 0                        # no --require-accept
+    assert _cli(mx, "--size", "feather", "--require-accept", "--di", "builtin") == 0     # not judged
+
+
+def test_exit_0_when_met(mx, monkeypatch):
+    _fake_validation(mx, monkeypatch, esr_value=0.001)
+    assert _cli(mx, "--size", "standard", "--require-accept", "--di", "builtin") == 0
+
+
+def test_require_accept_help_describes_exit_2():
+    from sawblade_match.export import cli
+    h = " ".join(cli.build_parser().format_help().split())
+    assert "exit 2" in h and "NOT MET" in h and "exit 4" not in h
+
+
+def test_sigint_flag_cancels_keeps_checkpoint_and_exits_130(mx, capsys):
+    from sawblade_match.export import resume as R
+    from sawblade_match.export import stop as STOP
+    mx.fake.interrupt = True
+    pj = mx.tmp / "progress.json"
+    out = mx.tmp / "int"
+    rc = _cli(mx, "--no-validate", "--out", str(out), "--progress-json", str(pj))
+    assert rc == 130 and "interrupted" in capsys.readouterr().err
+    ck = R.ckpt_dir(out)
+    assert (ck / R.LAST).read_bytes() == b"x"                              # last complete epoch untouched
+    assert R.read_progress(ck)["interrupted"] is True and R.read_progress(ck)["epoch"] == 2
+    d = json.loads(pj.read_text())
+    assert d["stage"] == "cancelled" and d["resumable"] is True and d["outDir"] == str(out.resolve())
+    assert not (out / "export_report.json").exists()                       # nothing reported on cancel
+    assert not list(out.glob("*.nam"))
+    assert not STOP.stop_requested()                                       # main resets the flag
+
+
+def test_run_export_raises_export_interrupted_and_skips_validation(mx, monkeypatch):
+    from sawblade_match.export import stop as STOP
+    seen = _fake_validation(mx, monkeypatch)
+    mx.fake.interrupt = True
+    try:
+        with pytest.raises(STOP.ExportInterrupted):
+            mx.RUN.run_export(mx.tmp / "preset.json", mode="nocab", size="feather", validate=True, di="builtin",
+                              log=lambda *_: None, out=str(mx.tmp / "o"), progress_json=str(mx.tmp / "p.json"))
+    finally:
+        STOP.clear()
+    assert seen == {} and json.loads((mx.tmp / "p.json").read_text())["stage"] == "cancelled"
+    assert not (mx.tmp / "o" / "export_report.json").exists()
+
+
+def test_stop_flag_before_training_cancels_at_a_stage_boundary(mx):
+    from sawblade_match.export import stop as STOP
+    STOP.request_stop()
+    try:
+        with pytest.raises(STOP.ExportInterrupted):
+            mx.go(progress_json=str(mx.tmp / "p.json"))
+    finally:
+        STOP.clear()
+    d = json.loads((mx.tmp / "p.json").read_text())
+    assert d["stage"] == "cancelled" and d["resumable"] is False and not mx.fake.calls
+
+
+def test_cli_installs_and_restores_sigint_handler(mx, monkeypatch):
+    import signal as sg
+    from sawblade_match.export import stop as STOP
+    before = sg.getsignal(sg.SIGINT)
+    seen = {}
+
+    def spy(*a, **k):
+        h = sg.getsignal(sg.SIGINT)
+        seen["h"] = h
+        h(sg.SIGINT, None)                                                  # first SIGINT: flag, default handler back
+        seen["after"] = sg.getsignal(sg.SIGINT)
+        seen["flag"] = STOP.stop_requested()
+        raise STOP.ExportInterrupted("x")
+    monkeypatch.setattr(mx.RUN, "run_export", spy)
+    assert _cli(mx, "--no-validate") == 130
+    assert seen["h"] is not before and seen["after"] is sg.default_int_handler and seen["flag"] is True
+    assert sg.getsignal(sg.SIGINT) is before
+
+
+def test_exports_root_names_the_dir_and_out_overrides(mx):
+    mx.go()
+    d = next((mx.tmp / "exports").iterdir())
+    assert d.name.startswith("golden-shared-live-compatible-nocab-feather-") and (d / "export_report.json").is_file()
+    out = mx.tmp / "explicit"
+    mx.go(out=str(out))
+    assert (out / "export_report.json").is_file() and len(list((mx.tmp / "exports").iterdir())) == 1
+
+
+def _nc_preset(mx):
+    p = copy.deepcopy(mx.preset)
+    p["paths"]["a"]["blocks"][0]["model"]["source"] = {**SOURCE, "license": "cc-by-nc-sa"}
+    (mx.tmp / "preset.json").write_text(json.dumps(p))
+
+
+def test_nc_suffix_names_nam_ir_and_dir(mx):
+    _nc_preset(mx)
+    rep = mx.go()
+    d = next((mx.tmp / "exports").iterdir())
+    assert d.name.startswith("golden-shared-live-compatible-nc-nocab-feather-")
+    assert rep["training"]["namFile"] == "golden-shared-live-compatible-nc-nocab-feather.nam"
+    assert rep["ir"]["file"] == "golden-shared-live-compatible-nc-nocab.ir.wav" and (d / rep["ir"]["file"]).is_file()
+    assert rep["nonCommercial"] is True
+
+
+def test_nc_suffix_not_doubled_and_applies_to_name(mx):
+    _nc_preset(mx)
+    assert mx.go(name="mytone-nc")["training"]["namFile"] == "mytone-nc-nocab-feather.nam"
+    assert mx.go(name="mytone")["training"]["namFile"] == "mytone-nc-nocab-feather.nam"
+
+
+def test_no_nc_suffix_for_permissive_licences(mx):
+    assert "-nc" not in mx.go()["training"]["namFile"]
+
+
+def test_di_resolver(tmp_path, monkeypatch):
+    from sawblade_match.export import run as RUN
+    msgs = []
+    assert RUN.resolve_di("builtin", msgs.append) is None and msgs == []
+    f = tmp_path / "di.wav"
+    assert RUN.resolve_di(str(f), msgs.append) == f and msgs == []
+    monkeypatch.setattr(RUN, "DI_DEFAULT", tmp_path / "missing.wav")
+    assert RUN.resolve_di(None, msgs.append) is None
+    assert msgs == ["DI excerpt: default test DI not found, using the built-in signal"]
+    f.write_bytes(b"")
+    monkeypatch.setattr(RUN, "DI_DEFAULT", f)
+    assert RUN.resolve_di(None, msgs.append) == f and len(msgs) == 1
+
+
+def test_builtin_di_validates_on_the_held_out_signal(mx, monkeypatch):
+    seen = _fake_validation(mx, monkeypatch)
+    msgs = []
+    rep = mx.RUN.run_export(mx.tmp / "preset.json", mode="nocab", size="feather", validate=True, di="builtin",
+                            log=msgs.append, out=str(mx.tmp / "o"))
+    assert rep["validation"]["diExcerpt"]["excerpt"]["file"] == "builtin"
+    assert seen["di_excerpt"] == (10, 48000)                               # the (mocked) 10-sample held-out signal
+    assert not any("not found" in m for m in msgs)
+
+
+def test_missing_default_di_falls_back_to_builtin_with_log_line(mx, monkeypatch):
+    _fake_validation(mx, monkeypatch)
+    monkeypatch.setattr(mx.RUN, "DI_DEFAULT", mx.tmp / "no_such_di.wav")
+    msgs = []
+    rep = mx.RUN.run_export(mx.tmp / "preset.json", mode="nocab", size="feather", validate=True, log=msgs.append,
+                            out=str(mx.tmp / "o"))
+    assert rep["validation"]["diExcerpt"]["excerpt"]["file"] == "builtin"
+    assert "DI excerpt: default test DI not found, using the built-in signal" in msgs
+
+
+def test_late_sigint_after_training_cancels_before_validation_and_report(mx, monkeypatch, capsys):
+    seen = _fake_validation(mx, monkeypatch)
+    mx.fake.late_stop = True
+    pj = mx.tmp / "progress.json"
+    out = mx.tmp / "late"
+    rc = _cli(mx, "--out", str(out), "--di", "builtin", "--progress-json", str(pj))
+    assert rc == 130 and seen == {}
+    assert not (out / "export_report.json").exists()
+    d = json.loads(pj.read_text())
+    assert d["stage"] == "cancelled" and d["resumable"] is True
+
+
+def test_validate_stage_resets_eta(tmp_path):
+    from sawblade_match.export import progress as PG
+    p = PG.Progress(tmp_path / "p.json")
+    p.update("train", 0.3, eta=99, force=True)
+    p.update("validate")
+    assert json.loads((tmp_path / "p.json").read_text())["etaSeconds"] == -1
+
+
+def test_check_stop_in_the_render_stage_between_train_and_valid_renders(mx, monkeypatch):
+    from sawblade_match.export import progress as PG
+    from sawblade_match.export import stop as STOP
+    RUN = mx.RUN
+    monkeypatch.setattr(RUN, "CACHE_ROOT", mx.tmp / "cache")
+    calls = []
+
+    def render(*a, **k):
+        calls.append(1)
+        STOP.request_stop()                                               # SIGINT during the first render
+        return np.zeros(10, np.float32), {}
+    monkeypatch.setattr(RUN, "render48", render)
+    prog = PG.Progress(None)
+    try:
+        with pytest.raises(STOP.ExportInterrupted):
+            mx.real_targets(mx.preset, ".", {"trainSha256": "t", "validSha256": "v"}, np.zeros(10), np.zeros(10),
+                                None, lambda *_: None, check=lambda: RUN._check_stop(prog))
+    finally:
+        STOP.clear()
+    assert len(calls) == 1                                                # the valid render never started
+
+
+@pytest.mark.parametrize("stop_in_call", [1, 2])
+def test_check_stop_sites_inside_validate(mx, monkeypatch, stop_in_call):
+    from sawblade_match.export import stop as STOP
+    RUN = mx.RUN
+    n = {"compare": 0, "listen": 0}
+
+    def compare(name, x, in_rate, *a, **k):
+        n["compare"] += 1
+        if n["compare"] == stop_in_call:
+            STOP.request_stop()
+        return {"esr": 0.5, "ltas": {"aWeightedErrorDb": 0.1}}, np.zeros(4, np.float32), np.zeros(4, np.float32)
+
+    def listen(*a, **k):
+        n["listen"] += 1
+        return {}
+    monkeypatch.setattr(RUN.V, "compare_signals", compare)
+    monkeypatch.setattr(RUN.V, "export_check_preset", lambda *a, **k: {})
+    monkeypatch.setattr(RUN, "load_targets", lambda *a, **k: {})
+    monkeypatch.setattr(RUN, "listening_ab", listen)
+    try:
+        with pytest.raises(STOP.ExportInterrupted):
+            RUN._validate(mx.preset, ".", RUN.P.make_plan(mx.preset, "nocab"), mx.tmp / "m.nam", None, mx.tmp / "o",
+                          mx.tmp / "s", "feather", None, np.zeros(10, np.float32), None, lambda *_: None)
+    finally:
+        STOP.clear()
+    assert n["compare"] == stop_in_call and n["listen"] == 0     # after held-out: DI step skipped; after DI: no listening
