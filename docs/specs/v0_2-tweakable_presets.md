@@ -164,3 +164,22 @@ behaviour). No pool / nothing cached → path B gets the TS + the first high-gai
   as a compile-time constant), then 10.1 level match. The `suggest-body` call runs async; if it answers with a
   different amp and path B has not been edited since, the amp capture is replaced and coalesced into the same undo
   transaction (one Undo restores the pre-BLEND preset). Missing captures go through resolve as today.
+
+### Task D — UI wiring (dsp-engineer)
+- Six `knob_amp` filmstrip knobs per amp head on the rig page, labelled GAIN BASS MID TREBLE PRESENCE LEVEL, bound
+  to `amp<A|B>_*` with the existing attachment pattern; remove the Task A editor-test exemption so every param has
+  exactly one bound control again. Layout inside the existing head art; no new art (if the six knobs do not fit at
+  the current scale, shrink the filmstrip draw size, never redraw it — note it in the report).
+- Path without an amp block: knobs disabled (greyed with the existing disabled style) and the one-line reason
+  `NO AMP IN THIS PATH`.
+- Capture blocks: wherever a capture block is drawn (rig slots, pedalboard), it shows the tag `CAPTURE · FIXED TONE`
+  and draws no knobs; a modeled pedal keeps its knobs.
+- GAIN read-out from `ladderInfo`: ladder → `GAIN 7.0 · capture: <rung name>`; rung pending →
+  `GAIN 7.0 · drive only (fetching <target name>)`; no ladder → `GAIN 7.0`.
+- Body head with path B empty and BLEND off: `BODY PATH OFF — turn up BLEND to add one` (knobs disabled).
+- Undo: Cmd/Ctrl+Z on the editor calls `RigController::undo()` when `canUndo()` (the BLEND-fill stack from Task C).
+- Tests: mouse-driven knob drags move the params (like `test_live_controls.cpp`); disabled state + reason strings;
+  the GAIN read-out in all three states (fake `ladderInfo`); body-off string; capture tag present / no knobs on
+  capture blocks; Cmd/Ctrl+Z undo.
+- Screenshots: rig page at defaults and with knobs moved (+ a ladder and the body-off state), via the existing
+  `SAWBLADE_SCREENSHOT_DIR` snapshot test; the lead attaches the PNGs to the report (not committed).
