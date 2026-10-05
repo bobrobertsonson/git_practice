@@ -20,6 +20,8 @@
 
 #include "BuildInfo.h"
 #include "SettingsEnv.h"
+#include "mic/MicPage.h"
+#include "presets/PresetBrowser.h"
 #include "MatchScreen.h"
 #include "PlayAlongPanel.h"
 #include "about/AboutBox.h"
@@ -2190,14 +2192,14 @@ TEST_CASE("settings: the login view shows the device code and URL; CANCEL ends t
     if (l->getText() == "ABCD-1234") CHECK(l->getFont().getHeight() >= 36.0f);
   for (const char* b : {"COPY CODE", "COPY URL", "OPEN", "CANCEL"}) {
     INFO(b);
-    auto* btn = buttonTitled(*rig.ed, b);
+    auto* btn = buttonTitled(panel, b);  // other panels (play-along separation) have their own CANCEL
     REQUIRE(btn != nullptr);
     CHECK(btn->isVisible());
   }
   const juce::Image shot = rig.ed->createComponentSnapshot(rig.ed->getLocalBounds(), true, 1.0f);
   savePng(shot, "sawblade_login_1x.png");
 
-  click(*buttonTitled(*rig.ed, "CANCEL"));
+  click(*buttonTitled(panel, "CANCEL"));
   CHECK(pumpUntil([&] { return !panel.loginRunning(); }, 5000));
   CHECK_FALSE(anyLabelContains(*rig.ed, "ABCD-1234"));
 }
@@ -2251,8 +2253,10 @@ TEST_CASE("settings: opening the panel raises it above the RIG overlay", "[edito
   auto* parent = panel.getParentComponent();
   REQUIRE(parent != nullptr);
   CHECK(parent->getIndexOfChildComponent(&panel) > parent->getIndexOfChildComponent(&rig.ed->rigEditor()));
-  CHECK(parent->getIndexOfChildComponent(&panel) > parent->getIndexOfChildComponent(&rig.ed->browser()));
-  CHECK(parent->getIndexOfChildComponent(&panel) > parent->getIndexOfChildComponent(&rig.ed->micPage()));
+  const juce::Component* browserC = &rig.ed->browser();
+  const juce::Component* micC = &rig.ed->micPage();
+  CHECK(parent->getIndexOfChildComponent(&panel) > parent->getIndexOfChildComponent(browserC));
+  CHECK(parent->getIndexOfChildComponent(&panel) > parent->getIndexOfChildComponent(micC));
 }
 
 TEST_CASE("settings: Test buttons run the tools through ToolRunner", "[editor][settings]") {
