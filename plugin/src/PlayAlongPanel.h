@@ -26,6 +26,9 @@ class PlayAlongPanel : public juce::Component {
   void paint(juce::Graphics&) override;
   void resized() override;
   void refresh();
+  // The top bar's MATCH button: the panel (with its record + match band) is already open; in plugin mode this shows the
+  // same "open the Standalone app" note as the panel's MATCH button, in Standalone it only brings the band up to date.
+  void showMatchArea();
   // The MATCH / EXPORT NAM buttons open the match screen (the editor wires these). In plugin mode (not
   // Standalone) they only show a note: open the Standalone app.
   std::function<void()> onMatch, onExport;

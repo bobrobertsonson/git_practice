@@ -64,7 +64,11 @@ class SawbladeEditor::Content : public juce::Component {
     configure(prev_, juce::String::fromUTF8("\xe2\x80\xb9"), "Previous preset", true);
     configure(next_, juce::String::fromUTF8("\xe2\x80\xba"), "Next preset", true);
     configure(ab_, "A / B", "A/B compare", true);
-    configure(match_, "MATCH", "Match to a reference", true);
+    configure(match_, "MATCH", "Open the record + match area of the play-along panel: record a take, then match it to the loaded song (Standalone app)", false);
+    match_.onClick = [this] {
+      setPlayAlongOpen(true);
+      panel_->showMatchArea();
+    };
     configure(export_, "EXPORT NAM", "Export as NAM model", true);
     configure(playAlong_, "PLAY ALONG", "Show / hide the play-along panel: a backing track from separated stems to play over", false);
     playAlong_.setClickingTogglesState(true);

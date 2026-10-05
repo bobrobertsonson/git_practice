@@ -346,6 +346,49 @@ audition; **A / B** switches between that preset (A) and the candidate (B); **AP
 current preset (what a normal preset load leaves; the audition ends); **REVERT** goes back to A. Auditioning is a real load:
 the plugin state holds whichever side is playing.
 
+**Two-pass MATCH: quick, then thorough (phase 6a.1).** Spec: `docs/specs/phase6a_1_quick_then_thorough.md`.
+
+- *Passes.* The runner reads `<exe> --help` once (the same cached probe as `--progress-json`). If it lists both `--quick`
+  and `--thorough`, MATCH starts `sawblade-match ... --quick` first; its candidates fill the list with a **PREVIEW** badge.
+  When the quick job succeeds and **auto-refine** is on, the runner starts `... --thorough` by itself, on a thread of
+  its own, with the same `--di`, `--ref`, `--ref-channel`, `--offset-ms` and `--pool` and its own job folder. While it runs, a
+  thin bar and **REFINING... n%** sit on the results header. If the tool does not list both flags (a tool without them, or
+  with only one), MATCH is the single run of phase 6a: no PREVIEW badge, no refinement.
+- *Match session.* A MATCH is a quick job folder plus an optional thorough one. Each `job.json` records
+  `"pass": "quick" | "thorough"` and `"pair": "<the other folder's name>"` (a single run has no `pass`), and a `request`
+  object (DI, reference, offset, labels) so the refinement can be started from the quick job alone. A re-attach (panel or
+  app closed and reopened) rebuilds the pair from these. A quick job that finished with no thorough job, and auto-refine on,
+  starts the refinement once (its folder then exists, whatever became of it); a thorough job that is running is re-attached
+  and is not restarted; a quick job that is still running starts the refinement itself when it ends.
+- *Auto-refine.* A toggle in the match screen's TOOLS area (default on), kept in the settings file
+  (`juce::PropertiesFile`, key `autoRefine`), never in the plugin state. With it off the thorough job is not started and
+  the quick results simply stay PREVIEW.
+- *Never interrupts audio.* When the thorough result arrives **nothing is loaded**. The list gains a **REFINED** section at
+  the top (header + its candidates) with a "REFINED READY" badge, the quick candidates move below it under a PREVIEW header,
+  the selection stays on the candidate you had, and whatever you auditioned or applied keeps playing (no `loadPreset`; the
+  tests assert that the engine build counter does not move). A refined candidate reaches the rig only when you AUDITION /
+  APPLY one of its rows, or press **APPLY REFINED BEST** (it goes through the normal audition path: off-thread build, cross-fade).
+- *Auto-promote.* If the **applied** quick candidate is the same chain as the thorough best, only the badge changes
+  (PREVIEW to REFINED, "same chain as the refined best") and APPLY REFINED BEST is greyed out; nothing is loaded. "Same chain"
+  is the pure function `sameChain(json, json)` in `MatchGlue.h`: the same structure (paths, the blocks in order with their
+  types and slots, EQ bands, cab mode, flags), the same captures per slot (by TONE3000 `source` id when both have one, else by
+  file name, ignoring the folder), every number whose key ends in `Db` (levels, input / output / EQ gains, thresholds) within
+  **0.5 dB**, `blend` within 0.01, and every other number (frequencies, q, times, align samples) within a relative 1e-3. Names,
+  notes, block ids and `playAlong` are ignored. When in doubt it says "different", which only costs a badge.
+- *Cancel.* During the quick pass CANCEL cancels everything and no refinement starts. During the refinement the button reads
+  CANCEL REFINE and cancels only the thorough job: the quick results stay. Starting a new MATCH (which is allowed while only the
+  refinement runs), or choosing another take with USE FOR MATCH, cancels a running refinement (the old thorough process group is
+  terminated on its own monitor thread and its folder is marked `cancelled`).
+- *Job folder housekeeping.* On launch the processor asks the runner to prune, **on the runner's own thread** (never the
+  message thread): the match job folders (`<jobs>/*-match`, quick and thorough) are grouped by take (the DI path in
+  `job.json`), the groups ordered by their newest folder, and everything outside the **5 most recent takes' groups** is
+  deleted. A group with a running job (its process alive and the recorded tool, or one of this runner's own jobs, or a job that
+  has not spawned yet) is never pruned. Export jobs, `<jobs>/inputs/`, folders without a `job.json` and takes are never touched.
+  Folders of phase 6a (no `request`) are grouped by the `--di` in their command line.
+- *Top bar.* The top-bar **MATCH** button opens the play-along panel (its record + match band). In plugin mode it also shows
+  the same "MATCH runs in the Standalone app: open the Standalone app." note as the panel's MATCH; in Standalone the panel's own
+  MATCH button then opens the screen. EXPORT NAM and A / B in the top bar stay disabled placeholders until phase 12.
+
 **EXPORT NAM.** The same screen in export mode: NO CAB / WITH CAB (the hint says which is exact for the current blend: a
 live blend, both paths on one cab, is exact without the cab; a studio blend only with it), FEATHER / LITE / STANDARD, device
 `auto` (the tool's default; `--device auto` is passed), the licence note of the export, progress, and REVEAL
@@ -364,10 +407,13 @@ a running and a finished job, a re-attached cancel, a child that floods the pipe
 audition / A-B / apply; the plugin-mode gating) and the editor tests in `plugin/tests/test_editor.cpp` (the band, the
 Standalone-only buttons, the missing-tool message, a job that survives the editor, and the screenshots
 `build/screenshots/sawblade_record_armed_1x.png`, `sawblade_match_progress_1x.png`, `sawblade_match_results_1x.png`,
-`sawblade_export_progress_1x.png`). All test data is synthesised into temp dirs; `SAWBLADE_DATA_DIR` keeps the default
+`sawblade_export_progress_1x.png`). The 6a.1 tests add `[twopass]`, `[prune]` and `[topbar]` cases (the fake child understands
+`--quick` / `--thorough`, can hide them from `--help`, writes different results per pass and can make the thorough best
+differ by a level offset) and the screenshots `sawblade_match_preview_refining_1x.png` and `sawblade_match_refined_1x.png`.
+All test data is synthesised into temp dirs; `SAWBLADE_DATA_DIR` keeps the default
 locations out of the home folder.
 
-**Known limits.** MATCH / EXPORT are Standalone-only. The take list is rescanned when the recorder changes it and every 10 s while the panel is open. Takes and job folders are never deleted by the plugin.
+**Known limits.** MATCH / EXPORT are Standalone-only. The take list is rescanned when the recorder changes it and every 10 s while the panel is open. Takes are never deleted by the plugin; match job folders are pruned as described above (5 most recent takes).
 
 ### Editor
 
@@ -375,15 +421,15 @@ A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, sp
 `docs/specs/phase2_5_skin.md`); the final UI is the user's design. A fixed 1280 x 800 design laid out in one
 content component that the editor scales with an `AffineTransform` (resizable, fixed 1.6 aspect, 640x400 to
 2560x1600). It reads `status()` and the APVTS only. Layout: top bar (preset button opening the preset file chooser,
-latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM; MATCH and EXPORT NAM are opened from the
-play-along panel, see Record + Match), rig area (amp heads, cab, pedalboard
+latency chip, LIVE / STUDIO chip, MATCH (opens the play-along panel's record + match area), placeholders for A/B and EXPORT NAM; the
+MATCH and EXPORT NAM screens are opened from the play-along panel, see Record + Match), rig area (amp heads, cab, pedalboard
 with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
 knobs; all 12 parameters are bound to exactly one knob each).
 
 Pictures come from `plugin/assets/` (our own renders, embedded with `juce_add_binary_data`). Controls live in
 `plugin/src/skin/`: `SkinAssets` (decodes the PNGs and JSON sidecars once), `FilmstripKnob`, `FootswitchButton`,
 `LedIndicator`, `RigView`. Colours, fonts and plain-widget drawing are in `SawbladeLookAndFeel`. Placeholders
-(disabled, titled, with a tooltip saying so): A/B, MATCH, EXPORT NAM, previous / next preset, BROWSE CAPTURES,
+(disabled, titled, with a tooltip saying so): A/B, EXPORT NAM, previous / next preset, BROWSE CAPTURES,
 LEARN GATE, "+ PEDAL", CPU readout, the footswitch (visual bypass only).
 
 ## Tests

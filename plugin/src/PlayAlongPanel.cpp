@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "MatchGlue.h"
 #include "PlayAlong.h"
 #include "SawbladeLookAndFeel.h"
 
@@ -275,7 +276,7 @@ struct PlayAlongPanel::Impl {
     useForMatch.onClick = [this] {
       const std::string n = selectedTakeName();
       if (n.empty()) return;
-      proc.matchSettings().setSelectedTake(n);
+      chooseTakeForMatch(proc, n);  // another take than before also cancels a running refinement
       refreshBand();
     };
     renameTake.onClick = [this] {
@@ -312,13 +313,7 @@ struct PlayAlongPanel::Impl {
                          }),
                          true);
     };
-    matchBtn.onClick = [this] {
-      if (!proc.matchEnabled()) {
-        showNotice("MATCH runs in the Standalone app: open the Standalone app.");
-        return;
-      }
-      if (owner.onMatch) owner.onMatch();
-    };
+    matchBtn.onClick = [this] { matchClicked(); };
     exportBtn.onClick = [this] {
       if (!proc.matchEnabled()) {
         showNotice("EXPORT NAM runs in the Standalone app: open the Standalone app.");
@@ -326,6 +321,14 @@ struct PlayAlongPanel::Impl {
       }
       if (owner.onExport) owner.onExport();
     };
+  }
+
+  void matchClicked() {
+    if (!proc.matchEnabled()) {
+      showNotice("MATCH runs in the Standalone app: open the Standalone app.");
+      return;
+    }
+    if (owner.onMatch) owner.onMatch();
   }
 
   void refreshBand(bool force = false) {
@@ -600,6 +603,11 @@ void PlayAlongPanel::paint(juce::Graphics& g) {
 void PlayAlongPanel::resized() { impl_->layout(); }
 
 void PlayAlongPanel::refresh() { impl_->refresh(); }
+
+void PlayAlongPanel::showMatchArea() {
+  if (!impl_->proc.matchEnabled()) impl_->showNotice("MATCH runs in the Standalone app: open the Standalone app.");
+  impl_->refresh();
+}
 
 void PlayAlongPanel::chooseFolder() {
   impl_->chooser = std::make_unique<juce::FileChooser>("Choose a folder of separated stems", juce::File(), "");

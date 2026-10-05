@@ -75,9 +75,21 @@ struct MatchScreen::Impl : juce::ListBoxModel {
   juce::Label capProgress, stage, message, eta, capResults, auditionStatus, resultLabel, licence;
   Bar bar;
   juce::ListBox results{"Match results", this};
-  juce::TextButton audition, ab, apply, revert;
+  juce::TextButton audition, ab, apply, revert, applyRefined;
+  // two-pass MATCH: PREVIEW / REFINED badge, REFINING... with a thin bar, and the auto-refine setting
+  juce::Label previewBadge, refiningLabel;
+  Bar refineBar;
+  juce::ToggleButton autoRefine;
 
-  std::vector<MatchCandidate> rows;
+  // A row of the results list: a candidate, or a section header (REFINED / PREVIEW). `tag` is its badge.
+  struct Row {
+    MatchCandidate c;
+    bool header = false;
+    std::string text, tag;
+    bool sameAs(const Row& o) const { return header == o.header && text == o.text && tag == o.tag && c.preset == o.c.preset && c.errorDb == o.c.errorDb && c.rank == o.c.rank; }
+  };
+  std::vector<Row> rows;
+  int lastGoodRow = -1;
   std::unique_ptr<juce::FileChooser> chooser;
   std::string appliedName;
   bool exportModeChosen = false;
@@ -132,7 +144,21 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     button(exeLocate, "LOCATE...", "Choose the sawblade-match (or sawblade-export) executable");
     button(poolLocate, "LOCATE...", "Choose the capture pool manifest (pool_manifest.json)");
     button(startBtn, "START MATCH", "Run the matcher on the selected DI take against the loaded song");
-    button(cancelBtn, "CANCEL", "Stop the running job");
+    button(cancelBtn, "CANCEL", "Stop the running job (during the background refinement: only the refinement)");
+    autoRefine.setButtonText("AUTO-REFINE");
+    autoRefine.setTitle("Auto-refine");
+    autoRefine.setTooltip("After the quick PREVIEW pass, run the thorough pass in the background on the same take and offer its result. Nothing is ever loaded by itself.");
+    autoRefine.setColour(juce::ToggleButton::textColourId, L::text());
+    autoRefine.setColour(juce::ToggleButton::tickColourId, L::saw());
+    owner.addAndMakeVisible(autoRefine);
+    for (juce::Label* l : {&previewBadge, &refiningLabel}) {
+      l->setFont(L::labelFont(11.0f));
+      l->setInterceptsMouseClicks(false, false);
+      owner.addAndMakeVisible(*l);
+    }
+    refiningLabel.setJustificationType(juce::Justification::centredRight);
+    refiningLabel.setColour(juce::Label::textColourId, L::saw());
+    owner.addAndMakeVisible(refineBar);
     startBtn.setColour(juce::TextButton::buttonColourId, L::saw());
     startBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff140a04));
 
@@ -181,6 +207,9 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     button(ab, "A / B", "Switch between the preset you had (A) and the auditioned result (B)");
     button(apply, "APPLY", "Make the selected result the current preset");
     button(revert, "REVERT", "Go back to the preset you had before the audition");
+    button(applyRefined, "APPLY REFINED BEST", "Load the refined (thorough) best result and make it the current preset. This is the only way a refined result reaches the rig, other than choosing one of its candidates.");
+    applyRefined.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1d3a22));
+    applyRefined.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff9be5a4));
     apply.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
     apply.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb27a));
 
@@ -192,7 +221,18 @@ struct MatchScreen::Impl : juce::ListBoxModel {
   int getNumRows() override { return static_cast<int>(rows.size()); }
   void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selected) override {
     if (row < 0 || row >= static_cast<int>(rows.size())) return;
-    const MatchCandidate& c = rows[static_cast<std::size_t>(row)];
+    const Row& r = rows[static_cast<std::size_t>(row)];
+    if (r.header) {
+      g.setColour(juce::Colour(0xff1e2a1f));
+      g.fillRect(0, 0, w, h);
+      g.setColour(L::rule());
+      g.fillRect(0, h - 1, w, 1);
+      g.setColour(r.tag == "REFINED" ? L::live() : L::saw());
+      g.setFont(L::titleFont(13.0f));
+      g.drawText(juce::String(r.text), 12, 0, w - 24, h, juce::Justification::centredLeft);
+      return;
+    }
+    const MatchCandidate& c = r.c;
     if (selected) {
       g.setColour(juce::Colour(0xff3a1c0b));
       g.fillRect(0, 0, w, h);
@@ -204,7 +244,12 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     g.drawText(juce::String("#") + juce::String(c.rank), 12, 0, 40, h, juce::Justification::centredLeft);
     g.setColour(L::text());
     g.setFont(L::monoFont(15.0f));
-    g.drawText(juce::String(c.errorDb, 2) + " dB", 56, 0, 100, h, juce::Justification::centredLeft);
+    g.drawText(juce::String(c.errorDb, 2) + " dB", 56, r.tag.empty() ? 0 : 3, 100, r.tag.empty() ? h : h - 14, juce::Justification::centredLeft);
+    if (!r.tag.empty()) {
+      g.setColour(r.tag == "REFINED" ? L::live() : L::saw());
+      g.setFont(L::labelFont(10.0f));
+      g.drawText(juce::String(r.tag), 56, h - 17, 100, 14, juce::Justification::centredLeft);
+    }
     const juce::Colour tc = c.topology == "blend" ? L::saw() : c.topology == "single2" ? L::studio() : L::body();
     g.setColour(tc);
     g.setFont(L::labelFont(11.0f));
@@ -221,12 +266,21 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     g.setFont(L::bodyFont(13.0f));
     g.drawFittedText(c.captures, 330, 4, w - 342, h - 8, juce::Justification::centredLeft, 2, 1.0f);
   }
-  void selectedRowsChanged(int) override { owner.repaint(); }
+  void selectedRowsChanged(int row) override {
+    // A section header is not a candidate: the selection goes back to the last candidate that was selected.
+    if (row >= 0 && row < static_cast<int>(rows.size()) && rows[static_cast<std::size_t>(row)].header) {
+      if (lastGoodRow >= 0 && lastGoodRow < static_cast<int>(rows.size()) && !rows[static_cast<std::size_t>(lastGoodRow)].header) results.selectRow(lastGoodRow);
+      else results.deselectAllRows();
+    } else if (row >= 0) {
+      lastGoodRow = row;
+    }
+    owner.repaint();
+  }
 
   // ---- actions --------------------------------------------------------------------------------------------
   const MatchCandidate* selectedRow() const {
     const int r = results.getSelectedRow();
-    return r >= 0 && r < static_cast<int>(rows.size()) ? &rows[static_cast<std::size_t>(r)] : nullptr;
+    return r >= 0 && r < static_cast<int>(rows.size()) && !rows[static_cast<std::size_t>(r)].header ? &rows[static_cast<std::size_t>(r)].c : nullptr;
   }
 
   void locate(bool pool, bool exportExe) {
@@ -256,6 +310,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     if (!proc.jobs().startMatch(plan.request, &err)) toolMsg.setText(err, juce::dontSendNotification);
     results.deselectAllRows();
     rows.clear();
+    lastGoodRow = -1;
     results.updateContent();
     appliedName.clear();
     refresh();
@@ -322,6 +377,17 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       proc.audition().revert();
       refresh();
     };
+    applyRefined.onClick = [this] {
+      std::string err;
+      if (applyRefinedBest(proc, &err)) {
+        const auto r = proc.jobs().refineSnapshot();
+        appliedName = "#1 (refined best) " + r.results.front().captures;
+      } else {
+        auditionStatus.setText("Could not apply the refined best: " + err, juce::dontSendNotification);
+      }
+      refresh();
+    };
+    autoRefine.onClick = [this] { proc.matchSettings().setAutoRefine(autoRefine.getToggleState()); };
   }
 
   void applyMode() {
@@ -329,7 +395,8 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     title.setText(m ? "MATCH" : "EXPORT NAM", juce::dontSendNotification);
     subtitle.setText(m ? "FIND THE BLEND THAT SOUNDS LIKE YOUR REFERENCE" : "TRAIN ONE MODEL OF THIS BLEND FOR A LOADER PEDAL", juce::dontSendNotification);
     for (juce::Component* c : std::initializer_list<juce::Component*>{&capRef, &refName, &refStem, &capDi, &diName, &diOffset, &poolLabel, &poolLocate, &startBtn,
-                                                                      &cancelBtn, &capResults, &results, &audition, &ab, &apply, &revert, &auditionStatus})
+                                                                      &cancelBtn, &capResults, &results, &audition, &ab, &apply, &revert, &auditionStatus, &autoRefine,
+                                                                      &previewBadge, &refiningLabel, &refineBar, &applyRefined})
       c->setVisible(m);
     for (juce::Component* c : std::initializer_list<juce::Component*>{&capSource, &sourceLabel, &capMode, &modeHint, &capSize, &capDevice, &deviceLabel, &exportMsg, &noCab,
                                                                       &withCab, &feather, &lite, &standard, &exportBtn, &exportCancel, &revealBtn, &resultLabel, &licence})
@@ -347,6 +414,11 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     const bool m = mode == Mode::Match;
     const JobKind kind = m ? JobKind::Match : JobKind::Export;
     const JobSnapshot snap = proc.jobs().snapshot(kind);
+    const JobSnapshot refine = m ? proc.jobs().refineSnapshot() : JobSnapshot{};
+    const bool quickPass = m && snap.pass == "quick";
+    const bool refineActive = refine.active() || (quickPass && snap.refinePending);
+    const bool refineReady = refine.state == JobState::Succeeded && !refine.results.empty();
+    const bool promoted = m && appliedQuickIsRefinedBest(proc, snap, refine);
     const ToolCheck tools = proc.jobs().checkTools(kind);
     const auto st = proc.status();
 
@@ -379,7 +451,11 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       diOffset.setText(diText, juce::dontSendNotification);
       if (toolText.isEmpty() && !plan.ok) toolText = plan.message;
       startBtn.setEnabled(plan.ok && tools.ok() && !snap.active());
-      cancelBtn.setEnabled(snap.active());
+      cancelBtn.setEnabled(snap.active() || refineActive);
+      const char* cancelText = !snap.active() && refineActive ? "CANCEL REFINE" : "CANCEL";
+      cancelBtn.setButtonText(cancelText);
+      cancelBtn.setTitle(cancelText);
+      autoRefine.setToggleState(proc.matchSettings().autoRefine(), juce::dontSendNotification);
       poolLocate.setColour(juce::TextButton::buttonColourId, tools.missing == ToolCheck::Missing::Pool ? juce::Colour(0xff5a2a1c) : juce::Colour(0xff1b1916));
       exeLocate.setColour(juce::TextButton::buttonColourId, tools.missing == ToolCheck::Missing::Executable ? juce::Colour(0xff5a2a1c) : juce::Colour(0xff1b1916));
     } else {
@@ -411,7 +487,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       case JobState::None: stageText = m ? "Ready to match" : "Ready to export"; sc = L::dimText(); break;
       case JobState::Starting: stageText = "Starting..."; sc = L::warning(); break;
       case JobState::Running: stageText = snap.progress.stage.empty() ? "Running" : juce::String(snap.progress.stage); break;
-      case JobState::Succeeded: stageText = "Done"; sc = L::live(); break;
+      case JobState::Succeeded: stageText = quickPass ? "Done (quick pass)" : "Done"; sc = L::live(); break;
       case JobState::Failed: stageText = "Failed"; sc = L::error(); break;
       case JobState::Cancelled: stageText = "Cancelled"; sc = L::warning(); break;
     }
@@ -419,7 +495,13 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     stage.setColour(juce::Label::textColourId, sc);
     juce::String msg = snap.progress.message;
     if (snap.state == JobState::Failed || snap.state == JobState::Cancelled) msg = snap.message;
-    else if (snap.state == JobState::Succeeded) msg = m ? "Finished. Pick a result and AUDITION it in the rig; APPLY keeps it." : "Export finished.";
+    else if (snap.state == JobState::Succeeded && quickPass) {
+      if (refineActive) msg = "Quick pass finished: these are PREVIEW results. The thorough pass is refining them in the background; its result is offered, never loaded by itself.";
+      else if (refineReady) msg = "Quick pass finished. The thorough pass is ready (REFINED section).";
+      else if (!snap.refineNote.empty()) msg = snap.refineNote;
+      else if (!proc.matchSettings().autoRefine()) msg = "Quick pass finished: these are PREVIEW results. Auto-refine is off, so there is no thorough pass.";
+      else msg = "Quick pass finished: these are PREVIEW results.";
+    } else if (snap.state == JobState::Succeeded) msg = m ? "Finished. Pick a result and AUDITION it in the rig; APPLY keeps it." : "Export finished.";
     message.setText(juce::String(msg.toStdString()), juce::dontSendNotification);
     message.setColour(juce::Label::textColourId, snap.state == JobState::Failed ? L::error() : L::dimText());
     const bool known = snap.progress.fraction >= 0.0;
@@ -434,15 +516,81 @@ struct MatchScreen::Impl : juce::ListBoxModel {
 
     // results + audition
     if (m) {
-      const std::vector<MatchCandidate> now = snap.state == JobState::Succeeded ? snap.results : std::vector<MatchCandidate>{};
+      // The list: a REFINED section first when the thorough pass is ready, then the quick (PREVIEW) or single-run results.
+      const auto applied = proc.audition().appliedCandidateFile();
+      std::vector<Row> now;
+      if (refineReady) {
+        Row h;
+        h.header = true;
+        h.tag = "REFINED";
+        h.text = "REFINED  -  refined result ready (thorough pass)";
+        now.push_back(h);
+        for (const auto& c : refine.results) now.push_back({c, false, {}, "REFINED"});
+        if (snap.state == JobState::Succeeded && quickPass) {
+          Row q;
+          q.header = true;
+          q.tag = "PREVIEW";
+          q.text = "PREVIEW  -  quick pass";
+          now.push_back(q);
+        }
+      }
+      if (snap.state == JobState::Succeeded)
+        for (const auto& c : snap.results) {
+          std::string tag;
+          if (quickPass) tag = promoted && applied && *applied == c.preset ? "REFINED" : "PREVIEW";
+          now.push_back({c, false, {}, tag});
+        }
       bool changed = now.size() != rows.size();
-      for (std::size_t i = 0; !changed && i < now.size(); ++i) changed = now[i].preset != rows[i].preset || now[i].errorDb != rows[i].errorDb;
+      for (std::size_t i = 0; !changed && i < now.size(); ++i) changed = !now[i].sameAs(rows[i]);
       if (changed) {
-        rows = now;
+        // Keep the user's selection (by candidate) when the list grows a REFINED section above it.
+        fs::path keepPreset;
+        if (const MatchCandidate* sel = selectedRow()) keepPreset = sel->preset;
+        const bool hadRows = !rows.empty();
+        rows = std::move(now);
         results.updateContent();
-        if (!rows.empty()) results.selectRow(0);
+        int pick = -1;
+        for (std::size_t i = 0; i < rows.size(); ++i)
+          if (!rows[i].header && !keepPreset.empty() && rows[i].c.preset == keepPreset) {
+            pick = static_cast<int>(i);
+            break;
+          }
+        if (pick < 0 && !hadRows)
+          for (std::size_t i = 0; i < rows.size(); ++i)
+            if (!rows[i].header) {
+              pick = static_cast<int>(i);
+              break;
+            }
+        if (pick >= 0) results.selectRow(pick);
+        else results.deselectAllRows();
         results.repaint();
       }
+      // badges and the refinement bar on the results header
+      juce::String badge;
+      juce::Colour bc = L::saw();
+      if (promoted) {
+        badge = "REFINED";
+        bc = L::live();
+      } else if (refineReady) {
+        badge = "REFINED READY";
+        bc = L::live();
+      } else if (quickPass && snap.state == JobState::Succeeded) {
+        badge = "PREVIEW";
+      }
+      previewBadge.setText(badge, juce::dontSendNotification);
+      previewBadge.setColour(juce::Label::textColourId, bc);
+      previewBadge.setTooltip(promoted ? "The applied preset is the same chain as the thorough pass's best." : refineReady ? "The thorough pass finished: see the REFINED section." : "Quick pass: preview results.");
+      refiningLabel.setVisible(refineActive);
+      refineBar.setVisible(refineActive);
+      if (refineActive) {
+        const double f = refine.progress.fraction;
+        refiningLabel.setText(juce::String::fromUTF8("REFINING\xe2\x80\xa6") + (f >= 0.0 ? " " + juce::String(juce::roundToInt(std::min(1.0, f) * 100.0)) + "%" : juce::String()),
+                              juce::dontSendNotification);
+        refineBar.set(std::max(0.0, f), f < 0.0, L::saw());
+      }
+      applyRefined.setEnabled(refineReady && refine.results.front().presetExists && !promoted);
+      applyRefined.setVisible(refineReady);
+
       const auto as = proc.audition().state();
       const MatchCandidate* sel = selectedRow();
       audition.setEnabled(sel != nullptr && sel->presetExists);
@@ -450,15 +598,18 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       ab.setEnabled(as.active);
       revert.setEnabled(as.active);
       ab.setButtonText(as.active ? (as.onCandidate ? "A / B  (B)" : "A / B  (A)") : "A / B");
+      juce::String status;
       if (as.active)
-        auditionStatus.setText(juce::String(std::string("A: ") + as.originalName + "    B: " + as.candidateName + "    now playing " + (as.onCandidate ? "B (the result)" : "A (your preset)")),
-                               juce::dontSendNotification);
+        status = juce::String(std::string("A: ") + as.originalName + "    B: " + as.candidateName + "    now playing " + (as.onCandidate ? "B (the result)" : "A (your preset)"));
       else if (!appliedName.empty())
-        auditionStatus.setText("Applied " + juce::String(appliedName), juce::dontSendNotification);
+        status = "Applied " + juce::String(appliedName);
       else if (!rows.empty())
-        auditionStatus.setText("AUDITION loads the selected result into the rig; A / B compares it with the preset you had.", juce::dontSendNotification);
-      else
-        auditionStatus.setText({}, juce::dontSendNotification);
+        status = "AUDITION loads the selected result into the rig; A / B compares it with the preset you had.";
+      if (promoted)
+        status += (status.isEmpty() ? "" : "\n") + juce::String("The applied preset is the same chain as the refined best: it now counts as REFINED. Nothing was reloaded.");
+      else if (refineReady)
+        status += (status.isEmpty() ? "" : "\n") + juce::String("Refined result ready: nothing was loaded. Choose a refined candidate, or APPLY REFINED BEST.");
+      auditionStatus.setText(status, juce::dontSendNotification);
     }
   }
 
@@ -481,7 +632,8 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       exeLocate.setBounds(lx + lw - 100, 278, 100, 26);
       poolLabel.setBounds(lx, 312, lw - 110, 18);
       poolLocate.setBounds(lx + lw - 100, 308, 100, 26);
-      toolMsg.setBounds(lx, 344, lw, 56);
+      toolMsg.setBounds(lx, 340, lw, 40);
+      autoRefine.setBounds(lx, 384, lw, 24);
       startBtn.setBounds(lx, 414, 200, 40);
       cancelBtn.setBounds(lx + 212, 414, 120, 40);
     } else {
@@ -511,12 +663,16 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     message.setBounds(rx, 152, rw, 34);
     eta.setBounds(rx, 190, rw, 18);
     if (m) {
-      capResults.setBounds(rx, 226, rw, 14);
+      capResults.setBounds(rx, 226, 250, 14);
+      previewBadge.setBounds(rx + 258, 224, 170, 18);
+      refiningLabel.setBounds(rx + 440, 224, 150, 18);
+      refineBar.setBounds(rx + 596, 229, rw - 596, 8);
       results.setBounds(rx, 246, rw, 330);
       audition.setBounds(rx, 590, 130, 36);
       ab.setBounds(rx + 140, 590, 140, 36);
       apply.setBounds(rx + 290, 590, 150, 36);
       revert.setBounds(rx + 450, 590, 110, 36);
+      applyRefined.setBounds(rx + 572, 590, 196, 36);
       auditionStatus.setBounds(rx, 636, rw, 40);
     } else {
       resultLabel.setBounds(rx, 236, rw, 40);
