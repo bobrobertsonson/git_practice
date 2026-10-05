@@ -288,6 +288,31 @@ if(SAWBLADE_BUILD_TESTS)
   endif()
 endif()
 
+# Integration walk (v0.1): every panel of the Standalone-configured editor, one editor over one processor, screenshots to
+# ${CMAKE_BINARY_DIR}/screenshots/v01/. Needs a display (xvfb-run). Tests: ctest prefix "integration: ".
+if(SAWBLADE_BUILD_TESTS)
+  add_executable(sawblade_integration_tests tests/test_integration.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_integration.cpp PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
+  target_include_directories(sawblade_integration_tests PRIVATE src ${SAWBLADE_GENERATED_DIR} ${PROJECT_SOURCE_DIR}/tests)
+  target_compile_definitions(sawblade_integration_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
+    SAWBLADE_TEST_TOOLS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/tools"
+    SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
+    SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots"
+    SAWBLADE_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
+    SAWBLADE_FAKE_T3K="${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_t3k.py")
+  target_link_libraries(sawblade_integration_tests PRIVATE
+    $<$<BOOL:${SAWBLADE_WITH_SEPARATOR}>:sawblade_separator> sawblade_core Catch2::Catch2WithMain SawbladeAssets
+    juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
+    juce::juce_audio_formats juce::juce_recommended_config_flags
+    "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib)
+  sawblade_ort_build_rpath(sawblade_integration_tests)
+  find_program(SAWBLADE_XVFB_RUN xvfb-run)
+  if(SAWBLADE_XVFB_RUN AND NOT APPLE)
+    set_property(TARGET sawblade_integration_tests PROPERTY CROSSCOMPILING_EMULATOR ${SAWBLADE_XVFB_RUN} -a)
+  endif()
+  catch_discover_tests(sawblade_integration_tests TEST_PREFIX "integration: " TEST_SPEC "[integration]")
+endif()
+
 # Optional: validate the built VST3 with pluginval (https://github.com/Tracktion/pluginval).
 # Not fetched or built here (it is a large JUCE application; see docs/PLUGIN.md). Point this at a
 # pluginval binary to register the ctest; build the SawbladePlugin_VST3 target first. On Linux the
