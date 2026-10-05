@@ -48,13 +48,17 @@ class StatusDot : public juce::Component {
     repaint();
   }
   bool isOn() const noexcept { return on_; }
+  void setLit(juce::Colour glow, juce::Colour core) {
+    lit_ = glow;
+    core_ = core;
+  }
   void paint(juce::Graphics& g) override {
     const auto r = getLocalBounds().toFloat().reduced(2.0f);
     if (on_) {
-      g.setGradientFill(juce::ColourGradient(L::saw().withAlpha(0.55f), r.getCentre(), L::saw().withAlpha(0.0f), r.getTopLeft() - juce::Point<float>(4.0f, 4.0f), true));
+      g.setGradientFill(juce::ColourGradient(lit_.withAlpha(0.55f), r.getCentre(), lit_.withAlpha(0.0f), r.getTopLeft() - juce::Point<float>(4.0f, 4.0f), true));
       g.fillEllipse(r.expanded(4.0f));
     }
-    g.setColour(on_ ? juce::Colour(0xffffb27a) : juce::Colour(0xff3a2a20));
+    g.setColour(on_ ? core_ : juce::Colour(0xff3a2a20));
     g.fillEllipse(r.reduced(r.getWidth() * 0.2f));
     g.setColour(juce::Colour(0xff0b0a09));
     g.drawEllipse(r.reduced(r.getWidth() * 0.2f), 1.0f);
@@ -62,6 +66,39 @@ class StatusDot : public juce::Component {
 
  private:
   bool on_ = false;
+  juce::Colour lit_ = L::saw(), core_ = juce::Colour(0xffffb27a);
+};
+
+// One row per take: name, length, where in the song it starts, overruns, and a tag for the one used by MATCH.
+struct TakeRows : juce::ListBoxModel {
+  std::vector<TakeInfo> takes;
+  std::string matchTake;
+  int getNumRows() override { return static_cast<int>(takes.size()); }
+  void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selected) override {
+    if (row < 0 || row >= static_cast<int>(takes.size())) return;
+    const TakeInfo& t = takes[static_cast<std::size_t>(row)];
+    if (selected) {
+      g.setColour(juce::Colour(0xff3a1c0b));
+      g.fillRect(0, 0, w, h);
+    }
+    const bool isMatch = t.name == matchTake;
+    g.setColour(isMatch ? L::saw() : L::text());
+    g.setFont(L::monoFont(12.0f));
+    g.drawText(juce::String(t.name), 8, 0, 230, h, juce::Justification::centredLeft, true);
+    g.setColour(L::dimText());
+    g.drawText(juce::String(t.lengthSeconds(), 1) + " s", 240, 0, 60, h, juce::Justification::centredRight);
+    const auto off = t.offsetMs();
+    g.drawText(off ? juce::String("@ ") + juce::String(*off / 1000.0, 1) + " s" : juce::String("no song"), 306, 0, 90, h, juce::Justification::centredLeft);
+    if (t.overruns > 0) {
+      g.setColour(L::warning());
+      g.drawText(juce::String(static_cast<int>(t.overruns)) + " overrun" + (t.overruns > 1 ? "s" : ""), 396, 0, 78, h, juce::Justification::centredLeft);
+    }
+    if (isMatch) {
+      g.setColour(L::saw());
+      g.setFont(L::labelFont(10.0f));
+      g.drawText("FOR MATCH", w - 78, 0, 72, h, juce::Justification::centredRight);
+    }
+  }
 };
 
 }  // namespace
@@ -76,6 +113,16 @@ struct PlayAlongPanel::Impl {
   juce::Label title, song, status, position, loopRead, standaloneNote;
   juce::Label capLoop, capCount, capGuitar, capLevel, capOffset;
   juce::TextButton load, keepKeys, play, setA, setB, loop, countIn, mute, ghost, full, sync;
+  // record / match band
+  juce::Label capTakes, recTime, recInfo, emptyNote;
+  juce::TextButton rec, renameTake, deleteTake, useForMatch, matchBtn, exportBtn;
+  StatusDot recDot;
+  TakeRows takeRows;
+  juce::ListBox takeList{"Takes", &takeRows};
+  std::uint64_t seenVersion = ~std::uint64_t{0};
+  int refreshTick = 0;
+  juce::String notice;
+  std::uint32_t noticeUntil = 0;
   juce::Slider seek, bpm, level, offset;
   StatusDot led;
   std::unique_ptr<juce::FileChooser> chooser;
@@ -164,6 +211,205 @@ struct PlayAlongPanel::Impl {
     caption(capOffset, "OFFSET");
 
     wire();
+    buildBand();
+  }
+
+  // --- the record / match band ---------------------------------------------------------------------------------
+  void buildBand() {
+    caption(capTakes, "TAKES");
+    configure(rec, "REC", "Record the clean input (before the gate) to a take. Press again to stop. Takes are saved in the takes folder with a sidecar that stores where the song was.");
+    configure(renameTake, "RENAME", "Rename the selected take");
+    configure(deleteTake, "DELETE", "Delete the selected take (the audio file and its sidecar)");
+    configure(useForMatch, "USE FOR MATCH", "Use the selected take as the DI for MATCH");
+    configure(matchBtn, "MATCH", "Find the blend that sounds like the loaded song, from the selected take (Standalone app)");
+    configure(exportBtn, "EXPORT NAM", "Train a NAM model of the loaded preset for a loader pedal (Standalone app)");
+    rec.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a1712));
+    rec.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb0a0));
+    matchBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
+    matchBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb27a));
+    exportBtn.setColour(juce::TextButton::buttonColourId, L::saw());
+    exportBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff140a04));
+    recDot.setLit(juce::Colour(0xffff3a2a), juce::Colour(0xffff8a7a));
+    recDot.setInterceptsMouseClicks(false, false);
+    owner.addAndMakeVisible(recDot);
+    recTime.setFont(L::monoFont(15.0f));
+    recTime.setInterceptsMouseClicks(false, false);
+    recInfo.setFont(L::bodyFont(11.5f));
+    recInfo.setColour(juce::Label::textColourId, L::dimText());
+    recInfo.setJustificationType(juce::Justification::topLeft);
+    recInfo.setInterceptsMouseClicks(false, false);
+    emptyNote.setFont(L::bodyFont(12.0f));
+    emptyNote.setColour(juce::Label::textColourId, L::dimText());
+    emptyNote.setText("No takes yet. Press REC and play.", juce::dontSendNotification);
+    emptyNote.setJustificationType(juce::Justification::centred);
+    emptyNote.setInterceptsMouseClicks(false, false);
+    for (juce::Label* l : {&recTime, &recInfo}) owner.addAndMakeVisible(*l);
+    takeList.setRowHeight(22);
+    takeList.setColour(juce::ListBox::backgroundColourId, juce::Colour(0xff141210));
+    takeList.setColour(juce::ListBox::outlineColourId, L::chipBorder());
+    takeList.setOutlineThickness(1);
+    takeList.setTitle("Takes");
+    takeList.setTooltip("Recorded DI takes, newest first");
+    owner.addAndMakeVisible(takeList);
+    owner.addAndMakeVisible(emptyNote);
+    wireBand();
+  }
+
+  void showNotice(const juce::String& text) {
+    notice = text;
+    noticeUntil = juce::Time::getMillisecondCounter() + 6000;
+  }
+
+  std::string selectedTakeName() const {
+    const int r = takeList.getSelectedRow();
+    return r >= 0 && r < static_cast<int>(takeRows.takes.size()) ? takeRows.takes[static_cast<std::size_t>(r)].name : std::string();
+  }
+
+  void wireBand() {
+    rec.onClick = [this] {
+      auto& r = proc.recorder();
+      if (r.state() == TakeRecorder::State::Idle) r.start(pa().settings().folder);
+      else r.stop();
+      refreshBand();
+    };
+    useForMatch.onClick = [this] {
+      const std::string n = selectedTakeName();
+      if (n.empty()) return;
+      proc.matchSettings().setSelectedTake(n);
+      refreshBand();
+    };
+    renameTake.onClick = [this] {
+      const std::string n = selectedTakeName();
+      if (n.empty()) return;
+      auto* w = new juce::AlertWindow("Rename take", "New name for " + juce::String(n), juce::MessageBoxIconType::NoIcon);
+      w->addTextEditor("name", juce::String(n));
+      w->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
+      w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+      w->enterModalState(true, juce::ModalCallbackFunction::create([this, n, w](int result) {
+                           if (result != 1) return;
+                           std::string err;
+                           const std::string nn = w->getTextEditorContents("name").toStdString();
+                           if (proc.recorder().renameTake(n, nn, &err)) {
+                             if (proc.matchSettings().selectedTake() == n) proc.matchSettings().setSelectedTake(nn);
+                           } else {
+                             showNotice(juce::String(err));
+                           }
+                           refreshBand(true);
+                         }),
+                         true);
+    };
+    deleteTake.onClick = [this] {
+      const std::string n = selectedTakeName();
+      if (n.empty()) return;
+      auto* w = new juce::AlertWindow("Delete take", "Delete " + juce::String(n) + " and its sidecar? This cannot be undone.", juce::MessageBoxIconType::WarningIcon);
+      w->addButton("Delete", 1, juce::KeyPress(juce::KeyPress::returnKey));
+      w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+      w->enterModalState(true, juce::ModalCallbackFunction::create([this, n](int result) {
+                           if (result != 1) return;
+                           if (!proc.recorder().removeTake(n)) showNotice("Could not delete " + juce::String(n));
+                           if (proc.matchSettings().selectedTake() == n) proc.matchSettings().setSelectedTake({});
+                           refreshBand(true);
+                         }),
+                         true);
+    };
+    matchBtn.onClick = [this] {
+      if (!proc.matchEnabled()) {
+        showNotice("MATCH runs in the Standalone app: open the Standalone app.");
+        return;
+      }
+      if (owner.onMatch) owner.onMatch();
+    };
+    exportBtn.onClick = [this] {
+      if (!proc.matchEnabled()) {
+        showNotice("EXPORT NAM runs in the Standalone app: open the Standalone app.");
+        return;
+      }
+      if (owner.onExport) owner.onExport();
+    };
+  }
+
+  void refreshBand(bool force = false) {
+    auto& r = proc.recorder();
+    const auto state = r.state();
+    const bool busy = state != TakeRecorder::State::Idle;
+    const double rate = r.sampleRate() > 0.0 ? r.sampleRate() : 48000.0;
+    rec.setButtonText(state == TakeRecorder::State::Idle ? "REC" : "STOP");
+    rec.setEnabled(state != TakeRecorder::State::Finalizing);
+    recDot.setOn(state == TakeRecorder::State::Recording || state == TakeRecorder::State::Armed);
+    juce::String t;
+    switch (state) {
+      case TakeRecorder::State::Idle: t = "READY"; break;
+      case TakeRecorder::State::Armed: t = "ARMED"; break;
+      case TakeRecorder::State::Recording: t = "REC " + timeText(static_cast<double>(r.recordedSamples()) / rate); break;
+      case TakeRecorder::State::Finalizing: t = "SAVING"; break;
+    }
+    recTime.setText(t, juce::dontSendNotification);
+    recTime.setColour(juce::Label::textColourId, state == TakeRecorder::State::Recording ? juce::Colour(0xffff6a5a) : L::dimText());
+
+    // The takes on disk: rescanned when the recorder changed them, and every 10 s (other instances / the user's file manager).
+    if (force || r.takesVersion() != seenVersion || (++refreshTick % 160) == 0) {
+      seenVersion = r.takesVersion();
+      auto fresh = r.listTakes();
+      const std::string keep = selectedTakeName();
+      const std::string match = proc.matchSettings().selectedTake();
+      bool same = fresh.size() == takeRows.takes.size() && match == takeRows.matchTake;
+      for (std::size_t i = 0; same && i < fresh.size(); ++i)
+        same = fresh[i].name == takeRows.takes[i].name && fresh[i].lengthSamples == takeRows.takes[i].lengthSamples;
+      if (!same) {
+        takeRows.takes = std::move(fresh);
+        takeRows.matchTake = match;
+        takeList.updateContent();
+        int row = -1;
+        for (std::size_t i = 0; i < takeRows.takes.size(); ++i)
+          if (takeRows.takes[i].name == keep) row = static_cast<int>(i);
+        if (row < 0 && !takeRows.takes.empty()) row = 0;
+        if (row >= 0) takeList.selectRow(row, true);
+        takeList.repaint();
+      }
+    }
+    emptyNote.setVisible(takeRows.takes.empty());
+    const bool haveSel = !selectedTakeName().empty();
+    renameTake.setEnabled(haveSel && !busy);
+    deleteTake.setEnabled(haveSel && !busy);
+    useForMatch.setEnabled(haveSel);
+
+    juce::String info;
+    juce::Colour col = L::dimText();
+    if (const std::string err = r.lastError(); !err.empty()) {
+      info = juce::String(err);
+      col = L::error();
+    } else if (notice.isNotEmpty() && juce::Time::getMillisecondCounter() < noticeUntil) {
+      info = notice;
+      col = L::warning();
+    } else if (state != TakeRecorder::State::Idle) {
+      info = "Recording the clean input, before the gate.";
+      if (r.overruns() > 0) {
+        info = juce::String(static_cast<int>(r.overruns())) + " overruns: the disk could not keep up; the gaps are filled with silence.";
+        col = L::warning();
+      }
+    } else if (!proc.matchEnabled()) {
+      info = "MATCH and EXPORT NAM: open the Standalone app.";
+    } else {
+      info = "REC saves the clean input. Choose a take, USE FOR MATCH, then MATCH.";
+    }
+    recInfo.setText(info, juce::dontSendNotification);
+    recInfo.setColour(juce::Label::textColourId, col);
+  }
+
+  void layoutBand() {
+    constexpr int y0 = kPlayAlongHeight, m = 18;
+    capTakes.setBounds(340, y0 + 8, 120, 14);
+    rec.setBounds(m, y0 + 14, 96, 36);
+    recDot.setBounds(m + 104, y0 + 22, 20, 20);
+    recTime.setBounds(m + 128, y0 + 14, 170, 36);
+    recInfo.setBounds(m, y0 + 58, 300, 46);
+    takeList.setBounds(340, y0 + 26, 500, 78);
+    emptyNote.setBounds(340, y0 + 26, 500, 78);
+    renameTake.setBounds(856, y0 + 26, 94, 34);
+    deleteTake.setBounds(856, y0 + 68, 94, 34);
+    useForMatch.setBounds(958, y0 + 26, 150, 34);
+    matchBtn.setBounds(1124, y0 + 26, 138, 34);
+    exportBtn.setBounds(1124, y0 + 68, 138, 34);
   }
 
   // --- controls -> processor -------------------------------------------------------------------
@@ -290,6 +536,7 @@ struct PlayAlongPanel::Impl {
     keepKeys.setToggleState(s.keepOther, juce::dontSendNotification);
     if (!level.isMouseButtonDown()) level.setValue(s.levelDb, juce::dontSendNotification);
     if (!offset.isMouseButtonDown()) offset.setValue(s.offsetMs, juce::dontSendNotification);
+    refreshBand();
   }
 
   void layout() {
@@ -307,6 +554,7 @@ struct PlayAlongPanel::Impl {
     seek.setBounds(m + 86 + 10 + 168 + 14, 52, w - (m + 86 + 10 + 168 + 14) - m - 250, 34);
     sync.setBounds(w - m - 232, 52, 232, 34);
     standaloneNote.setBounds(w - m - 232, 52, 232, 34);
+    layoutBand();
 
     constexpr int cy = 126, ch = 30, capY = 104;
     capLoop.setBounds(m, capY, 120, 14);
@@ -346,6 +594,7 @@ void PlayAlongPanel::paint(juce::Graphics& g) {
   g.fillRect(0, 0, getWidth(), 2);
   g.setColour(L::rule());
   g.fillRect(18, 94, getWidth() - 36, 1);
+  g.fillRect(0, kPlayAlongHeight, getWidth(), 1);  // the record / match band below
 }
 
 void PlayAlongPanel::resized() { impl_->layout(); }

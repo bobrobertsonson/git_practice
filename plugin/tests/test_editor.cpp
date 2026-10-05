@@ -8,12 +8,17 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <cstdlib>
+#include <functional>
 #include <set>
+#include <thread>
 #include <vector>
+#include <unistd.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "MatchScreen.h"
 #include "PlayAlongPanel.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
@@ -30,6 +35,7 @@
 #include "skin/LedIndicator.h"
 #include "skin/RigView.h"
 #include "skin/SkinAssets.h"
+#include "fake_tools.h"
 #include "sawblade/wav_io.h"
 
 using namespace sawblade;
@@ -120,7 +126,9 @@ juce::MouseEvent mouse(juce::Component& c, juce::Point<float> pos, juce::Point<f
 float luminance(juce::Colour c) { return 0.299f * c.getFloatRed() + 0.587f * c.getFloatGreen() + 0.114f * c.getFloatBlue(); }
 
 void savePng(const juce::Image& img, const juce::String& name) {
-  const juce::File dir(SAWBLADE_SCREENSHOT_DIR);
+  // build/screenshots by default; SAWBLADE_SCREENSHOT_DIR (environment) puts them anywhere else.
+  const char* envDir = std::getenv("SAWBLADE_SCREENSHOT_DIR");
+  const juce::File dir(envDir != nullptr && *envDir != '\0' ? envDir : SAWBLADE_SCREENSHOT_DIR);
   REQUIRE(dir.createDirectory().wasOk());
   const juce::File f = dir.getChildFile(name);
   f.deleteFile();
@@ -1576,4 +1584,378 @@ TEST_CASE("pedal face and drawer: screenshots", "[editor][pedal][screenshots]") 
     CHECK(differing > 1000);
     drawer.setOpen(false, false);
   }
+}
+
+// ---- record + match (docs/specs/phase6a_record_match_plugin.md) -------------------------------------------------
+namespace {
+namespace fs = std::filesystem;
+using namespace std::chrono_literals;
+
+// Anything that falls back to the default data folder (settings, takes, jobs) stays inside a temp dir.
+[[maybe_unused]] const bool kEditorDataDirSet = [] {
+  const fs::path d = fs::temp_directory_path() / ("sawblade_editor_tests_data_" + std::to_string(::getpid()));
+  ::setenv("SAWBLADE_DATA_DIR", d.c_str(), 1);
+  return true;
+}();
+
+bool waitUntilTrue(const std::function<bool()>& pred, std::chrono::milliseconds timeout = 15000ms) {
+  const auto end = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < end) {
+    if (pred()) return true;
+    std::this_thread::sleep_for(10ms);
+  }
+  return pred();
+}
+
+// Feeds `seconds` of audio (silence in, like a quiet DI) at roughly 8x real time: the writer thread gets time to
+// drain the ring, as it would from a live host.
+void feedSeconds(SawbladeProcessor& p, double seconds) {
+  const int blocks = static_cast<int>(seconds * 48000.0 / 512.0);
+  for (int done = 0; done < blocks; done += 40) {
+    processBlocks(p, std::min(40, blocks - done));
+    std::this_thread::sleep_for(25ms);
+  }
+}
+
+struct MatchRig : Rig {
+  TempFolder tmp;
+  fake_tools::Toolbox tools{tmp.dir / "tools"};
+  MatchRig() {
+    proc.recorder().setTakesDir(tmp.dir / "takes");
+    proc.jobs().setJobsDir(tools.jobs);
+    proc.matchSettings().setFile(tools.root / "settings.xml");  // the toolbox saved its fake tool paths there
+  }
+  MatchScreen& screen() { return *all<MatchScreen>(*ed).at(0); }
+  PlayAlongPanel& panel() { return *all<PlayAlongPanel>(*ed).at(0); }
+  juce::Button* screenButton(const juce::String& title) { return buttonTitled(screen(), title); }
+};
+
+juce::Image shot(SawbladeEditor& ed) {
+  ed.setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  return ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f);
+}
+
+}  // namespace
+
+TEST_CASE("record: REC, the take list and USE FOR MATCH are bound to the recorder", "[editor][record]") {
+  MatchRig rig;
+  rig.ed->setPlayAlongOpen(true);
+  PlayAlongPanel& panel = rig.panel();
+  for (const char* title : {"REC", "RENAME", "DELETE", "USE FOR MATCH", "MATCH", "EXPORT NAM"}) {
+    INFO(title);
+    auto* b = buttonTitled(panel, title);
+    REQUIRE(b != nullptr);
+    CHECK(b->getTooltip().isNotEmpty());
+  }
+  // The panel grew by the record band; it still sits on the bottom edge of the design.
+  const auto pb = rig.ed->getLocalArea(&panel, panel.getLocalBounds());
+  CHECK(pb.getBottom() == SawbladeEditor::kDesignHeight);
+  CHECK(pb.getHeight() == PlayAlongPanel::kHeight);
+  CHECK(pb.getY() > 400);
+
+  auto lists = all<juce::ListBox>(panel);
+  REQUIRE(lists.size() == 1);
+  juce::ListBox& list = *lists[0];
+  CHECK(list.getListBoxModel()->getNumRows() == 0);
+  CHECK(anyLabelContains(panel, "No takes yet"));
+  CHECK_FALSE(buttonTitled(panel, "RENAME")->isEnabled());
+  CHECK_FALSE(buttonTitled(panel, "DELETE")->isEnabled());
+
+  auto& rec = rig.proc.recorder();
+  juce::Button* recBtn = buttonTitled(panel, "REC");
+  click(*recBtn);
+  CHECK(rec.state() == TakeRecorder::State::Armed);
+  processBlocks(rig.proc, 6);
+  panel.refresh();
+  CHECK(rec.state() == TakeRecorder::State::Recording);
+  CHECK(recBtn->getButtonText() == "STOP");
+  CHECK(anyLabelContains(panel, "REC 00:"));
+  click(*recBtn);  // stop
+  processBlocks(rig.proc, 2);
+  REQUIRE(rec.waitIdle());
+  panel.refresh();
+  CHECK(recBtn->getButtonText() == "REC");
+  REQUIRE(list.getListBoxModel()->getNumRows() == 1);
+  CHECK_FALSE(anyLabelContains(panel, "No takes yet"));
+  CHECK(buttonTitled(panel, "RENAME")->isEnabled());
+  CHECK(buttonTitled(panel, "DELETE")->isEnabled());
+  CHECK(list.getSelectedRow() == 0);
+
+  const auto takes = rec.listTakes();
+  REQUIRE(takes.size() == 1);
+  CHECK(rig.proc.matchSettings().selectedTake().empty());
+  click(*buttonTitled(panel, "USE FOR MATCH"));
+  CHECK(rig.proc.matchSettings().selectedTake() == takes[0].name);
+
+  // A take deleted behind the panel's back disappears from the list.
+  REQUIRE(rec.removeTake(takes[0].name));
+  panel.refresh();
+  CHECK(list.getListBoxModel()->getNumRows() == 0);
+}
+
+TEST_CASE("record: an overrun shows in the panel", "[editor][record]") {
+  MatchRig rig;
+  rig.ed->setPlayAlongOpen(true);
+  auto& rec = rig.proc.recorder();
+  rec.setWriterStalledForTest(true);
+  REQUIRE(rec.start(""));
+  processBlocks(rig.proc, static_cast<int>(rec.ringCapacity() / 512) + 8);
+  rig.panel().refresh();
+  CHECK(anyLabelContains(rig.panel(), "8 overruns"));
+  rec.setWriterStalledForTest(false);
+  rec.stop();
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  rig.panel().refresh();
+  const auto takes = rec.listTakes();
+  REQUIRE(takes.size() == 1);
+  CHECK(takes[0].overruns == 8);
+}
+
+TEST_CASE("record/match: in plugin mode MATCH and EXPORT NAM say to open the Standalone app", "[editor][record][match]") {
+  MatchRig rig;
+  rig.ed->setPlayAlongOpen(true);
+  REQUIRE_FALSE(rig.proc.matchEnabled());
+  auto* match = buttonTitled(rig.panel(), "MATCH");
+  auto* exportBtn = buttonTitled(rig.panel(), "EXPORT NAM");
+  click(*match);
+  rig.panel().refresh();
+  CHECK_FALSE(rig.ed->matchScreenOpen());
+  CHECK(anyLabelContains(rig.panel(), "Standalone app"));
+  click(*exportBtn);
+  rig.panel().refresh();
+  CHECK_FALSE(rig.ed->matchScreenOpen());
+  CHECK(anyLabelContains(rig.panel(), "Standalone app"));
+  CHECK(anyLabelContains(rig.panel(), "EXPORT NAM runs"));
+  // Recording still works in plugin mode.
+  click(*buttonTitled(rig.panel(), "REC"));
+  CHECK(rig.proc.recorder().state() == TakeRecorder::State::Armed);
+  click(*buttonTitled(rig.panel(), "REC"));  // the same button, now labelled STOP
+  CHECK(rig.proc.recorder().state() == TakeRecorder::State::Idle);
+
+  // Standalone: the buttons open the screen.
+  rig.proc.playAlong().setStandalone(true);
+  click(*match);
+  CHECK(rig.ed->matchScreenOpen());
+  CHECK(rig.screen().mode() == MatchScreen::Mode::Match);
+  click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
+  CHECK_FALSE(rig.ed->matchScreenOpen());
+  click(*exportBtn);
+  CHECK(rig.ed->matchScreenOpen());
+  CHECK(rig.screen().mode() == MatchScreen::Mode::Export);
+}
+
+TEST_CASE("match screen: a missing executable or pool shows a clear message and a Locate button", "[editor][match]") {
+  MatchRig rig;
+  rig.proc.playAlong().setStandalone(true);
+  rig.ed->openMatchScreen(false);
+  MatchScreen& screen = rig.screen();
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+  CHECK_FALSE(start->isEnabled());  // no song, no take yet
+  CHECK(anyLabelContains(screen, "Load a song"));
+
+  rig.proc.matchSettings().setMatchExecutable(rig.tmp.dir / "nowhere" / "sawblade-match");
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "sawblade-match was not found"));
+  CHECK(anyLabelContains(screen, "Locate"));
+  int locate = 0;
+  for (auto* b : all<juce::Button>(screen))
+    if (b->getTitle() == "LOCATE..." && b->isVisible()) ++locate;
+  CHECK(locate == 2);  // executable and pool
+
+  rig.proc.matchSettings().setMatchExecutable(rig.tools.match);
+  rig.proc.matchSettings().setPoolManifest(rig.tmp.dir / "nowhere" / "pool_manifest.json");
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "pool manifest was not found"));
+  CHECK_FALSE(start->isEnabled());
+}
+
+TEST_CASE("match screen: a job survives closing the editor and the reopened screen shows it", "[editor][match]") {
+  MatchRig rig;
+  auto& pa = rig.proc.playAlong();
+  pa.setStandalone(true);
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  auto& rec = rig.proc.recorder();
+  REQUIRE(rec.start(song.string()));
+  feedSeconds(rig.proc, 1.0);
+  rec.stop();
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  rig.proc.matchSettings().setSelectedTake(rec.listTakes().at(0).name);
+
+  rig.tools.cfgMatch({{"progressJson", true}, {"gates", nlohmann::json::array({"g2"})}});
+  rig.ed->openMatchScreen(false);
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+  REQUIRE(start->isEnabled());
+  click(*start);
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Match).progress.message == "refining 1/3"; }));
+
+  rig.proc.editorBeingDeleted(rig.base.get());  // what a plugin wrapper does when it closes the editor window
+  rig.base.reset();  // the editor goes away; the processor (and its job) stays
+  rig.ed = nullptr;
+  CHECK(rig.proc.jobs().snapshot(JobKind::Match).state == JobState::Running);
+  CHECK(rig.proc.getActiveEditor() == nullptr);
+  rig.base.reset(rig.proc.createEditorAndMakeActive());
+  rig.ed = dynamic_cast<SawbladeEditor*>(rig.base.get());
+  REQUIRE(rig.ed != nullptr);
+  rig.ed->openMatchScreen(false);
+  CHECK(anyLabelContains(rig.screen(), "stage 2: fine-tuning"));
+  CHECK(anyLabelContains(rig.screen(), "refining 1/3"));
+  CHECK(rig.screenButton("CANCEL")->isEnabled());
+  CHECK_FALSE(rig.screenButton("START MATCH")->isEnabled());
+  click(*rig.screenButton("CANCEL"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Match, 10000ms));
+  rig.screen().refresh();
+  CHECK(anyLabelContains(rig.screen(), "Cancelled"));
+}
+
+TEST_CASE("record + match: screenshots of REC armed, the match progress and the result list", "[editor][record][match][screenshot]") {
+  MatchRig rig;
+  auto& proc = rig.proc;
+  auto& pa = proc.playAlong();
+  pa.setStandalone(true);
+  rig.ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+
+  // A song, a few takes (the first two with the backing running, so they carry a position in the song), then a take in progress.
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Gatecreeper - Dark Superstition (stems)", 90.0);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  pa.setLevelDb(-6.0);
+  processBlocks(proc, 4);
+  auto& rec = proc.recorder();
+  auto takeOf = [&](double seconds, bool playing, double seekSeconds, const char* name) {
+    if (playing) {
+      pa.seekSamples(static_cast<std::int64_t>(seekSeconds * 48000.0));
+      pa.play();
+    } else {
+      pa.pause();
+    }
+    processBlocks(proc, 4);
+    REQUIRE(rec.start(song.string()));
+    feedSeconds(proc, seconds);
+    rec.stop();
+    processBlocks(proc, 1);
+    REQUIRE(rec.waitIdle());
+    pa.pause();
+    processBlocks(proc, 2);
+    std::string err;
+    REQUIRE(rec.renameTake(rec.currentTakeName(), name, &err));
+  };
+  takeOf(3.0, true, 31.4, "verse riff");
+  takeOf(2.0, true, 58.0, "breakdown");
+  takeOf(1.5, false, 0.0, "warm-up (no song)");
+  rig.proc.matchSettings().setSelectedTake("verse riff");
+
+  pa.seekSamples(12 * 48000);
+  pa.play();
+  processBlocks(proc, 4);
+  REQUIRE(rec.start(song.string()));
+  feedSeconds(proc, 5.5);
+  rig.ed->setPlayAlongOpen(true);
+  rig.panel().refresh();
+  REQUIRE(rec.state() == TakeRecorder::State::Recording);
+  CHECK(anyLabelContains(rig.panel(), "REC 00:05"));
+  const juce::Image armed = shot(*rig.ed);
+  savePng(armed, "sawblade_record_armed_1x.png");
+  const juce::Rectangle<int> band(0, 800 - PlayAlongPanel::kRecordHeight, 1280, PlayAlongPanel::kRecordHeight);
+  CHECK(nonBackgroundFraction(armed, band) > 0.1);
+  auto* list = all<juce::ListBox>(rig.panel()).at(0);
+  CHECK(list->getListBoxModel()->getNumRows() == 3);
+  rec.stop();
+  processBlocks(proc, 1);
+  REQUIRE(rec.waitIdle());
+  rig.panel().refresh();
+  CHECK(list->getListBoxModel()->getNumRows() == 4);
+
+  // MATCH: a fake matcher parked at stage 2.
+  rig.tools.cfgMatch({{"progressJson", true}, {"gates", nlohmann::json::array({"g2"})}});
+  click(*buttonTitled(rig.panel(), "MATCH"));
+  REQUIRE(rig.ed->matchScreenOpen());
+  MatchScreen& screen = rig.screen();
+  CHECK(anyLabelContains(screen, "'other' stem"));
+  CHECK(anyLabelContains(screen, "verse riff"));
+  CHECK(anyLabelContains(screen, "into the song"));
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+  REQUIRE(start->isEnabled());
+  click(*start);
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Match).progress.message == "refining 1/3"; }));
+  std::this_thread::sleep_for(1200ms);  // some elapsed time to show
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "stage 2: fine-tuning"));
+  CHECK(anyLabelContains(screen, "refining 1/3"));
+  CHECK(anyLabelContains(screen, "best error 4.20 dB"));
+  CHECK(anyLabelContains(screen, "ETA 01:00"));
+  const juce::Image progress = shot(*rig.ed);
+  savePng(progress, "sawblade_match_progress_1x.png");
+  CHECK(nonBackgroundFraction(progress, {0, 100, 1280, 700}) > 0.03);
+
+  // Results: the job finishes; audition the second candidate (A/B state shows).
+  fake_tools::release(rig.proc.jobs().snapshot(JobKind::Match).dir, "g2");
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Match));
+  screen.refresh();
+  auto* results = all<juce::ListBox>(screen).at(0);
+  REQUIRE(results->getListBoxModel()->getNumRows() == 3);
+  CHECK(anyLabelContains(screen, "Done"));
+  results->selectRow(1);
+  click(*rig.screenButton("AUDITION"));
+  REQUIRE(proc.waitForLoader());
+  screen.refresh();
+  CHECK(proc.status().presetName == "match alt 1");
+  CHECK(anyLabelContains(screen, "now playing B"));
+  REQUIRE(rig.screenButton("A / B") != nullptr);
+  CHECK(rig.screenButton("A / B")->getButtonText() == "A / B  (B)");
+  click(*rig.screenButton("A / B"));
+  REQUIRE(proc.waitForLoader());
+  screen.refresh();
+  CHECK(proc.status().presetName == "Init");
+  CHECK(anyLabelContains(screen, "now playing A"));
+  CHECK(rig.screenButton("A / B")->getButtonText() == "A / B  (A)");
+  click(*rig.screenButton("A / B"));
+  REQUIRE(proc.waitForLoader());
+  screen.refresh();
+  const juce::Image resultsShot = shot(*rig.ed);
+  savePng(resultsShot, "sawblade_match_results_1x.png");
+  CHECK(nonBackgroundFraction(resultsShot, {460, 230, 800, 350}) > 0.1);
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(proc.waitForLoader());
+  screen.refresh();
+  CHECK(proc.status().presetName == "match alt 1");
+  CHECK_FALSE(rig.proc.audition().state().active);
+  CHECK(anyLabelContains(screen, "Applied"));
+
+  // EXPORT NAM on the applied preset: mode / size choice, device auto, progress from the checkpoint, Reveal.
+  click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
+  rig.tools.cfgExport({{"gates", nlohmann::json::array({"g2"})}});
+  click(*buttonTitled(rig.panel(), "EXPORT NAM"));
+  REQUIRE(rig.ed->matchScreenOpen());
+  CHECK(rig.screen().mode() == MatchScreen::Mode::Export);
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "match_alt") == false);
+  CHECK(anyLabelContains(screen, "Matched preset:"));
+  click(*rig.screenButton("WITH CAB"));
+  click(*rig.screenButton("LITE"));
+  click(*rig.screenButton("TRAIN EXPORT"));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Export).progress.fraction > 0.29; }));
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "training"));
+  CHECK(anyLabelContains(screen, "epoch 7"));
+  const auto exportSnap = rig.proc.jobs().snapshot(JobKind::Export);
+  CHECK(exportSnap.exportMode == "withcab");
+  CHECK(exportSnap.exportSize == "lite");
+  savePng(shot(*rig.ed), "sawblade_export_progress_1x.png");
+  fs::path revealed;
+  screen.reveal = [&](const juce::File& f) { revealed = fs::path(f.getFullPathName().toStdString()); };
+  CHECK_FALSE(rig.screenButton("REVEAL")->isEnabled());
+  fake_tools::release(exportSnap.outDir, "g2");
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export));
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "Model written to"));
+  REQUIRE(rig.screenButton("REVEAL")->isEnabled());
+  click(*rig.screenButton("REVEAL"));
+  CHECK(revealed == exportSnap.outDir);
 }

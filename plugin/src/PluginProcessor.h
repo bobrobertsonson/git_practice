@@ -15,7 +15,10 @@
 
 #include "Engine.h"
 #include "EngineLoader.h"
+#include "JobRunner.h"
 #include "PlayAlong.h"
+#include "PresetAudition.h"
+#include "TakeRecorder.h"
 #include "PresetMapping.h"
 #include "browser/PreviewPlayer.h"
 #include "pedals/CircuitParams.h"
@@ -116,6 +119,17 @@ class SawbladeProcessor : public juce::AudioProcessor,
   const PlayAlong& playAlong() const noexcept { return playAlong_; }
   // The capture browser's audition: plays a rendered riff instead of the rig (docs/specs/phase8_capture_browser.md).
   PreviewPlayer& previewPlayer() noexcept { return preview_; }
+  // The DI take recorder (docs/PLUGIN.md "Record + Match"): taps the input before the rig, writes WAV + sidecar
+  // off the audio thread. Its control surface is safe from any non-audio thread.
+  // Record + Match (message thread): the settings (application properties, not part of the tone state), the
+  // match / export job runner, and the audition / A-B of match candidates. MATCH and EXPORT NAM are
+  // Standalone-only for now: matchEnabled() says whether this instance may start jobs.
+  MatchSettings& matchSettings() noexcept { return matchSettings_; }
+  JobRunner& jobs() noexcept { return jobs_; }
+  PresetAudition& audition() noexcept { return audition_; }
+  bool matchEnabled() const noexcept { return playAlong_.standalone(); }
+  TakeRecorder& recorder() noexcept { return recorder_; }
+  const TakeRecorder& recorder() const noexcept { return recorder_; }
 
 
   // --- rig editor hooks (message thread; docs/PLUGIN.md "Rig editor") -----------------------------------
@@ -198,6 +212,10 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::vector<float> mono_, backL_, backR_;  // rig mono, backing L / R (audio-thread scratch)
   PlayAlong playAlong_;
   PreviewPlayer preview_;
+  TakeRecorder recorder_;
+  MatchSettings matchSettings_;
+  JobRunner jobs_;
+  PresetAudition audition_;
 
   // Audio-thread state: the engine in use and, for kFadeSeconds after a swap, the outgoing one.
   // Neither reference is ever the last one (the loader keeps its own), so dropping them on the

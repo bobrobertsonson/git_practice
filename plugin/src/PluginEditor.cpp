@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 
+#include "MatchScreen.h"
 #include "PlayAlongPanel.h"
 #include "browser/BrowserSettings.h"
 #include "browser/CaptureBrowser.h"
@@ -187,6 +188,10 @@ class SawbladeEditor::Content : public juce::Component {
     presetBrowser_->onClose = [this] { setBrowserOpen(false); };
     presetBrowser_->onLoadFile = [this] { chooseFile(); };
     addChildComponent(*presetBrowser_);  // last child: on top of everything below the top bar
+    screen_ = std::make_unique<MatchScreen>(processor_);
+    addChildComponent(*screen_);  // last child: covers everything below the top bar
+    panel_->onMatch = [this] { openMatchScreen(false); };
+    panel_->onExport = [this] { openMatchScreen(true); };
 
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
@@ -250,6 +255,7 @@ class SawbladeEditor::Content : public juce::Component {
       drawer_->setAnchor(pedal, rig_.getBounds().withTrimmedRight(24));
     }
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
+    screen_->setBounds(0, kTopBar, MatchScreen::kWidth, kDesignHeight - kTopBar);
     message_.setBounds(34, kTopBar + 14, 860, 20);
     rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
     micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
@@ -399,6 +405,12 @@ class SawbladeEditor::Content : public juce::Component {
   void refreshMicPage() {
     if (micPage_->isVisible()) micPage_->refresh();
   }
+  void openMatchScreen(bool exportMode) {
+    screen_->open(exportMode ? MatchScreen::Mode::Export : MatchScreen::Mode::Match);
+    screen_->toFront(false);  // above an open rig editor / mic page / preset browser overlay
+  }
+  bool matchScreenOpen() const { return screen_->isVisible(); }
+  void refreshScreen() { screen_->refresh(); }
 
  private:
   static juce::Rectangle<int> matchBox() { return {kInspX + 16, kDesignHeight - 14 - 64, kInspW - 32, 64}; }
@@ -463,6 +475,7 @@ class SawbladeEditor::Content : public juce::Component {
   std::unique_ptr<rig::RigEditorPanel> rigPanel_;
   std::unique_ptr<MicPage> micPage_;
   std::unique_ptr<PresetBrowser> presetBrowser_;
+  std::unique_ptr<MatchScreen> screen_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -501,9 +514,10 @@ double SawbladeEditor::contentScale() const { return static_cast<double>(getWidt
 skin::Piece SawbladeEditor::selectedPiece() const { return content_->rig().selected(); }
 
 void SawbladeEditor::timerCallback() {
-  if ((tick_++ & 3) == 0) {
-    content_->refresh();  // 4 Hz; the open play-along panel refreshes at the full rate
+  if ((tick_++ & 3) == 0) {  // 4 Hz; the open play-along panel refreshes at the full rate
+    content_->refresh();
     content_->refreshMicPage();
+    content_->refreshScreen();
   }
   content_->refreshPanel();
 }
@@ -520,6 +534,10 @@ void SawbladeEditor::setBrowserOpen(bool open) { content_->setBrowserOpen(open);
 bool SawbladeEditor::browserOpen() const { return content_->browserOpen(); }
 PresetBrowser& SawbladeEditor::browser() { return content_->browser(); }
 AbCompare& SawbladeEditor::abCompare() { return content_->abCompare(); }
+void SawbladeEditor::openMatchScreen(bool exportMode) {
+  content_->openMatchScreen(exportMode);
+}
+bool SawbladeEditor::matchScreenOpen() const { return content_->matchScreenOpen(); }
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
   for (const auto& f : files)

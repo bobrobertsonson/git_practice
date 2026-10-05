@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -15,7 +16,9 @@ namespace sawblade::plugin {
 // the controls (message thread, called from the editor's timer).
 class PlayAlongPanel : public juce::Component {
  public:
-  static constexpr int kHeight = 170, kWidth = 1280;
+  // The play-along controls take the top kPlayAlongHeight; the record / take band (REC, take list, MATCH, EXPORT NAM)
+  // sits below them.
+  static constexpr int kPlayAlongHeight = 170, kRecordHeight = 112, kHeight = kPlayAlongHeight + kRecordHeight, kWidth = 1280;
 
   explicit PlayAlongPanel(SawbladeProcessor& p);
   ~PlayAlongPanel() override;
@@ -23,6 +26,9 @@ class PlayAlongPanel : public juce::Component {
   void paint(juce::Graphics&) override;
   void resized() override;
   void refresh();
+  // The MATCH / EXPORT NAM buttons open the match screen (the editor wires these). In plugin mode (not
+  // Standalone) they only show a note: open the Standalone app.
+  std::function<void()> onMatch, onExport;
   // Opens the folder picker (asynchronous); a chosen folder is loaded as a user-initiated load.
   void chooseFolder();
 

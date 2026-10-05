@@ -55,6 +55,10 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   PresetBrowser& browser();
   AbCompare& abCompare();
 
+  // The MATCH / EXPORT NAM overlay (MatchScreen): opened from the play-along panel's buttons (Standalone only).
+  void openMatchScreen(bool exportMode);
+  bool matchScreenOpen() const;
+
   // Dropping a folder (of stems) anywhere on the editor loads it as the song and opens the panel.
   bool isInterestedInFileDrag(const juce::StringArray& files) override;
   void filesDropped(const juce::StringArray& files, int x, int y) override;
