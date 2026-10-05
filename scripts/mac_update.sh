@@ -2,25 +2,28 @@
 # One command to get the latest Sawblade plugin on the Mac (Apple Silicon, Homebrew,
 # cmake + ninja, Command Line Tools only). See docs/MAC.md.
 #
-#   scripts/mac_update.sh [--no-resolve] [--clean] [--standalone] [--dry-run]
+#   scripts/mac_update.sh [--no-resolve] [--no-models] [--clean] [--standalone] [--dry-run]
 #
 # --no-resolve  skip the TONE3000 preset resolve step
+# --no-models   skip installing the stem-separation model (htdemucs_6s, used by LOAD SONG)
 # --clean       wipe build-mac/ first (full reconfigure + rebuild)
 # --standalone  open the Standalone app at the end
 # --dry-run     print the commands instead of running them (safe on any machine)
 set -euo pipefail
 
 NO_RESOLVE=0
+NO_MODELS=0
 CLEAN=0
 STANDALONE=0
 DRY=0
 for arg in "$@"; do
   case "$arg" in
     --no-resolve) NO_RESOLVE=1 ;;
+    --no-models) NO_MODELS=1 ;;
     --clean) CLEAN=1 ;;
     --standalone) STANDALONE=1 ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "mac_update: unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -54,7 +57,7 @@ run() {
 say "mac_update: repo $ROOT"
 
 # ---------------------------------------------------------------- 1. pull
-step "1/5 git pull"
+step "1/6 git pull"
 PREV=""
 [[ -f $LAST_FILE ]] && PREV="$(tr -d '[:space:]' <"$LAST_FILE")"
 run git pull --ff-only
@@ -72,7 +75,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 2. build
-step "2/5 build"
+step "2/6 build"
 if [[ $CLEAN -eq 1 ]]; then
   run rm -rf "$BUILD_DIR"
 fi
@@ -84,7 +87,7 @@ run cmake --build "$BUILD_DIR"
 say "Build took $((SECONDS - START)) s."
 
 # ---------------------------------------------------------------- 3. install + auval
-step "3/5 install + auval"
+step "3/6 install + auval"
 if [[ $DRY -eq 0 ]]; then
   for f in "$ART_DIR/AU/Sawblade.component" "$ART_DIR/VST3/Sawblade.vst3"; do
     [[ -d $f ]] || { echo "mac_update: build artefact missing: $f" >&2; exit 1; }
@@ -108,7 +111,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 4. resolve presets
-step "4/5 TONE3000 presets"
+step "4/6 TONE3000 presets"
 resolve_presets() {
   local p out n_ok=0 n_fail=0 n_skip=0 reason
   while IFS= read -r p; do
@@ -145,8 +148,33 @@ else
   say "  export TONE3000_CLIENT_ID=t3k_pub_xxxxxxxx && $ROOT/$T3K login"
 fi
 
-# ---------------------------------------------------------------- 5. what's new
-step "5/5 what's new"
+# ---------------------------------------------------------------- 5. separation model
+step "5/6 separation model"
+# Idempotent: when htdemucs_6s is already present and verified only the status probe runs (fast, no torch import).
+# Under --dry-run the probe is printed, not run (it depends on the machine's model directory), and the install
+# and fetch commands are always printed, so the dry-run output lists the whole step.
+MODELS=match/.venv/bin/sawblade-models
+MODELS_PIP=match/.venv/bin/pip
+install_models() {
+  run "$MODELS_PIP" install -e 'match[models]' -c match/constraints-separation.txt
+  run "$MODELS" fetch --model htdemucs_6s
+}
+if [[ $NO_MODELS -eq 1 ]]; then
+  say "Skipped (--no-models)."
+elif [[ $DRY -eq 1 ]]; then
+  say "+ $MODELS status --model htdemucs_6s   (probe; the install and fetch below run only if it reports missing)"
+  install_models
+elif [[ ! -x $MODELS ]]; then
+  say "Skipped: $MODELS not found (see match/README.md to set up the venv, then re-run)."
+elif "$MODELS" status --model htdemucs_6s >/dev/null 2>&1; then
+  say "Separation model htdemucs_6s present and verified."
+else
+  say "Separation model htdemucs_6s missing; installing (one-time download, several minutes)."
+  install_models || say "WARNING: separation model install failed; LOAD SONG will not work until it succeeds. Re-run this script." >&2
+fi
+
+# ---------------------------------------------------------------- 6. what's new
+step "6/6 what's new"
 if [[ -n $PREV ]]; then
   say "Changed under plugin/ and presets/ since ${PREV:0:7}:"
   CHANGED="$(git diff --name-status "$PREV" "$HEAD_SHA" -- plugin presets | grep -v '\.resolved\.json$' || true)"
