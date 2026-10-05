@@ -396,3 +396,30 @@ TEST_CASE("classifyStemFolder: only a set of recognised stems is a stem folder",
     REQUIRE_FALSE(isAudioFileName("/x/notes.txt"));
   }
 }
+
+TEST_CASE("Dot-files are ignored by the loader and the stem-folder rule", "[stems][loader][dir][classify]") {
+  const auto d = noise(1000, 81), b = noise(1000, 82);
+  {
+    StemTempDir t;
+    writeWavFloat32(t / "drums.wav", 48000.0, d);
+    writeWavFloat32(t / "bass.wav", 48000.0, b);
+    { std::ofstream(t / "._drums.wav") << "AppleDouble, not audio"; }
+    { std::ofstream(t / "._bass.wav") << "x"; }
+    { std::ofstream(t / ".DS_Store") << "x"; }
+    REQUIRE(classifyStemFolder(t.dir).ok);
+    REQUIRE(classifyStemFolder(t.dir).recognised == 2);
+    const StemSet s = loadStemDirectory(t.dir, 48000.0, OtherRole::Other);
+    REQUIRE(s.audio[static_cast<int>(StemKind::Drums)][0][5] == d[5]);
+    REQUIRE(s.sources[static_cast<int>(StemKind::Drums)].size() == 1);
+    REQUIRE(s.warnings.empty());
+  }
+  {
+    StemTempDir t;  // only dot-files plus one stem: refused
+    writeWavFloat32(t / "drums.wav", 48000.0, d);
+    { std::ofstream(t / "._bass.wav") << "x"; }
+    { std::ofstream(t / ".DS_Store") << "x"; }
+    REQUIRE_FALSE(classifyStemFolder(t.dir).ok);
+  }
+  REQUIRE(isHiddenFileName("._a.wav"));
+  REQUIRE_FALSE(isHiddenFileName("a.wav"));
+}

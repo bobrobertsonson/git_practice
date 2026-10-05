@@ -121,6 +121,7 @@ StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, O
   for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
     std::error_code e2;
     if (!it->is_regular_file(e2)) continue;
+    if (isHiddenFileName(it->path().filename().string())) continue;  // AppleDouble ._x.wav, .DS_Store
     const std::string ext = lower(it->path().extension().string());
     if (ext == ".wav" || ext == ".flac") audioFiles.push_back(it->path());
   }
@@ -178,6 +179,8 @@ StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, O
   return set;
 }
 
+bool isHiddenFileName(const std::string& fileName) { return !fileName.empty() && fileName.front() == '.'; }
+
 bool isAudioFileName(const std::string& path) {
   const std::string ext = lower(std::filesystem::path(path).extension().string());
   return ext == ".mp3" || ext == ".wav" || ext == ".flac" || ext == ".m4a" || ext == ".aac" || ext == ".aif" || ext == ".aiff" ||
@@ -198,7 +201,9 @@ StemFolderCheck classifyStemFolder(const std::filesystem::path& dir) {
   std::string stranger;
   for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
     std::error_code e2;
-    if (!it->is_regular_file(e2) || !isAudioFileName(it->path().filename().string())) continue;
+    if (!it->is_regular_file(e2) || isHiddenFileName(it->path().filename().string()) ||
+        !isAudioFileName(it->path().filename().string()))
+      continue;
     const std::string base = lower(it->path().stem().string());
     if (!isStemName(base)) {
       if (stranger.empty() || it->path().filename().string() < stranger) stranger = it->path().filename().string();

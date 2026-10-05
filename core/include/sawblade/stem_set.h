@@ -65,6 +65,9 @@ StemSet loadStemFiles(const std::vector<std::pair<StemKind, std::filesystem::pat
 // std::runtime_error when the directory is missing or holds no audio file, plus the loadStemFiles errors.
 StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, OtherRole otherRole = OtherRole::Guitar);
 
+// A dot-file name (macOS AppleDouble `._drums.wav` on FAT/exFAT/network volumes, `.DS_Store`). Both
+// loadStemDirectory and classifyStemFolder skip such files.
+bool isHiddenFileName(const std::string& fileName);
 // An audio file by extension (mp3 wav flac m4a aac aif aiff ogg, case-insensitive). The plugin's
 // "song file" test is the same list.
 bool isAudioFileName(const std::string& path);
