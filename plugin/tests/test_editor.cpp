@@ -1215,9 +1215,17 @@ TEST_CASE("rig editor: screenshots", "[editor][rig]") {
     // Single: lane B shows the BLEND OFF note.
     click(rig.panel().topologyButton(rig::Topology::Single));
     rig.wait();
-    // let the async parameter attachments land: queued messages run before the stop request
-    juce::MessageManager::callAsync([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
-    juce::MessageManager::getInstance()->runDispatchLoop();
+    // Let the async parameter attachments land. Pump with runDispatchLoopUntil (as every other editor test does):
+    // MessageManager::runDispatchLoop() is `[NSApp run]` on macOS, which does not return for a callAsync'd
+    // stopDispatchLoop() in a headless test process (and leaves quitMessagePosted set), so the knob was still at its
+    // default 0.5 there. Bounded: the attachments normally land in the first pass or two.
+    for (int pass = 0; pass < 50; ++pass) {
+      juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+      bool landed = true;
+      for (auto* k : all<skin::FilmstripKnob>(*rig.ed))
+        if (k->paramId() == "blend" && k->getValue() != 0.0) landed = false;
+      if (landed) break;
+    }
     for (auto* k : all<skin::FilmstripKnob>(*rig.ed))
       if (k->paramId() == "blend") CHECK(k->getValue() == 0.0);
     const juce::Image single = rig.snapshot("rig_single.png");
