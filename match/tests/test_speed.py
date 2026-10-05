@@ -170,8 +170,8 @@ def test_quick_matches_thorough_on_the_known_answer(tmp_path):
                                                       top_k={"blend": 1, "single": 0, "single2": 0}), **kw), Log())
     t = run_match(Config(out=tmp_path / "t", plan=mkplan(top_k={"blend": 1, "single": 0, "single2": 0}, gens_linear=40,
                                                          gens_gain=8, gens_final=25, pop_linear=16, pop_gain=8), **kw), Log())
-    # 6b's report accepts "--quick within 1 dB A-weighted of --thorough" (docs/specs/phase6b_matcher_speed_REPORT.md); the old
-    # 0.15 dB target was never met there (0.062 dB margin at seed 7 before 10.1's levels entered the loss; other seeds 0.32-0.69 dB).
+    # quick 0.684 dB vs thorough 0.255 dB A-weighted at seed 7 once 10.1's levels entered the loss (other seeds 0.32-0.69 dB);
+    # the accepted criterion is 6b's report: within 1 dB A-weighted of --thorough (docs/specs/phase6b_matcher_speed_REPORT.md).
     assert q["after"][0]["aWeightedErrorDb"] < t["after"][0]["aWeightedErrorDb"] + 1.0
     assert q["after"][0]["aWeightedErrorDb"] < 1.0
     assert q["best"]["captures"] == t["best"]["captures"]
