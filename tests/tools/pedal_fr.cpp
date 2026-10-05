@@ -8,7 +8,7 @@
 // string (enums). --preset takes the block's params from a preset file (first circuit block, i.e.
 // pedal.hm / pedal.muff, unless --block names an id); --param overrides on top; --type then comes
 // from the block. FR method: impulse at -90 dBFS, 65536 samples, fs = 48 kHz. THD: a 500 Hz sine
-// from -40 to 0 dBFS in 2 dB steps (1 s each, 0.25 s discarded), harmonics 2-20.
+// from -70 to 0 dBFS in 2 dB steps (1 s each, 0.25 s discarded), harmonics 2-20.
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -25,12 +25,13 @@ using namespace sawblade;
 
 namespace {
 const char* kUsage =
-    "usage: pedal_fr (--type pedal.hm|pedal.muff|pedal.ts | --preset FILE [--block ID]) [--param key=value]... [--thd] --out file.csv\n";
+    "usage: pedal_fr (--type pedal.hm|pedal.muff|pedal.ts|pedal.hmx|pedal.eye | --preset FILE [--block ID]) [--param key=value]... [--model-version N] [--thd] --out file.csv\n";
 }
 
 int main(int argc, char** argv) {
   std::string type, out, presetFile, blockId;
   bool thd = false;
+  int modelVersion = 0;
   nlohmann::json overrides = nlohmann::json::object();
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -49,6 +50,8 @@ int main(int argc, char** argv) {
       presetFile = next();
     } else if (a == "--block") {
       blockId = next();
+    } else if (a == "--model-version") {
+      modelVersion = std::atoi(next().c_str());
     } else if (a == "--thd") {
       thd = true;
     } else if (a == "--param") {
@@ -94,7 +97,8 @@ int main(int argc, char** argv) {
     }
     for (auto it = overrides.begin(); it != overrides.end(); ++it) blockJson["params"][it.key()] = it.value();
     blockJson["type"] = type;
-    if (!blockJson.contains("modelVersion") && type == "pedal.hm") blockJson["modelVersion"] = 2;  // --type builds the current model
+    if (modelVersion > 0) blockJson["modelVersion"] = modelVersion;
+    if (!blockJson.contains("modelVersion") && type == "pedal.hm") blockJson["modelVersion"] = 3;  // --type builds the current model
 
     const BlockType* t = BlockRegistry::instance().find(type);
     if (!t) {
@@ -120,7 +124,7 @@ int main(int argc, char** argv) {
     if (thd) {
       proc->prepare({test::kFrFs, 512});
       f << "input_dbfs,thd_db,h2_dbc\n";
-      for (int db = -40; db <= 0; db += 2) {
+      for (int db = -70; db <= 0; db += 2) {
         const auto r = test::thdPoint(*proc, db);
         f << db << "," << r.thdDb << "," << r.h2Dbc << "\n";
       }

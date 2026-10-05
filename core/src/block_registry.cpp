@@ -5,7 +5,9 @@
 #include "sawblade/capture_cache.h"
 #include "sawblade/eq.h"
 #include "sawblade/nam_block.h"
+#include "sawblade/pedal_eye.h"
 #include "sawblade/pedal_hm.h"
+#include "sawblade/pedal_hmx.h"
 #include "sawblade/pedal_muff.h"
 #include "sawblade/pedal_ts.h"
 
@@ -78,6 +80,8 @@ BlockRegistry::BlockRegistry() {
   types_["pedal.hm"] = BlockType{{/*namTrainable=*/true}, parseHmBlock, createHm, hmLiveParamDescs()};
   types_["pedal.muff"] = BlockType{{/*namTrainable=*/true}, parseMuffBlock, createMuff, muffLiveParamDescs()};
   types_["pedal.ts"] = BlockType{{/*namTrainable=*/true}, parseTsBlock, createTs, {}};
+  types_["pedal.hmx"] = BlockType{{/*namTrainable=*/true}, parseHmxBlock, createHmx, hmxLiveParamDescs()};
+  types_["pedal.eye"] = BlockType{{/*namTrainable=*/true}, parseEyeBlock, createEye, eyeLiveParamDescs()};
 }
 
 BlockRegistry& BlockRegistry::instance() {

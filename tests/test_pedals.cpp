@@ -101,7 +101,7 @@ double measureAliasDb(Processor& p, double fs = 48000.0) {
 }
 
 HmParams hmAlias() {
-  HmParams q;
+  HmParams q = HmParams::v2();
   q.distortion = 10;
   q.low = q.high = 5;
   return q;
@@ -130,7 +130,7 @@ struct Fr {
 };
 
 Fr hmFr(double low, double high, double dist = 5.0, double level = 5.0) {
-  HmParams q;
+  HmParams q = HmParams::v2();
   q.low = low;
   q.high = high;
   q.distortion = dist;
@@ -500,7 +500,7 @@ std::vector<Thd> thdSweep(bool hm, double levelDbfs) {
   std::vector<Thd> t;
   for (int k = 0; k <= 10; ++k) {
     if (hm) {
-      HmParams q;
+      HmParams q = HmParams::v2();
       q.distortion = k;
       HmPedal p(q);
       t.push_back(measureThd(p, levelDbfs));
@@ -804,7 +804,7 @@ TEST_CASE("pedal block presets round-trip and reject bad values", "[pedal][prese
     b[k] = std::move(v);
     return b;
   };
-  CHECK_THROWS_AS(parseP(bad(with("modelVersion", 3))), PresetError);
+  CHECK_THROWS_AS(parseP(bad(with("modelVersion", 4))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("modelVersion", 2, "pedal.ts"))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("modelVersion", 0))), PresetError);
   CHECK_THROWS_AS(parseP(bad(with("params", {{"distortion", 11}}))), PresetError);

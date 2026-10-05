@@ -64,17 +64,26 @@ class CMAES:
         self.gen += 1
 
 
-def minimize(fn, x0, sigma0=0.25, popsize=None, generations=20, seed=0, evaluate_batch=None):
+def minimize(fn, x0, sigma0=0.25, popsize=None, generations=20, seed=0, evaluate_batch=None, patience=None,
+             tol=0.0, on_gen=None):
     """Run CMA-ES. ``fn(x) -> float`` or ``evaluate_batch(X) -> list[float]`` (parallel evaluation, order kept).
     Returns (best_x, best_f, history[list of best-so-far per generation]). The initial point is evaluated first
-    so the result is never worse than x0."""
+    so the result is never worse than x0.
+
+    ``patience`` (generations) with ``tol``: stop early once the best-so-far has improved by less than ``tol`` over the
+    last ``patience`` generations (plateau). ``None`` runs all generations (the full search). ``on_gen(g, generations)`` is
+    called after every generation (progress reporting). Deterministic: the stop rule only looks at evaluated values."""
     es = CMAES(x0, sigma0, popsize, seed)
     batch = evaluate_batch or (lambda X: [fn(x) for x in X])
     f0 = batch(np.asarray([es.mean]))[0]
     es.best_f, es.best_x = float(f0), es.mean.copy()
     hist = [es.best_f]
-    for _ in range(generations):
+    for g in range(generations):
         X = es.ask()
         es.tell(X, batch(X))
         hist.append(es.best_f)
+        if on_gen is not None:
+            on_gen(g + 1, generations)
+        if patience is not None and len(hist) > patience and hist[-1 - patience] - hist[-1] < tol:
+            break
     return es.best_x, es.best_f, hist

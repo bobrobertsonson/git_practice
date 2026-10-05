@@ -191,7 +191,8 @@ def post_eq(v: dict[str, float]) -> list[dict]:
 
 def gate_preset(noise_floor_db: float, extra: dict | None = None) -> dict:
     """Fixed gate ("medium"): open at the DI noise floor + 4 dB, hold 40 ms, release 150 ms, range -50 dB."""
-    g = {"enabled": True, "thresholdDb": round(noise_floor_db + 4.0, 2), "hysteresisDb": 6.0, "attackMs": 0.5,
+    # a DI with digital silence measures a floor of -200 dBFS: keep the threshold inside the schema range (>= -120)
+    g = {"enabled": True, "thresholdDb": round(max(noise_floor_db, -90.0) + 4.0, 2), "hysteresisDb": 6.0, "attackMs": 0.5,
          "holdMs": 40.0, "releaseMs": 150.0, "rangeDb": -50.0}
     if extra:  # phase 3.5 fields (mode, ratio, keyHighPassHz, releaseCurve) pass straight through
         g.update(extra)

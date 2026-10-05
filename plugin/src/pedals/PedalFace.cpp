@@ -40,11 +40,14 @@ PedalFace::PedalFace(SawbladeProcessor& p) : proc_(p) {
       addChildComponent(*knob);
       knobs_[static_cast<size_t>(c)][static_cast<size_t>(k)] = std::move(knob);
     }
-    std::vector<juce::String> clipTexts;
-    for (int i = 0; i < kNumClipTypes; ++i) clipTexts.push_back(clipShortName(i));
-    clip_[static_cast<size_t>(c)] = std::make_unique<PedalSwitch>(apvts, paramSpec(f.clipParam).id, std::string(f.oledName) + " clip", clipTexts);
-    focus_[static_cast<size_t>(c)] = std::make_unique<PedalSwitch>(apvts, paramSpec(f.focus.param).id, std::string(f.oledName) + " focus", f.focus);
+    if (f.clipParam >= 0) {
+      std::vector<juce::String> clipTexts;
+      for (int i = 0; i < kNumClipTypes; ++i) clipTexts.push_back(clipShortName(i));
+      clip_[static_cast<size_t>(c)] = std::make_unique<PedalSwitch>(apvts, paramSpec(f.clipParam).id, std::string(f.oledName) + " clip", clipTexts);
+    }
+    focus_[static_cast<size_t>(c)] = std::make_unique<PedalSwitch>(apvts, paramSpec(f.focus.param).id, std::string(f.oledName) + " " + f.focus.label, f.focus);
     for (PedalSwitch* sw : {clip_[static_cast<size_t>(c)].get(), focus_[static_cast<size_t>(c)].get()}) {
+      if (sw == nullptr) continue;
       sw->setValueText(PedalSwitch::TextSide::Above, 0, 6.5f);
       addChildComponent(*sw);
     }
@@ -81,7 +84,7 @@ void PedalFace::resized() {
   };
   place(*circuit_, 0);
   for (int c = 0; c < kNumCircuits; ++c) {
-    place(*clip_[static_cast<size_t>(c)], 1);
+    if (clip_[static_cast<size_t>(c)]) place(*clip_[static_cast<size_t>(c)], 1);
     place(*focus_[static_cast<size_t>(c)], 2);
   }
 }
@@ -91,7 +94,7 @@ void PedalFace::showActive() {
     const bool on = active_ && static_cast<int>(*active_) == c;
     for (auto& k : knobs_[static_cast<size_t>(c)])
       if (k) k->setVisible(on);
-    clip_[static_cast<size_t>(c)]->setVisible(on);
+    if (clip_[static_cast<size_t>(c)]) clip_[static_cast<size_t>(c)]->setVisible(on);
     focus_[static_cast<size_t>(c)]->setVisible(on);
   }
   circuit_->setVisible(active_.has_value());
@@ -118,8 +121,10 @@ juce::String PedalFace::oledLine2() const {
   const CircuitFace& f = circuitFace(c);
   auto& apvts = proc_.parameters();
   const auto raw = [&](int param) { return static_cast<double>(apvts.getRawParameterValue(paramSpec(param).id)->load()); };
+  const juce::String focus = f.focus.isNarrow(raw(f.focus.param)) ? f.focus.narrowText : f.focus.wideText;
+  if (f.clipParam < 0) return juce::String(f.oledName) + kDot + focus;  // no CLIP switch: no clip field
   const int clip = static_cast<int>(std::lround(raw(f.clipParam)));
-  return juce::String(f.oledName) + kDot + clipShortName(clip) + kDot + (f.focus.isNarrow(raw(f.focus.param)) ? "NARROW" : "WIDE");
+  return juce::String(f.oledName) + kDot + clipShortName(clip) + kDot + focus;
 }
 
 void PedalFace::paint(juce::Graphics& g) {
@@ -162,7 +167,7 @@ void PedalFace::paint(juce::Graphics& g) {
     auto m = knobMm(k);
     chip(toPx({m.x, m.y + kKnobLabelDy}), fk.param >= 0 ? fk.label : "");
   }
-  const char* switchLabels[3] = {"CIRCUIT", "CLIP", f.focus.label};
+  const char* switchLabels[3] = {"CIRCUIT", f.clipParam >= 0 ? "CLIP" : "", f.focus.label};
   for (int k = 0; k < 3; ++k) chip(toPx({switchMm(k).x, kSwitchLabelY}), switchLabels[k]);
 
   // OLED overlay.

@@ -54,12 +54,27 @@ the fixture render peaks at about -3 dBFS.
 (Band names appear only in `notes`, never in `name`; file names keep "pickle" as the internal id
 of the BIG FUZZ circuit.)
 
-Coming with phase 7c (no files yet; TODO rows):
+Phase 7c adds ten modded / one-knob presets and four calibrated CHAINSAW presets in their own folders (the family bank is 29 with the fifteen above):
 
-| TODO | Circuit |
-|---|---|
-| a modded-chainsaw tone with decoupled mids, boost and clean blend | `pedal.hmx` |
-| a one-knob chainsaw | `pedal.eye` |
+| File | Name | Circuit | Notes |
+|---|---|---|---|
+| `hmx/arizona_mids.json` | Arizona Mids | MODDED SAW | pushed high-mids, presence up, LED clip, 20 % clean; high-gain amp 88689 |
+| `hmx/boosted_blend.json` | Boosted Blend | MODDED SAW | boost on, 35 % clean blend; mid-gain British amp 86089 |
+| `hmx/four_band_doom.json` | Four-Band Doom | MODDED SAW | low-mids up, high-mids scooped, asymmetric clip; low-gain amp |
+| `hmx/decoupled_crust.json` | Decoupled Crust | MODDED SAW | bark at 1.2 kHz, less low, tight; plexi-style amp 76884 |
+| `hmx/berlin_saw_low.json` | Berlin Saw Low | MODDED SAW | VOICE = LOW (750 Hz): lower, thicker bark |
+| `hmx/berlin_saw_mid.json` | Berlin Saw Mid | MODDED SAW | VOICE = STOCK (1 kHz); same knobs as the other two |
+| `hmx/berlin_saw_high.json` | Berlin Saw High | MODDED SAW | VOICE = HIGH (2 kHz): upper-mid cut-through |
+| `eye/one_knob_max.json` | One-Knob Max | ONE-KNOB SAW | sealed buzzsaw at full gain; small solid-state amp |
+| `eye/one_knob_tight.json` | One-Knob Tight | ONE-KNOB SAW | tight input low cut for palm-muted riffing |
+| `eye/one_knob_crust.json` | One-Knob Crust | ONE-KNOB SAW | low-gain crust, clippers barely driven |
+| `hm_v3/sunlight_all_tens.json` | Sunlight All Tens | CHAINSAW (v3) | all-tens buzzsaw on the calibrated model; preset output -4 dB |
+| `hm_v3/stockholm_custom.json` | Stockholm Custom | CHAINSAW (v3) | custom mode, low 6.5 / high 5 / distortion 10, low gyrator 90 Hz |
+| `hm_v3/gothenburg_half_mids.json` | Gothenburg Half-Mids | CHAINSAW (v3) | half the high-mids, custom gain, presence 6 dB |
+| `hm_v3/grind_buzz.json` | Grind Buzz | CHAINSAW (v3) | custom-mode grind, tightness 7, presence 5.5 kHz +12 dB; preset output -4 dB |
+
+(`presets/modeled/chainsaw/` holds 7b's fifteen (model version 2, untouched); `presets/modeled/hmx/`, `eye/` and `hm_v3/` are 7c's, kept in
+their own folders because a test asserts exactly fifteen files in `chainsaw/`.)
 
 ## Captures to fetch (not committed)
 

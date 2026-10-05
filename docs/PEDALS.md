@@ -8,8 +8,8 @@ model, not a capture, so every knob moves live. The schema is in `docs/PRESET_SC
 |---|---|---|---|
 | CHAINSAW | Swedish chainsaw distortion | `pedal.hm` | ready |
 | BIG FUZZ | big fuzz | `pedal.muff` | ready |
-| (modded chainsaw) | modded-chainsaw class: decoupled mids, presence, 3-way clip, boost, clean blend, 4-band EQ | `pedal.hmx` | coming (phase 7c) |
-| (one-knob chainsaw) | one-knob chainsaw | `pedal.eye` | coming (phase 7c) |
+| MODDED SAW | modded chainsaw distortion: decoupled mids, presence, four clips, boost, clean blend, 4-band EQ | `pedal.hmx` | ready (phase 7c) |
+| ONE-KNOB SAW | one-knob chainsaw | `pedal.eye` | ready (phase 7c) |
 
 Both models are starting points built from published descriptions, not fitted to a real unit.
 A capture-based fit comes later (the fixed constants are in one table, `HmVoicing`).
@@ -56,6 +56,36 @@ Two cascaded clipping stages into a passive tone stack, with extras for a scoope
 - **TIGHT, MIX, OUT** (`volume`): as on CHAINSAW.
 - **ROLL-OFF**: the final low-pass. **STAGE 2**: trim on stage B. **BIAS**: asymmetry. **CLIP / CLIP 2**: as below.
 
+## MODDED SAW circuit
+The chainsaw core with the mods the modded-pedal class shares: the two mid bands are decoupled
+(HIGH-MID is its own parametric band, HIGH moves the upper bark alone), a low-mid band, a presence
+shelf, four clips, a boost stage and a clean blend. With HIGH-MID = HIGH, HIGH-MID FREQ, LOW-MID and
+PRESENCE at their centre settings, BOOST off, MIX 100 and clip `silicon`, it is the CHAINSAW
+voicing plus the measured modded-unit deltas (a 110 Hz bump of about 3 dB and a dip of about 3 dB
+at 2.2 kHz) and a gain range that tops out where CHAINSAW sits at 6. Knob ranges are 0 to 10; the centre (5) of LOW-MID, HIGH-MID FREQ and PRESENCE is flat.
+
+- **LOW**, **HIGH**, **DIST**, **TIGHT**, **OUT**, **MIX**: as on CHAINSAW (HIGH here drives only the
+  1.5 kHz band).
+- **LOW-MID** and **LM HZ**: a bell that cuts or boosts 10 dB around 200 to 600 Hz (346 Hz at 5).
+  Up for body and doom weight, down for a leaner, cleaner low mid.
+- **HIGH-MID** and **HM HZ**: the stock 1 kHz bark band made movable, 625 Hz to 1.6 kHz (1 kHz at 5).
+  Push it for the modern "mids" voice; scoop it for a hollow, doom-like tone.
+- **PRESENCE**: a high shelf from 3.5 kHz, plus or minus 6 dB (flat at 5), on top of the stock
+  4.8 kHz peak.
+- **VOICE** (drawer switch): where the HIGH-MID band lives: STOCK 1 kHz, LOW 750 Hz (a lower, thicker bark, narrower), HIGH 2 kHz (upper-mid cut-through). HM HZ still trims around it.
+- **BOOST**: an extra 9 dB of drive into the first clipper: thicker and more compressed. It is a
+  switch (FOCUS on the face, BOOST in the drawer: they are the same parameter).
+- **CLIP**: `silicon`, `led`, `asymmetric` or `soft` (below).
+
+## ONE-KNOB SAW circuit
+A sealed chainsaw built on the CHAINSAW core with the knobs fixed where measurements of real
+one-knob units land (LOW 6.2, HIGH 7.1), one GAIN knob, OUT and a TIGHT low cut. GAIN maps onto the
+CHAINSAW distortion knob from 3 to 8. There is no MIX and no CLIP choice.
+
+- **GAIN**: low settings leave the clippers lightly driven (crust); full is the sealed buzzsaw.
+- **TIGHT**: as on CHAINSAW. On the face the FOCUS lever is the same parameter (OFF at 0, ON at 5).
+- **OUT**: output level.
+
 ## The four clips
 | clip | what you hear |
 |---|---|
@@ -68,14 +98,17 @@ At high gain every clip is close to a square wave and the differences shrink; th
 when you play softly or turn the gain down.
 
 ## Face and drawer (plugin)
-The pedal face shows six knobs per circuit plus CIRCUIT, CLIP and FOCUS switches; the advanced
-drawer (double-click the pedal) shows the rest. The mapping is a table in
+The pedal face shows up to six knobs per circuit plus CIRCUIT, CLIP and FOCUS switches; the advanced
+drawer (double-click the pedal) shows the rest. ONE-KNOB SAW has three knobs, no CLIP lever (the
+OLED's second line then has no clip field) and an empty drawer. The mapping is a table in
 `plugin/src/pedals/CircuitFaces` (phase 7b task B).
 
 | circuit | face knobs | CLIP | FOCUS | drawer |
 |---|---|---|---|---|
 | CHAINSAW | LOW, HIGH, DIST, TIGHT, OUT, MIX | `clip` | `lowQ` wide 0.8 / narrow 1.6 | LOW HZ, LOW Q, HIGH HZ, SPREAD, PRES HZ, PRES dB, ROLL-OFF, STAGE 1, STAGE 2, BIAS; MODE, CLIP 2 |
 | BIG FUZZ | SUSTAIN, TONE, SCOOP, TIGHT, OUT, MIX | `clip` | `stackRatio` wide 4.4 / narrow 2.5 | CRUNCH, VOICE, WIDTH, ROLL-OFF, STAGE 2, BIAS; CLIP 2 |
+| MODDED SAW | LOW, HIGH, DIST, TIGHT, OUT, MIX | `clip` | BOOST: `boost` OFF / ON | LOW-MID, LM HZ, HIGH-MID, HM HZ, PRESENCE; BOOST, VOICE |
+| ONE-KNOB SAW | GAIN, (empty), (empty), TIGHT, OUT, (empty) | none | TIGHT: `tightness` OFF 0 / ON 5 | none |
 
 ## The fifteen starting presets (`presets/modeled/chainsaw/`)
 All render from repo files only (identity cab); the notes name the suggested amp and cab from
@@ -99,4 +132,31 @@ All render from repo files only (identity cab); the notes name the suggested amp
 | Big Fuzz Doom Saw | BIG FUZZ | low-voiced doom and sludge saw, dark and soft-clipped |
 | Fuzz Into Saw | BIG FUZZ then CHAINSAW | a mild fuzz pushing the chainsaw: thicker, more compressed |
 
+## The ten modded and one-knob presets (`presets/modeled/hmx/`, `presets/modeled/eye/`)
+Same rules as the bank above (identity cab, amp suggestions by TONE3000 id in `notes`). Together with
+the fifteen above the family bank is 29 (with the 4 calibrated CHAINSAW presets below).
+
+| preset | circuit | the sound |
+|---|---|---|
+| Arizona Mids | MODDED SAW | modern desert death metal: pushed high-mids, presence up, LED clip, 20 % clean |
+| Boosted Blend | MODDED SAW | boost on, 35 % clean: thicker, more compressed buzz that keeps the pick attack |
+| Four-Band Doom | MODDED SAW | doom and sludge: low-mids up, high-mids scooped, dark presence, asymmetric clip |
+| Decoupled Crust | MODDED SAW | d-beat crust: the bark at 1.2 kHz, less low, tight |
+| Berlin Saw Low / Mid / High | MODDED SAW | the same knobs with the VOICE switch at LOW / STOCK / HIGH |
+| One-Knob Max | ONE-KNOB SAW | the sealed buzzsaw at full gain |
+| One-Knob Tight | ONE-KNOB SAW | the same voicing with a tight input low cut for palm-muted riffing |
+| One-Knob Crust | ONE-KNOB SAW | low-gain crust: the all-tens EQ with the clippers barely driven |
+
 Two or more circuits can sit in a chain; the plugin's face controls the first circuit block.
+
+## The four calibrated CHAINSAW presets (`presets/modeled/hm_v3/`)
+`pedal.hm` model version 3: the voicing calibrated against real units in phase 7.1 (saturated from
+distortion 2, an asymmetric clip with a strong 2nd harmonic, an open top end, and a measured
+custom mode with an extra low shelf and top shelf).
+
+| preset | the sound |
+|---|---|
+| Sunlight All Tens | all-tens Swedish buzzsaw on the calibrated model |
+| Stockholm Custom | custom-mode wall at the measured custom knob map, low gyrator at 90 Hz |
+| Gothenburg Half-Mids | melodic-death saw: half the high-mids, custom gain, presence trimmed |
+| Grind Buzz | custom-mode grind: tight low cut, presence at 5.5 kHz and lifted |

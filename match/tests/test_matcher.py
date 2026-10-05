@@ -728,3 +728,9 @@ def test_gate_preset_passes_phase35_fields_through():
     g = gate_preset(-50.0, {"mode": "expander", "ratio": 4.0, "keyHighPassHz": 120.0, "releaseCurve": "linear-db"})
     assert g["mode"] == "expander" and g["ratio"] == 4.0 and g["keyHighPassHz"] == 120.0
     assert g["releaseCurve"] == "linear-db" and g["releaseMs"] == base["releaseMs"]
+
+
+def test_gate_preset_clamps_digital_silence_floor():
+    assert gate_preset(-200.0)["thresholdDb"] == -86.0          # inside the schema range [-120, 0]
+    assert gate_preset(-90.0)["thresholdDb"] == -86.0
+    assert gate_preset(-37.1)["thresholdDb"] == pytest.approx(-33.1)   # normal floors are unchanged

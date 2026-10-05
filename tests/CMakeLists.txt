@@ -27,7 +27,10 @@ add_executable(sawblade_tests
   test_pedals.cpp
   test_pedals_7b.cpp
   test_ir_mix.cpp
-  test_category_cache.cpp)
+  test_category_cache.cpp
+  test_separation_support.cpp
+  test_pedals_saw.cpp
+  test_pedals_v3.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)
@@ -57,3 +60,20 @@ endif()
 add_executable(pedal_fr tools/pedal_fr.cpp)
 target_link_libraries(pedal_fr PRIVATE sawblade_core sawblade_warnings)
 target_include_directories(pedal_fr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Phase 5.1b separator tests: a synthetic ONNX model built at test time (tests/onnx_synth.h), no weights,
+# no Python. Separate executable so the ONNX Runtime library stays out of the core tests.
+if(SAWBLADE_WITH_SEPARATOR)
+  add_executable(sawblade_separator_tests test_separator.cpp)
+  target_link_libraries(sawblade_separator_tests PRIVATE
+    sawblade_separator sawblade_warnings Catch2::Catch2WithMain sawblade_json)
+  target_include_directories(sawblade_separator_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(sawblade_separator_tests PRIVATE
+    SAWBLADE_SEPARATE_EXE="$<TARGET_FILE:sawblade-stems>"
+    SAWBLADE_TONERENDER_EXE="$<TARGET_FILE:tonerender>"
+    SAWBLADE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets")
+  add_dependencies(sawblade_separator_tests sawblade-stems tonerender)
+  sawblade_ort_build_rpath(sawblade_separator_tests)
+  catch_discover_tests(sawblade_separator_tests TEST_PREFIX "separator: ")
+endif()

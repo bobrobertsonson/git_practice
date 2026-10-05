@@ -28,6 +28,8 @@ struct MatchPlan {
 // reference = the loaded song's guitar stem (else other, else the mix / first file), DI = the selected take,
 // offset = the take's stem sample index at its first sample (only if it was recorded against this song).
 MatchPlan planMatch(SawbladeProcessor& p);
+// The loaded song's name: the folder name, or the song file's stem (never the separation cache directory). "" = none.
+std::string activeSongName(SawbladeProcessor& p);
 
 // Why a preset cannot be exported as written: a capture (NAM model, or the cab IR when the cab is on) with no file path.
 // "" = fine.

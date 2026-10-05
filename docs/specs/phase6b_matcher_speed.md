@@ -28,3 +28,7 @@ references, and the stem-basis fizz acceptance still holds.
 - Full pytest passes (counts printed). Tests for progress-json and quick mode.
 - Use `nice`. Don't run more than one full match at once, because the NAM training job may
   still be running.
+
+## Amended acceptance (lead, after measurement)
+`--quick` is preview quality: at most ~5 min CPU-equivalent on 4 cores, within 1 dB A-weighted of `--thorough` on both references, fizz metrics unchanged. The 0.15 dB target was not met; see `phase6b_matcher_speed_REPORT.md`. `--thorough` remains the default final match.
+Listening files are written only with `--listen` in both modes (intentional default change); the R render is always made with `--di-r` for the clip guard.

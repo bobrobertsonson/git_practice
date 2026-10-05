@@ -9,6 +9,7 @@
 #include <cctype>
 
 #include "dr_flac.h"
+#include "dr_mp3.h"
 #include "dr_wav.h"
 
 namespace sawblade {
@@ -67,6 +68,24 @@ AudioFile readFlac(const std::filesystem::path& path) {
   return out;
 }
 
+AudioFile readMp3(const std::filesystem::path& path) {
+  const std::string p = path.string();
+  drmp3_config cfg{};
+  drmp3_uint64 frames = 0;
+  float* data = drmp3_open_file_and_read_pcm_frames_f32(p.c_str(), &cfg, &frames, nullptr);
+  if (data == nullptr) fail(path, "cannot open or not a valid MP3 file");
+  struct Freer {
+    float* d;
+    ~Freer() { drmp3_free(d, nullptr); }
+  } freer{data};
+  if (cfg.channels == 0 || cfg.sampleRate == 0) fail(path, "invalid channel count or sample rate");
+  AudioFile out;
+  out.sampleRate = static_cast<double>(cfg.sampleRate);
+  out.channels = static_cast<int>(cfg.channels);
+  out.interleaved.assign(data, data + static_cast<std::size_t>(frames) * cfg.channels);
+  return out;
+}
+
 }  // namespace
 
 AudioFile readAudioFile(const std::filesystem::path& path) {
@@ -74,7 +93,8 @@ AudioFile readAudioFile(const std::filesystem::path& path) {
   std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   if (ext == ".wav") return readWav(path);
   if (ext == ".flac") return readFlac(path);
-  throw std::runtime_error("audio error (" + path.string() + "): unsupported file type (need .wav or .flac)");
+  if (ext == ".mp3") return readMp3(path);
+  throw std::runtime_error("audio error (" + path.string() + "): unsupported file type (need .wav, .flac or .mp3)");
 }
 
 void writeWavFloat32(const std::filesystem::path& path, double sampleRate,
