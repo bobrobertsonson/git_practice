@@ -247,9 +247,13 @@ TEST_CASE("every parameter has exactly one bound control outside the rig panel",
   for (auto* sw : switches) ++nSwitches[sw->paramId().toStdString()];
   std::set<std::string> focusParams;
   for (int c = 0; c < kNumCircuits; ++c) focusParams.insert(paramSpec(circuitFace(static_cast<Circuit>(c)).focus.param).id);
-  CHECK(static_cast<int>(nKnobs.size() + nSwitches.size()) >= kNumParams);
+  // The twelve v0.2 amp-control parameters (ampA_* / ampB_*) have no editor control until v0.2 Task D wires
+  // the knobs onto the amp heads (docs/specs/v0_2-tweakable_presets.md); every other parameter is bound.
+  const auto isAmpParam = [](int i) { return i >= kAmpFirst && i < kAmpFirst + 2 * kAmpKnobCount; };
+  CHECK(static_cast<int>(nKnobs.size() + nSwitches.size()) >= kNumParams - 2 * kAmpKnobCount);
 
   for (int i = 0; i < kNumParams; ++i) {
+    if (isAmpParam(i)) continue;
     const ParamSpec& s = paramSpec(i);
     INFO(s.id);
     // One knob or one switch; a FOCUS parameter has the FOCUS switch on the face plus exactly one other
