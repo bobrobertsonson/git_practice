@@ -68,6 +68,7 @@ class Settings {
   static Settings& shared();
   // Test hook: forget the shared instance so the next shared() re-reads SAWBLADE_SETTINGS_FILE.
   static void resetSharedForTests();
+  static bool sharedExistsForTests();  // true once shared() has been called since the last reset
 
   const std::filesystem::path& file() const { return file_; }
   const Env& env() const { return env_; }
@@ -122,8 +123,7 @@ class Settings {
   nlohmann::json doc_ = nlohmann::json::object();
   bool loadedOnce_ = false, firstRun_ = false;
   std::string loadError_;
-  bool applyProcessEnv_ = false;  // only the shared() instance touches the process environment
-  std::optional<std::pair<bool, std::string>> savedCacheEnv_;  // SAWBLADE_CACHE_DIR before we overrode it
+  bool applyProcessEnv_ = false;  // only the shared() instance sets the core cache-root override
   std::vector<Listener*> listeners_;
 };
 

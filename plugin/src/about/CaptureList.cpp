@@ -18,7 +18,7 @@ void add(std::vector<CaptureRow>& out, const std::string& slot, const sawblade::
   r.file = c.file;
   r.title = std::filesystem::path(c.file).filename().string();
   std::error_code ec;
-  r.onDisk = !c.resolvedPath.empty() && std::filesystem::exists(sawblade::locateCapture(c), ec);  // incl. the TONE3000 cache copy
+  r.onDisk = std::filesystem::exists(sawblade::locateCapture(c), ec);  // incl. the TONE3000 cache copy
   if (c.source) {
     r.hasSource = true;
     r.provider = c.source->provider;

@@ -21,6 +21,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "AppPaths.h"
+#include "PluginProcessor.h"
 #include "TakeRecorder.h"
 #include "about/CaptureList.h"
 #include "sawblade/preset.h"
@@ -780,7 +781,7 @@ TEST_CASE("settings: Settings::shared keeps load()'s error text (malformed file,
   Settings::resetSharedForTests();
 }
 
-TEST_CASE("settings: a stored captureCacheDir reaches the core's captureCacheRoot(); clearing restores the environment", "[settings][cache]") {
+TEST_CASE("settings: a stored captureCacheDir reaches the core's captureCacheRoot() through the override, never the environment", "[settings][cache]") {
   TempDir t;
   const std::string file = (t.dir / "s.json").string(), envCache = (t.dir / "envcache").string(), stored = (t.dir / "stored cache").string();
   ScopedVar f("SAWBLADE_SETTINGS_FILE", &file), c("SAWBLADE_CACHE_DIR", &envCache);
@@ -789,16 +790,74 @@ TEST_CASE("settings: a stored captureCacheDir reaches the core's captureCacheRoo
   REQUIRE(Settings::shared().setCaptureCacheDir(fs::path(stored)).ok);
   CHECK(sawblade::captureCacheRoot() == fs::path(stored));
   CHECK(Settings::shared().effectiveCaptureCacheDir() == fs::path(stored));
+  CHECK(std::string(std::getenv("SAWBLADE_CACHE_DIR")) == envCache);  // the environment is untouched
   REQUIRE(Settings::shared().setCaptureCacheDir(std::nullopt).ok);
   CHECK(sawblade::captureCacheRoot() == fs::path(envCache));
-  // set again, then drop the instance: the environment is restored as well; and a value found in the file on load applies
   REQUIRE(Settings::shared().setCaptureCacheDir(fs::path(stored)).ok);
-  Settings::resetSharedForTests();
+  Settings::resetSharedForTests();  // dropping the instance drops the override
   CHECK(sawblade::captureCacheRoot() == fs::path(envCache));
   (void)Settings::shared();  // loads the file, which still holds the stored dir
   CHECK(sawblade::captureCacheRoot() == fs::path(stored));
+  CHECK(std::string(std::getenv("SAWBLADE_CACHE_DIR")) == envCache);
   Settings::resetSharedForTests();
   CHECK(sawblade::captureCacheRoot() == fs::path(envCache));
+  // an injected-Env instance never touches the override
+  Settings own(t.dir / "own.json", makeEnv(t.dir));
+  own.load();
+  own.setCaptureCacheDir(fs::path(stored));
+  CHECK(sawblade::captureCacheRoot() == fs::path(envCache));
+}
+
+TEST_CASE("TakeRecorder: no Settings access at construction; with no override it follows Settings when recording starts", "[settings][takes]") {
+  TempDir t;
+  const std::string file = (t.dir / "must_stay_uncreated.json").string(), data = (t.dir / "data").string();
+  ScopedVar f("SAWBLADE_SETTINGS_FILE", &file), ad("SAWBLADE_APPDATA", &data);
+  Settings::resetSharedForTests();
+  {
+    sawblade::plugin::TakeRecorder rec;       // the recorder alone
+    CHECK_FALSE(Settings::sharedExistsForTests());
+    CHECK_FALSE(fs::exists(file));
+  }
+  {
+    sawblade::plugin::SawbladeProcessor proc;  // a bare processor owns a TakeRecorder
+    CHECK_FALSE(Settings::sharedExistsForTests());
+    CHECK_FALSE(fs::exists(file));
+  }
+  // no override: the folder is whatever Settings says at the time
+  sawblade::plugin::TakeRecorder rec;
+  CHECK(rec.takesDir() == t.dir / "data" / "takes");
+  REQUIRE(Settings::shared().setTakesDir(t.dir / "first").ok);
+  CHECK(rec.takesDir() == t.dir / "first");
+  REQUIRE(Settings::shared().setTakesDir(t.dir / "second").ok);
+  CHECK(rec.takesDir() == t.dir / "second");
+  rec.setTakesDir(t.dir / "explicit");  // an explicit override wins
+  CHECK(rec.takesDir() == t.dir / "explicit");
+  Settings::resetSharedForTests();
+}
+
+TEST_CASE("TakeRecorder: start() records into the current Settings takes folder", "[settings][takes]") {
+  TempDir t;
+  const std::string file = (t.dir / "s.json").string();
+  ScopedVar f("SAWBLADE_SETTINGS_FILE", &file);
+  Settings::resetSharedForTests();
+  sawblade::plugin::TakeRecorder rec;
+  rec.prepare(48000.0);
+  REQUIRE(Settings::shared().setTakesDir(t.dir / "takes one").ok);
+  REQUIRE(rec.start("song"));
+  std::vector<float> block(512, 0.1f);
+  sawblade::plugin::TakeStartInfo info;
+  for (int i = 0; i < 20; ++i) {
+    rec.process(block.data(), 512, &info);
+    std::this_thread::sleep_for(5ms);
+  }
+  rec.stop();
+  rec.process(block.data(), 512, &info);
+  REQUIRE(rec.waitIdle(5000ms));
+  REQUIRE(fs::exists(t.dir / "takes one"));
+  size_t wavs = 0;
+  for (const auto& e : fs::directory_iterator(t.dir / "takes one")) wavs += e.path().extension() == ".wav";
+  CHECK(wavs == 1);
+  Settings::resetSharedForTests();
 }
 
 TEST_CASE("T3kTool's settings writer honours SAWBLADE_SETTINGS_FILE, creates 0600 and leaves no tmp file", "[settings][t3k]") {

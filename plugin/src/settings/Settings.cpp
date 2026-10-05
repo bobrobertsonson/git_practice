@@ -11,6 +11,8 @@
 
 #include <juce_core/juce_core.h>
 
+#include "sawblade/preset.h"
+
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -143,6 +145,11 @@ Settings& Settings::shared() {
     gShared->load();
   }
   return *gShared;
+}
+
+bool Settings::sharedExistsForTests() {
+  std::lock_guard<std::mutex> lk(gSharedMutex);
+  return gShared != nullptr;
 }
 
 void Settings::resetSharedForTests() {
@@ -403,33 +410,19 @@ Result Settings::setCaptureCacheDir(std::optional<fs::path> v) {
   return r;
 }
 
-// The shared instance keeps the process environment in line with a stored captureCacheDir, so the core's
-// captureCacheRoot() (which reads only SAWBLADE_CACHE_DIR) and the child tools (ToolRunner passes the effective dir)
-// use the same folder. Clearing the override restores the previous value. Caller holds m_ (or is the constructor path).
+// The shared instance points the core's captureCacheRoot() at a stored captureCacheDir (an in-process override, no
+// environment mutation), so the engine's cache fallback and the child tools (ToolRunner passes the effective dir) use
+// one folder. Clearing the override returns to the environment / default. Caller holds m_.
 void Settings::applyCacheEnv() {
   if (!applyProcessEnv_) return;
   auto it = doc_.find("captureCacheDir");
-  const bool stored = it != doc_.end() && it->is_string() && !it->get<std::string>().empty();
-#ifndef _WIN32
-  if (stored) {
-    if (!savedCacheEnv_) {
-      const char* cur = std::getenv("SAWBLADE_CACHE_DIR");
-      savedCacheEnv_ = std::make_pair(cur != nullptr, std::string(cur != nullptr ? cur : ""));
-    }
-    ::setenv("SAWBLADE_CACHE_DIR", it->get<std::string>().c_str(), 1);
-  } else if (savedCacheEnv_) {
-    if (savedCacheEnv_->first) ::setenv("SAWBLADE_CACHE_DIR", savedCacheEnv_->second.c_str(), 1);
-    else ::unsetenv("SAWBLADE_CACHE_DIR");
-    savedCacheEnv_.reset();
-  }
-#else
-  (void)stored;
-#endif
+  if (it != doc_.end() && it->is_string() && !it->get<std::string>().empty()) sawblade::setCaptureCacheRootOverride(fs::path(it->get<std::string>()));
+  else sawblade::setCaptureCacheRootOverride(std::nullopt);
 }
 
 Settings::~Settings() {
   std::lock_guard<std::mutex> lk(m_);
-  doc_.erase("captureCacheDir");  // restores the environment the process had before we changed it
+  doc_.erase("captureCacheDir");  // drops the core override
   applyCacheEnv();
 }
 Result Settings::setTakesDir(std::optional<fs::path> v) { return setPathKey("takesDir", std::move(v)); }

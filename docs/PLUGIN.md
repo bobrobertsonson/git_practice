@@ -554,7 +554,7 @@ keep off the real home directory. `Env` (home, executable, source dir, `getenv`,
 | settings | macOS `~/Library/Application Support/Sawblade/settings.json`; Linux `$XDG_DATA_HOME/sawblade/settings.json`, else `~/.local/share/sawblade/settings.json` (the same file `presets/T3kTool` and phase 9 use; each store keeps the other's keys); `SAWBLADE_APPDATA` moves the whole app-data dir | `SAWBLADE_SETTINGS_FILE` |
 | TONE3000 token file (the one `sawblade-t3k` writes) | `~/.config/sawblade/t3k_tokens.json` on all platforms | `SAWBLADE_T3K_TOKEN_FILE` |
 | capture cache | `~/.cache/sawblade/captures` | `SAWBLADE_CACHE_DIR` |
-| takes (recordings) | `<appDataDir()>/takes` (`defaultTakesDir()`; follows `SAWBLADE_APPDATA`, `SAWBLADE_DATA_DIR`, `XDG_DATA_HOME` like the settings file; a test asserts `Paths::takesDir` equals it). `TakeRecorder` starts in `Settings::effectiveTakesDir()`, so the panel's Takes folder applies | the `takesDir` key |
+| takes (recordings) | `<appDataDir()>/takes` (`defaultTakesDir()`; follows `SAWBLADE_APPDATA`, `SAWBLADE_DATA_DIR`, `XDG_DATA_HOME` like the settings file; a test asserts `Paths::takesDir` equals it). `TakeRecorder` resolves `Settings::effectiveTakesDir()` lazily (in `takesDir()` and `start()`, on the message thread; its constructor does not touch Settings), unless `setTakesDir()` set an explicit folder, so the panel's Takes folder applies to the next take | the `takesDir` key |
 
 **One app-data dir, one settings file.** `appDataDir()` (`plugin/src/AppPaths.h`, the single definition) is, in order:
 `SAWBLADE_APPDATA`, `SAWBLADE_DATA_DIR`, macOS `~/Library/Application Support/Sawblade`, else `$XDG_DATA_HOME/sawblade`
@@ -566,10 +566,11 @@ Both writers (`Settings` and `T3kTool::setT3kExecutable`) use a unique temp name
 `T3kTool` write between our load and save survives), takes its own nine keys from memory (removals included) and writes
 atomically. `T3kTool::setT3kExecutable` also leaves the file mode 0600.
 
-**Cache dir coherence.** The core's `captureCacheRoot()` reads only `SAWBLADE_CACHE_DIR`, while child tools get the
-effective dir from `ToolRunner`. To keep them on one folder, the shared `Settings` instance sets `SAWBLADE_CACHE_DIR` in
-the process environment whenever a stored `captureCacheDir` is loaded or set (clearing it, or dropping the instance,
-restores the previous value or unsets it). Instances built by tests with an injected `Env` never touch the environment.
+**Cache dir coherence.** The core's `captureCacheRoot()` used to read only `SAWBLADE_CACHE_DIR`, while child tools get the
+effective dir from `ToolRunner`. The shared `Settings` instance now calls `sawblade::setCaptureCacheRootOverride()`
+(core, mutex-guarded, load-time only, never on the audio thread) whenever a stored `captureCacheDir` is loaded or set;
+clearing it, or dropping the instance, clears the override. The process environment is never modified. Instances built
+by tests with an injected `Env` never touch the override.
 
 **Load errors.** `Settings::load()`'s text (malformed file, a dropped `t3k_cs_` key) is kept as `loadError()` and shown in
 red under the Appearance section of the panel ("Settings file problem"); the next save overwrites a malformed file.

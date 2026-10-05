@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <cstdlib>
 #include <filesystem>
+#include <unistd.h>
 #include <fstream>
 #include <string>
 
@@ -299,4 +301,31 @@ TEST_CASE("loadPresetFile: invalid JSON and missing file", "[preset]") {
   REQUIRE_THROWS_AS(loadPresetFile(f), PresetError);
   fs::remove(f);
   REQUIRE_THROWS_AS(loadPresetFile(f), std::runtime_error);
+}
+
+TEST_CASE("captureCacheRoot: the in-process override wins over the environment and clearing returns to it", "[preset][cache]") {
+  const char* old = std::getenv("SAWBLADE_CACHE_DIR");
+  const std::string saved = old ? old : "";
+  ::setenv("SAWBLADE_CACHE_DIR", "/env/cache", 1);
+  CHECK(captureCacheRoot() == std::filesystem::path("/env/cache"));
+  setCaptureCacheRootOverride(std::filesystem::path("/over/ride"));
+  CHECK(captureCacheRoot() == std::filesystem::path("/over/ride"));
+  CHECK(std::string(std::getenv("SAWBLADE_CACHE_DIR")) == "/env/cache");  // the environment is not touched
+  // locateCapture follows the override
+  const auto dir = std::filesystem::temp_directory_path() / ("sawblade_override_" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir / "7");
+  std::ofstream(dir / "7" / "8.nam") << "x";
+  setCaptureCacheRootOverride(dir);
+  Capture c;
+  c.file = "m.nam";
+  c.resolvedPath = "/nonexistent/m.nam";
+  c.source = CaptureSource{"tone3000", "7", "8", "", "", "", ""};
+  CHECK(locateCapture(c) == dir / "7" / "8.nam");
+  setCaptureCacheRootOverride(std::filesystem::path());  // empty = cleared
+  CHECK(captureCacheRoot() == std::filesystem::path("/env/cache"));
+  setCaptureCacheRootOverride(std::nullopt);
+  ::unsetenv("SAWBLADE_CACHE_DIR");
+  CHECK(captureCacheRoot().string().find(".cache/sawblade/captures") != std::string::npos);
+  if (old) ::setenv("SAWBLADE_CACHE_DIR", saved.c_str(), 1);
+  std::filesystem::remove_all(dir);
 }

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -22,11 +23,16 @@ namespace {
 struct SettingsEnv {
   std::filesystem::path dir;
   std::optional<std::string> oldHome;
+  std::map<std::string, std::optional<std::string>> saved;  // variables we overwrite, restored on exit
   bool homeIsolated = false;
   // isolateHome: HOME points into the temp dir too (for tests that read the fallback hooks, which consult Env::system()).
   explicit SettingsEnv(const char* json, bool isolateHome = false) {
     dir = std::filesystem::temp_directory_path() / ("sawblade_editor_settings_" + std::to_string(juce::Random::getSystemRandom().nextInt64() & 0xffffff));
     std::filesystem::create_directories(dir);
+    for (const char* v : {"SAWBLADE_SETTINGS_FILE", "SAWBLADE_T3K_TOKEN_FILE", "SAWBLADE_CACHE_DIR"}) {
+      const char* cur = std::getenv(v);
+      saved[v] = cur ? std::optional<std::string>(cur) : std::nullopt;
+    }
     ::setenv("SAWBLADE_SETTINGS_FILE", (dir / "settings.json").c_str(), 1);
     ::setenv("SAWBLADE_T3K_TOKEN_FILE", (dir / "tokens.json").c_str(), 1);
     ::setenv("SAWBLADE_CACHE_DIR", (dir / "cache").c_str(), 1);
@@ -47,7 +53,10 @@ struct SettingsEnv {
       if (oldHome) ::setenv("HOME", oldHome->c_str(), 1);
       else ::unsetenv("HOME");
     }
-    for (const char* v : {"SAWBLADE_SETTINGS_FILE", "SAWBLADE_T3K_TOKEN_FILE", "SAWBLADE_CACHE_DIR"}) ::unsetenv(v);
+    for (auto& [k, v] : saved) {
+      if (v) ::setenv(k.c_str(), v->c_str(), 1);
+      else ::unsetenv(k.c_str());
+    }
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
   }
