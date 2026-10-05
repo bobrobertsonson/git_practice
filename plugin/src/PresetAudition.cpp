@@ -68,6 +68,15 @@ std::optional<fs::path> PresetAudition::currentCandidateFile() const {
   if (state_.active && state_.onCandidate) file = state_.candidate;
   else if (!applied_.empty()) file = applied_;
   if (file.empty()) return std::nullopt;
+  return stillCurrent(file);
+}
+
+std::optional<fs::path> PresetAudition::appliedCandidateFile() const {
+  if (applied_.empty()) return std::nullopt;
+  return stillCurrent(applied_);
+}
+
+std::optional<fs::path> PresetAudition::stillCurrent(const fs::path& file) const {
   const auto st = proc_.status();
   if (st.loading) return file;
   // The comparison parses the candidate and serialises two presets: it is redone only when something it depends on

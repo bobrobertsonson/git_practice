@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -43,10 +44,12 @@ class MatchSettings {
   std::filesystem::path exportExecutable() const;  // default <repo>/match/.venv/bin/sawblade-export
   std::filesystem::path poolManifest() const;      // default ~/.cache/sawblade/captures/pool_manifest.json
   std::string selectedTake() const;                // take name chosen for MATCH ("" = none)
+  bool autoRefine() const;                         // MATCH starts the thorough pass after the quick one (default true)
   void setMatchExecutable(const std::filesystem::path& p);
   void setExportExecutable(const std::filesystem::path& p);
   void setPoolManifest(const std::filesystem::path& p);
   void setSelectedTake(const std::string& name);
+  void setAutoRefine(bool on);
 
   static std::filesystem::path defaultMatchExecutable();
   static std::filesystem::path defaultExportExecutable();
@@ -55,8 +58,13 @@ class MatchSettings {
  private:
   juce::PropertiesFile& props() const;
   std::filesystem::path file_;
+  mutable std::mutex m_;  // props_ is created on first use, which can be on a job's monitor thread
   mutable std::unique_ptr<juce::PropertiesFile> props_;
 };
+
+// A refinement is only auto-started (or offered on re-attach) for a quick job younger than this, measured from its finish
+// time (its spawn time if it has none): an old PREVIEW belongs to a take / song state that has likely moved on.
+constexpr int kRefineMaxAgeHours = 24;
 
 enum class JobKind { Match, Export };
 enum class JobState { None, Starting, Running, Succeeded, Failed, Cancelled };
@@ -94,6 +102,12 @@ struct JobSnapshot {
   int exitCode = -1;
   std::vector<std::string> logTail;   // last lines of the child's output
   std::string reference, di;          // match: what it was started with (for the screen)
+  // Two-pass MATCH (docs/specs/phase6a_1_quick_then_thorough.md). pass: "" = a single run (the tool has no
+  // --quick / --thorough), "quick" = the PREVIEW pass, "thorough" = the refinement. pairName = the other job
+  // directory's name (written to job.json, so a re-attach can rebuild the pair).
+  std::string pass, pairName;
+  std::string refineNote;             // quick job: why the refinement could not start ("" = nothing to say)
+  bool refinePending = false;         // quick job finished; the runner is deciding / starting its refinement
   std::vector<MatchCandidate> results;  // match, once succeeded
   std::filesystem::path outDir;       // export: the result folder (revealed in the file manager)
   std::string exportMode, exportSize;
@@ -154,9 +168,25 @@ class JobRunner {
   bool startExport(const ExportRequest& r, std::string* error = nullptr);
   void cancel(JobKind kind);
 
+  // The match slot holds the single run, or the quick pass of a two-pass MATCH.
   JobSnapshot snapshot(JobKind kind) const;
-  // Blocks (tests) until the job of `kind` is no longer active.
+  // The thorough pass of a two-pass MATCH (state None when there is none).
+  JobSnapshot refineSnapshot() const;
+  // Cancels only the thorough pass (the quick results stay).
+  void cancelRefine();
+  // Blocks (tests) until the job of `kind` is no longer active. For the match kind that includes the moment
+  // after the quick pass in which the runner decides whether to start the refinement (the thorough pass itself is
+  // waited for with waitRefineFinished).
   bool waitFinished(JobKind kind, std::chrono::milliseconds timeout = std::chrono::milliseconds(30000));
+  bool waitRefineFinished(std::chrono::milliseconds timeout = std::chrono::milliseconds(30000));
+
+  // Housekeeping: keeps the match job folders (quick and thorough) of the `keepTakes` most recently matched takes
+  // (a take = the DI path in job.json) and deletes the older ones. It deletes only real (non-symlink) folders named
+  // YYYYMMDD-HHMMSS...-match whose job.json says kind "match"; a take group with a running job is kept whole; export
+  // jobs, <jobs>/inputs and everything else are never touched. prune() runs on the calling thread;
+  // pruneAsync() runs it once on a thread the runner owns (the processor calls it at start-up).
+  void prune(int keepTakes = 5);
+  void pruneAsync(int keepTakes = 5);
 
   // Cancel = SIGTERM, then SIGKILL after this grace period (default 2.5 s).
   void setCancelGrace(std::chrono::milliseconds g) { graceMs_.store(g.count()); }
@@ -164,18 +194,30 @@ class JobRunner {
  private:
   struct Job;
   struct HelpCache;
-  bool launch(JobKind kind, std::shared_ptr<Job> job, std::string* error);
-  std::shared_ptr<Job>& slot(JobKind k) { return k == JobKind::Match ? match_ : export_; }
-  const std::shared_ptr<Job>& slot(JobKind k) const { return k == JobKind::Match ? match_ : export_; }
-  void adopt(JobKind kind, const std::filesystem::path& dir);
+  enum class Slot { Match, Export, Refine };
+  bool launchLocked(Slot s, std::shared_ptr<Job> job, std::string* error);  // m_ held
+  std::shared_ptr<Job>& slot(Slot s) { return s == Slot::Match ? match_ : s == Slot::Export ? export_ : refine_; }
+  static Slot slotOf(JobKind k) { return k == JobKind::Match ? Slot::Match : Slot::Export; }
+  std::shared_ptr<Job> adoptJob(JobKind kind, const std::filesystem::path& dir);  // m_ held; starts a monitor if the process is alive
+  void adoptMatchGroup(std::shared_ptr<Job> job, const std::vector<std::filesystem::path>& dirsNewestFirst);  // m_ held
+  std::shared_ptr<Job> makeMatchJob(const MatchRequest& r) const;
+  bool startRefineLocked(const std::shared_ptr<Job>& quick);  // m_ held
+  void refineAfter(const std::shared_ptr<Job>& quick);        // quick's monitor thread, after it finished
+  void finishAndRefine(const std::shared_ptr<Job>& job);      // end of a monitor thread
+  JobSnapshot snapshotOf(const std::shared_ptr<Job>& j, JobKind kind) const;
   void retire(std::shared_ptr<Job>& j);
+  void reapGraveyard();                                       // m_ held
   static void finalizeJob(Job& job);
-  static void monitorAttached(std::shared_ptr<Job> job);
+  void monitorAttached(std::shared_ptr<Job> job);
 
   MatchSettings& settings_;
   mutable std::mutex m_;                       // jobsDir_, slots
   std::filesystem::path jobsDir_;
-  std::shared_ptr<Job> match_, export_;
+  std::shared_ptr<Job> match_, export_, refine_;
+  std::vector<std::shared_ptr<Job>> graveyard_;  // cancelled refinements that are still dying (a new MATCH replaced them)
+  bool closing_ = false;
+  std::thread pruneThread_;
+  std::atomic<bool> pruneDone_{true};
   std::shared_ptr<HelpCache> help_;
   std::atomic<std::chrono::milliseconds::rep> graceMs_{2500};
 };

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "MatchGlue.h"
 #include "PlayAlong.h"
 #include "SawbladeLookAndFeel.h"
 
@@ -286,7 +287,7 @@ struct PlayAlongPanel::Impl {
     useForMatch.onClick = [this] {
       const std::string n = selectedTakeName();
       if (n.empty()) return;
-      proc.matchSettings().setSelectedTake(n);
+      chooseTakeForMatch(proc, n);  // another take than before also cancels a running refinement
       refreshBand();
     };
     renameTake.onClick = [this] {
@@ -300,11 +301,7 @@ struct PlayAlongPanel::Impl {
                            if (result != 1) return;
                            std::string err;
                            const std::string nn = w->getTextEditorContents("name").toStdString();
-                           if (proc.recorder().renameTake(n, nn, &err)) {
-                             if (proc.matchSettings().selectedTake() == n) proc.matchSettings().setSelectedTake(nn);
-                           } else {
-                             showNotice(juce::String(err));
-                           }
+                           if (!renameTakeForMatch(proc, n, nn, &err)) showNotice(juce::String(err));
                            refreshBand(true);
                          }),
                          true);
@@ -317,19 +314,12 @@ struct PlayAlongPanel::Impl {
       w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
       w->enterModalState(true, juce::ModalCallbackFunction::create([this, n](int result) {
                            if (result != 1) return;
-                           if (!proc.recorder().removeTake(n)) showNotice("Could not delete " + juce::String(n));
-                           if (proc.matchSettings().selectedTake() == n) proc.matchSettings().setSelectedTake({});
+                           if (!deleteTakeForMatch(proc, n)) showNotice("Could not delete " + juce::String(n));
                            refreshBand(true);
                          }),
                          true);
     };
-    matchBtn.onClick = [this] {
-      if (!proc.matchEnabled()) {
-        showNotice("MATCH runs in the Standalone app: open the Standalone app.");
-        return;
-      }
-      if (owner.onMatch) owner.onMatch();
-    };
+    matchBtn.onClick = [this] { matchClicked(); };
     exportBtn.onClick = [this] {
       if (!proc.matchEnabled()) {
         showNotice("EXPORT NAM runs in the Standalone app: open the Standalone app.");
@@ -337,6 +327,14 @@ struct PlayAlongPanel::Impl {
       }
       if (owner.onExport) owner.onExport();
     };
+  }
+
+  void matchClicked() {
+    if (!proc.matchEnabled()) {
+      showNotice("MATCH runs in the Standalone app: open the Standalone app.");
+      return;
+    }
+    if (owner.onMatch) owner.onMatch();
   }
 
   void refreshBand(bool force = false) {
@@ -632,6 +630,11 @@ void PlayAlongPanel::paint(juce::Graphics& g) {
 void PlayAlongPanel::resized() { impl_->layout(); }
 
 void PlayAlongPanel::refresh() { impl_->refresh(); }
+
+void PlayAlongPanel::showMatchArea() {
+  if (!impl_->proc.matchEnabled()) impl_->showNotice("MATCH runs in the Standalone app: open the Standalone app.");
+  impl_->refresh();
+}
 
 void PlayAlongPanel::chooseFolder() {
   impl_->chooser = std::make_unique<juce::FileChooser>("Choose a song file or a folder of separated stems", juce::File(),

@@ -80,7 +80,15 @@ class SawbladeEditor::Content : public juce::Component {
     ab_.addMouseListener(this, false);
     prev_.onClick = [this] { stepPreset(-1); };
     next_.onClick = [this] { stepPreset(+1); };
-    configure(match_, "MATCH", "Match to a reference", true);
+    configure(match_, "MATCH", "Standalone app: open the MATCH screen. In a plugin: open the play-along panel's record + match area (MATCH runs in the Standalone app)", false);
+    match_.onClick = [this] {
+      if (processor_.matchEnabled()) {
+        openMatchScreen(false);
+        return;
+      }
+      setPlayAlongOpen(true);  // plugin mode: the panel's note says to open the Standalone app
+      panel_->showMatchArea();
+    };
     configure(export_, "EXPORT NAM", "Export as NAM model", true);
     configure(playAlong_, "PLAY ALONG", "Show / hide the play-along panel: a backing track from separated stems to play over", false);
     playAlong_.setClickingTogglesState(true);

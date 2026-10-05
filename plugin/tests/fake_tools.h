@@ -25,7 +25,8 @@ name = os.path.basename(__file__)
 cfg = json.load(open(os.path.join(here, name + ".cfg")))
 argv = sys.argv[1:]
 if "--help" in argv:
-    print("usage: " + name + " [-h] [--device D]" + (" [--progress-json PATH]" if cfg.get("progressJson") else ""))
+    print("usage: " + name + " [-h] [--device D]" + (" [--progress-json PATH]" if cfg.get("progressJson") else "")
+          + (" [--quick | --thorough]" if cfg.get("quickThorough") else ""))
     sys.exit(0)
 if cfg.get("ignoreTerm"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -42,8 +43,12 @@ if cfg.get("grandchild"):
     gc = subprocess.Popen(["sleep", "120"])
     open(os.path.join(out, "grandchild.pid"), "w").write(str(gc.pid))
 
+# The pass of a match run: "quick" / "thorough" if the flag was given, else a single run (phase 6a behaviour).
+pas = "quick" if "--quick" in argv else ("thorough" if "--thorough" in argv else "single")
+gates = cfg.get("gates" + pas.capitalize(), cfg.get("gates", [])) if pas != "single" else cfg.get("gates", [])
+
 def gate(g):
-    if g not in cfg.get("gates", []):
+    if g not in gates:
         return
     path = os.path.join(out, "release-" + g)
     t0 = time.time()
@@ -64,28 +69,33 @@ if cfg["kind"] == "match":
     progress("stage 1: screening", 0.25, "screening 12 pairs", 120.0, None)
     print("[   0.2s] excerpt 1.0-7.0 s (loudest)", flush=True)
     gate("g1")
-    if cfg.get("fail"):
+    if cfg.get("fail") or (pas == "thorough" and cfg.get("failThorough")):
         print("error: pool needs amps and cabs, got {}", file=sys.stderr, flush=True)
         sys.exit(3)
     print("[   1.0s] stage2 blend [1/3] A + B (screen loss 4.2)", flush=True)
     progress("stage 2: fine-tuning", 0.6, "refining 1/3", 60.0, 4.2)
     gate("g2")
     src = json.load(open(cfg["presetSrc"]))
-    def preset(fname, nm):
-        p = dict(src); p["name"] = nm
+    label = {"single": "match", "quick": "quick", "thorough": "refined"}[pas]
+    loss = {"single": (3.21, 3.9, 4.4), "quick": (4.0, 4.6, 5.1), "thorough": (2.9, 3.4, 3.8)}[pas]
+    def preset(fname, nm, delta=0.0):
+        p = json.loads(json.dumps(src)); p["name"] = nm
+        if delta:  # the thorough best differs from the seed by this many dB on both path levels
+            for k in ("a", "b"):
+                p["paths"][k]["levelDb"] = p["paths"][k].get("levelDb", 0.0) + delta
         json.dump(p, open(os.path.join(out, fname), "w"), indent=2)
-    preset("best.preset.resolved.json", "match best")
-    preset("alt1.preset.resolved.json", "match alt 1")
-    preset("alt2.preset.resolved.json", "match alt 2")
+    preset("best.preset.resolved.json", label + " best", cfg.get("thoroughLevelDb", 0.0) if pas == "thorough" else 0.0)
+    preset("alt1.preset.resolved.json", label + " alt 1")
+    preset("alt2.preset.resolved.json", label + " alt 2")
     caps = lambda *t: {k: {"title": v} for k, v in t}
     result = {"schema": "sawblade.match_result", "version": 1,
-      "best": {"stage": "refined", "topology": "blend", "loss": 3.21, "blend": 0.62,
+      "best": {"stage": "refined", "topology": "blend", "loss": loss[0], "blend": 0.62,
                "captures": caps(("a_pedal", "HM-2 Chainsaw"), ("a_amp", "JCM800 2203"), ("b_pedal", "TS808"), ("b_amp", "5150III"), ("cab", "V30 4x12")),
                "preset": "best.preset.resolved.json"},
       "alternatives": [
-        {"stage": "refined", "topology": "single", "loss": 3.9, "blend": 0.0,
+        {"stage": "refined", "topology": "single", "loss": loss[1], "blend": 0.0,
          "captures": caps(("pedal", "HM-2 Chainsaw"), ("amp", "JCM800 2203"), ("cab", "V30 4x12")), "file": "alt1.preset.resolved.json"},
-        {"stage": "screened", "topology": "single2", "loss": 4.4, "blend": 0.0,
+        {"stage": "screened", "topology": "single2", "loss": loss[2], "blend": 0.0,
          "captures": caps(("pedal1", "TS808"), ("pedal2", "HM-2 Chainsaw"), ("amp", "5150III"), ("cab", "V30 4x12")), "file": "alt2.preset.resolved.json"}]}
     json.dump(result, open(os.path.join(out, "result.json"), "w"), indent=2)
     print("[   2.0s] done in 0.0 min; results in " + out, flush=True)
@@ -150,6 +160,12 @@ struct Toolbox {
   void cfgMatch(nlohmann::json c) const {
     c["kind"] = "match";
     cfg("sawblade-match", std::move(c));
+  }
+  // A matcher whose --help lists --quick / --thorough (and --progress-json): MATCH runs two passes.
+  void cfgTwoPass(nlohmann::json c = nlohmann::json::object()) const {
+    c["quickThorough"] = true;
+    c["progressJson"] = true;
+    cfgMatch(std::move(c));
   }
   void cfgExport(nlohmann::json c) const {
     c["kind"] = "export";

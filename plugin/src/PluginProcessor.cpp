@@ -64,6 +64,7 @@ SawbladeProcessor::SawbladeProcessor()
   playAlong_.setSongDecoder(&decodeSongFile);
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
   apvts_.addParameterListener(paramSpec(kSawCircuit).id, this);
+  jobs_.pruneAsync();  // old match job folders: on the runner's own thread, not here
   startTimerHz(10);
 }
 

@@ -38,6 +38,8 @@ class PresetAudition {
   State state() const { return state_; }
   // The candidate file whose preset is the current one (auditioned-on-B or applied), for the exporter.
   std::optional<std::filesystem::path> currentCandidateFile() const;
+  // The same, but only for a candidate that was applied (not one that is merely being auditioned).
+  std::optional<std::filesystem::path> appliedCandidateFile() const;
 
  private:
   struct CacheKey {
@@ -48,6 +50,7 @@ class PresetAudition {
     std::vector<float> params;
     bool operator==(const CacheKey&) const = default;
   };
+  std::optional<std::filesystem::path> stillCurrent(const std::filesystem::path& file) const;
   SawbladeProcessor& proc_;
   mutable std::optional<CacheKey> cacheKey_;
   mutable bool cacheResult_ = false;

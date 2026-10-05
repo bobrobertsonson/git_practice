@@ -15,6 +15,7 @@
 #include <vector>
 #include <unistd.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -2161,4 +2162,347 @@ TEST_CASE("record + match: screenshots of REC armed, the match progress and the 
   REQUIRE(rig.screenButton("REVEAL")->isEnabled());
   click(*rig.screenButton("REVEAL"));
   CHECK(revealed == exportSnap.outDir);
+}
+
+// ---- quick-then-thorough MATCH (docs/specs/phase6a_1_quick_then_thorough.md) ------------------------------------------------
+namespace {
+
+bool anyLabelEquals(juce::Component& root, const juce::String& text) {
+  for (auto* l : all<juce::Label>(root))
+    if (l->isVisible() && l->getText() == text) return true;
+  return false;
+}
+
+// The top-bar button of that title (the panel has a MATCH and an EXPORT NAM of its own).
+juce::Button* topBarButton(SawbladeEditor& ed, const juce::String& title) {
+  for (auto* b : all<juce::Button>(ed))
+    if (b->getTitle() == title && ed.getLocalArea(b, b->getLocalBounds()).getBottom() <= 58) return b;
+  return nullptr;
+}
+
+// Standalone mode, a song loaded, and a take recorded and chosen for MATCH. Returns the song folder.
+fs::path prepareMatchTake(MatchRig& rig, const char* takeName = nullptr) {
+  auto& pa = rig.proc.playAlong();
+  pa.setStandalone(true);
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  auto& rec = rig.proc.recorder();
+  REQUIRE(rec.start(song.string()));
+  feedSeconds(rig.proc, 1.0);
+  rec.stop();
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  std::string name = rec.listTakes().at(0).name;
+  if (takeName != nullptr) {
+    std::string err;
+    REQUIRE(rec.renameTake(name, takeName, &err));
+    name = takeName;
+  }
+  rig.proc.matchSettings().setSelectedTake(name);
+  return song;
+}
+
+juce::ListBox& resultsList(MatchRig& rig) { return *all<juce::ListBox>(rig.screen()).at(0); }
+
+// Starts a two-pass MATCH from the screen and waits until the quick pass is in and the refinement is running (parked at g1).
+void startTwoPass(MatchRig& rig) {
+  rig.ed->openMatchScreen(false);
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+  REQUIRE(start->isEnabled());
+  click(*start);
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded; }));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().refineSnapshot().state == JobState::Running && rig.proc.jobs().refineSnapshot().progress.fraction > 0.0; }));
+  rig.screen().refresh();
+}
+
+}  // namespace
+
+TEST_CASE("top bar: MATCH opens the play-along panel's record + match area; EXPORT NAM stays disabled, A/B is live", "[editor][match][topbar]") {
+  MatchRig rig;
+  auto* match = topBarButton(*rig.ed, "MATCH");
+  auto* exportBtn = topBarButton(*rig.ed, "EXPORT NAM");
+  auto* ab = topBarButton(*rig.ed, "A/B compare");
+  REQUIRE(match != nullptr);
+  REQUIRE(exportBtn != nullptr);
+  REQUIRE(ab != nullptr);
+  CHECK(match->isEnabled());
+  CHECK(match->getTooltip().isNotEmpty());
+  CHECK_FALSE(exportBtn->isEnabled());  // phase 12
+  CHECK(ab->isEnabled());  // live since p9
+
+  // Plugin mode: the panel opens, and says the same as the panel's MATCH: open the Standalone app.
+  REQUIRE_FALSE(rig.proc.matchEnabled());
+  CHECK_FALSE(rig.ed->playAlongOpen());
+  click(*match);
+  CHECK(rig.ed->playAlongOpen());
+  CHECK(rig.panel().isVisible());
+  CHECK_FALSE(rig.ed->matchScreenOpen());
+  CHECK(buttonTitled(rig.panel(), "REC")->isVisible());  // the record band is the area it opens
+  CHECK(buttonTitled(rig.panel(), "MATCH")->isVisible());
+  CHECK(anyLabelContains(rig.panel(), "MATCH runs in the Standalone app"));
+  CHECK(anyLabelContains(rig.panel(), "open the Standalone app"));
+
+}
+
+TEST_CASE("top bar: MATCH in the Standalone app opens the match screen directly", "[editor][match][topbar]") {
+  MatchRig rig;
+  rig.proc.playAlong().setStandalone(true);
+  auto* match = topBarButton(*rig.ed, "MATCH");
+  REQUIRE(match != nullptr);
+  CHECK_FALSE(rig.ed->matchScreenOpen());
+  click(*match);
+  CHECK(rig.ed->matchScreenOpen());
+  CHECK(rig.screen().mode() == MatchScreen::Mode::Match);
+  CHECK_FALSE(rig.ed->playAlongOpen());
+  CHECK_FALSE(anyLabelContains(rig.panel(), "MATCH runs in the Standalone app"));
+}
+
+TEST_CASE("match screen: PREVIEW with REFINING..., then a REFINED section; nothing is loaded by itself", "[editor][match][twopass]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}, {"thoroughLevelDb", 2.0}});
+  startTwoPass(rig);
+  MatchScreen& screen = rig.screen();
+  auto& list = resultsList(rig);
+
+  // PREVIEW: the quick results, a REFINING... bar while the thorough pass runs.
+  CHECK(anyLabelEquals(screen, "PREVIEW"));
+  CHECK(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+  CHECK(anyLabelContains(screen, "Done (quick pass)"));
+  CHECK(list.getListBoxModel()->getNumRows() == 3);
+  CHECK(list.getSelectedRow() == 0);
+  CHECK_FALSE(rig.screenButton("APPLY REFINED BEST")->isVisible());
+  CHECK(rig.screenButton("CANCEL REFINE")->isEnabled());
+  CHECK(rig.screenButton("START MATCH")->isEnabled());  // a new MATCH is allowed (it cancels the refinement)
+  auto* toggle = buttonTitled(screen, "Auto-refine");
+  REQUIRE(toggle != nullptr);
+  CHECK(toggle->getToggleState());
+
+  // The user applies the quick best.
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  screen.refresh();
+  CHECK(rig.proc.status().presetName == "quick best");
+  const std::uint64_t builds = rig.proc.engineBuilds();
+
+  // The refined result arrives: a REFINED section is added, nothing loads, the quick candidate stays applied.
+  fake_tools::release(rig.proc.jobs().refineSnapshot().dir, "g1");
+  REQUIRE(rig.proc.jobs().waitRefineFinished());
+  screen.refresh();
+  CHECK(rig.proc.engineBuilds() == builds);
+  CHECK_FALSE(rig.proc.status().loading);
+  CHECK(rig.proc.status().presetName == "quick best");
+  CHECK(list.getListBoxModel()->getNumRows() == 8);  // header, 3 refined, header, 3 quick
+  CHECK(anyLabelEquals(screen, "REFINED READY"));
+  CHECK_FALSE(anyLabelEquals(screen, "PREVIEW"));
+  CHECK(anyLabelContains(screen, "Refined result ready: nothing was loaded"));
+  CHECK(list.getSelectedRow() == 5);  // the selection stayed on the quick best (it moved down with the new section)
+  auto* applyRefined = rig.screenButton("APPLY REFINED BEST");
+  REQUIRE(applyRefined != nullptr);
+  CHECK(applyRefined->isVisible());
+  CHECK(applyRefined->isEnabled());
+  CHECK_FALSE(rig.screenButton("CANCEL")->isEnabled());
+  CHECK_FALSE(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+
+  // A header row is not a candidate: clicking it keeps the selection.
+  list.selectRow(0);
+  CHECK(list.getSelectedRow() == 5);
+  list.selectRow(4);
+  CHECK(list.getSelectedRow() == 5);
+
+  // Choosing a refined candidate and auditioning it goes through the loader.
+  list.selectRow(2);
+  click(*rig.screenButton("AUDITION"));
+  REQUIRE(rig.proc.waitForLoader());
+  CHECK(rig.proc.status().presetName == "refined alt 1");
+  click(*rig.screenButton("REVERT"));
+  REQUIRE(rig.proc.waitForLoader());
+  CHECK(rig.proc.status().presetName == "quick best");
+
+  // APPLY REFINED BEST loads the refined best and applies it.
+  click(*applyRefined);
+  REQUIRE(rig.proc.waitForLoader());
+  screen.refresh();
+  CHECK(rig.proc.status().presetName == "refined best");
+  CHECK(rig.proc.currentPreset().a.levelDb == Catch::Approx(2.0));
+  CHECK_FALSE(rig.proc.audition().state().active);
+  CHECK(anyLabelContains(screen, "Applied #1 (refined best)"));
+}
+
+TEST_CASE("match screen: an applied quick candidate that is the same chain as the refined best is promoted without a load", "[editor][match][twopass]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}});  // the thorough best equals the quick best
+  startTwoPass(rig);
+  MatchScreen& screen = rig.screen();
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  screen.refresh();
+  CHECK(anyLabelEquals(screen, "PREVIEW"));
+  const std::uint64_t builds = rig.proc.engineBuilds();
+  fake_tools::release(rig.proc.jobs().refineSnapshot().dir, "g1");
+  REQUIRE(rig.proc.jobs().waitRefineFinished());
+  screen.refresh();
+  CHECK(rig.proc.engineBuilds() == builds);
+  CHECK(rig.proc.status().presetName == "quick best");
+  CHECK(anyLabelEquals(screen, "REFINED"));  // the badge only
+  CHECK_FALSE(anyLabelEquals(screen, "PREVIEW"));
+  CHECK_FALSE(anyLabelEquals(screen, "REFINED READY"));
+  CHECK(anyLabelContains(screen, "same chain as the refined best"));
+  CHECK_FALSE(rig.screenButton("APPLY REFINED BEST")->isEnabled());  // nothing left to apply
+}
+
+TEST_CASE("match screen: auto-refine is a setting; cancel during the refinement keeps the quick results", "[editor][match][twopass]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}});
+  rig.ed->openMatchScreen(false);
+  MatchScreen& screen = rig.screen();
+  auto* toggle = buttonTitled(screen, "Auto-refine");
+  REQUIRE(toggle != nullptr);
+  CHECK(toggle->isVisible());
+  CHECK(toggle->getToggleState());
+  click(*toggle);
+  CHECK_FALSE(rig.proc.matchSettings().autoRefine());  // kept in the settings file, not the plugin state
+  juce::MemoryBlock state;
+  rig.proc.getStateInformation(state);
+  CHECK_FALSE(juce::String::fromUTF8(static_cast<const char*>(state.getData()), static_cast<int>(state.getSize())).containsIgnoreCase("refine"));
+
+  click(*rig.screenButton("START MATCH"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Match));
+  screen.refresh();
+  CHECK(rig.proc.jobs().refineSnapshot().state == JobState::None);
+  CHECK(anyLabelEquals(screen, "PREVIEW"));
+  CHECK(anyLabelContains(screen, "Auto-refine is off"));
+  CHECK_FALSE(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+  CHECK(resultsList(rig).getListBoxModel()->getNumRows() == 3);
+
+  click(*toggle);  // on again
+  CHECK(rig.proc.matchSettings().autoRefine());
+  click(*rig.screenButton("START MATCH"));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().refineSnapshot().state == JobState::Running; }));
+  screen.refresh();
+  CHECK(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+  click(*rig.screenButton("CANCEL REFINE"));
+  REQUIRE(rig.proc.jobs().waitRefineFinished(10000ms));
+  screen.refresh();
+  CHECK(rig.proc.jobs().refineSnapshot().state == JobState::Cancelled);
+  CHECK(rig.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
+  CHECK(resultsList(rig).getListBoxModel()->getNumRows() == 3);  // the quick results stay
+  CHECK(anyLabelEquals(screen, "PREVIEW"));
+  CHECK_FALSE(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+  CHECK_FALSE(rig.screenButton("APPLY REFINED BEST")->isVisible());
+}
+
+TEST_CASE("match screen: USE FOR MATCH on another take cancels a running refinement", "[editor][match][twopass]") {
+  MatchRig rig;
+  const auto song = prepareMatchTake(rig, "take one");
+  auto& rec = rig.proc.recorder();
+  REQUIRE(rec.start(song.string()));
+  feedSeconds(rig.proc, 1.0);
+  rec.stop();
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  std::string err;
+  REQUIRE(rec.renameTake(rec.currentTakeName(), "take two", &err));
+  const auto takes = rec.listTakes();
+  REQUIRE(takes.size() == 2);
+  rig.proc.matchSettings().setSelectedTake(takes[0].name);
+
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}});
+  startTwoPass(rig);
+  click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
+  rig.ed->setPlayAlongOpen(true);
+  rig.panel().refresh();
+  auto* takeList = all<juce::ListBox>(rig.panel()).at(0);
+  REQUIRE(takeList->getListBoxModel()->getNumRows() == 2);
+
+  takeList->selectRow(0);  // the take already in use: nothing changes
+  click(*buttonTitled(rig.panel(), "USE FOR MATCH"));
+  std::this_thread::sleep_for(300ms);
+  CHECK(rig.proc.jobs().refineSnapshot().state == JobState::Running);
+
+  takeList->selectRow(1);
+  click(*buttonTitled(rig.panel(), "USE FOR MATCH"));
+  CHECK(rig.proc.matchSettings().selectedTake() == takes[1].name);
+  REQUIRE(rig.proc.jobs().waitRefineFinished(10000ms));
+  CHECK(rig.proc.jobs().refineSnapshot().state == JobState::Cancelled);
+  CHECK(rig.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
+}
+
+TEST_CASE("match screen: screenshots of PREVIEW with REFINING and of the REFINED section", "[editor][match][twopass][screenshot]") {
+  MatchRig rig;
+  rig.ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  prepareMatchTake(rig, "verse riff");
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}, {"thoroughLevelDb", 2.0}});
+  startTwoPass(rig);
+  MatchScreen& screen = rig.screen();
+  std::this_thread::sleep_for(1200ms);  // some elapsed time to show
+  screen.refresh();
+  CHECK(anyLabelEquals(screen, "PREVIEW"));
+  CHECK(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+  const juce::Image preview = shot(*rig.ed);
+  savePng(preview, "sawblade_match_preview_refining_1x.png");
+  CHECK(nonBackgroundFraction(preview, {460, 220, 800, 360}) > 0.1);
+
+  // Apply the quick best (the user is already playing with it) and let the refinement finish.
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  fake_tools::release(rig.proc.jobs().refineSnapshot().dir, "g1");
+  REQUIRE(rig.proc.jobs().waitRefineFinished());
+  screen.refresh();
+  CHECK(anyLabelEquals(screen, "REFINED READY"));
+  REQUIRE(rig.screenButton("APPLY REFINED BEST")->isEnabled());
+  auto& list = resultsList(rig);
+  CHECK(list.getListBoxModel()->getNumRows() == 8);
+  list.selectRow(1);  // the refined best, selected
+  screen.refresh();
+  const juce::Image refined = shot(*rig.ed);
+  savePng(refined, "sawblade_match_refined_1x.png");
+  CHECK(nonBackgroundFraction(refined, {460, 220, 800, 440}) > 0.1);
+}
+
+TEST_CASE("match screen: a cancelled or failed refinement leaves a one-line note and the quick results", "[editor][match][twopass]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}});
+  startTwoPass(rig);
+  MatchScreen& screen = rig.screen();
+  CHECK_FALSE(anyLabelContains(screen, "Refinement cancelled"));
+  click(*rig.screenButton("CANCEL REFINE"));
+  REQUIRE(rig.proc.jobs().waitRefineFinished(10000ms));
+  screen.refresh();
+  CHECK(anyLabelEquals(screen, "Refinement cancelled"));
+  CHECK(resultsList(rig).getListBoxModel()->getNumRows() == 3);
+
+  // A failing thorough pass: the tool's error is shown.
+  rig.tools.cfgTwoPass({{"failThorough", true}});
+  click(*rig.screenButton("START MATCH"));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded; }));
+  REQUIRE(rig.proc.jobs().waitRefineFinished(15000ms));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().refineSnapshot().state == JobState::Failed; }));
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "Refinement failed: error: pool needs amps and cabs"));
+  CHECK(resultsList(rig).getListBoxModel()->getNumRows() == 3);
+  CHECK_FALSE(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+}
+
+TEST_CASE("match screen: an old PREVIEW shows that it is over 24 h old and is not refined", "[editor][match][twopass][age]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass();
+  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+  const fs::path q = rig.tools.jobs / "20260101-120000-match";
+  fs::create_directories(q);
+  const auto finished = now - 25LL * 3600 * 1000;
+  nlohmann::json j = {{"version", 1}, {"kind", "match"}, {"state", "succeeded"}, {"pass", "quick"}, {"pid", 0}, {"spawnedEpochMs", finished - 1000},
+                      {"startedEpochMs", finished - 1000}, {"finishedEpochMs", finished}, {"outDir", q.string()}, {"commandLine", nlohmann::json::array({"x"})},
+                      {"request", {{"di", rig.tools.di.string()}, {"ref", rig.tools.ref.string()}}}};
+  std::ofstream(q / "job.json") << j.dump();
+  rig.ed->openMatchScreen(false);  // re-attaches
+  rig.screen().refresh();
+  CHECK(rig.proc.jobs().refineSnapshot().state == JobState::None);
+  CHECK(anyLabelEquals(rig.screen(), "Preview is over 24 h old: re-run MATCH to refine."));
 }
