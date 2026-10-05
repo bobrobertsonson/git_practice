@@ -2202,6 +2202,59 @@ TEST_CASE("settings: the login view shows the device code and URL; CANCEL ends t
   CHECK_FALSE(anyLabelContains(*rig.ed, "ABCD-1234"));
 }
 
+namespace {
+struct FakeMode {  // FAKE_T3K_MODE for tools/fake_t3k.sh (inherited by the child)
+  explicit FakeMode(const char* m) { ::setenv("FAKE_T3K_MODE", m, 1); }
+  ~FakeMode() { ::unsetenv("FAKE_T3K_MODE"); }
+};
+}  // namespace
+
+TEST_CASE("settings: login success with the merged logged_in shape, error line and exit 4", "[editor][settings][login]") {
+  TempFolder tmp;
+  const fs::path venv = makeFakeVenv(tmp.dir);
+  const std::string json = settingsJsonWithVenv(venv);
+  {
+    FakeMode m("approve");
+    Rig rig(json.c_str());
+    rig.ed->setSettingsOpen(true);
+    click(*buttonTitled(*rig.ed, "Log in to TONE3000"));
+    REQUIRE(pumpUntil([&] { return anyLabelContains(*rig.ed, "Logged in as @gatefan (Gate Fan)"); }, 8000));
+  }
+  {
+    FakeMode m("error");  // {"error","code"} line, exit 1
+    Rig rig(json.c_str());
+    rig.ed->setSettingsOpen(true);
+    click(*buttonTitled(*rig.ed, "Log in to TONE3000"));
+    REQUIRE(pumpUntil([&] { return anyLabelContains(*rig.ed, "the login code expired"); }, 8000));
+    CHECK(buttonTitled(*rig.ed, "RETRY")->isVisible());
+  }
+  {
+    FakeMode m("loggedout");  // login exits 4 without an error line; whoami prints an error line and exits 4
+    Rig rig(json.c_str());
+    rig.ed->setSettingsOpen(true);
+    click(*buttonTitled(*rig.ed, "Log in to TONE3000"));
+    REQUIRE(pumpUntil([&] { return anyLabelContains(*rig.ed, "not logged in"); }, 8000));
+    std::vector<juce::Button*> tests;
+    for (auto* b : all<juce::Button>(*rig.ed))
+      if (b->getTitle() == "Test") tests.push_back(b);
+    REQUIRE(tests.size() == 2);
+    click(*tests[1]);
+    REQUIRE(pumpUntil([&] { return anyLabelContains(*rig.ed, "not logged in: run"); }, 8000));
+  }
+}
+
+TEST_CASE("settings: opening the panel raises it above the RIG overlay", "[editor][settings]") {
+  Rig rig;
+  rig.ed->setRigEditorOpen(true);
+  rig.ed->setSettingsOpen(true);
+  SettingsPanel& panel = settingsPanelOf(*rig.ed);
+  auto* parent = panel.getParentComponent();
+  REQUIRE(parent != nullptr);
+  CHECK(parent->getIndexOfChildComponent(&panel) > parent->getIndexOfChildComponent(&rig.ed->rigEditor()));
+  CHECK(parent->getIndexOfChildComponent(&panel) > parent->getIndexOfChildComponent(&rig.ed->browser()));
+  CHECK(parent->getIndexOfChildComponent(&panel) > parent->getIndexOfChildComponent(&rig.ed->micPage()));
+}
+
 TEST_CASE("settings: Test buttons run the tools through ToolRunner", "[editor][settings]") {
   TempFolder tmp;
   const fs::path venv = makeFakeVenv(tmp.dir);

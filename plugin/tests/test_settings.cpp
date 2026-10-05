@@ -19,6 +19,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include "AppPaths.h"
+#include "presets/T3kTool.h"
 #include "settings/LoginFlow.h"
 #include "settings/Settings.h"
 #include "settings/ToolRunner.h"
@@ -627,4 +629,78 @@ TEST_CASE("whoami --json parsing", "[settings][login]") {
   ToolResult none;
   none.error = "sawblade-t3k not found. Set the match venv in Settings (gear icon).";
   CHECK(parseWhoami(none).text == none.error);
+}
+
+// --- unified app data dir and shared settings.json -------------------------------------------------------------------
+namespace {
+struct ScopedVar {
+  std::string name;
+  ScopedVar(std::string n, const std::string* v) : name(std::move(n)) {
+    if (v) ::setenv(name.c_str(), v->c_str(), 1);
+    else ::unsetenv(name.c_str());
+  }
+  ~ScopedVar() { ::unsetenv(name.c_str()); }
+};
+}  // namespace
+
+TEST_CASE("settings: appDataDir, T3kTool's settingsFile and Paths::settingsFile agree for both env vars", "[settings]") {
+  TempDir t;
+  const std::string a = (t.dir / "a").string(), d = (t.dir / "d").string();
+  ScopedVar noSettings("SAWBLADE_SETTINGS_FILE", nullptr), noXdg("XDG_DATA_HOME", nullptr);
+  const std::string home = t.dir.string();
+  ScopedVar h("HOME", &home);
+  auto check = [&](const fs::path& root) {
+    CHECK(sawblade::plugin::appDataDir() == root);
+    CHECK(sawblade::plugin::settingsFile() == root / "settings.json");
+    CHECK(sawblade::plugin::packCacheDir() == root / "packs");
+    CHECK(Paths::settingsFile(Env::system()) == root / "settings.json");
+  };
+  {
+    ScopedVar v1("SAWBLADE_APPDATA", &a), v2("SAWBLADE_DATA_DIR", nullptr);
+    check(a);
+  }
+  {
+    ScopedVar v1("SAWBLADE_APPDATA", nullptr), v2("SAWBLADE_DATA_DIR", &d);
+    check(d);
+  }
+  {
+    ScopedVar v1("SAWBLADE_APPDATA", &a), v2("SAWBLADE_DATA_DIR", &d);  // APPDATA wins
+    check(a);
+  }
+  {
+    ScopedVar v1("SAWBLADE_APPDATA", nullptr), v2("SAWBLADE_DATA_DIR", nullptr);
+#if defined(__APPLE__)
+    check(t.dir / "Library/Application Support/Sawblade");
+#else
+    check(t.dir / ".local/share/sawblade");
+    const std::string x = (t.dir / "xdg").string();
+    ScopedVar v3("XDG_DATA_HOME", &x);
+    check(t.dir / "xdg/sawblade");
+#endif
+  }
+}
+
+TEST_CASE("settings: T3kTool and the Settings store share settings.json, keep each other's keys, and the file stays 0600", "[settings]") {
+  TempDir t;
+  const std::string a = (t.dir / "data").string();
+  ScopedVar noSettings("SAWBLADE_SETTINGS_FILE", nullptr), v1("SAWBLADE_APPDATA", &a);
+  const Env env = Env::system();
+  Settings s(Paths::settingsFile(env), env);
+  REQUIRE(s.load().empty());
+  CHECK(s.setSeparationModel("htdemucs").ok);
+  std::string err;
+  REQUIRE(sawblade::plugin::settings::setT3kExecutable("/x/sawblade-t3k", &err));  // written between our load and save
+  struct stat st {};
+  REQUIRE(::stat(s.file().c_str(), &st) == 0);
+  CHECK((st.st_mode & 0777) == 0600);
+  CHECK(s.setUiScale(1.25).ok);  // our save must not drop t3kExecutable
+  auto j = nlohmann::json::parse(slurp(s.file()));
+  CHECK(j["t3kExecutable"] == "/x/sawblade-t3k");
+  CHECK(j["separationModel"] == "htdemucs");
+  CHECK(j["uiScale"] == 1.25);
+  REQUIRE(::stat(s.file().c_str(), &st) == 0);
+  CHECK((st.st_mode & 0777) == 0600);
+  // clearing a key we own removes it even though the file still has it
+  CHECK(s.setMatchVenvDir(std::nullopt).ok);
+  CHECK_FALSE(nlohmann::json::parse(slurp(s.file())).contains("matchVenvDir"));
 }

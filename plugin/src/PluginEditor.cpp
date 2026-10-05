@@ -352,7 +352,10 @@ class SawbladeEditor::Content : public juce::Component {
   }
   bool playAlongOpen() const { return panel_->isVisible(); }
   void setSettingsOpen(bool open, bool firstRun = false) {
-    if (open) settingsPanel_->open(firstRun);
+    if (open) {
+      settingsPanel_->open(firstRun);
+      settingsPanel_->toFront(true);  // above the RIG / mic / browser overlays
+    }
     else settingsPanel_->close();
     settingsBtn_.setToggleState(open, juce::dontSendNotification);
   }

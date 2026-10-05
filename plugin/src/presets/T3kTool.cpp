@@ -1,4 +1,5 @@
 #include "T3kTool.h"
+#include "../AppPaths.h"
 #include "../settings/Settings.h"
 
 #include <cctype>
@@ -11,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #if !defined(_WIN32)
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -19,23 +21,6 @@ namespace fs = std::filesystem;
 using nlohmann::json;
 
 // --- app data and settings ---------------------------------------------------------------------------------------
-fs::path appDataDir() {
-  if (const char* o = std::getenv("SAWBLADE_APPDATA"); o != nullptr && *o != '\0') return fs::path(o);
-#if defined(_WIN32)
-  if (const char* a = std::getenv("APPDATA"); a != nullptr && *a != '\0') return fs::path(a) / "Sawblade";
-  return fs::path("Sawblade");
-#else
-  const char* home = std::getenv("HOME");
-  const fs::path h = home != nullptr && *home != '\0' ? fs::path(home) : fs::path(".");
-#if defined(__APPLE__)
-  return h / "Library" / "Application Support" / "Sawblade";
-#else
-  if (const char* x = std::getenv("XDG_DATA_HOME"); x != nullptr && *x != '\0') return fs::path(x) / "sawblade";
-  return h / ".local" / "share" / "sawblade";
-#endif
-#endif
-}
-
 fs::path settingsFile() { return appDataDir() / "settings.json"; }
 fs::path packCacheDir() { return appDataDir() / "packs"; }
 fs::path packManifestPath(const std::string& toneId) {
@@ -111,6 +96,9 @@ bool setT3kExecutable(const fs::path& exe, std::string* error) {
     o << j.dump(2) << '\n';
     if (!o) return fail("cannot write " + tmp.string());
   }
+#if !defined(_WIN32)
+  ::chmod(tmp.c_str(), 0600);  // the shared settings file stays private (the phase 11 store writes it 0600 too)
+#endif
   fs::rename(tmp, settingsFile(), ec);
   if (ec) return fail("cannot replace " + settingsFile().string() + ": " + ec.message());
   return true;

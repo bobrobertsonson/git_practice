@@ -91,7 +91,8 @@ std::optional<std::string> Env::var(std::string_view name) const {
 fs::path Paths::settingsFile(const Env& env) {
   if (auto v = env.var("SAWBLADE_SETTINGS_FILE")) return fs::path(*v);
   // Same file as presets/T3kTool's settingsFile() (<appdata>/settings.json); both stores keep each other's keys.
-  if (auto v = env.var("SAWBLADE_APPDATA")) return fs::path(*v) / "settings.json";
+  if (auto v = env.var("SAWBLADE_APPDATA")) return fs::path(*v) / "settings.json";  // same order as appDataDir() in AppPaths.h
+  if (auto v = env.var("SAWBLADE_DATA_DIR")) return fs::path(*v) / "settings.json";
   if (env.isMac) return env.home / "Library" / "Application Support" / "Sawblade" / "settings.json";
   if (auto x = env.var("XDG_DATA_HOME")) return fs::path(*x) / "sawblade" / "settings.json";
   return env.home / ".local" / "share" / "sawblade" / "settings.json";
