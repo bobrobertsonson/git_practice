@@ -122,3 +122,45 @@ behaviour). No pool / nothing cached → path B gets the TS + the first high-gai
   already parses (respx, like `test_client.py`); hand-written from the real naming patterns, labelled as such
   (no network recording available in this container). Cover: clean ladder, mixed sizes, channel names,
   descriptive names, duplicate gains, single model, decimals.
+
+### Task A follow-ups (lead, after reviewer ACCEPT)
+- Literal spec: add a committed per-preset render test — every JSON under `presets/`, NAM blocks swapped for the
+  `linear_identity` fixture and IRs for a fixture IR, rendered with and without explicit default `ampControls`
+  (and against the stage forced off if a test hook already exists), bit-identical. Rides with Task B's first commit.
+- Amp controls act even when the amp block is bypassed (they are path tone controls); document it in
+  `PRESET_SCHEMA.md`, plus the lenient read of `ampControls` in a `version: 1` file. Move `sanitizeAmp` above the
+  orphaned xorshift comment in `chain.cpp`.
+
+### Task B — plugin side (dsp-engineer)
+- **Ladder storage:** the capture of a `nam` block gets optional `ladder: [{modelId, gain, name}]` (schema v2,
+  additive), filled by the plugin from `sawblade-t3k ladder <toneId> --size <size> --json` when a TONE3000 capture is
+  set or a preset is loaded without one (async, never on the audio thread; `null` → no ladder, stored as absent).
+  Rung files come from the existing resolve/cache flow by model id.
+- **Knob → rung:** rung positions on the GAIN knob `p_i = 10·(g_i − g_min)/(g_max − g_min)`. Active rung = nearest,
+  with hysteresis: switch only once the knob is ≥ 0.15 past the midpoint between two rungs. Residual drive dB =
+  `(k − p_active)·2.4`, clamped to ±12. With no ladder, Task A behaviour exactly.
+- **Bit-identity with a ladder:** when a block has a ladder but `gainStep` is absent, the active rung is the block's
+  own capture and the knob is placed at that rung's position, so the render is unchanged. Moving GAIN writes
+  `gainStep` (model id); the GAIN knob value is saved as usual.
+- **Swaps:** rung models present in the cache are preloaded on a background thread after load (≤ 8 rungs; a ladder
+  longer than 8 keeps the 8 nearest the current rung). Handover via the existing lock-free swap slot; equal-power
+  crossfade of 20 ms (both models run during the fade); the old model is released off the audio thread. A rung
+  not yet cached: stay on the current rung, drive-only, and expose a "rung pending" flag for Task D's UI.
+- **Latency:** a rung whose latency differs from the block's capture is rejected (that rung is dropped, logged off
+  the audio thread) — assert in a test that latency never changes across swaps.
+- **Offline render (`tonerender`, export):** uses the `gainStep` rung directly, no crossfade — deterministic.
+- Tests: knob→rung mapping incl. hysteresis at boundaries; swap allocation-free with the counting harness; crossfade
+  click test (sine through two different linear fixture models, peak sample-to-sample step deviation < −60 dBFS
+  versus the ideal crossfade); latency constancy; ladder round trip; offline render uses `gainStep`.
+
+### Task C — suggested body path
+- **Rule (match-engineer, pure Python):** `suggest_body(pool_records, a_title) -> record | None` in
+  `match/sawblade_match/t3k/suggest.py` + CLI `sawblade-t3k suggest-body --a-title "<path A amp title>" --json`.
+  Candidates: pool amps with `classify(...) == "amp_high"`. Family key = the first `_HIGH_AMPS` match (else
+  `_LOW`-style brand token, lower-cased) of title + name. Order: different family from A first, then cached first,
+  then pool order (stable). Returns the tone id, model id, title, cached flag; `null` when nothing qualifies.
+- **Plugin (dsp-engineer):** when BLEND turns on with an empty path B, in one undo transaction: TS (`pedal.ts`
+  drive 0, tone 5, level 8) + the fallback amp (first high-gain amp of `presets/CAPTURE_SHORTLIST.md`, tone 88689,
+  as a compile-time constant), then 10.1 level match. The `suggest-body` call runs async; if it answers with a
+  different amp and path B has not been edited since, the amp capture is replaced and coalesced into the same undo
+  transaction (one Undo restores the pre-BLEND preset). Missing captures go through resolve as today.
