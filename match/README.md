@@ -141,6 +141,20 @@ API terms before sharing anything that uses search.
 (honouring `Retry-After`); a 401 triggers one refresh + retry. The `X-Tone3000-Deprecations` response header is
 logged at WARNING. Use `-v` for INFO logs.
 
+### `ladder` (gain ladders)
+
+```
+sawblade-t3k ladder TONE_ID [--size standard] [--architecture 1|2|custom] --json
+```
+
+Lists the tone's models and prints one JSON line `{"tone_id", "size", "rungs": [{"model_id", "gain", "name"}]}`
+(ids are strings, rungs sorted by gain) or `"rungs": null` when there is no unambiguous ladder. A ladder exists
+only if, among models of the requested size (and architecture; default = what `resolve` would pick, A2 then A1),
+every model name yields exactly one gain number (`Gain 6`, `G6`, `gain=6`, `6 gain`, `Drive 7`, `@7`, `G 6.5`),
+the names are identical once that number is removed, the gains are distinct and there are at least two. Anything
+else is "no ladder" - it never guesses. Errors follow the usual `--json` `{"error","code"}` shape.
+Code: `sawblade_match/t3k/ladder.py` (`parse_ladder`, `gain_ladder`).
+
 ### `pack`, progress lines and exit codes
 
 ```

@@ -1,4 +1,4 @@
-"""`sawblade-t3k` command line: login, whoami, pull, resolve."""
+"""`sawblade-t3k` command line: login, whoami, pull, resolve, ladder."""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,7 @@ from .fetch import ensure_capture, list_candidates
 from .licenses import check_license
 from .filter import FilterConfig
 from .ids import require_id
+from .ladder import gain_ladder
 from .pool import build_pool, write_manifest
 from .pack import build_pack
 from .resolve import default_output, resolve_file
@@ -275,6 +276,21 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ladder(args: argparse.Namespace) -> int:
+    """Gain ladder of a tone as one JSON document: ``rungs`` is null when there is no (unambiguous) ladder."""
+    client = make_client()
+    tone_id = require_id(args.tone_id, "tone id")
+    arch = args.architecture
+    if arch is None:                       # same architecture choice as `resolve` (A2, then A1)
+        found = list_candidates(client, client.get_tone(tone_id))
+        arch = found[0] if found else None
+    rungs = gain_ladder(client, tone_id, args.size, arch) if arch is not None else None
+    _emit({"tone_id": tone_id, "size": args.size,
+           "rungs": None if rungs is None else
+           [{"model_id": str(r.model_id), "gain": r.gain, "name": r.name} for r in rungs]})
+    return 0
+
+
 def cmd_pack(args: argparse.Namespace) -> int:
     def on_progress(done: int, total: int, name: str) -> None:
         _progress_line({"done": done, "total": total, "name": name})
@@ -387,6 +403,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="print one JSON line per resolved capture to stdout: "
                         '{"done", "total", "capture", "title"}')
     r.set_defaults(fn=cmd_resolve)
+
+    ld = sub.add_parser("ladder", help="gain ladder (same amp at several gain settings) of a tone")
+    ld.add_argument("tone_id")
+    ld.add_argument("--size", default="standard", help="model size to consider (default: standard)")
+    ld.add_argument("--architecture", choices=["1", "2", "custom"], default=None,
+                    help="default: the one `resolve` would use (A2, then A1)")
+    ld.add_argument("--json", action="store_true", help="JSON output (the only format; accepted for symmetry)")
+    ld.set_defaults(fn=cmd_ladder, json=True)
 
     k = sub.add_parser("pack", help="download every model of an IR tone and write a manifest")
     k.add_argument("tone_id")
