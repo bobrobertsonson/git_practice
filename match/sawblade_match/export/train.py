@@ -260,6 +260,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
             self.cancel_after_epoch = False
             self.start_epoch = 0             # epochs complete when this session started
             self.start_elapsed = 0.0
+            self.prior_epoch_s: float | None = None    # per-epoch time recorded by the resumed checkpoint
 
         def elapsed(self) -> float:
             return self.prior_s + (time.time() - self.t0)
@@ -289,7 +290,8 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
             done = len(self.history)
             el = self.elapsed()
             best = min((r["valEsr"] for r in self.history), default=None)
-            eta = PG.eta_seconds(el - self.start_elapsed, done - self.start_epoch, done, cfg.epochs, el, cap_s)
+            eta = PG.eta_seconds(el - self.start_elapsed, done - self.start_epoch, done, cfg.epochs, el, cap_s,
+                                  batch_frac=batch_frac, prior_epoch_s=self.prior_epoch_s)
             t = PG.train_progress(done, batch_frac, cfg.epochs, el, cap_s)
             progress.update("train", PG.stage_fraction("train", t), eta=eta, epoch=done, epochs=cfg.epochs,
                             best_esr=best, resumable=(cdir / R.LAST).is_file(), force=force,
@@ -358,6 +360,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
         st = torch.load(resume_from, map_location="cpu", weights_only=False)["callbacks"][run.state_key]
         run.prior_s = float(st["elapsedS"])
         run.history = list(st["history"])
+        run.prior_epoch_s = PG.prior_epoch_seconds(run.prior_s, len(run.history))
     run.start_epoch = len(run.history)
     run.start_elapsed = run.prior_s
     history = run.history

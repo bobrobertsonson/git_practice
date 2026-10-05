@@ -123,3 +123,23 @@ def test_heartbeat_keeps_elapsed_ticking_and_fraction_monotonic(tmp_path):
     n = read(f)["elapsedSeconds"]
     time.sleep(0.5)
     assert read(f)["elapsedSeconds"] == n                                  # the thread stopped with the context
+
+
+def test_eta_is_seeded_before_the_first_epoch_finishes():
+    # fresh start: 25% of epoch 1 took 10 s -> 40 s/epoch x 9.75 epochs left
+    assert PG.eta_seconds(10.0, 0, 0, 10, 10.0, 6000.0, batch_frac=0.25) == 390
+    assert PG.eta_seconds(0.0, 0, 0, 10, 0.0, 6000.0, batch_frac=0.0) == -1     # nothing measurable yet
+    assert PG.eta_seconds(10.0, 0, 0, 10, 10.0, 100.0, batch_frac=0.25) == 90   # still capped by --max-minutes
+    # resumed with a checkpoint rate of 30 s/epoch: an estimate from the very first sample, partial epoch ignored
+    assert PG.eta_seconds(0.0, 0, 4, 10, 120.0, 6000.0, prior_epoch_s=30.0) == 180
+    assert PG.eta_seconds(2.0, 0, 4, 10, 122.0, 6000.0, batch_frac=0.5, prior_epoch_s=30.0) == 165
+    # once this session finished an epoch its own mean wins over the checkpoint's
+    assert PG.eta_seconds(20.0, 1, 5, 10, 140.0, 6000.0, batch_frac=0.1, prior_epoch_s=30.0) == 100
+
+
+def test_prior_epoch_seconds_from_a_checkpoint():
+    assert PG.prior_epoch_seconds(400.0, 2) == 200.0
+    assert PG.prior_epoch_seconds(0.0, 2) is None and PG.prior_epoch_seconds(50.0, 0) is None
+    # resumed at epoch 4 of 10 (120 s spent): the first sample after the resume already has an ETA
+    prior = PG.prior_epoch_seconds(120.0, 4)
+    assert PG.eta_seconds(0.0, 0, 4, 10, 120.0, 6000.0, prior_epoch_s=prior) == 180

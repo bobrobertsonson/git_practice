@@ -34,12 +34,28 @@ def train_progress(epochs_done: int, batch_frac: float, epochs: int, elapsed_s: 
 
 
 def eta_seconds(session_s: float, session_epochs: int, epochs_done: int, epochs: int, elapsed_s: float,
-                cap_s: float) -> int:
-    """Mean epoch time of this session x remaining epochs, capped by the time left; -1 until one epoch is done."""
-    if session_epochs < 1:
+                cap_s: float, batch_frac: float = 0.0, prior_epoch_s: float | None = None) -> int:
+    """Epoch time of this session x remaining epochs, capped by the time left.  Until this session has finished an
+    epoch the rate is seeded from ``prior_epoch_s`` (a resumed checkpoint's recorded per-epoch time) when given, else
+    from the partial epoch (``batch_frac`` of an epoch in ``session_s``); -1 only when neither is measurable."""
+    bf = min(1.0, max(0.0, batch_frac))
+    if session_epochs >= 1:
+        rate = session_s / session_epochs
+        left = max(epochs - epochs_done, 0)
+    elif prior_epoch_s is not None and prior_epoch_s > 0:
+        rate = prior_epoch_s
+        left = max(epochs - epochs_done - bf, 0.0)
+    elif bf > 0 and session_s > 0:
+        rate = session_s / bf
+        left = max(epochs - epochs_done - bf, 0.0)
+    else:
         return -1
-    eta = session_s / session_epochs * max(epochs - epochs_done, 0)
-    return int(round(max(0.0, min(eta, cap_s - elapsed_s))))
+    return int(round(max(0.0, min(rate * left, cap_s - elapsed_s))))
+
+
+def prior_epoch_seconds(elapsed_s: float, epochs_done: int) -> float | None:
+    """Per-epoch time recorded by a checkpoint (its total training time / epochs done); None when unknown."""
+    return elapsed_s / epochs_done if epochs_done > 0 and elapsed_s > 0 else None
 
 
 class Progress:
