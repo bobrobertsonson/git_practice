@@ -337,7 +337,10 @@ void Chain::prepare(const ProcessSpec& spec) {
   } else {
     applyAlignment({});
   }
-  applyLevelMatch(resolveLevelMatch());
+  // Legacy-shaped presets (levelMatch off + linear law) never run the probe, so every pre-10.1 preset
+  // renders bit-identically (a probe resets the blocks, which perturbs e.g. LSTM start-up by ~1e-7).
+  const bool wantProbe = preset_.levelMatch.mode != LevelMatchMode::Off || preset_.blendLaw == BlendLaw::ConstantLoudness;
+  applyLevelMatch(wantProbe ? resolveLevelMatch() : LevelMatchResult{});
 }
 
 float Chain::levelTarget(std::size_t k, double levelDb, bool mute) const noexcept {
@@ -588,6 +591,7 @@ ChainInfo Chain::info() const {
   i.alignMode = preset_.align.mode;
   i.align = align_;
   i.levelMatchMode = preset_.levelMatch.mode;
+  i.levelMeasured = level_.measured;
   i.trimDb = trimDb_;
   i.lufs = level_.lufs;
   i.sumLufs = level_.sumLufs;

@@ -329,8 +329,8 @@ linearly over 20 ms like the blend itself. The law and the make-up never add lat
 **Level matching.** Mismatched path loudness makes BLEND useless (a scooped chainsaw path and a dense
 body path differ by 3 to 6 dB at equal peak), so the chain measures both paths when it is prepared, on
 the same occasions as auto alignment (preset load, capture swap; always on the background loader) and
-whenever both paths are enabled, whatever `levelMatch.mode` and `blendLaw` say (so a live law toggle
-always has a make-up curve). With a path disabled all trims and make-up are 0 and nothing is measured.
+whenever both paths are enabled and (`levelMatch.mode` is not `off` or `blendLaw` is `constantLoudness`); a legacy-shaped
+preset (`off` + `linear`) never runs the probe, so it renders bit-identically to before (`levelMatch.measured` is false in the report). With a path disabled all trims and make-up are 0 and nothing is measured.
 The deterministic probe (documented in `core/src/chain.cpp`; no audio fixture):
 
 1. Alignment is resolved first (its own probe: 1.0 s noise). The level probe then renders a 1.5 s
@@ -362,7 +362,7 @@ from it internally), so a preset keeps its compressor behaviour (float tolerance
 prints them. The render report (`tonerender --report`) carries:
 
 ```jsonc
-"levelMatch": { "mode": "auto", "trimADb": 2.02, "trimBDb": 0.0,
+"levelMatch": { "mode": "auto", "measured": true, "trimADb": 2.02, "trimBDb": 0.0,
                 "lufsA": -12.26, "lufsB": -10.23, "sumLufs": -10.99 },  // lufs / sumLufs: null when not measured
 "blend": { "value": 0.5, "law": "constantLoudness", "makeupDb": [0.0, -1.7, -2.3, -1.7, 0.0] }
 ```

@@ -92,6 +92,7 @@ struct ChainInfo {
   AlignMode alignMode = AlignMode::Auto;
   AlignResult align;                     // the values in effect (resolved for auto)
   LevelMatchMode levelMatchMode = LevelMatchMode::Off;
+  bool levelMeasured = false;            // the level-match probe ran and measured both paths
   std::array<double, 2> trimDb{};        // level trims in effect (dB)
   std::array<double, 2> lufs{LevelMatchResult::kNoLufs, LevelMatchResult::kNoLufs};
   double sumLufs = LevelMatchResult::kNoLufs;
@@ -198,7 +199,8 @@ class Chain {
   // tap as alignment, gate bypassed, alignment applied as currently stored, each path's levelDb
   // included, no trim), measures BS.1770 loudness per path and derives the trims and the
   // constant-loudness make-up curve. Pure measurement: does not change the chain's settings except
-  // that prepare() then applies the result. Needs prepare(). Not RT-safe. With a path disabled
+  // that prepare() then applies the result. prepare() runs it only when both paths are enabled and
+  // (levelMatch.mode != off or blendLaw == constantLoudness). Needs prepare(). Not RT-safe. With a path disabled
   // returns a skipped (all-zero) result.
   LevelMatchResult resolveLevelMatch();
 

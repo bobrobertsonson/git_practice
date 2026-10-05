@@ -264,6 +264,7 @@ nlohmann::json reportJson(const RenderResult& r) {
                                {"invertB", i.align.invertB},
                                {"peakCorrelation", i.align.peakCorrelation}}}}},
       {"levelMatch", {{"mode", levelMatchModeName(i.levelMatchMode)},
+                      {"measured", i.levelMeasured},
                       {"trimADb", i.trimDb[0]},
                       {"trimBDb", i.trimDb[1]},
                       {"lufsA", lufsOrNull(i.lufs[0])},

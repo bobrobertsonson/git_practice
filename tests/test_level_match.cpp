@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <vector>
 
@@ -151,17 +152,21 @@ TEST_CASE("Level match: absent keys equal explicit off + linear, bit for bit", "
 
 TEST_CASE("Level match: modes (off measures only, manual uses the stored trims)", "[levelmatch]") {
   json off = mk("linear_identity.nam", "linear_identity.nam", -6.0);
+  off["blendLaw"] = "constantLoudness";  // off + linear never probes
   const ChainInfo io = build(off)->info();
   CHECK(io.trimDb == std::array<double, 2>{0.0, 0.0});
   CHECK(io.lufs[0] - io.lufs[1] == Approx(6.0).margin(0.1));  // still measured, for a live law toggle
 
   json manual = off;
+  manual["blendLaw"] = "linear";
   manual["levelMatch"] = {{"mode", "manual"}, {"trimADb", 1.5}, {"trimBDb", 7.0}};
   const ChainInfo im = build(manual)->info();
   CHECK(im.trimDb[0] == 1.5);
   CHECK(im.trimDb[1] == 7.0);
   // The manual trims show in the audio: A is 1.5 dB and B 7 dB up -> the sum is +1.0 dB over an untrimmed copy.
-  auto plain = build(off);
+  json plainJ = off;
+  plainJ["blendLaw"] = "linear";
+  auto plain = build(plainJ);
   auto trimmed = build(manual);
   const auto x = noise(static_cast<std::size_t>(kFs), 11, 0.1f);
   const auto yp = run(*plain, x, 256), yt = run(*trimmed, x, 256);
@@ -281,4 +286,32 @@ TEST_CASE("Headroom: without a compressor the sum node is transparent", "[levelm
   const auto y = run(*c, x, 100);
   const auto lat = static_cast<std::size_t>(c->latencySamples());
   for (std::size_t i = 0; i + lat < x.size(); ++i) REQUIRE(y[i + lat] == Approx(x[i]).margin(2e-6));
+}
+
+TEST_CASE("Level match: a legacy-shaped preset never probes and renders the golden exactly", "[levelmatch][golden]") {
+  const fs::path presets = fs::path(SAWBLADE_FIXTURES_DIR) / "presets";
+  const fs::path di = fs::path(SAWBLADE_FIXTURES_DIR) / "di_riff.wav";
+  const RenderResult r = renderFile(presets / "golden_perpath.json", di);  // LSTM, manual alignment, no new keys
+  CHECK_FALSE(r.info.levelMeasured);
+  CHECK(r.info.trimDb == std::array<double, 2>{0.0, 0.0});
+  CHECK(r.info.makeupDb == std::array<double, 5>{});
+  CHECK_FALSE(reportJson(r)["levelMatch"]["measured"].get<bool>());
+  const AudioFile g = readWav(fs::path(SAWBLADE_GOLDEN_DIR) / "golden_perpath.wav");
+  REQUIRE(g.interleaved.size() == r.samples.size());
+  double maxDiff = 0.0;
+  for (std::size_t i = 0; i < r.samples.size(); ++i)
+    maxDiff = std::max(maxDiff, std::fabs(static_cast<double>(g.interleaved[i]) - r.samples[i]));
+  CHECK(maxDiff == 0.0);
+
+  // The same preset with the constant-loudness law is measured and has a non-trivial curve.
+  json j = json::parse(std::ifstream(presets / "golden_perpath.json"));
+  j["blendLaw"] = "constantLoudness";
+  const Preset p = parsePreset(j, presets);
+  AudioFile in = readWav(di);
+  in.interleaved.resize(48000);
+  const RenderResult m = renderPreset(p, in, RenderOptions{});
+  CHECK(m.info.levelMeasured);
+  double span = 0.0;
+  for (double v : m.info.makeupDb) span = std::max(span, std::fabs(v));
+  CHECK(span > 0.1);
 }

@@ -160,7 +160,14 @@ void RigController::remeasure() { proc_.remeasureAlignment(); }
 
 void RigController::matchLevels() { proc_.matchLevels(); }
 
-void RigController::setBlendLaw(BlendLaw law) { live([law](Preset& p) { p.blendLaw = law; }); }
+void RigController::setBlendLaw(BlendLaw law) {
+  // Live when the running engine has a measured make-up curve (or for LINEAR, which needs none); a legacy
+  // preset toggled to CONSTANT is a structural edit, so the rebuild probes.
+  if (law == BlendLaw::ConstantLoudness && !proc_.status().info.levelMeasured)
+    edit([law](Preset& p) { p.blendLaw = law; });
+  else
+    live([law](Preset& p) { p.blendLaw = law; });
+}
 
 void RigController::nudgeAlign(int samples) {
   const AlignResult m = measuredAlign();

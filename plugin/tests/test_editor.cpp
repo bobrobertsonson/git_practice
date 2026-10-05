@@ -1627,3 +1627,25 @@ TEST_CASE("pedal face and drawer: screenshots", "[editor][pedal][screenshots]") 
     drawer.setOpen(false, false);
   }
 }
+
+TEST_CASE("rig editor: CONSTANT on a legacy preset rebuilds once; on a measured engine it is live", "[editor][rig][levelmatch]") {
+  FxRig rig(fxPreset());  // no level-match keys: off + linear, never probed
+  rig.open(rig::RigEditorPanel::Tab::Blend);
+  CHECK_FALSE(rig.proc.status().info.levelMeasured);
+  juce::Button* linear = buttonTitled(*rig.ed, "Blend law LINEAR");
+  juce::Button* constant = buttonTitled(*rig.ed, "Blend law CONSTANT");
+  REQUIRE(linear != nullptr);
+  REQUIRE(constant != nullptr);
+  auto builds = rig.proc.engineBuilds();
+  click(*constant);
+  rig.wait();
+  CHECK(rig.proc.engineBuilds() == builds + 1);
+  CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::ConstantLoudness);
+  CHECK(rig.proc.status().info.levelMeasured);
+  builds = rig.proc.engineBuilds();
+  click(*linear);
+  click(*constant);
+  rig.wait();
+  CHECK(rig.proc.engineBuilds() == builds);
+  CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::ConstantLoudness);
+}
