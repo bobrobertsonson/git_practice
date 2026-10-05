@@ -16,7 +16,8 @@ def rec(tone, model, title, name="Standard", cached=False):
 
 
 @pytest.mark.parametrize("title,fam", [
-    ("Peavey 5150 Block Letter", "peavey"),  # leftmost match wins (spec)
+    ("Peavey 5150 Block Letter", "5150"), ("Peavey Invective", "peavey"), ("Peavey XXX", "peavey"),
+    ("Triple Rectifier", "recto"), ("Peavey 6505+ Dual", "5150"),
      ("6505+ Lead", "5150"), ("5153 Red Stripe", "5150"),
     ("Mesa Dual Rectifier", "recto"), ("Mesa Boogie Recto", "recto"), ("Bogner Uberschall", "bogner"),
     ("EVH 5150III", "5150"), ("Marshall JCM800", "marshall"), ("  ", ""), ("", ""), (None, ""), ("1987 !!", ""),
@@ -122,3 +123,13 @@ def test_cli_suggest_body_null_without_pool_or_candidates(tmp_path, capsys):
     assert run(capsys, "suggest-body", "--json", "--cache-dir", str(tmp_path))[1] is None
     (tmp_path / "pool_manifest.json").write_text(json.dumps({"tones": [_entry(1, "Fender Twin", [(1, "Clean")])]}))
     assert run(capsys, "suggest-body", "--json", "--cache-dir", str(tmp_path))[1] is None
+
+
+def test_alias_families_merge_but_peavey_does_not_fold():
+    assert family_key("Peavey 5150 Block Letter") == family_key("6505+ Lead")
+    assert family_key("Peavey Invective") != family_key("6505")
+    assert family_key("Mesa Dual Rectifier") == family_key("Recto")
+    pool = [rec(1, 11, "Peavey 5150 Lead", cached=True), rec(2, 21, "Diezel VH4 Ch3")]
+    assert suggest_body(pool, "6505+ Lead")["tone_id"] == 2
+    assert suggest_body([rec(1, 11, "Peavey Invective Lead", cached=True), rec(2, 21, "Diezel VH4")],
+                        "6505")["tone_id"] == 1

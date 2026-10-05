@@ -11,18 +11,21 @@ from typing import Any, Iterable, Sequence
 from ..matcher.classify import _HIGH_AMPS, classify
 from .cache import Cache
 
-_ALIASES = {"5150": "5150", "5153": "5150", "6505": "5150", "recto": "recto", "dual": "recto"}
+_ALIAS = re.compile(r"(?P<f5150>5150|5153|6505|evh)|(?P<recto>recto|dual|triple)")
 
 
 def family_key(title: str | None) -> str:
-    """Amp family of a title: the first ``_HIGH_AMPS`` match (5150/5153/6505 -> "5150", recto/dual ->
-    "recto", else the match lower-cased with non-alphanumerics removed), otherwise the first alphabetic
-    word of the title lower-cased. ``""`` when there is no title / no such word (unknown)."""
+    """Amp family of a title. First the alias families anywhere in the text (leftmost wins):
+    5150/5153/6505/evh -> "5150", recto/dual/triple -> "recto". Otherwise the leftmost other
+    ``_HIGH_AMPS`` match (lower-cased, non-alphanumerics removed; "peavey" itself is never folded into
+    5150), otherwise the first alphabetic word of the title. ``""`` when there is none (unknown)."""
     t = (title or "").lower()
+    m = _ALIAS.search(t)
+    if m:
+        return "5150" if m.group("f5150") else "recto"
     m = _HIGH_AMPS.search(t)
     if m:
-        k = re.sub(r"[^a-z0-9]", "", m.group(0))
-        return _ALIASES.get(k, k)
+        return re.sub(r"[^a-z0-9]", "", m.group(0))
     w = re.search(r"[a-z]+", t)
     return w.group(0) if w else ""
 
