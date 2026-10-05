@@ -162,9 +162,9 @@ sawblade-t3k suggest-body --a-title "<path A amp title>" [--cache-dir D] --json
 ```
 
 Offline (reads `<cache>/pool_manifest.json` and the capture cache, no login). Prints one JSON line
-`{"tone_id", "model_id", "title", "cached"}` or `null` (no pool, or no high-gain amp in it). Candidates are the
+`{"tone_id", "model_id", "title", "cached"}` (ids are strings) or `null` (no pool, or no high-gain amp in it). Candidates are the
 pool's amp models whose `classify(...)` is `amp_high`. Order: a different amp family from path A first, then
-already-cached captures, then pool order. Family key = an alias family found anywhere in the title (5150/5153/6505/evh -> `5150`, recto/dual/triple ->
+already-cached captures, then pool order. Family key = an alias family found anywhere in the title (5150/5153/6505/evh -> `5150`, recto/rectifier/dual/triple ->
 `recto`), else the leftmost other `_HIGH_AMPS` match (so `peavey` stays its own family), else the first alphabetic word; an empty or unknown
 A title ranks nobody as "different". Code: `sawblade_match/t3k/suggest.py` (`suggest_body`, `pool_candidates`).
 

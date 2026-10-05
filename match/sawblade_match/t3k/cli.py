@@ -22,7 +22,7 @@ from .fetch import ensure_capture, list_candidates
 from .licenses import check_license
 from .filter import FilterConfig
 from .ids import require_id
-from .suggest import pool_candidates, suggest_body
+from .suggest import load_pool_manifest, pool_candidates, suggest_body
 from .ladder import gain_ladder, parse_ladder
 from .pool import build_pool, write_manifest
 from .pack import build_pack
@@ -205,11 +205,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         records = assess(tones, _filter_cfg(args), datetime.now(timezone.utc))
     else:
         cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
-        try:
-            manifest = json.loads((cache.root / "pool_manifest.json").read_text())
-        except (FileNotFoundError, ValueError):
-            manifest = None
-        records = pool_records(manifest if isinstance(manifest, dict) else None)
+        records = pool_records(load_pool_manifest(cache))
         if gears:
             records = [r for r in records if r["gear"] in gears]
         if args.query:
@@ -295,11 +291,7 @@ def cmd_ladder(args: argparse.Namespace) -> int:
 def cmd_suggest_body(args: argparse.Namespace) -> int:
     """Offline: pick a body-path amp from the cached pool manifest; prints a JSON record or ``null``."""
     cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
-    try:
-        manifest = json.loads((cache.root / "pool_manifest.json").read_text())
-    except (FileNotFoundError, ValueError):
-        manifest = None
-    pick = suggest_body(pool_candidates(manifest if isinstance(manifest, dict) else None, cache), args.a_title)
+    pick = suggest_body(pool_candidates(load_pool_manifest(cache), cache), args.a_title)
     _emit(pick)
     return 0
 
