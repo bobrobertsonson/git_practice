@@ -83,7 +83,7 @@ def _cached_signal(spec: S.SignalSpec, log):
     return tr, va, info
 
 
-def _cached_targets(tpreset: dict, base, spec_info: dict, tr, va, cache, log):
+def _cached_targets(tpreset: dict, base, spec_info: dict, tr, va, cache, log, check=None):
     key = hashlib.sha256((P.preset_hash(tpreset) + spec_info["trainSha256"] + spec_info["validSha256"] +
                           _core_id()).encode()).hexdigest()[:20]
     f = CACHE_ROOT / "targets" / f"{key}.npz"
@@ -94,6 +94,8 @@ def _cached_targets(tpreset: dict, base, spec_info: dict, tr, va, cache, log):
     t0 = time.time()
     log(f"rendering the training target through the chain ({len(tr) / RATE:.0f} s + {len(va) / RATE:.0f} s) ...")
     yt, rt = render48(tpreset, tr, base, cache)
+    if check:
+        check()
     yv, _ = render48(tpreset, va, base, cache)
     info = {"renderSeconds": round(time.time() - t0, 1), "latencySamples": rt.get("latencySamples"),
             "align": rt.get("align"), "warnings": rt.get("warnings", []),
@@ -113,7 +115,7 @@ def run_export(*args, progress_json=None, **kwargs) -> dict:
     except ExportInterrupted:
         raise
     except KeyboardInterrupt as e:
-        _cancelled(prog)
+        _cancelled(prog, prog.state["outDir"] or None)
         raise ExportInterrupted("interrupted") from e
     except Exception as e:
         prog.update("error", message=str(e) or type(e).__name__)
@@ -206,7 +208,7 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str =
         log(f"  bypassed: {b['what']} ({b['why']})")
 
     prog.update("render", message="rendering the training target")
-    yt, yv, tinfo = _cached_targets(tpreset, base, sinfo, tr, va, cache, log)
+    yt, yv, tinfo = _cached_targets(tpreset, base, sinfo, tr, va, cache, log, check=lambda: _check_stop(prog, outdir))
 
     report: dict = {"reportVersion": REPORT_VERSION, "tool": "sawblade-export", "created": stamp,
                     "preset": {"path": str(Path(preset_path).resolve()), "name": preset.get("name"),
@@ -247,6 +249,7 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str =
         log(f"interrupted after {tres.epochs_done} epochs; resume with --resume {outdir}")
         _cancelled(prog, outdir)            # no report is written on cancel; the checkpoint stays
         raise ExportInterrupted("interrupted")
+    _check_stop(prog, outdir)               # a SIGINT the trainer did not consume (final epoch, ...)
     log(f"trained in {tres.wall_s / 60:.1f} min, {tres.epochs_done} epochs, best val ESR {tres.best_val_esr:.5f} "
         f"(epoch {tres.best_epoch}), stopped by {tres.stopped_by}")
     report["resume"] = resumed_from
@@ -302,6 +305,7 @@ def _validate(preset, base, plan, nam_path, ir_path, outdir, scratch, size, cach
     ho, _, _ = V.compare_signals("heldout", va_, RATE, ref_preset, base, check, cache, targets, renders_dir=rdir,
                                  drop=int(1.0 * RATE))
     out["heldOut"] = ho
+    _check_stop(prog, outdir)
     prog.update("validate", PG.stage_fraction("validate", 0.4), message="held-out segment done")
     out["metricsSkipFirstS"] = 1.0
     if di_path is None:
@@ -314,10 +318,12 @@ def _validate(preset, base, plan, nam_path, ir_path, outdir, scratch, size, cach
     a, b, info = select_excerpt(di, fs, DI_EXCERPT_S + V.PREROLL_S)
     log(f"validating on the DI excerpt ({info.get('startS', 0):.1f}-{info.get('endS', 0):.1f} s of {Path(src).name}) ...")
     orig_with_gate = {"vsOriginalWithGate": preset} if (preset.get("gate") or {}).get("enabled") else None
+    _check_stop(prog, outdir)
     dres, ref_o, out_e = V.compare_signals("di_excerpt", di[a:b], fs, ref_preset, base, check, cache, targets,
                                            extra_refs=orig_with_gate, drop=int(V.PREROLL_S * RATE), renders_dir=rdir)
     dres["excerpt"] = {"file": src, "startS": a / fs, "endS": b / fs, "prerollDroppedS": V.PREROLL_S, **info}
     out["diExcerpt"] = dres
+    _check_stop(prog, outdir)
     prog.update("validate", PG.stage_fraction("validate", 0.8), message="DI excerpt done")
     out["listening"] = listening_ab(ref_o, out_e, outdir / "listen")
     out["acceptance"] = V.acceptance(size, ho["esr"], dres["ltas"]["aWeightedErrorDb"])

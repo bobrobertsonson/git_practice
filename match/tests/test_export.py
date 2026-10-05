@@ -474,6 +474,7 @@ class _FakeTrain:
     def __init__(self):
         self.calls = []
         self.interrupt = False
+        self.late_stop = False
 
     def __call__(self, x, y, v, yv, cfg, outdir, scratch, user_metadata=None, other_metadata=None, log=print,
                  basename="model", ckpt_dir=None, resume=False, identity=None, progress=None):
@@ -501,6 +502,8 @@ class _FakeTrain:
         p.write_text(json.dumps({"architecture": "WaveNet", "weights": [0.0],
                                  "metadata": {"sawblade": dict(other_metadata["sawblade"])}}))
         from sawblade_match.export.train import TrainResult
+        if self.late_stop:                       # SIGINT the trainer never consumed (e.g. during its final epoch)
+            STOP.request_stop()
         return TrainResult(nam_path=p, epochs_done=2, best_epoch=2, best_val_esr=0.5, wall_s=1.0, stopped_by="max_epochs",
                            params=1, receptive_field=1, history=[], config={})
 
@@ -524,6 +527,7 @@ def mocked_export(tmp_path, monkeypatch, shared):
     sinfo = {"trainSha256": "t" * 64, "validSha256": "v" * 64,
              "train": {"rmsDbfs": -20.0, "peakDbfs": -3.0}, "valid": {}}
     state = {"sinfo": sinfo}
+    real_targets = RUN._cached_targets
     monkeypatch.setattr(RUN.T, "train_nam", fake)
     monkeypatch.setattr(RUN, "probe_report", lambda *a, **k: {"warnings": []})
     monkeypatch.setattr(RUN, "_cached_signal", lambda spec, log: (np.zeros(10, np.float32), np.zeros(10, np.float32),
@@ -544,7 +548,7 @@ def mocked_export(tmp_path, monkeypatch, shared):
         kw.setdefault("size", "feather")
         kw.setdefault("mode", "nocab")
         return RUN.run_export(pj, validate=False, log=lambda *_: None, exports_root=tmp_path / "exports", **kw)
-    return types.SimpleNamespace(go=go, fake=fake, tmp=tmp_path, sinfo=state, preset=p, RUN=RUN)
+    return types.SimpleNamespace(go=go, fake=fake, tmp=tmp_path, sinfo=state, preset=p, RUN=RUN, real_targets=real_targets)
 
 
 def _unfinished(mocked, name, **over):
@@ -929,3 +933,73 @@ def test_missing_default_di_falls_back_to_builtin_with_log_line(mx, monkeypatch)
                             out=str(mx.tmp / "o"))
     assert rep["validation"]["diExcerpt"]["excerpt"]["file"] == "builtin"
     assert "DI excerpt: default test DI not found, using the built-in signal" in msgs
+
+
+def test_late_sigint_after_training_cancels_before_validation_and_report(mx, monkeypatch, capsys):
+    seen = _fake_validation(mx, monkeypatch)
+    mx.fake.late_stop = True
+    pj = mx.tmp / "progress.json"
+    out = mx.tmp / "late"
+    rc = _cli(mx, "--out", str(out), "--di", "builtin", "--progress-json", str(pj))
+    assert rc == 130 and seen == {}
+    assert not (out / "export_report.json").exists()
+    d = json.loads(pj.read_text())
+    assert d["stage"] == "cancelled" and d["resumable"] is True
+
+
+def test_validate_stage_resets_eta(tmp_path):
+    from sawblade_match.export import progress as PG
+    p = PG.Progress(tmp_path / "p.json")
+    p.update("train", 0.3, eta=99, force=True)
+    p.update("validate")
+    assert json.loads((tmp_path / "p.json").read_text())["etaSeconds"] == -1
+
+
+def test_check_stop_in_the_render_stage_between_train_and_valid_renders(mx, monkeypatch):
+    from sawblade_match.export import progress as PG
+    from sawblade_match.export import stop as STOP
+    RUN = mx.RUN
+    monkeypatch.setattr(RUN, "CACHE_ROOT", mx.tmp / "cache")
+    calls = []
+
+    def render(*a, **k):
+        calls.append(1)
+        STOP.request_stop()                                               # SIGINT during the first render
+        return np.zeros(10, np.float32), {}
+    monkeypatch.setattr(RUN, "render48", render)
+    prog = PG.Progress(None)
+    try:
+        with pytest.raises(STOP.ExportInterrupted):
+            mx.real_targets(mx.preset, ".", {"trainSha256": "t", "validSha256": "v"}, np.zeros(10), np.zeros(10),
+                                None, lambda *_: None, check=lambda: RUN._check_stop(prog))
+    finally:
+        STOP.clear()
+    assert len(calls) == 1                                                # the valid render never started
+
+
+@pytest.mark.parametrize("stop_in_call", [1, 2])
+def test_check_stop_sites_inside_validate(mx, monkeypatch, stop_in_call):
+    from sawblade_match.export import stop as STOP
+    RUN = mx.RUN
+    n = {"compare": 0, "listen": 0}
+
+    def compare(name, x, in_rate, *a, **k):
+        n["compare"] += 1
+        if n["compare"] == stop_in_call:
+            STOP.request_stop()
+        return {"esr": 0.5, "ltas": {"aWeightedErrorDb": 0.1}}, np.zeros(4, np.float32), np.zeros(4, np.float32)
+
+    def listen(*a, **k):
+        n["listen"] += 1
+        return {}
+    monkeypatch.setattr(RUN.V, "compare_signals", compare)
+    monkeypatch.setattr(RUN.V, "export_check_preset", lambda *a, **k: {})
+    monkeypatch.setattr(RUN, "load_targets", lambda *a, **k: {})
+    monkeypatch.setattr(RUN, "listening_ab", listen)
+    try:
+        with pytest.raises(STOP.ExportInterrupted):
+            RUN._validate(mx.preset, ".", RUN.P.make_plan(mx.preset, "nocab"), mx.tmp / "m.nam", None, mx.tmp / "o",
+                          mx.tmp / "s", "feather", None, np.zeros(10, np.float32), None, lambda *_: None)
+    finally:
+        STOP.clear()
+    assert n["compare"] == stop_in_call and n["listen"] == 0     # after held-out: DI step skipped; after DI: no listening

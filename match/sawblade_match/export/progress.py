@@ -61,6 +61,8 @@ class Progress:
                 raise ValueError(f"unknown stage {stage!r}")
             s["stage"] = stage
         st = s["stage"]
+        if st == "validate" and self.last_stage != "validate":
+            s["etaSeconds"] = -1                         # training ETA no longer applies
         if st in STAGE_RANGE:
             lo, hi = STAGE_RANGE[st]
             f = lo if fraction is None else fraction
