@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -47,9 +48,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile", default="derived",
                    help="guardrail profile: 'derived' (default, from the reference's guitars), a profile id in profiles/, or a path")
     p.add_argument("--base-profile", default="swedish_death_hm2", help="rule skeleton for --profile derived")
-    p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--threads", "--jobs", dest="threads", type=int, default=4,
+                   help="parallel render workers (default 4). Threads, not processes: the C++ renderer releases the GIL "
+                        "and scales to the core count, so a process pool only adds copies of the models and signals")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--quick", action="store_true",
+                      help="fast preset (target <= 5 min on 4 cores): blend-aware pre-screen, coarse 2 s pair screen then "
+                           "full pass on the top 10 %%, fewer re-scores/cab sweeps, smaller CMA-ES budgets with a plateau stop")
+    mode.add_argument("--thorough", action="store_true", help="the full search (default): every pair of the capped pool on the "
+                      "full excerpt, full CMA-ES budgets")
+    p.add_argument("--progress-json", metavar="PATH",
+                   help="write {stage, fraction, etaSeconds, bestErrorDb, message} to PATH (atomically, at least once per "
+                        "second) for the plugin's progress bar")
+    p.add_argument("--listen", action="store_true",
+                   help="also render the listening files (full-length R render, stereo WAV/MP3); off by default")
     p.add_argument("--targets", help="(deprecated alias) path of the base profile / tone-targets file")
-    p.add_argument("--no-audio", action="store_true", help="skip the listening WAV/MP3")
+    p.add_argument("--no-audio", action="store_true", help=argparse.SUPPRESS)      # deprecated no-op (listening is off unless --listen)
     return p
 
 
@@ -59,6 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if a.excerpt_s > 8.0:
             raise ValueError("--excerpt-s must be <= 8 (spec: short excerpts)")
         out = Path(a.out) if a.out else Path.home() / ".cache" / "sawblade" / "match_runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
+        t_load = time.time()
         pool = load_pool(a.pool)
         ref = load_reference(a.ref, channel=a.ref_channel, stems_dir=Path(a.stems_dir) if a.stems_dir else None,
                              matched=a.matched, offset_ms=a.offset_ms, sections=a.ref_section,
@@ -67,7 +82,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                      budget=a.budget, seed=a.seed, excerpt_s=a.excerpt_s, top_k=a.top_k, prescreen_n=a.prescreen, profile=a.profile,
                      base_profile=a.base_profile, threads=a.threads,
                      targets=Path(a.targets) if a.targets else None, window_s=a.excerpt_window,
-                     write_audio=not a.no_audio)
+                     write_audio=a.listen and not a.no_audio, quick=a.quick,
+                     progress_json=Path(a.progress_json) if a.progress_json else None,
+                     timings_pre={"referenceLoad": time.time() - t_load})
         run_match(cfg, Log())
         return 0
     except (ValueError, OSError, RuntimeError) as e:

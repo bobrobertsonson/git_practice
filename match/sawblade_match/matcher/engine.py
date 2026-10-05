@@ -15,6 +15,10 @@ All pipeline signals are at 48 kHz (the NAM rate) so the core never resamples be
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+import threading
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 
@@ -35,14 +39,27 @@ def to48(x: np.ndarray, fs: int) -> np.ndarray:
     return signal.resample_poly(x, f.numerator, f.denominator).astype(np.float32)
 
 
+CORE_CACHE_BYTES = 400 * 1024 * 1024     # NAM-core memo (per excerpt signal), LRU
+
+
 class Engine:
-    def __init__(self, gate: dict | None, workers: int = 4, cache=None):
+    """``core_blocks`` memoises NAM cores per (block list, input signal): the renderer is deterministic, so a chain that
+    the pre-screen already rendered on an excerpt is not rendered again by stage 1, and stage 2 starts from stage-1 cores.
+    ``stats`` counts hits/misses/NAM seconds. Disable with ``core_cache_bytes=0``."""
+
+    def __init__(self, gate: dict | None, workers: int = 4, cache=None, core_cache_bytes: int = CORE_CACHE_BYTES):
         self.cache = cache or _core.CaptureCache()
         self.gate = gate
         self.workers = workers
         self.pool = ThreadPoolExecutor(workers)
         self.n_renders = 0
         self.render_audio_s = 0.0
+        self._core_cache: OrderedDict = OrderedDict()
+        self._core_bytes = 0
+        self._core_cap = core_cache_bytes
+        self._lock = threading.Lock()
+        self.core_hits = 0
+        self.core_misses = 0
 
     def close(self):
         self.pool.shutdown(wait=True)
@@ -54,8 +71,21 @@ class Engine:
         self.render_audio_s += len(x) / fs
         return y, rep
 
-    def map(self, fn, items):
-        return list(self.pool.map(fn, items))
+    def map(self, fn, items, progress=None):
+        """Parallel map keeping order. ``progress(done, total)`` is called (from worker threads) as items finish."""
+        items = list(items)
+        if progress is None:
+            return list(self.pool.map(fn, items))
+        total, done = len(items), [0]
+
+        def wrapped(it):
+            r = fn(it)
+            with self._lock:
+                done[0] += 1
+                d = done[0]
+            progress(d, total)
+            return r
+        return list(self.pool.map(wrapped, items))
 
     # ---- preset skeletons -------------------------------------------------------------------------------------
     @staticmethod
@@ -88,9 +118,30 @@ class Engine:
     # ---- stages -------------------------------------------------------------------------------------------------
     def core_blocks(self, blocks: list[dict], cab, x: np.ndarray) -> np.ndarray:
         """NAM core of one chain (gate -> blocks) at 48 kHz; ``cab`` only fills the (disabled) cab slot."""
+        x = np.ascontiguousarray(x, dtype=np.float32)
+        key = None
+        if self._core_cap > 0:
+            key = (json.dumps(blocks, sort_keys=True), len(x), hashlib.blake2b(x.tobytes(), digest_size=12).digest())
+            with self._lock:
+                hit = self._core_cache.get(key)
+                if hit is not None:
+                    self._core_cache.move_to_end(key)
+                    self.core_hits += 1
+                    return hit
         y, rep = self.render(self.chain_preset(blocks, cab, "a"), x)
         if rep.get("latencySamples", 0):
             raise RuntimeError("path latency != 0 is not supported by the matcher emulation yet")
+        if key is not None:
+            y = np.asarray(y)
+            y.flags.writeable = False
+            with self._lock:
+                self.core_misses += 1
+                if key not in self._core_cache:
+                    self._core_cache[key] = y
+                    self._core_bytes += y.nbytes
+                    while self._core_bytes > self._core_cap and len(self._core_cache) > 1:
+                        _, old = self._core_cache.popitem(last=False)
+                        self._core_bytes -= old.nbytes
         return y
 
     def core(self, combo: Combo, v: dict, path: str, x: np.ndarray) -> np.ndarray:

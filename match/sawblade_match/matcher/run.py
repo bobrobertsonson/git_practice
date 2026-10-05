@@ -20,7 +20,9 @@ from .engine import RATE, Engine, to48
 from .offset import refine_offset
 from .pool import Capture, Pool, default_cab, starter_choice
 from .profile import DEFAULT_BASE, derive_profile, load_profile, profile_path, save_profile
+from .excerpt import select_excerpt
 from .reference import Reference, build_target, make_excerpt
+from .progress import NullProgress, Progress
 from .refine import refine_combo
 from .screen import Scored, Screener, TOPOLOGIES
 from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manual_align
@@ -51,9 +53,39 @@ class Plan:
     prescreen_n2: int = 4              # per-class pre-screen N used for the single2 pedal/amp subset
     n2_pedals: int = 6
     n2_amps: int = 8
+    # ---- quick mode (spec 6b); the defaults below leave the thorough search exactly as before ----------------------------
+    mode: str = "thorough"
+    coarse_s: float = 0.0              # >0: two-pass screen, first pass on this many seconds of the excerpt
+    coarse_keep: float = 0.10          # fraction of the pairs that get the full-length second pass
+    coarse_min_keep: int = 32
+    blend_aware: bool = False          # blend-aware pre-screen extras (measured: no recall gain, so off in quick)
+    capped_prescreen: bool = False     # quick: the pair cap stays on (per-class quotas, pedals and amps sized separately)
+    prescreen_n_ped: int = 4           # quick: per-class pedal quota (amps get the rest of the pair cap)
+    patience: int | None = None        # CMA-ES plateau stop (linear blocks): generations without ``plateau_tol`` gain
+    patience_gain: int | None = None   # same for the gain block (its generations are expensive)
+    plateau_tol: float = 0.0
+    blend_extra_ped: int = 0           # blend-aware pre-screen: extra pedals / amps per class ranked by their best blend
+    blend_extra_amp: int = 0
+    gain_s: float = 0.0                # >0: the gain block of CMA-ES runs on this many seconds of the excerpt
+    short_linear: bool = False         # ... and so does the first linear block (the last one always uses the full excerpt)
 
     @staticmethod
-    def from_budget(budget: float, top_k: int = 3, prescreen_n: int | None = None) -> "Plan":
+    def quick(budget: float = 1.0, top_k: int = 3, prescreen_n: int | None = None) -> "Plan":
+        """Fast preset (``--quick``): blend-aware pre-screen -> coarse 2 s pair screen -> full pass on the top 10 % ->
+        fewer re-scores / cab sweeps -> smaller CMA-ES budgets with a plateau stop."""
+        b = max(budget, 0.01)
+        g = lambda n, lo: max(lo, int(round(n * min(b, 3.0))))
+        return Plan(cap_pairs=g(380, 6), n_rescore=g(16, 3), n_rescore_single=g(12, 3), n_cab=g(3, 2), n_cab_single=g(2, 2),
+                    top_k={"blend": min(top_k, 2), "single": min(top_k, 2), "single2": 1 if top_k >= 4 else 0},
+                    gens_linear=g(30, 3), gens_gain=g(5, 2), gens_final=g(10, 2), pop_linear=12, pop_gain=6,
+                    prescreen_n=prescreen_n, n2_pedals=g(4, 2), n2_amps=g(4, 2), mode="quick", coarse_s=2.5,
+                    coarse_keep=0.08, coarse_min_keep=32, blend_aware=False, capped_prescreen=True, patience=8, patience_gain=3, plateau_tol=0.005,
+                    prescreen_n_ped=4, blend_extra_ped=0, blend_extra_amp=0, gain_s=2.5, short_linear=True)
+
+    @staticmethod
+    def from_budget(budget: float, top_k: int = 3, prescreen_n: int | None = None, quick: bool = False) -> "Plan":
+        if quick:
+            return Plan.quick(budget, top_k, prescreen_n)
         b = max(budget, 0.01)
         g = lambda n, lo: max(lo, int(round(n * min(b, 3.0))))
         return Plan(cap_pairs=g(800, 6), n_rescore=g(60, 3), n_rescore_single=g(40, 3), n_cab=g(15, 2),
@@ -83,6 +115,9 @@ class Config:
     write_audio: bool = True
     refine_offsets: bool = True
     plan: Plan | None = None
+    quick: bool = False
+    progress_json: Path | None = None
+    timings_pre: dict | None = None      # seconds spent before run_match (reference loading), from the CLI
 
 
 class Log:
@@ -225,7 +260,7 @@ def run_match(cfg: Config, log=None) -> dict:
     t_start = time.time()
     out = Path(cfg.out)
     out.mkdir(parents=True, exist_ok=True)
-    plan = cfg.plan or Plan.from_budget(cfg.budget, cfg.top_k, cfg.prescreen_n)
+    plan = cfg.plan or Plan.from_budget(cfg.budget, cfg.top_k, cfg.prescreen_n, cfg.quick)
     rng = np.random.default_rng(cfg.seed)
     ref, pool = cfg.ref, cfg.pool
     if not (pool.amps and pool.cabs):
@@ -240,21 +275,39 @@ def run_match(cfg: Config, log=None) -> dict:
     gate = gate_preset(floor)
     log(f"DI floor on the gate's peak envelope {floor:.1f} dBFS -> gate {gate}")
     eng = Engine(gate, cfg.threads)
+    prog = Progress(cfg.progress_json, plan.mode).start() if cfg.progress_json else NullProgress()
     try:
-        return _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start)
+        res = _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog)
+        prog.close("done", res["after"][0]["aWeightedErrorDb"] if res.get("after") else None)
+        return res
+    except BaseException as e:
+        prog.close(f"error: {e}")
+        raise
     finally:
         eng.close()
 
 
-def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start):
+def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog=None):
+    prog = prog or NullProgress()
+    cpu0 = time.process_time()
+    prog.stage("prepare", "preparing the excerpt and the reference")
+    T: dict = {"referenceLoad": (cfg.timings_pre or {}).get("referenceLoad"), "diPrep": time.time() - t_start}
+    t_mark = time.time()
+
+    def lap(name):
+        nonlocal t_mark
+        now = time.time()
+        T[name] = T.get(name, 0.0) + now - t_mark
+        t_mark = now
     cab0 = default_cab(pool.cabs)
     window = None if cfg.window_s is None else (int(cfg.window_s[0] * RATE), int(cfg.window_s[1] * RATE))
     ex = make_excerpt(di48, cfg.excerpt_s, window=window, ref=ref)
+    lap("excerpt")
     log(f"excerpt {ex.start / RATE:.1f}-{ex.end / RATE:.1f} s ({ex.info})")
     for note in ref.notes:
         log(f"reference note: {note}")
     result: dict = {"schema": "sawblade.match_result", "version": 1, "seed": cfg.seed, "budget": cfg.budget,
-                    "plan": plan.__dict__, "di": str(cfg.di), "diR": str(cfg.di_r) if cfg.di_r else None,
+                    "mode": plan.mode, "plan": plan.__dict__, "di": str(cfg.di), "diR": str(cfg.di_r) if cfg.di_r else None,
                     "reference": {"path": ref.path, "basis": ref.basis, "stemChannel": ref.stem_channel,
                                   "bandLimitHz": ref.hf_limit_hz, "textureTerm": ref.texture,
                                   "matchedStftFmaxHz": ref.matched_fmax if ref.matched_sig is not None else None,
@@ -287,7 +340,22 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             f"[{r['method']}, env ratio {r['envPeakRatio']:.1f}, fine ratio {r.get('peakRatio', 0):.1f}]")
         if r["envPeakRatio"] >= 2.0:
             ref.offset_samples = r["offset"]
+    lap("starterAndOffset")
     tgt = build_target(ref, ex)
+    cex = ctgt = None
+    if plan.coarse_s > 0 and ex.n > int(plan.coarse_s * 1.5 * RATE):
+        # coarse excerpt: the densest `coarse_s` seconds inside the excerpt, with a short warm-up lead
+        a0, b0, cinfo = select_excerpt(ex.x[ex.lead:], RATE, plan.coarse_s)
+        cex = make_excerpt(di48, plan.coarse_s, lead_s=0.2, window=(ex.start + a0, ex.start + b0), ref=ref)
+        ctgt = build_target(ref, cex)
+        result["coarseExcerpt"] = {"startS": cex.start / RATE, "endS": cex.end / RATE, "leadS": cex.lead / RATE}
+        log(f"coarse excerpt {cex.start / RATE:.1f}-{cex.end / RATE:.1f} s")
+    gex = gtgt = None
+    if plan.gain_s > 0 and ex.n > int(plan.gain_s * 1.2 * RATE):
+        a1, b1, _ = select_excerpt(ex.x[ex.lead:], RATE, plan.gain_s)
+        gex = make_excerpt(di48, plan.gain_s, lead_s=0.3, window=(ex.start + a1, ex.start + b1), ref=ref)
+        gtgt = build_target(ref, gex)
+        result["gainExcerpt"] = {"startS": gex.start / RATE, "endS": gex.end / RATE}
     # ---- profile: guardrail rules (the reference LTAS stays the target) ----------------------------------------------
     base = load_profile(cfg.targets and str(cfg.targets) or cfg.base_profile)
     if cfg.profile == "derived":
@@ -308,21 +376,35 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     before_ex = L.evaluate(ex.trim(y_st), tgt, None)
     result["starter"]["excerptLoss"] = before_ex.as_dict()
     log(f"starter on excerpt: loss {before_ex.total:.3f} (ltas {before_ex.ltas:.2f} dB)")
+    lap("targetAndProfile")
 
     # ---- stage 1 -----------------------------------------------------------------------------------------------------
-    scr = Screener(eng, pool, ex, tgt, cab0, rng, plan, log)
+    scr = Screener(eng, pool, ex, tgt, cab0, rng, plan, log, cex, ctgt, prog)
     ranked = scr.run()
     result["stage1"] = {**scr.stats, "top": {t: [_scored_json(s) for s in lst[:30]] for t, lst in ranked.items()}}
     t1 = time.time() - t_start
+    T["stage1"] = scr.stats.get("stage1Seconds")
+    T["stage1Detail"] = scr.stats.get("timings")
+    t_mark = time.time()
+    prog.stage("refine", "refining the best candidates")
 
     # ---- stage 2 -----------------------------------------------------------------------------------------------------
     refined: list[Scored] = []
     unrefined: list[Scored] = []
+    n_refine = sum(min(plan.top_k.get(t, 0), len(ranked.get(t, []))) for t in TOPOLOGIES)
+    n_done = 0
+    T["stage2PerCombo"] = []
     for topo in TOPOLOGIES:
         lst = ranked.get(topo, [])
         kk = plan.top_k.get(topo, 0)
         unrefined += lst[kk:kk + 2]
         for k, s in enumerate(lst[:kk]):
+            t_combo = time.time()
+
+            def on_gen(block, g, n, _d=n_done):
+                base = {"L1": 0.0, "G": 0.4, "L2": 0.85}[block]
+                span = {"L1": 0.4, "G": 0.45, "L2": 0.15}[block]
+                prog.update((_d + base + span * g / max(n, 1)) / max(n_refine, 1))
             log(f"stage2 {topo} [{k + 1}/{kk}] {s.combo.describe()} (screen loss {s.loss:.3f})")
             sp = Space.for_combo(s.combo)
             v0 = sp.default()
@@ -331,7 +413,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + len(refined) * 10,
                                       gens_linear=plan.gens_linear, pop_linear=plan.pop_linear,
                                       gens_gain=plan.gens_gain, pop_gain=plan.pop_gain, gens_final=plan.gens_final,
-                                      log=log)
+                                      patience=plan.patience, patience_gain=plan.patience_gain, tol=plan.plateau_tol,
+                                      on_gen=on_gen, gex=gex, gtgt=gtgt, short_linear=plan.short_linear, log=log)
             ca = eng.core(s.combo, v, "a", ex.x)
             cb = eng.core(s.combo, v, "b", ex.x) if s.combo.topology == "blend" else None
             y = ex.trim(eng.emulate(s.combo, v, ca, cb, s.align))
@@ -340,11 +423,18 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             refined.append(Scored(s.combo, r.total, v.get("blend", 0.0), s.align, r, "refined",
                                   {"params": v, "outputGainDb": g, "clipped": clipped, "info": info,
                                    "guardrails": guard}))
+            n_done += 1
+            prog.best(r.ltas)
+            prog.update(n_done / max(n_refine, 1))
+            T["stage2PerCombo"].append({"topology": topo, "seconds": round(time.time() - t_combo, 1)})
     unrefined = sorted([c for c in unrefined if np.isfinite(c.loss)], key=lambda c: c.loss)
     refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
     best = choose(refined)
     result["stage2Seconds"] = time.time() - t_start - t1
+    T["stage2"] = time.time() - t_mark
+    t_mark = time.time()
+    prog.stage("finalize", "verifying on the full-length DI")
     result["topologies"] = {}
     for topo in TOPOLOGIES:
         c = [x for x in refined if x.topology == topo]
@@ -360,8 +450,10 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     gain_db = best.extra["outputGainDb"]
     final = build_preset(best.combo, v, gate=gate, align=best.align, output_db=gain_db,
                          name="Sawblade match", notes=_notes(cfg, ref, best))
-    full_jobs = {"best_L": (final, cfg.di), "starter_L": (starter_p, cfg.di)}
-    if cfg.di_r is not None:
+    full_jobs = {"best_L": (final, cfg.di)}
+    if plan.mode != "quick" or cfg.write_audio:     # quick: no full-length "before" render (the excerpt loss has it)
+        full_jobs["starter_L"] = (starter_p, cfg.di)
+    if cfg.di_r is not None:       # always: the clip guard (peak = max of L/R) and the R offset refinement need it
         full_jobs["best_R"] = (final, cfg.di_r)
     log(f"stage3: full-length renders {list(full_jobs)}")
 
@@ -373,6 +465,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         return name, y, fs, rep
 
     renders = {n: (y, fs, rep) for n, y, fs, rep in eng.map(full_render, list(full_jobs.items()))}
+    lap("fullRenders")
+    prog.update(0.5, "measuring the result")
     peaks = {n: float(np.max(np.abs(renders[n][0]))) for n in renders if n.startswith("best")}
     peak = max(peaks.values())
     best.extra["fullLengthPeakDbfs"] = {n: float(20 * np.log10(max(p, 1e-12))) for n, p in peaks.items()}
@@ -395,7 +489,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     tc_dir = out / "tonecheck"
     refs = _tonecheck_refs(ref, out, cfg)
     reports = {}
-    for name in ("best_L", "starter_L"):
+    for name in [n for n in ("best_L", "starter_L") if n in renders]:
         y, fs, rep = renders[name]
         wav = out / f"render_{name}.wav"
         sf.write(str(wav), y, fs, subtype="FLOAT")
@@ -412,10 +506,12 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                                "baseProfileRules": [{"id": q["id"], "status": q["status"], "margin": q["margin"]}
                                                     for q in evaluate_rules(r["groupsDb"], v2_rules)]}
                            for n, r in reports.items()}
-    result["before"] = _err_summary(reports["starter_L"])
+    lap("tonecheck")
+    result["before"] = _err_summary(reports["starter_L"]) if "starter_L" in reports else None
     result["after"] = _err_summary(reports["best_L"])
-    log(f"A-weighted error vs {Path(refs[0][0]).name}: before {result['before'][0]['aWeightedErrorDb']:.2f} dB, "
-        f"after {result['after'][0]['aWeightedErrorDb']:.2f} dB")
+    log(f"A-weighted error vs {Path(refs[0][0]).name}: "
+        + (f"before {result['before'][0]['aWeightedErrorDb']:.2f} dB, " if result["before"] else "")
+        + f"after {result['after'][0]['aWeightedErrorDb']:.2f} dB")
 
     # final offsets (+-1 ms) on the full-length renders
     if ref.matched_sig is not None:
@@ -438,6 +534,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             fin["error"] = str(e)
         result.setdefault("offsetRefinement", {})["final"] = fin
 
+    lap("finalOffsets")
     # ---- outputs -------------------------------------------------------------------------------------------------------
     resolved = out / "best.preset.resolved.json"
     resolved.write_text(json.dumps(final, indent=2) + "\n")
@@ -462,9 +559,14 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result["best"]["fullLengthPeakAfterGuardDbfs"] = best.extra["fullLengthPeakAfterGuardDbfs"]
     result["best"]["clipGuardDb"] = best.extra.get("clipGuardDb", 0.0)
     result["candidatesStage2"] = [_scored_json(c) for c in refined]
+    lap("outputs")
     result["listening"] = {}
     if cfg.write_audio:
         result["listening"] = _listening(out, renders, cfg, log)
+        lap("listening")
+    T["coreCache"] = {"hits": eng.core_hits, "misses": eng.core_misses}
+    T["cpuSeconds"] = time.process_time() - cpu0
+    result["timings"] = {k: (round(v, 2) if isinstance(v, float) else v) for k, v in T.items()}
     result["engine"] = {"renders": eng.n_renders, "renderedAudioSeconds": eng.render_audio_s,
                         "threads": cfg.threads}
     result["wallSeconds"] = time.time() - t_start
