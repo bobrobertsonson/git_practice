@@ -5,6 +5,8 @@
 #include <cmath>
 
 #include "PlayAlongPanel.h"
+#include "about/AboutBox.h"
+#include "settings/SettingsPanel.h"
 #include "skin/FilmstripKnob.h"
 
 namespace sawblade::plugin {
@@ -69,6 +71,11 @@ class SawbladeEditor::Content : public juce::Component {
     playAlong_.setClickingTogglesState(true);
     playAlong_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
     playAlong_.onClick = [this] { setPlayAlongOpen(playAlong_.getToggleState()); };
+    configure(settingsBtn_, juce::String::fromUTF8("\xe2\x9a\x99"), "Settings: tool paths, TONE3000 login, cache", false);
+    settingsBtn_.setTitle("Settings");
+    settingsBtn_.setClickingTogglesState(true);
+    settingsBtn_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
+    settingsBtn_.onClick = [this] { setSettingsOpen(settingsBtn_.getToggleState()); };
     match_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
     match_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb27a));
     export_.setColour(juce::TextButton::buttonColourId, L::saw());
@@ -138,9 +145,16 @@ class SawbladeEditor::Content : public juce::Component {
     panel_->setVisible(false);
     addChildComponent(*panel_);  // last child: on top of the rig and the inspector
 
+    settingsPanel_ = std::make_unique<settings::SettingsPanel>(processor_, settings::Settings::shared());
+    settingsPanel_->setVisible(false);
+    settingsPanel_->onClosed = [this] { settingsBtn_.setToggleState(false, juce::dontSendNotification); };
+    settingsPanel_->onAbout = [this] { about::AboutBox::show(*this, about_, processor_, settings::Settings::shared()); };
+    addChildComponent(*settingsPanel_);  // on top of the play-along panel
+
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
     refresh();
+    if (settings::Settings::shared().isFirstRun() && settings::SettingsPanel::claimFirstRunShow()) setSettingsOpen(true, true);
   }
 
   void paint(juce::Graphics& g) override {
@@ -178,11 +192,12 @@ class SawbladeEditor::Content : public juce::Component {
     wordmark_.setBounds(18, 8, 190, 42);
     int x = 226;
     prev_.setBounds(x, y, 34, h);
-    presetButton_.setBounds(x + 34, y, 240, h);
-    next_.setBounds(x + 34 + 240, y, 34, h);
-    x += 34 + 240 + 34 + 12;
+    presetButton_.setBounds(x + 34, y, 214, h);
+    next_.setBounds(x + 34 + 214, y, 34, h);
+    x += 34 + 214 + 34 + 12;
     ab_.setBounds(x, y, 70, h);
     playAlong_.setBounds(x + 70 + 12, y, 104, h);
+    settingsBtn_.setBounds(x + 70 + 12 + 104 + 12, y, 34, h);
     int r = kDesignWidth - 18;
     export_.setBounds(r - 130, y, 130, h);
     r -= 130 + 12;
@@ -190,10 +205,11 @@ class SawbladeEditor::Content : public juce::Component {
     r -= 90 + 12;
     modeChip_.setBounds(r - 96, y + 2, 96, 30);
     r -= 96 + 12;
-    latChip_.setBounds(r - 170, y + 2, 170, 30);
+    latChip_.setBounds(r - 136, y + 2, 136, 30);
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
+    settingsPanel_->setBounds(0, kTopBar, settings::SettingsPanel::kWidth, settings::SettingsPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
 
     const int ix = kInspX + 16, iw = kInspW - 32;
@@ -238,6 +254,7 @@ class SawbladeEditor::Content : public juce::Component {
     const SlotBands bands = processor_.postEqSlots();
     for (int k = 0; k < kPostEqSlots; ++k) knobs_[static_cast<size_t>(kPostEqFirst + k)]->setEnabled(bands[static_cast<size_t>(k)] >= 0);
     updateReadouts();
+    if (settingsPanel_ && settingsPanel_->isVisible()) settingsPanel_->refresh();
   }
 
   void updateReadouts() {
@@ -255,6 +272,13 @@ class SawbladeEditor::Content : public juce::Component {
     playAlong_.setToggleState(open, juce::dontSendNotification);
   }
   bool playAlongOpen() const { return panel_->isVisible(); }
+  void setSettingsOpen(bool open, bool firstRun = false) {
+    if (open) settingsPanel_->open(firstRun);
+    else settingsPanel_->close();
+    settingsBtn_.setToggleState(open, juce::dontSendNotification);
+  }
+  bool settingsOpen() const { return settingsPanel_->isVisible(); }
+  bool aboutOpen() const { return about_ != nullptr && about_->isVisible(); }
   void refreshPanel() {
     if (panel_->isVisible()) panel_->refresh();
   }
@@ -310,8 +334,10 @@ class SawbladeEditor::Content : public juce::Component {
   SawbladeProcessor& processor_;
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
-  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_;
+  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, settingsBtn_;
   std::unique_ptr<PlayAlongPanel> panel_;
+  std::unique_ptr<settings::SettingsPanel> settingsPanel_;
+  std::unique_ptr<about::AboutBox> about_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -328,7 +354,8 @@ SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEdito
   setResizable(true, true);
   setResizeLimits(640, 400, 2560, 1600);
   getConstrainer()->setFixedAspectRatio(static_cast<double>(kDesignWidth) / kDesignHeight);
-  setSize(kDesignWidth, kDesignHeight);
+  const double uiScale = settings::Settings::shared().uiScale();
+  setSize(juce::roundToInt(kDesignWidth * uiScale), juce::roundToInt(kDesignHeight * uiScale));
   startTimerHz(16);
 }
 
@@ -356,6 +383,9 @@ void SawbladeEditor::timerCallback() {
 
 void SawbladeEditor::setPlayAlongOpen(bool open) { content_->setPlayAlongOpen(open); }
 bool SawbladeEditor::playAlongOpen() const { return content_->playAlongOpen(); }
+void SawbladeEditor::setSettingsOpen(bool open) { content_->setSettingsOpen(open); }
+bool SawbladeEditor::settingsOpen() const { return content_->settingsOpen(); }
+bool SawbladeEditor::aboutOpen() const { return content_->aboutOpen(); }
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
   for (const auto& f : files)

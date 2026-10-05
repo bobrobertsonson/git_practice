@@ -18,9 +18,13 @@ renders at build time. Total size is well under the 25 MB budget (checked by the
 | `knob_pedal.png` + `.json` | knurled knob, same layout | strip |
 | `footswitch.png` + `.json` | footswitch, 2 frames (up, down) | strip |
 | `led_orange.png` + `.json` | LED, 2 frames (off, on), 64 x 64 | strip |
+| `icon/icon_{16,32,64,128,256,512,1024}.png` | app icon (macOS rounded square, 10 % transparent margin) | square; `icon_1024` / `icon_256` are the plugin's `ICON_BIG` / `ICON_SMALL`, `icon_256` is embedded for the About box |
 
 Stored sizes are 2x the layout size (the editor lays out at 1280 x 800 and draws panels at half the stored
 width). Sidecar JSONs are copied unchanged from `ui_sprites.py`.
+
+The icon is not a Blender render: `python3 design/render/app_icon.py` (Pillow + numpy, deterministic, seconds) rewrites
+`icon/`, and `--check` (a ctest) compares a fresh render with the committed PNGs.
 
 ## Regenerating
 

@@ -29,7 +29,31 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/skin/FilmstripKnob.cpp
   src/skin/FootswitchButton.cpp
   src/skin/LedIndicator.cpp
-  src/skin/RigView.cpp)
+  src/skin/RigView.cpp
+  src/settings/Settings.cpp
+  src/settings/ToolRunner.cpp
+  src/settings/SettingsPanel.cpp
+  src/about/CaptureList.cpp
+  src/about/AboutBox.cpp)
+
+# BuildInfo.h (version, git hash, UTC date) is generated at configure time for the About box.
+set(SAWBLADE_GIT_HASH "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+                  OUTPUT_VARIABLE _hash OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE _rc)
+  if(_rc EQUAL 0 AND NOT _hash STREQUAL "")
+    set(SAWBLADE_GIT_HASH "${_hash}")
+    execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+                    OUTPUT_VARIABLE _dirty OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(NOT _dirty STREQUAL "")
+      set(SAWBLADE_GIT_HASH "${SAWBLADE_GIT_HASH}-dirty")
+    endif()
+  endif()
+endif()
+string(TIMESTAMP SAWBLADE_BUILD_DATE "%Y-%m-%d" UTC)
+configure_file(src/about/BuildInfo.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/BuildInfo.h @ONLY)
+set(SAWBLADE_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
 # UI renders embedded into the binary: an explicit list (not a glob) of everything in assets/.
 # Nothing renders at build time; design/render/export_ui_assets.py produced these files once.
@@ -46,7 +70,9 @@ juce_add_binary_data(SawbladeAssets SOURCES
   assets/footswitch.png
   assets/footswitch.json
   assets/led_orange.png
-  assets/led_orange.json)
+  assets/led_orange.json
+  assets/icon/icon_256.png
+  ${PROJECT_SOURCE_DIR}/docs/THIRD_PARTY.md)
 
 # JUCE module sources are compiled into the same targets: -Werror applies to OUR files only.
 set_source_files_properties(${SAWBLADE_PLUGIN_SOURCES} src/PluginEntry.cpp PROPERTIES
@@ -72,10 +98,13 @@ juce_add_plugin(SawbladePlugin
   IS_MIDI_EFFECT FALSE
   VST3_CATEGORIES Fx Distortion
   AU_MAIN_TYPE kAudioUnitType_Effect
+  ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/icon_1024.png"
+  ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/icon_256.png"
   COPY_PLUGIN_AFTER_BUILD FALSE)
 
 target_sources(SawbladePlugin PRIVATE ${SAWBLADE_PLUGIN_SOURCES} src/PluginEntry.cpp)
-target_include_directories(SawbladePlugin PUBLIC src)
+target_include_directories(SawbladePlugin PUBLIC src ${SAWBLADE_GENERATED_DIR})
+target_compile_definitions(SawbladePlugin PRIVATE SAWBLADE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_compile_features(SawbladePlugin PUBLIC cxx_std_20)
 target_compile_definitions(SawbladePlugin PUBLIC ${SAWBLADE_JUCE_DEFS})
 target_link_libraries(SawbladePlugin
@@ -98,12 +127,14 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_engine.cpp
     tests/test_processor.cpp
     tests/test_playalong.cpp
+    tests/test_settings.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
-    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
+    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp tests/test_settings.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
-  target_include_directories(sawblade_plugin_tests PRIVATE src)
-  target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS})
+  target_include_directories(sawblade_plugin_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
+  target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS} SAWBLADE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    SAWBLADE_TEST_TOOLS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/tools")
   target_link_libraries(sawblade_plugin_tests PRIVATE
     sawblade_core Catch2::Catch2WithMain SawbladeAssets
     juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events
@@ -130,8 +161,12 @@ if(SAWBLADE_BUILD_TESTS)
   add_executable(sawblade_editor_tests tests/test_editor.cpp ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(tests/test_editor.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
-  target_include_directories(sawblade_editor_tests PRIVATE src)
+  target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
   target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS}
+    JUCE_MODAL_LOOPS_PERMITTED=1  # tests pump the message loop (runDispatchLoopUntil) to receive ToolRunner callbacks
+    SAWBLADE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    SAWBLADE_TEST_TOOLS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/tools"
+    SAWBLADE_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/icon"
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
     SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots")
   target_link_libraries(sawblade_editor_tests PRIVATE
@@ -152,6 +187,10 @@ if(SAWBLADE_BUILD_TESTS)
       COMMAND ${CMAKE_COMMAND} -DASSETS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/assets
               -DEXPORTER=${PROJECT_SOURCE_DIR}/design/render/export_ui_assets.py -DPYTHON=${SAWBLADE_PYTHON}
               -P ${CMAKE_CURRENT_SOURCE_DIR}/check_assets.cmake)
+    # The committed icon PNGs are exactly what design/render/app_icon.py renders (skipped, exit 77, without Pillow).
+    add_test(NAME "plugin: app icon is reproducible"
+      COMMAND ${SAWBLADE_PYTHON} ${PROJECT_SOURCE_DIR}/design/render/app_icon.py --check)
+    set_tests_properties("plugin: app icon is reproducible" PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 endif()
 
