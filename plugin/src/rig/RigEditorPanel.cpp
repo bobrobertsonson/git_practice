@@ -259,6 +259,26 @@ struct BlendPage : Page {
     setup(remeasure, "RE-MEASURE", "Measure the alignment again and store it as manual values");
     remeasure.onClick = [this] { controller.remeasure(); };
     addAndMakeVisible(remeasure);
+    setup(matchLevels, "MATCH LEVELS", "Measure both paths with a guitar-shaped probe and store the level trims that equalize them (manual)");
+    matchLevels.onClick = [this] { controller.matchLevels(); };
+    addAndMakeVisible(matchLevels);
+    law.setItems({{"LINEAR", "Blend law LINEAR", "Linear crossfade: the loudness can change with BLEND"},
+                  {"CONSTANT", "Blend law CONSTANT", "Equal-power crossfade with make-up gain: the loudness stays the same at every BLEND"}});
+    law.onChange = [this](int i) { controller.setBlendLaw(i == 0 ? BlendLaw::Linear : BlendLaw::ConstantLoudness); };
+    addAndMakeVisible(law);
+    for (juce::Label* l : {&trimReadA, &trimReadB}) {
+      styleLabel(*l, L::monoFont(11.0f), L::dimText(), juce::Justification::centred);
+      addAndMakeVisible(*l);
+    }
+    trimReadA.setTitle("Saw level trim read-out");
+    trimReadB.setTitle("Body level trim read-out");
+  }
+  // "+4.2 dB auto" / "+4.2 dB manual" / "0.0 dB off", plus the player's offset when it is not zero.
+  static juce::String trimText(LevelMatchMode mode, double trim, double userOffsetDb) {
+    const juce::String modeName = mode == LevelMatchMode::Auto ? "auto" : mode == LevelMatchMode::Manual ? "manual" : "off";
+    juce::String s = (trim >= 0.05 ? "+" : "") + juce::String(trim, 1) + " dB " + modeName;
+    if (std::abs(userOffsetDb) >= 0.05) s << kDot << (userOffsetDb > 0.0 ? "+" : "") << juce::String(userOffsetDb, 1) << " dB";
+    return s;
   }
   void updateBlendText() {
     const double b = blend.knob().getValue();
@@ -301,8 +321,19 @@ struct BlendPage : Page {
     invert->setEnabled(alignable);
     invert->setToggleState(p.align.mode == AlignMode::Manual ? p.align.invertB : (p.align.mode == AlignMode::Auto ? st.info.align.invertB : false),
                            juce::dontSendNotification);
-    remeasure.setEnabled(blendOn && !st.loading && !st.alignMeasuring && p.a.enabled && p.b.enabled);
+    const bool busy = st.alignMeasuring || st.levelsMeasuring;
+    remeasure.setEnabled(blendOn && !st.loading && !busy && p.a.enabled && p.b.enabled);
     remeasure.setButtonText(st.alignMeasuring ? "measuring" + juce::String::fromUTF8("\xE2\x80\xA6") : "RE-MEASURE");
+    matchLevels.setEnabled(blendOn && !st.loading && !busy && p.a.enabled && p.b.enabled);
+    matchLevels.setButtonText(st.levelsMeasuring ? "measuring" + juce::String::fromUTF8("\xE2\x80\xA6") : "MATCH LEVELS");
+    law.setSelected(p.blendLaw == BlendLaw::Linear ? 0 : 1);
+    law.setEnabled(blendOn);
+    const LevelMatchMode mode = p.levelMatch.mode;
+    const double trimA = mode == LevelMatchMode::Auto ? st.info.trimDb[0] : mode == LevelMatchMode::Manual ? p.levelMatch.trimADb : 0.0;
+    const double trimB = mode == LevelMatchMode::Auto ? st.info.trimDb[1] : mode == LevelMatchMode::Manual ? p.levelMatch.trimBDb : 0.0;
+    trimReadA.setText(trimText(mode, trimA, levelA.knob().getValue()), juce::dontSendNotification);
+    trimReadB.setText(blendOn ? trimText(mode, trimB, levelB.knob().getValue()) : juce::String::fromUTF8("\xE2\x80\x94"),
+                      juce::dontSendNotification);
   }
   void paint(juce::Graphics& g) override {
     group(g, "BLEND", 16, 12);
@@ -325,14 +356,18 @@ struct BlendPage : Page {
     for (int i = 0; i < 4; ++i) nudge[i].setBounds(16 + i * 58, 326, 54, 32);
     invert->setBounds(260, 326, 130, 32);
     remeasure.setBounds(402, 326, 140, 32);
+    matchLevels.setBounds(552, 326, 150, 32);
+    law.setBounds(172, 44, 148, 32);
+    trimReadA.setBounds(320, 204, 130, 16);
+    trimReadB.setBounds(460, 204, 130, 16);
   }
   RigController& controller;
   SawbladeProcessor& proc;
   BoundKnob blend, levelA, levelB;
-  juce::Label blendRead, alignRead;
+  juce::Label blendRead, alignRead, trimReadA, trimReadB;
   std::unique_ptr<LedToggle> mute[2], solo[2], invert;
-  Segmented align;
-  juce::TextButton nudge[4], remeasure;
+  Segmented align, law;
+  juce::TextButton nudge[4], remeasure, matchLevels;
 };
 
 // ---------------------------------------------------------------------------------------------------

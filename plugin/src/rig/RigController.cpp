@@ -158,6 +158,10 @@ AlignResult RigController::measuredAlign() const { return proc_.status().info.al
 
 void RigController::remeasure() { proc_.remeasureAlignment(); }
 
+void RigController::matchLevels() { proc_.matchLevels(); }
+
+void RigController::setBlendLaw(BlendLaw law) { live([law](Preset& p) { p.blendLaw = law; }); }
+
 void RigController::nudgeAlign(int samples) {
   const AlignResult m = measuredAlign();
   edit([=](Preset& p) { rig::nudgeAlign(p, samples, m); });

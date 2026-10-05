@@ -55,6 +55,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
     ChainInfo info;
     AlignResult measuredAlign;     // the last RE-MEASURE result (docs/PLUGIN.md "Rig editor")
     bool alignMeasuring = false;   // a re-measure build is in flight
+    bool levelsMeasuring = false;  // a MATCH LEVELS build is in flight
     std::uint64_t generation = 0;  // of the running engine (the loader request id it was built for)
   };
 
@@ -80,7 +81,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   int getNumPrograms() override { return 1; }
   int getCurrentProgram() override { return 0; }
   void setCurrentProgram(int) override {}
-  const juce::String getProgramName(int) override { return {}; }
+  const juce::String getProgramName(int) override { return "Default"; }
   void changeProgramName(int, const juce::String&) override {}
   void getStateInformation(juce::MemoryBlock& destData) override;
   void setStateInformation(const void* data, int sizeInBytes) override;
@@ -135,6 +136,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
   Monitor monitor() const;
   // Re-measures the alignment with an auto-mode build and writes the result back as manual values.
   void remeasureAlignment();
+  // Phase 10.1: re-measures the level trims with an auto-mode build and writes them back as
+  // levelMatch.mode = manual with the measured trims.
+  void matchLevels();
   const rig::InputMeter& inputMeter() const noexcept { return inputMeter_; }
   // The loader request id the current preset was committed for (== the running engine's generation
   // once it has been published).
@@ -164,6 +168,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void commit(const Preset& p, std::uint64_t generation, bool clearMonitor);
   void publishLive();  // mutex_ held
   void dropReplacedRemeasure();  // mutex_ held
+  void remeasure(bool levels);
   void onOutcome(const EngineLoader::Outcome& o);
   // CIRCUIT switch: parameterChanged() (APVTS listener, any thread) handles the change at once on the
   // message thread and otherwise flags it for the message-thread timer, so a host automating the
@@ -184,6 +189,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   bool wantedKeepsMonitor_ = false;
   std::shared_ptr<const Preset> remeasureBase_;    // the preset a pending re-measure started from
   std::uint64_t presetSerial_ = 0;                 // bumped by every commit()
+  bool remeasureLevels_ = false;                   // the pending re-measure is MATCH LEVELS (else RE-MEASURE)
   std::shared_ptr<const Preset> remeasureWanted_;  // the pending re-measure build, if any
   std::uint64_t presetGeneration_ = 0;     // loader request id of the committed preset (kNoGeneration: none yet)
   Monitor monitor_;

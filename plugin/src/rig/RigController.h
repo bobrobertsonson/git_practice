@@ -72,6 +72,10 @@ class RigController {
 
   // --- align / LEARN --------------------------------------------------------------------------------
   void remeasure();
+  // Phase 10.1: MATCH LEVELS measures the path trims (levelMatch -> manual with the measured values);
+  // the blend law is a live edit (no rebuild).
+  void matchLevels();
+  void setBlendLaw(BlendLaw law);
   // Alignment edits that switch Auto to Manual seed it with the measured values.
   void nudgeAlign(int samples);
   void setInvertB(bool invert);

@@ -197,7 +197,7 @@ void SawbladeProcessor::dropReplacedRemeasure() {
   if (remeasureWanted_ && wanted_ != remeasureWanted_) {
     remeasureWanted_.reset();
     remeasureBase_.reset();
-    status_.alignMeasuring = false;
+    status_.alignMeasuring = status_.levelsMeasuring = false;
   }
 }
 
@@ -361,8 +361,12 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
   if (o.wanted && o.wanted == remeasureWanted_) {
     remeasureWanted_.reset();
     remeasureBase_.reset();
-    status_.alignMeasuring = false;
-    if (o.built) {
+    status_.alignMeasuring = status_.levelsMeasuring = false;
+    if (o.built && remeasureLevels_) {
+      // Built with levelMatch auto: its resolved trims are what a manual preset with the same numbers
+      // does, so the write-back needs no rebuild.
+      preset_.levelMatch = {LevelMatchMode::Manual, o.info.trimDb[0], o.info.trimDb[1]};
+    } else if (o.built) {
       // The engine was built in auto mode: its resolved values are what a manual preset with the same
       // numbers does, so the write-back needs no rebuild.
       status_.measuredAlign = o.info.align;
@@ -449,12 +453,16 @@ std::uint64_t SawbladeProcessor::presetGeneration() const {
   return presetGeneration_;
 }
 
-void SawbladeProcessor::remeasureAlignment() {
+void SawbladeProcessor::remeasureAlignment() { remeasure(/*levels=*/false); }
+void SawbladeProcessor::matchLevels() { remeasure(/*levels=*/true); }
+
+void SawbladeProcessor::remeasure(bool levels) {
   if (hostRate_ <= 0.0) return;
   Preset p = editBasePreset();
-  if (!p.a.enabled || !p.b.enabled) return;  // the chain skips alignment with a path disabled
+  if (!p.a.enabled || !p.b.enabled) return;  // the chain skips alignment / level matching with a path disabled
   auto base = std::make_shared<const Preset>(p);  // what edits made while this is pending start from
-  p.align.mode = AlignMode::Auto;
+  if (levels) p.levelMatch.mode = LevelMatchMode::Auto;
+  else p.align.mode = AlignMode::Auto;
   auto c = std::make_shared<const Preset>(clampedToParams(std::move(p)));
   {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -462,7 +470,9 @@ void SawbladeProcessor::remeasureAlignment() {
     wantedKeepsMonitor_ = true;
     remeasureWanted_ = c;
     remeasureBase_ = base;
-    status_.alignMeasuring = true;
+    remeasureLevels_ = levels;
+    status_.alignMeasuring = !levels;
+    status_.levelsMeasuring = levels;
     status_.error.clear();
   }
   submit(/*fallbackToInit=*/false);

@@ -27,7 +27,8 @@ int activePedalSlots(const PathPreset& p);  // pedal-slot blocks that are not by
 // blocks; else Single.
 Topology topologyOf(const Preset& p);
 
-// -> Blend: b.enabled = true; blend 0 becomes `blendIfRestored`. -> Single / SinglePlusTwoPedals:
+// -> Blend: b.enabled = true; blend 0 becomes `blendIfRestored`; a preset at the level-match defaults
+// (mode off, law linear) becomes levelMatch auto + constantLoudness (phase 10.1). -> Single / SinglePlusTwoPedals:
 // b.enabled = false and blend = 0 (path B's blocks are kept). -> Single bypasses every pedal-slot
 // block of A after the first active one; -> SinglePlusTwoPedals un-bypasses the first bypassed
 // pedal-slot block of A when fewer than two are active. Nothing is ever deleted.
