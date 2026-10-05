@@ -23,6 +23,7 @@
 #include "MatchGlue.h"
 #include "Sha256.h"
 #include "PresetAudition.h"
+#include "SettingsEnv.h"
 #include "TakeRecorder.h"
 #include "fake_tools.h"
 #include "processor_harness.h"
@@ -850,6 +851,7 @@ TEST_CASE("runner: settings persist in application properties", "[match][runner]
   using namespace sawblade::plugin;
   TempDir tmp;
   const fs::path f = tmp.dir / "sub" / "settings.xml";
+  HookIsolation iso;
   {
     MatchSettings s(f);
     CHECK(s.matchExecutable() == MatchSettings::defaultMatchExecutable());

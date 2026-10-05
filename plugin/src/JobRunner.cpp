@@ -1,4 +1,5 @@
 #include "JobRunner.h"
+#include "settings/Settings.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -214,8 +215,15 @@ const char* jobStateName(JobState s) {
 }
 
 // ---- settings ----------------------------------------------------------------------------------------------------
-fs::path MatchSettings::defaultMatchExecutable() { return fs::path(SAWBLADE_SOURCE_DIR) / "match" / ".venv" / "bin" / "sawblade-match"; }
-fs::path MatchSettings::defaultExportExecutable() { return fs::path(SAWBLADE_SOURCE_DIR) / "match" / ".venv" / "bin" / "sawblade-export"; }
+// The Settings panel's match venv (stored or auto-detected, phase 11) wins over the compile-time checkout location.
+fs::path MatchSettings::defaultMatchExecutable() {
+  auto& s = settings::Settings::shared();
+  return s.effectiveMatchVenvDir() ? s.toolPath("sawblade-match") : fs::path(SAWBLADE_SOURCE_DIR) / "match" / ".venv" / "bin" / "sawblade-match";
+}
+fs::path MatchSettings::defaultExportExecutable() {
+  auto& s = settings::Settings::shared();
+  return s.effectiveMatchVenvDir() ? s.toolPath("sawblade-export") : fs::path(SAWBLADE_SOURCE_DIR) / "match" / ".venv" / "bin" / "sawblade-export";
+}
 fs::path MatchSettings::defaultPoolManifest() { return homeDir() / ".cache" / "sawblade" / "captures" / "pool_manifest.json"; }
 
 MatchSettings::MatchSettings(const fs::path& file) : file_(file) {}

@@ -177,7 +177,8 @@ class TakeRecorder {
   std::atomic<std::uint64_t> version_{0};
 
   mutable std::mutex m_;                 // dir_, pending_, error_, current_ (never taken by the audio thread)
-  std::filesystem::path dir_;
+  std::filesystem::path dir_;        // explicit override (setTakesDir); empty = follow Settings, resolved in start()
+  std::filesystem::path activeDir_;  // the folder of the take being started / recorded
   Pending pending_;
   std::string error_, current_;
   std::condition_variable cv_;

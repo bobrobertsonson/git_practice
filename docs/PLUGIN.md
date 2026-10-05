@@ -538,7 +538,10 @@ content component that the editor scales with an `AffineTransform` (resizable, f
 2560x1600). It reads `status()` and the APVTS only. Layout: top bar (preset button opening the preset file chooser,
 latency chip, LIVE / STUDIO chip, A/B compare, previous / next preset, MATCH (Standalone: opens the MATCH screen; plugin: opens the play-along panel's record + match area), EXPORT NAM (opens the export panel), rig area (amp heads, cab, pedalboard
 with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
-knobs; all 12 parameters are bound to exactly one knob each outside the rig panel).
+knobs; all 12 parameters are bound to exactly one knob each outside the rig panel). The top bar also carries the gear button (title
+"Settings", after PLAY ALONG) that toggles the Settings overlay (below). To make room for it the preset button is 170
+design px wide (upstream 200) and the latency chip 136 (upstream 150). The window opens at 1280 x 800 times the `uiScale` setting
+(0.5 to 2.0, default 1.0).
 
 Pictures come from `plugin/assets/` (our own renders, embedded with `juce_add_binary_data`). Controls live in
 `plugin/src/skin/`: `SkinAssets` (decodes the PNGs and JSON sidecars once), `FilmstripKnob`, `FootswitchButton`,
@@ -661,6 +664,146 @@ Code: `plugin/src/presets/` (`PresetLibrary`, `PresetLoadFlow`, `AbCompare`, `Pr
   slot, activates the other (an empty B starts as a copy) and loads it: one engine build and the 30 ms swap. A browser load replaces
   the active slot only. Right-click: Copy A to B, Copy B to A, Reset compare. Not saved in the plugin state.
 
+### Settings, ToolRunner, first run, About (phase 11)
+
+Spec: `docs/specs/phase11_settings.md`. Code: `plugin/src/settings/` (`Settings`, `ToolRunner`, `LoginFlow`,
+`SettingsPanel`) and `plugin/src/about/` (`AboutBox`, `CaptureList`, `BuildInfo.h.in`). Nothing here runs on the audio
+thread. `Settings` and `ToolRunner` are JUCE-free in their interfaces (`juce::File` and `juce::ChildProcess` are used
+inside), so they are tested headless.
+
+**Files.** Every location can be overridden by an environment variable, which is how the tests (and portable setups)
+keep off the real home directory. `Env` (home, executable, source dir, `getenv`, `exists`, `isMac`) is injectable;
+`Env::system()` reads `getenv` at call time.
+
+| what | default | override |
+|---|---|---|
+| settings | macOS `~/Library/Application Support/Sawblade/settings.json`; Linux `$XDG_DATA_HOME/sawblade/settings.json`, else `~/.local/share/sawblade/settings.json` (the same file `presets/T3kTool` and phase 9 use; each store keeps the other's keys); `SAWBLADE_APPDATA` moves the whole app-data dir | `SAWBLADE_SETTINGS_FILE` |
+| TONE3000 token file (the one `sawblade-t3k` writes) | `~/.config/sawblade/t3k_tokens.json` on all platforms | `SAWBLADE_T3K_TOKEN_FILE` |
+| capture cache | `~/.cache/sawblade/captures` | `SAWBLADE_CACHE_DIR` |
+| takes (recordings) | `<appDataDir()>/takes` (`defaultTakesDir()`; follows `SAWBLADE_APPDATA`, `SAWBLADE_DATA_DIR`, `XDG_DATA_HOME` like the settings file; a test asserts `Paths::takesDir` equals it). `TakeRecorder` resolves `Settings::effectiveTakesDir()` lazily (in `takesDir()` and `start()`, on the message thread; its constructor does not touch Settings), unless `setTakesDir()` set an explicit folder, so the panel's Takes folder applies to the next take | the `takesDir` key |
+
+**One app-data dir, one settings file.** `appDataDir()` (`plugin/src/AppPaths.h`, the single definition) is, in order:
+`SAWBLADE_APPDATA`, `SAWBLADE_DATA_DIR`, macOS `~/Library/Application Support/Sawblade`, else `$XDG_DATA_HOME/sawblade`
+or `~/.local/share/sawblade`. `presets/T3kTool`'s `settingsFile()` / `packCacheDir()`, the take and job directories and
+`Paths::settingsFile` (which additionally honours `SAWBLADE_SETTINGS_FILE` first) all follow it; a test checks that they
+agree for both variables. The file is shared: phase 9's `t3kExecutable` and `factoryPresetDir` live next to our keys.
+Both writers (`Settings` and `T3kTool::setT3kExecutable`) use a unique temp name (`.tmp.<pid>.<n>`) created 0600, and `T3kTool::settingsFile()` honours `SAWBLADE_SETTINGS_FILE` like `Paths::settingsFile`.
+`Settings::save()` is read-modify-write: it re-reads the file, keeps every key it does not own as found on disk (so a
+`T3kTool` write between our load and save survives), takes its own nine keys from memory (removals included) and writes
+atomically. `T3kTool::setT3kExecutable` also leaves the file mode 0600.
+
+**Cache dir coherence.** The core's `captureCacheRoot()` used to read only `SAWBLADE_CACHE_DIR`, while child tools get the
+effective dir from `ToolRunner`. The shared `Settings` instance now calls `sawblade::setCaptureCacheRootOverride()`
+(core, mutex-guarded, load-time only, never on the audio thread) whenever a stored `captureCacheDir` is loaded or set;
+clearing it, or dropping the instance, clears the override. The process environment is never modified. Instances built
+by tests with an injected `Env` never touch the override.
+
+**Load errors.** `Settings::load()`'s text (malformed file, a dropped `t3k_cs_` key) is kept as `loadError()` and shown in
+red under the Appearance section of the panel ("Settings file problem"); the next save overwrites a malformed file.
+
+**URL safety.** The About rows and the login box's OPEN button launch only `http://` and `https://` URLs
+(`about::isWebUrl`); anything else (`file:`, `javascript:`, custom schemes) is shown as text, and OPEN is disabled.
+
+**Tool-path fallbacks.** `MatchSettings::defaultMatchExecutable()` / `defaultExportExecutable()`,
+`BrowserSettings::defaultExecutable()` and `settings::defaultT3kExecutable()` return
+`Settings::shared().toolPath("<tool>")` when `effectiveMatchVenvDir()` is set (stored or auto-detected), else their
+compile-time `<repo>/match/.venv/bin/<tool>`. Explicit per-feature overrides those stores hold still win, so the
+Settings panel's venv drives MATCH, EXPORT, the capture browser and the preset resolver.
+
+**Keys** (`settings.json`, version 1; unknown keys survive a round trip; writes are atomic via `settings.json.tmp` +
+rename, file mode 0600, directory 0700; a malformed file loads as defaults plus an error text and the next save
+overwrites it):
+
+| key | meaning |
+|---|---|
+| `matchVenvDir` | Python venv with `bin/sawblade-t3k` and `bin/sawblade-match`. Absent = auto-detect. A stored value wins even when invalid. |
+| `captureCacheDir` | absent = `SAWBLADE_CACHE_DIR`, else the default above |
+| `tone3000ClientId` | the publishable key (`t3k_pub_...`). A value containing `t3k_cs_` (any case) is refused by `setTone3000ClientId`, never stored, written or logged; `load()` also drops one found in a file. Anything not starting with `t3k_pub_` is accepted with a warning. Effective value: stored, else the `TONE3000_CLIENT_ID` environment variable (never a `t3k_cs_` value). |
+| `separationModel` | `htdemucs_6s` (default), `htdemucs`, `htdemucs_ft` |
+| `takesDir` | absent = the platform default above |
+| `theme` | only `"dark"` exists |
+| `uiScale` | 0.5 to 2.0 (clamped), initial editor size = 1280 x 800 x `uiScale` |
+| `firstRunCompleted` | set by DONE / closing the panel on a first run |
+
+**Match venv auto-detect** (`detectMatchVenv`; a candidate is valid when `<dir>/bin/sawblade-t3k` exists; first valid
+wins): 1. `SAWBLADE_MATCH_VENV`; 2. the build tree: `<SAWBLADE_SOURCE_DIR>/match/.venv` when the running binary lies
+inside the source checkout (`SAWBLADE_SOURCE_DIR` is a compile definition); 3. `~/sawblade/match/.venv` (the
+`docs/MAC.md` layout); 4. none.
+
+**`ToolRunner`** is the one way the plugin runs a `sawblade-*` tool. Usage (the capture browser, presets and
+record+match sessions adopt it: resolve the tool, build a `ToolRequest`, stream lines, read `result.json`):
+
+```cpp
+using namespace sawblade::plugin::settings;
+ToolRunner runner(Settings::shared());            // member of your panel; its destructor cancels and joins the jobs
+ToolRequest req;
+req.tool = "sawblade-t3k";                        // resolved: <venv>/bin/<tool>, else PATH, else StartFailed
+req.args = {"whoami", "--json"};
+req.timeout = std::chrono::seconds(30);           // 0 = none
+auto job = runner.run(req,
+    [](const std::string& line) { /* every complete line, stdout+stderr merged, redacted */ },
+    [](const ToolResult& r) {                     // exactly once, after the last line
+      if (r.outcome == ToolResult::Outcome::Ok && r.json) { /* (*r.json)["username"] ... */ }
+      else { /* r.error (StartFailed/TimedOut) or r.lines.back() */ }
+    });
+// job->cancel();  job->wait(ms);  job->result();
+```
+
+Hardening: redaction is a manual case-insensitive scan (safe on multi-megabyte token lines); an executable path containing
+`=` is refused with a `StartFailed` message (the `/usr/bin/env` prefix would read it as an assignment); `cancel()` and the
+timeout watchdog never signal a child that has already been waited for (`reaped_`). Callbacks are posted to the message thread (`juce::MessageManager::callAsync`) and dropped if the runner is gone;
+`callbacksOnMessageThread = false` runs them on the worker thread (headless tests). The environment: JUCE's
+`ChildProcess` takes no environment table, so on POSIX the command is `/usr/bin/env KEY=VALUE ... exe args`, with
+`PYTHONUNBUFFERED=1`, `TONE3000_CLIENT_ID` (effective id, when non-empty) and `SAWBLADE_CACHE_DIR` (effective cache
+dir) added, then `request.env` (which wins). **Redaction:** every `t3k_cs_[A-Za-z0-9_-]+` in an output line becomes
+`t3k_cs_[redacted]` before the line is stored or delivered. **`result.json`** is the last line that parses as a JSON
+object or array, else the whole text if it parses, else empty. Limits of `juce::ChildProcess`: arguments that are the
+empty string are dropped; a child killed by a signal it did not cause reads as exit 0 (JUCE reports 0); cancelling kills
+only the direct child (a tool that spawns grandchildren which keep the pipe open delays the end of the job until they
+exit; the `sawblade-*` entry points exec in place).
+
+**Login protocol** (`sawblade-t3k login --json`, an alias of `--json-events`, one JSON object per line; the refresh
+token is never printed in this mode): `{"event":"device_code","user_code","verification_uri","verification_uri_complete"|null,"expires_in"}`,
+then `{"event":"logged_in", ...}` where `username`, `display_name`, `id` and `token_file` are optional; failures are a
+line `{"error":"<msg>","code":"auth|network|..."}` (the CLI's shape; `{"event":"error","message"}` is accepted too) and a
+non-zero exit, and exit code 4 means "not logged in". `LoginFlow` is the state machine the panel drives (other lines are
+ignored). `whoami --json` prints one `{"id","username","display_name","token_file"}` line, or the `{"error","code"}` line
+with exit 1 (4 when not logged in). The capture browser's `T3kClient`/`T3kJson` parsers ignore the extra keys (tested).
+
+**Settings panel** (`SettingsPanel`): an overlay over the rig area (940 x 742 design px), closed by default, opened by the
+gear button, closed by Esc, the x button or DONE (UI state, never saved). Sections: Setup checklist, Tools (match venv
+path, Browse, Auto, status light, Test = `sawblade-t3k --help`), TONE3000 (client id with the secret-key refusal shown in
+red, token-file status, Test = `whoami --json`, Log in with the device code box: code in a 40 px mono font, COPY CODE,
+COPY URL, OPEN, CANCEL, countdown, RETRY on failure), Captures (cache folder, count of `*.nam` / `*.wav` counted on a
+background thread, Open folder), Separation, Recording (takes folder), Appearance (theme, UI scale; applies when the
+window is next opened), and a footer with the settings file path and **About Sawblade...**.
+
+**First run.** `Settings::isFirstRun()` is true when no settings file existed at the instance's first `load()`. The
+editor constructor then opens the panel with the checklist expanded, once per process (a process-wide atomic, so a DAW
+with 12 instances shows it once). Closing the panel or DONE calls `markFirstRunCompleted()`, which writes the file, so
+it never shows again. Checklist rows (light, text, fix button): **Tools found** (both executables exist; LOCATE...),
+**Logged in** (token file present, or the last whoami result; LOG IN), **Captures cached** (every TONE3000 capture of the
+current preset has an existing `resolvedPath`; FETCH CAPTURES writes the preset to `<cache>/_resolve/<name>.json`, runs
+`sawblade-t3k resolve ... -o <name>.resolved.json` through `ToolRunner` and loads the resolved preset). It re-evaluates
+when the panel opens, after each fix job and on the editor's 4 Hz tick while visible. Note that the processor keeps the
+previous preset when a load fails, so this row sees a preset that references missing captures when a host restores a
+session (state restore commits the preset before it builds) or before `prepareToPlay`, not after a failed
+`loadPresetFile`.
+
+**About box** (`AboutBox::show`, an overlay over the whole editor): the icon (`icon_256.png` embedded), `Sawblade
+<version> . <git hash> . built <date>` (`BuildInfo.h` is generated by CMake at configure time: `PROJECT_VERSION`,
+`git rev-parse --short HEAD` plus `-dirty` when tracked files changed, `unknown` without git, a UTC date), the licence
+note (JUCE 8 under the AGPLv3, personal non-commercial use, not sold), the captures of the current preset (slot, title,
+creator, licence as stored, a clickable TONE3000 link, a dot for on disk / missing, the tag "non-commercial" for any
+`-nc` licence; captures without a `source` say "local file, no TONE3000 metadata") and `docs/THIRD_PARTY.md` in a
+read-only scrollable text box (embedded with `juce_add_binary_data`). CLOSE or Esc closes it.
+
+**App icon.** `design/render/app_icon.py` (Pillow + numpy, deterministic) renders `plugin/assets/icon/icon_{16..1024}.png`:
+the 16-tooth saw blade of `pedal_b2.py` in saw orange with bone ring highlights on the dark ground, in the macOS rounded
+square with a 10 % transparent margin. `--check` re-renders to a temp dir and compares the decoded pixels with the
+committed files (ctest `plugin: app icon is reproducible`; skipped with exit 77 if Pillow is missing). CMake passes
+`icon_1024.png` / `icon_256.png` to `juce_add_plugin` as `ICON_BIG` / `ICON_SMALL`.
+
 ## Tests
 
 `sawblade_editor_tests` (`plugin/tests/test_editor.cpp`, ctest prefix `editor: `, run under `xvfb-run -a` when
@@ -673,12 +816,18 @@ and the MIX fader, read-only studio mode, LOAD IR FOLDER, LOAD PACK through a fa
 `build/screenshots/sawblade_micpage_{rig,single,blend}_1x.png`.
 `plugin/tests/test_presets.cpp` (library, user operations, A/B, resolve flow with fake executables, info panel) and
 `plugin/tests/test_preset_browser.cpp` (the browser, stepping, the A/B button, screenshot `sawblade_browser_1x.png`) cover phase 9b. The Record + Match tests are described in that section.
+The phase 11
+editor tests (each points `SAWBLADE_SETTINGS_FILE` at a temp file) cover the gear button, the first-run checklist, the
+secret-key refusal, the login view against a fake `sawblade-t3k` (`plugin/tests/tools/fake_t3k.sh`, `FAKE_T3K_MODE`
+selects approve / error line / exit 4), the panel raising above the RIG overlay, the checklist lights,
+the About box and the icon PNGs, with screenshots `sawblade_{settings,firstrun,login,about}_1x.png` in the screenshot
+directory.
 
 `sawblade_plugin_tests` (headless): `plugin/tests/test_rig_model.cpp` and `plugin/tests/test_rig_controller.cpp` (rig
 model, controller, live edits, mutes, re-measure, blend automation, concurrent-edit RT test, LEARN),
 `plugin/tests/test_mic.cpp` (IR name parser, pack and dot layout, snapping, choosing
 models through the processor, the `sawblade-t3k` runner and settings, with fake executables), `plugin/tests/test_engine.cpp` (Engine, no JUCE),
-`plugin/tests/test_processor.cpp` (the processor driven like a host) and `plugin/tests/test_playalong.cpp` (the backing:
+`plugin/tests/test_processor.cpp` (the processor driven like a host) and `plugin/tests/test_settings.cpp` (the settings store, auto-detect order, secret-key rule, `ToolRunner` against the fake scripts in `plugin/tests/tools/`, `LoginFlow`) and `plugin/tests/test_playalong.cpp` (the backing:
 level rule, queue, Standalone and host-follow transport, rig-latency alignment, offset, state, zero allocations and
 locks with the backing playing; stems are synthesised into a temp dir, no audio is committed). Audio-thread rules are
 enforced with the existing `AllocGuard` plus `LockGuard` (`plugin/tests/lock_guard.cpp`, counts

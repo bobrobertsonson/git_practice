@@ -16,6 +16,7 @@ torn tape, mis-registered second ink, scratched-through paint). No downloaded mo
 | `cab_4x12.py`       | SAWBLADE 4x12 cab (760x760x360 mm, generic)      | howling wolf + crescent moon painted on woven grille cloth; bone + toxic green | `cab_hero_3q.png` 1600x1200, `cab_front_ortho.png` 1400x1400 (grille on), `cab_open_ortho.png` 1400x1400 (grille off, 4 drivers + mic) |
 | `cab_2x12.py`       | SAWBLADE 2x12 open-back cab (740x520x290 mm, generic) for the "studio split" layout | **placeholder art, pending the user's call:** crossed bones + crust spikes + "CRUST" stencil painted on the grille cloth; bone + bruise purple | `cab2x12_hero_3q.png` 1600x1200, `cab2x12_front_ortho.png` 1400x1000 (grille on), `cab2x12_open_ortho.png` 1400x1000 (grille off, 2 drivers + mic) |
 | `ui_sprites.py`     | UI control filmstrips (real sprites, transparent) | none (parts only)                         | see "UI sprites" below                              |
+| `app_icon.py`       | app icon: 16-tooth saw blade (the `pedal_b2.py` motif) in the macOS rounded square | orange + bone on near-black | `plugin/assets/icon/icon_{16,32,64,128,256,512,1024}.png` (Pillow + numpy, no Blender; `--check` compares with the committed files) |
 
 Heads and the cab share real-cab detail parts in `common.py`: tolex, metal corner caps, piping, stitched seams, strap handles; the cab adds grille cloth, generic drivers and a generic unbranded mic.
 

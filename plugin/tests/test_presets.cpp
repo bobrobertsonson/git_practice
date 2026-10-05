@@ -13,6 +13,7 @@
 
 #include "PluginProcessor.h"
 #include "presets/AbCompare.h"
+#include "settings/Settings.h"
 #include "presets/PresetInfoPanel.h"
 #include "presets/PresetLibrary.h"
 #include "presets/PresetLoadFlow.h"
@@ -331,7 +332,10 @@ namespace {
 struct EnvVar {
   std::string k;
   EnvVar(const std::string& key, const std::string& v) : k(key) { ::setenv(k.c_str(), v.c_str(), 1); }
-  ~EnvVar() { ::unsetenv(k.c_str()); }
+  ~EnvVar() {
+    ::unsetenv(k.c_str());
+    if (k == "SAWBLADE_APPDATA") sawblade::plugin::settings::Settings::resetSharedForTests();  // the cached settings file path may have followed it
+  }
 };
 
 // A preset whose NAM capture is a TONE3000 one with a file that does not exist.

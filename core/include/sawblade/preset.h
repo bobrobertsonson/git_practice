@@ -159,6 +159,10 @@ void verifyCapture(const Capture& c, const std::string& jsonPath);
 // The TONE3000 capture cache root, as match/sawblade_match/t3k/cache.py: $SAWBLADE_CACHE_DIR if set, else
 // ~/.cache/sawblade/captures. Layout: <root>/<tone id>/<model id>.nam (.wav for IRs).
 std::filesystem::path captureCacheRoot();
+// An in-process override that captureCacheRoot() consults before the environment (the plugin's Settings panel sets it for a
+// stored cache folder; nothing mutates the process environment). nullopt clears it. Thread-safe (a mutex); only ever called at
+// load time and from the message thread, never from the audio thread.
+void setCaptureCacheRootOverride(std::optional<std::filesystem::path> root);
 // Where the capture's file really is: `resolvedPath` if it exists; else, for a TONE3000 capture with id and modelId,
 // the cached copy if that exists; else `resolvedPath`. IRs are recognised by the file extension (.wav / .flac).
 // Every core loader (verifyCapture, CaptureCache, the NAM block, IR loading) goes through this.

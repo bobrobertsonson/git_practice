@@ -1,4 +1,5 @@
 #include "TakeRecorder.h"
+#include "settings/Settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -160,7 +161,7 @@ struct TakeRecorder::OpenTake {
   bool failed = false;
 };
 
-TakeRecorder::TakeRecorder() : dir_(defaultTakesDir()) {}
+TakeRecorder::TakeRecorder() = default;  // no Settings access here: the takes folder is resolved lazily (takesDir(), start())
 
 TakeRecorder::~TakeRecorder() {
   {
@@ -211,9 +212,13 @@ void TakeRecorder::setTakesDir(const fs::path& dir) {
   std::lock_guard<std::mutex> lk(m_);
   dir_ = dir;
 }
+// An explicit setTakesDir() wins; otherwise the Settings panel's takes folder (else defaultTakesDir()) as it is now.
 fs::path TakeRecorder::takesDir() const {
-  std::lock_guard<std::mutex> lk(m_);
-  return dir_;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    if (!dir_.empty()) return dir_;
+  }
+  return settings::Settings::shared().effectiveTakesDir();
 }
 
 bool TakeRecorder::start(const std::string& songFolder) {
@@ -222,6 +227,7 @@ bool TakeRecorder::start(const std::string& songFolder) {
     return false;
   }
   std::string name;
+  const fs::path dir = takesDir();  // message thread: resolved here, not on the writer thread
   {
     std::lock_guard<std::mutex> lk(m_);
     if (arm_.load() != kIdle) {
@@ -231,8 +237,9 @@ bool TakeRecorder::start(const std::string& songFolder) {
     const std::string base = takeStamp();
     name = base;
     std::error_code ec;
-    for (int i = 2; fs::exists(dir_ / (name + ".wav"), ec) || fs::exists(dir_ / (name + ".json"), ec); ++i) name = base + "-" + std::to_string(i);
+    for (int i = 2; fs::exists(dir / (name + ".wav"), ec) || fs::exists(dir / (name + ".json"), ec); ++i) name = base + "-" + std::to_string(i);
     pending_ = Pending{name, songFolder, true};
+    activeDir_ = dir;
     current_ = name;
     error_.clear();
     recorded_.store(0);
@@ -487,7 +494,7 @@ void TakeRecorder::beginTake(const Event& e) {
     std::lock_guard<std::mutex> lk(m_);
     p = pending_;
     pending_.valid = false;
-    dir = dir_;
+    dir = !activeDir_.empty() ? activeDir_ : dir_;
   }
   open_ = std::make_unique<OpenTake>();
   open_->name = p.valid ? p.name : takeStamp();

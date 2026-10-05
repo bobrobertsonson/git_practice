@@ -1,4 +1,5 @@
 #include "BrowserSettings.h"
+#include "../settings/Settings.h"
 
 #ifndef SAWBLADE_REPO_DIR
 #define SAWBLADE_REPO_DIR "."
@@ -23,7 +24,11 @@ BrowserSettings::BrowserSettings() : file_(std::make_unique<juce::PropertiesFile
 BrowserSettings::BrowserSettings(const juce::File& f) : file_(std::make_unique<juce::PropertiesFile>(f, options())) {}
 BrowserSettings::~BrowserSettings() = default;
 
-std::string BrowserSettings::defaultExecutable() { return (juce::File(SAWBLADE_REPO_DIR).getChildFile("match/.venv/bin/sawblade-t3k")).getFullPathName().toStdString(); }
+std::string BrowserSettings::defaultExecutable() {
+  auto& s = settings::Settings::shared();  // the Settings panel's match venv, when set or detected (phase 11)
+  if (s.effectiveMatchVenvDir()) return s.toolPath("sawblade-t3k").string();
+  return (juce::File(SAWBLADE_REPO_DIR).getChildFile("match/.venv/bin/sawblade-t3k")).getFullPathName().toStdString();
+}
 
 std::string BrowserSettings::executable() const {
   const juce::String s = file_->getValue(kKey);

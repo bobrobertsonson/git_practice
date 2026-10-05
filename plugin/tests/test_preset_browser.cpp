@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "PluginEditor.h"
+#include "SettingsEnv.h"
 #include "PluginProcessor.h"
 #include "presets/AbCompare.h"
 #include "presets/PresetBrowser.h"
@@ -74,7 +75,10 @@ struct TempDir {
 struct EnvVar {
   std::string k;
   EnvVar(const std::string& key, const std::string& v) : k(key) { ::setenv(k.c_str(), v.c_str(), 1); }
-  ~EnvVar() { ::unsetenv(k.c_str()); }
+  ~EnvVar() {
+    ::unsetenv(k.c_str());
+    if (k == "SAWBLADE_APPDATA") sawblade::plugin::settings::Settings::resetSharedForTests();  // the cached settings file path may have followed it
+  }
 };
 
 // A loadable user preset (fixture captures, absolute paths).
@@ -92,6 +96,7 @@ void writeUserPreset(const fs::path& dir, const std::string& name, double blend)
 // The factory presets copied to a temp dir (one licence changed to a non-commercial one, so the screenshot shows the tag),
 // the user bank in the temp appdata, and an editor on top.
 struct Fixture {
+  SettingsEnv settingsEnv{kSettingsExist};
   juce::ScopedJuceInitialiser_GUI gui;
   TempDir tmp;
   std::unique_ptr<EnvVar> appdata;
@@ -122,6 +127,7 @@ struct Fixture {
     fs::create_directories(tmp.dir / "appdata");
     std::ofstream(tmp.dir / "appdata" / "settings.json") << json{{"factoryPresetDir", factory.string()}}.dump();
     appdata = std::make_unique<EnvVar>("SAWBLADE_APPDATA", (tmp.dir / "appdata").string());
+    ::unsetenv("SAWBLADE_SETTINGS_FILE");  // T3kTool reads <appdata>/settings.json (the Settings store keeps its cached file)
     writeUserPreset(tmp.dir / "appdata" / "presets", "User one", 0.2);
     writeUserPreset(tmp.dir / "appdata" / "presets", "User two", 0.8);
     proc.prepareToPlay(48000.0, 512);

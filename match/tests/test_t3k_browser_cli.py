@@ -138,7 +138,8 @@ def test_text_errors_unchanged_without_json(run, world, capsys):
 
 def test_whoami_json(run, world):
     rc, out, _ = run("whoami", "--json")
-    assert rc == 0 and out == {"id": 7, "username": "alice", "display_name": None}
+    assert rc == 0 and out.pop("token_file")          # merged with the Settings panel's --json contract
+    assert out == {"id": 7, "username": "alice", "display_name": None}
 
 
 def test_list_favorites_shape_filter_and_query(run, world):
@@ -234,7 +235,7 @@ def test_login_json_events_never_prints_refresh_token(login_env, respx_mock, cap
         {"event": "device_code", "verification_uri": "https://www.tone3000.com/activate",
          "verification_uri_complete": "https://www.tone3000.com/activate?c=1", "user_code": "BCDF-GHJK",
          "expires_in": 600},
-        {"event": "logged_in"}]
+        {"event": "logged_in", "token_file": str(login_env)}]   # user fields are best effort (user endpoint unmocked)
     for secret in ("REFRESH-ONCE", SECRET_ACCESS, "DEVSECRET"):
         assert secret not in cap.out + cap.err
     saved = TokenStore(login_env).load()                  # still persisted for the CLI itself
@@ -253,7 +254,8 @@ def test_whoami_json_after_login_store(login_env, api, capsys):
     TokenStore(login_env).save(Session(SECRET_ACCESS, "r", time.time() + 3600))
     assert cli.main(["whoami", "--json"]) == 0
     cap = capsys.readouterr()
-    assert json.loads(cap.out) == {"id": 7, "username": "alice", "display_name": None}
+    assert json.loads(cap.out) == {"id": 7, "username": "alice", "display_name": None,
+                                   "token_file": str(login_env)}
     assert SECRET_ACCESS not in cap.out + cap.err
 
 

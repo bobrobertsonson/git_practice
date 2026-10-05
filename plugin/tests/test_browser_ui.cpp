@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "PluginEditor.h"
+#include "SettingsEnv.h"
 #include "PluginProcessor.h"
 #include "SawbladeLookAndFeel.h"
 #include "browser/BrowserSettings.h"
@@ -92,6 +93,7 @@ juce::TextButton* buttonTitled(juce::Component& root, const juce::String& title)
 }
 
 struct Rig {
+  SettingsEnv settingsEnv{kSettingsExist};
   juce::ScopedJuceInitialiser_GUI gui;
   SawbladeLookAndFeel laf;
   TempDir tmp;
@@ -446,6 +448,7 @@ TEST_CASE("browser: PREVIEW renders through the rig and plays on the audio threa
 }
 
 TEST_CASE("browser: the editor's BROWSE CAPTURES opens the overlay for the selected piece and closes it", "[browser][ui]") {
+  SettingsEnv settingsEnv{kSettingsExist};
   juce::ScopedJuceInitialiser_GUI gui;
   Env env;
   env.set("HOME", fs::temp_directory_path().string());  // the default settings file stays out of the real home

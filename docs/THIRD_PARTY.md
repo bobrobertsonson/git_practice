@@ -33,6 +33,7 @@ exact commits. Headers are exposed as `SYSTEM`; third-party code is compiled wit
 | Name | Version | License | Use |
 |------|---------|---------|-----|
 | pluginval (Tracktion) | v1.0.4 | GPL-3.0 (check the repository's `LICENSE`) | Dev tool, not linked or shipped. Optional VST3 validation: build it yourself and pass `-DSAWBLADE_PLUGINVAL_EXECUTABLE=...` (see `docs/PLUGIN.md`). Not fetched by our CMake. |
+| Pillow + NumPy | Pillow 12.3.0, NumPy 2.4.6 (what the committed icon PNGs were rendered with; not pinned in the repo) | HPND (Pillow), BSD-3-Clause (NumPy) | Dev tools for `design/render/app_icon.py` (the app icon) and its `--check` ctest. Not linked, not shipped; the test is skipped without them. |
 
 ## Python (match/)
 

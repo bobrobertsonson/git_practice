@@ -56,6 +56,11 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/skin/FootswitchButton.cpp
   src/skin/LedIndicator.cpp
   src/skin/RigView.cpp
+  src/settings/Settings.cpp
+  src/settings/ToolRunner.cpp
+  src/settings/SettingsPanel.cpp
+  src/about/CaptureList.cpp
+  src/about/AboutBox.cpp
   src/rig/RigModel.cpp
   src/rig/RigController.cpp
   src/rig/RigWidgets.cpp
@@ -73,6 +78,25 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/presets/AbCompare.cpp
   src/presets/PresetInfoPanel.cpp
   src/presets/PresetBrowser.cpp)
+
+# BuildInfo.h (version, git hash, UTC date) is generated at configure time for the About box.
+set(SAWBLADE_GIT_HASH "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+                  OUTPUT_VARIABLE _hash OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE _rc)
+  if(_rc EQUAL 0 AND NOT _hash STREQUAL "")
+    set(SAWBLADE_GIT_HASH "${_hash}")
+    execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+                    OUTPUT_VARIABLE _dirty OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(NOT _dirty STREQUAL "")
+      set(SAWBLADE_GIT_HASH "${SAWBLADE_GIT_HASH}-dirty")
+    endif()
+  endif()
+endif()
+string(TIMESTAMP SAWBLADE_BUILD_DATE "%Y-%m-%d" UTC)
+configure_file(src/about/BuildInfo.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/BuildInfo.h @ONLY)
+set(SAWBLADE_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
 # UI renders embedded into the binary: an explicit list (not a glob) of everything in assets/.
 # Nothing renders at build time; design/render/export_ui_assets.py produced these files once.
@@ -94,6 +118,8 @@ juce_add_binary_data(SawbladeAssets SOURCES
   assets/footswitch.json
   assets/led_orange.png
   assets/led_orange.json
+  assets/icon/icon_256.png
+  ${PROJECT_SOURCE_DIR}/docs/THIRD_PARTY.md
   assets/preview_riff.wav)
 
 set_source_files_properties(src/browser/BrowserSettings.cpp PROPERTIES COMPILE_DEFINITIONS "SAWBLADE_REPO_DIR=\"${PROJECT_SOURCE_DIR}\"")
@@ -126,10 +152,12 @@ juce_add_plugin(SawbladePlugin
   IS_MIDI_EFFECT FALSE
   VST3_CATEGORIES Fx Distortion
   AU_MAIN_TYPE kAudioUnitType_Effect
+  ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/icon_1024.png"
+  ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon/icon_256.png"
   COPY_PLUGIN_AFTER_BUILD FALSE)
 
 target_sources(SawbladePlugin PRIVATE ${SAWBLADE_PLUGIN_SOURCES} src/PluginEntry.cpp)
-target_include_directories(SawbladePlugin PUBLIC src)
+target_include_directories(SawbladePlugin PUBLIC src ${SAWBLADE_GENERATED_DIR})
 target_compile_features(SawbladePlugin PUBLIC cxx_std_20)
 target_compile_definitions(SawbladePlugin PUBLIC ${SAWBLADE_JUCE_DEFS})
 target_link_libraries(SawbladePlugin
@@ -186,14 +214,16 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_mic.cpp
     tests/test_presets.cpp
     tests/test_record_match.cpp
+    tests/test_settings.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
     tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp tests/test_pedal_face.cpp
-    tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp
+    tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_settings.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
-  target_include_directories(sawblade_plugin_tests PRIVATE src)
-  target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1)
+  target_include_directories(sawblade_plugin_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
+  target_compile_definitions(sawblade_plugin_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
+    SAWBLADE_TEST_TOOLS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/tools")
   target_link_libraries(sawblade_plugin_tests PRIVATE
     $<$<BOOL:${SAWBLADE_WITH_SEPARATOR}>:sawblade_separator> sawblade_core Catch2::Catch2WithMain SawbladeAssets
     juce::juce_audio_processors juce::juce_gui_basics juce::juce_data_structures juce::juce_events juce::juce_audio_formats
@@ -224,9 +254,11 @@ if(SAWBLADE_BUILD_TESTS)
   add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
-  target_include_directories(sawblade_editor_tests PRIVATE src)
+  target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
   # JUCE_MODAL_LOOPS_PERMITTED: the page tests pump the message loop (MessageManager::runDispatchLoopUntil).
   target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
+    SAWBLADE_TEST_TOOLS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/tools"
+    SAWBLADE_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/icon"
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
     SAWBLADE_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots"
     SAWBLADE_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
@@ -249,6 +281,10 @@ if(SAWBLADE_BUILD_TESTS)
       COMMAND ${CMAKE_COMMAND} -DASSETS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/assets
               -DEXPORTER=${PROJECT_SOURCE_DIR}/design/render/export_ui_assets.py -DPYTHON=${SAWBLADE_PYTHON}
               -P ${CMAKE_CURRENT_SOURCE_DIR}/check_assets.cmake)
+    # The committed icon PNGs are exactly what design/render/app_icon.py renders (skipped, exit 77, without Pillow).
+    add_test(NAME "plugin: app icon is reproducible"
+      COMMAND ${SAWBLADE_PYTHON} ${PROJECT_SOURCE_DIR}/design/render/app_icon.py --check)
+    set_tests_properties("plugin: app icon is reproducible" PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 endif()
 

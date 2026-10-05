@@ -9,14 +9,14 @@
 #include <thread>
 #include <vector>
 
+#include "../AppPaths.h"  // appDataDir()
+
 // Runs the Python `sawblade-t3k` tool as a child process (shared by the mic page's IR packs and the preset browser,
 // docs/specs/phase9a_mic_page.md section 6). The message thread never blocks: the child runs on a background thread,
 // progress comes from `--progress-json` stdout lines ({"done", "total", "name"}), cancel kills the child.
 namespace sawblade::plugin {
 
-// <appdata>/sawblade: Linux $XDG_DATA_HOME or ~/.local/share/sawblade, macOS ~/Library/Application Support/Sawblade,
-// Windows %APPDATA%/Sawblade. The environment variable SAWBLADE_APPDATA overrides it (tests, portable installs).
-std::filesystem::path appDataDir();
+// appDataDir() lives in AppPaths.h (SAWBLADE_APPDATA, SAWBLADE_DATA_DIR, platform default).
 std::filesystem::path settingsFile();                // <appdata>/settings.json, shared with other features
 std::filesystem::path packCacheDir();                // <appdata>/packs
 std::filesystem::path packManifestPath(const std::string& toneId);  // <appdata>/packs/<toneId>.json

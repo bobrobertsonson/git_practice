@@ -96,7 +96,16 @@ def cmd_login(args: argparse.Namespace) -> int:
     tm = TokenManager(cid, http, TokenStore())
     tm.set_session(session)
     if events:
-        _emit({"event": "logged_in"})   # the refresh token is saved by TokenStore and never printed here
+        # The refresh token is saved by TokenStore and never printed here. The user fields are best
+        # effort: the login itself succeeded even if the profile fetch fails.
+        done: dict = {"event": "logged_in"}
+        try:
+            u = T3KClient(tm, base, http=http).get_user()
+            done.update({"username": u.username, "display_name": u.display_name, "id": u.id})
+        except Exception:
+            pass
+        done["token_file"] = str(tm.store.path)
+        _emit(done)
         return 0
     print(f"Logged in. Tokens saved to {tm.store.path} (mode 0600).")
     print("\nContainers are ephemeral. To skip this login next time, save this refresh token as the\n"
@@ -108,7 +117,8 @@ def cmd_login(args: argparse.Namespace) -> int:
 def cmd_whoami(args: argparse.Namespace) -> int:
     u = make_client().get_user()
     if args.json:
-        _emit({"id": u.id, "username": u.username, "display_name": u.display_name})
+        _emit({"id": u.id, "username": u.username, "display_name": u.display_name,
+               "token_file": str(TokenStore().path)})
         return 0
     print(f"{u.display_name or u.username} (@{u.username}, id {u.id})")
     return 0
@@ -283,7 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
     lg = sub.add_parser("login", help="device-flow login (needs TONE3000_CLIENT_ID)")
-    lg.add_argument("--json-events", action="store_true",
+    lg.add_argument("--json-events", "--json", dest="json_events", action="store_true",
                     help="print JSON event lines (device_code, logged_in) and never the refresh token")
     lg.set_defaults(fn=cmd_login, json=False)
     wh = sub.add_parser("whoami", help="show the logged-in TONE3000 user")

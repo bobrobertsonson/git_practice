@@ -36,6 +36,15 @@ Containers are ephemeral: `login` prints the refresh token **once**. Save it as 
 `TONE3000_REFRESH_TOKEN` secret and a fresh container logs in without the device step (stored tokens,
 when present, win over the env seed). Access tokens and Authorization headers are never printed or logged.
 
+`login --json` (alias of `login --json-events`) and `whoami --json` are the machine-readable forms used by the
+plugin. `login --json` prints one JSON object per line on stdout, flushed immediately: a `device_code` event
+(`user_code`, `verification_uri`, `verification_uri_complete` or null, `expires_in`), then `logged_in`
+(`username`, `display_name`, `id`, `token_file`; the user fields are omitted if the profile fetch fails after a
+successful login). `whoami --json` prints one line `{"id", "username", "display_name", "token_file"}`. Failures
+in `--json` mode print one `{"error", "code"}` line and exit 1 (4 if not logged in). Nothing but JSON goes to
+stdout and the refresh token is never printed (it is only in the token file); plain-text `login` still prints it
+for the container workflow.
+
 ## Usage
 
 ```
@@ -76,7 +85,7 @@ sawblade-t3k models TONE_ID --json
 sawblade-t3k fetch TONE_ID [--model MODEL_ID] [--cache-dir DIR] --json
 sawblade-t3k list --source favorites|pool [--query Q] [--gear amp pedal ir] [--limit N] [--cache-dir DIR] --json
 sawblade-t3k whoami --json
-sawblade-t3k login --json-events
+sawblade-t3k login --json-events      # alias: --json
 ```
 
 With `--json`, stdout is exactly one JSON document (notes/logs go to stderr). Failure: exit 1 and

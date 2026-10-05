@@ -7,6 +7,8 @@
 #include "ExportPanel.h"
 #include "MatchScreen.h"
 #include "PlayAlongPanel.h"
+#include "about/AboutBox.h"
+#include "settings/SettingsPanel.h"
 #include "browser/BrowserSettings.h"
 #include "browser/CaptureBrowser.h"
 #include "pedals/AdvancedDrawer.h"
@@ -96,6 +98,11 @@ class SawbladeEditor::Content : public juce::Component {
     playAlong_.setClickingTogglesState(true);
     playAlong_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
     playAlong_.onClick = [this] { setPlayAlongOpen(playAlong_.getToggleState()); };
+    configure(settingsBtn_, juce::String::fromUTF8("\xe2\x9a\x99"), "Settings: tool paths, TONE3000 login, cache", false);
+    settingsBtn_.setTitle("Settings");
+    settingsBtn_.setClickingTogglesState(true);
+    settingsBtn_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
+    settingsBtn_.onClick = [this] { setSettingsOpen(settingsBtn_.getToggleState()); };
     configure(rigButton_, "RIG", "Show / hide the rig editor: topology, blocks, EQs, blend and alignment, cab, gate and compressor", false);
     rigButton_.setClickingTogglesState(true);
     rigButton_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
@@ -205,9 +212,16 @@ class SawbladeEditor::Content : public juce::Component {
     panel_->onMatch = [this] { openMatchScreen(); };
     panel_->onExport = [this] { openExportPanel(); };
 
+    settingsPanel_ = std::make_unique<settings::SettingsPanel>(processor_, settings::Settings::shared());
+    settingsPanel_->setVisible(false);
+    settingsPanel_->onClosed = [this] { settingsBtn_.setToggleState(false, juce::dontSendNotification); };
+    settingsPanel_->onAbout = [this] { about::AboutBox::show(*this, about_, processor_, settings::Settings::shared()); };
+    addChildComponent(*settingsPanel_);  // on top of the play-along panel
+
     setSize(kDesignWidth, kDesignHeight);  // lays everything out (resized() needs all children to exist)
     updateSelection();
     refresh();
+    if (settings::Settings::shared().isFirstRun() && settings::SettingsPanel::claimFirstRunShow()) setSettingsOpen(true, true);
   }
 
   void paint(juce::Graphics& g) override {
@@ -245,12 +259,13 @@ class SawbladeEditor::Content : public juce::Component {
     wordmark_.setBounds(18, 8, 190, 42);
     int x = 226;
     prev_.setBounds(x, y, 34, h);
-    presetButton_.setBounds(x + 34, y, 200, h);
-    next_.setBounds(x + 34 + 200, y, 34, h);
-    x += 34 + 200 + 34 + 12;
+    presetButton_.setBounds(x + 34, y, 170, h);
+    next_.setBounds(x + 34 + 170, y, 34, h);
+    x += 34 + 170 + 34 + 12;
     ab_.setBounds(x, y, 52, h);
     playAlong_.setBounds(x + 52 + 12, y, 104, h);
     rigButton_.setBounds(x + 52 + 12 + 104 + 12, y, 64, h);
+    settingsBtn_.setBounds(x + 52 + 12 + 104 + 12 + 64 + 12, y, 34, h);
     int r = kDesignWidth - 18;
     export_.setBounds(r - 130, y, 130, h);
     r -= 130 + 12;
@@ -258,7 +273,7 @@ class SawbladeEditor::Content : public juce::Component {
     r -= 90 + 12;
     modeChip_.setBounds(r - 96, y + 2, 96, 30);
     r -= 96 + 12;
-    latChip_.setBounds(r - 150, y + 2, 150, 30);
+    latChip_.setBounds(r - 136, y + 2, 136, 30);
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
     {
@@ -269,6 +284,7 @@ class SawbladeEditor::Content : public juce::Component {
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     screen_->setBounds(0, kTopBar, MatchScreen::kWidth, kDesignHeight - kTopBar);
     exportPanel_->setBounds(0, kTopBar, ExportPanel::kWidth, kDesignHeight - kTopBar);
+    settingsPanel_->setBounds(0, kTopBar, settings::SettingsPanel::kWidth, settings::SettingsPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
     rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
     micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
@@ -323,6 +339,7 @@ class SawbladeEditor::Content : public juce::Component {
     updateReadouts();
     face_->refresh();
     if (drawer_->isVisible()) drawer_->refresh();
+    if (settingsPanel_ && settingsPanel_->isVisible()) settingsPanel_->refresh();
   }
 
   void updateReadouts() {
@@ -347,6 +364,16 @@ class SawbladeEditor::Content : public juce::Component {
     playAlong_.setToggleState(open, juce::dontSendNotification);
   }
   bool playAlongOpen() const { return panel_->isVisible(); }
+  void setSettingsOpen(bool open, bool firstRun = false) {
+    if (open) {
+      settingsPanel_->open(firstRun);
+      settingsPanel_->toFront(true);  // above the RIG / mic / browser overlays
+    }
+    else settingsPanel_->close();
+    settingsBtn_.setToggleState(open, juce::dontSendNotification);
+  }
+  bool settingsOpen() const { return settingsPanel_->isVisible(); }
+  bool aboutOpen() const { return about_ != nullptr && about_->isVisible(); }
 
   // The capture browser overlay for the selected piece (closed with its "< RIG" button).
   void openBrowser() {
@@ -488,7 +515,7 @@ class SawbladeEditor::Content : public juce::Component {
   AbCompare abCompare_{processor_};
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
-  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_;
+  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, settingsBtn_;
   juce::uint32 learnShownUntil_ = 0;
   std::unique_ptr<PedalFace> face_;
   std::unique_ptr<AdvancedDrawer> drawer_;
@@ -501,6 +528,8 @@ class SawbladeEditor::Content : public juce::Component {
   std::unique_ptr<PresetBrowser> presetBrowser_;
   std::unique_ptr<MatchScreen> screen_;
   std::unique_ptr<ExportPanel> exportPanel_;
+  std::unique_ptr<settings::SettingsPanel> settingsPanel_;
+  std::unique_ptr<about::AboutBox> about_;
   skin::RigView rig_;
   std::array<std::unique_ptr<FilmstripKnob>, kNumParams> knobs_;
   std::unique_ptr<juce::FileChooser> chooser_;
@@ -517,7 +546,8 @@ SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEdito
   setResizable(true, true);
   setResizeLimits(640, 400, 2560, 1600);
   getConstrainer()->setFixedAspectRatio(static_cast<double>(kDesignWidth) / kDesignHeight);
-  setSize(kDesignWidth, kDesignHeight);
+  const double uiScale = settings::Settings::shared().uiScale();
+  setSize(juce::roundToInt(kDesignWidth * uiScale), juce::roundToInt(kDesignHeight * uiScale));
   startTimerHz(16);
 }
 
@@ -552,6 +582,9 @@ void SawbladeEditor::setRigEditorOpen(bool open) { content_->setRigEditorOpen(op
 bool SawbladeEditor::rigEditorOpen() const { return content_->rigEditorOpen(); }
 rig::RigEditorPanel& SawbladeEditor::rigEditor() { return content_->rigEditor(); }
 bool SawbladeEditor::playAlongOpen() const { return content_->playAlongOpen(); }
+void SawbladeEditor::setSettingsOpen(bool open) { content_->setSettingsOpen(open); }
+bool SawbladeEditor::settingsOpen() const { return content_->settingsOpen(); }
+bool SawbladeEditor::aboutOpen() const { return content_->aboutOpen(); }
 void SawbladeEditor::setMicPageOpen(bool open) { content_->setMicPageOpen(open); }
 bool SawbladeEditor::micPageOpen() const { return content_->micPageOpen(); }
 MicPage& SawbladeEditor::micPage() { return content_->micPage(); }

@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 
 #include "PluginEditor.h"
+#include "SettingsEnv.h"
 #include "PluginProcessor.h"
 #include "mic/MicPage.h"
 #include "skin/RigView.h"
@@ -121,6 +122,7 @@ fs::path writePack(const fs::path& dir, const std::string& toneId, const std::st
 
 // The processor + editor. The cab uses a synthetic IR from the pack (tone 321, source attached), so the page can offer LOAD PACK.
 struct Fixture {
+  SettingsEnv settingsEnv{kSettingsExist};
   juce::ScopedJuceInitialiser_GUI gui;
   SawbladeProcessor proc;
   std::unique_ptr<juce::AudioProcessorEditor> base;
@@ -411,6 +413,7 @@ TEST_CASE("mic page: LOAD PACK runs sawblade-t3k, shows progress, caches the man
   Fixture f;
   TempDir data;
   setEnv("SAWBLADE_APPDATA", data.dir.string());
+  ::unsetenv("SAWBLADE_SETTINGS_FILE");  // T3kTool then reads <appdata>/settings.json (the Settings store keeps its cached file)
   // fake tool: copies the prepared manifest to the -o path after a few progress lines
   const fs::path exe = writeScript(data.dir, "fake-t3k",
                                    "echo '{\"done\": 1, \"total\": 2, \"name\": \"a\"}'\n"
@@ -440,12 +443,14 @@ TEST_CASE("mic page: LOAD PACK runs sawblade-t3k, shows progress, caches the man
   f.ed->setMicPageOpen(true);
   CHECK(f.page().dotCount() == 8);
   ::unsetenv("SAWBLADE_APPDATA");
+  sawblade::plugin::settings::Settings::resetSharedForTests();
 }
 
 TEST_CASE("mic page: not logged in and a missing tool show the messages", "[editor][mic][t3k]") {
   Fixture f;
   TempDir data;
   setEnv("SAWBLADE_APPDATA", data.dir.string());
+  ::unsetenv("SAWBLADE_SETTINGS_FILE");  // T3kTool then reads <appdata>/settings.json (the Settings store keeps its cached file)
   const fs::path exe = writeScript(data.dir, "fake-t3k", "echo 'auth: token expired' >&2\nexit 4");
   std::ofstream(data.dir / "settings.json") << json{{"t3kExecutable", exe.string()}}.dump();
   f.openByDoubleClick();
@@ -463,6 +468,7 @@ TEST_CASE("mic page: not logged in and a missing tool show the messages", "[edit
   REQUIRE(locate != nullptr);
   CHECK(locate->isVisible());
   ::unsetenv("SAWBLADE_APPDATA");
+  sawblade::plugin::settings::Settings::resetSharedForTests();
 }
 
 TEST_CASE("mic page: screenshots of the rig, the page with one mic and with BLEND on", "[editor][mic][screenshot]") {

@@ -1,4 +1,6 @@
 #include "T3kTool.h"
+#include "../AppPaths.h"
+#include "../settings/Settings.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -10,6 +12,8 @@
 #include <nlohmann/json.hpp>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -18,24 +22,10 @@ namespace fs = std::filesystem;
 using nlohmann::json;
 
 // --- app data and settings ---------------------------------------------------------------------------------------
-fs::path appDataDir() {
-  if (const char* o = std::getenv("SAWBLADE_APPDATA"); o != nullptr && *o != '\0') return fs::path(o);
-#if defined(_WIN32)
-  if (const char* a = std::getenv("APPDATA"); a != nullptr && *a != '\0') return fs::path(a) / "Sawblade";
-  return fs::path("Sawblade");
-#else
-  const char* home = std::getenv("HOME");
-  const fs::path h = home != nullptr && *home != '\0' ? fs::path(home) : fs::path(".");
-#if defined(__APPLE__)
-  return h / "Library" / "Application Support" / "Sawblade";
-#else
-  if (const char* x = std::getenv("XDG_DATA_HOME"); x != nullptr && *x != '\0') return fs::path(x) / "sawblade";
-  return h / ".local" / "share" / "sawblade";
-#endif
-#endif
+fs::path settingsFile() {
+  if (const char* o = std::getenv("SAWBLADE_SETTINGS_FILE"); o != nullptr && *o != '\0') return fs::path(o);  // as settings::Paths::settingsFile
+  return appDataDir() / "settings.json";
 }
-
-fs::path settingsFile() { return appDataDir() / "settings.json"; }
 fs::path packCacheDir() { return appDataDir() / "packs"; }
 fs::path packManifestPath(const std::string& toneId) {
   std::string safe;
@@ -62,6 +52,7 @@ bool readSettings(json& out) {
 }  // namespace
 
 fs::path defaultT3kExecutable() {
+  if (auto& s = Settings::shared(); s.effectiveMatchVenvDir()) return s.toolPath("sawblade-t3k");  // Settings panel venv (phase 11)
 #ifdef SAWBLADE_REPO_DIR
   return fs::path(SAWBLADE_REPO_DIR) / "match" / ".venv" / "bin" / "sawblade-t3k";
 #else
@@ -100,15 +91,35 @@ bool setT3kExecutable(const fs::path& exe, std::string* error) {
   if (!readSettings(j)) return fail("settings.json is not a JSON object; not overwritten: " + settingsFile().string());
   j["t3kExecutable"] = exe.string();
   std::error_code ec;
-  fs::create_directories(appDataDir(), ec);
-  if (ec) return fail("cannot create " + appDataDir().string() + ": " + ec.message());
-  const fs::path tmp = settingsFile().string() + ".tmp";
+  const fs::path dir = settingsFile().parent_path();
+  if (!dir.empty()) fs::create_directories(dir, ec);
+  if (ec) return fail("cannot create " + dir.string() + ": " + ec.message());
+  static std::atomic<unsigned> counter{0};
+  const fs::path tmp = settingsFile().string() + ".tmp." + std::to_string(::getpid()) + "." + std::to_string(counter.fetch_add(1));
+  const std::string text = j.dump(2) + "\n";
+#if !defined(_WIN32)
+  {  // created 0600 from the start: the shared settings file stays private (the phase 11 store writes it 0600 too)
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return fail("cannot write " + tmp.string());
+    size_t off = 0;
+    while (off < text.size()) {
+      const ssize_t n = ::write(fd, text.data() + off, text.size() - off);
+      if (n <= 0) {
+        ::close(fd);
+        fs::remove(tmp, ec);
+        return fail("cannot write " + tmp.string());
+      }
+      off += static_cast<size_t>(n);
+    }
+    ::close(fd);
+  }
+#else
   {
     std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
     if (!o) return fail("cannot write " + tmp.string());
-    o << j.dump(2) << '\n';
-    if (!o) return fail("cannot write " + tmp.string());
+    o << text;
   }
+#endif
   fs::rename(tmp, settingsFile(), ec);
   if (ec) return fail("cannot replace " + settingsFile().string() + ": " + ec.message());
   return true;

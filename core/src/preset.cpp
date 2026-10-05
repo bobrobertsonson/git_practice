@@ -1,5 +1,6 @@
 #include "sawblade/preset.h"
 
+#include <mutex>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
@@ -402,7 +403,22 @@ nlohmann::json toJson(const Preset& p) {
   return j;
 }
 
+namespace {
+std::mutex gCacheOverrideMutex;
+std::optional<fs::path> gCacheOverride;
+}  // namespace
+
+void setCaptureCacheRootOverride(std::optional<fs::path> root) {
+  std::lock_guard<std::mutex> lk(gCacheOverrideMutex);
+  if (root && root->empty()) root.reset();
+  gCacheOverride = std::move(root);
+}
+
 fs::path captureCacheRoot() {
+  {
+    std::lock_guard<std::mutex> lk(gCacheOverrideMutex);
+    if (gCacheOverride) return *gCacheOverride;
+  }
   if (const char* e = std::getenv("SAWBLADE_CACHE_DIR"); e != nullptr && *e != '\0') return fs::path(e);
 #if defined(_WIN32)
   const char* home = std::getenv("USERPROFILE");

@@ -64,6 +64,11 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   bool exportPanelOpen() const;
   ExportPanel& exportPanel();
 
+  // The Settings overlay (settings::SettingsPanel, phase 11) and the About box over it; UI state, never saved.
+  void setSettingsOpen(bool open);
+  bool settingsOpen() const;
+  bool aboutOpen() const;
+
   // Dropping a folder (of stems) anywhere on the editor loads it as the song and opens the panel.
   bool isInterestedInFileDrag(const juce::StringArray& files) override;
   void filesDropped(const juce::StringArray& files, int x, int y) override;
