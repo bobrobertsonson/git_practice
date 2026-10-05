@@ -25,9 +25,15 @@ std::string seconds(double s) {
 }
 }  // namespace
 
+std::string activeSongName(SawbladeProcessor& p) {
+  const auto s = p.playAlong().settings();
+  if (!s.songFile.empty()) return fs::path(s.songFile).stem().string();
+  return fs::path(s.folder).filename().string();
+}
+
 MatchPlan planMatch(SawbladeProcessor& p) {
   MatchPlan plan;
-  const std::string folder = p.playAlong().settings().folder;
+  const std::string folder = p.playAlong().activeStemsDir();
   if (folder.empty()) {
     plan.message = "Load a song in PLAY ALONG first: its stems folder is the reference.";
     return plan;
@@ -44,7 +50,7 @@ MatchPlan planMatch(SawbladeProcessor& p) {
   }
   plan.request.di = plan.take->wav;
   plan.request.ref = plan.reference.file;
-  plan.request.referenceLabel = fs::path(folder).filename().string() + " (" + plan.reference.label + ")";
+  plan.request.referenceLabel = activeSongName(p) + " (" + plan.reference.label + ")";
   plan.request.diLabel = plan.take->name;
   const bool sameSong = plan.take->songFolder.empty() || fs::path(plan.take->songFolder) == fs::path(folder);
   if (const auto off = plan.take->offsetMs(); off && sameSong) {

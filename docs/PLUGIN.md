@@ -317,7 +317,7 @@ Sidecar `<take>.json`:
   "createdUtc": "2026-10-04T12:00:00.000Z" }
 ```
 
-`playAlong` is `null` when no song was loaded. `stemSampleIndex` is the stem sample that plays at the take's **first
+`playAlong` is `null` when no song was loaded. `songFolder` is the stems directory that was playing: the folder for a song loaded as a folder, and the separation cache directory when the song came from a file (LOAD SONG on an audio file); MATCH uses it as the reference. `stemSampleIndex` is the stem sample that plays at the take's **first
 sample**: the playhead (the player's position in Standalone, the host position in plugin mode) minus the applied player
 offset, so the offset setting is already in it. The backing is delayed by the rig latency, which is exactly what lines the
 DI sample up with the stem sample the player plays at that moment. `running` is false when the backing was paused, counting

@@ -24,6 +24,8 @@
 #include "TakeRecorder.h"
 #include "fake_tools.h"
 #include "processor_harness.h"
+#include "onnx_synth.h"
+#include "sawblade/sha256.h"
 #include "sawblade/wav_io.h"
 
 namespace {
@@ -1071,6 +1073,65 @@ TEST_CASE("match: the plan uses the loaded song's guitar stem and the take's off
   CHECK_FALSE(plan.request.offsetMs.has_value());
   CHECK(plan.offsetNote.find("unknown") != std::string::npos);
 }
+
+#ifdef SAWBLADE_WITH_SEPARATOR
+TEST_CASE("match: a song loaded from a FILE is the reference and the take's songFolder (5.1b)", "[match][plan][separation]") {
+  using namespace sawblade::plugin;
+  TempDir tmp;
+  struct Env {
+    std::string name;
+    Env(const char* n, const std::string& v) : name(n) { ::setenv(n, v.c_str(), 1); }
+    ~Env() { ::unsetenv(name.c_str()); }
+  } models("SAWBLADE_MODELS_DIR", (tmp.dir / "models").string()), stems("SAWBLADE_STEMS_DIR", (tmp.dir / "stems").string());
+  fs::create_directories(tmp.dir / "models");
+  const std::vector<float> t(6, 0.5f), f(6, 0.0f);
+  const std::string bytes = sawblade::test::onnx_synth::buildCoreModel(t, f);
+  const fs::path mp = tmp.dir / "models" / "htdemucs_6s-core-opset17.onnx";
+  sawblade::test::onnx_synth::write(mp, bytes);
+  std::ofstream(mp.string() + ".sha256") << sawblade::sha256Hex(bytes.data(), bytes.size()) << "\n";
+  const fs::path file = tmp.dir / "my song.wav";
+  sawblade::writeWavFloat32Stereo(file, 44100.0, signal(44100 * 4, 3), signal(44100 * 4, 4));
+
+  Host h(kFs, 480);
+  PlayAlong& pa = h.p.playAlong();
+  pa.setStandalone(true);
+  h.p.recorder().setTakesDir(tmp.dir / "takes");
+  h.p.matchSettings().setFile(tmp.dir / "settings.xml");
+  pa.loadSong(file.string(), true);
+  REQUIRE(pa.waitForLoader());
+  REQUIRE(pa.loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+  CHECK(pa.settings().folder.empty());  // exclusive with songFile: the old code saw "no song"
+
+  const std::string dir = pa.activeStemsDir();
+  REQUIRE_FALSE(dir.empty());
+  CHECK(fs::path(dir).lexically_relative(tmp.dir / "stems").native().rfind("..", 0) != 0);  // inside the stem cache
+
+  MatchPlan plan = planMatch(h.p);
+  CHECK_FALSE(plan.ok);
+  CHECK(plan.message.find("USE FOR MATCH") != std::string::npos);  // not "Load a song"
+  CHECK(plan.reference.found);
+
+  const auto x = signal(480 * 64);
+  std::size_t at = 0;
+  runBlocks(h, x, at, 3, 480);
+  pa.play();
+  runBlocks(h, x, at, 4, 480);
+  REQUIRE(h.p.recorder().start(pa.activeStemsDir()));
+  runBlocks(h, x, at, 4, 480);
+  finishTake(h);
+  const auto takes = h.p.recorder().listTakes();
+  REQUIRE(takes.size() == 1);
+  CHECK(fs::path(takes[0].songFolder) == fs::path(dir));
+  h.p.matchSettings().setSelectedTake(takes[0].name);
+  plan = planMatch(h.p);
+  REQUIRE(plan.ok);
+  CHECK(fs::path(plan.request.ref).parent_path() == fs::path(dir));
+  CHECK(plan.request.referenceLabel.rfind("my song (", 0) == 0);
+  CHECK(activeSongName(h.p) == "my song");
+  REQUIRE(plan.request.offsetMs.has_value());  // same song: the position is used
+  CHECK(plan.offsetNote.find("into the song") != std::string::npos);
+}
+#endif
 
 TEST_CASE("match: audition, A/B and apply go through the loader and keep the previous preset", "[match][audition]") {
   TempDir tmp;

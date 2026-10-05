@@ -234,6 +234,10 @@ class PlayAlong {
   void setKeepOther(bool keep);  // reloads the folder with the other role
 
   PlayAlongSettings settings() const;
+  // The stems directory the player is using: for a song FILE the separation cache directory (once it is
+  // separated, or restored from the cache), else settings().folder; "" when nothing is loaded. settings().folder
+  // and settings().songFile are exclusive, so record + match use this, never settings().folder alone.
+  std::string activeStemsDir() const;
   LoadStatus loadStatus() const;
   Snapshot snapshot() const noexcept;
   std::optional<double> rigLoudnessLufs() const noexcept { return loud_.lufs(); }

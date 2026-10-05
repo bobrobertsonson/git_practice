@@ -408,6 +408,13 @@ PlayAlongSettings PlayAlong::settings() const {
   return settings_;
 }
 
+std::string PlayAlong::activeStemsDir() const {
+  std::lock_guard<std::mutex> lk(m_);
+  if (!settings_.songFile.empty())
+    return (songDirFile_ == settings_.songFile && songDirFourStem_ == settings_.fourStemModel) ? songDir_ : std::string();
+  return settings_.folder;
+}
+
 PlayAlong::LoadStatus PlayAlong::loadStatus() const {
   LoadStatus st;
   {

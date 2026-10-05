@@ -279,7 +279,7 @@ struct PlayAlongPanel::Impl {
   void wireBand() {
     rec.onClick = [this] {
       auto& r = proc.recorder();
-      if (r.state() == TakeRecorder::State::Idle) r.start(pa().settings().folder);
+      if (r.state() == TakeRecorder::State::Idle) r.start(pa().activeStemsDir());
       else r.stop();
       refreshBand();
     };

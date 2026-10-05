@@ -361,7 +361,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
 
     if (m) {
       const MatchPlan plan = planMatch(proc);
-      refName.setText(proc.playAlong().settings().folder.empty() ? "No song loaded" : juce::String(fs::path(proc.playAlong().settings().folder).filename().string()),
+      refName.setText(proc.playAlong().activeStemsDir().empty() ? "No song loaded" : juce::String(activeSongName(proc)),
                       juce::dontSendNotification);
       refName.setColour(juce::Label::textColourId, plan.reference.found ? L::text() : L::dimText());
       refStem.setText(plan.reference.found ? juce::String(plan.reference.label) : juce::String("Load a song in PLAY ALONG: its guitar stem is the reference."),
