@@ -148,7 +148,7 @@ struct SettingsPanel::Impl : private juce::Timer {
   juce::TextButton venvBrowse, venvAutoBtn, testTools;
   Dot venvDot;
   // tone3000
-  juce::Label capId, idMsg, t3kStatus, whoamiResult;
+  juce::Label capId, idSrc, idMsg, t3kStatus, whoamiResult;
   juce::TextEditor idField;
   juce::TextButton whoamiBtn, loginBtn;
   Dot t3kDot;
@@ -275,8 +275,10 @@ struct SettingsPanel::Impl : private juce::Timer {
     styleField(idField, "TONE3000 client id", "Your TONE3000 publishable key (t3k_pub_...). The secret key (t3k_cs_...) is refused and never stored.");
     idField.onReturnKey = [this] { commitId(); };
     idField.onFocusLost = [this] { commitId(); };
-    idField.onEscapeKey = [this] { idField.setText(ju(s.tone3000ClientId()), false); idField.giveAwayKeyboardFocus(); };
+    idField.onEscapeKey = [this] { idField.setText(ju(shownId().id), false); idField.giveAwayKeyboardFocus(); };
     add(idField);
+    styleLabel(idSrc, L::bodyFont(12.0f), L::dimText());
+    add(idSrc);
     styleLabel(idMsg, L::bodyFont(12.0f), L::error());
     add(idMsg);
     add(t3kDot);
@@ -433,22 +435,25 @@ struct SettingsPanel::Impl : private juce::Timer {
     });
   }
 
+  // What the field shows: the stored id; when none is stored, the effective one (environment / login file).
+  // Showing it does not store it: commitId() compares against this, so an untouched field stores nothing.
+  ClientIdResolution shownId() const { return s.resolveTone3000ClientId(); }
+
   void commitId() {
     const std::string text = su(idField.getText());
-    if (text == s.tone3000ClientId() && idMsg.getText().isEmpty()) return;
-    if (text == s.tone3000ClientId()) return;  // keep a message that is showing
+    if (text == shownId().id) return;  // unchanged (also keeps a message that is showing)
     const Result r = s.setTone3000ClientId(text);
     if (!r.ok) {
       idMsg.setColour(juce::Label::textColourId, L::error());
       idMsg.setText(ju(r.error), juce::dontSendNotification);
-      idField.setText(ju(s.tone3000ClientId()), false);  // never echo a refused value
+      idField.setText(ju(shownId().id), false);  // never echo a refused value
     } else if (!r.warning.empty()) {
       idMsg.setColour(juce::Label::textColourId, L::warning());
       idMsg.setText(ju(r.warning), juce::dontSendNotification);
-      idField.setText(ju(s.tone3000ClientId()), false);
+      idField.setText(ju(shownId().id), false);
     } else {
       idMsg.setText({}, juce::dontSendNotification);
-      idField.setText(ju(s.tone3000ClientId()), false);
+      idField.setText(ju(shownId().id), false);
     }
     refresh();
   }
@@ -687,7 +692,12 @@ struct SettingsPanel::Impl : private juce::Timer {
     }
 
     // tone3000 section
-    if (!idField.hasKeyboardFocus(true) && idField.getText() != ju(s.tone3000ClientId())) idField.setText(ju(s.tone3000ClientId()), false);
+    if (!idField.hasKeyboardFocus(true) && idField.getText() != ju(shownId().id)) idField.setText(ju(shownId().id), false);
+    {
+      const ClientIdSource src = shownId().source;
+      idSrc.setText(src == ClientIdSource::Environment ? "from environment" : src == ClientIdSource::TokenFile ? "from sawblade-t3k login" : "",
+                    juce::dontSendNotification);
+    }
     const bool token = ex(s.tokenFile());
     t3kDot.setState(token ? Dot::State::Ok : Dot::State::Bad);
     t3kStatus.setText(token ? "Token file present (" + ju(s.tokenFile().string()) + ")" : juce::String("Not logged in"), juce::dontSendNotification);
@@ -847,6 +857,7 @@ struct SettingsPanel::Impl : private juce::Timer {
     tone3000Y = y;
     heading("TONE3000");
     place(capId, m, y, 400, 14);
+    place(idSrc, m + 404, y, juce::jmax(0, w - 2 * m - 404), 14);
     y += 16;
     place(idField, m, y, w - 2 * m, 30);
     y += 32;
