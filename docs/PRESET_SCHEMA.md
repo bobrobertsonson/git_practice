@@ -94,7 +94,7 @@ Block types:
 |---|---|---|---|---|
 | `nam` | NAM capture (pedal, boost, amp) | see NamBlock below | yes | the model's |
 | `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` | yes | 0 |
-| `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology), the CHAINSAW circuit | `modelVersion` (1 or 2), `params`; see PedalHm below | yes | 50 samples (at any rate) |
+| `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology), the CHAINSAW circuit | `modelVersion` (1, 2 or 3), `params`; see PedalHm below | yes | 50 samples (at any rate) |
 | `pedal.muff` | Modeled "big fuzz" (Big-Muff-family topology), the BIG FUZZ circuit | `modelVersion` (1), `params`; see PedalMuff below | yes | 50 samples (at any rate) |
 | `pedal.ts` | Modeled "green overdrive" (Tube-Screamer topology) | `modelVersion`, `params`; see PedalTs below | yes | 50 samples (at any rate) |
 | `pedal.hmx` | Modeled "modded chainsaw distortion" (modded HM-2 class) | `modelVersion`, `params`; see PedalHmx below | yes | 50 samples (at any rate) |
@@ -131,7 +131,7 @@ any slot is accepted. The player-facing description of every control is in `docs
 
 ```jsonc
 { "id": "a1", "type": "pedal.hm", "slot": "pedal", "bypass": false,
-  "modelVersion": 2,                    // optional, default 1 (the phase 7 four-knob object)
+  "modelVersion": 3,                    // optional, default 1 (the phase 7 four-knob object); 3 = calibrated voicing
   "params": { "level": 2, "low": 10, "high": 10, "distortion": 10, "mode": "stock", "clip": "silicon" } }
 { "id": "a1", "type": "pedal.muff", "slot": "pedal", "modelVersion": 1,
   "params": { "sustain": 10, "tone": 7, "scoop": 8, "volume": 4 } }
@@ -158,10 +158,12 @@ any slot is accepted. The player-facing description of every control is in `docs
 | `highSpread` | 1.0-2.0 | 1.5 | gyrator B centre = `highFreq * highSpread` |
 | `presenceFreq` | 3000-7000 Hz | 4800 | presence peak centre (Q 2) |
 | `presenceDb` | 0-16 dB | 8 | presence peak gain |
-| `rolloffHz` | 4000-12000 Hz | 9000 | output low-pass corner |
+| `rolloffHz` | v2: 4000-12000 Hz, v3: 4000-16000 Hz | v2: 9000, v3: 16000 | output low-pass corner |
 | `gain1Db` | -12..+12 dB | 0 | trim on the stage-1 gain |
 | `gain2Db` | -12..+12 dB | 0 | trim on the interstage gain (stock +20 dB) |
 | `bias` | 0-10 | 0 | asymmetry: negative knee scaled by `1 - 0.5*bias/10` on both stages |
+| `customLowDb` | 0-8 dB, **v3 only** | 3.2 | `custom` mode: low shelf at 100 Hz (Q 0.7); a PresetError on v1 / v2 blocks; preset-static (not a live parameter, not on the face or drawer) |
+| `customHighDb` | 0-8 dB, **v3 only** | 3.0 | `custom` mode: high shelf at 6 kHz (Q 0.7); same rules |
 
 All fixed voicing constants (pre-filter corners, mode LPF corners, interstage gain, gyrator Qs, mode
 slopes) live in the `HmVoicing` table in `core/include/sawblade/pedal_hm.h`.
@@ -169,79 +171,28 @@ slopes) live in the `HmVoicing` table in `core/include/sawblade/pedal_hm.h`.
 **Versions.** `modelVersion` 1 (the default when absent) may set only `level`, `low`, `high`,
 `distortion`; any other key is a PresetError. A v1 block maps onto the v2 defaults and renders
 **bit-identically** to the phase 7 implementation (golden `tests/golden/hm_chainsaw_v1.wav`,
-`ts_boost_v1.wav`). `modelVersion` 2 may set any key. `toJson()` always writes `modelVersion: 2`
-with every key (enums as strings), so parse -> write -> parse is exact. Any other version (0, 3)
-is a PresetError.
+`ts_boost_v1.wav`). `modelVersion` 2 (the phase 7b voicing) may set any key but the two custom
+trims. `modelVersion` 3 (phase 7c part 3, the calibrated voicing) accepts every v2 key plus
+`customLowDb` / `customHighDb`. `toJson()` writes the **stored** version (v1 blocks are stored and
+written as 2; v3 as 3) with every key (enums as strings), so parse -> write -> parse is exact.
+A block built from defaults (`HmParams{}`, the plugin's CIRCUIT switch) is **v3**; the 7b bank in
+`presets/modeled/chainsaw/` stays at v2 and renders bit-identically. Any other version (0, 4) is a
+PresetError.
 
-#### `pedal.muff` parameters (`modelVersion` 1)
+#### The v3 voicing (`HmVoicing::v3()`; provenance: measured in phase 7.1 against 18 real captures)
+Every v3 number lives in the one `HmVoicing::v3()` table in `core/src/pedal_hm.cpp`.
 
-| key | type / range | default | meaning |
+| constant | v2 | v3 | provenance |
 |---|---|---|---|
-| `volume` | 0-10 | 5 | output level, `3*volume - 24` dB (wet only) |
-| `sustain` | 0-10 | 5 | stage-A gain, `6 + 3*sustain` dB |
-| `tone` | 0-10 | 5 | tone-stack blend, dark -> bright |
-| `scoop` | 0-10 | 3 | extra mid notch at the stack centre, `-1.6*scoop` dB |
-| `crunch` | 0-10 | 5 | clipping compression: both knees x `1.2 - 0.08*crunch` |
-| `voice` | 0-10 | 5 | stack centre `860 * 2^((voice-5)/5)` Hz (430 Hz .. 1.72 kHz) |
-| `tightness` | 0-10 | 0 | input high-pass as in `pedal.hm` |
-| `mix` | 0-100 (%) | 100 | wet proportion |
-| `clip`, `clip2` | as `pedal.hm` | `silicon`, `follow` | stage A / stage B clipper |
-| `stackRatio` | 2.0-8.0 | 4.4 | stack corner ratio `fH/fL` (scoop width) |
-| `rolloffHz` | 4000-12000 Hz | 10000 | output low-pass corner |
-| `gain2Db` | -12..+12 dB | 0 | trim on the stage-B gain (stock +18 dB) |
-| `bias` | 0-10 | 0 | asymmetry as `pedal.hm` |
+| stage-1 gain | `6 + 4*D` dB (6-46) | `26 + 2*D` dB (26-46) | free fits land at D ~ 10 for every real D label: saturated from D 2 |
+| `silicon` knees (stage 1 / stage 2) | 0.5 / 0.5, 0.5 / 0.5 | k+ 0.5 / k- 0.5, k+ 0.5 / k- 2.10 | asymmetric diode clip: real H2 ~ -9, H3 ~ -18 dBc; k- fitted by the scan in `tests/test_pedals_v3.cpp` (stage 2 only: both stages alias -73 dB) |
+| output DC block | none | 10 Hz 1st-order HPF | the asymmetric clip makes DC |
+| fit bands (fixed) | none | low shelf 85 Hz +1.7 dB Q 0.707; peak 683 Hz +4.5 dB Q 2.4; peak 5.5 kHz -12.0 dB Q 1.54 | free-cascade residual fit, 8 labelled stock units, 1.36 dB RMS |
+| post-clip LPF (4th order) | stock / custom 6.5 kHz, modded 9 kHz | stock / custom 9.5 kHz, modded 11 kHz | model was ~12 dB short at 10 kHz |
+| interstage LPF, `modded` | 9 kHz | 6.5 kHz | spec asks 11 kHz; limited by the alias budget (< -80 dB), see the report |
+| `rolloffHz` default | 9000 | 16000 | the fit ran to its 14 kHz bound |
+| `custom` mode | `s1` 4.6, `sLow` 3.6 | stock gain; +2.5 dB output; `customLowDb` shelf 100 Hz; `customHighDb` shelf 6 kHz; k- pulled 25 % toward k+ | four standard / custom pairs agree |
 
-`modelVersion: 2` on `pedal.muff` is a PresetError.
-
-#### The clip table (shared by both circuits)
-
-| `clip` | knees k+ / k- | shape order | character |
-|---|---|---|---|
-| `silicon` | 0.5 / 0.5 | cubic | stock diode pair |
-| `led` | 1.4 / 1.4 | quintic | louder, harder knee |
-| `asymmetric` | 0.5 / 0.3 | cubic | even harmonics |
-| `soft` | 0.3 / 0.3 | cubic | earlier, rounder, quieter |
-
-Cubic: `c(u) = u - u^3/(3k^2)`, saturating at `2k/3`. Quintic: `c(u) = u - u^5/(5k^4)`, saturating at
-`4k/5`, slope `1 - (u/k)^4`.
-
-#### `pedal.ts` parameters
-
-| Param | Range | Default | Meaning |
-|---|---|---|---|
-| `drive` | 0-10 | 5 | feedback-loop gain, `Rd/4.7k` with `Rd = 51k + 500k*drive/10` |
-| `tone` | 0-10 | 5 | 1st-order low-pass, 723 Hz .. 7.23 kHz |
-| `level` | 0-10 | 5 | output level, `3*level - 24` dB |
-
-#### Rules common to the modeled pedals
-
-- Out of range, wrong type, an unknown enum string, an unknown key inside `params` (including
-  another type's key), or a `params` that is not an object, is a PresetError (exit 3). A preset
-  naming a `modelVersion` this build does not know is rejected instead of silently sounding
-  different; a later re-fit that changes the sound bumps it.
-- **Live parameters.** `pedal.hm` and `pedal.muff` can move every parameter while running
-  (`Processor::setLiveParams`, descriptors in `BlockType::liveParams`, `Chain::setBlockLiveParams`;
-  the plugin uses it). Gains ramp over 20 ms; filter coefficients are redesigned once at the next
-  block start (a small step is possible); enums and the clip knees apply immediately. With no live
-  change the render is bit-identical to a static build. `pedal.ts` is not live. Presets themselves
-  stay static.
-- Internals: the nonlinear stages run at 4x oversampling (linear-phase half-band FIRs) with
-  second-order antiderivative anti-aliasing (ADAA2); aliasing is below -80 dB at maximum gain
-  (see the phase 7b report for the table).
-- **Latency: 50 samples at every sample rate** for every mode and clip (oversampler round trip +
-  two ADAA samples, padded to a whole number of base-rate samples; IIR group delay is not counted;
-  the clean-mix dry path is delayed by the same 50). It is reported through the block's
-  `latencySamples()`, so `pathLatency`, `compensationDelay` and the plugin's reported latency
-  include it; a bypassed block adds none. In a preset with a pedal on one path only, the other
-  path is delayed by the same amount.
-- `namTrainable: true` for all three (static, nonlinear, time-invariant).
-- None of the models is a capture of a real unit; a later task fits them to captures and bumps
-  `modelVersion` if the sound changes.
-- Examples that render with files in this repo only: `presets/modeled/hm_chainsaw.json`,
-  `presets/modeled/ts_boost.json` (v1) and the bank `presets/modeled/chainsaw/*.json`:
-  `classic_buzzsaw`, `early_raw_demo`, `dbeat_crust`, `powerviolence_hardcore`, `grind`,
-  `death_n_roll`, `modern_tight_swedish`, `blend_partner`, `custom_wall`, `modded_nasty`,
-  `bass_chainsaw`, `clean_mix_texture` (CHAINSAW) and `pickle_chainsaw`, `pickle_doom_saw`,
   `pickle_into_saw` (BIG FUZZ). See `presets/README.md`.
 
 ### PedalHmx (`type: "pedal.hmx"`) and PedalEye (`type: "pedal.eye"`)
@@ -249,13 +200,14 @@ Cubic: `c(u) = u - u^3/(3k^2)`, saturating at `2k/3`. Quintic: `c(u) = u - u^5/(
 Modeled chainsaw-family pedals (DSP, no capture files, phase 7c). Generic UI names:
 `pedal.hmx` = **"modded chainsaw distortion"** (circuit label MODDED SAW), `pedal.eye` =
 **"one-knob chainsaw"** (circuit label ONE-KNOB SAW). They are not captures of any real unit; the
-voicings are starting hypotheses to be fitted against captures later (`modelVersion`).
+voicings are built on the pedal.hm v3 core (calibrated in phase 7.1, see above) with the deltas
+below, still hypotheses to be fitted further against captures (`modelVersion`).
 
 ```jsonc
 { "id": "a1", "type": "pedal.hmx", "slot": "pedal", "modelVersion": 1,
   "params": { "level": 3, "low": 8, "lowMid": 5, "highMid": 9, "high": 7, "distortion": 9,
               "presence": 8, "tightness": 3, "mix": 80, "clip": "led", "boost": "off",
-              "lowMidFreq": 5, "highMidFreq": 6 } }
+              "lowMidFreq": 5, "highMidFreq": 6, "midVoice": "stock" } }
 { "id": "a1", "type": "pedal.eye", "modelVersion": 1, "params": { "gain": 10, "level": 2, "tightness": 0 } }
 ```
 
@@ -264,38 +216,42 @@ voicings are starting hypotheses to be fitted against captures later (`modelVers
 | `pedal.hmx` | `level` | 0-10 | 5 | output level on the wet path, `3*level - 24` dB |
 | | `low` | 0-10 | 5 | 100 Hz peak, Q 0.8, `-12 + 3*low` dB |
 | | `lowMid` | 0-10 | 5 | low-mid peak gain, Q 1.0, `2*(lowMid - 5)` dB (0 dB at 5) |
-| | `highMid` | 0-10 | 5 | high-mid peak gain, Q 1.2, `-8 + 2.2*highMid` dB |
+| | `highMid` | 0-10 | 5 | high-mid peak gain, Q from `midVoice` (1.2 stock), `-8 + 2.2*highMid` dB |
 | | `high` | 0-10 | 5 | 1.5 kHz peak alone (decoupled from highMid), Q 1.2, `-8 + 2.2*high` dB |
-| | `distortion` | 0-10 | 5 | first-stage gain `6 + 4*distortion` dB (+9 dB with boost); second stage fixed +20 dB |
+| | `distortion` | 0-10 | 5 | first-stage gain `26 + 1.24*distortion` dB (+9 dB with boost; tops out at the stock D 6.2); second stage fixed +20 dB |
 | | `presence` | 0-10 | 5 | high shelf at 3.5 kHz, Q 0.7071, `1.2*(presence - 5)` dB (0 dB at 5); a fixed +8 dB peak at 4.8 kHz stays |
 | | `tightness` | 0-10 | 0 | input 1st-order high-pass at `20 * 10^(tightness/10)` Hz (20 Hz .. 200 Hz) |
 | | `mix` | 0-100 | 100 | wet percent; the dry branch is delayed by the latency; skipped at 100 |
-| | `clip` | `"silicon"` \| `"led"` \| `"asymmetric"` | `"silicon"` | clip knees, see below |
+| | `clip` | `"silicon"` \| `"led"` \| `"asymmetric"` \| `"soft"` | `"silicon"` | clip knees, see below |
 | | `boost` | `"off"` \| `"on"` (a JSON boolean is also read) | `"off"` | +9 dB ahead of the clippers; always written as the string |
 | | `lowMidFreq` | 0-10 | 5 | `200 * 3^(lowMidFreq/10)` Hz (200-600 Hz; 346 Hz at 5) |
-| | `highMidFreq` | 0-10 | 5 | `1000 * 1.6^((highMidFreq-5)/5)` Hz (625 Hz-1.6 kHz; 1 kHz at 5) |
-| `pedal.eye` | `gain` | 0-10 | 5 | first-stage gain `10 + 4.2*gain` dB (10-52 dB) |
+| | `highMidFreq` | 0-10 | 5 | `base * 1.6^((highMidFreq-5)/5)` Hz around the `midVoice` base (stock: 625 Hz-1.6 kHz; 1 kHz at 5) |
+| | `midVoice` | `"stock"` \| `"low"` \| `"high"` | `"stock"` | HIGH-MID base centre and Q: stock 1000 Hz / 1.2, low 750 Hz / 1.4, high 2000 Hz / 1.2 (`HmxVoicing::kMidVoices`); live index 13 (last) |
+| `pedal.eye` | `gain` | 0-10 | 5 | drive `D = 3 + 0.5*gain` (3-8) of the pedal.hm v3 core, i.e. `26 + 2*D` dB = 32-42 dB |
 | | `level` | 0-10 | 5 | output level, `3*level - 24` dB |
 | | `tightness` | 0-10 | 0 | as above |
 
 | `clip` | knee k+ / k- | character |
 |---|---|---|
-| `silicon` | 0.5 / 0.5 | stock silicon pair |
-| `led` | 1.4 / 1.4 | later, louder, more open |
+| `silicon` | 0.5 / 0.5 in the hm v1 / v2 voicings; hmx and the v3 hm use the v3 asymmetric knees (stage 1 0.5 / 0.5, stage 2 0.5 / 2.10) | stock silicon pair |
+| `led` | 1.4 / 1.4, order-2 (quintic) shape | later, louder, more open |
 | `asymmetric` | 0.5 / 0.3 | silicon + germanium-like pair: even harmonics when not saturated, a little DC (a 10 Hz DC block follows) |
+| `soft` | 0.3 / 0.3 | earlier, rounder, quieter |
 
-- `pedal.hmx` at the **stock position** (`highMid = high`, `highMidFreq = 5`, `lowMid = 5`,
-  `presence = 5`, `boost = off`, `mix = 100`, `clip = silicon`, `tightness = 0`) equals
-  `pedal.hm` at the same `low` / `high` / `distortion` / `level` within 0.2 dB (the added bands are
-  0 dB). `pedal.eye` is the HM colour-mix EQ fixed at low = high = 10, a 100 Hz pre-clip high-pass
-  (stock HM: 60 Hz) and +6 dB more gain range; it has no `mix`.
+- `pedal.hmx` = the pedal.hm v3 core plus the decoupled mids, low-mid band, presence shelf, boost,
+  clean blend and four fixed deltas measured against a modded unit: a +3.8 dB broad peak at 110 Hz
+  (Q 0.7), -2.5 dB at 2.2 kHz (Q 1.0), no extra presence, and a gain range that tops out at the
+  stock D 6.2 (`26 + 1.24*distortion` dB). Versus `pedal.hm` v3 at the same knobs it is +3.3 dB at
+  110 Hz and -3.0 dB at 2.2 kHz (both re 400 Hz). `pedal.eye` **is** the v3 hm core at fixed
+  knobs L 6.2 / H 7.1 (an HM-2-family fixed-knob circuit: the phase 7.1 fits of two real units
+  land at D 6.6-7.4); it has no `mix`, no clip choice and silicon clipping.
 - `mix`: `out = (1 - m)*dry + m*levelGain*wet`, `m = mix/100`. The dry signal is delayed by
   exactly the reported latency so both branches align; at `mix = 100` the dry branch is not run.
 - Value rules as PedalHm/PedalTs: out-of-range, wrong type, unknown key, unknown enum value
-  (`clip: "soft"`, `clip: 1`, `boost: "maybe"`) or `modelVersion` other than 1 is a PresetError;
+  (`clip: "soft"`, `clip: 1`, `boost: "maybe"`) `midVoice: "mid"`, or `modelVersion` other than 1 is a PresetError;
   `toJson()` writes every key. Params are static per preset.
 - **Latency: 50 samples at every sample rate** (two ADAA2 stages, as `pedal.hm`), NAM-trainable.
-- Preset folders: `presets/modeled/hmx/` (4) and `presets/modeled/eye/` (3).
+- Preset folders: `presets/modeled/hmx/` (7), `presets/modeled/eye/` (3) and `presets/modeled/hm_v3/` (4, pedal.hm v3).
 
 ### Capture (shared by NAM models and IRs)
 

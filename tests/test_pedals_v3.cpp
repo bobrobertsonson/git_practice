@@ -476,3 +476,48 @@ TEST_CASE("pedal.hm live: the version and the static trims survive setLiveParams
   }
   CHECK(e / s < 1e-6);
 }
+
+// ---- 21. presets/modeled/hm_v3 ---------------------------------------------------------------------------------
+TEST_CASE("presets/modeled/hm_v3 are v3 blocks, render in the safe window, names are generic", "[pedal][v3][presets]") {
+  const char* banned[] = {"entombed", "dismember", "gatecreeper", "nails", "nasum", "bloodbath", "wolfbrigade", "disfear", "trap them",
+                          "rotten sound", "carnage", "nihilist", "lik", "electric wizard", "conan", "boss", "hm-2", "wrath", "torcher",
+                          "eyemaster", "dunwich", "abominable", "swollen", "pickle", "muff"};
+  int count = 0;
+  for (const auto& e : fs::directory_iterator(fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "hm_v3")) {
+    if (e.path().extension() != ".json") continue;
+    ++count;
+    INFO(e.path().string());
+    const Preset p = loadPresetFile(e.path());
+    std::string lname = p.name;
+    std::transform(lname.begin(), lname.end(), lname.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const char* w : banned) CHECK(lname.find(w) == std::string::npos);
+    CHECK(!p.notes.empty());
+    const HmParams& h = hmOf(p);
+    CHECK(h.modelVersion == 3);
+    RenderResult r;
+    REQUIRE_NOTHROW(r = renderFile(e.path(), kFixtures / "di_riff.wav"));
+    double peak = 0.0;
+    for (float s : r.samples) {
+      REQUIRE(std::isfinite(s));
+      peak = std::max(peak, static_cast<double>(std::fabs(s)));
+    }
+    const double db = 20.0 * std::log10(peak);
+    std::printf("[preset] hm_v3/%s: peak %.2f dBFS, latency %d\n", e.path().filename().string().c_str(), db, r.info.latencySamples);
+    CHECK(db >= -6.0);
+    CHECK(db <= -0.5);
+    CHECK(r.info.latencySamples == 50);
+    // the file round-trips
+    CHECK(parsePreset(toJson(p), e.path().parent_path()) == p);
+  }
+  CHECK(count == 4);
+  // the 7b bank is untouched: still 15 presets, all v1 / v2 blocks
+  int bank = 0;
+  for (const auto& e : fs::directory_iterator(fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "chainsaw")) {
+    if (e.path().extension() != ".json") continue;
+    ++bank;
+    const Preset p = loadPresetFile(e.path());
+    for (const Block& b : p.a.blocks)
+      if (b.type == "pedal.hm") CHECK(static_cast<const HmBlockParams&>(*b.params).p.modelVersion == 2);
+  }
+  CHECK(bank == 15);
+}

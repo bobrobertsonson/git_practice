@@ -1,0 +1,56 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Gothenburg Half-Mids",
+  "notes": "Melodic-death saw: half the high-mids (900 Hz centre, wider spread), custom-mode gain, presence trimmed to 6 dB. Calibrated voicing (pedal.hm modelVersion 3, fitted to real captures in phase 7.1). Modeled pedal, no capture; the cab slot is the repo identity IR. Starting hypothesis, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 3,
+          "params": {
+            "level": 2.74,
+            "low": 8,
+            "high": 5,
+            "distortion": 8,
+            "tightness": 0,
+            "mix": 100,
+            "mode": "custom",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 0.8,
+            "highFreq": 900,
+            "highSpread": 1.4,
+            "presenceFreq": 4800,
+            "presenceDb": 6,
+            "rolloffHz": 16000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0,
+            "customLowDb": 3.2,
+            "customHighDb": 3.0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  }
+}

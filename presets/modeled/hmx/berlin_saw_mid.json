@@ -1,8 +1,8 @@
 {
   "schema": "sawblade.preset",
   "version": 1,
-  "name": "Arizona Mids",
-  "notes": "Modern desert death metal: high-mids pushed, presence up, LED clip, 20 % clean blend (Gatecreeper-style); into a high-gain amp, TONE3000 88689. Starting hypothesis, fitted against captures later. Modeled pedal, no capture; the cab slot is the repo identity IR.",
+  "name": "Berlin Saw Mid",
+  "notes": "Modded chainsaw with the stock high-mid voicing (1 kHz centre): the same knobs as Berlin Saw Low and High for an A/B/C of the VOICE switch. Same knobs as the other two Berlin Saw presets; only midVoice differs. Modeled pedal, no capture; the cab slot is the repo identity IR.",
   "paths": {
     "a": {
       "role": "saw",
@@ -13,19 +13,20 @@
           "slot": "pedal",
           "modelVersion": 1,
           "params": {
-            "level": 0.91,
-            "low": 8,
+            "level": 1.38,
+            "low": 7,
             "lowMid": 5,
             "highMid": 9,
             "high": 7,
-            "distortion": 9,
-            "presence": 8,
+            "distortion": 8,
+            "presence": 5,
             "tightness": 3,
-            "mix": 80,
-            "clip": "led",
+            "mix": 100,
+            "clip": "silicon",
             "boost": "off",
             "lowMidFreq": 5,
-            "highMidFreq": 6
+            "highMidFreq": 5,
+            "midVoice": "stock"
           }
         }
       ]

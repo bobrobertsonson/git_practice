@@ -14,7 +14,7 @@
           "modelVersion": 1,
           "params": {
             "gain": 10,
-            "level": 2,
+            "level": 2.35,
             "tightness": 0
           }
         }

@@ -13,7 +13,7 @@
           "slot": "pedal",
           "modelVersion": 1,
           "params": {
-            "level": 6,
+            "level": 3.03,
             "low": 7,
             "lowMid": 6,
             "highMid": 7,

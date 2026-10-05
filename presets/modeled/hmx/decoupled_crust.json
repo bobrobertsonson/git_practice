@@ -13,7 +13,7 @@
           "slot": "pedal",
           "modelVersion": 1,
           "params": {
-            "level": 1,
+            "level": 0.0,
             "low": 5,
             "lowMid": 4,
             "highMid": 10,
@@ -44,5 +44,8 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "gainDb": -4.0
   }
 }

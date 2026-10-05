@@ -827,7 +827,7 @@ TEST_CASE("presets/modeled/hmx and eye render the fixture DI with a safe peak", 
   const char* banned[] = {"entombed", "dismember", "gatecreeper", "nails", "nasum", "bloodbath", "wolfbrigade", "disfear", "trap them",
                           "rotten sound", "carnage", "nihilist", "lik", "electric wizard", "conan", "boss", "hm-2", "wrath", "torcher",
                           "eyemaster", "dunwich", "abominable", "swollen", "pickle", "muff"};
-  for (auto [dir, expected] : {std::pair{"hmx", 4}, std::pair{"eye", 3}}) {
+  for (auto [dir, expected] : {std::pair{"hmx", 7}, std::pair{"eye", 3}}) {
     int count = 0;
     for (const auto& e : fs::directory_iterator(fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / dir)) {
       if (e.path().extension() != ".json") continue;
