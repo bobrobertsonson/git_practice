@@ -156,8 +156,9 @@ step "5/6 separation model"
 MODELS=match/.venv/bin/sawblade-models
 MODELS_PIP=match/.venv/bin/pip
 install_models() {
-  run "$MODELS_PIP" install -e 'match[models]' -c match/constraints-separation.txt
-  run "$MODELS" fetch --model htdemucs_6s
+  # Chained with && (set -e is off inside a function called from `||`): no fetch after a failed pip install.
+  run "$MODELS_PIP" install -e 'match[models]' -c match/constraints-separation.txt &&
+    run "$MODELS" fetch --model htdemucs_6s
 }
 if [[ $NO_MODELS -eq 1 ]]; then
   say "Skipped (--no-models)."
