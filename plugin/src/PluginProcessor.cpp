@@ -212,10 +212,18 @@ void SawbladeProcessor::ladderTick() {
   for (const LadderFetchResult& r : done) {
     if (r.rungs.empty()) continue;
     Preset p = editBasePreset();
-    if (applyLadderToPreset(p, r.toneId, r.rungs)) loadPreset(std::move(p), /*keepMonitor=*/true);
+    if (applyLadderToPreset(p, r.toneId, r.rungs)) {
+      loadPreset(std::move(p), /*keepMonitor=*/true);
+    } else if (const auto need = toneIdsNeedingLadder(p); std::find(need.begin(), need.end(), r.toneId) != need.end()) {
+      // The ladder has the tone's `standard`-size models; a capture of another size is not one of them (the preset does not
+      // record the size), so it gets no ladder: GAIN stays drive-only. Say so.
+      std::lock_guard<std::mutex> lk(fetchMutex_);
+      ladderNotes_.push_back("tone " + r.toneId + ": the amp capture's model is not in the " + kLadderSize +
+                             "-size gain ladder (another model size?); GAIN stays drive-only");
+    }
   }
   // 2. The next ladder to fetch (one run at a time, once per tone per session).
-  if (ladderFetch_.load() && !fetchRunning_.load() && !ladderTool_.running()) {
+  if (ladderFetch_.load() && !networkToolsDisabled() && !fetchRunning_.load() && !ladderTool_.running()) {
     for (const std::string& id : toneIdsNeedingLadder(editBasePreset())) {
       if (!ladderTried_.insert(id).second) continue;
       std::error_code ec;
@@ -269,7 +277,7 @@ void SawbladeProcessor::ladderTick() {
 // same tool the resolve flow uses), one at a time, nearest the sounding rung first, once per rung per session. Only if the
 // tool is configured and exists; never on the audio thread. The rung loader picks the file up when it arrives.
 void SawbladeProcessor::fetchMissingRung(const Engine& e) {
-  if (!ladderFetch_.load() || fetchRunning_.load() || ladderTool_.running()) return;
+  if (!ladderFetch_.load() || networkToolsDisabled() || fetchRunning_.load() || ladderTool_.running()) return;
   std::error_code ec;
   if (!std::filesystem::exists(settings::t3kExecutable(), ec)) return;
   for (int k = 0; k < 2; ++k) {
@@ -301,6 +309,24 @@ void SawbladeProcessor::fetchMissingRung(const Engine& e) {
       return;
     }
   }
+}
+
+std::vector<std::string> SawbladeProcessor::ladderMessages() const {
+  std::vector<std::string> v;
+  {
+    std::lock_guard<std::mutex> lk(fetchMutex_);
+    v = ladderNotes_;
+  }
+  std::shared_ptr<Engine> e;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    e = published_.lock();
+  }
+  if (e) {
+    const auto m = e->ladderMessages();
+    v.insert(v.end(), m.begin(), m.end());
+  }
+  return v;
 }
 
 bool SawbladeProcessor::waitForLadderWork(std::chrono::milliseconds timeout) {

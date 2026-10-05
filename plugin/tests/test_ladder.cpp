@@ -8,6 +8,7 @@
 
 #include "Engine.h"
 #include "LadderFetch.h"
+#include "rig/RigController.h"
 #include "PluginProcessor.h"
 #include "alloc_guard.h"
 #include "latency_stub.h"
@@ -86,6 +87,9 @@ ParamValues defaults() {
 }
 
 }  // namespace
+
+// The fake-tool tests run the tool for real: SAWBLADE_NO_NETWORK (set for every test by CMake and by the harness) is off in them.
+#define ALLOW_FAKE_TOOL EnvGuard allowNetwork("SAWBLADE_NO_NETWORK", "0")
 
 TEST_CASE("Ladder fetch: the tool's JSON is parsed strictly", "[ladder][plugin]") {
   auto r = parseLadderOutput(kLadderDoc);
@@ -300,6 +304,7 @@ TEST_CASE("Ladder processor: GAIN moves the rung, the preset records gainStep, s
 }
 
 TEST_CASE("Ladder processor: a ladder fetched through sawblade-t3k is stored, the knob placed, one rebuild", "[ladder][plugin][processor]") {
+  ALLOW_FAKE_TOOL;
   const LadderCache cache;
   cache.put("m2", "linear_05_025.nam");
   cache.put("m3", "linear_identity.nam");
@@ -342,6 +347,7 @@ TEST_CASE("Ladder processor: a ladder fetched through sawblade-t3k is stored, th
 }
 
 TEST_CASE("Ladder processor: no ladder when the tool says none, fails, or is missing", "[ladder][plugin][processor]") {
+  ALLOW_FAKE_TOOL;
   const LadderCache cache;
   TempDir t;
   const auto tryTool = [&](const std::string& body, bool exists) {
@@ -372,6 +378,7 @@ TEST_CASE("Ladder processor: no ladder when the tool says none, fails, or is mis
 }
 
 TEST_CASE("Ladder processor: missing rung models are fetched one at a time through sawblade-t3k fetch, then picked up", "[ladder][plugin][processor]") {
+  ALLOW_FAKE_TOOL;
   const LadderCache cache;  // empty: the own model m1 is the preset's file, m2 and m3 are missing
   TempDir t;
   const fs::path log = t.dir / "calls.log";
@@ -419,6 +426,7 @@ TEST_CASE("Ladder processor: missing rung models are fetched one at a time throu
 }
 
 TEST_CASE("Ladder processor: no rung is fetched when ladder fetching is off or no tool exists", "[ladder][plugin][processor]") {
+  ALLOW_FAKE_TOOL;
   const LadderCache cache;
   TempDir t;
   EnvGuard settings("SAWBLADE_SETTINGS_FILE", (t.dir / "none.json").string());  // default executable: not present in a test run
@@ -434,4 +442,74 @@ TEST_CASE("Ladder processor: no rung is fetched when ladder fetching is off or n
   h.p.setLadderFetchEnabled(false);
   h.p.ladderTick();
   CHECK(h.p.rungFetches() == 0);
+}
+
+TEST_CASE("Network opt-out: SAWBLADE_NO_NETWORK blocks the ladder fetch, the rung fetch and the body-path tool runs", "[ladder][plugin][processor][nonetwork]") {
+  const LadderCache cache;
+  TempDir t;
+  const fs::path log = t.dir / "calls.log";
+  const fs::path exe = t.dir / "fake-t3k";
+  std::ofstream(exe) << "#!/bin/sh\necho \"$@\" >> '" << log.string() << "'\necho '{}'\n";
+  fs::permissions(exe, fs::perms::owner_all);
+  std::ofstream(t.dir / "settings.json") << json{{"t3kExecutable", exe.string()}}.dump();
+  EnvGuard settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
+  const auto nCalls = [&] {
+    std::ifstream in(log);
+    int n = 0;
+    for (std::string l; std::getline(in, l);) ++n;
+    return n;
+  };
+  {
+    EnvGuard off("SAWBLADE_NO_NETWORK", "1");
+    CHECK(networkToolsDisabled());
+    // 1. ladder fetch: a tone3000 amp capture without a ladder.
+    Host h(48000.0, 512);
+    h.load(writePreset(t.dir, "nolad", ladderPreset("m3", false)));
+    h.p.ladderTick();
+    CHECK(h.p.waitForLadderWork());
+    CHECK(h.p.ladderFetches() == 0);
+    // 2. rung fetch: a ladder whose rungs m2 / m3 are not cached.
+    Host h2(48000.0, 512);
+    h2.load(writePreset(t.dir, "lad", ladderPreset("m1", true)));
+    for (int i = 0; i < 3; ++i) h2.p.ladderTick();
+    CHECK(h2.p.waitForLadderWork());
+    CHECK(h2.p.rungFetches() == 0);
+    // 3. BLEND body path: no suggest-body, no fallback fetch.
+    rig::RigController ctl(h2.p);
+    ctl.bodyFill().begin(h2.p.currentPreset());
+    CHECK(ctl.bodyFill().toolRuns() == 0);
+    CHECK_FALSE(ctl.bodyFill().active());
+    CHECK(nCalls() == 0);
+  }
+  {  // The opt-out off: the same tool is started (the check above is not vacuous).
+    EnvGuard on("SAWBLADE_NO_NETWORK", "0");
+    CHECK_FALSE(networkToolsDisabled());
+    Host h(48000.0, 512);
+    h.load(writePreset(t.dir, "nolad2", ladderPreset("m3", false)));
+    h.p.ladderTick();
+    REQUIRE(h.p.waitForLadderWork());
+    CHECK(h.p.ladderFetches() == 1);
+    CHECK(nCalls() >= 1);
+  }
+}
+
+TEST_CASE("Ladder processor: an own model that is not in the fetched ladder is reported", "[ladder][plugin][processor]") {
+  ALLOW_FAKE_TOOL;
+  const LadderCache cache;
+  TempDir t;
+  const fs::path exe = t.dir / "fake-t3k";
+  std::ofstream(exe) << "#!/bin/sh\necho '" << kLadderDoc << "'\n";
+  fs::permissions(exe, fs::perms::owner_all);
+  std::ofstream(t.dir / "settings.json") << json{{"t3kExecutable", exe.string()}}.dump();
+  EnvGuard settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
+  Host h(48000.0, 512);
+  h.load(writePreset(t.dir, "other", ladderPreset("other-size-model", false)));  // not m1 / m2 / m3
+  h.p.ladderTick();
+  REQUIRE(h.p.waitForLadderWork());
+  h.p.ladderTick();
+  CHECK_FALSE(h.p.ladderInfo(0).has);
+  const auto msgs = h.p.ladderMessages();
+  REQUIRE(msgs.size() == 1);
+  CHECK(msgs[0].find("T1") != std::string::npos);
+  CHECK(msgs[0].find("standard") != std::string::npos);
 }

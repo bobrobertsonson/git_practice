@@ -91,14 +91,16 @@ bool applyLadderToPreset(Preset& p, const std::string& toneId, const std::vector
   for (PathPreset* path : {&p.a, &p.b}) {
     const NamBlockParams* nam = ampNam(*path);
     if (!nam || !nam->model.ladder.empty() || !nam->model.source) continue;
-    const CaptureSource& s = *nam->model.source;
-    if (s.provider != "tone3000" || s.id != toneId || rungIndexOfModel(rungs, s.modelId) < 0) continue;
+    // Copied out: `nam` (and the source inside it) is freed when the block's params are replaced below.
+    const std::string provider = nam->model.source->provider, id = nam->model.source->id, modelId = nam->model.source->modelId;
+    const int own = rungIndexOfModel(rungs, modelId);
+    if (provider != "tone3000" || id != toneId || own < 0) continue;
     auto copy = std::make_shared<NamBlockParams>(*nam);
     copy->model.ladder = rungs;
     path->blocks[static_cast<std::size_t>(ampIndex(*path))].params = copy;
     if (path->ampControls.gainStep.empty() && path->ampControls.gain == kAmpKnobDefault) {
       const auto pos = ladderPositions(rungs);
-      path->ampControls.gain = snapParam(pos[static_cast<std::size_t>(rungIndexOfModel(rungs, s.modelId))]);
+      path->ampControls.gain = snapParam(pos[static_cast<std::size_t>(own)]);
     }
     changed = true;
   }

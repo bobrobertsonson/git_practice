@@ -90,7 +90,8 @@ class LadderBlock : public Processor {
   // returns whether everything staged has been handed over. Rungs < 64 only.
   bool publishRungs(std::vector<Entry> entries);
   bool flushRungs();  // retry handing over what is still staged
-  // Rungs whose models are loaded or staged for hand-over (the producer's view), as a bit mask.
+  // Rungs whose models are loaded, staged, or in a batch the audio thread has not taken yet (the producer's view). A model the
+  // audio thread dropped (rejected for its latency, or evicted) is not in it.
   std::uint64_t knownMask() const;
 
  private:
@@ -121,7 +122,7 @@ class LadderBlock : public Processor {
   std::mutex producerMutex_;
   std::vector<Entry> staged_;
   std::uint64_t publishedSeq_ = 0;
-  std::uint64_t knownMask_ = 0;
+  std::uint64_t inflightMask_ = 0;  // rungs (with models) in the batch the audio thread has not taken yet
 };
 
 }  // namespace sawblade

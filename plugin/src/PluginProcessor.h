@@ -202,6 +202,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void setLadderFetchEnabled(bool on) noexcept { ladderFetch_.store(on); }
   // Blocks until no ladder fetch is running and the rung loader is idle (tests); a fetched result still waits for ladderTick().
   bool waitForLadderWork(std::chrono::milliseconds timeout = std::chrono::milliseconds(20000));
+  // Why a ladder is not in use (rejected rungs, an own model that is not in the fetched ladder, ...): any non-audio thread.
+  std::vector<std::string> ladderMessages() const;
   std::uint64_t ladderFetches() const noexcept { return ladderFetches_.load(); }  // `ladder` tool runs started
   std::uint64_t rungFetches() const noexcept { return rungFetches_.load(); }      // `fetch` runs started for missing rung models
 
@@ -251,7 +253,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::atomic<bool> rungArrived_{false};  // a rung `fetch` finished: ask the rung loader at once
   std::set<std::string> rungTried_;       // "tone:model" already fetched (or failed) this session (message thread only)
   std::set<std::string> ladderTried_;  // tone ids already asked about (message thread only)
-  std::mutex fetchMutex_;
+  mutable std::mutex fetchMutex_;
+  std::vector<std::string> ladderNotes_;  // fetchMutex_
   std::vector<LadderFetchResult> fetched_;  // results waiting for the message thread
   std::atomic<bool> fetchRunning_{false};
   std::uint64_t lastRungKey_ = ~0ull;  // message thread: what the rung loader was last asked for

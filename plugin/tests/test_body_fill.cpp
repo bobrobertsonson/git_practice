@@ -34,6 +34,11 @@ struct BfEnv {
   }
 };
 
+// Every test here runs a fake tool for real: the opt-out SAWBLADE_NO_NETWORK (set for all tests) is off for them.
+struct AllowTool {
+  BfEnv env{"SAWBLADE_NO_NETWORK", "0"};
+};
+
 struct BfCache {
   fs::path dir;
   BfCache() {
@@ -252,6 +257,7 @@ TEST_CASE("Body fill: a path B that already has blocks is left untouched", "[bod
 }
 
 TEST_CASE("Body fill: the pool's suggestion replaces the fallback amp, coalesced into the same undo step", "[bodyfill][rig]") {
+  const AllowTool allowTool;
   const BfCache cache;
   cache.put("88689", "5001");
   cache.put("T9", "m5");
@@ -289,6 +295,7 @@ TEST_CASE("Body fill: the pool's suggestion replaces the fallback amp, coalesced
 }
 
 TEST_CASE("Body fill: a suggestion that is not cached is fetched; a failing fetch falls back", "[bodyfill][rig]") {
+  const AllowTool allowTool;
   const BfCache cache;
   TempDir t;
   const FakeTool tool(t.dir, R"({"tone_id":"T9","model_id":"m5","title":"Diezel X","cached":false})");
@@ -313,6 +320,7 @@ TEST_CASE("Body fill: a suggestion that is not cached is fetched; a failing fetc
 }
 
 TEST_CASE("Body fill: no suggestion (null) or a tool error: the fallback amp is fetched", "[bodyfill][rig]") {
+  const AllowTool allowTool;
   for (const char* answer : {"null", "garbage"}) {
     CAPTURE(answer);
     const BfCache cache;
@@ -340,6 +348,7 @@ TEST_CASE("Body fill: no suggestion (null) or a tool error: the fallback amp is 
 }
 
 TEST_CASE("Body fill: a suggestion is dropped if path B was edited meanwhile, or the fill undone", "[bodyfill][rig]") {
+  const AllowTool allowTool;
   const BfCache cache;
   cache.put("88689", "5001");
   cache.put("T9", "m5");

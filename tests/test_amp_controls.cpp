@@ -545,13 +545,11 @@ TEST_CASE("Amp controls schema: every committed preset reads at neutral defaults
 }
 
 TEST_CASE("Amp controls: every committed preset is parse-equivalent with explicit default ampControls and renders through the new chain at defaults", "[amp][preset][neutral][render]") {
-  // What this proves, and what it does not. Every JSON under presets/, its NAM captures swapped for the linear_identity
-  // fixture and its IRs for a fixture IR (the real captures are not in the repo), is parsed as committed and with `ampControls`
-  // spelled out at the defaults on both paths: the two presets must be equal (parse-equivalence), and both render through the
-  // new chain at the defaults to the same samples. Because the presets are equal that second comparison is a determinism check
-  // of the new chain, not a comparison against a build without the feature. The bit-identity against the pre-v0.2 renderer was
-  // the ad-hoc check recorded in the Task A report: all 77 renders (32 as committed + 45 with stand-in captures) of a
-  // pre-v0.2 tonerender compared byte for byte with this build.
+  // What this proves: every JSON under presets/, its NAM captures swapped for the linear_identity fixture and its IRs for a fixture
+  // IR (the real captures are not in the repo), parses to the same preset as the one with `ampControls` spelled out at the defaults
+  // on both paths (p0 == p1), and both render through the new chain at the defaults to identical samples. Bit-identity against a
+  // pre-v0.2 build is NOT tested here: it rests on the structural argument (a neutral stage is skipped entirely, no filter runs),
+  // which tests/test_amp_controls.cpp checks on the stage itself.
   const fs::path fx = fs::path(SAWBLADE_FIXTURES_DIR);
   AudioFile in;
   in.sampleRate = kFs;

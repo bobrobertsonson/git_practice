@@ -38,7 +38,10 @@ namespace {
 class JuceLifetime : public Catch::EventListenerBase {
  public:
   using Catch::EventListenerBase::EventListenerBase;
-  void testRunStarting(const Catch::TestRunInfo&) override { init_ = std::make_unique<juce::ScopedJuceInitialiser_GUI>(); }
+  void testRunStarting(const Catch::TestRunInfo&) override {
+    ::setenv("SAWBLADE_NO_NETWORK", "1", /*overwrite=*/0);  // no real sawblade-t3k from the plugin under test (CMake sets it too)
+    init_ = std::make_unique<juce::ScopedJuceInitialiser_GUI>();
+  }
   void testRunEnded(const Catch::TestRunStats&) override { init_.reset(); }
 
  private:

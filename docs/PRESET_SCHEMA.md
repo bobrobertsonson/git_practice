@@ -115,8 +115,8 @@ no such block has no amp controls: the object is accepted and stored but has no 
   not enforced per field), so a hand-edited v1 file that carries it loads as written.
 - Every field is optional and defaults to 5; a value outside [0, 10] or not a number is a `PresetError` naming
   the field (e.g. `paths.a.ampControls.treble`); unknown keys are rejected. `gainStep` must be a non-empty
-  string; in v0.2 Task A it is parsed, validated and round-tripped only (it has no effect until the gain-ladder
-  work); the plugin keeps it as preset state, not as a host parameter.
+  string naming a rung of the amp block's gain ladder (see "Gain ladder" below: it selects the rung, and has no effect on a
+  block without a ladder); the plugin keeps it as preset state, not as a host parameter.
 - **Exact neutral:** while every knob of a path is 5 (and no change is ramping) the stage is skipped entirely, no
   filter runs, so a preset without `ampControls` renders bit-identically to a v1 build.
 - Smoothing: live changes ramp over 20 ms (`gain` and `level` per sample in dB; the tone filters on an absolute

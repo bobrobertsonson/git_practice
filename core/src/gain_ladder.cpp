@@ -101,7 +101,6 @@ LadderBlock::LadderBlock(int rungCount, int activeRung, std::unique_ptr<Processo
   latency_ = active->latencySamples();
   slots_[static_cast<std::size_t>(activeRung)] = std::move(active);
   loaded_.store(1ull << activeRung);
-  knownMask_ = 1ull << activeRung;
 }
 
 LadderBlock::~LadderBlock() = default;
@@ -222,8 +221,6 @@ bool LadderBlock::publishRungs(std::vector<Entry> entries) {
   for (Entry& e : entries) {
     if (e.rung < 0 || e.rung >= rungCount_) continue;
     staged_.erase(std::remove_if(staged_.begin(), staged_.end(), [&](const Entry& s) { return s.rung == e.rung; }), staged_.end());
-    if (e.proc) knownMask_ |= 1ull << e.rung;
-    else knownMask_ &= ~(1ull << e.rung);
     staged_.push_back(std::move(e));
   }
   slot_.collectGarbage();
@@ -231,6 +228,9 @@ bool LadderBlock::publishRungs(std::vector<Entry> entries) {
   if (consumedSeq_.load(std::memory_order_acquire) != publishedSeq_) return false;  // the audio thread has not taken the last batch
   auto b = std::make_unique<Batch>();
   b->seq = ++publishedSeq_;
+  inflightMask_ = 0;
+  for (const Entry& e : staged_)
+    if (e.proc) inflightMask_ |= 1ull << e.rung;
   b->entries = std::move(staged_);
   staged_.clear();
   slot_.publish(std::move(b));
@@ -242,7 +242,11 @@ bool LadderBlock::flushRungs() { return publishRungs({}); }
 std::uint64_t LadderBlock::knownMask() const {
   auto* self = const_cast<LadderBlock*>(this);
   std::lock_guard<std::mutex> lk(self->producerMutex_);
-  return knownMask_ | loaded_.load(std::memory_order_acquire);
+  std::uint64_t m = loaded_.load(std::memory_order_acquire);
+  if (consumedSeq_.load(std::memory_order_acquire) != publishedSeq_) m |= inflightMask_;
+  for (const Entry& e : staged_)
+    if (e.proc) m |= 1ull << e.rung;
+  return m;
 }
 
 }  // namespace sawblade

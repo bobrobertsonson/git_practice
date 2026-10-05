@@ -9,7 +9,9 @@
 #include <fstream>
 #include <memory>
 #include <numbers>
+#include <atomic>
 #include <random>
+#include <thread>
 #include <vector>
 
 #include "alloc_guard.h"
@@ -449,6 +451,7 @@ TEST_CASE("Ladder: latency never changes across swaps; a rung with another laten
   const LadderState st = c->ladderState(0);
   CHECK((st.rejectedMask & 0b100) != 0);
   CHECK((st.loadedMask & 0b100) == 0);
+  CHECK((c->ladderBlock(0)->knownMask() & 0b100) == 0);  // the producer no longer counts a model the audio thread dropped
   CHECK(st.committed != 2);
   CHECK(c->info().latencySamples == lat);
   CHECK(c->info().pathLatency[0] == c->info().pathLatency[1]);
@@ -496,10 +499,57 @@ TEST_CASE("Ladder: rungs staged while the audio thread has not taken the previou
   CHECK(c->ladderBlock(0)->publishRungs(std::move(ev)));
   c->process(x.data(), y.data(), 512);
   CHECK(c->ladderState(0).loadedMask == 0b011);
-  // The sounding rung is never evicted.
+  CHECK((c->ladderBlock(0)->knownMask() & 0b100) == 0);
+  // The sounding rung is never evicted, and the producer still sees it as known.
   std::vector<LadderBlock::Entry> ev2;
   ev2.push_back({0, nullptr});
   c->ladderBlock(0)->publishRungs(std::move(ev2));
   c->process(x.data(), y.data(), 512);
   CHECK(c->ladderState(0).loadedMask == 0b011);
+  CHECK((c->ladderBlock(0)->knownMask() & 0b001) != 0);
+}
+
+TEST_CASE("Ladder: hand-overs, flushes of a staged batch and evictions racing the audio thread allocate nothing there", "[ladder][rt]") {
+  const CacheDir cache;
+  cache.put("m2", "linear_05_025.nam");
+  cache.put("m3", "linear_identity.nam");
+  const Preset p = parsePreset(mk(true), kPresets);
+  const auto& nam = static_cast<const NamBlockParams&>(*p.a.blocks[0].params);
+  auto c = build(mk(true));
+  publishAll(*c, p, {1, 2});
+  LadderBlock* lb = c->ladderBlock(0);
+  std::atomic<bool> stop{false};
+  std::atomic<int> handOvers{0};
+  // The producer: evicts and re-publishes rungs 1 and 2 continuously (some batches are staged behind an untaken one and flushed
+  // later). Its own allocations are not counted: the guard is per thread.
+  std::thread producer([&] {
+    int i = 0;
+    while (!stop.load()) {
+      std::vector<LadderBlock::Entry> es;
+      const int r = 1 + (i % 2);
+      if ((i / 2) % 2 == 0) es.push_back({r, nullptr});  // eviction
+      else es.push_back({r, buildRungProcessor(nam, r, {kFs, 512}, nullptr)});
+      lb->publishRungs(std::move(es));
+      lb->flushRungs();
+      ++i;
+      handOvers.store(i);
+      std::this_thread::sleep_for(std::chrono::microseconds(300));
+    }
+  });
+  const auto x = noise(512, 2);
+  std::vector<float> y(512);
+  LiveParams lp = c->liveParams();
+  {
+    AllocGuard g;
+    for (int i = 0; i < 3000; ++i) {
+      lp.amp[0].gain = 5.0 + 5.0 * std::sin(i * 0.02);
+      c->setLiveParams(lp);
+      c->process(x.data(), y.data(), 1 + (i * 37) % 512);
+    }
+    CHECK(g.count() == 0);
+  }
+  stop.store(true);
+  producer.join();
+  CHECK(handOvers.load() > 20);
+  for (float v : y) REQUIRE(std::isfinite(v));
 }

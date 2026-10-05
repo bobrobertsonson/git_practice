@@ -75,13 +75,17 @@ void BodyFill::begin(const Preset& applied) {
   if (a >= 0)
     if (const auto* nam = dynamic_cast<const NamBlockParams*>(applied.a.blocks[static_cast<std::size_t>(a)].params.get())) aTitle_ = captureTitle(nam->model);
   std::error_code ec;
-  if (!fs::exists(settings::t3kExecutable(), ec)) return;  // no tool: the immediate fill is all there is
+  if (networkToolsDisabled() || !fs::exists(settings::t3kExecutable(), ec)) return;  // no tool: the immediate fill is all there is
   start(Step::Suggest, {"suggest-body", "--a-title", aTitle_, "--cache-dir", captureCacheRoot().string(), "--json"});
 }
 
 void BodyFill::start(Step s, std::vector<std::string> args) {
   // The previous run has finished (its completion is what led here), but T3kTool joins its thread lazily: retry briefly.
   for (int i = 0; i < 500 && tool_.running(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  if (networkToolsDisabled()) {
+    step_ = Step::Idle;
+    return;
+  }
   step_ = s;
   const std::uint64_t run = ++run_;
   ++runs_;
