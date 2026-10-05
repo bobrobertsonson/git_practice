@@ -45,6 +45,11 @@ from . import stop as STOP
 # of them is descheduled, so wait passively.  Effective only if torch has not been imported yet (the CLI guarantees that).
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 
+class _Cancel(BaseException):
+    """Raised from the batch hook on SIGINT: Lightning tears down and re-raises it, with no validation pass and no
+    epoch-end hooks (a ``should_stop`` would still run both)."""
+
+
 NAM_PIN = "0.13.0"
 RATE = 48000
 NY = 8192
@@ -165,8 +170,9 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
     atomically.  ``resume=True`` continues from ``last.ckpt``; ``cfg.max_minutes`` counts the elapsed training time of
     all sessions.
 
-    Cancel: when ``stop.stop_requested()`` (SIGINT) the trainer stops at the end of the current batch; the partial epoch
-    writes no checkpoint (``progress.json`` only gets ``"interrupted": true``), nothing is exported and the result has
+    Cancel: when ``stop.stop_requested()`` (SIGINT) the batch hook raises ``_Cancel``, which aborts ``fit`` at the end of
+    the current batch without a validation pass or epoch-end hooks; the partial epoch writes no checkpoint
+    (``progress.json`` only gets ``"interrupted": true``), nothing is exported and the result has
     ``stopped_by == "interrupt"`` and ``nam_path None``.  ``progress`` (optional) receives the train-stage updates.
     """
     cfg = cfg.resolved()
@@ -264,14 +270,17 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
         def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
             if STOP.stop_requested():
                 self.interrupted = True
-                trainer.should_stop = True
-                return
+                raise _Cancel()
             if self.elapsed() >= cap_s:
                 trainer.should_stop = True
             self._report(trainer, (batch_idx + 1) / max(trainer.num_training_batches, 1), force=False)
 
+        def on_validation_batch_end(self, trainer, module, outputs, batch, batch_idx, dataloader_idx=0):
+            if not trainer.sanity_checking:
+                self._report(trainer, 0.0, force=False)          # heartbeat (throttled to 1 Hz by Progress)
+
         def on_exception(self, trainer, module, exception):
-            if isinstance(exception, KeyboardInterrupt):
+            if isinstance(exception, (KeyboardInterrupt, _Cancel)):
                 self.interrupted = True
 
         def on_validation_end(self, trainer, module):
@@ -338,7 +347,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
         else:
             try:
                 trainer.fit(model, dl_train, dl_val, ckpt_path=str(resume_from) if resume_from else None)
-            except (KeyboardInterrupt, SystemExit):
+            except (_Cancel, KeyboardInterrupt, SystemExit):
                 # Lightning turns a KeyboardInterrupt into exit(1); our SIGINT handler normally prevents it, but a
                 # second SIGINT reaches here.  Anything else (a real SystemExit) propagates.
                 if not (run.interrupted or STOP.stop_requested()):

@@ -474,6 +474,7 @@ class _FakeTrain:
     def __init__(self):
         self.calls = []
         self.interrupt = False
+        self.late_stop = False
 
     def __call__(self, x, y, v, yv, cfg, outdir, scratch, user_metadata=None, other_metadata=None, log=print,
                  basename="model", ckpt_dir=None, resume=False, identity=None, progress=None):
@@ -501,6 +502,8 @@ class _FakeTrain:
         p.write_text(json.dumps({"architecture": "WaveNet", "weights": [0.0],
                                  "metadata": {"sawblade": dict(other_metadata["sawblade"])}}))
         from sawblade_match.export.train import TrainResult
+        if self.late_stop:                       # SIGINT the trainer never consumed (e.g. during its final epoch)
+            STOP.request_stop()
         return TrainResult(nam_path=p, epochs_done=2, best_epoch=2, best_val_esr=0.5, wall_s=1.0, stopped_by="max_epochs",
                            params=1, receptive_field=1, history=[], config={})
 
@@ -929,3 +932,23 @@ def test_missing_default_di_falls_back_to_builtin_with_log_line(mx, monkeypatch)
                             out=str(mx.tmp / "o"))
     assert rep["validation"]["diExcerpt"]["excerpt"]["file"] == "builtin"
     assert "DI excerpt: default test DI not found, using the built-in signal" in msgs
+
+
+def test_late_sigint_after_training_cancels_before_validation_and_report(mx, monkeypatch, capsys):
+    seen = _fake_validation(mx, monkeypatch)
+    mx.fake.late_stop = True
+    pj = mx.tmp / "progress.json"
+    out = mx.tmp / "late"
+    rc = _cli(mx, "--out", str(out), "--di", "builtin", "--progress-json", str(pj))
+    assert rc == 130 and seen == {}
+    assert not (out / "export_report.json").exists()
+    d = json.loads(pj.read_text())
+    assert d["stage"] == "cancelled" and d["resumable"] is True
+
+
+def test_validate_stage_resets_eta(tmp_path):
+    from sawblade_match.export import progress as PG
+    p = PG.Progress(tmp_path / "p.json")
+    p.update("train", 0.3, eta=99, force=True)
+    p.update("validate")
+    assert json.loads((tmp_path / "p.json").read_text())["etaSeconds"] == -1
