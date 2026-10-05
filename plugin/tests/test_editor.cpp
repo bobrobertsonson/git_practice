@@ -1080,6 +1080,48 @@ TEST_CASE("rig editor: topology and cab buttons change the preset through the lo
   CHECK(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE: the no-cab NAM export is exact"));
 }
 
+namespace {
+juce::String modeChipText(juce::Component& root) {
+  for (auto* l : all<juce::Label>(root))
+    if (l->getTitle() == "Blend mode") return l->getText();
+  return "(no chip)";
+}
+}  // namespace
+
+TEST_CASE("top bar: the mode chip is LIVE for a cab-less rig and the shared / irMix cabs, STUDIO only for per-path cabs", "[editor][chip]") {
+  SettingsEnv env{kSettingsExist};
+  juce::ScopedJuceInitialiser_GUI gui;
+  {  // Init preset: no cab at all, so the no-cab export is exact by definition
+    SawbladeProcessor proc;
+    proc.prepareToPlay(48000.0, 512);
+    REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
+    CHECK_FALSE(proc.currentPreset().cab.enabled);
+    CHECK(proc.status().liveCompatible);
+    std::unique_ptr<juce::AudioProcessorEditor> base(proc.createEditorAndMakeActive());
+    auto* ed = dynamic_cast<SawbladeEditor*>(base.get());
+    REQUIRE(ed != nullptr);
+    ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+    CHECK(modeChipText(*ed).contains("LIVE"));
+    CHECK_FALSE(modeChipText(*ed).contains("STUDIO"));
+  }
+  const std::string ir = (kFx / "ir" / "impulse.wav").string();
+  struct Case { const char* name; json cab; const char* chip; bool live; };
+  const std::vector<Case> cases = {
+      {"shared", {{"mode", "shared"}, {"ir", {{"file", ir}}}}, "LIVE", true},
+      {"irMix", {{"mode", "irMix"}, {"irA", {{"file", ir}}}, {"irB", {{"file", ir}}}, {"mix", 0.5}}, "LIVE", true},
+      {"perPath", {{"mode", "perPath"}, {"irA", {{"file", ir}}}, {"irB", {{"file", ir}}}}, "STUDIO", false},
+      {"perPath, cab disabled", {{"mode", "perPath"}, {"irA", {{"file", ir}}}, {"irB", {{"file", ir}}}, {"enabled", false}}, "LIVE", true},
+  };
+  for (const auto& c : cases) {
+    INFO(c.name);
+    json j = fxPreset();
+    j["cab"] = c.cab;
+    FxRig rig(j);
+    CHECK(rig.proc.status().liveCompatible == c.live);
+    CHECK(modeChipText(*rig.ed).contains(c.chip));
+  }
+}
+
 TEST_CASE("rig editor: chain cards edit the blocks", "[editor][rig]") {
   json j = fxPreset();
   j["paths"]["a"]["blocks"].push_back({{"id", "a2"}, {"type", "eq"}, {"slot", "fx"}, {"bands", json::array({{{"type", "peak"}, {"freq", 1000}, {"gainDb", 3}, {"q", 1}}})}});

@@ -419,6 +419,14 @@ TEST_CASE("Cab: shared vs perPath with the same IR; disabled bypasses", "[chain]
   REQUIRE_FALSE(cp->info().liveCompatible);
   REQUIRE_FALSE(cp->info().exportExactness.noCab);
   REQUIRE(cp->info().exportExactness.withCab);
+
+  // A cab-less rig has nothing to differ between the paths: live-compatible whatever the stored mode.
+  json noCabJ = per;
+  noCabJ["cab"]["enabled"] = false;
+  auto co = build(noCabJ);
+  REQUIRE(co->info().liveCompatible);
+  REQUIRE(co->info().exportExactness.noCab);
+  REQUIRE(co->info().exportExactness.withCab);
   const auto ys = render(*cs, x, 256), yp = render(*cp, x, 333);
   REQUIRE(maxAbsDiff(ys, yp) <= 1e-5);
 

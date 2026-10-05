@@ -99,7 +99,7 @@ struct ChainInfo {
   double sumLufs = LevelMatchResult::kNoLufs;
   std::array<double, 5> makeupDb{};      // constant-loudness make-up at b = 0, .25, .5, .75, 1
   BlendLaw blendLaw = BlendLaw::Linear;  // the preset's law (the live law may differ)
-  bool liveCompatible = false;           // cab.mode is shared or irMix (one cab IR after the blend)
+  bool liveCompatible = false;           // no cab (cab.enabled false), or cab.mode shared / irMix (one cab IR after the blend)
   struct Exactness {
     bool withCab = true;
     bool noCab = false;

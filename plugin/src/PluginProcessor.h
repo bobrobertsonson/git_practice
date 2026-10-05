@@ -54,7 +54,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
     int latencySamples = 0;      // host-rate samples, as reported to the host
     double hostRate = 0.0, modelRate = 0.0;
     int builtMaxBlock = 0;        // block size the running engine was built for
-    bool liveCompatible = false;  // shared cab: the no-cab export is exact
+    bool liveCompatible = true;   // no cab or a shared cab: the no-cab export is exact (the Init preset has no cab)
     bool resampling = false;
     ChainInfo info;
     AlignResult measuredAlign;     // the last RE-MEASURE result (docs/PLUGIN.md "Rig editor")

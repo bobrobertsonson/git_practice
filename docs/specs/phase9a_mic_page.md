@@ -25,7 +25,7 @@ editing those files in parallel.
    (`mixIrs(a, b, mix)`), so the plugin and tests share it.
 3. **Processing.** One convolver on `h`, at the same place in the chain and with the same
    latency as `shared`. Nothing new runs in `process()`.
-4. **Derived properties.** `liveCompatible = mode is shared or irMix`. The render report
+4. **Derived properties.** `liveCompatible = !cab.enabled || mode is shared or irMix`. The render report
    names the mode and both captures. The "studio" UI chip shows LIVE for `irMix`.
 5. **Writer.** The preset writer round-trips `irMix` (and every existing mode unchanged).
 6. **Docs.** Update `docs/PRESET_SCHEMA.md`: the Cab section, derived properties, and a

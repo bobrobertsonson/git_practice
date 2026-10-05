@@ -615,7 +615,8 @@ ChainInfo Chain::info() const {
   i.sumLufs = level_.sumLufs;
   i.makeupDb = level_.makeupDb;
   i.blendLaw = preset_.blendLaw;
-  i.liveCompatible = usesSharedCab(preset_.cab.mode);
+  // A cab-less rig has no cab to differ between the paths: the no-cab export is exact by definition.
+  i.liveCompatible = !preset_.cab.enabled || usesSharedCab(preset_.cab.mode);
   i.exportExactness = {true, i.liveCompatible};
   i.warnings = warnings_;
   i.warnings.insert(i.warnings.end(), alignWarnings_.begin(), alignWarnings_.end());

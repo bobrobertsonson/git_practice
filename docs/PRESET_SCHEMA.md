@@ -473,7 +473,7 @@ and ignored by the core parser, never part of the tone or of a resolved preset. 
 
 ## Derived properties (not stored; reported by tonerender / plugin)
 
-- `liveCompatible` = `cab.mode` is `"shared"` or `"irMix"`.
+- `liveCompatible` = `cab.enabled` is false (no cab: the no-cab export is exact by definition) or `cab.mode` is `"shared"` or `"irMix"`.
 - `cabMode` (render report): `"shared"`, `"perPath"` or `"irMix"`; the report's `captures` lists
   `cab.irA` and `cab.irB` for `irMix`.
 - `exportExactness`: `{ "withCab": true, "noCab": liveCompatible }`.
