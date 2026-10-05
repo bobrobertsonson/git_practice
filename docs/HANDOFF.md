@@ -82,13 +82,20 @@ htdemucs export, if re-exported). Env: `TONE3000_CLIENT_ID=<publishable t3k_pub_
 
 ## Open items, in priority order
 
-- (a) **macOS CI: 45 failing tests on Apple Silicon** (base f9ac2ca, run 52; unchanged by v0.1.1/v0.1.2):
-   render goldens, preset save/load round-trip + A/B, and 39 runner/two-pass/export tests ("Subprocess
-   aborted"); the failing Test step skips auval/pluginval. Affects the user's Mac build (Apple arm64 renders
-   may differ from the Linux goldens). Triage goldens + round-trip first, then the subprocess aborts.
-- (b) **Build version/commit on About + Standalone title**, regenerated each build: `BuildInfo.h` is
-   configure-time only and goes stale under `scripts/mac_update.sh`.
-- (c) **Eigen via the GitHub mirror** instead of gitlab.com (gitlab is blocked in the cloud containers).
+- (a)–(c) **Closed (v0.1.3, merged 559048d; report `docs/specs/v0_1_3-macos_green_REPORT.md`, CI run 69 all green
+   incl. macOS auval + pluginval AU/VST3 10).**
+   - (a) ~~macOS CI 45 failures~~ — 39 aborts: a static `Settings` locked the core cache mutex after libc++ had
+     destroyed it (cross-TU static destruction order); 6 goldens: Apple clang contracted `a*b+c` into FMA, fixed by
+     `-ffp-contract=off` everywhere (one tolerance widened, measured in the report).
+   - (b) ~~Build stamp~~ — `BuildInfo.h` was configure-time only; now regenerated every build by an always-run target
+     (`copy_if_different`, so no-op rebuilds compile nothing). Manual check left: Standalone title shows the stamp.
+   - (c) ~~Eigen mirror~~ — gitlab.com is blocked in cloud containers; Eigen 3.4.0 (same pin) now from
+     `github.com/eigen-mirror/eigen`, NAM core fetched without its unused submodules.
+   - Proposals (from the v0.1.3 report, not done): split `BuildInfo.h` into stable version + per-commit stamp; drop the
+     leftover `kGitHash`; make `cachedSha256`'s static mutex and PreviewWorker's `Graveyard` teardown-safe the same
+     way; CI check that `build_stamp` is registered (it silently skips without git at configure).
+- (d) **CLIENT ID prefill:** token files written before v0.1.1 have no `client_id`; backfill it on the next successful
+   token refresh or offer a one-click "save current id".
 0. ~~First Mac run findings~~ **Closed (v0.1.1, merged e156d7a).** Root cause: INIT's disabled cab carries the
    schema placeholder file `"(none)"`, which the IR plot, About box, rig/mic pages and saved state treated as a
    real file → red "file not found". Fixed, plus Classic presets on TONE3000 ids and CLIENT ID prefill. See
