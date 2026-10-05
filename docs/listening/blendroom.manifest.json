@@ -50,7 +50,7 @@
    "style": "Death Metal",
    "durationS": 269.291,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/uk_death_bolt_thrower.resolved.json",
+   "guitarPreset": "presets/styles/uk_death_bolt_thrower.resolved.json",
    "gains": {
     "backingDb": -5.69,
     "guitarDb": -9.76,
@@ -64,7 +64,7 @@
    "style": "Death Metal",
    "durationS": 203.284,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar rendered fresh with this preset.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/uk_death_bolt_thrower.resolved.json",
+   "guitarPreset": "presets/styles/uk_death_bolt_thrower.resolved.json",
    "gains": {
     "backingDb": -5.26,
     "guitarDb": -10.47,
@@ -78,7 +78,7 @@
    "style": "Death Metal",
    "durationS": 240.0,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/uk_death_bolt_thrower.resolved.json",
+   "guitarPreset": "presets/styles/uk_death_bolt_thrower.resolved.json",
    "gains": {
     "backingDb": -5.0,
     "guitarDb": -11.25,
@@ -92,7 +92,7 @@
    "style": "Doom Metal",
    "durationS": 182.769,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/fuzz_doom_electric_wizard.resolved.json",
+   "guitarPreset": "presets/styles/fuzz_doom_electric_wizard.resolved.json",
    "gains": {
     "backingDb": -4.92,
     "guitarDb": -12.97,
@@ -106,7 +106,7 @@
    "style": "Sludge Metal",
    "durationS": 280.909,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/sludge_crowbar.resolved.json",
+   "guitarPreset": "presets/styles/sludge_crowbar.resolved.json",
    "gains": {
     "backingDb": -5.26,
     "guitarDb": -11.39,
@@ -120,7 +120,7 @@
    "style": "Black Metal",
    "durationS": 370.666,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/black_metal_raw.resolved.json",
+   "guitarPreset": "presets/styles/black_metal_raw.resolved.json",
    "gains": {
     "backingDb": -5.32,
     "guitarDb": -7.16,
@@ -134,7 +134,7 @@
    "style": "Melodic Black Metal",
    "durationS": 297.543,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/black_metal_raw.resolved.json",
+   "guitarPreset": "presets/styles/black_metal_raw.resolved.json",
    "gains": {
     "backingDb": -5.65,
     "guitarDb": -8.05,
@@ -148,7 +148,7 @@
    "style": "Doom Metal",
    "durationS": 305.806,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/fuzz_doom_electric_wizard.resolved.json",
+   "guitarPreset": "presets/styles/fuzz_doom_electric_wizard.resolved.json",
    "gains": {
     "backingDb": -5.14,
     "guitarDb": -12.33,
@@ -162,7 +162,7 @@
    "style": "Black Metal",
    "durationS": 289.808,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar rendered fresh with this preset.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/black_metal_raw.resolved.json",
+   "guitarPreset": "presets/styles/black_metal_raw.resolved.json",
    "gains": {
     "backingDb": -5.38,
     "guitarDb": -8.08,
@@ -176,7 +176,7 @@
    "style": "Powerviolence",
    "durationS": 48.222,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/chainsaw_hardcore_nails.resolved.json",
+   "guitarPreset": "presets/styles/chainsaw_hardcore_nails.resolved.json",
    "gains": {
     "backingDb": -5.47,
     "guitarDb": -8.36,
@@ -190,7 +190,7 @@
    "style": "Powerviolence",
    "durationS": 59.479,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/chainsaw_hardcore_nails.resolved.json",
+   "guitarPreset": "presets/styles/chainsaw_hardcore_nails.resolved.json",
    "gains": {
     "backingDb": -5.21,
     "guitarDb": -12.34,
@@ -204,7 +204,7 @@
    "style": "Grindcore",
    "durationS": 179.614,
    "notes": "Drums: FluidR3 GM kit render of the session MIDI (non-drum channels stripped, tanh soft-limited); bass: session Bass DI through JCM800 2203 capture (-6 dB in) + 4x12 IR, HP 40 Hz, +5 dB low shelf 120 Hz, LP 3.5 kHz; no guitars, no vocals. Bass mixed -6 dB rel. drums peak, centred. Backing peak -3 dBFS. Guitar from styles_out renders.",
-   "guitarPreset": "/home/user/git_practice/presets/styles/grind_terrorizer.resolved.json",
+   "guitarPreset": "presets/styles/grind_terrorizer.resolved.json",
    "gains": {
     "backingDb": -5.47,
     "guitarDb": -7.49,
