@@ -301,7 +301,15 @@ TEST_CASE("Level match: a legacy-shaped preset never probes and renders the gold
   double maxDiff = 0.0;
   for (std::size_t i = 0; i < r.samples.size(); ++i)
     maxDiff = std::max(maxDiff, std::fabs(static_cast<double>(g.interleaved[i]) - r.samples[i]));
-  CHECK(maxDiff == 0.0);
+  UNSCOPED_INFO("golden_perpath maxDiff = " << maxDiff);
+#if defined(__x86_64__) && defined(__linux__)
+  CHECK(maxDiff == 0.0);  // the platform that produced the goldens: bit-exact
+#else
+  // Measured 1.53e-7 on Apple arm64 (CI run 68); cause = Eigen's explicit NEON FMA (vfmaq_f32) in the NAM LSTM path,
+  // which -ffp-contract=off does not affect. The bound is ~6.5x the measured noise and orders of magnitude below any
+  // level-match trim (0.01 dB ~= 1.2e-3 relative), so this still catches a probe/trim being applied.
+  CHECK(maxDiff <= 1e-6);
+#endif
 
   // The same preset with the constant-loudness law is measured and has a non-trivial curve.
   json j = json::parse(std::ifstream(presets / "golden_perpath.json"));

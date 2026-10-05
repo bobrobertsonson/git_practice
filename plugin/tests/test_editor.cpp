@@ -1226,8 +1226,13 @@ TEST_CASE("rig editor: screenshots", "[editor][rig]") {
         if (k->paramId() == "blend" && k->getValue() != 0.0) landed = false;
       if (landed) break;
     }
+    int blendKnobs = 0;
     for (auto* k : all<skin::FilmstripKnob>(*rig.ed))
-      if (k->paramId() == "blend") CHECK(k->getValue() == 0.0);
+      if (k->paramId() == "blend") {
+        ++blendKnobs;
+        CHECK(k->getValue() == 0.0);
+      }
+    REQUIRE(blendKnobs >= 1);
     const juce::Image single = rig.snapshot("rig_single.png");
     CHECK(nonBackgroundFraction(single, {0, 58, 940, 742}) > 0.04);
     CHECK(anyLabelContains(*rig.ed, "BLEND OFF"));
