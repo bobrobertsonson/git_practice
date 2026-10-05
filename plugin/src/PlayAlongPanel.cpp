@@ -519,6 +519,10 @@ struct PlayAlongPanel::Impl {
     }
     if (st.state == PlayAlong::LoadStatus::State::Ready && msg.isEmpty() && !standalone && !s.hostSync)
       msg = "Backing is off. Enable SYNC TO HOST to follow the host transport.";
+    if (!st.notice.empty()) {
+      msg = juce::String(st.notice);
+      col = L::error();
+    }
     if (pickNotice.isNotEmpty() && juce::Time::getMillisecondCounter() < pickNoticeUntil) {
       msg = pickNotice;
       col = L::error();
@@ -671,7 +675,7 @@ bool PlayAlongPanel::handlePicked(ChooserAction a, const juce::File& f) {
   }
   impl_->pickNotice.clear();
   impl_->pa().loadSong(f.getFullPathName().toStdString(), /*userInitiated=*/true);
-  return true;
+  return impl_->pa().loadStatus().notice.empty();  // a folder that is not a stem set is refused (notice), nothing loads
 }
 
 bool PlayAlongPanel::isLoadableDrop(const juce::StringArray& files) {

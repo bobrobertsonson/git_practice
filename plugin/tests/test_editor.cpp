@@ -588,6 +588,42 @@ TEST_CASE("play-along: a rejected pick keeps the song and says why (v0.2.1 Task 
   CHECK(anyLabelContains(*panel, "Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file."));
 }
 
+TEST_CASE("play-along: a folder that is not a stem set is refused from the picker and from a drop (v0.2.1 Task F)", "[editor][playalong]") {
+  using A = PlayAlongPanel::ChooserAction;
+  const juce::String msg = "This folder is not a set of separated stems. Choose the song file (mp3, wav, flac, m4a) instead.";
+  Rig rig;
+  TempFolder tmp;
+  auto& pa = rig.proc.playAlong();
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  const auto song = writeSyntheticSong(tmp.dir, "keep", 6.0);
+  CHECK(panel->handlePicked(A::StemsFolder, juce::File(juce::String(song.string()))));
+  REQUIRE(pa.waitForLoader());
+  REQUIRE(pa.loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+
+  const auto mixed = writeSyntheticSong(tmp.dir, "desktop", 4.0);
+  { std::ofstream(mixed / "holiday.mp3") << "x"; }  // one unrelated audio file
+  CHECK_FALSE(panel->handlePicked(A::StemsFolder, juce::File(juce::String(mixed.string()))));
+  CHECK(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*panel, msg));
+  CHECK(pa.settings().folder == song.string());  // the previous song stays loaded
+  CHECK(pa.loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+
+  CHECK(panel->handlePicked(A::StemsFolder, juce::File(juce::String(song.string()))));  // an accepted pick clears it
+  REQUIRE(pa.waitForLoader());
+  panel->refresh();
+  CHECK_FALSE(anyLabelContains(*panel, msg));
+
+  juce::StringArray dropped;  // the same rule for a drop
+  dropped.add(juce::String(mixed.string()));
+  rig.ed->filesDropped(dropped, 10, 10);
+  CHECK(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*panel, msg));
+  CHECK(pa.settings().folder == song.string());
+  CHECK(pa.snapshot().hasSet);
+}
+
 TEST_CASE("play-along: the status messages fit the status label (v0.2.1 Task G)", "[editor][playalong]") {
   Rig rig;
   TempFolder tmp;
@@ -926,14 +962,15 @@ TEST_CASE("play-along: in plugin mode with sync off the status shows warnings an
   REQUIRE_FALSE(pa.standalone());
   REQUIRE_FALSE(pa.settings().hostSync);
 
-  // A folder with an unknown stem name: the loader warning wins over the hint.
+  // A folder with a duplicate stem name (a stem folder, so it is accepted): the loader warning wins over the hint.
   const auto warn = writeSyntheticSong(tmp.dir, "warn", 4.0);
   std::vector<float> x(48000, 0.1f);
-  sawblade::writeWavFloat32Stereo(warn / "piano.wav", 48000.0, x, x);
+  sawblade::writeWavFloat32Stereo(warn / "guitar.wav", 48000.0, x, x);
+  sawblade::writeWavFloat32Stereo(warn / "guitars.wav", 48000.0, x, x);
   pa.loadFolder(warn.string(), false);
   REQUIRE(pa.waitForLoader());
   panel->refresh();
-  CHECK(anyLabelContains(*rig.ed, "piano.wav"));
+  CHECK(anyLabelContains(*rig.ed, "guitars.wav"));
   CHECK_FALSE(anyLabelContains(*rig.ed, "Backing is off"));
 
   // A clean user load: the one-time level suggestion is shown.

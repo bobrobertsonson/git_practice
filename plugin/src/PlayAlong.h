@@ -181,6 +181,9 @@ class PlayAlong {
     bool modelMissing = false;
     std::string fetchCommand;
     bool cacheHit = false;                    // Ready: the stems came from the stem cache, no separation ran
+    // A load that was refused before anything changed (a folder that is not a stem set): the message shows in
+    // the status line over whatever state there is, and the loaded song stays loaded. Cleared by the next load.
+    std::string notice;
   };
   struct HostTransport {
     bool playing = false;
@@ -204,6 +207,9 @@ class PlayAlong {
   // Starts a background load of `folder` (never throws; failures show in loadStatus()). `userInitiated`
   // loads also set the backing level once from the loudness rule (suggestedBackingLevelDb); state
   // restores and reloads never touch the level.
+  // A folder that is not a set of separated stems (classifyStemFolder: every audio file has a stem name, at
+  // least two stems) is refused synchronously: LoadStatus::notice says so, settings and the loaded song are
+  // untouched. restore() does not check (a saved folder, or a cache folder, loads as before).
   void loadFolder(const std::string& folder, bool userInitiated);
   // CHOOSE SONG FILE / CHOOSE STEMS FOLDER / a drop: a folder is loadFolder; an audio file (isSongFileName) is separated on the separation thread
   // (stem cache first: a second load is instant) and then loaded exactly like a folder. Never throws.

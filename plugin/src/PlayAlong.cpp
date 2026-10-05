@@ -114,12 +114,7 @@ PlayAlongSettings playAlongFromJson(const nlohmann::json& j) {
   return s;
 }
 
-bool isSongFileName(const std::string& path) {
-  std::string ext = std::filesystem::path(path).extension().string();
-  std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return ext == ".mp3" || ext == ".wav" || ext == ".flac" || ext == ".m4a" || ext == ".aac" || ext == ".aif" || ext == ".aiff" ||
-         ext == ".ogg";
-}
+bool isSongFileName(const std::string& path) { return isAudioFileName(path); }
 
 double suggestedBackingLevelDb(std::optional<double> rigLufs, std::optional<double> backingLufs) {
   if (!backingLufs) return kBackingLevelDefaultDb;
@@ -323,6 +318,11 @@ void PlayAlong::setKeepOther(bool keep) {
 }
 
 void PlayAlong::loadFolder(const std::string& folder, bool userInitiated) {
+  if (!classifyStemFolder(std::filesystem::path(folder)).ok) {
+    std::lock_guard<std::mutex> lk(m_);
+    status_.notice = "This folder is not a set of separated stems. Choose the song file (mp3, wav, flac, m4a) instead.";
+    return;
+  }
   {
     std::lock_guard<std::mutex> lk(m_);
     settings_.folder = folder;

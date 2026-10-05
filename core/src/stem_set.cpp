@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <set>
 #include <stdexcept>
 
 #include "sawblade/loudness.h"
@@ -132,22 +133,24 @@ StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, O
     StemKind kind;
     fs::path path;
     bool unknown;
+    bool quiet;  // recognised, but maps to `other` without a duplicate or unknown-name warning (piano)
   };
   std::vector<Entry> entries;
   bool realGuitar = false, anyOther = false;
   for (const auto& p : audioFiles) {
     const std::string base = lower(p.stem().string());
     StemKind kind = StemKind::Other;
-    bool unknown = false;
+    bool unknown = false, quiet = false;
     if (base == "drums") kind = StemKind::Drums;
     else if (base == "bass") kind = StemKind::Bass;
     else if (base == "vocals") kind = StemKind::Vocals;
     else if (base == "other") kind = StemKind::Other;
     else if (base == "guitar" || base == "guitars") kind = StemKind::Guitar;
+    else if (base == "piano") quiet = true;  // 6-stem separation piano: summed into `other`, not a surprise
     else unknown = true;
     realGuitar = realGuitar || kind == StemKind::Guitar;
     anyOther = anyOther || kind == StemKind::Other;
-    entries.push_back({kind, p, unknown});
+    entries.push_back({kind, p, unknown, quiet});
   }
   if (entries.empty()) fail("no .wav or .flac stems found in " + dir.string());
 
@@ -160,7 +163,7 @@ StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, O
     if (toGuitar && e.kind == StemKind::Other) e.kind = StemKind::Guitar;
     if (e.unknown) {
       warnings.push_back(e.path.filename().string() + ": unrecognised stem name; summed into '" + stemKindName(e.kind) + "'");
-    } else {
+    } else if (!e.quiet) {
       std::string& first = firstNamed[static_cast<std::size_t>(e.kind)];
       if (!first.empty())
         warnings.push_back(e.path.filename().string() + ": duplicate '" + stemKindName(e.kind) + "' stem (also " + first + "); summed");
@@ -173,6 +176,47 @@ StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, O
   set.warnings.insert(set.warnings.begin(), warnings.begin(), warnings.end());
   set.otherMappedToGuitar = toGuitar;
   return set;
+}
+
+bool isAudioFileName(const std::string& path) {
+  const std::string ext = lower(std::filesystem::path(path).extension().string());
+  return ext == ".mp3" || ext == ".wav" || ext == ".flac" || ext == ".m4a" || ext == ".aac" || ext == ".aif" || ext == ".aiff" ||
+         ext == ".ogg";
+}
+
+bool isStemName(const std::string& baseName) {
+  const std::string b = lower(baseName);
+  return b == "drums" || b == "bass" || b == "vocals" || b == "other" || b == "guitar" || b == "guitars" || b == "piano";
+}
+
+StemFolderCheck classifyStemFolder(const std::filesystem::path& dir) {
+  namespace fs = std::filesystem;
+  StemFolderCheck r;
+  std::error_code ec;
+  if (!fs::is_directory(dir, ec)) return r;  // not a folder: loadStemDirectory reports it
+  std::set<std::string> kinds;
+  std::string stranger;
+  for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    std::error_code e2;
+    if (!it->is_regular_file(e2) || !isAudioFileName(it->path().filename().string())) continue;
+    const std::string base = lower(it->path().stem().string());
+    if (!isStemName(base)) {
+      if (stranger.empty() || it->path().filename().string() < stranger) stranger = it->path().filename().string();
+      continue;
+    }
+    kinds.insert(base == "guitars" ? "guitar" : base);
+  }
+  r.recognised = static_cast<int>(kinds.size());
+  if (!stranger.empty()) {
+    r.ok = false;
+    r.reason = "'" + stranger + "' is not a stem name";
+  } else if (r.recognised < 2) {
+    r.ok = false;
+    r.reason = r.recognised == 0 ? "no stem files" : "only one stem file";
+  } else {
+    r.ok = true;
+  }
+  return r;
 }
 
 StemSet makeStemSet(double sampleRate, const std::array<std::optional<StemAudio>, kStemKindCount>& audio) {
