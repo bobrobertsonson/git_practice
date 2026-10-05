@@ -137,6 +137,8 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
     log(f"export {mode}/{size} -> {outdir}")
     for b in plan.bypassed:
         log(f"  bypassed: {b['what']} ({b['why']})")
+    for line in P.level_match_lines(probe):
+        log(f"  {line}")
 
     yt, yv, tinfo = _cached_targets(tpreset, base, sinfo, tr, va, cache, log)
 
@@ -145,6 +147,7 @@ def run_export(preset_path, mode: str = "nocab", size: str = "standard", out=Non
                                "sha256": P.preset_hash(preset)},
                     "mode": mode, "size": size, "seed": seed, "signalSeed": signal_seed,
                     "plan": plan.to_json(), "signal": sinfo, "target": tinfo, "coreBuild": _core_id(),
+                    "levelMatch": P.level_match_info(probe),
                     "attribution": P.attribution(preset), "licenceNote": P.licence_note(preset), "nonCommercial": bool(P.nc_captures(preset))}
 
     ir_info = None

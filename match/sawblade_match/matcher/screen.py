@@ -27,6 +27,7 @@ from . import loss as L
 from .engine import Engine
 from .pool import Capture, Pool
 from .prescreen import DEFAULT_V, auto_n, prescreen
+from .levelmatch import Levels
 from .space import Combo, Space, chain_blocks, manual_align
 
 BLENDS = np.array([0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85])
@@ -43,6 +44,7 @@ class Scored:
     result: L.LossResult | None = None
     stage: str = "screen"
     extra: dict = field(default_factory=dict)
+    levels: Levels | None = None     # phase 10.1 trims (blend topology only); b is fitted after them
 
     @property
     def topology(self) -> str:
@@ -120,7 +122,8 @@ class Screener:
     def _lin(self, cores, path="a") -> list[np.ndarray]:
         return [self.ex.trim(s) for s in self.eng.map(lambda c: self.eng.linear(self.cab0, self.v0, path, c), cores)]
 
-    def _score(self, combo: Combo, v: dict, cores: tuple, align: dict, blends=None, stage="screen") -> Scored:
+    def _score(self, combo: Combo, v: dict, cores: tuple, align: dict, blends=None, stage="screen",
+               levels: Levels | None = None) -> Scored:
         eng, ex = self.eng, self.ex
         sp = Space.for_combo(combo)
         la = eng.linear(combo.cab, v, "a", cores[0])
@@ -130,11 +133,11 @@ class Screener:
         lb = eng.linear(combo.cab, v, "b", cores[1])
         best = None
         for beta in (FINE_BLENDS if blends is None else blends):
-            y = ex.trim(eng.mix(la, lb, float(beta), align))
+            y = ex.trim(eng.mix(la, lb, float(beta), align, levels))
             r = L.evaluate(y, self.tgt, sp.eq_gains(v))
             if best is None or r.total < best[0].total:
                 best = (r, float(beta))
-        return Scored(combo, best[0].total, best[1], align, best[0], stage, {"_cores": cores})
+        return Scored(combo, best[0].total, best[1], align, best[0], stage, {"_cores": cores}, levels)
 
     # ---- main ---------------------------------------------------------------------------------------------------
     def run(self) -> dict[str, list[Scored]]:
@@ -218,7 +221,8 @@ class Screener:
             combo, cores = item
             align = eng.probe_align(combo, self.v0) if combo.topology == "blend" else manual_align(0, False)
             v = Space.for_combo(combo).default()
-            return self._score(combo, v, cores, align)
+            levels = eng.probe_levels(combo, v, align)       # after alignment, before the blend fit
+            return self._score(combo, v, cores, align, levels=levels)
 
         res = eng.map(rescore, cands)
         res.sort(key=lambda s: s.loss)
@@ -229,7 +233,8 @@ class Screener:
             combo = s.combo.with_cab(cab)
             blends = None if s.combo.topology != "blend" else \
                 np.array([s.blend - 0.1, s.blend, s.blend + 0.1]).clip(0.05, 0.95)
-            return self._score(combo, Space.for_combo(combo).default(), s.extra["_cores"], s.align, blends, "screen+cab")
+            return self._score(combo, Space.for_combo(combo).default(), s.extra["_cores"], s.align, blends, "screen+cab",
+                               s.levels)
 
         jobs = [(s, cab) for s in res[:n_cab] for cab in self.pool.cabs if cab.key != self.cab0.key]
         allres = res + eng.map(cab_job, jobs)

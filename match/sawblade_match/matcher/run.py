@@ -23,6 +23,7 @@ from .profile import DEFAULT_BASE, derive_profile, load_profile, profile_path, s
 from .reference import Reference, build_target, make_excerpt
 from .refine import refine_combo
 from .screen import Scored, Screener, TOPOLOGIES
+from .levelmatch import emit_gain_correction_db
 from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manual_align
 
 CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level output exceeds it is "clipping"
@@ -331,15 +332,17 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + len(refined) * 10,
                                       gens_linear=plan.gens_linear, pop_linear=plan.pop_linear,
                                       gens_gain=plan.gens_gain, pop_gain=plan.pop_gain, gens_final=plan.gens_final,
-                                      log=log)
+                                      levels=s.levels, log=log)
             ca = eng.core(s.combo, v, "a", ex.x)
             cb = eng.core(s.combo, v, "b", ex.x) if s.combo.topology == "blend" else None
-            y = ex.trim(eng.emulate(s.combo, v, ca, cb, s.align))
+            y = ex.trim(eng.emulate(s.combo, v, ca, cb, s.align, s.levels))
             g, clipped = pick_output_gain(float(np.max(np.abs(y))), r.offset_db, ref.level_offset_db)
+            if s.levels is not None:      # emitted preset uses the constantLoudness law + make-up: keep the fitted level
+                g -= emit_gain_correction_db(v["blend"], s.levels)
             guard = _guardrails(y, profile)
             refined.append(Scored(s.combo, r.total, v.get("blend", 0.0), s.align, r, "refined",
                                   {"params": v, "outputGainDb": g, "clipped": clipped, "info": info,
-                                   "guardrails": guard}))
+                                   "guardrails": guard}, s.levels))
     unrefined = sorted([c for c in unrefined if np.isfinite(c.loss)], key=lambda c: c.loss)
     refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
@@ -359,7 +362,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     v = best.extra["params"]
     gain_db = best.extra["outputGainDb"]
     final = build_preset(best.combo, v, gate=gate, align=best.align, output_db=gain_db,
-                         name="Sawblade match", notes=_notes(cfg, ref, best))
+                         name="Sawblade match", notes=_notes(cfg, ref, best), levels=best.levels)
     full_jobs = {"best_L": (final, cfg.di), "starter_L": (starter_p, cfg.di)}
     if cfg.di_r is not None:
         full_jobs["best_R"] = (final, cfg.di_r)
@@ -452,7 +455,10 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             v_alt, gdb = Space.for_combo(s.combo).default(), 0.0
             if "blend" in v_alt:
                 v_alt["blend"] = s.blend
-        preset = build_preset(s.combo, v_alt, gate=gate, align=s.align, output_db=gdb, name=f"Sawblade match alt {i}")
+            if s.levels is not None:
+                gdb -= emit_gain_correction_db(s.blend, s.levels)
+        preset = build_preset(s.combo, v_alt, gate=gate, align=s.align, output_db=gdb, name=f"Sawblade match alt {i}",
+                              levels=s.levels)
         (out / f"alt{i}.preset.resolved.json").write_text(json.dumps(preset, indent=2) + "\n")
         alts.append({**_scored_json(s), "file": f"alt{i}.preset.resolved.json"})
     result["alternatives"] = alts
@@ -499,6 +505,7 @@ def _guardrails(y: np.ndarray, profile: dict) -> dict:
 
 def _scored_json(s: Scored) -> dict:
     d = {"stage": s.stage, "topology": s.topology, "loss": s.loss, "blend": s.blend, "align": s.align,
+         "levelMatch": s.levels and s.levels.preset_block(),
          "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
          "sizeRank": {"category": s.combo.size_rank()[0], "byteBucket": s.combo.size_rank()[1]}}
     if "guardrails" in s.extra:
