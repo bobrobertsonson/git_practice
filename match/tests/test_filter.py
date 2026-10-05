@@ -197,15 +197,14 @@ def test_search_is_opt_in(make_client, api):
 def test_license_allowlist_no_favorites_bypass():
     cfg = FilterConfig(min_favorites=0, min_downloads=0, keep_favorites_below_floor=True,
                        favorites_bypass_recency=True)
-    allowed = ["t3k", "cc-by", "cc-by-sa", "cc-by-nd", "cco"]
-    bad = {"cc-by-nc": "non_commercial_license:cc-by-nc", "cc-by-nc-sa": "non_commercial_license:cc-by-nc-sa",
-           "cc-by-nc-nd": "non_commercial_license:cc-by-nc-nd", "": "unknown_license:",
-           "gpl-3": "unknown_license:gpl-3"}
+    allowed = ["t3k", "cc-by", "cc-by-sa", "cc-by-nd", "cco", "cc-by-nc", "cc-by-nc-sa", "cc-by-nc-nd"]
+    bad = {"": "unknown_license:", "gpl-3": "unknown_license:gpl-3"}
     js = [tone_json(600 + i, license=lic, fav=99999, dl=999999) for i, lic in enumerate(allowed)]
     js += [tone_json(700 + i, license=lic, fav=99999, dl=999999) for i, lic in enumerate(bad)]
     ds, _ = run(js, favorited={j["id"] for j in js}, cfg=cfg)
     for i in range(len(allowed)):
         assert ds[600 + i].status == "included", allowed[i]
+        assert ("non_commercial" in ds[600 + i].flags) == allowed[i].startswith("cc-by-nc"), allowed[i]
     for i, (lic, reason) in enumerate(bad.items()):
         assert ds[700 + i].status == "excluded" and reason in ds[700 + i].reasons, lic
 
@@ -236,9 +235,10 @@ def test_add_tone_is_lead_pick_and_filtered(make_client, api, tmp_path):
     for t in (ok, old, nc):
         api.add_tone(t, [model_json(t["id"] * 10, t["id"])])
     m = _pool(make_client, tmp_path, add_tones=[20, 21, 22], trending=False, latest=False)
-    assert [t["tone_id"] for t in m["tones"]] == [20] and m["tones"][0]["sources"] == ["lead-pick"]
+    assert [t["tone_id"] for t in m["tones"]] == [20, 22] and m["tones"][0]["sources"] == ["lead-pick"]
+    assert m["tones"][1]["flags"] == ["non_commercial"]
     ex = {t["tone_id"]: t["reasons"] for t in m["excluded"]}
-    assert ex[21][0].startswith("too_old") and ex[22] == ["non_commercial_license:cc-by-nc"]
+    assert ex[21][0].startswith("too_old") and 22 not in ex
     assert m["sources"]["lead_picks"] == [20, 21, 22]
 
 
@@ -248,9 +248,9 @@ def test_force_tone_skips_quality_but_not_license(make_client, api, tmp_path):
     for t in (old, nc):
         api.add_tone(t, [model_json(t["id"] * 10, t["id"])])
     m = _pool(make_client, tmp_path, force_tones=[30, 31], trending=False, latest=False)
-    assert [t["tone_id"] for t in m["tones"]] == [30]
+    assert [t["tone_id"] for t in m["tones"]] == [30, 31]
     assert m["tones"][0]["flags"] == ["forced"] and m["tones"][0]["sources"] == ["lead-pick"]
-    assert [t["reasons"] for t in m["excluded"]] == [["non_commercial_license:cc-by-nc-sa"]]
+    assert m["tones"][1]["flags"] == ["non_commercial", "forced"] and not m["excluded"]
 
 
 def test_pool_sources_file_merged_into_pull(make_client, api, tmp_path, monkeypatch, capsys):
@@ -300,7 +300,7 @@ def test_search_output_and_verdicts(make_client, api, tmp_path, monkeypatch, cap
     assert "Fuzz Good" in lines["50"] and "bob" in lines["50"] and "cc-by" in lines["50"]
     assert "300/5000" in lines["50"] and "2026-06-01" in lines["50"] and "PASS" in lines["50"]
     assert "A2:1" in lines["50"]
-    assert "FAIL" in lines["51"] and "non_commercial_license:cc-by-nc" in lines["51"]
+    assert "FAIL" in lines["51"] and "non_commercial_license" not in lines["51"]
     assert "too_old" in lines["51"] and "below_popularity" in lines["51"]
     assert "1 pass" in out
     q = api.requests("search")[0].url.params
@@ -311,4 +311,4 @@ def test_search_output_and_verdicts(make_client, api, tmp_path, monkeypatch, cap
     assert cli.main(["search", "fuzz", "--json"]) == 0
     recs = json.loads(capsys.readouterr().out)
     assert [(r["tone_id"], r["passes"]) for r in recs] == [(50, True), (51, False)]
-    assert recs[1]["reasons"][0] == "non_commercial_license:cc-by-nc"
+    assert "non_commercial_license:cc-by-nc" not in recs[1]["reasons"]

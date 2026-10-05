@@ -19,6 +19,7 @@
 #include "browser/BrowserSettings.h"
 #include "browser/CaptureBrowser.h"
 #include "browser/T3kClient.h"
+#include "presets/PresetLibrary.h"
 
 using namespace sawblade;
 using namespace sawblade::plugin;
@@ -172,7 +173,11 @@ TEST_CASE("t3k client: every command against the fake CLI", "[browser][client]")
   CHECK(f.value.kind == "nam");
   CHECK(f.value.source.license == "cc-by");
   CHECK(fs::exists(f.value.path));
-  auto lic = await<t3k::FetchResult>([&](auto cb) { c.fetch(103, 0, cb); });
+  // cc-by-nc is usable (CLAUDE.md "Capture licensing"); only an unknown licence is refused, as the real CLI does.
+  auto nc = await<t3k::FetchResult>([&](auto cb) { c.fetch(103, 0, cb); });
+  REQUIRE(nc.ok);
+  CHECK(nc.value.source.license == "cc-by-nc");
+  auto lic = await<t3k::FetchResult>([&](auto cb) { c.fetch(107, 0, cb); });
   CHECK_FALSE(lic.ok);
   CHECK(lic.error.code == "license");
 
@@ -328,13 +333,31 @@ TEST_CASE("browser: licences are shown on every card and in the selected panel; 
   CHECK(sel->getText() == "cc-by-nc");
   CHECK(sel->isVisible());
   CHECK(allText(b).contains(CaptureBrowser::licenceNote()));
+  CHECK(juce::String(CaptureBrowser::licenceNote()).containsIgnoreCase("non-commercial"));
+  CHECK_FALSE(juce::String(CaptureBrowser::licenceNote()).contains("can't be used"));
 
-  // USE on it: the CLI refuses with code "license"; the message is displayed; nothing was swapped.
+  // The card carries the NON_COMMERCIAL flag the CLI reports for a cc-by-nc record (the preset browser tags it NON-COMMERCIAL).
+  REQUIRE(ctl.selected() != nullptr);
+  CHECK(ctl.selected()->flags == std::vector<std::string>{"non_commercial"});
+  CHECK(nonCommercialLicense(ctl.selected()->license));
+
+  // USE on it works (non-commercial captures are allowed): the capture is swapped in with its licence kept, no error.
   const Preset before = rig.proc.currentPreset();
+  ctl.selectModel(0);
   ctl.use(0);
-  REQUIRE(pumpUntil([&] { return ctl.state().statusIsError; }));
-  CHECK(allText(b).contains("licence cc-by-nc is not allowed (license)"));
-  CHECK(rig.proc.currentPreset() == before);
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }));
+  CHECK_FALSE(ctl.state().statusIsError);
+  CHECK_FALSE(allText(b).contains("not allowed"));
+  CHECK_FALSE(rig.proc.currentPreset() == before);
+  bool foundNc = false;
+  const Preset after = rig.proc.currentPreset();
+  for (const PathPreset* path : {&after.a, &after.b})
+    for (const auto& blk : path->blocks)
+      if (blk.type == "nam" && blk.params) {
+        const auto& m = static_cast<const NamBlockParams&>(*blk.params).model;
+        if (m.source && m.source->license == "cc-by-nc") foundNc = true;
+      }
+  CHECK(foundNc);
 
   // Screenshot: a selected, passing card with its models.
   ctl.select(101);

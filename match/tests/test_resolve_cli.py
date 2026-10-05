@@ -197,7 +197,7 @@ def _nc_world(api, lic="cc-by-nc"):
     return {"m": {"file": "x", "source": {"provider": "tone3000", "id": "800", "modelId": "8001"}}}
 
 
-@pytest.mark.parametrize("lic", ["cc-by-nc", "cc-by-nc-sa", "cc-by-nc-nd", "weird"])
+@pytest.mark.parametrize("lic", ["weird", ""])
 def test_resolve_refuses_disallowed_license_without_download(make_client, api, tmp_path, lic):
     from sawblade_match.t3k.errors import T3KError
     p = _nc_world(api, lic)
@@ -213,13 +213,20 @@ def test_resolve_refuses_disallowed_license_on_cache_hit(make_client, api, tmp_p
     p = _nc_world(api, "cc-by")
     resolve_preset(make_client(), cache, p)
     meta = cache.read_meta(800)
-    meta["tone"]["license"] = "cc-by-nc"          # e.g. the tone's license was changed upstream
+    meta["tone"]["license"] = "weird"          # e.g. the tone's license was changed upstream
     (cache.tone_dir(800) / "meta.json").write_text(_json.dumps(meta))
     n = len(api.calls)
     p2 = {"m": {"file": "x", "source": {"provider": "tone3000", "id": "800", "modelId": "8001"}}}
-    with pytest.raises(T3KError, match="non_commercial"):
+    with pytest.raises(T3KError, match="unknown_license"):
         resolve_preset(make_client(), cache, p2)
     assert len(api.calls) == n
+
+
+@pytest.mark.parametrize("lic", ["cc-by-nc", "cc-by-nc-sa", "cc-by-nc-nd"])
+def test_resolve_allows_non_commercial_license(make_client, api, tmp_path, lic):
+    p = _nc_world(api, lic)
+    resolve_preset(make_client(), Cache(tmp_path / "c"), p)
+    assert api.requests("download")
 
 
 @pytest.mark.parametrize("bad", ["../..", "12/../3", "abc", "", "-1", "1.5"])

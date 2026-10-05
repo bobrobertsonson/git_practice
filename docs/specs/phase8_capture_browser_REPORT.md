@@ -54,7 +54,7 @@ The tests cover:
 ## Lead decisions
 
 - Licence: the code still refuses NC (`licence_noncommercial.md` is queued), so the browser footer says
-  "CC BY-NC captures are not enabled in this build". The plugin has no licence logic of its own.
+  "Non-commercial (CC BY-NC) captures can't be used yet". The plugin has no licence logic of its own.
 - Per-path cab: PREVIEW puts the candidate IR in both irA and irB. USE offers SAW CAB / BODY CAB.
 - Preview normalized to −3 dBFS peak. It adds no host latency.
 - The login view appears only on CLI code `auth`/exit. Other failures show the error and the CLI-path row.
