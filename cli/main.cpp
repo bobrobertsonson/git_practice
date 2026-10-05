@@ -3,6 +3,7 @@
 // Exit codes: 0 ok, 2 usage, 3 preset error, 4 I/O / model error.
 #include <cerrno>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <algorithm>
 #include <filesystem>
@@ -262,6 +263,14 @@ int main(int argc, char** argv) {
       if (!args.backing.empty()) rep["backing"] = backingReport(args, backing);
       f << rep.dump(2) << "\n";
       if (!f) throw sawblade::RenderError(sawblade::RenderErrorKind::Io, "cannot write report: " + args.report);
+    }
+    if (!args.report.empty() && r.info.lufs[0] > sawblade::LevelMatchResult::kNoLufs) {
+      char buf[256];
+      std::snprintf(buf, sizeof buf,
+                    "level match: A %+.1f dB, B %+.1f dB; make-up [%.1f, %.1f, %.1f, %.1f, %.1f] dB at blend 0..1",
+                    r.info.trimDb[0], r.info.trimDb[1], r.info.makeupDb[0], r.info.makeupDb[1], r.info.makeupDb[2],
+                    r.info.makeupDb[3], r.info.makeupDb[4]);
+      std::cerr << "tonerender: " << buf << "\n";
     }
     for (const auto& w : r.warnings) std::cerr << "tonerender: warning: " << w << "\n";
     for (const auto& w : backing.set.warnings) std::cerr << "tonerender: warning: " << w << "\n";

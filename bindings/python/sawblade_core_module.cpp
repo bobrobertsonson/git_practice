@@ -2,6 +2,7 @@
 //
 //   render(preset, audio, sample_rate, render_rate="auto", out_rate="input", block=256,
 //          base_dir=None, cache=None) -> (float32 ndarray, report dict)
+//   level_match(preset, sample_rate, base_dir=None, cache=None) -> dict (phase 10.1 probe, no audio rendered)
 //   CaptureCache: loads each .nam / IR once, shared by any number of renders and threads.
 //   load_stems(dir, sample_rate, other_role="guitar") / stem_set_from_arrays(dict, sample_rate) -> StemSet, and
 //   StemPlayer (play-along backing, spec docs/specs/phase5_1_stemplayer.md section 5).
@@ -118,6 +119,41 @@ py::tuple render(const py::object& preset, const py::array& audioIn, const py::o
   return py::make_tuple(out, py::module_::import("json").attr("loads")(report));
 }
 
+// Phase 10.1: builds the chain, prepare()s it (alignment + level-match probe) and returns the info.
+// The probe measures trims whatever the preset's levelMatch.mode, but the trims "in effect" are 0 for
+// `off`; the matcher asks for the measurement, so the mode is forced to `auto` here.
+py::dict levelMatch(const py::object& preset, const py::object& sampleRateArg, const py::object& baseDir,
+                    CaptureCache* cache) {
+  if (py::isinstance<py::bool_>(sampleRateArg) || py::isinstance<py::str>(sampleRateArg) ||
+      !(PyNumber_Check(sampleRateArg.ptr())))
+    throw py::value_error("sample_rate must be a number (Hz)");
+  const double sampleRate = sampleRateArg.cast<double>();
+  if (!(std::isfinite(sampleRate) && sampleRate >= 1000.0)) throw py::value_error("sample_rate must be a rate in Hz, >= 1000");
+  const nlohmann::json j = presetToJson(preset);
+  std::filesystem::path base = std::filesystem::current_path();
+  if (!baseDir.is_none()) base = py::str(py::module_::import("os").attr("fspath")(baseDir)).cast<std::string>();
+  ChainInfo info;
+  {
+    py::gil_scoped_release nogil;
+    Preset p = parsePreset(j, base);
+    p.levelMatch.mode = LevelMatchMode::Auto;
+    Chain chain(p, loadResources(p, sampleRate, cache));
+    chain.prepare({sampleRate, 512});
+    info = chain.info();
+  }
+  const auto lufs = [](double v) { return v > LevelMatchResult::kNoLufs ? py::object(py::float_(v)) : py::none(); };
+  py::dict d;
+  d["trimADb"] = info.trimDb[0];
+  d["trimBDb"] = info.trimDb[1];
+  d["lufsA"] = lufs(info.lufs[0]);
+  d["lufsB"] = lufs(info.lufs[1]);
+  d["sumLufs"] = lufs(info.sumLufs);
+  d["makeupDb"] = std::vector<double>(info.makeupDb.begin(), info.makeupDb.end());
+  d["delaySamplesB"] = info.align.delaySamplesB;
+  d["invertB"] = info.align.invertB;
+  d["warnings"] = info.warnings;
+  return d;
+}
 
 // ---- stems ------------------------------------------------------------------------------------
 StemKind parseKind(const std::string& name) {
@@ -362,6 +398,20 @@ cache        optional CaptureCache. Its invalidation is stat-gated (file size + 
 Returns (samples: float32 ndarray, report: dict). The report is the tonerender --report JSON
 (latencySamples, pathLatency, renderRate, timings, warnings, ...). The GIL is released while
 rendering. Raises PresetError (ValueError) or RenderIOError (OSError); both have `json_path`.)doc");
+
+  m.def("level_match", &levelMatch, py::arg("preset"), py::arg("sample_rate"), py::arg("base_dir") = py::none(),
+        py::arg("cache") = nullptr,
+        R"doc(Run the phase 10.1 level-match probe on a preset (builds the chain, prepare(), no audio rendered).
+
+preset       JSON text (str) or a dict following docs/PRESET_SCHEMA.md; levelMatch.mode is forced to
+             "auto" so the measured trims are returned whatever the preset says.
+sample_rate  chain rate in Hz (use the NAM models' training rate, as render_rate="auto" does).
+base_dir, cache  as in render().
+
+Returns a dict: trimADb, trimBDb (dB, the louder path has 0), lufsA, lufsB, sumLufs (None when not
+measured: a path disabled or silent), makeupDb (list of 5: make-up at blend 0, .25, .5, .75, 1),
+delaySamplesB, invertB (the resolved alignment) and warnings. With a path disabled everything is 0.
+The GIL is released while measuring. Raises PresetError or RenderIOError like render().)doc");
 
   bindStems(m);
 }

@@ -63,6 +63,18 @@ const char* alignModeName(AlignMode m) {
 // -infinity (digital silence) is not representable in JSON: report null.
 nlohmann::json dbOrNull(double db) { return std::isfinite(db) ? nlohmann::json(db) : nlohmann::json(nullptr); }
 
+const char* levelMatchModeName(LevelMatchMode m) {
+  switch (m) {
+    case LevelMatchMode::Auto: return "auto";
+    case LevelMatchMode::Manual: return "manual";
+    case LevelMatchMode::Off: return "off";
+  }
+  return "off";
+}
+
+// LevelMatchResult::kNoLufs (not measured) is reported as null.
+nlohmann::json lufsOrNull(double v) { return v > LevelMatchResult::kNoLufs ? nlohmann::json(v) : nlohmann::json(nullptr); }
+
 std::string hzString(double hz) {
   char buf[32];
   std::snprintf(buf, sizeof buf, "%g", hz);
@@ -85,6 +97,7 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
   r.presetName = preset.name;
   r.inputRate = in.sampleRate;
   r.blockSize = opts.blockSize;
+  r.blend = preset.blend;
   r.captures = attributions(preset);
 
   // Mono input (stereo and beyond: first channel, with a warning).
@@ -250,6 +263,15 @@ nlohmann::json reportJson(const RenderResult& r) {
                  {"resolved", {{"delaySamplesB", i.align.delaySamplesB},
                                {"invertB", i.align.invertB},
                                {"peakCorrelation", i.align.peakCorrelation}}}}},
+      {"levelMatch", {{"mode", levelMatchModeName(i.levelMatchMode)},
+                      {"trimADb", i.trimDb[0]},
+                      {"trimBDb", i.trimDb[1]},
+                      {"lufsA", lufsOrNull(i.lufs[0])},
+                      {"lufsB", lufsOrNull(i.lufs[1])},
+                      {"sumLufs", lufsOrNull(i.sumLufs)}}},
+      {"blend", {{"value", r.blend},
+                 {"law", i.blendLaw == BlendLaw::Linear ? "linear" : "constantLoudness"},
+                 {"makeupDb", i.makeupDb}}},
       {"liveCompatible", i.liveCompatible},
       {"exportExactness", {{"withCab", i.exportExactness.withCab}, {"noCab", i.exportExactness.noCab}}},
       {"input", stats(r.input)},
