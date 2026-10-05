@@ -7,7 +7,8 @@
 //   GAIN 7.0 . drive only (fetching Gain 8) a rung is pending: its model is not loaded yet
 //   GAIN 7.0                                no ladder
 //   NO AMP IN THIS PATH                     no amp block: the knobs are disabled
-//   BODY PATH OFF - turn up BLEND to add one   (body head, path B off): the knobs are disabled
+//   BODY PATH OFF - turn up BLEND to add one   (body head, path B empty and off): the knobs are disabled
+//   BODY PATH OFF - turn up BLEND              (body head, path B off but it has blocks): the knobs are disabled
 // No new art: the filmstrip is drawn at kKnob design px (smaller than the pedal knobs), never redrawn.
 
 #include <array>
@@ -42,7 +43,8 @@ class AmpHead : public juce::Component {
   // The one line for a path with a working amp: GAIN `gain` with the ladder's state.
   static juce::String gainReadout(double gain, const SawbladeProcessor::LadderInfo& ladder);
   static juce::String noAmpText();    // "NO AMP IN THIS PATH"
-  static juce::String bodyOffText();  // "BODY PATH OFF - turn up BLEND to add one" (with an em dash)
+  static juce::String bodyOffText();  // path B empty, BLEND off: "BODY PATH OFF - turn up BLEND to add one" (with an em dash)
+  static juce::String bodyOffWithBlocksText();  // path B has blocks, BLEND off: "BODY PATH OFF - turn up BLEND"
 
   void paint(juce::Graphics&) override;
   void resized() override;

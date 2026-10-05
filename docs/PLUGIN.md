@@ -170,7 +170,8 @@ PRESENCE; the art's own captions say LOW / HIGH, so code-drawn captions with the
 | ladder | `GAIN 7.0 · capture: <rung name>` |
 | rung pending | `GAIN 7.0 · drive only (fetching <target rung name>)` |
 | path has no amp block | `NO AMP IN THIS PATH` (knobs disabled) |
-| path B off (BLEND off) | `BODY PATH OFF — turn up BLEND to add one` (knobs disabled) |
+| path B empty, BLEND off | `BODY PATH OFF — turn up BLEND to add one` (knobs disabled) |
+| path B has blocks, BLEND off | `BODY PATH OFF — turn up BLEND` (knobs disabled) |
 
 Capture blocks in the rig editor's slot strips show the tag `CAPTURE · FIXED TONE` (a capture is a fixed tone; its tone is shaped by the amp head's
 controls). Cmd / Ctrl + Z on the editor calls `RigController::undo()` when there is a BLEND fill to undo.

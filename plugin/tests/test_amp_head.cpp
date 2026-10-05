@@ -186,9 +186,11 @@ TEST_CASE("amp head: no amp in the path, and the body path off: knobs disabled w
   CHECK_FALSE(rig.ed->ampHead(1).knobsEnabled());
   CHECK(rig.ed->ampHead(1).readout() == "NO AMP IN THIS PATH");
 
-  rig.load(rigJson(true, true, false));  // path B has an amp but BLEND is off: the body head is off
+  rig.load(rigJson(true, true, false));  // path B has an amp but BLEND is off: the body head is off, and "add one" would be false
   CHECK(rig.ed->ampHead(0).knobsEnabled());
-  CHECK(rig.ed->ampHead(1).readout() == rig::AmpHead::bodyOffText());
+  CHECK(rig.ed->ampHead(1).readout() == rig::AmpHead::bodyOffWithBlocksText());
+  CHECK(rig.ed->ampHead(1).readout() == juce::String::fromUTF8("BODY PATH OFF \xE2\x80\x94 turn up BLEND"));
+  CHECK(rig.ed->ampHead(1).readout() != rig::AmpHead::bodyOffText());
   CHECK_FALSE(rig.ed->ampHead(1).knobsEnabled());
 
   rig.load(rigJson(true, true, true));
@@ -309,6 +311,9 @@ TEST_CASE("amp head: screenshots of the rig page", "[ampd][editor]") {
   juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
   rig.snap("rig_amp_moved.png");
   rig.load(rigJson(true, false, false));  // body path off
-  rig.snap("rig_amp_bodyoff.png");
+  rig.snap("rig_amp_bodyoff.png");  // B empty, BLEND off
   CHECK(rig.ed->ampHead(1).readout() == rig::AmpHead::bodyOffText());
+  rig.load(rigJson(true, true, false));
+  rig.snap("rig_amp_bodyoff_blocks.png");  // B has blocks, BLEND off
+  CHECK(rig.ed->ampHead(1).readout() == rig::AmpHead::bodyOffWithBlocksText());
 }

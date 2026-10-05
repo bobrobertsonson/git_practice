@@ -24,6 +24,8 @@ const char* AmpHead::caption(int k) {
 juce::String AmpHead::noAmpText() { return "NO AMP IN THIS PATH"; }
 juce::String AmpHead::bodyOffText() { return juce::String::fromUTF8("BODY PATH OFF \xE2\x80\x94 turn up BLEND to add one"); }
 
+juce::String AmpHead::bodyOffWithBlocksText() { return juce::String::fromUTF8("BODY PATH OFF \xE2\x80\x94 turn up BLEND"); }
+
 juce::String AmpHead::gainReadout(double gain, const SawbladeProcessor::LadderInfo& l) {
   const juce::String g = "GAIN " + juce::String(gain, 1);
   if (!l.has) return g;
@@ -62,7 +64,7 @@ void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo&
   juce::String text;
   bool on = true, reason = false;
   if (path_ == 1 && !pp.enabled) {
-    text = bodyOffText();
+    text = pp.blocks.empty() ? bodyOffText() : bodyOffWithBlocksText();
     on = false;
     reason = true;
   } else if (ampIndex(pp) < 0) {
