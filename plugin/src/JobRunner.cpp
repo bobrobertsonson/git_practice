@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "AppPaths.h"
+#include "Sha256.h"
 
 #if !JUCE_WINDOWS
 #include <fcntl.h>
@@ -24,6 +25,7 @@
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
 #endif
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -157,12 +159,13 @@ bool jobProcessAlive(std::int64_t pid, std::int64_t pgid, std::int64_t spawnedMs
 }
 
 // The tool runs as the leader of its own process group (pgid == pid), so this reaches its helper processes too.
-void signalGroup(std::int64_t pgid, bool hard) {
+enum class Sig { Int, Term, Kill };
+void signalGroup(std::int64_t pgid, Sig sig) {
 #if JUCE_WINDOWS
   (void)pgid;
-  (void)hard;
+  (void)sig;
 #else
-  if (pgid > 1) ::kill(-static_cast<pid_t>(pgid), hard ? SIGKILL : SIGTERM);
+  if (pgid > 1) ::kill(-static_cast<pid_t>(pgid), sig == Sig::Kill ? SIGKILL : sig == Sig::Term ? SIGTERM : SIGINT);
 #endif
 }
 
@@ -212,11 +215,13 @@ MatchSettings::MatchSettings(const fs::path& file) : file_(file) {}
 MatchSettings::~MatchSettings() = default;
 
 void MatchSettings::setFile(const fs::path& file) {
+  std::lock_guard<std::mutex> lk(m_);
   file_ = file;
   props_.reset();
 }
 
 juce::PropertiesFile& MatchSettings::props() const {
+  std::lock_guard<std::mutex> lk(m_);
   if (!props_) {
     juce::PropertiesFile::Options o;
     o.applicationName = "Sawblade";
@@ -244,6 +249,13 @@ fs::path MatchSettings::exportExecutable() const { return pathSetting(props(), "
 fs::path MatchSettings::poolManifest() const { return pathSetting(props(), "poolManifest", defaultPoolManifest()); }
 std::string MatchSettings::selectedTake() const { return props().getValue("selectedTake", juce::String()).toStdString(); }
 
+double MatchSettings::exportWallSeconds(const std::string& size) const {
+  return props().getDoubleValue(juce::String("exportWallSeconds.") + juce::String(size), 0.0);
+}
+void MatchSettings::setExportWallSeconds(const std::string& size, double seconds) {
+  saveSetting(props(), (std::string("exportWallSeconds.") + size).c_str(), juce::String(seconds, 1));
+}
+
 void MatchSettings::setMatchExecutable(const fs::path& p) { saveSetting(props(), "matchExecutable", juce::String(p.string())); }
 void MatchSettings::setExportExecutable(const fs::path& p) { saveSetting(props(), "exportExecutable", juce::String(p.string())); }
 void MatchSettings::setPoolManifest(const fs::path& p) { saveSetting(props(), "poolManifest", juce::String(p.string())); }
@@ -260,6 +272,12 @@ bool parseProgressJson(const std::string& text, JobProgress& out) {
   if (p.fraction > 1.0) p.fraction = 1.0;
   p.etaSeconds = num(j, "etaSeconds", -1.0);
   if (auto it = j.find("bestErrorDb"); it != j.end() && it->is_number()) p.bestErrorDb = it->get<double>();
+  // sawblade-export's --progress-json (phase 12): epoch, epochs, bestEsr (null before the first epoch), outDir, resumable.
+  p.epoch = static_cast<int>(num(j, "epoch", 0.0));
+  p.epochs = static_cast<int>(num(j, "epochs", 0.0));
+  if (auto it = j.find("bestEsr"); it != j.end() && it->is_number()) p.bestEsr = it->get<double>();
+  if (auto it = j.find("resumable"); it != j.end() && it->is_boolean()) p.resumable = it->get<bool>();
+  if (auto it = j.find("outDir"); it != j.end() && it->is_string()) p.outDir = it->get<std::string>();
   out = std::move(p);
   return true;
 }
@@ -280,12 +298,74 @@ bool parseExportProgress(const std::string& text, JobProgress& out) {
   if (maxMin > 0.0) f = std::max(f, elapsed / (maxMin * 60.0));
   if (f >= 0.0) p.fraction = std::min(f, 0.99);
   if (p.fraction > 0.02 && elapsed > 0.0) p.etaSeconds = elapsed * (1.0 - p.fraction) / p.fraction;
+  p.epoch = static_cast<int>(epoch);
+  p.epochs = static_cast<int>(epochs);
+  p.resumable = true;
   std::ostringstream m;
   m << "epoch " << static_cast<int>(epoch);
-  if (auto it = j.find("bestValEsr"); it != j.end() && it->is_number()) m << ", best val ESR " << it->get<double>();
+  if (auto it = j.find("bestValEsr"); it != j.end() && it->is_number()) {
+    p.bestEsr = it->get<double>();
+    m << ", best val ESR " << it->get<double>();
+  }
   p.message = m.str();
   out = std::move(p);
   return true;
+}
+
+CheckpointInfo readCheckpoint(const fs::path& outDir) {
+  CheckpointInfo c;
+  if (outDir.empty()) return c;
+  const json j = json::parse(readFile(outDir / "checkpoint" / "progress.json"), nullptr, /*allow_exceptions=*/false);
+  if (!j.is_object()) return c;
+  if (auto it = j.find("complete"); it != j.end() && it->is_boolean() && it->get<bool>()) return c;
+  c.resumable = true;
+  c.epoch = static_cast<int>(num(j, "epoch", 0.0));
+  if (auto cfg = j.find("config"); cfg != j.end() && cfg->is_object()) c.epochs = static_cast<int>(num(*cfg, "epochs", 0.0));
+  return c;
+}
+
+ExportResult readExportResult(const fs::path& outDir) {
+  ExportResult r;
+  if (outDir.empty()) return r;
+  std::error_code ec;
+  const json j = json::parse(readFile(outDir / "export_report.json"), nullptr, /*allow_exceptions=*/false);
+  if (j.is_object()) {
+    r.haveReport = true;
+    r.nonCommercial = j.value("nonCommercial", false);
+    r.wallSeconds = num(j, "totalWallSeconds", 0.0);
+    if (auto t = j.find("training"); t != j.end() && t->is_object()) {
+      if (r.wallSeconds <= 0.0) r.wallSeconds = num(*t, "wallSeconds", 0.0);
+      if (auto f = t->find("namFile"); f != t->end() && f->is_string()) r.namFile = f->get<std::string>();
+    }
+    std::string status = "not judged";
+    if (auto v = j.find("validation"); v != j.end() && v->is_object())
+      if (auto a = v->find("acceptance"); a != v->end() && a->is_object()) {
+        if (auto it = a->find("status"); it != a->end() && it->is_string()) status = it->get<std::string>();
+        if (auto it = a->find("summary"); it != a->end() && it->is_string()) r.summary = it->get<std::string>();
+        auto opt = [&](const char* k, std::optional<double>& dst) {
+          if (auto it = a->find(k); it != a->end() && it->is_number()) dst = it->get<double>();
+        };
+        opt("heldOutEsr", r.heldOutEsr);
+        opt("diLtasDb", r.diLtasDb);
+        opt("esrLimit", r.esrLimit);
+        opt("ltasLimitDb", r.ltasLimitDb);
+      }
+    const std::string l = lower(trim(status));
+    r.status = l.rfind("not met", 0) == 0 ? "NOT MET" : l.rfind("met", 0) == 0 ? "MET" : "NOT JUDGED";
+  }
+  if (r.namFile.empty() || !fs::exists(outDir / r.namFile, ec)) {
+    r.namFile.clear();
+    for (fs::directory_iterator it(outDir, ec), end; !ec && it != end; it.increment(ec))
+      if (it->path().extension() == ".nam") r.namFile = it->path().filename().string();
+  }
+  for (const char* ext : {".mp3", ".wav"}) {
+    const fs::path f = outDir / "listen" / (std::string("ab_original_then_export") + ext);
+    if (fs::is_regular_file(f, ec)) {
+      r.listen = f;
+      break;
+    }
+  }
+  return r;
 }
 
 void parseLogLine(JobKind kind, const std::string& rawLine, JobProgress& p) {
@@ -417,7 +497,9 @@ struct JobRunner::HelpCache {
 
 struct JobRunner::Job {
   JobKind kind = JobKind::Match;
-  fs::path dir, outDir, progressFile;
+  fs::path dir, outDir, progressFile;  // outDir: monitor thread only (export: "" until the exporter reports it)
+  fs::path exportsRoot, sourcePreset;  // export
+  MatchSettings* settings = nullptr;   // export: the wall time of a finished run is recorded there
   std::string exe;
   std::vector<std::string> args;          // after the executable
   bool wantProgressJson = false;          // match: probe `--help` for --progress-json
@@ -433,6 +515,9 @@ struct JobRunner::Job {
   std::vector<std::string> commandLine;
 
   std::atomic<bool> cancelRequested{false}, stopMonitoring{false}, owned{true};
+  int cancelStep = 0;                      // monitor thread: how far the cancel has escalated
+  std::chrono::steady_clock::time_point cancelAt;
+  std::int64_t lastScanMs = 0;             // export: when the exports root was last searched for the run's folder
   std::atomic<std::int64_t> pid{0};
   std::atomic<std::int64_t> pgid{0};
   std::atomic<std::int64_t> spawnedMs{0};  // when the tool was spawned (identity check on re-attach)
@@ -494,13 +579,23 @@ struct JobRunner::Job {
     j["exitCode"] = s.exitCode;
     j["commandLine"] = commandLine;
     j["jobDir"] = dir.string();
-    j["outDir"] = outDir.string();
+    j["outDir"] = (state != nullptr && !s.outDir.empty() ? s.outDir : outDir).string();
     j["progressMode"] = s.progressJson ? "json" : "log";
     j["message"] = s.message;
     j["reference"] = s.reference;
     j["di"] = s.di;
     j["exportMode"] = s.exportMode;
     j["exportSize"] = s.exportSize;
+    if (kind == JobKind::Export) {
+      j["sourcePreset"] = sourcePreset.string();
+      j["sourceSha256"] = s.sourceSha256;
+      j["exportsRoot"] = exportsRoot.string();
+      j["allowInexact"] = s.allowInexact;
+      j["diBuiltin"] = s.diBuiltin;
+      j["accepted"] = s.accepted;
+      j["resumable"] = s.resumable;
+      j["sidecar"] = s.sidecar.string();
+    }
     std::lock_guard<std::mutex> fl(fileM);
     writeAtomic(dir / "job.json", j.dump(2) + "\n");
   }
@@ -520,17 +615,99 @@ struct JobRunner::Job {
         progressFileSeen = true;
       }
     } else {
-      JobProgress p;
-      if (parseExportProgress(readFile(outDir / "checkpoint" / "progress.json"), p)) {
+      bool useJson;
+      {
         std::lock_guard<std::mutex> lk(m);
-        // Keep the log-derived message when the file carries nothing newer; the file is authoritative for numbers.
-        snap.progress.fraction = p.fraction;
-        snap.progress.etaSeconds = p.etaSeconds;
-        snap.progress.bestErrorDb = p.bestErrorDb;
-        snap.progress.stage = p.stage;
-        snap.progress.message = p.message;
+        useJson = snap.progressJson;
+      }
+      JobProgress p;
+      if (useJson) {
+        // sawblade-export --progress-json: the whole snapshot, plus the final output folder.
+        if (!parseProgressJson(readFile(progressFile), p)) return;
+        const bool learned = !p.outDir.empty() && outDir != fs::path(p.outDir);
+        if (!p.outDir.empty()) outDir = p.outDir;
+        {
+          std::lock_guard<std::mutex> lk(m);
+          snap.progress = std::move(p);
+          progressFileSeen = true;
+          if (!outDir.empty()) snap.outDir = outDir;
+        }
+        if (learned) writeJobJson();  // job.json names the run folder as soon as it is known (a later runner re-attaches by it)
+        return;
+      }
+      // Fallback (an exporter without --progress-json): the 4.1 checkpoint's progress.json, in the run's folder,
+      // which is found by looking for the newest folder the exporter created in the exports root.
+      if (outDir.empty()) locateOutDir(false);
+      if (outDir.empty() || !parseExportProgress(readFile(outDir / "checkpoint" / "progress.json"), p)) return;
+      std::lock_guard<std::mutex> lk(m);
+      // Keep the log-derived message when the file carries nothing newer; the file is authoritative for numbers.
+      snap.progress.fraction = p.fraction;
+      snap.progress.etaSeconds = p.etaSeconds;
+      snap.progress.bestErrorDb = p.bestErrorDb;
+      snap.progress.stage = p.stage;
+      snap.progress.message = p.message;
+      snap.progress.epoch = p.epoch;
+      snap.progress.epochs = p.epochs;
+      snap.progress.bestEsr = p.bestEsr;
+      snap.progress.resumable = true;
+      snap.outDir = outDir;
+    }
+  }
+
+  // Export without a reported output folder: the newest folder in the exports root that was created after the job
+  // started (once a second unless `force`). Monitor thread.
+  void locateOutDir(bool force) {
+    if (exportsRoot.empty()) return;
+    const std::int64_t now = nowMs();
+    if (!force && now - lastScanMs < 1000) return;
+    lastScanMs = now;
+    std::error_code ec;
+    fs::path best;
+    long long bestTime = 0;
+    for (fs::directory_iterator it(exportsRoot, ec), end; !ec && it != end; it.increment(ec)) {
+      if (!it->is_directory(ec)) continue;
+#if !JUCE_WINDOWS
+      struct stat st {};
+      if (::stat(it->path().c_str(), &st) != 0) continue;
+      const long long mt = static_cast<long long>(st.st_mtime);
+#else
+      continue;
+#endif
+      if (mt * 1000 + 1999 < startedMs) continue;  // older than the job (whole-second timestamps)
+      if (best.empty() || mt > bestTime || (mt == bestTime && it->path() > best)) {
+        best = it->path();
+        bestTime = mt;
       }
     }
+    if (!best.empty()) {
+      outDir = best;
+      {
+        std::lock_guard<std::mutex> lk(m);
+        snap.outDir = best;
+      }
+      writeJobJson();
+    }
+  }
+
+  // Cancel, escalating: a match job gets SIGTERM, then SIGKILL after the grace period; an export job gets SIGINT (the
+  // exporter stops at the end of its batch and keeps the checkpoint), SIGTERM after the grace period, SIGKILL after
+  // another. Monitor thread.
+  void driveCancel(std::int64_t pg) {
+    if (!cancelRequested) return;
+    const auto now = std::chrono::steady_clock::now();
+    const bool exp = kind == JobKind::Export;
+    if (cancelStep == 0) {
+      signalGroup(pg, exp ? Sig::Int : Sig::Term);
+      cancelStep = 1;
+      cancelAt = now;
+      return;
+    }
+    if (now - cancelAt <= grace) return;
+    const int last = exp ? 3 : 2;
+    if (cancelStep >= last) return;
+    signalGroup(pg, exp && cancelStep == 1 ? Sig::Term : Sig::Kill);
+    ++cancelStep;
+    cancelAt = now;
   }
 
   // The tool's stdout / stderr go straight to <job>/log.txt (no pipe, so nothing can fill and nothing needs a reader
@@ -694,11 +871,30 @@ bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
   auto job = std::make_shared<Job>();
   job->kind = JobKind::Export;
   job->exe = settings_.exportExecutable().string();
-  job->args = {r.preset.string(), "--mode", r.mode, "--size", r.size, "--device", "auto"};
+  job->settings = &settings_;
+  job->wantProgressJson = true;  // probe --help for --progress-json (the checkpoint's progress.json is the fallback)
+  job->args = {r.preset.string(), "--mode", r.mode, "--size", r.size, "--device", "auto", "--require-accept"};
   if (r.di) job->args.insert(job->args.end(), {"--di", r.di->string()});
+  else if (r.diBuiltin) job->args.insert(job->args.end(), {"--di", "builtin"});
+  if (r.allowInexact) job->args.push_back("--allow-inexact");
+  if (!r.resumeDir.empty()) {
+    if (!fs::is_directory(r.resumeDir, ec)) return fail("The run to resume was not found: " + r.resumeDir.string());
+    job->args.insert(job->args.end(), {"--resume", r.resumeDir.string()});
+    job->outDir = r.resumeDir;  // a resumed run continues in its own folder
+  }
+  job->sourcePreset = r.preset;
+  {
+    const std::string bytes = readFile(r.preset);
+    job->snap.sourceSha256 = sha256Hex(bytes);
+  }
+  job->exportsRoot = r.exportsRoot;  // "" = <job dir>/export (launch)
+  job->snap.allowInexact = r.allowInexact;
+  job->snap.diBuiltin = r.diBuiltin && !r.di;
+  job->snap.source = r.preset;
   job->snap.exportMode = r.mode;
   job->snap.exportSize = r.size;
   job->snap.reference = r.preset.filename().string();
+  job->snap.di = r.di ? r.di->filename().string() : r.diBuiltin ? "built-in signal" : "";
   return launch(JobKind::Export, std::move(job), error);
 }
 
@@ -717,10 +913,21 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
     return false;
   }
   job->dir = dir;
-  job->outDir = kind == JobKind::Export ? dir / "export" : dir;
+  if (kind == JobKind::Match) {
+    job->outDir = dir;
+    job->args.insert(job->args.end(), {"--out", dir.string()});
+  } else {
+    // The exporter names its own folder, <exports root>/<name>-<mode>-<size>-<ts>, and reports it in the progress file
+    // (a resumed run continues in the folder it was given). The default root is inside the job folder.
+    if (job->exportsRoot.empty()) job->exportsRoot = dir / "export";
+    std::error_code ec;
+    fs::create_directories(job->exportsRoot, ec);
+    if (job->outDir.empty()) job->args.insert(job->args.end(), {"--exports-root", job->exportsRoot.string()});
+  }
+  job->snap.exportsRoot = job->exportsRoot;
   job->progressFile = dir / "progress.json";
   job->help = help_;
-  job->grace = std::chrono::milliseconds(graceMs_.load());
+  job->grace = std::chrono::milliseconds(kind == JobKind::Export ? exportGraceMs_.load() : graceMs_.load());
   job->startedMs = nowMs();
   job->snap.kind = kind;
   job->snap.dir = dir;
@@ -728,12 +935,11 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
   job->snap.state = JobState::Starting;
   job->commandLine.push_back(job->exe);
   for (const auto& a : job->args) job->commandLine.push_back(a);
-  job->args.insert(job->args.end(), {"--out", job->outDir.string()});
   job->writeJobJson();
   retire(slot(kind));
   slot(kind) = job;
   job->monitor = std::thread([job]() mutable {
-    // --- probe the executable for --progress-json (match only)
+    // --- probe the executable for --progress-json
     if (job->wantProgressJson) {
       const std::string key = job->exe + "|" + std::to_string(juce::File(job->exe).getLastModificationTime().toMilliseconds());
       bool has;
@@ -826,19 +1032,10 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
     job->writeJobJson();
 
     // --- monitor: log lines, progress, cancel (group SIGTERM, then SIGKILL after the grace period), exit
-    bool termSent = false, killSent = false, exited = false;
+    bool exited = false;
     int status = 0;
-    std::chrono::steady_clock::time_point termAt;
     while (!job->stopMonitoring) {
-      if (job->cancelRequested && !termSent) {
-        termSent = true;
-        termAt = std::chrono::steady_clock::now();
-        signalGroup(pid, false);
-      }
-      if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace) {
-        killSent = true;
-        signalGroup(pid, true);
-      }
+      job->driveCancel(pid);
       job->pollLogFile();
       job->pollProgress();
       const pid_t r = ::waitpid(pid, &status, WNOHANG);
@@ -849,7 +1046,7 @@ bool JobRunner::launch(JobKind kind, std::shared_ptr<Job> job, std::string* erro
       std::this_thread::sleep_for(kPollPeriod);
     }
     if (!exited) return;  // runner destroyed: the child keeps running; the job dir lets the next runner re-attach
-    if (job->cancelRequested) signalGroup(pid, true);  // sweep helpers that outlived the tool
+    if (job->cancelRequested) signalGroup(pid, Sig::Kill);  // sweep helpers that outlived the tool
     job->pollLogFile(/*flush=*/true);
     job->pollProgress();
     {
@@ -871,26 +1068,35 @@ void JobRunner::finalizeJob(Job& job) {
   }
   job.finishedMs = nowMs();
   std::error_code ec;
+  const bool exporting = job.kind == JobKind::Export;
   // Did the tool leave its result behind?
   std::vector<MatchCandidate> results;
   std::string resultError;
   bool artifacts;
-  if (job.kind == JobKind::Match) {
+  bool haveReport = false;
+  if (!exporting) {
     results = parseMatchResult(job.dir / "result.json", &resultError);
     artifacts = !results.empty();
   } else {
-    artifacts = fs::exists(job.outDir / "export_report.json", ec);
-    if (!artifacts)
+    if (job.outDir.empty()) job.locateOutDir(/*force=*/true);
+    haveReport = !job.outDir.empty() && fs::exists(job.outDir / "export_report.json", ec);
+    artifacts = haveReport;
+    if (!artifacts && !job.outDir.empty())
       for (fs::directory_iterator it(job.outDir, ec), end; !ec && it != end; it.increment(ec))
         if (it->path().extension() == ".nam") artifacts = true;
     if (!artifacts) resultError = "The export finished but wrote no model.";
   }
+  // Exit 0 = finished; exit 2 = trained but acceptance NOT MET (the files are still written; needs the report);
+  // exit 130 = the exporter was interrupted (SIGINT).
+  const bool exportDone = exporting && artifacts && (s.exitCode == 0 || (s.exitCode == 2 && haveReport));
   JobState state;
   std::string message;
-  if (job.cancelRequested) {
+  if (exportDone && job.cancelRequested) {
+    state = JobState::Succeeded;  // it finished before the cancel could land
+  } else if (job.cancelRequested || (exporting && s.exitCode == 130)) {
     state = JobState::Cancelled;
     message = "Cancelled.";
-  } else if ((s.exitCode == 0 || (!job.owned && s.exitCode < 0)) && artifacts) {
+  } else if ((exporting ? exportDone : s.exitCode == 0 && artifacts) || (!job.owned && s.exitCode < 0 && artifacts)) {
     state = JobState::Succeeded;
   } else {
     state = JobState::Failed;
@@ -902,6 +1108,7 @@ void JobRunner::finalizeJob(Job& job) {
         break;
       }
     }
+    if (message.empty() && exporting && s.progress.stage == "error" && !s.progress.message.empty()) message = s.progress.message;
     if (message.empty()) {
       if (s.exitCode > 0) message = "The process exited with code " + std::to_string(s.exitCode) + ".";
       else if (!resultError.empty() && job.owned) message = resultError;
@@ -920,6 +1127,19 @@ void JobRunner::finalizeJob(Job& job) {
   }
   fin.state = state;
   if (!message.empty()) fin.message = message;
+  if (exporting) {
+    if (!job.outDir.empty()) fin.outDir = job.outDir;
+    fin.resumable = state != JobState::Succeeded && readCheckpoint(job.outDir).resumable;
+    if (state == JobState::Succeeded) {
+      fin.result = readExportResult(job.outDir);
+      fin.accepted = fin.result.status == "MET" ? "met" : fin.result.status == "NOT MET" ? "NOT MET" : "not judged";
+      // The sidecar: the resolved preset that was exported, byte for byte, next to the model.
+      const std::string stem = !fin.result.namFile.empty() ? fs::path(fin.result.namFile).stem().string() : job.outDir.filename().string();
+      const fs::path sidecar = job.outDir / (stem + ".sawblade.json");
+      if (!job.sourcePreset.empty() && fs::copy_file(job.sourcePreset, sidecar, fs::copy_options::overwrite_existing, ec) && !ec) fin.sidecar = sidecar;
+      if (job.settings != nullptr && fin.result.wallSeconds > 0.0) job.settings->setExportWallSeconds(fin.exportSize, fin.result.wallSeconds);
+    }
+  }
   if (state == JobState::Succeeded) {
     fin.results = std::move(results);
     fin.progress.fraction = 1.0;
@@ -934,25 +1154,20 @@ void JobRunner::finalizeJob(Job& job) {
   job.snap.progress.fraction = fin.progress.fraction;
   job.snap.progress.etaSeconds = fin.progress.etaSeconds;
   job.snap.progress.stage = fin.progress.stage;
+  job.snap.outDir = fin.outDir;
+  job.snap.resumable = fin.resumable;
+  job.snap.result = std::move(fin.result);
+  job.snap.accepted = fin.accepted;
+  job.snap.sidecar = fin.sidecar;
 }
 
 void JobRunner::monitorAttached(std::shared_ptr<Job> job) {
-  bool termSent = false, killSent = false;
-  std::chrono::steady_clock::time_point termAt;
   auto alive = [&] { return jobProcessAlive(job->pid.load(), job->pgid.load(), job->spawnedMs.load()); };
   while (!job->stopMonitoring) {
     job->pollLogFile();
     job->pollProgress();
     if (!alive()) break;  // gone, or not our tool any more: never signalled
-    if (job->cancelRequested && !termSent) {
-      termSent = true;
-      termAt = std::chrono::steady_clock::now();
-      signalGroup(job->pgid.load(), false);
-    }
-    if (termSent && !killSent && std::chrono::steady_clock::now() - termAt > job->grace) {
-      killSent = true;
-      signalGroup(job->pgid.load(), true);
-    }
+    job->driveCancel(job->pgid.load());
     std::this_thread::sleep_for(kPollPeriod);
   }
   if (job->stopMonitoring) return;
@@ -989,6 +1204,20 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
   job->snap.exportMode = j.value("exportMode", std::string());
   job->snap.exportSize = j.value("exportSize", std::string());
   job->snap.exitCode = j.value("exitCode", -1);
+  if (kind == JobKind::Export) {
+    job->sourcePreset = j.value("sourcePreset", std::string());
+    job->exportsRoot = j.value("exportsRoot", std::string());
+    job->snap.source = job->sourcePreset;
+    job->snap.sourceSha256 = j.value("sourceSha256", std::string());
+    job->snap.exportsRoot = job->exportsRoot;
+    job->snap.allowInexact = j.value("allowInexact", false);
+    job->snap.diBuiltin = j.value("diBuiltin", false);
+    job->snap.accepted = j.value("accepted", std::string());
+    job->snap.resumable = j.value("resumable", false);
+    job->snap.sidecar = j.value("sidecar", std::string());
+    job->snap.di = j.value("di", std::string());
+    job->settings = &settings_;
+  }
   job->snap.pid = job->pid.load();
   job->finishedMs = j.value("finishedEpochMs", static_cast<std::int64_t>(0));
   const bool wasActive = state == "starting" || state == "running";
@@ -1007,10 +1236,12 @@ void JobRunner::adopt(JobKind kind, const fs::path& dir) {
   } else if (state == "succeeded") {
     job->snap.state = JobState::Succeeded;
     if (kind == JobKind::Match) job->snap.results = parseMatchResult(dir / "result.json");
+    else job->snap.result = readExportResult(job->outDir);
     job->snap.progress.fraction = 1.0;
     job->snap.progress.stage = "done";
   } else if (state == "cancelled") {
     job->snap.state = JobState::Cancelled;
+    if (kind == JobKind::Export) job->snap.resumable = readCheckpoint(job->outDir).resumable;
   } else {
     job->snap.state = JobState::Failed;
   }

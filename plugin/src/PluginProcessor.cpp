@@ -277,6 +277,12 @@ void SawbladeProcessor::getStateInformation(juce::MemoryBlock& dest) {
     j["playAlong"] = playAlongToJson(pa);
     s = j.dump(2);
   }
+  // Likewise the export panel's settings (phase 12), omitted while they are all defaults.
+  if (const ExportSettings es = exportSettings(); !es.isDefault()) {
+    nlohmann::json j = nlohmann::json::parse(s);
+    j["export"] = exportSettingsToJson(es);
+    s = j.dump(2);
+  }
   dest.replaceAll(s.data(), s.size());
 }
 
@@ -291,16 +297,39 @@ void SawbladeProcessor::setStateInformation(const void* data, int size) {
   // A `playAlong` that is not an object would make the core parser reject the whole state: drop it, so the
   // tone still loads.
   nlohmann::json j = nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/false);
-  if (j.is_object())
-    if (auto it = j.find("playAlong"); it != j.end() && !it->is_object()) {
-      j.erase(it);
-      s = j.dump();
-    }
+  if (j.is_object()) {
+    bool dropped = false;
+    for (const char* key : {"playAlong", "export"})
+      if (auto it = j.find(key); it != j.end() && !it->is_object()) {
+        j.erase(it);
+        dropped = true;
+      }
+    if (dropped) s = j.dump();
+  }
   loadPresetJson(s, base, nullptr, /*restore=*/true);
   // A state without `playAlong` (older sessions) leaves the play-along as it is. Never throws: a missing
   // or unreadable folder shows up in playAlong().loadStatus().
   if (j.is_object())
     if (auto it = j.find("playAlong"); it != j.end()) playAlong_.restore(playAlongFromJson(*it));
+  // `export`: absent = defaults (a session saved before the panel existed, or one that never touched it).
+  if (j.is_object()) {
+    auto it = j.find("export");
+    setExportSettings(it != j.end() ? exportSettingsFromJson(*it) : ExportSettings{});
+  }
+}
+
+ExportSettings SawbladeProcessor::exportSettings() const {
+  std::lock_guard<std::mutex> lk(exportMutex_);
+  return exportSettings_;
+}
+
+void SawbladeProcessor::setExportSettings(const ExportSettings& s) {
+  {
+    std::lock_guard<std::mutex> lk(exportMutex_);
+    if (exportSettings_ == s) return;
+    exportSettings_ = s;
+  }
+  ++exportSerial_;
 }
 
 // --- loader -------------------------------------------------------------------------------------

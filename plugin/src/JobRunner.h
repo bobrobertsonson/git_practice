@@ -10,9 +10,11 @@
 //
 // The tool is started with posix_spawn as the leader of its own process group, with stdout and stderr appended to
 // <job>/log.txt (a file, not a pipe: nothing can fill, nothing needs a reader thread, and the job outlives the app).
-// Cancel = SIGTERM to the whole group, then SIGKILL to it after a short grace period, so helper processes the tool
-// started die with it; the job is then marked `cancelled` in job.json. job.json stores pid and pgid, which a runner
-// started later uses to re-attach.
+// Cancel of a match job = SIGTERM to the whole group, then SIGKILL to it after a short grace period, so helper
+// processes the tool started die with it. Cancel of an export job = SIGINT to the group first (the exporter stops at
+// the end of the batch and keeps its checkpoint, phase 12), SIGTERM after the grace period, SIGKILL after another.
+// A cancelled job is marked `cancelled` in job.json. job.json stores pid and pgid, which a runner started later
+// uses to re-attach.
 
 #include <atomic>
 #include <chrono>
@@ -43,6 +45,9 @@ class MatchSettings {
   std::filesystem::path exportExecutable() const;  // default <repo>/match/.venv/bin/sawblade-export
   std::filesystem::path poolManifest() const;      // default ~/.cache/sawblade/captures/pool_manifest.json
   std::string selectedTake() const;                // take name chosen for MATCH ("" = none)
+  // Wall time of the last finished export per size ("feather" / "lite" / "standard"); 0 = no run yet.
+  double exportWallSeconds(const std::string& size) const;
+  void setExportWallSeconds(const std::string& size, double seconds);
   void setMatchExecutable(const std::filesystem::path& p);
   void setExportExecutable(const std::filesystem::path& p);
   void setPoolManifest(const std::filesystem::path& p);
@@ -55,6 +60,7 @@ class MatchSettings {
  private:
   juce::PropertiesFile& props() const;
   std::filesystem::path file_;
+  mutable std::mutex m_;  // props_ is created on first use, possibly from a job's monitor thread
   mutable std::unique_ptr<juce::PropertiesFile> props_;
 };
 
@@ -68,6 +74,11 @@ struct JobProgress {
   double fraction = -1.0;       // 0..1, < 0 = indeterminate
   double etaSeconds = -1.0;     // < 0 = unknown
   std::optional<double> bestErrorDb;
+  // export (--progress-json of sawblade-export, or the checkpoint's progress.json as the fallback)
+  int epoch = 0, epochs = 0;    // epochs 0 = unknown
+  std::optional<double> bestEsr;
+  bool resumable = false;       // a checkpoint exists
+  std::string outDir;           // the final output directory ("" = not reported)
 };
 
 // One row of the match results (best first).
@@ -82,6 +93,20 @@ struct MatchCandidate {
   std::string name() const { return rank == 1 ? "best" : "alt" + std::to_string(rank - 1); }
 };
 
+// What the exporter's export_report.json says (phase 12): the acceptance block and the training wall time.
+struct ExportResult {
+  bool haveReport = false;
+  std::string status;                   // "MET" | "NOT MET" | "NOT JUDGED" ("" = no report)
+  std::string summary;                  // the report's one-line summary
+  std::optional<double> heldOutEsr, diLtasDb, esrLimit, ltasLimitDb;
+  double wallSeconds = 0.0;             // totalWallSeconds, else training.wallSeconds (0 = unknown)
+  bool nonCommercial = false;
+  std::string namFile;                  // file name of the .nam inside outDir ("" = none found)
+  std::filesystem::path listen;         // listen/ab_original_then_export.mp3, else .wav ("" = none)
+};
+// Reads <outDir>/export_report.json and looks for the .nam and the listening file. Never throws.
+ExportResult readExportResult(const std::filesystem::path& outDir);
+
 struct JobSnapshot {
   JobKind kind = JobKind::Match;
   JobState state = JobState::None;
@@ -95,8 +120,17 @@ struct JobSnapshot {
   std::vector<std::string> logTail;   // last lines of the child's output
   std::string reference, di;          // match: what it was started with (for the screen)
   std::vector<MatchCandidate> results;  // match, once succeeded
-  std::filesystem::path outDir;       // export: the result folder (revealed in the file manager)
+  std::filesystem::path outDir;       // export: the result folder (revealed in the file manager); empty until the exporter reports it
   std::string exportMode, exportSize;
+  // export (phase 12)
+  std::filesystem::path source;       // the resolved preset file that was exported
+  std::string sourceSha256;           // sha256 of its bytes: the "same rig" key
+  std::filesystem::path exportsRoot;
+  bool allowInexact = false, diBuiltin = false;
+  std::string accepted;               // "met" | "NOT MET" | "not judged" once finished ("" otherwise)
+  bool resumable = false;             // Cancelled with a checkpoint left behind
+  ExportResult result;                // once Succeeded
+  std::filesystem::path sidecar;      // <outDir>/<nam stem>.sawblade.json, written when Succeeded
   bool active() const { return state == JobState::Starting || state == JobState::Running; }
 };
 
@@ -110,7 +144,11 @@ struct ExportRequest {
   std::filesystem::path preset;        // resolved preset JSON
   std::string mode = "nocab";          // nocab / withcab
   std::string size = "standard";       // feather / lite / standard
-  std::optional<std::filesystem::path> di;  // validation DI (the selected take)
+  std::optional<std::filesystem::path> di;  // validation DI (a take); none + diBuiltin = the built-in signal; none = the exporter's default
+  std::filesystem::path exportsRoot;   // --exports-root ("" = <job dir>/export)
+  bool allowInexact = false;           // --allow-inexact (no-cab export that keeps the comp's absence as reported error)
+  bool diBuiltin = false;              // --di builtin
+  std::filesystem::path resumeDir;     // --resume <dir>: continue that run (its own mode / size / preset)
 };
 
 // What the user must locate before a job can start.
@@ -124,7 +162,13 @@ struct ToolCheck {
 // Pure helpers (unit-tested).
 bool parseProgressJson(const std::string& text, JobProgress& out);       // tolerant: false on partial / bad JSON
 void parseLogLine(JobKind kind, const std::string& line, JobProgress& p); // the log-line fallback
-bool parseExportProgress(const std::string& text, JobProgress& out);     // <out>/checkpoint/progress.json
+bool parseExportProgress(const std::string& text, JobProgress& out);     // <out>/checkpoint/progress.json (the fallback)
+// The checkpoint a cancelled export left behind: <dir>/checkpoint/progress.json exists and is not `complete`.
+struct CheckpointInfo {
+  bool resumable = false;
+  int epoch = 0, epochs = 0;
+};
+CheckpointInfo readCheckpoint(const std::filesystem::path& outDir);
 std::vector<MatchCandidate> parseMatchResult(const std::filesystem::path& resultJson, std::string* error = nullptr);
 
 // The reference file for a song folder: the guitar stem, else `other`, else a mix / the first audio file.
@@ -158,8 +202,12 @@ class JobRunner {
   // Blocks (tests) until the job of `kind` is no longer active.
   bool waitFinished(JobKind kind, std::chrono::milliseconds timeout = std::chrono::milliseconds(30000));
 
-  // Cancel = SIGTERM, then SIGKILL after this grace period (default 2.5 s).
-  void setCancelGrace(std::chrono::milliseconds g) { graceMs_.store(g.count()); }
+  // Cancel = SIGTERM, then SIGKILL after this grace period (default 2.5 s). An export job gets SIGINT first and
+  // this grace period after each signal (tests; the default for exports is 15 s: it finishes the batch in hand).
+  void setCancelGrace(std::chrono::milliseconds g) {
+    graceMs_.store(g.count());
+    exportGraceMs_.store(g.count());
+  }
 
  private:
   struct Job;
@@ -177,7 +225,7 @@ class JobRunner {
   std::filesystem::path jobsDir_;
   std::shared_ptr<Job> match_, export_;
   std::shared_ptr<HelpCache> help_;
-  std::atomic<std::chrono::milliseconds::rep> graceMs_{2500};
+  std::atomic<std::chrono::milliseconds::rep> graceMs_{2500}, exportGraceMs_{15000};
 };
 
 }  // namespace sawblade::plugin

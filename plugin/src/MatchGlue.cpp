@@ -1,10 +1,11 @@
 #include "MatchGlue.h"
 
 #include <cmath>
-#include <ctime>
 #include <fstream>
+#include <iterator>
 
 #include "PluginProcessor.h"
+#include "Sha256.h"
 
 namespace sawblade::plugin {
 namespace fs = std::filesystem;
@@ -72,33 +73,53 @@ std::string exportBlockedReason(const Preset& p) {
   return {};
 }
 
-ExportSource prepareExportSource(SawbladeProcessor& p) {
+ExportSource prepareExportSource(SawbladeProcessor& p, bool dropComp, bool write) {
   ExportSource s;
-  if (const auto f = p.audition().currentCandidateFile(); f && fs::exists(*f)) {
+  Preset current;
+  const bool compOn = (current = p.currentPreset()).busComp.enabled;
+  // The auditioned / applied candidate is exported as it is, unless the comp has to go (a no-cab export that drops it).
+  if (const auto f = p.audition().currentCandidateFile(); f && fs::exists(*f) && !(dropComp && compOn)) {
+    std::ifstream in(*f, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     s.ok = true;
     s.file = *f;
+    s.sha256 = sha256Hex(bytes);
     s.description = "Matched preset: " + f->filename().string();
     return s;
   }
-  if (const std::string why = exportBlockedReason(p.currentPreset()); !why.empty()) {
+  if (const std::string why = exportBlockedReason(current); !why.empty()) {
     s.message = why;
     return s;
   }
+  if (dropComp) current.busComp.enabled = false;
+  // The file is named by the hash of its bytes: the same rig always gives the same file (and the same "same rig" key
+  // for RESUME); a changed rig gives another one.
+  const std::string text = presetToStateJson(current);
+  s.sha256 = sha256Hex(text);
   const fs::path dir = p.jobs().jobsDir() / "inputs";
+  const fs::path file = dir / (s.sha256.substr(0, 16) + ".preset.json");
+  if (!write) {  // only the key (and where the file would go)
+    s.ok = true;
+    s.file = file;
+    s.description = "Current preset: " + p.status().presetName;
+    return s;
+  }
   std::error_code ec;
   fs::create_directories(dir, ec);
-  const std::time_t t = std::time(nullptr);
-  std::tm tm{};
-  localtime_r(&t, &tm);
-  char buf[32];
-  std::strftime(buf, sizeof buf, "%Y%m%d-%H%M%S", &tm);
-  const fs::path file = dir / (std::string(buf) + ".preset.json");
-  std::ofstream out(file, std::ios::binary | std::ios::trunc);
-  out << presetToStateJson(p.currentPreset());
-  out.close();
-  if (!out) {
-    s.message = "Could not write the preset to " + file.string();
-    return s;
+  bool same = false;
+  {
+    std::ifstream in(file, std::ios::binary);
+    if (in) same = std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()) == text;
+  }
+  if (!same) {
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out << text;
+    out.close();
+    if (!out) {
+      s.message = "Could not write the preset to " + file.string();
+      s.sha256.clear();
+      return s;
+    }
   }
   s.ok = true;
   s.file = file;
