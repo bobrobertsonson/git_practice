@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stems-dir", help="directory with sawblade-calibrate stems (default testdata/stems)")
     p.add_argument("--matched", choices=["left", "right", "mono"],
                    help="the reference is a matched pair with --di (time-aligned STFT term vs this channel)")
-    p.add_argument("--offset-ms", type=float, help="coarse DI offset within the reference (default: unknown, searched within +-3 s and refined)")
+    p.add_argument("--offset-ms", type=float, help="coarse DI offset within the reference (default: unknown; a DI shorter than the reference is placed by a whole-song envelope search, otherwise searched within +-3 s; refined either way)")
     p.add_argument("--pool", required=True, help="pool_manifest.json from sawblade-t3k pull (captures must be downloaded)")
     p.add_argument("--out", help="output directory (default ~/.cache/sawblade/match_runs/<timestamp>)")
     p.add_argument("--budget", type=float, default=1.0, help="work scale (default 1.0: all pedal x amp pairs of the current pool)")

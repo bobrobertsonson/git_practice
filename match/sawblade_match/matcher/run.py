@@ -17,7 +17,7 @@ from ..tonecheck.analysis import analyze
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
 from .engine import RATE, Engine, to48
-from .offset import refine_offset
+from .offset import PlacementError, refine_offset, resolve_offset
 from .pool import Capture, Pool, default_cab, starter_choice
 from .profile import DEFAULT_BASE, derive_profile, load_profile, profile_path, save_profile
 from .excerpt import select_excerpt
@@ -240,7 +240,8 @@ def encode_mp3(wav: Path, mp3: Path, log) -> bool:
         return False
 
 
-HINT_WINDOW_MS = 20.0   # an explicit --offset-ms is trusted: both refinements search only +-20 ms around it
+PLACED_WINDOW_MS = 250.0   # after a confident whole-song placement the refinement searches only +-250 ms
+HINT_WINDOW_MS = 20.0  # an explicit --offset-ms is trusted: both refinements search only +-20 ms around it
 
 
 def _refine_native(render: np.ndarray, fs: int, ref_path: str, col: int, coarse_ms: float, search_ms: float = 250.0):
@@ -301,6 +302,24 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         T[name] = T.get(name, 0.0) + now - t_mark
         t_mark = now
     cab0 = default_cab(pool.cabs)
+    offset_search = None
+    if ref.matched_sig is not None:
+        # unknown offset + DI shorter than the song: whole-song coarse placement (raises PlacementError, a ValueError,
+        # which the CLI prints as "error: could not place the DI in the song: enter where it starts")
+        t_place = time.time()
+        try:
+            offset_search = resolve_offset(di48, ref.matched_sig, RATE, ref.offset_given, ref.offset_samples)
+        except PlacementError as e:
+            d = e.details       # one calibration line BEFORE the error line (the plugin shows the last line starting "error")
+            if d:
+                log(f"whole-song placement failed: r1 {d['r1']:.3f}, r2 {d['r2']:.3f}, sigma {d['sigma']:.4f}, "
+                    f"confidence {d['confidence']:.2f} < MIN_CONFIDENCE {d['minConfidence']:.1f}")
+            raise
+        if offset_search["mode"] == "whole_song":
+            ref.offset_samples = offset_search["offset_samples"]
+            offset_search["searchSeconds"] = time.time() - t_place
+            log(f"whole-song placement: DI starts at {offset_search['offset_ms'] / 1000:.3f} s "
+                f"(confidence {offset_search['confidence']:.1f}, {offset_search['searchSeconds']:.2f} s)")
     window = None if cfg.window_s is None else (int(cfg.window_s[0] * RATE), int(cfg.window_s[1] * RATE))
     ex = make_excerpt(di48, cfg.excerpt_s, window=window, ref=ref)
     lap("excerpt")
@@ -323,13 +342,20 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     # ---- starter ("before") on the excerpt, which also gives the coarse offset refinement its render -----------------
     starter_p, starter_caps = starter_preset(pool, gate)
     result["starter"] = {"label": "generic starter baseline", "captures": starter_caps}
+    if offset_search is not None:
+        result["offset_search"] = offset_search
     y_st, rep_st = eng.render(starter_p, ex.x)
 
     hint_samples = ref.offset_samples if ref.offset_given else None
 
     def offset_from(y_full_excerpt, label):
         # unknown offset: +-3 s, then refined; given: only +-HINT_WINDOW_MS around the hint
-        search = int(HINT_WINDOW_MS * RATE / 1000) if ref.offset_given else int(3.0 * RATE)
+        if ref.offset_given:
+            search = int(HINT_WINDOW_MS * RATE / 1000)
+        elif offset_search is not None and offset_search["mode"] == "whole_song":
+            search = int(PLACED_WINDOW_MS * RATE / 1000)     # a confident placement: no jumping to a louder decoy
+        else:
+            search = int(3.0 * RATE)
         return refine_offset(ex.trim(y_full_excerpt), ref.matched_sig.astype(np.float64), RATE, ref.offset_samples,
                              start=ex.start, search=search)
 
@@ -341,6 +367,9 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             f"[{r['method']}, env ratio {r['envPeakRatio']:.1f}, fine ratio {r.get('peakRatio', 0):.1f}]")
         if r["envPeakRatio"] >= 2.0:
             ref.offset_samples = r["offset"]
+        if offset_search is not None and offset_search["mode"] != "given":
+            offset_search["offset_ms"] = 1000.0 * ref.offset_samples / RATE      # after the refinement
+            offset_search["offset_samples"] = int(ref.offset_samples)
     lap("starterAndOffset")
     tgt = build_target(ref, ex)
     cex = ctgt = None
