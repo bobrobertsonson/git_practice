@@ -56,7 +56,16 @@ The spec's "fails on pre-fix code" criterion does not apply because there is no 
 | clang | Not run here. CI's `linux-clang-werror` job covers it. |
 | Python suite | Not run; no Python changed. |
 | pluginval | Not run; no plugin code changed. |
-| macOS arm64 | Covered by the CI job on the pushed commit. |
+| CI run 37337777150 (sha 3eb464c) | linux-gcc (ctest + pluginval VST3 level 10), linux-clang-werror and python are green. |
+| CI macos-arm64 | All 6 new `editor:live controls` tests **pass on Apple Silicon**. The job is **red**: 45/683 fail. These are exactly the same 45 tests that fail on the base branch at f9ac2ca (run 37333081170, 45/677). |
+
+The 45 macOS failures are pre-existing and are not caused by this phase:
+- 39 tests in `plugin:runner`, `plugin:two-pass`, `plugin:export`, `plugin:T3kTool` and `plugin:housekeeping` end in "Subprocess aborted".
+- 3 render-golden tests fail: `Chain live params: mute ramps`, `Level match: legacy preset golden` and `v1 modeled presets ... phase 7 goldens`.
+- 2 preset tests fail: `plugin:save / load round trip` and `plugin:A/B compare`.
+- `editor:rig editor: screenshots` fails.
+
+So the spec's criterion "macOS arm64 job green on the final commit" is **not met**, and it cannot be met from this phase. Because the Test step fails, the job's auval and pluginval steps are skipped. This needs its own Mac-CI task; see proposal 3.
 
 Local build workarounds (environment only, no repo change):
 - gitlab is blocked, so Eigen and NAM core came in via `FETCHCONTENT_SOURCE_DIR_*` overrides.
@@ -72,3 +81,4 @@ Local build workarounds (environment only, no repo change):
 
 1. **Build-identity readout (H4 hardening).** Add the version and git commit to the About page and the Standalone window title, regenerated on every build. The implementer found that a configure-time-only header goes stale under `scripts/mac_update.sh`, which reconfigures only when `build.ninja` is missing. Estimate: about 30 lines of CMake plus the title.
 2. **Multi-instance UX.** Show the track/instance name in the editor header, or a small "monitoring?" hint, so two open Sawblade windows can be told apart in Logic.
+3. **macOS CI repair (new task, high priority).** The base branch's macos-arm64 job fails 45 tests (list above). The goldens and the save/load round-trip are the most worrying for the user's Mac build, because they suggest Apple arm64 renders differ from the Linux goldens. Triage these first, then the subprocess-runner aborts.
