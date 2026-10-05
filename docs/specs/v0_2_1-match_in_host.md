@@ -48,6 +48,23 @@ song in PLAY ALONG with "follow host", put Sawblade on the DI track, play the DI
 carries its song position automatically. One test proves the offset of a host-follow take equals the host
 playhead at the take's first sample (if an existing test already proves it, cite it instead).
 
+## Task D — the MATCH screen holds its own inputs
+
+User (2026-10-05): "I couldn't see any place to load or record for match." Today the song (LOAD SONG)
+and the DI (REC → USE FOR MATCH) live only in the PLAY ALONG panel; the MATCH screen just says to go
+there. Fix:
+
+- MatchScreen section "1 · REFERENCE SONG" gets **LOAD SONG…** (+ drop), same code path as the
+  play-along panel, with the separation progress shown in place.
+- Section "2 · YOUR DI" gets **REC / STOP**, **IMPORT DI…** (Task B) and a take picker (the take list,
+  newest first, selected = the match DI). No USE FOR MATCH round trip: picking a take here selects it.
+- **START MATCH** is enabled only when both are set; when not, the button's caption says what is
+  missing ("load a song first" / "record or import a DI").
+- The play-along panel keeps its controls (same state, no duplication of logic: both views drive the
+  same `PlayAlong` / `TakeRecorder` / `MatchSettings`).
+- Mouse-driven editor test: from a fresh state, a user can load a song, import a DI and start a match
+  without leaving the MATCH screen.
+
 ## Acceptance
 
 - New tests: MATCH enabled in plugin mode (editor, mouse-driven); two-instance job isolation; import of
