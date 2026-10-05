@@ -22,7 +22,7 @@ PedalSwitch::PedalSwitch(juce::AudioProcessorValueTreeState& apvts, const juce::
 }
 
 PedalSwitch::PedalSwitch(juce::AudioProcessorValueTreeState& apvts, const juce::String& paramId, const juce::String& name, const FaceSwitchSpec& focus)
-    : paramId_(paramId), name_(name), texts_{"WIDE", "NARROW"}, values_{focus.wideValue, focus.narrowValue}, focus_(true), spec_(focus) {
+    : paramId_(paramId), name_(name), texts_{focus.wideText, focus.narrowText}, values_{focus.wideValue, focus.narrowValue}, focus_(true), spec_(focus) {
   init(apvts);
 }
 

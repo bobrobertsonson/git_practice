@@ -1,0 +1,60 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Grind Buzz",
+  "notes": "Custom-mode grind: tight low cut at 7, presence moved up to 5.5 kHz and lifted 12 dB, highs maxed. Calibrated voicing (pedal.hm modelVersion 3, fitted to real captures in phase 7.1). Modeled pedal, no capture; the cab slot is the repo identity IR. Starting hypothesis, not a tuned tone.",
+  "category": "Grind",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 3,
+          "params": {
+            "level": 0.0,
+            "low": 6,
+            "high": 10,
+            "distortion": 10,
+            "tightness": 7,
+            "mix": 100,
+            "mode": "custom",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 0.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 5500,
+            "presenceDb": 12,
+            "rolloffHz": 16000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0,
+            "customLowDb": 3.2,
+            "customHighDb": 3.0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "gainDb": -4.0
+  }
+}

@@ -100,7 +100,13 @@ P with(std::function<void(P&)> f) {
 }
 using HmSet = std::function<void(HmParams&)>;
 using MuSet = std::function<void(MuffParams&)>;
-HmParams H(const HmSet& f) { return with<HmParams>(f); }
+// The 7b suite tests the v2 voicing: its parameter sets start from HmParams::v2() (the default-built
+// HmParams is v3 since phase 7c part 3).
+HmParams H(const HmSet& f) {
+  HmParams p = HmParams::v2();
+  f(p);
+  return p;
+}
 MuffParams M(const MuSet& f) { return with<MuffParams>(f); }
 
 void run(Processor& p, std::vector<float>& x, int block) {
@@ -231,7 +237,7 @@ TEST_CASE("pedal.hm / pedal.muff blocks: v1 maps onto v2 defaults, full v2 JSON,
   const Preset v1 = parseBlock({{"id", "a1"}, {"type", "pedal.hm"}, {"modelVersion", 1}, {"params", {{"level", 5}, {"low", 5}, {"high", 5}, {"distortion", 5}}}});
   const Preset v1b = parseBlock({{"id", "a1"}, {"type", "pedal.hm"}});
   const Preset v2 = parseBlock({{"id", "a1"}, {"type", "pedal.hm"}, {"modelVersion", 2}, {"params", json::object()}});
-  CHECK(hmOf(v1) == HmParams{});
+  CHECK(hmOf(v1) == HmParams::v2());
   CHECK(hmOf(v1) == hmOf(v2));
   CHECK(hmOf(v1b) == hmOf(v2));
   CHECK(v1 == v2);
@@ -246,7 +252,7 @@ TEST_CASE("pedal.hm / pedal.muff blocks: v1 maps onto v2 defaults, full v2 JSON,
   // a v1 block may set only the four stock keys
   CHECK_THROWS_AS(parseBlock({{"id", "a1"}, {"type", "pedal.hm"}, {"modelVersion", 1}, {"params", {{"mix", 50}}}}), PresetError);
   CHECK_THROWS_AS(parseBlock({{"id", "a1"}, {"type", "pedal.hm"}, {"params", {{"mode", "custom"}}}}), PresetError);  // implicit = v1
-  CHECK_THROWS_AS(parseBlock({{"id", "a1"}, {"type", "pedal.hm"}, {"modelVersion", 3}}), PresetError);
+  CHECK_THROWS_AS(parseBlock({{"id", "a1"}, {"type", "pedal.hm"}, {"modelVersion", 4}}), PresetError);
   CHECK_THROWS_AS(parseBlock({{"id", "a1"}, {"type", "pedal.hm"}, {"modelVersion", 0}}), PresetError);
   CHECK_THROWS_AS(parseBlock({{"id", "a1"}, {"type", "pedal.muff"}, {"modelVersion", 2}}), PresetError);
 
@@ -703,7 +709,7 @@ TEST_CASE("pedal.hm modes: custom and modded", "[pedal7b][hm][mode]") {
     return y;
   };
   CHECK(render(H([](HmParams& p) { p.low = 0; p.distortion = 0; p.mode = HmMode::Custom; })) == render(H([](HmParams& p) { p.low = 0; p.distortion = 0; })));
-  CHECK(render(H([](HmParams& p) { p.mode = HmMode::Custom; })) != render(HmParams{}));
+  CHECK(render(H([](HmParams& p) { p.mode = HmMode::Custom; })) != render(HmParams::v2()));
 }
 
 // ---- 6. aliasing -------------------------------------------------------------------------------------------

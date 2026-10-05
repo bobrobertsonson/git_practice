@@ -31,7 +31,7 @@ constexpr Spec kHmSpec[kHmNumLive] = {
     {"highSpread", "High Spread", 1.0, 2.0, 1.5},
     {"presenceFreq", "Presence Freq", 3000, 7000, 4800},
     {"presenceDb", "Presence", 0, 16, 8},
-    {"rolloffHz", "Roll-off", 4000, 12000, 9000},
+    {"rolloffHz", "Roll-off", 4000, 16000, 16000},  // v3; a v2 block parses 4000..12000, default 9000
     {"gain1Db", "Stage 1", -12, 12, 0},
     {"gain2Db", "Stage 2", -12, 12, 0},
     {"bias", "Bias", 0, 10, 0},
@@ -209,8 +209,9 @@ void muffLiveFromParams(const MuffParams& p, float* v) noexcept {
 std::shared_ptr<const BlockParams> parseHmBlock(JsonObject& o, const std::filesystem::path&) {
   auto b = std::make_shared<HmBlockParams>();
   const int version = parseModelVersion(o, kHmModelVersion, 1);
+  if (version <= 2) b->p = HmParams::v2();  // v1 maps onto the v2 defaults, stored as 2
   if (auto po = o.optionalObject("params")) {
-    // The four stock knobs exist in both versions.
+    // The four stock knobs exist in every version.
     b->p.level = num(*po, kHmSpec[kHmLevel]);
     b->p.low = num(*po, kHmSpec[kHmLow]);
     b->p.high = num(*po, kHmSpec[kHmHigh]);
@@ -229,12 +230,16 @@ std::shared_ptr<const BlockParams> parseHmBlock(JsonObject& o, const std::filesy
       p.highSpread = num(*po, kHmSpec[kHmHighSpread]);
       p.presenceFreq = num(*po, kHmSpec[kHmPresenceFreq]);
       p.presenceDb = num(*po, kHmSpec[kHmPresenceDb]);
-      p.rolloffHz = num(*po, kHmSpec[kHmRolloffHz]);
+      p.rolloffHz = version == 3 ? num(*po, kHmSpec[kHmRolloffHz]) : po->number("rolloffHz", 9000.0, 4000.0, 12000.0);
       p.gain1Db = num(*po, kHmSpec[kHmGain1Db]);
       p.gain2Db = num(*po, kHmSpec[kHmGain2Db]);
       p.bias = num(*po, kHmSpec[kHmBias]);
+      if (version == 3) {
+        p.customLowDb = po->number("customLowDb", 3.2, 0.0, 8.0);
+        p.customHighDb = po->number("customHighDb", 3.0, 0.0, 8.0);
+      }
     }
-    po->finish();
+    po->finish();  // customLowDb / customHighDb on a v1 / v2 block are unknown keys: PresetError
   }
   return b;
 }
@@ -291,7 +296,11 @@ nlohmann::json HmBlockParams::toJson() const {
                       {"presenceFreq", p.presenceFreq}, {"presenceDb", p.presenceDb},
                       {"rolloffHz", p.rolloffHz},   {"gain1Db", p.gain1Db},
                       {"gain2Db", p.gain2Db},       {"bias", p.bias}};
-  return {{"modelVersion", kHmModelVersion}, {"params", j}};
+  if (p.modelVersion >= 3) {
+    j["customLowDb"] = p.customLowDb;
+    j["customHighDb"] = p.customHighDb;
+  }
+  return {{"modelVersion", p.modelVersion >= 3 ? kHmModelVersion : kHmModelVersionV2}, {"params", j}};
 }
 
 bool MuffBlockParams::equals(const BlockParams& other) const {

@@ -15,8 +15,12 @@ namespace {
 
 constexpr int hmP(int live) { return kHmFirst + live; }
 constexpr int muffP(int live) { return kMuffFirst + live; }
+constexpr int hmxP(int live) { return kHmxFirst + live; }
+constexpr int eyeP(int live) { return kEyeFirst + live; }
 
 const fs::path kChainsawDir = fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "chainsaw";
+const fs::path kHmxDir = fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "hmx";
+const fs::path kEyeDir = fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "eye";
 
 // Output of the processor for the same stationary input; the first `settle` samples are discarded.
 std::vector<float> render(Host& h, const std::vector<float>& x, std::size_t settle = 4096) {
@@ -47,9 +51,12 @@ const std::vector<float>& testInput() {
 }  // namespace
 
 TEST_CASE("Circuit params: the parameter table follows the core descriptors", "[pedalface]") {
-  REQUIRE(kNumParams == kPostEqFirst + kPostEqSlots + 1 + kHmNumLive + kMuffNumLive);
+  REQUIRE(kNumParams == kPostEqFirst + kPostEqSlots + 1 + kHmNumLive + kMuffNumLive + kHmxNumLive + kEyeNumLive);
+  CHECK(static_cast<int>(kHmxFirst) == static_cast<int>(kMuffFirst) + static_cast<int>(kMuffNumLive));
+  CHECK(static_cast<int>(kEyeFirst) == static_cast<int>(kHmxFirst) + static_cast<int>(kHmxNumLive));
   CHECK(paramSpec(kSawCircuit).id == "sawCircuit");
-  CHECK(paramSpec(kSawCircuit).choices == std::vector<std::string>{"Chainsaw", "Big Fuzz"});
+  CHECK(paramSpec(kSawCircuit).choices == std::vector<std::string>{"Chainsaw", "Big Fuzz", "Modded Saw", "One-Knob Saw"});
+  CHECK(kNumCircuits == 4);
   const auto hm = hmLiveParamDescs();
   const auto mf = muffLiveParamDescs();
   for (int k = 0; k < kHmNumLive; ++k) {
@@ -69,6 +76,38 @@ TEST_CASE("Circuit params: the parameter table follows the core descriptors", "[
     CHECK(s.choices == mf[static_cast<std::size_t>(k)].choices);
     CHECK(s.name.rfind("Big Fuzz ", 0) == 0);
   }
+  const auto hx = hmxLiveParamDescs();
+  const auto ey = eyeLiveParamDescs();
+  for (int k = 0; k < kHmxNumLive; ++k) {
+    const ParamSpec& s = paramSpec(kHmxFirst + k);
+    INFO(s.id);
+    CHECK(s.min == hx[static_cast<std::size_t>(k)].min);
+    CHECK(s.max == hx[static_cast<std::size_t>(k)].max);
+    CHECK(s.def == hx[static_cast<std::size_t>(k)].def);
+    if (k != kHmxMidVoice) CHECK(s.choices == hx[static_cast<std::size_t>(k)].choices);  // midVoice reads Stock / Low / High
+    CHECK(s.name.rfind("Modded Saw ", 0) == 0);
+  }
+  for (int k = 0; k < kEyeNumLive; ++k) {
+    const ParamSpec& s = paramSpec(kEyeFirst + k);
+    INFO(s.id);
+    CHECK(s.min == ey[static_cast<std::size_t>(k)].min);
+    CHECK(s.max == ey[static_cast<std::size_t>(k)].max);
+    CHECK(s.def == ey[static_cast<std::size_t>(k)].def);
+    CHECK(s.name.rfind("One-Knob Saw ", 0) == 0);
+  }
+  // The 7c ids listed in the spec 2.3, in order.
+  const char* hmxIds[] = {"hmxLevel", "hmxLow", "hmxLowMid", "hmxHighMid", "hmxHigh", "hmxDistortion", "hmxPresence",
+                          "hmxTightness", "hmxMix", "hmxClip", "hmxBoost", "hmxLowMidFreq", "hmxHighMidFreq", "hmxMidVoice"};
+  for (int k = 0; k < kHmxNumLive; ++k) CHECK(paramSpec(hmxP(k)).id == hmxIds[k]);
+  const char* eyeIds[] = {"eyeGain", "eyeLevel", "eyeTightness"};
+  for (int k = 0; k < kEyeNumLive; ++k) CHECK(paramSpec(eyeP(k)).id == eyeIds[k]);
+  CHECK(paramSpec(hmxP(kHmxClip)).choices == std::vector<std::string>{"silicon", "led", "asymmetric", "soft"});
+  CHECK(paramSpec(hmxP(kHmxBoost)).choices == std::vector<std::string>{"off", "on"});
+  CHECK(paramSpec(hmxP(kHmxMidVoice)).choices == std::vector<std::string>{"Stock", "Low", "High"});
+  CHECK(paramSpec(hmxP(kHmxMidVoice)).name == "Modded Saw Mid Voice");
+  CHECK(paramSpec(hmxP(kHmxMix)).unit == "%");
+  CHECK(paramSpec(hmxP(kHmxLowMidFreq)).unit.empty());  // a 0..10 knob, not Hz
+  CHECK(paramSpec(hmxP(kHmxHighMidFreq)).unit.empty());
   // The ids listed in the spec.
   CHECK(paramSpec(hmP(kHmLowQ)).id == "hmLowQ");
   CHECK(paramSpec(hmP(kHmPresenceFreq)).id == "hmPresenceFreq");
@@ -182,6 +221,7 @@ TEST_CASE("Circuit faces: every table entry names a real parameter of its circui
     std::map<int, int> controls;  // param -> number of knobs (face + drawer)
     int knobCount = 0;
     for (const FaceKnob& k : f.knobs) {
+      if (k.param < 0) continue;  // an empty position
       REQUIRE(inSet(k.param));
       ++controls[k.param];
       ++knobCount;
@@ -191,27 +231,52 @@ TEST_CASE("Circuit faces: every table entry names a real parameter of its circui
       ++controls[k.param];
     }
     CHECK(f.drawerKnobs.size() <= 10);
-    REQUIRE(inSet(f.clipParam));
-    CHECK_FALSE(paramSpec(f.clipParam).choices.empty());
+    if (f.clipParam >= 0) {  // -1: no CLIP switch (the one-knob circuit)
+      REQUIRE(inSet(f.clipParam));
+      CHECK_FALSE(paramSpec(f.clipParam).choices.empty());
+      ++controls[f.clipParam];
+    }
     REQUIRE(inSet(f.focus.param));
     for (const FaceKnob& s : f.drawerSwitches) {
       REQUIRE(inSet(s.param));
       CHECK_FALSE(paramSpec(s.param).choices.empty());
       ++controls[s.param];
     }
-    ++controls[f.clipParam];
     // FOCUS parameter: a switch on the face plus one drawer knob. Everything else: exactly one control.
     for (int p = ci.firstParam; p < ci.firstParam + ci.numParams; ++p) {
       INFO(paramSpec(p).id);
       CHECK(controls[p] == 1);
     }
-    CHECK(knobCount == 6);
+    CHECK(knobCount == (c == static_cast<int>(Circuit::OneKnobSaw) ? 3 : 6));
     const double lo = paramSpec(f.focus.param).min, hi = paramSpec(f.focus.param).max;
     CHECK(f.focus.wideValue >= lo);
     CHECK(f.focus.wideValue <= hi);
     CHECK(f.focus.narrowValue >= lo);
     CHECK(f.focus.narrowValue <= hi);
+    CHECK(std::string(f.focus.wideText).size() > 0);
+    CHECK(std::string(f.focus.narrowText).size() > 0);
   }
+  // The 7c rows: BOOST reads OFF / ON over 0 / 1; the one-knob TIGHT reads OFF / ON over 0 / 5.
+  const CircuitFace& hx = circuitFace(Circuit::ModdedSaw);
+  CHECK(hx.focus.param == hmxP(kHmxBoost));
+  CHECK(std::string(hx.focus.label) == "BOOST");
+  CHECK(std::string(hx.focus.wideText) == "OFF");
+  CHECK(std::string(hx.focus.narrowText) == "ON");
+  CHECK(hx.focus.wideValue == 0.0);
+  CHECK(hx.focus.narrowValue == 1.0);
+  CHECK(hx.focus.threshold == 0.5);
+  CHECK(hx.drawerKnobs.size() == 5);
+  CHECK(hx.drawerSwitches.size() == 2);  // BOOST, VOICE
+  const CircuitFace& ey = circuitFace(Circuit::OneKnobSaw);
+  CHECK(ey.clipParam == -1);
+  CHECK(ey.focus.param == eyeP(kEyeTightness));
+  CHECK(ey.focus.narrowValue == 5.0);
+  CHECK(ey.focus.threshold == 2.5);
+  CHECK(ey.drawerKnobs.empty());
+  CHECK(ey.drawerSwitches.empty());
+  CHECK(ey.knobs[1].param == -1);
+  CHECK(ey.knobs[2].param == -1);
+  CHECK(ey.knobs[5].param == -1);
 }
 
 TEST_CASE("Pedal params: classic_buzzsaw maps onto the parameters and back", "[pedalface][params]") {
@@ -283,10 +348,12 @@ TEST_CASE("Pedal params: moving chainsaw parameters changes the audio live, with
 }
 
 TEST_CASE("Pedal params: sweeping every pedal parameter while audio runs allocates and locks nothing", "[pedalface][rt]") {
-  for (const char* file : {"classic_buzzsaw.json", "pickle_chainsaw.json"}) {
-    INFO(file);
+  const fs::path files[] = {kChainsawDir / "classic_buzzsaw.json", kChainsawDir / "pickle_chainsaw.json",
+                            kHmxDir / "arizona_mids.json", kEyeDir / "one_knob_max.json"};
+  for (const fs::path& file : files) {
+    INFO(file.string());
     Host h(44100.0, 512);
-    h.load(kChainsawDir / file);
+    h.load(file);
     const std::uint64_t builds = h.p.engineBuilds();
     const auto x = noise(512 * 120, 5, 0.1f);
     std::vector<float> out(512);
@@ -332,7 +399,7 @@ TEST_CASE("Pedal params: a modelVersion 1 preset reads the v2 defaults", "[pedal
   Host h(48000.0, 512);
   h.load(fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "hm_chainsaw.json");
   CHECK(h.param(kSawCircuit) == 0.0);
-  const HmParams def;
+  const HmParams def = HmParams::v2();  // a v1 preset reads as the v2 voicing (HmParams{} is v3 since 7c part 3)
   CHECK(h.param(hmP(kHmLevel)) == Catch::Approx(hm->p.level).margin(1e-4));
   CHECK(h.param(hmP(kHmLow)) == Catch::Approx(hm->p.low).margin(1e-4));
   CHECK(h.param(hmP(kHmDistortion)) == Catch::Approx(hm->p.distortion).margin(1e-4));
@@ -536,4 +603,213 @@ TEST_CASE("Pedal params: overlapping loads of different circuits do not trigger 
     CHECK(h.param(kSawCircuit) == 0.0);
     CHECK(h.p.engineBuilds() <= builds + 2);  // the two loads (A may be superseded), never an extra switch build
   }
+}
+
+// ---- phase 7c Part 2: MODDED SAW (pedal.hmx) and ONE-KNOB SAW (pedal.eye) -------------------------------
+
+TEST_CASE("Pedal params: field access of the 7c sets agrees with the core's live converters", "[pedalface][7c]") {
+  HmxParams h;
+  h.level = 1.5; h.low = 9.5; h.lowMid = 7.25; h.highMid = 3.5; h.high = 8.0; h.distortion = 6.5; h.presence = 2.5;
+  h.tightness = 3.3; h.mix = 41.0; h.clip = ClipType::Soft; h.boost = true; h.lowMidFreq = 2.5; h.highMidFreq = 8.5;
+  float live[kHmxNumLive];
+  hmxLiveFromParams(h, live);
+  HmxParams back;
+  for (int i = 0; i < kHmxNumLive; ++i) {
+    CHECK(static_cast<float>(hmxField(h, i)) == live[i]);
+    setHmxField(back, i, hmxField(h, i));
+  }
+  CHECK(back == h);
+  EyeParams e;
+  e.gain = 9.25; e.level = 2.5; e.tightness = 6.0;
+  float el[kEyeNumLive];
+  eyeLiveFromParams(e, el);
+  EyeParams eb;
+  for (int i = 0; i < kEyeNumLive; ++i) {
+    CHECK(static_cast<float>(eyeField(e, i)) == el[i]);
+    setEyeField(eb, i, eyeField(e, i));
+  }
+  CHECK(eb == e);
+  CHECK(circuitForBlockType("pedal.hmx") == Circuit::ModdedSaw);
+  CHECK(circuitForBlockType("pedal.eye") == Circuit::OneKnobSaw);
+  CHECK(std::string(circuitInfo(Circuit::ModdedSaw).choiceName) == "Modded Saw");
+  CHECK(std::string(circuitInfo(Circuit::OneKnobSaw).choiceName) == "One-Knob Saw");
+}
+
+TEST_CASE("Pedal params: arizona_mids maps onto the modded-saw set and back; moving it is live", "[pedalface][params][7c][rt]") {
+  const Preset p = loadPresetFile(kHmxDir / "arizona_mids.json");
+  const auto* hx = dynamic_cast<const HmxBlockParams*>(p.a.blocks[0].params.get());
+  REQUIRE(hx != nullptr);
+  const ParamValues v = paramsFromPreset(p);
+  CHECK(v[kSawCircuit] == 2.0);  // ModdedSaw
+  for (int k = 0; k < kHmxNumLive; ++k) {
+    INFO(paramSpec(hmxP(k)).id);
+    CHECK(v[static_cast<std::size_t>(hmxP(k))] == snapParam(hmxField(hx->p, k)));
+  }
+  // the other sets are at their defaults
+  for (int k = 0; k < kHmNumLive; ++k) CHECK(v[static_cast<std::size_t>(hmP(k))] == paramSpec(hmP(k)).def);
+  for (int k = 0; k < kEyeNumLive; ++k) CHECK(v[static_cast<std::size_t>(eyeP(k))] == paramSpec(eyeP(k)).def);
+  CHECK(v[hmxP(kHmxClip)] == 1.0);   // led
+  CHECK(v[hmxP(kHmxMix)] == 80.0);
+  CHECK(v[hmxP(kHmxBoost)] == 0.0);
+  Preset q = p;
+  applyParams(q, v);  // writes the values back into the block
+  CHECK(q == clampedToParams(p));
+
+  Host h(48000.0, 512);
+  h.load(kHmxDir / "arizona_mids.json");
+  CHECK(h.param(kSawCircuit) == 2.0);
+  CHECK(h.param(hmxP(kHmxHighMid)) == Catch::Approx(hx->p.highMid).margin(1e-4));
+  CHECK(h.param(hmxP(kHmxHighMidFreq)) == Catch::Approx(6.0).margin(1e-4));
+  CHECK(h.param(hmxP(kHmxPresence)) == Catch::Approx(8.0).margin(1e-4));
+
+  const std::uint64_t builds = h.p.engineBuilds();
+  const auto x = testInput();
+  render(h, x);
+  const auto base = render(h, x);
+  REQUIRE(rms(base.data(), base.size()) > 1e-3);
+  struct Move { int param; double to; const char* what; };
+  for (const Move m : {Move{kHmxHighMid, 2.0, "highMid"}, Move{kHmxClip, 0.0, "clip"}, Move{kHmxBoost, 1.0, "boost"}, Move{kHmxDistortion, 3.0, "distortion"},
+                       Move{kHmxMix, 30.0, "mix"}, Move{kHmxLowMid, 9.0, "lowMid"}, Move{kHmxPresence, 1.0, "presence"}}) {
+    INFO(m.what);
+    const double was = h.param(hmxP(m.param));
+    h.setParam(hmxP(m.param), m.to);
+    render(h, x);
+    const auto moved = render(h, x);
+    CHECK(relDiff(base, moved) > 0.005);
+    h.setParam(hmxP(m.param), was);
+    render(h, x);
+    CHECK(relDiff(base, render(h, x)) < 1e-4);
+  }
+  CHECK(h.p.engineBuilds() == builds);  // never a rebuild
+  CHECK(h.allocs == 0);
+  if (LockGuard::enabled()) CHECK(h.locks == 0);
+
+  // The state carries the moved values and round-trips.
+  h.setParam(hmxP(kHmxHighMid), 4.5);
+  h.setParam(hmxP(kHmxBoost), 1.0);
+  h.setParam(hmxP(kHmxClip), 3.0);
+  juce::MemoryBlock s;
+  h.p.getStateInformation(s);
+  const json j = json::parse(std::string(static_cast<const char*>(s.getData()), s.getSize()));
+  const json& blk = j["paths"]["a"]["blocks"][0];
+  CHECK(blk["type"] == "pedal.hmx");
+  CHECK(blk["params"]["highMid"].get<double>() == Catch::Approx(4.5).margin(1e-4));
+  CHECK(blk["params"]["boost"] == "on");
+  CHECK(blk["params"]["clip"] == "soft");
+  SawbladeProcessor b;
+  b.setStateInformation(s.getData(), static_cast<int>(s.getSize()));
+  CHECK(b.parameters().getRawParameterValue("sawCircuit")->load() == 2.0f);
+  CHECK(b.parameters().getRawParameterValue("hmxBoost")->load() == 1.0f);
+  juce::MemoryBlock s2;
+  b.getStateInformation(s2);
+  CHECK(std::string(static_cast<const char*>(s2.getData()), s2.getSize()) == std::string(static_cast<const char*>(s.getData()), s.getSize()));
+}
+
+TEST_CASE("Pedal params: one_knob_max maps onto the one-knob set; eyeGain moves the audio live", "[pedalface][params][7c][rt]") {
+  const Preset p = loadPresetFile(kEyeDir / "one_knob_max.json");
+  const auto* ey = dynamic_cast<const EyeBlockParams*>(p.a.blocks[0].params.get());
+  REQUIRE(ey != nullptr);
+  const ParamValues v = paramsFromPreset(p);
+  CHECK(v[kSawCircuit] == 3.0);  // OneKnobSaw
+  for (int k = 0; k < kEyeNumLive; ++k) CHECK(v[static_cast<std::size_t>(eyeP(k))] == snapParam(eyeField(ey->p, k)));
+  CHECK(v[eyeP(kEyeGain)] == 10.0);
+  Preset q = p;
+  applyParams(q, v);
+  CHECK(q == clampedToParams(p));
+
+  Host h(48000.0, 512);
+  h.load(kEyeDir / "one_knob_max.json");
+  CHECK(h.param(kSawCircuit) == 3.0);
+  CHECK(h.param(eyeP(kEyeGain)) == Catch::Approx(10.0));
+  const std::uint64_t builds = h.p.engineBuilds();
+  const auto x = testInput();
+  render(h, x);
+  const auto base = render(h, x);
+  REQUIRE(rms(base.data(), base.size()) > 1e-3);
+  for (const auto& m : {std::pair<int, double>{kEyeGain, 2.0}, {kEyeLevel, 8.0}, {kEyeTightness, 8.0}}) {
+    const double was = h.param(eyeP(m.first));
+    h.setParam(eyeP(m.first), m.second);
+    render(h, x);
+    CHECK(relDiff(base, render(h, x)) > 0.005);
+    h.setParam(eyeP(m.first), was);
+    render(h, x);
+    CHECK(relDiff(base, render(h, x)) < 1e-4);
+  }
+  CHECK(h.p.engineBuilds() == builds);
+  CHECK(h.allocs == 0);
+  if (LockGuard::enabled()) CHECK(h.locks == 0);
+}
+
+TEST_CASE("Pedal params: the CIRCUIT switch cycles all four circuits, one rebuild per step, with the carry-over", "[pedalface][params][7c][swap]") {
+  Host h(48000.0, 512);
+  h.load(kChainsawDir / "classic_buzzsaw.json");
+  h.setParam(hmP(kHmLevel), 3.25);
+  h.setParam(hmP(kHmMix), 62.0);
+  h.setParam(hmP(kHmTightness), 4.5);
+  h.setParam(hmP(kHmClip), 1.0);  // led
+  h.setParam(hmP(kHmPresenceDb), 14.0);
+  std::uint64_t builds = h.p.engineBuilds();
+  const auto x = testInput();
+
+  auto step = [&](Circuit to) {
+    h.setParam(kSawCircuit, static_cast<double>(static_cast<int>(to)));
+    REQUIRE(h.p.waitForLoader());
+    REQUIRE(h.p.status().error.empty());
+    CHECK(h.p.engineBuilds() == ++builds);  // exactly one rebuild per step
+    REQUIRE(h.p.circuitSlot().has_value());
+    CHECK(h.p.circuitSlot()->circuit == to);
+    CHECK(h.param(kSawCircuit) == static_cast<double>(static_cast<int>(to)));
+    render(h, x);
+    const auto y = render(h, x);
+    CHECK(rms(y.data(), y.size()) > 1e-3);
+    return h.p.currentPreset();
+  };
+
+  const Preset fuzz = step(Circuit::BigFuzz);
+  CHECK(fuzz.a.blocks[0].type == "pedal.muff");
+
+  const Preset modded = step(Circuit::ModdedSaw);
+  CHECK(modded.a.blocks[0].type == "pedal.hmx");
+  const auto* hp = dynamic_cast<const HmxBlockParams*>(modded.a.blocks[0].params.get());
+  REQUIRE(hp != nullptr);
+  HmxParams hexp;
+  hexp.level = 3.25; hexp.mix = 62.0; hexp.tightness = 4.5; hexp.clip = ClipType::Led;  // level, mix, tightness, clip carried
+  CHECK(hp->p == hexp);
+  CHECK(h.param(hmxP(kHmxLevel)) == Catch::Approx(3.25));
+  CHECK(h.param(hmxP(kHmxPresence)) == paramSpec(hmxP(kHmxPresence)).def);
+  h.setParam(hmxP(kHmxBoost), 1.0);  // not carried to the next circuit
+
+  const Preset eye = step(Circuit::OneKnobSaw);
+  CHECK(eye.a.blocks[0].type == "pedal.eye");
+  const auto* ep = dynamic_cast<const EyeBlockParams*>(eye.a.blocks[0].params.get());
+  REQUIRE(ep != nullptr);
+  EyeParams eexp;
+  eexp.level = 3.25; eexp.tightness = 4.5;  // level and tightness only: no mix, no clip
+  CHECK(ep->p == eexp);
+  CHECK(h.param(eyeP(kEyeLevel)) == Catch::Approx(3.25));
+  CHECK(h.param(eyeP(kEyeTightness)) == Catch::Approx(4.5));
+  CHECK(h.param(hmxP(kHmxBoost)) == 0.0);  // the old set is back at its defaults
+
+  // the state round-trips with the eye block
+  juce::MemoryBlock s;
+  h.p.getStateInformation(s);
+  const json j = json::parse(std::string(static_cast<const char*>(s.getData()), s.getSize()));
+  CHECK(j["paths"]["a"]["blocks"][0]["type"] == "pedal.eye");
+  SawbladeProcessor b;
+  b.setStateInformation(s.getData(), static_cast<int>(s.getSize()));
+  CHECK(b.parameters().getRawParameterValue("sawCircuit")->load() == 3.0f);
+  CHECK(b.circuitSlot()->circuit == Circuit::OneKnobSaw);
+  juce::MemoryBlock s2;
+  b.getStateInformation(s2);
+  CHECK(std::string(static_cast<const char*>(s2.getData()), s2.getSize()) == std::string(static_cast<const char*>(s.getData()), s.getSize()));
+
+  const Preset saw = step(Circuit::Chainsaw);  // back around; mix and clip are at the chainsaw's defaults
+  CHECK(saw.a.blocks[0].type == "pedal.hm");
+  const auto* sp = dynamic_cast<const HmBlockParams*>(saw.a.blocks[0].params.get());
+  REQUIRE(sp != nullptr);
+  HmParams sexp;
+  sexp.level = 3.25; sexp.tightness = 4.5;
+  CHECK(sp->p == sexp);
+  CHECK(sp->p.modelVersion == 3);  // a switch to Chainsaw builds the calibrated (v3) voicing
+  CHECK(h.allocs == 0);
 }
