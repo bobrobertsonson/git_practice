@@ -1224,7 +1224,15 @@ void JobRunner::adoptMatchGroup(std::shared_ptr<Job> job, const std::vector<fs::
     std::lock_guard<std::mutex> jl(job->m);
     st = job->snap.state;
   }
-  if (st == JobState::Succeeded && settings_.autoRefine()) startRefineLocked(job);
+  if (st != JobState::Succeeded) return;
+  // Too old to refine: the results stay as a PREVIEW and say so.
+  const std::int64_t ref = job->finishedMs.load() > 0 ? job->finishedMs.load() : job->spawnedMs.load() > 0 ? job->spawnedMs.load() : job->startedMs;
+  if (ref > 0 && nowMs() - ref > static_cast<std::int64_t>(kRefineMaxAgeHours) * 3600 * 1000) {
+    std::lock_guard<std::mutex> jl(job->m);
+    job->snap.refineNote = "Preview is over " + std::to_string(kRefineMaxAgeHours) + " h old: re-run MATCH to refine.";
+    return;
+  }
+  if (settings_.autoRefine()) startRefineLocked(job);
 }
 
 void JobRunner::attachExisting() {

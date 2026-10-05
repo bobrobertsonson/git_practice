@@ -1183,24 +1183,17 @@ TEST_CASE("top bar: MATCH opens the play-along panel's record + match area; EXPO
 
 }
 
-TEST_CASE("top bar: MATCH in the Standalone app opens the panel's record + match area", "[editor][match][topbar]") {
+TEST_CASE("top bar: MATCH in the Standalone app opens the match screen directly", "[editor][match][topbar]") {
   MatchRig rig;
   rig.proc.playAlong().setStandalone(true);
   auto* match = topBarButton(*rig.ed, "MATCH");
   REQUIRE(match != nullptr);
-  CHECK_FALSE(rig.ed->playAlongOpen());
-  click(*match);
-  CHECK(rig.ed->playAlongOpen());
   CHECK_FALSE(rig.ed->matchScreenOpen());
-  CHECK(buttonTitled(rig.panel(), "REC")->isVisible());
-  CHECK(buttonTitled(rig.panel(), "USE FOR MATCH")->isVisible());
-  CHECK_FALSE(anyLabelContains(rig.panel(), "MATCH runs in the Standalone app"));
-  CHECK(anyLabelContains(rig.panel(), "REC saves the clean input"));
-  click(*match);  // opening it twice is harmless
-  CHECK(rig.ed->playAlongOpen());
-  // the panel's own MATCH button goes on to the screen
-  click(*buttonTitled(rig.panel(), "MATCH"));
+  click(*match);
   CHECK(rig.ed->matchScreenOpen());
+  CHECK(rig.screen().mode() == MatchScreen::Mode::Match);
+  CHECK_FALSE(rig.ed->playAlongOpen());
+  CHECK_FALSE(anyLabelContains(rig.panel(), "MATCH runs in the Standalone app"));
 }
 
 TEST_CASE("match screen: PREVIEW with REFINING..., then a REFINED section; nothing is loaded by itself", "[editor][match][twopass]") {
@@ -1431,4 +1424,22 @@ TEST_CASE("match screen: a cancelled or failed refinement leaves a one-line note
   CHECK(anyLabelContains(screen, "Refinement failed: error: pool needs amps and cabs"));
   CHECK(resultsList(rig).getListBoxModel()->getNumRows() == 3);
   CHECK_FALSE(anyLabelContains(screen, juce::String::fromUTF8("REFINING\xe2\x80\xa6")));
+}
+
+TEST_CASE("match screen: an old PREVIEW shows that it is over 24 h old and is not refined", "[editor][match][twopass][age]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass();
+  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+  const fs::path q = rig.tools.jobs / "20260101-120000-match";
+  fs::create_directories(q);
+  const auto finished = now - 25LL * 3600 * 1000;
+  nlohmann::json j = {{"version", 1}, {"kind", "match"}, {"state", "succeeded"}, {"pass", "quick"}, {"pid", 0}, {"spawnedEpochMs", finished - 1000},
+                      {"startedEpochMs", finished - 1000}, {"finishedEpochMs", finished}, {"outDir", q.string()}, {"commandLine", nlohmann::json::array({"x"})},
+                      {"request", {{"di", rig.tools.di.string()}, {"ref", rig.tools.ref.string()}}}};
+  std::ofstream(q / "job.json") << j.dump();
+  rig.ed->openMatchScreen(false);  // re-attaches
+  rig.screen().refresh();
+  CHECK(rig.proc.jobs().refineSnapshot().state == JobState::None);
+  CHECK(anyLabelEquals(rig.screen(), "Preview is over 24 h old: re-run MATCH to refine."));
 }

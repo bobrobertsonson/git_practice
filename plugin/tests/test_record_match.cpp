@@ -2151,3 +2151,35 @@ TEST_CASE("two-pass: rename or delete of the selected take cancels the refinemen
     }
   }
 }
+
+TEST_CASE("two-pass: a quick job older than 24 h is not refined on re-attach; one younger is", "[match][runner][twopass][attach][age]") {
+  using namespace sawblade::plugin;
+  static_assert(kRefineMaxAgeHours == 24);
+  const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+  for (const int hours : {23, 25}) {
+    INFO("quick job finished " << hours << " h ago");
+    FakeTools t;
+    t.cfgTwoPass({{"gatesThorough", json::array({"g1"})}});
+    const fs::path q = t.jobs / "20260101-120000-match";
+    fs::create_directories(q);
+    const std::int64_t finished = nowMs - static_cast<std::int64_t>(hours) * 3600 * 1000;
+    json j = {{"version", 1}, {"kind", "match"}, {"state", "succeeded"}, {"pass", "quick"}, {"pid", 0},
+              {"spawnedEpochMs", finished - 60000}, {"startedEpochMs", finished - 60000}, {"finishedEpochMs", finished},
+              {"outDir", q.string()}, {"commandLine", json::array({"x"})},
+              {"request", {{"di", t.di.string()}, {"ref", t.ref.string()}, {"offsetMs", 1234.5}}}};
+    std::ofstream(q / "job.json") << j.dump();
+    JobRunner runner(t.settings, t.jobs);
+    runner.attachExisting();
+    CHECK(runner.snapshot(JobKind::Match).state == JobState::Succeeded);
+    if (hours < 24) {
+      REQUIRE(waitUntil([&] { return refineRunning(runner); }));
+      CHECK(countMatchDirs(t.jobs) == 2);
+      runner.cancelRefine();
+      REQUIRE(runner.waitRefineFinished(10000ms));
+    } else {
+      CHECK(runner.refineSnapshot().state == JobState::None);
+      CHECK(countMatchDirs(t.jobs) == 1);
+      CHECK(runner.snapshot(JobKind::Match).refineNote == "Preview is over 24 h old: re-run MATCH to refine.");
+    }
+  }
+}

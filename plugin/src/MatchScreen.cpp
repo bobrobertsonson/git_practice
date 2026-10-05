@@ -54,6 +54,8 @@ class Bar : public juce::Component {
   juce::Colour col_ = L::saw();
 };
 
+constexpr int kRightX = 478;  // left edge of the progress / results column
+
 }  // namespace
 
 struct MatchScreen::Impl : juce::ListBoxModel {
@@ -583,13 +585,19 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       previewBadge.setTooltip(promoted ? "The applied preset is the same chain as the thorough pass's best." : refineReady ? "The thorough pass finished: see the REFINED section." : "Quick pass: preview results.");
       // A thorough pass that ended without a result: one line on the header (the quick results stay).
       const bool refineEnded = !refineActive && quickPass && (refine.state == JobState::Failed || refine.state == JobState::Cancelled);
-      refiningLabel.setVisible(refineActive || refineEnded);
+      // An old quick job that was not refined (too old, or it could not start) says why.
+      const bool refineNoted = !refineActive && !refineEnded && quickPass && snap.state == JobState::Succeeded && refine.state == JobState::None && !snap.refineNote.empty();
+      refiningLabel.setVisible(refineActive || refineEnded || refineNoted);
       refineBar.setVisible(refineActive);
-      refiningLabel.setBounds(refineActive ? juce::Rectangle<int>(478 + 440, 224, 150, 18) : juce::Rectangle<int>(478 + 430, 224, 338, 18));
+      refiningLabel.setBounds(refineActive ? juce::Rectangle<int>(kRightX + 440, 224, 150, 18) : juce::Rectangle<int>(kRightX + 430, 224, 338, 18));
       if (refineEnded) {
         juce::String note = refine.state == JobState::Cancelled ? juce::String("Refinement cancelled") : "Refinement failed: " + juce::String(refine.message);
         refiningLabel.setText(note, juce::dontSendNotification);
         refiningLabel.setColour(juce::Label::textColourId, refine.state == JobState::Failed ? L::error() : L::warning());
+      }
+      if (refineNoted) {
+        refiningLabel.setText(juce::String(snap.refineNote), juce::dontSendNotification);
+        refiningLabel.setColour(juce::Label::textColourId, L::warning());
       }
       if (refineActive) {
         refiningLabel.setColour(juce::Label::textColourId, L::saw());
@@ -624,7 +632,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
   }
 
   void layout() {
-    constexpr int lx = 34, lw = 410, rx = 478, rw = 768;
+    constexpr int lx = 34, lw = 410, rx = kRightX, rw = 768;
     title.setBounds(124, 10, 400, 28);
     subtitle.setBounds(124, 38, 760, 16);
     closeBtn.setBounds(18, 14, 90, 34);

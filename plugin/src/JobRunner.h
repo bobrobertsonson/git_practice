@@ -62,6 +62,10 @@ class MatchSettings {
   mutable std::unique_ptr<juce::PropertiesFile> props_;
 };
 
+// A refinement is only auto-started (or offered on re-attach) for a quick job younger than this, measured from its finish
+// time (its spawn time if it has none): an old PREVIEW belongs to a take / song state that has likely moved on.
+constexpr int kRefineMaxAgeHours = 24;
+
 enum class JobKind { Match, Export };
 enum class JobState { None, Starting, Running, Succeeded, Failed, Cancelled };
 const char* jobKindName(JobKind k);
@@ -177,8 +181,9 @@ class JobRunner {
   bool waitRefineFinished(std::chrono::milliseconds timeout = std::chrono::milliseconds(30000));
 
   // Housekeeping: keeps the match job folders (quick and thorough) of the `keepTakes` most recently matched takes
-  // (a take = the DI path in job.json) and deletes the older ones. Never deletes a running job (its whole take
-  // group stays), an export job, or anything that is not <jobs>/*-match. prune() runs on the calling thread;
+  // (a take = the DI path in job.json) and deletes the older ones. It deletes only real (non-symlink) folders named
+  // YYYYMMDD-HHMMSS...-match whose job.json says kind "match"; a take group with a running job is kept whole; export
+  // jobs, <jobs>/inputs and everything else are never touched. prune() runs on the calling thread;
   // pruneAsync() runs it once on a thread the runner owns (the processor calls it at start-up).
   void prune(int keepTakes = 5);
   void pruneAsync(int keepTakes = 5);

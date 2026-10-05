@@ -363,6 +363,10 @@ the plugin state holds whichever side is playing.
 - *Auto-refine.* A toggle in the match screen's TOOLS area (default on), kept in the settings file
   (`juce::PropertiesFile`, key `autoRefine`), never in the plugin state. With it off the thorough job is not started and
   the quick results simply stay PREVIEW.
+- *Age limit.* A refinement is only auto-started (on re-attach, when the screen opens) for a quick job younger than
+  `kRefineMaxAgeHours` = 24 h, measured from its finish time (its spawn time if it has none). For an older finished quick
+  job with no thorough partner no refinement starts, and the results header says "Preview is over 24 h old: re-run MATCH to
+  refine."
 - *Never interrupts audio.* When the thorough result arrives **nothing is loaded**. The list gains a **REFINED** section at
   the top (header + its candidates) with a "REFINED READY" badge, the quick candidates move below it under a PREVIEW header,
   the selection stays on the candidate you had, and whatever you auditioned or applied keeps playing (no `loadPreset`; the
@@ -385,9 +389,9 @@ the plugin state holds whichever side is playing.
   deleted. A group with a running job (its process alive and the recorded tool, or one of this runner's own jobs, or a job that
   has not spawned yet) is never pruned. Export jobs, `<jobs>/inputs/`, folders without a `job.json` and takes are never touched.
   Folders of phase 6a (no `request`) are grouped by the `--di` in their command line.
-- *Top bar.* The top-bar **MATCH** button opens the play-along panel (its record + match band). In plugin mode it also shows
-  the same "MATCH runs in the Standalone app: open the Standalone app." note as the panel's MATCH; in Standalone the panel's own
-  MATCH button then opens the screen. EXPORT NAM and A / B in the top bar stay disabled placeholders until phase 12.
+- *Top bar.* In Standalone the top-bar **MATCH** button opens the match screen directly. In plugin mode it opens the
+  play-along panel (its record + match band) and shows the same "MATCH runs in the Standalone app: open the Standalone app."
+  note as the panel's MATCH. EXPORT NAM and A / B in the top bar stay disabled placeholders until phase 12.
 
 **EXPORT NAM.** The same screen in export mode: NO CAB / WITH CAB (the hint says which is exact for the current blend: a
 live blend, both paths on one cab, is exact without the cab; a studio blend only with it), FEATHER / LITE / STANDARD, device
