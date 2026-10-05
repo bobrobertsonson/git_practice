@@ -1,5 +1,7 @@
 #include "rig/RigModel.h"
 
+#include "PresetMapping.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -145,11 +147,13 @@ Block makeBlock(const std::string& type, const std::string& id, const std::strin
 }
 
 std::string captureTitle(const Capture& c) {
+  if (isNoCapture(c)) return "No IR";
   if (c.source && !c.source->title.empty()) return c.source->title;
   return std::filesystem::path(c.file).stem().string();
 }
 
 std::string captureCredit(const Capture& c) {
+  if (isNoCapture(c)) return {};
   if (!c.source) return "LOCAL FILE";
   std::string s;
   const auto add = [&s](const std::string& part) {

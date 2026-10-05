@@ -1,4 +1,5 @@
 #include "CaptureList.h"
+#include "../PresetMapping.h"
 #include "../presets/PresetLibrary.h"
 
 #include <algorithm>
@@ -13,7 +14,7 @@ std::string capitalise(std::string s) {
 }
 
 void add(std::vector<CaptureRow>& out, const std::string& slot, const sawblade::Capture& c) {
-  if (c.file.empty()) return;
+  if (isNoCapture(c)) return;
   CaptureRow r;
   r.slot = slot;
   r.file = c.file;

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <numbers>
 
+#include "PresetMapping.h"
 #include "sawblade/ir.h"
 
 namespace sawblade::plugin::mic {
@@ -60,6 +61,7 @@ Response magnitudeResponse(const std::vector<float>& ir, double sampleRate, int 
 }
 
 Spectrum spectrumOfCapture(const Capture& c, bool normalize, std::string* error) {
+  if (isNoCapture(c)) return {};  // no cab: nothing to read, and nothing to report
   try {
     const IrData ir = loadIr(locateCapture(c).empty() ? std::filesystem::path(c.file) : locateCapture(c), kResponseRate, normalize);
     return irSpectrum(ir.samples, kResponseRate);

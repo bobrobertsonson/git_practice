@@ -89,7 +89,7 @@ Preset makeInitPreset() {
   p.name = "Init";
   p.cab.enabled = false;
   p.align.mode = AlignMode::Off;
-  p.cab.ir.file = "(none)";  // the schema requires a file even when the cab is disabled; it is never loaded
+  p.cab.ir.file = kNoCaptureFile;  // the schema requires a file even when the cab is disabled; it is never loaded
   p.cab.ir.resolvedPath = p.cab.ir.file;
   return p;
 }
@@ -103,7 +103,7 @@ std::string presetToStateJson(const Preset& p) {
   namespace fs = std::filesystem;
   nlohmann::json j = toJson(p);
   auto absolutise = [](nlohmann::json& capture, const Capture& c) {
-    if (c.resolvedPath.empty()) return;
+    if (c.resolvedPath.empty() || isNoCapture(c)) return;  // the placeholder is not a path
     std::error_code ec;  // absolute() throws if the working directory no longer exists
     const fs::path a = fs::absolute(c.resolvedPath, ec);
     capture["file"] = (ec ? c.resolvedPath : a).string();

@@ -67,21 +67,25 @@ static CaptureSummary summary(const std::string& where, const Capture& c) {
 
 std::vector<CaptureSummary> summariseCaptures(const Preset& p) {
   std::vector<CaptureSummary> out;
+  // A slot with no capture (the "(none)" placeholder of a cab-less preset) is not listed: it is not a file.
+  auto add = [&out](const std::string& where, const Capture& c) {
+    if (!isNoCapture(c)) out.push_back(summary(where, c));
+  };
   const PathPreset* paths[2] = {&p.a, &p.b};
   const char* names[2] = {"Path A", "Path B"};
   for (int k = 0; k < 2; ++k)
     for (const auto& b : paths[k]->blocks)
       if (const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get()))
-        out.push_back(summary(std::string(names[k]) + " / " + b.id + (b.slot.empty() ? "" : " (" + b.slot + ")"), nam->model));
+        add(std::string(names[k]) + " / " + b.id + (b.slot.empty() ? "" : " (" + b.slot + ")"), nam->model);
   switch (p.cab.mode) {
-    case CabMode::Shared: out.push_back(summary("Cab", p.cab.ir)); break;
+    case CabMode::Shared: add("Cab", p.cab.ir); break;
     case CabMode::PerPath:
-      out.push_back(summary("Cab irA (path A)", p.cab.irA));
-      out.push_back(summary("Cab irB (path B)", p.cab.irB));
+      add("Cab irA (path A)", p.cab.irA);
+      add("Cab irB (path B)", p.cab.irB);
       break;
     case CabMode::IrMix:
-      out.push_back(summary("Cab irA (mic 1)", p.cab.irA));
-      out.push_back(summary("Cab irB (mic 2)", p.cab.irB));
+      add("Cab irA (mic 1)", p.cab.irA);
+      add("Cab irB (mic 2)", p.cab.irB);
       break;
   }
   return out;

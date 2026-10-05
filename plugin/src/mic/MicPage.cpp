@@ -4,6 +4,7 @@
 #include <cmath>
 #include <map>
 
+#include "../PresetMapping.h"
 #include "../SawbladeLookAndFeel.h"
 #include "../presets/T3kTool.h"
 #include "BinaryData.h"
@@ -565,7 +566,7 @@ struct MicPage::Impl {
     if (it == spectra.end()) {
       std::string err;
       mic::Spectrum s = mic::spectrumOfCapture(c, normalize, &err);
-      if (s.empty()) setMessage(juce::String("Cannot read the IR: ") + juce::String(juce::CharPointer_UTF8(err.c_str())), true);
+      if (s.empty() && !isNoCapture(c)) setMessage(juce::String("Cannot read the IR: ") + juce::String(juce::CharPointer_UTF8(err.c_str())), true);
       if (spectra.size() > 64) spectra.clear();
       it = spectra.emplace(key, std::move(s)).first;
     }
@@ -603,7 +604,8 @@ struct MicPage::Impl {
       ttl = juce::String(juce::CharPointer_UTF8(info.title.c_str()));
       sub = "LOCAL FOLDER" + kDot + juce::String(pack.size()) + " IRs";
     } else {
-      ttl = juce::String(juce::CharPointer_UTF8((info.title.empty() ? s.capture(0).file : info.title).c_str()));
+      ttl = isNoCapture(s.capture(0)) && info.title.empty() ? juce::String("No cab")
+                                                             : juce::String(juce::CharPointer_UTF8((info.title.empty() ? s.capture(0).file : info.title).c_str()));
       juce::StringArray parts;
       if (!info.creator.empty()) parts.add("@" + juce::String(juce::CharPointer_UTF8(info.creator.c_str())));
       if (!info.license.empty()) parts.add(juce::String(juce::CharPointer_UTF8(info.license.c_str())));
