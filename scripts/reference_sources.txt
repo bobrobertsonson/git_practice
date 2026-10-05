@@ -2,7 +2,7 @@
 # Replace a query with the exact URL once the dry run shows the right video.
 # Slugs follow testdata/ naming: <artist>__<song>.
 original|terrorizer__fear_of_napalm|https://www.youtube.com/watch?v=AG-menlRlAg
-original|electric_wizard__dunwich|Electric Wizard Dunwich Witchcult Today
+original|electric_wizard__dunwich|https://www.youtube.com/watch?v=NFc3LjvlLeM
 original|darkthrone__transilvanian_hunger|https://www.youtube.com/watch?v=KphlVeJX6fE
 original|crowbar__planets_collide|https://www.youtube.com/watch?v=EMZm_E0DRcU
 original|bolt_thrower__the_shreds_of_sanity|https://www.youtube.com/watch?v=48yoqqJu-c4
