@@ -1,5 +1,6 @@
 #include "sawblade/preset.h"
 
+#include <algorithm>
 #include <mutex>
 #include <cctype>
 #include <cstdlib>
@@ -303,7 +304,30 @@ std::vector<EqBand> parseEqBands(const json& arr, const std::string& path) {
   return out;
 }
 
-Capture parseCapture(const json& j, const std::string& path, const fs::path& baseDir) {
+std::vector<LadderRung> parseLadder(const json& arr, const std::string& path) {
+  if (!arr.is_array()) throw PresetError(path, "must be an array");
+  if (arr.size() < 2 || arr.size() > static_cast<std::size_t>(kMaxLadderRungsInPreset))
+    throw PresetError(path, "a gain ladder has 2 to " + std::to_string(kMaxLadderRungsInPreset) + " rungs (omit it for none)");
+  std::vector<LadderRung> out;
+  for (std::size_t i = 0; i < arr.size(); ++i) {
+    JsonObject o(arr[i], JsonObject::index(path, i));
+    LadderRung r;
+    r.modelId = o.requireString("modelId");
+    if (r.modelId.empty()) throw PresetError(o.child("modelId"), "must not be empty");
+    r.gain = o.requireNumber("gain", 0.0, 100.0);
+    r.name = o.string("name", "");
+    o.finish();
+    for (const auto& e : out) {
+      if (e.modelId == r.modelId) throw PresetError(o.child("modelId"), "duplicate rung \"" + r.modelId + "\"");
+      if (e.gain == r.gain) throw PresetError(o.child("gain"), "duplicate gain value");
+    }
+    out.push_back(std::move(r));
+  }
+  std::stable_sort(out.begin(), out.end(), [](const LadderRung& a, const LadderRung& b) { return a.gain < b.gain; });
+  return out;
+}
+
+Capture parseCapture(const json& j, const std::string& path, const fs::path& baseDir, bool allowLadder) {
   JsonObject o(j, path);
   Capture c;
   c.file = o.requireString("file");
@@ -331,6 +355,7 @@ Capture parseCapture(const json& j, const std::string& path, const fs::path& bas
     s->finish();
     c.source = src;
   }
+  if (allowLadder && o.has("ladder")) c.ladder = parseLadder(*o.take("ladder"), o.child("ladder"));
   o.finish();
   return c;
 }
@@ -345,6 +370,15 @@ nlohmann::json toJson(const Capture& c) {
     for (const auto& [k, v] : opt)
       if (!v->empty()) s[k] = *v;
     j["source"] = s;
+  }
+  if (!c.ladder.empty()) {
+    json l = json::array();
+    for (const auto& r : c.ladder) {
+      json e = {{"modelId", r.modelId}, {"gain", r.gain}};
+      if (!r.name.empty()) e["name"] = r.name;
+      l.push_back(e);
+    }
+    j["ladder"] = l;
   }
   return j;
 }

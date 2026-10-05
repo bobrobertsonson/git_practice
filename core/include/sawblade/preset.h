@@ -30,6 +30,16 @@ struct CaptureSource {
   bool operator==(const CaptureSource&) const = default;
 };
 
+// One rung of a gain ladder (v0.2 Task B): the same amp at another gain setting. `modelId` is the TONE3000 model id
+// (a string); `gain` the amp's gain setting as the pack names it; `name` the model's title (display only).
+struct LadderRung {
+  std::string modelId;
+  double gain = 0.0;
+  std::string name;
+  bool operator==(const LadderRung&) const = default;
+};
+constexpr int kMaxLadderRungsInPreset = 64;
+
 // NAM model or IR reference. `file` is as written; `resolvedPath` is absolute-or-relative to the
 // process cwd as resolved against the preset file's directory.
 struct Capture {
@@ -37,6 +47,7 @@ struct Capture {
   std::filesystem::path resolvedPath;
   std::string sha256;  // lowercase hex, empty if absent
   std::optional<CaptureSource> source;
+  std::vector<LadderRung> ladder;  // NAM model captures only (v0.2): ascending gain, 2..64 rungs, or empty
   bool operator==(const Capture&) const = default;
 };
 
@@ -178,7 +189,7 @@ std::filesystem::path locateCapture(const Capture& c);
 std::string captureNotFoundMessage(const Capture& c, const std::string& jsonPath);
 
 // Shared parse helpers (used by block-type parse hooks).
-Capture parseCapture(const nlohmann::json& j, const std::string& path, const std::filesystem::path& baseDir);
+Capture parseCapture(const nlohmann::json& j, const std::string& path, const std::filesystem::path& baseDir, bool allowLadder = false);
 nlohmann::json toJson(const Capture& c);
 std::vector<EqBand> parseEqBands(const nlohmann::json& arr, const std::string& path);
 nlohmann::json toJson(const EqBand& b);

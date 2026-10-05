@@ -30,6 +30,9 @@ struct BlockBuildContext {
   std::vector<std::string>* warnings = nullptr;  // loaders append human-readable warnings
   std::string jsonPath;                          // e.g. "paths.a.blocks[1]" for error messages
   CaptureCache* cache = nullptr;                 // optional: reuse parsed captures across loads
+  // The path's ampControls.gainStep when this block is the path's amp block (else null): a nam block whose capture
+  // has a gain ladder starts on that rung if its model is in the capture cache (v0.2 Task B).
+  const std::string* gainStep = nullptr;
 };
 
 // One live (knob-movable) parameter of a block type; index order = the `values` order of

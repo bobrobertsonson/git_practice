@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -538,6 +539,48 @@ TEST_CASE("Amp controls schema: every committed preset reads at neutral defaults
     CHECK_FALSE(out["paths"]["b"].contains("ampControls"));
     CHECK(out["version"] == 2);
     CHECK(parsePreset(out, e.path().parent_path()) == p);
+    ++n;
+  }
+  CHECK(n >= 40);
+}
+
+TEST_CASE("Amp controls: every committed preset renders bit-identically with and without explicit default ampControls", "[amp][preset][neutral][render]") {
+  // Every JSON under presets/, its NAM captures swapped for the linear_identity fixture and its IRs for a fixture IR
+  // (the real captures are not in the repo), rendered as committed and with `ampControls` spelled out at the defaults on
+  // both paths: the neutral stage is skipped entirely, so the two renders must be identical bit for bit. (Against a build
+  // without the feature the same holds: verified by rendering all presets with the pre-v0.2 tonerender, see the report.)
+  const fs::path fx = fs::path(SAWBLADE_FIXTURES_DIR);
+  AudioFile in;
+  in.sampleRate = kFs;
+  in.channels = 1;
+  in.interleaved = noise(16000, 77, 0.25f);
+  const auto standIn = [&](json& cap, bool ir) {
+    if (!cap.is_object()) return;
+    cap["file"] = (fx / (ir ? "ir/impulse.wav" : "nam/linear_identity.nam")).string();
+    cap.erase("sha256");
+  };
+  int n = 0;
+  for (const auto& e : fs::recursive_directory_iterator(SAWBLADE_PRESETS_DIR)) {
+    if (e.path().extension() != ".json") continue;
+    CAPTURE(e.path().string());
+    std::ifstream f(e.path());
+    json j = json::parse(f);
+    for (const char* k : {"a", "b"})
+      for (auto& b : j["paths"][k]["blocks"])
+        if (b["type"] == "nam") standIn(b["model"], false);
+    for (const char* key : {"ir", "irA", "irB"})
+      if (j["cab"].contains(key)) standIn(j["cab"][key], true);
+    json explicitDefaults = j;
+    for (const char* k : {"a", "b"})
+      explicitDefaults["paths"][k]["ampControls"] = {{"gain", 5}, {"bass", 5}, {"mid", 5}, {"treble", 5}, {"presence", 5}, {"level", 5}};
+    const Preset p0 = parsePreset(j, e.path().parent_path());
+    const Preset p1 = parsePreset(explicitDefaults, e.path().parent_path());
+    REQUIRE(p0 == p1);  // spelled-out defaults are the same preset
+    const RenderResult r0 = renderPreset(p0, in);
+    const RenderResult r1 = renderPreset(p1, in);
+    REQUIRE(r0.samples.size() == in.interleaved.size());
+    CHECK(r0.samples == r1.samples);
+    CHECK(r0.info.latencySamples == r1.info.latencySamples);
     ++n;
   }
   CHECK(n >= 40);

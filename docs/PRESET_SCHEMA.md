@@ -108,8 +108,11 @@ no such block has no amp controls: the object is accepted and stored but has no 
 | `level` | gain after the tone stack: dB = (k - 5) * 2.4 (+-12 dB) |
 
 - The tone stack (bass, mid, treble, presence, in that order) and `level` run directly after the amp block,
-  so for the usual path (amp last) that is before the path `eq`. A shelf's gain *at its frequency* is half its
+  so for the usual path (amp last) that is before the path `eq`. They are path tone controls, so they act **even
+  when the amp block is bypassed** (the drive and the tone stack still apply around the bypassed block). A shelf's gain *at its frequency* is half its
   dB (RBJ shelf midpoint) and it reaches the full dB on its plateau; the `mid` peak reaches its full dB at 650 Hz.
+- `ampControls` is read leniently: it is accepted in a file that says `"version": 1` too (the version number is
+  not enforced per field), so a hand-edited v1 file that carries it loads as written.
 - Every field is optional and defaults to 5; a value outside [0, 10] or not a number is a `PresetError` naming
   the field (e.g. `paths.a.ampControls.treble`); unknown keys are rejected. `gainStep` must be a non-empty
   string; in v0.2 Task A it is parsed, validated and round-tripped only (it has no effect until the gain-ladder
@@ -123,6 +126,35 @@ no such block has no amp controls: the object is accepted and stored but has no 
   stage is path-level, not a block type: the block picker cannot insert it.
 - Plugin: 12 automatable host parameters `ampA_gain`, `ampA_bass`, `ampA_mid`, `ampA_treble`, `ampA_presence`,
   `ampA_level`, `ampB_*` (0..10, default 5), snapped to the 1e-4 state grid like the other parameters.
+
+### Gain ladder (`model.ladder`, v2, additive)
+
+A `nam` block's capture may carry the other models of the same TONE3000 tone that are the same amp at different gain
+settings (the plugin fills it from `sawblade-t3k ladder <tone id> --size <size> --json`; "no ladder" is stored as
+absent). It is only read on the model capture of a `nam` block (not on IRs).
+
+```jsonc
+"model": { "file": "...", "source": { "provider": "tone3000", "id": "123", "modelId": "456" },
+           "ladder": [ { "modelId": "455", "gain": 3.0, "name": "Gain 3" },     // 2..64 rungs; ids are strings
+                       { "modelId": "456", "gain": 6.0, "name": "Gain 6" } ] }  // gain 0..100, distinct; name optional
+```
+Rungs are stored in ascending `gain` order (the reader sorts); `modelId`s and `gain`s are distinct. The block's own
+capture is the rung whose `modelId` equals `source.modelId`; a ladder that does not contain it is ignored. Rung model files
+come from the capture cache by model id (`<cache>/<tone id>/<model id>.nam`).
+
+Behaviour (applies to the path's amp block, with `ampControls`):
+- Rung positions on the GAIN knob: `p_i = 10 (g_i - g_min) / (g_max - g_min)`. The active rung is the nearest, with
+  hysteresis: it changes only once the knob is >= 0.15 past the midpoint between two rungs. The residual drive in front of
+  the amp block is `(gain - p_active) * 2.4 dB`, clamped to +-12 dB. A ladder that is absent: Task A behaviour exactly.
+- `ampControls.gainStep` is the model id of the rung to use. Offline renders (`tonerender`, export) use it directly, with
+  no crossfade; if that model is not in the capture cache the block's own capture is used (drive only) and a warning is
+  reported. With **no `gainStep` and GAIN untouched (5)** the active rung is the block's own capture and the knob is taken to
+  sit at that rung's position, so the render is bit-identical to the same preset without a ladder. With no `gainStep` and an
+  explicit GAIN, the own capture sounds and the residual is measured from its rung.
+- Live (plugin): a rung switch warms the incoming model for 10 ms (output discarded) and then crossfades equal-power over
+  20 ms. Moving GAIN writes `gainStep`; the GAIN knob value is saved as usual. A rung whose model is not cached yet leaves
+  the block on its current rung (drive only) until it is. A rung whose model has a different latency than the block's is
+  rejected: latency never changes across rungs.
 
 ### Block (modular chain element)
 
