@@ -715,6 +715,7 @@ struct MicPage::Impl {
 
     // selected IR names
     auto nameOf = [&](int mic) -> juce::String {
+      if (isNoCapture(s.capture(mic))) return "No cab";  // the placeholder is not a file name
       const int m = s.model(mic);
       const std::string n = m >= 0 ? pack.models()[static_cast<std::size_t>(m)].name : s.capture(mic).resolvedPath.stem().string();
       return juce::String(juce::CharPointer_UTF8(n.c_str()));
