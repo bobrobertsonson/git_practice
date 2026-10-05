@@ -57,6 +57,17 @@ if(SAWBLADE_BASH)
             ${PROJECT_SOURCE_DIR}/scripts/mac_update.sh)
 endif()
 
+# Build stamp (v0.1.3 task C): the BuildInfo.h generator follows HEAD without a reconfigure, is a no-op on an
+# unchanged HEAD, and falls back to "unknown" without git. Pure cmake -P; needs git, no plugin build.
+find_package(Git QUIET)
+if(GIT_FOUND)
+  add_test(NAME build_stamp
+    COMMAND ${CMAKE_COMMAND} -DGEN=${PROJECT_SOURCE_DIR}/cmake/GenBuildInfo.cmake
+            -DTEMPLATE=${PROJECT_SOURCE_DIR}/plugin/src/about/BuildInfo.h.in
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/build_stamp_work -DGIT=${GIT_EXECUTABLE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/test_build_stamp.cmake)
+endif()
+
 # Developer tool (not installed): small-signal frequency response of the modeled pedals as CSV.
 add_executable(pedal_fr tools/pedal_fr.cpp)
 target_link_libraries(pedal_fr PRIVATE sawblade_core sawblade_warnings)

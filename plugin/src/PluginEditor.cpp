@@ -572,6 +572,13 @@ SawbladeEditor::~SawbladeEditor() {
   setLookAndFeel(nullptr);
 }
 
+void SawbladeEditor::parentHierarchyChanged() {
+  // Standalone only: a plugin editor must not rename the host's window.
+  if (processor_.wrapperType != juce::AudioProcessor::wrapperType_Standalone) return;
+  if (auto* top = getTopLevelComponent(); top != nullptr && top != this)
+    top->setName("Sawblade - " + about::buildStamp());
+}
+
 void SawbladeEditor::paint(juce::Graphics& g) { g.fillAll(L::background()); }
 
 void SawbladeEditor::resized() {

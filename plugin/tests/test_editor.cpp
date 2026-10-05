@@ -3563,7 +3563,8 @@ TEST_CASE("settings: the About box lists the preset's captures with creator, lic
   CHECK(anyLabelContains(*rig.ed, juce::String("Sawblade ") + ver));
   CHECK(std::string(sawblade::plugin::about::kGitHash).size() > 0);
   CHECK(std::string(sawblade::plugin::about::kBuildDate).size() > 0);
-  CHECK(anyLabelContains(*rig.ed, sawblade::plugin::about::kGitHash));
+  CHECK(anyLabelContains(*rig.ed, sawblade::plugin::about::kGitSha));
+  CHECK(anyLabelContains(*rig.ed, sawblade::plugin::about::kGitDirty));
   CHECK(anyLabelContains(*rig.ed, sawblade::plugin::about::kBuildDate));
   CHECK(anyLabelContains(*rig.ed, "AGPLv3 for personal, non-commercial use"));
   CHECK(anyLabelContains(*rig.ed, "Sawblade is not sold"));
