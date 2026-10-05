@@ -589,3 +589,37 @@ Acceptance 24: `FR(highMid 10) − FR(highMid 5)` argmax (100 Hz–10 kHz, `high
 ±5 % of 750 / 1000 / 2000 Hz for `low` / `stock` / `high`; `stock` renders bit-identically to a
 block without the key; round-trip and PresetError for `"mid"`; the three presets render in
 window; the drawer shows VOICE and the editor count test includes it.
+
+## 3.8 Part 3 amendments after measurement (lead decisions, 2026-10-05 00:30 UTC)
+The implementer's measurements (report in `phase7c_chainsaw_family_REPORT.md`) showed several
+Part-3 conditions were set at a fully saturated operating point or were arithmetically wrong.
+Decisions, all "measure where the physics is visible; models unchanged except where stated":
+1. **Harmonic windows (17) at −60 dBFS**, not −20: at D 10 the pedal is a near-square wave at
+   −20 dBFS and no knee pair in 0.5–3.0 moves H2 above −25 dBc. Chosen knees: stage 1 symmetric
+   0.5/0.5, **stage 2 k+ 0.5 / k− 2.10** (H2 −9.0, H3 −14.9, H4 −21.6, H5 −29.6, H6 −35.6 dBc
+   at −60 dBFS; alias −88.7 dB). Both stages asymmetric (k− 2.05) hit the windows too but alias
+   at −73 dB, so the spec's fallback applies. Follow-up for the local re-fit (not done here): the
+   real pedal's H2 ≈ −9 dBc *at saturation* implies duty-cycle asymmetry, i.e. a DC bias ahead
+   of the clipper rather than unequal knees; that variant could meet the −20 dBFS window and
+   would also move the crest. The −20 dBFS numbers stay as an informational print.
+2. **Modded mode** `interLpfHz` = **6500** (highest corner keeping every clip < −80 dB alias;
+   11 kHz gave −67…−72 dB); `postLpfHz` = 11000 as specified. Brightness +4.1 dB (≥ +3 holds).
+3. **Acceptance 18 is measured at equal stage-1 gain** (v3 D 0 vs v2 D 5, both 26 dB): "same
+   knobs" carries the new drive law's +20 dB. Gains-only cross-check is informational only.
+4. **Unsaturated test points move 20 dB down** (base drive is now 26 dB): boost THD, clip-type
+   order, hmx/eye THD spans, live-change tests are asserted at −60 dBFS (old levels printed).
+   `D 2 THD ≥ v2 D 10 − 3 dB` is dropped (measured 0.6 dB short; the drive-range intent is
+   proven by the 20 dB small-signal law and the −40 dBFS saturation prints).
+5. **Clip-type symmetric reference is `led`** (`led.h2 < −70 dBc`); v3 `silicon` is asymmetric
+   by design.
+6. **THD monotonicity tolerance 0.07 dB** (saturated-region wiggle 0.063 dB measured).
+7. **hmx 110 Hz band is a peak (Q 0.7), not a shelf** (a shelf corner at 110 Hz gives half its
+   gain there); acceptance 19's 400 Hz / 8 kHz bound is **±0.8 dB** (the peak and the 2.2 kHz dip
+   leak into the 400 Hz reference; measured −0.68 at 8 kHz).
+8. **Eye gain law = 10 ± 0.2 dB** at 1 kHz (D 3 → 8 at 2 dB per unit; the spec's "5" was a
+   lead arithmetic error).
+9. **Presets** may use the preset-level `output.gainDb` (here −4 dB on `decoupled_crust`,
+   `sunlight_all_tens`, `grind_buzz`) when `level` 0 cannot reach the peak window; knobs stay the
+   recipes.
+10. Custom-mode crest (+0.1 dB vs stock; real units −0.6…−1.4 dB) is recorded as a re-fit item.
+No `[!shouldfail]` tests remain: each condition above is either asserted as amended or printed.
