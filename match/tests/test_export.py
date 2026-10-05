@@ -1003,3 +1003,32 @@ def test_check_stop_sites_inside_validate(mx, monkeypatch, stop_in_call):
     finally:
         STOP.clear()
     assert n["compare"] == stop_in_call and n["listen"] == 0     # after held-out: DI step skipped; after DI: no listening
+
+
+def test_render_stage_writes_heartbeats_while_the_target_render_runs(mx, monkeypatch):
+    import time
+    import sawblade_match.export.progress as PGm
+    seen = []
+    orig = PGm.atomic_write_text
+
+    def spy(path, text):
+        seen.append(json.loads(text))
+        orig(path, text)
+    monkeypatch.setattr(PGm, "atomic_write_text", spy)
+    monkeypatch.setattr(PGm, "HEARTBEAT_S", 0.25)
+    monkeypatch.setattr(PGm, "HEARTBEAT_TAU_S", 1.0)
+
+    def slow_targets(*a, **k):
+        time.sleep(2.6)                                     # stands in for the ~105 s core render
+        return np.zeros(10, np.float32), np.zeros(10, np.float32), {"cached": False, "levels": {
+            "trainOutRmsDbfs": -20.0, "trainOutPeakDbfs": -6.0}}
+    monkeypatch.setattr(mx.RUN, "_cached_targets", slow_targets)
+    mx.go(progress_json=str(mx.tmp / "p.json"))
+    r = [s for s in seen if s["stage"] == "render"]
+    assert len(r) >= 8, len(r)
+    el = [s["elapsedSeconds"] for s in r]
+    fr = [s["fraction"] for s in r]
+    assert el == sorted(el) and el[-1] - el[0] >= 2.0 and len(set(el)) >= 6
+    assert fr == sorted(fr) and fr[-1] > fr[0] and fr[-1] < 0.10
+    allfr = [s["fraction"] for s in seen]
+    assert allfr == sorted(allfr) and allfr[-1] == 1.0

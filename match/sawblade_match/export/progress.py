@@ -1,7 +1,10 @@
 """``--progress-json``: atomic, throttled progress file for GUIs (the plugin's export panel)."""
 from __future__ import annotations
 
+import contextlib
 import json
+import math
+import threading
 import time
 from pathlib import Path
 
@@ -13,6 +16,8 @@ STAGE_RANGE = {"plan": (0.0, 0.02), "signal": (0.02, 0.05), "render": (0.05, 0.1
 STAGES = tuple(STAGE_RANGE) + ("cancelled", "error")
 TERMINAL = ("done", "cancelled", "error")
 MIN_INTERVAL_S = 1.0
+HEARTBEAT_S = 1.0
+HEARTBEAT_TAU_S = 60.0       # time constant of the render-stage fraction estimate (a real render takes ~100 s)
 
 
 def stage_fraction(stage: str, t: float) -> float:
@@ -48,6 +53,7 @@ class Progress:
         self.t0 = clock()
         self.last_write: float | None = None
         self.last_stage: str | None = None
+        self._lock = threading.RLock()                  # the heartbeat thread and the main thread both write
         self.state: dict = {"stage": "plan", "fraction": 0.0, "etaSeconds": -1, "epoch": 0, "epochs": 0,
                             "bestEsr": None, "message": "", "outDir": str(out_dir or ""), "resumable": False,
                             "elapsedSeconds": 0.0}
@@ -55,6 +61,32 @@ class Progress:
     def update(self, stage: str | None = None, fraction: float | None = None, *, eta: int | None = None,
                epoch: int | None = None, epochs: int | None = None, best_esr: float | None = None,
                message: str | None = None, out_dir=None, resumable: bool | None = None, force: bool = False) -> None:
+        with self._lock:
+            self._update(stage, fraction, eta, epoch, epochs, best_esr, message, out_dir, resumable, force)
+
+    @contextlib.contextmanager
+    def heartbeat(self, stage: str, interval: float | None = None, tau: float | None = None):
+        """While the body runs (a long call that reports nothing itself), rewrite the file every ``interval`` s so
+        ``elapsedSeconds`` keeps ticking; the stage fraction creeps up as ``1 - exp(-t / tau)`` (an estimate)."""
+        interval = HEARTBEAT_S if interval is None else interval
+        tau = HEARTBEAT_TAU_S if tau is None else tau
+        stop = threading.Event()
+        t0 = self.clock()
+
+        def beat():
+            while not stop.wait(interval):
+                t = 1.0 - math.exp(-(self.clock() - t0) / tau) if tau > 0 else 0.0
+                self.update(stage, stage_fraction(stage, 0.95 * t), force=True)
+
+        th = threading.Thread(target=beat, name="progress-heartbeat", daemon=True)
+        th.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            th.join()
+
+    def _update(self, stage, fraction, eta, epoch, epochs, best_esr, message, out_dir, resumable, force) -> None:
         s = self.state
         if stage is not None:
             if stage not in STAGES:

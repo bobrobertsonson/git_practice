@@ -210,7 +210,9 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str =
         log(f"  {line}")
 
     prog.update("render", message="rendering the training target")
-    yt, yv, tinfo = _cached_targets(tpreset, base, sinfo, tr, va, cache, log, check=lambda: _check_stop(prog, outdir))
+    with prog.heartbeat("render"):               # the core render reports nothing: keep the progress file alive
+        yt, yv, tinfo = _cached_targets(tpreset, base, sinfo, tr, va, cache, log,
+                                        check=lambda: _check_stop(prog, outdir))
 
     report: dict = {"reportVersion": REPORT_VERSION, "tool": "sawblade-export", "created": stamp,
                     "preset": {"path": str(Path(preset_path).resolve()), "name": preset.get("name"),

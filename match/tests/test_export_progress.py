@@ -101,3 +101,25 @@ def test_eta_and_train_fraction():
     assert PG.train_progress(2, 0.5, 10, 10.0, 600.0) == pytest.approx(0.25)
     assert PG.train_progress(1, 0.0, 10, 300.0, 600.0) == pytest.approx(0.5)  # elapsed / cap wins
     assert PG.train_progress(10, 1.0, 10, 0.0, 600.0) == 1.0
+
+
+def test_heartbeat_keeps_elapsed_ticking_and_fraction_monotonic(tmp_path):
+    import time
+    f = tmp_path / "p.json"
+    p = PG.Progress(f)
+    p.update("render", message="rendering")
+    seen = []
+    with p.heartbeat("render", interval=0.2, tau=1.0):
+        for _ in range(14):                                  # a "render" that reports nothing for ~2.8 s
+            time.sleep(0.2)
+            seen.append(read(f))
+    assert len({d["elapsedSeconds"] for d in seen}) >= 3 and len(seen) == 14
+    el = [d["elapsedSeconds"] for d in seen]
+    fr = [d["fraction"] for d in seen]
+    assert el == sorted(el) and el[-1] - el[0] >= 2.0
+    assert fr == sorted(fr) and fr[-1] > fr[0] >= 0.05 and fr[-1] <= PG.STAGE_RANGE["render"][1]
+    assert all(d["stage"] == "render" for d in seen)
+    assert [x.name for x in tmp_path.iterdir()] == ["p.json"]              # atomic writes leave no temp file
+    n = read(f)["elapsedSeconds"]
+    time.sleep(0.5)
+    assert read(f)["elapsedSeconds"] == n                                  # the thread stopped with the context
