@@ -180,8 +180,10 @@ loader, loudness), `plugin/src/PlayAlongPanel.{h,cpp}` (the panel).
 
 **Panel.** An overlay docked along the bottom of the 1280 x 800 design, toggled by the PLAY ALONG button in the top
 bar, closed by default (open / closed is UI state and is not saved). It uses the skin's palette and plain-widget
-drawing; no PLAY ALONG hardware render exists yet. Controls: LOAD SONG (folder picker; dropping a folder anywhere on
-the editor also loads it), play / pause, position display, seek bar, loop SET A / SET B / LOOP, COUNT-IN with BPM, guitar
+drawing; no PLAY ALONG hardware render exists yet. Controls: CHOOSE SONG FILE… (files-only picker, audio filter) and CHOOSE STEMS FOLDER…
+(directories-only picker, no filter); a song file or stems folder dropped anywhere on the editor, including the panel itself
+(which is its own drop target), also loads it (`PlayAlongPanel::loadDroppedFiles`). Never combine files and directories in
+one native chooser with a type filter: the macOS panel greyed the .wav out (v0.2.1 Task G), play / pause, position display, seek bar, loop SET A / SET B / LOOP, COUNT-IN with BPM, guitar
 stem MUTE / GHOST / FULL, KEEP KEYS, backing level, offset, and in the plugin SYNC TO HOST.
 
 **Standalone vs plugin.** `wrapperType == wrapperType_Standalone` (a processor built outside any wrapper, as in the

@@ -941,7 +941,7 @@ TEST_CASE("PlayAlong: a state restore with a stem-cache miss does not separate; 
   pa.restore(s);
   REQUIRE(pa.waitForLoader());
   CHECK(pa.loadStatus().state == State::NotSeparated);
-  CHECK(pa.loadStatus().message.find("LOAD SONG") != std::string::npos);
+  CHECK(pa.loadStatus().message.find("CHOOSE SONG FILE") != std::string::npos);
   CHECK(pa.settings().songFile == song.string());  // kept
   CHECK_FALSE(fs::exists(t.dir / "stems"));          // nothing was separated
   pa.loadSong(song.string(), true);

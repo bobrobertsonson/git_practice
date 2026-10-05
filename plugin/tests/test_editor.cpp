@@ -569,12 +569,18 @@ TEST_CASE("play-along: the controls are bound to the processor", "[editor][playa
   auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
 
   // Every expected control exists, with a title and a tooltip.
-  for (const char* title : {"LOAD SONG", "KEEP KEYS", "PLAY", "SET A", "SET B", "LOOP", "COUNT-IN", "MUTE", "GHOST", "FULL", "SYNC TO HOST"}) {
+  for (const char* title : {"KEEP KEYS", "PLAY", "SET A", "SET B", "LOOP", "COUNT-IN", "MUTE", "GHOST", "FULL", "SYNC TO HOST"}) {
     INFO(title);
     auto* b = buttonTitled(*panel, title);
     REQUIRE(b != nullptr);
     CHECK(b->getTooltip().isNotEmpty());
   }
+  for (const juce::String& title : {juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"), juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6")}) {
+    auto* b = buttonTitled(*panel, title);
+    REQUIRE(b != nullptr);
+    CHECK(b->getTooltip().isNotEmpty());
+  }
+  CHECK(buttonTitled(*panel, "LOAD SONG") == nullptr);  // replaced by the two one-purpose pickers
   for (const char* title : {"Seek", "Count-in BPM", "Backing level", "Backing offset"}) {
     INFO(title);
     auto* s = sliderTitled(*panel, title);
@@ -677,6 +683,94 @@ TEST_CASE("play-along: the controls are bound to the processor", "[editor][playa
   processBlocks(rig.proc, 2);
   CHECK(pa.snapshot().loopActive);
   CHECK(pa.snapshot().loopStart == 240000);
+}
+
+TEST_CASE("play-along: the pickers are one-purpose choosers (v0.2.1 Task G)", "[editor][playalong]") {
+  using A = PlayAlongPanel::ChooserAction;
+  const auto song = PlayAlongPanel::chooserSpec(A::SongFile);
+  // Files only: no directory flag, which is what made the macOS panel grey out the .wav.
+  CHECK((song.flags & juce::FileBrowserComponent::canSelectFiles) != 0);
+  CHECK((song.flags & juce::FileBrowserComponent::canSelectDirectories) == 0);
+  CHECK((song.flags & juce::FileBrowserComponent::openMode) != 0);
+  CHECK((song.flags & juce::FileBrowserComponent::saveMode) == 0);
+  juce::StringArray patterns;
+  patterns.addTokens(song.filter, ";", "");
+  patterns.removeEmptyStrings();
+  CHECK(patterns.size() >= 8);
+  for (const auto& p : patterns) {  // the form the macOS chooser can turn into an allowed-extensions list
+    INFO(p);
+    CHECK(p.startsWith("*."));
+    CHECK(p.lastIndexOfChar('*') == 0);
+  }
+  for (const char* name : {"a.wav", "a.WAV", "a.Wav", "a.mp3", "a.MP3", "a.flac", "a.m4a", "a.aif", "a.aiff", "a.aac", "a.ogg"}) {
+    INFO(name);
+    bool hit = false, hitCaseSensitive = false;
+    for (const auto& p : patterns) {
+      hit = hit || juce::String(name).matchesWildcard(p, true);
+      hitCaseSensitive = hitCaseSensitive || juce::String(name).matchesWildcard(p, false);
+    }
+    CHECK(hit);
+    if (juce::String(name) != "a.Wav") CHECK(hitCaseSensitive);  // a case-sensitive chooser still shows .WAV
+    CHECK(isSongFileName(name));                                   // the chooser and the loader agree
+  }
+  CHECK_FALSE(juce::String("notes.txt").matchesWildcard("*.wav;*.mp3", true));
+
+  const auto folder = PlayAlongPanel::chooserSpec(A::StemsFolder);
+  CHECK((folder.flags & juce::FileBrowserComponent::canSelectDirectories) != 0);
+  CHECK((folder.flags & juce::FileBrowserComponent::canSelectFiles) == 0);
+  CHECK((folder.flags & juce::FileBrowserComponent::openMode) != 0);
+  CHECK(folder.filter.isEmpty());  // directories-only choosers carry no type filter
+}
+
+namespace {
+// What juce::ComponentPeer does for a file drop: the deepest component under the mouse that is a FileDragAndDropTarget
+// and interested, walking up through the parents.
+juce::Component* dropTargetAt(juce::Component& editor, juce::Point<int> p, const juce::StringArray& files) {
+  for (auto* c = editor.getComponentAt(p); c != nullptr; c = c->getParentComponent())
+    if (auto* t = dynamic_cast<juce::FileDragAndDropTarget*>(c))
+      if (t->isInterestedInFileDrag(files)) return c;
+  return nullptr;
+}
+}  // namespace
+
+TEST_CASE("play-along: a drop on the panel and on the rig area loads a song (v0.2.1 Task G)", "[editor][playalong]") {
+  TempFolder tmp;
+  const auto song = writeSyntheticSong(tmp.dir, "dropg", 6.0);
+  juce::StringArray files, audio;  // a stems folder (loads to Ready, no separation model needed) and a song file
+  files.add(juce::String(song.string()));
+  audio.add(juce::String((song / "drums.wav").string()));
+  juce::StringArray upper;
+  upper.add(juce::String((song / "DRUMS.WAV").string()));
+  CHECK(PlayAlongPanel::isLoadableDrop(upper));  // .WAV is a song file whatever the case
+
+  {  // onto the panel itself, deepest child under the mouse
+    Rig rig;
+    rig.ed->setPlayAlongOpen(true);
+    auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+    const juce::Point<int> p(640, 800 - PlayAlongPanel::kHeight + 70);
+    auto* t = dropTargetAt(*rig.ed, p, files);
+    REQUIRE(t != nullptr);
+    CHECK(t == panel);  // the panel itself, not a fall-through to the editor
+    dynamic_cast<juce::FileDragAndDropTarget*>(t)->filesDropped(files, p.x, p.y);
+    REQUIRE(rig.proc.playAlong().waitForLoader());
+    CHECK(rig.proc.playAlong().loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+    CHECK(rig.proc.playAlong().settings().folder == song.string());
+    CHECK(dropTargetAt(*rig.ed, p, audio) == panel);  // a song file is accepted by the panel too
+  }
+  {  // onto the rig area (panel closed): the editor takes it and opens the panel
+    Rig rig;
+    CHECK_FALSE(rig.ed->playAlongOpen());
+    const juce::Point<int> p(640, 300);
+    auto* t = dropTargetAt(*rig.ed, p, files);
+    REQUIRE(t != nullptr);
+    CHECK(t == rig.ed);
+    dynamic_cast<juce::FileDragAndDropTarget*>(t)->filesDropped(files, p.x, p.y);
+    CHECK(rig.ed->playAlongOpen());
+    REQUIRE(rig.proc.playAlong().waitForLoader());
+    CHECK(rig.proc.playAlong().loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+    CHECK(rig.proc.playAlong().settings().folder == song.string());
+    CHECK(dropTargetAt(*rig.ed, p, audio) == rig.ed);
+  }
 }
 
 TEST_CASE("play-along: dropping a folder loads it; a missing folder shows a message", "[editor][playalong]") {

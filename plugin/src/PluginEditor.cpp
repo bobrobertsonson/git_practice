@@ -621,19 +621,10 @@ void SawbladeEditor::openExportPanel() { content_->openExportPanel(); }
 bool SawbladeEditor::exportPanelOpen() const { return content_->exportPanelOpen(); }
 ExportPanel& SawbladeEditor::exportPanel() { return content_->exportPanel(); }
 
-bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
-  for (const auto& f : files)
-    if (juce::File(f).isDirectory() || isSongFileName(f.toStdString())) return true;
-  return false;
-}
+bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) { return PlayAlongPanel::isLoadableDrop(files); }
 
 void SawbladeEditor::filesDropped(const juce::StringArray& files, int, int) {
-  for (const auto& f : files) {
-    if (!juce::File(f).isDirectory() && !isSongFileName(f.toStdString())) continue;
-    processor_.playAlong().loadSong(f.toStdString(), /*userInitiated=*/true);
-    setPlayAlongOpen(true);
-    return;
-  }
+  if (PlayAlongPanel::loadDroppedFiles(processor_, files)) setPlayAlongOpen(true);
 }
 
 }  // namespace sawblade::plugin

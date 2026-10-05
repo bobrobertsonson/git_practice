@@ -621,7 +621,7 @@ void PlayAlong::runSeparation(const SepRequest& r) {
     std::lock_guard<std::mutex> lk2(m_);
     status_ = LoadStatus{};
     status_.state = LoadStatus::State::NotSeparated;
-    status_.message = "Song not separated yet - LOAD SONG to separate it";
+    status_.message = "Song not separated yet - CHOOSE SONG FILE to separate it";
   } catch (const SeparationCancelled&) {
     // Superseded or cancelled: whoever did that has set the status already.
   } catch (const ModelUnavailable& e) {
