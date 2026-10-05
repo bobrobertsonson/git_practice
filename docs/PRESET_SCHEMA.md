@@ -185,11 +185,11 @@ Every v3 number lives in the one `HmVoicing::v3()` table in `core/src/pedal_hm.c
 | constant | v2 | v3 | provenance |
 |---|---|---|---|
 | stage-1 gain | `6 + 4*D` dB (6-46) | `26 + 2*D` dB (26-46) | free fits land at D ~ 10 for every real D label: saturated from D 2 |
-| `silicon` knees (stage 1 / stage 2) | 0.5 / 0.5, 0.5 / 0.5 | k+ 0.5 / k- 0.5, k+ 0.5 / k- 2.10 | asymmetric diode clip: real H2 ~ -9, H3 ~ -18 dBc; k- fitted by the scan in `tests/test_pedals_v3.cpp` (stage 2 only: both stages alias -73 dB) |
+| `silicon` knees (stage 1 / stage 2) | 0.5 / 0.5 on both | stage 1 k+ 0.5 / k- 0.5; stage 2 k+ 0.5 / k- 2.10 (spec §3.8 item 1) | asymmetric diode clip: real H2 ~ -9, H3 ~ -18 dBc; k- fitted by the scan in `tests/test_pedals_v3.cpp` (stage 2 only: both stages alias -73 dB) |
 | output DC block | none | 10 Hz 1st-order HPF | the asymmetric clip makes DC |
 | fit bands (fixed) | none | low shelf 85 Hz +1.7 dB Q 0.707; peak 683 Hz +4.5 dB Q 2.4; peak 5.5 kHz -12.0 dB Q 1.54 | free-cascade residual fit, 8 labelled stock units, 1.36 dB RMS |
 | post-clip LPF (4th order) | stock / custom 6.5 kHz, modded 9 kHz | stock / custom 9.5 kHz, modded 11 kHz | model was ~12 dB short at 10 kHz |
-| interstage LPF, `modded` | 9 kHz | 6.5 kHz | spec asks 11 kHz; limited by the alias budget (< -80 dB), see the report |
+| interstage LPF, `modded` | 9 kHz | 6.5 kHz | 11 kHz would alias at -67..-72 dB (budget -80); amended in phase7c spec §3.8 item 2 (post-clip LPF stays 11 kHz) |
 | `rolloffHz` default | 9000 | 16000 | the fit ran to its 14 kHz bound |
 | `custom` mode | `s1` 4.6, `sLow` 3.6 | stock gain; +2.5 dB output; `customLowDb` shelf 100 Hz; `customHighDb` shelf 6 kHz; k- pulled 25 % toward k+ | four standard / custom pairs agree |
 

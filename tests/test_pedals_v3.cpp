@@ -79,7 +79,7 @@ HmParams modified(HmParams p, auto&& f) {
   return p;
 }
 
-// The level at which the v3 harmonic windows are fitted (see HmVoicing::v3()): D 10 at -60 dBFS is the same
+// Spec 3.8 item 1: the level at which the v3 harmonic windows are fitted (see HmVoicing::v3()): D 10 at -60 dBFS is the same
 // drive point as the spec's "D 10 at -20 dBFS" would be with 40 dB less headroom in the model's input scale.
 constexpr double kFitDbfs = -60.0;
 
@@ -208,7 +208,7 @@ TEST_CASE("v2 voicing is the phase 7b table; v3 has the spec's constants", "[ped
   for (const auto& m : b.modes) CHECK(m.s1 == 2.0);
   CHECK(b.modes[0].postLpfHz == 9500.0);
   CHECK(b.modes[1].postLpfHz == 9500.0);
-  CHECK(b.modes[2].interLpfHz == 6500.0);  // spec says 11000: alias budget, see v3()
+  CHECK(b.modes[2].interLpfHz == 6500.0);  // spec 3.8 item 2 (alias budget)
   CHECK(b.modes[2].postLpfHz == 11000.0);
   CHECK(b.fitLowShelfHz == 85.0);
   CHECK(b.fitLowShelfDb == 1.7);
@@ -250,17 +250,14 @@ TEST_CASE("v3 alias floor is below -80 dB at D 10 for every clip type and mode",
 }
 
 // ---- 17. harmonics and drive ----------------------------------------------------------------------------------
-// The spec's literal condition cannot be met by any k- in 0.5..3 (hard-saturated square wave): documented, expected to fail.
-TEST_CASE("v3 harmonics (spec 17, literal -20 dBFS): H2 in [-12, -6] dBc, H3 in [-22, -14] dBc", "[pedal][v3][harmonics][!shouldfail]") {
+// Spec 3.8 item 1: the windows are asserted at -60 dBFS (below); at the literal -20 dBFS the pedal is a near-square wave and the
+// numbers are informational only.
+TEST_CASE("v3 harmonics at -20 dBFS (informational print)", "[pedal][v3][harmonics]") {
   HmPedal v3(v3Ref()), v2(v2Ref());
   const Harm a = harmonics(v2, -20.0), b = harmonics(v3, -20.0);
   std::printf("[v3 harm] -20 dBFS, D 10, L=H=5, 500 Hz: v2 H2..H6 %.1f %.1f %.1f %.1f %.1f | v3 %.1f %.1f %.1f %.1f %.1f dBc\n", a.h[2], a.h[3], a.h[4],
               a.h[5], a.h[6], b.h[2], b.h[3], b.h[4], b.h[5], b.h[6]);
-  // The windows are not reachable at this level (hard-saturated square wave, see HmVoicing::v3()); reported to the lead.
-  CHECK(b.h[2] >= -12.0);
-  CHECK(b.h[2] <= -6.0);
-  CHECK(b.h[3] >= -22.0);
-  CHECK(b.h[3] <= -14.0);
+  SUCCEED();
 }
 
 TEST_CASE("v3 harmonics at the fitted drive point and the drive range", "[pedal][v3][harmonics]") {
@@ -293,14 +290,12 @@ TEST_CASE("v3 harmonics at the fitted drive point and the drive range", "[pedal]
   }
 }
 
-// Spec 17: THD at -40 dBFS, v3 D 2 >= v2 D 10 - 3 dB. Measured -7.49 vs -6.86 (0.6 dB short): the v3 stage-2 knee at
-// 2.10 and the 9.5 kHz post LPF make D 2 slightly cleaner than the spec's design values assume. Expected to fail
-// (threshold unchanged) until the lead reviews it.
-TEST_CASE("v3 saturated from D 2: THD at -40 dBFS", "[pedal][v3][harmonics][!shouldfail]") {
+// Spec 3.8 item 4: "D 2 THD >= v2 D 10 - 3 dB" is dropped (measured 0.6 dB short); the numbers are printed.
+TEST_CASE("v3 saturated from D 2: THD at -40 dBFS (informational print)", "[pedal][v3][harmonics]") {
   HmPedal p2(modified(v3Ref(), [](HmParams& p) { p.distortion = 2; })), q10(v2Ref());
   const double t2 = harmonics(p2, -40.0).thdDb, t10 = harmonics(q10, -40.0).thdDb;
   std::printf("[v3 drive] THD at -40 dBFS: v3 D 2 %.2f dB, v2 D 10 %.2f dB\n", t2, t10);
-  CHECK(t2 >= t10 - 3.0);
+  SUCCEED();
 }
 
 // ---- 3.2.3 dynamics (printed only) ----------------------------------------------------------------------------
@@ -326,6 +321,7 @@ TEST_CASE("v3 EQ: the fit bands and the open top end versus v2", "[pedal][v3][fr
   const Fr d = diff(hmFr(a3), hmFr(a2));
   std::printf("[v3 eq] v3 - v2 (defaults): 50 Hz %.2f, 85 Hz %.2f, 400 Hz %.2f, 683 Hz %.2f, 1 kHz %.2f, 1.5 kHz %.2f, 5.5 kHz %.2f, 8 kHz %.2f, 10 kHz %.2f dB\n",
               d.at(50), d.at(85), d.at(400), d.at(683), d.at(1000), d.at(1500), d.at(5500), d.at(8000), d.at(10000));
+  // spec 3.8 item 3: measured at equal stage-1 gain
   CHECK(d.at(50) >= 0.7);
   CHECK(d.at(50) <= 2.7);
   CHECK(d.at(683) >= 3.4);

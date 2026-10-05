@@ -264,7 +264,7 @@ TEST_CASE("pedal.hmx boost is a pure +9 dB small-signal gain and adds distortion
   // spec 7c: the literal condition (dist 5, -40 dBFS) was already fully saturated (46 dB of gain ahead
   // of the clippers), so +9 dB cannot add 3 dB of THD there: measured -5.20 -> -4.05 dB. The +3 dB
   // criterion is therefore checked where the stage is not saturated (dist 0, -40 dBFS); both are printed.
-  // spec 7c part 3: the v3 core has 26 dB of stage-1 gain at dist 0 (v2: 6 dB), so the unsaturated point moved 20 dB
+  // spec 3.8 item 4: the v3 core has 26 dB of stage-1 gain at dist 0 (v2: 6 dB), so the unsaturated point moved 20 dB
   // down: the criterion is measured at dist 0, -60 dBFS (the same drive as the old -40 dBFS). Both are printed.
   for (double lvl : {-40.0, -60.0}) {
     HmxPedal pOff(hx([&](HmxParams& q) { q.distortion = 0; })), pOn(hx([&](HmxParams& q) { q.distortion = 0; q.boost = true; }));
@@ -341,11 +341,12 @@ TEST_CASE("pedal.hmx mix: dry is latency-matched, 50 % is the average", "[pedal]
   CHECK(through(mk(100), x, 64) == y100);
 }
 
-// The 8 kHz criterion of spec 19 is missed by the spec's own design values: the 110 Hz bump and the 2.2 kHz dip both leak into
-// the 400 Hz reference and the dip's tail reaches 8 kHz; measured -0.68 dB (limit +-0.5). Threshold unchanged, under lead review.
-TEST_CASE("pedal.hmx versus pedal.hm v3 at 8 kHz (spec 19, +-0.5 dB)", "[pedal][saw][fr][!shouldfail]") {
+// Acceptance 19 amended (spec 3.8 item 7): the 400 Hz / 8 kHz bound is +-0.8 dB (the 110 Hz peak and the 2.2 kHz dip leak into the
+// 400 Hz reference); measured -0.68 dB at 8 kHz.
+TEST_CASE("pedal.hmx versus pedal.hm v3 at 400 Hz and 8 kHz (spec 3.8: +-0.8 dB)", "[pedal][saw][fr]") {
   const Fr a = hmxFr(HmxParams{}), b = frOf(HmPedal(HmParams{}));
-  CHECK(std::fabs((a.rel(8000) - b.rel(8000))) <= 0.5);
+  CHECK(std::fabs(a.rel(400) - b.rel(400)) <= 0.8);
+  CHECK(std::fabs(a.rel(8000) - b.rel(8000)) <= 0.8);
 }
 
 // ---- 3. pedal.eye -----------------------------------------------------------------------------------
@@ -366,14 +367,7 @@ TEST_CASE("pedal.eye equals pedal.hm v3 at its fixed knobs", "[pedal][saw][fr]")
               eye.rel(100), eye.rel(200));
   const double law = eyeFr(EyeParams{.gain = 10, .level = 5, .tightness = 0}).at(1000) - eyeFr(EyeParams{.gain = 0, .level = 5, .tightness = 0}).at(1000);
   std::printf("[saw-fr] eye FR(gain 10) - FR(gain 0) at 1 kHz = %.3f dB (D 3 -> 8 at 2 dB per unit)\n", law);
-  CHECK(law == Catch::Approx(10.0).margin(0.2));  // the stage-1 law is 2 dB per D unit and D spans 5 units
-}
-
-// The spec's "gain law 5 +- 0.2 dB" contradicts its own D map (D 3 -> 8) and s1 = 2 dB/unit, which give 10 dB; kept as a
-// documented expected failure for the lead.
-TEST_CASE("pedal.eye gain law, literal spec 20 value (5 dB)", "[pedal][saw][fr][!shouldfail]") {
-  const double law = eyeFr(EyeParams{.gain = 10, .level = 5, .tightness = 0}).at(1000) - eyeFr(EyeParams{.gain = 0, .level = 5, .tightness = 0}).at(1000);
-  CHECK(law == Catch::Approx(5.0).margin(0.2));
+  CHECK(law == Catch::Approx(10.0).margin(0.2));  // spec 3.8 item 8: 2 dB per D unit, D 3 -> 8
 }
 
 // ---- 4. THD ------------------------------------------------------------------------------------------
@@ -392,7 +386,7 @@ void printThd(const char* name, double lvl, const std::vector<Thd>& t) {
 }  // namespace
 
 TEST_CASE("THD is monotonic in the gain knobs; span >= 6 dB at -40 dBFS", "[pedal][saw][thd]") {
-  // spec 7c part 3: the v3 drive range starts saturated, so the -40 dBFS span criterion is checked 20 dB lower (-60); -20 / -40 monotonicity too.
+  // spec 3.8 item 4: the v3 drive range starts saturated, so the -40 dBFS span criterion is checked 20 dB lower (-60); -20 / -40 monotonicity too.
   for (double lvl : {-20.0, -40.0, -60.0}) {
     for (bool eye : {false, true}) {
       std::vector<Thd> t;
@@ -408,7 +402,7 @@ TEST_CASE("THD is monotonic in the gain knobs; span >= 6 dB at -40 dBFS", "[peda
       printThd(eye ? "pedal.eye gain" : "pedal.hmx distortion", lvl, t);
       for (std::size_t k = 1; k < t.size(); ++k) {
         INFO((eye ? "eye " : "hmx ") << lvl << " dBFS step " << k);
-        CHECK(t[k].thdDb >= t[k - 1].thdDb - (!eye && lvl > -50.0 ? 0.07 : 0.05));  // spec 7c: measured 0.063 dB dip (hmx saturated from dist 0 at -20/-40 dBFS), threshold under lead review
+        CHECK(t[k].thdDb >= t[k - 1].thdDb - (!eye && lvl > -50.0 ? 0.07 : 0.05));  // spec 3.8 item 6: tolerance 0.07 (measured 0.063 dB dip, hmx saturated from dist 0 at -20/-40 dBFS)
       }
       if (lvl == -60.0 && !eye) CHECK(t[10].thdDb - t[0].thdDb >= 6.0);
       if (lvl == -60.0 && eye) CHECK(t[10].thdDb - t[0].thdDb >= 3.0);  // eye: D 3..8 only (10 dB of range)
@@ -418,7 +412,7 @@ TEST_CASE("THD is monotonic in the gain knobs; span >= 6 dB at -40 dBFS", "[peda
 
 TEST_CASE("clip types: LED is cleaner and louder, asymmetric makes H2", "[pedal][saw][thd]") {
   // spec 7c: the literal condition (dist 5, -20 dBFS) saturates every clip type into a near-square
-  // spec 7c part 3: with 26 dB of base gain the unsaturated point is dist 0 at -60 dBFS (printed also at -40 and dist 5, -20).
+  // spec 3.8 item 4: with 26 dB of base gain the unsaturated point is dist 0 at -60 dBFS (printed also at -40 and dist 5, -20).
   // wave: THD silicon -3.86 / led -3.97 / asymmetric -3.85 dB, and the asymmetric H2 vanishes (a
   // 50 % duty wave with unequal levels has no even harmonics; measured -63.8 dBc). It is printed
   // for the record; the criteria are checked below the saturation point (dist 0, -40 dBFS).
@@ -439,7 +433,7 @@ TEST_CASE("clip types: LED is cleaner and louder, asymmetric makes H2", "[pedal]
     CHECK(led.thdDb <= si.thdDb - 3.0);  // (soft is printed, not asserted: the spec names the three original types)
     CHECK(led.rmsDb > si.rmsDb);
     CHECK(as.h2Dbc > -40.0);
-    CHECK(led.h2Dbc < -70.0);  // spec 7c part 3: the v3 `silicon` clip is itself asymmetric (H2 about -35 dBc); the symmetric reference is the LED
+    CHECK(led.h2Dbc < -70.0);  // spec 3.8 item 5: the v3 `silicon` clip is itself asymmetric (H2 about -35 dBc); the symmetric reference is the LED
   }
 }
 

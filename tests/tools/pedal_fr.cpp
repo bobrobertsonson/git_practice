@@ -8,7 +8,7 @@
 // string (enums). --preset takes the block's params from a preset file (first circuit block, i.e.
 // pedal.hm / pedal.muff, unless --block names an id); --param overrides on top; --type then comes
 // from the block. FR method: impulse at -90 dBFS, 65536 samples, fs = 48 kHz. THD: a 500 Hz sine
-// from -40 to 0 dBFS in 2 dB steps (1 s each, 0.25 s discarded), harmonics 2-20.
+// from -70 to 0 dBFS in 2 dB steps (1 s each, 0.25 s discarded), harmonics 2-20.
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
     if (thd) {
       proc->prepare({test::kFrFs, 512});
       f << "input_dbfs,thd_db,h2_dbc\n";
-      for (int db = -40; db <= 0; db += 2) {
+      for (int db = -70; db <= 0; db += 2) {
         const auto r = test::thdPoint(*proc, db);
         f << db << "," << r.thdDb << "," << r.h2Dbc << "\n";
       }
