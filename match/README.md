@@ -110,10 +110,11 @@ Without `--json` behaviour is unchanged. Licence policy is unchanged (`cc-by-nc*
 
 ### License policy
 
-Sawblade is commercial, so only tones licensed `t3k`, `cc-by`, `cc-by-sa`, `cc-by-nd` or `cco` are used.
-`cc-by-nc*` (reason `non_commercial_license:<lic>`) and unknown/empty licenses (`unknown_license:<lic>`) are
-excluded from the pool even if favorited, and `resolve`/downloads refuse them (also on cache hits). There is
-no override flag.
+Sawblade is a personal, non-commercial project (CLAUDE.md "Capture licensing"), so tones licensed `t3k`, `cc-by`,
+`cc-by-sa`, `cc-by-nd`, `cco` and the non-commercial `cc-by-nc`, `cc-by-nc-sa`, `cc-by-nc-nd` are used. A passing `-nc`
+tone carries the flag `non_commercial` (anything derived from it is marked non-commercial; exports are for the user's own
+use). Unknown/empty licenses (reason `unknown_license:<lic>`) are excluded from the pool even if favorited, and
+`resolve`/downloads refuse them (also on cache hits). There is no override flag.
 
 ### Search and extra pool sources (opt-in, personal use)
 

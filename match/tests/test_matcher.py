@@ -292,7 +292,7 @@ def test_load_pool_slots_downloaded_only_and_licenses(tmp_path):
     p = load_pool(_fake_cache(tmp_path))
     assert sorted(c.key for c in p.pedals) == ["2/20", "3/30"]       # no title filter: any pedal is a pedal candidate
     assert {c.key: c.kind for c in p.pedals} == {"2/20": "distortion", "3/30": "drive"}
-    assert sorted(c.key for c in p.amps) == ["1/10", "1/11"]       # nc amp excluded, undownloaded models skipped
+    assert sorted(c.key for c in p.amps) == ["1/10", "1/11", "5/50"]  # nc amp usable (personal project); undownloaded models skipped
     assert [c.key for c in p.cabs] == ["4/40"]
     assert p.counts()["distortion"] == 1 and p.counts()["drive"] == 1
 

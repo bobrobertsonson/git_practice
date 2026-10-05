@@ -47,7 +47,10 @@ juce::String tagsText(const t3k::CaptureRecord& r) {
 
 }  // namespace
 
-const char* CaptureBrowser::licenceNote() { return "Non-commercial (CC BY-NC) captures can't be used yet."; }
+const char* CaptureBrowser::licenceNote() {
+  return "Non-commercial (CC BY-NC) captures are usable: the rig and anything exported from it is marked non-commercial, "
+         "and exports are for your own use.";
+}
 
 struct CaptureBrowser::Impl {
   // One card of the grid.

@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from .licenses import license_problem
+from .licenses import is_non_commercial, license_problem
 from .types import Tone
 
 DAYS_PER_MONTH = 30.4375
@@ -132,6 +132,8 @@ def evaluate(
         lp = license_problem(t.license)
         if lp:
             d.reasons.append(lp)
+        elif is_non_commercial(t.license):
+            d.flags.append("non_commercial")
 
         # architecture / models
         if t.format == "nam":
