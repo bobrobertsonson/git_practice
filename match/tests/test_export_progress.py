@@ -119,7 +119,7 @@ def test_heartbeat_keeps_elapsed_ticking_and_fraction_monotonic(tmp_path):
     assert el == sorted(el) and el[-1] - el[0] >= 2.0
     assert fr == sorted(fr) and fr[-1] > fr[0] >= 0.05 and fr[-1] <= PG.STAGE_RANGE["render"][1]
     assert all(d["stage"] == "render" for d in seen)
-    assert [x.name for x in tmp_path.iterdir()] == ["p.json"]              # atomic writes leave no temp file
+    assert [x.name for x in tmp_path.iterdir()] == ["p.json"]              # (after the context: no temp file left)
     n = read(f)["elapsedSeconds"]
     time.sleep(0.5)
     assert read(f)["elapsedSeconds"] == n                                  # the thread stopped with the context
@@ -143,3 +143,33 @@ def test_prior_epoch_seconds_from_a_checkpoint():
     # resumed at epoch 4 of 10 (120 s spent): the first sample after the resume already has an ETA
     prior = PG.prior_epoch_seconds(120.0, 4)
     assert PG.eta_seconds(0.0, 0, 4, 10, 120.0, 6000.0, prior_epoch_s=prior) == 180
+
+
+def test_heartbeat_never_overwrites_a_terminal_state(tmp_path):
+    import time
+    f = tmp_path / "p.json"
+    p = PG.Progress(f)
+    p.update("render")
+    with p.heartbeat("render", interval=0.1, tau=1.0):
+        time.sleep(0.35)
+        p.update("cancelled", message="cancelled")
+        frac = read(f)["fraction"]
+        time.sleep(0.5)                                       # several heartbeat intervals
+        d = read(f)
+        assert d["stage"] == "cancelled" and d["fraction"] == frac and d["message"] == "cancelled"
+    assert read(f)["stage"] == "cancelled"
+
+
+def test_heartbeat_thread_stops_when_the_body_raises(tmp_path):
+    import time
+    f = tmp_path / "p.json"
+    p = PG.Progress(f)
+    p.update("render")
+    with pytest.raises(RuntimeError):
+        with p.heartbeat("render", interval=0.1, tau=1.0):
+            time.sleep(0.35)
+            raise RuntimeError("boom")
+    n = read(f)["elapsedSeconds"]
+    time.sleep(0.5)
+    assert read(f)["elapsedSeconds"] == n
+    assert not any(t.name == "progress-heartbeat" for t in __import__("threading").enumerate())

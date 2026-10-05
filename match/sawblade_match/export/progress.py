@@ -91,8 +91,11 @@ class Progress:
 
         def beat():
             while not stop.wait(interval):
-                t = 1.0 - math.exp(-(self.clock() - t0) / tau) if tau > 0 else 0.0
-                self.update(stage, stage_fraction(stage, 0.95 * t), force=True)
+                with self._lock:                         # check-and-write atomically vs a terminal update
+                    if stop.is_set() or self.state["stage"] != stage:
+                        continue                         # cancelled / error / moved on: never overwrite it
+                    t = 1.0 - math.exp(-(self.clock() - t0) / tau) if tau > 0 else 0.0
+                    self.update(stage, stage_fraction(stage, 0.95 * t), force=True)
 
         th = threading.Thread(target=beat, name="progress-heartbeat", daemon=True)
         th.start()
