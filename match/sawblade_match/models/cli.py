@@ -20,6 +20,8 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--force", action="store_true", help="re-export even if a verified ONNX is already present")
     s = sub.add_parser("status", help="list each model: present / sha ok / pinned match")
     s.add_argument("--dir", default=None)
+    s.add_argument("--model", choices=MODEL_IDS, default=None,
+                   help="check one model only: print one line, exit 0 if present and verified, 1 otherwise (for scripts)")
     return p
 
 
@@ -30,6 +32,11 @@ def _dir(arg: str | None) -> Path:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     d = _dir(args.dir)
+    if args.cmd == "status" and args.model:
+        from .store import model_status
+        ok = model_status(args.model, d).sha_ok
+        print(f"{args.model}: {'present and verified' if ok else 'missing or not verified'}")
+        return 0 if ok else 1
     if args.cmd == "status":
         print(format_status(d))
         return 0

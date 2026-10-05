@@ -148,6 +148,11 @@ TEST_CASE("ModelStore: missing, mismatch, sidecar", "[separation][modelstore]") 
   REQUIRE_FALSE(missing.ok());
   REQUIRE_THAT(missing.message, ContainsSubstring("match/.venv/bin/sawblade-models fetch --model htdemucs_6s"));
   REQUIRE_THAT(missing.message, ContainsSubstring(store.modelPath(m).string()));
+  // One line, runnable on macOS from the repo root: install the extra, then fetch; or the update script.
+  REQUIRE_THAT(missing.message, ContainsSubstring("match/.venv/bin/pip install -e 'match[models]' -c match/constraints-separation.txt && "
+                                                  "match/.venv/bin/sawblade-models fetch --model htdemucs_6s"));
+  REQUIRE_THAT(missing.message, ContainsSubstring("scripts/mac_update.sh"));
+  REQUIRE(missing.message.find('\n') == std::string::npos);
 
   writeText(store.modelPath(m), "pretend onnx bytes");
   const ModelStatus bad = store.check(m);  // no sidecar, not the pinned hash

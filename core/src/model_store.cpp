@@ -98,7 +98,11 @@ ModelStatus ModelStore::check(SeparationModel m) const {
   ModelStatus st;
   st.model = m;
   st.path = modelPath(m);
-  const std::string fix = "Fetch it with (from the repository root): " + separationModelFetchCommand(m);
+  // One line, macOS-safe, from the repository root: install the `models` extra (idempotent), then fetch.
+  // `scripts/mac_update.sh` does the same as part of an update (a no-op when the model is present).
+  const std::string fix =
+      "Install it with (from the repository root): match/.venv/bin/pip install -e 'match[models]' -c "
+      "match/constraints-separation.txt && " + separationModelFetchCommand(m) + "   (or run scripts/mac_update.sh)";
   try {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(st.path, ec)) {
