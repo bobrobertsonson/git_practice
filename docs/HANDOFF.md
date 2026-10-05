@@ -96,6 +96,10 @@ htdemucs export, if re-exported). Env: `TONE3000_CLIENT_ID=<publishable t3k_pub_
      way; CI check that `build_stamp` is registered (it silently skips without git at configure).
 - (d) **CLIENT ID prefill:** token files written before v0.1.1 have no `client_id`; backfill it on the next successful
    token refresh or offer a one-click "save current id".
+- (e) **JobRunner "job.json before snapshot" rule** (race fix 8aab5d0, reviewer ACCEPT after the fact): two
+   remaining publish-before-write sites on non-final fields (`startRefineLocked` pairName/refineNote, spawn-time
+   `progressJson`) — reorder or comment as exempt; add a deterministic test via a test-only
+   `testBeforePublishOutDir` hook (the current export-progress test only catches the race probabilistically).
 0. ~~First Mac run findings~~ **Closed (v0.1.1, merged e156d7a).** Root cause: INIT's disabled cab carries the
    schema placeholder file `"(none)"`, which the IR plot, About box, rig/mic pages and saved state treated as a
    real file → red "file not found". Fixed, plus Classic presets on TONE3000 ids and CLIENT ID prefill. See
@@ -114,7 +118,7 @@ htdemucs export, if re-exported). Env: `TONE3000_CLIENT_ID=<publishable t3k_pub_
 6. Renders: footswitch rebuild + Big Fuzz face (session `claude/sawblade-renders-v3` never
    acted on "go"; re-run from `design/render/`).
 7. Standalone polish / first-run flow on real hardware; AAX later.
-8. Nail-the-Mix sessions once the user subscribes (more DIs with real mixes).
+8. ~~Nail-the-Mix~~ user has 20 sessions on the Mac; catalogue in `docs/NTM_CATALOGUE.md` (Bloodbath first: per-path HM2/UBR amp tracks). Visual/render pack assembled 2026-10-05 (not in git; user holds the zips).
 
 ## Decisions worth remembering
 
