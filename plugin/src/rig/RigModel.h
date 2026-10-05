@@ -4,6 +4,7 @@
 // topology, slots, EQ bands, cab, align, gate and bus comp. Pure functions on a Preset; every rule
 // of the spec is tested in plugin/tests/test_rig_model.cpp. Nothing here knows a style or a pedal.
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,23 @@ std::string defaultSlotFor(const PathPreset& p, const std::string& type);
 // BlockRegistry::find(type)->parse. Throws PresetError (naming the problem, e.g. a missing field).
 Block makeBlock(const std::string& type, const std::string& id, const std::string& slot,
                 const std::filesystem::path& baseDir, const nlohmann::json& typeFields);
+// --- v0.2 Task C: BLEND fills an empty path B with a suggested body path ----------------------------------
+// The fallback body amp: tone 88689, "EVH 5150iii Ivory FULL Pack", the first high-gain amp of presets/CAPTURE_SHORTLIST.md.
+// (No model id is fixed: a cached model of the tone is used, else `sawblade-t3k fetch` picks the tone's default model.)
+inline constexpr const char* kFallbackBodyTone = "88689";
+// The modeled boost in front of the body amp: pedal.ts, drive 0, tone 5, level 8 (slot "boost").
+Block makeTsBoost(const Preset& p);
+// A `nam` amp block (slot "amp") for path B holding `model`.
+Block makeBodyAmp(const Preset& p, const Capture& model);
+// Path B := [TS boost, amp?] when it has no blocks (else untouched); returns whether it filled it. Does not touch
+// the topology, blend or level-match fields (setTopology does).
+bool fillBodyPath(Preset& p, const std::optional<Capture>& amp);
+// Path B's amp replaced by `model` (or added after the first block); the other blocks stay.
+void setBodyAmp(Preset& p, const Capture& model);
+// A TONE3000 capture of `toneId` in the capture cache (`modelId` empty: the first cached model by file name), as a Capture
+// with an absolute path; nullopt if none is cached.
+std::optional<Capture> cachedToneCapture(const std::string& toneId, const std::string& modelId = {});
+
 // An `eq` block with one flat peak band at 1 kHz.
 nlohmann::json flatEqFields();
 

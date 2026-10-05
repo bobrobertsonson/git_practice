@@ -137,6 +137,62 @@ Block makeBlock(const std::string& type, const std::string& id, const std::strin
   return b;
 }
 
+// --- Task C ---------------------------------------------------------------------------------------------
+Block makeTsBoost(const Preset& p) {
+  return makeBlock("pedal.ts", newBlockId(p, 'b'), "boost", {},
+                   {{"modelVersion", 1}, {"params", {{"drive", 0}, {"tone", 5}, {"level", 8}}}});
+}
+
+Block makeBodyAmp(const Preset& p, const Capture& model) {
+  Block b;
+  b.id = newBlockId(p, 'b');
+  b.type = "nam";
+  b.slot = "amp";
+  auto params = std::make_shared<NamBlockParams>();
+  params->model = model;
+  b.params = std::move(params);
+  return b;
+}
+
+bool fillBodyPath(Preset& p, const std::optional<Capture>& amp) {
+  if (!p.b.blocks.empty()) return false;
+  p.b.blocks.push_back(makeTsBoost(p));
+  if (amp) p.b.blocks.push_back(makeBodyAmp(p, *amp));
+  return true;
+}
+
+void setBodyAmp(Preset& p, const Capture& model) {
+  const int amp = ampIndex(p.b);
+  if (amp >= 0) p.b.blocks.erase(p.b.blocks.begin() + amp);
+  const int at = amp >= 0 ? amp : static_cast<int>(p.b.blocks.size());
+  addBlock(p.b, at, makeBodyAmp(p, model));
+}
+
+std::optional<Capture> cachedToneCapture(const std::string& toneId, const std::string& modelId) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path dir = captureCacheRoot() / toneId;
+  if (toneId.empty() || toneId.find_first_of("/\\.") != std::string::npos || !fs::is_directory(dir, ec)) return std::nullopt;
+  std::string pick;
+  if (!modelId.empty()) {
+    if (modelId.find_first_of("/\\.") != std::string::npos || !fs::exists(dir / (modelId + ".nam"), ec)) return std::nullopt;
+    pick = modelId;
+  } else {
+    for (const auto& e : fs::directory_iterator(dir, ec))
+      if (e.path().extension() == ".nam" && (pick.empty() || e.path().stem().string() < pick)) pick = e.path().stem().string();
+    if (pick.empty()) return std::nullopt;
+  }
+  Capture c;
+  c.resolvedPath = fs::absolute(dir / (pick + ".nam"), ec);
+  c.file = c.resolvedPath.string();
+  CaptureSource src;
+  src.provider = "tone3000";
+  src.id = toneId;
+  src.modelId = pick;
+  c.source = src;
+  return c;
+}
+
 std::string captureTitle(const Capture& c) {
   if (isNoCapture(c)) return "No cab";
   if (c.source && !c.source->title.empty()) return c.source->title;

@@ -6,7 +6,7 @@
 
 namespace sawblade::plugin::rig {
 
-RigController::RigController(SawbladeProcessor& p) : proc_(p), loadSerial_(p.userLoadSerial()) {
+RigController::RigController(SawbladeProcessor& p) : proc_(p), body_(p), loadSerial_(p.userLoadSerial()) {
   debounce_.fn = [this] { flushPending(); };
   learnTimer_.fn = [this] { finishLearn(); };
   lastBlend_ = [&] {
@@ -96,7 +96,10 @@ void RigController::sync() {
   if (const auto serial = proc_.userLoadSerial(); serial != loadSerial_) {
     loadSerial_ = serial;
     resetTransient();
+    undo_.clear();  // another preset: the BLEND fill can no longer be undone, and its suggestion no longer applies
+    body_.cancel();
   }
+  body_.tick();
   if (!pending_.empty()) return;
   const Preset p = proc_.editBasePreset();
   if (p.b.enabled && p.blend > 0.0) lastBlend_ = p.blend;
@@ -121,7 +124,31 @@ void RigController::setTopology(Topology t) {
   if (topologyOf(cur) == Topology::Blend && cur.blend > 0.0) lastBlend_ = cur.blend;
   singlePlus_ = (t == Topology::SinglePlusTwoPedals);
   const double restore = lastBlend_;
-  edit([t, restore](Preset& p) { rig::setTopology(p, t, restore); });
+  const bool fill = t == Topology::Blend && !cur.b.enabled && cur.b.blocks.empty();
+  if (!fill) {
+    edit([t, restore](Preset& p) { rig::setTopology(p, t, restore); });
+    return;
+  }
+  undo_.push_back(cur);
+  if (undo_.size() > 8) undo_.erase(undo_.begin());
+  const std::optional<Capture> amp = cachedToneCapture(kFallbackBodyTone);
+  edit([t, restore, amp](Preset& p) {
+    rig::setTopology(p, t, restore);
+    fillBodyPath(p, amp);
+  });
+  body_.begin(proc_.editBasePreset());
+}
+
+bool RigController::undo() {
+  sync();
+  if (undo_.empty()) return false;
+  body_.cancel();
+  pending_.clear();
+  debounce_.stopTimer();
+  Preset p = std::move(undo_.back());
+  undo_.pop_back();
+  proc_.loadPreset(std::move(p), /*keepMonitor=*/true);
+  return true;
 }
 
 void RigController::applyMonitor() {

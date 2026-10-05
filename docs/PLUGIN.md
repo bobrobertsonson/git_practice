@@ -141,6 +141,22 @@ of the tone that are the same amp at other gain settings. In the plugin:
 - **For the UI (Task D).** `SawbladeProcessor::ladderInfo(path)`: `has`, `rungCount`, `activeIndex` / `activeName` / `activeGain` /
   `activeModelId` (e.g. "Gain 6"), `targetIndex` / `targetName`, `pending` (the "rung pending" flag), `missingRungs`.
 
+### BLEND fills an empty path B (v0.2 Task C)
+
+`RigController::setTopology(Blend)` on a preset whose path B has no blocks fills it in one edit: a modeled TS boost (`pedal.ts`,
+drive 0, tone 5, level 8, slot `boost`) and the **fallback body amp**, a cached model of TONE3000 tone 88689 (EVH 5150iii Ivory FULL Pack,
+the first high-gain amp of `presets/CAPTURE_SHORTLIST.md`; `kFallbackBodyTone`) if the capture cache has one, else the TS alone (an
+uncached capture is never put in the preset, so the build cannot fail). Level match auto and the constant-loudness law are set as for any
+new blend (phase 10.1). A path B that already has blocks is left as it is.
+
+Then `BodyFill` (message thread; `RigController::sync()` ticks it) asks, through the configured `sawblade-t3k` and only if it exists:
+`suggest-body --a-title <path A amp title> --cache-dir <cache> --json` (offline rule in match/). A different amp replaces the fallback if path B is
+exactly what the fill left (nothing edited since, BLEND still on); a model that is not cached is fetched first (`fetch <tone> --model <id>`).
+`null`, an error or a failing fetch: the fallback amp is fetched if it is not already there. One tool run at a time; nothing runs without a tool.
+
+**Undo.** `RigController::undo()` restores the preset as it was before BLEND (the swap adds no entry of its own, so it is one step, also
+after the asynchronous replacement) and cancels a pending suggestion. The undo stack holds BLEND fills only and is cleared by a user preset load.
+
 ### Latency accounting (exact, in host samples)
 
 ```
