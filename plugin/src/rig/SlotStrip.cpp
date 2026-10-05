@@ -33,6 +33,14 @@ class SlotStrip::Card : public juce::Component {
     kind_.setText(kindText(path, index, b), juce::dontSendNotification);
     kind_.setFont(L::labelFont(10.0f));
     kind_.setColour(juce::Label::textColourId, accent);
+    if (dynamic_cast<const NamBlockParams*>(b.params.get())) {  // a capture is a fixed tone: say so, draw no tone knobs
+      tag_.setText(SlotStrip::captureTag(), juce::dontSendNotification);
+      tag_.setFont(L::labelFont(9.0f));
+      tag_.setColour(juce::Label::textColourId, L::dimText());
+      tag_.setTitle("Capture tag " + name);
+      tag_.setInterceptsMouseClicks(false, false);
+      addAndMakeVisible(tag_);
+    }
     title_.setText(blockTitle(b), juce::dontSendNotification);
     title_.setFont(L::labelFont(13.0f));
     title_.setJustificationType(juce::Justification::topLeft);
@@ -97,6 +105,8 @@ class SlotStrip::Card : public juce::Component {
   }
 
   const std::string& id() const { return id_; }
+  bool showsCaptureTag() const { return tag_.isShowing() || tag_.getParentComponent() == this; }
+  const juce::Label& tag() const { return tag_; }
   juce::Button& bypassButton() { return *bypass_; }
   juce::Button& leftButton() { return left_; }
   juce::Button& rightButton() { return right_; }
@@ -120,7 +130,8 @@ class SlotStrip::Card : public juce::Component {
     auto r = getLocalBounds().reduced(8);
     kind_.setBounds(r.removeFromTop(14));
     r.removeFromTop(2);
-    title_.setBounds(r.removeFromTop(44));
+    if (tag_.getParentComponent() == this) tag_.setBounds(r.removeFromTop(13));
+    title_.setBounds(r.removeFromTop(tag_.getParentComponent() == this ? 32 : 44));
     credit_.setBounds(r.removeFromTop(36));
     r.removeFromTop(2);
     bypass_->setBounds(r.removeFromTop(24));
@@ -145,7 +156,7 @@ class SlotStrip::Card : public juce::Component {
   std::string id_;
   juce::Colour accent_;
   bool dimmed_ = false;
-  juce::Label kind_, title_, credit_;
+  juce::Label kind_, tag_, title_, credit_;
   std::unique_ptr<LedToggle> bypass_;
   std::unique_ptr<PresetKnob> input_;
   juce::TextButton left_, right_, remove_;
@@ -175,6 +186,9 @@ SlotStrip::SlotStrip(RigController& c, int path, const juce::String& title, juce
 SlotStrip::~SlotStrip() = default;
 
 juce::Component& SlotStrip::card(int i) { return *cards_[static_cast<std::size_t>(i)]; }
+
+juce::String SlotStrip::captureTag() { return juce::String::fromUTF8("CAPTURE \xC2\xB7 FIXED TONE"); }
+bool SlotStrip::cardShowsCaptureTag(int i) { return cards_[static_cast<std::size_t>(i)]->showsCaptureTag(); }
 
 void SlotStrip::refresh(const Preset& p, bool emptyPedalSlot) {
   const PathPreset& pp = path_ == 0 ? p.a : p.b;

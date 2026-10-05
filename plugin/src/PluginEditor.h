@@ -6,6 +6,7 @@
 
 #include "PluginProcessor.h"
 #include "SawbladeLookAndFeel.h"
+#include "rig/AmpHead.h"
 #include "rig/RigEditorPanel.h"
 #include "skin/RigView.h"
 
@@ -45,6 +46,13 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   void setRigEditorOpen(bool open);
   bool rigEditorOpen() const;
   rig::RigEditorPanel& rigEditor();
+
+  // v0.2 Task D: the amp controls over the amp head of path 0 = SAW / 1 = BODY, the rig controller (BLEND fill undo), a
+  // synchronous refresh of the main screen (the timer does it at 4 Hz), and Cmd / Ctrl + Z for the undo.
+  rig::AmpHead& ampHead(int path);
+  rig::RigController& rigController();
+  void refreshNow();
+  bool keyPressed(const juce::KeyPress& k) override;
 
   // The cab mic page (mic/MicPage): an overlay over the rig + inspector, opened by double-clicking the cab; UI state, never saved.
   void setMicPageOpen(bool open);

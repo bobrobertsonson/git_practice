@@ -157,6 +157,24 @@ exactly what the fill left (nothing edited since, BLEND still on); a model that 
 **Undo.** `RigController::undo()` restores the preset as it was before BLEND (the swap adds no entry of its own, so it is one step, also
 after the asynchronous replacement) and cancels a pending suggestion. The undo stack holds BLEND fills only and is cleared by a user preset load.
 
+### Amp controls on the amp heads (v0.2 Task D)
+
+`rig::AmpHead` (`plugin/src/rig/AmpHead.*`) lays the six `knob_amp` filmstrip knobs of a path over the knob positions baked into the amp-head art
+(`amp_saw` / `amp_body`), bound to `ampA_*` / `ampB_*` with the usual `SliderAttachment`. The art's order is kept (GAIN, BASS, MID, TREBLE, LEVEL,
+PRESENCE; the art's own captions say LOW / HIGH, so code-drawn captions with the parameters' names sit over them). The filmstrip is drawn at 30 design px
+(the art's knobs are about 26), never redrawn. A read-out pill in the lower half of the head shows one line:
+
+| state | line |
+|---|---|
+| no ladder | `GAIN 7.0` |
+| ladder | `GAIN 7.0 · capture: <rung name>` |
+| rung pending | `GAIN 7.0 · drive only (fetching <target rung name>)` |
+| path has no amp block | `NO AMP IN THIS PATH` (knobs disabled) |
+| path B off (BLEND off) | `BODY PATH OFF — turn up BLEND to add one` (knobs disabled) |
+
+Capture blocks in the rig editor's slot strips show the tag `CAPTURE · FIXED TONE` (a capture is a fixed tone; its tone is shaped by the amp head's
+controls). Cmd / Ctrl + Z on the editor calls `RigController::undo()` when there is a BLEND fill to undo.
+
 ### Latency accounting (exact, in host samples)
 
 ```
