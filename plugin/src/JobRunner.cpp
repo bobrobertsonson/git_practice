@@ -659,13 +659,15 @@ struct JobRunner::Job {
         if (!parseProgressJson(readFile(progressFile), p)) return;
         const bool learned = !p.outDir.empty() && outDir != fs::path(p.outDir);
         if (!p.outDir.empty()) outDir = p.outDir;
+        // job.json names the run folder as soon as it is known (a later runner re-attaches by it). The file first, so
+        // whoever sees the folder or this progress in snapshot() finds job.json up to date.
+        if (learned) writeJobJson();
         {
           std::lock_guard<std::mutex> lk(m);
           snap.progress = std::move(p);
           progressFileSeen = true;
           if (!outDir.empty()) snap.outDir = outDir;
         }
-        if (learned) writeJobJson();  // job.json names the run folder as soon as it is known (a later runner re-attaches by it)
         return;
       }
       // Fallback (an exporter without --progress-json): the 4.1 checkpoint's progress.json, in the run's folder,
@@ -714,11 +716,9 @@ struct JobRunner::Job {
     }
     if (!best.empty()) {
       outDir = best;
-      {
-        std::lock_guard<std::mutex> lk(m);
-        snap.outDir = best;
-      }
-      writeJobJson();
+      writeJobJson();  // the file first, as above
+      std::lock_guard<std::mutex> lk(m);
+      snap.outDir = best;
     }
   }
 
