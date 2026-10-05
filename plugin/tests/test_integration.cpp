@@ -1379,7 +1379,7 @@ std::vector<juce::String> allShownTexts(juce::Component& root) {
 
 // Text that reports a missing / unreadable file, or shows the INIT cab sentinel as if it were a file.
 bool reportsMissingFile(const juce::String& s) {
-  for (const char* phrase : {"(none)", "file not found", "file missing", "captures missing", "No such file"})
+  for (const char* phrase : {"(none)", "file not found", "file missing", "captures missing", "No such file", "cannot read the ir", "not a valid wav", "cannot open"})
     if (s.containsIgnoreCase(phrase)) return true;
   return false;
 }
@@ -1506,4 +1506,56 @@ TEST_CASE("launch: a saved state whose captures no longer exist restores; only t
   CHECK_FALSE(reportsMissingFile(ed->browser().infoPanel().plainText()));
   ed->setBrowserOpen(false);
   base.reset();
+}
+
+TEST_CASE("launch: a state saved by an older build with the absolutised \"(none)\" cab file shows no cab and no error", "[integration][launch]") {
+  gWalk.reset();
+  SettingsEnv env(kSettingsExist, /*isolateHome=*/true);
+  EnvVar appData("SAWBLADE_APPDATA", (env.dir / "appdata").string());
+  juce::ScopedJuceInitialiser_GUI gui;
+  json state = {{"schema", "sawblade.preset"}, {"version", 1}, {"name", "Init"},
+                {"paths", {{"a", {{"blocks", json::array()}}}, {"b", {{"blocks", json::array()}}}}},
+                {"align", {{"mode", "off"}}},
+                {"blend", 0.5},
+                {"cab", {{"enabled", false}, {"mode", "shared"}, {"ir", {{"file", (env.dir / "(none)").string()}}}}}};
+  const std::string text = state.dump(2);
+  SawbladeProcessor proc;
+  proc.playAlong().setStandalone(true);
+  proc.prepareToPlay(48000.0, 512);
+  proc.setStateInformation(text.data(), static_cast<int>(text.size()));
+  REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(proc.status().error.empty());
+  CHECK(proc.currentPreset().cab.ir.file == "(none)");
+  CHECK(exportBlockedReason(proc.currentPreset()).empty());
+
+  std::unique_ptr<juce::AudioProcessorEditor> base(proc.createEditorAndMakeActive());
+  auto* ed = dynamic_cast<SawbladeEditor*>(base.get());
+  REQUIRE(ed != nullptr);
+  ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  pump(250);
+  expectNoMissingFileText(*ed, "editor");
+  ed->setSettingsOpen(true);
+  auto* about = buttonTitled(*ed, "About Sawblade...");
+  REQUIRE(about != nullptr);
+  click(*about);
+  REQUIRE(ed->aboutOpen());
+  expectNoMissingFileText(*ed, "About box");
+  click(*buttonTitled(*ed, "CLOSE"));
+  pump(80);
+  ed->setSettingsOpen(false);
+  ed->setRigEditorOpen(true);
+  ed->rigEditor().setTab(rig::RigEditorPanel::Tab::Cab);
+  ed->rigEditor().refresh();
+  expectNoMissingFileText(*ed, "rig Cab tab");
+  ed->setRigEditorOpen(false);
+  ed->setMicPageOpen(true);
+  pump(250);
+  expectNoMissingFileText(*ed, "cab mic page");
+  ed->setMicPageOpen(false);
+  base.reset();
+
+  juce::MemoryBlock out;
+  proc.getStateInformation(out);
+  const json saved = json::parse(std::string(static_cast<const char*>(out.getData()), out.getSize()));
+  CHECK(saved["cab"]["ir"]["file"] == "(none)");  // written back verbatim, not absolutised
 }

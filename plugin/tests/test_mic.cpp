@@ -22,6 +22,7 @@
 #include "mic/IrResponse.h"
 #include "mic/MicSession.h"
 #include "SettingsEnv.h"
+#include "presets/PresetLibrary.h"
 #include "presets/T3kTool.h"
 #include "sawblade/sha256.h"
 #include "sawblade/wav_io.h"
@@ -793,4 +794,21 @@ TEST_CASE("a cached-but-unresolved cab IR previews and lays out through the capt
   CHECK(p.models()[0].file == tmp.dir / "cache" / "77" / "9.wav");
   CHECK(p.findModel(c) == 0);
   ::unsetenv("SAWBLADE_CACHE_DIR");
+}
+
+TEST_CASE("no capture: the \"(none)\" placeholder is never a file", "[mic][init]") {
+  Capture c;
+  CHECK(isNoCapture(c));  // empty file
+  c.file = kNoCaptureFile;
+  CHECK(isNoCapture(c));
+  c.file = "/tmp/(none)";  // exact match only: an absolute path is a file
+  CHECK_FALSE(isNoCapture(c));
+  c.file = "cab.wav";
+  CHECK_FALSE(isNoCapture(c));
+
+  const Preset init = makeInitPreset();
+  CHECK(isNoCapture(init.cab.ir));
+  CHECK(json::parse(presetToStateJson(init))["cab"]["ir"]["file"] == "(none)");  // not absolutised
+  CHECK(summariseCaptures(init).empty());
+  CHECK(IrPack::single(init.cab.ir).empty());
 }
