@@ -6,7 +6,9 @@
 check of every v1/v2 preset render against a `tonerender` built from 7b's final commit. Its
 five non-blocking notes (explicit `midVoice` keys, an alloc test cycling v3 modes, a v3 custom
 block-size render, v3 modded alias at 44.1 kHz, pinned H4–H6) were folded in afterwards as
-`FINAL_FIX_COMMIT` without a second review round; they add tests and a preset key, no model code.
+`d5d40df` and `05dae6a` without a second review round; they add tests and a preset key, no model
+code. Final state: Release ctest **351/351** (core, plugin, editor), ASan/UBSan core green, no
+hidden or expected-failure tests.
 
 Spec: `docs/specs/phase7c_chainsaw_family.md` (Parts 1–3 with amendments §3.8). Plots:
 `docs/reports/phase7c/` (face/drawer screenshots in `ui/`). Artifact page "Sawblade Chainsaw
@@ -85,7 +87,7 @@ Buzz. All render from repo files only, peaks −3.9…−3.0 dBFS; three use `ou
 | custom − stock: 400 Hz / 50 Hz / 10 kHz; H3 / H2 | +2.52 / +5.50 / +5.25 dB; +2.57 / −1.70 | [2, 3] / [4.5, 6.5] / [4.5, 6.5]; [1, 4] / [−2.5, 0] |
 | modded − stock, |H(10k)| − |H(400)| | +4.09 dB | ≥ +3 |
 | alias, v3 stock/custom × 4 clips; modded (48 kHz) | −85.5…−88.7; −82.1…−83.6 dB | < −80 |
-| alias, v3 modded at 44.1 kHz (silicon / led / asymmetric / soft) | −80.7 / −75.6 / −72.9 / −75.7 dB | < −72 (documented exception, §3.8 item 11) |
+| alias, v3 modded at 44.1 kHz (silicon / led / asymmetric / soft) | −80.7 / −75.6 / −72.9 / −75.7 dB (96 kHz: −96…−98) | < −72 (documented exception, §3.8 item 11) |
 | alias, hmx × 4 clips + boost; eye | −86.7…−90.7; −85.1 dB | < −80 |
 | hmx vs hm v3: 110 Hz / 2.2 kHz / 400 Hz & 8 kHz | +3.29 / −2.99 / −0.68 dB | [3.1, 4.5] / [−3.2, −1.8] / ±0.8 |
 | hmx decoupling, HIGH 0→10 @ 1.5 kHz / 625 Hz; HIGH-MID the reverse | +22.00 / +3.88 dB | [20, 24] / ≤ 6 |
@@ -160,5 +162,5 @@ type in v3 (consistent, zero cost for v2).
 Specs: `dd2b891` (Zone/Rat, superseded), `716c2a7`, `7542c7e`, `9de0684`, `4b6f585`, `ed14122`,
 `5b7308a`. Implementation: `2d5c736`, `e4cce00` (Part 1); `a6cbdf5` (merge of 7b `a0eae2e`),
 `cd413f0`, `23b1f18` (Part 2 core); `b1987fd` (Part 2 plugin); `00ce35f`, `888230c` (Part 3);
-`c1d3a70` (cleanup); `FINAL_FIX_COMMIT` (reviewer's non-blocking items). Plots and screenshots:
+`c1d3a70` (cleanup); `d5d40df`, `05dae6a` (reviewer's non-blocking items, modded 44.1 kHz exception). Plots and screenshots:
 `06ec182`, `fb663e2`, `868a647`. State: `71478b6`, `0694158`, `1128b1a`.
