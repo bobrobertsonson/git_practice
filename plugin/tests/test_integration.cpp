@@ -1045,6 +1045,7 @@ void step19Separation(Walk& w) {
   CHECK(pa.loadStatus().cacheHit);
   CHECK(pa.loadStatus().songName == "my song");
 
+  if (w.proc.matchSettings().selectedTake().empty()) click(*buttonTitled(w.panel(), "USE FOR MATCH"));  // (step 16 chose it in a full walk)
   // MATCH and EXPORT plan from the song file's stems: the reference is the guitar stem inside the stems cache
   const MatchPlan plan = planMatch(w.proc);
   INFO(plan.message);
