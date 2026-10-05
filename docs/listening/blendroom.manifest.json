@@ -8,7 +8,7 @@
    "style": "chainsaw HM-2 + high-gain body (matched)",
    "durationS": 174.857,
    "notes": "Backing = demucs stems drums+bass+vocals (guitars removed), trimmed 0.16771 s to align with DIs; backing peak -3 dBFS.",
-   "guitarPreset": "/root/.cache/sawblade/match_runs/original_v4/best.preset.resolved.json",
+   "guitarPreset": "~/.cache/sawblade/match_runs/original_v4/best.preset.resolved.json",
    "gains": {
     "backingDb": 0.74,
     "guitarDb": -7.46,
