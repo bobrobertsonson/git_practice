@@ -11,6 +11,7 @@
 #include <set>
 #include <vector>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -1169,6 +1170,55 @@ TEST_CASE("rig editor: screenshots", "[editor][rig]") {
     rig.panel().setTab(rig::RigEditorPanel::Tab::Comp);
     rig.snapshot("rig_tab_comp.png");
   }
+}
+
+TEST_CASE("rig editor: MATCH LEVELS fills the trim read-outs and the blend law round-trips through state", "[editor][rig][levelmatch]") {
+  json j = fxPreset();
+  j["paths"]["b"]["levelDb"] = -6.0;
+  j["levelMatch"] = {{"mode", "off"}};
+  j["blendLaw"] = "constantLoudness";
+  FxRig rig(j);
+  rig.open(rig::RigEditorPanel::Tab::Blend);
+  CHECK(anyLabelContains(*rig.ed, "0.0 dB off"));
+
+  juce::Button* match = buttonTitled(*rig.ed, "MATCH LEVELS");
+  REQUIRE(match != nullptr);
+  CHECK(match->isEnabled());
+  CHECK(match->getTooltip().isNotEmpty());
+  click(*match);
+  rig.wait();
+  rig.panel().refresh();
+  const Preset p = rig.proc.currentPreset();
+  CHECK(p.levelMatch.mode == LevelMatchMode::Manual);
+  CHECK(p.levelMatch.trimADb == Catch::Approx(0.0).margin(0.1));
+  CHECK(p.levelMatch.trimBDb == Catch::Approx(6.0).margin(0.1));
+  CHECK(anyLabelContains(*rig.ed, "manual"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "0.0 dB off"));
+  CHECK(anyLabelContains(*rig.ed, "+6.0 dB manual"));
+  CHECK(anyLabelContains(*rig.ed, juce::String::fromUTF8(" \xC2\xB7 -6.0 dB")));  // the player's offset, separately
+
+  // LINEAR / CONSTANT: a live edit (no rebuild), saved with the plugin state.
+  juce::Button* linear = buttonTitled(*rig.ed, "Blend law LINEAR");
+  juce::Button* constant = buttonTitled(*rig.ed, "Blend law CONSTANT");
+  REQUIRE(linear != nullptr);
+  REQUIRE(constant != nullptr);
+  const auto builds = rig.proc.engineBuilds();
+  click(*linear);
+  CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::Linear);
+  CHECK(rig.proc.engineBuilds() == builds);
+  {
+    juce::MemoryBlock state;
+    rig.proc.getStateInformation(state);
+    SawbladeProcessor other;
+    other.prepareToPlay(48000.0, 512);
+    other.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    REQUIRE(other.waitForLoader(std::chrono::milliseconds(60000)));
+    CHECK(other.currentPreset().blendLaw == BlendLaw::Linear);
+    CHECK(other.currentPreset().levelMatch.mode == LevelMatchMode::Manual);
+    CHECK(other.currentPreset().levelMatch.trimBDb == Catch::Approx(6.0).margin(0.1));
+  }
+  click(*constant);
+  CHECK(rig.proc.currentPreset().blendLaw == BlendLaw::ConstantLoudness);
 }
 
 // ---------------------------------------------------------------------------------------------
