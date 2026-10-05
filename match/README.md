@@ -408,3 +408,35 @@ Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.re
   models of heavy two-path high-gain chains normally need hundreds of epochs on a GPU. The same code trains on a GPU box unchanged
   with `--device cuda` or `--device mps` (default auto).
   `--batch-size 4` gave a better ESR per minute in a 10-minute trial (0.51 vs ~0.58 at the same time) but did not change the picture.
+
+## Separation models (`sawblade-models`)
+
+The C++ `ModelStore` (stem separation, phase 5.1b) expects the ONNX core of the separation models in the
+per-user models dir. Nothing is committed or bundled; this tool builds them locally.
+
+One-time venv setup (from the repo root). torch comes from PyPI (CUDA wheels, ~3 GB download; CPU is all that
+is used). The `models` extra pins torch 2.5.1, demucs 4.0.1, onnx 1.23.1 and onnxruntime 1.30.0; the constraints
+file pins the resolved set (linux x86_64):
+
+```
+python3.11 -m venv match/.venv
+match/.venv/bin/pip install -e 'match[models]' -c match/constraints-separation.txt
+match/.venv/bin/pip cache purge          # optional: reclaim pip's download cache
+```
+
+Then:
+
+```
+match/.venv/bin/sawblade-models fetch --model htdemucs_6s     # default; also: htdemucs | all
+match/.venv/bin/sawblade-models status
+```
+
+* Models dir: `$SAWBLADE_MODELS_DIR`, else macOS `~/Library/Application Support/Sawblade/models/`, else Linux
+  `$XDG_DATA_HOME/sawblade/models/` or `~/.local/share/sawblade/models/`. `--dir` overrides for one call.
+* `fetch` downloads the official checkpoint from dl.fbaipublicfiles.com (sha256 pinned; cached under
+  `<dir>/checkpoints/`, skipped when present and correct, partial downloads deleted on failure), exports
+  `<dir>/<id>-core-opset17.onnx` (torch legacy exporter, opset 17, fixed shapes), checks onnxruntime against torch
+  on a seeded synthetic segment (fails if the residual is worse than -60 dB), and only then writes
+  `<id>-core-opset17.onnx.sha256`. The export is reproducible; its hash is compared with the pin from
+  `spikes/separator/RESULTS.md` (a mismatch on another platform is a warning, not a failure).
+* Never commit the checkpoints or ONNX files.

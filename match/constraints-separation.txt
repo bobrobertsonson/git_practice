@@ -1,5 +1,7 @@
 # Resolved set used for calibration method 1 (pip freeze of match/.venv with `match[separation]`, linux x86_64).
 # pip install -e 'match[separation]' -c match/constraints-separation.txt
+# The `models` extra (sawblade-models, phase 5.1b) adds the onnx/onnxruntime block at the end of this file:
+# pip install -e 'match[models]' -c match/constraints-separation.txt
 demucs==4.0.1
 torch==2.5.1
 torchaudio==2.5.1
@@ -27,3 +29,8 @@ nvidia-cusparse-cu12==12.3.1.170
 nvidia-nccl-cu12==2.21.5
 nvidia-nvjitlink-cu12==12.4.127
 nvidia-nvtx-cu12==12.4.127
+onnx==1.23.1
+onnxruntime==1.30.0
+flatbuffers==25.12.19
+ml_dtypes==0.6.0
+protobuf==7.36.2

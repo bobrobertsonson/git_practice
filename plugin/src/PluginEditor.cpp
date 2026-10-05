@@ -541,14 +541,14 @@ bool SawbladeEditor::matchScreenOpen() const { return content_->matchScreenOpen(
 
 bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
   for (const auto& f : files)
-    if (juce::File(f).isDirectory()) return true;
+    if (juce::File(f).isDirectory() || isSongFileName(f.toStdString())) return true;
   return false;
 }
 
 void SawbladeEditor::filesDropped(const juce::StringArray& files, int, int) {
   for (const auto& f : files) {
-    if (!juce::File(f).isDirectory()) continue;
-    processor_.playAlong().loadFolder(f.toStdString(), /*userInitiated=*/true);
+    if (!juce::File(f).isDirectory() && !isSongFileName(f.toStdString())) continue;
+    processor_.playAlong().loadSong(f.toStdString(), /*userInitiated=*/true);
     setPlayAlongOpen(true);
     return;
   }

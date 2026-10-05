@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "SongDecoder.h"
 
 #include <algorithm>
 #include <cmath>
@@ -60,6 +61,7 @@ SawbladeProcessor::SawbladeProcessor()
   backR_.assign(kMinChunk, 0.0f);
   fadeBuf_.assign(kMinChunk, 0.0f);
   playAlong_.setStandalone(wrapperType == wrapperType_Standalone);
+  playAlong_.setSongDecoder(&decodeSongFile);
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
   apvts_.addParameterListener(paramSpec(kSawCircuit).id, this);
   startTimerHz(10);

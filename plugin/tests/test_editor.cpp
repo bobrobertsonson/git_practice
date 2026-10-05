@@ -674,8 +674,11 @@ TEST_CASE("play-along: dropping a folder loads it; a missing folder shows a mess
   dirs.add(juce::String(song.string()));
   CHECK(rig.ed->isInterestedInFileDrag(dirs));
   juce::StringArray notDirs;
-  notDirs.add(juce::String((song / "drums.wav").string()));
+  notDirs.add(juce::String((song / "notes.txt").string()));  // 5.1b: audio files are accepted too (separated)
   CHECK_FALSE(rig.ed->isInterestedInFileDrag(notDirs));
+  juce::StringArray audio;
+  audio.add(juce::String((song / "drums.wav").string()));
+  CHECK(rig.ed->isInterestedInFileDrag(audio));
 
   CHECK_FALSE(rig.ed->playAlongOpen());
   rig.ed->filesDropped(dirs, 10, 10);
