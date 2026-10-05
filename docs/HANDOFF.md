@@ -82,15 +82,21 @@ htdemucs export, if re-exported). Env: `TONE3000_CLIENT_ID=<publishable t3k_pub_
 
 ## Open items, in priority order
 
-0. **First Mac run findings (2026-10-05, v0.1 at db0813e):** the Standalone opens on the
-   `INIT` preset, which (like the four "Classic" library presets: Chainsaw + Body, Studio
-   Split, Swedeath Saw, Tight Body) references placeholder capture files
-   (`presets/captures/saw_pedal_hm2_maxed.nam` etc.; fixed in v0.1.1: they now carry TONE3000 sources) that are not in the repo → red
-   "file not found" on launch. Fix: make INIT capture-free (modeled chainsaw + repo IR) and
-   either resolve the Classic presets through TONE3000 ids or move them out of the library.
-   Also: the Settings CLIENT ID field starts empty (GUI apps do not read `.zshrc`); prefill
-   from the token file / env when present. Matched + Styles presets load fine.
-1. User plays v0.1 in Logic (`scripts/mac_update.sh`), reports; fix round.
+- (a) **macOS CI: 45 failing tests on Apple Silicon** (base f9ac2ca, run 52; unchanged by v0.1.1/v0.1.2):
+   render goldens, preset save/load round-trip + A/B, and 39 runner/two-pass/export tests ("Subprocess
+   aborted"); the failing Test step skips auval/pluginval. Affects the user's Mac build (Apple arm64 renders
+   may differ from the Linux goldens). Triage goldens + round-trip first, then the subprocess aborts.
+- (b) **Build version/commit on About + Standalone title**, regenerated each build: `BuildInfo.h` is
+   configure-time only and goes stale under `scripts/mac_update.sh`.
+- (c) **Eigen via the GitHub mirror** instead of gitlab.com (gitlab is blocked in the cloud containers).
+0. ~~First Mac run findings~~ **Closed (v0.1.1, merged e156d7a).** Root cause: INIT's disabled cab carries the
+   schema placeholder file `"(none)"`, which the IR plot, About box, rig/mic pages and saved state treated as a
+   real file → red "file not found". Fixed, plus Classic presets on TONE3000 ids and CLIENT ID prefill. See
+   [`docs/specs/v0_1_1-init_classic_REPORT.md`](specs/v0_1_1-init_classic_REPORT.md) and
+   [`docs/specs/v0_1_2-live_controls_REPORT.md`](specs/v0_1_2-live_controls_REPORT.md) (live controls: no bug,
+   regression tests added).
+1. User plays v0.1 in Logic (`scripts/mac_update.sh`), reports; fix round. First Logic run: controls fine,
+   two-instance monitoring confusion (Logic monitors the selected track; see v0.1.2 report).
 2. CC BY-NC captures: enabled end to end (29ca1a0); derived presets/exports marked
    non-commercial. Nothing pending here.
 3. 7.2: re-fit `pedal.hm` v3 / hmx / eye against the captures (`sawblade-calibrate pedal-fit`),
