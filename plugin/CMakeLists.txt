@@ -335,7 +335,7 @@ if(SAWBLADE_BUILD_TESTS)
       COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/standalone_launch.sh ${SAWBLADE_XVFB_RUN} ${SAWBLADE_IMPORT_EXE}
               "$<TARGET_FILE:SawbladePlugin_Standalone>" ${CMAKE_BINARY_DIR}/screenshots/v01/22_standalone.png)
     set_tests_properties("integration: standalone launches" PROPERTIES TIMEOUT 60 DEPENDS SawbladePlugin_Standalone
-                          SKIP_RETURN_CODE 77)
+                          SKIP_RETURN_CODE 77 ENVIRONMENT "SAWBLADE_NO_NETWORK=1")
   endif()
 endif()
 

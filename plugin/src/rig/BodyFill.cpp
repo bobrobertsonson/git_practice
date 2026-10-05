@@ -116,9 +116,13 @@ void BodyFill::applyAmp(const Capture& model) {
     if (const auto* nam = dynamic_cast<const NamBlockParams*>(cur.b.blocks[static_cast<std::size_t>(amp)].params.get()))
       if (nam->model.source && model.source && nam->model.source->id == model.source->id && nam->model.source->modelId == model.source->modelId) return;  // already there
   setBodyAmp(cur, model);
-  expectedB_ = cur.b;
-  if (onBodyChanged) onBodyChanged(cur);
   proc_.loadPreset(std::move(cur), /*keepMonitor=*/true);  // coalesced with the BLEND edit: no undo entry of its own
+  // What the rig is now: loadPreset clamps the values to the parameter grid, so record that (off-grid values must not make the
+  // untouched check or the undo entry's post-fill comparison fail).
+  const Preset now = proc_.editBasePreset();
+  expectedB_ = now.b;
+  expectedBlend_ = now.blend;
+  if (onBodyChanged) onBodyChanged(now);
 }
 
 void BodyFill::fallback() {
