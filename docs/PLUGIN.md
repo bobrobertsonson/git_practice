@@ -421,8 +421,8 @@ latency chip, LIVE / STUDIO chip, placeholders for A/B, MATCH, EXPORT NAM; MATCH
 play-along panel, see Record + Match), rig area (amp heads, cab, pedalboard
 with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
 knobs; all 12 parameters are bound to exactly one knob each outside the rig panel). The top bar also carries the gear button (title
-"Settings", after PLAY ALONG) that toggles the Settings overlay (below). To make room for it the preset button is 214
-design px wide (was 240) and the latency chip 136 (was 170). The window opens at 1280 x 800 times the `uiScale` setting
+"Settings", after PLAY ALONG) that toggles the Settings overlay (below). To make room for it the preset button is 170
+design px wide (upstream 200) and the latency chip 136 (upstream 150). The window opens at 1280 x 800 times the `uiScale` setting
 (0.5 to 2.0, default 1.0).
 
 Pictures come from `plugin/assets/` (our own renders, embedded with `juce_add_binary_data`). Controls live in
@@ -556,6 +556,21 @@ keep off the real home directory. `Env` (home, executable, source dir, `getenv`,
 | capture cache | `~/.cache/sawblade/captures` | `SAWBLADE_CACHE_DIR` |
 | takes (recordings) | macOS `~/Library/Application Support/Sawblade/takes`; Linux `~/.local/share/sawblade/takes` | the `takesDir` key |
 
+**One app-data dir, one settings file.** `appDataDir()` (`plugin/src/AppPaths.h`, the single definition) is, in order:
+`SAWBLADE_APPDATA`, `SAWBLADE_DATA_DIR`, macOS `~/Library/Application Support/Sawblade`, else `$XDG_DATA_HOME/sawblade`
+or `~/.local/share/sawblade`. `presets/T3kTool`'s `settingsFile()` / `packCacheDir()`, the take and job directories and
+`Paths::settingsFile` (which additionally honours `SAWBLADE_SETTINGS_FILE` first) all follow it; a test checks that they
+agree for both variables. The file is shared: phase 9's `t3kExecutable` and `factoryPresetDir` live next to our keys.
+`Settings::save()` is read-modify-write: it re-reads the file, keeps every key it does not own as found on disk (so a
+`T3kTool` write between our load and save survives), takes its own nine keys from memory (removals included) and writes
+atomically. `T3kTool::setT3kExecutable` also leaves the file mode 0600.
+
+**Tool-path fallbacks.** `MatchSettings::defaultMatchExecutable()` / `defaultExportExecutable()`,
+`BrowserSettings::defaultExecutable()` and `settings::defaultT3kExecutable()` return
+`Settings::shared().toolPath("<tool>")` when `effectiveMatchVenvDir()` is set (stored or auto-detected), else their
+compile-time `<repo>/match/.venv/bin/<tool>`. Explicit per-feature overrides those stores hold still win, so the
+Settings panel's venv drives MATCH, EXPORT, the capture browser and the preset resolver.
+
 **Keys** (`settings.json`, version 1; unknown keys survive a round trip; writes are atomic via `settings.json.tmp` +
 rename, file mode 0600, directory 0700; a malformed file loads as defaults plus an error text and the next save
 overwrites it):
@@ -606,11 +621,13 @@ empty string are dropped; a child killed by a signal it did not cause reads as e
 only the direct child (a tool that spawns grandchildren which keep the pipe open delays the end of the job until they
 exit; the `sawblade-*` entry points exec in place).
 
-**Login protocol** (`sawblade-t3k login --json`, one JSON object per line; the refresh token is never printed in this
-mode): `{"event":"device_code","user_code","verification_uri","verification_uri_complete"|null,"expires_in"}`, then
-`{"event":"logged_in","username","display_name","id","token_file"}`, or `{"event":"error","message"}` with exit 1.
-`LoginFlow` is the state machine the panel drives (non-JSON lines are ignored). `whoami --json` prints one
-`{"username","display_name","id","token_file"}` line, or `{"error": ...}` and exit 1.
+**Login protocol** (`sawblade-t3k login --json`, an alias of `--json-events`, one JSON object per line; the refresh
+token is never printed in this mode): `{"event":"device_code","user_code","verification_uri","verification_uri_complete"|null,"expires_in"}`,
+then `{"event":"logged_in", ...}` where `username`, `display_name`, `id` and `token_file` are optional; failures are a
+line `{"error":"<msg>","code":"auth|network|..."}` (the CLI's shape; `{"event":"error","message"}` is accepted too) and a
+non-zero exit, and exit code 4 means "not logged in". `LoginFlow` is the state machine the panel drives (other lines are
+ignored). `whoami --json` prints one `{"id","username","display_name","token_file"}` line, or the `{"error","code"}` line
+with exit 1 (4 when not logged in). The capture browser's `T3kClient`/`T3kJson` parsers ignore the extra keys (tested).
 
 **Settings panel** (`SettingsPanel`): an overlay over the rig area (940 x 742 design px), closed by default, opened by the
 gear button, closed by Esc, the x button or DONE (UI state, never saved). Sections: Setup checklist, Tools (match venv
@@ -660,7 +677,8 @@ and the MIX fader, read-only studio mode, LOAD IR FOLDER, LOAD PACK through a fa
 `plugin/tests/test_preset_browser.cpp` (the browser, stepping, the A/B button, screenshot `sawblade_browser_1x.png`) cover phase 9b. The Record + Match tests are described in that section.
 The phase 11
 editor tests (each points `SAWBLADE_SETTINGS_FILE` at a temp file) cover the gear button, the first-run checklist, the
-secret-key refusal, the login view against a fake `sawblade-t3k` (`plugin/tests/tools/fake_t3k.sh`), the checklist lights,
+secret-key refusal, the login view against a fake `sawblade-t3k` (`plugin/tests/tools/fake_t3k.sh`, `FAKE_T3K_MODE`
+selects approve / error line / exit 4), the panel raising above the RIG overlay, the checklist lights,
 the About box and the icon PNGs, with screenshots `sawblade_{settings,firstrun,login,about}_1x.png` in the screenshot
 directory.
 

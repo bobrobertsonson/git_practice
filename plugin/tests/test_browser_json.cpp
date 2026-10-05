@@ -122,6 +122,8 @@ TEST_CASE("browser json: whoami, error object, login events", "[browser][json]")
   CHECK(d->userCode == "AB-12");
   CHECK(d->expiresIn == 600);
   CHECK(t3k::parseLoginLine(R"({"event":"logged_in"})")->kind == t3k::LoginEvent::Kind::LoggedIn);
+  CHECK(t3k::parseLoginLine(R"({"event":"logged_in","username":"u","display_name":"D","id":"7","token_file":"/t"})")->kind == t3k::LoginEvent::Kind::LoggedIn);  // phase 11 extra keys
+  CHECK(t3k::parseWhoAmI(R"({"id":"7","username":"u","display_name":"D","token_file":"/t"})", e)->username == "u");
   CHECK_FALSE(t3k::parseLoginLine("refresh_token=SECRET").has_value());
   CHECK_FALSE(t3k::parseLoginLine(R"({"event":"other"})").has_value());
   CHECK_FALSE(t3k::parseLoginLine(R"({"refresh_token":"SECRET"})").has_value());
