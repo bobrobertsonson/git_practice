@@ -4,7 +4,7 @@ Branch `claude/sawblade-v0_2_1-match-in-host`, based on 75f4f64; v0.2 (`claude/s
 cdb4b9a+) merged in at 621d5e9 (merge commit, no textual conflicts, CI run 129 green). Lead decisions are in the spec
 ("Lead decisions", 4e8b27d).
 
-**Final CI: see "CI of record" at the end.**
+**Final: all tasks reviewer-ACCEPTed; CI run 148 (id 37526869468) on `85c753e` green on all four jobs.**
 
 ## Tasks and reviewer verdicts
 
@@ -115,4 +115,7 @@ v0.2 merge): green. Run 145 (1d1042e): clang green incl. all import tests; macOS
 
 ## CI of record
 
-(filled in below)
+**Run 148 (id 37526869468) on `85c753e`: success** — linux-gcc (ctest + pluginval VST3 level 10), linux-clang-werror
+(ctest), macos-arm64 (ctest + auval + pluginval AU and VST3 level 10), python (pytest). `85c753e` contains every code
+change of the phase (last code commit 667f253) plus this report's previous revision; the commit that fills in this
+section changes only this file.
