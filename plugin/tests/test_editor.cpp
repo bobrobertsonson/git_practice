@@ -3552,6 +3552,7 @@ TEST_CASE("match screen: an old PREVIEW shows that it is over 24 h old and is no
   nlohmann::json j = {{"version", 1}, {"kind", "match"}, {"state", "succeeded"}, {"pass", "quick"}, {"pid", 0}, {"spawnedEpochMs", finished - 1000},
                       {"startedEpochMs", finished - 1000}, {"finishedEpochMs", finished}, {"outDir", q.string()}, {"commandLine", nlohmann::json::array({"x"})},
                       {"request", {{"di", rig.tools.di.string()}, {"ref", rig.tools.ref.string()}}}};
+  j["owner"] = rig.proc.instanceId();  // seeded as this instance would have written it: an owned runner adopts only its own jobs
   std::ofstream(q / "job.json") << j.dump();
   rig.ed->openMatchScreen();  // re-attaches
   rig.screen().refresh();
