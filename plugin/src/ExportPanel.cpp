@@ -531,7 +531,7 @@ struct ExportPanel::Impl {
     if (notesBox.getText() != notesTextShown) notesBox.setText(notesTextShown, juce::dontSendNotification);
     setText(notesSource, fromReport ? juce::String("from the export report (sawblade-export)")
                          : done    ? juce::String("(computed by the plugin)")
-                                   : juce::String("Follows MODE and BUS COMP above: set these on your pedal chain around the loader."));
+                                   : juce::String("Follows the export settings above: set these on your pedal chain around the loader."));
   }
 
   void refresh() {

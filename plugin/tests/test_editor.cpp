@@ -2952,7 +2952,7 @@ TEST_CASE("export panel: the notes box lists the gate and the fast bus comp with
   CHECK(editors[0]->isVisible());
   CHECK(editors[0]->isReadOnly());
   CHECK(editors[0]->getText().trimEnd() == nocab.trimEnd());
-  CHECK(anyLabelContains(panel, "Follows MODE and BUS COMP"));
+  CHECK(anyLabelContains(panel, "Follows the export settings"));
 
   // COPY puts the same text on the clipboard (the seam replaces the system clipboard).
   juce::String copied;
@@ -3012,7 +3012,7 @@ TEST_CASE("export panel: the notes box sits in the right column without overlapp
       if (c == box || c == copy || !c->isVisible() || c->getBounds().isEmpty()) continue;
       // The header row and the source line belong to the notes; every other visible child stays clear of the box and COPY.
       if (auto* l = dynamic_cast<juce::Label*>(c);
-          l != nullptr && (l->getText().startsWith("EXPORT NOTES") || l->getText().startsWith("Follows MODE") || l->getText() == "(computed by the plugin)" ||
+          l != nullptr && (l->getText().startsWith("EXPORT NOTES") || l->getText().startsWith("Follows the export") || l->getText() == "(computed by the plugin)" ||
                            l->getText().startsWith("from the export report")))
         continue;
       INFO(c->getTitle() << " / " << c->getBounds().toString());
