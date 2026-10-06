@@ -63,7 +63,10 @@ list only the TS-style model ids in `pedals.ts.tones[70280].models` of `targets.
 
 Each command writes `docs/reports/v0_4/fits_<pedal>.json` (licence + creator per capture, free and knob-constrained
 fits, `harm_rms_db` with even/odd parts, `harm_rms_db_legacy`, the lag, the capture spread) and per-capture PNGs.
-It is crash-safe: a re-run with `--merge` skips captures already in the file.
+It is crash-safe: a re-run with `--merge` skips captures already in the file (it refuses a file with a different
+probe, pedal, modelVersion or harmonic floor). Every pedal, hm included, reads its captures from
+`docs/reports/v0_4/targets.json` (so 6778 and the peterny capture are fitted once listed there); the phase 7.1 list is only
+used with `--targets builtin-7.1`.
 
 ```
 W=~/sawblade-work/pedalfit; O=docs/reports/v0_4
@@ -77,7 +80,7 @@ sawblade-calibrate pedal-fit --pedal muff --work $W --out $O --jobs 4
 Optional, to compare with phase 7.1 (hm v1 with the old -70 dB floor and the old search):
 
 ```
-sawblade-calibrate pedal-fit --pedal hm --model-version 1 --harm-floor -70 --refine-generations 0 \
+sawblade-calibrate pedal-fit --pedal hm --model-version 1 --harm-floor -70 --refine-generations 0 --targets builtin-7.1 \
   --work $W --out docs/reports/v0_4/hm_v1_replay --fits-name fits_hm_v1.json
 ```
 

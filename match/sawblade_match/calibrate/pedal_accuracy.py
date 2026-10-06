@@ -74,9 +74,11 @@ def reference_spread_db(spread: dict) -> float | None:
 # targets and verdict
 # ---------------------------------------------------------------------------------------------------------
 def target_check(models: Sequence[dict], spread: dict) -> dict:
-    """The v0.4 target on labelled captures (labels read from the capture's name; assumed pins do not count)."""
-    lab = [m for m in models if m.get("labels") and "constrained" in m]
-    out: dict = {"n_labelled": len(lab), "ltas_ok": None, "harm_ok": None}
+    """The v0.4 target on labelled captures (labels read from the capture's name; assumed pins do not count, and neither do labels that did not cover every
+    searched knob, whose missing knobs were pinned at the block default: ``n_partially_labelled``)."""
+    full = [m for m in models if m.get("labels") and "constrained" in m]
+    lab = [m for m in full if not m["constrained"].get("pins_filled_with_default")]
+    out: dict = {"n_labelled": len(lab), "n_partially_labelled": len(full) - len(lab), "ltas_ok": None, "harm_ok": None}
     ref_sp = reference_spread_db(spread)
     out["reference_spread_db"] = ref_sp
     if lab:
@@ -96,7 +98,9 @@ def verdict(name: str, models: Sequence[dict], chk: dict) -> str:
         return f"{name}: PENDING USER RUN (no capture fits)."
     if not chk["n_labelled"]:
         free = float(np.mean([m["free"]["ltas_rms_db"] for m in models]))
-        return (f"{name}: no labelled captures, so the v0.4 target cannot be judged; mean free-fit LTAS "
+        part = (f" ({chk['n_partially_labelled']} partially labelled, unlabelled knobs pinned at the block default, "
+                "not counted)") if chk.get("n_partially_labelled") else ""
+        return (f"{name}: no fully labelled captures{part}, so the v0.4 target cannot be judged; mean free-fit LTAS "
                 f"{free:.2f} dB over {len(models)} captures.")
     parts = [f"constrained LTAS <= {TARGET_LTAS_DB:g} dB on {chk['ltas_within']}/{chk['n_labelled']} labelled "
              f"({'PASS' if chk['ltas_ok'] else 'MISS'}, need {TARGET_LTAS_FRACTION:.0%})"]
@@ -106,6 +110,9 @@ def verdict(name: str, models: Sequence[dict], chk: dict) -> str:
         parts.append(f"constrained harm {chk['mean_constrained_harm_db']:.1f} dB vs {TARGET_HARM_SPREAD_X:g} x spread "
                      f"{chk['reference_spread_db']:.1f} dB ({'PASS' if chk['harm_ok'] else 'MISS'})")
     ok = chk["ltas_ok"] and chk["harm_ok"] is not False
+    if chk.get("n_partially_labelled"):
+        parts.append(f"{chk['n_partially_labelled']} partially labelled capture(s) (unlabelled knobs pinned at the block "
+                     "default) not counted")
     return f"{name}: {'MEETS' if ok else 'MISSES'} the v0.4 target; " + "; ".join(parts) + "."
 
 
@@ -179,6 +186,8 @@ def generate(fits_by_pedal: dict[str, dict], known: dict | None = None) -> str:
               "|---|---|---|---|---|---|---|---|---|---|"]
         for m in models:
             pins = "none" if not m.get("pinned_knobs") else ("assumed" if m.get("pinned_is_assumed") else "labelled")
+            if pins == "labelled" and m.get("constrained", {}).get("pins_filled_with_default"):
+                pins = "partial (" + ", ".join(m["constrained"]["pins_filled_with_default"]) + " default)"
             lic = f"{m.get('license')} / {m.get('creator')}" + (" (non-commercial)" if m.get("non_commercial") else "")
             fc, cc = _fit_cells(m["free"]).split(" | "), _fit_cells(m.get("constrained")).split(" | ")
             L.append(f"| {m['tone_id']} | {m['name']} ({m['model_id']}) | {lic} | {pins} | "

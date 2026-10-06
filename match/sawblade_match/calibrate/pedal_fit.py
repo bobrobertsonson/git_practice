@@ -331,19 +331,39 @@ LAG_MAX = 8192          # samples; search window of the sweep alignment (up to 1
 LAG_MIN = -256
 
 
+def lag_window(layout: ProbeLayout) -> int:
+    """Largest delay (samples) the sweep alignment searches: LAG_MAX, but never beyond the lead of the second
+    harmonic. In an exponential sweep f0 -> f1 of length T the k-th harmonic of the output at time t appears where
+    the fundamental of the probe is at k f(t), i.e. ``T ln(k) / ln(f1/f0)`` later in the probe: H2 correlates at a lag
+    that is *earlier* by ``T ln2 / ln(f1/f0)`` (4816 samples for a 1 s sweep, 48000 for the 10 s one). A delay larger
+    than that could put the fundamental's peak and H2's peak in one window, so a short sweep must not search beyond it."""
+    lead = layout.n_sweep * np.log(2.0) / np.log(20000.0 / 20.0)
+    return int(min(LAG_MAX, lead))
+
+
 def estimate_lag(y: np.ndarray, probe: np.ndarray, layout: ProbeLayout) -> int:
     """Delay (samples, >= LAG_MIN) of ``y`` relative to the probe: the peak of |cross-correlation| of the sweep
     segment. The sweep, not the stepped sines, because it is broadband (a sharp peak) and the distortion products of
-    an exponential sweep correlate far outside this search window (they lead by ``T ln(k)/ln(f1/f0)`` seconds)."""
+    an exponential sweep correlate at other lags (see ``lag_window``). A silent ``y`` gives 0. When the window had to
+    be shortened for a short sweep and the best peak is weak (normalised correlation < 0.1: the true delay is beyond
+    the window) a ValueError says so instead of returning a harmonic's or noise lag."""
     n = layout.n_sweep
+    wmax = lag_window(layout)
     x = np.asarray(probe, float)[:n]
-    seg = np.zeros(n + LAG_MAX)
-    got = np.asarray(y, float)[:n + LAG_MAX]
+    seg = np.zeros(n + wmax)
+    got = np.asarray(y, float)[:n + wmax]
     seg[:len(got)] = got
-    nfft = 1 << int(np.ceil(np.log2(2 * n + LAG_MAX)))
+    ex, ey = float(np.sum(x ** 2)), float(np.sum(seg ** 2))
+    if ex <= 0.0 or ey <= 1e-12 * ex:
+        return 0
+    nfft = 1 << int(np.ceil(np.log2(2 * n + wmax)))
     c = np.fft.irfft(np.fft.rfft(seg, nfft) * np.conj(np.fft.rfft(x, nfft)), nfft)
-    cand = np.concatenate([c[nfft + LAG_MIN:], c[:LAG_MAX + 1]])
-    return int(np.argmax(np.abs(cand))) + LAG_MIN
+    cand = np.abs(np.concatenate([c[nfft + LAG_MIN:], c[:wmax + 1]]))
+    k = int(np.argmax(cand))
+    if wmax < LAG_MAX and cand[k] / np.sqrt(ex * ey) < 0.1:
+        raise ValueError(f"no alignment peak within {wmax} samples: the reference's delay exceeds what a "
+                         f"{layout.sweep_s:g} s sweep can disambiguate from harmonic products; use a longer sweep")
+    return k + LAG_MIN
 
 
 def align(y: np.ndarray, lag: int) -> np.ndarray:
@@ -576,10 +596,11 @@ def load_targets(cache: Path, tones: dict | None = None, pedal: dict | None = No
     ``assumed``) used to label the records."""
     man = json.loads((cache / "pool_manifest.json").read_text())
     by_tone = {t["tone_id"]: t for t in man["tones"]}
+    builtin = not pedal      # the 7.1 list (--targets builtin-7.1): HM-2 labels and the ASSUMED table
     pedal = pedal or {}
-    regex = re.compile(pedal["label_regex"]) if pedal.get("label_regex") else LABEL_RE
+    regex = LABEL_RE if builtin else (re.compile(pedal["label_regex"]) if pedal.get("label_regex") else None)  # null: no labels
     groups = tuple(pedal.get("label_groups") or LABEL_GROUPS)
-    assumed = pedal.get("assumed", ASSUMED if pedal == {} else {})
+    assumed = ASSUMED if builtin else pedal.get("assumed", {})
     found, missing = [], []
     for tid, (unit, group, mids) in (tones or DEFAULT_TONES).items():
         t = by_tone.get(tid)
@@ -587,7 +608,7 @@ def load_targets(cache: Path, tones: dict | None = None, pedal: dict | None = No
         for mid in (mids or sorted(names)):
             f = cache / str(tid) / f"{mid}.nam"
             name = names.get(mid, str(mid))
-            labels = parse_labels(name, regex, groups)
+            labels = parse_labels(name, regex, groups) if regex is not None else None
             rec = {"tone_id": tid, "model_id": mid, "name": name, "unit": unit, "group": group,
                    "file": f, "creator": (t or {}).get("creator"), "license": (t or {}).get("license"),
                    "labels": labels, "pin": labels or assumed.get(name)}
@@ -959,6 +980,7 @@ def run_known_answers(a: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------------------------------------
+BUILTIN_TARGETS = "builtin-7.1"
 DEFAULT_TARGETS = REPO / "docs" / "reports" / "v0_4" / "targets.json"
 
 
@@ -972,8 +994,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model-version", type=int, default=None,
                    help="modelVersion of the block (default: its current version; hm = 3)")
     p.add_argument("--targets", default=None, metavar="PATH",
-                   help="targets manifest (docs/reports/v0_4/targets.json). Default: the built-in 7.1 list for hm, "
-                        "the manifest for the other pedals")
+                   help="targets manifest; default docs/reports/v0_4/targets.json for every pedal (hm included). "
+                        f"'{BUILTIN_TARGETS}' selects the built-in phase 7.1 HM-2 list (hm only)")
     p.add_argument("--harm-floor", type=float, default=HARM_FIXED_FLOOR_DB,
                    help=f"floor (dB re fundamental) of the harmonic term in the cost (default {HARM_FIXED_FLOOR_DB:g}; "
                         f"{HARM_FLOOR_DB:g} reproduces the 7.1 cost)")
@@ -1022,15 +1044,19 @@ def doc_header(a: argparse.Namespace, spec: PedalSpec, layout: ProbeLayout) -> d
                        "refine_sigma_knob_units": 10 * REFINE_SIGMA}}
 
 
-def load_previous(path: Path, a: argparse.Namespace, spec: PedalSpec) -> dict:
+def load_previous(path: Path, a: argparse.Namespace, spec: PedalSpec, layout: ProbeLayout | None = None) -> dict:
     """Existing fits file for ``--merge``. Refuses (clear message) anything that is not comparable."""
     prev = json.loads(path.read_text())
+    layout = layout or ProbeLayout()
     v = int(prev.get("version", 1))
     if prev.get("schema") != "sawblade.pedal_fit" or v < SCHEMA_VERSION:
         raise ValueError(f"{path} is a schema-{v} fits file (phase 7.1: pedal.hm v1, floor -70 dB harmonic term, no "
                          "capture profiles) and cannot be merged with schema-" f"{SCHEMA_VERSION} records; fit again "
                          "into a new file (--fits-name) instead")
     want = a.model_version or spec.default_version
+    if prev.get("probe", {}).get("layout") != layout.__dict__:
+        raise ValueError(f"{path} was fitted with probe layout {prev.get('probe', {}).get('layout')}, not "
+                         f"{layout.__dict__}; fits on different probes are not comparable")
     if prev.get("pedal") != spec.name or prev.get("model_version") != want:
         raise ValueError(f"{path} holds pedal {prev.get('pedal')} modelVersion {prev.get('model_version')}, not "
                          f"{spec.name} modelVersion {want}")
@@ -1053,7 +1079,7 @@ def run(a: argparse.Namespace) -> int:
     work.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     (work / "refs").mkdir(exist_ok=True)
-    targets = Path(a.targets) if a.targets else (None if spec.name == "hm" else DEFAULT_TARGETS)
+    targets = None if a.targets == BUILTIN_TARGETS else Path(a.targets or DEFAULT_TARGETS)
     if targets is None:
         found, missing = load_targets(Path(a.cache))
     else:
@@ -1072,7 +1098,7 @@ def run(a: argparse.Namespace) -> int:
                    harm_floor_db=a.harm_floor)
     fits_path = out / (a.fits_name or f"fits_{spec.name}.json")
     head = doc_header(a, spec, layout)
-    prev = load_previous(fits_path, a, spec) if (a.merge and fits_path.exists()) else {"models": []}
+    prev = load_previous(fits_path, a, spec, layout) if (a.merge and fits_path.exists()) else {"models": []}
     done = {m["model_id"]: m for m in prev["models"]}
     if a.merge:
         found = [r for r in found if r["model_id"] not in done]

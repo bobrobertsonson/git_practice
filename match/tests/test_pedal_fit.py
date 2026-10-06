@@ -14,7 +14,7 @@ from sawblade_match.calibrate import pedal_fit as PF
 
 REPO = PF.REPO
 DI = REPO / "tests" / "fixtures" / "di_riff.wav"
-LAYOUT = PF.KNOWN_LAYOUT          # 2 s sweep + 3.2 s stepped sines + 8 s DI: short, but the real slot structure
+LAYOUT = PF.KNOWN_LAYOUT          # 1 s sweep + 3.2 s stepped sines + 4 s DI: short, but the real slot structure
 PEDALS = list(PF.PEDALS)
 
 try:
@@ -39,7 +39,10 @@ LOOSE_KNOB_TOL: dict[str, dict[str, float]] = {"hm": {"distortion": 1.0}, "hmx":
 # for the V-shaped cost to be walked to its vertex: the long small-step refine stage is what makes it robust
 # (measured over 3 seeds: hmx at 2/10/14/12 has LTAS 0.25 and presence 1.3 units off on one of them, at 2/10/10/30 every
 # knob is within 0.4 on all of them).
-BUDGET = {"hm": (2, 8, 8, 8), "hmx": (2, 10, 10, 30), "eye": (1, 6, 6, 4), "muff": (2, 10, 10, 30), "ts": (2, 8, 8, 6)}
+BUDGET = {"hm": (2, 8, 10, 16), "hmx": (2, 10, 10, 30), "eye": (2, 6, 6, 8), "muff": (2, 10, 10, 30), "ts": (2, 8, 8, 12)}
+# Margins at these budgets (3 seeds, worst case; thresholds in test_known_answer_fit): hm LTAS 0.024 / harm 0.098 /
+# dyn 0.029, distortion 0.33 off; ts and eye <= 0.004 on every term; hmx LTAS 0.088 / harm 0.221 / dyn 0.026; muff
+# LTAS 0.051 / harm 0.046 / dyn 0.093.
 
 
 @pytest.fixture(scope="module")
@@ -197,7 +200,8 @@ def test_old_fits_file_is_refused_for_merge_and_for_the_report(tmp_path):
     assert PA.main(["--fits", str(old), "--out", str(tmp_path / "x.md")]) == 3
     new = tmp_path / "fits_hm.json"
     new.write_text(json.dumps({"schema": "sawblade.pedal_fit", "version": PF.SCHEMA_VERSION, "pedal": "hm",
-                               "model_version": 3, "cost": {"harm_floor_db": -40.0}, "models": []}))
+                               "model_version": 3, "cost": {"harm_floor_db": -40.0},
+                               "probe": {"layout": PF.ProbeLayout().__dict__}, "models": []}))
     assert PF.load_previous(new, a, PF.PEDALS["hm"])["models"] == []
     a1 = PF.build_parser().parse_args(["--work", str(tmp_path), "--merge", "--model-version", "1"])
     with pytest.raises(ValueError, match="modelVersion"):
@@ -357,3 +361,73 @@ def test_pedal_fit_cli_end_to_end_with_a_delayed_capture(tmp_path):
     assert PF.main(argv + ["--merge"]) == 0 and json.loads((out / "fits_ts.json").read_text())["models"] == doc["models"]
     assert PA.main(["--fits", str(out / "fits_ts.json"), "--out", str(tmp_path / "acc.md")]) == 0
     assert "cc-by-nc / tester (non-commercial)" in (tmp_path / "acc.md").read_text()
+
+
+def test_estimate_lag_silent_and_short_sweep_window():
+    probe, lay, _ = PF.build_probe(DI, LAYOUT)
+    assert PF.estimate_lag(np.zeros(len(probe)), probe, lay) == 0                 # silent reference: no lag -256
+    assert PF.estimate_lag(1e-20 * probe.astype(float), probe, lay) == 0
+    win = PF.lag_window(lay)
+    assert win < PF.LAG_MAX and win == int(lay.n_sweep * np.log(2) / np.log(1000))    # H2 lead of the 1 s sweep: 4816
+    assert PF.lag_window(PF.ProbeLayout()) == PF.LAG_MAX
+    ok = np.concatenate([np.zeros(win - 100), probe.astype(float)])[:len(probe)]
+    assert PF.estimate_lag(ok, probe, lay) == win - 100
+    late = np.concatenate([np.zeros(6000), probe.astype(float)])[:len(probe)]
+    with pytest.raises(ValueError, match="longer sweep"):                         # explicit, never a harmonic's lag
+        PF.estimate_lag(late, probe, lay)
+    full, flay, _ = PF.build_probe(DI, PF.ProbeLayout())
+    assert PF.estimate_lag(np.concatenate([np.zeros(6000), full.astype(float)])[:len(full)], full, flay) == 6000
+
+
+def test_manifest_null_label_regex_gives_no_labels_and_builtin_keeps_hm2(tmp_path):
+    cache = tmp_path
+    (cache / "1").mkdir()
+    (cache / "1" / "5.nam").write_text("x")
+    (cache / "pool_manifest.json").write_text(json.dumps({"tones": [{"tone_id": 1, "creator": "c", "license": "t3k",
+        "models": [{"id": 5, "name": "Boss HM-2 Lv-7 L-9 H-9 D-2"}]}]}))
+    ent = {"label_regex": None, "assumed": {}}
+    found, _ = PF.load_targets(cache, {1: ("u", "g", [5])}, ent)
+    assert found[0]["labels"] is None and found[0]["pin"] is None
+    found, _ = PF.load_targets(cache, {1: ("u", "g", [5])})                        # built-in 7.1 behaviour
+    assert found[0]["labels"]["low"] == 9
+
+
+@needs_cli
+def test_hm_default_targets_come_from_the_manifest(tmp_path):
+    """`pedal-fit --pedal hm` with no --targets reads docs/reports/v0_4/targets.json (6778 included); the 7.1 list is
+    only reachable with --targets builtin-7.1."""
+    cache = tmp_path / "cache"
+    (cache / "6778").mkdir(parents=True)
+    import shutil
+    shutil.copy(REPO / "tests" / "fixtures" / "nam" / "linear_identity.nam", cache / "6778" / "9.nam")
+    (cache / "pool_manifest.json").write_text(json.dumps({"tones": [{"tone_id": 6778, "creator": "c", "license": "cc-by",
+        "models": [{"id": 9, "name": "some HM-2 capture"}]}]}))
+    base = ["--pedal", "hm", "--cache", str(cache), "--di", str(DI), "--work", str(tmp_path / "w"), "--short-probe",
+            "--no-plots", "--restarts", "1", "--popsize", "4", "--generations", "1", "--refine-generations", "0",
+            "--jobs", "2"]
+    assert PF.main(base + ["--out", str(tmp_path / "o1")]) == 0
+    doc = json.loads((tmp_path / "o1" / "fits_hm.json").read_text())
+    assert [m["tone_id"] for m in doc["models"]] == [6778]                       # a tone only the manifest lists
+    assert PF.main(base + ["--out", str(tmp_path / "o2"), "--targets", PF.BUILTIN_TARGETS]) == 0
+    assert json.loads((tmp_path / "o2" / "fits_hm.json").read_text())["models"] == []   # 7.1 list: 6778 not in it
+
+
+def test_merge_refuses_a_different_probe_layout(tmp_path):
+    a = PF.build_parser().parse_args(["--work", str(tmp_path), "--merge"])
+    f = tmp_path / "fits_hm.json"
+    f.write_text(json.dumps({"schema": "sawblade.pedal_fit", "version": PF.SCHEMA_VERSION, "pedal": "hm",
+                             "model_version": 3, "cost": {"harm_floor_db": -40.0},
+                             "probe": {"layout": PF.KNOWN_LAYOUT.__dict__}, "models": []}))
+    with pytest.raises(ValueError, match="probe layout"):
+        PF.load_previous(f, a, PF.PEDALS["hm"], PF.ProbeLayout())
+    assert PF.load_previous(f, a, PF.PEDALS["hm"], PF.KNOWN_LAYOUT)["models"] == []
+
+
+def test_partially_labelled_captures_do_not_count_for_the_target():
+    base = np.full((16, 6), -25.0)
+    full = _model(1, {"low": 5.0}, base)
+    part = _model(2, {"low": 5.0}, base)
+    part["constrained"]["pins_filled_with_default"] = ["high"]
+    chk = PA.target_check([full, part], PA.spread_report([full, part]))
+    assert chk["n_labelled"] == 1 and chk["n_partially_labelled"] == 1
+    assert "partially labelled" in PA.verdict("hm", [full, part], chk)
