@@ -367,29 +367,29 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
     candidate by more than 0.1 dB (`choose`). The modeled pedal adds 50 samples of latency, which the renderer already advances out of the
     output, so the matcher's core stays sample-aligned. `result.json -> tightBoost {tried, refined, won, params, bestBoostLoss,
     bestPlainSingleLoss, occamDb, ablated}`; every candidate row has `tightBoost`. Single-path `single2` chains and blend paths get none (no variant there yet).
-  * **Post-cab filters**: `post.hp` 60-140 Hz and `post.lp2` 6-11 kHz after the shared cab, each with a discrete slope parameter
-    (`post.hp_slope`, `post.lp2_slope`: < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct = two cascaded biquads with the 4th-order Butterworth Qs
-    0.541 / 1.307). Off at the range edge (hp 60 Hz, lp2 11 kHz: the band is omitted, whatever the slope); they are not in the EQ-gain
-    regulariser. The slopes are not CMA-ES dimensions: the frequencies are searched at 12 dB/oct, then each filter is tried at 24 dB/oct
-    (`refine.pick_slopes`). The existing `post.lp` roll-off (5-12 kHz) stays; `post_filters_from_eq` reads the filters back from a preset
-    (a single 12 dB low-pass cannot be told from `post.lp`). `result.json -> postFilters`.
+  * **Post-cab filters**: `post.hp` 60-140 Hz after the shared cab, and the existing post low-pass `post.lp` (5-12 kHz, 12 kHz = off) now with a
+    slope choice. Each has a discrete slope parameter (`post.hp_slope`, `post.lp_slope`: < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct = two cascaded
+    biquads with the 4th-order Butterworth Qs 0.541 / 1.307). A filter at its range edge (hp 60 Hz, lp 12 kHz) is off whatever the slope (the band
+    is omitted); they are not in the EQ-gain regulariser. The slopes are not CMA-ES dimensions: the frequencies are searched at 12 dB/oct, then each
+    filter is tried at 24 dB/oct (`refine.pick_slopes`). `post_filters_from_eq` reads the filters back from a preset. `result.json -> postFilters`.
   * **Cab breadth** (`matcher/cabsweep.py`): after stage 2, the top 3 refined candidates per topology are scored with **every** cab of the pool
     (full loss, the NAM cores come from the engine memo, so each IR costs two linear renders + the loss). When another cab wins, the last
     linear CMA-ES block is re-run on it (`refine.relinear`). `result.json -> cabSweep {poolCabs, candidates[...irs]}` lists every IR's
     loss, best / worst and whether the cab changed. `cab_sweep()` is a separate function with the contract candidate + cabs -> loss rows so the
     analytic IR screen (B3) can replace it for large pools.
-  * **Gate matched to the reference** (`matcher/gatesweep.py`): on the final chain the threshold (DI floor + 4, 8, 12, 16, 20 dB) x release
-    (80, 150, 250 ms) grid is rendered (15 NAM cores per path; the gate is part of the core memo key) and the cell with the lowest feel
-    `floor` term (inter-note level re the reference's) is picked, subject to the A-weighted LTAS error rising by at most 0.05 dB and the
-    tightness term not getting worse than at the default cell (4 dB, 150 ms), which is part of the grid. Without a matched pair the
-    reference's own inter-note floor is the target (`reference_floor_db`; a mix without real silence has none and the sweep is skipped).
-    `result.json -> gateSweep` (whole grid, baseline, picked, constraints), `gateDefault`, `gateFinal`. The final preset carries the picked gate.
+  * **Gate matched to the reference** (`matcher/gatesweep.py`): on the final chain the gate is tuned by coordinate descent (about 15 renders of
+    the NAM cores; the gate is part of the core memo key): threshold = DI floor + 4, 8, ..., 36 dB at the default hold / release / range, then hold
+    2 / 10 / 40 ms, release 20 / 80 / 150 / 250 ms, range -50 / -90 dB. Each step keeps the cell with the lowest feel `floor` term (inter-note level
+    re the reference's) under the acceptance rule: A-weighted LTAS error up by at most 0.05 dB and the tightness term not worse than at the default
+    cell (4 dB, 40 ms, 150 ms, -50 dB, which is the start of the descent). Without a matched pair the reference's own inter-note floor is the
+    target (`reference_floor_db`; a mix without real silence has none and the sweep is skipped).
+    `result.json -> gateSweep` (every rendered cell, `steps`, baseline, picked), `gateDefault`, `gateFinal`. The final preset carries the picked gate.
   * **Why a DI's `gap_noise` stays high** (synthetic diagnosis): the fixed gate (floor + 4 dB,
     hold 40 ms) sits inside the DI's own noise-peak statistics and never closes; the sweep fixes that. What is left depends on the gate
-    hold / range (not swept) and on what follows the gate (a high-gain chain and the IR tail).
+    hold and range (swept too) and on what follows the gate (a high-gain chain and the IR tail).
 * **`--ablate LIST`** (`feel, boost, filters, irsweep, irblend, studio`): switches suspects off for on/off pairs; `result.json -> ablate` echoes the
   list. `feel`: no feel term in the search's loss (it is still measured for the report and the gate sweep); `boost`: no boost variants;
-  `filters`: no post-cab hp/lp2; `irsweep`: only the stage-1 cab sweep (the pre-v0.4M behaviour). `irblend` and `studio` are accepted and echoed
+  `filters`: no post-cab hp / low-pass slope; `irsweep`: only the stage-1 cab sweep (the pre-v0.4M behaviour). `irblend` and `studio` are accepted and echoed
   but are no-ops until the two-IR blend (B2.1) and studio processing (B2.3) land. **`--trace-tones ID[,ID...]`** explains TONE3000 tones in
   `result.json -> trace[id]`: in the manifest / downloaded, models, gear class, pre-screen score / rank in class / survived, best stage-1
   pair (rank, LTAS error, best blend), its best candidate loss as the amp (the refined one, or the winner's pedals + cab + EQ with this amp

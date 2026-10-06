@@ -78,7 +78,7 @@ class Plan:
     short_linear: bool = False         # ... and so does the first linear block (the last one always uses the full excerpt)
     # ---- v0.4M suspects (always on; --ablate switches them off for the on/off pairs) -----------------------------------
     boost: bool = True                 # single-path candidates also compete with a tight boost (modeled pedal.ts) before the amp
-    filters: bool = True               # post-cab high-pass / low-pass (post.hp, post.lp2) in the search
+    filters: bool = True               # post-cab high-pass / low-pass (post.hp, post.lp slope) in the search
     cab_sweep: bool = True             # after stage 2: every pool cab on the top candidates per topology (False: the old sweep only)
 
     @staticmethod

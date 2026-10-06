@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also render the listening files (full-length R render, stereo WAV/MP3); off by default")
     p.add_argument("--ablate", metavar="LIST", default="",
                    help="v0.4M on/off pairs: comma list of suspects to switch OFF (" + ", ".join(ABLATIONS) + "): feel = no feel "
-                        "term in the loss; boost = no tight-boost variants; filters = no post-cab hp/lp2; irsweep = only the "
+                        "term in the loss; boost = no tight-boost variants; filters = no post-cab hp / low-pass slope; irsweep = only the "
                         "stage-1 cab sweep (the pre-v0.4M behaviour). " + ", ".join(NOOP_ABLATIONS) + " are accepted and echoed "
                         "in result.json -> ablate but are no-ops until their tasks (two-IR blend, studio processing) land")
     p.add_argument("--trace-tones", metavar="ID[,ID...]", default="",

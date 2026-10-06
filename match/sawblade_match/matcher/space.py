@@ -15,11 +15,12 @@ Continuous parameters (physical units; the optimizer works in the normalised box
 * post EQ roll-off (phase 3.4, a real cab + mic rolls off): a high shelf 3-7 kHz, -8..0 dB (q 0.707) and a low-pass
   5-12 kHz (12 dB/oct). Both are neutral at their default (shelf 0 dB, low-pass at 12 kHz = band omitted); neither counts
   toward the EQ-gain regulariser.
-* post-cab filters (v0.4M, always searched unless ``filters=False``): ``post.hp`` 60-140 Hz and ``post.lp2`` 6-11 kHz, each with
-  a discrete slope parameter (``post.hp_slope`` / ``post.lp2_slope`` in [0, 1]: < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct, emitted
-  as two cascaded biquads with the 4th-order Butterworth Qs 0.541 / 1.307). The slopes are not CMA-ES dimensions (group
-  ``discrete``): the frequencies are optimised at 12 dB/oct, then ``refine.pick_slopes`` tries 24 dB/oct for each filter. A filter at its range edge (hp 60 Hz, lp2 11 kHz)
-  is "off" (whatever its slope) and omitted from the preset. They do not count toward the EQ-gain regulariser.
+* post-cab filters (v0.4M, always searched unless ``filters=False``): ``post.hp`` 60-140 Hz, and the post low-pass ``post.lp``
+  above (5-12 kHz) gets a slope choice. Each has a discrete slope parameter (``post.hp_slope`` / ``post.lp_slope`` in [0, 1]:
+  < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct, emitted as two cascaded biquads with the 4th-order Butterworth Qs 0.541 / 1.307). The
+  slopes are not CMA-ES dimensions (group ``discrete``): frequencies are optimised at 12 dB/oct, then ``refine.pick_slopes``
+  tries 24 dB/oct for each filter. A filter at its range edge (hp 60 Hz, lp 12 kHz) is "off" whatever its slope. They do not
+  count toward the EQ-gain regulariser.
 * tight boost (v0.4M, ``Combo.boost``; single topology only): a modeled ``pedal.ts`` (slot ``boost``) directly in front of the
   amp, after any pedal: ``boost.drive`` 0-3, ``boost.level`` 6-10, ``boost.tone`` 3-8 (defaults 1 / 8 / 5). The boost renders
   inside the NAM core, so these three belong to the ``gain`` group.
@@ -44,7 +45,7 @@ PEAK_GAIN, POST_GAIN, NAM_GAIN = 9.0, 6.0, 12.0
 Q = 1.0
 SHELF_RANGE, SHELF_GAIN_RANGE, POST_LP_RANGE = (3000.0, 7000.0), (-8.0, 0.0), (5000.0, 12000.0)
 DEFAULT_HP, DEFAULT_LP = 60.0, 9000.0
-POST_HP_RANGE, POST_LP2_RANGE = (60.0, 140.0), (6000.0, 11000.0)
+POST_HP_RANGE = (60.0, 140.0)
 SLOPE_DEFAULT = 0.4                       # discrete slope parameter: < 0.5 -> 12 dB/oct, >= 0.5 -> 24 dB/oct
 BUTTER4_Q = (0.541196, 1.306563)          # Qs of the two biquads of a 4th-order Butterworth (24 dB/oct) pass filter
 BOOST_PARAMS = (("drive", 0.0, 3.0, 1.0), ("level", 6.0, 10.0, 8.0), ("tone", 3.0, 8.0, 5.0))   # name, lo, hi, default
@@ -150,8 +151,7 @@ class Space:
         if filters:
             ps.append(P("post.hp", *POST_HP_RANGE, POST_HP_RANGE[0], log=True))
             ps.append(P("post.hp_slope", 0.0, 1.0, SLOPE_DEFAULT, group="discrete"))
-            ps.append(P("post.lp2", *POST_LP2_RANGE, POST_LP2_RANGE[1], log=True))
-            ps.append(P("post.lp2_slope", 0.0, 1.0, SLOPE_DEFAULT, group="discrete"))
+            ps.append(P("post.lp_slope", 0.0, 1.0, SLOPE_DEFAULT, group="discrete"))
         gains = [f"a.{i}" for i in range(na)] + ["a.amp"]
         if nb is not None:
             gains += [f"b.{i}" for i in range(nb)] + ["b.amp"]
@@ -218,8 +218,7 @@ def pass_bands(kind: str, freq: float, slope: float) -> list[dict]:
 
 def post_filters_from_eq(bands: list[dict]) -> dict:
     """Inverse of the post-cab filter emission (round trip of the preset): ``{"hp": (freq, slope) | None, "lowpass":
-    [(freq, slope), ...]}`` with slope 12 or 24 dB/oct. A single 12 dB low-pass is ``post.lp`` or ``post.lp2`` (the preset
-    cannot tell them apart); a 24 dB pair is always ``post.lp2``."""
+    [(freq, slope), ...]}`` with slope 12 or 24 dB/oct. The one post low-pass is ``post.lp``."""
     def groups(kind):
         bs = [b for b in bands if b.get("type") == kind and b.get("enabled", True)]
         out, i = [], 0
@@ -240,16 +239,12 @@ def post_eq(v: dict[str, float]) -> list[dict]:
     bands = [_peak(v[f"post.f{i}"], v[f"post.g{i}"]) for i in range(3)]
     if "post.shelf_g" in v and v["post.shelf_g"] < -1e-3:
         bands.append({"type": "highShelf", "freq": float(v["post.shelf_f"]), "gainDb": float(v["post.shelf_g"]), "q": 0.707})
-    if "post.lp" in v and v["post.lp"] < POST_LP_RANGE[1] * 0.999:
-        bands.append({"type": "lowPass", "freq": float(v["post.lp"]), "q": 0.707})
+    if "post.lp" in v and v["post.lp"] < POST_LP_RANGE[1] * 0.999:     # one post low-pass; 12 kHz = off, any slope
+        bands += pass_bands("lowPass", v["post.lp"], v.get("post.lp_slope", 0.0))
     if "post.hp" in v:        # v0.4M post-cab filters; a filter at its range edge is off (whatever its slope)
         s = v.get("post.hp_slope", SLOPE_DEFAULT)
         if v["post.hp"] > POST_HP_RANGE[0] * 1.001:
             bands += pass_bands("highPass", v["post.hp"], s)
-    if "post.lp2" in v:
-        s = v.get("post.lp2_slope", SLOPE_DEFAULT)
-        if v["post.lp2"] < POST_LP2_RANGE[1] * 0.999:
-            bands += pass_bands("lowPass", v["post.lp2"], s)
     return bands
 
 

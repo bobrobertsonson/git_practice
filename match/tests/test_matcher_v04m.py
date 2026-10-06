@@ -13,7 +13,7 @@ import soundfile as sf
 from scipy import signal
 
 from sawblade_match.matcher.pool import Pool, load_pool
-from sawblade_match.matcher.space import (BUTTER4_Q, Combo, POST_HP_RANGE, POST_LP2_RANGE, Space, boost_block,
+from sawblade_match.matcher.space import (BUTTER4_Q, Combo, POST_HP_RANGE, POST_LP_RANGE, Space, boost_block,
                                           build_preset, gate_preset, manual_align, post_eq, post_filters_from_eq)
 
 core = pytest.importorskip("sawblade_match.core", reason="sawblade_core not built")
@@ -65,22 +65,22 @@ def test_post_filters_are_neutral_by_default_and_not_in_the_regulariser():
     for shape in ((1, None), (1, 1), (0, 0)):
         sp = Space(shape)
         v = sp.default()
-        assert v["post.hp"] == POST_HP_RANGE[0] and v["post.lp2"] == POST_LP2_RANGE[1]
-        assert v["post.hp_slope"] < 0.5 and v["post.lp2_slope"] < 0.5          # 12 dB/oct
+        assert v["post.hp"] == POST_HP_RANGE[0] and v["post.lp"] == POST_LP_RANGE[1]
+        assert v["post.hp_slope"] < 0.5 and v["post.lp_slope"] < 0.5          # 12 dB/oct
         assert [b["type"] for b in post_eq(v)] == ["peak"] * 3                 # neutral filters are omitted
         assert len(sp.eq_gains(v)) == len(Space(shape, filters=False).eq_gains(v))
-        for n in ("post.hp", "post.hp_slope", "post.lp2", "post.lp2_slope"):
+        for n in ("post.hp", "post.hp_slope", "post.lp", "post.lp_slope"):
             assert not sp.params[sp.idx[n]].eq_gain
         # the slopes are discrete: not CMA-ES dimensions in either group
         assert set(sp.indices("linear")) | set(sp.indices("gain")) == set(range(len(sp))) - set(sp.indices("discrete"))
-        assert {sp.names[i] for i in sp.indices("discrete")} == {"post.hp_slope", "post.lp2_slope"}
+        assert {sp.names[i] for i in sp.indices("discrete")} == {"post.hp_slope", "post.lp_slope"}
     assert "post.hp" not in Space((1, None), filters=False).idx
     assert "post.hp" not in post_eq(Space((1, None), filters=False).default())
 
 
 def test_post_filter_emission_slopes_and_inverse():
     v = Space((1, None)).default()
-    v.update({"post.hp": 100.0, "post.hp_slope": 0.2, "post.lp2": 8000.0, "post.lp2_slope": 0.9})
+    v.update({"post.hp": 100.0, "post.hp_slope": 0.2, "post.lp": 8000.0, "post.lp_slope": 0.9})
     bands = post_eq(v)
     hp = [b for b in bands if b["type"] == "highPass"]
     lp = [b for b in bands if b["type"] == "lowPass"]
@@ -89,16 +89,14 @@ def test_post_filter_emission_slopes_and_inverse():
     assert [b["q"] for b in lp] == list(BUTTER4_Q) and {b["freq"] for b in lp} == {8000.0}
     back = post_filters_from_eq(json.loads(json.dumps(bands)))
     assert back == {"hp": (100.0, 12), "lowpass": [(8000.0, 24)]}
-    v.update({"post.hp_slope": 1.0, "post.lp2_slope": 0.0})
+    v.update({"post.hp_slope": 1.0, "post.lp_slope": 0.0})
     assert post_filters_from_eq(post_eq(v)) == {"hp": (100.0, 24), "lowpass": [(8000.0, 12)]}
-    # both lows together (post.lp roll-off at 12 dB + a 24 dB lp2) are told apart by the Butterworth pair
-    v.update({"post.lp": 7000.0, "post.lp2_slope": 1.0})
-    assert post_filters_from_eq(post_eq(v))["lowpass"] == [(7000.0, 12), (8000.0, 24)]
+    assert "post.lp2" not in Space((1, None)).idx                           # one post low-pass: post.lp with a slope
     # a filter at its range edge is off, whatever its slope; just off the edge it is on
     v2 = Space((1, None)).default()
-    v2.update({"post.hp_slope": 1.0, "post.lp2_slope": 1.0})
+    v2.update({"post.hp_slope": 1.0, "post.lp_slope": 1.0})
     assert post_filters_from_eq(post_eq(v2)) == {"hp": None, "lowpass": []}
-    v2.update({"post.hp": 62.0, "post.lp2": 10900.0})
+    v2.update({"post.hp": 62.0, "post.lp": 10900.0})
     assert post_filters_from_eq(post_eq(v2)) == {"hp": (62.0, 24), "lowpass": [(10900.0, 24)]}
 
 
@@ -148,7 +146,7 @@ def test_boost_block_is_schema_valid_and_emulation_equals_full_render():
         Space((1, 1), boost=True)
     v = sp.default()
     v.update({"boost.drive": 2.0, "boost.level": 9.0, "boost.tone": 4.0, "post.hp": 110.0, "post.hp_slope": 1.0,
-              "post.lp2": 7500.0, "post.lp2_slope": 1.0, "post.g1": 2.0})
+              "post.lp": 7500.0, "post.lp_slope": 1.0, "post.g1": 2.0})
     gate = gate_preset(-60.0)
     preset = build_preset(combo, v, gate=gate, align=manual_align())
     blocks = preset["paths"]["a"]["blocks"]
@@ -188,7 +186,7 @@ def test_post_filter_24db_response_is_a_fourth_order_butterworth():
     try:
         sp = Space((0, None))
         h0 = np.fft.rfft(eng.linear(impulse.cabs[0], sp.default(), "a", x).astype(np.float64))      # filters neutral
-        for kind, f0 in (("hp", 120.0), ("lp2", 7000.0)):
+        for kind, f0 in (("hp", 120.0), ("lp", 7000.0)):
             for slope, order in ((0.0, 2), (1.0, 4)):
                 v = sp.default()
                 v.update({f"post.{kind}": f0, f"post.{kind}_slope": slope})
@@ -237,6 +235,7 @@ def _gate_case(tmp: Path, ref_gate_fn):
     combo = Combo((), pool.amps[2], None, None, pool.cabs[0], boost=True)
     sp = Space.for_combo(combo)
     v = sp.default()
+    v.update({"boost.drive": 3.0, "boost.level": 10.0, "gain.a.amp": 12.0})    # gain after the gate: its residue shows
     di = _gap_di()
     floor = gate_envelope_floor_db(di, FS)
     dip, ref = _known(tmp, pool, combo, v, gate=ref_gate_fn(floor), di=di)
@@ -252,22 +251,27 @@ def _gate_case(tmp: Path, ref_gate_fn):
 
 
 def test_gate_sweep_picks_a_higher_threshold_when_the_reference_gaps_are_cleaner(tmp_path):
-    gs, floor = _gate_case(tmp_path, lambda f: cell_gate(f, 20.0, 80.0))          # a reference gated hard and fast
-    assert gs["skipped"] is None and gs["mode"] == "paired" and len(gs["grid"]) == 15
+    gs, floor = _gate_case(tmp_path, lambda f: cell_gate(f, 20.0, 20.0, 2.0, -90.0))      # a reference gated hard and fast
+    assert gs["skipped"] is None and gs["mode"] == "paired" and gs["renders"] == len(gs["grid"]) <= 20
+    assert [st["axis"] for st in gs["steps"]] == ["thresholdOffsetDb", "holdMs", "releaseMs", "rangeDb"]
     assert gs["changed"] and gs["picked"]["offsetDb"] > 4.0
+    assert gs["gate"]["holdMs"] == gs["picked"]["holdMs"] and gs["gate"]["rangeDb"] == gs["picked"]["rangeDb"]
+    assert gs["picked"]["thresholdDb"] == gs["gate"]["thresholdDb"]
     assert gs["picked"]["thresholdDb"] > gs["baseline"]["thresholdDb"] and gs["gate"]["thresholdDb"] == gs["picked"]["thresholdDb"]
     assert gs["picked"]["floorTerm"] < gs["baseline"]["floorTerm"]
     assert gs["picked"]["feasible"] and gs["picked"]["ltas"] <= gs["baseline"]["ltas"] + gs["ltasToleranceDb"]
-    assert (gs["baseline"]["offsetDb"], gs["baseline"]["releaseMs"]) == (4.0, 150.0)
+    assert (gs["baseline"]["offsetDb"], gs["baseline"]["holdMs"], gs["baseline"]["releaseMs"],
+            gs["baseline"]["rangeDb"]) == (4.0, 40.0, 150.0, -50.0)
     assert gs["baseline"]["thresholdDb"] == pytest.approx(gate_preset(floor)["thresholdDb"])
     # the gate gets cleaner with the threshold: the output's floor falls (more negative) from +4 to +20 dB at 150 ms
-    by = {(r["offsetDb"], r["releaseMs"]): r for r in gs["grid"]}
-    assert by[(20.0, 150.0)]["floorDbOut"] < by[(4.0, 150.0)]["floorDbOut"] - 3.0
-    assert sorted({r["offsetDb"] for r in gs["grid"]}) == list(GATE_OFFSETS_DB)
+    by = {(r["offsetDb"], r["holdMs"], r["releaseMs"], r["rangeDb"]): r for r in gs["grid"]}
+    assert by[(20.0, 40.0, 150.0, -50.0)]["floorDbOut"] < by[(4.0, 40.0, 150.0, -50.0)]["floorDbOut"] - 3.0
+    assert {r["offsetDb"] for r in gs["grid"] if r["holdMs"] == 40.0 and r["releaseMs"] == 150.0 and r["rangeDb"] == -50.0} \
+        == set(GATE_OFFSETS_DB)
 
 
 def test_gate_sweep_keeps_the_default_when_the_reference_has_the_default_gate(tmp_path):
-    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 4.0, 150.0))
+    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 4.0))
     assert gs["skipped"] is None and not gs["changed"]
     assert gs["picked"] is gs["baseline"] and gs["baseline"]["floorTerm"] == pytest.approx(0.0, abs=1e-6)
     assert gs["gate"] == gate_preset(gs["diNoiseFloorDb"])             # untouched
@@ -278,6 +282,28 @@ def test_reference_floor_is_measured_in_the_references_own_gaps():
     assert f is not None and -70.0 < f < -20.0
     mix = np.random.default_rng(0).standard_normal(FS * 4) * 0.05    # a dense mix has no real silence to match
     assert reference_floor_db(mix) is None
+
+
+def test_gate_sweep_descends_threshold_then_hold_then_release_then_range(monkeypatch):
+    """The descent on a stand-in chain whose gap floor only depends on the hold (short hold = cleaner) and the range."""
+    import types
+    from sawblade_match.matcher import gatesweep as G
+    monkeypatch.setattr(G, "render_gate", lambda eng, cand, ex, g: np.array([g["holdMs"], g["rangeDb"]]))
+    monkeypatch.setattr(G._feel, "floor_db", lambda y, plan: -40.0 + 0.5 * float(y[0]) + 0.1 * float(y[1]))
+    monkeypatch.setattr(G.L, "evaluate", lambda y, tgt, eq: types.SimpleNamespace(total=1.0, ltas=1.0, feel_terms={"tight": 0.1}))
+    ft = types.SimpleNamespace(mode="paired", plan=types.SimpleNamespace(gap_ok=True), ref=types.SimpleNamespace(floor=-80.0))
+    eng = types.SimpleNamespace(map=lambda f, items: [f(i) for i in items])
+    sp = types.SimpleNamespace(eq_gains=lambda v: None)
+    gs = gate_sweep(eng, types.SimpleNamespace(extra={"params": {}}), sp, None, types.SimpleNamespace(feel=ft), -60.0)
+    assert [st["axis"] for st in gs["steps"]] == ["thresholdOffsetDb", "holdMs", "releaseMs", "rangeDb"]
+    assert gs["picked"]["holdMs"] == 2.0 and gs["picked"]["rangeDb"] == -90.0 and gs["picked"]["offsetDb"] == 4.0
+    assert gs["picked"]["releaseMs"] == 150.0 and gs["changed"] and gs["renders"] == len(gs["grid"]) <= 20
+    assert gs["gate"]["holdMs"] == 2.0 and gs["gate"]["rangeDb"] == -90.0 and gs["gate"]["thresholdDb"] == -56.0
+    # an acceptance guard: when the LTAS error rises by more than 0.05 dB the cell is not feasible and the default stays
+    monkeypatch.setattr(G.L, "evaluate", lambda y, tgt, eq: types.SimpleNamespace(
+        total=1.0, ltas=1.0 + (0.0 if (y[0], y[1]) == (40.0, -50.0) else 0.5), feel_terms={"tight": 0.1}))
+    gs2 = gate_sweep(eng, types.SimpleNamespace(extra={"params": {}}), sp, None, types.SimpleNamespace(feel=ft), -60.0)
+    assert not gs2["changed"] and gs2["gate"] == gate_preset(-60.0)
 
 
 def test_gate_sweep_is_skipped_without_gaps(tmp_path):
@@ -423,7 +449,7 @@ def test_ablate_switches_the_suspects_off_and_echoes_them(tmp_path):
     assert tb["ablated"] is True and tb["tried"] == 0 and tb["won"] is False and tb["refined"] == 0
     assert not any(c["tightBoost"] for c in res["stage1"]["top"]["single"]) and not any(c["tightBoost"] for c in res["candidatesStage2"])
     assert res["cabSweep"]["ablated"] is True and "candidates" not in res["cabSweep"]
-    assert res["postFilters"]["searched"] is False and "post.hp" not in res["best"]["params"] and "post.lp2" not in res["best"]["params"]
+    assert res["postFilters"]["searched"] is False and "post.hp" not in res["best"]["params"] and "post.lp_slope" not in res["best"]["params"]
     assert [b["type"] for b in json.loads((tmp_path / "out" / "best.preset.resolved.json").read_text())["postEq"]] \
         .count("highPass") == 0
     bd = res["best"]["breakdown"]
