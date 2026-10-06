@@ -26,6 +26,7 @@ from .progress import NullProgress, Progress
 from .refine import refine_combo
 from .screen import Scored, Screener, TOPOLOGIES
 from .levelmatch import emit_gain_correction_db
+from .loudness import choose_listen_section, match_gain_db, true_peak_db
 from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manual_align
 
 CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level output exceeds it is "clipping"
@@ -569,7 +570,10 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     lap("outputs")
     result["listening"] = {}
     if cfg.write_audio:
-        result["listening"] = _listening(out, renders, cfg, log)
+        fin_l = (result.get("offsetRefinement", {}).get("final") or {}).get("L") or {}
+        off48 = (int(round(fin_l["offsetSamples"] * RATE / fin_l["rate"])) if "offsetSamples" in fin_l
+                 else ref.offset_samples)
+        result["listening"] = _listening(out, renders, cfg, log, ref=ref, di48=di48, offset=off48)
         lap("listening")
     T["coreCache"] = {"hits": eng.core_hits, "misses": eng.core_misses}
     T["cpuSeconds"] = time.process_time() - cpu0
@@ -640,11 +644,59 @@ def _tonecheck_refs(ref: Reference, out: Path, cfg) -> list[tuple[Path, str]]:
     return refs
 
 
-def _listening(out: Path, renders: dict, cfg, log) -> dict:
+def _louder_quieter(gain_db: float) -> str:
+    """The raw render needed ``gain_db``: negative -> it was louder than the reference."""
+    return f"{abs(gain_db):.1f} dB {'louder' if gain_db < 0 else 'quieter'}"
+
+
+def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None, di48: np.ndarray | None = None,
+               offset: int = 0) -> dict:
+    """Listening files, all loudness-matched to the reference (BS.1770 integrated LUFS over one 30 s guitar-dominant
+    section, time-aligned with ``offset`` = reference index of DI sample 0, 48 kHz samples); never peak-normalised,
+    float WAV. ``listen/ref.wav`` + ``render.wav`` (+ ``before.wav``) are that section; the full-length stereo file gets
+    the same gain as the render. Without a reference (or DI) nothing can be matched: no section files, gain 0 dB."""
     d = out / "listen"
     d.mkdir(exist_ok=True)
     yl, fs, _ = renders["best_L"]
-    info = {}
+    info: dict = {"loudnessMatched": False}
+    gain_db = 0.0
+    if ref is not None and di48 is not None:
+        matched = ref.matched_sig is not None
+        r48 = to48(yl, fs)
+        st48 = to48(renders["starter_L"][0], renders["starter_L"][1]) if "starter_L" in renders else None
+        n_av = min(len(di48), len(r48))
+        if matched:
+            a, b, _ = choose_listen_section(di48[:n_av], len(ref.matched_sig), offset, fs=RATE)
+            ref_seg = ref.matched_sig[a + offset:b + offset]
+            ref_sig = "matched reference channel"
+        else:        # no time alignment exists: the reference's own guitar-dominant section (its guitar isolation)
+            a, b, _ = choose_listen_section(di48[:n_av], None, 0, fs=RATE)
+            ra, rb, _ = select_excerpt(ref.ltas_sig, RATE, (b - a) / RATE)
+            ref_seg = ref.ltas_sig[ra:rb]
+            ref_sig = f"guitar isolation ({ref.basis}), its own guitar-dominant section; not time-aligned"
+        sec = r48[a:b]
+        gain_db, l_ref, l_raw = match_gain_db(ref_seg, sec, RATE)
+        sf.write(str(d / "ref.wav"), ref_seg.astype(np.float32), RATE, subtype="FLOAT")
+        sf.write(str(d / "render.wav"), (sec * 10 ** (gain_db / 20)).astype(np.float32), RATE, subtype="FLOAT")
+        tp = {"ref": true_peak_db(ref_seg), "render": true_peak_db(sec * 10 ** (gain_db / 20))}
+        info.update({"loudnessMatched": True, "section": [a / RATE, b / RATE], "lufsRef": l_ref, "lufsRenderRaw": l_raw,
+                     "gainDb": gain_db, "offsetMs": 1000.0 * offset / RATE if matched else None,
+                     "referenceSignal": ref_sig, "truePeakDb": tp,
+                     "files": {"ref": str(d / "ref.wav"), "render": str(d / "render.wav")}})
+        if not matched:
+            info["refSection"] = [ra / RATE, rb / RATE]
+        if st48 is not None:
+            gb, _, l_bef = match_gain_db(ref_seg, st48[a:b], RATE)
+            bef = st48[a:b] * 10 ** (gb / 20)
+            sf.write(str(d / "before.wav"), bef.astype(np.float32), RATE, subtype="FLOAT")
+            info.update({"lufsBefore": l_bef, "gainBeforeDb": gb})
+            tp["before"] = true_peak_db(bef)
+            info["files"]["before"] = str(d / "before.wav")
+        if np.isfinite(l_ref) and np.isfinite(l_raw):
+            log(f"render was {_louder_quieter(gain_db)} than the reference before matching "
+                f"(integrated {l_raw:.1f} vs {l_ref:.1f} LUFS over {a / RATE:.1f}-{b / RATE:.1f} s)")
+        else:
+            log("loudness matching skipped: the listening section is silent or shorter than 400 ms; gain 0 dB")
     if "best_R" in renders:
         yr = renders["best_R"][0]
         n = min(len(yl), len(yr))
@@ -653,14 +705,25 @@ def _listening(out: Path, renders: dict, cfg, log) -> dict:
     else:
         st = np.stack([yl, yl], axis=1)
         name = "guitar_L_mono"
-    peak = float(np.max(np.abs(st)))
-    gain = 10 ** (-1.0 / 20) / max(peak, 1e-9)
-    info["normalisationGainDb"] = float(20 * np.log10(gain))
-    st = (st * gain).astype(np.float32)
-    sf.write(str(d / f"{name}.wav"), st, fs, subtype="PCM_24")
+    st = (st * 10 ** (gain_db / 20)).astype(np.float32)
+    pk = float(np.max(np.abs(st)))
+    info["fullLengthGainDb"] = float(gain_db)
+    info["fullLengthSamplePeakDb"] = float(20 * np.log10(max(pk, 1e-12)))
+    sf.write(str(d / f"{name}.wav"), st, fs, subtype="FLOAT")
     info["wav"] = str(d / f"{name}.wav")
-    if encode_mp3(d / f"{name}.wav", d / f"{name}.mp3", log):
-        info["mp3"] = str(d / f"{name}.mp3")
+    # the MP3 is integer PCM: encode an attenuated copy when the (float, unclipped) WAV would clip; the WAV is untouched
+    mp3_src, tmp = d / f"{name}.wav", None
+    if pk > 0.89:         # -1 dBFS
+        tmp = d / f"{name}.mp3src.wav"
+        info["mp3GainDb"] = float(20 * np.log10(0.89 / pk))
+        sf.write(str(tmp), (st * (0.89 / pk)).astype(np.float32), fs, subtype="FLOAT")
+        mp3_src = tmp
+    try:
+        if encode_mp3(mp3_src, d / f"{name}.mp3", log):
+            info["mp3"] = str(d / f"{name}.mp3")
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
     return info
 
 
