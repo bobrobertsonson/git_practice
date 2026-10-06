@@ -13,6 +13,7 @@
 #include <set>
 #include <thread>
 #include <vector>
+#include <optional>
 #include <unistd.h>
 
 #include <catch2/catch_approx.hpp>
@@ -46,6 +47,7 @@
 #include "skin/SkinAssets.h"
 #include "fake_tools.h"
 #include "sawblade/wav_io.h"
+#include "sawblade/model_store.h"
 
 using namespace sawblade;
 using namespace sawblade::plugin;
@@ -561,6 +563,144 @@ TEST_CASE("play-along: the panel exists, is closed by default and opens from the
   }
 }
 
+TEST_CASE("play-along: a rejected pick keeps the song and says why (v0.2.1 Task G)", "[editor][playalong]") {
+  using A = PlayAlongPanel::ChooserAction;
+  Rig rig;
+  TempFolder tmp;
+  rig.ed->setPlayAlongOpen(true);
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  auto& pa = rig.proc.playAlong();
+  const auto song = writeSyntheticSong(tmp.dir, "keep", 6.0);
+  CHECK(panel->handlePicked(A::StemsFolder, juce::File(juce::String(song.string()))));
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.settings().folder == song.string());
+
+  const auto txt = song / "notes.txt";
+  { std::ofstream(txt) << "x"; }
+  CHECK_FALSE(panel->handlePicked(A::SongFile, juce::File(juce::String(txt.string()))));      // a non-song file
+  CHECK_FALSE(panel->handlePicked(A::SongFile, juce::File(juce::String(song.string()))));     // a folder from the song picker
+  CHECK_FALSE(panel->handlePicked(A::StemsFolder, juce::File(juce::String(txt.string()))));   // a file from the folder picker
+  CHECK_FALSE(panel->handlePicked(A::SongFile, juce::File()));                               // cancelled
+  CHECK(pa.waitForLoader());
+  CHECK(pa.settings().folder == song.string());  // never reached loadSong -> loadFolder
+  CHECK(pa.settings().songFile.empty());
+  CHECK(pa.loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+  panel->handlePicked(A::SongFile, juce::File(juce::String(txt.string())));
+  panel->refresh();
+  CHECK(anyLabelContains(*panel, "Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file."));
+}
+
+TEST_CASE("play-along: a folder that is not a stem set is refused from the picker and from a drop (v0.2.1 Task F)", "[editor][playalong]") {
+  using A = PlayAlongPanel::ChooserAction;
+  const juce::String msg = "This folder is not a set of separated stems. Choose the song file (mp3, wav, flac, m4a) instead.";
+  Rig rig;
+  TempFolder tmp;
+  auto& pa = rig.proc.playAlong();
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  const auto song = writeSyntheticSong(tmp.dir, "keep", 6.0);
+  CHECK(panel->handlePicked(A::StemsFolder, juce::File(juce::String(song.string()))));
+  REQUIRE(pa.waitForLoader());
+  REQUIRE(pa.loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+
+  const auto mixed = writeSyntheticSong(tmp.dir, "desktop", 4.0);
+  { std::ofstream(mixed / "holiday.mp3") << "x"; }  // one unrelated audio file
+  CHECK_FALSE(panel->handlePicked(A::StemsFolder, juce::File(juce::String(mixed.string()))));  // the return value, not a status race
+  CHECK(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*panel, msg));
+  CHECK(pa.settings().folder == song.string());  // the previous song stays loaded
+  CHECK(pa.loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+
+  CHECK(panel->handlePicked(A::StemsFolder, juce::File(juce::String(song.string()))));  // an accepted pick clears it
+  REQUIRE(pa.waitForLoader());
+  panel->refresh();
+  CHECK_FALSE(anyLabelContains(*panel, msg));
+
+  juce::StringArray dropped;  // the same rule for a drop
+  dropped.add(juce::String(mixed.string()));
+  rig.ed->filesDropped(dropped, 10, 10);
+  CHECK(pa.waitForLoader());
+  panel->refresh();
+  CHECK(anyLabelContains(*panel, msg));
+  CHECK(pa.settings().folder == song.string());
+  processBlocks(rig.proc, 4);  // the audio thread adopts a loaded set only inside process()
+  CHECK(pa.snapshot().hasSet);
+}
+
+#ifdef SAWBLADE_WITH_SEPARATOR
+TEST_CASE("play-along: a missing separation model shows the full install command in a copyable field (v0.2.1 Task E)", "[editor][playalong]") {
+  TempFolder tmp;
+  struct Env {
+    std::string k;
+    std::optional<std::string> old;
+    Env(const char* key, const std::string& v) : k(key) {
+      if (const char* o = std::getenv(key)) old = o;
+      ::setenv(key, v.c_str(), 1);
+    }
+    ~Env() {
+      if (old) ::setenv(k.c_str(), old->c_str(), 1);
+      else ::unsetenv(k.c_str());
+    }
+  } models("SAWBLADE_MODELS_DIR", (tmp.dir / "models").string()), stems("SAWBLADE_STEMS_DIR", (tmp.dir / "stems").string());
+  Rig rig;
+  auto& pa = rig.proc.playAlong();
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  const auto wav = tmp.dir / "song.wav";
+  std::vector<float> x(48000, 0.1f);
+  sawblade::writeWavFloat32Stereo(wav, 48000.0, x, x);
+  pa.loadSong(wav.string(), true);
+  REQUIRE(pa.waitForLoader());
+  REQUIRE(pa.loadStatus().modelMissing);
+  panel->refresh();
+
+  const std::string full = sawblade::separationModelInstallCommand(sawblade::SeparationModel::Htdemucs6s);
+  juce::TextEditor* field = nullptr;
+  for (auto* e : all<juce::TextEditor>(*panel))
+    if (e->getName() == "fetchCommand") field = e;
+  REQUIRE(field != nullptr);
+  CHECK(field->isVisible());
+  CHECK(field->isReadOnly());
+  CHECK(field->getText().toStdString() == full);  // no truncation
+  CHECK(field->getTextHeight() <= field->getHeight());  // wrapped: the whole command is visible without scrolling
+  CHECK(field->getBounds().getBottom() <= PlayAlongPanel::kPlayAlongHeight);
+  for (auto* c : panel->getChildren())  // nothing visible overlaps the field (the progress bar is hidden here)
+    if (c != field && c->isVisible()) CHECK_FALSE(c->getBounds().intersects(field->getBounds()));
+  CHECK(pa.loadStatus().message.find(full) != std::string::npos);
+}
+#endif
+
+TEST_CASE("play-along: the status messages fit the status label (v0.2.1 Task G)", "[editor][playalong]") {
+  Rig rig;
+  TempFolder tmp;
+  rig.ed->setPlayAlongOpen(true);
+  auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+  auto statusLabel = [&]() -> juce::Label* {
+    for (auto* l : all<juce::Label>(*panel))
+      if (l->getY() == 10 && l->getHeight() == 30 && l->getWidth() >= 380) return l;
+    return nullptr;
+  };
+  auto fits = [&](const juce::String& text) {
+    auto* l = statusLabel();
+    REQUIRE(l != nullptr);
+    INFO(text);
+    CHECK(juce::GlyphArrangement::getStringWidthInt(l->getFont(), text) <= l->getWidth() - 8);
+  };
+  panel->refresh();
+  REQUIRE(statusLabel() != nullptr);
+  CHECK(statusLabel()->getText().contains("Drop a song file"));  // None
+  fits(statusLabel()->getText());
+  fits("Backing is off. Enable SYNC TO HOST to follow the host transport.");
+  fits("Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file.");
+  const auto song = writeSyntheticSong(tmp.dir, "fit", 6.0);
+  rig.proc.playAlong().loadSong(song.string(), true);
+  REQUIRE(rig.proc.playAlong().waitForLoader());
+  panel->refresh();
+  fits(statusLabel()->getText());  // Ready
+  // The captions and the status label do not overlap.
+  for (auto* b : all<juce::Button>(*panel))
+    if (b->getY() == 10 && b->isVisible() && b->getTitle().startsWith("CHOOSE")) CHECK_FALSE(b->getBounds().intersects(statusLabel()->getBounds()));
+}
+
 TEST_CASE("play-along: the controls are bound to the processor", "[editor][playalong]") {
   Rig rig;
   TempFolder tmp;
@@ -569,12 +709,18 @@ TEST_CASE("play-along: the controls are bound to the processor", "[editor][playa
   auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
 
   // Every expected control exists, with a title and a tooltip.
-  for (const char* title : {"LOAD SONG", "KEEP KEYS", "PLAY", "SET A", "SET B", "LOOP", "COUNT-IN", "MUTE", "GHOST", "FULL", "SYNC TO HOST"}) {
+  for (const char* title : {"KEEP KEYS", "PLAY", "SET A", "SET B", "LOOP", "COUNT-IN", "MUTE", "GHOST", "FULL", "SYNC TO HOST"}) {
     INFO(title);
     auto* b = buttonTitled(*panel, title);
     REQUIRE(b != nullptr);
     CHECK(b->getTooltip().isNotEmpty());
   }
+  for (const juce::String& title : {juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"), juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6")}) {
+    auto* b = buttonTitled(*panel, title);
+    REQUIRE(b != nullptr);
+    CHECK(b->getTooltip().isNotEmpty());
+  }
+  CHECK(buttonTitled(*panel, "LOAD SONG") == nullptr);  // replaced by the two one-purpose pickers
   for (const char* title : {"Seek", "Count-in BPM", "Backing level", "Backing offset"}) {
     INFO(title);
     auto* s = sliderTitled(*panel, title);
@@ -679,6 +825,101 @@ TEST_CASE("play-along: the controls are bound to the processor", "[editor][playa
   CHECK(pa.snapshot().loopStart == 240000);
 }
 
+TEST_CASE("play-along: the pickers are one-purpose choosers (v0.2.1 Task G)", "[editor][playalong]") {
+  using A = PlayAlongPanel::ChooserAction;
+  for (const bool mac : {false, true}) {
+    INFO("mac = " << mac);
+    const auto song = PlayAlongPanel::chooserSpec(A::SongFile, mac);
+    // Files only: no directory flag, which the macOS panel greyed the .wav out of.
+    CHECK((song.flags & juce::FileBrowserComponent::canSelectFiles) != 0);
+    CHECK((song.flags & juce::FileBrowserComponent::canSelectDirectories) == 0);
+    CHECK((song.flags & juce::FileBrowserComponent::openMode) != 0);
+    CHECK((song.flags & juce::FileBrowserComponent::saveMode) == 0);
+    juce::StringArray patterns;
+    patterns.addTokens(song.filter, ";", "");
+    patterns.removeEmptyStrings();
+    if (mac) {
+      CHECK(song.filter == "*");  // JUCE: allowedFileTypes = nil, the delegate matches every file
+    } else {
+      CHECK(patterns.size() == 8);
+      for (const auto& p : patterns) {  // the form the chooser can turn into an allowed-extensions list
+        INFO(p);
+        CHECK(p.startsWith("*."));
+        CHECK(p.lastIndexOfChar('*') == 0);
+        CHECK(p == p.toLowerCase());
+      }
+    }
+    for (const char* name : {"a.wav", "a.WAV", "a.Wav", "a.mp3", "a.MP3", "a.flac", "a.m4a", "a.aif", "a.aiff", "a.aac", "a.ogg"}) {
+      INFO(name);
+      bool hit = false;
+      for (const auto& p : patterns) hit = hit || juce::String(name).matchesWildcard(p, true);  // JUCE matches ignoring case
+      CHECK(hit);
+      CHECK(isSongFileName(name));  // the chooser and the loader agree
+    }
+    CHECK_FALSE(isSongFileName("notes.txt"));
+  }
+  CHECK_FALSE(juce::String("notes.txt").matchesWildcard("*.wav;*.mp3", true));
+
+  const auto folder = PlayAlongPanel::chooserSpec(A::StemsFolder);
+  CHECK((folder.flags & juce::FileBrowserComponent::canSelectDirectories) != 0);
+  CHECK((folder.flags & juce::FileBrowserComponent::canSelectFiles) == 0);
+  CHECK((folder.flags & juce::FileBrowserComponent::openMode) != 0);
+  CHECK(folder.filter.isEmpty());  // directories-only choosers carry no type filter
+}
+
+namespace {
+// What juce::ComponentPeer does for a file drop: the deepest component under the mouse that is a FileDragAndDropTarget
+// and interested, walking up through the parents.
+juce::Component* dropTargetAt(juce::Component& editor, juce::Point<int> p, const juce::StringArray& files) {
+  for (auto* c = editor.getComponentAt(p); c != nullptr; c = c->getParentComponent())
+    if (auto* t = dynamic_cast<juce::FileDragAndDropTarget*>(c))
+      if (t->isInterestedInFileDrag(files)) return c;
+  return nullptr;
+}
+}  // namespace
+
+TEST_CASE("play-along: a drop on the panel and on the rig area loads a song (v0.2.1 Task G)", "[editor][playalong]") {
+  TempFolder tmp;
+  const auto song = writeSyntheticSong(tmp.dir, "dropg", 6.0);
+  juce::StringArray files, audio;  // a stems folder (loads to Ready, no separation model needed) and a song file
+  files.add(juce::String(song.string()));
+  audio.add(juce::String((song / "drums.wav").string()));
+  juce::StringArray upper;
+  upper.add(juce::String((song / "DRUMS.WAV").string()));
+  CHECK(PlayAlongPanel::isLoadableDrop(upper));  // .WAV is a song file whatever the case
+
+  {  // onto the panel itself, deepest child under the mouse
+    Rig rig;
+    rig.ed->setVisible(true);  // getComponentAt() skips an invisible component, and this editor is never put on screen
+    rig.ed->setPlayAlongOpen(true);
+    auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
+    const juce::Point<int> p(640, 800 - PlayAlongPanel::kHeight + 70);
+    auto* t = dropTargetAt(*rig.ed, p, files);
+    REQUIRE(t != nullptr);
+    CHECK(t == panel);  // the panel itself, not a fall-through to the editor
+    dynamic_cast<juce::FileDragAndDropTarget*>(t)->filesDropped(files, p.x, p.y);
+    REQUIRE(rig.proc.playAlong().waitForLoader());
+    CHECK(rig.proc.playAlong().loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+    CHECK(rig.proc.playAlong().settings().folder == song.string());
+    CHECK(dropTargetAt(*rig.ed, p, audio) == panel);  // a song file is accepted by the panel too
+  }
+  {  // onto the rig area (panel closed): the editor takes it and opens the panel
+    Rig rig;
+    rig.ed->setVisible(true);
+    CHECK_FALSE(rig.ed->playAlongOpen());
+    const juce::Point<int> p(640, 300);
+    auto* t = dropTargetAt(*rig.ed, p, files);
+    REQUIRE(t != nullptr);
+    CHECK(t == rig.ed);
+    dynamic_cast<juce::FileDragAndDropTarget*>(t)->filesDropped(files, p.x, p.y);
+    CHECK(rig.ed->playAlongOpen());
+    REQUIRE(rig.proc.playAlong().waitForLoader());
+    CHECK(rig.proc.playAlong().loadStatus().state == PlayAlong::LoadStatus::State::Ready);
+    CHECK(rig.proc.playAlong().settings().folder == song.string());
+    CHECK(dropTargetAt(*rig.ed, p, audio) == rig.ed);
+  }
+}
+
 TEST_CASE("play-along: dropping a folder loads it; a missing folder shows a message", "[editor][playalong]") {
   Rig rig;
   TempFolder tmp;
@@ -768,14 +1009,15 @@ TEST_CASE("play-along: in plugin mode with sync off the status shows warnings an
   REQUIRE_FALSE(pa.standalone());
   REQUIRE_FALSE(pa.settings().hostSync);
 
-  // A folder with an unknown stem name: the loader warning wins over the hint.
+  // A folder with a duplicate stem name (a stem folder, so it is accepted): the loader warning wins over the hint.
   const auto warn = writeSyntheticSong(tmp.dir, "warn", 4.0);
   std::vector<float> x(48000, 0.1f);
-  sawblade::writeWavFloat32Stereo(warn / "piano.wav", 48000.0, x, x);
+  sawblade::writeWavFloat32Stereo(warn / "guitar.wav", 48000.0, x, x);
+  sawblade::writeWavFloat32Stereo(warn / "guitars.wav", 48000.0, x, x);
   pa.loadFolder(warn.string(), false);
   REQUIRE(pa.waitForLoader());
   panel->refresh();
-  CHECK(anyLabelContains(*rig.ed, "piano.wav"));
+  CHECK(anyLabelContains(*rig.ed, "guitars.wav"));
   CHECK_FALSE(anyLabelContains(*rig.ed, "Backing is off"));
 
   // A clean user load: the one-time level suggestion is shown.
@@ -2069,21 +2311,26 @@ TEST_CASE("record: an overrun shows in the panel", "[editor][record]") {
   CHECK(takes[0].overruns == 8);
 }
 
-TEST_CASE("record/match: in plugin mode MATCH says to open the Standalone app; EXPORT NAM works everywhere", "[editor][record][match]") {
+TEST_CASE("record/match: in plugin mode MATCH opens the match screen, as in Standalone; EXPORT NAM works too", "[editor][record][match]") {
   MatchRig rig;
   rig.ed->setPlayAlongOpen(true);
-  REQUIRE_FALSE(rig.proc.matchEnabled());
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());  // a plugin instance, not the Standalone wrapper
   auto* match = buttonTitled(rig.panel(), "MATCH");
   auto* exportBtn = buttonTitled(rig.panel(), "EXPORT NAM");
+  CHECK(match->getTooltip().isNotEmpty());
+  CHECK_FALSE(match->getTooltip().containsIgnoreCase("Standalone"));
+  CHECK_FALSE(anyLabelContains(rig.panel(), "Standalone app"));
   click(*match);
   rig.panel().refresh();
+  CHECK(rig.ed->matchScreenOpen());
+  CHECK_FALSE(anyLabelContains(rig.panel(), "Standalone app"));
+  CHECK_FALSE(anyLabelContains(rig.screen(), "Standalone app"));
+  click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
   CHECK_FALSE(rig.ed->matchScreenOpen());
-  CHECK(anyLabelContains(rig.panel(), "Standalone app"));
-  // EXPORT NAM opens its panel in plugin mode too, with no Standalone notice.
+  // EXPORT NAM opens its panel in plugin mode too.
   click(*exportBtn);
   CHECK(rig.ed->exportPanelOpen());
   CHECK_FALSE(rig.ed->matchScreenOpen());
-  CHECK_FALSE(anyLabelContains(rig.panel(), "EXPORT NAM runs"));
   click(*rig.exportButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
   CHECK_FALSE(rig.ed->exportPanelOpen());
   // Recording still works in plugin mode.
@@ -2092,7 +2339,7 @@ TEST_CASE("record/match: in plugin mode MATCH says to open the Standalone app; E
   click(*buttonTitled(rig.panel(), "REC"));  // the same button, now labelled STOP
   CHECK(rig.proc.recorder().state() == TakeRecorder::State::Idle);
 
-  // Standalone: MATCH opens the screen (which no longer has an export mode).
+  // Standalone: the same.
   rig.proc.playAlong().setStandalone(true);
   click(*match);
   CHECK(rig.ed->matchScreenOpen());
@@ -2112,7 +2359,7 @@ TEST_CASE("match screen: a missing executable or pool shows a clear message and 
   auto* start = rig.screenButton("START MATCH");
   REQUIRE(start != nullptr);
   CHECK_FALSE(start->isEnabled());  // no song, no take yet
-  CHECK(anyLabelContains(screen, "Load a song"));
+  CHECK(anyLabelContains(screen, "load a song first"));
 
   rig.proc.matchSettings().setMatchExecutable(rig.tmp.dir / "nowhere" / "sawblade-match");
   screen.refresh();
@@ -2237,7 +2484,7 @@ TEST_CASE("record + match: screenshots of REC armed, the match progress and the 
   MatchScreen& screen = rig.screen();
   CHECK(anyLabelContains(screen, "'other' stem"));
   CHECK(anyLabelContains(screen, "verse riff"));
-  CHECK(anyLabelContains(screen, "into the song"));
+  CHECK(anyLabelContains(screen, "matched by tone"));
   auto* start = rig.screenButton("START MATCH");
   REQUIRE(start != nullptr);
   REQUIRE(start->isEnabled());
@@ -2350,7 +2597,7 @@ struct ExportRig : MatchRig {
 
 TEST_CASE("export panel: opens from the top bar in plugin mode; the mode default follows the cab mode", "[editor][export]") {
   ExportRig rig;
-  REQUIRE_FALSE(rig.proc.matchEnabled());  // plugin mode: no Standalone gating for EXPORT
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());  // plugin mode: no Standalone gating for EXPORT
   auto* top = topBarButton(*rig.ed, "EXPORT NAM");
   REQUIRE(top != nullptr);
   CHECK(top->isEnabled());
@@ -2730,10 +2977,10 @@ juce::Button* topBarButton(SawbladeEditor& ed, const juce::String& title) {
   return nullptr;
 }
 
-// Standalone mode, a song loaded, and a take recorded and chosen for MATCH. Returns the song folder.
-fs::path prepareMatchTake(MatchRig& rig, const char* takeName = nullptr) {
+// Standalone mode (or plugin mode: standalone = false), a song loaded, and a take recorded and chosen for MATCH. Returns the song folder.
+fs::path prepareMatchTake(MatchRig& rig, const char* takeName = nullptr, bool standalone = true) {
   auto& pa = rig.proc.playAlong();
-  pa.setStandalone(true);
+  pa.setStandalone(standalone);
   const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
   pa.loadFolder(song.string(), true);
   REQUIRE(pa.waitForLoader());
@@ -2769,7 +3016,7 @@ void startTwoPass(MatchRig& rig) {
 
 }  // namespace
 
-TEST_CASE("top bar: MATCH opens the play-along panel's record + match area; EXPORT NAM and A/B are live", "[editor][match][topbar]") {
+TEST_CASE("top bar: MATCH opens the match screen in a host; EXPORT NAM and A/B are live", "[editor][match][topbar]") {
   MatchRig rig;
   auto* match = topBarButton(*rig.ed, "MATCH");
   auto* exportBtn = topBarButton(*rig.ed, "EXPORT NAM");
@@ -2779,27 +3026,26 @@ TEST_CASE("top bar: MATCH opens the play-along panel's record + match area; EXPO
   REQUIRE(ab != nullptr);
   CHECK(match->isEnabled());
   CHECK(match->getTooltip().isNotEmpty());
+  CHECK_FALSE(match->getTooltip().containsIgnoreCase("Standalone"));
   CHECK(exportBtn->isEnabled());  // live since phase 12 (opens the export panel)
   CHECK(ab->isEnabled());  // live since p9
 
-  // Plugin mode: the panel opens, and says the same as the panel's MATCH: open the Standalone app.
-  REQUIRE_FALSE(rig.proc.matchEnabled());
+  // Plugin mode (v0.2.1 Task A): the same as Standalone, straight to the match screen, no note anywhere.
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());
   CHECK_FALSE(rig.ed->playAlongOpen());
   click(*match);
-  CHECK(rig.ed->playAlongOpen());
-  CHECK(rig.panel().isVisible());
-  CHECK_FALSE(rig.ed->matchScreenOpen());
-  CHECK(buttonTitled(rig.panel(), "REC")->isVisible());  // the record band is the area it opens
-  CHECK(buttonTitled(rig.panel(), "MATCH")->isVisible());
-  CHECK(anyLabelContains(rig.panel(), "MATCH runs in the Standalone app"));
-  CHECK(anyLabelContains(rig.panel(), "open the Standalone app"));
+  CHECK(rig.ed->matchScreenOpen());
+  CHECK_FALSE(rig.ed->playAlongOpen());
+  CHECK_FALSE(anyLabelContains(rig.panel(), "Standalone app"));
+  CHECK_FALSE(anyLabelContains(rig.screen(), "Standalone app"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "MATCH runs in the Standalone app"));
 
   click(*exportBtn);
   CHECK(rig.ed->exportPanelOpen());
   CHECK_FALSE(rig.ed->matchScreenOpen());
 }
 
-TEST_CASE("top bar: MATCH in the Standalone app opens the match screen directly", "[editor][match][topbar]") {
+TEST_CASE("top bar: MATCH in the Standalone app opens the match screen directly too", "[editor][match][topbar]") {
   MatchRig rig;
   rig.proc.playAlong().setStandalone(true);
   auto* match = topBarButton(*rig.ed, "MATCH");
@@ -2810,6 +3056,259 @@ TEST_CASE("top bar: MATCH in the Standalone app opens the match screen directly"
   CHECK_FALSE(rig.ed->exportPanelOpen());  // the match screen is MATCH only; EXPORT NAM has its own panel
   CHECK_FALSE(rig.ed->playAlongOpen());
   CHECK_FALSE(anyLabelContains(rig.panel(), "MATCH runs in the Standalone app"));
+}
+
+// ---- v0.2.1 Task D: the MATCH screen holds its own inputs ---------------------------------------------------------
+namespace {
+juce::ListBox& takePicker(MatchRig& rig) {
+  for (auto* l : all<juce::ListBox>(rig.screen()))
+    if (l->getTitle() == "Take picker") return *l;
+  FAIL("no take picker on the match screen");
+  std::abort();
+}
+// A finished take written to the takes folder (renamed so the names are distinct); `songFolder` "" = recorded without a song.
+std::string recordTakeNamed(MatchRig& rig, const std::string& songFolder, const char* name) {
+  auto& rec = rig.proc.recorder();
+  REQUIRE(rec.start(songFolder));
+  feedSeconds(rig.proc, 1.0);
+  rec.stop();
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  std::string err;
+  REQUIRE(rec.renameTake(rec.currentTakeName(), name, &err));
+  return name;
+}
+}  // namespace
+
+TEST_CASE("match screen: load a song, record a DI and start a match without leaving the screen (Task D)", "[editor][match][inputs]") {
+  using A = PlayAlongPanel::ChooserAction;
+  MatchRig rig;
+  rig.proc.playAlong().setStandalone(true);  // Standalone free-run transport; the plugin-mode flow is the test below
+  rig.tools.cfgMatch({{"progressJson", true}});
+  rig.ed->openMatchScreen();
+  MatchScreen& screen = rig.screen();
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+
+  // The controls are there, in the screen, with tooltips.
+  for (const char* title : {"REC"}) {
+    auto* b = rig.screenButton(title);
+    REQUIRE(b != nullptr);
+    CHECK(b->isVisible());
+    CHECK(b->getTooltip().isNotEmpty());
+  }
+  for (const auto& title : {juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"), juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6")}) {
+    auto* b = rig.screenButton(title);
+    REQUIRE(b != nullptr);
+    CHECK(b->isVisible());
+    CHECK(b->isEnabled());
+    CHECK(b->getTooltip().isNotEmpty());
+  }
+  CHECK(anyLabelContains(screen, juce::String::fromUTF8("1 \xc2\xb7 REFERENCE SONG")));
+  CHECK(anyLabelContains(screen, juce::String::fromUTF8("2 \xc2\xb7 YOUR DI")));
+  CHECK(anyLabelContains(screen, "No takes yet"));
+  CHECK_FALSE(start->isEnabled());
+  CHECK(anyLabelEquals(screen, "load a song first"));
+
+  // 1: the song, through the path the SONG FILE... / STEMS FOLDER... choosers call with their result.
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
+  CHECK(screen.handlePicked(A::StemsFolder, juce::File(juce::String(song.string()))));
+  REQUIRE(rig.proc.playAlong().waitForLoader());
+  screen.refresh();
+  CHECK(rig.proc.playAlong().settings().folder == song.string());
+  CHECK(anyLabelContains(screen, "Song (stems)"));
+  CHECK_FALSE(start->isEnabled());
+  CHECK(anyLabelEquals(screen, "record or import a DI"));
+  CHECK_FALSE(anyLabelContains(screen, "load a song first"));
+
+  // 2: REC / STOP in the screen drive the one recorder; the new take becomes the DI.
+  auto& rec = rig.proc.recorder();
+  auto* recBtn = rig.screenButton("REC");
+  REQUIRE(recBtn->isEnabled());
+  click(*recBtn);
+  CHECK(rec.state() == TakeRecorder::State::Armed);
+  auto* stopBtn = rig.screenButton("STOP");
+  REQUIRE(stopBtn != nullptr);
+  CHECK(stopBtn == recBtn);  // the same button, relabelled
+  feedSeconds(rig.proc, 1.0);
+  screen.refresh();
+  CHECK(rec.state() == TakeRecorder::State::Recording);
+  CHECK(anyLabelContains(screen, "REC 00:"));
+  click(*stopBtn);
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  screen.refresh();
+  CHECK(rig.screenButton("REC") == recBtn);
+  auto& picker = takePicker(rig);
+  REQUIRE(picker.getListBoxModel()->getNumRows() == 1);
+  CHECK(picker.getSelectedRow() == 0);
+  CHECK(rig.proc.matchSettings().selectedTake() == rec.listTakes().at(0).name);
+  CHECK_FALSE(anyLabelContains(screen, "No takes yet"));
+
+  // 3: START MATCH is enabled with nothing missing and starts the job.
+  CHECK(start->isEnabled());
+  CHECK_FALSE(anyLabelContains(screen, "record or import a DI"));
+  CHECK_FALSE(anyLabelContains(screen, "load a song first"));
+  click(*start);
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Match, 15000ms));
+  screen.refresh();
+  CHECK(rig.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
+  CHECK(resultsList(rig).getListBoxModel()->getNumRows() > 0);
+  CHECK(rig.ed->matchScreenOpen());  // never left the screen
+}
+
+TEST_CASE("match screen: START MATCH says what is missing, the song first; the take picker chooses the DI and syncs with the take band (Task D)", "[editor][match][inputs]") {
+  MatchRig rig;
+  auto& pa = rig.proc.playAlong();
+  pa.setStandalone(true);
+  rig.ed->openMatchScreen();
+  MatchScreen& screen = rig.screen();
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+
+  // Two takes written to the takes folder, no song yet: the song is what is missing first.
+  const std::string a = recordTakeNamed(rig, "", "take A");
+  const std::string b = recordTakeNamed(rig, "", "take B");
+  screen.open();  // reopening rescans the takes
+  auto& picker = takePicker(rig);
+  REQUIRE(picker.getListBoxModel()->getNumRows() == 2);
+  CHECK(picker.getSelectedRow() == -1);  // nothing chosen yet: the picker never picks for the user
+  CHECK(rig.proc.matchSettings().selectedTake().empty());
+  CHECK_FALSE(start->isEnabled());
+  CHECK(anyLabelEquals(screen, "load a song first"));  // song missing takes precedence over the DI
+
+  // Picking a take chooses it as the match DI (no USE FOR MATCH round trip).
+  picker.selectRow(0);
+  const std::string first = rig.proc.matchSettings().selectedTake();
+  CHECK((first == a || first == b));
+  picker.selectRow(1);
+  const std::string second = rig.proc.matchSettings().selectedTake();
+  CHECK((second == a || second == b));
+  CHECK(second != first);
+  screen.refresh();
+  CHECK(anyLabelContains(screen, juce::String(second)));  // the DI summary names it
+  CHECK_FALSE(start->isEnabled());                        // still no song
+  CHECK(anyLabelEquals(screen, "load a song first"));
+
+  // With a song the button is enabled and the caption is gone.
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
+  CHECK(screen.handlePicked(PlayAlongPanel::ChooserAction::StemsFolder, juce::File(juce::String(song.string()))));
+  REQUIRE(pa.waitForLoader());
+  screen.refresh();
+  CHECK(start->isEnabled());
+  CHECK_FALSE(anyLabelContains(screen, "load a song first"));
+  CHECK_FALSE(anyLabelContains(screen, "record or import a DI"));
+
+  // A take deleted behind the screen's back: the DI is missing again, and the caption says so.
+  REQUIRE(rig.proc.recorder().removeTake(second));
+  screen.refresh();
+  CHECK_FALSE(start->isEnabled());
+  CHECK(anyLabelEquals(screen, "record or import a DI"));
+  CHECK(picker.getListBoxModel()->getNumRows() == 1);
+
+  // The take band and the screen drive the same MatchSettings: a pick in one is the selection in the other.
+  rig.ed->setPlayAlongOpen(true);
+  rig.panel().refresh();
+  auto* bandList = all<juce::ListBox>(rig.panel()).at(0);
+  REQUIRE(bandList->getListBoxModel()->getNumRows() == 1);
+  bandList->selectRow(0);
+  click(*buttonTitled(rig.panel(), "USE FOR MATCH"));
+  const std::string kept = second == a ? b : a;  // the take that is left
+  CHECK(rig.proc.matchSettings().selectedTake() == kept);
+  screen.refresh();
+  CHECK(picker.getSelectedRow() == 0);  // the band's choice shows in the screen
+  CHECK(start->isEnabled());
+  CHECK(anyLabelContains(screen, juce::String(kept)));
+}
+
+TEST_CASE("match screen: the empty-picker note is above the list; a take chosen while recording is not overridden (Task D)", "[editor][match][inputs]") {
+  MatchRig rig;
+  auto& pa = rig.proc.playAlong();
+  pa.setStandalone(true);
+  rig.ed->openMatchScreen();
+  MatchScreen& screen = rig.screen();
+  auto& picker = takePicker(rig);
+  juce::Label* note = nullptr;
+  for (auto* l : all<juce::Label>(screen))
+    if (l->getText().contains("No takes yet")) note = l;
+  REQUIRE(note != nullptr);
+  CHECK(note->isVisible());
+  CHECK(screen.getIndexOfChildComponent(note) > screen.getIndexOfChildComponent(&picker));  // not covered by the opaque list
+  CHECK(note->getBounds().intersects(picker.getBounds()));
+
+  // Two takes; A is the DI. A recording started from the screen finishes while B has been chosen: B stays.
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  const std::string a = recordTakeNamed(rig, song.string(), "take A");
+  const std::string b = recordTakeNamed(rig, song.string(), "take B");
+  screen.open();
+  CHECK_FALSE(note->isVisible());
+  rig.proc.matchSettings().setSelectedTake(a);
+  screen.refresh();
+  click(*rig.screenButton("REC"));
+  REQUIRE(rig.proc.recorder().state() == TakeRecorder::State::Armed);
+  feedSeconds(rig.proc, 1.0);
+  rig.proc.matchSettings().setSelectedTake(b);  // the user picks B (e.g. in the take band) while recording
+  screen.refresh();
+  click(*rig.screenButton("STOP"));
+  processBlocks(rig.proc, 1);
+  REQUIRE(rig.proc.recorder().waitIdle());
+  screen.refresh();
+  CHECK(picker.getListBoxModel()->getNumRows() == 3);
+  CHECK(rig.proc.matchSettings().selectedTake() == b);
+}
+
+TEST_CASE("match screen: a drop loads the song in place; a refused folder and a bad pick say why (Task D)", "[editor][match][inputs]") {
+  using A = PlayAlongPanel::ChooserAction;
+  MatchRig rig;
+  auto& pa = rig.proc.playAlong();
+  pa.setStandalone(true);
+  rig.ed->openMatchScreen();
+  MatchScreen& screen = rig.screen();
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Dropped Song", 8.0);
+
+  juce::StringArray stray;
+  { std::ofstream(rig.tmp.dir / "notes.txt") << "x"; }
+  stray.add(juce::String((rig.tmp.dir / "notes.txt").string()));
+  CHECK_FALSE(screen.isInterestedInFileDrag(stray));  // not a song, not a folder
+
+  juce::StringArray dropped;
+  dropped.add(juce::String(song.string()));
+  REQUIRE(screen.isInterestedInFileDrag(dropped));
+  screen.fileDragEnter(dropped, 100, 120);
+  screen.fileDragExit(dropped);
+  screen.filesDropped(dropped, 100, 120);
+  REQUIRE(pa.waitForLoader());
+  screen.refresh();
+  CHECK(pa.settings().folder == song.string());
+  CHECK(anyLabelContains(screen, "Dropped Song"));
+  CHECK(anyLabelEquals(screen, "record or import a DI"));
+  CHECK(rig.ed->matchScreenOpen());
+
+  // A folder that is not a stem set is refused in the screen, and the loaded song stays.
+  const auto mixed = writeSyntheticSong(rig.tmp.dir, "desktop", 4.0);
+  { std::ofstream(mixed / "holiday.mp3") << "x"; }
+  juce::StringArray bad;
+  bad.add(juce::String(mixed.string()));
+  screen.filesDropped(bad, 10, 10);
+  CHECK(pa.waitForLoader());
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "This folder is not a set of separated stems. Choose the song file (mp3, wav, flac, m4a) instead."));
+  CHECK(pa.settings().folder == song.string());
+  CHECK_FALSE(screen.handlePicked(A::StemsFolder, juce::File(juce::String(mixed.string()))));
+
+  // The song picker refuses a non-song file with the same message as the play-along panel, and never reaches loadSong.
+  CHECK_FALSE(screen.handlePicked(A::SongFile, juce::File(juce::String((rig.tmp.dir / "notes.txt").string()))));
+  CHECK(anyLabelContains(screen, "Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file."));
+  CHECK_FALSE(screen.handlePicked(A::StemsFolder, juce::File(juce::String((rig.tmp.dir / "notes.txt").string()))));
+  CHECK(anyLabelContains(screen, "Not a folder: choose a folder of separated stems."));
+  CHECK_FALSE(screen.handlePicked(A::SongFile, juce::File()));  // cancelled
+  CHECK(pa.settings().folder == song.string());
+
+  // Both views use the one chooser definition.
+  CHECK(PlayAlongPanel::chooserSpec(A::SongFile, true).filter == "*");
+  CHECK(PlayAlongPanel::chooserSpec(A::SongFile, false).filter.contains("*.wav"));
 }
 
 TEST_CASE("match screen: PREVIEW with REFINING..., then a REFINED section; nothing is loaded by itself", "[editor][match][twopass]") {
@@ -2882,6 +3381,63 @@ TEST_CASE("match screen: PREVIEW with REFINING..., then a REFINED section; nothi
   CHECK(rig.proc.currentPreset().a.levelDb == Catch::Approx(2.0));
   CHECK_FALSE(rig.proc.audition().state().active);
   CHECK(anyLabelContains(screen, "Applied #1 (refined best)"));
+}
+
+TEST_CASE("match screen: an applied candidate is ONE Cmd / Ctrl + Z step back to the pre-audition preset", "[editor][match][undo]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}});
+  startTwoPass(rig);
+  MatchScreen& screen = rig.screen();
+  auto& list = resultsList(rig);
+  auto& rc = rig.ed->rigController();
+  const juce::KeyPress undoKey('z', juce::ModifierKeys::commandModifier, 0);
+  const Preset pre = rig.proc.currentPreset();
+
+  // Auditioning and A/B-ing leave no undo entry.
+  list.selectRow(1);
+  click(*rig.screenButton("AUDITION"));
+  REQUIRE(rig.proc.waitForLoader());
+  click(*rig.screenButton("A / B"));
+  REQUIRE(rig.proc.waitForLoader());
+  click(*rig.screenButton("A / B"));
+  REQUIRE(rig.proc.waitForLoader());
+  CHECK_FALSE(rc.canUndo());
+  rig.ed->closeAllOverlaysForTests();
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  rig.ed->openMatchScreen();
+
+  // APPLY (while B is loaded; the pre-audition preset is A, not an auditioned candidate).
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  screen.refresh();
+  const Preset applied = rig.proc.currentPreset();
+  CHECK(applied != pre);
+  CHECK(anyLabelContains(screen, "Cmd/Ctrl+Z (after closing MATCH) undoes this"));
+  CHECK(rc.canUndo());
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));  // the match screen is open: the chord does not undo underneath it ...
+  CHECK(rc.canUndo());                        // ... and does not consume the step
+  rig.ed->closeAllOverlaysForTests();
+  CHECK(rig.ed->keyPressed(undoKey));
+  REQUIRE(rig.proc.waitForLoader());
+  CHECK(rig.proc.currentPreset() == pre);
+  CHECK_FALSE(rc.canUndo());
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));  // one step only
+  CHECK(rig.proc.currentPreset() == pre);
+
+  // APPLY, then any edit: no undo (it would lose the edit).
+  rig.ed->openMatchScreen();
+  list.selectRow(1);
+  click(*rig.screenButton("AUDITION"));
+  REQUIRE(rig.proc.waitForLoader());
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  rc.edit([](Preset& p) { p.a.levelDb += 1.0; });
+  REQUIRE(rig.proc.waitForLoader());
+  const Preset edited = rig.proc.currentPreset();
+  rig.ed->closeAllOverlaysForTests();
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  CHECK(rig.proc.currentPreset() == edited);
 }
 
 TEST_CASE("match screen: an applied quick candidate that is the same chain as the refined best is promoted without a load", "[editor][match][twopass]") {
@@ -3053,6 +3609,7 @@ TEST_CASE("match screen: an old PREVIEW shows that it is over 24 h old and is no
   nlohmann::json j = {{"version", 1}, {"kind", "match"}, {"state", "succeeded"}, {"pass", "quick"}, {"pid", 0}, {"spawnedEpochMs", finished - 1000},
                       {"startedEpochMs", finished - 1000}, {"finishedEpochMs", finished}, {"outDir", q.string()}, {"commandLine", nlohmann::json::array({"x"})},
                       {"request", {{"di", rig.tools.di.string()}, {"ref", rig.tools.ref.string()}}}};
+  j["owner"] = rig.proc.instanceId();  // seeded as this instance would have written it: an owned runner adopts only its own jobs
   std::ofstream(q / "job.json") << j.dump();
   rig.ed->openMatchScreen();  // re-attaches
   rig.screen().refresh();
@@ -3657,4 +4214,208 @@ TEST_CASE("settings: screenshot with the panel open and the checklist collapsed"
     for (int x = 960; x < 1280; ++x)
       if (open.getPixelAt(x, y) != closed.getPixelAt(x, y)) ++changedRight;
   CHECK(changedRight == 0);
+}
+
+// ---- v0.2.1 Task A: MATCH inside a host ---------------------------------------------------------------------------
+namespace {
+// Closes the editor the way a plugin wrapper does and opens a new one on the same processor.
+void reopenEditor(MatchRig& rig) {
+  rig.proc.editorBeingDeleted(rig.base.get());
+  rig.base.reset();
+  rig.ed = nullptr;
+  rig.base.reset(rig.proc.createEditorAndMakeActive());
+  rig.ed = dynamic_cast<SawbladeEditor*>(rig.base.get());
+  REQUIRE(rig.ed != nullptr);
+}
+
+// SAWBLADE_APPDATA in a temp dir for the life of the object: the settings file, the takes and the jobs of a
+// default-constructed processor all live there (what a plugin host gives a fresh install).
+struct AppDataEnv {
+  fs::path dir;
+  std::optional<std::string> old;
+  AppDataEnv() {
+    dir = fs::temp_directory_path() / ("sawblade_appdata_" + std::to_string(juce::Random::getSystemRandom().nextInt64() & 0xffffff));
+    fs::create_directories(dir);
+    if (const char* v = std::getenv("SAWBLADE_APPDATA")) old = v;
+    ::setenv("SAWBLADE_APPDATA", dir.c_str(), 1);
+  }
+  ~AppDataEnv() {
+    if (old) ::setenv("SAWBLADE_APPDATA", old->c_str(), 1);
+    else ::unsetenv("SAWBLADE_APPDATA");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+  }
+};
+}  // namespace
+
+TEST_CASE("match in a host: the top-bar MATCH, START MATCH and APPLY work in plugin mode", "[editor][match][host]") {
+  MatchRig rig;
+  prepareMatchTake(rig, nullptr, /*standalone=*/false);
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());
+  rig.tools.cfgMatch({{"progressJson", true}});
+
+  auto* top = topBarButton(*rig.ed, "MATCH");
+  REQUIRE(top != nullptr);
+  click(*top);
+  REQUIRE(rig.ed->matchScreenOpen());
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+  REQUIRE(start->isEnabled());
+  click(*start);
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Match, 15000ms));
+  rig.screen().refresh();
+  const JobSnapshot job = rig.proc.jobs().snapshot(JobKind::Match);
+  REQUIRE(job.state == JobState::Succeeded);
+  CHECK(job.dir.parent_path() == rig.tools.jobs);
+  REQUIRE(resultsList(rig).getListBoxModel()->getNumRows() == 3);
+  CHECK_FALSE(anyLabelContains(rig.screen(), "Standalone"));
+
+  // APPLY from the screen: the result becomes the instance's preset.
+  resultsList(rig).selectRow(1);
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  rig.screen().refresh();
+  CHECK(rig.proc.status().presetName == "match alt 1");
+  CHECK(anyLabelContains(rig.screen(), "Applied"));
+
+  // The play-along band's MATCH reaches the same screen.
+  click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
+  REQUIRE_FALSE(rig.ed->matchScreenOpen());
+  rig.ed->setPlayAlongOpen(true);
+  click(*buttonTitled(rig.panel(), "MATCH"));
+  CHECK(rig.ed->matchScreenOpen());
+}
+
+TEST_CASE("match in a host: two instances run matches at once and each applies only its own result", "[editor][match][host][isolation]") {
+  MatchRig a;
+  MatchRig b;
+  b.proc.jobs().setJobsDir(a.tools.jobs);  // one per-user jobs folder for every instance, as in a host
+  prepareMatchTake(a, nullptr, false);
+  prepareMatchTake(b, nullptr, false);
+  CHECK_FALSE(a.proc.instanceId().empty());
+  CHECK(a.proc.instanceId() != b.proc.instanceId());
+  // A's matcher parks in its fine stage until released; B's runs straight through.
+  a.tools.cfgMatch({{"progressJson", true}, {"gates", nlohmann::json::array({"g2"})}});
+  b.tools.cfgMatch({{"progressJson", true}});
+
+  a.ed->openMatchScreen();
+  click(*a.screenButton("START MATCH"));
+  REQUIRE(waitUntilTrue([&] { return a.proc.jobs().snapshot(JobKind::Match).progress.message == "refining 1/3"; }));
+  const fs::path dirA = a.proc.jobs().snapshot(JobKind::Match).dir;
+
+  // B opens its screen while A's job runs: it shows no job (and its START MATCH is free), never A's.
+  b.ed->openMatchScreen();
+  CHECK(b.proc.jobs().snapshot(JobKind::Match).state == JobState::None);
+  CHECK_FALSE(anyLabelContains(b.screen(), "refining 1/3"));
+  if (auto* cancel = b.screenButton("CANCEL")) CHECK_FALSE(cancel->isEnabled());
+  REQUIRE(b.screenButton("START MATCH")->isEnabled());
+  click(*b.screenButton("START MATCH"));
+  REQUIRE(b.proc.jobs().waitFinished(JobKind::Match, 15000ms));  // B finishes while A is still running
+  CHECK(a.proc.jobs().snapshot(JobKind::Match).state == JobState::Running);
+  const fs::path dirB = b.proc.jobs().snapshot(JobKind::Match).dir;
+  CHECK(dirB != dirA);
+  CHECK(b.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
+  fake_tools::release(dirA, "g2");
+  REQUIRE(a.proc.jobs().waitFinished(JobKind::Match, 15000ms));
+  REQUIRE(a.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
+
+  // Reopening each editor shows only its own job.
+  reopenEditor(a);
+  reopenEditor(b);
+  a.ed->openMatchScreen();
+  b.ed->openMatchScreen();
+  CHECK(a.proc.jobs().snapshot(JobKind::Match).dir == dirA);
+  CHECK(b.proc.jobs().snapshot(JobKind::Match).dir == dirB);
+  a.screen().refresh();
+  b.screen().refresh();
+  CHECK(resultsList(a).getListBoxModel()->getNumRows() == 3);
+  CHECK(resultsList(b).getListBoxModel()->getNumRows() == 3);
+
+  // Applying A's result touches A only.
+  const std::string bBefore = b.proc.status().presetName;
+  resultsList(a).selectRow(1);
+  click(*a.screenButton("APPLY"));
+  REQUIRE(a.proc.waitForLoader());
+  CHECK(a.proc.status().presetName == "match alt 1");
+  CHECK(b.proc.status().presetName == bBefore);
+  CHECK_FALSE(b.proc.audition().state().active);
+  CHECK_FALSE(b.proc.audition().appliedCandidateFile().has_value());
+  const auto applied = a.proc.audition().appliedCandidateFile();
+  REQUIRE(applied.has_value());
+  CHECK(applied->parent_path() == dirA);  // the candidate file sits in A's own job folder, never B's
+}
+
+TEST_CASE("pluginval / auval paths never start a job: a fresh processor with default settings spawns nothing", "[editor][match][pluginval]") {
+  AppDataEnv data;
+  Rig rig;  // a default-constructed processor: default settings file, jobs folder and takes folder (all under SAWBLADE_APPDATA)
+  auto& jobs = rig.proc.jobs();
+  REQUIRE(jobs.jobsDir() == data.dir / "jobs");
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());
+
+  auto drive = [&] {
+    // state save / load (a validator's first calls), prepare at other rates, audio, and a sweep of every parameter
+    for (int i = 0; i < 2; ++i) {
+      juce::MemoryBlock state;
+      rig.proc.getStateInformation(state);
+      rig.proc.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    }
+    rig.proc.prepareToPlay(44100.0, 256);
+    processBlocks(rig.proc, 4);
+    rig.proc.prepareToPlay(96000.0, 1024);
+    processBlocks(rig.proc, 4);
+    for (auto* prm : rig.proc.getParameters())
+      for (const float v : {0.0f, 1.0f, 0.5f}) {
+        prm->setValueNotifyingHost(v);
+        processBlocks(rig.proc, 1);
+      }
+    // the editor: open and close every panel, close and reopen the whole editor, refresh timers
+    rig.ed->setPlayAlongOpen(true);
+    all<PlayAlongPanel>(*rig.ed).at(0)->refresh();
+    rig.ed->setPlayAlongOpen(false);
+    rig.ed->openMatchScreen();
+    MatchScreen& screen = *all<MatchScreen>(*rig.ed).at(0);
+    screen.refresh();
+    auto* startBtn = buttonTitled(screen, "START MATCH");
+    REQUIRE(startBtn != nullptr);
+    CHECK_FALSE(startBtn->isEnabled());  // no song, no take, no tool: nothing to start
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(120);
+    rig.ed->openExportPanel();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(120);
+  };
+  drive();
+  rig.proc.editorBeingDeleted(rig.base.get());
+  rig.base.reset();
+  rig.ed = nullptr;
+  rig.base.reset(rig.proc.createEditorAndMakeActive());
+  rig.ed = dynamic_cast<SawbladeEditor*>(rig.base.get());
+  REQUIRE(rig.ed != nullptr);
+  drive();
+
+  for (const JobKind k : {JobKind::Match, JobKind::Export}) {
+    INFO(jobKindName(k));
+    CHECK(jobs.snapshot(k).state == JobState::None);
+    CHECK(jobs.snapshot(k).pid == 0);
+  }
+  CHECK(jobs.refineSnapshot().state == JobState::None);
+  // Nothing was written to the jobs folder (no job.json anywhere): no child was started by any of it.
+  int jobFolders = 0;
+  std::error_code ec;
+  if (fs::is_directory(data.dir / "jobs", ec))
+    for (const auto& e : fs::directory_iterator(data.dir / "jobs", ec))
+      if (fs::exists(e.path() / "job.json", ec)) ++jobFolders;
+  CHECK(jobFolders == 0);
+
+  // With no tool configured (the default on a validator's machine) a start is refused, not attempted. A machine that
+  // does have the tool installed at the default path skips this half; the half above holds either way.
+  const fs::path exe = rig.proc.matchSettings().matchExecutable();
+  INFO("default match executable: " << exe.string());
+  if (!jobs.checkTools(JobKind::Match).ok()) {
+    std::string err;
+    MatchRequest req;
+    req.di = data.dir / "di.wav";
+    req.ref = data.dir / "ref.wav";
+    CHECK_FALSE(jobs.startMatch(req, &err));
+    CHECK(err.find("was not found") != std::string::npos);
+    CHECK(jobs.snapshot(JobKind::Match).state == JobState::None);
+  }
 }

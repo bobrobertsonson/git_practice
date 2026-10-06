@@ -78,7 +78,17 @@ def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path |
     notes: list[str] = []
     stereo = x.shape[1] >= 2
     basis, off_db, sig, stem_kind, auto_fallback = None, 0.0, None, None, False
+    clean_arg = clean
     clean = (matched == "mono") if clean is None else bool(clean)
+    if matched or clean:
+        if clean_arg is None and matched == "mono":
+            notes.append("reference treated as an isolated guitar track (implied by --matched mono); use --ref-mix for a "
+                         "full mix")
+        elif clean:
+            notes.append("reference treated as an isolated guitar track (--ref-clean)")
+        else:
+            notes.append("reference treated as a full mix (--ref-mix / --no-ref-clean): no HF-fizz, tightness, floor, "
+                         "flux or crest feel terms against it")
     if channel == "auto" and clean:
         channel = {"left": "left", "right": "right"}.get(matched or "", "mid")
         notes.append(f"clean (isolated guitar) reference: its own '{channel}' signal is the target; no stem, no HF limit")
@@ -118,7 +128,8 @@ def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path |
                          "5-10 kHz fit brighter; consider --ref-hf-limit 4500")
     if matched:
         col = {"left": 0, "right": 1, "mono": 0}[matched]
-        ref.matched_sig = to48(x[:, min(col, x.shape[1] - 1)], fs)
+        # "mono" = the channel mean (the same signal as the clean ``mid`` LTAS target; a mono file is unchanged)
+        ref.matched_sig = to48(x.mean(axis=1) if matched == "mono" else x[:, min(col, x.shape[1] - 1)], fs)
         ref.matched_channel = matched
         ref.offset_given = offset_ms is not None
         ref.offset_samples = int(round((offset_ms or 0.0) * RATE / 1000))
@@ -163,14 +174,43 @@ def make_excerpt(di48: np.ndarray, length_s: float, lead_s: float = 0.5, window:
     return Excerpt(a, b, lead, np.ascontiguousarray(di48[a - lead:b], dtype=np.float32), info)
 
 
+def _full_mix(ref: Reference) -> bool:
+    """The feel reference is a full-mix channel (not an isolated guitar track, not a stem)."""
+    return not (ref.clean or ref.texture)
+
+
+_MIX_HF = ("{what} is a full mix (cymbals above 5 kHz); pass --ref-clean if it is an isolated guitar track")
+_MIX_LOW = ("{what} is a full mix (bass/kick in 60-250 Hz); pass --ref-clean if it is an isolated guitar track")
+
+
 def feel_fizz_state(ref: Reference) -> tuple[bool, str | None]:
     """Is the reference's 5-12 kHz usable as a target for the fizz feel term? (False, reason) when it is not."""
     if ref.hf_limit_hz is not None:
         return False, f"reference HF limited to {ref.hf_limit_hz:g} Hz (full-mix basis)"
-    if ref.matched_sig is not None and not (ref.clean or ref.texture):
-        return False, ("matched channel is a full mix (cymbals above 5 kHz); pass --ref-clean if it is an isolated "
-                       "guitar track")
+    if _full_mix(ref):
+        return False, _MIX_HF.format(what="matched channel" if ref.matched_sig is not None else "reference channel")
     return True, None
+
+
+def feel_tight_state(ref: Reference) -> tuple[bool, str | None]:
+    """Is the reference's 60-250 Hz usable for the tightness term? A matched full-mix channel and an unmatched full-mix
+    channel other than the side channel hold bass and kick there."""
+    if _full_mix(ref) and (ref.matched_sig is not None or ref.basis != "side"):
+        return False, _MIX_LOW.format(what="matched channel" if ref.matched_sig is not None else "reference channel")
+    return True, None
+
+
+def feel_off_terms(ref: Reference) -> dict[str, str]:
+    """Polish terms that cannot be trusted on this reference ({name: reason}): the inter-note floor unless the reference is
+    a clean track (mix and demucs stem gaps hold other instruments / separation artefacts), flux and crest on a matched full
+    mix (cymbals dominate flux, drums dominate crest)."""
+    off: dict[str, str] = {}
+    if ref.matched_sig is not None and not ref.clean:
+        off["floor"] = "reference is not a clean guitar track (full-mix and stem gaps do not hold the guitar's floor)"
+    if ref.matched_sig is not None and _full_mix(ref):
+        off["flux"] = "matched channel is a full mix (cymbals dominate spectral flux); pass --ref-clean if isolated"
+        off["crest"] = "matched channel is a full mix (drums dominate crest); pass --ref-clean if isolated"
+    return off
 
 
 def build_target(ref: Reference, ex: Excerpt, offset_samples: int | None = None) -> L.Target:
@@ -183,6 +223,8 @@ def build_target(ref: Reference, ex: Excerpt, offset_samples: int | None = None)
     onsets = detect_onsets(di64, RATE)
     gaps = gap_regions(di64, RATE)
     fizz_on, fizz_why = feel_fizz_state(ref)
+    tight_on, tight_why = feel_tight_state(ref)
+    feel_off = feel_off_terms(ref)
     matched = None
     if ref.matched_sig is not None:
         off = ref.offset_samples if offset_samples is None else offset_samples
@@ -194,13 +236,13 @@ def build_target(ref: Reference, ex: Excerpt, offset_samples: int | None = None)
         matched = ref.matched_sig[a:a + ex.n]
         # feel: the isolated guitar when there is one (stem basis), else the matched channel itself
         feel = FEEL.make_target(di64, onsets, mask, gaps, seg if ref.texture else matched,
-                                fizz_on=fizz_on, fizz_reason=fizz_why)
+                                fizz_on=fizz_on, fizz_reason=fizz_why, tight_on=tight_on, tight_reason=tight_why, off=feel_off)
     else:
         rmask, _, _ = activity_mask(ref.ltas_sig, RATE)
         rstarts = L.segment_starts(len(ref.ltas_sig), rmask)
         ron = detect_onsets(ref.ltas_sig, RATE)
         rf = L.features(ref.ltas_sig, rstarts, ron if len(ron) else None)
         feel = FEEL.make_target(di64, onsets, mask, gaps, None, fizz_on=fizz_on, fizz_reason=fizz_why,
-                                soft_ref=(ref.ltas_sig, rmask, ron), cache=ref.feel_cache)
+                                tight_on=tight_on, tight_reason=tight_why, soft_ref=(ref.ltas_sig, rmask, ron), cache=ref.feel_cache)
     return L.Target(starts, rf, onsets if len(onsets) else None, mask, matched, ref.texture, ref.hf_limit_hz,
                     ref.matched_fmax, feel)

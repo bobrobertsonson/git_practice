@@ -128,12 +128,15 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // The DI take recorder (docs/PLUGIN.md "Record + Match"): taps the input before the rig, writes WAV + sidecar
   // off the audio thread. Its control surface is safe from any non-audio thread.
   // Record + Match (message thread): the settings (application properties, not part of the tone state), the
-  // match / export job runner, and the audition / A-B of match candidates. MATCH is Standalone-only for now:
-  // matchEnabled() says whether this instance may start a match job. EXPORT NAM works everywhere.
+  // match / export job runner, and the audition / A-B of match candidates. MATCH and EXPORT NAM work in the
+  // Standalone app and in a host alike; a job starts only when the tool is configured (jobs().checkTools()).
   MatchSettings& matchSettings() noexcept { return matchSettings_; }
   JobRunner& jobs() noexcept { return jobs_; }
   PresetAudition& audition() noexcept { return audition_; }
-  bool matchEnabled() const noexcept { return playAlong_.standalone(); }
+  // This instance's id: the owner written into every job folder it starts (JobRunner::setOwner), so a second
+  // instance (or the Standalone app) sharing the per-user jobs folder never adopts or applies this one's job. It is
+  // kept in the plugin state (only once the instance has a job to recover), so a reloaded project finds its own job.
+  std::string instanceId() const { return jobs_.owner(); }
   // EXPORT NAM (phase 12) is available in plugin mode and in the Standalone app alike. The panel's last settings are
   // UI state (plugin state `export`, never the preset); any non-audio thread.
   ExportSettings exportSettings() const;
@@ -271,6 +274,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   PlayAlong playAlong_;
   mutable std::mutex exportMutex_;  // exportSettings_; never taken on the audio thread
   ExportSettings exportSettings_;
+  bool instanceRestored_ = false;  // the id came from a saved state: keep saving it
   std::atomic<std::uint64_t> exportSerial_{0};
   PreviewPlayer preview_;
   TakeRecorder recorder_;

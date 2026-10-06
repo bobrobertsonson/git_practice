@@ -250,9 +250,16 @@ loader, loudness), `plugin/src/PlayAlongPanel.{h,cpp}` (the panel).
 
 **Panel.** An overlay docked along the bottom of the 1280 x 800 design, toggled by the PLAY ALONG button in the top
 bar, closed by default (open / closed is UI state and is not saved). It uses the skin's palette and plain-widget
-drawing; no PLAY ALONG hardware render exists yet. Controls: LOAD SONG (folder picker; dropping a folder anywhere on
-the editor also loads it), play / pause, position display, seek bar, loop SET A / SET B / LOOP, COUNT-IN with BPM, guitar
+drawing; no PLAY ALONG hardware render exists yet. Controls: SONG FILE… (CHOOSE SONG FILE: files-only picker) and STEMS FOLDER… (CHOOSE STEMS FOLDER: directories-only
+picker, no filter), play / pause, position display, seek bar, loop SET A / SET B / LOOP, COUNT-IN with BPM, guitar
 stem MUTE / GHOST / FULL, KEEP KEYS, backing level, offset, and in the plugin SYNC TO HOST.
+
+A song file or stems folder dropped anywhere on the editor, including on the panel (which is also a drop target,
+structurally: JUCE already walked up to the editor), loads through `PlayAlongPanel::loadDroppedFiles`. The .wav was
+observed greyed out in the old combined files-and-folders chooser on macOS (user report, build e8945c2); the cause is not
+confirmed (see the Task G report). On macOS the song chooser therefore uses the filter "*" and validates the pick after
+the fact (a non-song file is refused with a message and the current song kept). A host that does not forward Finder drags
+into an out-of-process AU view (possibly Logic) cannot be fixed by the plugin: use the pickers there.
 
 **Standalone vs plugin.** `wrapperType == wrapperType_Standalone` (a processor built outside any wrapper, as in the
 tests, counts as a plugin; `PlayAlong::setStandalone` overrides it). Standalone: always enabled, free-run, the panel's
@@ -388,13 +395,15 @@ Sidecar `<take>.json`:
   "createdUtc": "2026-10-04T12:00:00.000Z" }
 ```
 
+An imported take (IMPORT DI..., below) has `"playAlong": null` and an extra `"imported": {"source": "di.wav", "channel": "left", "samePerformance": false, "offsetMs": null}`.
+
 `playAlong` is `null` when no song was loaded. `songFolder` is the stems directory that was playing: the folder for a song loaded as a folder, and the separation cache directory when the song came from a file (LOAD SONG on an audio file); MATCH uses it as the reference. `stemSampleIndex` is the stem sample that plays at the take's **first
 sample**: the playhead (the player's position in Standalone, the host position in plugin mode) minus the applied player
 offset, so the offset setting is already in it. The backing is delayed by the rig latency, which is exactly what lines the
 DI sample up with the stem sample the player plays at that moment. `running` is false when the backing was paused, counting
 in, or (plugin mode) not following the host: the index is then only where the playhead was, and MATCH does not use it.
 `droppedSamples` is an addition to the spec's field list. The matcher's `--offset-ms` is
-`stemSampleIndex / stemSampleRate * 1000` (the DI starts that far into the song). A loop that wraps during the take
+`stemSampleIndex / stemSampleRate * 1000` (the DI starts that far into the song); the matcher uses it only with `--matched`, i.e. for an imported same-performance DI, and ignores it for a recorded take. A loop that wraps during the take
 breaks the single offset (the take is one straight run of the DI; the offset is valid until the first wrap).
 
 **Panel.** The play-along panel is 112 px taller (`PlayAlongPanel::kHeight` = 170 + 112); the new band holds REC / STOP with
@@ -402,10 +411,27 @@ a timer and a lamp, the take list (name, length, position in the song, overruns,
 DELETE (both confirm in a dialog), USE FOR MATCH, MATCH and EXPORT NAM. The selection used for MATCH is a setting, not tone
 state.
 
-**MATCH is Standalone only.** MATCH runs the Python matcher, so for now it is Standalone-only: `matchEnabled()` is
-`playAlong().standalone()` (a processor outside the Standalone wrapper counts as a plugin). In plugin mode the button
-only shows "MATCH runs in the Standalone app: open the Standalone app." Recording works in both. EXPORT NAM is available
-in both (phase 12, "NAM export" below).
+**MATCH works in a host (v0.2.1 Task A).** MATCH runs the Python matcher as a child process, exactly like EXPORT NAM, so it needs
+no Standalone wrapper: the top-bar MATCH button, the play-along band's MATCH and the MATCH screen behave the same in the
+Standalone app and in a plugin instance. The only gate is the tool: with no `sawblade-match` (or no pool manifest) the screen
+says what is missing and START MATCH stays disabled; nothing is started by loading state, preparing, opening the editor or
+sweeping parameters (so pluginval and auval never start a job; tests in `test_editor.cpp`). Applying a result is one preset load
+(every parameter notifies the host, as for any preset load) followed by one
+`updateHostDisplay(nonParameterStateChanged)`, which marks the host project dirty; auditioning and A/B do not.
+
+**Several instances in one project.** The jobs folder is per user and shared by every instance, so each instance has an id
+(`SawbladeProcessor::instanceId()`, a UUID) that is written into the `owner` field of every `job.json` it starts. A runner with
+an owner adopts (`attachExisting()`, called when the MATCH / EXPORT screen opens) only the jobs that name it; jobs without an
+owner (older builds, tools) belong to nobody. The id is saved in the plugin state (key `instance`, plugin bookkeeping outside the
+tone) once the instance has a job, so closing the host project and reopening it finds the same job again; a state restored
+while another live instance in the process holds the same id (a duplicated track) gets a fresh id and no jobs. Two instances may
+run matches at once, and a result is applied only by the instance whose screen shows it. Pruning is scoped the same way: an owned
+runner deletes only its own folders and ownerless ones, never another instance's job.
+
+- Jobs from builds before this one have no owner and are not adopted by any instance.
+- Match settings (selected take, tool paths) are one per-user file shared by all instances.
+- A real undo of an applied match is deferred to v0.2's `RigController::undo` (hook at `PresetAudition::apply`); today apply = one
+  preset load + `updateHostDisplay`.
 
 **Job runner.** `JobRunner` (owned by the processor, so jobs survive the editor and the panel closing) starts
 `sawblade-match` and `sawblade-export` with `juce::ChildProcess`. Every job has a folder
@@ -451,7 +477,37 @@ the tools, a progress bar with stage, message, ETA and best error, CANCEL, and t
 - the reference is the loaded song folder's guitar stem (`guitar` / `guitars`), else `other`, else a mix, else the first
   audio file; the label on the screen says which. `--stems-dir` is not passed (it is the calibrate stem cache);
 - `--offset-ms` comes from the take's sidecar and is omitted when no backing was running or when the take was recorded
-  against another song (the matcher then searches within +-3 s).
+  against another song (the matcher then searches within +-3 s). A take imported as the **same performance as the song** also
+  passes `--matched mono` (the matcher reads `--offset-ms` only for a matched pair; with "don't know" no `--offset-ms` is
+  passed and it searches the whole song). `--matched mono` takes column 0 of the reference file for the time-aligned STFT term
+  while `--ref-channel mid` (the mean of its channels) still gives the LTAS target: for a stereo guitar stem that is the left
+  channel against the mid, which is harmless for a mono DI.
+
+**Record in the host: no import needed (v0.2.1 Task C).** Load the song in PLAY ALONG (or in MATCH section 1), turn on SYNC TO HOST,
+put Sawblade on the DI track in the DAW, play the DI region and press REC. While the host transport runs and SYNC TO HOST is
+on, the take's sidecar stores `playAlong.running: true` and `stemSampleIndex` = the host playhead at the take's first sample
+minus the applied player offset (the applied offset is the negated OFFSET setting, so +100 ms gives host position + 4800 samples at 48 kHz; with the offset at 0 it is exactly the host position), so the take carries its song position
+automatically (`PlayAlong::takeStartInfo`, called at the block where recording starts). Proof:
+`plugin/tests/test_record_match.cpp:427`, "record: the sidecar offset follows the host position in plugin mode"
+(`takes[0].stemSampleIndex == hostPos + 4800`, the 4800 being the 100 ms player offset; host stopped gives `running: false`).
+How this differs from IMPORT DI...: a take recorded while the song plays is a *different performance* from the record, so the
+matcher matches it by **spectrum** (tone), unmatched: the plan still passes `--offset-ms`, but the matcher reads it only with
+`--matched` (`match/sawblade_match/matcher/reference.py`), which the plugin sets only for an imported "same performance as the
+song" DI (`MatchGlue.cpp`, `planMatch`). Only that imported pair is time-aligned. A take recorded against another song, or with
+the backing not following the host, has no usable position and the matcher searches for it where it needs one.
+
+**IMPORT DI... (v0.2.1 Task B).** A DI you already have (WAV / AIFF / FLAC, 16 / 24 / 32-bit integer or 32-bit float, any rate)
+becomes a take: IMPORT DI... in the take band and in the MATCH screen's section 2, or drop the file on the take list / on
+section 2 (a drop on the song area is still a song). The native chooser is files-only (filter `*` on macOS, the pick is
+validated afterwards); a small modal dialog inside the editor then asks: for a stereo file, left (default) / right / sum;
+"same performance as the song (my own recording)" (default off); and, only for that, "DI starts at m:ss.mmm" (default 0:00.000, a
+DI bounced from the start of the song: leave it) with a "don't know" box. The file is **copied**: a mono 32-bit float WAV at the
+file's own rate in the takes folder (named after the file, `-2`, `-3`... if taken) plus the usual sidecar, which has
+`"playAlong": null` and `"imported": {"source": <file name>, "channel": "mono"|"left"|"right"|"sum", "samePerformance": bool,
+"offsetMs": <ms or null>}` (`offsetMs` is stored only for the same performance). The list marks it `IMPORTED`. A file is refused
+with a one-line reason when it is **silent** (loudest sample of the chosen channel below -60 dBFS) or **clipped** (4 or more
+consecutive samples at |x| >= 0.999); a file with more than two channels, one longer than 30 minutes, one with non-finite samples, and a FLAC whose header states no length are refused too. The clipped rule needs a flat top (the run's samples equal within 1e-6), so a low sine normalised to full scale is accepted. Decoding and writing run on a worker
+thread, never on the audio thread.
 
 The results (`result.json`: `best` and `alternatives`, `loss` shown as dB, `topology`, a captures summary) list the matcher's
 choice first. **AUDITION** loads the candidate's `*.preset.resolved.json` through the processor's normal off-thread preset
@@ -503,9 +559,16 @@ the plugin state holds whichever side is playing.
   deleted. A group with a running job (its process alive and the recorded tool, or one of this runner's own jobs, or a job that
   has not spawned yet) is never pruned. Export jobs, `<jobs>/inputs/`, folders without a `job.json` and takes are never touched.
   Folders of phase 6a (no `request`) are grouped by the `--di` in their command line.
-- *Top bar.* In Standalone the top-bar **MATCH** button opens the match screen directly. In plugin mode it opens the
-  play-along panel (its record + match band) and shows the same "MATCH runs in the Standalone app: open the Standalone app."
-  note as the panel's MATCH. EXPORT NAM in the top bar opens the export panel (phase 12).
+- *Top bar.* The top-bar **MATCH** button opens the match screen directly, in Standalone and in a plugin alike (the play-along
+  band's MATCH opens the same screen). EXPORT NAM in the top bar opens the export panel (phase 12).
+- *The screen holds its own inputs (v0.2.1 Task D).* Left column: **1 - REFERENCE SONG** (SONG FILE... / STEMS FOLDER...,
+  a drop anywhere on the screen, the separation progress, a refused folder and the model-missing install command in place),
+  **2 - YOUR DI** (REC / STOP on the same recorder as the take band, and a take picker, newest first: choosing a take makes
+  it the match DI, the same `MatchSettings` selection the band's USE FOR MATCH sets; a take that finishes while the screen is
+  open becomes the DI; the slot right of REC / STOP is reserved for IMPORT DI...), then the tools and **START MATCH**. START
+  MATCH is enabled only with a song and a DI; its caption says what is missing ("load a song first", then "record or import a
+  DI"). The pickers, validation, drops and status line are `SongInput.*`, shared with the play-along panel. REC needs nothing
+  but a prepared recorder (no song, no host transport): a take without a song has no position in it and the matcher searches.
 
 **EXPORT NAM** moved to its own panel in phase 12 (see "NAM export (phase 12)" below); `MatchScreen` is MATCH only. The
 export source (the auditioned / applied candidate's resolved file, else the current preset written to `<jobs>/inputs/`) and
@@ -518,8 +581,8 @@ child written at test time (`plugin/tests/fake_tools.h`, a Python script that an
 `--progress-json`, writes progress.json, log lines, result.json and presets, and can wait on gate files): progress in both
 modes, the command line, result list, cancel (SIGTERM and the SIGKILL escalation), failure message, missing tools, re-attach to
 a running and a finished job, a re-attached cancel, a child that floods the pipe, export progress; settings persistence;
-audition / A-B / apply; the plugin-mode gating) and the editor tests in `plugin/tests/test_editor.cpp` (the band, the
-Standalone-only buttons, the missing-tool message, a job that survives the editor, and the screenshots
+audition / A-B / apply; two-instance job isolation) and the editor tests in `plugin/tests/test_editor.cpp` (the band, the
+MATCH in plugin mode, the missing-tool message, a job that survives the editor, and the screenshots
 `build/screenshots/sawblade_record_armed_1x.png`, `sawblade_match_progress_1x.png`, `sawblade_match_results_1x.png`; the export screenshot moved with the export panel).
 The 6a.1 tests add `[twopass]`, `[prune]` and `[topbar]` cases (the fake child understands
 `--quick` / `--thorough`, can hide them from `--help`, writes different results per pass and can make the thorough best
@@ -527,7 +590,7 @@ differ by a level offset) and the screenshots `sawblade_match_preview_refining_1
 All test data is synthesised into temp dirs; `SAWBLADE_DATA_DIR` keeps the default
 locations out of the home folder.
 
-**Known limits.** MATCH is Standalone-only (EXPORT NAM is not). The take list is rescanned when the recorder changes it and every 10 s while the panel is open. Takes and export job folders are never deleted by the plugin; match job folders are pruned as described above (5 most recent takes).
+**Known limits.** The take list is rescanned when the recorder changes it and every 10 s while the panel is open. Takes and export job folders are never deleted by the plugin; match job folders are pruned as described above (5 most recent takes).
 
 ### NAM export (phase 12)
 
@@ -606,7 +669,7 @@ A skinned prototype of the main rig screen (`design/mockups/RigReal.dc.html`, sp
 `docs/specs/phase2_5_skin.md`); the final UI is the user's design. A fixed 1280 x 800 design laid out in one
 content component that the editor scales with an `AffineTransform` (resizable, fixed 1.6 aspect, 640x400 to
 2560x1600). It reads `status()` and the APVTS only. Layout: top bar (preset button opening the preset file chooser,
-latency chip, LIVE / STUDIO chip, A/B compare, previous / next preset, MATCH (Standalone: opens the MATCH screen; plugin: opens the play-along panel's record + match area), EXPORT NAM (opens the export panel), rig area (amp heads, cab, pedalboard
+latency chip, LIVE / STUDIO chip, A/B compare, previous / next preset, MATCH (opens the MATCH screen), EXPORT NAM (opens the export panel), rig area (amp heads, cab, pedalboard
 with two pedals, footswitches and LEDs; click a piece to select it) and an inspector (BLEND, MASTER and POST EQ
 knobs; all 12 parameters are bound to exactly one knob each outside the rig panel). The top bar also carries the gear button (title
 "Settings", after PLAY ALONG) that toggles the Settings overlay (below). To make room for it the preset button is 170

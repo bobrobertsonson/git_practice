@@ -84,6 +84,14 @@ pedals for 1 or both below." Build to it with the existing skin (no new art); th
   blend presets; CAB button and cab chip open the cab page; everything the old cab area did is reachable on the
   page (mouse-driven); screenshots of the main page (single, blend) and the cab page in the report.
 
+## Task E — export panel shows what is not in the NAM model
+
+The matcher phase v0.4M (Task E) writes `exportNotes` for every NAM export: each stage left out of the trained model
+(bus comp, gate, IR for no-cab, excluded EQ/filters, trim) with hardware-usable settings. The plugin's EXPORT NAM
+panel shows that list before and after training, in plain words ("add a compressor after the loader: threshold …,
+ratio …, attack …, release …"), with a COPY button. Test: a preset with gate + fast bus comp shows both with the
+right numbers.
+
 ## Out of scope (propose in the report)
 
 Final visual design of the main and cab pages (the user designs it);

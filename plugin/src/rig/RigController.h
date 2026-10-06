@@ -71,7 +71,8 @@ class RigController {
   // Undo of the last BLEND fill: restores the pre-BLEND preset (also after the asynchronous amp swap). There is ONE entry: the
   // pre-BLEND preset and the preset the fill (and its swap) left. undo() works only while the rig still is exactly that; any other
   // edit (path A, a parameter, BLEND off, path B's blocks) or a user preset load drops the entry, and undo() then returns false.
-  bool canUndo() const noexcept { return undo_.has_value(); }
+  // An applied match candidate (PresetAudition::apply) is the same kind of entry: pre = the preset before the audition started.
+  bool canUndo();
   bool undo();
   BodyFill& bodyFill() noexcept { return body_; }
 
@@ -106,6 +107,8 @@ class RigController {
       if (fn) fn();
     }
   };
+  void syncLoadSerial();
+  void adoptAppliedMatch();
   void applyMonitor();
   void resetTransient();
   AlignResult measuredAlign() const;

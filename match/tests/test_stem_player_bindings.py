@@ -190,7 +190,7 @@ def test_load_stems_directory(tmp_path):
     assert ss.sample_rate == FS
     assert ss.present == ["drums", "other", "guitar"]
     assert ss.length == 4800  # 4410 frames at 44.1 kHz -> 4800 at 48 kHz
-    assert any("piano.wav" in w for w in ss.warnings)
+    assert not any("piano.wav" in w for w in ss.warnings)  # piano is a recognised stem name: no warning
     p = core.StemPlayer()
     p.prepare(FS, 256, 0)
     p.set_stem_set(ss)

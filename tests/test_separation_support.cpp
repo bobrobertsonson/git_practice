@@ -130,6 +130,9 @@ TEST_CASE("ModelStore: directory resolution", "[separation][modelstore]") {
     REQUIRE(std::string(separationModelId(SeparationModel::Htdemucs6s)) == "htdemucs_6s");
     REQUIRE(std::string(separationModelId(SeparationModel::Htdemucs4s)) == "htdemucs");
     REQUIRE(separationModelFetchCommand(SeparationModel::Htdemucs6s) == "match/.venv/bin/sawblade-models fetch --model htdemucs_6s");
+    REQUIRE(separationModelInstallCommand(SeparationModel::Htdemucs6s) ==
+            "match/.venv/bin/pip install -e 'match[models]' -c match/constraints-separation.txt && "
+            "match/.venv/bin/sawblade-models fetch --model htdemucs_6s");
     REQUIRE(ModelStore("/m").modelPath(SeparationModel::Htdemucs4s) == fs::path("/m/htdemucs-core-opset17.onnx"));
     REQUIRE(std::string(separationModelPinnedSha256(SeparationModel::Htdemucs4s)) ==
             "79189af3c584b1a2145ae5e4182a50c0204f88b76e2829bd27e4d4a88ede427d");
@@ -148,6 +151,11 @@ TEST_CASE("ModelStore: missing, mismatch, sidecar", "[separation][modelstore]") 
   REQUIRE_FALSE(missing.ok());
   REQUIRE_THAT(missing.message, ContainsSubstring("match/.venv/bin/sawblade-models fetch --model htdemucs_6s"));
   REQUIRE_THAT(missing.message, ContainsSubstring(store.modelPath(m).string()));
+  // One line, runnable on macOS from the repo root: install the extra, then fetch; or the update script.
+  REQUIRE_THAT(missing.message, ContainsSubstring("match/.venv/bin/pip install -e 'match[models]' -c match/constraints-separation.txt && "
+                                                  "match/.venv/bin/sawblade-models fetch --model htdemucs_6s"));
+  REQUIRE_THAT(missing.message, ContainsSubstring("scripts/mac_update.sh"));
+  REQUIRE(missing.message.find('\n') == std::string::npos);
 
   writeText(store.modelPath(m), "pretend onnx bytes");
   const ModelStatus bad = store.check(m);  // no sidecar, not the pinned hash

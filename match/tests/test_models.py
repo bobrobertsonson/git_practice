@@ -156,6 +156,18 @@ def test_status_output(tmp_path, capsys):
     assert "htdemucs_6s: missing" in out and "match/.venv/bin/sawblade-models fetch --model htdemucs_6s" in out
 
 
+def test_status_model_exit_code(tmp_path, capsys):
+    assert cli.main(["status", "--model", "htdemucs_6s", "--dir", str(tmp_path)]) == 1
+    assert "missing" in capsys.readouterr().out
+    f = paths.onnx_path("htdemucs_6s", tmp_path)
+    f.write_bytes(b"x")
+    assert cli.main(["status", "--model", "htdemucs_6s", "--dir", str(tmp_path)]) == 1   # no sidecar: not verified
+    store.write_sidecar("htdemucs_6s", tmp_path, store.sha256_file(f))
+    assert cli.main(["status", "--model", "htdemucs_6s", "--dir", str(tmp_path)]) == 0
+    assert "present and verified" in capsys.readouterr().out
+    assert cli.main(["status", "--model", "htdemucs", "--dir", str(tmp_path)]) == 1   # judged on its own
+
+
 def test_status_uses_env_dir(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("SAWBLADE_MODELS_DIR", str(tmp_path / "e"))
     cli.main(["status"])

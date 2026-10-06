@@ -53,6 +53,16 @@ four suspects are each a deliverable, not a hypothesis:
 Report each suspect's measured contribution (feel terms + A-weighted error with it on vs off) on the synthetic
 known answer and, after the user runs them, on Bloodbath HM2 and UBR.
 
+## Task B4 — pre-EQ before the drive (user, 2026-10-06)
+
+The chain has a per-path pre-EQ (DI → gate → **pre-EQ** → blocks) but the matcher never searches it (space.py:
+"no fixed pre-EQ"). Add a small grid, since everything before a NAM block forces a re-render: HPF {off, 80, 110, 150 Hz}
+(12 dB/oct), optional mid peak {off, +3, +6 dB at 700–900 Hz, Q 0.8}, optional low shelf {0, −3 dB at 200 Hz} —
+pruned on the screen excerpt (≤ 12 combos per top candidate), full renders only for the winners. Also use it as
+the **guitar-difference** correction: when the user's DI is darker/bassier than typical (DI spectral tilt vs the
+reference's implied input), widen the grid accordingly. Report its contribution with `--ablate preeq`. NAM
+export: pre-EQ is linear and before the amp, so it is trained into the model (state it in export notes).
+
 ## Task B3 — IR library: the user's own catalog + a wide TONE3000 sweep (user, 2026-10-06)
 
 User: "I have a large catalog of IRs, but we could allow a huge gamut of them from TONE3000."

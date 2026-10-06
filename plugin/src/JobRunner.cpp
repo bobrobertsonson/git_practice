@@ -523,6 +523,7 @@ struct JobRunner::Job {
   fs::path exportsRoot, sourcePreset;  // export
   MatchSettings* settings = nullptr;   // export: the wall time of a finished run is recorded there
   std::string exe;
+  std::string owner;                      // the instance that started it (job.json "owner"; "" = unscoped)
   std::vector<std::string> args;          // after the executable
   bool wantProgressJson = false;          // match: probe `--help` for --progress-json, --quick and --thorough
   bool wantQuickPass = false;             // startMatch: run --quick (then --thorough) if the tool lists both
@@ -591,6 +592,7 @@ struct JobRunner::Job {
     }
     j["version"] = 1;
     j["kind"] = jobKindName(kind);
+    if (!owner.empty()) j["owner"] = owner;
     j["state"] = jobStateName(s.state);
     j["pid"] = pid.load();
     j["pgid"] = pgid.load();
@@ -617,6 +619,7 @@ struct JobRunner::Job {
     if (kind == JobKind::Match) {
       json r = {{"di", request.di.string()}, {"ref", request.ref.string()}, {"referenceLabel", request.referenceLabel}, {"diLabel", request.diLabel}};
       if (request.offsetMs) r["offsetMs"] = *request.offsetMs;
+      if (request.matched) r["matched"] = true;
       j["request"] = std::move(r);
     }
     if (kind == JobKind::Export) {
@@ -831,6 +834,14 @@ fs::path JobRunner::jobsDir() const {
   std::lock_guard<std::mutex> lk(m_);
   return jobsDir_;
 }
+void JobRunner::setOwner(const std::string& owner) {
+  std::lock_guard<std::mutex> lk(m_);
+  owner_ = owner;
+}
+std::string JobRunner::owner() const {
+  std::lock_guard<std::mutex> lk(m_);
+  return owner_;
+}
 
 ToolCheck JobRunner::checkTools(JobKind kind) const {
   ToolCheck t;
@@ -909,6 +920,10 @@ std::shared_ptr<JobRunner::Job> JobRunner::makeMatchJob(const MatchRequest& r) c
     std::snprintf(buf, sizeof buf, "%.3f", *r.offsetMs);
     job->args.insert(job->args.end(), {"--offset-ms", buf});
   }
+  // A DI that is the same performance as the reference (an imported bounce of the song's own recording) is a matched pair:
+  // the matcher reads the offset only with --matched (it time-aligns the STFT term), and with no offset it searches the whole
+  // song for where the DI starts. Anything else stays unmatched, where an offset is not used.
+  if (r.matched) job->args.insert(job->args.end(), {"--matched", "mono"});
   job->snap.reference = r.referenceLabel.empty() ? r.ref.filename().string() : r.referenceLabel;
   job->snap.di = r.diLabel.empty() ? r.di.filename().string() : r.diLabel;
   return job;
@@ -984,6 +999,7 @@ bool JobRunner::launchLocked(Slot sl, std::shared_ptr<Job> job, std::string* err
     return false;
   }
   job->dir = dir;
+  job->owner = owner_;
   if (kind == JobKind::Match) {
     job->outDir = dir;
     job->args.insert(job->args.end(), {"--out", dir.string()});
@@ -1342,6 +1358,7 @@ std::shared_ptr<JobRunner::Job> JobRunner::adoptJob(JobKind kind, const fs::path
   job->kind = kind;
   job->owned = false;
   job->dir = dir;
+  if (const auto o = j.find("owner"); o != j.end() && o->is_string()) job->owner = o->get<std::string>();
   job->outDir = j.value("outDir", dir.string());
   job->progressFile = dir / "progress.json";
   job->grace = std::chrono::milliseconds(kind == JobKind::Export ? exportGraceMs_.load() : graceMs_.load());
@@ -1358,6 +1375,7 @@ std::shared_ptr<JobRunner::Job> JobRunner::adoptJob(JobKind kind, const fs::path
     job->request.referenceLabel = it->value("referenceLabel", std::string());
     job->request.diLabel = it->value("diLabel", std::string());
     if (auto o = it->find("offsetMs"); o != it->end() && o->is_number()) job->request.offsetMs = o->get<double>();
+    job->request.matched = it->value("matched", false);
   }
   const std::string state = j.value("state", std::string());
   job->snap.kind = kind;
@@ -1472,26 +1490,45 @@ void JobRunner::adoptMatchGroup(std::shared_ptr<Job> job, const std::vector<fs::
   if (settings_.autoRefine()) startRefineLocked(job);
 }
 
+// m_ held. An owned runner adopts only jobs whose job.json names it; an unscoped one adopts any.
+bool JobRunner::ownedByThisRunner(const fs::path& dir) const {
+  if (owner_.empty()) return true;
+  const json j = json::parse(readFile(dir / "job.json"), nullptr, /*allow_exceptions=*/false);
+  if (!j.is_object()) return false;
+  const auto it = j.find("owner");
+  return it != j.end() && it->is_string() && it->get<std::string>() == owner_;
+}
+
 void JobRunner::attachExisting() {
   std::lock_guard<std::mutex> lk(m_);
+  if (export_ && (match_ || refine_)) return;  // every slot already has a job
   std::error_code ec;
   if (!fs::is_directory(jobsDir_, ec)) return;
-  std::vector<fs::path> dirs;
-  for (fs::directory_iterator it(jobsDir_, ec), end; !ec && it != end; it.increment(ec))
-    if (it->is_directory(ec) && fs::exists(it->path() / "job.json", ec)) dirs.push_back(it->path());
-  std::sort(dirs.begin(), dirs.end(), std::greater<>());
   auto endsWith = [](const std::string& n, const std::string& suffix) { return n.size() > suffix.size() && n.compare(n.size() - suffix.size(), suffix.size(), suffix) == 0; };
+  // The cheap name filter first; ownership (a job.json read) only for the candidates actually looked at, newest first.
+  std::vector<fs::path> exportDirs, matchDirs;
+  for (fs::directory_iterator it(jobsDir_, ec), end; !ec && it != end; it.increment(ec)) {
+    if (!it->is_directory(ec)) continue;
+    const std::string n = it->path().filename().string();
+    if (endsWith(n, "-export")) exportDirs.push_back(it->path());
+    else if (endsWith(n, "-match")) matchDirs.push_back(it->path());
+  }
+  std::sort(exportDirs.begin(), exportDirs.end(), std::greater<>());
+  std::sort(matchDirs.begin(), matchDirs.end(), std::greater<>());
   if (!export_)
-    for (const auto& d : dirs)
-      if (endsWith(d.filename().string(), "-export")) {
+    for (const auto& d : exportDirs)
+      if (fs::exists(d / "job.json", ec) && ownedByThisRunner(d)) {
         export_ = adoptJob(JobKind::Export, d);
         if (export_) break;
       }
   if (!match_ && !refine_)
-    for (const auto& d : dirs)
-      if (endsWith(d.filename().string(), "-match")) {
+    for (const auto& d : matchDirs)
+      if (fs::exists(d / "job.json", ec) && ownedByThisRunner(d)) {
         if (auto job = adoptJob(JobKind::Match, d)) {
-          adoptMatchGroup(std::move(job), dirs);
+          std::vector<fs::path> owned;
+          for (const auto& m : matchDirs)
+            if (fs::exists(m / "job.json", ec) && ownedByThisRunner(m)) owned.push_back(m);
+          adoptMatchGroup(std::move(job), owned);
           break;
         }
       }
@@ -1609,10 +1646,12 @@ bool recordedRunning(const json& j, const fs::path& dir) {
 
 void JobRunner::prune(int keepTakes) {
   fs::path root;
+  std::string owner;
   std::vector<fs::path> live;  // jobs this runner is running right now
   {
     std::lock_guard<std::mutex> lk(m_);
     root = jobsDir_;
+    owner = owner_;
     std::vector<std::shared_ptr<Job>> mine{match_, refine_};
     mine.insert(mine.end(), graveyard_.begin(), graveyard_.end());
     for (const auto& j : mine) {
@@ -1640,6 +1679,9 @@ void JobRunner::prune(int keepTakes) {
     try {
       const json j = json::parse(readFile(it->path() / "job.json"), nullptr, /*allow_exceptions=*/false);
       if (!j.is_object()) continue;  // not a job folder (or being written): never touched
+      // An owned runner prunes only its own folders and ownerless (legacy) ones: never another live instance's job.
+      if (!owner.empty())
+        if (auto o = j.find("owner"); o != j.end() && o->is_string() && o->get<std::string>() != owner) continue;
       if (auto k = j.find("kind"); k == j.end() || !k->is_string() || k->get<std::string>() != "match") continue;
       std::string take = takeOf(j);
       if (take.empty()) take = "dir:" + name;

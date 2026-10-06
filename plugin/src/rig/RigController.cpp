@@ -97,13 +97,19 @@ void RigController::resetTransient() {
   lastBlend_ = b > 0.0 ? b : 0.5;
 }
 
-void RigController::sync() {
+// A user preset load (serial bump) resets the transient state and drops the undo entry.
+void RigController::syncLoadSerial() {
   if (const auto serial = proc_.userLoadSerial(); serial != loadSerial_) {
     loadSerial_ = serial;
     resetTransient();
     undo_.reset();  // another preset: the BLEND fill can no longer be undone, and its suggestion no longer applies
     body_.cancel();
   }
+}
+
+void RigController::sync() {
+  syncLoadSerial();
+  adoptAppliedMatch();
   body_.tick();
   if (!pending_.empty()) return;
   const Preset p = proc_.editBasePreset();
@@ -142,6 +148,21 @@ void RigController::setTopology(Topology t) {
   const Preset post = proc_.editBasePreset();
   undo_ = UndoEntry{cur, post};  // replaces any older entry: a second fill never resurrects the first one's snapshot
   body_.begin(post);
+}
+
+// An applied match candidate is one undo step too (PresetAudition::apply records it; this is where the editor adopts it). It
+// replaces any older entry, exactly as a BLEND fill does.
+void RigController::adoptAppliedMatch() {
+  if (auto step = proc_.audition().takeUndoStep(proc_.userLoadSerial())) {
+    undo_ = UndoEntry{std::move(step->pre), std::move(step->post)};
+    body_.cancel();
+  }
+}
+
+bool RigController::canUndo() {
+  syncLoadSerial();  // (the apply's own load bumped the serial: that must not drop its entry)
+  adoptAppliedMatch();  // an apply since the last refresh tick counts
+  return undo_.has_value();
 }
 
 bool RigController::undo() {

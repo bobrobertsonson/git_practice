@@ -502,7 +502,7 @@ void step01Main(Walk& w) {
   auto* selector = buttonTitled(*w.ed, "Preset");
   REQUIRE(selector != nullptr);
   CHECK(pumpUntil([&] { return selector->getButtonText() == "UK DEATH (BOLT THROWER-STYLE)"; }, 3000));
-  CHECK(w.proc.matchEnabled());  // Standalone
+  CHECK(w.proc.playAlong().standalone());
   const auto o = w.overlays();
   CHECK(o.count() == 0);
   CHECK_FALSE(o.settings);
@@ -856,7 +856,7 @@ void step16MatchProgress(Walk& w) {
   CHECK(anyLabelContains(screen, "'other' stem"));
   CHECK(anyLabelContains(screen, "Gatecreeper"));
   CHECK(anyLabelContains(screen, take));
-  CHECK(anyLabelContains(screen, "into the song"));  // the take was recorded with the backing running
+  CHECK(anyLabelContains(screen, "matched by tone"));  // the take was recorded with the backing running
   auto* start = w.matchButton("START MATCH");
   REQUIRE(start != nullptr);
   REQUIRE(start->isEnabled());
