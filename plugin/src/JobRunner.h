@@ -151,6 +151,7 @@ struct MatchRequest {
   std::filesystem::path di;            // DI take WAV
   std::filesystem::path ref;           // reference audio (a stem file)
   std::optional<double> offsetMs;      // matcher sign; none = search
+  bool matched = false;                // the DI is the same performance as the reference: --matched mono (offsetMs is then used)
   std::string referenceLabel, diLabel; // for the screen
 };
 struct ExportRequest {

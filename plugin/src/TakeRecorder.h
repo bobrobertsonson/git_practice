@@ -40,6 +40,16 @@ struct TakeStartInfo {
   double stemSampleRate = 0.0;
 };
 
+// Sidecar `imported` (a take made from an audio file by IMPORT DI..., not recorded): where it came from, which channel of the
+// file became the mono take, whether it is the same performance as the song, and where it starts in the song.
+struct ImportedInfo {
+  bool present = false;
+  std::string source;               // the original file's name (not its path)
+  std::string channel;              // "mono" | "left" | "right" | "sum"
+  bool samePerformance = false;     // a bounce of the recording the song was made from: the matcher may time-align it
+  std::optional<double> offsetMs;   // where the DI starts in the song; set only for samePerformance, none = "don't know"
+};
+
 // One finished take on disk (WAV + sidecar).
 struct TakeInfo {
   std::string name;                 // file stem
@@ -55,10 +65,12 @@ struct TakeInfo {
   double stemSampleRate = 0.0;
   std::string songFolder;
   std::string createdUtc;
+  ImportedInfo imported;            // present = an imported file
 
   double lengthSeconds() const { return sampleRate > 0.0 ? static_cast<double>(lengthSamples) / sampleRate : 0.0; }
   // The matcher's --offset-ms (where the DI starts inside the song); none when no song was playing.
   std::optional<double> offsetMs() const {
+    if (imported.present) return imported.samePerformance ? imported.offsetMs : std::nullopt;
     if (!hasPlayAlong || !running || stemSampleRate <= 0.0) return std::nullopt;
     return 1000.0 * static_cast<double>(stemSampleIndex) / stemSampleRate;
   }
@@ -104,6 +116,12 @@ class TakeRecorder {
   std::vector<TakeInfo> listTakes() const;  // finished takes, newest first
   bool renameTake(const std::string& name, const std::string& newName, std::string* error = nullptr);
   bool removeTake(const std::string& name);
+
+  // IMPORT DI...: writes `mono` (already decoded, one channel, at `sampleRate`) into the takes folder as a normal take: the same
+  // 32-bit float mono WAV and the same sidecar a recording makes (playAlong null, no overruns) plus an `imported` object from `info` (always written, so a listing reads the take as imported).
+  // The take is named after info.source's stem (made unique with -2, -3...). Any thread except the audio thread; the WAV is
+  // written first and the sidecar last, so a listing never sees half a take. False + *error on failure (nothing is left behind).
+  bool importTake(const std::vector<float>& mono, double sampleRate, ImportedInfo info, std::string* name, std::string* error = nullptr);
 
   bool waitIdle(std::chrono::milliseconds timeout = std::chrono::milliseconds(10000));  // armed -> ... -> idle, writer drained
   std::size_t ringCapacity() const noexcept { return capacity_; }

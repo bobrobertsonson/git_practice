@@ -619,6 +619,7 @@ struct JobRunner::Job {
     if (kind == JobKind::Match) {
       json r = {{"di", request.di.string()}, {"ref", request.ref.string()}, {"referenceLabel", request.referenceLabel}, {"diLabel", request.diLabel}};
       if (request.offsetMs) r["offsetMs"] = *request.offsetMs;
+      if (request.matched) r["matched"] = true;
       j["request"] = std::move(r);
     }
     if (kind == JobKind::Export) {
@@ -919,6 +920,10 @@ std::shared_ptr<JobRunner::Job> JobRunner::makeMatchJob(const MatchRequest& r) c
     std::snprintf(buf, sizeof buf, "%.3f", *r.offsetMs);
     job->args.insert(job->args.end(), {"--offset-ms", buf});
   }
+  // A DI that is the same performance as the reference (an imported bounce of the song's own recording) is a matched pair:
+  // the matcher reads the offset only with --matched (it time-aligns the STFT term), and with no offset it searches the whole
+  // song for where the DI starts. Anything else stays unmatched, where an offset is not used.
+  if (r.matched) job->args.insert(job->args.end(), {"--matched", "mono"});
   job->snap.reference = r.referenceLabel.empty() ? r.ref.filename().string() : r.referenceLabel;
   job->snap.di = r.diLabel.empty() ? r.di.filename().string() : r.diLabel;
   return job;
@@ -1370,6 +1375,7 @@ std::shared_ptr<JobRunner::Job> JobRunner::adoptJob(JobKind kind, const fs::path
     job->request.referenceLabel = it->value("referenceLabel", std::string());
     job->request.diLabel = it->value("diLabel", std::string());
     if (auto o = it->find("offsetMs"); o != it->end() && o->is_number()) job->request.offsetMs = o->get<double>();
+    job->request.matched = it->value("matched", false);
   }
   const std::string state = j.value("state", std::string());
   job->snap.kind = kind;

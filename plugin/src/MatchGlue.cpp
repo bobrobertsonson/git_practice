@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <fstream>
@@ -64,6 +65,15 @@ std::string recordStateText(SawbladeProcessor& p) {
   return b;
 }
 
+std::string takeOriginText(const TakeInfo& t) {
+  if (t.imported.present) return "IMPORTED";
+  const auto off = t.offsetMs();
+  if (!off) return "no song";
+  char buf[48];
+  std::snprintf(buf, sizeof buf, "@ %.1f s", *off / 1000.0);
+  return buf;
+}
+
 MatchPlan planMatch(SawbladeProcessor& p) {
   MatchPlan plan;
   const std::string folder = p.playAlong().activeStemsDir();
@@ -86,7 +96,22 @@ MatchPlan planMatch(SawbladeProcessor& p) {
   plan.request.referenceLabel = activeSongName(p) + " (" + plan.reference.label + ")";
   plan.request.diLabel = plan.take->name;
   const bool sameSong = plan.take->songFolder.empty() || fs::path(plan.take->songFolder) == fs::path(folder);
-  if (const auto off = plan.take->offsetMs(); off && sameSong) {
+  if (plan.take->imported.present) {
+    // An imported file: its position in the song is used only when it is the same performance as the song (a matched pair,
+    // `--matched mono`); otherwise it is a different performance and the matcher matches tone, not timing.
+    const auto& im = plan.take->imported;
+    if (im.samePerformance) {
+      plan.request.matched = true;
+      if (im.offsetMs) {
+        plan.request.offsetMs = *im.offsetMs;
+        plan.offsetNote = "Imported, same performance as the song: starts " + seconds(*im.offsetMs / 1000.0) + " into it.";
+      } else {
+        plan.offsetNote = "Imported, same performance as the song: the matcher will search the whole song for where it starts.";
+      }
+    } else {
+      plan.offsetNote = "Imported file: a different performance from the song, so its timing is not used.";
+    }
+  } else if (const auto off = plan.take->offsetMs(); off && sameSong) {
     plan.request.offsetMs = *off;
     plan.offsetNote = "Starts " + seconds(*off / 1000.0) + " into the song (from the take).";
   } else if (off && !sameSong) {
