@@ -12,6 +12,8 @@
 #include <nlohmann/json.hpp>
 
 #include "ExportPanel.h"
+#include "about/AboutBox.h"
+#include "pedals/AdvancedDrawer.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "SettingsEnv.h"
@@ -339,7 +341,38 @@ TEST_CASE("amp head: Cmd / Ctrl + Z does not bubble into an undo from a focused 
   CHECK_FALSE(bubble(*rig.ed));
   CHECK(rig.proc.currentPreset() == filled);
   CHECK(rig.ed->rigController().canUndo());
+  // About (opened through the settings panel's button, then the settings panel closed: the about box alone is open).
+  rig.ed->setSettingsOpen(true);
+  for (auto* b : findAll<juce::Button>(*rig.ed))
+    if (b->getTitle() == "About Sawblade...") {
+      const auto c = b->getLocalBounds().toFloat().getCentre();
+      juce::Component& comp = *b;
+      comp.mouseDown(ev(comp, c, c));  // a mouse click, as the About test in test_editor.cpp does
+      comp.mouseUp(ev(comp, c, c));
+    }
+  REQUIRE(rig.ed->aboutOpen());
   rig.ed->setSettingsOpen(false);
+  if (rig.ed->aboutOpen()) {
+    CHECK_FALSE(rig.ed->keyPressed(undoKey));
+    CHECK_FALSE(bubble(*rig.ed));
+  }
+  rig.ed->setSettingsOpen(true);
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));  // about + settings open
+  rig.ed->setSettingsOpen(false);
+  // The preset browser.
+  rig.ed->setBrowserOpen(true);
+  REQUIRE(rig.ed->browserOpen());
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  CHECK_FALSE(bubble(*rig.ed));
+  rig.ed->setBrowserOpen(false);
+  // The advanced pedal drawer.
+  auto drawers = findAll<AdvancedDrawer>(*rig.ed);
+  REQUIRE(drawers.size() == 1);
+  drawers[0]->setOpen(true, /*animate=*/false);
+  REQUIRE(drawers[0]->isVisible());
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  CHECK_FALSE(bubble(*rig.ed));
+  drawers[0]->setOpen(false, /*animate=*/false);
   rig.ed->openExportPanel();
   CHECK_FALSE(rig.ed->keyPressed(undoKey));
   rig.ed->setPlayAlongOpen(true);
@@ -355,7 +388,36 @@ TEST_CASE("amp head: Cmd / Ctrl + Z does not bubble into an undo from a focused 
   rig.ed->setMicPageOpen(false);
   CHECK(rig.proc.currentPreset() == filled);
 
-  // 3. Nothing open and no text focus: it does undo.
+  // Close what is still open (the about box has its own CLOSE; the other overlays close with the next one).
+  for (auto* b : findAll<juce::Button>(*rig.ed))
+    if (b->getTitle() == "CLOSE" && b->findParentComponentOfClass<about::AboutBox>() != nullptr) {
+      const auto c = b->getLocalBounds().toFloat().getCentre();
+      juce::Component& comp = *b;
+      comp.mouseDown(ev(comp, c, c));
+      comp.mouseUp(ev(comp, c, c));
+      break;
+    }
+  rig.ed->setSettingsOpen(false);
+  rig.ed->setPlayAlongOpen(false);
+  rig.ed->setMicPageOpen(false);
+  rig.ed->setBrowserOpen(false);
+  rig.ed->exportPanel().setVisible(false);
+  juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+  CHECK_FALSE(rig.ed->aboutOpen());
+
+  // 3. The RIG editor is deliberately not an overlay for this purpose: with it open the chord undoes the fill (that is where path B is edited).
+  rig.ed->setRigEditorOpen(true);
+  REQUIRE(rig.ed->rigEditorOpen());
+  CHECK(rig.ed->keyPressed(undoKey));
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(rig.proc.currentPreset() == pre);
+  CHECK_FALSE(rig.ed->rigController().canUndo());
+  rig.ed->setRigEditorOpen(false);
+  rig.ed->rigController().setTopology(rig::Topology::Blend);  // fill again for step 4
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  REQUIRE(rig.ed->rigController().canUndo());
+
+  // 4. Nothing open and no text focus: it does undo.
   rig.ed->setRigEditorOpen(false);
   rig.ed->setMicPageOpen(false);
   rig.ed->setBrowserOpen(false);

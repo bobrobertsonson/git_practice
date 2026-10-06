@@ -445,6 +445,9 @@ class SawbladeEditor::Content : public juce::Component {
   }
   // The component that has the keyboard focus (tests replace it: a headless X server gives no window, so no focus).
   std::function<juce::Component*()> focusProbe_ = [] { return juce::Component::getCurrentlyFocusedComponent(); };
+  // Overlays that cover or take over the editor's context: Cmd / Ctrl + Z must not undo underneath them. The RIG editor (rigPanel_) is NOT
+  // in this list on purpose: it is where path B's BLEND fill is visible and edited, so undoing the fill from there is the point.
+  // New overlays: add them here (or document why not) and to the test "does not bubble into an undo" in test_amp_head.cpp.
   bool anyOverlayOpen() const {
     const auto vis = [](const juce::Component* c) { return c != nullptr && c->isVisible(); };
     return vis(drawer_.get()) || vis(settingsPanel_.get()) || vis(about_.get()) || vis(presetBrowser_.get()) || vis(screen_.get()) ||
@@ -564,6 +567,7 @@ class SawbladeEditor::Content : public juce::Component {
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
   juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, settingsBtn_;
   juce::uint32 learnShownUntil_ = 0;
+  // New overlays: add them to anyOverlayOpen() (Cmd / Ctrl + Z) or document why not.
   std::array<std::unique_ptr<rig::AmpHead>, 2> ampHeads_;
   std::unique_ptr<PedalFace> face_;
   std::unique_ptr<AdvancedDrawer> drawer_;
