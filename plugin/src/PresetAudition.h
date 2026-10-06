@@ -8,6 +8,7 @@
 // another candidate keeps A. Apply makes the candidate the current preset (it is what a normal preset load
 // would leave), Revert goes back to A.
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -36,6 +37,14 @@ class PresetAudition {
   bool apply();      // false when no audition is active; leaves the candidate loaded and ends the audition
   bool revert();     // back to A and ends the audition
   State state() const { return state_; }
+  // The one undo step an apply() leaves behind (the rig's Cmd / Ctrl + Z, RigController::undo): the preset that was current when
+  // the audition started and the applied candidate as loaded. takeUndoStep() hands it out once; it is dropped (nullopt) when a
+  // user preset load happened since the apply (`userLoadSerial` is the processor's current serial). Auditions and A/B leave none.
+  struct UndoStep {
+    Preset pre, post;
+    std::uint64_t loadSerial = 0;
+  };
+  std::optional<UndoStep> takeUndoStep(std::uint64_t userLoadSerial);
   // The candidate file whose preset is the current one (auditioned-on-B or applied), for the exporter.
   std::optional<std::filesystem::path> currentCandidateFile() const;
   // The same, but only for a candidate that was applied (not one that is merely being auditioned).
@@ -56,6 +65,7 @@ class PresetAudition {
   mutable bool cacheResult_ = false;
   State state_;
   Preset original_;
+  std::optional<UndoStep> undoStep_;
   std::filesystem::path applied_;
   std::string appliedName_;
 };

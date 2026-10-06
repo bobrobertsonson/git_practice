@@ -50,12 +50,22 @@ bool PresetAudition::apply() {
   applied_ = state_.candidate;
   appliedName_ = state_.candidateName;
   state_ = State{};
+  // One undo step: A (the pre-audition preset, not an auditioned candidate) -> the candidate as loaded. Taken after the load so
+  // the serial is the one the load left; the editor's RigController adopts it (it owns the undo entry).
+  undoStep_ = UndoStep{original_, proc_.editBasePreset(), proc_.userLoadSerial()};
   // Applying is the one point where the audition becomes the instance's saved state: the whole preset was swapped by a
   // single load (every parameter notified the host as a preset load does), and the non-parameter part of the state (the
   // blocks, captures, cab) changed too, so the host is told its project needs saving. (Auditioning and A/B are previews
   // and do not set this.)
   proc_.updateHostDisplay(juce::AudioProcessor::ChangeDetails().withNonParameterStateChanged(true));
   return true;
+}
+
+std::optional<PresetAudition::UndoStep> PresetAudition::takeUndoStep(std::uint64_t userLoadSerial) {
+  std::optional<UndoStep> s = std::move(undoStep_);
+  undoStep_.reset();
+  if (s && s->loadSerial != userLoadSerial) return std::nullopt;
+  return s;
 }
 
 bool PresetAudition::revert() {

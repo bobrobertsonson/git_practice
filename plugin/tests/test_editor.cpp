@@ -3383,6 +3383,62 @@ TEST_CASE("match screen: PREVIEW with REFINING..., then a REFINED section; nothi
   CHECK(anyLabelContains(screen, "Applied #1 (refined best)"));
 }
 
+TEST_CASE("match screen: an applied candidate is ONE Cmd / Ctrl + Z step back to the pre-audition preset", "[editor][match][undo]") {
+  MatchRig rig;
+  prepareMatchTake(rig);
+  rig.tools.cfgTwoPass({{"gatesThorough", nlohmann::json::array({"g1"})}});
+  startTwoPass(rig);
+  MatchScreen& screen = rig.screen();
+  auto& list = resultsList(rig);
+  auto& rc = rig.ed->rigController();
+  const juce::KeyPress undoKey('z', juce::ModifierKeys::commandModifier, 0);
+  const Preset pre = rig.proc.currentPreset();
+
+  // Auditioning and A/B-ing leave no undo entry.
+  list.selectRow(1);
+  click(*rig.screenButton("AUDITION"));
+  REQUIRE(rig.proc.waitForLoader());
+  click(*rig.screenButton("A / B"));
+  REQUIRE(rig.proc.waitForLoader());
+  click(*rig.screenButton("A / B"));
+  REQUIRE(rig.proc.waitForLoader());
+  CHECK_FALSE(rc.canUndo());
+  rig.ed->closeAllOverlaysForTests();
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  rig.ed->openMatchScreen();
+
+  // APPLY (while B is loaded; the pre-audition preset is A, not an auditioned candidate).
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  screen.refresh();
+  const Preset applied = rig.proc.currentPreset();
+  CHECK(applied != pre);
+  CHECK(rc.canUndo());
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));  // the match screen is open: the chord does not undo underneath it ...
+  CHECK(rc.canUndo());                        // ... and does not consume the step
+  rig.ed->closeAllOverlaysForTests();
+  CHECK(rig.ed->keyPressed(undoKey));
+  REQUIRE(rig.proc.waitForLoader());
+  CHECK(rig.proc.currentPreset() == pre);
+  CHECK_FALSE(rc.canUndo());
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));  // one step only
+  CHECK(rig.proc.currentPreset() == pre);
+
+  // APPLY, then any edit: no undo (it would lose the edit).
+  rig.ed->openMatchScreen();
+  list.selectRow(1);
+  click(*rig.screenButton("AUDITION"));
+  REQUIRE(rig.proc.waitForLoader());
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  rc.edit([](Preset& p) { p.a.levelDb += 1.0; });
+  REQUIRE(rig.proc.waitForLoader());
+  const Preset edited = rig.proc.currentPreset();
+  rig.ed->closeAllOverlaysForTests();
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  CHECK(rig.proc.currentPreset() == edited);
+}
+
 TEST_CASE("match screen: an applied quick candidate that is the same chain as the refined best is promoted without a load", "[editor][match][twopass]") {
   MatchRig rig;
   prepareMatchTake(rig);
