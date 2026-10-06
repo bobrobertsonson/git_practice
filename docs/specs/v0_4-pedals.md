@@ -41,6 +41,12 @@ with the harmonic-profile term at ~40 dB on every model; v3 (7c) applied fixes b
 - A capture pedal has a generic face (existing skin): name, creator, licence tag, `CAPTURE · FIXED TONE`, a LEVEL
   knob and the bypass footswitch; no knob that does nothing. Where the pack has several knob settings, the
   pedal shows a setting selector (reuse the v0.2 ladder machinery where it fits; a plain list otherwise).
+- **Modeled and captured pedals must look different at a glance** (user, 2026-10-06). Rule, using the existing
+  skin only: modeled pedals keep their rendered faces; a capture pedal is a plain generic enclosure (flat panel,
+  no rendered art), a distinct outline colour and a "CAPTURE" badge on the face, the creator name where a model
+  pedal shows its circuit name. The same distinction applies in the + PEDAL picker (tabs + badge), the rig
+  editor slot strips and anywhere a pedal is listed. Test: every pedal widget exposes its kind and the capture
+  kind renders the badge. Propose dedicated capture-pedal art in the report (the user designs the final look).
 - Placement uses v0.3's per-slot level match, so a capture pedal drops in at matched loudness.
 - NAM-trainable as today (a capture pedal is a `nam` block); the export rules are unchanged.
 
