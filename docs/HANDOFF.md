@@ -82,6 +82,15 @@ htdemucs export, if re-exported). Env: `TONE3000_CLIENT_ID=<publishable t3k_pub_
 
 ## Open items, in priority order
 
+**User decision (2026-10-06): the core tone tool comes first** — rig, amp-head controls, blend, cab, EQ,
+presets, NAM export, and matching against clean guitar-only references (covers' guitar tracks, NTM amp
+tracks). Song separation / play-along / LOAD SONG polish is deferred. v0.2 (tweakable presets) finishes and
+merges first. v0.2.1 (branch `claude/sawblade-v0_2_1-match-in-host`, spec `docs/specs/v0_2_1-match_in_host.md`)
+is parked once its CI is green: MATCH-in-Logic (A, reviewer ACCEPT) and IMPORT DI (B) serve the core tool and
+are the first things to resume; the separation items (E model install, F/G LOAD SONG, D's song controls)
+wait. The 7-day usage limit was at `allowed_warning` on 2026-10-06 (resets 2026-10-12 21:40 UTC): one phase
+session at a time until then.
+
 - (a)–(c) **Closed (v0.1.3, merged 559048d; report `docs/specs/v0_1_3-macos_green_REPORT.md`, CI run 69 all green
    incl. macOS auval + pluginval AU/VST3 10).**
    - (a) ~~macOS CI 45 failures~~ — 39 aborts: a static `Settings` locked the core cache mutex after libc++ had
