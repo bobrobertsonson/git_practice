@@ -141,7 +141,7 @@ class RigController {
   int timerStarts_ = 0;
   SawbladeProcessor& proc_;
   BodyFill body_;
-  int gestures_ = 0;  // beginGesture() calls not yet ended
+  std::vector<SawbladeProcessor::GestureToken> gestureTokens_;  // beginGesture() calls not yet ended
   struct Pending {
     const void* key;  // non-null: a throttled edit, replaced in place by the next one with the same key
     EditFn fn;

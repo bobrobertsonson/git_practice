@@ -107,6 +107,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // and the engine built on the loader thread. Return false (and set *error) if parsing failed;
   // load failures that only show up while building are reported through status().error.
   // `undoable`: a user's load (preset browser, file chooser, resolve): recorded as an undo step of kind Load (see "undo / redo").
+  // The undoable path touches the history, which is message-thread data: `undoable = true` is for the MESSAGE THREAD only (the callers are UI
+  // callbacks); every other thread passes false.
   bool loadPresetFile(const std::filesystem::path& file, std::string* error = nullptr, bool undoable = false);
   bool loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error = nullptr,
                       bool restore = false);
@@ -176,16 +178,21 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void historyRecord(Preset before, const Preset& after, HistoryKind kind = HistoryKind::Edit);
   // A gesture (a drag) is one step: the preset at its start is compared with the rig at its end. Nested gestures are one gesture (the
   // outermost start counts); `before` is the preset a step should restore (default: the rig now).
-  void historyGestureBegin();
-  void historyGestureBegin(Preset before);
-  void historyGestureEnd();
+  // begin returns the token its end must pass back; an end whose gesture was aborted meanwhile (historyAbortGestures / historyClear) is ignored.
+  using GestureToken = std::uint64_t;
+  GestureToken historyGestureBegin();
+  GestureToken historyGestureBegin(Preset before);
+  void historyGestureEnd(GestureToken token);
   void historyAbortGestures();  // the editor is going away mid-drag
   bool historyInGesture() const;
   void historyClear();
   // Applies an asynchronous completion that belongs to the rig to every stored snapshot (no step).
   void patchHistory(const std::function<void(Preset&)>& f);
   // The rig controller's pending (debounced) edits: flushed before a gesture starts and before an undo / redo, so they are steps of their own.
-  void setHistoryFlusher(std::function<void()> f);
+  // `owner` identifies the setter (a controller): clearHistoryFlusher() only clears the flusher if it is still that owner's (two editors / a
+  // rebuilt controller must not drop each other's).
+  void setHistoryFlusher(std::function<void()> f, const void* owner);
+  void clearHistoryFlusher(const void* owner);
   // A user-driven load that is one step (loadPreset() itself records nothing: BodyFill, the ladder write-back, A/B compare and the audition use it).
   // Records only when the preset differs from the rig. `kind` is how an undo restores it.
   void loadPresetUndoable(Preset preset, HistoryKind kind, bool keepMonitor = false, std::optional<double> provisionalTrimDb = std::nullopt);
@@ -318,6 +325,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   mutable std::mutex historyMutex_;  // history_, historyFlusher_; never taken on the audio thread
   EditHistory history_;
   std::function<void()> historyFlusher_;
+  const void* historyFlusherOwner_ = nullptr;
+  std::array<GestureToken, kNumParams> paramGestureToken_{};  // message thread: the open history gesture of each host parameter
   std::array<std::atomic<float>*, kNumParams> paramAtomic_{};
   std::array<juce::RangedAudioParameter*, kNumParams> paramObj_{};
 

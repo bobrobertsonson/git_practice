@@ -232,6 +232,8 @@ void SawbladeProcessor::ladderTick() {
   for (const LadderFetchResult& r : done) {
     if (r.rungs.empty()) continue;
     Preset p = editBasePreset();
+    // The snapshots take the ladder by the same rule (structure-only: the path's amp capture is this tone's, with no ladder yet), so a
+    // snapshot whose amp is another capture is left alone.
     if (applyLadderToPreset(p, r.toneId, r.rungs)) {
       loadPreset(std::move(p), /*keepMonitor=*/true);  // an async completion: no undo step of its own ...
       patchHistory([&](Preset& snap) { applyLadderToPreset(snap, r.toneId, r.rungs); });  // ... and an undo does not take the ladder away

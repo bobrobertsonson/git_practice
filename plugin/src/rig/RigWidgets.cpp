@@ -100,14 +100,22 @@ PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::Film
   // notch or a typed value is one flush of the debounce = one step, recorded when it is applied.)
   knob_.onDragStart = [this] {
     dragging_ = true;
-    controller_.beginGesture();
+    // Only a real mouse drag (or a double-click, which also has the mouse down) is an undo gesture. JUCE wraps every wheel notch in a drag
+    // notification too: those must take the debounced path (a burst of notches = one flush = one step), not flush at each notch.
+    if (knob_.mouseHeld()) {
+      undoGesture_ = true;
+      controller_.beginGesture();
+    }
     if (onGestureBegin) onGestureBegin();
   };
   knob_.onDragEnd = [this] {
     dragging_ = false;
     if (knob_.mouseHeld()) finishGesture();  // a mouse gesture ends with its final value; a wheel edit (no mouse held) already took the throttled route
     if (onGestureEnd) onGestureEnd();
-    controller_.endGesture();
+    if (undoGesture_) {
+      undoGesture_ = false;
+      controller_.endGesture();
+    }
   };
   knob_.onValueChange = [this] {
     updateText();
@@ -185,7 +193,10 @@ PresetKnob::~PresetKnob() {
   if (dragging_) {  // destroyed mid-drag: close the gesture so begin / end stay paired
     dragging_ = false;
     if (onGestureEnd) onGestureEnd();
-    controller_.endGesture();
+    if (undoGesture_) {
+      undoGesture_ = false;
+      controller_.endGesture();
+    }
   }
 }
 

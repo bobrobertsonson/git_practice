@@ -17,6 +17,7 @@
 
 #include <bitset>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -76,16 +77,20 @@ class EditHistory {
     undo_.clear();
     redo_.clear();
     depth_ = 0;
+    ++epoch_;
     gestureBefore_.reset();
   }
 
   bool inGesture() const noexcept { return depth_ > 0; }
-  void beginGesture(Preset before) {
+  // Returns the token the matching end must present: a gesture's end that arrives after abortGestures() / clear() (a stale end of a
+  // widget or host gesture that began before) carries an old epoch and is ignored, so it cannot close a newer gesture.
+  std::uint64_t beginGesture(Preset before) {
     if (depth_++ == 0) gestureBefore_ = std::move(before);
+    return epoch_;
   }
   // The preset the outermost gesture started from, when this call closes it; nullopt while an outer gesture is still open (or none).
-  std::optional<Preset> endGesture() {
-    if (depth_ <= 0) return std::nullopt;
+  std::optional<Preset> endGesture(std::uint64_t token) {
+    if (token != epoch_ || depth_ <= 0) return std::nullopt;
     if (--depth_ > 0) return std::nullopt;
     std::optional<Preset> b = std::move(gestureBefore_);
     gestureBefore_.reset();
@@ -94,6 +99,7 @@ class EditHistory {
   // Closes every open gesture at once (the editor was destroyed mid-drag).
   std::optional<Preset> abortGestures() {
     depth_ = 0;
+    ++epoch_;
     std::optional<Preset> b = std::move(gestureBefore_);
     gestureBefore_.reset();
     return b;
@@ -108,6 +114,7 @@ class EditHistory {
  private:
   std::vector<Step> undo_, redo_;
   int depth_ = 0;
+  std::uint64_t epoch_ = 0;
   std::optional<Preset> gestureBefore_;
 };
 

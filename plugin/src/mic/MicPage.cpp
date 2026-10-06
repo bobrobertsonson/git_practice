@@ -409,14 +409,14 @@ struct MicPage::Impl {
     mixSlider.setColour(juce::Slider::thumbColourId, L::text());
     mixSlider.onValueChange = [this] { mixMoved(); };
     mixSlider.onDragStart = [this] {
-      o.processor_.historyGestureBegin();  // the whole drag (and every throttled submit in it) is one undo step
+      mixGestureToken = o.processor_.historyGestureBegin();  // the whole drag (and every throttled submit in it) is one undo step
       mixGesture = true;
     };
     mixSlider.onDragEnd = [this] {
       if (mixDirty) submitMix();
       if (mixGesture) {
         mixGesture = false;
-        o.processor_.historyGestureEnd();
+        o.processor_.historyGestureEnd(mixGestureToken);
       }
     };
     o.addAndMakeVisible(mixSlider);
@@ -800,6 +800,7 @@ struct MicPage::Impl {
 
   T3kTool tool;
   bool toolRunning = false, needLocate = false, updating = false, mixDirty = false, mixGesture = false;
+  SawbladeProcessor::GestureToken mixGestureToken = 0;
   juce::uint32 lastMixSubmit = 0;
   juce::String localMessage;
   bool localIsError = false;

@@ -9,7 +9,7 @@
 namespace sawblade::plugin::rig {
 
 RigController::RigController(SawbladeProcessor& p) : proc_(p), body_(p), loadSerial_(p.userLoadSerial()) {
-  proc_.setHistoryFlusher([this] { flushPending(); });  // pending debounced edits are steps of their own before a gesture / an undo
+  proc_.setHistoryFlusher([this] { flushPending(); }, this);  // pending debounced edits are steps of their own before a gesture / an undo
   debounce_.fn = [this] { flushPending(); };
   learnTimer_.fn = [this] { finishLearn(); };
   lastBlend_ = [&] {
@@ -19,8 +19,8 @@ RigController::RigController(SawbladeProcessor& p) : proc_(p), body_(p), loadSer
 }
 
 RigController::~RigController() {
-  while (gestures_ > 0) endGesture();
-  proc_.setHistoryFlusher({});
+  while (!gestureTokens_.empty()) endGesture();
+  proc_.clearHistoryFlusher(this);  // only if it is still ours
   debounce_.stopTimer();
   learnTimer_.stopTimer();
 }
@@ -77,10 +77,14 @@ void RigController::liveRecorded(const EditFn& f, const std::function<void()>& b
     if (beforeEdit) beforeEdit();
     return proc_.applyLiveEdit(f);
   }
-  Preset before = proc_.currentPreset();
+  // `before` is the rig as the user sees it (editBasePreset: the pending load if one is in flight, as the gesture path does). `after` is
+  // that same preset with the edit applied: a live edit mutates the running preset in place, which during an in-flight load is not
+  // the preset the user is looking at, so measuring the step on the running one would record the wrong pair.
+  Preset before = proc_.editBasePreset();
   if (beforeEdit) beforeEdit();  // a host-parameter write that belongs to the same step (a post EQ band's gain)
+  Preset after = proc_.editBasePreset();
+  f(after);
   proc_.applyLiveEdit(f);
-  const Preset after = proc_.currentPreset();
   if (after != before) proc_.historyRecord(std::move(before), after, SawbladeProcessor::HistoryKind::Edit);
 }
 
@@ -186,11 +190,11 @@ void RigController::applyTopology(Topology t, const std::optional<Preset>& preBl
   sync();
   flushPending();  // an edit still waiting for its debounce is a step of its own, not part of this one
   const Preset cur = view();
-  proc_.historyGestureBegin(preBlend.value_or(cur));
   struct End {
     SawbladeProcessor& p;
-    ~End() { p.historyGestureEnd(); }
-  } end{proc_};
+    SawbladeProcessor::GestureToken token;
+    ~End() { p.historyGestureEnd(token); }
+  } end{proc_, proc_.historyGestureBegin(preBlend.value_or(cur))};
   if (topologyOf(cur) == Topology::Blend && cur.blend > 0.0) lastBlend_ = cur.blend;
   singlePlus_ = (t == Topology::SinglePlusTwoPedals);
   const double restore = lastBlend_;
@@ -209,15 +213,13 @@ void RigController::applyTopology(Topology t, const std::optional<Preset>& preBl
   body_.begin(proc_.editBasePreset());
 }
 
-void RigController::beginGesture() {
-  ++gestures_;
-  proc_.historyGestureBegin();
-}
+void RigController::beginGesture() { gestureTokens_.push_back(proc_.historyGestureBegin()); }
 
 void RigController::endGesture() {
-  if (gestures_ <= 0) return;
-  --gestures_;
-  proc_.historyGestureEnd();
+  if (gestureTokens_.empty()) return;
+  const auto token = gestureTokens_.back();
+  gestureTokens_.pop_back();
+  proc_.historyGestureEnd(token);
 }
 
 bool RigController::undo() { return stepHistory(true); }

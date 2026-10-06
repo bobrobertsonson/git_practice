@@ -26,6 +26,7 @@ class EqGraph : public juce::Component, public juce::SettableTooltipClient {
   static constexpr float kNodeRadius = 8.0f, kHitRadius = 14.0f;
 
   explicit EqGraph(RigController& c);
+  ~EqGraph() override;  // closes a drag still open (the controller outlives its panel)
 
   // --- the documented mapping (static, tested) ---
   static double xToFreq(double x, double w) noexcept;

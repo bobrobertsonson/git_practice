@@ -174,6 +174,9 @@ void BodyFill::applyAmp(const Capture& model) {
       }
   // The arrival belongs to the BLEND fill's undo step: it adds none, and the stored snapshots that hold the fill as it was (boost only, or
   // the fallback amp) get the amp too, so an undo of a later edit does not hand back a path B without it.
+  // The match is STRUCTURE-ONLY: bodyUntouched() compares path B with what the fill made (blocks, enabled, and the blend / level / amp knobs
+  // when an amp is already there), so a snapshot that holds the fill as it was gets the amp, while a snapshot with a different path B (the
+  // pre-BLEND preset, path B edited since) is left alone.
   proc_.patchHistory([&](Preset& snap) {
     if (bodyUntouched(snap)) setBodyAmp(snap, model);
   });

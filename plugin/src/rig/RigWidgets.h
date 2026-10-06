@@ -91,7 +91,7 @@ class PresetKnob : public juce::Component {
   Apply apply_;
   Format format_;
   Normalise normalise_;
-  bool live_ = false, dragging_ = false, updating_ = false;
+  bool live_ = false, dragging_ = false, updating_ = false, undoGesture_ = false;  // undoGesture_: a controller history gesture is open
   double shown_ = 0.0;
 };
 

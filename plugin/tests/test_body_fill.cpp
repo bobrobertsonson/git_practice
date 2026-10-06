@@ -615,3 +615,68 @@ TEST_CASE("Body fill: the suggestion is dropped if anything of path B or the ble
     CHECK(ampOf(h.p.currentPreset().b)->model.source->id == "88689");  // the fallback stayed
   }
 }
+
+// --- v0.3 Task D: the BLEND fill and the undo history ------------------------------------------------------------------------------------
+
+TEST_CASE("Body fill undo: the fill's amp arriving is patched into the history; undoing a LATER edit keeps the amp (and adds no step)", "[bodyfill][rig][undo]") {
+  const AllowTool allowTool;
+  const BfCache cache;
+  cache.put("88689", "5001");
+  cache.put("T9", "m5");
+  TempDir t;
+  const FakeTool tool(t.dir, R"({"tone_id":"T9","model_id":"m5","title":"Diezel X","cached":true})");
+  tool.configure(t.dir);
+  BfEnv settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
+  Host h(48000.0, 512);
+  h.load(writeSinglePreset(t.dir));
+  RigController ctl(h.p);
+  ctl.setTopology(Topology::Blend);
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(ampOf(h.p.currentPreset().b)->model.source->id == "88689");  // the fallback, first
+  ctl.edit([](Preset& p) { p.a.levelDb = -2.0; });  // a later step: its "before" snapshot holds the fill with the FALLBACK amp
+  REQUIRE(h.p.waitForLoader());
+  pump(h, ctl);  // the suggestion arrives
+  REQUIRE(ampOf(h.p.currentPreset().b)->model.source->id == "T9");
+  CHECK(h.p.undoSteps() == 2);  // the fill and the edit: the arrival added none
+  REQUIRE(ctl.undo());  // the level edit
+  REQUIRE(h.p.waitForLoader());
+  const Preset cur = h.p.currentPreset();
+  CHECK(cur.a.levelDb == Catch::Approx(0.0));
+  REQUIRE(ampOf(cur.b) != nullptr);
+  CHECK(ampOf(cur.b)->model.source->id == "T9");  // the amp survived the undo
+  REQUIRE(ctl.redo());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(ampOf(h.p.currentPreset().b)->model.source->id == "T9");
+}
+
+TEST_CASE("Body fill undo: redo into a blend path B that has no amp restarts the fill; an undo that empties path B cancels one in flight", "[bodyfill][rig][undo]") {
+  const AllowTool allowTool;
+  const BfCache cache;
+  TempDir t;
+  const FakeTool tool(t.dir, "null", /*delaySeconds=*/1);
+  tool.configure(t.dir);
+  BfEnv settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
+  Host h(48000.0, 512);
+  h.load(writeSinglePreset(t.dir));
+  RigController ctl(h.p);
+  ctl.setTopology(Topology::Blend);  // nothing cached: boost only for now, the fill is in flight
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(ctl.bodyFill().active());
+  REQUIRE(ampOf(h.p.currentPreset().b) == nullptr);
+  const Preset boostOnly = h.p.currentPreset();
+  REQUIRE(ctl.undo());  // path B is empty again: the fill is cancelled
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(ctl.bodyFill().active());
+  CHECK(ctl.bodyFill().status().kind == FillStatus::Kind::Idle);
+  ctl.bodyFill().waitToolIdle(std::chrono::seconds(20));
+  ctl.sync();
+  CHECK(h.p.currentPreset().b.blocks.empty());  // the late answer did nothing
+  const std::size_t runsBefore = tool.calls().size();
+  REQUIRE(ctl.redo());  // a blend path B with a boost and no amp: the fill starts again
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset().b.blocks.size() == boostOnly.b.blocks.size());
+  CHECK(ctl.bodyFill().active());
+  pump(h, ctl);
+  CHECK(tool.calls().size() > runsBefore);  // it asked the tool again
+  CHECK(ampOf(h.p.currentPreset().b) != nullptr);  // and the fallback amp (fetched by the fake tool) arrived
+}

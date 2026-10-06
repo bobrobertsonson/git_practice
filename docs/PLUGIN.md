@@ -167,8 +167,14 @@ changed: undo / redo put back only those, so a value the host automated meanwhil
 - Steps: add / remove / reorder / bypass a block, a capture swap with its make-up, block parameters, EQ edits, cab / mic, gate / comp / alignment,
   topology and the BLEND fill (one step, with the knob back on full SAW), a user preset load (browser, file chooser, resolve) and an applied match
   (audition APPLY: one step back to the preset before the audition; the audition's own loads and its A / B toggles are not steps).
-- One step per gesture: a mouse drag (mouse down to mouse up) however many rebuilds it makes; a wheel notch or a typed value is its own one-event
-  gesture (one debounce flush = one step). Host parameters bound to the UI (the amp heads' controls, the main page's BLEND / INPUT / OUTPUT / EQ knobs
+- One step per gesture: a mouse drag (mouse down to mouse up, or a double-click) however many rebuilds it makes. Only a held mouse opens the
+  history gesture: JUCE wraps every wheel notch in a drag notification too, and those take the debounced path (a burst of notches inside the 150 ms
+  debounce = one flush = one rebuild = one step; notches further apart are a step each). A typed value is one flush. A live knob (no rebuild) records
+  one step per wheel notch / typed value.
+- Gesture ends carry a token: an end that arrives after the editor aborted its gestures (window closed mid-drag) cannot close a newer gesture. A
+  controller removes the history's pre-gesture flusher only if it is still its own.
+- A masked restore (host automation of GAIN since the step) keeps the current `gainStep` / ladder for a path whose GAIN the step did not change, when
+  the amp is the same capture, so the rung and the knob agree. Host parameters bound to the UI (the amp heads' controls, the main page's BLEND / INPUT / OUTPUT / EQ knobs
   and every other APVTS knob) are undoable per USER gesture: they record on the parameter's change-gesture begin / end, which host automation never
   sends. (A host that wraps its own automation writes in change gestures is indistinguishable from a user and is recorded.) An A / B compare toggle
   is not a step.

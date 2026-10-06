@@ -15,6 +15,7 @@
 #include "SettingsEnv.h"
 #include "rig/RigController.h"
 #include "rig/RigModel.h"
+#include "LadderFetch.h"
 #include "sawblade/auto_trim.h"
 #include "test_util.h"
 
@@ -338,4 +339,142 @@ TEST_CASE("undo: the level-match trim never dips to 0 on undo / redo (edit steps
   look();
   settleLooking();
   for (double t : seen) CHECK(t != 0.0);
+}
+
+namespace {
+
+json ladderRungs() {
+  return json::parse(R"([{"modelId":"m1","gain":2.0,"name":"Gain 2"},{"modelId":"m2","gain":5.0,"name":"Gain 5"},{"modelId":"m3","gain":8.0,"name":"Gain 8"}])");
+}
+
+// A path A amp that is a TONE3000 capture (T1 / m1), optionally with its ladder and active rung.
+json ampPreset(bool ladder, const char* gainStep = nullptr) {
+  json model = {{"file", (kFixtures / "nam" / "linear_identity.nam").string()},
+                {"source", {{"provider", "tone3000"}, {"id", "T1"}, {"modelId", "m1"}, {"title", "Marshall A"}}}};
+  if (ladder) model["ladder"] = ladderRungs();
+  json a = {{"blocks", json::array({{{"id", "a1"}, {"type", "nam"}, {"slot", "amp"}, {"model", model}}})}};
+  if (gainStep) a["ampControls"] = {{"gainStep", gainStep}};
+  return {{"schema", "sawblade.preset"}, {"version", 3}, {"name", "amp"}, {"paths", {{"a", a}, {"b", {{"enabled", false}, {"blocks", json::array()}}}}},
+          {"align", {{"mode", "off"}}}, {"blend", 0.0}, {"cab", {{"mode", "shared"}, {"enabled", false}, {"ir", {{"file", "(none)"}}}}}};
+}
+
+fs::path writeJsonFile(const fs::path& dir, const std::string& name, const json& j) {
+  const fs::path f = dir / (name + ".json");
+  std::ofstream(f) << j.dump(2);
+  return f;
+}
+
+std::vector<LadderRung> rungsOf(const json& j) {
+  std::vector<LadderRung> v;
+  for (const auto& r : j) v.push_back({r["modelId"].get<std::string>(), r["gain"].get<double>(), r["name"].get<std::string>()});
+  return v;
+}
+
+}  // namespace
+
+TEST_CASE("undo: a wheel notch burst is one step; notches apart are one step each (no flush per notch)", "[undo][rig]") {
+  // (see test_undo_ui.cpp for the knob-level version; here: the controller's debounce)
+  Undo u;
+  RigController ctl(u.h.p);
+  const std::string before = u.now();
+  for (int i = 1; i <= 5; ++i) ctl.editDebounced([i](Preset& p) { p.a.levelDb = 0.5 * i; });
+  CHECK(u.h.p.undoSteps() == 0);  // nothing flushed yet
+  REQUIRE(ctl.flushTimerForTests());
+  u.settle();
+  CHECK(u.h.p.undoSteps() == 1);
+  REQUIRE(ctl.undo());
+  u.settle();
+  CHECK(u.now() == before);
+}
+
+TEST_CASE("undo: a masked restore keeps the gain-ladder rung that follows an automated GAIN", "[undo][rig][ladder]") {
+  Undo u;
+  u.h.load(writeJsonFile(u.tmp.dir, "amp", ampPreset(true, "m1")));
+  RigController ctl(u.h.p);
+  u.h.p.historyClear();
+  ctl.edit([](Preset& p) { p.b.levelDb = -1.0; });  // an unrelated step (GAIN is not in its mask)
+  u.settle();
+  // The host automates GAIN to another rung; the ladder write-back records the rung (simulated: what ladderWriteBack does).
+  u.h.setParam(ampParam(0, kAmpGain), 9.0);
+  u.h.p.applyLiveEdit([](Preset& p) { p.a.ampControls.gainStep = "m3"; });
+  REQUIRE(u.h.p.currentPreset().a.ampControls.gainStep == "m3");
+  REQUIRE(ctl.undo());
+  u.settle();
+  const Preset p = u.h.p.currentPreset();
+  CHECK(p.b.levelDb == Catch::Approx(0.0));
+  CHECK(u.h.param(ampParam(0, kAmpGain)) == Catch::Approx(9.0).margin(1e-6));  // the automation stands ...
+  CHECK(p.a.ampControls.gainStep == "m3");                                      // ... and the rung still agrees with it
+  REQUIRE(ctl.redo());
+  u.settle();
+  CHECK(u.h.p.currentPreset().a.ampControls.gainStep == "m3");
+}
+
+TEST_CASE("undo: a ladder written back later is patched into the stored snapshots; undoing an earlier step keeps it", "[undo][rig][ladder]") {
+  Undo u;
+  u.h.load(writeJsonFile(u.tmp.dir, "amp", ampPreset(false)));
+  RigController ctl(u.h.p);
+  u.h.p.historyClear();
+  ctl.edit([](Preset& p) { p.b.levelDb = -1.0; });  // step 1: its snapshot has no ladder
+  u.settle();
+  REQUIRE(u.h.p.currentPreset().a.blocks.size() == 1);
+  // The ladder arrives (what ladderTick does: load it keeping the monitor state, patch the history, no step).
+  const auto rungs = rungsOf(ladderRungs());
+  Preset p = u.h.p.editBasePreset();
+  REQUIRE(applyLadderToPreset(p, "T1", rungs));
+  u.h.p.loadPreset(std::move(p), /*keepMonitor=*/true);
+  u.h.p.patchHistory([&](Preset& snap) { applyLadderToPreset(snap, "T1", rungs); });
+  u.settle();
+  CHECK(u.h.p.undoSteps() == 1);
+  const auto ladderOf = [](const Preset& pr) {
+    const auto* n = dynamic_cast<const NamBlockParams*>(pr.a.blocks[0].params.get());
+    return n ? n->model.ladder.size() : std::size_t{0};
+  };
+  REQUIRE(ladderOf(u.h.p.currentPreset()) == 3);
+  REQUIRE(ctl.undo());
+  u.settle();
+  CHECK(u.h.p.currentPreset().b.levelDb == Catch::Approx(0.0));
+  CHECK(ladderOf(u.h.p.currentPreset()) == 3);  // not taken away
+  REQUIRE(ctl.redo());
+  u.settle();
+  CHECK(ladderOf(u.h.p.currentPreset()) == 3);
+  // The match is structure-only: a snapshot whose amp is ANOTHER capture does not get the ladder.
+  Preset other = u.h.p.editBasePreset();
+  u.h.p.patchHistory([&](Preset& snap) { applyLadderToPreset(snap, "OTHER", rungs); });
+  CHECK(ladderOf(u.h.p.currentPreset()) == 3);
+}
+
+TEST_CASE("undo: a live edit while a load is in flight is one step measured on the preset the user sees", "[undo][rig]") {
+  Undo u;
+  RigController ctl(u.h.p);
+  const std::string before = u.now();
+  u.h.p.loadPreset(u.h.p.currentPreset(), /*keepMonitor=*/true);  // in flight (not awaited)
+  ctl.live([](Preset& p) { p.postEq[0].freq = 2000.0; });
+  CHECK(u.h.p.undoSteps() == 1);
+  u.settle();
+  REQUIRE(ctl.undo());
+  u.settle();
+  CHECK(u.now() == before);
+  CHECK_FALSE(ctl.canUndo());
+}
+
+TEST_CASE("undo: a stale gesture end after an abort cannot close a newer gesture; a destroyed controller leaves a newer one's flusher", "[undo][rig]") {
+  Undo u;
+  const auto stale = u.h.p.historyGestureBegin();
+  u.h.p.historyAbortGestures();  // the editor went away mid-drag
+  CHECK_FALSE(u.h.p.historyInGesture());
+  const auto fresh = u.h.p.historyGestureBegin();
+  u.h.p.historyGestureEnd(stale);  // the host's late end of the old gesture
+  CHECK(u.h.p.historyInGesture());  // the newer gesture is still open
+  u.h.p.historyGestureEnd(fresh);
+  CHECK_FALSE(u.h.p.historyInGesture());
+  // Controller A is replaced by B before A is destroyed: A's destructor leaves B's flusher in place.
+  auto a = std::make_unique<RigController>(u.h.p);
+  RigController b(u.h.p);
+  a.reset();
+  b.editDebounced([](Preset& p) { p.a.levelDb = -3.0; });
+  REQUIRE(b.hasPending());
+  const auto t = u.h.p.historyGestureBegin();  // the history flushes B's pending edit as a step of its own
+  CHECK_FALSE(b.hasPending());
+  CHECK(u.h.p.undoSteps() == 1);
+  u.h.p.historyGestureEnd(t);
 }

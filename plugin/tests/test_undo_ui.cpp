@@ -271,3 +271,58 @@ TEST_CASE("undo ui: closing the editor in the middle of a drag leaves one step, 
   CHECK(r.proc.undoSteps() == 1);
   CHECK(r.proc.undo());
 }
+
+namespace {
+void wheel(skin::FilmstripKnob& k, float dy) {
+  juce::MouseWheelDetails wd{};
+  wd.deltaY = dy;
+  const auto now = juce::Time::getCurrentTime();
+  const juce::Point<float> p(15.0f, 15.0f);
+  k.mouseWheelMove(juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), p, juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &k, &k, now, p, now, 1, false), wd);
+}
+}  // namespace
+
+TEST_CASE("undo ui: a burst of wheel notches is one step and one rebuild; notches apart are one step each", "[undoui][editor]") {
+  Rig r;
+  r.ed->setRigEditorOpen(true);
+  r.settle();
+  std::vector<rig::PresetKnob*> knobs;
+  collect(*r.ed, knobs);
+  // A debounced knob a wheel notch moves (a live knob applies every notch at once and has no pending edit).
+  skin::FilmstripKnob* k = nullptr;
+  for (auto* pk : knobs) {
+    if (!pk->isVisible()) continue;
+    const std::string before = r.now();
+    wheel(pk->knob(), 0.2f);
+    const bool debounced = r.ed->rigController().hasPending();
+    r.ed->rigController().flushTimerForTests();
+    r.settle();
+    if (debounced && r.now() != before) {
+      k = &pk->knob();
+      break;
+    }
+  }
+  REQUIRE(k != nullptr);
+  auto& ctl = r.ed->rigController();
+  r.proc.historyClear();
+  const std::string before = r.now();
+  const auto builds0 = r.proc.engineBuilds();
+  for (int i = 0; i < 5; ++i) wheel(*k, 0.2f);  // five notches inside the debounce window
+  CHECK(r.proc.undoSteps() == 0);                // nothing flushed per notch
+  REQUIRE(ctl.flushTimerForTests());             // the timer fires once
+  r.settle();
+  CHECK(r.proc.undoSteps() == 1);
+  CHECK(r.proc.engineBuilds() == builds0 + 1);   // one load
+  CHECK(r.now() != before);
+  CHECK(r.key('z', false));
+  r.settle();
+  CHECK(r.now() == before);
+  // Notches apart (the timer fired between them): one step each.
+  r.proc.historyClear();
+  for (int i = 0; i < 3; ++i) {
+    wheel(*k, 0.2f);
+    REQUIRE(ctl.flushTimerForTests());
+    r.settle();
+  }
+  CHECK(r.proc.undoSteps() == 3);
+}

@@ -64,6 +64,8 @@ EqGraph::EqGraph(RigController& c) : controller_(c) {
   recomputeCurve();
 }
 
+EqGraph::~EqGraph() { endGesture(); }
+
 void EqGraph::setTarget(EqTarget t) {
   if (t == target_) return;
   endGesture();
