@@ -619,6 +619,7 @@ TEST_CASE("PlayAlong: a folder that is not a stem set is refused and the loaded 
       CHECK(st.songName == songName);
       CHECK(pa.settings().folder == good.string());
       CHECK(pa.settings().songFile.empty());
+      run(h, 2, 512);  // the audio thread adopts a loaded set only inside process()
       CHECK(pa.snapshot().hasSet);
       // loadSong with a folder path goes through the same check
       pa.loadSong(bad.string(), true);

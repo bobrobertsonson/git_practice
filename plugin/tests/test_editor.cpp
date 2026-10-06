@@ -623,6 +623,7 @@ TEST_CASE("play-along: a folder that is not a stem set is refused from the picke
   panel->refresh();
   CHECK(anyLabelContains(*panel, msg));
   CHECK(pa.settings().folder == song.string());
+  processBlocks(rig.proc, 4);  // the audio thread adopts a loaded set only inside process()
   CHECK(pa.snapshot().hasSet);
 }
 
@@ -889,6 +890,7 @@ TEST_CASE("play-along: a drop on the panel and on the rig area loads a song (v0.
 
   {  // onto the panel itself, deepest child under the mouse
     Rig rig;
+    rig.ed->setVisible(true);  // getComponentAt() skips an invisible component, and this editor is never put on screen
     rig.ed->setPlayAlongOpen(true);
     auto* panel = all<PlayAlongPanel>(*rig.ed).at(0);
     const juce::Point<int> p(640, 800 - PlayAlongPanel::kHeight + 70);
@@ -903,6 +905,7 @@ TEST_CASE("play-along: a drop on the panel and on the rig area loads a song (v0.
   }
   {  // onto the rig area (panel closed): the editor takes it and opens the panel
     Rig rig;
+    rig.ed->setVisible(true);
     CHECK_FALSE(rig.ed->playAlongOpen());
     const juce::Point<int> p(640, 300);
     auto* t = dropTargetAt(*rig.ed, p, files);
