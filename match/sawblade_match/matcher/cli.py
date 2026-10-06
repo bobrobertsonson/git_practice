@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="v0.4M on/off pairs: comma list of suspects to switch OFF (" + ", ".join(ABLATIONS) + "): feel = no feel "
                         "term in the loss; boost = no tight-boost variants; filters = no post-cab hp / low-pass slope; irsweep = only the "
                         "stage-1 cab sweep (the pre-v0.4M behaviour); irblend = no two-IR blend of the winner's cab; studio = detect "
-                        "studio processing (always reported) but do not add a bus comp / wider post EQ")
+                        "studio processing (always reported) but do not add a bus comp / wider post EQ; preeq = no pre-EQ grid before the amp")
     p.add_argument("--trace-tones", metavar="ID[,ID...]", default="",
                    help="TONE3000 tone ids to explain in result.json -> trace[id]: downloaded?, models, gear class, pre-screen "
                         "rank/score/survived, best pair, best candidate loss with it as the amp, and why it lost")

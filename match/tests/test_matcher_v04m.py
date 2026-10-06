@@ -19,6 +19,7 @@ from sawblade_match.matcher.space import (BUTTER4_Q, Combo, POST_HP_RANGE, POST_
 core = pytest.importorskip("sawblade_match.core", reason="sawblade_core not built")
 from sawblade_match.matcher.cli import build_parser, parse_tone_ids      # noqa: E402
 from sawblade_match.matcher.engine import Engine, to48                   # noqa: E402
+from sawblade_match.matcher import preeq as PE                       # noqa: E402
 from sawblade_match.matcher import studio as ST                       # noqa: E402
 from sawblade_match.matcher.irblend import ir_alignment, load_ir48        # noqa: E402
 from sawblade_match.matcher.gatesweep import (GATE_OFFSETS_DB, cell_gate, gate_sweep,    # noqa: E402
@@ -75,7 +76,8 @@ def test_post_filters_are_neutral_by_default_and_not_in_the_regulariser():
             assert not sp.params[sp.idx[n]].eq_gain
         # post.hp and the slopes are discrete: not CMA-ES dimensions in either group
         assert set(sp.indices("linear")) | set(sp.indices("gain")) == set(range(len(sp))) - set(sp.indices("discrete"))
-        assert {sp.names[i] for i in sp.indices("discrete")} == {"post.hp", "post.hp_slope", "post.lp_slope"}
+        assert {sp.names[i] for i in sp.indices("discrete") if not sp.names[i].startswith("pre.")} \
+            == {"post.hp", "post.hp_slope", "post.lp_slope"}
     assert "post.hp" not in Space((1, None), filters=False).idx
     assert "post.hp" not in post_eq(Space((1, None), filters=False).default())
 
@@ -119,7 +121,7 @@ def test_cli_flags_and_ablate_parsing():
                                    "--trace-tones", "57492,79751,57492"])
     assert parse_ablate(a.ablate) == ("feel", "boost", "irblend") and parse_tone_ids(a.trace_tones) == (57492, 79751)
     assert parse_ablate("") == () and parse_ablate(["studio"]) == ("studio",)
-    assert set(ABLATIONS) == {"feel", "boost", "filters", "irsweep", "irblend", "studio"}
+    assert set(ABLATIONS) == {"feel", "boost", "filters", "irsweep", "irblend", "studio", "preeq"}
     with pytest.raises(ValueError, match="unknown suspect"):
         parse_ablate("feel,bogus")
     with pytest.raises(ValueError, match="tone id"):
@@ -599,3 +601,83 @@ def test_the_plain_chain_does_not_fire_the_studio_detector(tmp_path):
     assert st["compressed"] is False and st["eqd"] is False and st["busCompUsed"] is False and "stage" not in st
     best = json.loads((tmp_path / "out" / "best.preset.resolved.json").read_text())
     assert not best.get("busComp", {}).get("enabled")
+
+
+# ---- pre-EQ (B4) ----------------------------------------------------------------------------------------------------------------
+def _stage1_candidate(tmp_path, v_hidden):
+    pool = fixture_pool()
+    combo, sp, _ = hidden(pool, "single")
+    sp = Space.for_combo(combo)
+    di, ref = _known(tmp_path, pool, combo, v_hidden(sp))
+    x, fs = _loadwav(FIX / "di_riff.wav")
+    x48 = to48(x, fs)
+    ex = make_excerpt(x48, 2.0)
+    tgt = build_target(ref, ex)
+    eng = Engine(gate_preset(gate_envelope_floor_db(x48, FS)), 2)
+    v0 = sp.default()
+    core_ = eng.core(combo, v0, "a", ex.x)
+    r = ST.L.evaluate(ex.trim(eng.emulate(combo, v0, core_, None, manual_align())), tgt, sp.eq_gains(v0))
+    return eng, Scored(combo, r.total, 0.0, manual_align(), r, "screen", {}), sp, ex, tgt
+
+
+def test_pre_eq_grid_recovers_a_hidden_hpf_and_mid_peak_deterministically(tmp_path):
+    def hid(sp):
+        v = sp.default()
+        v.update({"pre.a.hpf": 110.0, "pre.a.mid_db": 6.0, "pre.a.mid_hz": 900.0})
+        return v
+    eng, cand, sp, ex, tgt = _stage1_candidate(tmp_path, hid)
+    try:
+        nums = PE.di_spectrum_numbers(ex.x[ex.lead:], tgt.starts)
+        wide = PE.widening(nums)
+        n_wide = len(wide["hpf"]) + len(wide["mid"]) + len(wide["shelf"])
+        rec = PE.preeq_candidate(eng, cand, sp, ex, tgt, wide)
+        rec2 = PE.preeq_candidate(eng, cand, sp, ex, tgt, wide)
+    finally:
+        eng.close()
+    a = rec["paths"]["a"]
+    assert a["values"] == [110.0, 6.0, 900.0, 0.0] and rec["loss"] < 0.01 < rec["offLoss"]            # the exact grid point
+    assert rec["params"]["pre.a.hpf"] == 110.0 and rec["params"]["pre.a.mid_db"] == 6.0 and rec["gainVsOff"] > 1.0
+    assert rec["renders"] <= 12 + n_wide and a["grid"][0]["setting"] == "off"                       # <= 12 settings + widening
+    assert rec2["paths"]["a"]["grid"] == a["grid"] and rec2["params"] == rec["params"]               # deterministic
+    # and the preset the grid implies carries the pre-EQ on that path (core renders it)
+    combo = cand.combo
+    v = {**sp.default(), **rec["params"]}
+    preset = build_preset(combo, v, gate=gate_preset(-60.0), align=manual_align())
+    assert [b["type"] for b in preset["paths"]["a"]["preEq"]] == ["highPass", "peak"] and preset["paths"]["a"]["preEq"][1]["q"] == 0.8
+    core.render(preset, np.zeros(2048, np.float32), 48000.0)
+
+
+def test_pre_eq_widening_fires_on_a_dark_di_and_not_on_the_fixture_for_dark(tmp_path):
+    rng = np.random.default_rng(1)
+    from sawblade_match.matcher import loss as Lm
+    n = FS * 4
+    white = rng.standard_normal(n)
+    dark = signal.sosfilt(signal.butter(2, 300.0, btype="lowpass", fs=FS, output="sos"), white)
+    bassy = signal.sosfilt(signal.butter(2, 250.0, btype="lowpass", fs=FS, output="sos"), white) + 0.02 * white
+    starts = Lm.segment_starts(n, None)
+    nd, nb, nw = (PE.di_spectrum_numbers(x, starts) for x in (dark, bassy, white))
+    assert nd["diTilt"] < PE.TILT_DARK and (9.0, 800.0) in PE.widening(nd)["mid"]
+    assert nb["diLowExcess"] > PE.LOW_EXCESS_BASSY and -6.0 in PE.widening(nb)["shelf"]
+    assert nw["diTilt"] > PE.TILT_BRIGHT and 180.0 in PE.widening(nw)["hpf"]
+    fx, fs = _loadwav(FIX / "di_riff.wav")
+    fnum = PE.di_spectrum_numbers(to48(fx, fs), Lm.segment_starts(len(fx), None))
+    assert not PE.widening(fnum)["mid"] and not PE.widening(fnum)["shelf"]       # the fixture DI is not dark / bassy
+
+
+def test_ablate_preeq_leaves_the_pre_eq_empty_and_the_default_run_reports_it(tmp_path):
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool, "single")
+    di, ref = _known(tmp_path, pool, combo, v)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=4, gens_gain=2, gens_final=3,
+                  n_rescore_single=6, n_cab_single=2)
+    kw = dict(di=di, ref=ref, pool=pool, seed=2, excerpt_s=2.0, threads=2, plan=plan, write_audio=False, refine_offsets=False)
+    off = run_match(Config(out=tmp_path / "off", ablate=("preeq",), **kw), Log())
+    assert off["ablate"] == ["preeq"] and off["preEq"]["ablated"] is True and off["preEq"]["candidates"] == []
+    assert off["preEq"]["chosen"] == {"a": "off"} and off["preEq"]["gainVsOff"] == 0.0 and "diTilt" in off["preEq"]
+    assert "preEq" not in json.loads((tmp_path / "off" / "best.preset.resolved.json").read_text())["paths"]["a"]
+    on = run_match(Config(out=tmp_path / "on", **kw), Log())
+    pe = on["preEq"]
+    assert pe["ablated"] is False and pe["candidates"] and all(c["renders"] <= 12 + len(pe["widened"]) for c in pe["candidates"])
+    assert set(pe["chosen"]) == {"a"} and pe["gainVsOff"] >= 0.0
+    best = json.loads((tmp_path / "on" / "best.preset.resolved.json").read_text())
+    assert ("preEq" in best["paths"]["a"]) == (pe["chosen"]["a"] != "off")

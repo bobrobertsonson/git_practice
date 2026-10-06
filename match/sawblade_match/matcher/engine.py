@@ -27,7 +27,8 @@ from scipy import signal
 
 from .. import core as _core
 from .levelmatch import Levels, level_match
-from .space import Combo, block_latency, build_preset, cab_block, chain_blocks, manual_align, path_blocks, path_eq, post_eq
+from .space import (Combo, block_latency, build_preset, cab_block, chain_blocks, manual_align, path_blocks, path_eq, path_pre_eq,
+                    post_eq)
 
 RATE = 48000
 
@@ -102,10 +103,12 @@ class Engine:
     def _disabled(role: str) -> dict:
         return {"role": role, "enabled": False, "blocks": []}
 
-    def chain_preset(self, blocks: list[dict], cab, path: str = "a", gate=_DEFAULT_GATE) -> dict:
+    def chain_preset(self, blocks: list[dict], cab, path: str = "a", gate=_DEFAULT_GATE, pre_eq: list | None = None) -> dict:
         p = self._base(cab, blend=0.0 if path == "a" else 1.0, cab_enabled=False,
                        gate=self.gate if gate is _DEFAULT_GATE else gate)
         live = {"role": "saw" if path == "a" else "body", "blocks": blocks}
+        if pre_eq:
+            live["preEq"] = pre_eq
         p["paths"] = {"a": live, "b": self._disabled("body")} if path == "a" else \
             {"a": self._disabled("saw"), "b": live}
         return p
@@ -121,21 +124,21 @@ class Engine:
         return p
 
     # ---- stages -------------------------------------------------------------------------------------------------
-    def core_blocks(self, blocks: list[dict], cab, x: np.ndarray, gate=_DEFAULT_GATE) -> np.ndarray:
+    def core_blocks(self, blocks: list[dict], cab, x: np.ndarray, gate=_DEFAULT_GATE, pre_eq: list | None = None) -> np.ndarray:
         """NAM core of one chain (gate -> blocks) at 48 kHz; ``cab`` only fills the (disabled) cab slot. ``gate``: a gate
         preset dict (or None for no gate) instead of the engine's; it is part of the memo key."""
         x = np.ascontiguousarray(x, dtype=np.float32)
         key = None
         if self._core_cap > 0:
             gk = None if gate is _DEFAULT_GATE else json.dumps(gate, sort_keys=True)
-            key = (json.dumps(blocks, sort_keys=True), gk, len(x), hashlib.blake2b(x.tobytes(), digest_size=12).digest())
+            key = (json.dumps(blocks, sort_keys=True), gk, json.dumps(pre_eq) if pre_eq else None, len(x), hashlib.blake2b(x.tobytes(), digest_size=12).digest())
             with self._lock:
                 hit = self._core_cache.get(key)
                 if hit is not None:
                     self._core_cache.move_to_end(key)
                     self.core_hits += 1
                     return hit
-        y, rep = self.render(self.chain_preset(blocks, cab, "a", gate), x)
+        y, rep = self.render(self.chain_preset(blocks, cab, "a", gate, pre_eq), x)
         # (latency per block type: docs/PRESET_SCHEMA.md block table, see space.block_latency)
         # the renderer advances its output by the reported latency, so the core stays sample-aligned with the input; only
         # the known latency of the modeled pedal blocks is expected (captures with latency are not supported yet)
@@ -156,7 +159,7 @@ class Engine:
 
     def core(self, combo: Combo, v: dict, path: str, x: np.ndarray, gate=_DEFAULT_GATE) -> np.ndarray:
         """NAM core of one path of a combo. Same length as ``x``."""
-        return self.core_blocks(path_blocks(combo, v, path), combo.cab, x, gate)
+        return self.core_blocks(path_blocks(combo, v, path), combo.cab, x, gate, path_pre_eq(v, path) or None)
 
     def linear(self, cab, v: dict, path: str, sig: np.ndarray, cab_obj: dict | None = None) -> np.ndarray:
         y, _ = self.render(self.linear_preset(cab, v, path, cab_obj), sig)

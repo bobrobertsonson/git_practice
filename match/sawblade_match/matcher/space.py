@@ -141,7 +141,7 @@ class Space:
     """Parameters for one combo shape ``(n_pedals_a, n_pedals_b | None)``."""
 
     def __init__(self, shape: tuple, boost: bool = False, filters: bool = True, irmix: bool = False,
-                 post_gain: float = POST_GAIN):
+                 post_gain: float = POST_GAIN, preeq: bool = True):
         na, nb = shape
         if boost and nb is not None:
             raise ValueError("the tight boost is a single-path variant")
@@ -149,6 +149,11 @@ class Space:
         paths = "a" if nb is None else "ab"
         if nb is not None:
             ps += [P("blend", 0.05, 0.95, 0.55), P("levelA", -6, 6, 0.0), P("levelB", -6, 6, 0.0)]
+        for path in paths if preeq else "":      # B4 pre-EQ settings: discrete, fixed before stage 2 (preeq.py)
+            ps.append(P(f"pre.{path}.hpf", 0.0, 200.0, 0.0, group="discrete"))
+            ps.append(P(f"pre.{path}.mid_db", 0.0, 9.0, 0.0, group="discrete"))
+            ps.append(P(f"pre.{path}.mid_hz", 700.0, 900.0, 800.0, group="discrete"))
+            ps.append(P(f"pre.{path}.shelf_db", -6.0, 0.0, 0.0, group="discrete"))
         for path in paths:
             for i, (lo, hi) in enumerate(PEAK_RANGES):
                 ps.append(P(f"{path}.f{i}", lo, hi, float(np.sqrt(lo * hi)), log=True))
@@ -181,8 +186,8 @@ class Space:
         self.shape = shape
 
     @staticmethod
-    def for_combo(combo: Combo, filters: bool = True) -> "Space":
-        return Space(combo.shape(), boost=combo.boost, filters=filters, irmix=combo.cab_b is not None)
+    def for_combo(combo: Combo, filters: bool = True, preeq: bool = True) -> "Space":
+        return Space(combo.shape(), boost=combo.boost, filters=filters, irmix=combo.cab_b is not None, preeq=preeq)
 
     def __len__(self) -> int:
         return len(self.params)
@@ -214,6 +219,28 @@ class Space:
 
 def _peak(f, g):
     return {"type": "peak", "freq": float(f), "gainDb": float(g), "q": Q}
+
+
+PRE_HPF_OPTIONS = (80.0, 110.0, 150.0)        # B4 pre-EQ grid (before the drive); 180 Hz joins for a bright DI
+PRE_MID_OPTIONS = ((3.0, 700.0), (3.0, 900.0), (6.0, 700.0), (6.0, 900.0))
+PRE_SHELF_HZ, PRE_SHELF_DB = 200.0, -3.0
+PRE_MID_Q = 0.8
+
+
+def path_pre_eq(v: dict[str, float], path: str) -> list[dict]:
+    """The path's pre-EQ bands (DI -> gate -> pre-EQ -> blocks) from the discrete ``pre.<path>.*`` parameters; empty when off.
+    Linear and before the amp, so it is trained into a NAM export."""
+    bands = []
+    h = float(v.get(f"pre.{path}.hpf", 0.0))
+    if h > 1.0:
+        bands.append({"type": "highPass", "freq": h, "q": 0.707})
+    g = float(v.get(f"pre.{path}.mid_db", 0.0))
+    if abs(g) > 1e-9:
+        bands.append({"type": "peak", "freq": float(v.get(f"pre.{path}.mid_hz", 800.0)), "gainDb": g, "q": PRE_MID_Q})
+    s = float(v.get(f"pre.{path}.shelf_db", 0.0))
+    if abs(s) > 1e-9:
+        bands.append({"type": "lowShelf", "freq": PRE_SHELF_HZ, "gainDb": s, "q": 0.707})
+    return bands
 
 
 def path_eq(v: dict[str, float], path: str) -> list[dict]:
@@ -330,8 +357,12 @@ def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align:
     blend = combo.topology == "blend"
     pa = {"role": "saw" if blend else "body", "blocks": path_blocks(combo, v, "a"), "eq": path_eq(v, "a"),
           "levelDb": float(v.get("levelA", 0.0))}
+    if path_pre_eq(v, "a"):
+        pa["preEq"] = path_pre_eq(v, "a")
     pb = ({"role": "body", "blocks": path_blocks(combo, v, "b"), "eq": path_eq(v, "b"), "levelDb": float(v["levelB"])}
           if blend else {"role": "body", "enabled": False, "blocks": []})
+    if blend and path_pre_eq(v, "b"):
+        pb["preEq"] = path_pre_eq(v, "b")
     p = {
         "schema": "sawblade.preset", "version": 1, "name": name, "notes": notes,
         "gate": gate if gate else {"enabled": False},

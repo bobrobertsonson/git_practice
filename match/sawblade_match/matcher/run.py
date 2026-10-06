@@ -27,6 +27,7 @@ from .progress import NullProgress, Progress
 from .cabsweep import TOP_PER_TOPOLOGY, cab_sweep, sweep_summary
 from .gatesweep import gate_sweep, reference_floor_db, render_gate
 from .irblend import TOP_IRS, pair_search
+from .preeq import describe as describe_pre, di_spectrum_numbers, preeq_candidate, setting_params, widening
 from .refine import refine_combo, relinear
 from .studio import detect as detect_studio, studio_stage
 from .trace import trace_tones
@@ -39,7 +40,7 @@ CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level o
 CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-length peak is below this
 OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
-ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio")      # --ablate names (v0.4M suspects)
+ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio", "preeq")      # --ablate names (v0.4M suspects)
 CAB_SWITCH_DB = 0.01      # a different cab must lower the loss by at least this to replace the stage-2 cab
 REFINE_SHARE = 0.95       # share of the refine stage's progress for stage 2; the cab / gate sweeps and the trace get the rest
 
@@ -471,6 +472,31 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     t_mark = time.time()
     prog.stage("refine", "refining the best candidates")
 
+    # ---- pre-EQ before the drive (v0.4M B4): pruned grid on the top 2 candidates per topology -------------------------
+    t_pre = time.time()
+    nums = di_spectrum_numbers(ex.x[ex.lead:], tgt.starts)
+    wide = widening(nums)
+    log(f"pre-EQ: DI tilt {nums['diTilt']:+.2f} dB/oct, low excess {nums['diLowExcess']:+.2f} dB; widened: "
+        f"{', '.join(wide['widened']) or 'none'}")
+    pre_res: dict = {**nums, "widened": wide["widened"], "ablated": "preeq" in ablate, "candidates": [], "chosen": {},
+                     "gainVsOff": 0.0}
+    pre_gain: dict = {}
+    if "preeq" not in ablate:
+        for topo in TOPOLOGIES:
+            lst = ranked.get(topo, [])
+            for s in lst[:2]:
+                rec = preeq_candidate(eng, s, Space.for_combo(s.combo, plan.filters), ex, tgt, wide)
+                pre_res["candidates"].append({k: rec[k] for k in ("topology", "captures", "offLoss", "loss", "gainVsOff", "renders",
+                                                                   "paths")})
+                if rec["gainVsOff"] > 0:
+                    s.extra["pre"] = rec["params"]
+                    s.loss, s.result = rec["loss"], None
+                    pre_gain[s.combo.pair_key()] = rec["gainVsOff"]
+                    log(f"pre-EQ {topo}: {s.combo.describe()[:60]}: " + "; ".join(
+                        f"path {p} {x['chosen']}" for p, x in rec["paths"].items()) + f" (loss -{rec['gainVsOff']:.3f})")
+            lst.sort(key=lambda c: c.loss)
+    T["preEq"] = time.time() - t_pre
+    t_mark = time.time()
     # ---- stage 2 -----------------------------------------------------------------------------------------------------
     refined: list[Scored] = []
     unrefined: list[Scored] = []
@@ -515,6 +541,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         log(f"stage2 {topo} [{k + 1}/{kk}] {s.combo.describe()} (screen loss {s.loss:.3f})")
         sp = Space.for_combo(s.combo, plan.filters)
         v0 = sp.default()
+        v0.update(s.extra.get("pre", {}))           # the pre-EQ the grid chose (fixed through stage 2)
         if "blend" in v0:
             v0["blend"] = s.blend
         v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + len(refined) * 10,
@@ -667,6 +694,11 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         "bestPlainSingleLoss": min((c.loss for c in refined if c.topology == "single" and not c.combo.boost), default=None),
         "occamDb": OCCAM_DB, "ablated": not plan.boost}
     result["postFilters"] = {"searched": plan.filters, **post_filters_from_eq(post_eq(bp))}
+    pre_res["chosen"] = {p: describe_pre(tuple(float(bp.get(k, d)) for k, d in (
+        (f"pre.{p}.hpf", 0.0), (f"pre.{p}.mid_db", 0.0), (f"pre.{p}.mid_hz", 800.0), (f"pre.{p}.shelf_db", 0.0))))
+        for p in (("a", "b") if best.combo.topology == "blend" else ("a",))}
+    pre_res["gainVsOff"] = pre_gain.get(best.combo.pair_key(), 0.0)
+    result["preEq"] = pre_res
     if cfg.trace_tones:
         t_tr = time.time()
         result["trace"] = trace_tones(cfg.trace_tones, eng=eng, pool=pool, scr=scr, ranked=ranked, refined=refined, best=best,
@@ -778,6 +810,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             v_alt, gdb = s.extra["params"], s.extra["outputGainDb"]
         else:
             v_alt, gdb = Space.for_combo(s.combo).default(), 0.0
+            v_alt.update(s.extra.get("pre", {}))
             if "blend" in v_alt:
                 v_alt["blend"] = s.blend
             if s.levels is not None:
