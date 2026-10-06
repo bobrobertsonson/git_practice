@@ -1,0 +1,325 @@
+{
+ "schema": "sawblade.pedal_known_answers",
+ "version": 1,
+ "seed": 20261004,
+ "harm_floor_db": -40.0,
+ "probe": "1 s sweep + 3.2 s stepped sines + 4 s DI (di_riff.wav)",
+ "search": {
+  "restarts": 3,
+  "popsize": 8,
+  "generations": 14,
+  "refine_generations": 30
+ },
+ "pedals": {
+  "hm": {
+   "model_version": 3,
+   "seed": 20261004,
+   "truth": {
+    "low": 7.0,
+    "high": 3.0,
+    "distortion": 8.0,
+    "level": 6.5
+   },
+   "constrained": {
+    "params": {
+     "level": 6.49999987072236,
+     "low": 7.0,
+     "high": 3.0,
+     "distortion": 8.0
+    },
+    "model_lag": 5,
+    "cost": 1.1627241486877291e-07,
+    "ltas_rms_db": 4.227452295302762e-09,
+    "harm_rms_db": 1.221875898222057e-07,
+    "harm_even_rms_db": 1.6852951866702673e-07,
+    "harm_odd_rms_db": 3.817611230834608e-08,
+    "harm_rms_db_legacy": 4.048432326672329e-07,
+    "dyn_db": 1.0190233532473461e-07,
+    "d_crest_db": -1.441102845944897e-07,
+    "d_env_spread_db": -6.306848376880225e-10,
+    "ltas_rms_limited_db": 4.227452295302762e-09,
+    "level_gain_db": -4.5000003878329204,
+    "level": 6.49999987072236,
+    "level_clipped": false
+   },
+   "free": {
+    "params": {
+     "level": 6.500096253407724,
+     "low": 6.999678126068172,
+     "high": 2.997604032157936,
+     "distortion": 8.02291503571584
+    },
+    "model_lag": 5,
+    "cost": 0.008830670846801489,
+    "ltas_rms_db": 0.00333485375828175,
+    "harm_rms_db": 0.008699178415381393,
+    "harm_even_rms_db": 0.011298519121456168,
+    "harm_odd_rms_db": 0.004867738270220001,
+    "harm_rms_db_legacy": 0.014297601852950193,
+    "dyn_db": 0.002292455761658085,
+    "d_crest_db": 0.00041741303366116256,
+    "d_env_spread_db": -0.0032150385997136155,
+    "ltas_rms_limited_db": 0.00333485375828175,
+    "level_gain_db": -4.499711239776828,
+    "level": 6.500096253407724,
+    "level_clipped": false
+   },
+   "knob_errors": {
+    "low": 0.00032187393182780966,
+    "high": 0.002395967842064195,
+    "distortion": 0.022915035715840304
+   },
+   "level_error": 9.625340772423385e-05,
+   "n_renders": 580
+  },
+  "hmx": {
+   "model_version": 1,
+   "seed": 20261004,
+   "truth": {
+    "low": 6.0,
+    "lowMid": 3.0,
+    "highMid": 7.0,
+    "high": 4.0,
+    "distortion": 8.0,
+    "presence": 6.0,
+    "level": 6.5
+   },
+   "constrained": {
+    "params": {
+     "level": 6.499999871190287,
+     "low": 6.0,
+     "lowMid": 3.0,
+     "highMid": 7.0,
+     "high": 4.0,
+     "distortion": 8.0,
+     "presence": 6.0
+    },
+    "model_lag": 5,
+    "cost": 8.99824195730446e-08,
+    "ltas_rms_db": 4.700413235069484e-09,
+    "harm_rms_db": 1.3338136382356136e-07,
+    "harm_even_rms_db": 1.8654306921020638e-07,
+    "harm_odd_rms_db": 2.7979631171669026e-08,
+    "harm_rms_db_legacy": 5.560387324187245e-07,
+    "dyn_db": 3.718264885238889e-08,
+    "d_crest_db": -5.1818403790093726e-08,
+    "d_env_spread_db": -8.941575924126255e-09,
+    "ltas_rms_limited_db": 4.700413235069484e-09,
+    "level_gain_db": -4.50000038642914,
+    "level": 6.499999871190287,
+    "level_clipped": false
+   },
+   "free": {
+    "params": {
+     "level": 6.5629461841587515,
+     "low": 5.955008183830547,
+     "lowMid": 2.8896409002190033,
+     "highMid": 6.964030541029366,
+     "high": 3.938401394628638,
+     "distortion": 7.873322689589442,
+     "presence": 5.797722270523922
+    },
+    "model_lag": 5,
+    "cost": 0.08026831814693301,
+    "ltas_rms_db": 0.04297940268541651,
+    "harm_rms_db": 0.06777064128880882,
+    "harm_even_rms_db": 0.07993807296265293,
+    "harm_odd_rms_db": 0.05287366199167951,
+    "harm_rms_db_legacy": 0.07344536070557528,
+    "dyn_db": 0.006807189634224189,
+    "d_crest_db": -8.471148043476262e-05,
+    "d_env_spread_db": 0.009626447184587938,
+    "ltas_rms_limited_db": 0.04297940268541651,
+    "level_gain_db": -4.311161447523746,
+    "level": 6.5629461841587515,
+    "level_clipped": false
+   },
+   "knob_errors": {
+    "low": 0.04499181616945336,
+    "lowMid": 0.11035909978099667,
+    "highMid": 0.03596945897063364,
+    "high": 0.06159860537136197,
+    "distortion": 0.12667731041055763,
+    "presence": 0.20227772947607825
+   },
+   "level_error": 0.06294618415875153,
+   "n_renders": 580
+  },
+  "eye": {
+   "model_version": 1,
+   "seed": 20261004,
+   "truth": {
+    "gain": 7.0,
+    "level": 6.5
+   },
+   "constrained": {
+    "params": {
+     "level": 6.499999871632482,
+     "gain": 7.0
+    },
+    "model_lag": 5,
+    "cost": 1.747024482391467e-07,
+    "ltas_rms_db": 7.970089041627083e-09,
+    "harm_rms_db": 1.1761660300593475e-07,
+    "harm_even_rms_db": 1.5678720891330917e-07,
+    "harm_odd_rms_db": 5.5543692049463785e-08,
+    "harm_rms_db_legacy": 5.166053127865892e-07,
+    "dyn_db": 2.1584811538910452e-07,
+    "d_crest_db": -3.051341952442499e-07,
+    "d_env_spread_db": 8.59887938631232e-09,
+    "ltas_rms_limited_db": 7.970089041627083e-09,
+    "level_gain_db": -4.500000385102556,
+    "level": 6.499999871632482,
+    "level_clipped": false
+   },
+   "free": {
+    "params": {
+     "level": 6.499999871632482,
+     "gain": 6.999968816493951
+    },
+    "model_lag": 5,
+    "cost": 1.747024482391467e-07,
+    "ltas_rms_db": 7.970089041627083e-09,
+    "harm_rms_db": 1.1761660300593475e-07,
+    "harm_even_rms_db": 1.5678720891330917e-07,
+    "harm_odd_rms_db": 5.5543692049463785e-08,
+    "harm_rms_db_legacy": 5.166053127865892e-07,
+    "dyn_db": 2.1584811538910452e-07,
+    "d_crest_db": -3.051341952442499e-07,
+    "d_env_spread_db": 8.59887938631232e-09,
+    "ltas_rms_limited_db": 7.970089041627083e-09,
+    "level_gain_db": -4.500000385102556,
+    "level": 6.499999871632482,
+    "level_clipped": false
+   },
+   "knob_errors": {
+    "gain": 3.1183506049359266e-05
+   },
+   "level_error": 1.2836751839273575e-07,
+   "n_renders": 413
+  },
+  "muff": {
+   "model_version": 1,
+   "seed": 20261004,
+   "truth": {
+    "sustain": 7.0,
+    "tone": 4.0,
+    "scoop": 6.0,
+    "voice": 6.0,
+    "volume": 6.5
+   },
+   "constrained": {
+    "params": {
+     "volume": 6.500000053904439,
+     "sustain": 7.0,
+     "tone": 4.0,
+     "scoop": 6.0,
+     "voice": 6.0
+    },
+    "model_lag": 3,
+    "cost": 1.9831230728606514e-07,
+    "ltas_rms_db": 5.9322424946023265e-09,
+    "harm_rms_db": 1.110076355354272e-07,
+    "harm_even_rms_db": 0.0,
+    "harm_odd_rms_db": 1.569885037011707e-07,
+    "harm_rms_db_legacy": 1.110076355354272e-07,
+    "dyn_db": 2.7375249404749845e-07,
+    "d_crest_db": -3.8698633453293496e-07,
+    "d_env_spread_db": 1.1064939187122036e-08,
+    "ltas_rms_limited_db": 5.9322424946023265e-09,
+    "level_gain_db": -4.4999998382866835,
+    "level": 6.500000053904439,
+    "level_clipped": false
+   },
+   "free": {
+    "params": {
+     "volume": 6.510233396320487,
+     "sustain": 6.818709959194757,
+     "tone": 4.007642947673665,
+     "scoop": 5.989880873224154,
+     "voice": 6.003609925475109
+    },
+    "model_lag": 3,
+    "cost": 0.037269611224399445,
+    "ltas_rms_db": 0.017615499364550438,
+    "harm_rms_db": 0.009830180924734295,
+    "harm_even_rms_db": 0.0,
+    "harm_odd_rms_db": 0.013901975184340533,
+    "harm_rms_db_legacy": 0.009830180924734295,
+    "dyn_db": 0.029478042794963712,
+    "d_crest_db": -0.031628014100915536,
+    "d_env_spread_db": -0.02715840087478849,
+    "ltas_rms_limited_db": 0.017615499364550438,
+    "level_gain_db": -4.469299811038538,
+    "level": 6.510233396320487,
+    "level_clipped": false
+   },
+   "knob_errors": {
+    "sustain": 0.18129004080524336,
+    "tone": 0.00764294767366458,
+    "scoop": 0.010119126775846254,
+    "voice": 0.003609925475108966
+   },
+   "level_error": 0.010233396320487032,
+   "n_renders": 580
+  },
+  "ts": {
+   "model_version": 1,
+   "seed": 20261004,
+   "truth": {
+    "drive": 7.0,
+    "tone": 3.0,
+    "level": 6.5
+   },
+   "constrained": {
+    "params": {
+     "level": 6.499999870188224,
+     "drive": 7.0,
+     "tone": 3.0
+    },
+    "model_lag": 2,
+    "cost": 1.047839689224983e-07,
+    "ltas_rms_db": 6.713990073116147e-09,
+    "harm_rms_db": 8.778320740325507e-08,
+    "harm_even_rms_db": 9.23590255398436e-08,
+    "harm_odd_rms_db": 8.295536996081874e-08,
+    "harm_rms_db_legacy": 1.6290079329788475e-06,
+    "dyn_db": 1.0835675029550923e-07,
+    "d_crest_db": -1.5322098789738448e-07,
+    "d_env_spread_db": -2.3873703014487546e-09,
+    "ltas_rms_limited_db": 6.713990073116147e-09,
+    "level_gain_db": -4.500000389435329,
+    "level": 6.499999870188224,
+    "level_clipped": false
+   },
+   "free": {
+    "params": {
+     "level": 6.499999870188224,
+     "drive": 6.999968418470884,
+     "tone": 3.0000412170227286
+    },
+    "model_lag": 2,
+    "cost": 1.047839689224983e-07,
+    "ltas_rms_db": 6.713990073116147e-09,
+    "harm_rms_db": 8.778320740325507e-08,
+    "harm_even_rms_db": 9.23590255398436e-08,
+    "harm_odd_rms_db": 8.295536996081874e-08,
+    "harm_rms_db_legacy": 1.6290079329788475e-06,
+    "dyn_db": 1.0835675029550923e-07,
+    "d_crest_db": -1.5322098789738448e-07,
+    "d_env_spread_db": -2.3873703014487546e-09,
+    "ltas_rms_limited_db": 6.713990073116147e-09,
+    "level_gain_db": -4.500000389435329,
+    "level": 6.499999870188224,
+    "level_clipped": false
+   },
+   "knob_errors": {
+    "drive": 3.158152911630907e-05,
+    "tone": 4.121702272863459e-05
+   },
+   "level_error": 1.2981177643922592e-07,
+   "n_renders": 569
+  }
+ },
+ "note": "Produced in the cloud container, where scipy and soundfile cannot be installed: numpy stand-ins replaced scipy.signal.welch/freqz and soundfile (LTAS may differ from a real scipy run in the last digit; the harmonic, lag and dynamics terms do not use them). CI re-runs the same checks at a smaller budget; re-generate with `sawblade-calibrate pedal-fit --known-answers` on a full install."
+}
