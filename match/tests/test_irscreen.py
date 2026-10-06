@@ -172,6 +172,19 @@ def test_2000_synthetic_irs_screen_in_under_60_seconds():
     print(f"2000 IRs screened in {dt:.2f} s")
 
 
+def test_6000_synthetic_irs_screen_in_under_90_seconds():
+    x = pre_cab_signal(seed=4)
+    ref = signal.sosfilt(signal.butter(2, [100, 5500], btype="band", fs=FS, output="sos"), x.astype(np.float64))
+    tgt = make_target(x, ref, fizz=True)
+    bank = synth_bank(6000, seed=2)
+    t0 = time.time()
+    rows, info = irscreen.prefilter(bank, irscreen.SCREEN_MAX, set())
+    s = irscreen.screen(bank, x, tgt)
+    dt = time.time() - t0
+    assert len(rows) == 6000 and not info["prefiltered"] and len(s.score) == 6000 and np.all(np.isfinite(s.score)) and dt < 90.0
+    print(f"6000 IRs screened in {dt:.2f} s")
+
+
 def test_prefilter_is_deterministic_tag_first_and_proportional():
     bank = synth_bank(900, seed=1)
     a, ia = irscreen.prefilter(bank, 300, {"v30"}, seed=4)

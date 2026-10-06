@@ -11,7 +11,8 @@ the IR is the core's: left channel, 48 kHz, <= 2 s, L2 = 1). From that
   distributions, Huber-softened and weighted exactly like the feel term (``hfMod`` is a time-domain envelope statistic and
   is left to the full render).
 
-``score = ltas + W_FIZZ * scale * fizz``. Only the top N IRs get the real full-loss render (cabsweep.cab_sweep); the top 6
+``score = ltas + W_FIZZ * scale * fizz``. The analytic score covers LTAS + spectral fizz only: buzz, texture, STFT,
+hfMod and the other feel terms are left to the full renders of the top N. Only the top N IRs get the real full-loss render (cabsweep.cab_sweep); the top 6
 are exposed for the later two-IR pair search.
 
 Above ``--ir-screen-max`` IRs the pool is prefiltered (never randomly sampled): IRs whose cab/speaker tags match the

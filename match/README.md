@@ -402,7 +402,7 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
     included), `unique = accepted - exactDuplicates - nearDuplicates`. Needs the built `sawblade_core`: the IR as the core applies it
     (left, 48 kHz, <= 2 s, L2 = 1) is obtained by rendering an impulse through the core, so no resampler is reimplemented in Python.
     Local IRs become pool cabs with `source.provider "local"`, licence `user-owned`, id = sha256[:16], referenced by absolute path + sha256 (a moved
-    file fails cleanly; `best.preset.json` keeps `local-irs/<stem>.wav` + the hash). IRs are never committed or uploaded. aif / flac and WAV subtypes
+    file fails cleanly; `best.preset.json` keeps `local-irs/<stem>.wav` + the hash; equal stems share that placeholder name, the sha256 tells them apart. For a converted aif/flac the preset's `sha256` is the converted WAV's, `source.id` the original's sha256[:16]). IRs are never committed or uploaded. aif / flac and WAV subtypes
     the core cannot read are converted (left channel, float32, no resampling) to `~/.cache/sawblade/ir_wav/<sha>.wav` and the preset points there.
     **Screen:** per refined candidate the chain is rendered once up to the cab (cab off, post EQ neutral). Each IR's |H| is cached on the loss' Welch
     grid (sidecar `~/.cache/sawblade/ir_h_v1/<sha[:2]>/<sha>.npy`, shared with the index, so warm runs do no FFTs); the predicted PSD is
@@ -414,7 +414,7 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
     first, then a seeded k-means (k = 32) on the 1/3-octave |H| shape keeps the IRs nearest each centroid in proportion to cluster size.
     `result.json -> irPool {local, tone3000, total, skipped, screenSeconds, prefiltered, winner{source, path | toneId}}`, and per candidate
     `cabSweep.candidates[].screen {pool, screened, prefilter, top, top6, fullTop6}`. Without a library and with <= 24 pool cabs the sweep is the old
-    every-cab sweep; `--ablate irsweep` keeps the pre-v0.4M behaviour (the library is ignored). `sawblade-t3k pull --gear ir` now downloads **all**
+    every-cab sweep (bigger pools now also go through the analytic screen, so only the top 24 get full renders; `irPool.screened` says which); `--ablate irsweep` keeps the pre-v0.4M behaviour (the library is ignored). `sawblade-t3k pull --gear ir` now downloads **all**
     models of IR tones (`--max-models-per-tone N` caps them, pedal/amp tones keep 3); `pull --ir-search QUERY` (repeatable, opt-in like `--search`)
     adds IR tones from tones/search under the same quality filter and licence rules.
   * **Gate matched to the reference** (`matcher/gatesweep.py`): on the final chain the gate is tuned by coordinate descent (about 15 renders of

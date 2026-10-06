@@ -180,7 +180,10 @@ def portable(preset: dict) -> dict:
         if isinstance(n, dict):
             src = n.get("source")
             if isinstance(src, dict) and "file" in n and src.get("provider") == "local":
-                n["file"] = f"local-irs/{Path(src.get('title') or 'ir').name}.wav"       # file stem + the sha256 stay
+                # file stem + the sha256 stay. Two IRs with the same stem collide on this placeholder name only; the sha256
+                # (and source.id) disambiguate. For converted IRs (aif/flac) the sha256 is the converted WAV's, while
+                # source.id is the original file's sha256[:16].
+                n["file"] = f"local-irs/{Path(src.get('title') or 'ir').name}.wav"
             elif isinstance(src, dict) and "file" in n:
                 ext = Path(n["file"]).suffix
                 n["file"] = f"captures/{src['id']}_{src.get('modelId', 'x')}{ext}"
