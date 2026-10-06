@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <set>
 
 #include <catch2/catch_approx.hpp>
@@ -731,4 +732,127 @@ TEST_CASE("browser: when the make-up cannot be measured the swap still happens w
   bool sawMatching = false;
   for (const auto& s : statuses) sawMatching = sawMatching || s.rfind("LEVEL MATCHING", 0) == 0;
   CHECK(sawMatching);
+}
+
+// --- v0.3 Task E: the browser marks the captures whose pack has a gain ladder ------------------------------------------------------------------
+
+namespace {
+struct NetworkOn {  // the processor's ladder tool is a network tool: SAWBLADE_NO_NETWORK ("1" in every test) is off for this test
+  std::optional<std::string> old;
+  NetworkOn() {
+    if (const char* c = std::getenv("SAWBLADE_NO_NETWORK")) old = c;
+    ::setenv("SAWBLADE_NO_NETWORK", "0", 1);
+  }
+  ~NetworkOn() {
+    if (old) ::setenv("SAWBLADE_NO_NETWORK", old->c_str(), 1);
+    else ::unsetenv("SAWBLADE_NO_NETWORK");
+  }
+};
+
+// The "steps" marker text of the card titled `title` (a card is the parent of its labels); "<no card>" if there is none.
+juce::String stepsOf(juce::Component& root, const juce::String& title) {
+  for (auto* st : allOf<juce::Label>(root)) {
+    if (st->getComponentID() != "steps") continue;
+    for (auto* sib : st->getParentComponent()->getChildren())
+      if (auto* l = dynamic_cast<juce::Label*>(sib); l != nullptr && l->getComponentID() == "title" && l->getText() == title) return st->getText();
+  }
+  return "<no card>";
+}
+}  // namespace
+
+TEST_CASE("browser: a card is marked STEPS n when its pack has a gain ladder; only checked tones are marked; each tone is asked once", "[browser][ui][steps]") {
+  Rig rig;
+  const NetworkOn net;
+  // The processor runs the ladder tool (its own settings); the browser's list / models use the browser's executable. Both are the fake CLI.
+  {
+    std::ofstream out(std::getenv("SAWBLADE_SETTINGS_FILE"));
+    out << nlohmann::json{{"version", 1}, {"firstRunCompleted", true}, {"t3kExecutable", SAWBLADE_FAKE_T3K}}.dump();
+  }
+  sawblade::plugin::settings::Settings::resetSharedForTests();
+  const fs::path log = rig.tmp.dir / "calls.log";
+  rig.env.set("FAKE_T3K_LOG", log.string());
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::SawAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return ctl.state().view == BrowserController::View::Browse && !ctl.state().records.empty() && !ctl.state().loading; }));
+  pumpFor(100);
+  const juce::String t101 = "Boss HM-2w CHAINSAW", t102 = juce::String::fromUTF8("Swedish Chainsaw \xc3\xa5\xc3\xa4\xc3\xb6"), t104 = "Tight Boost";
+  // Nothing is known yet: no row is marked (no per-row lookups either).
+  for (const auto& t : {t101, t102, t104}) CHECK(stepsOf(b, t) == "");
+  auto ladderCalls = [&] {
+    int n = 0;
+    std::ifstream in(log);
+    for (std::string line; std::getline(in, line);)
+      if (line.find("\"ladder\"") != std::string::npos) ++n;
+    return n;
+  };
+  CHECK(ladderCalls() == 0);
+
+  // Select the pack that has a ladder (the fake CLI: tone 101, five rungs): asked lazily, the tool runs off the UI thread, the card is marked.
+  ctl.select(101);
+  REQUIRE(pumpUntil([&] {
+    rig.proc.ladderTick();
+    return stepsOf(b, t101) == "STEPS 5";
+  }));
+  CHECK(rig.proc.ladderSteps("101") == 5);
+  CHECK(stepsOf(b, t102) == "");  // not asked, not marked
+  CHECK(stepsOf(b, t104) == "");
+  // A pack without a ladder (tone 102: rungs null) is asked and stays unmarked.
+  ctl.select(102);
+  REQUIRE(pumpUntil([&] {
+    rig.proc.ladderTick();
+    return rig.proc.ladderSteps("102") == 0;
+  }));
+  pumpFor(100);
+  CHECK(stepsOf(b, t102) == "");
+  CHECK(stepsOf(b, t101) == "STEPS 5");
+  // Back to the first one: not asked again (once per tone per session), and the mark stays.
+  ctl.select(101);
+  ctl.select(102);
+  ctl.select(101);
+  pumpFor(300);
+  rig.proc.ladderTick();
+  REQUIRE(rig.proc.waitForLadderWork());
+  CHECK(ladderCalls() == 2);
+  CHECK(stepsOf(b, t101) == "STEPS 5");
+  rig.proc.ladderTick();
+  rig.proc.waitForLadderWork();
+}
+
+TEST_CASE("browser: no ladder lookup when network tools are disabled, or for pedal and cab browsers", "[browser][ui][steps]") {
+  Rig rig;  // SAWBLADE_NO_NETWORK is "1" here
+  {
+    std::ofstream out(std::getenv("SAWBLADE_SETTINGS_FILE"));
+    out << nlohmann::json{{"version", 1}, {"firstRunCompleted", true}, {"t3kExecutable", SAWBLADE_FAKE_T3K}}.dump();
+  }
+  sawblade::plugin::settings::Settings::resetSharedForTests();
+  const fs::path log = rig.tmp.dir / "calls.log";
+  rig.env.set("FAKE_T3K_LOG", log.string());
+  const auto ladderCalls = [&] {
+    int n = 0;
+    std::ifstream in(log);
+    for (std::string line; std::getline(in, line);)
+      if (line.find("\"ladder\"") != std::string::npos) ++n;
+    return n;
+  };
+  {
+    CaptureBrowser b(rig.proc, *rig.settings, Slot::SawAmp);
+    auto& ctl = b.controller();
+    REQUIRE(pumpUntil([&] { return ctl.state().view == BrowserController::View::Browse && !ctl.state().records.empty() && !ctl.state().loading; }));
+    ctl.select(101);
+    pumpFor(200);
+    rig.proc.ladderTick();
+    CHECK(rig.proc.ladderSteps("101") == -1);
+  }
+  {
+    const NetworkOn net;
+    CaptureBrowser b(rig.proc, *rig.settings, Slot::SawPedal);
+    auto& ctl = b.controller();
+    REQUIRE(pumpUntil([&] { return ctl.state().view == BrowserController::View::Browse && !ctl.state().records.empty() && !ctl.state().loading; }));
+    ctl.select(101);
+    pumpFor(200);
+    rig.proc.ladderTick();
+    rig.proc.waitForLadderWork();
+    CHECK(rig.proc.ladderSteps("101") == -1);  // a pedal capture has no gain ladder to look for
+  }
+  CHECK(ladderCalls() == 0);
 }

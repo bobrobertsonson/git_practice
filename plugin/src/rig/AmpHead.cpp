@@ -53,6 +53,12 @@ juce::String AmpHead::gainReadout(double gain, const SawbladeProcessor::LadderIn
   return g + dot() + "capture: " + juce::String(l.activeName.empty() ? l.activeModelId : l.activeName);
 }
 
+juce::String AmpHead::stepsText(int steps) {
+  if (steps >= 2) return "STEPS " + juce::String(steps);
+  if (steps == 0) return juce::String::fromUTF8("STEPS \xE2\x80\x94");
+  return {};
+}
+
 AmpHead::AmpHead(SawbladeProcessor& p, int path) : proc_(p), path_(path) {
   setTitle(path == 0 ? "SAW amp controls" : "BODY amp controls");
   setInterceptsMouseClicks(false, true);  // only the knobs take the mouse: a click elsewhere on the head still selects it
@@ -81,7 +87,7 @@ void AmpHead::refresh() {
 
 void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo& ladder, const FillStatus& fill) {
   const PathPreset& pp = path_ == 0 ? preset.a : preset.b;
-  juce::String text;
+  juce::String text, tag;
   bool on = true, reason = false;
   if (path_ == 1 && !pp.enabled) {
     text = pp.blocks.empty() ? bodyOffText() : bodyOffWithBlocksText();
@@ -104,13 +110,19 @@ void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo&
     reason = true;
   } else {
     text = gainReadout(knob(kAmpGain).getValue(), ladder);
+    // The steps tag: from the preset as shown (so it follows an undo / redo and a ladder that just arrived), and what this session has checked.
+    if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp.blocks[static_cast<std::size_t>(ampIndex(pp))].params.get())) {
+      if (nam->model.ladder.size() >= 2) tag = stepsText(static_cast<int>(nam->model.ladder.size()));
+      else if (nam->model.source && nam->model.source->provider == "tone3000" && proc_.ladderCheckedNone(nam->model.source->id)) tag = stepsText(0);
+    }
   }
   if (on != enabled_) {
     enabled_ = on;
     for (auto& k : knobs_) k->setEnabled(on);
   }
-  if (text != readout_ || reason != reason_) {
+  if (text != readout_ || reason != reason_ || tag != stepsTag_) {
     readout_ = text;
+    stepsTag_ = tag;
     reason_ = reason;
     repaint();
   }
@@ -132,7 +144,16 @@ void AmpHead::paint(juce::Graphics& g) {
   g.fillRoundedRectangle(pill, 4.0f);
   g.setColour((reason_ ? L::warning() : L::text()).withAlpha(0.95f));
   g.setFont(L::monoFont(11.0f));
-  g.drawFittedText(readout_, pill.toNearestInt().reduced(6, 0), juce::Justification::centred, 1, 0.75f);
+  auto textArea = pill.toNearestInt().reduced(6, 0);
+  if (stepsTag_.isNotEmpty()) {  // the tag takes the right end of the pill; the read-out keeps the rest
+    const auto tagArea = textArea.removeFromRight(52);
+    g.setColour((stepsTag_.endsWithChar('4') || stepsTag_.getLastCharacter() != 0 ? L::dimText() : L::dimText()).withAlpha(1.0f));
+    g.setFont(L::monoFont(9.0f));
+    g.drawText(stepsTag_, tagArea, juce::Justification::centredRight);
+    g.setColour((reason_ ? L::warning() : L::text()).withAlpha(0.95f));
+    g.setFont(L::monoFont(11.0f));
+  }
+  g.drawFittedText(readout_, textArea, juce::Justification::centred, 1, 0.75f);
 }
 
 }  // namespace sawblade::plugin::rig

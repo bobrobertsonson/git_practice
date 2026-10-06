@@ -6,6 +6,8 @@
 //   GAIN 7.0 . capture: Gain 6              the path's amp capture has a gain ladder
 //   GAIN 7.0 . drive only (fetching Gain 8) a rung is pending: its model is not loaded yet
 //   GAIN 7.0                                no ladder
+// v0.3 Task E: a small text tag at the right end of the read-out pill: "STEPS n" when the capture has a gain ladder of n steps, "STEPS -"
+// (an em dash) when the capture was checked and has none, nothing while that is not known (and for the states below that disable the knobs).
 //   NO AMP IN THIS PATH                     no amp block: the knobs are disabled
 //   BODY PATH OFF - turn up BLEND to add one   (body head, path B empty and off): the knobs are disabled
 //   BODY PATH OFF - turn up BLEND              (body head, path B off but it has blocks): the knobs are disabled
@@ -44,6 +46,10 @@ class AmpHead : public juce::Component {
 
   bool knobsEnabled() const noexcept { return enabled_; }
   const juce::String& readout() const noexcept { return readout_; }
+  // The steps tag now shown ("" = none): see stepsText().
+  const juce::String& stepsTag() const noexcept { return stepsTag_; }
+  // steps: n >= 2 -> "STEPS n"; 0 -> "STEPS -" (em dash); anything else (unknown) -> "".
+  static juce::String stepsText(int steps);
   // The one line for a path with a working amp: GAIN `gain` with the ladder's state.
   static juce::String gainReadout(double gain, const SawbladeProcessor::LadderInfo& ladder);
   static juce::String noAmpText();    // "NO AMP IN THIS PATH"
@@ -64,7 +70,7 @@ class AmpHead : public juce::Component {
   SawbladeProcessor& proc_;
   int path_;
   std::array<std::unique_ptr<skin::FilmstripKnob>, kAmpKnobCount> knobs_;
-  juce::String readout_;
+  juce::String readout_, stepsTag_;
   bool enabled_ = true, reason_ = false;
 };
 

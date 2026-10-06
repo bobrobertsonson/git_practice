@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stand-in for `sawblade-t3k` in the capture-browser tests (docs/specs/phase8_capture_browser.md).
 
-Answers whoami / search / list / models / fetch / login from canned JSON by argv. Behaviour is steered by
+Answers whoami / search / list / models / ladder / fetch / login from canned JSON by argv. Behaviour is steered by
 environment variables:
   FAKE_T3K_MODE   ok (default) | error | sleep | garbage | exit1 | noisy
                   error: every command prints {"error", "code"} (FAKE_T3K_CODE, default "error") and exits 1
@@ -107,6 +107,13 @@ elif cmd == "models":
     out({"tone_id": tid, "architecture": "A2", "models": [
         {"model_id": tid * 10 + 1, "name": "Standard", "size": "standard"},
         {"model_id": tid * 10 + 2, "name": "Lite", "size": None}]})
+elif cmd == "ladder":
+    # v0.3 Task E: tone 101 has a 5-step ladder (own model 1011 is one of the rungs), every other tone none (rungs null).
+    tid = args[1]
+    rungs = None
+    if tid == "101":
+        rungs = [{"model_id": str(1010 + i), "gain": float(2 * i), "name": f"Gain {2 * i}"} for i in range(1, 6)]
+    out({"tone_id": tid, "size": "standard", "rungs": rungs})
 elif cmd == "fetch":
     tid = int(args[1])
     lic = {103: "cc-by-nc", 107: "unknown"}.get(tid, "cc-by")

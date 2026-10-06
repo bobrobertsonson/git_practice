@@ -63,6 +63,10 @@ class BrowserController {
   Slot slot() const noexcept { return slot_; }
   std::vector<const t3k::CaptureRecord*> visible() const;
   const t3k::CaptureRecord* selected() const;
+  // What this session knows about the gain ladder of a tone: -1 unknown, 0 none, n >= 2 steps (the processor's `ladder` tool answers). The
+  // browser marks a card only when this is >= 2. select() asks about the tone it selects (lazily, once per tone per session, through the
+  // processor's own ladder tool: no extra work per row, nothing queued on the browser's own tool runner).
+  int ladderSteps(std::int64_t toneId) const;
   // The slot's targets in the current preset (and why not, if none).
   std::vector<SlotTarget> targets(std::string* why = nullptr) const;
   std::string executable() const { return settings_.executable(); }

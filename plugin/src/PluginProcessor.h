@@ -8,6 +8,8 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <deque>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -278,6 +280,17 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // Why a ladder is not in use (rejected rungs, an own model that is not in the fetched ladder, ...): any non-audio thread.
   std::vector<std::string> ladderMessages() const;
   std::uint64_t ladderFetches() const noexcept { return ladderFetches_.load(); }  // `ladder` tool runs started
+  // v0.3 Task E: what this session has learned about the gain ladder of TONE3000 tone `toneId` (the `ladder` tool's answer): -1 = not
+  // checked (or the tool failed: unknown, never guessed), 0 = checked and none, n >= 2 = n steps. Any non-audio thread. Not saved in the preset:
+  // a new session asks again (once per tone).
+  int ladderSteps(const std::string& toneId) const;
+  // Checked and an amp of this tone has no usable ladder: the tool said none, or its ladder does not contain the capture's own model (another
+  // model size). The amp head's "STEPS -" tag.
+  bool ladderCheckedNone(const std::string& toneId) const;
+  // The capture browser asks about the tone it shows (selected / previewed): queued for the next ladderTick(), run through the same tool and
+  // the same once-per-tone-per-session rule as the preset's own fetch (so the answer is also applied to a rig that uses that capture). Message
+  // thread; a no-op when the tone is known, was already asked, ladder fetching is off or network tools are disabled.
+  void requestLadderLookup(const std::string& toneId);
   std::uint64_t rungFetches() const noexcept { return rungFetches_.load(); }      // `fetch` runs started for missing rung models
 
   // Test hook: a CIRCUIT edit from another thread (or during a commit) is waiting for the timer. Commit's own
@@ -349,6 +362,11 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::atomic<bool> rungArrived_{false};  // a rung `fetch` finished: ask the rung loader at once
   std::set<std::string> rungTried_;       // "tone:model" already fetched (or failed) this session (message thread only)
   std::set<std::string> ladderTried_;  // tone ids already asked about (message thread only)
+  std::deque<std::string> ladderLookups_;  // tone ids the capture browser wants checked (message thread only)
+  std::map<std::string, int> ladderSteps_;  // fetchMutex_: tone id -> steps (0 = none), from the tool's answers
+  std::set<std::string> ladderUnusable_;    // fetchMutex_: a ladder exists but no amp block could take it
+  std::map<std::string, std::vector<LadderRung>> ladderRungs_;  // fetchMutex_: the ladders found this session, by tone id
+  std::set<std::string> ladderNoted_;       // message thread: "tone:model" captures already reported as not in their tone's ladder
   mutable std::mutex fetchMutex_;
   std::vector<std::string> ladderNotes_;  // fetchMutex_
   std::vector<LadderFetchResult> fetched_;  // results waiting for the message thread

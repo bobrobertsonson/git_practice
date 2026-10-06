@@ -173,6 +173,20 @@ void SawbladeProcessor::timerCallback() {
 }
 
 // --- gain ladders -------------------------------------------------------------------------------
+namespace {
+// The model ids of the amp captures of `toneId` in `p` (a key for "this capture was already reported").
+std::string ampModelIds(const Preset& p, const std::string& toneId) {
+  std::string k;
+  for (const PathPreset* path : {&p.a, &p.b}) {
+    const int i = ampIndex(*path);
+    if (i < 0) continue;
+    const auto* nam = dynamic_cast<const NamBlockParams*>(path->blocks[static_cast<std::size_t>(i)].params.get());
+    if (nam && nam->model.source && nam->model.source->id == toneId) k += nam->model.source->modelId + ",";
+  }
+  return k;
+}
+}  // namespace
+
 SawbladeProcessor::LadderInfo SawbladeProcessor::ladderInfo(int path) const {
   LadderInfo li;
   std::shared_ptr<Engine> e;
@@ -230,27 +244,52 @@ void SawbladeProcessor::ladderTick() {
     done.swap(fetched_);
   }
   for (const LadderFetchResult& r : done) {
-    if (r.rungs.empty()) continue;
+    if (!r.ok) continue;  // the tool failed or answered nonsense: unknown, not "no ladder"
+    std::lock_guard<std::mutex> lk(fetchMutex_);
+    ladderSteps_[r.toneId] = static_cast<int>(r.rungs.size());
+    if (!r.rungs.empty()) ladderRungs_[r.toneId] = r.rungs;
+  }
+  // Every amp capture that has no ladder yet gets the one this session already learned for its tone (the one just fetched, or one the capture
+  // browser asked about before the capture was used).
+  for (const std::string& toneId : toneIdsNeedingLadder(editBasePreset())) {
+    std::vector<LadderRung> rungs;
+    {
+      std::lock_guard<std::mutex> lk(fetchMutex_);
+      if (const auto it = ladderRungs_.find(toneId); it != ladderRungs_.end()) rungs = it->second;
+    }
+    if (rungs.empty()) continue;
     Preset p = editBasePreset();
     // The snapshots take the ladder by the same rule (structure-only: the path's amp capture is this tone's, with no ladder yet), so a
     // snapshot whose amp is another capture is left alone.
-    if (applyLadderToPreset(p, r.toneId, r.rungs)) {
+    if (applyLadderToPreset(p, toneId, rungs)) {
       loadPreset(std::move(p), /*keepMonitor=*/true);  // an async completion: no undo step of its own ...
-      patchHistory([&](Preset& snap) { applyLadderToPreset(snap, r.toneId, r.rungs); });  // ... and an undo does not take the ladder away
-    } else if (const auto need = toneIdsNeedingLadder(p); std::find(need.begin(), need.end(), r.toneId) != need.end()) {
+      patchHistory([&](Preset& snap) { applyLadderToPreset(snap, toneId, rungs); });  // ... and an undo does not take the ladder away
+    } else if (ladderNoted_.insert(toneId + ":" + ampModelIds(p, toneId)).second) {
       // The ladder has the tone's `standard`-size models; a capture of another size is not one of them (the preset does not
-      // record the size), so it gets no ladder: GAIN stays drive-only. Say so.
+      // record the size), so it gets no ladder: GAIN stays drive-only. Say so (once per capture).
       std::lock_guard<std::mutex> lk(fetchMutex_);
-      ladderNotes_.push_back("tone " + r.toneId + ": the amp capture's model is not in the " + kLadderSize +
+      ladderUnusable_.insert(toneId);
+      ladderNotes_.push_back("tone " + toneId + ": the amp capture's model is not in the " + kLadderSize +
                              "-size gain ladder (another model size?); GAIN stays drive-only");
     }
   }
-  // 2. The next ladder to fetch (one run at a time, once per tone per session).
+  // 2. The next ladder to fetch (one run at a time, once per tone per session): a tone the capture browser asked about first, then the
+  //    preset's own amp captures that still need one.
   if (ladderFetch_.load() && !networkToolsDisabled() && !fetchRunning_.load() && !ladderTool_.running()) {
-    for (const std::string& id : toneIdsNeedingLadder(editBasePreset())) {
-      if (!ladderTried_.insert(id).second) continue;
-      std::error_code ec;
-      if (!std::filesystem::exists(settings::t3kExecutable(), ec)) break;  // no tool: nothing to ask
+    std::string id;
+    while (id.empty() && !ladderLookups_.empty()) {
+      std::string next = std::move(ladderLookups_.front());
+      ladderLookups_.pop_front();
+      if (ladderTried_.insert(next).second) id = std::move(next);
+    }
+    if (id.empty())
+      for (const std::string& need : toneIdsNeedingLadder(editBasePreset()))
+        if (ladderTried_.insert(need).second) {
+          id = need;
+          break;
+        }
+    std::error_code ec;
+    if (!id.empty() && std::filesystem::exists(settings::t3kExecutable(), ec)) {  // no tool: nothing to ask
       fetchRunning_.store(true);
       ladderFetches_.fetch_add(1);
       const bool started = ladderTool_.start(
@@ -266,7 +305,6 @@ void SawbladeProcessor::ladderTick() {
             fetchRunning_.store(false);
           });
       if (!started) fetchRunning_.store(false);
-      break;
     }
   }
   // 3. The running engine's rungs: write the active one back, keep the nearest models loaded.
@@ -350,6 +388,25 @@ std::vector<std::string> SawbladeProcessor::ladderMessages() const {
     v.insert(v.end(), m.begin(), m.end());
   }
   return v;
+}
+
+int SawbladeProcessor::ladderSteps(const std::string& toneId) const {
+  std::lock_guard<std::mutex> lk(fetchMutex_);
+  const auto it = ladderSteps_.find(toneId);
+  return it == ladderSteps_.end() ? -1 : it->second;
+}
+
+bool SawbladeProcessor::ladderCheckedNone(const std::string& toneId) const {
+  std::lock_guard<std::mutex> lk(fetchMutex_);
+  const auto it = ladderSteps_.find(toneId);
+  return (it != ladderSteps_.end() && it->second == 0) || ladderUnusable_.count(toneId) > 0;
+}
+
+void SawbladeProcessor::requestLadderLookup(const std::string& toneId) {
+  if (toneId.empty() || !ladderFetch_.load() || networkToolsDisabled()) return;
+  if (ladderTried_.count(toneId) > 0 || ladderSteps(toneId) >= 0) return;
+  if (std::find(ladderLookups_.begin(), ladderLookups_.end(), toneId) != ladderLookups_.end()) return;
+  ladderLookups_.push_back(toneId);
 }
 
 bool SawbladeProcessor::waitForLadderWork(std::chrono::milliseconds timeout) {

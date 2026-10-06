@@ -141,6 +141,19 @@ of the tone that are the same amp at other gain settings. In the plugin:
 - **For the UI (Task D).** `SawbladeProcessor::ladderInfo(path)`: `has`, `rungCount`, `activeIndex` / `activeName` / `activeGain` /
   `activeModelId` (e.g. "Gain 6"), `targetIndex` / `targetName`, `pending` (the "rung pending" flag), `missingRungs`.
 
+- **Where steps exist (v0.3 Task E).** Text only, in the existing skin.
+  - *Amp head:* a small tag at the right end of the read-out pill: `STEPS n` when the capture has a ladder of n steps (read from the preset as
+    shown, so it follows a ladder that arrives asynchronously and an undo / redo); `STEPS -` (em dash) when the tool was asked about the capture's
+    tone and found none (or a ladder without the capture's own model: `SawbladeProcessor::ladderCheckedNone`); nothing while that is unknown
+    (never asked, the tool is missing / disabled / failed, a local-file amp). "Checked, no ladder" is session state in the processor
+    (`ladderSteps(toneId)`: -1 unknown, 0 none, n steps), not in the preset: a new session asks again, once per tone.
+  - *Capture browser:* a card shows `STEPS n` (right end of the licence row) when the tone's ladder is known to exist. Only the tone the user
+    selects or previews is looked up (amp slots only): `BrowserController::select` calls `requestLadderLookup`, which the next `ladderTick()` runs
+    through the same tool and once-per-tone rule as above (one run at a time, off the UI thread, nothing queued on the browser's own tool runner).
+    Cards of tones nobody selected are never marked; a pack without a ladder is not marked. A looked-up ladder is also given to a rig whose amp
+    is a capture of that tone (so using it right after browsing shows the steps). `SAWBLADE_NO_NETWORK` turns the lookup off like the other
+    automatic tools.
+
 ### BLEND fills an empty path B (v0.2 Task C)
 
 `RigController::setTopology(Blend)` on a preset whose path B has no blocks fills it in one edit: a modeled TS boost (`pedal.ts`,

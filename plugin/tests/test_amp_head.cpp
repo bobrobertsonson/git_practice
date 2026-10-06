@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <random>
 
 #include <catch2/catch_approx.hpp>
@@ -421,4 +422,142 @@ TEST_CASE("amp head: screenshots of the rig page", "[ampd][editor]") {
   rig.load(rigJson(true, true, false));
   rig.snap("rig_amp_bodyoff_blocks.png");  // B has blocks, BLEND off
   CHECK(rig.ed->ampHead(1).readout() == rig::AmpHead::bodyOffWithBlocksText());
+}
+
+// --- v0.3 Task E: the STEPS tag on the amp head ---------------------------------------------------------------------------------------------
+
+namespace {
+// SAWBLADE_NO_NETWORK is "1" in every test; a test that runs the (fake) ladder tool turns it off for its own duration.
+struct NetworkOn {
+  std::optional<std::string> old;
+  NetworkOn() {
+    if (const char* c = std::getenv("SAWBLADE_NO_NETWORK")) old = c;
+    ::setenv("SAWBLADE_NO_NETWORK", "0", 1);
+  }
+  ~NetworkOn() {
+    if (old) ::setenv("SAWBLADE_NO_NETWORK", old->c_str(), 1);
+    else ::unsetenv("SAWBLADE_NO_NETWORK");
+  }
+};
+
+json fiveRungs() {
+  json l = json::array();
+  for (int i = 1; i <= 5; ++i) l.push_back({{"modelId", "m" + std::to_string(i)}, {"gain", 2.0 * i}, {"name", "Gain " + std::to_string(2 * i)}});
+  return l;
+}
+
+// Path A's amp is a TONE3000 capture T1 / m1 (a rung of fiveRungs()), with or without its stored ladder.
+json capturePreset(bool withLadder) {
+  json j = rigJson(true, false, false);
+  json& model = j["paths"]["a"]["blocks"][0]["model"];
+  model["source"] = {{"provider", "tone3000"}, {"id", "T1"}, {"modelId", "m1"}, {"title", "Marshall A"}};
+  if (withLadder) model["ladder"] = fiveRungs();
+  return j;
+}
+
+// A stand-in `sawblade-t3k` that prints `doc` for every call; the processor's settings point at it.
+void useLadderTool(Rig& rig, const std::string& doc) {
+  const fs::path exe = rig.dir.dir / "fake-t3k";
+  std::ofstream(exe) << "#!/bin/sh\necho '" << doc << "'\n";
+  fs::permissions(exe, fs::perms::owner_all);
+  std::ofstream(rig.env.dir / "settings.json") << json{{"version", 1}, {"firstRunCompleted", true}, {"t3kExecutable", exe.string()}}.dump();
+  settings::Settings::resetSharedForTests();
+}
+
+// Runs the ladder fetch to completion: the tool, then the tick that applies its answer.
+void fetchLadder(Rig& rig) {
+  rig.proc.ladderTick();
+  REQUIRE(rig.proc.waitForLadderWork());
+  rig.proc.ladderTick();
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+  rig.ed->refreshNow();
+}
+}  // namespace
+
+TEST_CASE("amp head: the text of the STEPS tag", "[ampd][editor][steps]") {
+  CHECK(rig::AmpHead::stepsText(5) == "STEPS 5");
+  CHECK(rig::AmpHead::stepsText(2) == "STEPS 2");
+  CHECK(rig::AmpHead::stepsText(0) == juce::String::fromUTF8("STEPS \xE2\x80\x94"));
+  CHECK(rig::AmpHead::stepsText(-1).isEmpty());  // unknown: nothing
+  CHECK(rig::AmpHead::stepsText(1).isEmpty());   // one rung is not a ladder
+}
+
+TEST_CASE("amp head: STEPS n for a capture with a ladder; nothing for a capture nobody has checked, or no capture source", "[ampd][editor][steps]") {
+  Rig rig;
+  rig.load(capturePreset(true));
+  CHECK(rig.ed->ampHead(0).stepsTag() == "STEPS 5");
+  CHECK(rig.ed->ampHead(1).stepsTag().isEmpty());  // no amp in path B: no tag, and the read-out says so
+  rig.load(capturePreset(false));
+  CHECK(rig.ed->ampHead(0).stepsTag().isEmpty());  // a capture, never checked: unknown
+  rig.load(rigJson(true, false, false));            // an amp that is a local file (no TONE3000 source): never checked either
+  CHECK(rig.ed->ampHead(0).stepsTag().isEmpty());
+  rig.load(rigJson(true, true, true, /*aLadder=*/true));  // the 3-rung ladder of the older tests
+  CHECK(rig.ed->ampHead(0).stepsTag() == "STEPS 3");
+  CHECK(rig.ed->ampHead(1).stepsTag().isEmpty());
+  rig.snap("rig_amp_steps.png");
+}
+
+TEST_CASE("amp head: STEPS appears when the ladder fetch completes, and survives an undo / redo", "[ampd][editor][steps]") {
+  Rig rig;
+  rig.load(capturePreset(false));
+  REQUIRE(rig.ed->ampHead(0).stepsTag().isEmpty());  // unknown while nobody asked
+  auto& ctl = rig.ed->rigController();
+  ctl.edit([](Preset& p) { p.a.levelDb = -2.0; });   // a step whose snapshot (before it) has no ladder yet
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  const NetworkOn net;
+  useLadderTool(rig, R"({"tone_id":"T1","size":"standard","rungs":[)" + [] {
+    std::string r;
+    for (int i = 1; i <= 5; ++i) r += std::string(i > 1 ? "," : "") + R"({"model_id":"m)" + std::to_string(i) + R"(","gain":)" + std::to_string(2 * i) + R"(.0,"name":"Gain )" + std::to_string(2 * i) + R"("})";
+    return r;
+  }() + "]}");
+  rig.proc.ladderTick();  // starts the tool
+  REQUIRE(rig.proc.waitForLadderWork());
+  CHECK(rig.ed->ampHead(0).stepsTag().isEmpty());  // the answer is waiting for the tick: still nothing
+  rig.proc.ladderTick();                           // applies it
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+  rig.ed->refreshNow();
+  CHECK(rig.ed->ampHead(0).stepsTag() == "STEPS 5");
+  // Undo to the snapshot from before the ladder, redo: the tag stays (the ladder was patched into the history).
+  REQUIRE(ctl.undo());
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.ed->refreshNow();
+  CHECK(rig.proc.currentPreset().a.levelDb == Catch::Approx(0.0));
+  CHECK(rig.ed->ampHead(0).stepsTag() == "STEPS 5");
+  REQUIRE(ctl.redo());
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.ed->refreshNow();
+  CHECK(rig.ed->ampHead(0).stepsTag() == "STEPS 5");
+}
+
+TEST_CASE("amp head: STEPS - when the capture was checked and has no ladder; nothing when the tool fails", "[ampd][editor][steps]") {
+  {
+    Rig rig;
+    rig.load(capturePreset(false));
+    const NetworkOn net;
+    useLadderTool(rig, R"({"tone_id":"T1","size":"standard","rungs":null})");
+    CHECK(rig.ed->ampHead(0).stepsTag().isEmpty());
+    fetchLadder(rig);
+    CHECK(rig.proc.ladderSteps("T1") == 0);
+    CHECK(rig.ed->ampHead(0).stepsTag() == juce::String::fromUTF8("STEPS \xE2\x80\x94"));
+    CHECK(rig.ed->ampHead(0).readout() == "GAIN 5.0");  // the read-out is unchanged
+    // Undo / redo keep it (the state is the session's knowledge of the tone, not part of a snapshot).
+    rig.ed->rigController().edit([](Preset& p) { p.b.levelDb = -1.0; });
+    REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+    REQUIRE(rig.ed->rigController().undo());
+    REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+    rig.ed->refreshNow();
+    CHECK(rig.ed->ampHead(0).stepsTag() == juce::String::fromUTF8("STEPS \xE2\x80\x94"));
+    rig.snap("rig_amp_steps_none.png");
+  }
+  {
+    Rig rig;  // a tool that fails: unknown, never "none"
+    rig.load(capturePreset(false));
+    const NetworkOn net;
+    useLadderTool(rig, "nonsense");
+    fetchLadder(rig);
+    CHECK(rig.proc.ladderSteps("T1") == -1);
+    CHECK(rig.ed->ampHead(0).stepsTag().isEmpty());
+  }
 }

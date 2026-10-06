@@ -48,6 +48,8 @@ const t3k::CaptureRecord* BrowserController::selected() const {
   return nullptr;
 }
 
+int BrowserController::ladderSteps(std::int64_t toneId) const { return proc_.ladderSteps(std::to_string(toneId)); }
+
 std::vector<SlotTarget> BrowserController::targets(std::string* why) const { return slotTargets(proc_.currentPreset(), slot_, why); }
 
 void BrowserController::setExecutable(const std::string& path) {
@@ -142,6 +144,7 @@ void BrowserController::select(std::int64_t toneId) {
   setStatus({});
   changed();
   if (toneId == 0) return;
+  if (st_.gear == "amp") proc_.requestLadderLookup(std::to_string(toneId));  // a ladder is an amp thing: not for pedals or cab IRs
   const std::uint64_t seq = ++modelsSeq_;
   client_.models(toneId, [this, seq, toneId](Reply<t3k::ModelsResult> r) {
     if (seq != modelsSeq_ || toneId != st_.selectedId) return;
