@@ -481,6 +481,19 @@ the tools, a progress bar with stage, message, ETA and best error, CANCEL, and t
   while `--ref-channel mid` (the mean of its channels) still gives the LTAS target: for a stereo guitar stem that is the left
   channel against the mid, which is harmless for a mono DI.
 
+**Record in the host: no import needed (v0.2.1 Task C).** Load the song in PLAY ALONG (or in MATCH section 1), turn on SYNC TO HOST,
+put Sawblade on the DI track in the DAW, play the DI region and press REC. While the host transport runs and SYNC TO HOST is
+on, the take's sidecar stores `playAlong.running: true` and `stemSampleIndex` = the host playhead at the take's first sample
+minus the applied player offset (with the offset at 0 it is exactly the host position), so the take carries its song position
+automatically (`PlayAlong::takeStartInfo`, called at the block where recording starts). Proof:
+`plugin/tests/test_record_match.cpp:427`, "record: the sidecar offset follows the host position in plugin mode"
+(`takes[0].stemSampleIndex == hostPos + 4800`, the 4800 being the 100 ms player offset; host stopped gives `running: false`).
+How this differs from IMPORT DI...: a take recorded while the song plays is a *different performance* from the record, so the
+matcher matches it by **spectrum** (tone), unmatched: the plan still passes `--offset-ms`, but the matcher reads it only with
+`--matched` (`match/sawblade_match/matcher/reference.py`), which the plugin sets only for an imported "same performance as the
+song" DI (`MatchGlue.cpp`, `planMatch`). Only that imported pair is time-aligned. A take recorded against another song, or with
+the backing not following the host, has no usable position and the matcher searches for it where it needs one.
+
 **IMPORT DI... (v0.2.1 Task B).** A DI you already have (WAV / AIFF / FLAC, 16 / 24 / 32-bit integer or 32-bit float, any rate)
 becomes a take: IMPORT DI... in the take band and in the MATCH screen's section 2, or drop the file on the take list / on
 section 2 (a drop on the song area is still a song). The native chooser is files-only (filter `*` on macOS, the pick is

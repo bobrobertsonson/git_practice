@@ -275,7 +275,7 @@ struct PlayAlongPanel::Impl {
   // --- the record / match band ---------------------------------------------------------------------------------
   void buildBand() {
     caption(capTakes, "TAKES");
-    configure(rec, "REC", "Record the clean input (before the gate) to a take. Press again to stop. Takes are saved in the takes folder with a sidecar that stores where the song was.");
+    configure(rec, "REC", "Record the clean input (before the gate) to a take. Press again to stop. Takes are saved in the takes folder with a sidecar that stores where the song was. In a host: load the song, enable SYNC TO HOST, put Sawblade on the DI track and record while the host plays the DI region.");
     configure(importBtn, juce::String::fromUTF8("IMPORT DI\xe2\x80\xa6"), "Import a WAV, AIFF or FLAC file (a DI you already have, for example a bounce from your DAW) as a take: it is copied into the takes folder and used for MATCH. You can also drop the file on the take list.");
     configure(renameTake, "RENAME", "Rename the selected take");
     configure(deleteTake, "DELETE", "Delete the selected take (the audio file and its sidecar)");

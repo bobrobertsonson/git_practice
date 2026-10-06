@@ -199,7 +199,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     owner.addChildComponent(fetchField);
     owner.addChildComponent(sepBar);
     caption(capDi, juce::String::fromUTF8("2 \xc2\xb7 YOUR DI"));
-    button(recBtn, "REC", "Record the clean input (before the gate) to a take. Press again to stop. The take becomes the DI for the match. Takes are saved in the takes folder with a sidecar that stores where the song was.");
+    button(recBtn, "REC", "Record the clean input (before the gate) to a take. Press again to stop. The take becomes the DI for the match. In a host: load the song, enable SYNC TO HOST, put Sawblade on the DI track and record while the host plays the DI region; the take keeps its song position. Matched by tone, not timing.");
     button(importBtn, juce::String::fromUTF8("IMPORT DI\xe2\x80\xa6"), "Import a WAV, AIFF or FLAC file (a DI you already have, for example a bounce from your DAW) as a take: it is copied into the takes folder and becomes the DI for the match. You can also drop the file on this section.");
     importer = std::make_unique<DiImporter>(proc, owner);
     importer->onRejected = [this](const juce::String& why) {
