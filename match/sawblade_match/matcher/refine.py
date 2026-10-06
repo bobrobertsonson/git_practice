@@ -23,27 +23,64 @@ DISCRETE_UP = 1.0       # slope parameter value of the 24 dB/oct alternative (>=
 HP_GRID = tuple(float(f) for f in np.geomspace(60.0, 140.0, 8)[1:])      # post.hp tried after CMA-ES (60 Hz = off)
 
 
-def pick_slopes(space: Space, v: dict, score) -> tuple[dict, L.LossResult]:
+LP_FREQ_FACTORS = (0.8, 0.9, 1.0, 1.12, 1.25)      # post.lp tried around the CMA-ES value, per slope
+SLOPE_12 = 0.0                                      # slope parameter value of the 12 dB/oct alternative (< 0.5)
+
+
+def pick_slopes(space: Space, v: dict, score, polish=None) -> tuple[dict, L.LossResult]:
     """The post-cab filter parameters (group ``discrete``) are not CMA-ES dimensions (extra dimensions cost the short stage-2
-    budgets accuracy on the known answer): after the linear block ``post.hp`` is tried on a short log grid, then each
-    filter's slope is switched to its 24 dB/oct alternative in turn; a change is kept when the loss falls.
-    ``score(v) -> LossResult``."""
+    budgets accuracy on the known answer). After the linear block they are chosen jointly, each change kept only when the loss
+    falls: ``post.hp`` over the short log grid x slope {12, 24 dB/oct}, then ``post.lp`` over a small grid around the CMA-ES
+    value x slope {12, 24}. (Trying 24 dB/oct only at the frequency found at 12 dB/oct left the filters unrecovered and the EQ
+    bands compensating.) If a filter changed, ``polish(v) -> (v, LossResult)`` (a short linear re-polish of the EQ bands) runs
+    and is kept when it does not raise the loss. ``score(v) -> LossResult``."""
     best = dict(v)
     r = score(best)
     names = [space.names[i] for i in space.indices("discrete")]
+    changed = False
     if "post.hp" in names:
-        for f in HP_GRID:
-            cand = {**best, "post.hp": f}
-            rc = score(cand)
-            if rc.total < r.total - 1e-9:
-                best, r = cand, rc
-    for n in names:
-        if n.endswith("_slope"):
-            cand = {**best, n: DISCRETE_UP}
-            rc = score(cand)
-            if rc.total < r.total - 1e-9:
-                best, r = cand, rc
+        for sl in (SLOPE_12, DISCRETE_UP):
+            for f in HP_GRID:
+                cand = {**best, "post.hp": f, "post.hp_slope": sl}
+                rc = score(cand)
+                if rc.total < r.total - 1e-9:
+                    best, r, changed = cand, rc, True
+    if "post.lp" in space.idx and "post.lp_slope" in names:
+        lo, hi = space.params[space.idx["post.lp"]].lo, space.params[space.idx["post.lp"]].hi
+        f0 = best["post.lp"]
+        for sl in (SLOPE_12, DISCRETE_UP):
+            for k in LP_FREQ_FACTORS:
+                f = float(np.clip(f0 * k, lo, hi))
+                if sl == SLOPE_12 and k == 1.0 and best.get("post.lp_slope", 0.4) < 0.5:
+                    continue                      # the current setting
+                cand = {**best, "post.lp": f, "post.lp_slope": sl}
+                rc = score(cand)
+                if rc.total < r.total - 1e-9:
+                    best, r, changed = cand, rc, True
+    if changed and polish is not None:
+        vp, rp = polish(best)
+        if rp.total <= r.total:
+            best, r = vp, rp
     return best, r
+
+
+def _polish_linear(eng, space: Space, score, v: dict, *, seed: int, gens: int, pop: int, sigma: float = 0.05,
+                   patience=None, tol: float = 0.0) -> tuple[dict, L.LossResult]:
+    """Short seeded CMA-ES over the linear parameters from ``v`` (the discrete filter settings stay fixed); never worse."""
+    lin_idx = space.indices("linear")
+    u = space.encode(v)
+
+    def full_u(x):
+        uu = u.copy()
+        uu[lin_idx] = x
+        return uu
+    bx, bf, hist = cma.minimize(None, u[lin_idx], sigma, pop, gens, seed,
+                                evaluate_batch=lambda X: eng.map(lambda x: score(space.decode(full_u(x))).total, list(X)),
+                                patience=patience, tol=tol)
+    vp = space.decode(full_u(bx))
+    for i in space.indices("discrete"):          # the filter settings just chosen stay exactly as they are
+        vp[space.names[i]] = v[space.names[i]]
+    return vp, score(vp)
 
 
 def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, align: dict, v0: dict, *,
@@ -126,7 +163,9 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
     ca, cb = cores_top(v)
     u, f3, h3 = run_block(u, lin_idx, pop_linear, gens_final, 0.1, "linear", 3, (ca, cb), "L2")
     v = space.decode(u)
-    v, r = pick_slopes(space, v, lambda vv: score(vv, ca, cb))
+    sc = lambda vv: score(vv, ca, cb)
+    v, r = pick_slopes(space, v, sc, lambda vv: _polish_linear(eng, space, sc, vv, seed=seed + 4, gens=max(4, gens_final // 2),
+                                                               pop=pop_linear, patience=patience, tol=tol))
     log(f"  block L2: {r.total:.3f} ({time.time() - t0:.0f}s)")
     info.update(l1Objective="ltas-only (no feel term)", startLoss=r0.total, history={"L1": h1, "G": h2, "L2": h3}, seconds=time.time() - t0)
     return v, r, info
@@ -158,6 +197,8 @@ def relinear(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, align: 
 
     bx, bf, hist = cma.minimize(None, u[lin_idx], sigma, pop, gens, seed, evaluate_batch=lambda X: eng.map(f, list(X)),
                                 patience=patience, tol=tol, on_gen=on_gen)
-    v, r = pick_slopes(space, space.decode(full_u(bx)), score)
+    v, r = pick_slopes(space, space.decode(full_u(bx)), score,
+                       lambda vv: _polish_linear(eng, space, score, vv, seed=seed + 1, gens=max(4, gens // 2), pop=pop,
+                                                 patience=patience, tol=tol))
     log(f"  relinear: {hist[0]:.3f} -> {r.total:.3f} ({time.time() - t0:.0f}s)")
     return v, r
