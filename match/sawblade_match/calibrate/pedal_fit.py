@@ -13,6 +13,15 @@ Method (docs/specs/phase7_1_hm_calibration.md)
   * the *constrained* fit pins ``low/high/distortion`` to the capture's labelled knob positions (only ``level``
     free) to show the error of the raw knob map.
 
+v0.4a (docs/specs/v0_4a-pedal_accuracy.md) changes, 7.1 behaviour stays reachable with ``--pedal hm --model-version 1``:
+  * the harmonic term of the cost is ``harm_rms_db``: profiles clamped at ``HARM_FIXED_FLOOR_DB`` (-40 dB re the
+    fundamental); the 7.1 term (floor -70 dB) is still reported as ``harm_rms_db_legacy``; even/odd parts are reported;
+  * every render is aligned to the probe by cross-correlating the sweep segment (lag recorded), so a reference with
+    latency does not move the stepped-sine slots;
+  * ``--pedal {hm,hmx,eye,muff,ts}``: the param space of each block comes from ``PEDALS``; ``level`` is solved in
+    closed form only where ``PedalSpec.level_pure_gain`` (proved by ``test_level_is_a_pure_output_gain[<pedal>]``),
+    otherwise it is searched like the other knobs.
+
 Python here is only analysis (features, plots, curve fits); every sample of ``pedal.hm`` audio comes from the C++
 core through ``tonerender``. Deterministic: every random draw uses a recorded seed.
 """
@@ -34,6 +43,8 @@ import numpy as np
 import soundfile as sf
 from scipy import signal
 
+from .pedal_accuracy import spread_report
+
 FS = 48000
 SEED = 20261004
 REPO = Path(__file__).resolve().parents[3]
@@ -53,7 +64,11 @@ BAND_CENTRES = BAND_CENTRES[(BAND_CENTRES >= 60.0) & (BAND_CENTRES <= 12000.0)]
 STEP_FREQS = (110.0, 220.0, 440.0, 880.0)
 STEP_LEVELS_DB = (-30.0, -20.0, -10.0, -3.0)
 HARMONICS = (2, 3, 4, 5, 6, 7)
-HARM_FLOOR_DB = -70.0
+HARM_FLOOR_DB = -70.0          # 7.1 profile floor ("absent"); the legacy term and the stored profiles use it
+HARM_FIXED_FLOOR_DB = -40.0    # v0.4a: audibility / estimator-noise floor of the harmonic term used in the cost
+EVEN_COLS = tuple(i for i, k in enumerate(HARMONICS) if k % 2 == 0)
+ODD_COLS = tuple(i for i, k in enumerate(HARMONICS) if k % 2 == 1)
+SCHEMA_VERSION = 2             # fits.json "version" (1 = phase 7.1, hm v1 only)
 W_HARM = 0.5
 W_DYN = 0.5
 
@@ -184,10 +199,59 @@ def nam_preset(nam_file: Path) -> dict:
     return _preset({"id": "a1", "type": "nam", "slot": "pedal", "model": {"file": str(nam_file)}})
 
 
-def hm_preset(low: float, high: float, distortion: float, level: float = LEVEL_REF) -> dict:
-    return _preset({"id": "a1", "type": "pedal.hm", "slot": "pedal", "modelVersion": 1,
-                    "params": {"level": float(level), "low": float(low), "high": float(high),
-                               "distortion": float(distortion)}})
+@dataclass(frozen=True)
+class PedalSpec:
+    """One modeled pedal block as the fit sees it. ``knobs`` are the searched 0..10 params (the block's own preset
+    keys); everything else (clip, boost, midVoice, the hmx mid-frequency knobs, tightness, mix, and muff ``crunch``,
+    see PEDALS) stays at the block default. ``level_key`` is the output knob; when ``level_pure_gain`` it is solved in closed form (the pedal ends
+    in a linear ``pedalLevelDb`` gain, proved per pedal by ``test_level_is_a_pure_output_gain``), otherwise it is
+    searched with the knobs."""
+    name: str
+    block_type: str
+    knobs: tuple
+    level_key: str
+    level_pure_gain: bool
+    default_version: int
+    versions: tuple
+
+    def block(self, knobs: Sequence[float], level: float = LEVEL_REF, version: int | None = None) -> dict:
+        v = self.default_version if version is None else int(version)
+        if v not in self.versions:
+            raise ValueError(f"pedal.{self.name} has no modelVersion {v} (known: {list(self.versions)})")
+        params = {self.level_key: float(level), **{k: float(x) for k, x in zip(self.knobs, knobs)}}
+        return {"id": "a1", "type": self.block_type, "slot": "pedal", "modelVersion": v, "params": params}
+
+    def preset(self, knobs: Sequence[float], level: float = LEVEL_REF, version: int | None = None) -> dict:
+        return _preset(self.block(knobs, level, version))
+
+    @property
+    def n_dims(self) -> int:
+        return len(self.knobs) + (0 if self.level_pure_gain else 1)
+
+    def param_dict(self, vec: Sequence[float], level: float | None = None) -> dict:
+        """{level_key: ..., knob: ...} from a search vector (knobs, then level when searched)."""
+        d = {k: float(x) for k, x in zip(self.knobs, vec)}
+        lv = float(vec[len(self.knobs)]) if not self.level_pure_gain else level
+        return {self.level_key: lv, **d}
+
+
+PEDALS = {
+    "hm": PedalSpec("hm", "pedal.hm", ("low", "high", "distortion"), "level", True, 3, (1, 2, 3)),
+    "hmx": PedalSpec("hmx", "pedal.hmx", ("low", "lowMid", "highMid", "high", "distortion", "presence"), "level",
+                     True, 1, (1,)),
+    "eye": PedalSpec("eye", "pedal.eye", ("gain",), "level", True, 1, (1,)),
+    # muff: ``crunch`` is not searched. Stage A gain is 6 + 3 * sustain dB and the clipper knee scales with crunch;
+    # a clipper of gain g and knee k outputs k * f(g / k), so (sustain, crunch, volume) have an exact null manifold
+    # (test_muff_sustain_and_crunch_are_redundant): only g / k is observable and the level solve absorbs k. Searching
+    # all three only lets the optimiser wander along that ridge; sustain carries the drive, crunch stays at 5.
+    "muff": PedalSpec("muff", "pedal.muff", ("sustain", "tone", "scoop", "voice"), "volume", True, 1, (1,)),
+    "ts": PedalSpec("ts", "pedal.ts", ("drive", "tone"), "level", True, 1, (1,)),
+}
+
+
+def hm_preset(low: float, high: float, distortion: float, level: float = LEVEL_REF, model_version: int = 3) -> dict:
+    """pedal.hm preset (four stock knobs). ``model_version=1`` reproduces the phase 7.1 fits."""
+    return PEDALS["hm"].preset((low, high, distortion), level, model_version)
 
 
 def render(preset: dict, in_wav: Path, out_wav: Path, tmpdir: Path | None = None) -> np.ndarray:
@@ -263,14 +327,48 @@ def sweep_response(y: np.ndarray, x: np.ndarray) -> np.ndarray:
     return ltas_bands(y, 8192) - ltas_bands(x, 8192)
 
 
-def features(y: np.ndarray, probe: np.ndarray, layout: ProbeLayout, slots) -> dict:
+LAG_MAX = 8192          # samples; search window of the sweep alignment (up to 170 ms at 48 kHz)
+LAG_MIN = -256
+
+
+def estimate_lag(y: np.ndarray, probe: np.ndarray, layout: ProbeLayout) -> int:
+    """Delay (samples, >= LAG_MIN) of ``y`` relative to the probe: the peak of |cross-correlation| of the sweep
+    segment. The sweep, not the stepped sines, because it is broadband (a sharp peak) and the distortion products of
+    an exponential sweep correlate far outside this search window (they lead by ``T ln(k)/ln(f1/f0)`` seconds)."""
+    n = layout.n_sweep
+    x = np.asarray(probe, float)[:n]
+    seg = np.zeros(n + LAG_MAX)
+    got = np.asarray(y, float)[:n + LAG_MAX]
+    seg[:len(got)] = got
+    nfft = 1 << int(np.ceil(np.log2(2 * n + LAG_MAX)))
+    c = np.fft.irfft(np.fft.rfft(seg, nfft) * np.conj(np.fft.rfft(x, nfft)), nfft)
+    cand = np.concatenate([c[nfft + LAG_MIN:], c[:LAG_MAX + 1]])
+    return int(np.argmax(np.abs(cand))) + LAG_MIN
+
+
+def align(y: np.ndarray, lag: int) -> np.ndarray:
+    """``y`` advanced by ``lag`` samples (same length, zero fill)."""
     y = np.asarray(y, float)
+    if lag > 0:
+        return np.concatenate([y[lag:], np.zeros(lag)])
+    if lag < 0:
+        return np.concatenate([np.zeros(-lag), y[:lag]])
+    return y
+
+
+def features(y: np.ndarray, probe: np.ndarray, layout: ProbeLayout, slots) -> dict:
+    """Analysis features of a render. ``y`` is first aligned to the probe by the sweep cross-correlation (``lag``
+    is recorded), so latency in a capture does not move the stepped-sine slots. ``harm`` is the 7.1 profile (floor
+    -70 dB); the cost clamps it again at HARM_FIXED_FLOOR_DB (see ``compare``)."""
+    y = np.asarray(y, float)
+    lag = estimate_lag(y, probe, layout)
+    y = align(y, lag)
     if len(y) < layout.n_total:
         y = np.pad(y, (0, layout.n_total - len(y)))
     y = y[:layout.n_total]
     di_y, di_x = y[layout.di_sl], np.asarray(probe, float)[layout.di_sl]
     return {"ltas": ltas_bands(di_y), "harm": harmonic_profile(y, slots), **env_features(di_y, di_x),
-            "sweep": sweep_response(y[layout.sweep_sl], np.asarray(probe, float)[layout.sweep_sl])}
+            "sweep": sweep_response(y[layout.sweep_sl], np.asarray(probe, float)[layout.sweep_sl]), "lag": lag}
 
 
 def level_limits_db() -> tuple[float, float]:
@@ -278,8 +376,28 @@ def level_limits_db() -> tuple[float, float]:
     return DB_PER_LEVEL * (0.0 - LEVEL_REF), DB_PER_LEVEL * (10.0 - LEVEL_REF)
 
 
-def compare(ref: dict, mod: dict) -> dict:
-    """Cost of a model render's features against the reference's; level solved in closed form."""
+def _rms(x) -> float:
+    x = np.asarray(x, float)
+    return float(np.sqrt(np.mean(x ** 2))) if x.size else 0.0
+
+
+def harm_fixed(h: np.ndarray, floor_db: float = HARM_FIXED_FLOOR_DB) -> np.ndarray:
+    """Harmonic profile clamped at ``floor_db`` (profiles from ``harmonic_profile`` are already clamped at -70)."""
+    if floor_db < HARM_FLOOR_DB:
+        raise ValueError(f"floor {floor_db} dB is below the profile's own floor {HARM_FLOOR_DB} dB")
+    return np.maximum(np.asarray(h, float), floor_db)
+
+
+def harm_terms(ref_h: np.ndarray, mod_h: np.ndarray, floor_db: float = HARM_FIXED_FLOOR_DB) -> dict:
+    """Fixed harmonic error (floor ``floor_db``), its even (H2 H4 H6) and odd (H3 H5 H7) parts, and the 7.1 term."""
+    d = harm_fixed(ref_h, floor_db) - harm_fixed(mod_h, floor_db)
+    return {"harm_rms_db": _rms(d), "harm_even_rms_db": _rms(d[:, EVEN_COLS]), "harm_odd_rms_db": _rms(d[:, ODD_COLS]),
+            "harm_rms_db_legacy": _rms(np.asarray(ref_h, float) - np.asarray(mod_h, float))}
+
+
+def compare(ref: dict, mod: dict, floor_db: float = HARM_FIXED_FLOOR_DB) -> dict:
+    """Cost of a model render's features against the reference's; level solved in closed form (the LTAS shape error
+    has the offset removed, so it is the same for every level of a pure-gain pedal)."""
     lo, hi = level_limits_db()
     diff = ref["ltas"] - mod["ltas"]
     g_free = float(np.mean(diff))
@@ -290,11 +408,11 @@ def compare(ref: dict, mod: dict) -> dict:
     resid = diff - g_free
     ltas = float(np.sqrt(np.mean(resid ** 2)))
     ltas_limited = float(np.sqrt(np.mean((diff - g) ** 2)))
-    harm = float(np.sqrt(np.mean((ref["harm"] - mod["harm"]) ** 2)))
+    ht = harm_terms(ref["harm"], mod["harm"], floor_db)
     dcrest = ref["crest_db"] - mod["crest_db"]
     dspread = ref["env_spread_db"] - mod["env_spread_db"]
     dyn = float(np.sqrt(0.5 * (dcrest ** 2 + dspread ** 2)))
-    return {"cost": ltas + W_HARM * harm + W_DYN * dyn, "ltas_rms_db": ltas, "harm_rms_db": harm, "dyn_db": dyn,
+    return {"cost": ltas + W_HARM * ht["harm_rms_db"] + W_DYN * dyn, "ltas_rms_db": ltas, **ht, "dyn_db": dyn,
             "d_crest_db": float(dcrest), "d_env_spread_db": float(dspread),
             "ltas_rms_limited_db": ltas_limited,
             "level_gain_db": g_free, "level": LEVEL_REF + g_free / DB_PER_LEVEL, "level_clipped": bool(abs(g - g_free) > 1e-9),
@@ -314,15 +432,23 @@ class Evaluator:
     jobs: int = 4
     cache: dict = field(default_factory=dict)
     n_renders: int = 0
+    spec: PedalSpec = PEDALS["hm"]
+    model_version: int | None = None     # None = the block type's current version
+    harm_floor_db: float = HARM_FIXED_FLOOR_DB
 
-    def features(self, low: float, high: float, dist: float) -> dict:
-        key = (round(low, 4), round(high, 4), round(dist, 4))
+    def features(self, *vals: float, level: float = LEVEL_REF) -> dict:
+        """Features of the pedal at knob values ``vals`` (``spec.knobs`` order). For a pure-gain pedal the level is
+        fixed at LEVEL_REF (the closed-form solve covers it); otherwise it is the last search dimension."""
+        if len(vals) == len(self.spec.knobs) + 1:
+            *vals, level = vals
+        key = tuple(round(float(v), 4) for v in vals) + ((round(float(level), 4),) if not self.spec.level_pure_gain else ())
         if key not in self.cache:
             fd, name = tempfile.mkstemp(suffix=".wav", dir=self.work)
             os.close(fd)
             out = Path(name)
             try:
-                y = render(hm_preset(*key), self.probe_wav, out, self.work)
+                y = render(self.spec.preset(key[:len(self.spec.knobs)], level if not self.spec.level_pure_gain else LEVEL_REF,
+                                            self.model_version), self.probe_wav, out, self.work)
             finally:
                 out.unlink(missing_ok=True)
             self.cache[key] = features(y, self.probe, self.layout, self.slots)
@@ -341,17 +467,25 @@ def reference_features(nam_file: Path, ev: Evaluator, keep: Path | None = None) 
     return features(y, ev.probe, ev.layout, ev.slots)
 
 
-def _minimize(fn_batch, x0, seed: int, popsize: int, generations: int):
+REFINE_SIGMA = 0.04   # step of the refinement stage, in the [0, 1] search box (0.4 knob units)
+
+
+def _minimize(fn_batch, x0, seed: int, popsize: int, generations: int, sigma0: float = 0.3):
     from ..matcher.cma import minimize
-    return minimize(None, x0, sigma0=0.3, popsize=popsize, generations=generations, seed=seed,
+    return minimize(None, x0, sigma0=sigma0, popsize=popsize, generations=generations, seed=seed,
                     evaluate_batch=fn_batch)
 
 
-def fit_free(ref: dict, ev: Evaluator, seed: int, restarts: int = 3, popsize: int = 8, generations: int = 14) -> dict:
-    """CMA-ES over (low, high, distortion) in [0, 10]^3, ``restarts`` seeded restarts; best of all."""
+def fit_free(ref: dict, ev: Evaluator, seed: int, restarts: int = 3, popsize: int = 8, generations: int = 14,
+             refine_generations: int = 0) -> dict:
+    """CMA-ES over the pedal's knobs in [0, 10]^n (plus the level knob when it is not a pure gain), ``restarts``
+    seeded restarts; best of all. ``refine_generations`` > 0 adds a last small-step CMA-ES stage (sigma
+    ``REFINE_SIGMA``) from the best point: the cost is V-shaped at the optimum, so the wide restarts stop short of
+    the vertex. 0 = the phase 7.1 search exactly. Returns ``{knob: value, ..., "restarts": [...]}``."""
+    n = ev.spec.n_dims
+
     def one(x):
-        low, high, dist = (10.0 * float(v) for v in x)
-        return compare(ref, ev.features(low, high, dist))["cost"]
+        return compare(ref, ev.features(*(10.0 * float(v) for v in x)), ev.harm_floor_db)["cost"]
 
     def batch(X):
         with ThreadPoolExecutor(max_workers=ev.jobs) as ex:
@@ -361,34 +495,49 @@ def fit_free(ref: dict, ev: Evaluator, seed: int, restarts: int = 3, popsize: in
     best = (np.inf, None)
     runs = []
     for r in range(restarts):
-        x0 = np.array([0.5, 0.5, 0.5]) if r == 0 else rng.uniform(0.05, 0.95, 3)
+        x0 = np.full(n, 0.5) if r == 0 else rng.uniform(0.05, 0.95, n)
         bx, bf, _ = _minimize(batch, x0, seed + 1000 * r, popsize, generations)
         runs.append({"restart": r, "seed": seed + 1000 * r, "x0": (10 * x0).round(3).tolist(),
                      "best": (10 * bx).round(3).tolist(), "cost": float(bf)})
         if bf < best[0]:
             best = (bf, bx)
-    low, high, dist = (10.0 * float(v) for v in best[1])
-    return {"low": low, "high": high, "distortion": dist, "restarts": runs}
+    if refine_generations > 0:
+        bx, bf, _ = _minimize(batch, best[1], seed + 7777, popsize, refine_generations, REFINE_SIGMA)
+        runs.append({"restart": "refine", "seed": seed + 7777, "x0": (10 * best[1]).round(3).tolist(),
+                     "best": (10 * bx).round(3).tolist(), "cost": float(bf)})
+        if bf < best[0]:
+            best = (bf, bx)
+    vals = [10.0 * float(v) for v in best[1]]
+    out = {k: v for k, v in zip(ev.spec.knobs, vals)}
+    if not ev.spec.level_pure_gain:
+        out[ev.spec.level_key] = vals[len(ev.spec.knobs)]
+    return {**out, "restarts": runs}
 
 
-def evaluate_params(ref: dict, ev: Evaluator, low: float, high: float, dist: float) -> dict:
-    mod = ev.features(low, high, dist)
-    c = compare(ref, mod)
-    return {"params": {"level": c["level"], "low": low, "high": high, "distortion": dist}, **c}, mod
+def evaluate_params(ref: dict, ev: Evaluator, *vals: float) -> tuple[dict, dict]:
+    """Score the pedal at ``vals`` (knobs, then level when it is searched). Returns (result, model features)."""
+    mod = ev.features(*vals)
+    c = compare(ref, mod, ev.harm_floor_db)
+    spec = ev.spec
+    level = c["level"] if spec.level_pure_gain else float(vals[len(spec.knobs)])
+    params = {spec.level_key: level, **{k: float(v) for k, v in zip(spec.knobs, vals)}}
+    return {"params": params, "model_lag": mod["lag"], **c}, mod
 
 
 # ---------------------------------------------------------------------------------------------------------
 # models to fit
 # ---------------------------------------------------------------------------------------------------------
 LABEL_RE = re.compile(r"Lv-(\d+)\s+L-(\d+)\s+H-(\d+)\s+D-(\d+)")
+LABEL_GROUPS = ("level", "low", "high", "distortion")
 
 
-def parse_labels(name: str) -> dict | None:
-    m = LABEL_RE.search(name)
+def parse_labels(name: str, regex: re.Pattern | str = LABEL_RE, groups: Sequence[str] = LABEL_GROUPS) -> dict | None:
+    """Knob positions written into a capture's name; the default is the HM-2 family's ``Lv-7 L-9 H-9 D-2``. A
+    targets manifest (docs/reports/v0_4/targets.json) gives another ``label_regex`` / ``label_groups`` per pedal."""
+    m = re.search(regex, name) if isinstance(regex, str) else regex.search(name)
     if not m:
         return None
-    lv, lo, hi, d = (float(v) for v in m.groups())
-    return {"level": lv, "low": lo, "high": hi, "distortion": d}
+    return {g: float(v) for g, v in zip(groups, m.groups())}
 
 
 # Knob positions assumed for captures that do not carry a full "Lv L H D" label (see the report). Rotary pots run
@@ -420,46 +569,94 @@ DEFAULT_TONES = {
 }
 
 
-def load_targets(cache: Path, tones: dict | None = None) -> tuple[list[dict], list[dict]]:
-    """(models found in the cache, models listed but missing). Reads pool_manifest.json for names."""
+def load_targets(cache: Path, tones: dict | None = None, pedal: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """(models found in the cache, models listed but missing). Reads pool_manifest.json for names, creators and
+    licences. ``tones``: tone id -> (unit, group, [model ids]); an empty model list means every model of that tone
+    in the pool manifest that is cached. ``pedal``: a targets-manifest entry (``label_regex``, ``label_groups``,
+    ``assumed``) used to label the records."""
     man = json.loads((cache / "pool_manifest.json").read_text())
     by_tone = {t["tone_id"]: t for t in man["tones"]}
+    pedal = pedal or {}
+    regex = re.compile(pedal["label_regex"]) if pedal.get("label_regex") else LABEL_RE
+    groups = tuple(pedal.get("label_groups") or LABEL_GROUPS)
+    assumed = pedal.get("assumed", ASSUMED if pedal == {} else {})
     found, missing = [], []
     for tid, (unit, group, mids) in (tones or DEFAULT_TONES).items():
         t = by_tone.get(tid)
         names = {m["id"]: m["name"] for m in (t["models"] if t else [])}
-        for mid in mids:
+        for mid in (mids or sorted(names)):
             f = cache / str(tid) / f"{mid}.nam"
-            rec = {"tone_id": tid, "model_id": mid, "name": names.get(mid, str(mid)), "unit": unit, "group": group,
-                   "file": f, "creator": (t or {}).get("creator"), "license": (t or {}).get("license")}
+            name = names.get(mid, str(mid))
+            labels = parse_labels(name, regex, groups)
+            rec = {"tone_id": tid, "model_id": mid, "name": name, "unit": unit, "group": group,
+                   "file": f, "creator": (t or {}).get("creator"), "license": (t or {}).get("license"),
+                   "labels": labels, "pin": labels or assumed.get(name)}
             (found if f.is_file() else missing).append(rec)
     return found, missing
 
 
+def load_manifest_pedal(path: Path, pedal: str) -> tuple[dict, dict]:
+    """(tones dict in DEFAULT_TONES shape, the pedal's manifest entry) from a targets manifest."""
+    doc = json.loads(Path(path).read_text())
+    ent = doc.get("pedals", {}).get(pedal)
+    if ent is None:
+        raise ValueError(f"{path} has no entry for pedal '{pedal}'")
+    if not ent.get("tones"):
+        raise ValueError(f"{path}: pedal '{pedal}' lists no tones yet; resolve ids with `sawblade-t3k search` "
+                         "(see its to_resolve entry), add them to \"tones\", and re-run")
+    tones = {int(t["tone_id"]): (t.get("unit", ent.get("family", pedal)), t.get("group", "all"),
+                                 [int(m) for m in t.get("models", [])]) for t in ent.get("tones", [])}
+    return tones, ent
+
+
+def _pin_vector(spec: PedalSpec, pin: dict) -> tuple[list[float], list[str]]:
+    """Knob values (``spec.knobs`` order) of a pinned setting; a knob the label does not carry takes the block
+    default 5.0 and is listed in the second return value."""
+    vals, filled = [], []
+    for k in spec.knobs:
+        if k in pin:
+            vals.append(float(pin[k]))
+        else:
+            vals.append(5.0)
+            filled.append(k)
+    return vals, filled
+
+
 def fit_model(rec: dict, ev: Evaluator, ref_wav_dir: Path, restarts: int, popsize: int, generations: int,
-              say: Callable[[str], None] = print) -> tuple[dict, dict]:
+              say: Callable[[str], None] = print, refine_generations: int = 0) -> tuple[dict, dict]:
+    spec = ev.spec
     ref = reference_features(rec["file"], ev, ref_wav_dir / f"{rec['model_id']}.wav")
-    labels = parse_labels(rec["name"])
+    if "labels" in rec:
+        labels, pin = rec["labels"], rec["pin"]
+    else:                                            # 7.1 call style: records straight from DEFAULT_TONES
+        labels = parse_labels(rec["name"])
+        pin = labels or ASSUMED.get(rec["name"])     # exact model-name match; None = no pinned fit
     assumed = labels is None
-    pin = labels or ASSUMED.get(rec["name"])   # exact model-name match; None = no pinned fit
     seed = SEED + int(rec["model_id"])
     ev.cache.clear()
-    free = fit_free(ref, ev, seed, restarts, popsize, generations)
-    fr, fmod = evaluate_params(ref, ev, free["low"], free["high"], free["distortion"])
+    free = fit_free(ref, ev, seed, restarts, popsize, generations, refine_generations)
+    fvec = [free[k] for k in spec.knobs] + ([free[spec.level_key]] if not spec.level_pure_gain else [])
+    fr, fmod = evaluate_params(ref, ev, *fvec)
     fr["restarts"] = free["restarts"]
     out = {k: rec[k] for k in ("tone_id", "model_id", "name", "unit", "group", "creator", "license")}
-    out.update({"non_commercial": str(rec.get("license") or "").lower().startswith("cc-by-nc"),
+    out.update({"pedal": spec.name, "model_version": ev.model_version or spec.default_version,
+                "non_commercial": str(rec.get("license") or "").lower().startswith("cc-by-nc"),
                 "labels": labels, "pinned_knobs": pin, "pinned_is_assumed": assumed, "seed": seed,
-                "ref": {"crest_db": ref["crest_db"], "env_spread_db": ref["env_spread_db"]}, "free": fr})
+                "ref": {"crest_db": ref["crest_db"], "env_spread_db": ref["env_spread_db"], "lag": ref["lag"],
+                        "harm_fixed": np.round(harm_fixed(ref["harm"], ev.harm_floor_db), 2).tolist()},
+                "free": fr})
     feats = {"ref": ref, "free": fmod}
     if pin:
-        cr, cmod = evaluate_params(ref, ev, float(pin["low"]), float(pin["high"]), float(pin["distortion"]))
+        cvec, filled = _pin_vector(spec, pin)
+        cr, cmod = evaluate_params(ref, ev, *cvec, *([LEVEL_REF] if not spec.level_pure_gain else []))
+        if filled:
+            cr["pins_filled_with_default"] = filled
         out["constrained"] = cr
         feats["constrained"] = cmod
-    say(f"  {rec['model_id']} {rec['name']}: free ltas {fr['ltas_rms_db']:.2f} dB "
-        f"(L {fr['params']['low']:.1f} H {fr['params']['high']:.1f} D {fr['params']['distortion']:.1f} "
-        f"Lv {fr['params']['level']:.1f})"
-        + (f", constrained ltas {out['constrained']['ltas_rms_db']:.2f}" if pin else "")
+    fp = fr["params"]
+    say(f"  {rec['model_id']} {rec['name']}: free ltas {fr['ltas_rms_db']:.2f} dB harm {fr['harm_rms_db']:.1f} "
+        f"({' '.join(f'{k} {fp[k]:.1f}' for k in (*spec.knobs, spec.level_key))})"
+        + (f", constrained ltas {out['constrained']['ltas_rms_db']:.2f}" if "constrained" in out else "")
         + f"  [{ev.n_renders} renders]")
     return out, feats
 
@@ -620,7 +817,7 @@ def model_plot(path: Path, rec: dict, feats: dict) -> None:
     for key, col in (("free", "C0"), ("constrained", "C3")):
         if key in feats:
             g = rec[key]["level_gain_db"]
-            a.semilogx(fc, feats[key]["ltas"] + g - np.max(ref), col, label=f"pedal.hm {key}")
+            a.semilogx(fc, feats[key]["ltas"] + g - np.max(ref), col, label=f"{rec.get('pedal', 'pedal.hm')} {key}")
     a.set_title("DI-segment LTAS (dB, 1/3 oct)")
     a.legend(fontsize=7)
     a.grid(True, which="both", alpha=0.3)
@@ -638,10 +835,10 @@ def model_plot(path: Path, rec: dict, feats: dict) -> None:
     # mean over fundamentals, per drive level
     for li, lv in enumerate(STEP_LEVELS_DB):
         sel = [fi * len(STEP_LEVELS_DB) + li for fi in range(len(STEP_FREQS))]
-        a.plot(x + 2, feats["ref"]["harm"][sel].mean(axis=0), "-o", color=f"C{li}", ms=3,
+        a.plot(x + 2, harm_fixed(feats["ref"]["harm"])[sel].mean(axis=0), "-o", color=f"C{li}", ms=3,
                label=f"capture {lv:g} dBFS")
-        a.plot(x + 2, feats["free"]["harm"][sel].mean(axis=0), "--", color=f"C{li}", lw=1)
-    a.set_title("H2..H7 re fundamental (dB; solid capture, dashed free fit)")
+        a.plot(x + 2, harm_fixed(feats["free"]["harm"])[sel].mean(axis=0), "--", color=f"C{li}", lw=1)
+    a.set_title("H2..H7 re fundamental (dB, floor -40; solid capture, dashed free fit)")
     a.set_xlabel("harmonic")
     a.legend(fontsize=6)
     a.grid(True, alpha=0.3)
@@ -691,60 +888,208 @@ def aggregate_plot(path: Path, fits: list[dict], kmap: dict, resid_mean: np.ndar
 
 
 # ---------------------------------------------------------------------------------------------------------
+# known answers: the pedal rendered at known params is the "capture"
+# ---------------------------------------------------------------------------------------------------------
+# Non-default knob sets per pedal (searched knobs in PedalSpec.knobs order) and the level of the "capture".
+KNOWN_TRUTH = {
+    "hm": ((7.0, 3.0, 8.0), 6.5),
+    "hmx": ((6.0, 3.0, 7.0, 4.0, 8.0, 6.0), 6.5),
+    "eye": ((7.0,), 6.5),
+    "muff": ((7.0, 4.0, 6.0, 6.0), 6.5),
+    "ts": ((7.0, 3.0), 6.5),
+}
+KNOWN_LAYOUT = ProbeLayout(sweep_s=1.0, steps_s=3.2, di_s=4.0)   # short probe: tests and --known-answers
+KNOWN_DI = REPO / "tests" / "fixtures" / "di_riff.wav"
+
+
+def known_answer(spec: PedalSpec, ev: Evaluator, seed: int = SEED, restarts: int = 2, popsize: int = 8,
+                 generations: int = 10, refine_generations: int = 0) -> dict:
+    """Render ``spec`` at KNOWN_TRUTH as the reference, then (a) score the knob-constrained fit at the true params
+    and (b) run the seeded free fit. ``knob_errors`` are |fitted - true| in knob units."""
+    truth, tlevel = KNOWN_TRUTH[spec.name]
+    fd, name = tempfile.mkstemp(suffix=".wav", dir=ev.work)
+    os.close(fd)
+    out = Path(name)
+    try:
+        yref = render(spec.preset(truth, tlevel, ev.model_version), ev.probe_wav, out, ev.work)
+    finally:
+        out.unlink(missing_ok=True)
+    ref = features(yref, ev.probe, ev.layout, ev.slots)
+    cres, _ = evaluate_params(ref, ev, *truth, *([LEVEL_REF] if not spec.level_pure_gain else []))
+    ev.cache.clear()
+    free = fit_free(ref, ev, seed, restarts, popsize, generations, refine_generations)
+    fvec = [free[k] for k in spec.knobs] + ([free[spec.level_key]] if not spec.level_pure_gain else [])
+    fres, _ = evaluate_params(ref, ev, *fvec)
+    errs = {k: abs(fres["params"][k] - t) for k, t in zip(spec.knobs, truth)}
+    return {"model_version": ev.model_version or spec.default_version, "seed": seed,
+            "truth": {**dict(zip(spec.knobs, truth)), spec.level_key: tlevel},
+            "constrained": {k: v for k, v in cres.items() if k not in ("residual_ltas_db",)},
+            "free": {k: v for k, v in fres.items() if k not in ("residual_ltas_db", "restarts")},
+            "knob_errors": errs, "level_error": abs(fres["params"][spec.level_key] - tlevel),
+            "n_renders": ev.n_renders}
+
+
+def run_known_answers(a: argparse.Namespace) -> int:
+    work = Path(a.work)
+    work.mkdir(parents=True, exist_ok=True)
+    probe, layout, slots = build_probe(Path(a.di) if a.di else KNOWN_DI, KNOWN_LAYOUT)
+    probe_wav = work / "probe_known.wav"
+    sf.write(str(probe_wav), probe, FS, subtype="FLOAT")
+    names = [a.pedal] if a.pedal_given else list(PEDALS)
+    res = {}
+    for n in names:
+        ev = Evaluator(probe_wav, probe, layout, slots, work, jobs=a.jobs, spec=PEDALS[n],
+                       model_version=a.model_version, harm_floor_db=a.harm_floor)
+        res[n] = known_answer(PEDALS[n], ev, SEED, a.restarts, a.popsize, a.generations, a.refine_generations)
+        f = res[n]["free"]
+        print(f"{n}: free ltas {f['ltas_rms_db']:.3f} harm {f['harm_rms_db']:.3f} dyn {f['dyn_db']:.3f} "
+              f"knob errors {({k: round(v, 2) for k, v in res[n]['knob_errors'].items()})}", flush=True)
+    doc = {"schema": "sawblade.pedal_known_answers", "version": 1, "seed": SEED, "harm_floor_db": a.harm_floor,
+           "probe": f"{layout.sweep_s:g} s sweep + {layout.steps_s:g} s stepped sines + {layout.di_s:g} s DI "
+                    f"({Path(a.di).name if a.di else KNOWN_DI.name})",
+           "search": {"restarts": a.restarts, "popsize": a.popsize, "generations": a.generations,
+                      "refine_generations": a.refine_generations}, "pedals": res}
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "known_answers.json").write_text(json.dumps(doc, indent=1))
+    print(f"wrote {out / 'known_answers.json'}")
+    return 0
+
+
+# ---------------------------------------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------------------------------------
+DEFAULT_TARGETS = REPO / "docs" / "reports" / "v0_4" / "targets.json"
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sawblade-calibrate pedal-fit",
-                                description="Fit pedal.hm {level, low, high, distortion} to TONE3000 captures of "
-                                            "real HM-2-family pedals (phase 7.1). Writes fits.json and PNG plots.")
+                                description="Fit a modeled pedal block (pedal.hm / hmx / eye / muff / ts) to TONE3000 "
+                                            "captures of its real-pedal family. Writes fits_<pedal>.json and PNG "
+                                            "plots. Phase 7.1 behaviour: --pedal hm --model-version 1 "
+                                            "[--harm-floor -70] [--out docs/reports/phase7_1].")
+    p.add_argument("--pedal", choices=sorted(PEDALS), default="hm", help="block type to fit (default hm)")
+    p.add_argument("--model-version", type=int, default=None,
+                   help="modelVersion of the block (default: its current version; hm = 3)")
+    p.add_argument("--targets", default=None, metavar="PATH",
+                   help="targets manifest (docs/reports/v0_4/targets.json). Default: the built-in 7.1 list for hm, "
+                        "the manifest for the other pedals")
+    p.add_argument("--harm-floor", type=float, default=HARM_FIXED_FLOOR_DB,
+                   help=f"floor (dB re fundamental) of the harmonic term in the cost (default {HARM_FIXED_FLOOR_DB:g}; "
+                        f"{HARM_FLOOR_DB:g} reproduces the 7.1 cost)")
     p.add_argument("--cache", default=str(DEFAULT_CACHE), help="capture cache (default ~/.cache/sawblade/captures)")
-    p.add_argument("--di", default=str(DEFAULT_DI), help="DI for the probe's last 30 s")
+    p.add_argument("--di", default=None, help="DI for the probe's last 30 s (default testdata/gatecreeper_cover/"
+                                                "Guitar_L.wav; --known-answers: tests/fixtures/di_riff.wav)")
     p.add_argument("--work", required=True, help="scratch dir for rendered audio (outside the repo)")
-    p.add_argument("--out", default=str(REPO / "docs" / "reports" / "phase7_1"), help="report dir (fits.json + PNGs)")
+    p.add_argument("--out", default=str(REPO / "docs" / "reports" / "v0_4"), help="report dir (fits JSON + PNGs)")
+    p.add_argument("--fits-name", default=None, help="fits file name inside --out (default fits_<pedal>.json)")
     p.add_argument("--tone", type=int, action="append", help="restrict to these tone ids (repeatable)")
     p.add_argument("--model", type=int, action="append", help="restrict to these model ids (repeatable)")
     p.add_argument("--restarts", type=int, default=3)
     p.add_argument("--popsize", type=int, default=8)
     p.add_argument("--generations", type=int, default=14)
+    p.add_argument("--refine-generations", type=int, default=16,
+                   help="small-step CMA-ES stage after the restarts (default 16; 0 = the phase 7.1 search)")
     p.add_argument("--jobs", type=int, default=4, help="parallel tonerender processes per CMA generation")
     p.add_argument("--no-plots", action="store_true")
-    p.add_argument("--merge", action="store_true", help="merge into an existing fits.json instead of replacing it")
+    p.add_argument("--short-probe", action="store_true",
+                   help="use the 8 s test probe instead of the 45 s probe (tests and smoke runs; not comparable "
+                        "with full-probe fits)")
+    p.add_argument("--merge", action="store_true",
+                   help="merge into an existing fits file instead of replacing it (schema 1 files from phase 7.1 are "
+                        "refused: their harmonic term and records are not comparable)")
+    p.add_argument("--known-answers", action="store_true",
+                   help="do not read captures: render the pedal(s) at known params as the capture, fit, and write "
+                        "known_answers.json (all five pedals unless --pedal is given)")
     return p
 
 
+def doc_header(a: argparse.Namespace, spec: PedalSpec, layout: ProbeLayout) -> dict:
+    return {"schema": "sawblade.pedal_fit", "version": SCHEMA_VERSION, "seed": SEED, "pedal": spec.name,
+            "block_type": spec.block_type, "model_version": a.model_version or spec.default_version,
+            "searched_knobs": list(spec.knobs), "level_key": spec.level_key,
+            "level_solved": "closed form (pure output gain)" if spec.level_pure_gain else "searched",
+            "probe": {"layout": layout.__dict__, "di": str(Path(a.di).name), "di_bpm": 140.0, "di_start_bar": 20,
+                      "rate": FS, "step_freqs": STEP_FREQS, "step_levels_dbfs": STEP_LEVELS_DB},
+            "cost": {"ltas": "1/3-oct 60 Hz-12 kHz dB RMS, DI segment, offset removed",
+                     "harm_weight": W_HARM, "dyn_weight": W_DYN, "harm_floor_db": a.harm_floor,
+                     "harm_floor_legacy_db": HARM_FLOOR_DB, "harm_terms": ["harm_rms_db", "harm_even_rms_db",
+                                                                           "harm_odd_rms_db", "harm_rms_db_legacy"],
+                     "alignment": f"sweep cross-correlation, lag in [{LAG_MIN}, {LAG_MAX}] samples, recorded per fit"},
+            "bands_hz": BAND_CENTRES.tolist(), "renderer": "tonerender (C++ core) via subprocess",
+            "search": {"optimiser": "CMA-ES (matcher.cma)", "restarts": a.restarts, "popsize": a.popsize,
+                       "generations": a.generations, "refine_generations": a.refine_generations,
+                       "refine_sigma_knob_units": 10 * REFINE_SIGMA}}
+
+
+def load_previous(path: Path, a: argparse.Namespace, spec: PedalSpec) -> dict:
+    """Existing fits file for ``--merge``. Refuses (clear message) anything that is not comparable."""
+    prev = json.loads(path.read_text())
+    v = int(prev.get("version", 1))
+    if prev.get("schema") != "sawblade.pedal_fit" or v < SCHEMA_VERSION:
+        raise ValueError(f"{path} is a schema-{v} fits file (phase 7.1: pedal.hm v1, floor -70 dB harmonic term, no "
+                         "capture profiles) and cannot be merged with schema-" f"{SCHEMA_VERSION} records; fit again "
+                         "into a new file (--fits-name) instead")
+    want = a.model_version or spec.default_version
+    if prev.get("pedal") != spec.name or prev.get("model_version") != want:
+        raise ValueError(f"{path} holds pedal {prev.get('pedal')} modelVersion {prev.get('model_version')}, not "
+                         f"{spec.name} modelVersion {want}")
+    if prev.get("cost", {}).get("harm_floor_db") != a.harm_floor:
+        raise ValueError(f"{path} was fitted with harmonic floor {prev.get('cost', {}).get('harm_floor_db')} dB, "
+                         f"not {a.harm_floor} dB")
+    return prev
+
+
 def run(a: argparse.Namespace) -> int:
+    spec = PEDALS[a.pedal]
+    if a.harm_floor < HARM_FLOOR_DB:
+        raise ValueError(f"--harm-floor must be >= {HARM_FLOOR_DB:g} (the profiles' own floor)")
+    if a.model_version is not None and a.model_version not in spec.versions:
+        raise ValueError(f"pedal.{spec.name} has no modelVersion {a.model_version} (known: {list(spec.versions)})")
+    if a.known_answers:
+        return run_known_answers(a)
     work = Path(a.work)
     out = Path(a.out)
     work.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     (work / "refs").mkdir(exist_ok=True)
-    found, missing = load_targets(Path(a.cache))
+    targets = Path(a.targets) if a.targets else (None if spec.name == "hm" else DEFAULT_TARGETS)
+    if targets is None:
+        found, missing = load_targets(Path(a.cache))
+    else:
+        tones, ent = load_manifest_pedal(targets, spec.name)
+        found, missing = load_targets(Path(a.cache), tones, ent)
     licenses = {r["model_id"]: r["license"] for r in found + missing}
     if a.tone:
         found = [r for r in found if r["tone_id"] in a.tone]
     if a.model:
         found = [r for r in found if r["model_id"] in a.model]
-    probe, layout, slots = build_probe(Path(a.di))
+    a.di = a.di or str(DEFAULT_DI)
+    probe, layout, slots = build_probe(Path(a.di), KNOWN_LAYOUT if a.short_probe else ProbeLayout())
     probe_wav = work / "probe.wav"
     sf.write(str(probe_wav), probe, FS, subtype="FLOAT")
-    ev = Evaluator(probe_wav, probe, layout, slots, work, jobs=a.jobs)
-    fits_path = out / "fits.json"
-    prev = json.loads(fits_path.read_text()) if (a.merge and fits_path.exists()) else {"models": []}
+    ev = Evaluator(probe_wav, probe, layout, slots, work, jobs=a.jobs, spec=spec, model_version=a.model_version,
+                   harm_floor_db=a.harm_floor)
+    fits_path = out / (a.fits_name or f"fits_{spec.name}.json")
+    head = doc_header(a, spec, layout)
+    prev = load_previous(fits_path, a, spec) if (a.merge and fits_path.exists()) else {"models": []}
     done = {m["model_id"]: m for m in prev["models"]}
     if a.merge:
         found = [r for r in found if r["model_id"] not in done]
     for rec in found:
-        r, feats = fit_model(rec, ev, work / "refs", a.restarts, a.popsize, a.generations)
+        r, feats = fit_model(rec, ev, work / "refs", a.restarts, a.popsize, a.generations,
+                             refine_generations=a.refine_generations)
         done[rec["model_id"]] = r
-        fits_path.write_text(json.dumps({"models": sorted(done.values(), key=lambda m: m["model_id"])}))  # crash-safe
+        fits_path.write_text(json.dumps({**head, "partial": True,
+                                         "models": sorted(done.values(), key=lambda m: m["model_id"])}))  # crash-safe
         if not a.no_plots:
-            model_plot(out / f"model_{rec['tone_id']}_{rec['model_id']}.png", r, feats)
+            model_plot(out / f"model_{spec.name}_{rec['tone_id']}_{rec['model_id']}.png", r, feats)
     for m in done.values():   # CLAUDE.md: anything derived from a cc-by-nc* capture is marked non-commercial
         m.setdefault("non_commercial", str(licenses.get(m["model_id"]) or "").lower().startswith("cc-by-nc"))
     fits = sorted(done.values(), key=lambda m: (m["tone_id"], m["model_id"]))
-    stock = [f for f in fits if f["group"] == "stock"]
     agg: dict = {}
-    if stock:
+    stock = [f for f in fits if f["group"] == "stock"]
+    if spec.name == "hm" and stock:    # the phase 7.1 aggregates (HM-2 knob map, EQ residual, Custom mode)
         agg["knob_map"] = knob_map(fits)
         agg["mean_free_ltas_rms_db_stock"] = float(np.mean([f["free"]["ltas_rms_db"] for f in stock]))
         agg["mean_constrained_ltas_rms_db_stock"] = float(np.mean([f["constrained"]["ltas_rms_db"] for f in stock
@@ -754,17 +1099,9 @@ def run(a: argparse.Namespace) -> int:
         agg["eq_correction"] = eq_correction_report(fits)
         agg["custom_mode"] = custom_mode_report(fits, work / "refs", ev)
         if not a.no_plots:
-            aggregate_plot(out / "aggregate.png", fits, agg["knob_map"], mean_residual(fits))
-    doc = {"schema": "sawblade.pedal_fit", "version": 1, "seed": SEED,
-           "probe": {"layout": layout.__dict__, "di": str(Path(a.di).name), "di_bpm": 140.0, "di_start_bar": 20,
-                     "rate": FS, "step_freqs": STEP_FREQS, "step_levels_dbfs": STEP_LEVELS_DB},
-           "cost": {"ltas": "1/3-oct 60 Hz-12 kHz dB RMS, DI segment, level solved in closed form",
-                    "harm_weight": W_HARM, "dyn_weight": W_DYN, "harm_floor_db": HARM_FLOOR_DB},
-           "bands_hz": BAND_CENTRES.tolist(), "renderer": "tonerender (C++ core) via subprocess",
-           "search": {"optimiser": "CMA-ES (matcher.cma)", "restarts": a.restarts, "popsize": a.popsize,
-                      "generations": a.generations},
-           "missing_models": [{k: m[k] for k in ("tone_id", "model_id", "name")} for m in missing],
-           "models": fits, "aggregate": agg}
+            aggregate_plot(out / f"aggregate_{spec.name}.png", fits, agg["knob_map"], mean_residual(fits))
+    doc = {**head, "missing_models": [{k: m[k] for k in ("tone_id", "model_id", "name")} for m in missing],
+           "models": fits, "spread": spread_report(fits), "aggregate": agg}
     fits_path.write_text(json.dumps(doc, indent=1))
     print(f"wrote {fits_path}")
     if "mean_free_ltas_rms_db_stock" in agg:
@@ -773,7 +1110,9 @@ def run(a: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    argv = list(argv) if argv is not None else sys.argv[1:]
     a = build_parser().parse_args(argv)
+    a.pedal_given = any(x == "--pedal" or x.startswith("--pedal=") for x in argv)
     try:
         return run(a)
     except (ValueError, OSError, RuntimeError) as e:
