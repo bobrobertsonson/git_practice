@@ -23,12 +23,14 @@ class AdvancedDrawer : public juce::Component, private juce::ChangeListener {
   static constexpr int kAnimationMs = 180;
   static constexpr int kGap = 12;        // between the pedal and the drawer
   static constexpr int kKnobPx = 64;
+  static constexpr int kMinOpenWidth = 420, kPreferredWidth = 574;  // v0.4 Task D: opens to the pedal's left when the right has < kMinOpenWidth
 
   explicit AdvancedDrawer(SawbladeProcessor& p);
   ~AdvancedDrawer() override;
 
   // Where the drawer lives (parent coordinates): the pedal's bounds and the area it may extend over
-  // (its right edge is the limit).
+  // (its right edge is the limit). It opens to the right of the pedal; a pedal near the right edge (the BODY column of the
+  // pedalboard) has it open to its left instead.
   void setAnchor(juce::Rectangle<int> pedal, juce::Rectangle<int> limit);
   juce::Rectangle<int> openBounds() const noexcept { return open_; }
 
@@ -54,10 +56,12 @@ class AdvancedDrawer : public juce::Component, private juce::ChangeListener {
   void changeListenerCallback(juce::ChangeBroadcaster*) override;
   void showActive();
   void updateReadouts();
+  juce::Rectangle<int> closedBounds() const;
 
   SawbladeProcessor& proc_;
   juce::ComponentAnimator animator_;
   juce::Rectangle<int> open_;
+  bool openLeft_ = false;
   bool wantOpen_ = false;
   std::optional<Circuit> active_;
   std::array<std::vector<Cell>, kNumCircuits> cells_;

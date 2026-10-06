@@ -45,7 +45,7 @@ const char* slotGear(Slot s) {
   return "";
 }
 
-std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string* why) {
+std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string* why, const std::string& pinnedBlockId) {
   std::vector<SlotTarget> out;
   if (slot == Slot::Cab) {
     SlotTarget t;
@@ -66,7 +66,22 @@ std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string
   const bool saw = slot == Slot::SawPedal || slot == Slot::SawAmp;
   const bool pedal = slot == Slot::SawPedal || slot == Slot::BodyPedal;
   const char which = saw ? 'a' : 'b';
-  const int idx = findNamBlock(pathOf(preset, which), pedal);
+  int idx = -1;
+  if (!pinnedBlockId.empty()) {
+    const PathPreset& path = pathOf(preset, which);
+    bool found = false;
+    for (std::size_t i = 0; i < path.blocks.size(); ++i)
+      if (path.blocks[i].id == pinnedBlockId) {
+        found = true;
+        if (path.blocks[i].type == "nam") idx = static_cast<int>(i);
+      }
+    if (idx < 0) {
+      if (why) *why = found ? "this pedal is a modeled circuit, not a capture: it has no capture to replace" : "the pedal you selected is no longer in this path";
+      return out;
+    }
+  } else {
+    idx = findNamBlock(pathOf(preset, which), pedal);
+  }
   if (idx < 0) {
     if (why) *why = std::string("this preset has no ") + (pedal ? "pedal" : "amp") + " in the " + (saw ? "saw" : "body") + " path";
     return out;

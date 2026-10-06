@@ -50,7 +50,8 @@ class BrowserController {
     bool previewing = false;
   };
 
-  BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot);
+  // pinnedBlockId (v0.4 Task D): the pedal tile the user selected on the pedalboard ("" = the slot's usual block); see slotTargets().
+  BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot, std::string pinnedBlockId = {});
   ~BrowserController();
   BrowserController(const BrowserController&) = delete;
   BrowserController& operator=(const BrowserController&) = delete;
@@ -109,6 +110,7 @@ class BrowserController {
   SawbladeProcessor& proc_;
   BrowserSettings& settings_;
   Slot slot_;
+  std::string pinnedBlockId_;
   State st_;
   T3kClient client_;
   std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);

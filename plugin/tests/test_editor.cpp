@@ -37,6 +37,7 @@
 #include "pedals/PedalFace.h"
 #include "pedals/PedalSwitch.h"
 #include "rig/EqGraph.h"
+#include "rig/Pedalboard.h"
 #include "rig/RigEditorPanel.h"
 #include "rig/RigModel.h"
 #include "rig/SlotStrip.h"
@@ -122,6 +123,7 @@ struct Rig {
     REQUIRE(proc.status().error.empty());
     // The loader thread wrote the parameters: let the attachments deliver to the controls.
     juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+    ed->refreshNow();  // v0.4 Task D: the pedalboard tiles (and the pedal face over one) follow the preset
   }
   void loadInit() {
     proc.loadPreset(makeInitPreset());
@@ -184,15 +186,23 @@ void checkSnapshot(Rig& rig, float scale, const char* file) {
   INFO("luminance sd " << sd);
   CHECK(sd > 0.03);
 
-  // the amp image region is not the background colour
+  // the amp image regions and the pedal tiles are not the background colour
+  auto scaledArea = [&](juce::Component& c) {
+    const auto area = rig.ed->getLocalArea(&c, c.getLocalBounds());
+    return juce::Rectangle<int>(juce::roundToInt(area.getX() * scale), juce::roundToInt(area.getY() * scale), juce::roundToInt(area.getWidth() * scale),
+                                juce::roundToInt(area.getHeight() * scale));
+  };
   auto rig_ = all<skin::RigPiece>(*rig.ed);
-  REQUIRE(rig_.size() == 5);
+  REQUIRE(rig_.size() == 2);  // the two amp heads (v0.4 Task D: the cab and the static pedals left the main page)
   for (auto* piece : rig_) {
-    const auto area = rig.ed->getLocalArea(piece, piece->getLocalBounds());
-    const juce::Rectangle<int> scaled(juce::roundToInt(area.getX() * scale), juce::roundToInt(area.getY() * scale),
-                                      juce::roundToInt(area.getWidth() * scale), juce::roundToInt(area.getHeight() * scale));
     INFO(piece->getTitle());
-    CHECK(nonBackgroundFraction(img, scaled) > 0.2);  // the renders are dark, but never plain background
+    CHECK(nonBackgroundFraction(img, scaledArea(*piece)) > 0.2);  // the renders are dark, but never plain background
+  }
+  auto tiles = all<rig::BoardTile>(*rig.ed);
+  REQUIRE(tiles.size() >= 1);
+  for (auto* tile : tiles) {
+    INFO(tile->getTitle());
+    CHECK(nonBackgroundFraction(img, scaledArea(*tile)) > 0.2);
   }
   savePng(img, file);
 }
@@ -201,6 +211,8 @@ void checkSnapshot(Rig& rig, float scale, const char* file) {
 
 TEST_CASE("snapshots 1x and 2x", "[editor]") {
   Rig rig;
+  // A blend of modeled pedals (renders from files in this repo only): both heads undimmed, tiles on both boards.
+  rig.load(std::filesystem::path(SAWBLADE_PRESETS_DIR) / "modeled" / "saw_body_blend_demo.json");
   checkSnapshot(rig, 1.0f, "sawblade_skin_1x.png");
   checkSnapshot(rig, 2.0f, "sawblade_skin_2x.png");
 }
@@ -365,10 +377,12 @@ TEST_CASE("knob interaction: drag, shift, horizontal, double-click", "[editor]")
 
 TEST_CASE("footswitch press look and paired LED", "[editor]") {
   Rig rig;
+  // v0.4 Task D: a footswitch + LED per pedal tile; the blend demo has one pedal on the SAW board and two on the BODY board.
+  rig.load(std::filesystem::path(SAWBLADE_PRESETS_DIR) / "modeled" / "saw_body_blend_demo.json");
   auto switches = all<skin::FootswitchButton>(*rig.ed);
   auto leds = all<skin::LedIndicator>(*rig.ed);
-  REQUIRE(switches.size() == 2);
-  REQUIRE(leds.size() == 2);
+  REQUIRE(switches.size() == 3);
+  REQUIRE(leds.size() == 3);
   skin::FootswitchButton& fs = *switches[0];
 
   const auto up = fs.createComponentSnapshot(fs.getLocalBounds(), true, 1.0f);
@@ -415,6 +429,7 @@ TEST_CASE("footswitch press look and paired LED", "[editor]") {
     for (int x = 0; x < lit.getWidth(); ++x)
       if (!sprite.contains(x, y) && lit.getPixelAt(x, y) != dark.getPixelAt(x, y)) ++glow;
   CHECK(glow > 200);
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));  // the clicks above are bypass edits (see test_layout.cpp)
 }
 
 TEST_CASE("accessibility: titles and tooltips on every control", "[editor]") {
@@ -441,10 +456,19 @@ TEST_CASE("accessibility: titles and tooltips on every control", "[editor]") {
 
 TEST_CASE("clicking a rig piece selects it", "[editor]") {
   Rig rig;
+  rig.load(std::filesystem::path(SAWBLADE_PRESETS_DIR) / "modeled" / "saw_body_blend_demo.json");
   CHECK(rig.ed->selectedPiece() == skin::Piece::SawPedal);
-  for (auto* p : all<skin::RigPiece>(*rig.ed)) {
+  auto heads = all<skin::RigPiece>(*rig.ed);
+  REQUIRE(heads.size() == 2);
+  for (auto* p : heads) {
     p->mouseDown(mouse(*p, {5.0f, 5.0f}, {5.0f, 5.0f}, false));
     CHECK(rig.ed->selectedPiece() == p->piece());
+  }
+  // a pedal tile selects its path's pedal slot and remembers which block
+  for (auto* t : all<rig::BoardTile>(*rig.ed)) {
+    t->mouseDown(mouse(*t, {5.0f, 5.0f}, {5.0f, 5.0f}, false));
+    CHECK(rig.ed->selectedPiece() == (t->path() == 0 ? skin::Piece::SawPedal : skin::Piece::BodyPedal));
+    CHECK(rig.ed->selectedBlockId() == t->blockId());
   }
 }
 
@@ -1668,9 +1692,12 @@ TEST_CASE("pedal face: shown only when the preset has a circuit block", "[editor
   REQUIRE(face.activeCircuit().has_value());
   CHECK(*face.activeCircuit() == Circuit::Chainsaw);
 
-  // The face lies exactly over the saw pedal render and lets background clicks through.
-  const auto& piece = rigViewOf(rig).piece(skin::Piece::SawPedal);
-  CHECK(face.getBounds() == piece.getBounds() + rigViewOf(rig).getPosition());
+  // The face lies exactly over the circuit pedal's tile on the pedalboard and lets background clicks through.
+  rig.ed->refreshNow();
+  const rig::BoardTile* tile = rig.ed->pedalboard().tileForBlock(0, 0);
+  REQUIRE(tile != nullptr);
+  const auto& piece = *tile;
+  CHECK(face.getBounds() == piece.getBounds() + rig.ed->pedalboard().getPosition());
   bool self = true, kids = false;
   face.getInterceptsMouseClicks(self, kids);
   CHECK_FALSE(self);
@@ -1804,7 +1831,8 @@ TEST_CASE("pedal drawer: closed by default, opens and closes on double-click, x 
   AdvancedDrawer& drawer = drawerOf(rig);
   rig.load(kChainsawPresets / "classic_buzzsaw.json");
   face.refresh();
-  skin::RigPiece& piece = rigViewOf(rig).piece(skin::Piece::SawPedal);
+  rig.ed->refreshNow();
+  rig::BoardTile& piece = *rig.ed->pedalboard().tileForBlock(0, 0);  // the circuit pedal's tile
 
   CHECK_FALSE(drawer.isOpen());
   CHECK_FALSE(drawer.isVisible());
@@ -1817,7 +1845,7 @@ TEST_CASE("pedal drawer: closed by default, opens and closes on double-click, x 
 
   // Geometry: inside the rig, to the right of the pedal, aligned with its vertical span.
   const auto rigBounds = rigViewOf(rig).getBounds();
-  const auto pedal = piece.getBounds() + rigViewOf(rig).getPosition();
+  const auto pedal = piece.getBounds() + rig.ed->pedalboard().getPosition();
   CHECK(rigBounds.contains(drawer.getBounds()));
   CHECK_FALSE(drawer.getBounds().intersects(pedal));
   CHECK(drawer.getX() == pedal.getRight() + AdvancedDrawer::kGap);

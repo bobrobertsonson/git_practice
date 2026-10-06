@@ -1,14 +1,15 @@
 #include "BrowserController.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "PreviewRender.h"
 #include "sawblade/auto_trim.h"
 
 namespace sawblade::plugin {
 
-BrowserController::BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot)
-    : proc_(p), settings_(s), slot_(slot), client_([&s] { return s.executable(); }) {
+BrowserController::BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot, std::string pinnedBlockId)
+    : proc_(p), settings_(s), slot_(slot), pinnedBlockId_(std::move(pinnedBlockId)), client_([&s] { return s.executable(); }) {
   st_.gear = slotGear(slot);
 }
 
@@ -77,7 +78,7 @@ void BrowserController::stopLadderWants() {
   proc_.setLadderLookups({});  // queued lookups are dropped; a run in flight finishes
 }
 
-std::vector<SlotTarget> BrowserController::targets(std::string* why) const { return slotTargets(proc_.currentPreset(), slot_, why); }
+std::vector<SlotTarget> BrowserController::targets(std::string* why) const { return slotTargets(proc_.currentPreset(), slot_, why, pinnedBlockId_); }
 
 void BrowserController::setExecutable(const std::string& path) {
   settings_.setExecutable(path);
@@ -265,7 +266,7 @@ void BrowserController::use(int targetIndex) {
   fetchSelected([this, targetIndex](const t3k::FetchResult& f) {
     const Preset cur = proc_.currentPreset();
     std::string why;
-    const auto ts = slotTargets(cur, slot_, &why);
+    const auto ts = slotTargets(cur, slot_, &why, pinnedBlockId_);
     if (targetIndex < 0 || targetIndex >= static_cast<int>(ts.size())) return fail(why.empty() ? "no such target" : why);
     const SlotTarget target = ts[static_cast<std::size_t>(targetIndex)];
     std::string err;
@@ -286,7 +287,7 @@ void BrowserController::use(int targetIndex) {
         if (!alive->load() || seq != useSeq_) return;
         // Edits made while the level was measured are kept: the swap is applied to the rig as it is now.
         const Preset now = proc_.currentPreset();
-        const auto ts2 = slotTargets(now, slot_);
+        const auto ts2 = slotTargets(now, slot_, nullptr, pinnedBlockId_);
         std::string e2;
         const SlotTarget* t2 = nullptr;
         for (const auto& t : ts2)
@@ -305,7 +306,7 @@ void BrowserController::preview() {
   fetchSelected([this](const t3k::FetchResult& f) {
     const Preset cur = proc_.currentPreset();
     std::string why;
-    const auto ts = slotTargets(cur, slot_, &why);
+    const auto ts = slotTargets(cur, slot_, &why, pinnedBlockId_);
     if (ts.empty()) return fail(why);
     Preset np = cur;
     std::string err;
