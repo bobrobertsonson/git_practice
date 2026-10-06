@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <string>
 #include <system_error>
@@ -204,6 +205,7 @@ struct ExportPanel::Impl {
   juce::String notesTextShown;   // what the box shows (= what COPY copies)
   bool notesFromReport = false;
   std::string notesKey;
+  std::string liveRigHash;       // of the LIVE preset (not the export preset: DROP COMP hides the comp from that one), with the plan
   // right column
   juce::Label capRight, stage, detail, bestEsr, timing, status, statusSummary, numEsr, numLtas, outPath, sidecarLabel, licenceNote, wallLabel, willWrite;
   Bar bar;
@@ -476,9 +478,9 @@ struct ExportPanel::Impl {
   void updateNotes(const JobSnapshot& snap) {
     const bool done = view == View::Result;
     const ExportResult& res = snap.result;
-    // Rebuilt only when what the notes depend on changed: the mode, DROP COMP, the exported preset's hash (plan.sourceSha256,
-    // recomputed with the plan) and, for a finished run, its folder / model / report.
-    const std::string key = plan.sourceSha256 + "|" + (done ? "|r|" + snap.outDir.string() + "|" + res.namFile + "|" + snap.exportMode + (snap.allowInexact ? "|i|" : "|e|") + res.exportNotesJson
+    // Rebuilt only when what the notes depend on changed: the mode, DROP COMP, the live rig (liveRigHash, refreshed with the
+    // plan, at most once a second) and, for a finished run, its folder / model / report.
+    const std::string key = liveRigHash + "|" + (done ? "|r|" + snap.outDir.string() + "|" + res.namFile + "|" + snap.exportMode + (snap.allowInexact ? "|i|" : "|e|") + res.exportNotesJson
                                                               : "|c|" + plan.mode + (plan.dropComp ? "|d" : "|k"));
     if (key == notesKey) return;
     notesKey = key;
@@ -505,7 +507,7 @@ struct ExportPanel::Impl {
       if (fromReport && runDropped) {
         bool hasComp = false;
         for (const auto& st : notes["stages"])
-          if (st.is_object() && st.value("stage", std::string()) == "busComp") hasComp = true;
+          if (st.is_object() && st.contains("stage") && st["stage"].is_string() && st["stage"].get<std::string>() == "busComp") hasComp = true;
         if (!hasComp) fromReport = false;  // the dropped comp would vanish from the notes: show the plugin's (un-dropped rig)
       }
     }
@@ -553,6 +555,7 @@ struct ExportPanel::Impl {
         plan = planExport(proc, cur);
         resumeOffer = findResumableExport(proc);
         planKey = k;
+        liveRigHash = std::to_string(std::hash<std::string>{}(toJson(proc.currentPreset()).dump()));
         planValid = true;
         planAt = now;
       }
