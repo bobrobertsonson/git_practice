@@ -299,6 +299,9 @@ sawblade-match --di Guitar_L.wav [--di-r Guitar_R.wav] --ref REF.mp3 --pool ~/.c
                [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 3] [--threads|--jobs 4]
                [--quick | --thorough] [--progress-json PATH] [--listen]
                [--ablate feel,boost,filters,irsweep,irblend,studio] [--trace-tones ID[,ID...]]
+               [--ir-dir DIR ...] [--ir-screen-max 6000]
+sawblade-match --ir-dirs-add DIR | --ir-dirs-list          # the persistent list ~/.config/sawblade/ir_dirs.json
+python -m sawblade_match.matcher.irlib --scan DIR [--scan DIR ...] [--json OUT]    # index + sanity report, run once
 python -m sawblade_match.matcher.known_answer --pool ... --di Guitar_L.wav --out DIR [--seed 1] [--topology blend|single|single2]
 python -m sawblade_match.matcher.recall --run RUN_DIR --di ... --ref ... [--matched left] --pool ... --ns 2,3,4,6,9
                [--quick [--coarse-s S]] [--old-pool] [--quick-run QUICK_RUN_DIR]
@@ -382,6 +385,38 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
     linear CMA-ES block is re-run on it (`refine.relinear`). `result.json -> cabSweep {poolCabs, candidates[...irs]}` lists every IR's
     loss, best / worst and whether the cab changed. `cab_sweep()` is a separate function with the contract candidate + cabs -> loss rows so the
     analytic IR screen (B3) can replace it for large pools.
+  * **IR library and analytic IR screen** (v0.4M Task B3, `matcher/irlib.py`, `matcher/irscreen.py`): your own IR catalog plus any number of
+    TONE3000 IRs, ranked cheaply and only the best get the full-loss sweep. `--ir-dir DIR` (repeatable) and the persistent list (`--no-ir-dirs` ignores it for one run; `irPool.dirs` records each directory used and whether it came from `cli` or `config`)
+    `~/.config/sawblade/ir_dirs.json` (`{"dirs": [...]}`, maintained with `--ir-dirs-add DIR` / `--ir-dirs-list`) are scanned recursively (spaces,
+    unicode, nesting and symlink loops are fine; `.wav .aif .aiff .flac`; anything else is counted by extension as not-audio). Never fatal per
+    file: unreadable / corrupt, empty, `too-short` (< 2 ms), `silent` and macOS `._` files are rejected with a reason. Multi-channel files use the
+    left channel (as the core does); IRs over 2 s are kept and truncated like the core (recorded `truncated`). The index
+    (`~/.cache/sawblade/ir_index.json`, keyed by path + size + mtime) is saved every 2 s during a cold scan, prints `done/total + ETA` at least every
+    2 s and resumes after an interruption; an unchanged file is never read again. Dedupe: exact (sha256) and **near** duplicates (the same IR at
+    44.1 / 48 / 96 kHz: 48 kHz, 2 s, L2 = 1, aligned by the peak, waveform correlation >= 0.999 over 50 ms; the 48 kHz copy, else the highest rate,
+    is kept, the others are its `aliases` with the reason). Tags from folder and file names (cab / speaker such as v30, g12t75, greenback, 1960,
+    mesa, os / standard; mic such as sm57, md421, r121, 414; position such as cap, edge, cone, off-axis, `dist:Nin`).
+    **`irlib --scan`** (same code path and index as `--ir-dir`) prints: files seen, audio files, accepted, exact / near duplicates, unique,
+    rejected by reason with up to 20 example paths each, truncated, rate and channel histograms and tag coverage (% tagged and top 15 values for
+    cab/speaker, mic, position); `--json OUT` writes it. Exit 0 unless no IR was accepted. Counts: `accepted` = valid audio files (duplicates
+    included), `unique = accepted - exactDuplicates - nearDuplicates`. Needs the built `sawblade_core`: the IR as the core applies it
+    (left, 48 kHz, <= 2 s, L2 = 1) is obtained by rendering an impulse through the core, so no resampler is reimplemented in Python.
+    Local IRs become pool cabs with `source.provider "local"`, licence `user-owned`, id = sha256[:16], referenced by absolute path + sha256 (a moved
+    file fails cleanly; `best.preset.json` keeps `local-irs/<stem>.wav` + the hash; equal stems share that placeholder name, the sha256 tells them apart. For a converted aif/flac the preset's `sha256` is the converted WAV's, `source.id` the original's sha256[:16]). IRs are never committed or uploaded. aif / flac and WAV subtypes
+    the core cannot read are converted (left channel, float32, no resampling) to `~/.cache/sawblade/ir_wav/<sha>.wav` and the preset points there.
+    **Screen:** per refined candidate the chain is rendered once up to the cab (cab off, post EQ neutral). Each IR's |H| is cached on the loss' Welch
+    grid (sidecar `~/.cache/sawblade/ir_h_v1/<sha[:2]>/<sha>.npy`, shared with the index, so warm runs do no FFTs); the predicted PSD is
+    `PSD(pre-cab) * |H|^2`, giving the A-weighted LTAS error of the loss (one matrix product for all IRs) plus the spectral fizz sub-terms
+    (`hfRatioDb`, `hfFlat` from the frame periodograms x |H|^2; `hfMod` is a time-domain statistic and is left to the full render), weighted like the
+    feel term. The top 24 per candidate (plus the candidate's own cab) get the full-loss sweep; the analytic top 6 (`screen.top6`; also the
+    full-loss top 6 `screen.fullTop6`) are the input of the later two-IR pair search. Pool cabs and library IRs are screened together. Above
+    `--ir-screen-max` (6000) IRs the pool is prefiltered, never randomly sampled: IRs whose cab/speaker tags match the candidate's current cab
+    first, then a seeded k-means (k = 32) on the 1/3-octave |H| shape keeps the IRs nearest each centroid in proportion to cluster size.
+    `result.json -> irPool {local, tone3000, total, skipped, screenSeconds, prefiltered, winner{source, path | toneId}}`, and per candidate
+    `cabSweep.candidates[].screen {pool, screened, prefilter, top, top6, fullTop6}`. Without a library and with <= 24 pool cabs the sweep is the old
+    every-cab sweep (bigger pools now also go through the analytic screen, so only the top 24 get full renders; `irPool.screened` says which); `--ablate irsweep` keeps the pre-v0.4M behaviour (the library is ignored). `sawblade-t3k pull --gear ir` now downloads **all**
+    models of IR tones (`--max-models-per-tone N` caps them, pedal/amp tones keep 3); `pull --ir-search QUERY` (repeatable, opt-in like `--search`)
+    adds IR tones from tones/search under the same quality filter and licence rules.
   * **Gate matched to the reference** (`matcher/gatesweep.py`): on the final chain the gate is tuned by coordinate descent (about 15 renders of
     the NAM cores; the gate is part of the core memo key): threshold = DI floor + 4, 8, ..., 36 dB at the default hold / release / range, then hold
     2 / 10 / 40 ms, release 20 / 80 / 150 / 250 ms, range -50 / -90 dB. Each step keeps the cell with the lowest feel `floor` term (inter-note level

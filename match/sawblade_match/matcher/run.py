@@ -25,6 +25,7 @@ from .excerpt import select_excerpt
 from .reference import Reference, build_target, make_excerpt
 from .progress import NullProgress, Progress
 from .cabsweep import TOP_PER_TOPOLOGY, cab_sweep, sweep_summary
+from . import irscreen
 from .gatesweep import gate_sweep, reference_floor_db, render_gate
 from .refine import refine_combo, relinear
 from .trace import trace_tones
@@ -134,6 +135,9 @@ class Config:
     timings_pre: dict | None = None      # seconds spent before run_match (reference loading), from the CLI
     ablate: tuple = ()                   # v0.4M suspects switched off (ABLATIONS); echoed in result.json
     trace_tones: tuple = ()              # TONE3000 tone ids to explain in result.json -> trace
+    ir_library: object = None            # irlib.IrLibrary (the user's own IRs): screened with the pool cabs, top N swept
+    ir_dirs: tuple = ()                  # [{"path", "source": "cli"|"config"}] the library was scanned from (for irPool.dirs)
+    ir_screen_max: int = irscreen.SCREEN_MAX   # above this many IRs the screen prefilters (tags, then k-means)
 
 
 class Log:
@@ -175,7 +179,12 @@ def portable(preset: dict) -> dict:
     def walk(n):
         if isinstance(n, dict):
             src = n.get("source")
-            if isinstance(src, dict) and "file" in n:
+            if isinstance(src, dict) and "file" in n and src.get("provider") == "local":
+                # file stem + the sha256 stay. Two IRs with the same stem collide on this placeholder name only; the sha256
+                # (and source.id) disambiguate. For converted IRs (aif/flac) the sha256 is the converted WAV's, while
+                # source.id is the original file's sha256[:16].
+                n["file"] = f"local-irs/{Path(src.get('title') or 'ir').name}.wav"
+            elif isinstance(src, dict) and "file" in n:
                 ext = Path(n["file"]).suffix
                 n["file"] = f"captures/{src['id']}_{src.get('modelId', 'x')}{ext}"
                 n.pop("sha256", None)
@@ -206,7 +215,9 @@ def caps_summary(combo: Combo) -> dict:
         out[slot] = None if c is None else {"toneId": c.tone_id, "modelId": c.model_id, "title": c.title,
                                             "model": c.name, "class": c.kind, "license": c.license,
                                             "creator": c.creator, "sizeBytes": c.size_bytes,
-                                            "sizeCategory": c.size_label or "standard", "architecture": c.arch}
+                                            "sizeCategory": c.size_label or "standard", "architecture": c.arch,
+                                            **({"source": "local", "path": c.orig_path, "sha256": c.orig_sha}
+                                               if c.provider == "local" else {})}
     return out
 
 
@@ -301,6 +312,9 @@ def run_match(cfg: Config, log=None) -> dict:
                                cab_sweep=plan.cab_sweep and "irsweep" not in abl)
     rng = np.random.default_rng(cfg.seed)
     ref, pool = cfg.ref, cfg.pool
+    lib = cfg.ir_library if "irsweep" not in abl else None
+    if lib is not None and not pool.cabs and len(lib.records):
+        pool.cabs.append(default_cab(lib.captures()))      # no TONE3000 cab in the pool: the library supplies the stage-1 cab
     if not (pool.amps and pool.cabs):
         raise ValueError(f"pool needs amps and cabs, got {pool.counts()}")
     log(f"pool {pool.counts()} seed {cfg.seed} budget {cfg.budget} plan {plan}")
@@ -532,13 +546,37 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     # ---- cab / IR breadth (v0.4M Task B): every pool cab on the top candidates per topology --------------------------
     cab_sweeps: list[dict] = []
     t_cab = time.time()
+    lib = cfg.ir_library if plan.cab_sweep else None
+    bank, ir_pool = None, {"ablated": not plan.cab_sweep, "local": 0, "tone3000": len(pool.cabs), "total": len(pool.cabs),
+                           "skipped": 0, "dirs": [dict(d) for d in cfg.ir_dirs], "screened": False, "screenSeconds": 0.0, "prefiltered": False}
+    if plan.cab_sweep and (lib is not None or len(pool.cabs) > irscreen.TOP_N):
+        t_bank = time.time()
+        bank = irscreen.Bank.build(lib, pool.cabs)
+        ir_pool.update(screened=True, local=bank.n_local, tone3000=bank.n_pool, total=len(bank), skipped=len(bank.skipped),
+                       skippedReasons=bank.skipped[:20], screenMax=cfg.ir_screen_max, topN=irscreen.TOP_N,
+                       bankSeconds=round(time.time() - t_bank, 2),
+                       libraryReport={k: lib.report[k] for k in ("accepted", "exactDuplicates", "nearDuplicates", "rejectedTotal")}
+                       if lib is not None else None)
+        log(f"IR pool: {bank.n_local} local + {bank.n_pool} TONE3000 = {len(bank)} IRs ({len(bank.skipped)} skipped), "
+            f"analytic screen -> top {irscreen.TOP_N} per candidate")
     if plan.cab_sweep:
         n_sw = max(1, sum(min(TOP_PER_TOPOLOGY, sum(1 for x in refined if x.topology == t)) for t in TOPOLOGIES))
         for topo in TOPOLOGIES:
             for c in sorted((x for x in refined if x.topology == topo), key=lambda x: x.loss)[:TOP_PER_TOPOLOGY]:
                 sp = Space.for_combo(c.combo, plan.filters)
-                rows = cab_sweep(eng, c, pool.cabs, sp, ex, tgt)
+                screen_rec = None
+                if bank is not None:
+                    caps, screen_rec = irscreen.candidate_irs(bank, eng, c, ex, tgt, top_n=irscreen.TOP_N,
+                                                              screen_max=cfg.ir_screen_max, seed=cfg.seed)
+                    ir_pool["screenSeconds"] += screen_rec["seconds"]
+                    ir_pool["prefiltered"] = ir_pool["prefiltered"] or screen_rec["prefilter"]["prefiltered"]
+                else:
+                    caps = pool.cabs
+                rows = cab_sweep(eng, c, caps, sp, ex, tgt)
                 summ = sweep_summary(c, rows)
+                if screen_rec is not None:
+                    full = sorted(rows, key=lambda r: r["result"].total)
+                    summ["screen"] = {**screen_rec, "fullTop6": [r["cab"].key for r in full[:irscreen.TOP_PAIR]]}
                 cur = next(x for x in rows if x["cab"].key == c.combo.cab.key)
                 top = min(rows, key=lambda x: x["result"].total)
                 if top["cab"].key != cur["cab"].key and top["result"].total < cur["result"].total - CAB_SWITCH_DB:
@@ -557,10 +595,13 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         refined.sort(key=lambda c: c.loss)
         result["cabSweep"] = {"ablated": False, "topPerTopology": TOP_PER_TOPOLOGY, "poolCabs": len(pool.cabs),
                               "candidates": cab_sweeps, "seconds": round(time.time() - t_cab, 2)}
+        ir_pool["screenSeconds"] = round(ir_pool["screenSeconds"], 2)
     else:
         result["cabSweep"] = {"ablated": True, "note": "--ablate irsweep: only the stage-1 cab sweep ran"}
     T["cabSweep"] = time.time() - t_cab
     best = choose(refined)
+    ir_pool["winner"] = {"key": best.combo.cab.key, "title": best.combo.cab.title, **best.combo.cab.source_info()}
+    result["irPool"] = ir_pool
     result["stage2Seconds"] = time.time() - t_start - t1
     T["stage2"] = time.time() - t_mark
     t_mark = time.time()

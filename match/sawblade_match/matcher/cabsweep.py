@@ -44,6 +44,7 @@ def sweep_summary(cand: Scored, rows: list[dict]) -> dict:
     cur = cand.combo.cab.key
     ranked = sorted(rows, key=lambda r: r["result"].total)
     irs = [{"cab": r["cab"].key, "toneId": r["cab"].tone_id, "title": r["cab"].title, "name": r["cab"].name,
+            **({"source": "local", "path": r["cab"].orig_path} if r["cab"].provider == "local" else {}),
             "loss": r["result"].total, "ltas": r["result"].ltas, **feel_row(r["result"]), "current": r["cab"].key == cur}
            for r in ranked]
     return {"topology": cand.topology, "boost": bool(cand.combo.boost), "currentCab": cur, "nCabs": len(rows),
