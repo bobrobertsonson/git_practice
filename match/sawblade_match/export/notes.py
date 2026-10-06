@@ -34,7 +34,7 @@ def _capture_info(cap: dict | None) -> dict:
     out = {"file": (cap.get("file") or "").replace("\\", "/").rsplit("/", 1)[-1] or None,
            "title": src.get("title"), "creator": src.get("creator"), "license": src.get("license"),
            "provider": src.get("provider"), "toneId": src.get("id"), "url": src.get("url")}
-    mic = src.get("mic") or src.get("mics") or src.get("tags") or cap.get("mic")
+    mic = src.get("mic") or src.get("mics")
     if mic:
         out["mic"] = mic
     return {k: v for k, v in out.items() if v is not None}
@@ -112,6 +112,7 @@ def _cab(cab: dict, ir_name: str | None) -> dict:
         a, b = _capture_info(cab.get("irA")), _capture_info(cab.get("irB"))
         mix = float(cab.get("mix", 0.5))
         s.update({"irA": a, "irB": b, "mix": mix})
+        # offsetSamplesB / invertB: core hook added in v0.4M B2.1 (docs/specs/v0_4m-tasks.md); read when present.
         for k in ("offsetSamplesB", "invertB"):
             if k in cab:
                 s[k] = cab[k]
@@ -150,16 +151,12 @@ def _comp(c: dict, out_gain_db: float, gain_before: bool) -> dict:
          "ratio": float(c.get("ratio", 2.0)), "attackMs": float(c.get("attackMs", 10.0)),
          "releaseMs": float(c.get("releaseMs", 100.0)), "kneeDb": float(c.get("kneeDb", 6.0)),
          "makeupDb": float(c.get("makeupDb", 0.0)), "detector": "peak, feed-forward, soft knee"}
-    if c.get("sidechainHpfHz"):
-        s["sidechainHpfHz"] = float(c["sidechainHpfHz"])
     # The compressor sees the level before the output gain; the no-cab export has that gain baked in before the IR.
     thr_out = thr + (out_gain_db if gain_before else 0.0)
     s["thresholdDbFsOut"] = thr_out
     h = (f"Bus compressor LAST (after the cab / post EQ): threshold {_g(thr)} dB re the chain's pre-headroom level = "
          f"{_g(thr_out)} dB re 0 dBFS at the exported output, ratio {_g(s['ratio'])}:1, attack {_g(s['attackMs'])} ms, "
          f"release {_g(s['releaseMs'])} ms, knee {_g(s['kneeDb'])} dB, make-up {s['makeupDb']:+.1f} dB, peak detector")
-    if "sidechainHpfHz" in s:
-        h += f", sidechain high-pass {_g(s['sidechainHpfHz'])} Hz"
     if gain_before and out_gain_db:
         h += f" (the output gain of {out_gain_db:+.1f} dB is already inside the model)"
     return {"stage": "busComp", "position": AFTER, "inModel": False, "settings": s, "hardware": h + "."}
@@ -174,7 +171,7 @@ def build_export_notes(preset: dict, plan, nam_name: str | None = None, ir_name:
     stages: list[dict] = []
 
     gate = preset.get("gate") or {}
-    if gate.get("enabled"):                       # the gate is never trained
+    if gate and gate.get("enabled", True):                       # the gate is never trained
         stages.append(_gate(gate))
 
     cab = preset.get("cab") or {}

@@ -444,7 +444,7 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   pedal. Shape: `{"version", "mode", "file", "stages": [{"stage": "gate"|"cab"|"postEq"|"busComp", "position": "before NAM"|"after
   NAM", "inModel": false, "settings": {...}, "hardware": "<one line>"}], "loaderOrder": "<one line>", "message"?}`. The gate is
   always listed (before the NAM, keyed on the DI = put it first: threshold/close dB, attack/hold/release ms, range dB, expander
-  ratio, key HPF). `nocab` additionally lists the cab (shared IR, or for `irMix` both IRs, mix, `offsetSamplesB`/`invertB` when
+  ratio, key HPF). `nocab` additionally lists the cab (shared IR, or for `irMix` both IRs, mix, `offsetSamplesB`/`invertB` (v0.4M B2.1 core hook) when
   present, with file/title/creator/licence/mic when known), the post EQ (type, Hz, dB, Q; HP/LP 12 dB/oct; both are already
   folded into the exported `.ir.wav`, which the notes point to) and the bus comp (threshold dB re the chain's pre-headroom level
   and re 0 dBFS at the exported output, which includes the output gain the model already has; ratio, attack/release ms, knee dB,
