@@ -3074,6 +3074,26 @@ TEST_CASE("export panel: a dropped comp stays in the notes after training even w
   CHECK_FALSE(panel.notesText().contains("FAKE GATE FROM THE REPORT."));
 }
 
+TEST_CASE("export panel: with DROP COMP a live edit of the comp refreshes the notes", "[editor][export][notes]") {
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(rig.exportButton("DROP COMP")->getToggleState());
+  CHECK(panel.notesText().contains("threshold -9 dB re the chain's pre-headroom level"));
+  CHECK(panel.notesText().contains("ratio 4:1"));
+  Preset p = rig.proc.currentPreset();
+  p.busComp.thresholdDb = -20.0;
+  p.busComp.ratio = 6.0;
+  p.busComp.attackMs = 5.0;
+  rig.proc.loadPreset(p);
+  REQUIRE(rig.proc.waitForLoader());
+  panel.refresh();
+  CHECK(panel.notesText().contains("threshold -20 dB re the chain's pre-headroom level"));
+  CHECK(panel.notesText().contains("ratio 6:1, attack 5 ms"));
+  CHECK_FALSE(panel.notesText().contains("ratio 4:1"));
+}
+
 TEST_CASE("export panel: a missing exporter shows a message and LOCATE; a refusal shows its message", "[editor][export]") {
   ExportRig rig;
   rig.loadRig("rig", false);
