@@ -6,11 +6,13 @@
 #include <string>
 #include <vector>
 
+#include "sawblade/amp_controls.h"
 #include "sawblade/block_registry.h"
 #include "sawblade/bus_comp.h"
 #include "sawblade/convolver.h"
 #include "sawblade/delay.h"
 #include "sawblade/eq.h"
+#include "sawblade/gain_ladder.h"
 #include "sawblade/gate.h"
 #include "sawblade/preset.h"
 #include "sawblade/processor.h"
@@ -107,6 +109,19 @@ struct ChainInfo {
   std::vector<std::string> warnings;
 };
 
+// Gain-ladder state of one path's amp block (v0.2 Task B), read from any thread (atomics of the LadderBlock).
+struct LadderState {
+  bool has = false;        // the path's amp block has a gain ladder
+  int rungCount = 0;
+  int own = -1;            // the rung that is the block's own capture
+  int active = -1;         // the rung sounding
+  int committed = -1;      // the rung sounding or being faded to
+  int target = -1;         // the rung the GAIN knob asks for
+  bool pending = false;    // target != committed: that rung's model is not loaded yet (GAIN is drive-only)
+  double position = 0.0;   // GAIN-knob position of the committed rung
+  std::uint64_t loadedMask = 0, rejectedMask = 0;
+};
+
 struct LiveEqBand {
   double freq = 0.0, gainDb = 0.0, q = 0.0;  // freq 0 = no band at that index
   bool operator==(const LiveEqBand&) const = default;
@@ -135,6 +150,9 @@ struct LiveParams {
   std::array<LiveEq, 2> preEq{}, pathEq{};
   // Input / output gain of each block (by block index; `nam` blocks only, others ignore it).
   std::array<std::array<LiveBlock, kMaxBlocksPerPath>, 2> blocks{};
+  // Amp controls of each path ([0] = a, [1] = b); they act only on a path that has an amp block (ampIndex).
+  // Ramped like the other live gains (see AmpStage); out-of-range values are clamped, non-finite ones ignored.
+  std::array<AmpKnobs, 2> amp{};
   // Monitoring (not preset state): ramp the path's level to silence and back.
   bool muteA = false, muteB = false;
 
@@ -207,6 +225,10 @@ class Chain {
 
   ChainInfo info() const;
 
+  // Gain ladder of path 0 = a / 1 = b: state, and the block (null if none) to hand preloaded rung models to.
+  LadderState ladderState(int path) const noexcept;
+  LadderBlock* ladderBlock(int path) noexcept;
+
   // Probe definition (exposed for documentation and tests).
   static constexpr double kProbeSeconds = 1.0;
   static constexpr double kProbeLevelDbfs = -18.0;  // RMS of the white noise before band-passing
@@ -225,6 +247,12 @@ class Chain {
   struct Path {
     ParametricEq preEq, eq;
     std::vector<LoadedBlock> blocks;
+    AmpStage amp;       // GAIN before / tone stack + LEVEL after block `ampBlock`
+    int ampBlock = -1;  // ampIndex(path); -1 = no amp controls
+    LadderBlock* ladder = nullptr;   // the amp block's processor when its capture has a gain ladder
+    std::vector<double> ladderPos;   // GAIN-knob position of each rung
+    int ladderOwn = -1, desired = -1, lastCommitted = -1;
+    double effKnob = kAmpKnobDefault;  // the GAIN position the ladder math uses
     Gain level;
     std::unique_ptr<Convolver> cab;  // perPath mode only
     DelayLine delay;
@@ -252,6 +280,8 @@ class Chain {
 
   void processChunk(const float* in, float* out, int n) noexcept;
   void renderPath(Path& p, float* io, int n, std::uint64_t counter, bool allowRamp) noexcept;
+  int driveRung(const Path& p) const noexcept;
+  AmpKnobs effectiveAmpKnobs(const Path& p, const AmpKnobs& k) const noexcept;
   void applyAlignment(const AlignResult& r);
   void applyLevelMatch(const LevelMatchResult& r);
   float levelTarget(std::size_t k, double levelDb, bool mute) const noexcept;

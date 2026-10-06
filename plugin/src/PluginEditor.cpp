@@ -13,6 +13,7 @@
 #include "browser/CaptureBrowser.h"
 #include "pedals/AdvancedDrawer.h"
 #include "pedals/PedalFace.h"
+#include "rig/AmpHead.h"
 #include "rig/RigController.h"
 #include "mic/MicPage.h"
 #include "presets/AbCompare.h"
@@ -134,6 +135,10 @@ class SawbladeEditor::Content : public juce::Component {
     // --- rig
     rig_.onSelect = [this](Piece) { updateSelection(); };
     addAndMakeVisible(rig_);
+    for (int path = 0; path < 2; ++path) {  // the amp controls (v0.2 Task D) lie over the amp heads' art
+      ampHeads_[static_cast<size_t>(path)] = std::make_unique<rig::AmpHead>(processor_, path);
+      addAndMakeVisible(*ampHeads_[static_cast<size_t>(path)]);
+    }
     message_.setFont(L::bodyFont(12.0f));
     message_.setInterceptsMouseClicks(false, false);
     addAndMakeVisible(message_);
@@ -280,6 +285,8 @@ class SawbladeEditor::Content : public juce::Component {
       const auto pedal = rig_.piece(Piece::SawPedal).getBounds() + rig_.getPosition();
       face_->setBounds(pedal);
       drawer_->setAnchor(pedal, rig_.getBounds().withTrimmedRight(24));
+      ampHeads_[0]->setBounds(rig_.piece(Piece::SawAmp).getBounds() + rig_.getPosition());
+      ampHeads_[1]->setBounds(rig_.piece(Piece::BodyAmp).getBounds() + rig_.getPosition());
     }
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     screen_->setBounds(0, kTopBar, MatchScreen::kWidth, kDesignHeight - kTopBar);
@@ -337,6 +344,10 @@ class SawbladeEditor::Content : public juce::Component {
     const SlotBands bands = processor_.postEqSlots();
     for (int k = 0; k < kPostEqSlots; ++k) knobs_[static_cast<size_t>(kPostEqFirst + k)]->setEnabled(bands[static_cast<size_t>(k)] >= 0);
     updateReadouts();
+    {
+      const Preset shown = processor_.editBasePreset();
+      for (int path = 0; path < 2; ++path) ampHeads_[static_cast<size_t>(path)]->refresh(shown, processor_.ladderInfo(path));
+    }
     face_->refresh();
     if (drawer_->isVisible()) drawer_->refresh();
     if (settingsPanel_ && settingsPanel_->isVisible()) settingsPanel_->refresh();
@@ -421,6 +432,45 @@ class SawbladeEditor::Content : public juce::Component {
     if (presetBrowser_->library().entries().empty()) presetBrowser_->scanBlocking();
     presetBrowser_->step(dir);
   }
+  rig::AmpHead& ampHead(int path) { return *ampHeads_[static_cast<size_t>(path)]; }
+  // Cmd / Ctrl + Z: undo the last BLEND fill (RigController::undo) when there is one.
+  bool handleKey(const juce::KeyPress& k) {
+    if (!(k.getModifiers().isCommandDown() && !k.getModifiers().isShiftDown() && (k.getKeyCode() == 'z' || k.getKeyCode() == 'Z'))) return false;
+    // Keys bubble up from children that did not take them: a text field (a read-only one passes Cmd+Z on) or an open overlay is
+    // the user's current context, so it must never undo a BLEND fill underneath it.
+    if (dynamic_cast<juce::TextInputTarget*>(focusProbe_()) != nullptr) return false;
+    if (anyOverlayOpen()) return false;
+    if (!rigController_->canUndo()) return false;
+    return rigController_->undo();
+  }
+  // The component that has the keyboard focus (tests replace it: a headless X server gives no window, so no focus).
+  std::function<juce::Component*()> focusProbe_ = [] { return juce::Component::getCurrentlyFocusedComponent(); };
+  // Overlays that cover or take over the editor's context: Cmd / Ctrl + Z must not undo underneath them. The RIG editor (rigPanel_) is NOT
+  // in this list on purpose: it is where path B's BLEND fill is visible and edited, so undoing the fill from there is the point.
+  // New overlays: add them here (or document why not) and to the test "does not bubble into an undo" in test_amp_head.cpp.
+  bool anyOverlayOpen() const {
+    const auto vis = [](const juce::Component* c) { return c != nullptr && c->isVisible(); };
+    return vis(drawer_.get()) || vis(settingsPanel_.get()) || vis(about_.get()) || vis(presetBrowser_.get()) || vis(screen_.get()) ||
+           vis(exportPanel_.get()) || vis(micPage_.get()) || vis(browser_.get()) || vis(panel_.get());
+  }
+  // Test hooks: the capture browser (the BROWSE CAPTURES overlay), and closing every overlay.
+  void openCaptureBrowserForTests() { openBrowser(); }
+  bool captureBrowserOpen() const { return browser_ != nullptr && browser_->isVisible(); }
+  void closeAllOverlays() {
+    settingsPanel_->close();
+    settingsBtn_.setToggleState(false, juce::dontSendNotification);
+    if (about_ != nullptr) about_->setVisible(false);
+    drawer_->setOpen(false, /*animate=*/false);
+    for (juce::Component* c : std::initializer_list<juce::Component*>{presetBrowser_.get(), screen_.get(), exportPanel_.get(), micPage_.get(), panel_.get(), rigPanel_.get()})
+      c->setVisible(false);
+    rigButton_.setToggleState(false, juce::dontSendNotification);
+    playAlong_.setToggleState(false, juce::dontSendNotification);
+    if (browser_ != nullptr) browser_->onClose();
+  }
+  bool drawerOpen() const { return drawer_->isVisible(); }
+  void setDrawerOpen(bool open) { drawer_->setOpen(open, /*animate=*/false); }
+  void setFocusProbe(std::function<juce::Component*()> p) { focusProbe_ = std::move(p); }
+  rig::RigController& rigControllerRef() { return *rigController_; }
   void mouseDown(const juce::MouseEvent& e) override {
     if (e.eventComponent != &ab_ || !e.mods.isPopupMenu()) return;
     juce::PopupMenu m;
@@ -533,6 +583,8 @@ class SawbladeEditor::Content : public juce::Component {
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
   juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, settingsBtn_;
   juce::uint32 learnShownUntil_ = 0;
+  // New overlays: add them to anyOverlayOpen() (Cmd / Ctrl + Z) or document why not.
+  std::array<std::unique_ptr<rig::AmpHead>, 2> ampHeads_;
   std::unique_ptr<PedalFace> face_;
   std::unique_ptr<AdvancedDrawer> drawer_;
   std::unique_ptr<PlayAlongPanel> panel_;
@@ -559,6 +611,7 @@ SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEdito
   content_ = std::make_unique<Content>(p);
   addAndMakeVisible(*content_);
 
+  setWantsKeyboardFocus(true);  // Cmd / Ctrl + Z
   setResizable(true, true);
   setResizeLimits(640, 400, 2560, 1600);
   getConstrainer()->setFixedAspectRatio(static_cast<double>(kDesignWidth) / kDesignHeight);
@@ -615,6 +668,16 @@ void SawbladeEditor::setBrowserOpen(bool open) { content_->setBrowserOpen(open);
 bool SawbladeEditor::browserOpen() const { return content_->browserOpen(); }
 PresetBrowser& SawbladeEditor::browser() { return content_->browser(); }
 AbCompare& SawbladeEditor::abCompare() { return content_->abCompare(); }
+rig::AmpHead& SawbladeEditor::ampHead(int path) { return content_->ampHead(path); }
+rig::RigController& SawbladeEditor::rigController() { return content_->rigControllerRef(); }
+void SawbladeEditor::refreshNow() { content_->refresh(); }
+void SawbladeEditor::openCaptureBrowserForTests() { content_->openCaptureBrowserForTests(); }
+bool SawbladeEditor::captureBrowserOpen() const { return content_->captureBrowserOpen(); }
+void SawbladeEditor::closeAllOverlaysForTests() { content_->closeAllOverlays(); }
+bool SawbladeEditor::advancedDrawerOpen() const { return content_->drawerOpen(); }
+void SawbladeEditor::setAdvancedDrawerOpen(bool open) { content_->setDrawerOpen(open); }
+void SawbladeEditor::setFocusProbeForTests(std::function<juce::Component*()> probe) { content_->setFocusProbe(std::move(probe)); }
+bool SawbladeEditor::keyPressed(const juce::KeyPress& k) { return content_->handleKey(k); }
 void SawbladeEditor::openMatchScreen() { content_->openMatchScreen(); }
 bool SawbladeEditor::matchScreenOpen() const { return content_->matchScreenOpen(); }
 void SawbladeEditor::openExportPanel() { content_->openExportPanel(); }

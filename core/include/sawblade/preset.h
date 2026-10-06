@@ -9,15 +9,16 @@
 
 #include <nlohmann/json.hpp>
 
+#include "sawblade/amp_controls.h"
 #include "sawblade/bus_comp.h"
 #include "sawblade/eq.h"
 #include "sawblade/gate.h"
 #include "sawblade/preset_reader.h"
 
-// C++ mirror of docs/PRESET_SCHEMA.md, v1. Parsing is strict (see PresetError).
+// C++ mirror of docs/PRESET_SCHEMA.md, v2 (v1 files are still read). Parsing is strict (see PresetError).
 namespace sawblade {
 
-constexpr int kPresetVersion = 1;
+constexpr int kPresetVersion = 2;
 constexpr int kMaxBlocksPerPath = 8;
 
 bool operator==(const GateParams&, const GateParams&);
@@ -29,6 +30,16 @@ struct CaptureSource {
   bool operator==(const CaptureSource&) const = default;
 };
 
+// One rung of a gain ladder (v0.2 Task B): the same amp at another gain setting. `modelId` is the TONE3000 model id
+// (a string); `gain` the amp's gain setting as the pack names it; `name` the model's title (display only).
+struct LadderRung {
+  std::string modelId;
+  double gain = 0.0;
+  std::string name;
+  bool operator==(const LadderRung&) const = default;
+};
+constexpr int kMaxLadderRungsInPreset = 64;
+
 // NAM model or IR reference. `file` is as written; `resolvedPath` is absolute-or-relative to the
 // process cwd as resolved against the preset file's directory.
 struct Capture {
@@ -36,6 +47,7 @@ struct Capture {
   std::filesystem::path resolvedPath;
   std::string sha256;  // lowercase hex, empty if absent
   std::optional<CaptureSource> source;
+  std::vector<LadderRung> ladder;  // NAM model captures only (v0.2): ascending gain, 2..64 rungs, or empty
   bool operator==(const Capture&) const = default;
 };
 
@@ -78,8 +90,13 @@ struct PathPreset {
   std::vector<EqBand> eq;
   double levelDb = 0.0;
   bool invert = false;
+  AmpControls ampControls;  // v2; all-default (and no gainStep) = absent in the file
   bool operator==(const PathPreset&) const = default;
 };
+
+// The block the path's amp controls act around: the last block with slot "amp", else the last "nam"
+// block; -1 if the path has none (it then has no amp controls). The one rule, shared with the rig UI.
+int ampIndex(const PathPreset& p);
 
 enum class AlignMode { Auto, Manual, Off };
 struct AlignParams {
@@ -172,7 +189,7 @@ std::filesystem::path locateCapture(const Capture& c);
 std::string captureNotFoundMessage(const Capture& c, const std::string& jsonPath);
 
 // Shared parse helpers (used by block-type parse hooks).
-Capture parseCapture(const nlohmann::json& j, const std::string& path, const std::filesystem::path& baseDir);
+Capture parseCapture(const nlohmann::json& j, const std::string& path, const std::filesystem::path& baseDir, bool allowLadder = false);
 nlohmann::json toJson(const Capture& c);
 std::vector<EqBand> parseEqBands(const nlohmann::json& arr, const std::string& path);
 nlohmann::json toJson(const EqBand& b);

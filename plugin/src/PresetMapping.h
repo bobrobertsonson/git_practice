@@ -22,6 +22,9 @@ namespace sawblade::plugin {
 // bands have no gain and are skipped. A slot with no band does nothing.
 constexpr int kPostEqSlots = 6;
 
+// v0.2 amp controls: six knobs per path (ids ampA_gain ... ampB_level), 0..10, default 5.
+enum AmpKnob : int { kAmpGain = 0, kAmpBass, kAmpMid, kAmpTreble, kAmpPresence, kAmpLevel, kAmpKnobCount };
+
 enum ParamIndex : int {
   kInputGain = 0,
   kOutputGain,
@@ -29,7 +32,8 @@ enum ParamIndex : int {
   kBlend,
   kLevelA,
   kLevelB,
-  kPostEqFirst,
+  kAmpFirst,  // path A knobs, then path B knobs (kAmpKnobCount each): see ampParam()
+  kPostEqFirst = kAmpFirst + 2 * kAmpKnobCount,
   // Pedal circuits (pedals/CircuitParams.h): the CIRCUIT switch, then one live set per circuit.
   kSawCircuit = kPostEqFirst + kPostEqSlots,
   kHmFirst,
@@ -38,6 +42,9 @@ enum ParamIndex : int {
   kEyeFirst = kHmxFirst + kHmxNumLive,
   kNumParams = kEyeFirst + kEyeNumLive
 };
+
+// Parameter index of knob `k` of path `path` (0 = a, 1 = b).
+constexpr int ampParam(int path, int k) noexcept { return kAmpFirst + path * kAmpKnobCount + k; }
 
 struct ParamSpec {
   std::string id;    // stable host-facing identifier (never rename once released)

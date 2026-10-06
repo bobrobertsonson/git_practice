@@ -49,6 +49,19 @@ std::unique_ptr<Convolver> loadCab(const Capture& c, const std::string& path, do
 // shared and irMix both run one convolver after the blend.
 bool usesSharedCab(CabMode m) { return m != CabMode::PerPath; }
 
+// Live amp knobs: non-finite values keep the old value, the rest is clamped to the knob range.
+void sanitizeAmp(AmpKnobs& n, const AmpKnobs& o) noexcept {
+  const auto fix = [](double& v, double old) {
+    v = std::isfinite(v) ? std::min(kAmpKnobMax, std::max(kAmpKnobMin, v)) : old;
+  };
+  fix(n.gain, o.gain);
+  fix(n.bass, o.bass);
+  fix(n.mid, o.mid);
+  fix(n.treble, o.treble);
+  fix(n.presence, o.presence);
+  fix(n.level, o.level);
+}
+
 // Deterministic white noise: xorshift64* (not <random>: distributions are implementation-defined).
 std::vector<float> makeProbe(double sr) {
   const auto n = static_cast<std::size_t>(std::llround(Chain::kProbeSeconds * sr));
@@ -135,6 +148,7 @@ ChainResources loadResources(const Preset& p, double sr, CaptureCache* cache) {
       const BlockType* t = BlockRegistry::instance().find(blocks[i].type);
       if (!t) throw std::runtime_error(jp + ".type: unknown block type \"" + blocks[i].type + "\"");
       BlockBuildContext ctx{sr, &res.warnings, jp, cache};
+      if (static_cast<int>(i) == ampIndex(*paths[k])) ctx.gainStep = &paths[k]->ampControls.gainStep;
       LoadedBlock lb;
       lb.id = blocks[i].id;
       lb.type = blocks[i].type;
@@ -227,6 +241,7 @@ LiveParams LiveParams::fromPreset(const Preset& p) {
     for (std::size_t i = 0; i < pp[k]->blocks.size() && i < l.blocks[k].size(); ++i)
       if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp[k]->blocks[i].params.get()))
         l.blocks[k][i] = {nam->inputGainDb, nam->outputGainDb};
+    l.amp[k] = pp[k]->ampControls.knobs();
   }
   return l;
 }
@@ -253,6 +268,24 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
       throw PresetError(pathName + ".eq", e.what());
     }
     p.level.setGainLinear(levelTarget(k, pp[k]->levelDb, false));
+    p.ampBlock = ampIndex(*pp[k]);
+    if (p.ampBlock >= 0) {  // else the stage stays neutral
+      const auto* nam = dynamic_cast<const NamBlockParams*>(pp[k]->blocks[static_cast<std::size_t>(p.ampBlock)].params.get());
+      auto* lad = dynamic_cast<LadderBlock*>(p.blocks[static_cast<std::size_t>(p.ampBlock)].processor.get());
+      const AmpKnobs& kn = pp[k]->ampControls;
+      if (nam && lad) {
+        p.ladder = lad;
+        p.ladderPos = ladderPositions(nam->model.ladder);
+        p.ladderOwn = ownRungIndex(nam->model);
+        // No gainStep and GAIN untouched: the block's own capture sounds and the knob is "at" its rung, so the render is
+        // bit-identical to the same preset without a ladder.
+        p.effKnob = pp[k]->ampControls.gainStep.empty() && kn.gain == kAmpKnobDefault
+                        ? p.ladderPos[static_cast<std::size_t>(p.ladderOwn)] : kn.gain;
+        p.desired = lad->activeRung();
+        p.lastCommitted = lad->committedRung();
+      }
+      p.amp.setKnobsNow(effectiveAmpKnobs(p, kn));
+    }
     for (const auto& lb : p.blocks)
       if (!lb.processor) throw std::runtime_error("ChainResources contains a null block");
   }
@@ -323,6 +356,7 @@ void Chain::prepare(const ProcessSpec& spec) {
     p.preEq.prepare(spec);
     p.eq.prepare(spec);
     for (auto& lb : p.blocks) lb.processor->prepare(spec);
+    p.amp.prepare(spec);
     if (p.cab) p.cab->prepare(spec);
     p.level.prepare(spec);
     p.latency = 0;
@@ -358,6 +392,46 @@ void Chain::prepare(const ProcessSpec& spec) {
   // renders bit-identically (a probe resets the blocks, which perturbs e.g. LSTM start-up by ~1e-7).
   const bool wantProbe = preset_.levelMatch.mode != LevelMatchMode::Off || preset_.blendLaw == BlendLaw::ConstantLoudness;
   applyLevelMatch(wantProbe ? resolveLevelMatch() : LevelMatchResult{});
+}
+
+// The rung the residual drive is measured from: the one the knob asks for once its model is loaded (the drive ramps
+// from the knob move, deterministically, while the block warms up and fades), else the one that is sounding.
+int Chain::driveRung(const Path& p) const noexcept {
+  const int d = p.desired;
+  if (d >= 0 && d < 64 && (p.ladder->loadedMask() >> d & 1ull) != 0) return d;
+  return p.ladder->committedRung();
+}
+
+// The knobs the stage runs: with a ladder, GAIN is the residual drive relative to the committed rung
+// ((knob - position) * 2.4 dB, clamped to +-12 dB), expressed as a knob value; exactly 5 when the residual is 0.
+AmpKnobs Chain::effectiveAmpKnobs(const Path& p, const AmpKnobs& k) const noexcept {
+  if (p.ladder == nullptr) return k;
+  AmpKnobs e = k;
+  const int c = std::clamp(driveRung(p), 0, static_cast<int>(p.ladderPos.size()) - 1);
+  e.gain = kAmpKnobDefault + ladderResidualDb(p.effKnob, p.ladderPos[static_cast<std::size_t>(c)]) / kAmpDbPerKnob;
+  return e;
+}
+
+LadderState Chain::ladderState(int path) const noexcept {
+  LadderState s;
+  if (path < 0 || path > 1) return s;
+  const Path& p = path_[static_cast<std::size_t>(path)];
+  if (!p.ladder) return s;
+  s.has = true;
+  s.rungCount = p.ladder->rungCount();
+  s.own = p.ladderOwn;
+  s.active = p.ladder->activeRung();
+  s.committed = p.ladder->committedRung();
+  s.target = p.ladder->targetRung();
+  s.pending = p.ladder->pending();
+  s.position = p.ladderPos[static_cast<std::size_t>(std::clamp(s.committed, 0, s.rungCount - 1))];
+  s.loadedMask = p.ladder->loadedMask();
+  s.rejectedMask = p.ladder->rejectedMask();
+  return s;
+}
+
+LadderBlock* Chain::ladderBlock(int path) noexcept {
+  return path < 0 || path > 1 ? nullptr : path_[static_cast<std::size_t>(path)].ladder;
 }
 
 float Chain::levelTarget(std::size_t k, double levelDb, bool mute) const noexcept {
@@ -435,6 +509,7 @@ void Chain::resetAll() {
     p.preEq.reset();
     p.eq.reset();
     for (auto& lb : p.blocks) lb.processor->reset();
+    p.amp.reset();
     if (p.cab) p.cab->reset();
     p.level.reset();
     p.delay.reset();
@@ -632,8 +707,12 @@ void Chain::renderPath(Path& p, float* io, int n, std::uint64_t counter, bool al
   const auto k = static_cast<std::size_t>(&p - path_.data());
   if (allowRamp) processEq(p.preEq, preRamps_[k], io, n, counter);
   else p.preEq.process(io, n);
-  for (auto& lb : p.blocks)
-    if (!lb.bypass) lb.processor->process(io, n);
+  for (std::size_t i = 0; i < p.blocks.size(); ++i) {
+    const bool amp = static_cast<int>(i) == p.ampBlock;  // the amp controls act around this block
+    if (amp) p.amp.processPre(io, n);
+    if (!p.blocks[i].bypass) p.blocks[i].processor->process(io, n);
+    if (amp) p.amp.processPost(io, n);
+  }
   if (allowRamp) processEq(p.eq, pathRamps_[k], io, n, counter);
   else p.eq.process(io, n);
   p.level.process(io, n);
@@ -742,6 +821,15 @@ void Chain::setLiveParams(const LiveParams& in) noexcept {
   if (p.blend != live_.blend || p.blendLaw != live_.blendLaw) setBlendTargets(p.blend, p.blendLaw, true);
   applyLiveEq(postRamps_, preset_.postEq, live_.postEq, p.postEq);
   for (std::size_t k = 0; k < 2; ++k) {
+    sanitizeAmp(p.amp[k], live_.amp[k]);
+    Path& pa = path_[k];
+    if (pa.ladder && p.amp[k].gain != live_.amp[k].gain) {  // GAIN moved: pick the rung (with hysteresis)
+      pa.effKnob = p.amp[k].gain;
+      pa.desired = selectRung(pa.ladderPos, pa.desired, pa.effKnob);
+      pa.ladder->setTargetRung(pa.desired);
+      pa.lastCommitted = driveRung(pa);
+    }
+    if (p.amp[k] != live_.amp[k] && pa.ampBlock >= 0) pa.amp.setKnobs(effectiveAmpKnobs(pa, p.amp[k]), rampSamples_);
     applyLiveEq(preRamps_[k], pp[k]->preEq, live_.preEq[k], p.preEq[k]);
     applyLiveEq(pathRamps_[k], pp[k]->eq, live_.pathEq[k], p.pathEq[k]);
     auto& blocks = path_[k].blocks;
@@ -809,6 +897,15 @@ void Chain::process(const float* in, float* out, int n) noexcept {
 }
 
 void Chain::processChunk(const float* in, float* out, int n) noexcept {
+  for (std::size_t k = 0; k < 2; ++k) {  // a ladder rung swap started (audio thread): move the residual drive with it
+    Path& pa = path_[k];
+    if (pa.ladder == nullptr) continue;
+    const int c = driveRung(pa);
+    if (c != pa.lastCommitted) {
+      pa.lastCommitted = c;
+      pa.amp.setKnobs(effectiveAmpKnobs(pa, live_.amp[k]), rampSamples_);
+    }
+  }
   float* w = work_.data();
   float* a = bufA_.data();
   float* b = bufB_.data();

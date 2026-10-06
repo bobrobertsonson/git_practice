@@ -38,7 +38,10 @@ namespace {
 class JuceLifetime : public Catch::EventListenerBase {
  public:
   using Catch::EventListenerBase::EventListenerBase;
-  void testRunStarting(const Catch::TestRunInfo&) override { init_ = std::make_unique<juce::ScopedJuceInitialiser_GUI>(); }
+  void testRunStarting(const Catch::TestRunInfo&) override {
+    ::setenv("SAWBLADE_NO_NETWORK", "1", /*overwrite=*/0);  // no real sawblade-t3k from the plugin under test (CMake sets it too)
+    init_ = std::make_unique<juce::ScopedJuceInitialiser_GUI>();
+  }
   void testRunEnded(const Catch::TestRunStats&) override { init_.reset(); }
 
  private:
@@ -543,4 +546,154 @@ TEST_CASE("Processor: state can be saved and restored after the working director
   fs::current_path(original);
   CHECK_FALSE(threw);
   CHECK(s.getSize() > 0);
+}
+
+// ---- v0.2 Task A: amp control parameters --------------------------------------------------------------------
+TEST_CASE("Amp params: the twelve host parameter ids are stable", "[processor][params][amp]") {
+  // Never rename once released: these are what a host stores automation under.
+  const char* const ids[12] = {"ampA_gain", "ampA_bass", "ampA_mid", "ampA_treble", "ampA_presence", "ampA_level",
+                               "ampB_gain", "ampB_bass", "ampB_mid", "ampB_treble", "ampB_presence", "ampB_level"};
+  for (int path = 0; path < 2; ++path)
+    for (int k = 0; k < kAmpKnobCount; ++k) {
+      const int i = ampParam(path, k);
+      CAPTURE(i, ids[path * 6 + k]);
+      CHECK(paramSpec(i).id == ids[path * 6 + k]);
+      CHECK(paramSpec(i).min == 0.0);
+      CHECK(paramSpec(i).max == 10.0);
+      CHECK(paramSpec(i).def == 5.0);
+      CHECK(paramSpec(i).choices.empty());
+    }
+  CHECK(ampParam(0, kAmpGain) == kAmpFirst);
+  CHECK(ampParam(1, kAmpLevel) == kAmpFirst + 11);
+  CHECK(kPostEqFirst == kAmpFirst + 12);
+  SawbladeProcessor p;
+  for (const char* id : ids) {
+    CAPTURE(id);
+    auto* prm = p.parameters().getParameter(id);
+    REQUIRE(prm != nullptr);
+    CHECK(prm->getDefaultValue() == Catch::Approx(0.5f));  // 5 on 0..10
+    CHECK(p.parameters().getRawParameterValue(id)->load() == 5.0f);
+  }
+  // Pre-existing ids did not move.
+  for (const char* id : {"inputGain", "outputGain", "gateThreshold", "blend", "levelA", "levelB", "postEq1", "postEq6", "sawCircuit"})
+    CHECK(p.parameters().getParameter(id) != nullptr);
+}
+
+TEST_CASE("Amp params: mapping to and from the preset, on the 1e-4 grid; gainStep is preset state", "[processor][params][amp]") {
+  Preset p = makeInitPreset();
+  p.a.ampControls.gain = 7.123456;
+  p.a.ampControls.presence = 0.00004;
+  p.a.ampControls.gainStep = "m-42";
+  p.b.ampControls.level = 9.87654;
+  const ParamValues v = paramsFromPreset(p);
+  CHECK(v[ampParam(0, kAmpGain)] == snapParam(7.123456));
+  CHECK(v[ampParam(0, kAmpGain)] == 7.1235);
+  CHECK(v[ampParam(0, kAmpPresence)] == 0.0);
+  CHECK(v[ampParam(1, kAmpLevel)] == 9.8765);
+  CHECK(v[ampParam(1, kAmpBass)] == 5.0);
+  const Preset c = clampedToParams(p);
+  CHECK(c.a.ampControls.gain == 7.1235);
+  CHECK(c.a.ampControls.gainStep == "m-42");  // untouched by the parameters
+  CHECK(c.b.ampControls.level == 9.8765);
+  ParamValues w = v;
+  w[ampParam(0, kAmpBass)] = 2.5;
+  w[ampParam(1, kAmpMid)] = 8.0;
+  Preset q = p;
+  applyParams(q, w);
+  CHECK(q.a.ampControls.bass == 2.5);
+  CHECK(q.b.ampControls.mid == 8.0);
+  CHECK(q.a.ampControls.gainStep == "m-42");
+  // Defaults in -> defaults out, so a preset with no controls stays without them.
+  Preset d = makeInitPreset();
+  applyParams(d, paramsFromPreset(d));
+  CHECK(d.a.ampControls.isDefault());
+  CHECK(d.b.ampControls.isDefault());
+}
+
+TEST_CASE("Amp params: plugin state round-trips ampControls, gainStep included", "[processor][state][amp]") {
+  TempDir t;
+  const fs::path base = writeIdentityPreset(t.dir, "amp", 0);
+  json j = json::parse(std::ifstream(base));
+  j["version"] = 2;
+  j["paths"]["a"]["ampControls"] = {{"gain", 7.5}, {"bass", 3.25}, {"level", 6.0}, {"gainStep", "model-77"}};
+  j["paths"]["b"]["ampControls"] = {{"treble", 8.0}, {"presence", 1.5}};
+  const fs::path f = t.dir / "amp_in.json";
+  std::ofstream(f) << j.dump(2);
+
+  Host a(48000.0, 512);
+  a.load(f);
+  CHECK(a.param(ampParam(0, kAmpGain)) == Catch::Approx(7.5).margin(1e-6));
+  CHECK(a.param(ampParam(0, kAmpBass)) == Catch::Approx(3.25).margin(1e-6));
+  CHECK(a.param(ampParam(0, kAmpMid)) == Catch::Approx(5.0).margin(1e-6));
+  CHECK(a.param(ampParam(1, kAmpTreble)) == Catch::Approx(8.0).margin(1e-6));
+  CHECK(a.param(ampParam(1, kAmpPresence)) == Catch::Approx(1.5).margin(1e-6));
+  a.setParam(ampParam(0, kAmpMid), 6.4321);  // a host / UI edit after the load
+  a.setParam(ampParam(1, kAmpGain), 0.0);
+  juce::MemoryBlock s1;
+  a.p.getStateInformation(s1);
+  const std::string text(static_cast<const char*>(s1.getData()), s1.getSize());
+  const json st = json::parse(text);
+  CHECK(st["version"] == 2);
+  CHECK(st["paths"]["a"]["ampControls"]["gain"].get<double>() == Catch::Approx(7.5).margin(1e-4));
+  CHECK(st["paths"]["a"]["ampControls"]["mid"].get<double>() == Catch::Approx(6.4321).margin(1e-4));
+  CHECK(st["paths"]["a"]["ampControls"]["gainStep"] == "model-77");
+  CHECK(st["paths"]["b"]["ampControls"]["gain"].get<double>() == Catch::Approx(0.0).margin(1e-4));
+  CHECK(st["paths"]["b"]["ampControls"]["treble"].get<double>() == Catch::Approx(8.0).margin(1e-4));
+
+  SawbladeProcessor b;
+  b.setStateInformation(s1.getData(), static_cast<int>(s1.getSize()));
+  CHECK(b.parameters().getRawParameterValue("ampA_gain")->load() == Catch::Approx(7.5f).margin(1e-4));
+  CHECK(b.parameters().getRawParameterValue("ampA_mid")->load() == Catch::Approx(6.4321f).margin(1e-4));
+  CHECK(b.parameters().getRawParameterValue("ampB_gain")->load() == Catch::Approx(0.0f).margin(1e-4));
+  CHECK(b.parameters().getRawParameterValue("ampB_presence")->load() == Catch::Approx(1.5f).margin(1e-4));
+  b.setRateAndBufferSizeDetails(48000.0, 512);
+  b.prepareToPlay(48000.0, 512);
+  REQUIRE(b.waitForLoader());
+  CHECK(b.status().error.empty());
+  juce::MemoryBlock s2;
+  b.getStateInformation(s2);
+  CHECK(std::string(static_cast<const char*>(s2.getData()), s2.getSize()) == text);
+  CHECK(b.currentPreset() == parsePreset(st, std::filesystem::current_path()));
+  CHECK(b.currentPreset().a.ampControls.gainStep == "model-77");
+
+  // A preset with no controls writes none.
+  Host c(48000.0, 512);
+  c.load(base);
+  juce::MemoryBlock s3;
+  c.p.getStateInformation(s3);
+  const json plain = json::parse(std::string(static_cast<const char*>(s3.getData()), s3.getSize()));
+  CHECK_FALSE(plain["paths"]["a"].contains("ampControls"));
+  CHECK_FALSE(plain["paths"]["b"].contains("ampControls"));
+}
+
+TEST_CASE("Amp params: knobs act on the audio, with no allocation, no rebuild and no latency change", "[processor][params][rt][amp]") {
+  TempDir t;
+  Host h(48000.0, 512);
+  h.load(writeIdentityPreset(t.dir, "ident", 0));
+  const std::uint64_t builds = h.p.engineBuilds();
+  const int latency = h.p.getLatencySamples();
+  std::vector<float> x(48000, 0.1f), y;
+  h.run(x, y, {512});
+  CHECK(y.back() == Catch::Approx(0.1).epsilon(1e-4));
+  for (int path = 0; path < 2; ++path) h.setParam(ampParam(path, kAmpLevel), 10.0);  // +12 dB on both paths
+  h.run(x, y, {512});
+  CHECK(y.back() == Catch::Approx(0.1 * 3.98107).epsilon(1e-3));
+  for (int path = 0; path < 2; ++path) h.setParam(ampParam(path, kAmpLevel), 5.0);
+  h.run(x, y, {512});
+  CHECK(y.back() == Catch::Approx(0.1).epsilon(1e-4));
+
+  // Knobs moving every block, odd block sizes: nothing allocates, nothing rebuilds.
+  const auto n = noise(8192, 3, 0.2f);
+  std::vector<float> out(8192);
+  h.allocs = 0;
+  for (int i = 0; i < 300; ++i) {
+    for (int k = 0; k < 2 * kAmpKnobCount; ++k)
+      h.setParam(kAmpFirst + k, 5.0 + 5.0 * std::sin(0.05 * i * (k + 1)));
+    h.process(n.data(), out.data(), 1 + (i * 97) % 4000);
+  }
+  CHECK(h.allocs == 0);
+  if (LockGuard::enabled()) CHECK(h.locks == 0);
+  CHECK_FALSE(h.nonFinite);
+  CHECK(h.p.engineBuilds() == builds);
+  CHECK(h.p.getLatencySamples() == latency);
 }

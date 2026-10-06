@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,9 @@
 #include "ExportSettings.h"
 #include "EngineLoader.h"
 #include "JobRunner.h"
+#include "LadderFetch.h"
+#include "RungPreloader.h"
+#include "presets/T3kTool.h"
 #include "PlayAlong.h"
 #include "PresetAudition.h"
 #include "TakeRecorder.h"
@@ -176,6 +180,33 @@ class SawbladeProcessor : public juce::AudioProcessor,
   EngineParamState engineParamState() const;
   // Number of engines the loader has published (parameter changes must not increase it).
   std::uint64_t engineBuilds() const noexcept { return loader_->engineBuilds(); }
+  // --- gain ladders (v0.2 Task B; docs/PRESET_SCHEMA.md "Gain ladder") ---------------------------------------
+  // What the UI (Task D) shows for path 0 = a / 1 = b: any non-audio thread. `has` is false for a path with no ladder.
+  struct LadderInfo {
+    bool has = false;
+    int rungCount = 0;
+    int activeIndex = -1;      // the rung sounding (or being faded to)
+    int targetIndex = -1;      // the rung the GAIN knob asks for
+    bool pending = false;      // the target rung's model is not loaded yet: GAIN is drive-only ("rung pending")
+    double activeGain = 0.0;   // the amp's gain setting of the active rung, as the pack names it
+    std::string activeName, activeModelId;  // e.g. "Gain 6"
+    std::string targetName, targetModelId;
+    int missingRungs = 0;      // wanted rungs that are not in the capture cache (they would have to be resolved)
+  };
+  LadderInfo ladderInfo(int path) const;
+  // The message-thread work of the ladders: applies fetched ladders, starts the next `sawblade-t3k ladder` run, writes the
+  // active rung back as `gainStep` once GAIN has moved it, and keeps the rung models loaded. Called by the 10 Hz timer;
+  // tests call it directly.
+  void ladderTick();
+  // `sawblade-t3k ladder` is run for a TONE3000 amp capture without a ladder (once per tone per session). Default on.
+  void setLadderFetchEnabled(bool on) noexcept { ladderFetch_.store(on); }
+  // Blocks until no ladder fetch is running and the rung loader is idle (tests); a fetched result still waits for ladderTick().
+  bool waitForLadderWork(std::chrono::milliseconds timeout = std::chrono::milliseconds(20000));
+  // Why a ladder is not in use (rejected rungs, an own model that is not in the fetched ladder, ...): any non-audio thread.
+  std::vector<std::string> ladderMessages() const;
+  std::uint64_t ladderFetches() const noexcept { return ladderFetches_.load(); }  // `ladder` tool runs started
+  std::uint64_t rungFetches() const noexcept { return rungFetches_.load(); }      // `fetch` runs started for missing rung models
+
   // Test hook: a CIRCUIT edit from another thread (or during a commit) is waiting for the timer. Commit's own
   // writes of the parameters never set it.
   bool circuitEditPending() const noexcept { return circuitDirty_.load(); }
@@ -197,6 +228,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void timerCallback() override;
   void circuitChanged();
 
+  void ladderWriteBack(const std::shared_ptr<Engine>& e);
+  void fetchMissingRung(const Engine& e);
+
   juce::AudioProcessorValueTreeState apvts_;
   std::array<std::atomic<float>*, kNumParams> paramAtomic_{};
   std::array<juce::RangedAudioParameter*, kNumParams> paramObj_{};
@@ -213,6 +247,18 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::shared_ptr<const Preset> remeasureWanted_;  // the pending re-measure build, if any
   std::uint64_t presetGeneration_ = 0;     // loader request id of the committed preset (kNoGeneration: none yet)
   Monitor monitor_;
+  std::weak_ptr<Engine> published_;  // the latest published engine, for message-thread readers (mutex_)
+  std::atomic<bool> ladderFetch_{true};
+  std::atomic<std::uint64_t> ladderFetches_{0}, rungFetches_{0};
+  std::atomic<bool> rungArrived_{false};  // a rung `fetch` finished: ask the rung loader at once
+  std::set<std::string> rungTried_;       // "tone:model" already fetched (or failed) this session (message thread only)
+  std::set<std::string> ladderTried_;  // tone ids already asked about (message thread only)
+  mutable std::mutex fetchMutex_;
+  std::vector<std::string> ladderNotes_;  // fetchMutex_
+  std::vector<LadderFetchResult> fetched_;  // results waiting for the message thread
+  std::atomic<bool> fetchRunning_{false};
+  std::uint64_t lastRungKey_ = ~0ull;  // message thread: what the rung loader was last asked for
+  int rungTicks_ = 0;
   std::atomic<std::uint64_t> userLoadSerial_{0};
   rig::InputMeter inputMeter_;
   std::atomic<bool> circuitDirty_{false};
@@ -245,6 +291,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   SwapSlot<LiveSnapshot> liveSlot_;
   SwapSlot<EngineRef> slot_;                  // declared before loader_: the loader is destroyed first
   std::unique_ptr<EngineLoader> loader_;
+  RungPreloader rungs_;
+  T3kTool ladderTool_;
 };
 
 }  // namespace sawblade::plugin

@@ -1,8 +1,13 @@
-# Preset schema — `sawblade.preset` v1
+# Preset schema — `sawblade.preset` v2
 
 A preset is one JSON document. Plugin state **is** the preset; `tonerender` renders exactly
 what the plugin will play. All unknown keys are rejected (strict parsing) so typos fail loudly.
 Readers must reject `version` greater than they support and migrate lower versions.
+
+**Versions.** v2 (v0.2) adds the optional per-path `ampControls` (see Amp controls). Everything else is
+unchanged, so a v1 file is a valid v2 file: the reader accepts 1 and 2, a v1 preset loads with every amp
+control at its default and renders bit-identically to before v2. The writer always emits `"version": 2` and
+omits `ampControls` while every knob is at 5 and there is no `gainStep`.
 
 ## Conventions
 
@@ -17,7 +22,7 @@ Readers must reject `version` greater than they support and migrate lower versio
 ```jsonc
 {
   "schema": "sawblade.preset",        // required, exact string
-  "version": 1,                        // required, integer
+  "version": 2,                        // required, integer; 1 and 2 are read, 2 is written
   "name": "Gatecreeper-ish v1",        // required
   "notes": "",                         // optional free text
   "category": "Death metal",           // optional UI metadata (see Category); not tone, ignored by the chain
@@ -74,10 +79,82 @@ Gate is never part of any NAM export.
   "blocks": [ Block, ... ],      // 0..8 blocks, processed in order (the pedal chain)
   "eq": [ EqBand, ... ],         // path EQ after the blocks, default []
   "levelDb": 0.0,                // path output trim before blend
-  "invert": false                // manual polarity flip (applied before auto-align)
+  "invert": false,               // manual polarity flip (applied before auto-align)
+  "ampControls": { ... }         // optional (v2); see Amp controls
 }
 ```
 Conventional layout: path A = `[pedal, amp]`, path B = `[boost?, amp]`.
+
+### Amp controls (`ampControls`, v2)
+
+A per-path control set applied around the path's **amp block**: the last block with `slot: "amp"`, else the
+last `nam` block (`sawblade::ampIndex`, one rule shared by the core, the plugin and the rig UI). A path with
+no such block has no amp controls: the object is accepted and stored but has no effect.
+
+```jsonc
+"ampControls": {
+  "gain": 5.0, "bass": 5.0, "mid": 5.0, "treble": 5.0, "presence": 5.0, "level": 5.0,  // each 0..10, default 5
+  "gainStep": "123456"           // optional, non-empty string: TONE3000 model id of the chosen gain-ladder rung
+}
+```
+
+| Control | Acts as |
+|---|---|
+| `gain` | drive into the amp block, inserted just before it: dB = (k - 5) * 2.4, so 0 / 5 / 10 = -12 / 0 / +12 dB |
+| `bass` | low shelf, 100 Hz, RBJ Q 0.7071, dB = (k - 5) * 2.4 (+-12 dB) |
+| `mid` | peak, 650 Hz, Q 0.7, dB = (k - 5) * 2.4 (+-12 dB) |
+| `treble` | high shelf, 3 kHz, RBJ Q 0.7071, dB = (k - 5) * 2.4 (+-12 dB) |
+| `presence` | high shelf, 5.5 kHz, RBJ Q 0.7071, dB = (k - 5) * 1.8 (+-9 dB) |
+| `level` | gain after the tone stack: dB = (k - 5) * 2.4 (+-12 dB) |
+
+- The tone stack (bass, mid, treble, presence, in that order) and `level` run directly after the amp block,
+  so for the usual path (amp last) that is before the path `eq`. They are path tone controls, so they act **even
+  when the amp block is bypassed** (the drive and the tone stack still apply around the bypassed block). A shelf's gain *at its frequency* is half its
+  dB (RBJ shelf midpoint) and it reaches the full dB on its plateau; the `mid` peak reaches its full dB at 650 Hz.
+- `ampControls` is read leniently: it is accepted in a file that says `"version": 1` too (the version number is
+  not enforced per field), so a hand-edited v1 file that carries it loads as written.
+- Every field is optional and defaults to 5; a value outside [0, 10] or not a number is a `PresetError` naming
+  the field (e.g. `paths.a.ampControls.treble`); unknown keys are rejected. `gainStep` must be a non-empty
+  string naming a rung of the amp block's gain ladder (see "Gain ladder" below: it selects the rung, and has no effect on a
+  block without a ladder); the plugin keeps it as preset state, not as a host parameter.
+- **Exact neutral:** while every knob of a path is 5 (and no change is ramping) the stage is skipped entirely, no
+  filter runs, so a preset without `ampControls` renders bit-identically to a v1 build.
+- Smoothing: live changes ramp over 20 ms (`gain` and `level` per sample in dB; the tone filters on an absolute
+  32-sample grid counted from `prepare()`), so the result does not depend on the host block size.
+- Latency 0. Linear and time-invariant at fixed knobs, so NAM-trainable (declared as `kAmpControlsTraits` next
+  to the block registry); the NAM export renders through the same Chain, hence through the same stage. The
+  stage is path-level, not a block type: the block picker cannot insert it.
+- Plugin: 12 automatable host parameters `ampA_gain`, `ampA_bass`, `ampA_mid`, `ampA_treble`, `ampA_presence`,
+  `ampA_level`, `ampB_*` (0..10, default 5), snapped to the 1e-4 state grid like the other parameters.
+
+### Gain ladder (`model.ladder`, v2, additive)
+
+A `nam` block's capture may carry the other models of the same TONE3000 tone that are the same amp at different gain
+settings (the plugin fills it from `sawblade-t3k ladder <tone id> --size <size> --json`; "no ladder" is stored as
+absent). It is only read on the model capture of a `nam` block (not on IRs).
+
+```jsonc
+"model": { "file": "...", "source": { "provider": "tone3000", "id": "123", "modelId": "456" },
+           "ladder": [ { "modelId": "455", "gain": 3.0, "name": "Gain 3" },     // 2..64 rungs; ids are strings
+                       { "modelId": "456", "gain": 6.0, "name": "Gain 6" } ] }  // gain 0..100, distinct; name optional
+```
+Rungs are stored in ascending `gain` order (the reader sorts); `modelId`s and `gain`s are distinct. The block's own
+capture is the rung whose `modelId` equals `source.modelId`; a ladder that does not contain it is ignored. Rung model files
+come from the capture cache by model id (`<cache>/<tone id>/<model id>.nam`).
+
+Behaviour (applies to the path's amp block, with `ampControls`):
+- Rung positions on the GAIN knob: `p_i = 10 (g_i - g_min) / (g_max - g_min)`. The active rung is the nearest, with
+  hysteresis: it changes only once the knob is >= 0.15 past the midpoint between two rungs. The residual drive in front of
+  the amp block is `(gain - p_active) * 2.4 dB`, clamped to +-12 dB. A ladder that is absent: Task A behaviour exactly.
+- `ampControls.gainStep` is the model id of the rung to use. Offline renders (`tonerender`, export) use it directly, with
+  no crossfade; if that model is not in the capture cache the block's own capture is used (drive only) and a warning is
+  reported. With **no `gainStep` and GAIN untouched (5)** the active rung is the block's own capture and the knob is taken to
+  sit at that rung's position, so the render is bit-identical to the same preset without a ladder. With no `gainStep` and an
+  explicit GAIN, the own capture sounds and the residual is measured from its rung.
+- Live (plugin): a rung switch warms the incoming model for 10 ms (output discarded) and then crossfades equal-power over
+  20 ms. Moving GAIN writes `gainStep`; the GAIN knob value is saved as usual. A rung whose model is not cached yet leaves
+  the block on its current rung (drive only) until it is. A rung whose model has a different latency than the block's is
+  rejected: latency never changes across rungs.
 
 ### Block (modular chain element)
 

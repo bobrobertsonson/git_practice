@@ -83,3 +83,103 @@ behaviour). No pool / nothing cached → path B gets the TS + the first high-gai
   failures versus the v0.1.3 baseline.
 - Report `docs/specs/v0_2-tweakable_presets_REPORT.md` with reviewer verdicts, screenshots, and
   proposals (art needed, controls the user may want next).
+
+## Lead decisions (implementation notes, binding for the implementer)
+
+### Task A
+- **Amp locator moves to core.** `rig::ampIndex` (last block with slot `amp`, else last `nam`) becomes
+  `sawblade::ampIndex(const PathPreset&)` in core; `rig::ampIndex` delegates to it. One rule, one place.
+- **Not a user block type.** The amp control set is a path-level stage owned by the path (gain before the
+  amp block; tone stack + LEVEL after it, before the path EQ), not something the block picker can insert.
+  Its traits (latency 0, NAM-trainable: linear/time-invariant at fixed knobs) are declared in core next to
+  the block registry and asserted by a test; NAM export renders through it (check the export path uses the
+  same processor; add a test if it does not obviously).
+- **Mapping:** knob k in [0,10]; GAIN/BASS/MID/TREBLE/LEVEL dB = (k − 5) · 2.4; PRESENCE dB = (k − 5) · 1.8.
+- **Exact neutral:** when every knob of a path is at 5 and no smoothing ramp is in flight the stage is skipped
+  entirely (no filter runs) — that is what makes legacy presets bit-identical, not unity coefficients.
+- **Smoothing must be block-size independent:** targets ramp per sample; filter coefficients are recomputed
+  on a fixed sample grid counted from `prepare()` (e.g. every 32 samples), never per host block.
+- **Schema:** `kPresetVersion` → 2; reader accepts 1 and 2; writer emits 2 and omits `ampControls` when all
+  values are default and `gainStep` is absent. `gainStep` (string, TONE3000 model id) is parsed, validated as a
+  string and round-tripped in Task A; it has no effect until Task B. Out-of-range knob values are a
+  `PresetError` naming the field.
+- **Host params:** ids `ampA_gain, ampA_bass, ampA_mid, ampA_treble, ampA_presence, ampA_level` and the same
+  for `ampB_`; range 0–10, default 5; follow the existing PresetMapping / 1e-4 grid pattern; param-id
+  stability test lists them literally.
+- Stay out of CMake dependency fetching and the About page (parallel v0.1.3 phase).
+
+### Task B — ladder parser (match-engineer)
+- New module `match/sawblade_match/t3k/ladder.py`: pure `parse_ladder(models, size) -> list[Rung] | None`
+  (`Rung = (model_id, gain: float, name)`, sorted by gain) and `gain_ladder(client, tone_id, size, architecture)`
+  that lists the tone's models and calls the parser. CLI: `sawblade-t3k ladder <tone_id> [--size S] --json`
+  emitting `{"tone_id", "size", "rungs":[{"model_id","gain","name"}]}` or `"rungs": null` — this is what the
+  plugin calls (same subprocess pattern as `resolve`).
+- **Never guess:** only models of the requested size (and architecture) count; each must yield exactly one gain
+  number from its name (`Gain 6`, `G6`, `gain=6`, `6 gain`, `Drive 7`, `@7`, `G 6.5`…); after removing that
+  number token the normalised names must be **identical** (so `Clean ch gain 5` vs `Lead ch gain 5`, or
+  `Crunch`/`Lead`, → no ladder); gains distinct; ≥ 2 rungs. Anything else → `None`.
+- Fixtures: `match/tests/fixtures/t3k_ladder/*.json` shaped exactly as the API's model-list response the client
+  already parses (respx, like `test_client.py`); hand-written from the real naming patterns, labelled as such
+  (no network recording available in this container). Cover: clean ladder, mixed sizes, channel names,
+  descriptive names, duplicate gains, single model, decimals.
+
+### Task A follow-ups (lead, after reviewer ACCEPT)
+- Literal spec: add a committed per-preset render test — every JSON under `presets/`, NAM blocks swapped for the
+  `linear_identity` fixture and IRs for a fixture IR, rendered with and without explicit default `ampControls`
+  (and against the stage forced off if a test hook already exists), bit-identical. Rides with Task B's first commit.
+- Amp controls act even when the amp block is bypassed (they are path tone controls); document it in
+  `PRESET_SCHEMA.md`, plus the lenient read of `ampControls` in a `version: 1` file. Move `sanitizeAmp` above the
+  orphaned xorshift comment in `chain.cpp`.
+
+### Task B — plugin side (dsp-engineer)
+- **Ladder storage:** the capture of a `nam` block gets optional `ladder: [{modelId, gain, name}]` (schema v2,
+  additive), filled by the plugin from `sawblade-t3k ladder <toneId> --size <size> --json` when a TONE3000 capture is
+  set or a preset is loaded without one (async, never on the audio thread; `null` → no ladder, stored as absent).
+  Rung files come from the existing resolve/cache flow by model id.
+- **Knob → rung:** rung positions on the GAIN knob `p_i = 10·(g_i − g_min)/(g_max − g_min)`. Active rung = nearest,
+  with hysteresis: switch only once the knob is ≥ 0.15 past the midpoint between two rungs. Residual drive dB =
+  `(k − p_active)·2.4`, clamped to ±12. With no ladder, Task A behaviour exactly.
+- **Bit-identity with a ladder:** when a block has a ladder but `gainStep` is absent, the active rung is the block's
+  own capture and the knob is placed at that rung's position, so the render is unchanged. Moving GAIN writes
+  `gainStep` (model id); the GAIN knob value is saved as usual.
+- **Swaps:** rung models present in the cache are preloaded on a background thread after load (≤ 8 rungs; a ladder
+  longer than 8 keeps the 8 nearest the current rung). Handover via the existing lock-free swap slot; equal-power
+  crossfade of 20 ms (both models run during the fade); the old model is released off the audio thread. A rung
+  not yet cached: stay on the current rung, drive-only, and expose a "rung pending" flag for Task D's UI.
+- **Latency:** a rung whose latency differs from the block's capture is rejected (that rung is dropped, logged off
+  the audio thread) — assert in a test that latency never changes across swaps.
+- **Offline render (`tonerender`, export):** uses the `gainStep` rung directly, no crossfade — deterministic.
+- Tests: knob→rung mapping incl. hysteresis at boundaries; swap allocation-free with the counting harness; crossfade
+  click test (sine through two different linear fixture models, peak sample-to-sample step deviation < −60 dBFS
+  versus the ideal crossfade); latency constancy; ladder round trip; offline render uses `gainStep`.
+
+### Task C — suggested body path
+- **Rule (match-engineer, pure Python):** `suggest_body(pool_records, a_title) -> record | None` in
+  `match/sawblade_match/t3k/suggest.py` + CLI `sawblade-t3k suggest-body --a-title "<path A amp title>" --json`.
+  Candidates: pool amps with `classify(...) == "amp_high"`. Family key = the first `_HIGH_AMPS` match (else
+  `_LOW`-style brand token, lower-cased) of title + name. Order: different family from A first, then cached first,
+  then pool order (stable). Returns the tone id, model id, title, cached flag; `null` when nothing qualifies.
+- **Plugin (dsp-engineer):** when BLEND turns on with an empty path B, in one undo transaction: TS (`pedal.ts`
+  drive 0, tone 5, level 8) + the fallback amp (first high-gain amp of `presets/CAPTURE_SHORTLIST.md`, tone 88689,
+  as a compile-time constant), then 10.1 level match. The `suggest-body` call runs async; if it answers with a
+  different amp and path B has not been edited since, the amp capture is replaced and coalesced into the same undo
+  transaction (one Undo restores the pre-BLEND preset). Missing captures go through resolve as today.
+
+### Task D — UI wiring (dsp-engineer)
+- Six `knob_amp` filmstrip knobs per amp head on the rig page, labelled GAIN BASS MID TREBLE PRESENCE LEVEL, bound
+  to `amp<A|B>_*` with the existing attachment pattern; remove the Task A editor-test exemption so every param has
+  exactly one bound control again. Layout inside the existing head art; no new art (if the six knobs do not fit at
+  the current scale, shrink the filmstrip draw size, never redraw it — note it in the report).
+- Path without an amp block: knobs disabled (greyed with the existing disabled style) and the one-line reason
+  `NO AMP IN THIS PATH`.
+- Capture blocks: wherever a capture block is drawn (rig slots, pedalboard), it shows the tag `CAPTURE · FIXED TONE`
+  and draws no knobs; a modeled pedal keeps its knobs.
+- GAIN read-out from `ladderInfo`: ladder → `GAIN 7.0 · capture: <rung name>`; rung pending →
+  `GAIN 7.0 · drive only (fetching <target name>)`; no ladder → `GAIN 7.0`.
+- Body head with path B empty and BLEND off: `BODY PATH OFF — turn up BLEND to add one` (knobs disabled).
+- Undo: Cmd/Ctrl+Z on the editor calls `RigController::undo()` when `canUndo()` (the BLEND-fill stack from Task C).
+- Tests: mouse-driven knob drags move the params (like `test_live_controls.cpp`); disabled state + reason strings;
+  the GAIN read-out in all three states (fake `ladderInfo`); body-off string; capture tag present / no knobs on
+  capture blocks; Cmd/Ctrl+Z undo.
+- Screenshots: rig page at defaults and with knobs moved (+ a ladder and the body-off state), via the existing
+  `SAWBLADE_SCREENSHOT_DIR` snapshot test; the lead attaches the PNGs to the report (not committed).

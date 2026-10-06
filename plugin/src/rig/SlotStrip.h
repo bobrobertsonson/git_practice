@@ -28,6 +28,9 @@ class SlotStrip : public juce::Component {
 
   int numCards() const noexcept { return static_cast<int>(cards_.size()); }
   juce::Component& card(int i);
+  // v0.2 Task D: the text of a capture block's tag, and whether card `i` shows it (a NAM capture is a fixed tone).
+  static juce::String captureTag();  // "CAPTURE · FIXED TONE"
+  bool cardShowsCaptureTag(int i);
   juce::Button& addButton() { return add_; }
   // Adds a block of `type` (a registered block type; for "nam" the file chooser opens first).
   void addType(const juce::String& type);

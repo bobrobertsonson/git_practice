@@ -5,21 +5,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <set>
 
 #include "sawblade/block_registry.h"
 
 namespace sawblade::plugin::rig {
 // --- topology --------------------------------------------------------------------------------------
-int ampIndex(const PathPreset& p) {
-  const int n = static_cast<int>(p.blocks.size());
-  for (int i = n - 1; i >= 0; --i)
-    if (p.blocks[static_cast<std::size_t>(i)].slot == "amp") return i;
-  for (int i = n - 1; i >= 0; --i)
-    if (p.blocks[static_cast<std::size_t>(i)].type == "nam") return i;
-  return -1;
-}
-
 bool isPedalSlot(const PathPreset& p, int index) {
   return index >= 0 && index < static_cast<int>(p.blocks.size()) && index != ampIndex(p);
 }
@@ -144,6 +136,81 @@ Block makeBlock(const std::string& type, const std::string& id, const std::strin
   if (!b.params) throw PresetError("block", "block type \"" + type + "\" produced no parameters");
   o.finish();
   return b;
+}
+
+// --- Task C ---------------------------------------------------------------------------------------------
+Block makeTsBoost(const Preset& p) {
+  return makeBlock("pedal.ts", newBlockId(p, 'b'), "boost", {},
+                   {{"modelVersion", 1}, {"params", {{"drive", 0}, {"tone", 5}, {"level", 8}}}});
+}
+
+Block makeBodyAmp(const Preset& p, const Capture& model) {
+  Block b;
+  b.id = newBlockId(p, 'b');
+  b.type = "nam";
+  b.slot = "amp";
+  auto params = std::make_shared<NamBlockParams>();
+  params->model = model;
+  b.params = std::move(params);
+  return b;
+}
+
+bool fillBodyPath(Preset& p, const std::optional<Capture>& amp) {
+  if (!p.b.blocks.empty()) return false;
+  p.b.blocks.push_back(makeTsBoost(p));
+  if (amp) p.b.blocks.push_back(makeBodyAmp(p, *amp));
+  return true;
+}
+
+void setBodyAmp(Preset& p, const Capture& model) {
+  const int amp = ampIndex(p.b);
+  if (amp >= 0) p.b.blocks.erase(p.b.blocks.begin() + amp);
+  const int at = amp >= 0 ? amp : static_cast<int>(p.b.blocks.size());
+  addBlock(p.b, at, makeBodyAmp(p, model));
+}
+
+std::optional<Capture> cachedToneCapture(const std::string& toneId, const std::string& modelId) {
+  namespace fs = std::filesystem;
+  using nlohmann::json;
+  const auto plain = [](const std::string& t) { return !t.empty() && t.find_first_of("/\\.") == std::string::npos; };
+  std::error_code ec;
+  if (!plain(toneId) || (!modelId.empty() && !plain(modelId))) return std::nullopt;
+  const fs::path dir = captureCacheRoot() / toneId;
+  // The cache entry is what `sawblade-t3k fetch` wrote: <tone>/meta.json names the model's file and sha256 and carries the tone's
+  // title / creator / licence / url. A model without a meta entry is not cached (fetch fills the entry, so the licence is never lost).
+  std::ifstream in(dir / "meta.json");
+  if (!in) return std::nullopt;
+  const json meta = json::parse(in, nullptr, /*allow_exceptions=*/false);
+  if (!meta.is_object() || !meta.contains("models") || !meta["models"].is_object()) return std::nullopt;
+  std::string pick = modelId;
+  if (pick.empty()) {  // the smallest model id with an entry and a file (the tool's fetch takes the tone's first candidate)
+    for (const auto& kv : meta["models"].items()) {
+      if (!plain(kv.key()) || !fs::exists(dir / (kv.key() + ".nam"), ec)) continue;
+      if (pick.empty() || kv.key().size() < pick.size() || (kv.key().size() == pick.size() && kv.key() < pick)) pick = kv.key();
+    }
+    if (pick.empty()) return std::nullopt;
+  }
+  if (!meta["models"].contains(pick) || !meta["models"][pick].is_object()) return std::nullopt;
+  const json& m = meta["models"][pick];
+  const std::string file = m.value("file", pick + ".nam");
+  if (!plain(fs::path(file).stem().string()) || file.find('/') != std::string::npos || !fs::exists(dir / file, ec)) return std::nullopt;
+  const auto str = [](const json& o, const char* k) { return o.is_object() && o.contains(k) && o[k].is_string() ? o[k].get<std::string>() : std::string(); };
+  const json tone = meta.contains("tone") ? meta["tone"] : json::object();
+  const json user = tone.is_object() && tone.contains("user") ? tone["user"] : json::object();
+  Capture c;
+  c.resolvedPath = fs::absolute(dir / file, ec);
+  c.file = c.resolvedPath.string();
+  c.sha256 = str(m, "sha256");
+  CaptureSource src;
+  src.provider = "tone3000";
+  src.id = toneId;
+  src.modelId = pick;
+  src.title = str(tone, "title");
+  src.url = str(tone, "url");
+  src.license = str(tone, "license");
+  src.creator = !str(user, "display_name").empty() ? str(user, "display_name") : !str(user, "username").empty() ? str(user, "username") : str(meta, "creatorUsername");
+  c.source = src;
+  return c;
 }
 
 std::string captureTitle(const Capture& c) {

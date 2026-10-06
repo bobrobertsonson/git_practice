@@ -20,6 +20,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -96,12 +97,29 @@ class Engine {
   int latencySamples() const noexcept { return latency_.total; }
   const ChainInfo& chainInfo() const noexcept { return info_; }
   const std::string& presetName() const noexcept { return name_; }
+
+  // --- gain ladders (v0.2 Task B) -------------------------------------------------------------------
+  // State of path 0 = a / 1 = b's gain ladder: any thread (atomics).
+  LadderState ladderState(int path) const noexcept { return chain_->ladderState(path); }
+  // The clamped preset the engine was built from (its ladders and gainSteps).
+  const Preset& builtPreset() const noexcept { return preset_; }
+  // Worker thread only (never the audio thread, never two at once): loads the cached rung models nearest the rung the GAIN
+  // knob asks for (at most kMaxLoadedRungs; the sounding rung always stays), hands them to the audio thread through the
+  // block's SwapSlot, evicts the others, and retries a hand-over that is still staged. Returns the number of wanted rungs
+  // whose model is not in the capture cache (those stay "pending": GAIN is drive-only until they are). Failures are
+  // recorded in ladderMessages().
+  int refreshRungs(CaptureCache* cache);
+  std::vector<std::string> ladderMessages() const;
   // Output samples the FIFO could not supply (must stay 0: the converters never need look-ahead).
   std::uint64_t underruns() const noexcept { return underruns_; }
 
  private:
   Engine() = default;
 
+  Preset preset_;           // clamped; set at build
+  ProcessSpec spec_{};      // what the chain was prepared with (rung models are prepared the same way)
+  mutable std::mutex ladderMutex_;
+  std::vector<std::string> ladderMessages_;
   double hostRate_ = 0.0, modelRate_ = 0.0;
   bool resampling_ = false;
   int hostMax_ = 0;

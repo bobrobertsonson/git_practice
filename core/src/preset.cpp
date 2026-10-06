@@ -1,5 +1,6 @@
 #include "sawblade/preset.h"
 
+#include <algorithm>
 #include <mutex>
 #include <cctype>
 #include <cstdlib>
@@ -23,6 +24,15 @@ bool operator==(const GateParams& a, const GateParams& b) {
 }
 bool operator==(const EqBand& a, const EqBand& b) {
   return a.type == b.type && a.freq == b.freq && a.gainDb == b.gainDb && a.q == b.q && a.enabled == b.enabled;
+}
+
+int ampIndex(const PathPreset& p) {
+  const int n = static_cast<int>(p.blocks.size());
+  for (int i = n - 1; i >= 0; --i)
+    if (p.blocks[static_cast<std::size_t>(i)].slot == "amp") return i;
+  for (int i = n - 1; i >= 0; --i)
+    if (p.blocks[static_cast<std::size_t>(i)].type == "nam") return i;
+  return -1;
 }
 
 bool Block::operator==(const Block& o) const {
@@ -157,6 +167,29 @@ json toJson(const Block& b) {
   return j;
 }
 
+AmpControls parseAmpControls(JsonObject& path) {
+  AmpControls c;
+  auto o = path.optionalObject("ampControls");
+  if (!o) return c;
+  c.gain = o->number("gain", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.bass = o->number("bass", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.mid = o->number("mid", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.treble = o->number("treble", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.presence = o->number("presence", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.level = o->number("level", kAmpKnobDefault, kAmpKnobMin, kAmpKnobMax);
+  c.gainStep = o->string("gainStep", "");
+  if (o->has("gainStep") && c.gainStep.empty()) throw PresetError(o->child("gainStep"), "must not be empty");
+  o->finish();
+  return c;
+}
+
+json toJson(const AmpControls& c) {
+  json j = {{"gain", c.gain}, {"bass", c.bass}, {"mid", c.mid},
+            {"treble", c.treble}, {"presence", c.presence}, {"level", c.level}};
+  if (!c.gainStep.empty()) j["gainStep"] = c.gainStep;
+  return j;
+}
+
 PathPreset parsePath(JsonObject& o, const fs::path& baseDir, std::set<std::string>& ids) {
   PathPreset p;
   p.role = o.oneOf("role", "", {"saw", "body"});
@@ -168,6 +201,7 @@ PathPreset parsePath(JsonObject& o, const fs::path& baseDir, std::set<std::strin
   p.eq = parseEqBandList(o, "eq");
   p.levelDb = o.number("levelDb", 0.0, kGainLo, kGainHi);
   p.invert = o.boolean("invert", false);
+  p.ampControls = parseAmpControls(o);
   o.finish();
   return p;
 }
@@ -178,6 +212,7 @@ json toJson(const PathPreset& p) {
   json j = {{"enabled", p.enabled}, {"preEq", eqListJson(p.preEq)}, {"blocks", blocks},
             {"eq", eqListJson(p.eq)}, {"levelDb", p.levelDb}, {"invert", p.invert}};
   if (!p.role.empty()) j["role"] = p.role;
+  if (!p.ampControls.isDefault()) j["ampControls"] = toJson(p.ampControls);
   return j;
 }
 
@@ -269,7 +304,30 @@ std::vector<EqBand> parseEqBands(const json& arr, const std::string& path) {
   return out;
 }
 
-Capture parseCapture(const json& j, const std::string& path, const fs::path& baseDir) {
+std::vector<LadderRung> parseLadder(const json& arr, const std::string& path) {
+  if (!arr.is_array()) throw PresetError(path, "must be an array");
+  if (arr.size() < 2 || arr.size() > static_cast<std::size_t>(kMaxLadderRungsInPreset))
+    throw PresetError(path, "a gain ladder has 2 to " + std::to_string(kMaxLadderRungsInPreset) + " rungs (omit it for none)");
+  std::vector<LadderRung> out;
+  for (std::size_t i = 0; i < arr.size(); ++i) {
+    JsonObject o(arr[i], JsonObject::index(path, i));
+    LadderRung r;
+    r.modelId = o.requireString("modelId");
+    if (r.modelId.empty()) throw PresetError(o.child("modelId"), "must not be empty");
+    r.gain = o.requireNumber("gain", 0.0, 100.0);
+    r.name = o.string("name", "");
+    o.finish();
+    for (const auto& e : out) {
+      if (e.modelId == r.modelId) throw PresetError(o.child("modelId"), "duplicate rung \"" + r.modelId + "\"");
+      if (e.gain == r.gain) throw PresetError(o.child("gain"), "duplicate gain value");
+    }
+    out.push_back(std::move(r));
+  }
+  std::stable_sort(out.begin(), out.end(), [](const LadderRung& a, const LadderRung& b) { return a.gain < b.gain; });
+  return out;
+}
+
+Capture parseCapture(const json& j, const std::string& path, const fs::path& baseDir, bool allowLadder) {
   JsonObject o(j, path);
   Capture c;
   c.file = o.requireString("file");
@@ -297,6 +355,7 @@ Capture parseCapture(const json& j, const std::string& path, const fs::path& bas
     s->finish();
     c.source = src;
   }
+  if (allowLadder && o.has("ladder")) c.ladder = parseLadder(*o.take("ladder"), o.child("ladder"));
   o.finish();
   return c;
 }
@@ -311,6 +370,15 @@ nlohmann::json toJson(const Capture& c) {
     for (const auto& [k, v] : opt)
       if (!v->empty()) s[k] = *v;
     j["source"] = s;
+  }
+  if (!c.ladder.empty()) {
+    json l = json::array();
+    for (const auto& r : c.ladder) {
+      json e = {{"modelId", r.modelId}, {"gain", r.gain}};
+      if (!r.name.empty()) e["name"] = r.name;
+      l.push_back(e);
+    }
+    j["ladder"] = l;
   }
   return j;
 }

@@ -29,6 +29,7 @@ struct SettingsEnv {
   explicit SettingsEnv(const char* json, bool isolateHome = false) {
     dir = std::filesystem::temp_directory_path() / ("sawblade_editor_settings_" + std::to_string(juce::Random::getSystemRandom().nextInt64() & 0xffffff));
     std::filesystem::create_directories(dir);
+    ::setenv("SAWBLADE_NO_NETWORK", "1", /*overwrite=*/0);  // the plugin starts no real network tool in a test (CMake sets it too)
     for (const char* v : {"SAWBLADE_SETTINGS_FILE", "SAWBLADE_T3K_TOKEN_FILE", "SAWBLADE_CACHE_DIR", "TONE3000_CLIENT_ID"}) {
       const char* cur = std::getenv(v);
       saved[v] = cur ? std::optional<std::string>(cur) : std::nullopt;
