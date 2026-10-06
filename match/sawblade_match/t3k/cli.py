@@ -24,7 +24,7 @@ from .filter import FilterConfig
 from .ids import require_id
 from .suggest import load_pool_manifest, pool_candidates, suggest_body
 from .ladder import gain_ladder, parse_ladder
-from .pool import build_pool, write_manifest
+from .pool import SLOT_GEAR, build_pool, write_manifest
 from .pack import build_pack
 from .resolve import default_output, resolve_file
 from .search import TABLE_HEADER, assess, pool_records, table_rows
@@ -139,7 +139,7 @@ def _table(rows: list[list[str]], header: list[str]) -> None:
 def cmd_search(args: argparse.Namespace) -> int:
     """Read-only: list tones/search results with the quality-filter verdict. No manifest, no download."""
     slots = _slots(args.gear)
-    gears = "_".join(slots) if args.gear else None
+    gears = "_".join(SLOT_GEAR[x] for x in slots) if args.gear else None      # same mapping as pool.collect
     tones = make_client().search(args.query, gears=gears, limit=args.limit)
     records = assess(tones, _filter_cfg(args), datetime.now(timezone.utc))
     if args.json:

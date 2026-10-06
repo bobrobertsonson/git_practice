@@ -325,7 +325,22 @@ def test_ir_tones_download_all_models_unless_capped_and_ir_search_adds_ir_tones(
     inc = {t["tone_id"]: t for t in m["tones"]}
     assert len(inc[204]["downloads"]) == 7 and len(inc[200]["downloads"]) == 3 and inc[204]["sources"] == ["ir-search"]
     assert m["sources"]["ir_search"] == ["mesa 4x12"] and m["max_ir_models_per_tone"] is None
-    assert api.requests("search") and "ir" in str(api.requests("search")[0].url)
+    from sawblade_match.t3k.pool import IR_GEAR
+    assert IR_GEAR == "cab" and api.requests("search")[0].url.params["gears"] == IR_GEAR
     m = build_pool(make_client(), Cache(tmp_path / "c2"), FilterConfig(), ir_searches=["mesa"], latest=False,
                    max_ir_models_per_tone=2, now=NOW)
     assert len([t for t in m["tones"] if t["tone_id"] == 204][0]["downloads"]) == 2
+
+
+def test_ir_search_does_not_turn_on_cab_collection(make_client, api, tmp_path):
+    ir = tone_json(304, gear="cab", fmt="ir", a2=0, fav=150, dl=2000)
+    trend_cab = tone_json(305, gear="cab", fmt="ir", a2=0, fav=150, dl=2000)
+    amp = tone_json(300, gear="amp", fav=300, dl=5000)
+    api.search_results = [ir]
+    api.trending = {"amp": [amp], "pedal": [], "cab": [trend_cab]}
+    for t, ms in ((ir, [model_json(3040, 304, arch=None)]), (trend_cab, [model_json(3050, 305, arch=None)]),
+                  (amp, [model_json(3000, 300, arch="2")])):
+        api.add_tone(t, ms)
+    m = build_pool(make_client(), Cache(tmp_path / "c"), FilterConfig(), slots=["amp"], ir_searches=["x"], latest=False, now=NOW)
+    assert {t["tone_id"] for t in m["tones"]} == {300, 304} and m["slots"] == ["amp"]      # no trending cab (305)
+    assert not [r for r in api.requests("trending") if r.url.params.get("gear") == "cab"]

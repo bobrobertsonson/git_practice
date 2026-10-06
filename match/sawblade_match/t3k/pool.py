@@ -16,6 +16,7 @@ from .types import Tone
 
 SLOT_GEAR = {"pedal": "pedal", "amp": "amp", "cab": "cab"}
 ALL_SLOTS = ("pedal", "amp", "cab")
+IR_GEAR = SLOT_GEAR["cab"]         # the tones/search `gears` value of IR tones; used by --search (cab slot) and --ir-search
 
 
 def collect(
@@ -51,7 +52,7 @@ def collect(
         # Opt-in; check the TONE3000 API terms before sharing anything that uses search.
         add("search", client.search(q, gears=gears))
     for q in ir_searches:      # IR-only searches (cab families); same opt-in terms as --search
-        add("ir-search", client.search(q, gears="ir"))
+        add("ir-search", client.search(q, gears=IR_GEAR))
     for tid in add_tones:
         add("lead-pick", [client.get_tone(tid)])
     return tones, sources
@@ -97,15 +98,14 @@ def build_pool(
     now = now or datetime.now(timezone.utc)
     slots = list(slots)
     ir_searches = list(dict.fromkeys(ir_searches))
-    if ir_searches and "cab" not in slots:
-        slots.append("cab")
+    eval_slots = slots + ["cab"] if ir_searches and "cab" not in slots else slots    # slots decides what is *collected*
     searches = list(dict.fromkeys(searches))
     force_tones = list(dict.fromkeys(int(t) for t in force_tones))
     # a forced tone is also a lead pick, so it is fetched even without --add-tone
     add_tones = list(dict.fromkeys([*(int(t) for t in add_tones), *force_tones]))
     tones, sources = collect(client, slots, trending=trending, latest=latest, searches=searches,
                              add_tones=add_tones, ir_searches=ir_searches)
-    decisions, thresholds = evaluate(tones, sources, cfg, now, gears=slots, forced=force_tones)
+    decisions, thresholds = evaluate(tones, sources, cfg, now, gears=eval_slots, forced=force_tones)
 
     for d in decisions:
         if d.status != "included":

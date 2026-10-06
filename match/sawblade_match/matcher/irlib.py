@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
@@ -191,10 +192,24 @@ def sidecar_path(sha: str, cdir: Path | None = None) -> Path:
 def save_sidecar(sha: str, h: np.ndarray, w: np.ndarray, cdir: Path | None = None) -> None:
     p = sidecar_path(sha, cdir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + f".{os.getpid()}.tmp")
-    with open(tmp, "wb") as f:
-        np.save(f, np.concatenate([h, w]).astype(np.float32))
-    os.replace(tmp, p)
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".sc.", suffix=".tmp")      # unique per call: threads share a pid
+    try:
+        with os.fdopen(fd, "wb") as f:
+            np.save(f, np.concatenate([h, w]).astype(np.float32))
+        _replace(tmp, p)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _replace(tmp, target) -> None:
+    """os.replace that tolerates losing a race to an identical writer (same sha = same content): not fatal if the target
+    exists afterwards."""
+    try:
+        os.replace(tmp, target)
+    except OSError:
+        if not os.path.exists(target):
+            raise
 
 
 def load_sidecar(sha: str, cdir: Path | None = None) -> tuple[np.ndarray, np.ndarray] | None:
@@ -254,7 +269,14 @@ def analyze_file(path: str, cdir: Path | None = None) -> dict:
         conv = (cdir or cache_dir()) / "ir_wav" / f"{sha}.wav"
         try:
             conv.parent.mkdir(parents=True, exist_ok=True)
-            sf.write(str(conv), left[: int(MAX_IR_S * fs) + 16], fs, subtype="FLOAT")
+            fd, tmpw = tempfile.mkstemp(dir=conv.parent, prefix=".cv.", suffix=".wav")      # unique per call
+            os.close(fd)
+            try:
+                sf.write(tmpw, left[: int(MAX_IR_S * fs) + 16], fs, subtype="FLOAT")
+                _replace(tmpw, conv)
+            finally:
+                if os.path.exists(tmpw):
+                    os.unlink(tmpw)
             ir = _render_ir(str(conv))
         except ImportError:
             raise
@@ -335,13 +357,28 @@ def _walk(root: Path, errors: list) -> Iterable[Path]:
 
 
 def _load_index(ip: Path) -> dict:
+    """The cached entries; a malformed index or entry is dropped (and re-analysed), never fatal."""
     try:
         d = json.loads(ip.read_text())
-        if d.get("version") == INDEX_VERSION:
-            return d.get("files", {})
+        files = d.get("files") if d.get("version") == INDEX_VERSION else None
     except (OSError, ValueError, AttributeError):
-        pass
-    return {}
+        return {}
+    if not isinstance(files, dict):
+        return {}
+    ok_keys = {"s", "m", "st"}
+    need = {"sha", "rate", "ch", "frames", "trunc", "origS", "core", "coreSha"}
+    out = {}
+    for k, e in files.items():
+        if not isinstance(e, dict) or not ok_keys <= e.keys():
+            continue
+        if e["st"] == "ok" and not need <= e.keys():
+            continue
+        if e["st"] == "rej" and "reason" not in e:
+            continue
+        if e["st"] not in ("ok", "rej"):
+            continue
+        out[k] = e
+    return out
 
 
 def _save_index(ip: Path, files: dict) -> None:
@@ -364,7 +401,7 @@ def scan(dirs: Sequence[str | Path], *, index_file: Path | None = None, cdir: Pa
     n_seen = 0
     not_audio: Counter = Counter()
     for d in dirs:
-        root = Path(d).expanduser()
+        root = Path(d).expanduser().resolve()          # stored paths (index keys, captures, presets) are absolute
         if not root.is_dir():
             errors.append(f"{root}: not a directory")
             continue
@@ -388,7 +425,7 @@ def scan(dirs: Sequence[str | Path], *, index_file: Path | None = None, cdir: Pa
         stat[str(f)] = (s.st_size, s.st_mtime_ns)
         e = index.get(str(f))
         if e and e.get("s") == s.st_size and e.get("m") == s.st_mtime_ns and \
-                (e.get("st") != "ok" or load_sidecar(e["sha"], cdir) is not None):
+                (e.get("st") != "ok" or (load_sidecar(e["sha"], cdir) is not None and Path(e["core"]).exists())):
             continue
         todo.append(f)
     reused = len(files) - len(todo)

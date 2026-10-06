@@ -146,19 +146,77 @@ def test_progress_every_two_seconds_and_resumable(tmp_path, monkeypatch):
         pass
 
     def prog(done, total, eta):
-        stamps.append((time.monotonic(), done))
-        if done >= 4:
+        stamps.append(time.monotonic())
+        if done >= 6:
             raise Stop
 
     with pytest.raises(Stop):
         irlib.scan([root], workers=1, analyze=slow, progress=prog)
     idx = json.loads((home / ".cache" / "sawblade" / "ir_index.json").read_text())
-    assert len(idx["files"]) >= 4                             # the interrupted scan kept what it had
+    assert len(idx["files"]) >= 6                             # the interrupted scan kept what it had
+    assert len(stamps) >= 2 and np.diff(stamps).max() <= 2.0 and stamps[-1] - stamps[0] < 4.0     # first run only
+    time.sleep(0.5)                                            # the interrupted pool's in-flight job finishes
     first = len(calls)
-    irlib.scan([root], workers=1, analyze=slow, progress=lambda *a: stamps.append((time.monotonic(), a[0])))
+    irlib.scan([root], workers=1, analyze=slow)
     assert len(calls) < first + 10                             # resumed, not restarted
-    gaps = np.diff([s[0] for s in stamps if s[1] >= 0])
-    assert len(stamps) >= 3 and gaps.max() <= 2.0
+
+
+def test_identical_files_analysed_concurrently_are_not_rejected(tmp_path, monkeypatch):
+    """Threads of one process share a pid: sidecar / converted-WAV temp names must be unique per call."""
+    ir = synth_ir(48000, seed=3)
+    for rep in range(3):
+        d = tmp_path / f"r{rep}"
+        d.mkdir()
+        _home(d, monkeypatch)
+        root = d / "irs"
+        root.mkdir()
+        for i in range(16):
+            sf.write(str(root / f"same {i}.wav"), ir, 48000, subtype="FLOAT")
+        r = irlib.scan([root], workers=8).report
+        assert r["accepted"] == 16 and r["exactDuplicates"] == 15 and r["rejectedTotal"] == 0, r["rejected"]
+
+
+def test_roots_are_resolved_to_absolute_paths(tmp_path, monkeypatch):
+    import os
+    _home(tmp_path, monkeypatch)
+    (tmp_path / "work" / "rel irs").mkdir(parents=True)
+    sf.write(str(tmp_path / "work" / "rel irs" / "a.wav"), synth_ir(48000, seed=1), 48000, subtype="FLOAT")
+    cwd = os.getcwd()
+    os.chdir(tmp_path / "work")
+    try:
+        lib = irlib.scan(["rel irs"], workers=1)
+        cap = lib.captures()[0]
+    finally:
+        os.chdir(cwd)
+    want = str((tmp_path / "work" / "rel irs" / "a.wav").resolve())
+    assert lib.records[0].path == want and cap.orig_path == want and cap.path == want and Path(cap.block_model()["file"]).is_absolute()
+    assert all(Path(k).is_absolute() for k in json.loads((tmp_path / "home" / ".cache" / "sawblade" / "ir_index.json").read_text())["files"])
+
+
+def test_malformed_index_entries_are_dropped_and_missing_converted_wav_is_reanalysed(tmp_path, monkeypatch):
+    home = _home(tmp_path, monkeypatch)
+    root = tmp_path / "irs"
+    root.mkdir()
+    sf.write(str(root / "a.wav"), synth_ir(48000, seed=1), 48000, subtype="FLOAT")
+    sf.write(str(root / "b.wav"), synth_ir(48000, seed=2), 48000, subtype="FLOAT")
+    irlib.scan([root], workers=1)
+    ip = home / ".cache" / "sawblade" / "ir_index.json"
+    idx = json.loads(ip.read_text())
+    keys = sorted(idx["files"])
+    idx["files"][keys[0]] = {"s": 1}                       # entry without the needed keys
+    idx["files"][keys[1]]["core"] = str(tmp_path / "gone" / "converted.wav")      # converted WAV vanished
+    idx["files"]["/x/garbage.wav"] = "not a dict"
+    ip.write_text(json.dumps(idx))
+    calls = []
+
+    def counting(path, cdir=None):
+        calls.append(path)
+        return irlib.analyze_file(path, cdir)
+    lib = irlib.scan([root], workers=1, analyze=counting)
+    assert len(calls) == 2    # a.wav (bad entry) and b.wav (missing core file)
+    assert lib.report["unique"] == 2
+    ip.write_text(json.dumps({"version": 1, "files": [1, 2]}))
+    assert irlib.scan([root], workers=1).report["unique"] == 2     # a non-dict index is ignored
 
 
 def test_tags():
