@@ -133,7 +133,7 @@ struct World {
   ~World() { base.reset(); }
 
   // The preset browser's load path.
-  void browserLoad(const fs::path& file) {
+  void browserLoad(const fs::path& file, bool waitLevel = true) {
     bool finished = false;
     PresetLoadFlow::Callbacks cb;
     cb.onFinished = [&](const PresetLoadFlow::Outcome& o) {
@@ -147,6 +147,14 @@ struct World {
     REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
     REQUIRE(proc.status().error.empty());
     pump(80);  // attachments deliver the loaded parameters to the controls
+    if (waitLevel) levelSettle();
+  }
+  // LEVEL MATCH (v0.3 Task B) measures the rig's trim on a worker thread, 400 ms after the last change: a render taken before it lands
+  // differs from one taken after (a slow machine lets it land between two renders). Every settle waits for it, so the renders compare
+  // a settled rig. The trim is a per-instance value: another instance's edit never starts or changes it (checked in the isolation test).
+  void levelSettle() {
+    REQUIRE(proc.waitForLevelWork(std::chrono::milliseconds(60000)));
+    pump(30);
   }
   void loadInit() {
     proc.loadPreset(makeInitPreset());
@@ -180,6 +188,7 @@ struct World {
   void settle() {
     REQUIRE(proc.waitForLoader(std::chrono::milliseconds(60000)));
     pump(60);
+    levelSettle();
   }
 };
 
@@ -401,13 +410,40 @@ TEST_CASE("live controls: two instances in one process do not affect each other"
   while (cf.knobs[static_cast<std::size_t>(k)].param < 0) ++k;
   skin::FilmstripKnob* knob = faces[0]->knob(slot->circuit, k);
   REQUIRE(knob != nullptr);
+  const auto aStatus = a.proc.status();
+  REQUIRE_FALSE(aStatus.levelPending);  // A is settled: its trim is measured
   moveKnobFar(*knob);
   b.settle();
   a.settle();
+  {  // B's edit never changes A's trim, nor starts a measurement for A
+    const auto now = a.proc.status();
+    CHECK(now.trimDb == aStatus.trimDb);
+    CHECK_FALSE(now.levelPending);
+  }
   const auto b1 = b.render();
   CHECK(relDiff(b0, b1) > kMinRelDiff);  // B did change
   CHECK(relDiff(a1, a.render()) < kSameRelDiff);
   CHECK(a.proc.currentPreset().name == "UK Death Fuzz Blend (match v1)");
+}
+
+// Root cause of a macOS CI failure of the isolation test: an instance's OWN pending level-match measurement (Task B) landed between two
+// renders of the same instance, so its output changed with no other instance involved. This is that mechanism, made deterministic with the
+// debounce: a render taken while the measurement is pending differs from one taken after it lands (which is why settle() now waits for it).
+TEST_CASE("live controls: an instance's own pending level measurement changes its render when it lands", "[editor][live][levelmatch]") {
+  World a;
+  a.proc.setLevelDebounceMs(60000);  // the measurement of the loaded rig waits (a slow machine)
+  a.browserLoad(kBolt, /*waitLevel=*/false);
+  pump(600);
+  REQUIRE(a.proc.status().levelPending);
+  const double trimBefore = a.proc.status().trimDb;
+  const auto before = a.render();
+  a.proc.setLevelDebounceMs(0);  // the debounce elapses
+  REQUIRE(a.proc.waitForLevelWork(std::chrono::milliseconds(60000)));
+  CHECK_FALSE(a.proc.status().levelPending);
+  const auto after = a.render();
+  INFO("trim " << trimBefore << " -> " << a.proc.status().trimDb << ", relDiff " << relDiff(before, after));
+  CHECK(a.proc.status().trimDb != trimBefore);
+  CHECK(relDiff(before, after) > kMinRelDiff);  // no other instance involved
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
