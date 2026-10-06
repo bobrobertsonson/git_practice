@@ -1,0 +1,25 @@
+{
+  "loaderOrder": "Loader order: gate -> NAM model",
+  "mode": "withcab",
+  "stages": [
+    {
+      "hardware": "Gate FIRST in the chain, keyed on the guitar (DI) before any pedal: open at -55 dB, close at -61 dB (hysteresis 6 dB), attack 0.5 ms, hold 20 ms, release 60 ms, range -90 dB.",
+      "inModel": false,
+      "position": "before NAM",
+      "settings": {
+        "attackMs": 0.5,
+        "closeThresholdDb": -61.0,
+        "holdMs": 20.0,
+        "hysteresisDb": 6.0,
+        "keyedOn": "DI (guitar signal before any pedal/amp)",
+        "mode": "gate",
+        "rangeDb": -90.0,
+        "releaseCurve": "one-pole",
+        "releaseMs": 60.0,
+        "thresholdDb": -55.0
+      },
+      "stage": "gate"
+    }
+  ],
+  "version": 1
+}
