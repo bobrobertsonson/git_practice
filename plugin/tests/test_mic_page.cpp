@@ -18,6 +18,7 @@
 #include "SettingsEnv.h"
 #include "PluginProcessor.h"
 #include "mic/MicPage.h"
+#include "rig/CabScreen.h"
 #include "skin/RigView.h"
 #include "sawblade/wav_io.h"
 
@@ -153,15 +154,17 @@ struct Fixture {
   ~Fixture() { base.reset(); }
 
   MicPage& page() { return ed->micPage(); }
-  skin::RigPiece& cabPiece() {
-    for (auto* p : all<skin::RigPiece>(*ed))
-      if (p->piece() == skin::Piece::Cab) return *p;
-    FAIL("no cab piece");
+  // v0.4 Task D: the mic page is reached from the CAB page (the CAB button, then MIC POSITIONS); double-clicking the cab is gone.
+  juce::Button& buttonIn(juce::Component& root, const juce::String& title) {
+    for (auto* b : all<juce::Button>(root))
+      if (b->getTitle() == title) return *b;
+    FAIL("no button titled " << title);
     std::abort();
   }
-  void openByDoubleClick() {
-    auto& c = cabPiece();
-    c.mouseDoubleClick(mouse(c, {20.0f, 20.0f}, {20.0f, 20.0f}, 2));
+  void openViaCabPage() {
+    click(buttonIn(*ed, "Cab page"));
+    REQUIRE(ed->cabPageOpen());
+    click(buttonIn(ed->cabScreen(), "MIC POSITIONS"));
   }
   void wait() { REQUIRE(proc.waitForLoader()); }
   void loadPackFromCache() {
@@ -201,11 +204,11 @@ fs::path writeScript(const fs::path& dir, const std::string& name, const std::st
 
 }  // namespace
 
-TEST_CASE("mic page: double-clicking the cab opens it, the dots match the pack, '< RIG' closes it", "[editor][mic]") {
+TEST_CASE("mic page: MIC POSITIONS on the CAB page opens it, the dots match the pack, '< RIG' closes it and returns to the CAB page", "[editor][mic]") {
   Fixture f;
   CHECK_FALSE(f.ed->micPageOpen());
   CHECK_FALSE(f.page().isVisible());
-  f.openByDoubleClick();
+  f.openViaCabPage();
   REQUIRE(f.ed->micPageOpen());
   REQUIRE(f.page().isVisible());
   // opened on the cab's IR: a single IR, one dot (the cab's tone has no cached manifest here)
@@ -226,11 +229,12 @@ TEST_CASE("mic page: double-clicking the cab opens it, the dots match the pack, 
   REQUIRE(back != nullptr);
   click(*back);
   CHECK_FALSE(f.ed->micPageOpen());
+  CHECK(f.ed->cabPageOpen());  // v0.4 Task D: the mic page was opened from the CAB page, closing it comes back there
 }
 
 TEST_CASE("mic page: dragging the mic snaps on release and loads that IR; nothing loads while dragging", "[editor][mic]") {
   Fixture f;
-  f.openByDoubleClick();
+  f.openViaCabPage();
   f.loadPackFromCache();
   const auto before = f.proc.currentPreset().cab.ir;
   const auto builds = f.proc.engineBuilds();
@@ -284,7 +288,7 @@ TEST_CASE("mic page: dragging the mic snaps on release and loads that IR; nothin
 
 TEST_CASE("mic page: the fields, and combo boxes when a dot has several mics or distances", "[editor][mic]") {
   Fixture f;
-  f.openByDoubleClick();
+  f.openViaCabPage();
   f.loadPackFromCache();
   f.dragTo(0, 0);  // UL cap: SM57 0.5 in / SM57 1 in / MD421 1 in
   f.wait();
@@ -316,7 +320,7 @@ TEST_CASE("mic page: the fields, and combo boxes when a dot has several mics or 
 
 TEST_CASE("mic page: BLEND 2 MICS, the second mic, the MIX fader and BLEND off", "[editor][mic]") {
   Fixture f;
-  f.openByDoubleClick();
+  f.openViaCabPage();
   f.loadPackFromCache();
   auto* blend = f.page().buttonTitled("BLEND 2 MICS");
   REQUIRE(blend != nullptr);
@@ -373,7 +377,7 @@ TEST_CASE("mic page: an irMix preset opens with BLEND on; perPath is read-only",
   preset.cab.ir = sawblade::Capture{};
   f.proc.loadPreset(preset);
   f.wait();
-  f.openByDoubleClick();
+  f.openViaCabPage();
   CHECK(f.page().session().blend());
   CHECK(f.page().mixSlider().isVisible());
   CHECK(f.page().mixSlider().getValue() == 70.0);
@@ -395,7 +399,7 @@ TEST_CASE("mic page: an irMix preset opens with BLEND on; perPath is read-only",
 
 TEST_CASE("mic page: LOAD IR FOLDER shows the folder as the pack", "[editor][mic]") {
   Fixture f;
-  f.openByDoubleClick();
+  f.openViaCabPage();
   const fs::path dir = f.tmp.dir / "my cab irs";
   fs::create_directories(dir);
   for (const char* n : {"Greenback 2x12 e906 25mm cap", "Greenback 2x12 e906 25mm edge", "Greenback 2x12 SM57 1in cone"})
@@ -421,7 +425,7 @@ TEST_CASE("mic page: LOAD PACK runs sawblade-t3k, shows progress, caches the man
                                    "echo '{\"done\": 2, \"total\": 2, \"name\": \"b\"}'\n"
                                    "cp \"" + f.manifest.string() + "\" \"$4\"");
   std::ofstream(data.dir / "settings.json") << json{{"t3kExecutable", exe.string()}, {"other", 1}}.dump();
-  f.openByDoubleClick();
+  f.openViaCabPage();
   auto* load = f.page().buttonTitled("LOAD PACK");
   REQUIRE(load != nullptr);
   CHECK(load->isVisible());
@@ -453,7 +457,7 @@ TEST_CASE("mic page: not logged in and a missing tool show the messages", "[edit
   ::unsetenv("SAWBLADE_SETTINGS_FILE");  // T3kTool then reads <appdata>/settings.json (the Settings store keeps its cached file)
   const fs::path exe = writeScript(data.dir, "fake-t3k", "echo 'auth: token expired' >&2\nexit 4");
   std::ofstream(data.dir / "settings.json") << json{{"t3kExecutable", exe.string()}}.dump();
-  f.openByDoubleClick();
+  f.openViaCabPage();
   f.page().loadPack();
   for (int i = 0; i < 100 && f.page().packLoading(); ++i) pump(50);
   CHECK(f.page().statusText() == "Not logged in to TONE3000. Run `sawblade-t3k login` in a terminal, then try again.");
@@ -477,7 +481,7 @@ TEST_CASE("mic page: screenshots of the rig, the page with one mic and with BLEN
   REQUIRE(rig.getWidth() == 1280);
   savePng(rig, "sawblade_micpage_rig_1x.png");
 
-  f.openByDoubleClick();
+  f.openViaCabPage();
   f.loadPackFromCache();
   f.dragTo(0, 3);  // UL cap edge 1 in
   f.wait();
@@ -519,7 +523,7 @@ TEST_CASE("mic page: screenshots of the rig, the page with one mic and with BLEN
 
 TEST_CASE("mic page: in BLEND the highlighted row, the marker and the fields name the active mic", "[editor][mic]") {
   Fixture f;
-  f.openByDoubleClick();
+  f.openViaCabPage();
   f.loadPackFromCache();
   click(*f.page().buttonTitled("BLEND 2 MICS"));
   f.wait();
