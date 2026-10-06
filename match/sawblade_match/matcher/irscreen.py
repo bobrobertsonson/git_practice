@@ -50,7 +50,7 @@ class Bank:
     _h2f: np.ndarray | None = field(default=None, repr=False)
 
     def __len__(self) -> int:
-        return len(self.caps)
+        return len(self.h2)
 
     @staticmethod
     def from_arrays(caps: list, h: np.ndarray, **kw) -> "Bank":

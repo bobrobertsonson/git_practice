@@ -234,3 +234,25 @@ def test_response_matches_the_core_ir(tmp_path, monkeypatch):
     for lo in (250, 500, 1000, 2000, 4000):
         assert abs(band(ratio_db, lo, lo * 1.26) - band(pred_db, lo, lo * 1.26)) < 0.6
     assert sel.any()
+
+
+def test_cli_ir_dir_flags_and_persistent_list(tmp_path, monkeypatch, capsys=None):
+    home = _home(tmp_path, monkeypatch)
+    from sawblade_match.matcher.cli import build_parser, main
+    a = build_parser().parse_args(["--di", "d", "--ref", "r", "--pool", "p", "--ir-dir", "x", "--ir-dir", "y"])
+    assert a.ir_dir == ["x", "y"] and a.ir_screen_max == 6000
+    d1, d2 = tmp_path / "a irs", tmp_path / "b"
+    d1.mkdir()
+    d2.mkdir()
+    assert main(["--ir-dirs-add", str(d1)]) == 0 and main(["--ir-dirs-add", str(d2)]) == 0 and main(["--ir-dirs-add", str(d1)]) == 0
+    assert irlib.load_dirs() == [str(d1.resolve()), str(d2.resolve())]
+    assert json.loads((home / ".config" / "sawblade" / "ir_dirs.json").read_text()) == {"dirs": irlib.load_dirs()}
+    assert main(["--ir-dirs-list"]) == 0
+
+
+def test_portable_preset_keeps_the_stem_and_hash_of_a_local_ir():
+    from sawblade_match.matcher.run import portable
+    p = {"cab": {"ir": {"file": "/Users/me/Music/IRs/Pack 1/V30 cap.wav", "sha256": "ab" * 32,
+                        "source": {"provider": "local", "id": "abababababababab", "title": "V30 cap", "license": "user-owned"}}}}
+    q = portable(p)["cab"]["ir"]
+    assert q["file"] == "local-irs/V30 cap.wav" and q["sha256"] == "ab" * 32 and "Users" not in json.dumps(q)

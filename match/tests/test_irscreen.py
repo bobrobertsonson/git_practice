@@ -187,3 +187,55 @@ def test_prefilter_is_deterministic_tag_first_and_proportional():
     sel = irscreen.kmeans_select(bank.shape_db(), 100, 32, 0)                    # keeps every spectral family
     lab, _ = irscreen.kmeans(bank.shape_db(), 32, 0)
     assert len(set(lab[sel].tolist())) >= 28 and len(sel) == 100
+
+
+def _lib_run(tmp: Path, monkeypatch, n_local=5, **cfg_kw):
+    from test_matcher import mkplan
+    from test_matcher_v04m import _known, distinct_tone_pool
+    from sawblade_match.matcher.run import Config, Log, run_match
+    from sawblade_match.matcher.space import Combo, Space
+    h = tmp / "home"
+    h.mkdir()
+    monkeypatch.setattr(irlib, "cache_dir", lambda: h / ".cache" / "sawblade")
+    root = tmp / "my irs" / "Pack A"
+    root.mkdir(parents=True)
+    for i, ir in enumerate(random_iss(n_local, 21)):
+        sf.write(str(root / f"V30 SM57 cap {i}.wav"), ir, FS, subtype="FLOAT")
+    lib = irlib.scan([tmp / "my irs"], workers=2)
+    pool = distinct_tone_pool()
+    combo = Combo((pool.pedals[0],), pool.amps[1], None, None, pool.cabs[1])
+    v = Space.for_combo(combo).default()
+    v.update({"post.g1": 1.5})
+    di, ref = _known(tmp, pool, combo, v)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=4, gens_gain=2, gens_final=3,
+                  n_rescore_single=6, n_cab_single=2)
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp / "out", seed=3, excerpt_s=2.0, threads=2, plan=plan, write_audio=False,
+                 refine_offsets=False, ir_library=lib, **cfg_kw)
+    return run_match(cfg, Log()), lib, pool
+
+
+def test_run_screens_library_irs_with_the_pool_cabs_and_records_irpool(tmp_path, monkeypatch):
+    res, lib, pool = _lib_run(tmp_path, monkeypatch)
+    ip = res["irPool"]
+    assert ip["local"] == len(lib.records) == 5 and ip["tone3000"] == len(pool.cabs) and ip["total"] == 5 + len(pool.cabs)
+    assert ip["screened"] is True and ip["skipped"] == 0 and ip["prefiltered"] is False and ip["screenSeconds"] >= 0
+    assert ip["winner"]["source"] in ("local", "tone3000") and ip["winner"]["key"]
+    for c in res["cabSweep"]["candidates"]:
+        keys = {i["cab"] for i in c["irs"]}
+        assert any(k.startswith("local/") for k in keys) and c["screen"]["pool"] == 5 + len(pool.cabs) and len(c["screen"]["top6"]) == 6
+        assert c["nCabs"] == 5 + len(pool.cabs) and c["screen"]["fullTop6"] and all(i["source"] == "local" for i in c["irs"] if i["cab"].startswith("local/"))
+    w = res["best"]["captures"]["cab"]
+    assert (w.get("source") == "local") == (ip["winner"]["source"] == "local")
+
+
+def test_prefiltered_pool_is_recorded_and_irsweep_ablation_keeps_the_old_sweep(tmp_path, monkeypatch):
+    res, lib, pool = _lib_run(tmp_path, monkeypatch, n_local=12, ir_screen_max=6)
+    ip = res["irPool"]
+    assert ip["prefiltered"] is True and ip["total"] == len(lib.records) + len(pool.cabs), (ip, len(lib.records), lib.report)
+    c = res["cabSweep"]["candidates"][0]["screen"]["prefilter"]
+    assert c["prefiltered"] and c["before"] == len(lib.records) + len(pool.cabs) and c["after"] == 6 and c["method"].endswith("kmeans32")
+    assert c["tagHints"] == []                         # the fixture cabs carry no cab tags
+    tmp2 = tmp_path / "second"
+    tmp2.mkdir()
+    res2, _, _ = _lib_run(tmp2, monkeypatch, ablate=("irsweep",))
+    assert res2["irPool"]["ablated"] is True and res2["irPool"]["screened"] is False and res2["cabSweep"]["ablated"] is True
