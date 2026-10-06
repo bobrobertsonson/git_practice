@@ -91,7 +91,9 @@ is parked once its CI is green: MATCH-in-Logic (A, reviewer ACCEPT) and IMPORT D
 are the first things to resume; the separation items (E model install, F/G LOAD SONG, D's song controls)
 wait. Next phases in order: **v0.3** core usability (`docs/specs/v0_3-core_usability.md`, running 2026-10-06), then
 **v0.4** pedals (`docs/specs/v0_4-pedals.md`: modeled-pedal accuracy vs captures, capture pedals on the board,
-drag/move pedals on the main page; user: "accuracy, captures and models, and moving them around"). The 7-day usage limit was at `allowed_warning` on 2026-10-06 (resets 2026-10-12 21:40 UTC): one phase
+drag/move pedals on the main page; user: "accuracy, captures and models, and moving them around"). Then
+**v0.5** circuit-level pedal models with optional mods (`docs/specs/v0_5-circuit_pedals.md`; user: "build the
+pedals virtually based on their circuits and then add mods optional"). The 7-day usage limit was at `allowed_warning` on 2026-10-06 (resets 2026-10-12 21:40 UTC): one phase
 session at a time until then.
 
 - (a)–(c) **Closed (v0.1.3, merged 559048d; report `docs/specs/v0_1_3-macos_green_REPORT.md`, CI run 69 all green

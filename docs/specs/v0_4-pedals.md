@@ -6,7 +6,12 @@ on v0.3's undo and per-slot level match). Owners: match-engineer (Task A fitting
 Tasks B–C), reviewer on every task. Hard rules in CLAUDE.md apply. No new art: generic faces use the existing
 skin; propose art in the report. UI names use generic descriptors, not trademarks.
 
-## Task A — modeled-pedal accuracy against real captures
+## Task A — accuracy harness, and today's models measured
+
+(Scope note 2026-10-06: the user wants pedals rebuilt as **circuit models** with optional mods; that is v0.5,
+`docs/specs/v0_5-circuit_pedals.md`. So v0.4 does not tune the behavioural models further: it fixes and
+validates the measurement harness and publishes the baseline numbers the circuit models must beat. Skip A.3's
+DSP fixes; keep A.1 and A.2.)
 
 State today (HANDOFF, 7.1 report): `pedal.hm` v1/v2 measured ~4 dB RMS LTAS shape error vs real HM-2 captures,
 with the harmonic-profile term at ~40 dB on every model; v3 (7c) applied fixes but was **never re-fit**; `hmx`,
@@ -54,9 +59,9 @@ with the harmonic-profile term at ~40 dB on every model; v3 (7c) applied fixes b
 
 ## Out of scope (propose in the report)
 
-New pedal models (list the ones worth adding next, by style family in CLAUDE.md's scope: e.g. a Rat-style
-distortion for grind/crust — see `docs/specs/phase7c_zone_rat.md` — an octave-fuzz, a noise-gate pedal on the
-board), pedal art, amp-head art.
+Circuit-level models and mods (v0.5); new pedal types beyond the chainsaw family and adjacent circuits
+(the user rejected non-chainsaw pedals once, `docs/specs/phase7c_zone_rat.md`: ask before proposing any);
+pedal art, amp-head art.
 
 ## Acceptance (phase)
 
