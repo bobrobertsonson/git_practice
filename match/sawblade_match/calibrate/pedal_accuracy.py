@@ -130,6 +130,7 @@ def known_answer_section(ka: dict | None) -> list[str]:
     L += [f"Probe `{ka.get('probe', '?')}`, harmonic floor {ka.get('harm_floor_db')} dB, free-fit budget "
           f"{ka.get('search', {})}. The reference is the pedal itself rendered at the true params, so the error "
           "of a perfect fit is 0; metrics are LTAS shape (dB) / `harm_rms_db` (even/odd) / dynamics (dB).", "",
+          *([f"_{ka['note']}_", ""] if ka.get("note") else []),
           "| pedal | version | true knobs | constrained (true params) LTAS / harm / dyn | free fit LTAS / harm / dyn "
           "| max knob error | unrecovered knobs |", "|---|---|---|---|---|---|---|"]
     for name in PEDAL_ORDER:
