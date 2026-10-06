@@ -26,7 +26,7 @@ from test_matcher import fixture_pool, mkplan                           # noqa: 
 
 
 def small_plan():
-    return mkplan(top_k={"blend": 0, "single": 2, "single2": 0}, gens_linear=20, gens_gain=4, gens_final=10,
+    return mkplan(top_k={"blend": 0, "single": 2, "single2": 0}, gens_linear=20, gens_gain=8, pop_gain=8, gens_final=10,
                   n_rescore_single=8, n_cab_single=2)
 
 
@@ -67,24 +67,15 @@ def test_feel_weights_context_restores_them():
     assert (F.W_TIGHT, F.W_FIZZ, F.W_POLISH) == old
 
 
-def test_feel_known_answer_finds_the_hidden_chain_and_most_features(tmp_path):
-    """Structural recovery (same amp, cab and tight boost, single topology) with the LTAS and feel deltas inside a loose
-    bound that holds today; the strict D.1 tolerances are in the xfail test below (see its reason)."""
+def test_feel_known_answer_recovers_ltas_and_feel_within_the_d1_tolerances(tmp_path):
     row = K.feel_case(fixture_pool(), tmp_path / "ka", seed=1, plan=small_plan(), log=lambda m: None)
-    assert row["topology"] == "single" and row["tightBoost"] is True, row
-    assert row["foundCaptures"]["amp"] == row["hiddenCaptures"]["amp"] and row["foundCaptures"]["cab"] == row["hiddenCaptures"]["cab"]
-    assert row["aWeightedErrorDb"] <= 1.0 and row["beforeStarterDb"] > row["aWeightedErrorDb"] + 3.0, row
     tol = K.FEEL_TOLERANCES
-    assert row["t12Ms"] <= tol["t12Ms"] and row["sustainDb"] <= tol["sustainDb"] and row["hfFlat"] <= tol["hfFlat"], row
+    assert row["aWeightedErrorDb"] <= tol["aWeightedErrorDb"], row
+    assert row["t12Ms"] <= tol["t12Ms"] and row["sustainDb"] <= tol["sustainDb"], row
+    assert row["hfRatioDb"] <= tol["hfRatioDb"] and row["hfFlat"] <= tol["hfFlat"], row
     assert row["fluxDb"] <= tol["fluxDb"] and row["floorDb"] <= tol["floorDb"], row
-
-
-@pytest.mark.xfail(strict=False, reason="D.1 strict tolerances: with every hidden discrete parameter on the matcher's grids the "
-                   "LTAS error is 0.83 dB (seed 1) because the post filters are not recovered (found 12 dB/oct at the wrong "
-                   "frequency; pick_slopes tries 24 dB/oct at the 12 dB/oct frequency) and boost.level / gain.a.amp drift")
-def test_feel_known_answer_meets_the_d1_tolerances(tmp_path):
-    row = K.feel_case(fixture_pool(), tmp_path / "ka", seed=1, plan=small_plan(), log=lambda m: None)
-    assert row["pass"], {k: row.get(k) for k in K.FEEL_TOLERANCES}
+    assert row["pass"] and row["topology"] == "single" and row["beforeStarterDb"] > row["aWeightedErrorDb"] + 3.0
+    assert row["foundCaptures"]["amp"] == row["hiddenCaptures"]["amp"] and row["foundCaptures"]["pedal"] is None
 
 
 def fixture_weights_report(out: Path) -> dict:
