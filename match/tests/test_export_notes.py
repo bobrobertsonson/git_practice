@@ -158,5 +158,11 @@ def test_gate_object_without_enabled_defaults_on():
     p["gate"] = {"thresholdDb": -50.0}                     # core: enabled defaults to true when the object is present
     n = N.build_export_notes(p, P.make_plan(p, "withcab"))
     assert [s["stage"] for s in n["stages"]] == ["gate"] and n["stages"][0]["settings"]["thresholdDb"] == -50
-    p["gate"] = {"enabled": False}
+    p["gate"] = {}                                         # present but empty: still enabled, core defaults
+    n = N.build_export_notes(p, P.make_plan(p, "withcab"))
+    assert [s["stage"] for s in n["stages"]] == ["gate"] and n["stages"][0]["settings"]["thresholdDb"] == -55
+    for off in ({"enabled": False}, None):
+        p["gate"] = off
+        assert N.build_export_notes(p, P.make_plan(p, "withcab"))["stages"] == []
+    del p["gate"]
     assert N.build_export_notes(p, P.make_plan(p, "withcab"))["stages"] == []

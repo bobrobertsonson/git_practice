@@ -170,8 +170,8 @@ def build_export_notes(preset: dict, plan, nam_name: str | None = None, ir_name:
     bypassed = {b.get("what") for b in pj.get("bypassed", [])}
     stages: list[dict] = []
 
-    gate = preset.get("gate") or {}
-    if gate and gate.get("enabled", True):                       # the gate is never trained
+    gate = preset.get("gate")
+    if isinstance(gate, dict) and gate.get("enabled", True):                       # the gate is never trained
         stages.append(_gate(gate))
 
     cab = preset.get("cab") or {}
