@@ -1,0 +1,10 @@
+Sawblade export notes - Notes parity: withcab (withcab export)
+
+Stages of the preset that are NOT in the trained model, in signal order:
+
+1. gate [before NAM]
+   Gate FIRST in the chain, keyed on the guitar (DI) before any pedal: open at -55 dB, close at -61 dB (hysteresis 6 dB), attack 0.5 ms, hold 20 ms, release 60 ms, range -90 dB.
+
+Loader order: gate -> NAM model
+
+Derived from TONE3000 captures; for personal use only. dB figures are digital (dBFS), so match levels by ear / meter on the device.

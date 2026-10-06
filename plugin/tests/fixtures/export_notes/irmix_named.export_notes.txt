@@ -1,0 +1,16 @@
+Sawblade export notes - Notes parity: irmix (nocab export)
+
+Stages of the preset that are NOT in the trained model, in signal order:
+
+1. gate [before NAM]
+   Expander FIRST in the chain, keyed on the guitar (DI) before any pedal: open at -48.5 dB, close at -52.5 dB (hysteresis 4 dB), attack 0.25 ms, hold 35 ms, release 90 ms, range -60 dB, ratio 3.5:1, key high-pass 120 Hz.
+
+2. cab [after NAM]
+   Load the cab IR: two mic IRs mixed into one, 70% A + 30% B (A = SM57 cap (file ir_a.wav; by @someone; cc-by-nc; tone3000 id 31); B = R121 edge (file ir_b.wav; by @other; cc-by; tone3000 id 32)). Easiest: load the exported irmix-nocab.ir.wav instead; it already holds this cab (and the post EQ) as one IR, mono 48 kHz 32-bit float, loaded WITHOUT loudness normalisation.
+
+3. postEq [after NAM]
+   Post EQ after the cab: high shelf 6000 Hz, -1.2 dB, Q 0.5. Already folded into the exported IR (irmix-nocab.ir.wav); add it again only if you do not use that IR.
+
+Loader order: gate -> NAM (irmix-nocab-standard.nam) -> cab IR + post EQ (irmix-nocab.ir.wav)
+
+Derived from TONE3000 captures; for personal use only. dB figures are digital (dBFS), so match levels by ear / meter on the device.

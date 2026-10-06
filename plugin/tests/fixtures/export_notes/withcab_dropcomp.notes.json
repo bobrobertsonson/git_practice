@@ -1,0 +1,42 @@
+{
+  "loaderOrder": "Loader order: gate -> NAM model -> bus comp",
+  "mode": "withcab",
+  "stages": [
+    {
+      "hardware": "Gate FIRST in the chain, keyed on the guitar (DI) before any pedal: open at -55 dB, close at -61 dB (hysteresis 6 dB), attack 0.5 ms, hold 20 ms, release 60 ms, range -90 dB.",
+      "inModel": false,
+      "position": "before NAM",
+      "settings": {
+        "attackMs": 0.5,
+        "closeThresholdDb": -61.0,
+        "holdMs": 20.0,
+        "hysteresisDb": 6.0,
+        "keyedOn": "DI (guitar signal before any pedal/amp)",
+        "mode": "gate",
+        "rangeDb": -90.0,
+        "releaseCurve": "one-pole",
+        "releaseMs": 60.0,
+        "thresholdDb": -55.0
+      },
+      "stage": "gate"
+    },
+    {
+      "hardware": "Bus compressor LAST (after the cab / post EQ): threshold -14 dB re the chain's pre-headroom level = -14 dB re 0 dBFS at the exported output, ratio 2:1, attack 10 ms, release 120 ms, knee 6 dB, make-up +0.0 dB, peak detector.",
+      "inModel": false,
+      "position": "after NAM",
+      "settings": {
+        "attackMs": 10.0,
+        "detector": "peak, feed-forward, soft knee",
+        "kneeDb": 6.0,
+        "makeupDb": 0.0,
+        "ratio": 2.0,
+        "releaseMs": 120.0,
+        "thresholdDb": -14.0,
+        "thresholdDbFsOut": -14.0,
+        "thresholdReference": "pre-headroom chain level (the 6 dB sum headroom is not counted)"
+      },
+      "stage": "busComp"
+    }
+  ],
+  "version": 1
+}

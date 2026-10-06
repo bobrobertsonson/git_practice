@@ -2539,7 +2539,8 @@ TEST_CASE("record + match: screenshots of REC armed, the match progress and the 
 namespace {
 
 // A preset on the identity fixtures whose captures carry TONE3000 sources (title, creator, licence).
-fs::path writeExportRig(const fs::path& dir, const std::string& name, bool perPath, bool comp, double releaseMs, const std::string& license) {
+fs::path writeExportRig(const fs::path& dir, const std::string& name, bool perPath, bool comp, double releaseMs, const std::string& license,
+                        const nlohmann::json& extra = nlohmann::json::object()) {
   using nlohmann::json;
   const std::string nam = (fs::path(SAWBLADE_FIXTURES_DIR) / "nam" / "linear_identity.nam").string();
   const std::string ir = (fs::path(SAWBLADE_FIXTURES_DIR) / "ir" / "impulse.wav").string();
@@ -2557,6 +2558,7 @@ fs::path writeExportRig(const fs::path& dir, const std::string& name, bool perPa
   if (perPath) j["cab"] = {{"mode", "perPath"}, {"irA", cap(ir, "21", "V30 Mesa 4x12 A", "@OutmodedElectronics", "t3k")}, {"irB", cap(ir, "22", "V30 Mesa 4x12 B", "@OutmodedElectronics", "t3k")}};
   else j["cab"] = {{"mode", "shared"}, {"ir", cap(ir, "21", "V30 Mesa 4x12", "@OutmodedElectronics", "t3k")}};
   if (comp) j["busComp"] = {{"enabled", true}, {"releaseMs", releaseMs}};
+  for (const auto& [k, v] : extra.items()) j[k] = v;  // e.g. a gate, or a fully set bus comp
   const fs::path p = dir / (name + ".json");
   std::ofstream(p) << j.dump(2);
   return p;
@@ -2580,8 +2582,9 @@ struct ExportRig : MatchRig {
     s.outputFolder = exportsDir.string();
     proc.setExportSettings(s);
   }
-  void loadRig(const std::string& name, bool perPath, bool comp = false, double releaseMs = 80.0, const std::string& license = "cc-by") {
-    load(writeExportRig(tmp.dir, name, perPath, comp, releaseMs, license));
+  void loadRig(const std::string& name, bool perPath, bool comp = false, double releaseMs = 80.0, const std::string& license = "cc-by",
+               const nlohmann::json& extra = nlohmann::json::object()) {
+    load(writeExportRig(tmp.dir, name, perPath, comp, releaseMs, license, extra));
   }
   void openPanel() {
     click(*topBarButton(*ed, "EXPORT NAM"));
@@ -2884,6 +2887,169 @@ TEST_CASE("export panel: training, cancel, RESUME, the result and its buttons", 
   CHECK_FALSE(anyLabelContains(panel, "NOT MET"));
   CHECK_FALSE(rig.visible("A/B LISTEN"));
   CHECK(anyLabelContains(panel, "last run: 3 min"));  // 150 s of wall time
+}
+
+// ---- export notes (v0.4 Task E): the stages that are not in the trained model, with hardware settings, and COPY ----
+namespace {
+nlohmann::json gateAndFastComp() {
+  return {{"gate", {{"enabled", true}, {"thresholdDb", -52.0}, {"hysteresisDb", 5.0}, {"attackMs", 0.5}, {"holdMs", 20.0}, {"releaseMs", 70.0}, {"rangeDb", -90.0}}},
+          {"busComp", {{"enabled", true}, {"thresholdDb", -9.0}, {"ratio", 4.0}, {"kneeDb", 3.0}, {"attackMs", 2.0}, {"releaseMs", 80.0}, {"makeupDb", 1.5}}}};
+}
+bool overlaps(const juce::Component& a, const juce::Component& b) { return a.getBounds().intersects(b.getBounds()); }
+}  // namespace
+
+TEST_CASE("export panel: the notes box lists the gate and the fast bus comp with their numbers; COPY copies the text; the mode updates it", "[editor][export][notes]") {
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  REQUIRE(panel.view() == ExportPanel::View::Configure);
+  const juce::String nocab = panel.notesText();
+  CHECK(nocab.startsWith("Sawblade export notes - notes (nocab export)"));
+  CHECK(nocab.contains("1. gate [before NAM]"));
+  CHECK(nocab.contains("open at -52 dB, close at -57 dB (hysteresis 5 dB), attack 0.5 ms, hold 20 ms, release 70 ms, range -90 dB"));
+  CHECK(nocab.contains("busComp [after NAM]"));
+  CHECK(nocab.contains("Bus compressor LAST"));
+  CHECK(nocab.contains("threshold -9 dB"));
+  CHECK(nocab.contains("ratio 4:1, attack 2 ms, release 80 ms, knee 3 dB, make-up +1.5 dB"));
+  CHECK(nocab.contains("Load the cab IR V30 Mesa 4x12"));
+  CHECK(nocab.contains("Loader order: gate -> NAM model -> cab IR -> bus comp"));
+  CHECK(nocab.contains("Built from TONE3000 captures"));  // the plugin's licence note closes the text
+  CHECK_FALSE(panel.notesFromReport());
+  // The visible box holds exactly that text.
+  const auto editors = all<juce::TextEditor>(panel);
+  REQUIRE(editors.size() == 1);
+  CHECK(editors[0]->isVisible());
+  CHECK(editors[0]->isReadOnly());
+  CHECK(editors[0]->getText().trimEnd() == nocab.trimEnd());
+  CHECK(anyLabelContains(panel, "Follows MODE and BUS COMP"));
+
+  // COPY puts the same text on the clipboard (the seam replaces the system clipboard).
+  juce::String copied;
+  panel.copyToClipboard = [&](const juce::String& t) { copied = t; };
+  REQUIRE(rig.visible("COPY"));
+  CHECK(rig.exportButton("COPY")->isEnabled());
+  CHECK(rig.exportButton("COPY")->getTooltip().isNotEmpty());
+  click(*rig.exportButton("COPY"));
+  CHECK(copied == nocab);
+
+  // DROP / KEEP COMP changes what is trained, not what the model leaves out: the comp stays in the list of a no-cab export.
+  click(*rig.exportButton("KEEP COMP"));
+  CHECK(panel.notesText().contains("Bus compressor LAST"));
+  click(*rig.exportButton("DROP COMP"));
+  CHECK(panel.notesText() == nocab);
+
+  // WITH CAB: the cab and the comp are trained into the model, only the gate is left out; it follows the click at once.
+  click(*rig.exportButton("WITH CAB"));
+  const juce::String withcab = panel.notesText();
+  CHECK(withcab.startsWith("Sawblade export notes - notes (withcab export)"));
+  CHECK(withcab.contains("1. gate [before NAM]"));
+  CHECK_FALSE(withcab.contains("Bus compressor"));
+  CHECK_FALSE(withcab.contains("Load the cab IR"));
+  CHECK(withcab.contains("Loader order: gate -> NAM model"));
+  CHECK(editors[0]->getText().trimEnd() == withcab.trimEnd());
+  click(*rig.exportButton("COPY"));
+  CHECK(copied == withcab);
+  click(*rig.exportButton("NO CAB"));
+  CHECK(panel.notesText() == nocab);
+
+  // A new rig replaces the notes; a rig with nothing to add says so.
+  rig.loadRig("plain", false);
+  panel.refresh();
+  CHECK(panel.notesText().contains("1. cab [after NAM]"));
+  click(*rig.exportButton("WITH CAB"));
+  CHECK(panel.notesText().contains("Nothing to add: the trained model (and its IR, if any) contains the whole chain."));
+}
+
+TEST_CASE("export panel: the notes box sits in the right column without overlapping anything, in every view", "[editor][export][notes]") {
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.tools.cfgExport({{"progressJson", true}, {"gates", nlohmann::json::array({"g1"})}});
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  auto checkLayout = [&](const char* view) {
+    INFO(view);
+    juce::TextEditor* box = all<juce::TextEditor>(panel).at(0);
+    juce::Button* copy = rig.exportButton("COPY");
+    REQUIRE(copy != nullptr);
+    CHECK(box->isVisible());
+    CHECK(copy->isVisible());
+    CHECK(panel.getLocalBounds().contains(box->getBounds()));
+    CHECK(panel.getLocalBounds().contains(copy->getBounds()));
+    CHECK(box->getHeight() >= 140);
+    CHECK_FALSE(overlaps(*box, *copy));
+    for (auto* c : panel.getChildren()) {
+      if (c == box || c == copy || !c->isVisible() || c->getBounds().isEmpty()) continue;
+      // The header row and the source line belong to the notes; every other visible child stays clear of the box and COPY.
+      if (auto* l = dynamic_cast<juce::Label*>(c);
+          l != nullptr && (l->getText().startsWith("EXPORT NOTES") || l->getText().startsWith("Follows MODE") || l->getText() == "(computed by the plugin)" ||
+                           l->getText().startsWith("from the export report")))
+        continue;
+      INFO(c->getTitle() << " / " << c->getBounds().toString());
+      CHECK_FALSE(overlaps(*c, *box));
+      CHECK_FALSE(overlaps(*c, *copy));
+    }
+  };
+  checkLayout("configure");
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Training);
+  checkLayout("training");
+  fake_tools::release(rig.proc.jobs().snapshot(JobKind::Export).outDir, "g1");
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  checkLayout("result");
+}
+
+TEST_CASE("export panel: after training the report's exportNotes are shown verbatim; without usable ones the plugin's notes stay with a note", "[editor][export][notes]") {
+  using nlohmann::json;
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  juce::String copied;
+  panel.copyToClipboard = [&](const juce::String& t) { copied = t; };
+  const juce::String computed = panel.notesText();
+  CHECK(computed.contains("Loader order: gate -> NAM model"));
+
+  const json fake = {{"version", 1}, {"mode", "nocab"}, {"file", "notes-nocab-standard.export_notes.txt"},
+                     {"stages", json::array({json{{"stage", "gate"}, {"position", "before NAM"}, {"inModel", false}, {"settings", json::object()}, {"hardware", "FAKE GATE FROM THE REPORT."}},
+                                             json{{"stage", "busComp"}, {"position", "after NAM"}, {"inModel", false}, {"settings", json::object()}, {"hardware", "FAKE COMP FROM THE REPORT."}}})},
+                     {"loaderOrder", "Loader order: gate -> NAM (report.nam) -> bus comp"}};
+  rig.tools.cfgExport({{"progressJson", true}, {"exportNotes", fake}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  CHECK(panel.notesFromReport());
+  const juce::String shown = panel.notesText();
+  CHECK(shown.contains("1. gate [before NAM]\n   FAKE GATE FROM THE REPORT.\n"));
+  CHECK(shown.contains("2. busComp [after NAM]\n   FAKE COMP FROM THE REPORT.\n"));
+  CHECK(shown.contains("Loader order: gate -> NAM (report.nam) -> bus comp"));
+  CHECK_FALSE(shown.contains("open at -52 dB"));  // not the plugin's computation
+  CHECK(all<juce::TextEditor>(panel).at(0)->getText().trimEnd() == shown.trimEnd());
+  CHECK_FALSE(anyLabelContains(panel, "(computed by the plugin)"));
+  CHECK(anyLabelContains(panel, "from the export report"));
+  click(*rig.exportButton("COPY"));
+  CHECK(copied == shown);
+
+  // A report without exportNotes, or with a version this build does not know: the plugin's notes and the dim note.
+  for (const json& notes : {json(), json{{"version", 2}, {"stages", json::array()}, {"loaderOrder", "Loader order: other"}}}) {
+    rig.tools.cfgExport({{"progressJson", true}, {"exportNotes", notes}});
+    click(*rig.exportButton("TRAIN EXPORT"));
+    REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+    panel.refresh();
+    REQUIRE(panel.view() == ExportPanel::View::Result);
+    CHECK_FALSE(panel.notesFromReport());
+    CHECK(anyLabelContains(panel, "(computed by the plugin)"));
+    CHECK(panel.notesText().contains("open at -52 dB, close at -57 dB"));
+    CHECK(panel.notesText().contains("Loader order: gate -> NAM ("));  // the finished run's model name is known
+    CHECK_FALSE(panel.notesText().contains("Loader order: other"));
+    click(*rig.exportButton("COPY"));
+    CHECK(copied == panel.notesText());
+  }
 }
 
 TEST_CASE("export panel: a missing exporter shows a message and LOCATE; a refusal shows its message", "[editor][export]") {

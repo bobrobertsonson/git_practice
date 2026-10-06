@@ -13,7 +13,7 @@
 # Sources (src/): Engine (Chain + real-time rate conversion), EngineLoader (background builds +
 # lock-free swap), PresetMapping (parameters <-> preset), PlayAlong (backing track), TakeRecorder (DI takes),
 # JobRunner (match / export child processes, settings), PresetAudition + MatchGlue (audition / A-B / apply, what MATCH
-# starts from), PluginProcessor, PluginEditor + PlayAlongPanel + MatchScreen + ExportPanel (NAM export, phase 12; ExportGlue + ExportSettings behind it) + SawbladeLookAndFeel (the replaceable look),
+# starts from), PluginProcessor, PluginEditor + PlayAlongPanel + MatchScreen + ExportPanel (NAM export, phase 12; ExportGlue + ExportSettings + ExportNotes behind it) + SawbladeLookAndFeel (the replaceable look),
 # PluginEntry (createPluginFilter).
 
 # Sources shared by the plugin and the tests. JUCE's own pattern is followed: JUCE modules are
@@ -44,6 +44,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/PresetAudition.cpp
   src/MatchGlue.cpp
   src/ExportSettings.cpp
+  src/ExportNotes.cpp
   src/ExportGlue.cpp
   src/SongDecoder.cpp
   src/LadderFetch.cpp
@@ -235,11 +236,12 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_settings.cpp
     tests/test_level_match.cpp
     tests/test_undo.cpp
+    tests/test_export_notes.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_ladder.cpp tests/test_body_fill.cpp tests/test_playalong.cpp
     tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp tests/test_pedal_face.cpp
-    tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_di_import.cpp tests/test_settings.cpp tests/test_level_match.cpp tests/test_undo.cpp
+    tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_di_import.cpp tests/test_settings.cpp tests/test_level_match.cpp tests/test_undo.cpp tests/test_export_notes.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   add_dependencies(sawblade_plugin_tests SawbladeBuildInfo)
   target_include_directories(sawblade_plugin_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
@@ -261,6 +263,7 @@ if(SAWBLADE_BUILD_TESTS)
   target_include_directories(sawblade_plugin_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
   target_compile_definitions(sawblade_plugin_tests PRIVATE
     SAWBLADE_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
+    SAWBLADE_EXPORT_NOTES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/export_notes"
     SAWBLADE_PRESETS_DIR="${PROJECT_SOURCE_DIR}/presets"
     SAWBLADE_PLUGIN_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     SAWBLADE_RIFF_SCRIPT="${PROJECT_SOURCE_DIR}/design/render/make_preview_riff.py"
