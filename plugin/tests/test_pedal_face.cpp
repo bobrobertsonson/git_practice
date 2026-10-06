@@ -582,7 +582,12 @@ TEST_CASE("Pedal params: overlapping loads of different circuits do not trigger 
   // A real edit from another thread is still flagged.
   std::thread([&] { h.setParam(kSawCircuit, 1.0); }).join();
   CHECK(h.p.circuitEditPending());
-  juce::MessageManager::getInstance()->runDispatchLoopUntil(250);
+  // The 10 Hz timer takes the flag on the message thread. How soon it fires in a dispatch-loop slice is the platform's business (macOS
+  // CI took longer than a fixed 250 ms once): pump in small slices until the flag is taken, bounded by 5 s.
+  const auto t0 = std::chrono::steady_clock::now();
+  while (h.p.circuitEditPending() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5))
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+  INFO("the timer took " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count() << " ms");
   REQUIRE(h.p.waitForLoader());
   CHECK_FALSE(h.p.circuitEditPending());
 
