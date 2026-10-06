@@ -6,6 +6,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginProcessor.h"
+#include "SongInput.h"
 
 namespace sawblade::plugin {
 
@@ -35,16 +36,10 @@ class PlayAlongPanel : public juce::Component, public juce::FileDragAndDropTarge
   // The two explicit pickers (asynchronous), each a one-purpose native chooser: a song file (files only, audio
   // filter) and a stems folder (directories only, no filter). A combined files+directories chooser with a type
   // filter is what the macOS panel greyed the .wav out of; see docs/PLUGIN.md. The result is a user-initiated load.
-  enum class ChooserAction { SongFile, StemsFolder };
-  struct ChooserSpec {
-    juce::String title, filter;  // filter: ';'-separated "*.ext" wildcards, empty = none
-    int flags;                   // juce::FileBrowserComponent flags
-  };
-#if JUCE_MAC
-  static constexpr bool kIsMac = true;
-#else
-  static constexpr bool kIsMac = false;
-#endif
+  // The pickers and drops are shared with the MATCH screen (SongInput.h); these are the same types and functions.
+  using ChooserAction = song_input::Action;
+  using ChooserSpec = song_input::ChooserSpec;
+  static constexpr bool kIsMac = song_input::kIsMac;
   // Pure: testable without a native dialog. mac: the song chooser uses the filter "*" (no allowed-types list, the
   // panel delegate accepts everything) and handlePicked validates the pick instead.
   static ChooserSpec chooserSpec(ChooserAction a, bool mac = kIsMac);

@@ -1461,7 +1461,8 @@ TEST_CASE("match: a song loaded from a FILE is the reference and the take's song
 
   MatchPlan plan = planMatch(h.p);
   CHECK_FALSE(plan.ok);
-  CHECK(plan.message.find("USE FOR MATCH") != std::string::npos);  // not "Load a song"
+  CHECK(plan.message.find("DI") != std::string::npos);  // "Record or import a DI first", not "Load a song"
+  CHECK(plan.message.find("Load a song") == std::string::npos);
   CHECK(plan.reference.found);
 
   const auto x = signal(480 * 64);

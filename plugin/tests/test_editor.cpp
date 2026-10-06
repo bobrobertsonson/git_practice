@@ -2351,7 +2351,7 @@ TEST_CASE("match screen: a missing executable or pool shows a clear message and 
   auto* start = rig.screenButton("START MATCH");
   REQUIRE(start != nullptr);
   CHECK_FALSE(start->isEnabled());  // no song, no take yet
-  CHECK(anyLabelContains(screen, "Load a song"));
+  CHECK(anyLabelContains(screen, "load a song first"));
 
   rig.proc.matchSettings().setMatchExecutable(rig.tmp.dir / "nowhere" / "sawblade-match");
   screen.refresh();
@@ -3049,6 +3049,221 @@ TEST_CASE("top bar: MATCH in the Standalone app opens the match screen directly"
   CHECK_FALSE(rig.ed->exportPanelOpen());  // the match screen is MATCH only; EXPORT NAM has its own panel
   CHECK_FALSE(rig.ed->playAlongOpen());
   CHECK_FALSE(anyLabelContains(rig.panel(), "MATCH runs in the Standalone app"));
+}
+
+// ---- v0.2.1 Task D: the MATCH screen holds its own inputs ---------------------------------------------------------
+namespace {
+juce::ListBox& takePicker(MatchRig& rig) {
+  for (auto* l : all<juce::ListBox>(rig.screen()))
+    if (l->getTitle() == "Take picker") return *l;
+  FAIL("no take picker on the match screen");
+  std::abort();
+}
+// A finished take written to the takes folder (renamed so the names are distinct); `songFolder` "" = recorded without a song.
+std::string recordTakeNamed(MatchRig& rig, const std::string& songFolder, const char* name) {
+  auto& rec = rig.proc.recorder();
+  REQUIRE(rec.start(songFolder));
+  feedSeconds(rig.proc, 1.0);
+  rec.stop();
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  std::string err;
+  REQUIRE(rec.renameTake(rec.currentTakeName(), name, &err));
+  return name;
+}
+}  // namespace
+
+TEST_CASE("match screen: load a song, record a DI and start a match without leaving the screen (Task D)", "[editor][match][inputs]") {
+  using A = PlayAlongPanel::ChooserAction;
+  MatchRig rig;
+  rig.proc.playAlong().setStandalone(true);  // today's gate; Task A only flips it
+  rig.tools.cfgMatch({{"progressJson", true}});
+  rig.ed->openMatchScreen();
+  MatchScreen& screen = rig.screen();
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+
+  // The controls are there, in the screen, with tooltips.
+  for (const char* title : {"REC"}) {
+    auto* b = rig.screenButton(title);
+    REQUIRE(b != nullptr);
+    CHECK(b->isVisible());
+    CHECK(b->getTooltip().isNotEmpty());
+  }
+  for (const auto& title : {juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"), juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6")}) {
+    auto* b = rig.screenButton(title);
+    REQUIRE(b != nullptr);
+    CHECK(b->isVisible());
+    CHECK(b->isEnabled());
+    CHECK(b->getTooltip().isNotEmpty());
+  }
+  CHECK(anyLabelContains(screen, juce::String::fromUTF8("1 \xc2\xb7 REFERENCE SONG")));
+  CHECK(anyLabelContains(screen, juce::String::fromUTF8("2 \xc2\xb7 YOUR DI")));
+  CHECK(anyLabelContains(screen, "No takes yet"));
+  CHECK_FALSE(start->isEnabled());
+  CHECK(anyLabelEquals(screen, "load a song first"));
+
+  // 1: the song, through the path the SONG FILE... / STEMS FOLDER... choosers call with their result.
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
+  CHECK(screen.handlePicked(A::StemsFolder, juce::File(juce::String(song.string()))));
+  REQUIRE(rig.proc.playAlong().waitForLoader());
+  screen.refresh();
+  CHECK(rig.proc.playAlong().settings().folder == song.string());
+  CHECK(anyLabelContains(screen, "Song (stems)"));
+  CHECK_FALSE(start->isEnabled());
+  CHECK(anyLabelEquals(screen, "record or import a DI"));
+  CHECK_FALSE(anyLabelContains(screen, "load a song first"));
+
+  // 2: REC / STOP in the screen drive the one recorder; the new take becomes the DI.
+  auto& rec = rig.proc.recorder();
+  auto* recBtn = rig.screenButton("REC");
+  REQUIRE(recBtn->isEnabled());
+  click(*recBtn);
+  CHECK(rec.state() == TakeRecorder::State::Armed);
+  auto* stopBtn = rig.screenButton("STOP");
+  REQUIRE(stopBtn != nullptr);
+  CHECK(stopBtn == recBtn);  // the same button, relabelled
+  feedSeconds(rig.proc, 1.0);
+  screen.refresh();
+  CHECK(rec.state() == TakeRecorder::State::Recording);
+  CHECK(anyLabelContains(screen, "REC 00:"));
+  click(*stopBtn);
+  processBlocks(rig.proc, 1);
+  REQUIRE(rec.waitIdle());
+  screen.refresh();
+  CHECK(rig.screenButton("REC") == recBtn);
+  auto& picker = takePicker(rig);
+  REQUIRE(picker.getListBoxModel()->getNumRows() == 1);
+  CHECK(picker.getSelectedRow() == 0);
+  CHECK(rig.proc.matchSettings().selectedTake() == rec.listTakes().at(0).name);
+  CHECK_FALSE(anyLabelContains(screen, "No takes yet"));
+
+  // 3: START MATCH is enabled with nothing missing and starts the job.
+  CHECK(start->isEnabled());
+  CHECK_FALSE(anyLabelContains(screen, "record or import a DI"));
+  CHECK_FALSE(anyLabelContains(screen, "load a song first"));
+  click(*start);
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Match, 15000ms));
+  screen.refresh();
+  CHECK(rig.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
+  CHECK(resultsList(rig).getListBoxModel()->getNumRows() > 0);
+  CHECK(rig.ed->matchScreenOpen());  // never left the screen
+}
+
+TEST_CASE("match screen: START MATCH says what is missing, the song first; the take picker chooses the DI and syncs with the take band (Task D)", "[editor][match][inputs]") {
+  MatchRig rig;
+  auto& pa = rig.proc.playAlong();
+  pa.setStandalone(true);
+  rig.ed->openMatchScreen();
+  MatchScreen& screen = rig.screen();
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+
+  // Two takes written to the takes folder, no song yet: the song is what is missing first.
+  const std::string a = recordTakeNamed(rig, "", "take A");
+  const std::string b = recordTakeNamed(rig, "", "take B");
+  screen.open();  // reopening rescans the takes
+  auto& picker = takePicker(rig);
+  REQUIRE(picker.getListBoxModel()->getNumRows() == 2);
+  CHECK(picker.getSelectedRow() == -1);  // nothing chosen yet: the picker never picks for the user
+  CHECK(rig.proc.matchSettings().selectedTake().empty());
+  CHECK_FALSE(start->isEnabled());
+  CHECK(anyLabelEquals(screen, "load a song first"));  // song missing takes precedence over the DI
+
+  // Picking a take chooses it as the match DI (no USE FOR MATCH round trip).
+  picker.selectRow(0);
+  const std::string first = rig.proc.matchSettings().selectedTake();
+  CHECK((first == a || first == b));
+  picker.selectRow(1);
+  const std::string second = rig.proc.matchSettings().selectedTake();
+  CHECK((second == a || second == b));
+  CHECK(second != first);
+  screen.refresh();
+  CHECK(anyLabelContains(screen, juce::String(second)));  // the DI summary names it
+  CHECK_FALSE(start->isEnabled());                        // still no song
+  CHECK(anyLabelEquals(screen, "load a song first"));
+
+  // With a song the button is enabled and the caption is gone.
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
+  CHECK(screen.handlePicked(PlayAlongPanel::ChooserAction::StemsFolder, juce::File(juce::String(song.string()))));
+  REQUIRE(pa.waitForLoader());
+  screen.refresh();
+  CHECK(start->isEnabled());
+  CHECK_FALSE(anyLabelContains(screen, "load a song first"));
+  CHECK_FALSE(anyLabelContains(screen, "record or import a DI"));
+
+  // A take deleted behind the screen's back: the DI is missing again, and the caption says so.
+  REQUIRE(rig.proc.recorder().removeTake(second));
+  screen.refresh();
+  CHECK_FALSE(start->isEnabled());
+  CHECK(anyLabelEquals(screen, "record or import a DI"));
+  CHECK(picker.getListBoxModel()->getNumRows() == 1);
+
+  // The take band and the screen drive the same MatchSettings: a pick in one is the selection in the other.
+  rig.ed->setPlayAlongOpen(true);
+  rig.panel().refresh();
+  auto* bandList = all<juce::ListBox>(rig.panel()).at(0);
+  REQUIRE(bandList->getListBoxModel()->getNumRows() == 1);
+  bandList->selectRow(0);
+  click(*buttonTitled(rig.panel(), "USE FOR MATCH"));
+  const std::string kept = second == a ? b : a;  // the take that is left
+  CHECK(rig.proc.matchSettings().selectedTake() == kept);
+  screen.refresh();
+  CHECK(picker.getSelectedRow() == 0);  // the band's choice shows in the screen
+  CHECK(start->isEnabled());
+  CHECK(anyLabelContains(screen, juce::String(kept)));
+}
+
+TEST_CASE("match screen: a drop loads the song in place; a refused folder and a bad pick say why (Task D)", "[editor][match][inputs]") {
+  using A = PlayAlongPanel::ChooserAction;
+  MatchRig rig;
+  auto& pa = rig.proc.playAlong();
+  pa.setStandalone(true);
+  rig.ed->openMatchScreen();
+  MatchScreen& screen = rig.screen();
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Dropped Song", 8.0);
+
+  juce::StringArray stray;
+  { std::ofstream(rig.tmp.dir / "notes.txt") << "x"; }
+  stray.add(juce::String((rig.tmp.dir / "notes.txt").string()));
+  CHECK_FALSE(screen.isInterestedInFileDrag(stray));  // not a song, not a folder
+
+  juce::StringArray dropped;
+  dropped.add(juce::String(song.string()));
+  REQUIRE(screen.isInterestedInFileDrag(dropped));
+  screen.fileDragEnter(dropped, 100, 120);
+  screen.fileDragExit(dropped);
+  screen.filesDropped(dropped, 100, 120);
+  REQUIRE(pa.waitForLoader());
+  screen.refresh();
+  CHECK(pa.settings().folder == song.string());
+  CHECK(anyLabelContains(screen, "Dropped Song"));
+  CHECK(anyLabelEquals(screen, "record or import a DI"));
+  CHECK(rig.ed->matchScreenOpen());
+
+  // A folder that is not a stem set is refused in the screen, and the loaded song stays.
+  const auto mixed = writeSyntheticSong(rig.tmp.dir, "desktop", 4.0);
+  { std::ofstream(mixed / "holiday.mp3") << "x"; }
+  juce::StringArray bad;
+  bad.add(juce::String(mixed.string()));
+  screen.filesDropped(bad, 10, 10);
+  CHECK(pa.waitForLoader());
+  screen.refresh();
+  CHECK(anyLabelContains(screen, "This folder is not a set of separated stems. Choose the song file (mp3, wav, flac, m4a) instead."));
+  CHECK(pa.settings().folder == song.string());
+  CHECK_FALSE(screen.handlePicked(A::StemsFolder, juce::File(juce::String(mixed.string()))));
+
+  // The song picker refuses a non-song file with the same message as the play-along panel, and never reaches loadSong.
+  CHECK_FALSE(screen.handlePicked(A::SongFile, juce::File(juce::String((rig.tmp.dir / "notes.txt").string()))));
+  CHECK(anyLabelContains(screen, "Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file."));
+  CHECK_FALSE(screen.handlePicked(A::StemsFolder, juce::File(juce::String((rig.tmp.dir / "notes.txt").string()))));
+  CHECK(anyLabelContains(screen, "Not a folder: choose a folder of separated stems."));
+  CHECK_FALSE(screen.handlePicked(A::SongFile, juce::File()));  // cancelled
+  CHECK(pa.settings().folder == song.string());
+
+  // Both views use the one chooser definition.
+  CHECK(PlayAlongPanel::chooserSpec(A::SongFile, true).filter == "*");
+  CHECK(PlayAlongPanel::chooserSpec(A::SongFile, false).filter.contains("*.wav"));
 }
 
 TEST_CASE("match screen: PREVIEW with REFINING..., then a REFINED section; nothing is loaded by itself", "[editor][match][twopass]") {

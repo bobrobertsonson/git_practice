@@ -47,6 +47,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/ExportGlue.cpp
   src/SongDecoder.cpp
   src/PluginProcessor.cpp
+  src/SongInput.cpp
   src/PlayAlongPanel.cpp
   src/MatchScreen.cpp
   src/ExportPanel.cpp

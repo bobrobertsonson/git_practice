@@ -39,11 +39,21 @@ std::string activeSongName(SawbladeProcessor& p) {
   return fs::path(s.folder).filename().string();
 }
 
+void toggleRecording(SawbladeProcessor& p) {
+  auto& r = p.recorder();
+  if (r.state() == TakeRecorder::State::Idle) r.start(p.playAlong().activeStemsDir());
+  else r.stop();
+}
+
+std::string recordUnavailableReason(SawbladeProcessor& p) {
+  return p.recorder().state() == TakeRecorder::State::Finalizing ? "The last take is still being saved." : std::string();
+}
+
 MatchPlan planMatch(SawbladeProcessor& p) {
   MatchPlan plan;
   const std::string folder = p.playAlong().activeStemsDir();
   if (folder.empty()) {
-    plan.message = "Load a song in PLAY ALONG first: its stems folder is the reference.";
+    plan.message = "Load a song first: its guitar stem is the reference.";
     return plan;
   }
   plan.reference = chooseReferenceFile(folder);
@@ -53,7 +63,7 @@ MatchPlan planMatch(SawbladeProcessor& p) {
   }
   plan.take = selectedTake(p);
   if (!plan.take) {
-    plan.message = "Record a take and choose it with USE FOR MATCH.";
+    plan.message = "Record or import a DI first.";
     return plan;
   }
   plan.request.di = plan.take->wav;

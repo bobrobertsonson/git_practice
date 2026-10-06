@@ -127,8 +127,7 @@ struct PlayAlongPanel::Impl {
   std::uint64_t seenVersion = ~std::uint64_t{0};
   int refreshTick = 0;
   juce::String notice;
-  juce::String pickNotice;  // a rejected pick, shown in the status label for a few seconds
-  std::uint32_t pickNoticeUntil = 0;
+  song_input::PickNotice pickNotice;  // a rejected pick, shown in the status label for a few seconds
   std::uint32_t noticeUntil = 0;
   juce::Slider seek, bpm, level, offset;
   double barProgress = 0.0;
@@ -178,20 +177,7 @@ struct PlayAlongPanel::Impl {
       l->setInterceptsMouseClicks(false, false);
       owner.addAndMakeVisible(*l);
     }
-    fetchField.setName("fetchCommand");
-    fetchField.setMultiLine(true, true);  // word-wrapped: the whole command is visible
-    fetchField.setReturnKeyStartsNewLine(false);
-    fetchField.setScrollbarsShown(false);
-    fetchField.setIndents(3, 1);
-    fetchField.setBorder(juce::BorderSize<int>(1));
-    fetchField.setReadOnly(true);
-    fetchField.setCaretVisible(false);
-    fetchField.setSelectAllWhenFocused(true);
-    fetchField.setFont(L::monoFont(9.0f));
-    fetchField.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff141210));
-    fetchField.setColour(juce::TextEditor::textColourId, L::text());
-    fetchField.setColour(juce::TextEditor::outlineColourId, L::chipBorder());
-    fetchField.setTitle("Install command");
+    song_input::styleFetchField(fetchField);
     fetchField.setVisible(false);
     owner.addChildComponent(fetchField);
     owner.addChildComponent(fetchCopy);
@@ -307,9 +293,7 @@ struct PlayAlongPanel::Impl {
 
   void wireBand() {
     rec.onClick = [this] {
-      auto& r = proc.recorder();
-      if (r.state() == TakeRecorder::State::Idle) r.start(pa().activeStemsDir());
-      else r.stop();
+      toggleRecording(proc);  // shared with the MATCH screen's REC / STOP
       refreshBand();
     };
     useForMatch.onClick = [this] {
@@ -516,63 +500,23 @@ struct PlayAlongPanel::Impl {
     song.setColour(juce::Label::textColourId, st.state == PlayAlong::LoadStatus::State::Ready ? L::text() : L::dimText());
 
     // status line
-    juce::String msg;
-    juce::Colour col = L::dimText();
-    switch (st.state) {
-      case PlayAlong::LoadStatus::State::Separating: {
-        msg = "Separating " + juce::String(juce::roundToInt(st.separationFraction * 100.0)) + "%";
-        if (st.separationEtaSeconds >= 0.0) msg += "  (about " + juce::String(juce::roundToInt(st.separationEtaSeconds)) + " s left)";
-        col = L::warning();
-        break;
-      }
-      case PlayAlong::LoadStatus::State::NotSeparated: msg = juce::String(st.message); col = L::warning(); break;
-      case PlayAlong::LoadStatus::State::Cancelled: msg = "Separation cancelled."; break;
-      case PlayAlong::LoadStatus::State::Loading: msg = "Loading stems..."; col = L::warning(); break;
-      case PlayAlong::LoadStatus::State::Failed: msg = juce::String(st.message); col = L::error(); break;
-      case PlayAlong::LoadStatus::State::Ready:
-        if (!st.warnings.empty()) {
-          msg = juce::String(st.warnings.front());
-          col = L::warning();
-        } else if (st.suggestedLevelDb) {
-          msg = "Level set to " + juce::String(*st.suggestedLevelDb, 1) + " dB to match the rig. Adjust to taste.";
-        } else if (st.otherMappedToGuitar && (standalone || s.hostSync)) {
-          msg = "4-stem song: 'other' is treated as the guitar.";
-        }
-        break;
-      case PlayAlong::LoadStatus::State::None: msg = "Drop a song file or a folder of stems here, or use CHOOSE SONG FILE."; break;
-    }
-    if (st.state == PlayAlong::LoadStatus::State::Ready && msg.isEmpty() && !standalone && !s.hostSync)
-      msg = "Backing is off. Enable SYNC TO HOST to follow the host transport.";
-    if (!st.notice.empty()) {
-      msg = juce::String(st.notice);
-      col = L::error();
-    }
-    if (pickNotice.isNotEmpty() && juce::Time::getMillisecondCounter() < pickNoticeUntil) {
-      msg = pickNotice;
-      col = L::error();
-    }
-    // A missing model: a short line in the status row (full message in the tooltip), then the complete command in a
-    // wrapped, selectable field below it, with COPY in the status row.
-    const bool showFetch = st.state == PlayAlong::LoadStatus::State::Failed && st.modelMissing && !st.fetchCommand.empty() &&
-                           pickNotice.isEmpty() && st.notice.empty();
-    status.setText(showFetch ? juce::String("Separation model not installed. Run this from the repository root:") : msg,
-                   juce::dontSendNotification);
-    status.setTooltip(msg);
-    bool relayout = showFetch != fetchShown;
-    if (showFetch && fetchField.getText() != juce::String(st.fetchCommand)) {
-      fetchField.setText(juce::String(st.fetchCommand), juce::dontSendNotification);
+    const auto line = song_input::statusLine(st, standalone, s.hostSync, pickNotice.active(), "Drop a song file or a folder of stems here, or use CHOOSE SONG FILE.");
+    status.setText(line.text, juce::dontSendNotification);
+    status.setTooltip(line.tooltip);
+    bool relayout = line.showFetch != fetchShown;
+    if (line.showFetch && fetchField.getText() != line.fetchCommand) {
+      fetchField.setText(line.fetchCommand, juce::dontSendNotification);
       relayout = true;
     }
-    fetchShown = showFetch;
+    fetchShown = line.showFetch;
     if (relayout) {
       layoutStatus();
-      fitFetchFont();
+      song_input::fitFetchFont(fetchField);
     }
-    fetchField.setVisible(showFetch);
-    fetchCopy.setVisible(showFetch);
-    fetchCopy.setTooltip(showFetch ? "Copy the install command to the clipboard.\n\n" + juce::String(st.message)
-                                   : juce::String("Copy the install command to the clipboard"));
-    status.setColour(juce::Label::textColourId, col);
+    fetchField.setVisible(line.showFetch);
+    fetchCopy.setVisible(line.showFetch);
+    fetchCopy.setTooltip(line.fetchTooltip);
+    status.setColour(juce::Label::textColourId, line.colour);
     const bool separating = st.state == PlayAlong::LoadStatus::State::Separating;
     barProgress = st.separationFraction;
     bar.setVisible(separating);
@@ -617,14 +561,6 @@ struct PlayAlongPanel::Impl {
     if (!level.isMouseButtonDown()) level.setValue(s.levelDb, juce::dontSendNotification);
     if (!offset.isMouseButtonDown()) offset.setValue(s.offsetMs, juce::dontSendNotification);
     refreshBand();
-  }
-
-  // The longest font (9 pt down to 7 pt) at which the whole wrapped command fits the field, no scrolling.
-  void fitFetchFont() {
-    for (float h = 9.0f; h >= 7.0f; h -= 0.5f) {
-      fetchField.applyFontToAllText(SawbladeLookAndFeel::monoFont(h));  // setFont alone leaves the existing text
-      if (fetchField.getTextHeight() <= fetchField.getHeight()) break;
-    }
   }
 
   // The status line, and below it (model missing only) the install command field and its COPY button.
@@ -713,48 +649,18 @@ void PlayAlongPanel::showMatchArea() {
   impl_->refresh();
 }
 
-PlayAlongPanel::ChooserSpec PlayAlongPanel::chooserSpec(ChooserAction a, bool mac) {
-  if (a == ChooserAction::SongFile) {
-    // JUCE matches filters case-insensitively on every platform, so lower-case extensions cover .WAV too.
-    // On macOS the filter is "*": JUCE then passes allowedFileTypes = nil and its panel delegate matches every
-    // file, so neither AppKit mechanism can disable a .wav; handlePicked() validates the pick instead.
-    const juce::String filter = mac ? juce::String("*") : juce::String("*.wav;*.mp3;*.flac;*.m4a;*.aif;*.aiff;*.aac;*.ogg");
-    return {"Choose a song file", filter, juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles};
-  }
-  return {"Choose a folder of separated stems", juce::String(),
-          juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories};
-}
+PlayAlongPanel::ChooserSpec PlayAlongPanel::chooserSpec(ChooserAction a, bool mac) { return song_input::chooserSpec(a, mac); }
 
 bool PlayAlongPanel::handlePicked(ChooserAction a, const juce::File& f) {
-  if (f == juce::File()) return false;  // cancelled
-  const bool ok = a == ChooserAction::SongFile ? (f.existsAsFile() && isSongFileName(f.getFullPathName().toStdString()))
-                                               : f.isDirectory();
-  if (!ok) {
-    // Rejected before loadSong, which would treat a non-song name as a folder; the current song stays loaded.
-    impl_->pickNotice = a == ChooserAction::SongFile
-                            ? "Not a song file: choose an mp3, wav, flac, m4a, aif, aac or ogg file."
-                            : "Not a folder: choose a folder of separated stems.";
-    impl_->pickNoticeUntil = juce::Time::getMillisecondCounter() + 8000;
-    impl_->refresh();
-    return false;
-  }
-  impl_->pickNotice.clear();
-  return impl_->pa().loadSong(f.getFullPathName().toStdString(), /*userInitiated=*/true);  // false: refused, nothing loads
+  const bool loaded = song_input::handlePicked(impl_->pa(), a, f, impl_->pickNotice);
+  if (f != juce::File() && !loaded) impl_->refresh();  // a rejected pick says why at once
+  return loaded;
 }
 
-bool PlayAlongPanel::isLoadableDrop(const juce::StringArray& files) {
-  for (const auto& f : files)
-    if (juce::File(f).isDirectory() || isSongFileName(f.toStdString())) return true;
-  return false;
-}
+bool PlayAlongPanel::isLoadableDrop(const juce::StringArray& files) { return song_input::isLoadableDrop(files); }
 
 bool PlayAlongPanel::loadDroppedFiles(SawbladeProcessor& proc, const juce::StringArray& files) {
-  for (const auto& f : files) {
-    if (!juce::File(f).isDirectory() && !isSongFileName(f.toStdString())) continue;
-    proc.playAlong().loadSong(f.toStdString(), /*userInitiated=*/true);
-    return true;
-  }
-  return false;
+  return song_input::loadDroppedFiles(proc.playAlong(), files);
 }
 
 bool PlayAlongPanel::isInterestedInFileDrag(const juce::StringArray& files) { return isLoadableDrop(files); }
@@ -762,9 +668,7 @@ bool PlayAlongPanel::isInterestedInFileDrag(const juce::StringArray& files) { re
 void PlayAlongPanel::filesDropped(const juce::StringArray& files, int, int) { loadDroppedFiles(impl_->proc, files); }
 
 void PlayAlongPanel::launchChooser(ChooserAction a) {
-  const ChooserSpec spec = chooserSpec(a);
-  impl_->chooser = std::make_unique<juce::FileChooser>(spec.title, juce::File(), spec.filter);
-  impl_->chooser->launchAsync(spec.flags, [this, a](const juce::FileChooser& fc) { handlePicked(a, fc.getResult()); });
+  song_input::launchChooser(impl_->chooser, a, [this, a](const juce::File& f) { handlePicked(a, f); });
 }
 
 void PlayAlongPanel::chooseSongFile() { launchChooser(ChooserAction::SongFile); }

@@ -443,6 +443,14 @@ the plugin state holds whichever side is playing.
 - *Top bar.* In Standalone the top-bar **MATCH** button opens the match screen directly. In plugin mode it opens the
   play-along panel (its record + match band) and shows the same "MATCH runs in the Standalone app: open the Standalone app."
   note as the panel's MATCH. EXPORT NAM in the top bar opens the export panel (phase 12).
+- *The screen holds its own inputs (v0.2.1 Task D).* Left column: **1 - REFERENCE SONG** (SONG FILE... / STEMS FOLDER...,
+  a drop anywhere on the screen, the separation progress, a refused folder and the model-missing install command in place),
+  **2 - YOUR DI** (REC / STOP on the same recorder as the take band, and a take picker, newest first: choosing a take makes
+  it the match DI, the same `MatchSettings` selection the band's USE FOR MATCH sets; a take that finishes while the screen is
+  open becomes the DI; the slot right of REC / STOP is reserved for IMPORT DI...), then the tools and **START MATCH**. START
+  MATCH is enabled only with a song and a DI; its caption says what is missing ("load a song first", then "record or import a
+  DI"). The pickers, validation, drops and status line are `SongInput.*`, shared with the play-along panel. REC needs nothing
+  but a prepared recorder (no song, no host transport): a take without a song has no position in it and the matcher searches.
 
 **EXPORT NAM** moved to its own panel in phase 12 (see "NAM export (phase 12)" below); `MatchScreen` is MATCH only. The
 export source (the auditioned / applied candidate's resolved file, else the current preset written to `<jobs>/inputs/`) and
