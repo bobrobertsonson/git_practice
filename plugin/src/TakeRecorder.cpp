@@ -359,14 +359,14 @@ bool TakeRecorder::importTake(const std::vector<float>& mono, double sampleRate,
     return false;
   };
   if (mono.empty() || !(sampleRate > 0.0)) return fail("There is no audio to import.");
+  fs::path wav, jsonPath;
+  std::error_code ec;
   try {
   const fs::path dir = takesDir();
-  std::error_code ec;
   fs::create_directories(dir, ec);
   std::string base = sanitizeName(fs::path(info.source).stem().string());
   if (base.empty()) base = takeStamp();
   std::string nm;
-  fs::path wav, jsonPath;
   std::ofstream f;
   {
     // Name check and file creation under one lock: two imports never pick the same name.
@@ -416,8 +416,10 @@ bool TakeRecorder::importTake(const std::vector<float>& mono, double sampleRate,
   if (name) *name = nm;
   return true;
   } catch (const std::exception& e) {
+    if (!wav.empty()) fs::remove(wav, ec);  // no orphan WAV that would block the name
     return fail(std::string("Import failed: ") + e.what());
   } catch (...) {
+    if (!wav.empty()) fs::remove(wav, ec);
     return fail("Import failed: unexpected error.");
   }
 }
