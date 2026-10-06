@@ -176,8 +176,23 @@ The Task B boost variant and post-cab HP/LP are always in the search (quick and 
   `~/.cache/sawblade/ir_index.json` keyed by (path, size, mtime) so an unchanged file is not re-hashed; dedupe by content
   sha256 (first path wins, the others listed as aliases). Tags from folder/file names (case-insensitive token match:
   cab/speaker e.g. V30, G12T75, Greenback, 1960, Mesa, OS/standard; mic e.g. SM57, MD421, R121, 414, SM58; position
-  e.g. cap, edge, cone, off-axis, distance in inches). Unreadable files or IRs longer than 2 s / shorter than 2 ms are
-  skipped and counted in the report, never fatal.
+  e.g. cap, edge, cone, off-axis, distance in inches). Never fatal per file:
+  - Paths with spaces/unicode, nested pack folders, symlink loops (resolve, visit each real dir once).
+  - Formats: `.wav`, `.aif`/`.aiff`, `.flac` (soundfile); everything else is counted by extension as `not-audio`, not an
+    error. Unreadable/corrupt files are rejected with the reason.
+  - Multi-channel: left channel used (same as the core), recorded as `channels: N, used: left`.
+  - Length: IRs > 2 s are **kept** and truncated to 2 s like the core, recorded `truncated: true` with the original length;
+    < 2 ms or all-zero/silent rejected (`too-short`, `silent`).
+  - Duplicates: exact (content sha256) and **near** duplicates, e.g. the same IR at 44.1/48/96 kHz: resample to 48 kHz,
+    truncate at 2 s, L2-normalise, align by the peak, and treat as duplicates when the waveform correlation is >= 0.999 over
+    the first 50 ms. Keep the 48 kHz (else the highest-rate) copy and list the rest as aliases with the reason.
+- One-time index / sanity command (for the user's Mac, run before matching):
+  `python -m sawblade_match.matcher.irlib --scan DIR [--scan DIR ...] [--json OUT]` prints files seen, audio files, accepted,
+  exact duplicates, near duplicates, rejected by reason (with up to 20 example paths each), truncated count, rate/channel
+  histograms, and tag coverage (% with cab/speaker, mic, position tags; top 15 values each). Exit 0 unless no IR is
+  accepted. Same code path as `--ir-dir` (the index is shared).
+- Tests: a tmp tree with spaces and nesting, a stereo IR, a 3 s IR, a silent file, a `.txt`, a corrupt `.wav`, and the same
+  IR at 44.1 and 48 kHz → the counts above are exact.
 - Preset reference: `{"file": <absolute path>, "sha256": ..., "source": {"provider": "local", "id": <sha256[:16]>,
   "title": <file stem>, "license": "user-owned"}}`. Check that the core parser accepts `provider: "local"` (the cache
   fallback is tone3000-only, so a moved file fails cleanly). If it rejects it, stop and tell the lead (that would be a
