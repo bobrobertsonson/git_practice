@@ -84,15 +84,8 @@ class SawbladeEditor::Content : public juce::Component {
     ab_.addMouseListener(this, false);
     prev_.onClick = [this] { stepPreset(-1); };
     next_.onClick = [this] { stepPreset(+1); };
-    configure(match_, "MATCH", "Standalone app: open the MATCH screen. In a plugin: open the play-along panel's record + match area (MATCH runs in the Standalone app)", false);
-    match_.onClick = [this] {
-      if (processor_.matchEnabled()) {
-        openMatchScreen();
-        return;
-      }
-      setPlayAlongOpen(true);  // plugin mode: the panel's note says to open the Standalone app
-      panel_->showMatchArea();
-    };
+    configure(match_, "MATCH", "Open the MATCH screen: find the blend that sounds like the loaded song, from a DI take", false);
+    match_.onClick = [this] { openMatchScreen(); };
     configure(export_, "EXPORT NAM", "Train a NAM model of this rig for a loader pedal", false);
     export_.onClick = [this] { openExportPanel(); };
     configure(playAlong_, "PLAY ALONG", "Show / hide the play-along panel: a backing track from separated stems to play over", false);
@@ -684,19 +677,10 @@ void SawbladeEditor::openExportPanel() { content_->openExportPanel(); }
 bool SawbladeEditor::exportPanelOpen() const { return content_->exportPanelOpen(); }
 ExportPanel& SawbladeEditor::exportPanel() { return content_->exportPanel(); }
 
-bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) {
-  for (const auto& f : files)
-    if (juce::File(f).isDirectory() || isSongFileName(f.toStdString())) return true;
-  return false;
-}
+bool SawbladeEditor::isInterestedInFileDrag(const juce::StringArray& files) { return PlayAlongPanel::isLoadableDrop(files); }
 
 void SawbladeEditor::filesDropped(const juce::StringArray& files, int, int) {
-  for (const auto& f : files) {
-    if (!juce::File(f).isDirectory() && !isSongFileName(f.toStdString())) continue;
-    processor_.playAlong().loadSong(f.toStdString(), /*userInitiated=*/true);
-    setPlayAlongOpen(true);
-    return;
-  }
+  if (PlayAlongPanel::loadDroppedFiles(processor_, files)) setPlayAlongOpen(true);
 }
 
 }  // namespace sawblade::plugin

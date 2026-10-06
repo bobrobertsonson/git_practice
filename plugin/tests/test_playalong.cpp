@@ -4,10 +4,13 @@
 #include <atomic>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <memory>
 #include <thread>
 
 #include "PlayAlong.h"
 #include "onnx_synth.h"
+#include "sawblade/model_store.h"
+#include "sawblade/stem_set.h"
 #include "sawblade/sha256.h"
 #include "processor_harness.h"
 #include "sawblade/loudness.h"
@@ -37,6 +40,10 @@ fs::path writeSong(const fs::path& root, const std::string& name, const Stems& d
   const fs::path d = root / name;
   fs::create_directories(d);
   writeWavFloat32Stereo(d / "drums.wav", kFs, drums.l, drums.r);
+  // A second stem, digital silence: a folder needs two stems to be accepted (Task F), and adding zeros
+  // leaves every sample and the backing loudness of the drums unchanged.
+  const std::vector<float> zeros(drums.l.size(), 0.0f);
+  writeWavFloat32Stereo(d / "bass.wav", kFs, zeros, zeros);
   return d;
 }
 
@@ -538,18 +545,22 @@ TEST_CASE("PlayAlong: a missing, empty or unreadable folder shows a message and 
   CHECK(pa.loadStatus().message.find("not found") != std::string::npos);
   CHECK(pa.settings().folder == s.folder);  // kept: the drive may be mounted later
 
+  // A folder with no stems is refused before anything changes (Task F); the loader's own errors are reached
+  // with a stem set that looks right but cannot be decoded.
   const fs::path empty = t.dir / "empty";
   fs::create_directories(empty);
+  const std::string keptFolder = pa.settings().folder;
   REQUIRE_NOTHROW(pa.loadFolder(empty.string(), true));
   REQUIRE(pa.waitForLoader());
-  CHECK(pa.loadStatus().state == State::Failed);
-  CHECK(pa.loadStatus().message.find("No .wav or .flac stems") != std::string::npos);
+  CHECK(pa.loadStatus().notice.find("not a set of separated stems") != std::string::npos);
+  CHECK(pa.settings().folder == keptFolder);
 
   { std::ofstream(empty / "drums.wav") << "garbage"; }
+  { std::ofstream(empty / "bass.wav") << "garbage"; }
   REQUIRE_NOTHROW(pa.loadFolder(empty.string(), true));
   REQUIRE(pa.waitForLoader());
   CHECK(pa.loadStatus().state == State::Failed);
-  CHECK(pa.loadStatus().message.find("drums.wav") != std::string::npos);
+  CHECK(pa.loadStatus().message.find("bass.wav") != std::string::npos);
 
   // The audio path is unaffected.
   const auto x = noise(2048, 3, 0.4f);
@@ -564,6 +575,74 @@ TEST_CASE("PlayAlong: a missing, empty or unreadable folder shows a message and 
   REQUIRE(pa.waitForLoader());
   CHECK(pa.loadStatus().state == State::Ready);
   CHECK(pa.loadStatus().message.empty());
+}
+
+TEST_CASE("PlayAlong: a folder that is not a stem set is refused and the loaded song stays (Task F)", "[playalong][stems][refuse]") {
+  using State = PlayAlong::LoadStatus::State;
+  const std::string msg = "This folder is not a set of separated stems. Choose the song file (mp3, wav, flac, m4a) instead.";
+  TempDir t;
+  Host h(kFs, 512);
+  PlayAlong& pa = h.p.playAlong();
+  pa.setStandalone(true);
+  h.prepare(kFs, 512);
+  const std::vector<float> x(4800, 0.1f);
+  auto folderWith = [&](const char* name, std::initializer_list<const char*> wavs, std::initializer_list<const char*> junk) {
+    const fs::path d = t.dir / name;
+    fs::create_directories(d);
+    for (const char* w : wavs) writeWavFloat32Stereo(d / w, kFs, x, x);
+    for (const char* j : junk) { std::ofstream(d / j) << "x"; }
+    return d;
+  };
+
+  // A real stems folder loads (piano and the guitars alias are recognised; non-audio extras are ignored).
+  const fs::path good = folderWith("good", {"drums.wav", "bass.wav", "Guitars.WAV", "piano.wav"}, {"notes.txt", "x.json", ".DS_Store"});
+  pa.loadFolder(good.string(), true);
+  REQUIRE(pa.waitForLoader());
+  REQUIRE(pa.loadStatus().state == State::Ready);
+  CHECK(pa.loadStatus().notice.empty());
+  CHECK(pa.loadStatus().warnings.empty());  // piano: no unrecognised-name warning
+  const std::string songName = pa.loadStatus().songName;
+  REQUIRE(pa.settings().folder == good.string());
+
+  const fs::path mixed = folderWith("mixed", {"drums.wav", "bass.wav", "holiday.wav"}, {});
+  const fs::path mixedMp3 = folderWith("mixed2", {"drums.wav", "bass.wav"}, {"holiday.mp3"});
+  const fs::path unrelated = folderWith("unrelated", {"a.wav", "b.wav"}, {});
+  const fs::path single = folderWith("single", {"drums.wav"}, {"notes.txt"});
+  const fs::path nothing = folderWith("nothing", {}, {"notes.txt"});
+  for (const fs::path& bad : {mixed, mixedMp3, unrelated, single, nothing}) {
+    {
+      pa.loadFolder(bad.string(), true);
+      REQUIRE(pa.waitForLoader());
+      const auto st = pa.loadStatus();
+      CHECK(st.notice == msg);
+      CHECK(st.state == State::Ready);  // the previous song, still loaded
+      CHECK(st.songName == songName);
+      CHECK(pa.settings().folder == good.string());
+      CHECK(pa.settings().songFile.empty());
+      run(h, 2, 512);  // the audio thread adopts a loaded set only inside process()
+      CHECK(pa.snapshot().hasSet);
+      // loadSong with a folder path goes through the same check
+      pa.loadSong(bad.string(), true);
+      REQUIRE(pa.waitForLoader());
+      CHECK(pa.loadStatus().notice == msg);
+      CHECK(pa.settings().folder == good.string());
+    }
+  }
+
+  // The next accepted load clears the notice.
+  CHECK_FALSE(pa.loadFolder(mixed.string(), true));
+  CHECK(pa.loadFolder(good.string(), true));
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().notice.empty());
+  CHECK(pa.loadStatus().state == State::Ready);
+
+  // A restored state is not checked: a saved folder loads as before.
+  PlayAlongSettings s;
+  s.folder = single.string();
+  pa.restore(s);
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().notice.empty());
+  CHECK(pa.loadStatus().state == State::Ready);
 }
 
 TEST_CASE("PlayAlong: 4-stem other is the guitar by default, KEEP KEYS keeps it", "[playalong][role]") {
@@ -901,6 +980,10 @@ TEST_CASE("PlayAlong: a song file is separated, cached and loaded like a folder"
   CHECK(pa.settings().songFile == song.string());
   CHECK(pa.settings().folder.empty());
   CHECK_FALSE(pa.settings().isDefault());
+  // The folder the plugin itself wrote for the separated song passes the stem-folder rule (Task F), so a
+  // saved state or a hand-picked cache folder is never refused.
+  CHECK(sawblade::classifyStemFolder(pa.activeStemsDir()).ok);
+  CHECK(sawblade::classifyStemFolder(pa.activeStemsDir()).recognised >= 2);
 
   pa.loadSong(song.string(), true);  // second load: the session already has the stems
   REQUIRE(pa.waitForLoader());
@@ -941,7 +1024,7 @@ TEST_CASE("PlayAlong: a state restore with a stem-cache miss does not separate; 
   pa.restore(s);
   REQUIRE(pa.waitForLoader());
   CHECK(pa.loadStatus().state == State::NotSeparated);
-  CHECK(pa.loadStatus().message.find("LOAD SONG") != std::string::npos);
+  CHECK(pa.loadStatus().message.find("CHOOSE SONG FILE") != std::string::npos);
   CHECK(pa.settings().songFile == song.string());  // kept
   CHECK_FALSE(fs::exists(t.dir / "stems"));          // nothing was separated
   pa.loadSong(song.string(), true);
@@ -963,7 +1046,9 @@ TEST_CASE("PlayAlong: a missing separation model gives the fetch command and no 
   const auto st = pa.loadStatus();
   CHECK(st.state == State::Failed);
   CHECK(st.modelMissing);
-  CHECK(st.fetchCommand == "match/.venv/bin/sawblade-models fetch --model htdemucs_6s");
+  CHECK(st.fetchCommand == sawblade::separationModelInstallCommand(sawblade::SeparationModel::Htdemucs6s));
+  CHECK(st.fetchCommand.find("pip install") != std::string::npos);
+  CHECK(st.fetchCommand.find("sawblade-models fetch --model htdemucs_6s") != std::string::npos);
   CHECK(st.message.find(st.fetchCommand) != std::string::npos);
   // A missing song file is a plain message.
   pa.loadSong((t.dir / "gone.mp3").string(), true);
@@ -1042,3 +1127,35 @@ TEST_CASE("PlayAlong: cancel mid-job, a folder replaces a job, and destruction m
   }
 }
 #endif
+
+TEST_CASE("PlayAlong: a refusal notice survives an in-flight load, expires, and loadFolder reports it (Task F)", "[playalong][stems][refuse]") {
+  using State = PlayAlong::LoadStatus::State;
+  TempDir t;
+  Host h(kFs, 512);
+  PlayAlong& pa = h.p.playAlong();
+  auto now = std::make_shared<PlayAlong::Clock::time_point>(PlayAlong::Clock::now());
+  pa.setClock([now] { return *now; });
+  const fs::path good = writeSong(t.dir, "good", rampStems(48000 * 20));
+  const fs::path bad = t.dir / "bad";
+  fs::create_directories(bad);
+  writeWavFloat32Stereo(bad / "a.wav", kFs, std::vector<float>(100, 0.1f), std::vector<float>(100, 0.1f));
+
+  CHECK(pa.loadFolder(good.string(), true));  // accepted: true
+  CHECK_FALSE(pa.loadFolder(bad.string(), true));  // refused while the load is (probably) still running
+  CHECK_FALSE(pa.loadSong(bad.string(), true));
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == State::Ready);  // the job finished and replaced status_ ...
+  CHECK(pa.loadStatus().notice.find("not a set of separated stems") != std::string::npos);  // ... the notice stays
+  CHECK(pa.settings().folder == good.string());
+
+  *now += std::chrono::seconds(7);
+  CHECK_FALSE(pa.loadStatus().notice.empty());
+  *now += std::chrono::seconds(2);  // past 8 s
+  CHECK(pa.loadStatus().notice.empty());
+
+  CHECK_FALSE(pa.loadFolder(bad.string(), true));
+  CHECK_FALSE(pa.loadStatus().notice.empty());
+  CHECK(pa.loadFolder(good.string(), true));  // the next accepted load clears it
+  CHECK(pa.loadStatus().notice.empty());
+  REQUIRE(pa.waitForLoader());
+}

@@ -169,7 +169,7 @@ TEST_CASE("CLI --backing: unrecognised stems warn, errors map to exit codes", "[
   const fs::path stems = t.dir / "stems";
   fs::create_directories(stems);
   writeWavFloat32(stems / "bass.wav", 48000.0, noise(1000, 4));
-  writeWavFloat32(stems / "piano.wav", 48000.0, noise(1000, 5));
+  writeWavFloat32(stems / "keys.wav", 48000.0, noise(1000, 5));
   REQUIRE(runCli(base + " --backing " + q(stems) + " --guitar-stem loud", err) == 2);
   REQUIRE(runCli(base + " --backing " + q(stems) + " --backing-level 13", err) == 2);
   REQUIRE(runCli(base + " --backing " + q(stems) + " --backing-level -61", err) == 2);
@@ -189,8 +189,8 @@ TEST_CASE("CLI --backing: unrecognised stems warn, errors map to exit codes", "[
   REQUIRE(runCli(base + " --backing " + q(stems) + " --other-role other --report " + q(t / "r.json"), err) == 0);
   const json rep = json::parse(slurp(t / "r.json"));
   REQUIRE(rep["backing"]["warnings"].size() == 1);
-  REQUIRE(rep["backing"]["warnings"][0].get<std::string>().find("piano.wav") != std::string::npos);
-  REQUIRE(slurp(err).find("piano.wav") != std::string::npos);
+  REQUIRE(rep["backing"]["warnings"][0].get<std::string>().find("keys.wav") != std::string::npos);
+  REQUIRE(slurp(err).find("keys.wav") != std::string::npos);
   REQUIRE(rep["backing"]["stems"].size() == 2);  // bass, other
 
   // Without --backing the output stays mono and the report has no backing object.

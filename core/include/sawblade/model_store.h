@@ -22,6 +22,11 @@ const char* separationModelPinnedSha256(SeparationModel m) noexcept;
 // The exact command that makes the model available, run from the repository root:
 // "match/.venv/bin/sawblade-models fetch --model htdemucs_6s".
 std::string separationModelFetchCommand(SeparationModel m);
+// The complete one-line command that installs the `models` extra into match/.venv and then fetches the
+// model, run from the repository root: "match/.venv/bin/pip install -e 'match[models]' -c
+// match/constraints-separation.txt && " + separationModelFetchCommand(m). The Missing / Mismatch /
+// Unreadable messages and the play-along panel both use it, so they cannot drift.
+std::string separationModelInstallCommand(SeparationModel m);
 
 struct ModelStatus {
   enum class State { Ok, Missing, Mismatch, Unreadable };

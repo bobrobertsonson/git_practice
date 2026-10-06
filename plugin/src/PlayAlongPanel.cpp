@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "ImportDialog.h"
 #include "MatchGlue.h"
 #include "PlayAlong.h"
 #include "SawbladeLookAndFeel.h"
@@ -88,8 +89,7 @@ struct TakeRows : juce::ListBoxModel {
     g.drawText(juce::String(t.name), 8, 0, 230, h, juce::Justification::centredLeft, true);
     g.setColour(L::dimText());
     g.drawText(juce::String(t.lengthSeconds(), 1) + " s", 240, 0, 60, h, juce::Justification::centredRight);
-    const auto off = t.offsetMs();
-    g.drawText(off ? juce::String("@ ") + juce::String(*off / 1000.0, 1) + " s" : juce::String("no song"), 306, 0, 90, h, juce::Justification::centredLeft);
+    g.drawText(juce::String(takeOriginText(t)), 306, 0, 90, h, juce::Justification::centredLeft);  // "IMPORTED" / "@ 12.3 s" / "no song"
     if (t.overruns > 0) {
       g.setColour(L::warning());
       g.drawText(juce::String(static_cast<int>(t.overruns)) + " overrun" + (t.overruns > 1 ? "s" : ""), 396, 0, 78, h, juce::Justification::centredLeft);
@@ -99,6 +99,36 @@ struct TakeRows : juce::ListBoxModel {
       g.setFont(L::labelFont(10.0f));
       g.drawText("FOR MATCH", w - 78, 0, 72, h, juce::Justification::centredRight);
     }
+  }
+};
+
+// The take list also takes a dropped WAV / AIFF / FLAC file: that is an IMPORT DI, not a song (the deepest interested component under
+// the mouse gets a drop, so a file dropped here never reaches the panel's song drop).
+struct TakeListBox : juce::ListBox, juce::FileDragAndDropTarget {
+  using juce::ListBox::ListBox;
+  std::function<void(const juce::StringArray&)> onFiles;
+  bool hover = false;
+  bool isInterestedInFileDrag(const juce::StringArray& files) override { return DiImporter::isImportableDrop(files); }
+  void fileDragEnter(const juce::StringArray&, int, int) override {
+    hover = true;
+    repaint();
+  }
+  void fileDragExit(const juce::StringArray&) override {
+    hover = false;
+    repaint();
+  }
+  void filesDropped(const juce::StringArray& files, int, int) override {
+    hover = false;
+    repaint();
+    if (onFiles) onFiles(files);
+  }
+  void paintOverChildren(juce::Graphics& g) override {
+    juce::ListBox::paintOverChildren(g);
+    if (!hover) return;
+    g.setColour(L::saw().withAlpha(0.18f));
+    g.fillRect(getLocalBounds());
+    g.setColour(L::saw());
+    g.drawRect(getLocalBounds(), 2);
   }
 };
 
@@ -113,16 +143,23 @@ struct PlayAlongPanel::Impl {
 
   juce::Label title, song, status, position, loopRead, standaloneNote;
   juce::Label capLoop, capCount, capGuitar, capLevel, capOffset;
-  juce::TextButton load, cancel, model, keepKeys, play, setA, setB, loop, countIn, mute, ghost, full, sync;
+  // Model-missing error: the full install command in a read-only, selectable field plus a COPY button.
+  juce::TextEditor fetchField;
+  juce::TextButton fetchCopy;
+  bool fetchShown = false;
+  juce::TextButton chooseSong, chooseStems, cancel, model, keepKeys, play, setA, setB, loop, countIn, mute, ghost, full, sync;
   // record / match band
   juce::Label capTakes, recTime, recInfo, emptyNote;
-  juce::TextButton rec, renameTake, deleteTake, useForMatch, matchBtn, exportBtn;
+  juce::TextButton rec, importBtn, renameTake, deleteTake, useForMatch, matchBtn, exportBtn;
+  std::unique_ptr<DiImporter> importer;  // IMPORT DI...: the chooser, the dialog and drops onto the take list
+  std::string pendingSelect;             // a take just imported: the list selects it on the next rescan
   StatusDot recDot;
   TakeRows takeRows;
-  juce::ListBox takeList{"Takes", &takeRows};
+  TakeListBox takeList{"Takes", &takeRows};
   std::uint64_t seenVersion = ~std::uint64_t{0};
   int refreshTick = 0;
   juce::String notice;
+  song_input::PickNotice pickNotice;  // a rejected pick, shown in the status label for a few seconds
   std::uint32_t noticeUntil = 0;
   juce::Slider seek, bpm, level, offset;
   double barProgress = 0.0;
@@ -172,11 +209,20 @@ struct PlayAlongPanel::Impl {
       l->setInterceptsMouseClicks(false, false);
       owner.addAndMakeVisible(*l);
     }
+    song_input::styleFetchField(fetchField);
+    fetchField.setVisible(false);
+    owner.addChildComponent(fetchField);
+    owner.addChildComponent(fetchCopy);
     owner.addAndMakeVisible(position);
     led.setInterceptsMouseClicks(false, false);
     owner.addAndMakeVisible(led);
 
-    configure(load, "LOAD SONG", "Choose a song file (mp3, wav, flac, m4a: separated into stems on this machine, once, then cached) or a folder of already separated stems (drums, bass, vocals, other, guitar as .wav or .flac). You can also drop either on the plugin.");
+    configure(chooseSong, juce::String::fromUTF8("SONG FILE\xe2\x80\xa6"), "Choose a song file (wav, mp3, flac, m4a, aif, aac, ogg): it is separated into stems on this machine, once, then cached. You can also drop a song file or a stems folder on the plugin.");
+    configure(chooseStems, juce::String::fromUTF8("STEMS FOLDER\xe2\x80\xa6"), "Choose a folder of already separated stems (drums, bass, vocals, other, guitar as .wav or .flac).");
+    chooseSong.setTitle(juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"));  // the accessible name is the full action
+    chooseStems.setTitle(juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6"));
+    configure(fetchCopy, "COPY", "Copy the install command to the clipboard");
+    fetchCopy.setVisible(false);
     configure(cancel, "CANCEL", "Cancel the separation");
     cancel.setVisible(false);
     configure(model, "6-STEM", "Separation model for song files. 6-stem (htdemucs_6s, default) has a guitar stem. 4-stem (htdemucs, fallback): the 'other' stem is treated as the guitar. Click to switch.");
@@ -229,11 +275,12 @@ struct PlayAlongPanel::Impl {
   // --- the record / match band ---------------------------------------------------------------------------------
   void buildBand() {
     caption(capTakes, "TAKES");
-    configure(rec, "REC", "Record the clean input (before the gate) to a take. Press again to stop. Takes are saved in the takes folder with a sidecar that stores where the song was.");
+    configure(rec, "REC", "Record the clean input (before the gate) to a take. Press again to stop. Takes are saved in the takes folder with a sidecar that stores where the song was. In a host: load the song, enable SYNC TO HOST, put Sawblade on the DI track and record while the host plays the DI region.");
+    configure(importBtn, juce::String::fromUTF8("IMPORT DI\xe2\x80\xa6"), "Import a WAV, AIFF or FLAC file (a DI you already have, for example a bounce from your DAW) as a take: it is copied into the takes folder and used for MATCH. You can also drop the file on the take list.");
     configure(renameTake, "RENAME", "Rename the selected take");
     configure(deleteTake, "DELETE", "Delete the selected take (the audio file and its sidecar)");
     configure(useForMatch, "USE FOR MATCH", "Use the selected take as the DI for MATCH");
-    configure(matchBtn, "MATCH", "Find the blend that sounds like the loaded song, from the selected take (Standalone app)");
+    configure(matchBtn, "MATCH", "Find the blend that sounds like the loaded song, from the selected take");
     configure(exportBtn, "EXPORT NAM", "Train a NAM model of the loaded preset for a loader pedal");
     rec.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a1712));
     rec.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb0a0));
@@ -261,7 +308,14 @@ struct PlayAlongPanel::Impl {
     takeList.setColour(juce::ListBox::outlineColourId, L::chipBorder());
     takeList.setOutlineThickness(1);
     takeList.setTitle("Takes");
-    takeList.setTooltip("Recorded DI takes, newest first");
+    takeList.setTooltip("Recorded and imported DI takes, newest first. Drop a WAV, AIFF or FLAC file here to import it.");
+    importer = std::make_unique<DiImporter>(proc, owner);
+    importer->onRejected = [this](const juce::String& why) { showNotice(why); refreshBand(); };
+    importer->onImported = [this](const std::string& name) {
+      pendingSelect = name;
+      refreshBand(true);
+    };
+    takeList.onFiles = [this](const juce::StringArray& files) { importer->handleDrop(files); };
     owner.addAndMakeVisible(takeList);
     owner.addAndMakeVisible(emptyNote);
     wireBand();
@@ -278,10 +332,9 @@ struct PlayAlongPanel::Impl {
   }
 
   void wireBand() {
+    importBtn.onClick = [this] { importer->choose(); };
     rec.onClick = [this] {
-      auto& r = proc.recorder();
-      if (r.state() == TakeRecorder::State::Idle) r.start(pa().activeStemsDir());
-      else r.stop();
+      toggleRecording(proc);  // shared with the MATCH screen's REC / STOP
       refreshBand();
     };
     useForMatch.onClick = [this] {
@@ -326,10 +379,6 @@ struct PlayAlongPanel::Impl {
   }
 
   void matchClicked() {
-    if (!proc.matchEnabled()) {
-      showNotice("MATCH runs in the Standalone app: open the Standalone app.");
-      return;
-    }
     if (owner.onMatch) owner.onMatch();
   }
 
@@ -337,25 +386,17 @@ struct PlayAlongPanel::Impl {
     auto& r = proc.recorder();
     const auto state = r.state();
     const bool busy = state != TakeRecorder::State::Idle;
-    const double rate = r.sampleRate() > 0.0 ? r.sampleRate() : 48000.0;
     rec.setButtonText(state == TakeRecorder::State::Idle ? "REC" : "STOP");
-    rec.setEnabled(state != TakeRecorder::State::Finalizing);
+    rec.setEnabled(recordUnavailableReason(proc).empty());
     recDot.setOn(state == TakeRecorder::State::Recording || state == TakeRecorder::State::Armed);
-    juce::String t;
-    switch (state) {
-      case TakeRecorder::State::Idle: t = "READY"; break;
-      case TakeRecorder::State::Armed: t = "ARMED"; break;
-      case TakeRecorder::State::Recording: t = "REC " + timeText(static_cast<double>(r.recordedSamples()) / rate); break;
-      case TakeRecorder::State::Finalizing: t = "SAVING"; break;
-    }
-    recTime.setText(t, juce::dontSendNotification);
+    recTime.setText(juce::String(recordStateText(proc)), juce::dontSendNotification);
     recTime.setColour(juce::Label::textColourId, state == TakeRecorder::State::Recording ? juce::Colour(0xffff6a5a) : L::dimText());
 
     // The takes on disk: rescanned when the recorder changed them, and every 10 s (other instances / the user's file manager).
     if (force || r.takesVersion() != seenVersion || (++refreshTick % 160) == 0) {
       seenVersion = r.takesVersion();
       auto fresh = r.listTakes();
-      const std::string keep = selectedTakeName();
+      const std::string keep = pendingSelect.empty() ? selectedTakeName() : pendingSelect;
       const std::string match = proc.matchSettings().selectedTake();
       bool same = fresh.size() == takeRows.takes.size() && match == takeRows.matchTake;
       for (std::size_t i = 0; same && i < fresh.size(); ++i)
@@ -371,6 +412,7 @@ struct PlayAlongPanel::Impl {
         if (row >= 0) takeList.selectRow(row, true);
         takeList.repaint();
       }
+      pendingSelect.clear();
     }
     emptyNote.setVisible(takeRows.takes.empty());
     const bool haveSel = !selectedTakeName().empty();
@@ -392,8 +434,6 @@ struct PlayAlongPanel::Impl {
         info = juce::String(static_cast<int>(r.overruns())) + " overruns: the disk could not keep up; the gaps are filled with silence.";
         col = L::warning();
       }
-    } else if (!proc.matchEnabled()) {
-      info = "MATCH: open the Standalone app.";
     } else {
       info = "REC saves the clean input. Choose a take, USE FOR MATCH, then MATCH.";
     }
@@ -407,7 +447,8 @@ struct PlayAlongPanel::Impl {
     rec.setBounds(m, y0 + 14, 96, 36);
     recDot.setBounds(m + 104, y0 + 22, 20, 20);
     recTime.setBounds(m + 128, y0 + 14, 170, 36);
-    recInfo.setBounds(m, y0 + 58, 300, 46);
+    importBtn.setBounds(m, y0 + 54, 130, 24);
+    recInfo.setBounds(m, y0 + 80, 316, 30);
     takeList.setBounds(340, y0 + 26, 500, 78);
     emptyNote.setBounds(340, y0 + 26, 500, 78);
     renameTake.setBounds(856, y0 + 26, 94, 34);
@@ -428,7 +469,9 @@ struct PlayAlongPanel::Impl {
   }
 
   void wire() {
-    load.onClick = [this] { owner.chooseFolder(); };
+    chooseSong.onClick = [this] { owner.chooseSongFile(); };
+    chooseStems.onClick = [this] { owner.chooseStemsFolder(); };
+    fetchCopy.onClick = [this] { juce::SystemClipboard::copyTextToClipboard(fetchField.getText()); };
     cancel.onClick = [this] { pa().cancelSeparation(); };
     model.onClick = [this] { pa().setFourStemModel(!pa().settings().fourStemModel); };
     keepKeys.onClick = [this] { pa().setKeepOther(keepKeys.getToggleState()); };
@@ -486,36 +529,23 @@ struct PlayAlongPanel::Impl {
     song.setColour(juce::Label::textColourId, st.state == PlayAlong::LoadStatus::State::Ready ? L::text() : L::dimText());
 
     // status line
-    juce::String msg;
-    juce::Colour col = L::dimText();
-    switch (st.state) {
-      case PlayAlong::LoadStatus::State::Separating: {
-        msg = "Separating " + juce::String(juce::roundToInt(st.separationFraction * 100.0)) + "%";
-        if (st.separationEtaSeconds >= 0.0) msg += "  (about " + juce::String(juce::roundToInt(st.separationEtaSeconds)) + " s left)";
-        col = L::warning();
-        break;
-      }
-      case PlayAlong::LoadStatus::State::NotSeparated: msg = juce::String(st.message); col = L::warning(); break;
-      case PlayAlong::LoadStatus::State::Cancelled: msg = "Separation cancelled."; break;
-      case PlayAlong::LoadStatus::State::Loading: msg = "Loading stems..."; col = L::warning(); break;
-      case PlayAlong::LoadStatus::State::Failed: msg = juce::String(st.message); col = L::error(); break;
-      case PlayAlong::LoadStatus::State::Ready:
-        if (!st.warnings.empty()) {
-          msg = juce::String(st.warnings.front());
-          col = L::warning();
-        } else if (st.suggestedLevelDb) {
-          msg = "Level set to " + juce::String(*st.suggestedLevelDb, 1) + " dB to match the rig. Adjust to taste.";
-        } else if (st.otherMappedToGuitar && (standalone || s.hostSync)) {
-          msg = "4-stem song: 'other' is treated as the guitar.";
-        }
-        break;
-      case PlayAlong::LoadStatus::State::None: msg = "Drop a song file or a folder of stems here, or LOAD SONG."; break;
+    const auto line = song_input::statusLine(st, standalone, s.hostSync, pickNotice.active(), "Drop a song file or a folder of stems here, or use CHOOSE SONG FILE.");
+    status.setText(line.text, juce::dontSendNotification);
+    status.setTooltip(line.tooltip);
+    bool relayout = line.showFetch != fetchShown;
+    if (line.showFetch && fetchField.getText() != line.fetchCommand) {
+      fetchField.setText(line.fetchCommand, juce::dontSendNotification);
+      relayout = true;
     }
-    if (st.state == PlayAlong::LoadStatus::State::Ready && msg.isEmpty() && !standalone && !s.hostSync)
-      msg = "Backing is off. Enable SYNC TO HOST to follow the host transport.";
-    status.setText(msg, juce::dontSendNotification);
-    status.setTooltip(msg);
-    status.setColour(juce::Label::textColourId, col);
+    fetchShown = line.showFetch;
+    if (relayout) {
+      layoutStatus();
+      song_input::fitFetchFont(fetchField);
+    }
+    fetchField.setVisible(line.showFetch);
+    fetchCopy.setVisible(line.showFetch);
+    fetchCopy.setTooltip(line.fetchTooltip);
+    status.setColour(juce::Label::textColourId, line.colour);
     const bool separating = st.state == PlayAlong::LoadStatus::State::Separating;
     barProgress = st.separationFraction;
     bar.setVisible(separating);
@@ -562,18 +592,34 @@ struct PlayAlongPanel::Impl {
     refreshBand();
   }
 
+  // The status line, and below it (model missing only) the install command field and its COPY button.
+  void layoutStatus() {
+    constexpr int m = 18, stemsW = 138, songW = 112, statusX = 484;
+    const int keepX = kWidth - m - stemsW - 8 - songW - 8 - 104;
+    const int w = keepX - 8 - statusX;  // >= 380 px: the longest hint must not ellipsize
+    if (fetchShown) {
+      status.setBounds(statusX, 1, w - 60, 15);
+      fetchCopy.setBounds(statusX + w - 56, 1, 56, 15);
+      fetchField.setBounds(statusX, 17, w, 34);  // ends at y 51: the transport row starts at 52
+    } else {
+      status.setBounds(statusX, 10, w, 30);
+    }
+    bar.setBounds(statusX, 40, w, 8);
+  }
+
   void layout() {
     constexpr int m = 18;
     const int w = kWidth;
     title.setBounds(m, 10, 110, 30);
     led.setBounds(138, 15, 20, 20);
-    song.setBounds(172, 10, 280, 30);
-    model.setBounds(458, 10, 96, 30);
-    status.setBounds(560, 10, 440, 30);
-    bar.setBounds(560, 40, 440, 8);
-    keepKeys.setBounds(w - m - 120 - 8 - 104, 10, 104, 30);
-    cancel.setBounds(w - m - 120 - 8 - 104, 10, 104, 30);
-    load.setBounds(w - m - 120, 10, 120, 30);
+    song.setBounds(172, 10, 200, 30);
+    model.setBounds(378, 10, 96, 30);
+    constexpr int stemsW = 138, songW = 112, keepX = w - m - stemsW - 8 - songW - 8 - 104;
+    layoutStatus();
+    keepKeys.setBounds(keepX, 10, 104, 30);
+    cancel.setBounds(keepX, 10, 104, 30);
+    chooseSong.setBounds(w - m - stemsW - 8 - songW, 10, songW, 30);
+    chooseStems.setBounds(w - m - stemsW, 10, stemsW, 30);
 
     play.setBounds(m, 52, 86, 34);
     position.setBounds(m + 86 + 10, 52, 168, 34);
@@ -627,21 +673,31 @@ void PlayAlongPanel::resized() { impl_->layout(); }
 
 void PlayAlongPanel::refresh() { impl_->refresh(); }
 
-void PlayAlongPanel::showMatchArea() {
-  if (!impl_->proc.matchEnabled()) impl_->showNotice("MATCH runs in the Standalone app: open the Standalone app.");
-  impl_->refresh();
+DiImporter& PlayAlongPanel::diImporter() { return *impl_->importer; }
+
+PlayAlongPanel::ChooserSpec PlayAlongPanel::chooserSpec(ChooserAction a, bool mac) { return song_input::chooserSpec(a, mac); }
+
+bool PlayAlongPanel::handlePicked(ChooserAction a, const juce::File& f) {
+  const bool loaded = song_input::handlePicked(impl_->pa(), a, f, impl_->pickNotice);
+  if (f != juce::File() && !loaded) impl_->refresh();  // a rejected pick says why at once
+  return loaded;
 }
 
-void PlayAlongPanel::chooseFolder() {
-  impl_->chooser = std::make_unique<juce::FileChooser>("Choose a song file or a folder of separated stems", juce::File(),
-                                                       "*.mp3;*.wav;*.flac;*.m4a;*.aac;*.aif;*.aiff;*.ogg");
-  impl_->chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles |
-                                  juce::FileBrowserComponent::canSelectDirectories,
-                              [this](const juce::FileChooser& fc) {
-                                const juce::File f = fc.getResult();
-                                if (f == juce::File() || !(f.isDirectory() || f.existsAsFile())) return;
-                                impl_->pa().loadSong(f.getFullPathName().toStdString(), /*userInitiated=*/true);
-                              });
+bool PlayAlongPanel::isLoadableDrop(const juce::StringArray& files) { return song_input::isLoadableDrop(files); }
+
+bool PlayAlongPanel::loadDroppedFiles(SawbladeProcessor& proc, const juce::StringArray& files) {
+  return song_input::loadDroppedFiles(proc.playAlong(), files);
 }
+
+bool PlayAlongPanel::isInterestedInFileDrag(const juce::StringArray& files) { return isLoadableDrop(files); }
+
+void PlayAlongPanel::filesDropped(const juce::StringArray& files, int, int) { loadDroppedFiles(impl_->proc, files); }
+
+void PlayAlongPanel::launchChooser(ChooserAction a) {
+  song_input::launchChooser(impl_->chooser, a, [this, a](const juce::File& f) { handlePicked(a, f); });
+}
+
+void PlayAlongPanel::chooseSongFile() { launchChooser(ChooserAction::SongFile); }
+void PlayAlongPanel::chooseStemsFolder() { launchChooser(ChooserAction::StemsFolder); }
 
 }  // namespace sawblade::plugin

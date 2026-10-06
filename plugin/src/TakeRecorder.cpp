@@ -143,6 +143,13 @@ std::optional<TakeInfo> readTakeSidecar(const fs::path& jsonPath) {
       t.stemSampleRate = it->value("stemSampleRate", 0.0);
       t.songFolder = it->value("songFolder", std::string());
     }
+    if (auto it = j.find("imported"); it != j.end() && it->is_object()) {
+      t.imported.present = true;
+      t.imported.source = it->value("source", std::string());
+      t.imported.channel = it->value("channel", std::string("mono"));
+      t.imported.samePerformance = it->value("samePerformance", false);
+      if (auto o = it->find("offsetMs"); o != it->end() && o->is_number()) t.imported.offsetMs = o->get<double>();
+    }
     if (!(t.sampleRate > 0.0)) return std::nullopt;
     return t;
   } catch (...) {
@@ -344,6 +351,77 @@ bool TakeRecorder::removeTake(const std::string& name) {
   const bool b = fs::remove(dir / (name + ".wav"), ec);
   version_.fetch_add(1);
   return a || b;
+}
+
+bool TakeRecorder::importTake(const std::vector<float>& mono, double sampleRate, ImportedInfo info, std::string* name, std::string* error) {
+  auto fail = [&](const std::string& m) {
+    if (error) *error = m;
+    return false;
+  };
+  if (mono.empty() || !(sampleRate > 0.0)) return fail("There is no audio to import.");
+  fs::path wav, jsonPath;
+  std::error_code ec;
+  try {
+  const fs::path dir = takesDir();
+  fs::create_directories(dir, ec);
+  std::string base = sanitizeName(fs::path(info.source).stem().string());
+  if (base.empty()) base = takeStamp();
+  std::string nm;
+  std::ofstream f;
+  {
+    // Name check and file creation under one lock: two imports never pick the same name.
+    std::lock_guard<std::mutex> lk(m_);
+    nm = base;
+    for (int i = 2; fs::exists(dir / (nm + ".wav"), ec) || fs::exists(dir / (nm + ".json"), ec); ++i) nm = base + "-" + std::to_string(i);
+    wav = dir / (nm + ".wav");
+    jsonPath = dir / (nm + ".json");
+    f.open(wav, std::ios::binary | std::ios::trunc);
+  }
+  if (!f) {
+    fs::remove(wav, ec);
+    return fail("Cannot create " + wav.string());
+  }
+  {
+    char h[kHeaderBytes];
+    makeHeader(h, static_cast<std::uint32_t>(std::lround(sampleRate)), mono.size());
+    f.write(h, kHeaderBytes);
+    f.write(reinterpret_cast<const char*>(mono.data()), static_cast<std::streamsize>(mono.size() * sizeof(float)));
+    f.flush();
+    if (!f) {
+      f.close();
+      fs::remove(wav, ec);
+      return fail("Disk write failed for " + wav.string());
+    }
+    f.close();
+  }
+  json j;
+  j["version"] = 1;
+  j["sampleRate"] = sampleRate;
+  j["channels"] = 1;
+  j["lengthSamples"] = mono.size();
+  j["overruns"] = 0;
+  j["droppedSamples"] = 0;
+  j["playAlong"] = nullptr;
+  json imp = {{"source", info.source}, {"channel", info.channel}, {"samePerformance", info.samePerformance}};
+  imp["offsetMs"] = info.offsetMs ? json(*info.offsetMs) : json(nullptr);
+  j["imported"] = std::move(imp);
+  j["createdUtc"] = utcNowIso();
+  try {
+    writeAtomic(jsonPath, j.dump(2) + "\n");
+  } catch (const std::exception& e) {
+    fs::remove(wav, ec);
+    return fail(e.what());
+  }
+  version_.fetch_add(1);
+  if (name) *name = nm;
+  return true;
+  } catch (const std::exception& e) {
+    if (!wav.empty()) fs::remove(wav, ec);  // no orphan WAV that would block the name
+    return fail(std::string("Import failed: ") + e.what());
+  } catch (...) {
+    if (!wav.empty()) fs::remove(wav, ec);
+    return fail("Import failed: unexpected error.");
+  }
 }
 
 // ---- audio thread ------------------------------------------------------------------------------------------------

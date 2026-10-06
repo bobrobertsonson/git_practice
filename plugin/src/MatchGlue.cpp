@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <fstream>
@@ -39,11 +40,45 @@ std::string activeSongName(SawbladeProcessor& p) {
   return fs::path(s.folder).filename().string();
 }
 
+void toggleRecording(SawbladeProcessor& p) {
+  auto& r = p.recorder();
+  if (r.state() == TakeRecorder::State::Idle) r.start(p.playAlong().activeStemsDir());
+  else r.stop();
+}
+
+std::string recordUnavailableReason(SawbladeProcessor& p) {
+  return p.recorder().state() == TakeRecorder::State::Finalizing ? "The last take is still being saved." : std::string();
+}
+
+std::string recordStateText(SawbladeProcessor& p) {
+  auto& r = p.recorder();
+  switch (r.state()) {
+    case TakeRecorder::State::Idle: return "READY";
+    case TakeRecorder::State::Armed: return "ARMED";
+    case TakeRecorder::State::Finalizing: return "SAVING";
+    case TakeRecorder::State::Recording: break;
+  }
+  const double rate = r.sampleRate() > 0.0 ? r.sampleRate() : 48000.0;
+  const int tenths = static_cast<int>(std::floor(static_cast<double>(r.recordedSamples()) / rate * 10.0 + 1e-9));
+  char b[32];
+  std::snprintf(b, sizeof b, "REC %02d:%02d.%d", tenths / 600, (tenths / 10) % 60, tenths % 10);
+  return b;
+}
+
+std::string takeOriginText(const TakeInfo& t) {
+  if (t.imported.present) return "IMPORTED";
+  const auto off = t.offsetMs();
+  if (!off) return "no song";
+  char buf[48];
+  std::snprintf(buf, sizeof buf, "@ %.1f s", *off / 1000.0);
+  return buf;
+}
+
 MatchPlan planMatch(SawbladeProcessor& p) {
   MatchPlan plan;
   const std::string folder = p.playAlong().activeStemsDir();
   if (folder.empty()) {
-    plan.message = "Load a song in PLAY ALONG first: its stems folder is the reference.";
+    plan.message = "Load a song first: its guitar stem is the reference.";
     return plan;
   }
   plan.reference = chooseReferenceFile(folder);
@@ -53,7 +88,7 @@ MatchPlan planMatch(SawbladeProcessor& p) {
   }
   plan.take = selectedTake(p);
   if (!plan.take) {
-    plan.message = "Record a take and choose it with USE FOR MATCH.";
+    plan.message = "Record or import a DI first.";
     return plan;
   }
   plan.request.di = plan.take->wav;
@@ -61,9 +96,24 @@ MatchPlan planMatch(SawbladeProcessor& p) {
   plan.request.referenceLabel = activeSongName(p) + " (" + plan.reference.label + ")";
   plan.request.diLabel = plan.take->name;
   const bool sameSong = plan.take->songFolder.empty() || fs::path(plan.take->songFolder) == fs::path(folder);
-  if (const auto off = plan.take->offsetMs(); off && sameSong) {
+  if (plan.take->imported.present) {
+    // An imported file: its position in the song is used only when it is the same performance as the song (a matched pair,
+    // `--matched mono`); otherwise it is a different performance and the matcher matches tone, not timing.
+    const auto& im = plan.take->imported;
+    if (im.samePerformance) {
+      plan.request.matched = true;
+      if (im.offsetMs) {
+        plan.request.offsetMs = *im.offsetMs;
+        plan.offsetNote = "Imported, same performance as the song: starts " + seconds(*im.offsetMs / 1000.0) + " into it.";
+      } else {
+        plan.offsetNote = "Imported, same performance as the song: the matcher will search the whole song for where it starts.";
+      }
+    } else {
+      plan.offsetNote = "Imported file: a different performance from the song, so its timing is not used.";
+    }
+  } else if (const auto off = plan.take->offsetMs(); off && sameSong) {
     plan.request.offsetMs = *off;
-    plan.offsetNote = "Starts " + seconds(*off / 1000.0) + " into the song (from the take).";
+    plan.offsetNote = "Recorded take: matched by tone (its song position, " + seconds(*off / 1000.0) + " in, is kept but not used).";
   } else if (off && !sameSong) {
     plan.offsetNote = "Recorded against another song: position ignored, the matcher will search for it.";
   } else {
