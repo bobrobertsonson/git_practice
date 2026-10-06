@@ -19,7 +19,7 @@ Continuous parameters (physical units; the optimizer works in the normalised box
   a discrete slope parameter (``post.hp_slope`` / ``post.lp2_slope`` in [0, 1]: < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct, emitted
   as two cascaded biquads with the 4th-order Butterworth Qs 0.541 / 1.307). The slopes are not CMA-ES dimensions (group
   ``discrete``): the frequencies are optimised at 12 dB/oct, then ``refine.pick_slopes`` tries 24 dB/oct for each filter. A filter at its range edge (hp 60 Hz, lp2 11 kHz)
-  with the 12 dB slope is "off" and omitted from the preset. They do not count toward the EQ-gain regulariser.
+  is "off" (whatever its slope) and omitted from the preset. They do not count toward the EQ-gain regulariser.
 * tight boost (v0.4M, ``Combo.boost``; single topology only): a modeled ``pedal.ts`` (slot ``boost``) directly in front of the
   amp, after any pedal: ``boost.drive`` 0-3, ``boost.level`` 6-10, ``boost.tone`` 3-8 (defaults 1 / 8 / 5). The boost renders
   inside the NAM core, so these three belong to the ``gain`` group.
@@ -242,13 +242,13 @@ def post_eq(v: dict[str, float]) -> list[dict]:
         bands.append({"type": "highShelf", "freq": float(v["post.shelf_f"]), "gainDb": float(v["post.shelf_g"]), "q": 0.707})
     if "post.lp" in v and v["post.lp"] < POST_LP_RANGE[1] * 0.999:
         bands.append({"type": "lowPass", "freq": float(v["post.lp"]), "q": 0.707})
-    if "post.hp" in v:        # v0.4M post-cab filters; at the range edge with the 12 dB slope a filter is off
+    if "post.hp" in v:        # v0.4M post-cab filters; a filter at its range edge is off (whatever its slope)
         s = v.get("post.hp_slope", SLOPE_DEFAULT)
-        if v["post.hp"] > POST_HP_RANGE[0] * 1.001 or s >= 0.5:
+        if v["post.hp"] > POST_HP_RANGE[0] * 1.001:
             bands += pass_bands("highPass", v["post.hp"], s)
     if "post.lp2" in v:
         s = v.get("post.lp2_slope", SLOPE_DEFAULT)
-        if v["post.lp2"] < POST_LP2_RANGE[1] * 0.999 or s >= 0.5:
+        if v["post.lp2"] < POST_LP2_RANGE[1] * 0.999:
             bands += pass_bands("lowPass", v["post.lp2"], s)
     return bands
 

@@ -369,7 +369,7 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
     bestPlainSingleLoss, occamDb, ablated}`; every candidate row has `tightBoost`. Single-path `single2` chains and blend paths get none (no variant there yet).
   * **Post-cab filters**: `post.hp` 60-140 Hz and `post.lp2` 6-11 kHz after the shared cab, each with a discrete slope parameter
     (`post.hp_slope`, `post.lp2_slope`: < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct = two cascaded biquads with the 4th-order Butterworth Qs
-    0.541 / 1.307). Neutral at the range edge with 12 dB/oct (hp 60 Hz, lp2 11 kHz: the band is omitted); they are not in the EQ-gain
+    0.541 / 1.307). Off at the range edge (hp 60 Hz, lp2 11 kHz: the band is omitted, whatever the slope); they are not in the EQ-gain
     regulariser. The slopes are not CMA-ES dimensions: the frequencies are searched at 12 dB/oct, then each filter is tried at 24 dB/oct
     (`refine.pick_slopes`). The existing `post.lp` roll-off (5-12 kHz) stays; `post_filters_from_eq` reads the filters back from a preset
     (a single 12 dB low-pass cannot be told from `post.lp`). `result.json -> postFilters`.

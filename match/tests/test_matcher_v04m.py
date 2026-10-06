@@ -94,10 +94,12 @@ def test_post_filter_emission_slopes_and_inverse():
     # both lows together (post.lp roll-off at 12 dB + a 24 dB lp2) are told apart by the Butterworth pair
     v.update({"post.lp": 7000.0, "post.lp2_slope": 1.0})
     assert post_filters_from_eq(post_eq(v))["lowpass"] == [(7000.0, 12), (8000.0, 24)]
-    # at the range edge a 24 dB/oct filter is real (only the 12 dB edge is "off")
+    # a filter at its range edge is off, whatever its slope; just off the edge it is on
     v2 = Space((1, None)).default()
-    v2["post.hp_slope"] = 1.0
-    assert post_filters_from_eq(post_eq(v2))["hp"] == (60.0, 24)
+    v2.update({"post.hp_slope": 1.0, "post.lp2_slope": 1.0})
+    assert post_filters_from_eq(post_eq(v2)) == {"hp": None, "lowpass": []}
+    v2.update({"post.hp": 62.0, "post.lp2": 10900.0})
+    assert post_filters_from_eq(post_eq(v2)) == {"hp": (62.0, 24), "lowpass": [(10900.0, 24)]}
 
 
 def test_choose_boost_needs_to_beat_the_plain_candidate_by_the_occam_margin():
