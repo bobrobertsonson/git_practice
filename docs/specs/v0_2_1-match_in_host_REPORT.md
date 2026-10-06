@@ -101,7 +101,7 @@ IMPORTED tag instead of "@ x s"; the dialog has LEFT / RIGHT / SUM (stereo only)
 
 ## Merge notes for the integration lead / v0.3
 
-- (Resolved in the v0.3 merge: `PresetAudition::takeUndoStep`, `RigController::adoptAppliedMatch` and the separate entry are removed; the apply records one step in the processor's history.)
+- **All notes below are superseded by the v0.3 merge (9c61f4b):** `PresetAudition::takeUndoStep`, `RigController::adoptAppliedMatch` / `syncLoadSerial` and the separate entry are removed; the apply records one step in the processor's edit history (see `docs/PLUGIN.md`, Undo / redo, and `docs/specs/v0_3-core_usability_REPORT.md`). Kept for history.
 - v0.3 rewrites undo/redo: keep the applied-match entry (pre = pre-audition preset, post = applied preset, keyed to
   `userLoadSerial`; `PresetAudition::takeUndoStep` is the single producer).
 - Conflict footprint: `PluginProcessor.*` (instance id, `"instance"` state key), `PluginEditor.cpp` (MATCH button
