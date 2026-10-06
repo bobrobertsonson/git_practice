@@ -1,6 +1,7 @@
 // v0.3 Task B: level-matched auditioning in core - the reference DI, the trim and its staleness hash, the schema (v3), the chain's
 // trim gain, the capture-swap make-up, and the acceptance tests over the committed presets.
 #include <algorithm>
+#include <atomic>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -115,6 +116,16 @@ TEST_CASE("Reference DI: 10 s, 48 kHz, peak -10 dBFS, finite, and the same bytes
   // new kReferenceDiVersion (and every stored autoTrimHash goes stale with it).
   static_assert(kReferenceDiVersion == 1);
   CHECK(sampleHash(x) == "9a365efeec001aa1533cc1abc4f45cab0fb1c94f4028e0e4e6d21a6ad2f30928");
+}
+
+TEST_CASE("Auto trim: a set cancel flag skips the measurement after the render", "[autotrim]") {
+  const Preset p = parse(twoPaths("linear_identity.nam", "linear_05_025.nam"));
+  std::atomic<bool> cancel{false};
+  CHECK(measureReferenceLufs(p, nullptr, false, &cancel).has_value());
+  cancel.store(true);
+  CHECK_FALSE(measureReferenceLufs(p, nullptr, false, &cancel).has_value());
+  CHECK_FALSE(computeAutoTrim(p, nullptr, &cancel).has_value());
+  CHECK_FALSE(slotMakeupDb(p, p, 0, nullptr, &cancel).has_value());
 }
 
 // ---- schema v3 ----------------------------------------------------------------------------------

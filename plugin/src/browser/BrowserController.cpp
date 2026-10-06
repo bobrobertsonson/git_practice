@@ -221,7 +221,9 @@ void BrowserController::fetchSelected(std::function<void(const t3k::FetchResult&
 }
 
 void BrowserController::loadSwapped(Preset p) {
-  proc_.loadPreset(std::move(p));
+  // The swap keeps the rig's current trim until the new rig's measurement lands: no level jump (a hash change drops to 0 otherwise).
+  const auto s = proc_.status();
+  proc_.loadPreset(std::move(p), /*keepMonitor=*/false, s.levelMatchOn ? std::optional<double>(s.trimDb) : std::nullopt);
   st_.busy = false;
   awaitingLoad_ = true;
   setStatus("Loading " + loadedTitle_ + "..." + levelNote_);

@@ -8,6 +8,7 @@
 // being measured finishes and its result is dropped by the caller when stale) and make-up jobs (first in, first out, always
 // before a trim job). Callbacks run on the worker thread.
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -39,7 +40,7 @@ class LevelWorker {
   using MakeupDone = std::function<void(const MakeupResult&)>;
 
   LevelWorker();
-  ~LevelWorker();  // joins; callbacks of work still queued are not called
+  ~LevelWorker();  // joins; callbacks of work still queued are not called; the render being measured is cancelled (no measurement)
   LevelWorker(const LevelWorker&) = delete;
   LevelWorker& operator=(const LevelWorker&) = delete;
 
@@ -72,6 +73,7 @@ class LevelWorker {
   std::optional<TrimJob> trim_;
   std::deque<MakeupJob> makeups_;
   bool busy_ = false, stop_ = false;
+  std::atomic<bool> cancel_{false};  // set by the destructor: checked between a render and its measurement
   std::uint64_t trimRuns_ = 0, makeupRuns_ = 0;
   CaptureCache cache_;  // worker thread only
   std::thread thread_;  // last

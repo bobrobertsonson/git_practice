@@ -110,7 +110,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
                       bool restore = false);
   // `keepMonitor`: the rig editor's structural edits keep the transient mute / solo state; user
   // loads clear it.
-  void loadPreset(Preset preset, bool keepMonitor = false);
+  // `provisionalTrimDb`: a user load (not keepMonitor) whose trim is not known yet plays at this trim until the measurement lands
+  // instead of dropping to 0 (a capture swap: the rig is the same one, so the old trim is the best guess; no level jump).
+  void loadPreset(Preset preset, bool keepMonitor = false, std::optional<double> provisionalTrimDb = std::nullopt);
   // Host-driven state restore: the preset and its parameter values are applied immediately (hosts
   // and validators read the parameters right after setStateInformation); the engine follows.
   void restorePreset(Preset preset);
@@ -198,6 +200,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   Preset levelMeasurementPreset() const;
   // Blocks until the level worker is idle and no trim is waiting for its debounce (tests).
   bool waitForLevelWork(std::chrono::milliseconds timeout = std::chrono::milliseconds(60000));
+  std::uint64_t levelHashComputes() const noexcept { return hashComputes_; }  // autoTrimHash evaluations by levelTick (tests)
   void setLevelDebounceMs(int ms) noexcept { levelDebounceMs_.store(ms); }
   static constexpr int kLevelDebounceMs = 400;
   bool levelMatchEnabled() const noexcept { return levelMatchOn_.load(); }
@@ -271,6 +274,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   bool wantedKeepsMonitor_ = false;
   std::shared_ptr<const Preset> remeasureBase_;    // the preset a pending re-measure started from
   std::uint64_t presetSerial_ = 0;                 // bumped by every commit()
+  std::uint64_t presetRev_ = 0;                    // bumped by every change of preset_ (commit, live edit, write-backs): the level hash cache key
   bool remeasureLevels_ = false;                   // the pending re-measure is MATCH LEVELS (else RE-MEASURE)
   std::shared_ptr<const Preset> remeasureWanted_;  // the pending re-measure build, if any
   std::uint64_t presetGeneration_ = 0;     // loader request id of the committed preset (kNoGeneration: none yet)
@@ -323,7 +327,14 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::atomic<int> levelDebounceMs_{kLevelDebounceMs};
   mutable std::mutex levelMutex_;
   std::vector<std::pair<std::string, double>> knownTrims_;  // hash -> trim, newest last, at most 32
-  std::set<std::string> failedTrims_;
+  std::set<std::string> failedTrims_;  // cleared on a user load and on a LEVEL MATCH toggle: a failure is not remembered for ever
+  std::optional<double> provisionalTrim_;  // levelMutex_: see loadPreset(); consumed by the next levelOnLoad
+  // levelTick()'s autoTrimHash cache (message thread): valid for (presetRev_, the parameter values).
+  bool hashCached_ = false;
+  std::uint64_t hashRev_ = 0;
+  ParamValues hashParams_{};
+  std::string hashValue_;
+  std::uint64_t hashComputes_ = 0;
   std::string levelWantedHash_, levelPendingHash_;
   std::chrono::steady_clock::time_point levelChangedAt_{};
   bool levelPending_ = false, levelFailed_ = false;

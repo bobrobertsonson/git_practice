@@ -10,6 +10,7 @@ namespace sawblade::plugin {
 LevelWorker::LevelWorker() { thread_ = std::thread([this] { run(); }); }
 
 LevelWorker::~LevelWorker() {
+  cancel_.store(true);
   {
     std::lock_guard<std::mutex> lk(m_);
     stop_ = true;
@@ -75,17 +76,17 @@ void LevelWorker::run() {
     if (makeup) {
       MakeupResult r;
       try {
-        r.makeupDb = slotMakeupDb(makeup->before, makeup->after, makeup->path, &cache_);
+        r.makeupDb = slotMakeupDb(makeup->before, makeup->after, makeup->path, &cache_, &cancel_);
         if (!r.makeupDb) r.error = "the slot's path is silent or disabled";
       } catch (const std::exception& e) {
         r.error = e.what();
       }
-      if (makeup->done) makeup->done(r);
+      if (makeup->done && !cancel_.load()) makeup->done(r);
     } else if (trim) {
       TrimResult r;
       r.hash = trim->hash;
       try {
-        if (const auto t = computeAutoTrim(trim->preset, &cache_)) {
+        if (const auto t = computeAutoTrim(trim->preset, &cache_, &cancel_)) {
           r.trimDb = t->trimDb;
           r.lufs = t->lufs;
           r.hash = t->hash;
@@ -95,7 +96,7 @@ void LevelWorker::run() {
       } catch (const std::exception& e) {
         r.error = e.what();
       }
-      if (trim->done) trim->done(r);
+      if (trim->done && !cancel_.load()) trim->done(r);
     }
     {
       std::lock_guard<std::mutex> lk(m_);

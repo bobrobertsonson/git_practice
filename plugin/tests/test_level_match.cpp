@@ -368,3 +368,72 @@ TEST_CASE("level match: an empty rig (Init) gets trim 0", "[levelmatch][plugin]"
   CHECK_FALSE(w.h.p.status().levelPending);
   CHECK_FALSE(w.h.p.status().levelFailed);
 }
+
+// ---- Task B follow-ups (v0.3 Task C step 0) -------------------------------------------------------------------------------
+TEST_CASE("level match: a capture swap keeps the old trim until the new measurement lands (no dip to 0)", "[levelmatch][plugin][swap]") {
+  World w;
+  w.load(rigJson("a", 6.0));
+  REQUIRE(w.h.p.waitForLevelWork());
+  const double t0 = w.h.p.status().trimDb;
+  REQUIRE(std::fabs(t0) > 1.0);
+  // A rig the stored trim does not cover (new hash), loaded the way the browser's swap does: with the old trim.
+  w.h.p.loadPreset(parsePreset(rigJson("b", 6.0, "linear_05_025.nam"), kFixtures), false, t0);
+  REQUIRE(w.h.p.waitForLoader());
+  CHECK(w.h.p.status().trimDb == t0);  // immediately after: no jump
+  CHECK(w.h.p.status().levelPending);
+  w.h.p.setLevelDebounceMs(60000);     // the measurement stays pending
+  w.h.p.levelTick();
+  CHECK(w.h.p.status().trimDb == t0);
+  // A plain user load of a new rig still starts at 0.
+  w.h.p.loadPreset(parsePreset(rigJson("c", 9.0), kFixtures));
+  REQUIRE(w.h.p.waitForLoader());
+  CHECK(w.h.p.status().trimDb == 0.0);
+}
+
+TEST_CASE("level match: levelTick hashes the rig once, not on every tick", "[levelmatch][plugin]") {
+  World w;
+  w.load(rigJson("cache", 6.0));
+  REQUIRE(w.h.p.waitForLevelWork());
+  const auto n = w.h.p.levelHashComputes();
+  for (int i = 0; i < 20; ++i) w.h.p.levelTick();
+  CHECK(w.h.p.levelHashComputes() == n);
+  w.h.setParam(kOutputGain, -3.0);  // a parameter change is noticed
+  w.h.p.levelTick();
+  CHECK(w.h.p.levelHashComputes() == n + 1);
+  w.h.p.applyLiveEdit([](Preset& p) { p.inputGainDb += 1.0; });  // so is a live edit
+  w.h.p.levelTick();
+  CHECK(w.h.p.levelHashComputes() == n + 2);
+}
+
+TEST_CASE("level match: a failed measurement is retried after a user load and after a LEVEL MATCH toggle", "[levelmatch][plugin]") {
+  World w;
+  json j = rigJson("silent", 6.0);
+  j["paths"]["a"]["enabled"] = false;
+  j["blend"] = 0.0;  // only the disabled path: silent
+  w.load(j);
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.status().levelFailed);
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 1);
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 1);  // remembered while nothing changed
+  settings::Settings::shared().setLevelMatch(false);
+  w.h.p.levelTick();
+  settings::Settings::shared().setLevelMatch(true);
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 2);  // the toggle retried it
+  w.load(j, "again");                              // a user load of the same rig retries too
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 3);
+}
+
+TEST_CASE("level match: destroying the level worker does not wait for the queued work", "[levelmatch][plugin]") {
+  const auto t0 = std::chrono::steady_clock::now();
+  {
+    LevelWorker lw;
+    const Preset p = parsePreset(rigJson("x"), kFixtures);
+    for (int i = 0; i < 4; ++i) lw.submitMakeup(p, p, 0, [](const LevelWorker::MakeupResult&) {});
+  }
+  CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(30));
+}

@@ -213,7 +213,10 @@ void SawbladeProcessor::ladderWriteBack(const std::shared_ptr<Engine>& e) {
     AmpControls& ac = (k == 0 ? preset_.a : preset_.b).ampControls;
     const std::string& id = nam->model.ladder[static_cast<std::size_t>(st.committed)].modelId;
     if (st.committed == st.own && ac.gainStep.empty()) continue;  // never moved off the block's own capture
-    if (ac.gainStep != id) ac.gainStep = id;
+    if (ac.gainStep != id) {
+      ac.gainStep = id;
+      ++presetRev_;
+    }
   }
 }
 
@@ -372,9 +375,13 @@ void SawbladeProcessor::circuitChanged() {
   loadPreset(switchCircuit(p, static_cast<Circuit>(idx)));
 }
 
-void SawbladeProcessor::loadPreset(Preset preset, bool keepMonitor) {
+void SawbladeProcessor::loadPreset(Preset preset, bool keepMonitor, std::optional<double> provisionalTrimDb) {
   auto c = std::make_shared<const Preset>(clampedToParams(std::move(preset)));
   if (!keepMonitor) userLoadSerial_.fetch_add(1);
+  {
+    std::lock_guard<std::mutex> lk(levelMutex_);
+    provisionalTrim_ = keepMonitor ? std::nullopt : provisionalTrimDb;
+  }
   bool buildNow;
   {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -431,6 +438,7 @@ void SawbladeProcessor::commit(const Preset& p, std::uint64_t generation, bool c
     status_.presetName = p.name;
     presetGeneration_ = generation;
     ++presetSerial_;
+    ++presetRev_;
     if (clearMonitor) monitor_ = {};
     publishLive();
   }
@@ -611,11 +619,13 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
       // Built with levelMatch auto: its resolved trims are what a manual preset with the same numbers
       // does, so the write-back needs no rebuild.
       preset_.levelMatch = {LevelMatchMode::Manual, o.info.trimDb[0], o.info.trimDb[1]};
+      ++presetRev_;
     } else if (o.built) {
       // The engine was built in auto mode: its resolved values are what a manual preset with the same
       // numbers does, so the write-back needs no rebuild.
       status_.measuredAlign = o.info.align;
       preset_.align = {AlignMode::Manual, preset_.align.maxLagMs, o.info.align.delaySamplesB, o.info.align.invertB};
+      ++presetRev_;
     }
   }
   if (o.id == lastSubmitted_ || o.id > lastSubmitted_) {
@@ -685,7 +695,10 @@ void SawbladeProcessor::levelOnLoad(const Preset& p) {
       known = k.second;
       have = true;
     }
-  trimTargetDb_.store(have ? known : 0.0);
+  // Not measured yet: a capture swap carries the old trim over (provisional), any other load starts at 0.
+  trimTargetDb_.store(have ? known : provisionalTrim_.value_or(0.0));
+  provisionalTrim_.reset();
+  failedTrims_.clear();  // a user load retries what could not be measured before
   levelWantedHash_ = hash;
   levelChangedAt_ = std::chrono::steady_clock::now();
   levelPending_ = !have;
@@ -706,14 +719,34 @@ void SawbladeProcessor::onTrimResult(const LevelWorker::TrimResult& r) {  // lev
 
 void SawbladeProcessor::levelTick() {
   const bool on = settings::Settings::shared().levelMatch();
-  levelMatchOn_.store(on);
+  if (levelMatchOn_.exchange(on) != on) {  // a LEVEL MATCH toggle retries what could not be measured
+    std::lock_guard<std::mutex> lk(levelMutex_);
+    failedTrims_.clear();
+  }
   if (!on) return;
-  const Preset q = levelMeasurementPreset();
-  const std::string hash = autoTrimHash(q);
+  // The hash of the measurement preset, recomputed only when the preset or a parameter changed (this runs at 10 Hz).
+  const ParamValues pv = readParams();
+  std::uint64_t rev;
+  std::string storedHash;
+  double storedDb;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    rev = presetRev_;
+    storedHash = preset_.autoTrim.hash;
+    storedDb = preset_.autoTrim.db;
+  }
+  if (!hashCached_ || hashRev_ != rev || hashParams_ != pv) {
+    hashValue_ = autoTrimHash(levelMeasurementPreset());
+    ++hashComputes_;
+    hashRev_ = rev;
+    hashParams_ = pv;
+    hashCached_ = true;
+  }
+  const std::string hash = hashValue_;
   std::optional<double> writeBack;
   {
     std::lock_guard<std::mutex> lk(levelMutex_);
-    if (!q.autoTrim.hash.empty() && q.autoTrim.hash == hash) rememberTrim(hash, q.autoTrim.db);  // fresh in the preset itself
+    if (!storedHash.empty() && storedHash == hash) rememberTrim(hash, storedDb);  // fresh in the preset itself
     if (levelWantedHash_ != hash) {
       levelWantedHash_ = hash;
       levelChangedAt_ = std::chrono::steady_clock::now();
@@ -722,7 +755,7 @@ void SawbladeProcessor::levelTick() {
     if (it != knownTrims_.end()) {
       trimTargetDb_.store(it->second);
       levelPending_ = levelFailed_ = false;
-      if (q.autoTrim.hash != hash) writeBack = it->second;
+      if (storedHash != hash) writeBack = it->second;
     } else if (failedTrims_.count(hash) != 0) {
       levelPending_ = false;
       levelFailed_ = true;
@@ -732,7 +765,7 @@ void SawbladeProcessor::levelTick() {
       const auto waited = std::chrono::steady_clock::now() - levelChangedAt_;
       if (levelPendingHash_ != hash && waited >= std::chrono::milliseconds(levelDebounceMs_.load())) {
         levelPendingHash_ = hash;
-        levelWorker_->submitTrim(q, hash, [this](const LevelWorker::TrimResult& r) { onTrimResult(r); });
+        levelWorker_->submitTrim(levelMeasurementPreset(), hash, [this](const LevelWorker::TrimResult& r) { onTrimResult(r); });
       }
     }
   }
@@ -785,6 +818,7 @@ Preset SawbladeProcessor::editBasePreset() const {
 void SawbladeProcessor::applyLiveEdit(const std::function<void(Preset&)>& edit) {
   std::lock_guard<std::mutex> lk(mutex_);
   edit(preset_);
+  ++presetRev_;
   publishLive();
 }
 

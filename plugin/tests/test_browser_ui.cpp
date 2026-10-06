@@ -616,6 +616,29 @@ TEST_CASE("browser: USE with LEVEL MATCH keeps the slot's loudness on the refere
   CHECK(rig.proc.status().error.empty());
 }
 
+TEST_CASE("browser: a capture swap does not make the trim jump: the old trim holds until the new measurement lands", "[browser][ui][levelmatch]") {
+  SwapRig rig("{}");
+  rig.env.set("FAKE_T3K_FETCH", (kFixtures / "nam" / "wavenet.nam").string());
+  rig.proc.setLevelDebounceMs(0);
+  REQUIRE(rig.proc.waitForLevelWork());
+  const double t0 = rig.proc.status().trimDb;
+  rig.proc.setLevelDebounceMs(60000);  // the swapped rig's measurement does not start: only the provisional trim can be heard
+  REQUIRE(std::fabs(t0) > 1.0);
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::BodyAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return !ctl.state().records.empty() && !ctl.state().loading; }));
+  ctl.select(104);
+  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }));
+  std::vector<double> seen;
+  ctl.onChange = [&] { seen.push_back(rig.proc.status().trimDb); };
+  ctl.use(0);
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }, 60000));
+  seen.push_back(rig.proc.status().trimDb);  // the swap is committed here
+  CHECK(rig.proc.currentPreset().b.blocks[0].params != nullptr);
+  REQUIRE_FALSE(seen.empty());
+  for (const double t : seen) CHECK(t == t0);  // never a dip to 0 (nor anything else) before the new measurement
+}
+
 TEST_CASE("browser: USE with LEVEL MATCH off swaps without make-up, at once", "[browser][ui][levelmatch]") {
   SwapRig rig(R"({"levelMatch": false})");
   rig.env.set("FAKE_T3K_FETCH", (kFixtures / "nam" / "wavenet.nam").string());

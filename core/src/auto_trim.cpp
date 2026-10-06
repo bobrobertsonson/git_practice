@@ -85,7 +85,7 @@ std::string autoTrimHash(const Preset& p) {
 
 bool autoTrimFresh(const Preset& p) { return !p.autoTrim.hash.empty() && p.autoTrim.hash == autoTrimHash(p); }
 
-std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache, bool applyTrim) {
+std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache, bool applyTrim, const std::atomic<bool>* cancel) {
   AudioFile in;
   in.sampleRate = kReferenceDiRate;
   in.channels = 1;
@@ -97,6 +97,7 @@ std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache,
   Preset q = applyTrim ? p : withoutTrim(p);
   q.outputGainDb = 0.0;  // the OUTPUT knob is a persistent offset on top of the match: it is measured at 0 dB
   const RenderResult r = renderPreset(q, in, o);
+  if (cancel != nullptr && cancel->load()) return std::nullopt;  // the caller is shutting down: skip the measurement
   return lufsOf(r.samples, r.sampleRate);
 }
 
@@ -109,8 +110,8 @@ bool hasNonlinearBlock(const Preset& p) {
   return false;
 }
 
-std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache) {
-  const auto l = measureReferenceLufs(p, cache);
+std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache, const std::atomic<bool>* cancel) {
+  const auto l = measureReferenceLufs(p, cache, false, cancel);
   if (!l) return std::nullopt;
   AutoTrimResult r;
   r.lufs = *l;
@@ -132,7 +133,7 @@ bool ensureAutoTrim(Preset& p, CaptureCache* cache) {
   return stampAutoTrim(p, cache);
 }
 
-std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* cache) {
+std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* cache, const std::atomic<bool>* cancel) {
   Preset q = withoutTrim(p);
   PathPreset& mine = path == 0 ? q.a : q.b;
   PathPreset& other = path == 0 ? q.b : q.a;
@@ -144,12 +145,13 @@ std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* c
   q.align.mode = AlignMode::Off;
   q.align.delaySamplesB = 0;
   q.align.invertB = false;
-  return measureReferenceLufs(q, cache);
+  return measureReferenceLufs(q, cache, false, cancel);
 }
 
-std::optional<double> slotMakeupDb(const Preset& before, const Preset& after, int path, CaptureCache* cache) {
-  const auto lb = measurePathLufs(before, path, cache);
-  const auto la = measurePathLufs(after, path, cache);
+std::optional<double> slotMakeupDb(const Preset& before, const Preset& after, int path, CaptureCache* cache, const std::atomic<bool>* cancel) {
+  const auto lb = measurePathLufs(before, path, cache, cancel);
+  if (cancel != nullptr && cancel->load()) return std::nullopt;
+  const auto la = measurePathLufs(after, path, cache, cancel);
   if (!lb || !la) return std::nullopt;
   return std::min(kMaxSlotMakeupDb, std::max(-kMaxSlotMakeupDb, *lb - *la));
 }
