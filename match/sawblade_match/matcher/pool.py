@@ -61,6 +61,8 @@ class Pool:
     pedals: list[Capture] = field(default_factory=list)
     amps: list[Capture] = field(default_factory=list)
     cabs: list[Capture] = field(default_factory=list)
+    # tone id -> what the manifest says about it (title, slot, status, models with a downloaded flag); for --trace-tones
+    catalog: dict = field(default_factory=dict)
 
     def counts(self) -> dict:
         out = {"pedals": len(self.pedals), "amps": len(self.amps), "cabs": len(self.cabs)}
@@ -98,19 +100,31 @@ def load_pool(manifest: str | Path, cache_root: Path | None = None) -> Pool:
                                  else default_cache_root()))
     pool = Pool()
     for t in m.get("tones", []):
-        if t.get("status", "included") != "included":
-            continue
         gear = t.get("slot") or t.get("gear")
+        mds = [md for md in t.get("models", []) if "id" in md]        # a model entry without an id is skipped
+        cat = {"title": t.get("title"), "slot": gear, "status": t.get("status", "included"), "license": t.get("license"),
+               "models": [{"modelId": int(md["id"]), "name": md.get("name", ""), "downloaded": False}
+                          for md in mds], "reason": None}
+        try:
+            pool.catalog[int(t["tone_id"])] = cat
+        except (KeyError, TypeError, ValueError):
+            pass
+        if t.get("status", "included") != "included":
+            cat["reason"] = f"status {t.get('status')}"
+            continue
         if gear not in ("pedal", "amp", "cab"):
+            cat["reason"] = f"gear {gear!r} is not a pool slot"
             continue
         try:
             check_license(t.get("license"), f"tone {t['tone_id']}")
         except Exception:
+            cat["reason"] = f"license {t.get('license')!r} not allowed"
             continue
-        for md in t.get("models", []):
+        for md, cm in zip(mds, cat["models"]):
             entry = cache.get(t["tone_id"], md["id"])
             if entry is None:      # not downloaded (or sha mismatch): not a candidate
                 continue
+            cm["downloaded"] = True
             kind = md.get("classOverride") or t.get("classOverride") or classify(gear, t["title"], md.get("name", ""))
             allowed = {"pedal": PEDAL_CLASSES, "amp": AMP_CLASSES, "cab": ("cab",)}[gear]
             if kind not in allowed:

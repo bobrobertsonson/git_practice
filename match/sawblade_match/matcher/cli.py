@@ -10,7 +10,7 @@ from typing import Sequence
 
 from .pool import load_pool
 from .reference import load_reference
-from .run import Config, Log, run_match
+from .run import ABLATIONS, NOOP_ABLATIONS, Config, Log, parse_ablate, run_match
 
 
 def _section(s: str) -> tuple[float, float]:
@@ -67,9 +67,33 @@ def build_parser() -> argparse.ArgumentParser:
                         "second) for the plugin's progress bar")
     p.add_argument("--listen", action="store_true",
                    help="also render the listening files (full-length R render, stereo WAV/MP3); off by default")
+    p.add_argument("--ablate", metavar="LIST", default="",
+                   help="v0.4M on/off pairs: comma list of suspects to switch OFF (" + ", ".join(ABLATIONS) + "): feel = no feel "
+                        "term in the loss; boost = no tight-boost variants; filters = no post-cab hp / low-pass slope; irsweep = only the "
+                        "stage-1 cab sweep (the pre-v0.4M behaviour). " + ", ".join(NOOP_ABLATIONS) + " are accepted and echoed "
+                        "in result.json -> ablate but are no-ops until their tasks (two-IR blend, studio processing) land")
+    p.add_argument("--trace-tones", metavar="ID[,ID...]", default="",
+                   help="TONE3000 tone ids to explain in result.json -> trace[id]: downloaded?, models, gear class, pre-screen "
+                        "rank/score/survived, best pair, best candidate loss with it as the amp, and why it lost")
     p.add_argument("--targets", help="(deprecated alias) path of the base profile / tone-targets file")
     p.add_argument("--no-audio", action="store_true", help=argparse.SUPPRESS)      # deprecated no-op (listening is off unless --listen)
     return p
+
+
+def parse_tone_ids(spec: str) -> tuple[int, ...]:
+    """``--trace-tones`` value -> tone ids (order kept, duplicates dropped)."""
+    out: list[int] = []
+    for x in (spec or "").split(","):
+        x = x.strip()
+        if not x:
+            continue
+        try:
+            i = int(x)
+        except ValueError:
+            raise ValueError(f"--trace-tones: {x!r} is not a TONE3000 tone id (an integer)") from None
+        if i not in out:
+            out.append(i)
+    return tuple(out)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -77,6 +101,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if a.excerpt_s > 8.0:
             raise ValueError("--excerpt-s must be <= 8 (spec: short excerpts)")
+        ablate = parse_ablate(a.ablate)
+        trace = parse_tone_ids(a.trace_tones)
         out = Path(a.out) if a.out else Path.home() / ".cache" / "sawblade" / "match_runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
         t_load = time.time()
         pool = load_pool(a.pool)
@@ -90,7 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                      targets=Path(a.targets) if a.targets else None, window_s=a.excerpt_window,
                      write_audio=a.listen and not a.no_audio, quick=a.quick,
                      progress_json=Path(a.progress_json) if a.progress_json else None,
-                     timings_pre={"referenceLoad": time.time() - t_load})
+                     timings_pre={"referenceLoad": time.time() - t_load}, ablate=ablate, trace_tones=trace)
         run_match(cfg, Log())
         return 0
     except (ValueError, OSError, RuntimeError) as e:

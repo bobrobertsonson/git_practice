@@ -15,8 +15,25 @@ import numpy as np
 
 from . import cma
 from . import loss as L
-from .engine import Engine
+from .engine import _DEFAULT_GATE, Engine
 from .space import Combo, Space
+
+
+DISCRETE_UP = 1.0       # slope parameter value of the 24 dB/oct alternative (>= 0.5)
+
+
+def pick_slopes(space: Space, v: dict, score) -> tuple[dict, L.LossResult]:
+    """The discrete parameters (post-filter slopes, group ``discrete``) are not CMA-ES dimensions: after the linear block
+    each is switched to its 24 dB/oct alternative in turn and kept when the loss falls. ``score(v) -> LossResult``."""
+    best = dict(v)
+    r = score(best)
+    for i in space.indices("discrete"):
+        n = space.names[i]
+        cand = {**best, n: DISCRETE_UP}
+        rc = score(cand)
+        if rc.total < r.total - 1e-9:
+            best, r = cand, rc
+    return best, r
 
 
 def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, align: dict, v0: dict, *,
@@ -99,7 +116,38 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
     ca, cb = cores_top(v)
     u, f3, h3 = run_block(u, lin_idx, pop_linear, gens_final, 0.1, "linear", 3, (ca, cb), "L2")
     v = space.decode(u)
-    r = score(v, ca, cb)
+    v, r = pick_slopes(space, v, lambda vv: score(vv, ca, cb))
     log(f"  block L2: {r.total:.3f} ({time.time() - t0:.0f}s)")
     info.update(l1Objective="ltas-only (no feel term)", startLoss=r0.total, history={"L1": h1, "G": h2, "L2": h3}, seconds=time.time() - t0)
     return v, r, info
+
+
+def relinear(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, align: dict, v0: dict, *, seed: int, levels=None,
+             gens: int = 20, pop: int = 16, sigma: float = 0.1, patience: int | None = None, tol: float = 0.0,
+             on_gen=None, gate=_DEFAULT_GATE, log=print) -> tuple[dict, L.LossResult]:
+    """One more linear CMA-ES block (the "L2" block of ``refine_combo``) from ``v0`` with the NAM cores fixed: used when
+    the cab (or the amp of a traced tone) changed after stage 2. The cores are the memoised renders of ``v0``'s gains
+    (a hit when stage 2 already rendered them); the loss is never worse than ``v0``'s (CMA-ES evaluates its start first)."""
+    t0 = time.time()
+    lin_idx = space.indices("linear")
+    paths = ("a", "b") if combo.topology == "blend" else ("a",)
+    cores = [eng.core(combo, v0, p, ex.x, gate=gate) for p in paths]
+    ca, cb = cores[0], (cores[1] if len(cores) > 1 else None)
+    u = space.encode(v0)
+
+    def full_u(x):
+        uu = u.copy()
+        uu[lin_idx] = x
+        return uu
+
+    def score(vv):
+        return L.evaluate(ex.trim(eng.emulate(combo, vv, ca, cb, align, levels)), tgt, space.eq_gains(vv))
+
+    def f(x):
+        return score(space.decode(full_u(x))).total
+
+    bx, bf, hist = cma.minimize(None, u[lin_idx], sigma, pop, gens, seed, evaluate_batch=lambda X: eng.map(f, list(X)),
+                                patience=patience, tol=tol, on_gen=on_gen)
+    v, r = pick_slopes(space, space.decode(full_u(bx)), score)
+    log(f"  relinear: {hist[0]:.3f} -> {r.total:.3f} ({time.time() - t0:.0f}s)")
+    return v, r

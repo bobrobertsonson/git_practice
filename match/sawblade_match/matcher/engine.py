@@ -27,7 +27,7 @@ from scipy import signal
 
 from .. import core as _core
 from .levelmatch import Levels, level_match
-from .space import Combo, build_preset, chain_blocks, manual_align, path_blocks, path_eq, post_eq
+from .space import Combo, block_latency, build_preset, chain_blocks, manual_align, path_blocks, path_eq, post_eq
 
 RATE = 48000
 
@@ -41,6 +41,7 @@ def to48(x: np.ndarray, fs: int) -> np.ndarray:
 
 
 CORE_CACHE_BYTES = 400 * 1024 * 1024     # NAM-core memo (per excerpt signal), LRU
+_DEFAULT_GATE = object()                 # "use the engine's gate" (None means: no gate)
 
 
 class Engine:
@@ -101,8 +102,9 @@ class Engine:
     def _disabled(role: str) -> dict:
         return {"role": role, "enabled": False, "blocks": []}
 
-    def chain_preset(self, blocks: list[dict], cab, path: str = "a") -> dict:
-        p = self._base(cab, blend=0.0 if path == "a" else 1.0, cab_enabled=False, gate=self.gate)
+    def chain_preset(self, blocks: list[dict], cab, path: str = "a", gate=_DEFAULT_GATE) -> dict:
+        p = self._base(cab, blend=0.0 if path == "a" else 1.0, cab_enabled=False,
+                       gate=self.gate if gate is _DEFAULT_GATE else gate)
         live = {"role": "saw" if path == "a" else "body", "blocks": blocks}
         p["paths"] = {"a": live, "b": self._disabled("body")} if path == "a" else \
             {"a": self._disabled("saw"), "b": live}
@@ -117,20 +119,25 @@ class Engine:
         return p
 
     # ---- stages -------------------------------------------------------------------------------------------------
-    def core_blocks(self, blocks: list[dict], cab, x: np.ndarray) -> np.ndarray:
-        """NAM core of one chain (gate -> blocks) at 48 kHz; ``cab`` only fills the (disabled) cab slot."""
+    def core_blocks(self, blocks: list[dict], cab, x: np.ndarray, gate=_DEFAULT_GATE) -> np.ndarray:
+        """NAM core of one chain (gate -> blocks) at 48 kHz; ``cab`` only fills the (disabled) cab slot. ``gate``: a gate
+        preset dict (or None for no gate) instead of the engine's; it is part of the memo key."""
         x = np.ascontiguousarray(x, dtype=np.float32)
         key = None
         if self._core_cap > 0:
-            key = (json.dumps(blocks, sort_keys=True), len(x), hashlib.blake2b(x.tobytes(), digest_size=12).digest())
+            gk = None if gate is _DEFAULT_GATE else json.dumps(gate, sort_keys=True)
+            key = (json.dumps(blocks, sort_keys=True), gk, len(x), hashlib.blake2b(x.tobytes(), digest_size=12).digest())
             with self._lock:
                 hit = self._core_cache.get(key)
                 if hit is not None:
                     self._core_cache.move_to_end(key)
                     self.core_hits += 1
                     return hit
-        y, rep = self.render(self.chain_preset(blocks, cab, "a"), x)
-        if rep.get("latencySamples", 0):
+        y, rep = self.render(self.chain_preset(blocks, cab, "a", gate), x)
+        # (latency per block type: docs/PRESET_SCHEMA.md block table, see space.block_latency)
+        # the renderer advances its output by the reported latency, so the core stays sample-aligned with the input; only
+        # the known latency of the modeled pedal blocks is expected (captures with latency are not supported yet)
+        if rep.get("latencySamples", 0) != block_latency(blocks):
             raise RuntimeError("path latency != 0 is not supported by the matcher emulation yet")
         if key is not None:
             y = np.asarray(y)
@@ -145,9 +152,9 @@ class Engine:
                         self._core_bytes -= old.nbytes
         return y
 
-    def core(self, combo: Combo, v: dict, path: str, x: np.ndarray) -> np.ndarray:
+    def core(self, combo: Combo, v: dict, path: str, x: np.ndarray, gate=_DEFAULT_GATE) -> np.ndarray:
         """NAM core of one path of a combo. Same length as ``x``."""
-        return self.core_blocks(path_blocks(combo, v, path), combo.cab, x)
+        return self.core_blocks(path_blocks(combo, v, path), combo.cab, x, gate)
 
     def linear(self, cab, v: dict, path: str, sig: np.ndarray) -> np.ndarray:
         y, _ = self.render(self.linear_preset(cab, v, path), sig)
