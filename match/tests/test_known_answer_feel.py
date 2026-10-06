@@ -10,6 +10,7 @@ TODO(D.1, later tasks): hidden irMix pair (offsetSamplesB / invertB, B2.1), fast
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -75,9 +76,36 @@ def test_feel_known_answer_recovers_ltas_and_feel_within_the_d1_tolerances(tmp_p
     assert row["pass"] and row["topology"] == "single" and row["beforeStarterDb"] > row["aWeightedErrorDb"] + 3.0
 
 
-if __name__ == "__main__":       # report script: python tests/test_known_answer_feel.py OUT_DIR
+def fixture_weights_report(out: Path) -> dict:
+    """Report helper: the 6b known-answer fixture (hidden blend, tests/test_matcher.py) under each feel weight set."""
+    import soundfile as sf
+    from test_matcher import _setup_known
+    from sawblade_match.matcher.run import Config, Log, run_match
+    table = {}
+    for i, (name, w) in enumerate(K.WEIGHT_SETS.items()):
+        d = out / f"fx{i}"
+        d.mkdir(parents=True, exist_ok=True)
+        pool, combo, di, ref = _setup_known(d, "blend")
+        plan = mkplan(top_k={"blend": 1, "single": 0, "single2": 0}, gens_linear=40, gens_gain=8, gens_final=25, pop_linear=16, pop_gain=8)
+        cfg = Config(di=di, ref=ref, pool=pool, out=d / "out", seed=7, excerpt_s=2.0, threads=2, plan=plan, write_audio=False,
+                     refine_offsets=False)
+        with K.feel_weights(w):
+            res = run_match(cfg, lambda m: None)
+        x, _ = sf.read(str(di), dtype="float32")
+        found, _ = K.render(json.loads((d / "out" / "best.preset.resolved.json").read_text()), x, float(RATE))
+        ft = build_target(ref, make_excerpt(x, len(x) / RATE, window=(0, len(x)))).feel
+        table[name] = {"aWeightedErrorDb": res["after"][0]["aWeightedErrorDb"], **(K.feel_deltas(found, ft) if ft else {}),
+                       "weights": list(w), "topology": res["best"]["topology"]}
+    (out / "fixture_weights.json").write_text(json.dumps(table, indent=2, default=float))
+    return table
+
+
+if __name__ == "__main__":       # report script: python tests/test_known_answer_feel.py OUT_DIR [fixture]
     import json
     out = Path(sys.argv[1])
+    if len(sys.argv) > 2 and sys.argv[2] == "fixture":
+        print(json.dumps(fixture_weights_report(out), indent=1, default=float))
+        sys.exit(0)
     tab = K.feel_report(fixture_pool(), out, seed=1, plan=small_plan(), log=lambda m: None)
     keys = ("aWeightedErrorDb", "t12Ms", "sustainDb", "hfRatioDb", "hfFlat", "fluxDb", "floorDb", "pass")
     print(json.dumps({n: {k: r[k] for k in keys} for n, r in tab.items()}, indent=1, default=float))
