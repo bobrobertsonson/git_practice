@@ -102,7 +102,7 @@ PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::Film
   };
   knob_.onDragEnd = [this] {
     dragging_ = false;
-    if (knob_.mouseHeld()) finishGesture();  // a wheel / double-click edit was already submitted (debounced) with its value
+    if (knob_.mouseHeld()) finishGesture();  // a mouse gesture ends with its final value; a wheel edit (no mouse held) already took the throttled route
     if (onGestureEnd) onGestureEnd();
   };
   knob_.onValueChange = [this] {

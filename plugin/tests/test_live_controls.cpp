@@ -794,3 +794,69 @@ TEST_CASE("rig knobs: KEY HPF does not stick in its OFF / 40 Hz dead zone under 
     CHECK(w.model(hpf) == 0.0);
   }
 }
+
+TEST_CASE("rig knobs: a real double-click sequence (down x2, double-click, up) resets to the default and leaves nothing pending",
+          "[editor][live][rigknobs]") {
+  RigKnobWorld w;
+  w.panel->setTab(rig::RigEditorPanel::Tab::Gate);
+  w.panel->refresh();
+  auto knobs = shownPresetKnobs(*w.panel);
+  REQUIRE(knobs.size() == 7);
+  rig::PresetKnob& pk = *knobs[4];  // RANGE -120..0 dB, default -90
+  skin::FilmstripKnob& k = pk.knob();
+  const Reader range = [](const Preset& p) { return rig::gateField(p.gate, rig::GateField::Range); };
+  int begin = 0, end = 0;
+  pk.onGestureBegin = [&] { ++begin; };
+  pk.onGestureEnd = [&] { ++end; };
+  {  // move it off the default first
+    Hand hand(k);
+    hand.to(-40.0f);
+    hand.up(-40.0f);
+    w.settle();
+    REQUIRE(k.getValue() != -90.0);
+    REQUIRE(w.model(range) == k.getValue());
+  }
+  begin = end = 0;
+  const juce::Point<float> p(40.0f, 60.0f);
+  const juce::ModifierKeys left(juce::ModifierKeys::leftButtonModifier);
+  k.mouseDown(mouseAtMods(k, p, p, left, 1));
+  k.mouseUp(mouseAtMods(k, p, p, left, 1));
+  k.mouseDown(mouseAtMods(k, p, p, left, 2));
+  k.mouseDoubleClick(mouseAtMods(k, p, p, left, 2));
+  k.mouseUp(mouseAtMods(k, p, p, left, 2));
+  CHECK(k.getValue() == -90.0);
+  CHECK_FALSE(k.mouseHeld());
+  CHECK_FALSE(w.panel->controller().hasPending());  // the mouse-up flushed the reset
+  CHECK(w.model(range) == -90.0);
+  w.settle();
+  CHECK(w.model(range) == -90.0);
+  CHECK(w.applied(range) == -90.0);
+  CHECK(begin == end);  // the gesture hooks balance
+  CHECK(begin >= 1);
+}
+
+TEST_CASE("rig knobs: mouseHeld() is false after a mouse-up and after a wheel event", "[editor][live][rigknobs]") {
+  RigKnobWorld w;
+  w.panel->setTab(rig::RigEditorPanel::Tab::Gate);
+  w.panel->refresh();
+  auto knobs = shownPresetKnobs(*w.panel);
+  REQUIRE(knobs.size() == 7);
+  skin::FilmstripKnob& k = knobs[4]->knob();
+  CHECK_FALSE(k.mouseHeld());
+  {
+    Hand hand(k);
+    CHECK(k.mouseHeld());
+    hand.to(-20.0f);
+    CHECK(k.mouseHeld());
+    hand.up(-20.0f);
+    CHECK_FALSE(k.mouseHeld());
+  }
+  w.settle();
+  juce::MouseWheelDetails wd{};
+  wd.deltaY = 0.2f;
+  k.mouseWheelMove(mouseAtMods(k, {40.0f, 60.0f}, {40.0f, 60.0f}, juce::ModifierKeys()), wd);
+  CHECK_FALSE(k.mouseHeld());
+  pump(rig::RigController::kDebounceMs + 150);
+  w.settle();
+  CHECK_FALSE(k.mouseHeld());
+}
