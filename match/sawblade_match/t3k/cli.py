@@ -232,12 +232,13 @@ def cmd_pull(args: argparse.Namespace) -> int:
     add_tones = merge_unique(_tone_ids(args.add_tone), extra.tones)
     force_tones = _tone_ids(args.force_tone)
     print(f"Extra pool sources file: {src_path} ({len(extra.searches)} search(es), {len(extra.tones)} tone(s))")
-    if searches:
+    if searches or args.ir_search:
         print(f"NOTE: {PERSONAL_USE_NOTE}", file=sys.stderr)
     m = build_pool(make_client(), cache, cfg, slots=slots, trending=not args.no_trending,
                    latest=not args.no_latest, searches=searches, add_tones=add_tones,
                    force_tones=force_tones, download=not args.no_download,
-                   max_models_per_tone=args.max_models_per_tone)
+                   max_models_per_tone=3 if args.max_models_per_tone is None else args.max_models_per_tone,
+                   max_ir_models_per_tone=args.max_models_per_tone, ir_searches=args.ir_search or [])
     out = Path(args.manifest) if args.manifest else cache.root / "pool_manifest.json"
     write_manifest(m, out)
     rows = [[str(t["tone_id"]), t["slot"], t["title"][:40], t["creator"], t["license"],
@@ -377,9 +378,12 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--no-a1-fallback", action="store_true")
     q.add_argument("--keep-favorites-below-floor", action="store_true",
                    help="keep (and flag) favorited tones below the popularity floors")
-    q.add_argument("--max-models-per-tone", type=int, default=3,
-                   help="when downloading, fetch at most N models per tone (default 3; the manifest "
-                        "always lists all models)")
+    q.add_argument("--max-models-per-tone", type=int, default=None,
+                   help="when downloading, fetch at most N models per tone (default: 3 for pedal/amp tones, ALL models "
+                        "of IR tones; the manifest always lists all models)")
+    q.add_argument("--ir-search", metavar="QUERY", action="append", default=None,
+                   help="OPT-IN tones/search query restricted to IR tones (cab families, e.g. 'v30 4x12'); repeatable; "
+                        "same quality filter and licence rules, personal use like --search")
     q.add_argument("--favorites-bypass-recency", action="store_true")
     q.set_defaults(fn=cmd_pull)
 

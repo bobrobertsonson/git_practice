@@ -161,12 +161,12 @@ def test_build_pool_manifest_end_to_end(respx_mock, make_client, api, tmp_path):
     g = inc[100]
     assert (g["title"], g["creator"], g["license"], g["gear"], g["slot"]) == ("Good Amp", "bob", "cc-by-sa", "amp", "amp")
     assert g["url"].endswith("tone-100") and g["published_at"] and g["favorites_count"] == 300
-    # manifest lists ALL models as candidates; downloads are capped at 3 per tone
+    # manifest lists ALL models as candidates; downloads: 3 per pedal/amp tone, ALL models of an IR tone (v0.4M B3)
     assert [x["id"] for x in g["models"]] == [1000, 1001, 1002, 1003, 1004]
     assert {"id", "name", "architecture_version"} <= set(g["models"][0])
     assert [x["model_id"] for x in g["downloads"]] == [1000, 1001, 1002]
     assert g["downloads"][0]["path"].endswith("100/1000.nam") and g["downloads"][0]["sha256"]
-    assert len(inc[104]["models"]) == 168 and len(inc[104]["downloads"]) == 3
+    assert len(inc[104]["models"]) == 168 and len(inc[104]["downloads"]) == 168
     assert inc[104]["downloads"][0]["path"].endswith("104/1040.wav")
     assert inc[105]["flags"] == ["a1_only"] and inc[105]["models"][0]["architecture_queried"] == "1"
     assert [t["tone_id"] for t in m["references"]] == [103]
@@ -174,7 +174,7 @@ def test_build_pool_manifest_end_to_end(respx_mock, make_client, api, tmp_path):
     assert set(ex) == {101, 102} and ex[102]["reasons"][0].startswith("below_popularity")
     assert m["config"]["popularity_percentile"] is None and m["max_models_per_tone"] == 3
     downloaded = sorted(int(r.url.path.split("/")[-2]) for r in api.requests("download"))
-    assert downloaded == [1000, 1001, 1002, 1040, 1041, 1042, 1050]
+    assert downloaded == sorted([1000, 1001, 1002, 1050, *range(1040, 1208)])
     assert not (tmp_path / "c" / "101").exists() and not (tmp_path / "c" / "103").exists()
 
     m2 = build_pool(make_client(), Cache(tmp_path / "c2"), FilterConfig(keep_favorites_below_floor=True),
@@ -312,3 +312,20 @@ def test_search_output_and_verdicts(make_client, api, tmp_path, monkeypatch, cap
     recs = json.loads(capsys.readouterr().out)
     assert [(r["tone_id"], r["passes"]) for r in recs] == [(50, True), (51, False)]
     assert "non_commercial_license:cc-by-nc" not in recs[1]["reasons"]
+
+
+def test_ir_tones_download_all_models_unless_capped_and_ir_search_adds_ir_tones(make_client, api, tmp_path):
+    ir = tone_json(204, gear="cab", fmt="ir", a2=0, fav=150, dl=2000, title="Mesa pack")
+    amp = tone_json(200, gear="amp", fav=300, dl=5000)
+    api.search_results = [ir]
+    api.trending = {"amp": [amp], "pedal": [], "cab": []}
+    api.add_tone(ir, [model_json(2040 + i, 204, arch=None) for i in range(7)])
+    api.add_tone(amp, [model_json(2000 + i, 200, arch="2") for i in range(5)])
+    m = build_pool(make_client(), Cache(tmp_path / "c"), FilterConfig(), ir_searches=["mesa 4x12"], latest=False, now=NOW)
+    inc = {t["tone_id"]: t for t in m["tones"]}
+    assert len(inc[204]["downloads"]) == 7 and len(inc[200]["downloads"]) == 3 and inc[204]["sources"] == ["ir-search"]
+    assert m["sources"]["ir_search"] == ["mesa 4x12"] and m["max_ir_models_per_tone"] is None
+    assert api.requests("search") and "ir" in str(api.requests("search")[0].url)
+    m = build_pool(make_client(), Cache(tmp_path / "c2"), FilterConfig(), ir_searches=["mesa"], latest=False,
+                   max_ir_models_per_tone=2, now=NOW)
+    assert len([t for t in m["tones"] if t["tone_id"] == 204][0]["downloads"]) == 2
