@@ -172,15 +172,19 @@ void BodyFill::applyAmp(const Capture& model) {
         status_ = {};
         return;
       }
+  // The arrival belongs to the BLEND fill's undo step: it adds none, and the stored snapshots that hold the fill as it was (boost only, or
+  // the fallback amp) get the amp too, so an undo of a later edit does not hand back a path B without it.
+  proc_.patchHistory([&](Preset& snap) {
+    if (bodyUntouched(snap)) setBodyAmp(snap, model);
+  });
   setBodyAmp(cur, model);
-  proc_.loadPreset(std::move(cur), /*keepMonitor=*/true);  // coalesced with the BLEND edit: no undo entry of its own
+  proc_.loadPreset(std::move(cur), /*keepMonitor=*/true);  // not a user edit: loadPreset() records no undo step
   // What the rig is now: loadPreset clamps the values to the parameter grid, so record that (off-grid values must not make the
-  // untouched check or the undo entry's post-fill comparison fail).
+  // untouched check fail).
   const Preset now = proc_.editBasePreset();
   expectedB_ = now.b;
   expectedBlend_ = now.blend;
   status_ = {};
-  if (onBodyChanged) onBodyChanged(now);
 }
 
 void BodyFill::fallback() {

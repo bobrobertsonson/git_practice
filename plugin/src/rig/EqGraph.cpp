@@ -229,6 +229,10 @@ void EqGraph::paint(juce::Graphics& g) {
 void EqGraph::endGesture() {
   if (gestureParam_ >= 0) controller_.endParam(gestureParam_);
   gestureParam_ = -1;
+  if (undoGesture_) {  // one undo step per drag
+    undoGesture_ = false;
+    controller_.endGesture();
+  }
 }
 
 void EqGraph::liveEdit(int band, double freq, double gain, double q) {
@@ -248,6 +252,10 @@ void EqGraph::mouseDown(const juce::MouseEvent& e) {
   if (i < 0) return;
   select(i);
   dragBand_ = i;
+  if (!undoGesture_) {
+    undoGesture_ = true;
+    controller_.beginGesture();
+  }
   dragStart_ = bands_[static_cast<std::size_t>(i)];
   dragNode_ = nodePosition(i);
   if (target_ == EqTarget::Post) {

@@ -184,14 +184,19 @@ class SawbladeEditor::Content : public juce::Component {
     // start / end are fired by the Slider for user input only: host automation moves the value through the parameter attachment, which
     // never starts a drag, so it cannot change the topology. The switch happens at the drag end: the value has settled, so the rebuild
     // that follows writes back the same BLEND value and cannot snap the knob while it is being dragged.
+    // v0.3 Task D: the knob's own parameter gesture ends BEFORE this runs, so the drag and the fill it triggers are held together in
+    // one history gesture (opened here, after the parameter gesture's start, closed after blendTurnedUp): one undo step restores the
+    // knob and the SAW-only rig together.
     blendKnob.onDragStart = [this] {
       blendGesture_ = true;
       blendBefore_ = knobs_[kBlend]->getValue();
+      if (rigController_) rigController_->beginGesture();
     };
     blendKnob.onDragEnd = [this] {
       if (!blendGesture_) return;
       blendGesture_ = false;
       if (rigController_ && knobs_[kBlend]->getValue() > 0.0) rigController_->blendTurnedUp(blendBefore_);
+      if (rigController_) rigController_->endGesture();
     };
     for (const KnobDef& d : kMaster) addKnob(d);
     for (int k = 0; k < kPostEqSlots; ++k) addKnob({kPostEqFirst + k, nullptr, FilmstripKnob::Kind::Pedal, 0xffff6a1a});
@@ -457,20 +462,21 @@ class SawbladeEditor::Content : public juce::Component {
     presetBrowser_->step(dir);
   }
   rig::AmpHead& ampHead(int path) { return *ampHeads_[static_cast<size_t>(path)]; }
-  // Cmd / Ctrl + Z: undo the last BLEND fill (RigController::undo) when there is one.
+  // Cmd / Ctrl + Z: undo the last rig edit (RigController::undo); Cmd / Ctrl + Shift + Z: redo it. v0.3 Task D.
   bool handleKey(const juce::KeyPress& k) {
-    if (!(k.getModifiers().isCommandDown() && !k.getModifiers().isShiftDown() && (k.getKeyCode() == 'z' || k.getKeyCode() == 'Z'))) return false;
+    if (!(k.getModifiers().isCommandDown() && (k.getKeyCode() == 'z' || k.getKeyCode() == 'Z'))) return false;
+    const bool redo = k.getModifiers().isShiftDown();
     // Keys bubble up from children that did not take them: a text field (a read-only one passes Cmd+Z on) or an open overlay is
-    // the user's current context, so it must never undo a BLEND fill underneath it.
+    // the user's current context, so it must never undo a rig edit underneath it.
     if (dynamic_cast<juce::TextInputTarget*>(focusProbe_()) != nullptr) return false;
     if (anyOverlayOpen()) return false;
-    if (!rigController_->canUndo()) return false;
-    return rigController_->undo();
+    if (!(redo ? rigController_->canRedo() : rigController_->canUndo())) return false;
+    return redo ? rigController_->redo() : rigController_->undo();
   }
   // The component that has the keyboard focus (tests replace it: a headless X server gives no window, so no focus).
   std::function<juce::Component*()> focusProbe_ = [] { return juce::Component::getCurrentlyFocusedComponent(); };
-  // Overlays that cover or take over the editor's context: Cmd / Ctrl + Z must not undo underneath them. The RIG editor (rigPanel_) is NOT
-  // in this list on purpose: it is where path B's BLEND fill is visible and edited, so undoing the fill from there is the point.
+  // Overlays that cover or take over the editor's context: Cmd / Ctrl + Z (and + Shift) must not undo / redo underneath them. The RIG editor
+  // (rigPanel_) is NOT in this list on purpose: it is where the rig is edited, so undoing from there is the point.
   // New overlays: add them here (or document why not) and to the test "does not bubble into an undo" in test_amp_head.cpp.
   bool anyOverlayOpen() const {
     const auto vis = [](const juce::Component* c) { return c != nullptr && c->isVisible(); };
@@ -597,7 +603,7 @@ class SawbladeEditor::Content : public juce::Component {
     chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& fc) {
       const juce::File f = fc.getResult();
       if (f == juce::File()) return;
-      processor_.loadPresetFile(std::filesystem::path(f.getFullPathName().toStdString()));
+      processor_.loadPresetFile(std::filesystem::path(f.getFullPathName().toStdString()), nullptr, /*undoable=*/true);
     });
   }
 
@@ -648,6 +654,7 @@ SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEdito
 
 SawbladeEditor::~SawbladeEditor() {
   stopTimer();
+  processor_.historyAbortGestures();  // a drag still open when the window closes is one step, not a stuck gesture
   setLookAndFeel(nullptr);
 }
 

@@ -14,6 +14,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "EditHistory.h"
 #include "Engine.h"
 #include "ExportSettings.h"
 #include "EngineLoader.h"
@@ -105,7 +106,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // Any non-audio thread. The preset is parsed here (synchronously, cheap); the models are loaded
   // and the engine built on the loader thread. Return false (and set *error) if parsing failed;
   // load failures that only show up while building are reported through status().error.
-  bool loadPresetFile(const std::filesystem::path& file, std::string* error = nullptr);
+  // `undoable`: a user's load (preset browser, file chooser, resolve): recorded as an undo step of kind Load (see "undo / redo").
+  bool loadPresetFile(const std::filesystem::path& file, std::string* error = nullptr, bool undoable = false);
   bool loadPresetJson(const std::string& json, const std::filesystem::path& baseDir, std::string* error = nullptr,
                       bool restore = false);
   // `keepMonitor`: the rig editor's structural edits keep the transient mute / solo state; user
@@ -151,6 +153,42 @@ class SawbladeProcessor : public juce::AudioProcessor,
   TakeRecorder& recorder() noexcept { return recorder_; }
   const TakeRecorder& recorder() const noexcept { return recorder_; }
 
+
+  // --- undo / redo (v0.3 Task D; message thread) ------------------------------------------------------------------------------
+  // The history of rig edits lives HERE, not in the editor: a closed and reopened editor (Logic users close the window all the time)
+  // keeps it. It is never saved (the plugin state is the preset) and a host state restore leaves it alone (its steps are whole-preset
+  // snapshots, so they stay applicable). 64 steps. Recorded: every edit a USER makes: through the rig controller (blocks, EQ, cab,
+  // gate, comp, alignment, topology + BLEND fill ...), through a host-parameter widget (a knob drag, a wheel step or a typed value is
+  // one parameter gesture: begin .. end), a capture swap, the mic page, a preset load, an applied match. NOT recorded: host
+  // automation (no gesture), a state restore, and the asynchronous completions (the BLEND fill's amp arriving, a capture swap's make-up
+  // arriving, a trim / ladder write-back): they add no step of their own (patchHistory() carries the ones that belong to the rig
+  // into the stored snapshots so an undo never takes them away).
+  using HistoryKind = EditHistory::Kind;
+  bool canUndo() const;
+  bool canRedo() const;
+  bool undo();  // restores the preset as it was before the last step; false when there is none
+  bool redo();
+  std::size_t undoSteps() const;
+  std::size_t redoSteps() const;
+  // Records `before` (the preset as it was before an edit that made it `after`) as one step and ends the redo branch. Edit steps are
+  // restored like a rig edit (the transient mute / solo state stays), Load steps like a preset load. Undo / redo restore only the host
+  // parameters that differ between `before` and `after` (a parameter the host automated since keeps its value).
+  void historyRecord(Preset before, const Preset& after, HistoryKind kind = HistoryKind::Edit);
+  // A gesture (a drag) is one step: the preset at its start is compared with the rig at its end. Nested gestures are one gesture (the
+  // outermost start counts); `before` is the preset a step should restore (default: the rig now).
+  void historyGestureBegin();
+  void historyGestureBegin(Preset before);
+  void historyGestureEnd();
+  void historyAbortGestures();  // the editor is going away mid-drag
+  bool historyInGesture() const;
+  void historyClear();
+  // Applies an asynchronous completion that belongs to the rig to every stored snapshot (no step).
+  void patchHistory(const std::function<void(Preset&)>& f);
+  // The rig controller's pending (debounced) edits: flushed before a gesture starts and before an undo / redo, so they are steps of their own.
+  void setHistoryFlusher(std::function<void()> f);
+  // A user-driven load that is one step (loadPreset() itself records nothing: BodyFill, the ladder write-back, A/B compare and the audition use it).
+  // Records only when the preset differs from the rig. `kind` is how an undo restores it.
+  void loadPresetUndoable(Preset preset, HistoryKind kind, bool keepMonitor = false, std::optional<double> provisionalTrimDb = std::nullopt);
 
   // --- rig editor hooks (message thread; docs/PLUGIN.md "Rig editor") -----------------------------------
   // The preset a structural edit starts from: the pending user load if one is in flight, else the
@@ -262,7 +300,24 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void ladderWriteBack(const std::shared_ptr<Engine>& e);
   void fetchMissingRung(const Engine& e);
 
+  // Parameter gestures (a user's drag / wheel / typed value; never host automation) are history gestures.
+  class HistoryParamListener : public juce::AudioProcessorParameter::Listener {
+   public:
+    explicit HistoryParamListener(SawbladeProcessor& p) : p_(p) {}
+    void parameterValueChanged(int, float) override {}
+    void parameterGestureChanged(int, bool starting) override;
+
+   private:
+    SawbladeProcessor& p_;
+  };
+  bool stepHistory(bool undo);
+  void finishGesture(Preset before);
+
   juce::AudioProcessorValueTreeState apvts_;
+  HistoryParamListener historyListener_{*this};
+  mutable std::mutex historyMutex_;  // history_, historyFlusher_; never taken on the audio thread
+  EditHistory history_;
+  std::function<void()> historyFlusher_;
   std::array<std::atomic<float>*, kNumParams> paramAtomic_{};
   std::array<juce::RangedAudioParameter*, kNumParams> paramObj_{};
 

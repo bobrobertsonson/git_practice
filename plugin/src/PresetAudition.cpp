@@ -47,6 +47,8 @@ bool PresetAudition::apply() {
     std::string err;
     if (!proc_.loadPresetFile(state_.candidate, &err)) return false;
   }
+  // APPLY is one undo step back to the preset the user had before the audition (the audition's own loads and the A / B toggles are not steps).
+  if (const Preset now = proc_.editBasePreset(); now != original_) proc_.historyRecord(original_, now, SawbladeProcessor::HistoryKind::Load);
   applied_ = state_.candidate;
   appliedName_ = state_.candidateName;
   state_ = State{};

@@ -81,11 +81,22 @@ class RigController {
   // path B and is one undo step (restoring the knob to `blendBefore`). When path B is a blend that has no amp because the last
   // fill failed, it retries the fill. Moving BLEND back to 0 never touches path B. True when it acted.
   bool blendTurnedUp(double blendBefore);
-  // Undo of the last BLEND fill: restores the pre-BLEND preset (also after the asynchronous amp swap). There is ONE entry: the
-  // pre-BLEND preset and the preset the fill (and its swap) left. undo() works only while the rig still is exactly that; any other
-  // edit (path A, a parameter, BLEND off, path B's blocks) or a user preset load drops the entry, and undo() then returns false.
-  bool canUndo() const noexcept { return undo_.has_value(); }
+  // --- undo / redo (v0.3 Task D) --------------------------------------------------------------------------------------------------------
+  // The history itself lives in the processor (SawbladeProcessor "undo / redo": 64 whole-preset steps that survive a closed editor);
+  // this is its face for the rig editor. Every edit this controller applies is one step: edit() / editDebounced() flush = one step
+  // (a debounced burst of wheel notches is one flush), live() = one step, a drag = ONE step however many flushes / live edits it makes
+  // (beginGesture() .. endGesture(), which PresetKnob and the EQ graph call around a mouse drag), applyTopology = one step with its
+  // BLEND fill. Asynchronous completions (the fill's amp arriving, a trim write-back) are never steps.
+  // A BLEND fill still in flight follows the rig: an undo / redo that leaves path B without blocks cancels it (the late answer is dropped
+  // either way: BodyFill only swaps an amp into a path B that is still what the fill made); a redo into a blend path B that never got its
+  // amp starts the fill again.
+  bool canUndo() const noexcept { return proc_.canUndo(); }
+  bool canRedo() const noexcept { return proc_.canRedo(); }
   bool undo();
+  bool redo();
+  // One undo step around a drag: nested calls are one gesture. The controller closes the ones it still has open when it is destroyed.
+  void beginGesture();
+  void endGesture();
   BodyFill& bodyFill() noexcept { return body_; }
 
   // --- monitoring (5.3) -----------------------------------------------------------------------------
@@ -121,16 +132,16 @@ class RigController {
   };
   void applyMonitor();
   void applyTopology(Topology t, const std::optional<Preset>& preBlend);
+  bool stepHistory(bool undo);
+  void reconcileFill(const PathPreset& bBefore);
+  void liveRecorded(const EditFn& f);
   void resetTransient();
   AlignResult measuredAlign() const;
 
   int timerStarts_ = 0;
   SawbladeProcessor& proc_;
   BodyFill body_;
-  struct UndoEntry {
-    Preset pre, post;
-  };
-  std::optional<UndoEntry> undo_;
+  int gestures_ = 0;  // beginGesture() calls not yet ended
   struct Pending {
     const void* key;  // non-null: a throttled edit, replaced in place by the next one with the same key
     EditFn fn;

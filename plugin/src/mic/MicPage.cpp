@@ -408,8 +408,16 @@ struct MicPage::Impl {
     mixSlider.setColour(juce::Slider::trackColourId, kGreen);
     mixSlider.setColour(juce::Slider::thumbColourId, L::text());
     mixSlider.onValueChange = [this] { mixMoved(); };
+    mixSlider.onDragStart = [this] {
+      o.processor_.historyGestureBegin();  // the whole drag (and every throttled submit in it) is one undo step
+      mixGesture = true;
+    };
     mixSlider.onDragEnd = [this] {
       if (mixDirty) submitMix();
+      if (mixGesture) {
+        mixGesture = false;
+        o.processor_.historyGestureEnd();
+      }
     };
     o.addAndMakeVisible(mixSlider);
 
@@ -791,7 +799,7 @@ struct MicPage::Impl {
   std::unique_ptr<juce::FileChooser> chooser;
 
   T3kTool tool;
-  bool toolRunning = false, needLocate = false, updating = false, mixDirty = false;
+  bool toolRunning = false, needLocate = false, updating = false, mixDirty = false, mixGesture = false;
   juce::uint32 lastMixSubmit = 0;
   juce::String localMessage;
   bool localIsError = false;
@@ -872,7 +880,7 @@ void MicPage::submit(std::optional<Preset> p) {
   impl_->pending = true;
   impl_->pendingCab = p->cab;
   impl_->pendingSince = juce::Time::getMillisecondCounter();
-  processor_.loadPreset(std::move(*p));
+  processor_.loadPresetUndoable(std::move(*p), SawbladeProcessor::HistoryKind::Edit);  // one step per submit; a mix drag is one gesture (Impl)
   impl_->updateAll();
 }
 

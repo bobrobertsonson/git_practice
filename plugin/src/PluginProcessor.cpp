@@ -68,11 +68,13 @@ SawbladeProcessor::SawbladeProcessor()
   levelWorker_ = std::make_unique<LevelWorker>();
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
   apvts_.addParameterListener(paramSpec(kSawCircuit).id, this);
+  for (auto* prm : paramObj_) prm->addListener(&historyListener_);
   jobs_.pruneAsync();  // old match job folders: on the runner's own thread, not here
   startTimerHz(10);
 }
 
 SawbladeProcessor::~SawbladeProcessor() {
+  for (auto* prm : paramObj_) prm->removeListener(&historyListener_);
   stopTimer();
   levelWorker_.reset();  // joins: its callbacks use this object
   loader_.reset();  // joins the worker before the slot and the rest are destroyed
@@ -231,7 +233,8 @@ void SawbladeProcessor::ladderTick() {
     if (r.rungs.empty()) continue;
     Preset p = editBasePreset();
     if (applyLadderToPreset(p, r.toneId, r.rungs)) {
-      loadPreset(std::move(p), /*keepMonitor=*/true);
+      loadPreset(std::move(p), /*keepMonitor=*/true);  // an async completion: no undo step of its own ...
+      patchHistory([&](Preset& snap) { applyLadderToPreset(snap, r.toneId, r.rungs); });  // ... and an undo does not take the ladder away
     } else if (const auto need = toneIdsNeedingLadder(p); std::find(need.begin(), need.end(), r.toneId) != need.end()) {
       // The ladder has the tone's `standard`-size models; a capture of another size is not one of them (the preset does not
       // record the size), so it gets no ladder: GAIN stays drive-only. Say so.
@@ -468,9 +471,11 @@ bool SawbladeProcessor::loadPresetJson(const std::string& json, const std::files
   }
 }
 
-bool SawbladeProcessor::loadPresetFile(const std::filesystem::path& file, std::string* error) {
+bool SawbladeProcessor::loadPresetFile(const std::filesystem::path& file, std::string* error, bool undoable) {
   try {
-    loadPreset(sawblade::loadPresetFile(file));
+    Preset p = sawblade::loadPresetFile(file);
+    if (undoable) loadPresetUndoable(std::move(p), HistoryKind::Load);
+    else loadPreset(std::move(p));
     return true;
   } catch (const std::exception& e) {
     if (error) *error = e.what();

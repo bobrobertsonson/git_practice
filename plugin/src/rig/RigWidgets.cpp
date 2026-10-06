@@ -96,14 +96,18 @@ PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::Film
   value_.setColour(juce::Label::textColourId, L::dimText());
   value_.setMinimumHorizontalScale(0.7f);
   // One gesture = mouse down .. mouse up (a double-click is one too; the wheel and typed values are one-event gestures).
+  // (v0.3 Task D: the controller's undo gesture follows these: a mouse drag is one undo step however many rebuilds it makes. A wheel
+  // notch or a typed value is one flush of the debounce = one step, recorded when it is applied.)
   knob_.onDragStart = [this] {
     dragging_ = true;
+    controller_.beginGesture();
     if (onGestureBegin) onGestureBegin();
   };
   knob_.onDragEnd = [this] {
     dragging_ = false;
     if (knob_.mouseHeld()) finishGesture();  // a mouse gesture ends with its final value; a wheel edit (no mouse held) already took the throttled route
     if (onGestureEnd) onGestureEnd();
+    controller_.endGesture();
   };
   knob_.onValueChange = [this] {
     updateText();
@@ -181,6 +185,7 @@ PresetKnob::~PresetKnob() {
   if (dragging_) {  // destroyed mid-drag: close the gesture so begin / end stay paired
     dragging_ = false;
     if (onGestureEnd) onGestureEnd();
+    controller_.endGesture();
   }
 }
 

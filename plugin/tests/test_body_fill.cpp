@@ -273,7 +273,7 @@ TEST_CASE("Body fill: a path B that already has blocks is left untouched", "[bod
   const Preset cur = h.p.currentPreset();
   CHECK(cur.b.enabled);
   CHECK(cur.b.blocks == pre.b.blocks);
-  CHECK_FALSE(ctl.canUndo());
+  CHECK(ctl.canUndo());  // v0.3 Task D: switching the topology is an edit like any other (one step); it is not a fill
   CHECK(ctl.bodyFill().toolRuns() == 0);
 }
 
@@ -497,7 +497,42 @@ TEST_CASE("Body fill: a model file without a meta entry is not cached; the model
   CHECK(h.p.currentPreset().b.blocks.size() == 1);
 }
 
-TEST_CASE("Body fill undo: any other edit makes undo() refuse and keeps the edit", "[bodyfill][rig][undo]") {
+TEST_CASE("Body fill undo: later edits are steps of their own; undo walks back through them, the fill is one step", "[bodyfill][rig][undo]") {
+  const BfCache cache;
+  cache.put("88689", "5001");
+  TempDir t;
+  const NoTool noTool(t.dir);
+  Host h(48000.0, 512);
+  h.load(writeSinglePreset(t.dir));
+  const Preset pre = h.p.currentPreset();
+  RigController ctl(h.p);
+  // BLEND, then an edit of path A: two steps. (v0.2 refused to undo the fill once anything else had changed.)
+  ctl.setTopology(Topology::Blend);
+  REQUIRE(h.p.waitForLoader());
+  const Preset filled = h.p.currentPreset();
+  ctl.edit([](Preset& p) { setBypass(p.a, 0, true); });
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.undoSteps() == 2);
+  REQUIRE(ctl.undo());  // the bypass
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(h.p.currentPreset().a.blocks[0].bypass);
+  CHECK(h.p.currentPreset() == filled);
+  CHECK(h.p.currentPreset().b.enabled);
+  REQUIRE(ctl.undo());  // the fill
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == pre);
+  CHECK_FALSE(ctl.canUndo());
+  // Redo walks forward again, to the fill and then the bypass.
+  REQUIRE(ctl.redo());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == filled);
+  REQUIRE(ctl.redo());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset().a.blocks[0].bypass);
+  CHECK_FALSE(ctl.canRedo());
+}
+
+TEST_CASE("Body fill undo: a host parameter change (automation) is not a step and is not rewound by an undo", "[bodyfill][rig][undo]") {
   const BfCache cache;
   cache.put("88689", "5001");
   TempDir t;
@@ -505,47 +540,22 @@ TEST_CASE("Body fill undo: any other edit makes undo() refuse and keeps the edit
   Host h(48000.0, 512);
   h.load(writeSinglePreset(t.dir));
   RigController ctl(h.p);
-  // BLEND, then an edit of path A: undo() would lose it, so it refuses.
   ctl.setTopology(Topology::Blend);
   REQUIRE(h.p.waitForLoader());
-  ctl.edit([](Preset& p) { setBypass(p.a, 0, true); });
+  REQUIRE(h.p.undoSteps() == 1);
+  h.setParam(kOutputGain, -3.0);  // the host: no gesture
+  CHECK(h.p.undoSteps() == 1);
+  REQUIRE(ctl.undo());
   REQUIRE(h.p.waitForLoader());
-  CHECK_FALSE(ctl.undo());
+  CHECK_FALSE(h.p.currentPreset().b.enabled);
+  CHECK(h.param(kOutputGain) == Catch::Approx(-3.0));  // the automation is still there: the fill step did not touch OUTPUT
+  REQUIRE(ctl.redo());
   REQUIRE(h.p.waitForLoader());
-  CHECK(h.p.currentPreset().a.blocks[0].bypass);  // the edit survived
   CHECK(h.p.currentPreset().b.enabled);
-  CHECK_FALSE(ctl.canUndo());
-  // A parameter edit does too.
-  ctl.setTopology(Topology::Single);
-  REQUIRE(h.p.waitForLoader());
-  ctl.edit([](Preset& p) { p.b.blocks.clear(); });  // path B empty again, BLEND off
-  REQUIRE(h.p.waitForLoader());
-  ctl.setTopology(Topology::Blend);
-  REQUIRE(h.p.waitForLoader());
-  REQUIRE(ctl.canUndo());
-  h.setParam(kOutputGain, -3.0);
-  CHECK_FALSE(ctl.undo());
-  REQUIRE(h.p.waitForLoader());
   CHECK(h.param(kOutputGain) == Catch::Approx(-3.0));
-  // BLEND turned off again: the fill is no longer the last word.
-  ctl.setTopology(Topology::Single);
-  REQUIRE(h.p.waitForLoader());
-  ctl.edit([](Preset& p) { p.b.blocks.clear(); });
-  REQUIRE(h.p.waitForLoader());
-  h.setParam(kOutputGain, 0.0);
-  ctl.setTopology(Topology::Blend);
-  REQUIRE(h.p.waitForLoader());
-  REQUIRE(ctl.canUndo());
-  ctl.setTopology(Topology::Single);
-  REQUIRE(h.p.waitForLoader());
-  CHECK_FALSE(ctl.canUndo());
-  ctl.edit([](Preset& p) { p.a.levelDb = -2.0; });
-  REQUIRE(h.p.waitForLoader());
-  CHECK_FALSE(ctl.undo());
-  CHECK(h.p.currentPreset().a.levelDb == Catch::Approx(-2.0));
 }
 
-TEST_CASE("Body fill undo: a second fill never resurrects the first snapshot", "[bodyfill][rig][undo]") {
+TEST_CASE("Body fill undo: a new edit after an undo ends the redo branch; a second fill never resurrects the first", "[bodyfill][rig][undo]") {
   const BfCache cache;
   cache.put("88689", "5001");
   TempDir t;
@@ -560,8 +570,10 @@ TEST_CASE("Body fill undo: a second fill never resurrects the first snapshot", "
   REQUIRE(h.p.waitForLoader());
   CHECK(h.p.currentPreset() == pre1);
   CHECK_FALSE(ctl.canUndo());
+  CHECK(ctl.canRedo());
   ctl.edit([](Preset& p) { p.a.levelDb = -4.0; });  // a change made after the first undo
   REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(ctl.canRedo());  // the first fill can no longer be redone
   const Preset pre2 = h.p.currentPreset();
   ctl.setTopology(Topology::Blend);
   REQUIRE(h.p.waitForLoader());
@@ -569,6 +581,9 @@ TEST_CASE("Body fill undo: a second fill never resurrects the first snapshot", "
   REQUIRE(h.p.waitForLoader());
   CHECK(h.p.currentPreset() == pre2);  // not pre1
   CHECK(h.p.currentPreset().a.levelDb == Catch::Approx(-4.0));
+  REQUIRE(ctl.undo());  // the level edit is a step of its own now
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == pre1);
   CHECK_FALSE(ctl.undo());
 }
 

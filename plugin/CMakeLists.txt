@@ -50,6 +50,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/RungPreloader.cpp
   src/LevelWorker.cpp
   src/PluginProcessor.cpp
+  src/PluginProcessorHistory.cpp
   src/PlayAlongPanel.cpp
   src/MatchScreen.cpp
   src/ExportPanel.cpp

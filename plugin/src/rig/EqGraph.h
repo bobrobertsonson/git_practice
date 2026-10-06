@@ -80,6 +80,7 @@ class EqGraph : public juce::Component, public juce::SettableTooltipClient {
   EqBand dragStart_;
   juce::Point<float> dragNode_;
   int gestureParam_ = -1;
+  bool undoGesture_ = false;  // a controller history gesture is open (mouse down .. up on a band)
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EqGraph)
 };

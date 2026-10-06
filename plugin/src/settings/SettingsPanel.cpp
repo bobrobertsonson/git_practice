@@ -577,7 +577,7 @@ struct SettingsPanel::Impl : private juce::Timer {
           fetchRunning = false;
           if (res.outcome == ToolResult::Outcome::Ok) {
             std::string err;
-            if (!proc.loadPresetFile(out, &err)) fetchError = "Could not load the resolved preset: " + ju(err);
+            if (!proc.loadPresetFile(out, &err, /*undoable=*/true)) fetchError = "Could not load the resolved preset: " + ju(err);
           } else {
             fetchError = !res.error.empty() ? ju(res.error) : (res.lines.empty() ? "resolve failed (exit " + juce::String(res.exitCode) + ")" : ju(res.lines.back()));
           }

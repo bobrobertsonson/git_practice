@@ -223,7 +223,8 @@ void BrowserController::fetchSelected(std::function<void(const t3k::FetchResult&
 void BrowserController::loadSwapped(Preset p) {
   // The swap keeps the rig's current trim until the new rig's measurement lands: no level jump (a hash change drops to 0 otherwise).
   const auto s = proc_.status();
-  proc_.loadPreset(std::move(p), /*keepMonitor=*/false, s.levelMatchOn ? std::optional<double>(s.trimDb) : std::nullopt);
+  // One undo step (restored as an edit: the rig stays, the old capture and its make-up come back); the make-up that arrived with the swap is part of it.
+  proc_.loadPresetUndoable(std::move(p), SawbladeProcessor::HistoryKind::Edit, /*keepMonitor=*/false, s.levelMatchOn ? std::optional<double>(s.trimDb) : std::nullopt);
   st_.busy = false;
   awaitingLoad_ = true;
   setStatus("Loading " + loadedTitle_ + "..." + levelNote_);

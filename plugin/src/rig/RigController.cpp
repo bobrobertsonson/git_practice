@@ -4,12 +4,12 @@
 #include <cmath>
 #include <cstdio>
 
+#include "PresetMapping.h"
+
 namespace sawblade::plugin::rig {
 
 RigController::RigController(SawbladeProcessor& p) : proc_(p), body_(p), loadSerial_(p.userLoadSerial()) {
-  body_.onBodyChanged = [this](const Preset& swapped) {  // the async amp swap: the fill's result moves with it
-    if (undo_) undo_->post = swapped;
-  };
+  proc_.setHistoryFlusher([this] { flushPending(); });  // pending debounced edits are steps of their own before a gesture / an undo
   debounce_.fn = [this] { flushPending(); };
   learnTimer_.fn = [this] { finishLearn(); };
   lastBlend_ = [&] {
@@ -19,6 +19,8 @@ RigController::RigController(SawbladeProcessor& p) : proc_(p), body_(p), loadSer
 }
 
 RigController::~RigController() {
+  while (gestures_ > 0) endGesture();
+  proc_.setHistoryFlusher({});
   debounce_.stopTimer();
   learnTimer_.stopTimer();
 }
@@ -60,14 +62,25 @@ void RigController::flushPending() {
   debounce_.stopTimer();
   if (pending_.empty()) return;
   Preset p = proc_.editBasePreset();
-  const PathPreset bBefore = p.b;
+  const Preset before = p;
   for (const auto& e : pending_) e.fn(p);
   pending_.clear();
-  if (undo_ && p.b != bBefore) undo_.reset();  // path B was edited (blocks, BLEND on / off, ...): the fill is no longer the last word
+  p = clampedToParams(std::move(p));
+  // One undo step per flush (a wheel burst or a typed value is one flush); inside a drag the gesture's end decides.
+  if (!proc_.historyInGesture() && p != before) proc_.historyRecord(before, p, SawbladeProcessor::HistoryKind::Edit);
   proc_.loadPreset(std::move(p), /*keepMonitor=*/true);
 }
 
-void RigController::live(const EditFn& f) { proc_.applyLiveEdit(f); }
+// A live edit outside a gesture (a typed value, a wheel notch) is a step of its own; inside a drag the gesture records it.
+void RigController::liveRecorded(const EditFn& f) {
+  if (proc_.historyInGesture()) return proc_.applyLiveEdit(f);
+  Preset before = proc_.currentPreset();
+  proc_.applyLiveEdit(f);
+  const Preset after = proc_.currentPreset();
+  if (after != before) proc_.historyRecord(std::move(before), after, SawbladeProcessor::HistoryKind::Edit);
+}
+
+void RigController::live(const EditFn& f) { liveRecorded(f); }
 
 int RigController::postSlotOfBand(int band) const {
   const SlotBands s = proc_.postEqSlots();
@@ -82,14 +95,14 @@ void RigController::eqLive(EqTarget t, int band, double freq, double gainDb, dou
     if (slot >= 0) {
       // The gain belongs to the host-visible parameter; the preset keeps its own value untouched.
       setParam(kPostEqFirst + slot, gainDb);
-      proc_.applyLiveEdit([=](Preset& p) {
+      liveRecorded([=](Preset& p) {
         if (band < 0 || band >= static_cast<int>(p.postEq.size())) return;
         setBandLive(p, t, band, freq, p.postEq[static_cast<std::size_t>(band)].gainDb, q);
       });
       return;
     }
   }
-  proc_.applyLiveEdit([=](Preset& p) { setBandLive(p, t, band, freq, gainDb, q); });
+  liveRecorded([=](Preset& p) { setBandLive(p, t, band, freq, gainDb, q); });
 }
 
 void RigController::beginParam(int i) {
@@ -118,8 +131,7 @@ void RigController::sync() {
   if (const auto serial = proc_.userLoadSerial(); serial != loadSerial_) {
     loadSerial_ = serial;
     resetTransient();
-    undo_.reset();  // another preset: the BLEND fill can no longer be undone, and its suggestion no longer applies
-    body_.cancel();
+    body_.cancel();  // another preset: the BLEND fill's suggestion no longer applies
   }
   body_.tick();
   if (!pending_.empty()) return;
@@ -162,20 +174,26 @@ bool RigController::blendTurnedUp(double blendBefore) {
   return true;
 }
 
+// The topology switch and its BLEND fill are ONE undo step: `preBlend` (when the BLEND knob started the switch) is the preset the step
+// restores, with the knob where the gesture started; otherwise it is the rig as it is now. The step is a gesture of its own, so the
+// edits below (and any outer gesture, such as the knob drag that led here) add no step of their own.
 void RigController::applyTopology(Topology t, const std::optional<Preset>& preBlend) {
   sync();
+  flushPending();  // an edit still waiting for its debounce is a step of its own, not part of this one
   const Preset cur = view();
+  proc_.historyGestureBegin(preBlend.value_or(cur));
+  struct End {
+    SawbladeProcessor& p;
+    ~End() { p.historyGestureEnd(); }
+  } end{proc_};
   if (topologyOf(cur) == Topology::Blend && cur.blend > 0.0) lastBlend_ = cur.blend;
   singlePlus_ = (t == Topology::SinglePlusTwoPedals);
   const double restore = lastBlend_;
   const bool fill = t == Topology::Blend && !cur.b.enabled && cur.b.blocks.empty();
   if (!fill) {
     edit([t, restore](Preset& p) { rig::setTopology(p, t, restore); });
-    if (t == Topology::Blend && !cur.b.enabled && ampIndex(cur.b) < 0) {  // path B kept blocks but has no amp: never a silent boost-only path
-      const Preset post = proc_.editBasePreset();
-      undo_ = UndoEntry{preBlend.value_or(cur), post};
-      body_.begin(post);
-    }
+    if (t == Topology::Blend && !cur.b.enabled && ampIndex(cur.b) < 0)  // path B kept blocks but has no amp: never a silent boost-only path
+      body_.begin(proc_.editBasePreset());
     return;
   }
   const std::optional<Capture> amp = cachedToneCapture(kFallbackBodyTone);
@@ -183,22 +201,40 @@ void RigController::applyTopology(Topology t, const std::optional<Preset>& preBl
     rig::setTopology(p, t, restore);
     fillBodyPath(p, amp);
   });
-  const Preset post = proc_.editBasePreset();
-  undo_ = UndoEntry{preBlend.value_or(cur), post};  // replaces any older entry: a second fill never resurrects the first one's snapshot
-  body_.begin(post);
+  body_.begin(proc_.editBasePreset());
 }
 
-bool RigController::undo() {
+void RigController::beginGesture() {
+  ++gestures_;
+  proc_.historyGestureBegin();
+}
+
+void RigController::endGesture() {
+  if (gestures_ <= 0) return;
+  --gestures_;
+  proc_.historyGestureEnd();
+}
+
+bool RigController::undo() { return stepHistory(true); }
+bool RigController::redo() { return stepHistory(false); }
+
+bool RigController::stepHistory(bool undo) {
   sync();
-  if (!undo_) return false;
-  flushPending();  // an edit still waiting for its debounce counts as an edit (and may drop the entry)
-  if (!undo_) return false;
-  UndoEntry e = std::move(*undo_);
-  undo_.reset();
-  body_.cancel();
-  if (proc_.editBasePreset() != e.post) return false;  // something else changed since the fill: undoing would lose it
-  proc_.loadPreset(std::move(e.pre), /*keepMonitor=*/true);
+  flushPending();  // an edit still waiting for its debounce counts as an edit (a step of its own, undone first)
+  if (!(undo ? proc_.canUndo() : proc_.canRedo())) return false;
+  const PathPreset bBefore = proc_.editBasePreset().b;
+  if (!(undo ? proc_.undo() : proc_.redo())) return false;
+  reconcileFill(bBefore);
   return true;
+}
+
+// The BLEND fill follows path B after an undo / redo (an undo of something else leaves the fill alone).
+void RigController::reconcileFill(const PathPreset& bBefore) {
+  sync();  // a Load step bumped the user-load serial: that cancels the fill; do it before deciding about a new one
+  const Preset now = proc_.editBasePreset();
+  if (now.b == bBefore) return;
+  if (!now.b.enabled || now.b.blocks.empty()) body_.cancel();
+  else if (topologyOf(now) == Topology::Blend && ampIndex(now.b) < 0 && !body_.active()) body_.begin(now);
 }
 
 void RigController::applyMonitor() {
