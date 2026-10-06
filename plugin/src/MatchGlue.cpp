@@ -105,6 +105,11 @@ ExportSource prepareExportSource(SawbladeProcessor& p, bool dropComp, bool write
     return s;
   }
   if (dropComp) current.busComp.enabled = false;
+  // NAM export always trains the UN-trimmed chain (docs/PRESET_SCHEMA.md "Level matching"): the auto trim (output.autoTrim.db, the
+  // plugin's LEVEL MATCH) is a plain gain on the way out and never part of the model, so neither the exported preset nor its key
+  // carries it. A slot's capture-swap make-up is part of the sound and stays.
+  current.autoTrim.db = 0.0;
+  current.autoTrim.hash.clear();
   // The file is named by the hash of its bytes: the same rig always gives the same file (and the same "same rig" key
   // for RESUME); a changed rig gives another one.
   const std::string text = presetToStateJson(current);

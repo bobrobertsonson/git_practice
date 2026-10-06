@@ -318,7 +318,15 @@ class SawbladeEditor::Content : public juce::Component {
   void refresh() {
     const auto st = processor_.status();
     presetButton_.setButtonText(juce::String(st.presetName).toUpperCase());
-    latChip_.setText("LAT " + juce::String(st.latencySamples) + juce::String::fromUTF8(" smp \xc2\xb7 CPU \xe2\x80\x94"), juce::dontSendNotification);
+    // LEVEL MATCH (v0.3): while the trim of this rig is being measured (background, a few seconds) the chip says so; the trim is
+    // 0 (or the previous one) until then.
+    const bool levelPending = st.levelMatchOn && st.levelPending;
+    latChip_.setText(levelPending ? juce::String::fromUTF8("LEVEL \xe2\x80\xa6")
+                                  : "LAT " + juce::String(st.latencySamples) + juce::String::fromUTF8(" smp \xc2\xb7 CPU \xe2\x80\x94"),
+                     juce::dontSendNotification);
+    latChip_.setTooltip(levelPending ? "Matching this rig to -18 LUFS on a built-in reference signal (LEVEL MATCH, background); until then no trim is applied. "
+                                       "Reported plugin latency: " + juce::String(st.latencySamples) + " samples"
+                                     : juce::String("Reported plugin latency (CPU meter: not available in this prototype)"));
     modeChip_.setText(st.liveCompatible ? juce::String::fromUTF8("\xe2\x97\x8f LIVE") : juce::String::fromUTF8("\xe2\x97\x8f STUDIO"), juce::dontSendNotification);
     modeChip_.setColour(juce::Label::textColourId, st.liveCompatible ? L::live() : L::studio());
     modeChip_.setColour(juce::Label::outlineColourId, st.liveCompatible ? L::liveBorder() : L::studio().withAlpha(0.45f));

@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "PreviewRender.h"
+#include "sawblade/auto_trim.h"
 
 namespace sawblade::plugin {
 
@@ -219,20 +220,49 @@ void BrowserController::fetchSelected(std::function<void(const t3k::FetchResult&
   });
 }
 
+void BrowserController::loadSwapped(Preset p) {
+  proc_.loadPreset(std::move(p));
+  st_.busy = false;
+  awaitingLoad_ = true;
+  setStatus("Loading " + loadedTitle_ + "...");
+  changed();
+}
+
 void BrowserController::use(int targetIndex) {
   fetchSelected([this, targetIndex](const t3k::FetchResult& f) {
     const Preset cur = proc_.currentPreset();
     std::string why;
     const auto ts = slotTargets(cur, slot_, &why);
     if (targetIndex < 0 || targetIndex >= static_cast<int>(ts.size())) return fail(why.empty() ? "no such target" : why);
+    const SlotTarget target = ts[static_cast<std::size_t>(targetIndex)];
     std::string err;
-    auto np = withCapture(cur, ts[static_cast<std::size_t>(targetIndex)], f, err);
+    auto np = withCapture(cur, target, f, err);
     if (!np) return fail(err);
-    proc_.loadPreset(std::move(*np));
-    st_.busy = false;
-    awaitingLoad_ = true;
-    setStatus("Loading " + loadedTitle_ + "...");
+    if (target.isIr() || !proc_.levelMatchEnabled()) return loadSwapped(std::move(*np));
+    // LEVEL MATCH: the new capture must not change the slot's loudness on the reference DI. The make-up is computed in the
+    // background (the old capture keeps playing meanwhile) and the swap is loaded with it, so there is no jump.
+    const int path = target.path == 'a' ? 0 : 1;
+    const Preset after = withSlotMakeup(*np, path, target.blockIndex, 0.0);
+    const std::uint64_t seq = ++useSeq_;
+    st_.busy = true;
+    setStatus("Matching the level of " + loadedTitle_ + "...");
     changed();
+    proc_.computeSlotMakeup(cur, after, path, [this, alive = alive_, seq, target, f, path](const LevelWorker::MakeupResult& r) {
+      juce::MessageManager::callAsync([this, alive, seq, target, f, path, mk = r.makeupDb] {
+        if (!alive->load() || seq != useSeq_) return;
+        // Edits made while the level was measured are kept: the swap is applied to the rig as it is now.
+        const Preset now = proc_.currentPreset();
+        const auto ts2 = slotTargets(now, slot_);
+        std::string e2;
+        const SlotTarget* t2 = nullptr;
+        for (const auto& t : ts2)
+          if (t.kind == target.kind && t.path == target.path) t2 = &t;
+        if (t2 == nullptr) return fail("the slot is no longer in the rig");
+        auto swapped = withCapture(now, *t2, f, e2);
+        if (!swapped) return fail(e2);
+        loadSwapped(mk ? withSlotMakeup(*swapped, path, t2->blockIndex, *mk) : std::move(*swapped));
+      });
+    });
   });
 }
 
@@ -250,6 +280,14 @@ void BrowserController::preview() {
       np = std::move(*r);
     }
     PreviewWorker::Job job;
+    if (proc_.levelMatchEnabled() && !previewRender) {  // LEVEL MATCH: the candidate is previewed at the rig's level
+      job.levelMatch.on = true;
+      job.levelMatch.before = cur;
+      if (!ts.front().isIr()) {
+        job.levelMatch.path = ts.front().path == 'a' ? 0 : 1;
+        job.levelMatch.block = ts.front().blockIndex;
+      }
+    }
     job.preset = std::move(np);
     const double hr = proc_.status().hostRate;
     job.hostRate = hr > 0.0 ? hr : 48000.0;

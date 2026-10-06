@@ -4,11 +4,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <thread>
 
 #include "AppPaths.h"
 #include "PluginEditor.h"
+#include "sawblade/auto_trim.h"
 #include "sawblade/preset.h"
 #include "sawblade/preset_reader.h"
+#include "settings/Settings.h"
 
 namespace sawblade::plugin {
 namespace {
@@ -62,6 +65,7 @@ SawbladeProcessor::SawbladeProcessor()
   fadeBuf_.assign(kMinChunk, 0.0f);
   playAlong_.setStandalone(wrapperType == wrapperType_Standalone);
   playAlong_.setSongDecoder(&decodeSongFile);
+  levelWorker_ = std::make_unique<LevelWorker>();
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
   apvts_.addParameterListener(paramSpec(kSawCircuit).id, this);
   jobs_.pruneAsync();  // old match job folders: on the runner's own thread, not here
@@ -70,6 +74,7 @@ SawbladeProcessor::SawbladeProcessor()
 
 SawbladeProcessor::~SawbladeProcessor() {
   stopTimer();
+  levelWorker_.reset();  // joins: its callbacks use this object
   loader_.reset();  // joins the worker before the slot and the rest are destroyed
   apvts_.removeParameterListener(paramSpec(kSawCircuit).id, this);
 }
@@ -111,8 +116,17 @@ Preset SawbladeProcessor::presetWithParams() const {
 Preset SawbladeProcessor::currentPreset() const { return presetWithParams(); }
 
 SawbladeProcessor::Status SawbladeProcessor::status() const {
-  std::lock_guard<std::mutex> lk(mutex_);
-  return status_;
+  Status s;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    s = status_;
+  }
+  s.levelMatchOn = levelMatchOn_.load();
+  s.trimDb = s.levelMatchOn ? trimTargetDb_.load() : 0.0;
+  std::lock_guard<std::mutex> lk(levelMutex_);
+  s.levelPending = s.levelMatchOn && levelPending_;
+  s.levelFailed = s.levelMatchOn && levelFailed_;
+  return s;
 }
 
 SawbladeProcessor::EngineParamState SawbladeProcessor::engineParamState() const {
@@ -153,6 +167,7 @@ void SawbladeProcessor::timerCallback() {
   if (committing_.load() > 0) return;
   if (circuitDirty_.exchange(false)) circuitChanged();
   ladderTick();
+  levelTick();
 }
 
 // --- gain ladders -------------------------------------------------------------------------------
@@ -416,9 +431,13 @@ void SawbladeProcessor::commit(const Preset& p, std::uint64_t generation, bool c
     status_.presetName = p.name;
     presetGeneration_ = generation;
     ++presetSerial_;
-    if (clearMonitor) monitor_ = {};
+    if (clearMonitor) {
+      monitor_ = {};
+      outBaseline_ = p.outputGainDb;  // a user load: the OUTPUT knob is relative to this from now on (level matching)
+    }
     publishLive();
   }
+  if (clearMonitor) levelOnLoad(p);  // before the engine for `p` is published: it starts at the right trim
   const ParamValues pv = paramsFromPreset(p);
   commitCircuit_.store(static_cast<int>(std::lround(pv[kSawCircuit])));
   committing_.fetch_add(1);
@@ -642,6 +661,116 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
   }
 }
 
+// --- level matching -----------------------------------------------------------------------------
+Preset SawbladeProcessor::levelMeasurementPreset() const {
+  Preset p = presetWithParams();
+  std::lock_guard<std::mutex> lk(mutex_);
+  p.outputGainDb = outBaseline_;
+  return p;
+}
+
+// levelMutex_ held.
+void SawbladeProcessor::rememberTrim(const std::string& hash, double db) {
+  for (auto& k : knownTrims_)
+    if (k.first == hash) {
+      k.second = db;
+      return;
+    }
+  knownTrims_.emplace_back(hash, db);
+  if (knownTrims_.size() > 32) knownTrims_.erase(knownTrims_.begin());
+}
+
+// A user load or state restore is being committed (loader thread, or the caller's thread before the first prepare): the previous
+// preset's trim does not carry over. A stored trim that is fresh for this preset applies at once; otherwise 0 until measured.
+void SawbladeProcessor::levelOnLoad(const Preset& p) {
+  const std::string hash = autoTrimHash(p);  // p's own output gain is the baseline of a fresh load
+  std::lock_guard<std::mutex> lk(levelMutex_);
+  if (!p.autoTrim.hash.empty() && p.autoTrim.hash == hash) rememberTrim(hash, p.autoTrim.db);
+  double known = 0.0;
+  bool have = false;
+  for (const auto& k : knownTrims_)
+    if (k.first == hash) {
+      known = k.second;
+      have = true;
+    }
+  trimTargetDb_.store(have ? known : 0.0);
+  levelWantedHash_ = hash;
+  levelChangedAt_ = std::chrono::steady_clock::now();
+  levelPending_ = !have;
+  levelFailed_ = false;
+}
+
+void SawbladeProcessor::onTrimResult(const LevelWorker::TrimResult& r) {  // level worker thread
+  std::lock_guard<std::mutex> lk(levelMutex_);
+  if (levelPendingHash_ == r.hash) levelPendingHash_.clear();
+  if (r.trimDb) rememberTrim(r.hash, *r.trimDb);
+  else failedTrims_.insert(r.hash);
+  if (r.hash == levelWantedHash_) {
+    trimTargetDb_.store(r.trimDb ? *r.trimDb : 0.0);
+    levelPending_ = false;
+    levelFailed_ = !r.trimDb;
+  }
+}
+
+void SawbladeProcessor::levelTick() {
+  const bool on = settings::Settings::shared().levelMatch();
+  levelMatchOn_.store(on);
+  if (!on) return;
+  const Preset q = levelMeasurementPreset();
+  const std::string hash = autoTrimHash(q);
+  std::optional<double> writeBack;
+  {
+    std::lock_guard<std::mutex> lk(levelMutex_);
+    if (!q.autoTrim.hash.empty() && q.autoTrim.hash == hash) rememberTrim(hash, q.autoTrim.db);  // fresh in the preset itself
+    if (levelWantedHash_ != hash) {
+      levelWantedHash_ = hash;
+      levelChangedAt_ = std::chrono::steady_clock::now();
+    }
+    const auto it = std::find_if(knownTrims_.begin(), knownTrims_.end(), [&](const auto& k) { return k.first == hash; });
+    if (it != knownTrims_.end()) {
+      trimTargetDb_.store(it->second);
+      levelPending_ = levelFailed_ = false;
+      if (q.autoTrim.hash != hash) writeBack = it->second;
+    } else if (failedTrims_.count(hash) != 0) {
+      levelPending_ = false;
+      levelFailed_ = true;
+    } else {
+      levelPending_ = true;
+      levelFailed_ = false;
+      const auto waited = std::chrono::steady_clock::now() - levelChangedAt_;
+      if (levelPendingHash_ != hash && waited >= std::chrono::milliseconds(levelDebounceMs_.load())) {
+        levelPendingHash_ = hash;
+        levelWorker_->submitTrim(q, hash, [this](const LevelWorker::TrimResult& r) { onTrimResult(r); });
+      }
+    }
+  }
+  if (writeBack) {  // so the saved state and the A / B slots carry the measured trim
+    std::lock_guard<std::mutex> lk(mutex_);
+    preset_.autoTrim.db = *writeBack;
+    preset_.autoTrim.hash = hash;
+  }
+}
+
+bool SawbladeProcessor::waitForLevelWork(std::chrono::milliseconds timeout) {
+  const auto end = std::chrono::steady_clock::now() + timeout;
+  for (;;) {
+    levelTick();
+    bool pending;
+    {
+      std::lock_guard<std::mutex> lk(levelMutex_);
+      pending = levelPending_ || !levelPendingHash_.empty();
+    }
+    if (!settings::Settings::shared().levelMatch()) return true;
+    if (!pending && levelWorker_->idle()) return true;
+    if (std::chrono::steady_clock::now() >= end) return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+}
+
+void SawbladeProcessor::computeSlotMakeup(Preset before, Preset after, int path, LevelWorker::MakeupDone done) {
+  levelWorker_->submitMakeup(std::move(before), std::move(after), path, std::move(done));
+}
+
 // --- rig editor hooks ---------------------------------------------------------------------------
 void SawbladeProcessor::publishLive() {
   auto snap = std::make_unique<LiveSnapshot>();
@@ -765,6 +894,10 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     const LiveSnapshot* snap = liveSlot_.current();
     engine->setParams(pv, snap && snap->generation == engine->generation() ? &snap->live : nullptr);
     if (fading_) fading_->setParams(pv, snap && snap->generation == fading_->generation() ? &snap->live : nullptr, snap ? &snap->live : nullptr);
+    // Level matching: a plain gain after the OUTPUT knob (atomics only; LEVEL MATCH off = 0 dB).
+    const double trim = levelMatchOn_.load(std::memory_order_relaxed) ? trimTargetDb_.load(std::memory_order_relaxed) : 0.0;
+    engine->setAutoTrimDb(trim);
+    if (fading_) fading_->setAutoTrimDb(trim);
   }
 
   // The host transport for the play-along (plugin mode only; Standalone free-runs).

@@ -10,6 +10,7 @@
 #include <functional>
 #include <set>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "PluginEditor.h"
@@ -527,4 +528,144 @@ TEST_CASE("browser: destroying the browser during a slow render returns at once 
   rig.proc.processBlock(buf, midi);
   CHECK(buf.getMagnitude(0, 512) < 0.05f);  // the rig (not the 0.3 preview)
   (void)t0;
+}
+
+// =============================================================================================
+// v0.3 Task B: capture swap make-up and the level-matched preview
+// =============================================================================================
+#include "sawblade/auto_trim.h"
+#include "browser/PreviewRender.h"
+#include "browser/PreviewWorker.h"
+
+namespace {
+nlohmann::json levelRigJson() {
+  const auto block = [](const std::string& id) {
+    return nlohmann::json{{"id", id}, {"type", "nam"}, {"slot", "amp"}, {"model", {{"file", (kFixtures / "nam" / "linear_identity.nam").string()}}}};
+  };
+  return {{"schema", "sawblade.preset"}, {"version", 3}, {"name", "swap"},
+          {"paths", {{"a", {{"blocks", nlohmann::json::array({block("a1")})}}}, {"b", {{"blocks", nlohmann::json::array({block("b1")})}}}}},
+          {"align", {{"mode", "off"}}}, {"blend", 0.5},
+          {"cab", {{"mode", "shared"}, {"ir", {{"file", (kFixtures / "ir" / "impulse.wav").string()}}}}}};
+}
+
+struct SwapRig {
+  SettingsEnv settingsEnv;
+  juce::ScopedJuceInitialiser_GUI gui;
+  SawbladeLookAndFeel laf;
+  TempDir tmp;
+  Env env;
+  SawbladeProcessor proc;
+  std::unique_ptr<BrowserSettings> settings;
+
+  explicit SwapRig(const char* settingsJson) : settingsEnv(settingsJson) {
+    juce::LookAndFeel::setDefaultLookAndFeel(&laf);
+    settings = std::make_unique<BrowserSettings>(juce::File(juce::String((tmp.dir / "browser.settings").string())));
+    settings->setExecutable(SAWBLADE_FAKE_T3K);
+    const fs::path f = tmp.dir / "swap.json";
+    std::ofstream(f) << levelRigJson().dump(2);
+    proc.loadPresetFile(f);
+    proc.prepareToPlay(48000.0, 512);
+    proc.waitForLoader();
+  }
+  ~SwapRig() { juce::LookAndFeel::setDefaultLookAndFeel(nullptr); }
+};
+}  // namespace
+
+TEST_CASE("browser: USE with LEVEL MATCH keeps the slot's loudness on the reference DI (make-up), within 0.5 LU", "[browser][ui][levelmatch]") {
+  SwapRig rig("{}");
+  rig.env.set("FAKE_T3K_FETCH", (kFixtures / "nam" / "wavenet.nam").string());
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::BodyAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return !ctl.state().records.empty() && !ctl.state().loading; }));
+  ctl.select(104);
+  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }));
+  const Preset before = rig.proc.currentPreset();
+  const double lBefore = *measurePathLufs(before, 1);
+  ctl.use(0);
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }, 60000));
+  CHECK_FALSE(ctl.state().statusIsError);
+  const Preset after = rig.proc.currentPreset();
+  const auto& nb = static_cast<const NamBlockParams&>(*after.b.blocks[0].params);
+  CHECK(nb.model.source->id == "104");
+  const double unmatched = *measurePathLufs(withSlotMakeup(after, 1, 0, 0.0), 1);
+  INFO("path B before " << lBefore << " LUFS, new capture without make-up " << unmatched << ", make-up " << nb.makeupDb << " dB");
+  CHECK(std::fabs(unmatched - lBefore) > 1.0);   // the swap really changed the level
+  CHECK(nb.makeupDb != 0.0);
+  CHECK(*measurePathLufs(after, 1) == Catch::Approx(lBefore).margin(0.5));
+  // Path A (the other slot) is untouched.
+  CHECK(static_cast<const NamBlockParams&>(*after.a.blocks[0].params).makeupDb == 0.0);
+  CHECK(after.a == before.a);
+  // The make-up is stored in the preset (saved state) and applied by the running chain.
+  CHECK(nlohmann::json::parse(presetToStateJson(after))["paths"]["b"]["blocks"][0].contains("makeupDb"));
+  CHECK(rig.proc.status().error.empty());
+}
+
+TEST_CASE("browser: USE with LEVEL MATCH off swaps without make-up, at once", "[browser][ui][levelmatch]") {
+  SwapRig rig(R"({"levelMatch": false})");
+  rig.env.set("FAKE_T3K_FETCH", (kFixtures / "nam" / "wavenet.nam").string());
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::BodyAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return !ctl.state().records.empty() && !ctl.state().loading; }));
+  ctl.select(104);
+  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }));
+  ctl.use(0);
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }));
+  const Preset after = rig.proc.currentPreset();
+  CHECK(static_cast<const NamBlockParams&>(*after.b.blocks[0].params).makeupDb == 0.0);
+  CHECK(static_cast<const NamBlockParams&>(*after.b.blocks[0].params).model.source->id == "104");
+  CHECK(rig.proc.levelWorker().makeupJobsRun() == 0);
+}
+
+TEST_CASE("browser: the preview is level matched (make-up and trim, no peak normalisation) when LEVEL MATCH is on", "[browser][ui][levelmatch]") {
+  SwapRig rig("{}");
+  const Preset cur = rig.proc.currentPreset();
+  // The candidate: path B's capture replaced by another model.
+  nlohmann::json cj = levelRigJson();
+  cj["paths"]["b"]["blocks"][0]["model"]["file"] = (kFixtures / "nam" / "linear_05_025.nam").string();
+  const Preset cand = parsePreset(cj, kFixtures);
+  const AudioFile riff = embeddedPreviewRiff();
+  auto run = [&](bool levelMatch) {
+    PreviewWorker w;
+    PreviewWorker::Job job;
+    job.preset = cand;
+    job.hostRate = 48000.0;
+    job.levelMatch.on = levelMatch;
+    job.levelMatch.before = cur;
+    job.levelMatch.path = 1;
+    job.levelMatch.block = 0;
+    job.alive = std::make_shared<std::atomic<bool>>(true);
+    std::vector<float> got;
+    std::string err;
+    bool done = false;
+    job.onDone = [&](std::vector<float> out, std::string e) {
+      got = std::move(out);
+      err = std::move(e);
+      done = true;
+    };
+    w.submit(std::move(job));
+    REQUIRE(pumpUntil([&] { return done; }, 60000));
+    REQUIRE(err.empty());
+    return got;
+  };
+  const std::vector<float> plain = run(false);
+  const std::vector<float> matched = run(true);
+  REQUIRE(plain.size() == matched.size());
+  auto peakDb = [](const std::vector<float>& x) {
+    float p = 0.0f;
+    for (float v : x) p = std::max(p, std::fabs(v));
+    return 20.0 * std::log10(static_cast<double>(p));
+  };
+  CHECK(peakDb(plain) == Catch::Approx(kPreviewNormalizeDbfs).margin(0.01));  // unchanged behaviour with LEVEL MATCH off
+  CHECK(std::fabs(peakDb(matched) - kPreviewNormalizeDbfs) > 0.01);           // not peak-normalised any more
+  // It is exactly the candidate with its make-up and trim, rendered with the trim applied.
+  const Preset zero = withSlotMakeup(cand, 1, 0, 0.0);
+  const auto mk = slotMakeupDb(cur, zero, 1);
+  REQUIRE(mk.has_value());
+  Preset expected = withSlotMakeup(cand, 1, 0, *mk);
+  REQUIRE(ensureAutoTrim(expected));
+  std::string err;
+  const std::vector<float> want = renderPreview(expected, riff, 48000.0, nullptr, err, /*levelMatched=*/true);
+  REQUIRE(err.empty());
+  REQUIRE(want.size() == matched.size());
+  CHECK(want == matched);
 }

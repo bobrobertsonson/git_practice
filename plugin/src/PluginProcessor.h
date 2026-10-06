@@ -18,6 +18,7 @@
 #include "ExportSettings.h"
 #include "EngineLoader.h"
 #include "JobRunner.h"
+#include "LevelWorker.h"
 #include "LadderFetch.h"
 #include "RungPreloader.h"
 #include "presets/T3kTool.h"
@@ -65,6 +66,12 @@ class SawbladeProcessor : public juce::AudioProcessor,
     bool alignMeasuring = false;   // a re-measure build is in flight
     bool levelsMeasuring = false;  // a MATCH LEVELS build is in flight
     std::uint64_t generation = 0;  // of the running engine (the loader request id it was built for)
+    // v0.3 level matching: LEVEL MATCH is on and the trim of the current rig is still being measured (the editor's chip then reads
+    // "LEVEL ..."; until it is known the trim is 0 or the previous one). trimDb is the trim the audio thread is asked to apply.
+    bool levelMatchOn = true;
+    bool levelPending = false;
+    bool levelFailed = false;  // the rig could not be measured (silent, a capture missing): no trim
+    double trimDb = 0.0;
   };
 
   SawbladeProcessor();
@@ -180,6 +187,24 @@ class SawbladeProcessor : public juce::AudioProcessor,
   EngineParamState engineParamState() const;
   // Number of engines the loader has published (parameter changes must not increase it).
   std::uint64_t engineBuilds() const noexcept { return loader_->engineBuilds(); }
+  // --- level matching (v0.3 Task B; docs/PRESET_SCHEMA.md "Level matching") ---------------------------------------------------
+  // The LEVEL MATCH setting (Settings store, default on) is read by levelTick(). The trim of the current rig is computed on the
+  // LevelWorker thread: at load when the preset's stored trim is missing or stale, and (debounced) whenever the level-affecting
+  // parts of the rig change. The audio thread applies the target through an atomic; until a trim is known a user load plays at 0.
+  // Called by the 10 Hz timer; tests call it directly. Message thread.
+  void levelTick();
+  // The rig the trim is measured for: the current preset with the parameter values, and with the OUTPUT knob at the value the
+  // preset was loaded with (the knob is the user's, on top of the match).
+  Preset levelMeasurementPreset() const;
+  // Blocks until the level worker is idle and no trim is waiting for its debounce (tests).
+  bool waitForLevelWork(std::chrono::milliseconds timeout = std::chrono::milliseconds(60000));
+  void setLevelDebounceMs(int ms) noexcept { levelDebounceMs_.store(ms); }
+  static constexpr int kLevelDebounceMs = 400;
+  bool levelMatchEnabled() const noexcept { return levelMatchOn_.load(); }
+  // The capture-swap make-up (core auto_trim.h slotMakeupDb) on the level worker. `done` runs on the worker thread.
+  void computeSlotMakeup(Preset before, Preset after, int path, LevelWorker::MakeupDone done);
+  LevelWorker& levelWorker() noexcept { return *levelWorker_; }
+
   // --- gain ladders (v0.2 Task B; docs/PRESET_SCHEMA.md "Gain ladder") ---------------------------------------
   // What the UI (Task D) shows for path 0 = a / 1 = b: any non-audio thread. `has` is false for a path with no ladder.
   struct LadderInfo {
@@ -228,6 +253,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void timerCallback() override;
   void circuitChanged();
 
+  void levelOnLoad(const Preset& p);                   // commit() of a user load: the new preset's trim is known, or 0
+  void onTrimResult(const LevelWorker::TrimResult&);   // level worker thread
+  void rememberTrim(const std::string& hash, double db);  // levelMutex_ held
   void ladderWriteBack(const std::shared_ptr<Engine>& e);
   void fetchMissingRung(const Engine& e);
 
@@ -237,6 +265,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
 
   mutable std::mutex mutex_;  // guards preset_, status_, lastSubmitted_; never taken on the audio thread
   Preset preset_;
+  double outBaseline_ = 0.0;  // the OUTPUT knob value of the last user load (mutex_): the trim is measured with it
   Status status_;
   std::uint64_t lastSubmitted_ = 0;
   std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed
@@ -288,6 +317,19 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // Live values of the preset for the engine of the same generation. Producers: the message thread
   // (live edits, monitor) and the loader thread (onOutcome); both publish only with mutex_ held, which
   // serialises them and so satisfies SwapSlot's single-producer contract. Consumer: the audio thread.
+  // Level matching. trimTargetDb_ / levelMatchOn_ are what the audio thread reads; the rest is guarded by levelMutex_ (never taken
+  // on the audio thread).
+  std::atomic<double> trimTargetDb_{0.0};
+  std::atomic<bool> levelMatchOn_{true};
+  std::atomic<int> levelDebounceMs_{kLevelDebounceMs};
+  mutable std::mutex levelMutex_;
+  std::vector<std::pair<std::string, double>> knownTrims_;  // hash -> trim, newest last, at most 32
+  std::set<std::string> failedTrims_;
+  std::string levelWantedHash_, levelPendingHash_;
+  std::chrono::steady_clock::time_point levelChangedAt_{};
+  bool levelPending_ = false, levelFailed_ = false;
+  std::unique_ptr<LevelWorker> levelWorker_;  // joined first in the destructor: its callbacks use this object
+
   SwapSlot<LiveSnapshot> liveSlot_;
   SwapSlot<EngineRef> slot_;                  // declared before loader_: the loader is destroyed first
   std::unique_ptr<EngineLoader> loader_;

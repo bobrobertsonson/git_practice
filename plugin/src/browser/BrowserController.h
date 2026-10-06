@@ -95,6 +95,7 @@ class BrowserController {
   void setStatus(const std::string& text, bool error = false);
   void handleError(const t3k::ErrorInfo& e);
   void fetchSelected(std::function<void(const t3k::FetchResult&)> then);
+  void loadSwapped(Preset p);
 
   SawbladeProcessor& proc_;
   BrowserSettings& settings_;
@@ -102,7 +103,7 @@ class BrowserController {
   State st_;
   T3kClient client_;
   std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
-  std::uint64_t listSeq_ = 0, modelsSeq_ = 0, fetchSeq_ = 0, previewGen_ = 0;
+  std::uint64_t listSeq_ = 0, modelsSeq_ = 0, fetchSeq_ = 0, previewGen_ = 0, useSeq_ = 0;
   bool awaitingLoad_ = false;
   std::string loadedTitle_;
   bool previewStarted_ = false, previewSeenPlaying_ = false;

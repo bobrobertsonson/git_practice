@@ -3658,3 +3658,72 @@ TEST_CASE("settings: screenshot with the panel open and the checklist collapsed"
       if (open.getPixelAt(x, y) != closed.getPixelAt(x, y)) ++changedRight;
   CHECK(changedRight == 0);
 }
+
+// =============================================================================================
+// v0.3 Task B: LEVEL MATCH in the editor (the chip while the trim is measured, the Settings toggle)
+// =============================================================================================
+namespace {
+sawblade::Preset levelRig(const char* name) {
+  const auto block = [](const std::string& id) {
+    return nlohmann::json{{"id", id}, {"type", "nam"}, {"slot", "amp"},
+                          {"model", {{"file", (std::filesystem::path(SAWBLADE_FIXTURES_DIR) / "nam" / "linear_identity.nam").string()}}}};
+  };
+  const nlohmann::json j = {{"schema", "sawblade.preset"}, {"version", 3}, {"name", name},
+                            {"paths", {{"a", {{"blocks", nlohmann::json::array({block("a1")})}}}, {"b", {{"blocks", nlohmann::json::array({block("b1")})}}}}},
+                            {"align", {{"mode", "off"}}}, {"blend", 0.5},
+                            {"cab", {{"mode", "shared"}, {"ir", {{"file", (std::filesystem::path(SAWBLADE_FIXTURES_DIR) / "ir" / "impulse.wav").string()}}}}}};
+  return sawblade::parsePreset(j, SAWBLADE_FIXTURES_DIR);
+}
+juce::Label* labelStartingWith(juce::Component& root, const juce::String& prefix) {
+  for (auto* l : all<juce::Label>(root))
+    if (l->isVisible() && l->getText().startsWith(prefix)) return l;
+  return nullptr;
+}
+}  // namespace
+
+TEST_CASE("level match: the LAT chip area reads LEVEL ... while the trim is measured, then the latency again", "[editor][levelmatch]") {
+  Rig rig;
+  rig.proc.setLevelDebounceMs(600000);  // hold the measurement back so the state can be looked at
+  rig.proc.loadPreset(levelRig("chip"));
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.proc.levelTick();
+  rig.ed->refreshNow();
+  juce::Label* chip = labelStartingWith(*rig.ed, "LEVEL");
+  REQUIRE(chip != nullptr);
+  CHECK(chip->getText() == juce::String::fromUTF8("LEVEL \xe2\x80\xa6"));
+  CHECK(chip->getTooltip().contains("-18 LUFS"));
+  CHECK(chip->getTooltip().contains("latency"));
+  CHECK(labelStartingWith(*rig.ed, "LAT ") == nullptr);
+  rig.proc.setLevelDebounceMs(0);
+  REQUIRE(rig.proc.waitForLevelWork());
+  rig.ed->refreshNow();
+  CHECK(labelStartingWith(*rig.ed, "LEVEL") == nullptr);
+  juce::Label* lat = labelStartingWith(*rig.ed, "LAT ");
+  REQUIRE(lat != nullptr);
+  CHECK(lat->getText().contains("smp"));
+  // With LEVEL MATCH off the chip never says LEVEL.
+  Settings::shared().setLevelMatch(false);
+  rig.proc.loadPreset(levelRig("chip2"));
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.proc.levelTick();
+  rig.ed->refreshNow();
+  CHECK(labelStartingWith(*rig.ed, "LEVEL") == nullptr);
+  Settings::shared().setLevelMatch(true);
+}
+
+TEST_CASE("level match: the Settings panel has a LEVEL MATCH toggle, on by default, stored as a setting", "[editor][levelmatch][settings]") {
+  Rig rig;
+  rig.ed->setSettingsOpen(true);
+  juce::ToggleButton* toggle = nullptr;
+  for (auto* b : all<juce::ToggleButton>(*rig.ed))
+    if (b->getTitle() == "Level match") toggle = b;
+  REQUIRE(toggle != nullptr);
+  CHECK(toggle->getToggleState());
+  CHECK(Settings::shared().levelMatch());
+  click(*toggle);
+  CHECK_FALSE(Settings::shared().levelMatch());
+  CHECK_FALSE(toggle->getToggleState());
+  click(*toggle);
+  CHECK(Settings::shared().levelMatch());
+  rig.ed->setSettingsOpen(false);
+}

@@ -103,6 +103,9 @@ class Settings {
   std::string theme() const;
   double uiScale() const;
   bool firstRunCompleted() const;
+  // v0.3 level matching: apply each preset's auto trim (docs/PRESET_SCHEMA.md "Level matching"). A plugin setting, never part of the
+  // preset. Default true.
+  bool levelMatch() const;
 
   Result setMatchVenvDir(std::optional<std::filesystem::path>);
   Result setCaptureCacheDir(std::optional<std::filesystem::path>);
@@ -111,6 +114,7 @@ class Settings {
   Result setTakesDir(std::optional<std::filesystem::path>);
   Result setTheme(std::string);
   Result setUiScale(double);
+  Result setLevelMatch(bool);
 
   std::filesystem::path tokenFile() const;
   // <effective venv>/bin/<tool>, "" when there is no venv.
