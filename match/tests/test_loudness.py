@@ -142,3 +142,39 @@ def test_listen_folder_without_before_and_unmatched_reference(tmp_path):
     y, _ = sf.read(d / "render.wav", dtype="float64")
     r, _ = sf.read(d / "ref.wav", dtype="float64")
     assert integrated_lufs(y, FS) == pytest.approx(integrated_lufs(r, FS), abs=0.1)
+
+
+def _matched_ref(tmp_path, di, off):
+    from sawblade_match.matcher.reference import Reference
+    sig = np.concatenate([np.zeros(off, np.float32), 0.05 * di]).astype(np.float32)
+    return Reference("r", str(tmp_path / "r.wav"), "left", sig, 0.0, matched_sig=sig, matched_channel="mono",
+                     offset_samples=off, offset_given=True)
+
+
+def test_listening_failure_never_aborts(tmp_path):
+    from sawblade_match.matcher.run import Config, _listening
+    di = _bursty_di(5)
+    ref = _matched_ref(tmp_path, di, 0)
+    cfg = Config(di=tmp_path / "x", ref=None, pool=None, out=tmp_path)
+    logs = []
+    info = _listening(tmp_path, {"best_L": (di, FS, {})}, cfg, logs.append, ref=ref, di48=di, offset=10 * FS)  # no overlap
+    d = tmp_path / "listen"
+    assert info["loudnessMatched"] is False and "no overlap" in info["listenError"]
+    assert not (d / "ref.wav").exists() and not (d / "render.wav").exists()
+    assert info["fullLengthGainDb"] == 0.0 and (d / "guitar_L_mono.wav").exists()
+    assert any("warning" in m for m in logs)
+
+
+def test_non_finite_listening_values_become_none(tmp_path):
+    import json
+    from sawblade_match.matcher.run import Config, _listening
+    di = _bursty_di(5)
+    ref = _matched_ref(tmp_path, di, 0)
+    cfg = Config(di=tmp_path / "x", ref=None, pool=None, out=tmp_path)
+    silent = np.zeros_like(di)
+    info = _listening(tmp_path, {"best_L": (silent, FS, {}), "starter_L": (silent, FS, {})}, cfg, lambda *_: None,
+                      ref=ref, di48=di, offset=0)
+    assert info["lufsRenderRaw"] is None and info["lufsBefore"] is None
+    assert info["truePeakDb"]["render"] is None and info["truePeakDb"]["before"] is None
+    assert info["gainDb"] == 0.0 and info["lufsRef"] is not None
+    json.dumps(info, allow_nan=False)

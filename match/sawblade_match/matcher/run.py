@@ -644,6 +644,17 @@ def _tonecheck_refs(ref: Reference, out: Path, cfg) -> list[tuple[Path, str]]:
     return refs
 
 
+def _finite_or_none(o):
+    """JSON-safe: non-finite floats (a silent section gives -inf LUFS) become None, recursively."""
+    if isinstance(o, dict):
+        return {k: _finite_or_none(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_finite_or_none(v) for v in o]
+    if isinstance(o, (float, np.floating)) and not np.isfinite(o):
+        return None
+    return o
+
+
 def _louder_quieter(gain_db: float) -> str:
     """The raw render needed ``gain_db``: negative -> it was louder than the reference."""
     return f"{abs(gain_db):.1f} dB {'louder' if gain_db < 0 else 'quieter'}"
@@ -661,42 +672,51 @@ def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None,
     info: dict = {"loudnessMatched": False}
     gain_db = 0.0
     if ref is not None and di48 is not None:
-        matched = ref.matched_sig is not None
-        r48 = to48(yl, fs)
-        st48 = to48(renders["starter_L"][0], renders["starter_L"][1]) if "starter_L" in renders else None
-        n_av = min(len(di48), len(r48))
-        if matched:
-            a, b, _ = choose_listen_section(di48[:n_av], len(ref.matched_sig), offset, fs=RATE)
-            ref_seg = ref.matched_sig[a + offset:b + offset]
-            ref_sig = "matched reference channel"
-        else:        # no time alignment exists: the reference's own guitar-dominant section (its guitar isolation)
-            a, b, _ = choose_listen_section(di48[:n_av], None, 0, fs=RATE)
-            ra, rb, _ = select_excerpt(ref.ltas_sig, RATE, (b - a) / RATE)
-            ref_seg = ref.ltas_sig[ra:rb]
-            ref_sig = f"guitar isolation ({ref.basis}), its own guitar-dominant section; not time-aligned"
-        sec = r48[a:b]
-        gain_db, l_ref, l_raw = match_gain_db(ref_seg, sec, RATE)
-        sf.write(str(d / "ref.wav"), ref_seg.astype(np.float32), RATE, subtype="FLOAT")
-        sf.write(str(d / "render.wav"), (sec * 10 ** (gain_db / 20)).astype(np.float32), RATE, subtype="FLOAT")
-        tp = {"ref": true_peak_db(ref_seg), "render": true_peak_db(sec * 10 ** (gain_db / 20))}
-        info.update({"loudnessMatched": True, "section": [a / RATE, b / RATE], "lufsRef": l_ref, "lufsRenderRaw": l_raw,
-                     "gainDb": gain_db, "offsetMs": 1000.0 * offset / RATE if matched else None,
-                     "referenceSignal": ref_sig, "truePeakDb": tp,
-                     "files": {"ref": str(d / "ref.wav"), "render": str(d / "render.wav")}})
-        if not matched:
-            info["refSection"] = [ra / RATE, rb / RATE]
-        if st48 is not None:
-            gb, _, l_bef = match_gain_db(ref_seg, st48[a:b], RATE)
-            bef = st48[a:b] * 10 ** (gb / 20)
-            sf.write(str(d / "before.wav"), bef.astype(np.float32), RATE, subtype="FLOAT")
-            info.update({"lufsBefore": l_bef, "gainBeforeDb": gb})
-            tp["before"] = true_peak_db(bef)
-            info["files"]["before"] = str(d / "before.wav")
-        if np.isfinite(l_ref) and np.isfinite(l_raw):
-            log(f"render was {_louder_quieter(gain_db)} than the reference before matching "
-                f"(integrated {l_raw:.1f} vs {l_ref:.1f} LUFS over {a / RATE:.1f}-{b / RATE:.1f} s)")
+        try:
+            matched = ref.matched_sig is not None
+            r48 = to48(yl, fs)
+            st48 = to48(renders["starter_L"][0], renders["starter_L"][1]) if "starter_L" in renders else None
+            n_av = min(len(di48), len(r48))
+            if matched:
+                a, b, _ = choose_listen_section(di48[:n_av], len(ref.matched_sig), offset, fs=RATE)
+                ref_seg = ref.matched_sig[a + offset:b + offset]
+                ref_sig = "matched reference channel"
+            else:        # no time alignment exists: the reference's own guitar-dominant section (its guitar isolation)
+                a, b, _ = choose_listen_section(di48[:n_av], None, 0, fs=RATE)
+                ra, rb, _ = select_excerpt(ref.ltas_sig, RATE, (b - a) / RATE)
+                ref_seg = ref.ltas_sig[ra:rb]
+                ref_sig = f"guitar isolation ({ref.basis}), its own guitar-dominant section; not time-aligned"
+            sec = r48[a:b]
+            gain_db, l_ref, l_raw = match_gain_db(ref_seg, sec, RATE)
+            sf.write(str(d / "ref.wav"), ref_seg.astype(np.float32), RATE, subtype="FLOAT")
+            sf.write(str(d / "render.wav"), (sec * 10 ** (gain_db / 20)).astype(np.float32), RATE, subtype="FLOAT")
+            tp = {"ref": true_peak_db(ref_seg), "render": true_peak_db(sec * 10 ** (gain_db / 20))}
+            info.update({"loudnessMatched": True, "section": [a / RATE, b / RATE], "lufsRef": l_ref, "lufsRenderRaw": l_raw,
+                         "gainDb": gain_db, "offsetMs": 1000.0 * offset / RATE if matched else None,
+                         "referenceSignal": ref_sig, "truePeakDb": tp,
+                         "files": {"ref": str(d / "ref.wav"), "render": str(d / "render.wav")}})
+            if not matched:
+                info["refSection"] = [ra / RATE, rb / RATE]
+            if st48 is not None:
+                gb, _, l_bef = match_gain_db(ref_seg, st48[a:b], RATE)
+                bef = st48[a:b] * 10 ** (gb / 20)
+                sf.write(str(d / "before.wav"), bef.astype(np.float32), RATE, subtype="FLOAT")
+                info.update({"lufsBefore": l_bef, "gainBeforeDb": gb})
+                tp["before"] = true_peak_db(bef)
+                info["files"]["before"] = str(d / "before.wav")
+            if np.isfinite(l_ref) and np.isfinite(l_raw):
+                log(f"render was {_louder_quieter(gain_db)} than the reference before matching "
+                    f"(integrated {l_raw:.1f} vs {l_ref:.1f} LUFS over {a / RATE:.1f}-{b / RATE:.1f} s)")
+            else:
+                log("loudness matching skipped: the listening section is silent or shorter than 400 ms; gain 0 dB")
+        except Exception as e:      # listening must never abort the run
+            gain_db = 0.0
+            for f in ("ref.wav", "render.wav", "before.wav"):
+                (d / f).unlink(missing_ok=True)
+            info = {"loudnessMatched": False, "listenError": f"{type(e).__name__}: {e}"}
+            log(f"warning: listening section files skipped ({info['listenError']}); full-length files at 0 dB")
         else:
-            log("loudness matching skipped: the listening section is silent or shorter than 400 ms; gain 0 dB")
+            info = _finite_or_none(info)
     if "best_R" in renders:
         yr = renders["best_R"][0]
         n = min(len(yl), len(yr))
@@ -724,7 +744,7 @@ def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None,
     finally:
         if tmp is not None:
             tmp.unlink(missing_ok=True)
-    return info
+    return _finite_or_none(info)
 
 
 def _repo_root() -> Path:
