@@ -71,7 +71,8 @@ def refine_offset(render: np.ndarray, ref: np.ndarray, fs: int, coarse: int, sta
 # Whole-song placement of a DI that is shorter than the reference (used when --offset-ms is absent).
 # ---------------------------------------------------------------------------------------------------------------------
 PLACE_FAIL_MESSAGE = "could not place the DI in the song: enter where it starts"
-COARSE_HOP_S = 0.010          # coarse envelope frame (100 Hz): 5 min of audio is 30 000 frames
+COARSE_HOP_S = 0.005          # coarse envelope frame (200 Hz): 5 min of audio is 60 000 frames. Finer than the old 10 ms so
+COARSE_SMOOTH = 3             # a DI starting between frames loses little (<= 2.5 ms shift); 3 frames (15 ms) smooth the energy
 FINE_HOP_S = 0.001            # fine envelope frame (1 kHz), searched only +-FINE_SEARCH_S around the coarse peak
 FINE_SEARCH_S = 0.020
 DETREND_S = 1.0               # coarse envelope: remove a 1 s running mean (keeps onsets/mutes, drops level and sustain)
@@ -101,7 +102,9 @@ def _log_env(x: np.ndarray, hop: int, detrend_frames: int, smooth_frames: int = 
     e = np.einsum("ij,ij->i", f, f).astype(np.float64) / hop
     if smooth_frames > 1:
         e = ndimage.uniform_filter1d(e, smooth_frames, mode="nearest")
-    e = np.sqrt(e)
+    # energy is >= 0 by construction, but the running-sum filter can return tiny negatives (cancellation after a loud
+    # frame): clamp, otherwise sqrt gives NaN, which poisons the FFT correlation (argmax of NaN is index 0)
+    e = np.sqrt(np.maximum(e, 0.0))
     floor = 1e-3 * float(np.sqrt(np.mean(e * e))) + 1e-12      # -60 dB re the signal's own RMS: silence is flat
     le = np.log(e + floor)
     return le - ndimage.uniform_filter1d(le, max(3, detrend_frames), mode="nearest")
@@ -111,7 +114,10 @@ def _ncc_valid(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Normalised cross-correlation of the template ``b`` against every window of ``a`` (FFT-based).
     ncc[k] = sum_i (a[k+i] - mean_k) (b[i] - mean_b) / (|a_k - mean_k| |b - mean_b|), k = 0 .. len(a) - len(b);
     values in [-1, 1]."""
+    if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
+        raise FloatingPointError("non-finite envelope passed to _ncc_valid")
     n = len(b)
+    a = a - a.mean()                  # mean removal first: the windowed variance below then cancels far less
     b = b - b.mean()
     nb = float(np.sqrt(np.dot(b, b))) + 1e-12
     raw = signal.correlate(a, b, mode="valid", method="fft")
@@ -121,16 +127,39 @@ def _ncc_valid(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     s2 = cs2[n:] - cs2[:-n]
     var = np.maximum(s2 - s1 * s1 / n, 0.0)
     var = np.maximum(var, 0.1 * float(np.median(var)) + 1e-12)   # near-silent windows must not score high
-    return raw / (nb * np.sqrt(var))
+    out = raw / (nb * np.sqrt(var))
+    if not np.all(np.isfinite(out)):
+        raise FloatingPointError("non-finite normalised cross-correlation")
+    return out
+
+
+def _fine_place(di: np.ndarray, ref: np.ndarray, centre: int, w: int, fh: int) -> tuple[int, bool]:
+    """1 ms envelope NCC of ``di`` against ``ref`` for offsets ``centre - w .. centre + w`` (clamped to the song).
+    Returns (offset, hit_edge) where hit_edge is True when the best lag sits on a window edge that is not the song's own
+    boundary, i.e. the true peak may lie outside the window."""
+    last = len(ref) - len(di)
+    lo, hi = max(0, centre - w), min(last, centre + w)
+    if hi < lo:
+        return min(max(centre, 0), last), False
+    seg = ref[lo:hi + len(di)]
+    det_f = int(round(0.2 / FINE_HOP_S))
+    fa, fb = _log_env(seg, fh, det_f, smooth_frames=5), _log_env(di, fh, det_f, smooth_frames=5)
+    if len(fb) < 20 or len(fa) <= len(fb):
+        return min(max(centre, 0), last), False
+    cf = _ncc_valid(fa, fb)
+    j = int(np.argmax(cf))
+    off = lo + j * fh
+    edge = (j == 0 and lo > 0) or (j == len(cf) - 1 and hi < last)
+    return off, bool(edge)
 
 
 def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: float = MIN_CONFIDENCE) -> dict:
     """Find where the (shorter) mono ``di`` starts inside the mono ``ref``; both at rate ``fs``.
 
-    Coarse: envelope cross-correlation. Both signals become a log RMS envelope at 100 Hz with a 1 s running mean
+    Coarse: envelope cross-correlation. Both signals become a log RMS envelope at 200 Hz (15 ms smoothed) with a 1 s running mean
     removed (``_log_env``); the DI envelope is slid over every position of the reference envelope with an FFT-based
-    normalised cross-correlation (cost O(M log M); 300 s of audio is a 30 000-point transform). Fine: the same at 1 kHz
-    within +-20 ms of the coarse peak, so the result is good to about 1-2 ms on material whose envelopes correspond
+    normalised cross-correlation (cost O(M log M); 300 s of audio is a 60 000-point transform). Fine: the same at 1 kHz
+    within +-20 ms of the coarse peak (re-centred once if the peak lands on the window edge), so the result is good to about 1-2 ms on material whose envelopes correspond
     (the downstream ``refine_offset`` then takes it to waveform accuracy on the rendered excerpt).
 
     **Confidence** = (r1 - r2) / sigma, where r1 is the best coarse NCC value, r2 the best value at least 1 s away from
@@ -146,7 +175,7 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
         raise ValueError("whole-song search needs a DI shorter than the reference")
     hop = int(round(COARSE_HOP_S * fs))
     det = int(round(DETREND_S / COARSE_HOP_S))
-    a, b = _log_env(ref, hop, det), _log_env(di, hop, det)
+    a, b = _log_env(ref, hop, det, COARSE_SMOOTH), _log_env(di, hop, det, COARSE_SMOOTH)
     if len(b) < 20 or len(a) <= len(b):
         return {"offset": 0, "offsetMs": 0.0, "coarseMs": 0.0, "confidence": 0.0, "r1": 0.0, "r2": 0.0, "sigma": 0.0,
                 "ok": False}
@@ -163,19 +192,15 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
     else:
         r2, sigma, conf = 0.0, 0.0, 0.0       # too few alternative positions to judge
     coarse = k1 * hop
-    # fine stage: 1 ms frames, +-20 ms around the coarse peak
+    # fine stage: 1 ms frames, +-20 ms around the coarse peak (covers the 2.5 ms coarse quantisation plus smoothing).
+    # Frame convention: frames start at sample 0 of their own signal and both signals use the same hop, smoothing and
+    # detrend filters, so lag k * hop is the DI start exactly: no half-hop or filter-delay bias.
     fh = int(round(FINE_HOP_S * fs))
     w = int(round(FINE_SEARCH_S * fs))
-    lo, hi = max(0, coarse - w), min(len(ref) - len(di), coarse + w)
     coarse = min(coarse, len(ref) - len(di))
-    off = coarse
-    if hi >= lo:
-        seg = ref[lo:hi + len(di)]
-        det_f = int(round(0.2 / FINE_HOP_S))
-        fa, fb = _log_env(seg, fh, det_f, smooth_frames=5), _log_env(di, fh, det_f, smooth_frames=5)
-        if len(fb) >= 20 and len(fa) > len(fb):
-            cf = _ncc_valid(fa, fb)
-            off = lo + int(np.argmax(cf)) * fh
+    off, edge = _fine_place(di, ref, coarse, w, fh)
+    if edge:                                   # peak on the window edge: re-centre on it once
+        off, _ = _fine_place(di, ref, off, w, fh)
     off = min(int(off), len(ref) - len(di))          # never place the DI past the end of the song
     return {"offset": int(off), "offsetMs": 1000.0 * off / fs, "coarseMs": 1000.0 * coarse / fs,
             "confidence": float(conf), "r1": r1, "r2": r2, "sigma": sigma, "ok": bool(conf >= min_confidence)}

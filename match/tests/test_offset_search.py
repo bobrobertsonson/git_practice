@@ -129,6 +129,43 @@ def test_five_minute_song_is_fast():
     assert dt < 20.0
 
 
+def test_log_env_is_finite_after_loud_to_silent():
+    """Regression: the running-sum smoothing used to return tiny negative energies after a loud frame, so sqrt gave NaN."""
+    import warnings
+    x = np.zeros(4 * FS, np.float32)
+    x[FS:FS + 4800] = np.random.default_rng(3).standard_normal(4800).astype(np.float32) * 30.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for hop, sm in ((48, 5), (240, 3), (480, 1)):
+            e = offset._log_env(x, hop, 200, sm)
+            assert np.all(np.isfinite(e))
+
+
+def test_ncc_is_finite_and_rejects_nonfinite_input():
+    rng = np.random.default_rng(4)
+    a = np.concatenate([rng.standard_normal(500) * 50, np.zeros(2000), rng.standard_normal(500)])
+    b = rng.standard_normal(100)
+    c = offset._ncc_valid(a, b)
+    assert np.all(np.isfinite(c)) and np.max(np.abs(c)) <= 1.0 + 1e-6
+    bad = a.copy()
+    bad[10] = np.nan
+    with pytest.raises(FloatingPointError):
+        offset._ncc_valid(bad, b)
+
+
+def test_fine_stage_recentres_when_peak_is_on_the_window_edge(song):
+    di_full, _ = song
+    a = int(20.0 * FS)
+    di = di_full[a:a + 10 * FS]
+    w, fh = int(0.020 * FS), int(0.001 * FS)
+    off = a + int(0.030 * FS)                      # 30 ms off: outside the first +-20 ms window
+    for _ in range(2):
+        off, edge = offset._fine_place(di, di_full, off, w, fh)
+        if not edge:
+            break
+    assert abs(1000.0 * (off - a) / FS) <= 2.5
+
+
 def test_cli_prints_failure_message(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "load_pool", lambda *a, **k: object())
     monkeypatch.setattr(cli, "load_reference", lambda *a, **k: object())
