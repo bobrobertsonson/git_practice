@@ -510,6 +510,16 @@ TEST_CASE("rig knobs: every PresetKnob sweeps min to max in a 250 px drag, a ref
     w.panel->refresh();
     const auto readers = readersFor(tab, w.panel->controller().view());
     REQUIRE(shownPresetKnobs(*w.panel).size() == readers.size());
+    if (tab == Tab::Chain) {  // an INPUT knob on both paths
+      int namCount[2] = {0, 0};
+      const Preset v = w.panel->controller().view();
+      for (int path = 0; path < 2; ++path)
+        for (const Block& b : (path == 0 ? v.a : v.b).blocks)
+          if (dynamic_cast<const NamBlockParams*>(b.params.get()) != nullptr) ++namCount[path];
+      CHECK(namCount[0] >= 1);
+      CHECK(namCount[1] >= 1);
+      CHECK(readers.size() == static_cast<std::size_t>(namCount[0] + namCount[1]));
+    }
     for (std::size_t i = 0; i < readers.size(); ++i) {
       w.panel->setTab(tab);
       w.panel->refresh();
@@ -619,4 +629,126 @@ TEST_CASE("rig knobs: a PresetKnob drags like a main-page knob (shift = fine, do
   pump(rig::RigController::kDebounceMs + 150);
   w.settle();
   CHECK(std::abs(w.model([](const Preset& p) { return rig::gateField(p.gate, rig::GateField::Range); }) - k.getValue()) < 1e-6);
+}
+
+TEST_CASE("rig knobs: a continuous drag applies on a throttle (not only when the hand pauses), mouse-up leaves nothing pending",
+          "[editor][live][rigknobs]") {
+  RigKnobWorld w;
+  w.panel->setTab(rig::RigEditorPanel::Tab::Comp);
+  w.panel->refresh();
+  auto knobs = shownPresetKnobs(*w.panel);
+  REQUIRE(knobs.size() == 6);
+  skin::FilmstripKnob& k = knobs[5]->knob();  // MAKEUP
+  const Reader makeup = [](const Preset& p) { return rig::compField(p.busComp, rig::CompField::Makeup); };
+  const double m0 = w.applied(makeup);
+  Hand hand(k);
+  float dy = 0.0f;
+  const auto t0 = juce::Time::getMillisecondCounter();
+  std::vector<double> seen{m0};
+  bool changedBeforeUp = false;
+  int events = 0;
+  while (juce::Time::getMillisecondCounter() - t0 < 700) {
+    dy -= 3.0f;  // an event every ~20 ms, never a gap near the 150 ms interval
+    hand.to(dy);
+    ++events;
+    pump(20);
+    const double a = w.applied(makeup);
+    if (a != seen.back()) seen.push_back(a);
+    if (a != m0) changedBeforeUp = true;
+  }
+  CHECK(events >= 25);
+  CHECK(changedBeforeUp);        // applied while the hand was still moving
+  CHECK(seen.size() <= 10);      // ... but throttled: about one rebuild per interval, not one per event
+  hand.up(dy);
+  CHECK_FALSE(w.panel->controller().hasPending());
+  w.settle();
+  CHECK(std::abs(w.model(makeup) - k.getValue()) < kTol * 72.0);
+  CHECK(std::abs(w.applied(makeup) - k.getValue()) < kTol * 72.0);
+}
+
+TEST_CASE("rig knobs: KEY HPF shows the model's value (OFF / 40 Hz) the moment the hand lets go", "[editor][live][rigknobs]") {
+  RigKnobWorld w;
+  w.panel->setTab(rig::RigEditorPanel::Tab::Gate);
+  w.panel->refresh();
+  auto knobs = shownPresetKnobs(*w.panel);
+  REQUIRE(knobs.size() == 7);
+  skin::FilmstripKnob& k = knobs[6]->knob();  // KEY HPF 0..400 Hz
+  const Reader hpf = [](const Preset& p) { return rig::gateField(p.gate, rig::GateField::KeyHpf); };
+  struct Case {
+    double releaseHz, modelHz;
+  };
+  for (const Case c : {Case{25.0, 40.0}, Case{10.0, 0.0}}) {
+    INFO("released at " << c.releaseHz << " Hz");
+    k.setValue(150.0, juce::dontSendNotification);
+    Hand hand(k);
+    const float down = static_cast<float>((150.0 - c.releaseHz) / 400.0 * 250.0);  // pixels down from 150 Hz
+    hand.to(down / 2);
+    hand.to(down);
+    CHECK(k.getValue() == Catch::Approx(c.releaseHz).margin(0.01));
+    hand.up(down);
+    CHECK(k.getValue() == c.modelHz);  // before any refresh tick
+    w.settle();
+    CHECK(w.model(hpf) == c.modelHz);
+    w.tick();
+    CHECK(k.getValue() == c.modelHz);
+  }
+}
+
+TEST_CASE("rig knobs: destroying a PresetKnob mid-drag closes its gesture", "[editor][live][rigknobs]") {
+  RigKnobWorld w;
+  int begin = 0, end = 0;
+  auto pk = std::make_unique<rig::PresetKnob>(w.panel->controller(), "X", skin::FilmstripKnob::Kind::Pedal, juce::Colours::red,
+                                              skin::FilmstripKnob::Range{0.0, 10.0, 5.0, 1, "u"}, [](Preset&, double) {});
+  pk->onGestureBegin = [&] { ++begin; };
+  pk->onGestureEnd = [&] { ++end; };
+  Hand hand(pk->knob());
+  hand.to(-20.0f);
+  CHECK(begin == 1);
+  CHECK(end == 0);
+  pk.reset();
+  CHECK(begin == 1);
+  CHECK(end == 1);
+  w.settle();
+}
+
+TEST_CASE("rig knobs: the host-parameter knobs (BLEND, levels, gate THRESHOLD) sweep min to max in 250 px with refresh ticks in between",
+          "[editor][live][rigknobs]") {
+  RigKnobWorld w;
+  w.panel->setTab(rig::RigEditorPanel::Tab::Blend);
+  for (const char* id : {"blend", "levelA", "levelB"}) {
+    INFO(id);
+    w.panel->refresh();
+    skin::FilmstripKnob& k = knobByParam(*w.panel, id);
+    REQUIRE(k.isEnabled());
+    k.setValue(k.getMinimum(), juce::sendNotificationSync);
+    Hand hand(k);
+    float dy = 0.0f;
+    for (int i = 0; i < 25; ++i) {
+      dy -= 10.0f;
+      hand.to(dy);
+      const double before = k.getValue();
+      if (i % 2 == 1) w.tick();
+      CHECK(k.getValue() == before);
+    }
+    hand.up(dy);
+    CHECK(k.proportion() > 0.999);
+    CHECK(static_cast<double>(w.proc.parameters().getRawParameterValue(id)->load()) == Catch::Approx(k.getMaximum()).margin(1e-3));
+  }
+  w.panel->setTab(rig::RigEditorPanel::Tab::Gate);
+  w.panel->refresh();
+  {
+    skin::FilmstripKnob& k = knobByParam(*w.panel, "gateThreshold");
+    k.setValue(k.getMinimum(), juce::sendNotificationSync);
+    Hand hand(k);
+    float dy = 0.0f;
+    for (int i = 0; i < 25; ++i) {
+      dy -= 10.0f;
+      hand.to(dy);
+      const double before = k.getValue();
+      if (i % 2 == 1) w.tick();
+      CHECK(k.getValue() == before);
+    }
+    hand.up(dy);
+    CHECK(k.proportion() > 0.999);
+  }
 }

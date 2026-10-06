@@ -49,16 +49,19 @@ class LedToggle : public juce::Button {
 };
 
 // A knob for a preset-only value; it drags exactly like a main-page knob (it is the same FilmstripKnob). Structural knobs (the
-// default) apply on a short debounce while dragged (a rebuild only once the hand pauses) and once on mouse-up; wheel and typed
+// default) apply on a throttle while dragged (at most one rebuild per RigController::kDebounceMs) and once on mouse-up; wheel and typed
 // values are debounced too. Live knobs call the controller's live edit on every change. The editor's refresh never writes into a
 // knob that is being dragged or has an edit pending.
 class PresetKnob : public juce::Component {
  public:
   using Apply = std::function<void(Preset&, double)>;
   using Format = std::function<juce::String(double)>;
+  // The value the model keeps for a knob value (clamps, dead zones such as KEY HPF's 0..40 Hz); after a gesture ends the knob shows it.
+  using Normalise = std::function<double(double)>;
 
   PresetKnob(RigController& c, const juce::String& caption, skin::FilmstripKnob::Kind kind, juce::Colour arc,
-             const skin::FilmstripKnob::Range& range, Apply apply, bool live = false, Format format = {});
+             const skin::FilmstripKnob::Range& range, Apply apply, bool live = false, Format format = {}, Normalise normalise = {});
+  ~PresetKnob() override;
 
   skin::FilmstripKnob& knob() noexcept { return knob_; }
   const skin::FilmstripKnob& knob() const noexcept { return knob_; }
@@ -80,12 +83,14 @@ class PresetKnob : public juce::Component {
   void updateText();
   void submit(bool debounced);
   void finishGesture();
+  void showNormalised();
 
   RigController& controller_;
   skin::FilmstripKnob knob_;
   juce::Label caption_, value_;
   Apply apply_;
   Format format_;
+  Normalise normalise_;
   bool live_ = false, dragging_ = false, updating_ = false;
   double shown_ = 0.0;
 };

@@ -510,7 +510,12 @@ struct GatePage : Page {
     threshold.knob().setTooltip("Gate threshold in dB (host automatable); LEARN sets it from your quiet input");
     auto add = [&](GateField f, const char* caption, const char* tip, FilmstripKnob::Range r, PresetKnob::Format fmt = {}) {
       knobs.push_back(std::make_unique<PresetKnob>(controller, caption, Kind::Pedal, L::saw(), r,
-                                                   [f](Preset& p, double v) { setGateField(p, f, v); }, false, std::move(fmt)));
+                                                   [f](Preset& p, double v) { setGateField(p, f, v); }, false, std::move(fmt),
+                                                   [f](double v) {
+                                                     Preset scratch;
+                                                     setGateField(scratch, f, v);
+                                                     return gateField(scratch.gate, f);
+                                                   }));
       knobs.back()->knob().setTooltip(juce::String(tip) + " (drag to turn, shift = fine, double-click = reset)");
       fields.push_back(f);
       addAndMakeVisible(*knobs.back());
@@ -581,7 +586,12 @@ struct CompPage : Page {
     addAndMakeVisible(*on);
     auto add = [&](CompField f, const char* caption, const char* tip, FilmstripKnob::Range r) {
       knobs.push_back(std::make_unique<PresetKnob>(controller, caption, Kind::Pedal, L::saw(), r,
-                                                   [f](Preset& p, double v) { setCompField(p, f, v); }));
+                                                   [f](Preset& p, double v) { setCompField(p, f, v); }, false, PresetKnob::Format{},
+                                                   [f](double v) {
+                                                     Preset scratch;
+                                                     setCompField(scratch, f, v);
+                                                     return compField(scratch.busComp, f);
+                                                   }));
       knobs.back()->knob().setTooltip(juce::String(tip) + " (drag to turn, shift = fine, double-click = reset)");
       fields.push_back(f);
       addAndMakeVisible(*knobs.back());

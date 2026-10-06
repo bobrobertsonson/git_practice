@@ -80,8 +80,8 @@ void LedToggle::paintButton(juce::Graphics& g, bool over, bool down) {
 
 // --- PresetKnob ------------------------------------------------------------------------------------
 PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::FilmstripKnob::Kind kind, juce::Colour arc,
-                       const skin::FilmstripKnob::Range& range, Apply apply, bool live, Format format)
-    : controller_(c), knob_(caption, kind, arc, range), apply_(std::move(apply)), format_(std::move(format)), live_(live), shown_(range.def) {
+                       const skin::FilmstripKnob::Range& range, Apply apply, bool live, Format format, Normalise normalise)
+    : controller_(c), knob_(caption, kind, arc, range), apply_(std::move(apply)), format_(std::move(format)), normalise_(std::move(normalise)), live_(live), shown_(range.def) {
   addAndMakeVisible(knob_);
   for (juce::Label* l : {&caption_, &value_}) {
     l->setInterceptsMouseClicks(false, false);
@@ -111,10 +111,11 @@ PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::Film
     if (live_) {
       submit(false);
     } else if (dragging_) {
-      submit(true);  // during the drag: a rebuild only once the hand pauses (latest value wins)
+      submit(true);  // during the drag: throttled, latest value wins
     } else {         // wheel / typed value
       if (onGestureBegin) onGestureBegin();
       submit(true);
+      showNormalised();
       if (onGestureEnd) onGestureEnd();
     }
   };
@@ -136,7 +137,8 @@ void PresetKnob::submit(bool debounced) {
   if (v == shown_) return;  // a click without a change submits nothing
   shown_ = v;
   auto f = [a = apply_, v](Preset& p) { a(p, v); };
-  if (debounced) controller_.editDebounced(f);
+  if (debounced && dragging_) controller_.editThrottled(this, f);
+  else if (debounced) controller_.editDebounced(f);
   else controller_.edit(f);
 }
 
@@ -146,6 +148,29 @@ void PresetKnob::finishGesture() {
   if (live_) return;
   if (knob_.getValue() != shown_) submit(false);
   else controller_.flushPending();
+  showNormalised();
+}
+
+// The knob shows what the model keeps (e.g. KEY HPF below 40 Hz is OFF or 40), at once rather than at the next refresh.
+void PresetKnob::showNormalised() {
+  if (!normalise_) return;
+  const double n = normalise_(knob_.getValue());
+  if (n == knob_.getValue()) return;
+  updating_ = true;
+  knob_.setValue(n, juce::dontSendNotification);
+  updating_ = false;
+  shown_ = knob_.getValue();
+  updateText();
+}
+
+PresetKnob::~PresetKnob() {
+  knob_.onDragStart = nullptr;
+  knob_.onDragEnd = nullptr;
+  knob_.onValueChange = nullptr;
+  if (dragging_) {  // destroyed mid-drag: close the gesture so begin / end stay paired
+    dragging_ = false;
+    if (onGestureEnd) onGestureEnd();
+  }
 }
 
 void PresetKnob::setValueFromPreset(double v) {

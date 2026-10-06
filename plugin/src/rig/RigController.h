@@ -46,6 +46,9 @@ class RigController {
   // --- structural -----------------------------------------------------------------------------------
   void edit(const EditFn& f);           // flushes pending edits, applies f, submits one rebuild
   void editDebounced(const EditFn& f);  // latest wins: submitted kDebounceMs after the last call
+  // Throttle for a drag: keeps only the LATEST closure per `key` (one entry per knob, no growth per mouse move) and starts the
+  // timer only when it is not running, so a flush (one background rebuild) happens at most every kDebounceMs during motion.
+  void editThrottled(const void* key, const EditFn& f);
   void flushPending();
   bool hasPending() const noexcept { return !pending_.empty(); }
 
@@ -116,7 +119,11 @@ class RigController {
     Preset pre, post;
   };
   std::optional<UndoEntry> undo_;
-  std::vector<EditFn> pending_;
+  struct Pending {
+    const void* key;  // non-null: a throttled edit, replaced in place by the next one with the same key
+    EditFn fn;
+  };
+  std::vector<Pending> pending_;
   Timer debounce_, learnTimer_;
 
   double lastBlend_ = 0.5;

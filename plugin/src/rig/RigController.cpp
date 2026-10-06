@@ -25,18 +25,25 @@ RigController::~RigController() {
 
 Preset RigController::view() const {
   Preset p = proc_.editBasePreset();
-  for (const auto& f : pending_) f(p);
+  for (const auto& e : pending_) e.fn(p);
   return p;
 }
 
 void RigController::edit(const EditFn& f) {
-  pending_.push_back(f);
+  pending_.push_back({nullptr, f});
   flushPending();
 }
 
 void RigController::editDebounced(const EditFn& f) {
-  pending_.push_back(f);
+  pending_.push_back({nullptr, f});
   debounce_.startTimer(kDebounceMs);
+}
+
+void RigController::editThrottled(const void* key, const EditFn& f) {
+  auto it = std::find_if(pending_.begin(), pending_.end(), [key](const Pending& e) { return e.key == key; });
+  if (it != pending_.end()) it->fn = f;
+  else pending_.push_back({key, f});
+  if (!debounce_.isTimerRunning()) debounce_.startTimer(kDebounceMs);
 }
 
 void RigController::flushPending() {
@@ -44,7 +51,7 @@ void RigController::flushPending() {
   if (pending_.empty()) return;
   Preset p = proc_.editBasePreset();
   const PathPreset bBefore = p.b;
-  for (const auto& f : pending_) f(p);
+  for (const auto& e : pending_) e.fn(p);
   pending_.clear();
   if (undo_ && p.b != bBefore) undo_.reset();  // path B was edited (blocks, BLEND on / off, ...): the fill is no longer the last word
   proc_.loadPreset(std::move(p), /*keepMonitor=*/true);
