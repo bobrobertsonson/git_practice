@@ -484,7 +484,7 @@ the tools, a progress bar with stage, message, ETA and best error, CANCEL, and t
 **Record in the host: no import needed (v0.2.1 Task C).** Load the song in PLAY ALONG (or in MATCH section 1), turn on SYNC TO HOST,
 put Sawblade on the DI track in the DAW, play the DI region and press REC. While the host transport runs and SYNC TO HOST is
 on, the take's sidecar stores `playAlong.running: true` and `stemSampleIndex` = the host playhead at the take's first sample
-minus the applied player offset (with the offset at 0 it is exactly the host position), so the take carries its song position
+minus the applied player offset (the applied offset is the negated OFFSET setting, so +100 ms gives host position + 4800 samples at 48 kHz; with the offset at 0 it is exactly the host position), so the take carries its song position
 automatically (`PlayAlong::takeStartInfo`, called at the block where recording starts). Proof:
 `plugin/tests/test_record_match.cpp:427`, "record: the sidecar offset follows the host position in plugin mode"
 (`takes[0].stemSampleIndex == hostPos + 4800`, the 4800 being the 100 ms player offset; host stopped gives `running: false`).
