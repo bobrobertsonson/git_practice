@@ -17,7 +17,7 @@ from ..tonecheck.analysis import analyze
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
 from .engine import RATE, Engine, to48
-from .offset import PlacementError, refine_offset, resolve_offset
+from .offset import STRONG_MARGIN, STRONG_R1, PlacementError, refine_offset, resolve_offset
 from .pool import Capture, Pool, default_cab, starter_choice
 from .profile import DEFAULT_BASE, derive_profile, load_profile, profile_path, save_profile
 from .excerpt import select_excerpt
@@ -311,9 +311,12 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             offset_search = resolve_offset(di48, ref.matched_sig, RATE, ref.offset_given, ref.offset_samples)
         except PlacementError as e:
             d = e.details       # one calibration line BEFORE the error line (the plugin shows the last line starting "error")
-            if d:
+            if d.get("nonFinite"):
+                log("non-finite audio in DI or reference")
+            elif d:
                 log(f"whole-song placement failed: r1 {d['r1']:.3f}, r2 {d['r2']:.3f}, sigma {d['sigma']:.4f}, "
-                    f"confidence {d['confidence']:.2f} < MIN_CONFIDENCE {d['minConfidence']:.1f}")
+                    f"confidence {d['confidence']:.2f} < MIN_CONFIDENCE {d['minConfidence']:.1f} "
+                    f"(and not a strong placement: r1 >= {STRONG_R1}, r1 - r2 >= {STRONG_MARGIN})")
             raise
         if offset_search["mode"] == "whole_song":
             ref.offset_samples = offset_search["offset_samples"]

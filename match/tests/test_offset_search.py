@@ -80,6 +80,32 @@ def test_unrelated_di_fails_with_message(song):
     assert isinstance(e.value, ValueError)      # the CLI turns ValueError into "error: ..." + exit 3
 
 
+def test_acceptance_rule_arithmetic():
+    """CI run 105: r1 0.949, r2 0.492, sigma 0.1176 -> confidence 3.885 < 4: accepted only by the strong-placement route."""
+    acc = offset.placement_accepted
+    assert acc(0.9491, 0.4923, 3.8847)                       # the failing CI case: r1 >= .85, gap .457 >= .40, conf >= 3.0
+    assert acc(0.5, 0.1, 4.2)                                # relative route unchanged
+    assert not acc(0.80, 0.30, 3.9)                          # r1 below STRONG_R1
+    assert not acc(0.95, 0.60, 3.9)                          # gap .35 < STRONG_MARGIN
+    assert not acc(0.95, 0.50, 2.9)                          # gap .45 but only 2.9 sigma (< 0.75 * 4)
+    assert not acc(0.49, 0.47, 0.2)                          # unrelated DI (chance peaks ~0.5, gap ~0.25 sigma)
+    assert not acc(0.92, 0.91, 0.1)                          # looped riff: r1 ~ r2
+    assert not acc(0.0, 0.0, 0.0)                            # silent DI / too few rival lags
+    assert not acc(0.95, 0.50, 3.9, min_confidence=6.0)      # the strong floor scales with the caller's min_confidence
+
+
+def test_odd_hop_uses_a_single_phase():
+    """fs 11025 -> hop 55 (odd): no half-hop shift; the search must still run and stay inside the song."""
+    fs, rng = 11025, np.random.default_rng(11)
+    n = 30 * fs
+    env = np.repeat(rng.uniform(0.05, 1.0, n // 700 + 1), 700)[:n]
+    ref = (env * rng.standard_normal(n)).astype(np.float32)
+    a = int(9.0 * fs)
+    r = whole_song_search(ref[a:a + 8 * fs], ref, fs)
+    assert 0 <= r["offset"] <= len(ref) - 8 * fs
+    assert abs(r["offsetMs"] - 9000.0) <= 10.0, r
+
+
 def test_silent_di_fails(song):
     _, ref = song
     with pytest.raises(PlacementError):

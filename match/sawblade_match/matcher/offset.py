@@ -80,8 +80,28 @@ FINE_SEARCH_S = 0.020
 DETREND_S = 1.0               # coarse envelope: remove a 1 s running mean (keeps onsets/mutes, drops level and sustain)
 EXCLUSION_S = 1.0             # a rival peak must be at least this far from the best one
 MIN_CONFIDENCE = 4.0          # see ``whole_song_search``
+# Second acceptance route for a short, strongly matching DI (see ``placement_accepted``): near-perfect best correlation,
+# a rival far below it, and still a clear multiple of the noise spread. All three must hold.
+STRONG_R1 = 0.85              # best coarse NCC at least this (chance peaks sit near 4 sigma, ~0.5 for a 12 s DI)
+STRONG_MARGIN = 0.40          # r1 - r2 at least this, absolute (NCC units)
+STRONG_CONF_FRACTION = 0.75   # and (r1 - r2) / sigma >= this fraction of min_confidence (3.0 at the default)
 WINDOW_SLACK_S = 3.0          # a DI at most this much shorter than the reference is covered by the +-3 s window search
 MIN_RIVAL_LAGS = 20           # fewest rival lags (any hop) for which a confidence is meaningful
+
+
+def placement_accepted(r1: float, r2: float, conf: float, min_confidence: float = MIN_CONFIDENCE) -> bool:
+    """Accept a placement when ``conf >= min_confidence`` (the relative test), or when it is strong in absolute terms.
+
+    Why the second route: for N roughly independent chance lags the best rival r2 sits about sqrt(2 ln N) ~ 4 sigma above
+    zero, so (r1 - r2) / sigma >= 4 needs r1 >= ~8 sigma. NCC cannot exceed 1, so a short DI (large sigma: a 12 s DI has
+    ~40 independent envelope segments, sigma ~ 0.12) can fail the relative test while being a flawless placement
+    (r1 = 0.95, r2 = 0.49 gives 3.9). Chance cannot produce that: the gap between the top two chance peaks is
+    exponential with mean sigma / sqrt(2 ln N) ~ 0.25 sigma, so P(gap >= 3 sigma) ~ exp(-3 * 3.9) ~ 1e-5, and in addition
+    the best peak must be >= STRONG_R1 and the gap >= STRONG_MARGIN in absolute terms, which unrelated signals (r1 ~ 0.5)
+    and loops (r1 - r2 ~ 0) are nowhere near."""
+    if conf >= min_confidence:
+        return True
+    return bool(r1 >= STRONG_R1 and (r1 - r2) >= STRONG_MARGIN and conf >= STRONG_CONF_FRACTION * min_confidence)
 
 
 class NonFiniteCorrelationError(RuntimeError):
@@ -91,7 +111,8 @@ class NonFiniteCorrelationError(RuntimeError):
 
 class PlacementError(ValueError):
     """The DI could not be placed in the song with enough confidence (message: PLACE_FAIL_MESSAGE).
-    ``details`` holds the search numbers (r1, r2, sigma, confidence, minConfidence) for calibration logging."""
+    ``details`` holds the search numbers (r1, r2, sigma, confidence, minConfidence) for calibration logging, or
+    {"nonFinite": True} when the audio contained NaN / inf."""
 
     def __init__(self, message: str = PLACE_FAIL_MESSAGE, details: dict | None = None):
         super().__init__(message)
@@ -178,27 +199,34 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
     fits two places equally well (a looped riff) gives ~0 and is rejected as ambiguous, which is the correct outcome.
     Threshold MIN_CONFIDENCE = 4.0: for Gaussian-like noise over thousands of lags a noise gap of 4 sigma is
     vanishingly unlikely, while a true placement of a heavily distorted, mixed-in guitar should clear it on anything
-    longer than a few seconds (not calibrated on real stems yet; the number is exposed for tuning).
-    Returns {offset (samples), offsetMs, coarseMs, confidence, r1, r2, sigma, ok}."""
+    longer than a few seconds (not calibrated on real stems yet; the number is exposed for tuning). A placement that
+    misses it is still accepted when it is strong in absolute terms (``placement_accepted``): r1 >= 0.85, r1 - r2 >= 0.40
+    and (r1 - r2) / sigma >= 0.75 * min_confidence, which a short but flawless match needs because sigma grows as the DI
+    shortens while NCC is capped at 1.
+    Returns {offset (samples), offsetMs, coarseMs, confidence, r1, r2, sigma, ok}.
+    The coarse lag axis has step ``hop / 2`` (2.5 ms) with two reference phases, or ``hop`` when the hop is odd."""
     if len(di) >= len(ref):
         raise ValueError("whole-song search needs a DI shorter than the reference")
     if not (np.all(np.isfinite(di)) and np.all(np.isfinite(ref))):
-        raise PlacementError(PLACE_FAIL_MESSAGE, {})          # NaN / inf audio: no honest placement exists
+        raise PlacementError(PLACE_FAIL_MESSAGE, {"nonFinite": True})   # NaN / inf audio: no honest placement exists
     hop = int(round(COARSE_HOP_S * fs))
-    half = hop // 2
     det = int(round(DETREND_S / COARSE_HOP_S))
     b = _log_env(di, hop, det, COARSE_SMOOTH)
     a0 = _log_env(ref, hop, det, COARSE_SMOOTH)
-    a1 = _log_env(ref[half:], hop, det, COARSE_SMOOTH)        # reference frames shifted by half a hop
+    two_phase = hop % 2 == 0                      # an odd hop has no exact half-hop shift: single phase then
+    a1 = _log_env(ref[hop // 2:], hop, det, COARSE_SMOOTH) if two_phase else a0   # frames shifted by half a hop
     if len(b) < 20 or len(a1) <= len(b):
         return {"offset": 0, "offsetMs": 0.0, "coarseMs": 0.0, "confidence": 0.0, "r1": 0.0, "r2": 0.0, "sigma": 0.0,
                 "ok": False}
-    # Two phases interleaved into one lag axis with step hop/2: lag 2k = DI at ref sample k*hop, lag 2k+1 = k*hop+half.
-    # A DI starting between frames then matches one phase to within hop/4 (1.25 ms at 5 ms), instead of hop/2.
-    c0, c1 = _ncc_valid(a0, b), _ncc_valid(a1, b)
-    c = np.empty(len(c0) + len(c1))
-    c[0::2], c[1::2] = c0, c1
-    step = half
+    if two_phase:
+        # Two phases interleaved into one lag axis with step hop/2: lag 2k = DI at ref sample k*hop, lag 2k+1 = k*hop+hop/2.
+        # A DI starting between frames then matches one phase to within hop/4 (1.25 ms at 5 ms), instead of hop/2.
+        c0, c1 = _ncc_valid(a0, b), _ncc_valid(a1, b)
+        c = np.empty(len(c0) + len(c1))
+        c[0::2], c[1::2] = c0, c1
+        step = hop // 2
+    else:
+        c, step = _ncc_valid(a0, b), hop
     k1 = int(np.argmax(c))
     ex = int(round(EXCLUSION_S * fs / step))
     mask = np.ones(len(c), bool)
@@ -210,8 +238,8 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
         conf = max(0.0, (r1 - r2) / sigma)
     else:
         r2, sigma, conf = 0.0, 0.0, 0.0       # too few alternative positions to judge
-    coarse = k1 * step
-    # fine stage: 1 ms frames, +-20 ms around the coarse peak (covers the 2.5 ms coarse quantisation plus smoothing).
+    coarse = k1 * step                        # lag axis is k * step: the coarse peak is quantised to step / 2 = 1.25 ms
+    # fine stage: 1 ms frames, +-20 ms around the coarse peak (covers the <= 1.25 ms coarse quantisation plus smoothing).
     # Frame convention: frames start at sample 0 of their own signal and both signals use the same hop, smoothing and
     # detrend filters, so lag k * hop is the DI start exactly: no half-hop or filter-delay bias.
     fh = int(round(FINE_HOP_S * fs))
@@ -222,7 +250,7 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
         off, _ = _fine_place(di, ref, off, w, fh)
     off = min(int(off), len(ref) - len(di))          # never place the DI past the end of the song
     return {"offset": int(off), "offsetMs": 1000.0 * off / fs, "coarseMs": 1000.0 * coarse / fs,
-            "confidence": float(conf), "r1": r1, "r2": r2, "sigma": sigma, "ok": bool(conf >= min_confidence)}
+            "confidence": float(conf), "r1": r1, "r2": r2, "sigma": sigma, "ok": placement_accepted(r1, r2, conf, min_confidence)}
 
 
 def resolve_offset(di: np.ndarray, ref: np.ndarray, fs: int, offset_given: bool, offset_samples: int = 0,
