@@ -25,7 +25,7 @@ _NUM = r"(\d+(?:\.\d+)?)"
 # keyword = gain | drive | g (a lone g glued to the number, or after a separator)
 _KW = r"(?:gain|drive|g)"
 _PATTERNS = (
-    re.compile(rf"(?<![a-z0-9]){_KW}\s*[=:]?\s*{_NUM}(?![\d.]*\d)(?![a-z])"),   # Gain 6, G6, gain=6, g 6.5
+    re.compile(rf"(?<![a-z0-9]){_KW}[\s_-]*[=:]?[\s_-]*{_NUM}(?![\d.]*\d)(?![a-z])"),   # Gain 6, G6, gain=6, Gain-06, g_6
     re.compile(rf"(?<![a-z0-9.]){_NUM}\s*{_KW}(?![a-z0-9])"),                      # 6 gain, 6g, 6.5 drive
     re.compile(rf"@\s*{_NUM}(?![\d.]*\d)(?![a-z])"),                               # @7
 )
