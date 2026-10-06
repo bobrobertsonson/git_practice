@@ -208,7 +208,16 @@ The Task B boost variant and post-cab HP/LP are always in the search (quick and 
   The top 24 IRs per candidate get full renders and the full loss; the top 6 feed the B2.1 pair search. Validation test:
   the analytic predicted LTAS error is within 0.3 dB of the full-render error for the fixture IRs, and the rank
   correlation is >= 0.9 over a synthetic 200-IR set (random 2nd-order-filtered fixture IRs).
-- Speed: 2000 IRs <= 60 s on 4 cores. Unit-test with 2000 synthetic short IRs (in memory, no files) and assert < 60 s on
+- Scale (user catalog: 3,899 WAVs; with a wide TONE3000 pull assume 5-6k): **6,000 IRs screened in <= 90 s on 4 cores in
+  quick mode** (from a warm index), and the 2000-IR CI test <= 60 s. |H| on the screening grid is cached per IR (sha-keyed
+  `.npy` sidecar, or one stacked `.npy` + offsets, beside the index), so warm runs do no IR FFTs. The first (cold) indexing
+  run may be slow but prints progress (files done / total, ETA) at least every 2 s and is resumable (an interrupted scan
+  keeps what it indexed).
+- Cap: above `--ir-screen-max` (default 6000) the pool is prefiltered, never randomly sampled: first by tags matching the
+  current candidates' cab hints where present, then by broad spectral family (k-means, k = 32, seeded, on the cached
+  1/3-octave |H| shape) keeping the IRs nearest each centroid in proportion to cluster size. `result.json -> irPool` says
+  `prefiltered: true`, the method and counts.
+- Speed test detail: 2000 IRs <= 60 s on 4 cores. Unit-test with 2000 synthetic short IRs (in memory, no files) and assert < 60 s on
   the CI runner. The index build (hashing) is measured separately and reported.
 - `result.json -> irPool: {local, tone3000, total, skipped, screenSeconds}` and the winning IR's source (local path or
   tone id).
