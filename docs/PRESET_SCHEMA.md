@@ -478,7 +478,7 @@ prints them. The render report (`tonerender --report`) carries:
 ```jsonc
 "cab": { "mode": "shared",  "ir": Capture, "enabled": true }                 // live-compatible
 "cab": { "mode": "perPath", "irA": Capture, "irB": Capture, "enabled": true } // studio blend
-"cab": { "mode": "irMix", "irA": Capture, "irB": Capture, "mix": 0.5, "enabled": true } // two mics, one cab
+"cab": { "mode": "irMix", "irA": Capture, "irB": Capture, "mix": 0.5, "offsetSamplesB": 0, "invertB": false, "enabled": true } // two mics, one cab
 ```
 - `shared`: the blended signal is convolved with one IR. **Live-compatible**: a no-cab NAM
   export (`blend` of the two paths before the cab) plus that IR (convolved with post EQ) is
@@ -491,7 +491,18 @@ prints them. The render report (`tonerender --report`) carries:
   zero-padded; the sum is **not** re-normalised. `mix` is in [0, 1] (default 0.5; out of range is
   a preset error), `irA` and `irB` are both required, and the strict-key rules hold: `ir` is
   rejected in `irMix` mode and `mix` in the other modes. One convolver runs on `h` at the same
-  place in the chain and with the same latency as `shared`. It is still one combined IR, so
+  place in the chain and with the same latency as `shared`.
+  Optional alignment of the second IR, **`irMix` only** (rejected as unknown keys in the other
+  modes): `offsetSamplesB` (int, -256..256, default 0; out of range or non-integer is a preset
+  error) and `invertB` (bool, default false). They are applied to `hB` before the sum:
+  `h[i] = (1 - mix) * hA[i] + mix * s * hB[i - offsetSamplesB]` with `s = -1` when `invertB`
+  and `hB[j] = 0` outside the IR. Positive offset = `hB` delayed (shifted right, zero-padded at
+  the front); negative = `hB` advanced (its first |k| samples dropped, zero-padded at the end).
+  `h` keeps the length rule `max(len hA, len hB)` using the original lengths, so a delayed `hB`
+  loses its last k samples and the IR never exceeds the 2.0 s cap. The combined IR is built at
+  load (off the audio thread); latency is unchanged. The writer omits both keys at their
+  defaults, so existing presets round-trip byte-identically. Still one combined IR, so the
+  no-cab export stays exact. It is still one combined IR, so
   the no-cab export is exact (**live-compatible**).
 - IR files: mono WAV (stereo → left channel used, with a warning), any rate (resampled at
   load), truncated to 2.0 s max, normalized so the IR's L2 norm equals 1 unless

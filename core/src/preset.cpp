@@ -270,7 +270,11 @@ CabPreset parseCab(JsonObject& root, const fs::path& baseDir) {
   } else {
     c.irA = cap("irA");
     c.irB = cap("irB");
-    if (c.mode == CabMode::IrMix) c.mix = o.number("mix", 0.5, 0.0, 1.0);  // rejected (unknown key) in other modes
+    if (c.mode == CabMode::IrMix) {  // all three rejected (unknown keys) in other modes
+      c.mix = o.number("mix", 0.5, 0.0, 1.0);
+      c.offsetSamplesB = o.integer("offsetSamplesB", 0, -kMaxIrOffsetSamples, kMaxIrOffsetSamples);
+      c.invertB = o.boolean("invertB", false);
+    }
   }
   o.finish();
   return c;
@@ -284,7 +288,11 @@ json toJson(const CabPreset& c) {
   } else {
     j["irA"] = toJson(c.irA);
     j["irB"] = toJson(c.irB);
-    if (c.mode == CabMode::IrMix) j["mix"] = c.mix;
+    if (c.mode == CabMode::IrMix) {
+      j["mix"] = c.mix;
+      if (c.offsetSamplesB != 0) j["offsetSamplesB"] = c.offsetSamplesB;  // omitted at the default
+      if (c.invertB) j["invertB"] = true;
+    }
   }
   return j;
 }

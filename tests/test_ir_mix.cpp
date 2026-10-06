@@ -236,3 +236,148 @@ TEST_CASE("irMix: render report names the mode and both captures", "[irmix][rend
   REQUIRE(std::count(where.begin(), where.end(), "cab.irA") == 1);
   REQUIRE(std::count(where.begin(), where.end(), "cab.irB") == 1);
 }
+
+// ---- B2.1: offsetSamplesB / invertB -------------------------------------------------------------
+
+namespace {
+json mixCabX(const std::string& a, const std::string& b, double mix, int offset, bool invert) {
+  json c = mixCab(a, b, mix);
+  if (offset != 0) c["offsetSamplesB"] = offset;
+  if (invert) c["invertB"] = true;
+  return c;
+}
+std::vector<float> shiftedCopy(const std::vector<float>& h, int k) {  // k leading zeros, then h
+  std::vector<float> o(static_cast<std::size_t>(k), 0.0f);
+  o.insert(o.end(), h.begin(), h.end());
+  return o;
+}
+double peakOf(const std::vector<float>& v) {
+  double p = 0.0;
+  for (float s : v) p = std::max(p, static_cast<double>(std::fabs(s)));
+  return p;
+}
+}  // namespace
+
+TEST_CASE("mixIrs: offset and invert semantics", "[irmix][b21]") {
+  const std::vector<float> a{1.0f, 2.0f, 3.0f, 4.0f}, b{10.0f, 20.0f, 30.0f, 40.0f};
+  SECTION("defaults are bit-identical to the plain mix") {
+    REQUIRE(mixIrs(a, b, 0.3, 0, false) == mixIrs(a, b, 0.3));
+  }
+  SECTION("positive offset delays b, zero-padded in front, tail clipped to max(len)") {
+    REQUIRE(mixIrs(a, b, 1.0, 2, false) == std::vector<float>{0.0f, 0.0f, 10.0f, 20.0f});
+  }
+  SECTION("negative offset advances b, first |k| samples dropped, zero at the end") {
+    REQUIRE(mixIrs(a, b, 1.0, -1, false) == std::vector<float>{20.0f, 30.0f, 40.0f, 0.0f});
+  }
+  SECTION("invert negates b only") {
+    const auto h = mixIrs(a, b, 0.5, 0, true);
+    REQUIRE(h[0] == 0.5f * 1.0f - 0.5f * 10.0f);
+    REQUIRE(h[3] == 0.5f * 4.0f - 0.5f * 40.0f);
+  }
+  SECTION("length is max of the original lengths") {
+    REQUIRE(mixIrs(a, {1.0f}, 0.5, 3, false).size() == 4);
+    REQUIRE(mixIrs(a, {1.0f}, 0.5, -3, false).size() == 4);
+    REQUIRE(mixIrs({1.0f}, b, 0.5, 256, false).size() == 4);
+    REQUIRE(mixIrs(a, b, 1.0, -256, false) == std::vector<float>(4, 0.0f));
+  }
+}
+
+TEST_CASE("cab irMix: offsetSamplesB / invertB parse, strict keys, ranges, round trip", "[irmix][preset][b21]") {
+  json j = withCab(basePreset(), mixCabX("a.wav", "b.wav", 0.3, -17, true));
+  const Preset p = parsePreset(j, "/base");
+  REQUIRE(p.cab.offsetSamplesB == -17);
+  REQUIRE(p.cab.invertB);
+  const json out = toJson(p);
+  REQUIRE(out["cab"]["offsetSamplesB"] == -17);
+  REQUIRE(out["cab"]["invertB"] == true);
+  REQUIRE(parsePreset(out, "/base") == p);
+  REQUIRE(toJson(parsePreset(out, "/base")) == out);
+
+  SECTION("defaults: parsed as 0/false and omitted by the writer") {
+    const json d = withCab(basePreset(), mixCab("a.wav", "b.wav", 0.3));
+    const Preset q = parsePreset(d, "/base");
+    REQUIRE(q.cab.offsetSamplesB == 0);
+    REQUIRE_FALSE(q.cab.invertB);
+    const json o = toJson(q);
+    REQUIRE_FALSE(o["cab"].contains("offsetSamplesB"));
+    REQUIRE_FALSE(o["cab"].contains("invertB"));
+    json e = d;
+    e["cab"]["offsetSamplesB"] = 0;
+    e["cab"]["invertB"] = false;
+    REQUIRE(parsePreset(e, "/base") == q);
+    REQUIRE(toJson(parsePreset(e, "/base")) == o);
+  }
+  SECTION("edges +-256 accepted, +-257 rejected, wrong types rejected") {
+    for (int k : {-256, 256}) {
+      j["cab"]["offsetSamplesB"] = k;
+      REQUIRE(parsePreset(j, "/base").cab.offsetSamplesB == k);
+    }
+    for (int k : {-257, 257}) {
+      j["cab"]["offsetSamplesB"] = k;
+      requireErrorAt(j, "cab.offsetSamplesB");
+    }
+    j["cab"]["offsetSamplesB"] = 1.5;
+    requireErrorAt(j, "cab.offsetSamplesB");
+    j["cab"]["offsetSamplesB"] = "3";
+    requireErrorAt(j, "cab.offsetSamplesB");
+    j["cab"]["offsetSamplesB"] = 0;
+    j["cab"]["invertB"] = 1;
+    requireErrorAt(j, "cab.invertB");
+  }
+  SECTION("rejected in shared and perPath modes") {
+    for (const std::string key : {"offsetSamplesB", "invertB"}) {
+      const json val = key == "invertB" ? json(true) : json(3);
+      json s = basePreset();
+      s["cab"][key] = val;
+      requireErrorAt(s, "cab." + key);
+      json pp = withCab(basePreset(), {{"mode", "perPath"}, {"irA", {{"file", "a.wav"}}}, {"irB", {{"file", "b.wav"}}}});
+      pp["cab"][key] = val;
+      requireErrorAt(pp, "cab." + key);
+    }
+  }
+}
+
+TEST_CASE("irMix B2.1: shifted copy with the opposite offset and invert cancels", "[irmix][chain][b21]") {
+  TempDir tmp;
+  const auto hA = decayingNoise(3000, 5);
+  const std::string fa = tmp.write("a.wav", hA);
+  const auto x = noise(20000, 19, 0.3f);
+  const double refPeak = peakOf(render(*build(withCab(basePreset(), sharedCab(fa))), x, 256));
+  REQUIRE(refPeak > 0.05);
+  for (int k : {1, 37, 256}) {
+    INFO("k = " << k);
+    const std::string fb = tmp.write("b.wav", shiftedCopy(hA, k));
+    auto chain = build(withCab(basePreset(), mixCabX(fa, fb, 0.5, -k, true)));
+    const double peak = peakOf(render(*chain, x, 256));
+    REQUIRE(20.0 * std::log10(std::max(peak, 1e-30) / refPeak) < -100.0);
+    // Not vacuous: invert alone (no realignment) does not cancel.
+    const double noPeak = peakOf(render(*build(withCab(basePreset(), mixCabX(fa, fb, 0.5, 0, true))), x, 256));
+    REQUIRE(noPeak > 0.01 * refPeak);
+    // Latency unchanged versus the shared cab.
+    REQUIRE(chain->latencySamples() == build(withCab(basePreset(), sharedCab(fa)))->latencySamples());
+  }
+  // The combined IR itself, at the +256 edge.
+  REQUIRE(mixIrs(hA, shiftedCopy(hA, 256), 0.5, -256, true) == std::vector<float>(hA.size() + 256, 0.0f));  // length = max(len a, len b) = len b
+}
+
+TEST_CASE("irMix B2.1: explicit default offset/invert render is bit-identical", "[irmix][chain][b21]") {
+  TempDir tmp;
+  const std::string fa = tmp.write("a.wav", decayingNoise(3000, 5));
+  const std::string fb = tmp.write("b.wav", decayingNoise(1100, 9));
+  const auto x = noise(20000, 21, 0.3f);
+  json explicitDefaults = mixCab(fa, fb, 0.3);
+  explicitDefaults["offsetSamplesB"] = 0;
+  explicitDefaults["invertB"] = false;
+  REQUIRE(render(*build(withCab(basePreset(), mixCab(fa, fb, 0.3))), x, 256) ==
+          render(*build(withCab(basePreset(), explicitDefaults)), x, 256));
+}
+
+TEST_CASE("irMix B2.1: offset render is block-size invariant", "[irmix][chain][b21]") {
+  TempDir tmp;
+  const std::string fa = tmp.write("a.wav", decayingNoise(3000, 5));
+  const std::string fb = tmp.write("b.wav", decayingNoise(1100, 9));
+  const json j = withCab(basePreset(), mixCabX(fa, fb, 0.4, 100, true));
+  const auto x = noise(20000, 23, 0.3f);
+  const auto y1 = render(*build(j, 512), x, 512);
+  for (int block : {1, 64, 333}) REQUIRE(render(*build(j, 512), x, block) == y1);
+}
