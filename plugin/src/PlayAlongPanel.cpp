@@ -247,7 +247,7 @@ struct PlayAlongPanel::Impl {
     configure(renameTake, "RENAME", "Rename the selected take");
     configure(deleteTake, "DELETE", "Delete the selected take (the audio file and its sidecar)");
     configure(useForMatch, "USE FOR MATCH", "Use the selected take as the DI for MATCH");
-    configure(matchBtn, "MATCH", "Find the blend that sounds like the loaded song, from the selected take (Standalone app)");
+    configure(matchBtn, "MATCH", "Find the blend that sounds like the loaded song, from the selected take");
     configure(exportBtn, "EXPORT NAM", "Train a NAM model of the loaded preset for a loader pedal");
     rec.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a1712));
     rec.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb0a0));
@@ -338,10 +338,6 @@ struct PlayAlongPanel::Impl {
   }
 
   void matchClicked() {
-    if (!proc.matchEnabled()) {
-      showNotice("MATCH runs in the Standalone app: open the Standalone app.");
-      return;
-    }
     if (owner.onMatch) owner.onMatch();
   }
 
@@ -396,8 +392,6 @@ struct PlayAlongPanel::Impl {
         info = juce::String(static_cast<int>(r.overruns())) + " overruns: the disk could not keep up; the gaps are filled with silence.";
         col = L::warning();
       }
-    } else if (!proc.matchEnabled()) {
-      info = "MATCH: open the Standalone app.";
     } else {
       info = "REC saves the clean input. Choose a take, USE FOR MATCH, then MATCH.";
     }
@@ -635,11 +629,6 @@ void PlayAlongPanel::paint(juce::Graphics& g) {
 void PlayAlongPanel::resized() { impl_->layout(); }
 
 void PlayAlongPanel::refresh() { impl_->refresh(); }
-
-void PlayAlongPanel::showMatchArea() {
-  if (!impl_->proc.matchEnabled()) impl_->showNotice("MATCH runs in the Standalone app: open the Standalone app.");
-  impl_->refresh();
-}
 
 PlayAlongPanel::ChooserSpec PlayAlongPanel::chooserSpec(ChooserAction a, bool mac) { return song_input::chooserSpec(a, mac); }
 

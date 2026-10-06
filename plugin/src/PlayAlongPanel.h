@@ -27,11 +27,8 @@ class PlayAlongPanel : public juce::Component, public juce::FileDragAndDropTarge
   void paint(juce::Graphics&) override;
   void resized() override;
   void refresh();
-  // The top bar's MATCH button: the panel (with its record + match band) is already open; in plugin mode this shows the
-  // same "open the Standalone app" note as the panel's MATCH button, in Standalone it only brings the band up to date.
-  void showMatchArea();
-  // MATCH opens the match screen and EXPORT NAM opens the export panel (the editor wires both). In plugin mode (not
-  // Standalone) MATCH only shows a note: open the Standalone app; EXPORT NAM works in a host too.
+  // MATCH opens the match screen and EXPORT NAM opens the export panel (the editor wires both); both work in the
+  // Standalone app and in a host alike.
   std::function<void()> onMatch, onExport;
   // The two explicit pickers (asynchronous), each a one-purpose native chooser: a song file (files only, audio
   // filter) and a stems folder (directories only, no filter). A combined files+directories chooser with a type

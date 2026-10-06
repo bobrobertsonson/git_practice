@@ -201,6 +201,12 @@ class JobRunner {
 
   void setJobsDir(const std::filesystem::path& dir);
   std::filesystem::path jobsDir() const;
+  // The instance this runner belongs to. The jobs folder is per user and shared by every plugin instance (and the
+  // Standalone app), so each job's job.json records its owner and attachExisting() adopts only jobs of this owner.
+  // Empty (the default; tests, tools) = unscoped: adopts any job, as before. An owned runner never adopts a job that
+  // has no owner (written by an older build or by an unscoped runner).
+  void setOwner(const std::string& owner);
+  std::string owner() const;
   // Adopts the newest match and export job found on disk (a running one is monitored again, a finished one is
   // loaded). Cheap; call it when a panel opens. Does nothing for a kind that already has a job.
   void attachExisting();
@@ -242,6 +248,7 @@ class JobRunner {
   struct Job;
   struct HelpCache;
   enum class Slot { Match, Export, Refine };
+  bool ownedByThisRunner(const std::filesystem::path& dir) const;  // m_ held
   bool launchLocked(Slot s, std::shared_ptr<Job> job, std::string* error);  // m_ held
   std::shared_ptr<Job>& slot(Slot s) { return s == Slot::Match ? match_ : s == Slot::Export ? export_ : refine_; }
   static Slot slotOf(JobKind k) { return k == JobKind::Match ? Slot::Match : Slot::Export; }
@@ -260,6 +267,7 @@ class JobRunner {
   MatchSettings& settings_;
   mutable std::mutex m_;                       // jobsDir_, slots
   std::filesystem::path jobsDir_;
+  std::string owner_;                          // see setOwner()
   std::shared_ptr<Job> match_, export_, refine_;
   std::vector<std::shared_ptr<Job>> graveyard_;  // cancelled refinements that are still dying (a new MATCH replaced them)
   bool closing_ = false;
