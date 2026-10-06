@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "ImportDialog.h"
 #include "MatchGlue.h"
 #include "SawbladeLookAndFeel.h"
 #include "SongInput.h"
@@ -74,8 +75,7 @@ struct TakePicker : juce::ListBoxModel {
     g.drawText(juce::String(t.name), 8, 0, w - 190, h, juce::Justification::centredLeft, true);
     g.setColour(L::dimText());
     g.drawText(juce::String(t.lengthSeconds(), 1) + " s", w - 180, 0, 56, h, juce::Justification::centredRight);
-    const auto off = t.offsetMs();
-    g.drawText(off ? juce::String("@ ") + juce::String(*off / 1000.0, 1) + " s" : juce::String("no song"), w - 118, 0, 70, h, juce::Justification::centredLeft);
+    g.drawText(juce::String(takeOriginText(t)), w - 118, 0, 70, h, juce::Justification::centredLeft);  // "IMPORTED" / "@ 12.3 s" / "no song"
     if (selected) {
       g.setColour(L::saw());
       g.setFont(L::labelFont(10.0f));
@@ -106,10 +106,12 @@ struct MatchScreen::Impl : juce::ListBoxModel {
   Bar sepBar;
   bool fetchShown = false;
   song_input::PickNotice pickNotice;
-  bool dropHover = false;
   // section 2 (the DI): REC / STOP, the take picker, and the slot IMPORT DI... takes (Task B, plugin part)
   juce::Label recTime, recNote, pickerEmpty, startNote;
-  juce::TextButton recBtn;
+  juce::TextButton recBtn, importBtn;
+  std::unique_ptr<DiImporter> importer;  // IMPORT DI...: the same chooser / dialog / drop code as the take band
+  song_input::PickNotice importNotice;   // a refused file, shown under REC for a few seconds
+  int dropSection = 0;                   // while a file is dragged over the screen: 1 = the song takes it, 2 = the DI list imports it
   TakePicker picker;
   juce::ListBox pickerList{"Take picker", &picker};
   bool syncingPicker = false;
@@ -137,8 +139,10 @@ struct MatchScreen::Impl : juce::ListBoxModel {
   std::vector<Row> rows;
   int lastGoodRow = -1;
   std::unique_ptr<juce::FileChooser> chooser, songChooser;
-  // Where IMPORT DI... goes (v0.2.1 Task B, plugin part): section 2, right of REC / STOP, same row. Nothing is drawn here yet.
+  // Where IMPORT DI... sits: section 2, right of REC / STOP, same row.
   juce::Rectangle<int> importSlot;
+  static juce::Rectangle<int> songZone() { return {24, 76, 428, 168}; }  // section 1: a dropped song / stems folder
+  static juce::Rectangle<int> diZone() { return {24, 250, 428, 240}; }   // section 2: a dropped DI file
   std::string appliedName;
 
   // ---- helpers ------------------------------------------------------------------------------------------
@@ -196,6 +200,18 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     owner.addChildComponent(sepBar);
     caption(capDi, juce::String::fromUTF8("2 \xc2\xb7 YOUR DI"));
     button(recBtn, "REC", "Record the clean input (before the gate) to a take. Press again to stop. The take becomes the DI for the match. Takes are saved in the takes folder with a sidecar that stores where the song was.");
+    button(importBtn, juce::String::fromUTF8("IMPORT DI\xe2\x80\xa6"), "Import a WAV, AIFF or FLAC file (a DI you already have, for example a bounce from your DAW) as a take: it is copied into the takes folder and becomes the DI for the match. You can also drop the file on this section.");
+    importer = std::make_unique<DiImporter>(proc, owner);
+    importer->onRejected = [this](const juce::String& why) {
+      importNotice.set(why);
+      refresh();
+    };
+    importer->onImported = [this](const std::string&) {
+      importNotice.clear();
+      rescanTakes();
+      refresh();
+    };
+    importBtn.onClick = [this] { importer->choose(); };
     recBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a1712));
     recBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb0a0));
     text(recTime, 15.0f, L::dimText(), true);
@@ -522,6 +538,9 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     } else if (why.isNotEmpty()) {
       note = why;
       nc = L::warning();
+    } else if (importNotice.active().isNotEmpty()) {
+      note = importNotice.active();
+      nc = L::warning();
     } else if (state != TakeRecorder::State::Idle) {
       note = "Recording the clean input, before the gate.";
       if (r.overruns() > 0) {
@@ -541,6 +560,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     if (take) {
       diText = juce::String(take->lengthSeconds(), 1) + " s" + kDot + juce::String(take->sampleRate / 1000.0, 1) + " kHz";
       if (take->overruns > 0) diText += kDot + juce::String(static_cast<int>(take->overruns)) + " overruns";
+      if (take->imported.present) diText += kDot + "IMPORTED";
       if (plan.take) diText += "\n" + juce::String(plan.offsetNote);
     } else {
       diText = "Record a take with REC, or pick one above.";
@@ -773,7 +793,8 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     capDi.setBounds(lx, 254, lw, 14);
     recBtn.setBounds(lx, 272, 96, 30);
     recTime.setBounds(lx + 106, 272, 140, 30);
-    importSlot = {lx + 256, 272, lw - 256, 30};  // reserved for IMPORT DI... (Task B, plugin part)
+    importSlot = {lx + 256, 272, lw - 256, 30};
+    importBtn.setBounds(importSlot);
     recNote.setBounds(lx, 306, lw, 28);
     pickerList.setBounds(lx, 336, lw, 88);
     pickerEmpty.setBounds(lx, 336, lw, 88);
@@ -851,11 +872,12 @@ void MatchScreen::paint(juce::Graphics& g) {
   g.setColour(L::rule());
   g.fillRect(34, 246, 408, 1);  // between 1 · REFERENCE SONG and 2 · YOUR DI
   g.fillRect(34, 492, 408, 1);  // between 2 · YOUR DI and 3 · TOOLS
-  if (impl_->dropHover) {       // a song file or a stems folder is being dragged over the screen: section 1 takes it
+  if (impl_->dropSection != 0) {  // a file is being dragged over the screen: section 1 takes a song, section 2 a DI
+    const auto z = (impl_->dropSection == 2 ? Impl::diZone() : Impl::songZone()).toFloat();
     g.setColour(L::saw().withAlpha(0.18f));
-    g.fillRoundedRectangle(24.0f, 76.0f, 428.0f, 168.0f, 6.0f);
+    g.fillRoundedRectangle(z, 6.0f);
     g.setColour(L::saw());
-    g.drawRoundedRectangle(24.5f, 76.5f, 427.0f, 167.0f, 6.0f, 1.5f);
+    g.drawRoundedRectangle(z.reduced(0.5f), 6.0f, 1.5f);
   }
 }
 
@@ -873,21 +895,37 @@ void MatchScreen::chooseStemsFolder() {
   song_input::launchChooser(impl_->songChooser, song_input::Action::StemsFolder, [this](const juce::File& f) { handlePicked(song_input::Action::StemsFolder, f); });
 }
 
+DiImporter& MatchScreen::diImporter() { return *impl_->importer; }
+
 bool MatchScreen::isInterestedInFileDrag(const juce::StringArray& files) { return song_input::isLoadableDrop(files); }
 
-void MatchScreen::fileDragEnter(const juce::StringArray&, int, int) {
-  impl_->dropHover = true;
+// A DI file (WAV / AIFF / FLAC) dropped on section 2 is imported; anything else, and a file dropped elsewhere on the screen, is the song.
+int MatchScreen::dropSectionAt(const juce::StringArray& files, juce::Point<int> p) const {
+  return Impl::diZone().contains(p) && DiImporter::isImportableDrop(files) ? 2 : 1;
+}
+
+void MatchScreen::fileDragEnter(const juce::StringArray& files, int x, int y) {
+  impl_->dropSection = dropSectionAt(files, {x, y});
   repaint();
+}
+
+void MatchScreen::fileDragMove(const juce::StringArray& files, int x, int y) {
+  const int s = dropSectionAt(files, {x, y});
+  if (s != impl_->dropSection) {
+    impl_->dropSection = s;
+    repaint();
+  }
 }
 
 void MatchScreen::fileDragExit(const juce::StringArray&) {
-  impl_->dropHover = false;
+  impl_->dropSection = 0;
   repaint();
 }
 
-void MatchScreen::filesDropped(const juce::StringArray& files, int, int) {
-  impl_->dropHover = false;
-  song_input::loadDroppedFiles(impl_->proc.playAlong(), files);
+void MatchScreen::filesDropped(const juce::StringArray& files, int x, int y) {
+  impl_->dropSection = 0;
+  if (dropSectionAt(files, {x, y}) == 2) impl_->importer->handleDrop(files);
+  else song_input::loadDroppedFiles(impl_->proc.playAlong(), files);
   impl_->refresh();
   repaint();
 }

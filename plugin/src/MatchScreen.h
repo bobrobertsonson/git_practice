@@ -6,6 +6,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginProcessor.h"
+#include "ImportDialog.h"
 #include "SongInput.h"
 
 namespace sawblade::plugin {
@@ -40,8 +41,15 @@ class MatchScreen : public juce::Component, public juce::FileDragAndDropTarget {
   void chooseStemsFolder();
   bool isInterestedInFileDrag(const juce::StringArray& files) override;
   void fileDragEnter(const juce::StringArray& files, int x, int y) override;
+  void fileDragMove(const juce::StringArray& files, int x, int y) override;
   void fileDragExit(const juce::StringArray& files) override;
   void filesDropped(const juce::StringArray& files, int x, int y) override;
+
+  // Section 2 · YOUR DI: IMPORT DI... (a button, and a drop of a WAV / AIFF / FLAC file on the section) copies the file into the takes as
+  // a take and chooses it (ImportDialog.h; the same DiImporter as the take band). dropSectionAt: which section a drag at `p` would land
+  // in: 2 = the DI list takes it (an importable file over section 2), 1 = the song does.
+  int dropSectionAt(const juce::StringArray& files, juce::Point<int> p) const;
+  DiImporter& diImporter();
 
   // Called when the screen closes (CLOSE button).
   std::function<void()> onClose;

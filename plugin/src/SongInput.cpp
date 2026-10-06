@@ -17,6 +17,11 @@ ChooserSpec chooserSpec(Action a, bool mac) {
           juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories};
 }
 
+ChooserSpec importChooserSpec(bool mac) {
+  const juce::String filter = mac ? juce::String("*") : juce::String("*.wav;*.aif;*.aiff;*.flac");
+  return {"Choose a DI recording to import", filter, juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles};
+}
+
 bool handlePicked(PlayAlong& pa, Action a, const juce::File& f, PickNotice& notice) {
   if (f == juce::File()) return false;  // cancelled
   const bool ok = a == Action::SongFile ? (f.existsAsFile() && isSongFileName(f.getFullPathName().toStdString())) : f.isDirectory();
@@ -31,7 +36,10 @@ bool handlePicked(PlayAlong& pa, Action a, const juce::File& f, PickNotice& noti
 }
 
 void launchChooser(std::unique_ptr<juce::FileChooser>& holder, Action a, std::function<void(const juce::File&)> onPicked) {
-  const ChooserSpec spec = chooserSpec(a);
+  launchChooserSpec(holder, chooserSpec(a), std::move(onPicked));
+}
+
+void launchChooserSpec(std::unique_ptr<juce::FileChooser>& holder, const ChooserSpec& spec, std::function<void(const juce::File&)> onPicked) {
   holder = std::make_unique<juce::FileChooser>(spec.title, juce::File(), spec.filter);
   holder->launchAsync(spec.flags, [cb = std::move(onPicked)](const juce::FileChooser& fc) { cb(fc.getResult()); });
 }

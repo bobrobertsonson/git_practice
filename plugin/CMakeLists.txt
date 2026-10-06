@@ -51,6 +51,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/PluginProcessor.cpp
   src/SongInput.cpp
   src/DiImport.cpp
+  src/ImportDialog.cpp
   src/PlayAlongPanel.cpp
   src/MatchScreen.cpp
   src/ExportPanel.cpp
@@ -267,8 +268,8 @@ endif()
 # executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
 # compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
 if(SAWBLADE_BUILD_TESTS)
-  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp ${SAWBLADE_PLUGIN_SOURCES})
-  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp
+  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_di_import_ui.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_di_import_ui.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   add_dependencies(sawblade_editor_tests SawbladeBuildInfo)
   target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})

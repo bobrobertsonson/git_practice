@@ -5,6 +5,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "ImportDialog.h"
 #include "PluginProcessor.h"
 #include "SongInput.h"
 
@@ -52,6 +53,10 @@ class PlayAlongPanel : public juce::Component, public juce::FileDragAndDropTarge
   static bool loadDroppedFiles(SawbladeProcessor& proc, const juce::StringArray& files);
   bool isInterestedInFileDrag(const juce::StringArray& files) override;
   void filesDropped(const juce::StringArray& files, int x, int y) override;
+
+  // IMPORT DI... in the take band, and a WAV / AIFF / FLAC file dropped on the take list (the list is the drop target, so the panel's own
+  // song drop does not see it). The same DiImporter as the MATCH screen's section 2.
+  DiImporter& diImporter();
 
  private:
   void launchChooser(ChooserAction a);

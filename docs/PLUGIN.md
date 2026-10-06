@@ -475,7 +475,24 @@ the tools, a progress bar with stage, message, ETA and best error, CANCEL, and t
 - the reference is the loaded song folder's guitar stem (`guitar` / `guitars`), else `other`, else a mix, else the first
   audio file; the label on the screen says which. `--stems-dir` is not passed (it is the calibrate stem cache);
 - `--offset-ms` comes from the take's sidecar and is omitted when no backing was running or when the take was recorded
-  against another song (the matcher then searches within +-3 s).
+  against another song (the matcher then searches within +-3 s). A take imported as the **same performance as the song** also
+  passes `--matched mono` (the matcher reads `--offset-ms` only for a matched pair; with "don't know" no `--offset-ms` is
+  passed and it searches the whole song). `--matched mono` takes column 0 of the reference file for the time-aligned STFT term
+  while `--ref-channel mid` (the mean of its channels) still gives the LTAS target: for a stereo guitar stem that is the left
+  channel against the mid, which is harmless for a mono DI.
+
+**IMPORT DI... (v0.2.1 Task B).** A DI you already have (WAV / AIFF / FLAC, 16 / 24 / 32-bit integer or 32-bit float, any rate)
+becomes a take: IMPORT DI... in the take band and in the MATCH screen's section 2, or drop the file on the take list / on
+section 2 (a drop on the song area is still a song). The native chooser is files-only (filter `*` on macOS, the pick is
+validated afterwards); a small modal dialog inside the editor then asks: for a stereo file, left (default) / right / sum;
+"same performance as the song (my own recording)" (default off); and, only for that, "DI starts at m:ss.mmm" (default 0:00.000, a
+DI bounced from the start of the song: leave it) with a "don't know" box. The file is **copied**: a mono 32-bit float WAV at the
+file's own rate in the takes folder (named after the file, `-2`, `-3`... if taken) plus the usual sidecar, which has
+`"playAlong": null` and `"imported": {"source": <file name>, "channel": "mono"|"left"|"right"|"sum", "samePerformance": bool,
+"offsetMs": <ms or null>}` (`offsetMs` is stored only for the same performance). The list marks it `IMPORTED`. A file is refused
+with a one-line reason when it is **silent** (loudest sample of the chosen channel below -60 dBFS) or **clipped** (4 or more
+consecutive samples at |x| >= 0.999); a file with more than two channels is refused too. Decoding and writing run on a worker
+thread, never on the audio thread.
 
 The results (`result.json`: `best` and `alternatives`, `loss` shown as dB, `topology`, a captures summary) list the matcher's
 choice first. **AUDITION** loads the candidate's `*.preset.resolved.json` through the processor's normal off-thread preset

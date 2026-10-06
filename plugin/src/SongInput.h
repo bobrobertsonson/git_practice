@@ -31,6 +31,10 @@ constexpr bool kIsMac = false;
 // delegate accepts everything) and handlePicked validates the pick instead.
 ChooserSpec chooserSpec(Action a, bool mac = kIsMac);
 
+// The IMPORT DI... chooser (v0.2.1 Task B): files only, never a folder; WAV / AIFF / FLAC. Same macOS rule as the song chooser: the
+// filter is "*" there (no allowed-types list) and DiImporter::handlePicked validates the pick instead.
+ChooserSpec importChooserSpec(bool mac = kIsMac);
+
 // A rejected pick's message, shown in a view's status line for a few seconds.
 struct PickNotice {
   juce::String text;
@@ -47,6 +51,9 @@ struct PickNotice {
 // song is kept, never passed to loadSong), then loaded as a user-initiated load. Returns whether it was loaded. An empty
 // file = cancelled (false, notice untouched).
 bool handlePicked(PlayAlong& pa, Action a, const juce::File& f, PickNotice& notice);
+
+// Opens a native chooser from a spec (the one-purpose choosers above); same contract as launchChooser(holder, Action, ...).
+void launchChooserSpec(std::unique_ptr<juce::FileChooser>& holder, const ChooserSpec& spec, std::function<void(const juce::File&)> onPicked);
 
 // Opens the native chooser for `a`; `holder` keeps it alive while it is open; `onPicked` gets the result (message thread).
 void launchChooser(std::unique_ptr<juce::FileChooser>& holder, Action a, std::function<void(const juce::File&)> onPicked);

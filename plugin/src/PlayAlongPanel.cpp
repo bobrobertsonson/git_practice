@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "ImportDialog.h"
 #include "MatchGlue.h"
 #include "PlayAlong.h"
 #include "SawbladeLookAndFeel.h"
@@ -88,8 +89,7 @@ struct TakeRows : juce::ListBoxModel {
     g.drawText(juce::String(t.name), 8, 0, 230, h, juce::Justification::centredLeft, true);
     g.setColour(L::dimText());
     g.drawText(juce::String(t.lengthSeconds(), 1) + " s", 240, 0, 60, h, juce::Justification::centredRight);
-    const auto off = t.offsetMs();
-    g.drawText(off ? juce::String("@ ") + juce::String(*off / 1000.0, 1) + " s" : juce::String("no song"), 306, 0, 90, h, juce::Justification::centredLeft);
+    g.drawText(juce::String(takeOriginText(t)), 306, 0, 90, h, juce::Justification::centredLeft);  // "IMPORTED" / "@ 12.3 s" / "no song"
     if (t.overruns > 0) {
       g.setColour(L::warning());
       g.drawText(juce::String(static_cast<int>(t.overruns)) + " overrun" + (t.overruns > 1 ? "s" : ""), 396, 0, 78, h, juce::Justification::centredLeft);
@@ -99,6 +99,36 @@ struct TakeRows : juce::ListBoxModel {
       g.setFont(L::labelFont(10.0f));
       g.drawText("FOR MATCH", w - 78, 0, 72, h, juce::Justification::centredRight);
     }
+  }
+};
+
+// The take list also takes a dropped WAV / AIFF / FLAC file: that is an IMPORT DI, not a song (the deepest interested component under
+// the mouse gets a drop, so a file dropped here never reaches the panel's song drop).
+struct TakeListBox : juce::ListBox, juce::FileDragAndDropTarget {
+  using juce::ListBox::ListBox;
+  std::function<void(const juce::StringArray&)> onFiles;
+  bool hover = false;
+  bool isInterestedInFileDrag(const juce::StringArray& files) override { return DiImporter::isImportableDrop(files); }
+  void fileDragEnter(const juce::StringArray&, int, int) override {
+    hover = true;
+    repaint();
+  }
+  void fileDragExit(const juce::StringArray&) override {
+    hover = false;
+    repaint();
+  }
+  void filesDropped(const juce::StringArray& files, int, int) override {
+    hover = false;
+    repaint();
+    if (onFiles) onFiles(files);
+  }
+  void paintOverChildren(juce::Graphics& g) override {
+    juce::ListBox::paintOverChildren(g);
+    if (!hover) return;
+    g.setColour(L::saw().withAlpha(0.18f));
+    g.fillRect(getLocalBounds());
+    g.setColour(L::saw());
+    g.drawRect(getLocalBounds(), 2);
   }
 };
 
@@ -120,10 +150,12 @@ struct PlayAlongPanel::Impl {
   juce::TextButton chooseSong, chooseStems, cancel, model, keepKeys, play, setA, setB, loop, countIn, mute, ghost, full, sync;
   // record / match band
   juce::Label capTakes, recTime, recInfo, emptyNote;
-  juce::TextButton rec, renameTake, deleteTake, useForMatch, matchBtn, exportBtn;
+  juce::TextButton rec, importBtn, renameTake, deleteTake, useForMatch, matchBtn, exportBtn;
+  std::unique_ptr<DiImporter> importer;  // IMPORT DI...: the chooser, the dialog and drops onto the take list
+  std::string pendingSelect;             // a take just imported: the list selects it on the next rescan
   StatusDot recDot;
   TakeRows takeRows;
-  juce::ListBox takeList{"Takes", &takeRows};
+  TakeListBox takeList{"Takes", &takeRows};
   std::uint64_t seenVersion = ~std::uint64_t{0};
   int refreshTick = 0;
   juce::String notice;
@@ -244,6 +276,7 @@ struct PlayAlongPanel::Impl {
   void buildBand() {
     caption(capTakes, "TAKES");
     configure(rec, "REC", "Record the clean input (before the gate) to a take. Press again to stop. Takes are saved in the takes folder with a sidecar that stores where the song was.");
+    configure(importBtn, juce::String::fromUTF8("IMPORT DI\xe2\x80\xa6"), "Import a WAV, AIFF or FLAC file (a DI you already have, for example a bounce from your DAW) as a take: it is copied into the takes folder and used for MATCH. You can also drop the file on the take list.");
     configure(renameTake, "RENAME", "Rename the selected take");
     configure(deleteTake, "DELETE", "Delete the selected take (the audio file and its sidecar)");
     configure(useForMatch, "USE FOR MATCH", "Use the selected take as the DI for MATCH");
@@ -275,7 +308,14 @@ struct PlayAlongPanel::Impl {
     takeList.setColour(juce::ListBox::outlineColourId, L::chipBorder());
     takeList.setOutlineThickness(1);
     takeList.setTitle("Takes");
-    takeList.setTooltip("Recorded DI takes, newest first");
+    takeList.setTooltip("Recorded and imported DI takes, newest first. Drop a WAV, AIFF or FLAC file here to import it.");
+    importer = std::make_unique<DiImporter>(proc, owner);
+    importer->onRejected = [this](const juce::String& why) { showNotice(why); refreshBand(); };
+    importer->onImported = [this](const std::string& name) {
+      pendingSelect = name;
+      refreshBand(true);
+    };
+    takeList.onFiles = [this](const juce::StringArray& files) { importer->handleDrop(files); };
     owner.addAndMakeVisible(takeList);
     owner.addAndMakeVisible(emptyNote);
     wireBand();
@@ -292,6 +332,7 @@ struct PlayAlongPanel::Impl {
   }
 
   void wireBand() {
+    importBtn.onClick = [this] { importer->choose(); };
     rec.onClick = [this] {
       toggleRecording(proc);  // shared with the MATCH screen's REC / STOP
       refreshBand();
@@ -355,7 +396,7 @@ struct PlayAlongPanel::Impl {
     if (force || r.takesVersion() != seenVersion || (++refreshTick % 160) == 0) {
       seenVersion = r.takesVersion();
       auto fresh = r.listTakes();
-      const std::string keep = selectedTakeName();
+      const std::string keep = pendingSelect.empty() ? selectedTakeName() : pendingSelect;
       const std::string match = proc.matchSettings().selectedTake();
       bool same = fresh.size() == takeRows.takes.size() && match == takeRows.matchTake;
       for (std::size_t i = 0; same && i < fresh.size(); ++i)
@@ -371,6 +412,7 @@ struct PlayAlongPanel::Impl {
         if (row >= 0) takeList.selectRow(row, true);
         takeList.repaint();
       }
+      pendingSelect.clear();
     }
     emptyNote.setVisible(takeRows.takes.empty());
     const bool haveSel = !selectedTakeName().empty();
@@ -405,7 +447,8 @@ struct PlayAlongPanel::Impl {
     rec.setBounds(m, y0 + 14, 96, 36);
     recDot.setBounds(m + 104, y0 + 22, 20, 20);
     recTime.setBounds(m + 128, y0 + 14, 170, 36);
-    recInfo.setBounds(m, y0 + 58, 300, 46);
+    importBtn.setBounds(m, y0 + 54, 130, 24);
+    recInfo.setBounds(m, y0 + 80, 316, 30);
     takeList.setBounds(340, y0 + 26, 500, 78);
     emptyNote.setBounds(340, y0 + 26, 500, 78);
     renameTake.setBounds(856, y0 + 26, 94, 34);
@@ -629,6 +672,8 @@ void PlayAlongPanel::paint(juce::Graphics& g) {
 void PlayAlongPanel::resized() { impl_->layout(); }
 
 void PlayAlongPanel::refresh() { impl_->refresh(); }
+
+DiImporter& PlayAlongPanel::diImporter() { return *impl_->importer; }
 
 PlayAlongPanel::ChooserSpec PlayAlongPanel::chooserSpec(ChooserAction a, bool mac) { return song_input::chooserSpec(a, mac); }
 
