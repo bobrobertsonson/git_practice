@@ -26,6 +26,7 @@ from .reference import Reference, build_target, make_excerpt
 from .progress import NullProgress, Progress
 from .cabsweep import TOP_PER_TOPOLOGY, cab_sweep, sweep_summary
 from .gatesweep import gate_sweep, reference_floor_db, render_gate
+from .irblend import TOP_IRS, pair_search
 from .refine import refine_combo, relinear
 from .trace import trace_tones
 from .screen import Scored, Screener, TOPOLOGIES
@@ -40,7 +41,7 @@ SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within 
 ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio")      # --ablate names (v0.4M suspects)
 CAB_SWITCH_DB = 0.01      # a different cab must lower the loss by at least this to replace the stage-2 cab
 REFINE_SHARE = 0.95       # share of the refine stage's progress for stage 2; the cab / gate sweeps and the trace get the rest
-NOOP_ABLATIONS = ("irblend", "studio")                                        # accepted and echoed; implemented in later tasks
+NOOP_ABLATIONS = ("studio",)                                        # accepted and echoed; implemented in later tasks
 
 
 @dataclass
@@ -378,7 +379,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                     "lossWeights": {"texFlat": L.W_FLAT, "texHf": L.W_HF, "ltas": L.W_LTAS, "buzz": L.W_BUZZ, "decay": L.W_DECAY, "stft": L.W_STFT,
                                     "reg": L.W_REG, "feelTight": L.W_TIGHT, "feelFizz": L.W_FIZZ, "feelPolish": L.W_POLISH},
                     "ablate": list(parse_ablate(cfg.ablate)),
-                    "ablateNote": "irblend and studio are accepted and echoed; they are no-ops until their tasks (B2.1 / B2.3) land",
+                    "ablateNote": "studio is accepted and echoed; it is a no-op until its task (B2.3) lands",
                     "randomness": f"numpy default_rng(seed={cfg.seed}) for subset sampling and CMA-ES (seed + block)"}
 
     # ---- starter ("before") on the excerpt, which also gives the coarse offset refinement its render -----------------
@@ -561,6 +562,30 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         result["cabSweep"] = {"ablated": True, "note": "--ablate irsweep: only the stage-1 cab sweep ran"}
     T["cabSweep"] = time.time() - t_cab
     best = choose(refined)
+    # ---- two-IR blend (v0.4M B2.1): the winner's cab as one combined irMix IR of two of the top IRs --------------------
+    t_ir = time.time()
+    if "irblend" in ablate:
+        result["irBlend"] = {"ablated": True, "tried": 0, "won": False}
+    else:
+        sw = next((x for x in cab_sweeps if x["topology"] == best.topology and x["boost"] == bool(best.combo.boost)), None)
+        bykey = {c.key: c for c in pool.cabs}
+        keys = [i["cab"] for i in sw["irs"]][:TOP_IRS] if sw else [c.key for c in pool.cabs][:TOP_IRS]
+        irb = pair_search(eng, best, Space.for_combo(best.combo, plan.filters), ex, tgt, [bykey[k] for k in keys],
+                          seed=cfg.seed * 1000 + 950, gens=plan.gens_final, pop=plan.pop_linear, patience=plan.patience,
+                          tol=plan.plateau_tol, log=log)
+        won_pair = irb.pop("_won", None)
+        irb["ablated"] = False
+        if won_pair is not None:
+            combo2, v2, r2 = won_pair
+            new = finish_refined(combo2, best, v2, r2, best.extra["info"])
+            refined[next(i for i, x in enumerate(refined) if x is best)] = new
+            log(f"two-IR blend: {irb['pair']['titleA']} + {irb['pair']['titleB']} (offset {irb['offset']}, invert {irb['invert']}, "
+                f"mix {irb['mix']:.2f}) loss {best.loss:.3f} -> {new.loss:.3f}")
+            best = new
+        else:
+            log(f"two-IR blend: no pair beats the single IR by {irb['minGain']} (best gain {irb['gainVsSingle']:+.3f})")
+        result["irBlend"] = irb
+    T["irBlend"] = time.time() - t_ir
     result["stage2Seconds"] = time.time() - t_start - t1
     T["stage2"] = time.time() - t_mark
     t_mark = time.time()
@@ -787,7 +812,9 @@ def _guardrails(y: np.ndarray, profile: dict) -> dict:
 def _scored_json(s: Scored) -> dict:
     d = {"stage": s.stage, "topology": s.topology, "loss": s.loss, "blend": s.blend, "align": s.align,
          "levelMatch": s.levels and s.levels.preset_block(),
-         "tightBoost": bool(s.combo.boost), "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
+         "tightBoost": bool(s.combo.boost), "irMix": None if s.combo.cab_b is None else
+         {"irB": s.combo.cab_b.key, "offsetSamplesB": s.combo.cab_offset, "invertB": s.combo.cab_invert},
+         "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
          "sizeRank": {"category": s.combo.size_rank()[0], "byteBucket": s.combo.size_rank()[1]}}
     if "guardrails" in s.extra:
         d["guardrails"] = s.extra["guardrails"]

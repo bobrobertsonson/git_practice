@@ -19,6 +19,7 @@ from sawblade_match.matcher.space import (BUTTER4_Q, Combo, POST_HP_RANGE, POST_
 core = pytest.importorskip("sawblade_match.core", reason="sawblade_core not built")
 from sawblade_match.matcher.cli import build_parser, parse_tone_ids      # noqa: E402
 from sawblade_match.matcher.engine import Engine, to48                   # noqa: E402
+from sawblade_match.matcher.irblend import ir_alignment, load_ir48        # noqa: E402
 from sawblade_match.matcher.gatesweep import (GATE_OFFSETS_DB, cell_gate, gate_sweep,    # noqa: E402
                                                reference_floor_db)
 from sawblade_match.matcher.reference import build_target, load_reference, make_excerpt   # noqa: E402
@@ -123,7 +124,7 @@ def test_cli_flags_and_ablate_parsing():
     with pytest.raises(ValueError, match="tone id"):
         parse_tone_ids("12,abc")
     helptext = " ".join(build_parser().format_help().split())
-    assert "no-ops until" in helptext and "--trace-tones" in helptext
+    assert "no-op until" in helptext or "no-ops until" in helptext and "--trace-tones" in helptext
 
 
 def test_pool_catalog_records_what_the_manifest_says(tmp_path):
@@ -463,7 +464,8 @@ def test_ablate_switches_the_suspects_off_and_echoes_them(tmp_path):
     names = ("feel", "boost", "filters", "irsweep", "irblend", "studio")
     res = run_match(Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=2, excerpt_s=2.0, threads=2, plan=plan,
                            write_audio=False, refine_offsets=False, ablate=names), Log())
-    assert res["ablate"] == list(names) and "no-ops" in res["ablateNote"]
+    assert res["ablate"] == list(names) and "studio" in res["ablateNote"]
+    assert res["irBlend"] == {"ablated": True, "tried": 0, "won": False}
     assert (res["plan"]["boost"], res["plan"]["filters"], res["plan"]["cab_sweep"]) == (False, False, False)
     tb = res["tightBoost"]
     assert tb["ablated"] is True and tb["tried"] == 0 and tb["won"] is False and tb["refined"] == 0
@@ -478,3 +480,75 @@ def test_ablate_switches_the_suspects_off_and_echoes_them(tmp_path):
     assert "gateSweep" in res                                               # the gate sweep is not an ablation switch
     with pytest.raises(ValueError, match="unknown suspect"):
         run_match(Config(di=di, ref=ref, pool=pool, out=tmp_path / "out2", ablate=("nope",)), Log())
+
+
+# ---- two-IR blend (B2.1) ------------------------------------------------------------------------------------------------------
+def test_ir_alignment_sign_conventions():
+    rng = np.random.default_rng(4)
+    ha = rng.standard_normal(400) * np.exp(-np.arange(400) / 80.0)
+    late = np.zeros(400)
+    late[7:] = -ha[:-7]                                    # B arrives 7 samples after A, opposite polarity
+    assert ir_alignment(ha, late) == (-7, True, 7)         # the core delays B for positive offsets: it needs -7
+    early = np.zeros(400)
+    early[:-5] = ha[5:]                                    # B arrives 5 samples before A
+    assert ir_alignment(ha, early) == (5, False, -5)
+    assert ir_alignment(ha, ha)[:2] == (0, False)
+
+
+def _irmix_combo(pool, offset, invert):
+    return Combo((), pool.amps[2], None, None, pool.cabs[0]).with_pair(pool.cabs[0], pool.cabs[1], offset, invert)
+
+
+def test_irmix_combo_emulation_equals_full_render_and_round_trips():
+    pool = fixture_pool()
+    ha, hb = load_ir48(pool.cabs[0]), load_ir48(pool.cabs[1])
+    off, inv, _ = ir_alignment(ha, hb)
+    combo = _irmix_combo(pool, off, inv)
+    assert combo.cab_b is not None and "irMix" in combo.describe() and combo.key()[-1].startswith("4/7+4/8@")
+    sp = Space.for_combo(combo)
+    assert sp.params[sp.idx["cab.mix"]].group == "discrete" and (sp.params[sp.idx["cab.mix"]].lo, sp.params[sp.idx["cab.mix"]].hi) == (0.2, 0.8)
+    v = sp.default()
+    v["cab.mix"] = 0.35
+    gate = gate_preset(-60.0)
+    preset = build_preset(combo, v, gate=gate, align=manual_align())
+    assert preset["cab"]["mode"] == "irMix" and preset["cab"]["mix"] == 0.35
+    assert preset["cab"].get("offsetSamplesB", 0) == off and preset["cab"].get("invertB", False) == inv
+    x, fs = _loadwav(FIX / "di_riff.wav")
+    x = to48(x, fs)[:FS * 2]
+    eng = Engine(gate, 2)
+    try:
+        ca = eng.core(combo, v, "a", x)
+        em = eng.emulate(combo, v, ca, None, manual_align())
+        full, rep = eng.render(preset, x)
+        assert rep["cabMode"] == "irMix" and rep["liveCompatible"] is True
+        assert np.max(np.abs(full - em)) < 1e-5 * max(1.0, np.max(np.abs(full)))
+        single = eng.emulate(combo.with_cab(pool.cabs[0]), v, ca, None, manual_align())
+        assert not np.allclose(single, em)
+    finally:
+        eng.close()
+    assert json.loads(json.dumps(preset)) == preset
+
+
+def test_two_ir_blend_wins_on_a_hidden_irmix_chain_and_ablates(tmp_path):
+    pool = fixture_pool()
+    ha, hb = load_ir48(pool.cabs[0]), load_ir48(pool.cabs[1])
+    off, inv, _ = ir_alignment(ha, hb)
+    hidden_combo = Combo((pool.pedals[0],), pool.amps[2], None, None, pool.cabs[0]).with_pair(pool.cabs[0], pool.cabs[1], off, inv)
+    v = Space.for_combo(hidden_combo).default()
+    v["cab.mix"] = 0.4
+    di, ref = _known(tmp_path, pool, hidden_combo, v)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=10, gens_gain=3, gens_final=8,
+                  pop_linear=10, pop_gain=4, n_rescore_single=6, n_cab_single=3)
+    kw = dict(di=di, ref=ref, pool=pool, seed=4, excerpt_s=2.0, threads=2, plan=plan, write_audio=False, refine_offsets=False)
+    res = run_match(Config(out=tmp_path / "on", **kw), Log())
+    ib = res["irBlend"]
+    assert ib["ablated"] is False and ib["tried"] == 2 and ib["won"] is True and ib["gainVsSingle"] >= 0.05
+    assert {ib["pair"]["irA"], ib["pair"]["irB"]} == {"4/7", "4/8"} and 0.2 <= ib["mix"] <= 0.8
+    assert "_won" not in ib and res["best"]["irMix"] is not None
+    best = json.loads((tmp_path / "on" / "best.preset.resolved.json").read_text())
+    assert best["cab"]["mode"] == "irMix" and best["cab"]["mix"] == pytest.approx(ib["mix"])
+    assert best["cab"].get("offsetSamplesB", 0) == ib["offset"] and best["cab"].get("invertB", False) == ib["invert"]
+    assert core.render(best, np.zeros(2048, np.float32), 48000.0)[1]["liveCompatible"] is True
+    off_res = run_match(Config(out=tmp_path / "off", ablate=("irblend",), **kw), Log())
+    assert off_res["irBlend"]["ablated"] is True and off_res["best"]["irMix"] is None
+    assert off_res["best"]["loss"] > res["best"]["loss"]

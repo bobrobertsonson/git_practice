@@ -20,6 +20,7 @@ from .space import Combo, Space
 
 
 DISCRETE_UP = 1.0       # slope parameter value of the 24 dB/oct alternative (>= 0.5)
+MIX_GRID = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)           # cab.mix tried after CMA-ES
 HP_GRID = tuple(float(f) for f in np.geomspace(60.0, 140.0, 8)[1:])      # post.hp tried after CMA-ES (60 Hz = off)
 
 
@@ -34,6 +35,12 @@ def pick_slopes(space: Space, v: dict, score) -> tuple[dict, L.LossResult]:
     if "post.hp" in names:
         for f in HP_GRID:
             cand = {**best, "post.hp": f}
+            rc = score(cand)
+            if rc.total < r.total - 1e-9:
+                best, r = cand, rc
+    if "cab.mix" in names:      # the IR mix of a two-IR cab (B2.1)
+        for m in MIX_GRID:
+            cand = {**best, "cab.mix": m}
             rc = score(cand)
             if rc.total < r.total - 1e-9:
                 best, r = cand, rc

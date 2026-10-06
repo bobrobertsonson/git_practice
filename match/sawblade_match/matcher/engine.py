@@ -27,7 +27,7 @@ from scipy import signal
 
 from .. import core as _core
 from .levelmatch import Levels, level_match
-from .space import Combo, block_latency, build_preset, chain_blocks, manual_align, path_blocks, path_eq, post_eq
+from .space import Combo, block_latency, build_preset, cab_block, chain_blocks, manual_align, path_blocks, path_eq, post_eq
 
 RATE = 48000
 
@@ -110,8 +110,10 @@ class Engine:
             {"a": self._disabled("saw"), "b": live}
         return p
 
-    def linear_preset(self, cab, v: dict, path: str) -> dict:
+    def linear_preset(self, cab, v: dict, path: str, cab_obj: dict | None = None) -> dict:
         p = self._base(cab, blend=0.0 if path == "a" else 1.0, cab_enabled=True, gate=None, post=post_eq(v))
+        if cab_obj is not None:         # irMix cab of the combo (B2.1)
+            p["cab"] = cab_obj
         live = {"role": "saw" if path == "a" else "body", "blocks": [], "eq": path_eq(v, path),
                 "levelDb": float(v.get("levelA" if path == "a" else "levelB", 0.0))}
         p["paths"] = {"a": live, "b": self._disabled("body")} if path == "a" else \
@@ -156,8 +158,8 @@ class Engine:
         """NAM core of one path of a combo. Same length as ``x``."""
         return self.core_blocks(path_blocks(combo, v, path), combo.cab, x, gate)
 
-    def linear(self, cab, v: dict, path: str, sig: np.ndarray) -> np.ndarray:
-        y, _ = self.render(self.linear_preset(cab, v, path), sig)
+    def linear(self, cab, v: dict, path: str, sig: np.ndarray, cab_obj: dict | None = None) -> np.ndarray:
+        y, _ = self.render(self.linear_preset(cab, v, path, cab_obj), sig)
         return y
 
     def probe_align(self, combo: Combo, v: dict) -> dict:
@@ -196,8 +198,9 @@ class Engine:
     def emulate(self, combo: Combo, v: dict, core_a: np.ndarray, core_b: np.ndarray | None, align: dict,
                 levels: Levels | None = None) -> np.ndarray:
         """Output of the full chain from the core(s) (output gain not applied)."""
-        a = self.linear(combo.cab, v, "a", core_a)
+        co = None if combo.cab_b is None else cab_block(combo, v)
+        a = self.linear(combo.cab, v, "a", core_a, co)
         if combo.topology != "blend":
             return a
-        b = self.linear(combo.cab, v, "b", core_b)
+        b = self.linear(combo.cab, v, "b", core_b, co)
         return self.mix(a, b, v["blend"], align, levels)

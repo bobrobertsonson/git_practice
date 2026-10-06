@@ -49,6 +49,7 @@ POST_HP_RANGE = (60.0, 140.0)
 SLOPE_DEFAULT = 0.4                       # discrete slope parameter: < 0.5 -> 12 dB/oct, >= 0.5 -> 24 dB/oct
 BUTTER4_Q = (0.541196, 1.306563)          # Qs of the two biquads of a 4th-order Butterworth (24 dB/oct) pass filter
 BOOST_PARAMS = (("drive", 0.0, 3.0, 1.0), ("level", 6.0, 10.0, 8.0), ("tone", 3.0, 8.0, 5.0))   # name, lo, hi, default
+IRMIX_RANGE = (0.2, 0.8)                  # mix of the second IR (B2.1)
 PEDAL_LATENCY = 50                        # samples of every modeled pedal block (docs/PRESET_SCHEMA.md)
 
 
@@ -63,6 +64,9 @@ class Combo:
     b_amp: Capture | None
     cab: Capture
     boost: bool = False                      # modeled pedal.ts directly in front of the amp (single topology only)
+    cab_b: Capture | None = None             # v0.4M B2.1: a second IR; the cab is then one combined "irMix" IR (cab = IR A)
+    cab_offset: int = 0                      # offsetSamplesB of the irMix cab (positive = IR B delayed)
+    cab_invert: bool = False                 # invertB of the irMix cab
 
     @property
     def topology(self) -> str:
@@ -80,7 +84,8 @@ class Combo:
         return out
 
     def key(self) -> tuple:
-        return (self.topology + ("+ts" if self.boost else ""), *[c.key for c in self.nams()], self.cab.key)
+        cab = self.cab.key if self.cab_b is None else f"{self.cab.key}+{self.cab_b.key}@{self.cab_offset}{'-' if self.cab_invert else ''}"
+        return (self.topology + ("+ts" if self.boost else ""), *[c.key for c in self.nams()], cab)
 
     def pair_key(self) -> tuple:
         """Identity without the cab."""
@@ -90,13 +95,20 @@ class Combo:
         """Ordered slot -> capture (for reports); slot names depend on the topology."""
         if self.topology == "blend":
             return {"a_pedal": (self.a_pedals or (None,))[0], "a_amp": self.a_amp,
-                    "b_pedal": (self.b_pedals or (None,))[0], "b_amp": self.b_amp, "cab": self.cab}
+                    "b_pedal": (self.b_pedals or (None,))[0], "b_amp": self.b_amp, **self._cabs()}
         if self.topology == "single2":
-            return {"pedal1": self.a_pedals[0], "pedal2": self.a_pedals[1], "amp": self.a_amp, "cab": self.cab}
-        return {"pedal": (self.a_pedals or (None,))[0], "amp": self.a_amp, "cab": self.cab}
+            return {"pedal1": self.a_pedals[0], "pedal2": self.a_pedals[1], "amp": self.a_amp, **self._cabs()}
+        return {"pedal": (self.a_pedals or (None,))[0], "amp": self.a_amp, **self._cabs()}
+
+    def _cabs(self) -> dict:
+        return {"cab": self.cab} if self.cab_b is None else {"cab": self.cab, "cab_b": self.cab_b}
 
     def with_cab(self, cab: Capture) -> "Combo":
         return Combo(self.a_pedals, self.a_amp, self.b_pedals, self.b_amp, cab, self.boost)
+
+    def with_pair(self, cab_a: Capture, cab_b: Capture, offset: int, invert: bool) -> "Combo":
+        """The same chain with a two-IR (irMix) cab: IR A, IR B shifted by ``offset`` samples (positive = B delayed)."""
+        return Combo(self.a_pedals, self.a_amp, self.b_pedals, self.b_amp, cab_a, self.boost, cab_b, int(offset), bool(invert))
 
     def model_bytes(self) -> int:
         return sum(c.size_bytes for c in self.nams())
@@ -111,7 +123,7 @@ class Combo:
         if self.boost:      # the boost sits right before the amp: show it in signal order
             i = next((n for n, p in enumerate(parts) if p.startswith("amp=")), len(parts))
             parts.insert(i, "boost=pedal.ts")
-        return f"{self.topology}{'+boost' if self.boost else ''}: " + " | ".join(parts)
+        return f"{self.topology}{'+boost' if self.boost else ''}{'+irMix' if self.cab_b is not None else ''}: " + " | ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -128,7 +140,7 @@ class P:
 class Space:
     """Parameters for one combo shape ``(n_pedals_a, n_pedals_b | None)``."""
 
-    def __init__(self, shape: tuple, boost: bool = False, filters: bool = True):
+    def __init__(self, shape: tuple, boost: bool = False, filters: bool = True, irmix: bool = False):
         na, nb = shape
         if boost and nb is not None:
             raise ValueError("the tight boost is a single-path variant")
@@ -157,6 +169,8 @@ class Space:
             gains += [f"b.{i}" for i in range(nb)] + ["b.amp"]
         for g in gains:
             ps.append(P(f"gain.{g}", -NAM_GAIN, NAM_GAIN, 0.0, group="gain"))
+        if irmix:       # B2.1: the IR mix, tried on a grid after CMA-ES (group discrete)
+            ps.append(P("cab.mix", *IRMIX_RANGE, 0.5, group="discrete"))
         if boost:
             for name, lo, hi, d in BOOST_PARAMS:
                 ps.append(P(f"boost.{name}", lo, hi, d, group="gain"))
@@ -167,7 +181,7 @@ class Space:
 
     @staticmethod
     def for_combo(combo: Combo, filters: bool = True) -> "Space":
-        return Space(combo.shape(), boost=combo.boost, filters=filters)
+        return Space(combo.shape(), boost=combo.boost, filters=filters, irmix=combo.cab_b is not None)
 
     def __len__(self) -> int:
         return len(self.params)
@@ -267,6 +281,20 @@ def _nam(id_, slot, cap: Capture, gain_db: float, normalize: bool) -> dict:
     return b
 
 
+def cab_block(combo: Combo, v: dict[str, float] | None = None) -> dict:
+    """The preset ``cab`` object of a combo: ``shared`` with one IR, or ``irMix`` (one combined IR, live-compatible) with
+    the pair's alignment (``offsetSamplesB`` / ``invertB``) and the mix ``cab.mix`` of ``v``."""
+    if combo.cab_b is None:
+        return {"mode": "shared", "ir": combo.cab.block_model(), "enabled": True}
+    c = {"mode": "irMix", "irA": combo.cab.block_model(), "irB": combo.cab_b.block_model(),
+         "mix": float((v or {}).get("cab.mix", 0.5)), "enabled": True}
+    if combo.cab_offset:
+        c["offsetSamplesB"] = int(combo.cab_offset)
+    if combo.cab_invert:
+        c["invertB"] = True
+    return c
+
+
 def boost_block(id_: str, v: dict[str, float]) -> dict:
     """The tight boost: modeled ``pedal.ts`` (slot ``boost``, model version 1) with the ``boost.*`` parameters."""
     return {"id": id_, "type": "pedal.ts", "slot": "boost", "modelVersion": 1,
@@ -308,7 +336,7 @@ def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align:
         "gate": gate if gate else {"enabled": False},
         "paths": {"a": pa, "b": pb},
         "align": align, "blend": float(v["blend"]) if blend else 0.0,
-        "cab": {"mode": "shared", "ir": combo.cab.block_model(), "enabled": True},
+        "cab": cab_block(combo, v),
         "postEq": post_eq(v),
         "output": {"gainDb": float(output_db)},
     }
