@@ -113,7 +113,7 @@ MatchPlan planMatch(SawbladeProcessor& p) {
     }
   } else if (const auto off = plan.take->offsetMs(); off && sameSong) {
     plan.request.offsetMs = *off;
-    plan.offsetNote = "Starts " + seconds(*off / 1000.0) + " into the song (from the take).";
+    plan.offsetNote = "Recorded take: matched by tone (its song position, " + seconds(*off / 1000.0) + " in, is kept but not used).";
   } else if (off && !sameSong) {
     plan.offsetNote = "Recorded against another song: position ignored, the matcher will search for it.";
   } else {

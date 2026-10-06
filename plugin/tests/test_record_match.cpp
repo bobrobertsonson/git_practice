@@ -1401,7 +1401,7 @@ TEST_CASE("match: the plan uses the loaded song's guitar stem and the take's off
   REQUIRE(plan.request.offsetMs.has_value());
   CHECK(*plan.request.offsetMs == Catch::Approx(*takes[0].offsetMs()));
   CHECK(*plan.request.offsetMs > 2000.0);
-  CHECK(plan.offsetNote.find("into the song") != std::string::npos);
+  CHECK(plan.offsetNote.find("matched by tone") != std::string::npos);
 
   // A guitar stem wins over other.
   sawblade::writeWavFloat32Stereo(song / "guitar.wav", kFs, std::vector<float>(480, 0.0f), std::vector<float>(480, 0.0f));
@@ -1484,7 +1484,7 @@ TEST_CASE("match: a song loaded from a FILE is the reference and the take's song
   CHECK(plan.request.referenceLabel.rfind("my song (", 0) == 0);
   CHECK(activeSongName(h.p) == "my song");
   REQUIRE(plan.request.offsetMs.has_value());  // same song: the position is used
-  CHECK(plan.offsetNote.find("into the song") != std::string::npos);
+  CHECK(plan.offsetNote.find("matched by tone") != std::string::npos);
 }
 #endif
 

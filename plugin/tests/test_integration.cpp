@@ -856,7 +856,7 @@ void step16MatchProgress(Walk& w) {
   CHECK(anyLabelContains(screen, "'other' stem"));
   CHECK(anyLabelContains(screen, "Gatecreeper"));
   CHECK(anyLabelContains(screen, take));
-  CHECK(anyLabelContains(screen, "into the song"));  // the take was recorded with the backing running
+  CHECK(anyLabelContains(screen, "matched by tone"));  // the take was recorded with the backing running
   auto* start = w.matchButton("START MATCH");
   REQUIRE(start != nullptr);
   REQUIRE(start->isEnabled());

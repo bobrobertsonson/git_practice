@@ -2484,7 +2484,7 @@ TEST_CASE("record + match: screenshots of REC armed, the match progress and the 
   MatchScreen& screen = rig.screen();
   CHECK(anyLabelContains(screen, "'other' stem"));
   CHECK(anyLabelContains(screen, "verse riff"));
-  CHECK(anyLabelContains(screen, "into the song"));
+  CHECK(anyLabelContains(screen, "matched by tone"));
   auto* start = rig.screenButton("START MATCH");
   REQUIRE(start != nullptr);
   REQUIRE(start->isEnabled());

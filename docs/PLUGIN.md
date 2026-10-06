@@ -401,7 +401,7 @@ offset, so the offset setting is already in it. The backing is delayed by the ri
 DI sample up with the stem sample the player plays at that moment. `running` is false when the backing was paused, counting
 in, or (plugin mode) not following the host: the index is then only where the playhead was, and MATCH does not use it.
 `droppedSamples` is an addition to the spec's field list. The matcher's `--offset-ms` is
-`stemSampleIndex / stemSampleRate * 1000` (the DI starts that far into the song). A loop that wraps during the take
+`stemSampleIndex / stemSampleRate * 1000` (the DI starts that far into the song); the matcher uses it only with `--matched`, i.e. for an imported same-performance DI, and ignores it for a recorded take. A loop that wraps during the take
 breaks the single offset (the take is one straight run of the DI; the offset is valid until the first wrap).
 
 **Panel.** The play-along panel is 112 px taller (`PlayAlongPanel::kHeight` = 170 + 112); the new band holds REC / STOP with
