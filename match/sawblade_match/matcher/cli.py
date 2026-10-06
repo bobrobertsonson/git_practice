@@ -81,6 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "~/.config/sawblade/ir_dirs.json. They are indexed once (~/.cache/sawblade/ir_index.json), screened "
                         "analytically together with the pool's cabs, and the top " + str(irscreen.TOP_N) + " per candidate get "
                         "the full-loss sweep. Never uploaded or committed; licence 'user-owned'")
+    p.add_argument("--no-ir-dirs", action="store_true",
+                   help="ignore ~/.config/sawblade/ir_dirs.json for this run (only --ir-dir directories are used)")
     p.add_argument("--ir-dirs-add", metavar="DIR", help="add DIR to ~/.config/sawblade/ir_dirs.json and exit")
     p.add_argument("--ir-dirs-list", action="store_true", help="print the persistent IR directories and exit")
     p.add_argument("--ir-screen-max", type=int, default=irscreen.SCREEN_MAX, metavar="N",
@@ -107,6 +109,20 @@ def parse_tone_ids(spec: str) -> tuple[int, ...]:
     return tuple(out)
 
 
+def resolve_ir_dirs(cli_dirs: Sequence[str], no_config: bool = False) -> list[dict]:
+    """The IR directories of a run with where each came from: ``cli`` (--ir-dir) first, then ``config``
+    (~/.config/sawblade/ir_dirs.json, skipped by --no-ir-dirs). A directory given both ways is listed once, as cli."""
+    out: list[dict] = []
+    for d in cli_dirs or []:
+        if all(x["path"] != d for x in out):
+            out.append({"path": d, "source": "cli"})
+    if not no_config:
+        for d in irlib.load_dirs():
+            if all(x["path"] != d for x in out):
+                out.append({"path": d, "source": "config"})
+    return out
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     a = parser.parse_args(argv)
@@ -129,7 +145,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         out = Path(a.out) if a.out else Path.home() / ".cache" / "sawblade" / "match_runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
         t_load = time.time()
         pool = load_pool(a.pool)
-        ir_dirs = [*irlib.load_dirs(), *[d for d in a.ir_dir if d not in irlib.load_dirs()]]
+        ir_dirs_info = resolve_ir_dirs(a.ir_dir, a.no_ir_dirs)
+        ir_dirs = [d["path"] for d in ir_dirs_info]
         library = None
         if ir_dirs:
             library = irlib.scan(ir_dirs, progress=irlib.stderr_progress)
@@ -149,7 +166,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                      write_audio=a.listen and not a.no_audio, quick=a.quick,
                      progress_json=Path(a.progress_json) if a.progress_json else None,
                      timings_pre={"referenceLoad": time.time() - t_load}, ablate=ablate, trace_tones=trace,
-                     ir_library=library, ir_screen_max=a.ir_screen_max)
+                     ir_library=library, ir_screen_max=a.ir_screen_max, ir_dirs=tuple(ir_dirs_info))
         run_match(cfg, Log())
         return 0
     except (ValueError, OSError, RuntimeError) as e:

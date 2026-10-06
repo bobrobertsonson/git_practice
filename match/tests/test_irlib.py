@@ -256,3 +256,19 @@ def test_portable_preset_keeps_the_stem_and_hash_of_a_local_ir():
                         "source": {"provider": "local", "id": "abababababababab", "title": "V30 cap", "license": "user-owned"}}}}
     q = portable(p)["cab"]["ir"]
     assert q["file"] == "local-irs/V30 cap.wav" and q["sha256"] == "ab" * 32 and "Users" not in json.dumps(q)
+
+
+def test_no_ir_dirs_skips_the_config_and_sources_are_recorded(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    from sawblade_match.matcher.cli import build_parser, resolve_ir_dirs
+    d1, d2 = tmp_path / "cfg1", tmp_path / "cfg2"
+    d1.mkdir()
+    d2.mkdir()
+    irlib.add_dir(str(d1))
+    irlib.add_dir(str(d2))
+    cli_dir = str(tmp_path / "cli")
+    assert build_parser().parse_args(["--no-ir-dirs"]).no_ir_dirs is True
+    assert resolve_ir_dirs([cli_dir, str(d1)]) == [{"path": cli_dir, "source": "cli"}, {"path": str(d1), "source": "cli"},
+                                                  {"path": str(d2.resolve()), "source": "config"}]
+    assert resolve_ir_dirs([cli_dir], no_config=True) == [{"path": cli_dir, "source": "cli"}]
+    assert resolve_ir_dirs([], no_config=True) == []

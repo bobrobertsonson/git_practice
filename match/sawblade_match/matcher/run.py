@@ -136,6 +136,7 @@ class Config:
     ablate: tuple = ()                   # v0.4M suspects switched off (ABLATIONS); echoed in result.json
     trace_tones: tuple = ()              # TONE3000 tone ids to explain in result.json -> trace
     ir_library: object = None            # irlib.IrLibrary (the user's own IRs): screened with the pool cabs, top N swept
+    ir_dirs: tuple = ()                  # [{"path", "source": "cli"|"config"}] the library was scanned from (for irPool.dirs)
     ir_screen_max: int = irscreen.SCREEN_MAX   # above this many IRs the screen prefilters (tags, then k-means)
 
 
@@ -544,7 +545,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     t_cab = time.time()
     lib = cfg.ir_library if plan.cab_sweep else None
     bank, ir_pool = None, {"ablated": not plan.cab_sweep, "local": 0, "tone3000": len(pool.cabs), "total": len(pool.cabs),
-                           "skipped": 0, "screened": False, "screenSeconds": 0.0, "prefiltered": False}
+                           "skipped": 0, "dirs": [dict(d) for d in cfg.ir_dirs], "screened": False, "screenSeconds": 0.0, "prefiltered": False}
     if plan.cab_sweep and (lib is not None or len(pool.cabs) > irscreen.TOP_N):
         t_bank = time.time()
         bank = irscreen.Bank.build(lib, pool.cabs)

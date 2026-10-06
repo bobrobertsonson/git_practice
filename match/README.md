@@ -386,7 +386,7 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
     loss, best / worst and whether the cab changed. `cab_sweep()` is a separate function with the contract candidate + cabs -> loss rows so the
     analytic IR screen (B3) can replace it for large pools.
   * **IR library and analytic IR screen** (v0.4M Task B3, `matcher/irlib.py`, `matcher/irscreen.py`): your own IR catalog plus any number of
-    TONE3000 IRs, ranked cheaply and only the best get the full-loss sweep. `--ir-dir DIR` (repeatable) and the persistent list
+    TONE3000 IRs, ranked cheaply and only the best get the full-loss sweep. `--ir-dir DIR` (repeatable) and the persistent list (`--no-ir-dirs` ignores it for one run; `irPool.dirs` records each directory used and whether it came from `cli` or `config`)
     `~/.config/sawblade/ir_dirs.json` (`{"dirs": [...]}`, maintained with `--ir-dirs-add DIR` / `--ir-dirs-list`) are scanned recursively (spaces,
     unicode, nesting and symlink loops are fine; `.wav .aif .aiff .flac`; anything else is counted by extension as not-audio). Never fatal per
     file: unreadable / corrupt, empty, `too-short` (< 2 ms), `silent` and macOS `._` files are rejected with a reason. Multi-channel files use the

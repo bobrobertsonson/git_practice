@@ -210,7 +210,8 @@ def _lib_run(tmp: Path, monkeypatch, n_local=5, **cfg_kw):
     plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=4, gens_gain=2, gens_final=3,
                   n_rescore_single=6, n_cab_single=2)
     cfg = Config(di=di, ref=ref, pool=pool, out=tmp / "out", seed=3, excerpt_s=2.0, threads=2, plan=plan, write_audio=False,
-                 refine_offsets=False, ir_library=lib, **cfg_kw)
+                 refine_offsets=False, ir_library=lib,
+                 ir_dirs=({"path": str(tmp / "my irs"), "source": "cli"},), **cfg_kw)
     return run_match(cfg, Log()), lib, pool
 
 
@@ -218,6 +219,7 @@ def test_run_screens_library_irs_with_the_pool_cabs_and_records_irpool(tmp_path,
     res, lib, pool = _lib_run(tmp_path, monkeypatch)
     ip = res["irPool"]
     assert ip["local"] == len(lib.records) == 5 and ip["tone3000"] == len(pool.cabs) and ip["total"] == 5 + len(pool.cabs)
+    assert ip["dirs"] == [{"path": str(tmp_path / "my irs"), "source": "cli"}]
     assert ip["screened"] is True and ip["skipped"] == 0 and ip["prefiltered"] is False and ip["screenSeconds"] >= 0
     assert ip["winner"]["source"] in ("local", "tone3000") and ip["winner"]["key"]
     for c in res["cabSweep"]["candidates"]:
