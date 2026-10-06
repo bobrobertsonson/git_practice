@@ -438,6 +438,19 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
 * **Never trained.** The gate is always bypassed in the training chain and reported (with its original settings) in
   `export_report.json -> plan.bypassed`. Non-bypassed blocks that are not NAM-trainable (unknown type, or the core's
   `namTrainable == false` trait, detected from the core's render warnings) are refused. `cc-by-nc*` captures are allowed (policy in CLAUDE.md): attribution entries and the `.nam` `sawblade` block get `nonCommercial: true` and the licence note adds NON-COMMERCIAL plus the capture names (it appears in the `.nam`, `export_report.json` and the CLI's final print). CLAUDE.md supersedes the phase 4 spec's note string; the note now reads "Derived from TONE3000 captures; for the user's personal use only; sharing needs permission from the creators and TONE3000."
+* **Export notes** (`export/notes.py`). Every export writes `<name>.export_notes.txt` next to the `.nam` (`<name>` = the `.nam`
+  stem) and an `exportNotes` block into `export_report.json`: every enabled stage of the preset that is **not in the trained
+  model**, in signal order (gate -> [pre-NAM] -> NAM -> cab IR -> post EQ -> bus comp), so it can be rebuilt around a loader
+  pedal. Shape: `{"version", "mode", "file", "stages": [{"stage": "gate"|"cab"|"postEq"|"busComp", "position": "before NAM"|"after
+  NAM", "inModel": false, "settings": {...}, "hardware": "<one line>"}], "loaderOrder": "<one line>", "message"?}`. The gate is
+  always listed (before the NAM, keyed on the DI = put it first: threshold/close dB, attack/hold/release ms, range dB, expander
+  ratio, key HPF). `nocab` additionally lists the cab (shared IR, or for `irMix` both IRs, mix, `offsetSamplesB`/`invertB` when
+  present, with file/title/creator/licence/mic when known), the post EQ (type, Hz, dB, Q; HP/LP 12 dB/oct; both are already
+  folded into the exported `.ir.wav`, which the notes point to) and the bus comp (threshold dB re the chain's pre-headroom level
+  and re 0 dBFS at the exported output, which includes the output gain the model already has; ratio, attack/release ms, knee dB,
+  make-up dB), the last only with `--allow-inexact`. `withcab` lists only the gate (and a bypassed bus comp, if the plan ever
+  drops one). Nothing outside the model: the file says "Nothing to add". The output gain is never listed (it is inside the
+  model). The `.txt` ends with the licence note (NON-COMMERCIAL included).
 * **Folding (nocab).** The IR written next to the model is `cab IR (*) post-EQ impulse response`, obtained by rendering a unit impulse
   through the core's own `cab -> post EQ` (empty paths, blend 0): so IR loading, resampling to 48 kHz, the 2 s truncation and the L2
   normalisation are exactly the chain's, and the latency is already trimmed. Trailing samples below -120 dB (re. peak) are cut. The

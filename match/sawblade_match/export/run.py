@@ -17,6 +17,7 @@ from ..core import CaptureCache
 from ..core import _core as _core_mod
 from ..matcher.excerpt import select_excerpt
 from ..tonecheck.rules import load_targets
+from . import notes as N
 from . import plan as P
 from . import progress as PG
 from . import resume as R
@@ -280,6 +281,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str =
                                           "acceptanceStatus": v["acceptance"]["status"],
                                           "note": "model + exported IR rendered through sawblade_core vs the original chain"}
     tres.nam_path.write_text(json.dumps(nam))
+    report["exportNotes"], notes_path = N.write_export_notes(preset, plan, tres.nam_path, ir_path, P.licence_note(preset))
+    log(f"export notes: {notes_path}")
     report["totalWallSeconds"] = round(time.time() - t_all, 1)
     (outdir / "export_report.json").write_text(json.dumps(report, indent=2, default=float))
     if keep_scratch:
