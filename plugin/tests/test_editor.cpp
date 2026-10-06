@@ -3217,6 +3217,44 @@ TEST_CASE("match screen: START MATCH says what is missing, the song first; the t
   CHECK(anyLabelContains(screen, juce::String(kept)));
 }
 
+TEST_CASE("match screen: the empty-picker note is above the list; a take chosen while recording is not overridden (Task D)", "[editor][match][inputs]") {
+  MatchRig rig;
+  auto& pa = rig.proc.playAlong();
+  pa.setStandalone(true);
+  rig.ed->openMatchScreen();
+  MatchScreen& screen = rig.screen();
+  auto& picker = takePicker(rig);
+  juce::Label* note = nullptr;
+  for (auto* l : all<juce::Label>(screen))
+    if (l->getText().contains("No takes yet")) note = l;
+  REQUIRE(note != nullptr);
+  CHECK(note->isVisible());
+  CHECK(screen.getIndexOfChildComponent(note) > screen.getIndexOfChildComponent(&picker));  // not covered by the opaque list
+  CHECK(note->getBounds().intersects(picker.getBounds()));
+
+  // Two takes; A is the DI. A recording started from the screen finishes while B has been chosen: B stays.
+  const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
+  pa.loadFolder(song.string(), true);
+  REQUIRE(pa.waitForLoader());
+  const std::string a = recordTakeNamed(rig, song.string(), "take A");
+  const std::string b = recordTakeNamed(rig, song.string(), "take B");
+  screen.open();
+  CHECK_FALSE(note->isVisible());
+  rig.proc.matchSettings().setSelectedTake(a);
+  screen.refresh();
+  click(*rig.screenButton("REC"));
+  REQUIRE(rig.proc.recorder().state() == TakeRecorder::State::Armed);
+  feedSeconds(rig.proc, 1.0);
+  rig.proc.matchSettings().setSelectedTake(b);  // the user picks B (e.g. in the take band) while recording
+  screen.refresh();
+  click(*rig.screenButton("STOP"));
+  processBlocks(rig.proc, 1);
+  REQUIRE(rig.proc.recorder().waitIdle());
+  screen.refresh();
+  CHECK(picker.getListBoxModel()->getNumRows() == 3);
+  CHECK(rig.proc.matchSettings().selectedTake() == b);
+}
+
 TEST_CASE("match screen: a drop loads the song in place; a refused folder and a bad pick say why (Task D)", "[editor][match][inputs]") {
   using A = PlayAlongPanel::ChooserAction;
   MatchRig rig;

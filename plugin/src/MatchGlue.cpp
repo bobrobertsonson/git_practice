@@ -49,6 +49,21 @@ std::string recordUnavailableReason(SawbladeProcessor& p) {
   return p.recorder().state() == TakeRecorder::State::Finalizing ? "The last take is still being saved." : std::string();
 }
 
+std::string recordStateText(SawbladeProcessor& p) {
+  auto& r = p.recorder();
+  switch (r.state()) {
+    case TakeRecorder::State::Idle: return "READY";
+    case TakeRecorder::State::Armed: return "ARMED";
+    case TakeRecorder::State::Finalizing: return "SAVING";
+    case TakeRecorder::State::Recording: break;
+  }
+  const double rate = r.sampleRate() > 0.0 ? r.sampleRate() : 48000.0;
+  const int tenths = static_cast<int>(std::floor(static_cast<double>(r.recordedSamples()) / rate * 10.0 + 1e-9));
+  char b[32];
+  std::snprintf(b, sizeof b, "REC %02d:%02d.%d", tenths / 600, (tenths / 10) % 60, tenths % 10);
+  return b;
+}
+
 MatchPlan planMatch(SawbladeProcessor& p) {
   MatchPlan plan;
   const std::string folder = p.playAlong().activeStemsDir();

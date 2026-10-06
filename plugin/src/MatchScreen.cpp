@@ -57,12 +57,6 @@ class Bar : public juce::Component {
 
 constexpr int kRightX = 478;  // left edge of the progress / results column
 
-juce::String recClock(double seconds) {
-  if (!(seconds > 0.0)) seconds = 0.0;
-  const int tenths = static_cast<int>(std::floor(seconds * 10.0 + 1e-9));
-  return juce::String::formatted("%02d:%02d.%d", tenths / 600, (tenths / 10) % 60, tenths % 10);
-}
-
 // The take picker (section 2): the takes newest first, one row each. The chosen row is the match DI; clicking a row chooses it.
 struct TakePicker : juce::ListBoxModel {
   std::vector<TakeInfo> takes;
@@ -122,7 +116,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
   std::uint64_t seenTakesVersion = ~std::uint64_t{0};
   int takesTick = 0;
   bool recSeen = false;
-  std::string newestAtRecStart;
+  std::string newestAtRecStart, chosenAtRecStart;
   // progress + results
   juce::Label capProgress, stage, message, eta, capResults, auditionStatus;
   Bar bar;
@@ -189,6 +183,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     songBtn.setTitle(juce::String::fromUTF8("CHOOSE SONG FILE\xe2\x80\xa6"));  // the accessible name is the full action
     stemsBtn.setTitle(juce::String::fromUTF8("CHOOSE STEMS FOLDER\xe2\x80\xa6"));
     button(sepCancel, "CANCEL", "Cancel the separation");
+    sepCancel.setTitle("CANCEL SEPARATION");  // unique: the match's own CANCEL button keeps the title "CANCEL"
     sepCancel.setVisible(false);
     button(fetchCopy, "COPY", "Copy the install command to the clipboard");
     fetchCopy.setVisible(false);
@@ -217,13 +212,11 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     pickerList.setOutlineThickness(1);
     pickerList.setTitle("Take picker");
     pickerList.setTooltip("Your recorded DI takes, newest first. The chosen take is the DI the match runs on.");
-    owner.addAndMakeVisible(pickerList);
     pickerEmpty.setFont(L::bodyFont(12.0f));
     pickerEmpty.setColour(juce::Label::textColourId, L::dimText());
     pickerEmpty.setText("No takes yet. Press REC and play.", juce::dontSendNotification);
     pickerEmpty.setJustificationType(juce::Justification::centred);
     pickerEmpty.setInterceptsMouseClicks(false, false);
-    owner.addAndMakeVisible(pickerEmpty);
     text(diName, 15.0f, L::text(), false, true);
     text(diOffset, 12.0f, L::dimText());
     text(startNote, 11.5f, L::dimText());
@@ -278,6 +271,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
 
     // The take picker goes last in the child order: the results list stays the screen's first ListBox (tests and tools find it so).
     owner.addAndMakeVisible(pickerList);
+    owner.addAndMakeVisible(pickerEmpty);  // above the (opaque) list, or it would be hidden by it
     wire();
     title.setText("MATCH", juce::dontSendNotification);
     subtitle.setText("FIND THE BLEND THAT SOUNDS LIKE YOUR REFERENCE", juce::dontSendNotification);
@@ -480,16 +474,19 @@ struct MatchScreen::Impl : juce::ListBoxModel {
   void refreshDi(const MatchPlan& plan) {
     auto& r = proc.recorder();
     const auto state = r.state();
-    // Takes on disk: rescanned when the recorder changed them, and every 10 s (other instances / the file manager).
-    if (r.takesVersion() != seenTakesVersion || (++takesTick % 160) == 0) rescanTakes();
+    // Takes on disk: rescanned when the recorder changed them, and every ~10 s (the timer runs at 4 Hz; other instances / the file manager).
+    if (r.takesVersion() != seenTakesVersion || (++takesTick % 40) == 0) rescanTakes();
     // A take that finished since the screen last looked becomes the DI (the user pressed REC to match with it).
     if (state != TakeRecorder::State::Idle && !recSeen) {
       recSeen = true;
       newestAtRecStart = picker.takes.empty() ? std::string() : picker.takes.front().name;
+      chosenAtRecStart = proc.matchSettings().selectedTake();
     } else if (state == TakeRecorder::State::Idle && recSeen) {
       recSeen = false;
       rescanTakes();
-      if (!picker.takes.empty() && picker.takes.front().name != newestAtRecStart) chooseTakeForMatch(proc, picker.takes.front().name);
+      // The new take becomes the DI unless the user chose another one while recording.
+      if (!picker.takes.empty() && picker.takes.front().name != newestAtRecStart && proc.matchSettings().selectedTake() == chosenAtRecStart)
+        chooseTakeForMatch(proc, picker.takes.front().name);
     }
     // The chosen row follows the match settings (a pick in the take band shows here too).
     const std::string chosen = proc.matchSettings().selectedTake();
@@ -508,14 +505,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     recBtn.setButtonText(state == TakeRecorder::State::Idle ? "REC" : "STOP");
     recBtn.setTitle(state == TakeRecorder::State::Idle ? "REC" : "STOP");
     recBtn.setEnabled(why.isEmpty());
-    const double rate = r.sampleRate() > 0.0 ? r.sampleRate() : 48000.0;
-    juce::String t;
-    switch (state) {
-      case TakeRecorder::State::Idle: t = "READY"; break;
-      case TakeRecorder::State::Armed: t = "ARMED"; break;
-      case TakeRecorder::State::Recording: t = "REC " + recClock(static_cast<double>(r.recordedSamples()) / rate); break;
-      case TakeRecorder::State::Finalizing: t = "SAVING"; break;
-    }
+    const juce::String t = juce::String(recordStateText(proc));
     recTime.setText(t, juce::dontSendNotification);
     recTime.setColour(juce::Label::textColourId, state == TakeRecorder::State::Recording ? juce::Colour(0xffff6a5a) : L::dimText());
     juce::String note = "REC records your clean input (before the gate). The newest take becomes the DI.";

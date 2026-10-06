@@ -1376,7 +1376,8 @@ TEST_CASE("match: the plan uses the loaded song's guitar stem and the take's off
   REQUIRE(pa.waitForLoader());
   plan = planMatch(h.p);
   CHECK_FALSE(plan.ok);
-  CHECK(plan.message.find("USE FOR MATCH") != std::string::npos);
+  CHECK(plan.message.find("DI") != std::string::npos);  // "Record or import a DI first"
+  CHECK(plan.message.find("Load a song") == std::string::npos);
   CHECK(plan.reference.found);
   CHECK(plan.reference.file.filename() == "other.wav");  // a 4-stem song: other is the guitar
 

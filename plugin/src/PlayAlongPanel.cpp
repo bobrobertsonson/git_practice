@@ -349,18 +349,10 @@ struct PlayAlongPanel::Impl {
     auto& r = proc.recorder();
     const auto state = r.state();
     const bool busy = state != TakeRecorder::State::Idle;
-    const double rate = r.sampleRate() > 0.0 ? r.sampleRate() : 48000.0;
     rec.setButtonText(state == TakeRecorder::State::Idle ? "REC" : "STOP");
-    rec.setEnabled(state != TakeRecorder::State::Finalizing);
+    rec.setEnabled(recordUnavailableReason(proc).empty());
     recDot.setOn(state == TakeRecorder::State::Recording || state == TakeRecorder::State::Armed);
-    juce::String t;
-    switch (state) {
-      case TakeRecorder::State::Idle: t = "READY"; break;
-      case TakeRecorder::State::Armed: t = "ARMED"; break;
-      case TakeRecorder::State::Recording: t = "REC " + timeText(static_cast<double>(r.recordedSamples()) / rate); break;
-      case TakeRecorder::State::Finalizing: t = "SAVING"; break;
-    }
-    recTime.setText(t, juce::dontSendNotification);
+    recTime.setText(juce::String(recordStateText(proc)), juce::dontSendNotification);
     recTime.setColour(juce::Label::textColourId, state == TakeRecorder::State::Recording ? juce::Colour(0xffff6a5a) : L::dimText());
 
     // The takes on disk: rescanned when the recorder changed them, and every 10 s (other instances / the user's file manager).

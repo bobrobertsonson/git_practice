@@ -26,6 +26,8 @@ std::optional<TakeInfo> selectedTake(SawbladeProcessor& p);  // the take chosen 
 void toggleRecording(SawbladeProcessor& p);
 // Why REC would do nothing right now ("" = it is available): the previous take is still being saved.
 std::string recordUnavailableReason(SawbladeProcessor& p);
+// The recorder's one-word state for both views: READY / ARMED / "REC mm:ss.t" / SAVING.
+std::string recordStateText(SawbladeProcessor& p);
 
 struct MatchPlan {
   bool ok = false;
