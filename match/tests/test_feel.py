@@ -94,7 +94,7 @@ def test_t12_matches_the_analytic_decay_and_floppy_scores_worse():
     same_but_noise_phase, _ = F.evaluate(riff(2, tau=0.03), ft)
     floppy, tf = F.evaluate(riff(3, tau=0.06), ft)
     tighter, tt = F.evaluate(riff(4, tau=0.015), ft)
-    assert tf["tight"] > 3.0 and tf["tightRaw"]["t12Ms"] > 15.0 and tf["tightRaw"]["sustainDb"] > 3.0
+    assert tf["tight"] > 2.0 and tf["tightRaw"]["t12Ms"] > 15.0 and tf["tightRaw"]["sustainDb"] > 3.0
     assert tt["tight"] > 0.5                              # tighter than the reference is penalised too ...
     slow_ref, fast_ref = target(riff(1, tau=0.05)), target(riff(1, tau=0.02))
     _, floppy_vs_fast = F.evaluate(riff(2, tau=0.05), fast_ref)
@@ -237,7 +237,7 @@ def test_soft_target_compares_distributions_at_half_weight():
     ft = F.make_target(di, ONSETS, activity(di), None, None, soft_ref=soft, cache={})
     assert ft.mode == "soft" and ft.scale == 0.5 and ft.ref_note_set == "chugs"
     v_same, t_same = F.evaluate(riff(1, fizz_db=-14), ft)
-    assert t_same["weights"]["tight"] == 0.25 and t_same["weights"]["fizz"] == 0.25
+    assert t_same["weights"]["tight"] == 0.125 and t_same["weights"]["fizz"] == 0.125
     assert v_same < 0.05, t_same
     assert "floor" in t_same["dropped"] and t_same["floor"] is None
     v_bad, t_bad = F.evaluate(riff(2, tau=0.07), ft)             # floppy and smooth where the reference is fizzy
@@ -268,7 +268,7 @@ def test_loss_integration_adds_feel_to_the_total():
     d = b.as_dict()
     assert d["feel"] == b.feel and d["feelTerms"]["tight"] is not None and "dropped" in d["feelTerms"]
     json.dumps(d)
-    assert (L.W_TIGHT, L.W_FIZZ, L.W_POLISH) == (0.5, 0.5, 0.25)
+    assert (L.W_TIGHT, L.W_FIZZ, L.W_POLISH) == (0.25, 0.25, 0.125)
 
 
 # ---- reference basis: the fizz term must be ON for a clean amp track ---------------------------------------------------
@@ -394,3 +394,25 @@ def test_non_finite_feel_is_null_in_the_json():
     bad[10] = np.inf
     d = L.evaluate(bad, tgt).as_dict()
     assert d["feel"] is None and d["feelTerms"]["nonFinite"] is True
+
+
+def test_huber_softening_is_smooth_monotone_and_flat_at_zero():
+    h = F.huber
+    assert h(0.0) == 0.0 and abs(h(F.SOFT_DELTA) - 0.5 * F.SOFT_DELTA) < 1e-12
+    xs = np.linspace(0, 5, 501)
+    ys = np.array([h(x) for x in xs])
+    assert np.all(np.diff(ys) > 0) and abs(ys[1] - ys[0]) < 1e-4            # monotone, slope ~0 at 0
+    assert abs(h(1.0 - 1e-9) - h(1.0 + 1e-9)) < 1e-6                         # continuous at the knee
+    assert abs(h(4.0) - 3.5) < 1e-12                                          # linear above
+
+
+def test_without_feel_keeps_everything_else():
+    from sawblade_match.matcher import loss as L
+    x = riff(1)
+    starts = L.segment_starts(len(x), None)
+    tgt = L.Target(starts, L.features(x, starts, None), None, activity(x), None, feel=target(x))
+    plain = L.without_feel(tgt)
+    assert plain.feel is None and plain.stft_cache is tgt.stft_cache and plain.starts is tgt.starts
+    assert L.without_feel(plain) is plain
+    out = riff(2, tau=0.06)
+    assert L.evaluate(out, plain).feel == 0.0 and L.evaluate(out, tgt).feel > 0.0

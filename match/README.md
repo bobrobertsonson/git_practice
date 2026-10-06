@@ -351,7 +351,7 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   side channel. Each switched-off term is listed with its reason in `feelTerms.dropped`, `referenceTarget.feel.dropped` and the run log;
   `result.json -> reference.clean` says which reading was used.
 * **Feel term** (v0.4M, `matcher/feel.py`, `feelTerms` in every `breakdown`): the LTAS finds the average spectrum, this finds how the tone
-  behaves. `feel = 0.5 tight + 0.5 fizz + 0.25 polish` added to the total (initial weights, tuned in Task D). *tight*: per-note 60-250 Hz
+  behaves. `feel = 0.25 tight + 0.25 fizz + 0.125 polish` added to the total (initial weights, tuned in Task D; each normalised sub-term is Huber-softened, quadratic below one normaliser, so mismatches within the noise of these statistics do not pull against the spectral fit; the first linear block of stage 2 is LTAS-only). *tight*: per-note 60-250 Hz
   12 dB decay time (t12) and 40-120 ms sustain after the DI's palm-muted chugs (>= 3, else all notes; one-sided: floppier than the
   reference counts fully, tighter half), t12 / 20 ms + sustain / 3 dB. *fizz*: per 2048-pt frame 5-12 kHz re 1-4 kHz (dB), 5-10 kHz flatness
   and 5-12 kHz envelope modulation, W1 distance of the distributions / (1.5 dB, 0.03, 0.1). *polish*: W1 of the spectral flux (/ 0.5 dB) and

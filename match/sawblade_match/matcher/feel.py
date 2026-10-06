@@ -28,9 +28,9 @@ A.3 polish.  ``flux`` = per-frame mean |delta dB| between consecutive 1024-pt lo
     300 Hz-8 kHz, active frames; W1 / 0.5 dB. ``crest`` = peak/RMS (dB) per 400 ms active window (hop 200 ms); W1 /
     1.5 dB. ``floor`` = output power in the DI gap regions re its active power (dB), same for the reference, one-sided
     ``max(0, d) / 6 + 0.25 max(0, -d) / 6`` (d = out - ref); dropped with < 100 ms of gaps.
-    ``polish = flux + crest + floor``.
+    ``polish = flux + crest + floor``. Every normalised sub-term above passes through ``huber`` (quadratic below 1, linear above).
 
-``feel = W_TIGHT * tight + W_FIZZ * fizz + W_POLISH * polish`` (0.5 / 0.5 / 0.25; tuned in Task D). Without a matched
+``feel = W_TIGHT * tight + W_FIZZ * fizz + W_POLISH * polish`` (0.25 / 0.25 / 0.125; tuned in Task D). Without a matched
 pair (``mode == "soft"``) the reference's own features (its onsets, its chugs, its frames) are compared to the
 render's as W1 of the per-note / per-frame distributions, ``floor`` is dropped (a mix has no clean gaps) and every
 weight is scaled by 0.5.
@@ -43,7 +43,7 @@ import numpy as np
 from scipy import signal
 
 RATE = 48000
-W_TIGHT, W_FIZZ, W_POLISH = 0.5, 0.5, 0.25
+W_TIGHT, W_FIZZ, W_POLISH = 0.25, 0.25, 0.125
 SOFT_SCALE = 0.5
 
 # ---- A.1 ---------------------------------------------------------------------------------------------------------

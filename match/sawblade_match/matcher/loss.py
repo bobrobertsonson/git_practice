@@ -23,7 +23,7 @@ total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched
              than the reference there, never brighter), plus a one-sided 8-12 kHz level ceiling (weight 0.12 / dB). The
              texture term is not used. The matched-pair STFT term is likewise limited to ``stft_fmax`` (a mix channel).
 * ``feel``   (v0.4M) how the tone behaves, not its average spectrum (``matcher/feel.py`` has the exact definitions):
-             ``feel = W_TIGHT * tight + W_FIZZ * fizz + W_POLISH * polish`` with initial weights 0.5 / 0.5 / 0.25 (tuned in
+             ``feel = W_TIGHT * tight + W_FIZZ * fizz + W_POLISH * polish`` with initial weights 0.25 / 0.25 / 0.125 (tuned in
              Task D). ``tight``: per-note 60-250 Hz decay time (t12) and sustain after the DI's palm-muted chugs, one-sided
              (floppier than the reference counts fully, tighter half), t12 / 20 ms + sustain / 3 dB. ``fizz``: per-frame
              5-12 kHz re 1-4 kHz level, 5-10 kHz flatness and 5-12 kHz envelope modulation, W1 distance of the
@@ -31,7 +31,10 @@ total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched
              a matched channel that is a full mix; see ``Reference.clean``). ``polish``: W1 of the spectral flux
              (/ 0.5 dB) and of the per-400 ms crest (/ 1.5 dB), plus the inter-note floor re the active level, one-sided
              (/ 6 dB). Matched pair: note by note against the aligned reference; otherwise the reference's own
-             features are compared as distributions, every weight x 0.5 and ``floor`` dropped. All gain invariant. Terms
+             features are compared as distributions, every weight x 0.5 and ``floor`` dropped. All gain invariant. Each normalised
+             sub-term is Huber-softened (``feel.huber``: quadratic below one normaliser, linear above), so mismatches inside
+             the noise of these statistics have no pull against the spectral fit, and stage 2's first linear block runs
+             LTAS-only (``without_feel``; known-answer margin, see REPORT). Terms
              with too little data (< 3 notes, < 100 ms of gaps, ...) are dropped and recorded in ``feelTerms.dropped``. A reference
              that is a full mix (matched channel not clean / not a stem) switches off fizz, tightness, flux, crest and floor;
              the floor also needs a clean track (see ``reference.feel_*_state``). The Occam margins in ``run.choose`` (0.1 dB,
