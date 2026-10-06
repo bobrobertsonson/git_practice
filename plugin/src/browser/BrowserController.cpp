@@ -14,6 +14,7 @@ BrowserController::BrowserController(SawbladeProcessor& p, BrowserSettings& s, S
 
 BrowserController::~BrowserController() {
   alive_->store(false);
+  stopLadderWants();
   proc_.previewPlayer().stop();
   client_.cancelAll();
   if (worker_) PreviewWorker::retire(std::move(worker_));  // never joins here
@@ -51,7 +52,10 @@ const t3k::CaptureRecord* BrowserController::selected() const {
 int BrowserController::ladderSteps(std::int64_t toneId) const { return proc_.ladderSteps(std::to_string(toneId)); }
 
 void BrowserController::wantLadders(const std::vector<std::int64_t>& visibleToneIds) {
-  if (st_.gear != "amp" || st_.view != View::Browse) return;
+  if (st_.gear != "amp" || st_.view != View::Browse) {  // not an amp browse view (login screen, pedal / cab slot): nothing of ours stays queued
+    stopLadderWants();
+    return;
+  }
   std::vector<std::string> ids;
   std::string sig = std::to_string(st_.selectedId);
   for (std::int64_t id : visibleToneIds) {
@@ -61,7 +65,16 @@ void BrowserController::wantLadders(const std::vector<std::int64_t>& visibleTone
   }
   if (sig == lastWanted_) return;
   lastWanted_ = sig;
-  proc_.setLadderLookups(ids, st_.selectedId != 0 ? std::to_string(st_.selectedId) : std::string());
+  wantedAny_ = true;
+  if (ids.empty()) proc_.setLadderLookups({});  // nothing on screen (hidden, scrolled away): not even the selected tone is wanted
+  else proc_.setLadderLookups(ids, st_.selectedId != 0 ? std::to_string(st_.selectedId) : std::string());
+}
+
+void BrowserController::stopLadderWants() {
+  if (lastWanted_.empty() && !wantedAny_) return;
+  lastWanted_.clear();
+  wantedAny_ = false;
+  proc_.setLadderLookups({});  // queued lookups are dropped; a run in flight finishes
 }
 
 std::vector<SlotTarget> BrowserController::targets(std::string* why) const { return slotTargets(proc_.currentPreset(), slot_, why); }

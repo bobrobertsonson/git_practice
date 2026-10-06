@@ -479,7 +479,9 @@ struct CaptureBrowser::Impl {
   void updateLadderWanted() {
     const auto area = viewport.getViewArea();
     std::vector<std::int64_t> ids;
-    if (viewport.isVisible())
+    // Hidden by the editor (its close button hides it before it is destroyed): nothing on screen. (A browser with no parent is not hidden by anyone.)
+    const bool hidden = owner.getParentComponent() != nullptr && !owner.isVisible();
+    if (viewport.isVisible() && !hidden)
       for (auto& c : grid.cards)
         if (c->getBounds().intersects(area)) ids.push_back(c->id);
     ctl.wantLadders(ids);

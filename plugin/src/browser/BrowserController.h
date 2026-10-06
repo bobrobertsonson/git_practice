@@ -71,6 +71,7 @@ class BrowserController {
   // first; tones that left the screen are dropped from the queue. USE / PREVIEW use the browser's own tool runner and never wait on it.
   static constexpr std::size_t kLadderLookupCap = 24;
   void wantLadders(const std::vector<std::int64_t>& visibleToneIds);
+  void stopLadderWants();  // drops what this browser queued (closing it, leaving the amp browse view)
   // The slot's targets in the current preset (and why not, if none).
   std::vector<SlotTarget> targets(std::string* why = nullptr) const;
   std::string executable() const { return settings_.executable(); }
@@ -112,6 +113,7 @@ class BrowserController {
   T3kClient client_;
   std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
   std::string lastWanted_;
+  bool wantedAny_ = false;
   std::uint64_t listSeq_ = 0, modelsSeq_ = 0, fetchSeq_ = 0, previewGen_ = 0, useSeq_ = 0;
   bool awaitingLoad_ = false;
   std::string loadedTitle_, levelNote_;

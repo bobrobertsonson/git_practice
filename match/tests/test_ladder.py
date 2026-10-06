@@ -221,3 +221,9 @@ def test_gain_range_pack_is_five_step_ladder():
 def test_hyphen_ladder_still_needs_identical_remainder_and_distinct_gains():
     assert parse_ladder(models("Amp-Gain-3", "Lead-Gain-5"), "standard") is None
     assert parse_ladder(models("Amp-Gain-3", "Amp-Gain-03"), "standard") is None
+
+
+def test_two_voicings_in_one_pack_are_not_a_ladder():
+    # Same gain number in two voicings: the remainders differ (hi / lo), so this is not one ladder.
+    assert parse_ladder(models("Hi-Gain-3", "Lo-Gain-3"), "standard") is None
+    assert parse_ladder(models("Hi-Gain-3", "Lo-Gain-3", "Hi-Gain-5", "Lo-Gain-5"), "standard") is None

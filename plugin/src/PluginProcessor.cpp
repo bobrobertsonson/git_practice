@@ -253,9 +253,15 @@ void SawbladeProcessor::ladderTick() {
     ladderSteps_[r.toneId] = static_cast<int>(r.rungs.size());
     if (!r.rungs.empty()) ladderRungs_[r.toneId] = r.rungs;
   }
+  bool anyLadder;
+  {
+    std::lock_guard<std::mutex> lk(fetchMutex_);
+    anyLadder = !ladderRungs_.empty();
+  }
   // Every amp capture that has no ladder yet gets the one this session already learned for its tone (the one just fetched, or one the capture
   // browser asked about before the capture was used).
-  for (const std::string& toneId : toneIdsNeedingLadder(editBasePreset())) {
+  const std::vector<std::string> need = anyLadder ? toneIdsNeedingLadder(editBasePreset()) : std::vector<std::string>{};
+  for (const std::string& toneId : need) {
     std::vector<LadderRung> rungs;
     {
       std::lock_guard<std::mutex> lk(fetchMutex_);

@@ -147,7 +147,7 @@ void AmpHead::paint(juce::Graphics& g) {
   auto textArea = pill.toNearestInt().reduced(6, 0);
   if (stepsTag_.isNotEmpty()) {  // the tag takes the right end of the pill; the read-out keeps the rest
     const auto tagArea = textArea.removeFromRight(52);
-    g.setColour((stepsTag_.endsWithChar('4') || stepsTag_.getLastCharacter() != 0 ? L::dimText() : L::dimText()).withAlpha(1.0f));
+    g.setColour(L::dimText());
     g.setFont(L::monoFont(9.0f));
     g.drawText(stepsTag_, tagArea, juce::Justification::centredRight);
     g.setColour((reason_ ? L::warning() : L::text()).withAlpha(0.95f));

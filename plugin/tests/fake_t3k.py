@@ -113,6 +113,11 @@ elif cmd == "ladder":
     if os.environ.get("FAKE_T3K_LADDER_FAIL"):
         err("not logged in", "auth")
     time.sleep(float(os.environ.get("FAKE_T3K_LADDER_SLEEP", "0")))
+    gate = os.environ.get("FAKE_T3K_LADDER_GATE")
+    if gate:  # blocks until the file exists (tests that need a ladder run to stay in flight)
+        t0 = time.time()
+        while not os.path.exists(gate) and time.time() - t0 < 60:
+            time.sleep(0.02)
     rungs = None
     if tid == "101":
         rungs = [{"model_id": str(1010 + i), "gain": float(2 * i), "name": f"Gain {2 * i}"} for i in range(1, 6)]

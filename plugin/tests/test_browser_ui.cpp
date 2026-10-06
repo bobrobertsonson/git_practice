@@ -880,24 +880,55 @@ TEST_CASE("browser: a failing ladder tool stops the lookups for the session; no 
 TEST_CASE("browser: USE does not wait on the ladder lookups", "[browser][ui][steps]") {
   LadderRig rig;
   const NetworkOn net;
-  rig.env.set("FAKE_T3K_LADDER_SLEEP", "2");  // every ladder run takes 2 s
+  const fs::path gate = rig.tmp.dir / "ladder_gate";
+  rig.env.set("FAKE_T3K_LADDER_GATE", gate.string());  // every ladder run blocks until this file exists
   CaptureBrowser b(rig.proc, *rig.settings, Slot::BodyAmp);
   auto& ctl = b.controller();
   REQUIRE(pumpUntil([&] { return rig.browsing(ctl); }));
-  pumpUntil([&] {
-    rig.proc.ladderTick();  // a lookup is now running (the first visible row)
+  REQUIRE(pumpUntil([&] {
+    rig.proc.ladderTick();  // a lookup is now in flight (the first visible row), and stays so
     return !rig.ladderCalls().empty();
-  });
+  }));
   ctl.wantLadders({101, 102, 104});
   ctl.select(104);
-  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }, 1500));
-  const auto t0 = std::chrono::steady_clock::now();
+  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }));
   ctl.use(0);
-  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }, 1500));
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }));
   CHECK_FALSE(ctl.state().statusIsError);
-  CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(1500));  // well under one 2 s lookup
   CHECK(rig.proc.currentPreset().b.blocks.size() >= 1);
-  rig.proc.waitForLadderWork(std::chrono::milliseconds(15000));
+  CHECK(rig.ladderCalls().size() == 1);  // the run was still blocked when USE finished
+  std::ofstream(gate) << "go";           // let the lookups finish
+  CHECK(rig.proc.waitForLadderWork(std::chrono::milliseconds(30000)));
+}
+
+TEST_CASE("browser: closing the browser (or leaving the amp browse view) drops its queued ladder lookups", "[browser][ui][steps]") {
+  LadderRig rig;
+  const NetworkOn net;
+  {
+    juce::Component parent;  // the editor: it hides the browser before it destroys it
+    parent.setSize(CaptureBrowser::kWidth, CaptureBrowser::kHeight);
+    CaptureBrowser b(rig.proc, *rig.settings, Slot::SawAmp);
+    parent.addChildComponent(b);
+    b.setVisible(true);
+    auto& ctl = b.controller();
+    REQUIRE(pumpUntil([&] { return rig.browsing(ctl); }));
+    ctl.wantLadders({701, 702, 703});
+    CHECK(rig.proc.ladderLookupQueue().size() == 3);
+    b.setVisible(false);  // hidden: nothing on screen
+    pumpFor(250);         // the browser's timer reports "no rows"
+    CHECK(rig.proc.ladderLookupQueue().empty());
+    b.setVisible(true);
+    ctl.wantLadders({711, 712});  // (701 may have been started by the processor's own timer before the browser reported: asked tones are not queued again)
+    REQUIRE(rig.proc.ladderLookupQueue().size() >= 2);
+    ctl.setGear("pedal");  // leaves the amp view: the next report drops them
+    ctl.wantLadders({711, 712});
+    CHECK(rig.proc.ladderLookupQueue().empty());
+    ctl.setGear("amp");
+    REQUIRE(pumpUntil([&] { return rig.browsing(ctl); }));
+    ctl.wantLadders({801, 802});
+    REQUIRE(rig.proc.ladderLookupQueue().size() >= 2);
+  }  // closed (destroyed): nothing stays queued
+  CHECK(rig.proc.ladderLookupQueue().empty());
 }
 
 TEST_CASE("browser: no ladder lookup when network tools are disabled, or for pedal and cab browsers", "[browser][ui][steps]") {
