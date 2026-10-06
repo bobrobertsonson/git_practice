@@ -633,7 +633,7 @@ TEST_CASE("Amp params: plugin state round-trips ampControls, gainStep included",
   a.p.getStateInformation(s1);
   const std::string text(static_cast<const char*>(s1.getData()), s1.getSize());
   const json st = json::parse(text);
-  CHECK(st["version"] == 2);
+  CHECK(st["version"] == kPresetVersion);
   CHECK(st["paths"]["a"]["ampControls"]["gain"].get<double>() == Catch::Approx(7.5).margin(1e-4));
   CHECK(st["paths"]["a"]["ampControls"]["mid"].get<double>() == Catch::Approx(6.4321).margin(1e-4));
   CHECK(st["paths"]["a"]["ampControls"]["gainStep"] == "model-77");

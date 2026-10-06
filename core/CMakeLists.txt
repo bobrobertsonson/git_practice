@@ -28,6 +28,8 @@ add_library(sawblade_core STATIC
   src/delay.cpp
   src/wav_io.cpp
   src/loudness.cpp
+  src/reference_di.cpp
+  src/auto_trim.cpp
   src/stem_set.cpp
   src/stem_player.cpp
   src/sha256.cpp
@@ -41,6 +43,10 @@ add_library(sawblade_core STATIC
   src/chain.cpp
   src/render.cpp)
 add_library(sawblade::core ALIAS sawblade_core)
+# The reference DI must be bit-identical on every machine: no fused multiply-add contraction in its generator.
+if(NOT MSVC)
+  set_source_files_properties(src/reference_di.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+endif()
 target_include_directories(sawblade_core PUBLIC include)
 target_compile_features(sawblade_core PUBLIC cxx_std_20)
 target_link_libraries(sawblade_core

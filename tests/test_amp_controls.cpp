@@ -453,13 +453,12 @@ TEST_CASE("Amp controls schema: v1 presets read with default controls; the write
   CHECK(p.a.ampControls.isDefault());
   CHECK(p.b.ampControls.isDefault());
   const json out = toJson(p);
-  CHECK(out["version"] == 2);
+  CHECK(out["version"] == kPresetVersion);
   CHECK_FALSE(out["paths"]["a"].contains("ampControls"));
   CHECK_FALSE(out["paths"]["b"].contains("ampControls"));
   CHECK(parsePreset(out, kPresets) == p);
-  static_assert(kPresetVersion == 2);
-  j["version"] = 3;
-  CHECK_THROWS_WITH(parsePreset(j, kPresets), ContainsSubstring("unsupported preset version 3"));
+  j["version"] = kPresetVersion + 1;
+  CHECK_THROWS_WITH(parsePreset(j, kPresets), ContainsSubstring("unsupported preset version " + std::to_string(kPresetVersion + 1)));
   j["version"] = 0;
   CHECK_THROWS_AS(parsePreset(j, kPresets), PresetError);
 }
@@ -479,7 +478,7 @@ TEST_CASE("Amp controls schema: v2 round trip", "[amp][preset]") {
   CHECK(p.b.ampControls.bass == 5.0);  // omitted knobs are at the default
   CHECK(p.b.ampControls.gainStep.empty());
   const json out = toJson(p);
-  CHECK(out["version"] == 2);
+  CHECK(out["version"] == kPresetVersion);
   CHECK(out["paths"]["a"]["ampControls"]["gainStep"] == "model-123");
   CHECK(out["paths"]["b"]["ampControls"]["gain"] == 6.0);
   CHECK_FALSE(out["paths"]["b"]["ampControls"].contains("gainStep"));
@@ -537,7 +536,7 @@ TEST_CASE("Amp controls schema: every committed preset reads at neutral defaults
     const json out = toJson(p);
     CHECK_FALSE(out["paths"]["a"].contains("ampControls"));
     CHECK_FALSE(out["paths"]["b"].contains("ampControls"));
-    CHECK(out["version"] == 2);
+    CHECK(out["version"] == kPresetVersion);
     CHECK(parsePreset(out, e.path().parent_path()) == p);
     ++n;
   }
