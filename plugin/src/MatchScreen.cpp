@@ -471,7 +471,8 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     pickerList.repaint();
   }
 
-  void refreshDi(const MatchPlan& plan) {
+  // Rescans the takes and lets a finished recording become the DI. Runs before the plan is made, so the plan sees the new choice.
+  void followRecorder() {
     auto& r = proc.recorder();
     const auto state = r.state();
     // Takes on disk: rescanned when the recorder changed them, and every ~10 s (the timer runs at 4 Hz; other instances / the file manager).
@@ -488,6 +489,11 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       if (!picker.takes.empty() && picker.takes.front().name != newestAtRecStart && proc.matchSettings().selectedTake() == chosenAtRecStart)
         chooseTakeForMatch(proc, picker.takes.front().name);
     }
+  }
+
+  void refreshDi(const MatchPlan& plan) {
+    auto& r = proc.recorder();
+    const auto state = r.state();
     // The chosen row follows the match settings (a pick in the take band shows here too).
     const std::string chosen = proc.matchSettings().selectedTake();
     int want = -1;
@@ -527,13 +533,15 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     recNote.setColour(juce::Label::textColourId, nc);
     recBtn.setTooltip(why.isNotEmpty() ? why : juce::String("Record the clean input (before the gate) to a take. Press again to stop. The take becomes the DI for the match."));
 
-    diName.setText(plan.take ? juce::String(plan.take->name) : juce::String("No DI chosen"), juce::dontSendNotification);
-    diName.setColour(juce::Label::textColourId, plan.take ? L::text() : L::dimText());
+    // The chosen take is shown whether or not a song is loaded (planMatch stops at "no song" before it looks at the take).
+    const std::optional<TakeInfo> take = selectedTake(proc);
+    diName.setText(take ? juce::String(take->name) : juce::String("No DI chosen"), juce::dontSendNotification);
+    diName.setColour(juce::Label::textColourId, take ? L::text() : L::dimText());
     juce::String diText;
-    if (plan.take) {
-      diText = juce::String(plan.take->lengthSeconds(), 1) + " s" + kDot + juce::String(plan.take->sampleRate / 1000.0, 1) + " kHz";
-      if (plan.take->overruns > 0) diText += kDot + juce::String(static_cast<int>(plan.take->overruns)) + " overruns";
-      diText += "\n" + juce::String(plan.offsetNote);
+    if (take) {
+      diText = juce::String(take->lengthSeconds(), 1) + " s" + kDot + juce::String(take->sampleRate / 1000.0, 1) + " kHz";
+      if (take->overruns > 0) diText += kDot + juce::String(static_cast<int>(take->overruns)) + " overruns";
+      if (plan.take) diText += "\n" + juce::String(plan.offsetNote);
     } else {
       diText = "Record a take with REC, or pick one above.";
     }
@@ -558,6 +566,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
     juce::String toolText;
     if (!tools.ok()) toolText = tools.message;
 
+    followRecorder();
     const MatchPlan plan = planMatch(proc);
     refreshSong(plan);
     refreshDi(plan);
