@@ -39,7 +39,7 @@ total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from scipy import signal
@@ -226,6 +226,11 @@ class Target:
     stft_fmax: float = 8000.0
     feel: "_feel.FeelTarget | None" = None   # v0.4M feel features of the reference (None: no feel term)
     stft_cache: dict = field(default_factory=dict, compare=False, repr=False)   # reference side of stft_loss, per size
+
+
+def without_feel(tgt: Target) -> Target:
+    """The same target without the feel term (LTAS-led objective; shares the STFT cache)."""
+    return tgt if tgt.feel is None else replace(tgt, feel=None)
 
 
 @dataclass

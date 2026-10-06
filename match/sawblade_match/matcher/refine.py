@@ -32,6 +32,11 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
 
     # the gain block may run on a shorter excerpt (``gex``/``gtgt``): each of its evaluations re-renders the NAMs
     gx, gt = (gex, gtgt) if (gex is not None and gtgt is not None) else (ex, tgt)
+    # staged objective: the first linear block (EQs/levels/blend, the coarse spectral fit) is LTAS-led, the feel term is
+    # added from the gain block on. On a combo that is not the exact answer the feel optimum differs from the spectral
+    # one; letting it steer the first fit trades spectral accuracy for feel before the spectrum is even in place.
+    tgt_l1 = L.without_feel(tgt)
+    gt_l1 = L.without_feel(gt)
 
     def cores_for(vv):          # serial: also called from pool threads (never nest pool maps)
         r = [eng.core(combo, vv, p, gx.x) for p in paths]
@@ -84,9 +89,9 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
     log(f"  start loss {r0.total:.3f} (ltas {r0.ltas:.2f})")
     if short_linear and gx is not ex:       # first linear block on the short window too (its cores: one render per path)
         ca_s, cb_s = cores_top(v, gx.x)
-        u, f1, h1 = run_block(u, lin_idx, pop_linear, gens_linear, 0.2, "linear", 1, (ca_s, cb_s), "L1", (gx, gt))
+        u, f1, h1 = run_block(u, lin_idx, pop_linear, gens_linear, 0.2, "linear", 1, (ca_s, cb_s), "L1", (gx, gt_l1))
     else:
-        u, f1, h1 = run_block(u, lin_idx, pop_linear, gens_linear, 0.2, "linear", 1, (ca, cb), "L1")
+        u, f1, h1 = run_block(u, lin_idx, pop_linear, gens_linear, 0.2, "linear", 1, (ca, cb), "L1", (ex, tgt_l1))
     log(f"  block L1: {f1:.3f} ({time.time() - t0:.0f}s)")
     u, f2, h2 = run_block(u, gain_idx, pop_gain, gens_gain, 0.25, "gain", 2, None, "G")
     log(f"  block G : {f2:.3f} ({time.time() - t0:.0f}s)")

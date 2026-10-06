@@ -114,6 +114,17 @@ def w1(a: np.ndarray, b: np.ndarray) -> float | None:
     return float(np.mean(np.abs(np.quantile(a, Q_LEVELS) - np.quantile(b, Q_LEVELS))))
 
 
+SOFT_DELTA = 1.0
+
+
+def huber(x: float) -> float:
+    """Huber-style transform of a normalised (>= 0) sub-term: quadratic below ``SOFT_DELTA`` (a mismatch under about one
+    normaliser is within the noise of these statistics and must not pull the search against the spectral fit: its slope
+    vanishes at 0), linear above (a real mismatch keeps a constant pull). Continuous, monotone, huber(0) = 0."""
+    x = abs(float(x))
+    return x * x / (2.0 * SOFT_DELTA) if x < SOFT_DELTA else x - 0.5 * SOFT_DELTA
+
+
 def asym(d: np.ndarray) -> np.ndarray:
     """One-sided: positive d (output floppier / more sustained than the reference) counts fully, negative 0.5x."""
     return np.where(d > 0, d, ASYM_UNDER * np.abs(d))
@@ -497,8 +508,8 @@ def evaluate(out: np.ndarray, ft: FeelTarget) -> tuple[float, dict]:
             else:
                 a = b = None
         if a is not None and b is not None and used >= MIN_NOTES:
-            tight = a / T12_NORM_MS + b / SUS_NORM_DB
-            terms["tightT12"], terms["tightSustain"] = a / T12_NORM_MS, b / SUS_NORM_DB
+            tight = huber(a / T12_NORM_MS) + huber(b / SUS_NORM_DB)
+            terms["tightT12"], terms["tightSustain"] = a / T12_NORM_MS, b / SUS_NORM_DB      # normalised, before huber()
             terms["notes"]["used"] = used
         else:
             terms["dropped"]["tight"] = "too few comparable notes in this render"
@@ -512,7 +523,7 @@ def evaluate(out: np.ndarray, ft: FeelTarget) -> tuple[float, dict]:
         b = w1(m.fizz["hfFlat"], ft.ref.fizz["hfFlat"])
         c = w1(m.fizz["hfMod"], ft.ref.fizz["hfMod"])
         if None not in (a, b, c):
-            fizz = a / RATIO_NORM_DB + b / FLAT_NORM + c / MOD_NORM
+            fizz = huber(a / RATIO_NORM_DB) + huber(b / FLAT_NORM) + huber(c / MOD_NORM)
             terms["fizzRaw"] = {"hfRatioDb": a, "hfFlat": b, "hfMod": c}
             terms["fizzHfRatio"], terms["fizzHfFlat"], terms["fizzHfMod"] = a / RATIO_NORM_DB, b / FLAT_NORM, c / MOD_NORM
     elif ft.fizz_on:
@@ -526,13 +537,13 @@ def evaluate(out: np.ndarray, ft: FeelTarget) -> tuple[float, dict]:
     if m.flux is not None and ft.ref.flux is not None:
         d = w1(m.flux, ft.ref.flux)
         if d is not None and len(m.flux) >= MIN_FRAMES and len(ft.ref.flux) >= MIN_FRAMES:
-            parts["flux"], raw["fluxDb"] = d / FLUX_NORM_DB, d
+            parts["flux"], raw["fluxDb"] = huber(d / FLUX_NORM_DB), d
     if m.crest is not None and ft.ref.crest is not None and len(m.crest) >= MIN_CREST_WINDOWS \
             and len(ft.ref.crest) >= MIN_CREST_WINDOWS:
         d = w1(m.crest, ft.ref.crest)
-        parts["crest"], raw["crestDb"] = d / CREST_NORM_DB, d
+        parts["crest"], raw["crestDb"] = huber(d / CREST_NORM_DB), d
     if not soft and m.floor is not None and ft.ref.floor is not None:
-        parts["floor"] = floor_term(m.floor, ft.ref.floor)
+        parts["floor"] = huber(floor_term(m.floor, ft.ref.floor))
         raw["floorDiffDb"] = m.floor - ft.ref.floor
         raw["floorDbOut"], raw["floorDbRef"] = m.floor, ft.ref.floor
     for name in ("flux", "crest", "floor"):
