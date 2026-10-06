@@ -134,6 +134,7 @@ class Engine:
                     self.core_hits += 1
                     return hit
         y, rep = self.render(self.chain_preset(blocks, cab, "a", gate), x)
+        # (latency per block type: docs/PRESET_SCHEMA.md block table, see space.block_latency)
         # the renderer advances its output by the reported latency, so the core stays sample-aligned with the input; only
         # the known latency of the modeled pedal blocks is expected (captures with latency are not supported yet)
         if rep.get("latencySamples", 0) != block_latency(blocks):

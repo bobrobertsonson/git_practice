@@ -101,9 +101,10 @@ def load_pool(manifest: str | Path, cache_root: Path | None = None) -> Pool:
     pool = Pool()
     for t in m.get("tones", []):
         gear = t.get("slot") or t.get("gear")
+        mds = [md for md in t.get("models", []) if "id" in md]        # a model entry without an id is skipped
         cat = {"title": t.get("title"), "slot": gear, "status": t.get("status", "included"), "license": t.get("license"),
                "models": [{"modelId": int(md["id"]), "name": md.get("name", ""), "downloaded": False}
-                          for md in t.get("models", [])], "reason": None}
+                          for md in mds], "reason": None}
         try:
             pool.catalog[int(t["tone_id"])] = cat
         except (KeyError, TypeError, ValueError):
@@ -119,7 +120,7 @@ def load_pool(manifest: str | Path, cache_root: Path | None = None) -> Pool:
         except Exception:
             cat["reason"] = f"license {t.get('license')!r} not allowed"
             continue
-        for md, cm in zip(t.get("models", []), cat["models"]):
+        for md, cm in zip(mds, cat["models"]):
             entry = cache.get(t["tone_id"], md["id"])
             if entry is None:      # not downloaded (or sha mismatch): not a candidate
                 continue

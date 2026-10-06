@@ -18,7 +18,8 @@ LIVE_CAB_MODES = frozenset({"shared", "irMix"})
 # Block types the Python side knows to be NAM-trainable.  The C++ registry is authoritative (its
 # ``namTrainable`` trait shows up as a "not NAM-trainable" render warning, see ``core_trainability_problems``);
 # a type that is neither here nor accepted by the core is refused.
-TRAINABLE_TYPES = frozenset({"nam", "eq"})
+# every block type the core registry declares NAM-trainable (docs/PRESET_SCHEMA.md block table): captures, EQ and the modeled pedals
+TRAINABLE_TYPES = frozenset({"nam", "eq", "pedal.hm", "pedal.muff", "pedal.ts", "pedal.hmx", "pedal.eye"})
 MAX_TRAINABLE_RELEASE_MS = 150.0   # core kBusCompMaxTrainableReleaseMs
 
 STUDIO_MESSAGE = "studio blend (per-path cab IRs): only the with-cab export is exact for studio blends"

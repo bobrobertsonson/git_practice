@@ -306,6 +306,26 @@ def test_gate_sweep_descends_threshold_then_hold_then_release_then_range(monkeyp
     assert not gs2["changed"] and gs2["gate"] == gate_preset(-60.0)
 
 
+def test_gate_sweep_honours_the_feel_floor_switch_and_the_clean_reference_rule():
+    import types
+    plan = types.SimpleNamespace(gap_ok=True)
+    eng = types.SimpleNamespace(map=lambda f, items: pytest.fail("nothing may be rendered"))
+    sp = types.SimpleNamespace(eq_gains=lambda v: None)
+    cand = types.SimpleNamespace(extra={"params": {}})
+    off = types.SimpleNamespace(mode="paired", plan=plan, ref=types.SimpleNamespace(floor=-40.0), off=frozenset({"floor"}),
+                                dropped={"floor": "matched channel is a full mix"})
+    gs = gate_sweep(eng, cand, sp, None, types.SimpleNamespace(feel=off), -60.0)
+    assert gs["skipped"] == "matched channel is a full mix" and not gs["changed"] and gs["gate"] == gate_preset(-60.0)
+    soft = types.SimpleNamespace(mode="soft", plan=plan, ref=types.SimpleNamespace(floor=None), off=frozenset(), dropped={})
+    gs = gate_sweep(eng, cand, sp, None, types.SimpleNamespace(feel=soft), -60.0, -50.0, ref_clean=False)
+    assert gs["skipped"] == "reference is not a clean guitar track" and not gs["changed"]
+
+
+def test_a_matched_mono_reference_is_clean_so_the_gate_sweep_runs_paired(tmp_path):
+    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 4.0))
+    assert gs["mode"] == "paired" and gs["skipped"] is None and gs["floorRefSource"].startswith("matched")
+
+
 def test_gate_sweep_is_skipped_without_gaps(tmp_path):
     pool = fixture_pool()
     combo, sp, v = hidden(pool, "single")                              # di_riff.wav: its gaps are too short in a 1 s window

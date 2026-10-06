@@ -284,7 +284,8 @@ def chain_blocks(pfx: str, pedals, amp: Capture, v: dict[str, float], boost: boo
 
 
 def block_latency(blocks: list[dict]) -> int:
-    """Processing latency (samples) the modeled pedal blocks of a chain add (NAM captures: 0 in the matcher's pool)."""
+    """Processing latency (samples) the modeled pedal blocks of a chain add (NAM captures: 0 in the matcher's pool). The
+    figure is the Latency column of the block-type table in docs/PRESET_SCHEMA.md (50 samples at any rate per pedal.*)."""
     return PEDAL_LATENCY * sum(1 for b in blocks if str(b.get("type", "")).startswith("pedal."))
 
 

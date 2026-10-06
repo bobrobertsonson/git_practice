@@ -35,6 +35,16 @@ def full() -> dict:
     return p
 
 
+def test_a_modeled_pedal_block_is_inside_the_model_not_in_the_notes():
+    p = full()
+    blocks = p["paths"]["a"]["blocks"]
+    blocks.insert(len(blocks) - 1, {"id": "a_boost", "type": "pedal.ts", "slot": "boost", "modelVersion": 1,
+                                    "params": {"drive": 1.0, "tone": 5.0, "level": 8.0}})
+    n = N.build_export_notes(p, P.make_plan(p, "nocab", allow_inexact=True), "x-nocab-standard.nam", "x-nocab.ir.wav")
+    assert [s["stage"] for s in n["stages"]] == ["gate", "cab", "postEq", "busComp"]      # same stages as without the boost
+    assert "pedal.ts" not in json.dumps(n) and "boost" not in json.dumps(n).lower()
+
+
 def test_nocab_gate_comp_posteq_order_and_numbers():
     p = full()
     plan = P.make_plan(p, "nocab", allow_inexact=True)

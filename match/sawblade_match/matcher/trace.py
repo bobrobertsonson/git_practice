@@ -95,17 +95,19 @@ def _pair(scr, caps) -> dict:
 
 
 def trace_tones(ids, *, eng, pool, scr, ranked: dict, refined: list[Scored], best: Scored, ex, tgt, plan, cab_sweeps: list,
-                seed: int, filters: bool = True, log=print) -> dict:
+                seed: int, filters: bool = True, gate=None, on_tone=None, log=print) -> dict:
     out: dict = {}
     pre = scr.stats.get("prescreen")
-    for tid in ids:
+    for n, tid in enumerate(ids):
+        if on_tone is not None:
+            on_tone(n, len(ids))
         log(f"trace: tone {tid}")
         out[str(tid)] = _trace_one(int(tid), eng, pool, scr, pre, ranked, refined, best, ex, tgt, plan, cab_sweeps, seed,
-                                   filters, log)
+                                   filters, gate, log)
     return out
 
 
-def _trace_one(tid, eng, pool, scr, pre, ranked, refined, best, ex, tgt, plan, cab_sweeps, seed, filters, log) -> dict:
+def _trace_one(tid, eng, pool, scr, pre, ranked, refined, best, ex, tgt, plan, cab_sweeps, seed, filters, gate, log) -> dict:
     allcaps = [c for c in (*pool.pedals, *pool.amps, *pool.cabs) if c.tone_id == tid]
     cat = pool.catalog.get(tid) if pool.catalog else None
     rec: dict = {"toneId": tid, "inManifest": (cat is not None) if pool.catalog else None,
@@ -173,12 +175,15 @@ def _trace_one(tid, eng, pool, scr, pre, ranked, refined, best, ex, tgt, plan, c
                 if k in best.extra["params"] and (not k.startswith("gain.")):
                     v0[k] = best.extra["params"][k]
             v, r = relinear(eng, combo, sp0, ex, tgt, manual_align(0, False), v0, seed=seed * 1000 + 500, gens=plan.gens_final,
-                            pop=plan.pop_linear, patience=plan.patience, tol=plan.plateau_tol, log=lambda *_: None)
+                            pop=plan.pop_linear, patience=plan.patience, tol=plan.plateau_tol, log=lambda *_: None,
+                            **({} if gate is None else {"gate": gate}))
             trial.append((r.total, cap, r))
         trial.sort(key=lambda t: t[0])
         _, cap, r = trial[0]
         rec["candidate"] = {"how": "rendered once on the excerpt as the winner's chain with this amp + one linear block "
-                                   "(not refined in stage 2)",
+                                   "(not refined in stage 2)"
+                                   + ("; the winner is a blend, so this is a single-path approximation (its path A pedals, "
+                                      "boost and EQ)" if best.combo.b_amp is not None else ""),
                             "model": {"modelId": cap.model_id, "name": cap.name}, "loss": r.total,
                             "breakdown": r.as_dict(), "allModels": [{"modelId": c.model_id, "loss": l} for l, c, _ in trial]}
     rec["vsWinner"] = vs_winner(r, best.result)

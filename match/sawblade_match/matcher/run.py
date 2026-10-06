@@ -38,6 +38,8 @@ CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-leng
 OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
 ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio")      # --ablate names (v0.4M suspects)
+CAB_SWITCH_DB = 0.01      # a different cab must lower the loss by at least this to replace the stage-2 cab
+REFINE_SHARE = 0.95       # share of the refine stage's progress for stage 2; the cab / gate sweeps and the trace get the rest
 NOOP_ABLATIONS = ("irblend", "studio")                                        # accepted and echoed; implemented in later tasks
 
 
@@ -506,7 +508,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         def on_gen(block, g, n, _d=n_done):
             base = {"L1": 0.0, "G": 0.4, "L2": 0.85}[block]
             span = {"L1": 0.4, "G": 0.45, "L2": 0.15}[block]
-            prog.update((_d + base + span * g / max(n, 1)) / max(n_refine, 1))
+            prog.update(REFINE_SHARE * (_d + base + span * g / max(n, 1)) / max(n_refine, 1))
         log(f"stage2 {topo} [{k + 1}/{kk}] {s.combo.describe()} (screen loss {s.loss:.3f})")
         sp = Space.for_combo(s.combo, plan.filters)
         v0 = sp.default()
@@ -521,7 +523,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         refined.append(finish_refined(s.combo, s, v, r, info))
         n_done += 1
         prog.best(r.ltas)
-        prog.update(n_done / max(n_refine, 1))
+        prog.update(REFINE_SHARE * n_done / max(n_refine, 1))
         T["stage2PerCombo"].append({"topology": topo, "seconds": round(time.time() - t_combo, 1)})
     unrefined = sorted([c for c in unrefined if np.isfinite(c.loss)], key=lambda c: c.loss)
     refined = [c for c in refined if np.isfinite(c.loss)]
@@ -531,6 +533,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     cab_sweeps: list[dict] = []
     t_cab = time.time()
     if plan.cab_sweep:
+        n_sw = max(1, sum(min(TOP_PER_TOPOLOGY, sum(1 for x in refined if x.topology == t)) for t in TOPOLOGIES))
         for topo in TOPOLOGIES:
             for c in sorted((x for x in refined if x.topology == topo), key=lambda x: x.loss)[:TOP_PER_TOPOLOGY]:
                 sp = Space.for_combo(c.combo, plan.filters)
@@ -538,7 +541,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                 summ = sweep_summary(c, rows)
                 cur = next(x for x in rows if x["cab"].key == c.combo.cab.key)
                 top = min(rows, key=lambda x: x["result"].total)
-                if top["cab"].key != cur["cab"].key and top["result"].total < cur["result"].total - 1e-9:
+                if top["cab"].key != cur["cab"].key and top["result"].total < cur["result"].total - CAB_SWITCH_DB:
                     combo2 = c.combo.with_cab(top["cab"])
                     v2, r2 = relinear(eng, combo2, sp, ex, tgt, c.align, c.extra["params"], levels=c.levels,
                                       seed=cfg.seed * 1000 + 900 + len(cab_sweeps), gens=plan.gens_final, pop=plan.pop_linear,
@@ -550,6 +553,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                     log(f"cab sweep {topo}: {cur['cab'].title}:{cur['cab'].name} -> {top['cab'].title}:{top['cab'].name} "
                         f"(loss {cur['result'].total:.3f} -> {top['result'].total:.3f}, relinear {r2.total:.3f})")
                 cab_sweeps.append(summ)
+                prog.update(REFINE_SHARE + 0.03 * len(cab_sweeps) / n_sw)
         refined.sort(key=lambda c: c.loss)
         result["cabSweep"] = {"ablated": False, "topPerTopology": TOP_PER_TOPOLOGY, "poolCabs": len(pool.cabs),
                               "candidates": cab_sweeps, "seconds": round(time.time() - t_cab, 2)}
@@ -574,10 +578,12 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
 
     # ---- gate matched to the reference (v0.4M Task B): sweep threshold x release on the final chain ----------------
     t_gate = time.time()
+    prog.update(REFINE_SHARE + 0.03)
     gate_final = gate
     sp_best = Space.for_combo(best.combo, plan.filters)
-    ref_floor = reference_floor_db(ref.ltas_sig) if (tgt_full.feel is not None and tgt_full.feel.mode == "soft") else None
-    gs = gate_sweep(eng, best, sp_best, ex, tgt_full, floor, ref_floor)
+    ref_floor = (reference_floor_db(ref.ltas_sig)
+                 if (tgt_full.feel is not None and tgt_full.feel.mode == "soft" and ref.clean) else None)
+    gs = gate_sweep(eng, best, sp_best, ex, tgt_full, floor, ref_floor, ref_clean=bool(ref.clean))
     result["gateSweep"] = gs
     result["gateDefault"] = gate
     if gs.get("changed"):
@@ -596,6 +602,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     else:
         log("gate sweep: " + (f"skipped ({gs['skipped']})" if gs.get("skipped") else "the default gate (floor + 4 dB, 150 ms) stays"))
     result["gateFinal"] = gate_final
+    prog.update(REFINE_SHARE + 0.04)
     T["gateSweep"] = time.time() - t_gate
 
     # ---- reporting of the v0.4M suspects ---------------------------------------------------------------------------------
@@ -613,6 +620,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         t_tr = time.time()
         result["trace"] = trace_tones(cfg.trace_tones, eng=eng, pool=pool, scr=scr, ranked=ranked, refined=refined, best=best,
                                       ex=ex, tgt=tgt, plan=plan, cab_sweeps=cab_sweeps, seed=cfg.seed, filters=plan.filters,
+                                      gate=gate_final, on_tone=lambda n, k: prog.update(REFINE_SHARE + 0.04 + 0.01 * n / max(k, 1)),
                                       log=log)
         T["trace"] = time.time() - t_tr
 
@@ -722,7 +730,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                 v_alt["blend"] = s.blend
             if s.levels is not None:
                 gdb -= emit_gain_correction_db(s.blend, s.levels)
-        preset = build_preset(s.combo, v_alt, gate=gate, align=s.align, output_db=gdb, name=f"Sawblade match alt {i}",
+        preset = build_preset(s.combo, v_alt, gate=gate_final, align=s.align, output_db=gdb, name=f"Sawblade match alt {i}",
                               levels=s.levels)
         (out / f"alt{i}.preset.resolved.json").write_text(json.dumps(preset, indent=2) + "\n")
         alts.append({**_scored_json(s), "file": f"alt{i}.preset.resolved.json"})

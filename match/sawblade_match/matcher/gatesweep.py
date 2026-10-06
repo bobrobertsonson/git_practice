@@ -68,7 +68,7 @@ def render_gate(eng: Engine, cand: Scored, ex, gate: dict) -> np.ndarray:
 
 
 def gate_sweep(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, floor_db: float,
-               ref_floor_db: float | None = None) -> dict:
+               ref_floor_db: float | None = None, ref_clean: bool = True) -> dict:
     """Coordinate-descent sweep of the gate on ``cand`` (a refined candidate): threshold offset (9 values) at the default hold /
     release / range, then hold, then release, then range, each step keeping the best cell under the acceptance rule (module
     docstring). ``tgt`` must carry the feel target (the sweep measures the feel ``floor`` and tightness terms even when the
@@ -86,6 +86,12 @@ def gate_sweep(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, floor
         return out
     paired = ft.mode == "paired"
     out["mode"] = ft.mode
+    if "floor" in getattr(ft, "off", ()):      # the target switched the floor term off (e.g. the matched channel is a mix)
+        out["skipped"] = ft.dropped.get("floor") or "floor term is off for this reference"
+        return out
+    if not paired and not ref_clean:
+        out["skipped"] = "reference is not a clean guitar track"
+        return out
     if not ft.plan.gap_ok:
         out["skipped"] = f"less than {int(_feel.FLOOR_MIN_S * 1000)} ms of DI gaps in the excerpt"
         return out

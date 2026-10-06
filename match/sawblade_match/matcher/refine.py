@@ -15,7 +15,7 @@ import numpy as np
 
 from . import cma
 from . import loss as L
-from .engine import Engine
+from .engine import _DEFAULT_GATE, Engine
 from .space import Combo, Space
 
 
@@ -119,14 +119,14 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
 
 def relinear(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, align: dict, v0: dict, *, seed: int, levels=None,
              gens: int = 20, pop: int = 16, sigma: float = 0.1, patience: int | None = None, tol: float = 0.0,
-             on_gen=None, log=print) -> tuple[dict, L.LossResult]:
+             on_gen=None, gate=_DEFAULT_GATE, log=print) -> tuple[dict, L.LossResult]:
     """One more linear CMA-ES block (the "L2" block of ``refine_combo``) from ``v0`` with the NAM cores fixed: used when
     the cab (or the amp of a traced tone) changed after stage 2. The cores are the memoised renders of ``v0``'s gains
     (a hit when stage 2 already rendered them); the loss is never worse than ``v0``'s (CMA-ES evaluates its start first)."""
     t0 = time.time()
     lin_idx = space.indices("linear")
     paths = ("a", "b") if combo.topology == "blend" else ("a",)
-    cores = [eng.core(combo, v0, p, ex.x) for p in paths]
+    cores = [eng.core(combo, v0, p, ex.x, gate=gate) for p in paths]
     ca, cb = cores[0], (cores[1] if len(cores) > 1 else None)
     u = space.encode(v0)
 
