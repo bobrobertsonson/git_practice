@@ -15,11 +15,14 @@
 #include "sawblade/gate.h"
 #include "sawblade/preset_reader.h"
 
-// C++ mirror of docs/PRESET_SCHEMA.md, v2 (v1 files are still read). Parsing is strict (see PresetError).
+// C++ mirror of docs/PRESET_SCHEMA.md, v3 (v1 and v2 files are still read; v3 adds output.autoTrimDb / autoTrimHash and the
+// nam block's makeupDb). Parsing is strict (see PresetError).
 namespace sawblade {
 
-constexpr int kPresetVersion = 2;
+constexpr int kPresetVersion = 3;
 constexpr int kMaxBlocksPerPath = 8;
+// Limits of the level-matching gains (auto_trim.h): output.autoTrimDb and a nam block's makeupDb are clamped / bounded to +-.
+constexpr double kMaxAutoTrimDb = 48.0;
 
 bool operator==(const GateParams&, const GateParams&);
 bool operator==(const EqBand&, const EqBand&);
@@ -71,6 +74,10 @@ struct NamBlockParams : BlockParams {
   double inputGainDb = 0.0;
   double outputGainDb = 0.0;
   bool normalizeLoudness = false;
+  // v3 capture-swap make-up (docs/PRESET_SCHEMA.md "Level matching"): a gain, in dB, on the block's output, written by the plugin
+  // when the capture in this slot is replaced so that the path's loudness on the reference DI stays unchanged. Kept apart from
+  // outputGainDb (the user's knob); the chain applies both. 0 = absent in the file.
+  double makeupDb = 0.0;
   Capture model;
   bool equals(const BlockParams& other) const override;
   nlohmann::json toJson() const override;
@@ -129,6 +136,15 @@ struct CabPreset {
   bool operator==(const CabPreset&) const = default;
 };
 
+// The measurement the level matching stores in a preset (output.autoTrimDb / autoTrimHash): metadata about the sound, not part of it.
+// Two presets that differ only in their stamp are equal (the plugin writes a freshly measured trim into the running preset without
+// it being an edit; undo and "did anything change" comparisons must not see it).
+struct AutoTrimStamp {
+  double db = 0.0;
+  std::string hash;  // "" = not measured
+  bool operator==(const AutoTrimStamp&) const noexcept { return true; }
+};
+
 struct Preset {
   std::string schema = "sawblade.preset";
   int version = kPresetVersion;
@@ -146,6 +162,11 @@ struct Preset {
   std::vector<EqBand> postEq;
   BusCompParams busComp;
   double outputGainDb = 0.0;
+  // v3 (docs/PRESET_SCHEMA.md "Level matching"): the trim, in dB, that brings this preset to kAutoTrimTargetLufs on the reference DI
+  // (auto_trim.h), and the hash of the level-affecting parts it was measured for ("" = not measured). It is a plain gain after
+  // outputGainDb, applied only when the player asks for it (RenderOptions::applyAutoTrim, the plugin's LEVEL MATCH); the chain,
+  // the NAM export and the matcher never see it.
+  AutoTrimStamp autoTrim;
   bool operator==(const Preset&) const = default;
 };
 

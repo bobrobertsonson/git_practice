@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "One-Knob Crust",
   "notes": "Low-gain crust: the all-tens EQ with the clippers barely driven. Starting hypothesis. Modeled pedal, no capture; the cab slot is the repo identity IR.",
   "category": "Hardcore / Crust",
@@ -35,5 +35,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -7.477,
+    "autoTrimHash": "14ff1f13746ebe99f577f222012e9057924181aae6f4199b891da2a275b60b35"
   }
 }

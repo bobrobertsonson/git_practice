@@ -22,6 +22,10 @@ AudioFile decodeWavMemory(const void* data, std::size_t size);
 // Renders `riff` (resampled to `hostRate` first) through `preset` and returns the mono result at `hostRate`,
 // normalized to kPreviewNormalizeDbfs. On failure returns empty and sets `error`. Thread-safe given a
 // thread-safe `cache` (may be null).
-std::vector<float> renderPreview(const Preset& preset, const AudioFile& riff, double hostRate, CaptureCache* cache, std::string& error);
+// `levelMatched` (v0.3, LEVEL MATCH on): the preview is NOT peak-normalized; it plays at the preset's own auto trim (applied after
+// its output gain), so a candidate sits at the same loudness as the rig it would replace. Only a safety limit applies: a result
+// whose peak would exceed -0.1 dBFS is scaled down as a whole.
+std::vector<float> renderPreview(const Preset& preset, const AudioFile& riff, double hostRate, CaptureCache* cache, std::string& error,
+                                 bool levelMatched = false);
 
 }  // namespace sawblade::plugin

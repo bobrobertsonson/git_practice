@@ -48,7 +48,9 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/SongDecoder.cpp
   src/LadderFetch.cpp
   src/RungPreloader.cpp
+  src/LevelWorker.cpp
   src/PluginProcessor.cpp
+  src/PluginProcessorHistory.cpp
   src/SongInput.cpp
   src/DiImport.cpp
   src/ImportDialog.cpp
@@ -231,11 +233,13 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_record_match.cpp
     tests/test_di_import.cpp
     tests/test_settings.cpp
+    tests/test_level_match.cpp
+    tests/test_undo.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_ladder.cpp tests/test_body_fill.cpp tests/test_playalong.cpp
     tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp tests/test_pedal_face.cpp
-    tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_di_import.cpp tests/test_settings.cpp
+    tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_di_import.cpp tests/test_settings.cpp tests/test_level_match.cpp tests/test_undo.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   add_dependencies(sawblade_plugin_tests SawbladeBuildInfo)
   target_include_directories(sawblade_plugin_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
@@ -268,8 +272,8 @@ endif()
 # executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
 # compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
 if(SAWBLADE_BUILD_TESTS)
-  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_di_import_ui.cpp ${SAWBLADE_PLUGIN_SOURCES})
-  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_di_import_ui.cpp
+  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_blend_knob.cpp tests/test_undo_ui.cpp tests/test_di_import_ui.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_blend_knob.cpp tests/test_undo_ui.cpp tests/test_di_import_ui.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   add_dependencies(sawblade_editor_tests SawbladeBuildInfo)
   target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})

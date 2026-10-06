@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Berlin Saw Low",
   "notes": "Modded chainsaw with the lower, thicker high-mid voicing (750 Hz centre, Q 1.4): bark that sits under the guitar. Same knobs as the other two Berlin Saw presets; only midVoice differs. Modeled pedal, no capture; the cab slot is the repo identity IR.",
   "category": "Swedish death (HM-2)",
@@ -46,5 +46,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -4.473,
+    "autoTrimHash": "475e0a8119c37aec6290190a89cefd21e6c82cc7975f7b112e57d71b51f90a0e"
   }
 }

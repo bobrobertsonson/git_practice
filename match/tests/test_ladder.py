@@ -189,3 +189,41 @@ def test_cli_ladder_no_models_is_null(monkeypatch, capsys):
     monkeypatch.setattr(cli, "make_client", lambda *a, **k: _tone_and_models_client(None, [], a2=1, a1=0))
     assert cli.main(["ladder", "1001", "--json"]) == 0      # tone claims A2 models but lists none
     assert json.loads(capsys.readouterr().out)["rungs"] is None
+
+
+# --- hyphen / underscore separators (v0.3 Task E) ---------------------------------------------------
+
+def test_hyphen_and_underscore_separators():
+    from sawblade_match.t3k.ladder import _gain_and_rest
+    assert _gain_and_rest("Gain-06") == (6.0, "")
+    assert _gain_and_rest("gain_6")[0] == 6.0
+    assert _gain_and_rest("G-6")[0] == 6.0
+    assert _gain_and_rest("APP-6505Plus-Scooped-Gain-06") == (6.0, "app 6505plus scooped")
+
+
+@pytest.mark.parametrize("name", ["APP-6505+-Boost-S-OD1", "5150-III", "Mesa-Rec-2ch", "Big-5", "APP-6505+-Boost-S-MercilessDrive"])
+def test_hyphenated_names_without_gain_token_do_not_parse(name):
+    from sawblade_match.t3k.ladder import _gain_and_rest
+    assert _gain_and_rest(name) is None
+
+
+def test_boost_pack_names_are_no_ladder():
+    assert parse_ladder(models("APP-6505+-Boost-S-MercilessDrive", "APP-6505+-Boost-S-OD1",
+                               "APP-6505+-Boost-S-SickAs"), "standard") is None
+
+
+def test_gain_range_pack_is_five_step_ladder():
+    names = [f"APP-6505Plus-Scooped-Gain-{n}" for n in ("04", "05", "06", "07", "02")]
+    r = parse_ladder(models(*names), "standard")
+    assert r is not None and [x.gain for x in r] == [2.0, 4.0, 5.0, 6.0, 7.0] and len(r) == 5
+
+
+def test_hyphen_ladder_still_needs_identical_remainder_and_distinct_gains():
+    assert parse_ladder(models("Amp-Gain-3", "Lead-Gain-5"), "standard") is None
+    assert parse_ladder(models("Amp-Gain-3", "Amp-Gain-03"), "standard") is None
+
+
+def test_two_voicings_in_one_pack_are_not_a_ladder():
+    # Same gain number in two voicings: the remainders differ (hi / lo), so this is not one ladder.
+    assert parse_ladder(models("Hi-Gain-3", "Lo-Gain-3"), "standard") is None
+    assert parse_ladder(models("Hi-Gain-3", "Lo-Gain-3", "Hi-Gain-5", "Lo-Gain-5"), "standard") is None

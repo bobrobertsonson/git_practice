@@ -93,7 +93,7 @@ bool PresetLoadFlow::load(const fs::path& presetFile, SubBank bank) {
   }
   if (plan.kind != LoadPlan::Kind::NeedsResolve) {
     std::string err;
-    if (proc_.loadPresetFile(plan.load, &err)) {
+    if (proc_.loadPresetFile(plan.load, &err, /*undoable=*/true)) {
       o.status = Outcome::Status::Loaded;
       o.loadedFile = plan.load;
     } else {
@@ -121,7 +121,7 @@ bool PresetLoadFlow::load(const fs::path& presetFile, SubBank bank) {
           switch (r.status) {
             case T3kTool::Status::Ok: {
               std::string err;
-              if (proc_.loadPresetFile(plan.resolvedOut, &err)) {
+              if (proc_.loadPresetFile(plan.resolvedOut, &err, /*undoable=*/true)) {
                 o.status = Outcome::Status::Loaded;
                 o.loadedFile = plan.resolvedOut;
                 o.message.clear();

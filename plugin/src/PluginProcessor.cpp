@@ -4,12 +4,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <thread>
 #include <set>
 
 #include "AppPaths.h"
 #include "PluginEditor.h"
+#include "sawblade/auto_trim.h"
 #include "sawblade/preset.h"
 #include "sawblade/preset_reader.h"
+#include "settings/Settings.h"
 
 namespace sawblade::plugin {
 namespace {
@@ -86,15 +89,19 @@ SawbladeProcessor::SawbladeProcessor()
   fadeBuf_.assign(kMinChunk, 0.0f);
   playAlong_.setStandalone(wrapperType == wrapperType_Standalone);
   playAlong_.setSongDecoder(&decodeSongFile);
+  levelWorker_ = std::make_unique<LevelWorker>();
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
   apvts_.addParameterListener(paramSpec(kSawCircuit).id, this);
+  for (auto* prm : paramObj_) prm->addListener(&historyListener_);
   jobs_.setOwner(claimNewId());
   jobs_.pruneAsync();  // old match job folders: on the runner's own thread, not here
   startTimerHz(10);
 }
 
 SawbladeProcessor::~SawbladeProcessor() {
+  for (auto* prm : paramObj_) prm->removeListener(&historyListener_);
   stopTimer();
+  levelWorker_.reset();  // joins: its callbacks use this object
   releaseId(jobs_.owner());
   loader_.reset();  // joins the worker before the slot and the rest are destroyed
   apvts_.removeParameterListener(paramSpec(kSawCircuit).id, this);
@@ -137,8 +144,17 @@ Preset SawbladeProcessor::presetWithParams() const {
 Preset SawbladeProcessor::currentPreset() const { return presetWithParams(); }
 
 SawbladeProcessor::Status SawbladeProcessor::status() const {
-  std::lock_guard<std::mutex> lk(mutex_);
-  return status_;
+  Status s;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    s = status_;
+  }
+  s.levelMatchOn = levelMatchOn_.load();
+  s.trimDb = s.levelMatchOn ? trimTargetDb_.load() : 0.0;
+  std::lock_guard<std::mutex> lk(levelMutex_);
+  s.levelPending = s.levelMatchOn && levelPending_;
+  s.levelFailed = s.levelMatchOn && levelFailed_;
+  return s;
 }
 
 SawbladeProcessor::EngineParamState SawbladeProcessor::engineParamState() const {
@@ -179,9 +195,24 @@ void SawbladeProcessor::timerCallback() {
   if (committing_.load() > 0) return;
   if (circuitDirty_.exchange(false)) circuitChanged();
   ladderTick();
+  levelTick();
 }
 
 // --- gain ladders -------------------------------------------------------------------------------
+namespace {
+// The model ids of the amp captures of `toneId` in `p` (a key for "this capture was already reported").
+std::string ampModelIds(const Preset& p, const std::string& toneId) {
+  std::string k;
+  for (const PathPreset* path : {&p.a, &p.b}) {
+    const int i = ampIndex(*path);
+    if (i < 0) continue;
+    const auto* nam = dynamic_cast<const NamBlockParams*>(path->blocks[static_cast<std::size_t>(i)].params.get());
+    if (nam && nam->model.source && nam->model.source->id == toneId) k += nam->model.source->modelId + ",";
+  }
+  return k;
+}
+}  // namespace
+
 SawbladeProcessor::LadderInfo SawbladeProcessor::ladderInfo(int path) const {
   LadderInfo li;
   std::shared_ptr<Engine> e;
@@ -224,7 +255,10 @@ void SawbladeProcessor::ladderWriteBack(const std::shared_ptr<Engine>& e) {
     AmpControls& ac = (k == 0 ? preset_.a : preset_.b).ampControls;
     const std::string& id = nam->model.ladder[static_cast<std::size_t>(st.committed)].modelId;
     if (st.committed == st.own && ac.gainStep.empty()) continue;  // never moved off the block's own capture
-    if (ac.gainStep != id) ac.gainStep = id;
+    if (ac.gainStep != id) {
+      ac.gainStep = id;
+      ++presetRev_;
+    }
   }
 }
 
@@ -236,24 +270,62 @@ void SawbladeProcessor::ladderTick() {
     done.swap(fetched_);
   }
   for (const LadderFetchResult& r : done) {
-    if (r.rungs.empty()) continue;
-    Preset p = editBasePreset();
-    if (applyLadderToPreset(p, r.toneId, r.rungs)) {
-      loadPreset(std::move(p), /*keepMonitor=*/true);
-    } else if (const auto need = toneIdsNeedingLadder(p); std::find(need.begin(), need.end(), r.toneId) != need.end()) {
-      // The ladder has the tone's `standard`-size models; a capture of another size is not one of them (the preset does not
-      // record the size), so it gets no ladder: GAIN stays drive-only. Say so.
+    if (!r.ok) {  // the tool failed or answered nonsense: unknown, not "no ladder"; the browser's lookups stop (no failing calls in a loop)
+      ladderLookupsStopped_.store(true);
+      ladderLookups_.clear();
+      continue;
+    }
+    std::lock_guard<std::mutex> lk(fetchMutex_);
+    ladderSteps_[r.toneId] = static_cast<int>(r.rungs.size());
+    if (!r.rungs.empty()) ladderRungs_[r.toneId] = r.rungs;
+  }
+  bool anyLadder;
+  {
+    std::lock_guard<std::mutex> lk(fetchMutex_);
+    anyLadder = !ladderRungs_.empty();
+  }
+  // Every amp capture that has no ladder yet gets the one this session already learned for its tone (the one just fetched, or one the capture
+  // browser asked about before the capture was used).
+  const std::vector<std::string> need = anyLadder ? toneIdsNeedingLadder(editBasePreset()) : std::vector<std::string>{};
+  for (const std::string& toneId : need) {
+    std::vector<LadderRung> rungs;
+    {
       std::lock_guard<std::mutex> lk(fetchMutex_);
-      ladderNotes_.push_back("tone " + r.toneId + ": the amp capture's model is not in the " + kLadderSize +
+      if (const auto it = ladderRungs_.find(toneId); it != ladderRungs_.end()) rungs = it->second;
+    }
+    if (rungs.empty()) continue;
+    Preset p = editBasePreset();
+    // The snapshots take the ladder by the same rule (structure-only: the path's amp capture is this tone's, with no ladder yet), so a
+    // snapshot whose amp is another capture is left alone.
+    if (applyLadderToPreset(p, toneId, rungs)) {
+      loadPreset(std::move(p), /*keepMonitor=*/true);  // an async completion: no undo step of its own ...
+      patchHistory([&](Preset& snap) { applyLadderToPreset(snap, toneId, rungs); });  // ... and an undo does not take the ladder away
+    } else if (ladderNoted_.insert(toneId + ":" + ampModelIds(p, toneId)).second) {
+      // The ladder has the tone's `standard`-size models; a capture of another size is not one of them (the preset does not
+      // record the size), so it gets no ladder: GAIN stays drive-only. Say so (once per capture).
+      std::lock_guard<std::mutex> lk(fetchMutex_);
+      ladderUnusable_.insert(toneId);
+      ladderNotes_.push_back("tone " + toneId + ": the amp capture's model is not in the " + kLadderSize +
                              "-size gain ladder (another model size?); GAIN stays drive-only");
     }
   }
-  // 2. The next ladder to fetch (one run at a time, once per tone per session).
+  // 2. The next ladder to fetch (one run at a time, once per tone per session): a tone the capture browser asked about first, then the
+  //    preset's own amp captures that still need one.
   if (ladderFetch_.load() && !networkToolsDisabled() && !fetchRunning_.load() && !ladderTool_.running()) {
-    for (const std::string& id : toneIdsNeedingLadder(editBasePreset())) {
-      if (!ladderTried_.insert(id).second) continue;
-      std::error_code ec;
-      if (!std::filesystem::exists(settings::t3kExecutable(), ec)) break;  // no tool: nothing to ask
+    std::string id;
+    while (id.empty() && !ladderLookups_.empty()) {
+      std::string next = std::move(ladderLookups_.front());
+      ladderLookups_.pop_front();
+      if (ladderTried_.insert(next).second) id = std::move(next);
+    }
+    if (id.empty())
+      for (const std::string& need : toneIdsNeedingLadder(editBasePreset()))
+        if (ladderTried_.insert(need).second) {
+          id = need;
+          break;
+        }
+    std::error_code ec;
+    if (!id.empty() && std::filesystem::exists(settings::t3kExecutable(), ec)) {  // no tool: nothing to ask
       fetchRunning_.store(true);
       ladderFetches_.fetch_add(1);
       const bool started = ladderTool_.start(
@@ -269,7 +341,6 @@ void SawbladeProcessor::ladderTick() {
             fetchRunning_.store(false);
           });
       if (!started) fetchRunning_.store(false);
-      break;
     }
   }
   // 3. The running engine's rungs: write the active one back, keep the nearest models loaded.
@@ -355,6 +426,36 @@ std::vector<std::string> SawbladeProcessor::ladderMessages() const {
   return v;
 }
 
+int SawbladeProcessor::ladderSteps(const std::string& toneId) const {
+  std::lock_guard<std::mutex> lk(fetchMutex_);
+  const auto it = ladderSteps_.find(toneId);
+  return it == ladderSteps_.end() ? -1 : it->second;
+}
+
+bool SawbladeProcessor::ladderCheckedNone(const std::string& toneId) const {
+  std::lock_guard<std::mutex> lk(fetchMutex_);
+  const auto it = ladderSteps_.find(toneId);
+  return (it != ladderSteps_.end() && it->second == 0) || ladderUnusable_.count(toneId) > 0;
+}
+
+void SawbladeProcessor::requestLadderLookup(const std::string& toneId) {
+  if (toneId.empty() || !ladderFetch_.load() || networkToolsDisabled() || ladderLookupsStopped_.load()) return;
+  if (ladderTried_.count(toneId) > 0 || ladderSteps(toneId) >= 0) return;
+  ladderLookups_.erase(std::remove(ladderLookups_.begin(), ladderLookups_.end(), toneId), ladderLookups_.end());
+  ladderLookups_.push_front(toneId);
+}
+
+void SawbladeProcessor::setLadderLookups(const std::vector<std::string>& toneIds, const std::string& priorityId) {
+  ladderLookups_.clear();
+  if (!ladderFetch_.load() || networkToolsDisabled() || ladderLookupsStopped_.load()) return;
+  const auto add = [&](const std::string& id) {
+    if (id.empty() || ladderTried_.count(id) > 0 || ladderSteps(id) >= 0) return;
+    if (std::find(ladderLookups_.begin(), ladderLookups_.end(), id) == ladderLookups_.end()) ladderLookups_.push_back(id);
+  };
+  add(priorityId);
+  for (const std::string& id : toneIds) add(id);
+}
+
 bool SawbladeProcessor::waitForLadderWork(std::chrono::milliseconds timeout) {
   const auto end = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < end) {
@@ -383,9 +484,13 @@ void SawbladeProcessor::circuitChanged() {
   loadPreset(switchCircuit(p, static_cast<Circuit>(idx)));
 }
 
-void SawbladeProcessor::loadPreset(Preset preset, bool keepMonitor) {
+void SawbladeProcessor::loadPreset(Preset preset, bool keepMonitor, std::optional<double> provisionalTrimDb) {
   auto c = std::make_shared<const Preset>(clampedToParams(std::move(preset)));
   if (!keepMonitor) userLoadSerial_.fetch_add(1);
+  {
+    std::lock_guard<std::mutex> lk(levelMutex_);
+    if (!keepMonitor) provisionalTrim_ = provisionalTrimDb;  // a keepMonitor load never touches it
+  }
   bool buildNow;
   {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -442,9 +547,11 @@ void SawbladeProcessor::commit(const Preset& p, std::uint64_t generation, bool c
     status_.presetName = p.name;
     presetGeneration_ = generation;
     ++presetSerial_;
+    ++presetRev_;
     if (clearMonitor) monitor_ = {};
     publishLive();
   }
+  if (clearMonitor) levelOnLoad(p);  // before the engine for `p` is published: it starts at the right trim
   const ParamValues pv = paramsFromPreset(p);
   commitCircuit_.store(static_cast<int>(std::lround(pv[kSawCircuit])));
   committing_.fetch_add(1);
@@ -470,9 +577,11 @@ bool SawbladeProcessor::loadPresetJson(const std::string& json, const std::files
   }
 }
 
-bool SawbladeProcessor::loadPresetFile(const std::filesystem::path& file, std::string* error) {
+bool SawbladeProcessor::loadPresetFile(const std::filesystem::path& file, std::string* error, bool undoable) {
   try {
-    loadPreset(sawblade::loadPresetFile(file));
+    Preset p = sawblade::loadPresetFile(file);
+    if (undoable) loadPresetUndoable(std::move(p), HistoryKind::Load);
+    else loadPreset(std::move(p));
     return true;
   } catch (const std::exception& e) {
     if (error) *error = e.what();
@@ -649,11 +758,13 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
       // Built with levelMatch auto: its resolved trims are what a manual preset with the same numbers
       // does, so the write-back needs no rebuild.
       preset_.levelMatch = {LevelMatchMode::Manual, o.info.trimDb[0], o.info.trimDb[1]};
+      ++presetRev_;
     } else if (o.built) {
       // The engine was built in auto mode: its resolved values are what a manual preset with the same
       // numbers does, so the write-back needs no rebuild.
       status_.measuredAlign = o.info.align;
       preset_.align = {AlignMode::Manual, preset_.align.maxLagMs, o.info.align.delaySamplesB, o.info.align.invertB};
+      ++presetRev_;
     }
   }
   if (o.id == lastSubmitted_ || o.id > lastSubmitted_) {
@@ -696,6 +807,134 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
   }
 }
 
+// --- level matching -----------------------------------------------------------------------------
+Preset SawbladeProcessor::levelMeasurementPreset() const { return presetWithParams(); }
+
+// levelMutex_ held.
+void SawbladeProcessor::rememberTrim(const std::string& hash, double db) {
+  for (auto& k : knownTrims_)
+    if (k.first == hash) {
+      k.second = db;
+      return;
+    }
+  knownTrims_.emplace_back(hash, db);
+  if (knownTrims_.size() > 32) knownTrims_.erase(knownTrims_.begin());
+}
+
+// A user load or state restore is being committed (loader thread, or the caller's thread before the first prepare): the previous
+// preset's trim does not carry over. A stored trim that is fresh for this preset applies at once; otherwise 0 until measured.
+void SawbladeProcessor::levelOnLoad(const Preset& p) {
+  const std::string hash = autoTrimHash(p);
+  std::lock_guard<std::mutex> lk(levelMutex_);
+  if (!p.autoTrim.hash.empty() && p.autoTrim.hash == hash) rememberTrim(hash, p.autoTrim.db);
+  double known = 0.0;
+  bool have = false;
+  for (const auto& k : knownTrims_)
+    if (k.first == hash) {
+      known = k.second;
+      have = true;
+    }
+  // Not measured yet: a capture swap carries the old trim over (provisional), any other load starts at 0.
+  trimTargetDb_.store(have ? known : provisionalTrim_.value_or(0.0));
+  provisionalTrim_.reset();
+  failedTrims_.clear();  // a user load retries what could not be measured before
+  levelWantedHash_ = hash;
+  levelChangedAt_ = std::chrono::steady_clock::now();
+  levelPending_ = !have;
+  levelFailed_ = false;
+}
+
+void SawbladeProcessor::onTrimResult(const LevelWorker::TrimResult& r) {  // level worker thread
+  std::lock_guard<std::mutex> lk(levelMutex_);
+  if (levelPendingHash_ == r.hash) levelPendingHash_.clear();
+  if (r.trimDb) rememberTrim(r.hash, *r.trimDb);
+  else failedTrims_.insert(r.hash);
+  if (r.hash == levelWantedHash_) {
+    trimTargetDb_.store(r.trimDb ? *r.trimDb : 0.0);
+    levelPending_ = false;
+    levelFailed_ = !r.trimDb;
+  }
+}
+
+void SawbladeProcessor::levelTick() {
+  const bool on = settings::Settings::shared().levelMatch();
+  if (levelMatchOn_.exchange(on) != on) {  // a LEVEL MATCH toggle retries what could not be measured
+    std::lock_guard<std::mutex> lk(levelMutex_);
+    failedTrims_.clear();
+  }
+  if (!on) return;
+  // The hash of the measurement preset, recomputed only when the preset or a parameter changed (this runs at 10 Hz).
+  const ParamValues pv = readParams();
+  std::uint64_t rev;
+  std::string storedHash;
+  double storedDb;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    rev = presetRev_;
+    storedHash = preset_.autoTrim.hash;
+    storedDb = preset_.autoTrim.db;
+  }
+  if (!hashCached_ || hashRev_ != rev || hashParams_ != pv) {
+    hashValue_ = autoTrimHash(levelMeasurementPreset());
+    ++hashComputes_;
+    hashRev_ = rev;
+    hashParams_ = pv;
+    hashCached_ = true;
+  }
+  const std::string hash = hashValue_;
+  std::optional<double> writeBack;
+  {
+    std::lock_guard<std::mutex> lk(levelMutex_);
+    if (!storedHash.empty() && storedHash == hash) rememberTrim(hash, storedDb);  // fresh in the preset itself
+    if (levelWantedHash_ != hash) {
+      levelWantedHash_ = hash;
+      levelChangedAt_ = std::chrono::steady_clock::now();
+    }
+    const auto it = std::find_if(knownTrims_.begin(), knownTrims_.end(), [&](const auto& k) { return k.first == hash; });
+    if (it != knownTrims_.end()) {
+      trimTargetDb_.store(it->second);
+      levelPending_ = levelFailed_ = false;
+      if (storedHash != hash) writeBack = it->second;
+    } else if (failedTrims_.count(hash) != 0) {
+      levelPending_ = false;
+      levelFailed_ = true;
+    } else {
+      levelPending_ = true;
+      levelFailed_ = false;
+      const auto waited = std::chrono::steady_clock::now() - levelChangedAt_;
+      if (levelPendingHash_ != hash && waited >= std::chrono::milliseconds(levelDebounceMs_.load())) {
+        levelPendingHash_ = hash;
+        levelWorker_->submitTrim(levelMeasurementPreset(), hash, [this](const LevelWorker::TrimResult& r) { onTrimResult(r); });
+      }
+    }
+  }
+  if (writeBack) {  // so the saved state and the A / B slots carry the measured trim
+    std::lock_guard<std::mutex> lk(mutex_);
+    preset_.autoTrim.db = *writeBack;
+    preset_.autoTrim.hash = hash;
+  }
+}
+
+bool SawbladeProcessor::waitForLevelWork(std::chrono::milliseconds timeout) {
+  const auto end = std::chrono::steady_clock::now() + timeout;
+  for (;;) {
+    levelTick();
+    bool pending;
+    {
+      std::lock_guard<std::mutex> lk(levelMutex_);
+      pending = levelPending_ || !levelPendingHash_.empty();
+    }
+    if (!settings::Settings::shared().levelMatch()) return true;
+    if (!pending && levelWorker_->idle()) return true;
+    if (std::chrono::steady_clock::now() >= end) return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+}
+
+void SawbladeProcessor::computeSlotMakeup(Preset before, Preset after, int path, LevelWorker::MakeupDone done) {
+  levelWorker_->submitMakeup(std::move(before), std::move(after), path, std::move(done));
+}
+
 // --- rig editor hooks ---------------------------------------------------------------------------
 void SawbladeProcessor::publishLive() {
   auto snap = std::make_unique<LiveSnapshot>();
@@ -718,6 +957,7 @@ Preset SawbladeProcessor::editBasePreset() const {
 void SawbladeProcessor::applyLiveEdit(const std::function<void(Preset&)>& edit) {
   std::lock_guard<std::mutex> lk(mutex_);
   edit(preset_);
+  ++presetRev_;
   publishLive();
 }
 
@@ -819,6 +1059,10 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     const LiveSnapshot* snap = liveSlot_.current();
     engine->setParams(pv, snap && snap->generation == engine->generation() ? &snap->live : nullptr);
     if (fading_) fading_->setParams(pv, snap && snap->generation == fading_->generation() ? &snap->live : nullptr, snap ? &snap->live : nullptr);
+    // Level matching: a plain gain after the OUTPUT knob (atomics only; LEVEL MATCH off = 0 dB).
+    const double trim = levelMatchOn_.load(std::memory_order_relaxed) ? trimTargetDb_.load(std::memory_order_relaxed) : 0.0;
+    engine->setAutoTrimDb(trim);
+    if (fading_) fading_->setAutoTrimDb(trim);
   }
 
   // The host transport for the play-along (plugin mode only; Standalone free-runs).

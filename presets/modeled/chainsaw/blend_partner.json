@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Blend Partner",
   "category": "Swedish death (HM-2)",
   "notes": "A saw path for Sawblade's two-path blend: output up, lows down (the body path carries the low end), tight input filter. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
@@ -51,5 +51,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -7.096,
+    "autoTrimHash": "adfe687c349ada3b7d7ed3b97d356cb5b8b57565ac8db7eeb5365bf8e131c950"
   }
 }

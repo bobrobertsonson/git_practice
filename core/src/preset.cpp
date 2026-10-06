@@ -386,11 +386,13 @@ nlohmann::json toJson(const Capture& c) {
 bool NamBlockParams::equals(const BlockParams& other) const {
   const auto* p = dynamic_cast<const NamBlockParams*>(&other);
   return p && inputGainDb == p->inputGainDb && outputGainDb == p->outputGainDb &&
-         normalizeLoudness == p->normalizeLoudness && model == p->model;
+         normalizeLoudness == p->normalizeLoudness && makeupDb == p->makeupDb && model == p->model;
 }
 nlohmann::json NamBlockParams::toJson() const {
-  return {{"inputGainDb", inputGainDb}, {"outputGainDb", outputGainDb}, {"normalizeLoudness", normalizeLoudness},
-          {"model", sawblade::toJson(model)}};
+  nlohmann::json j = {{"inputGainDb", inputGainDb}, {"outputGainDb", outputGainDb}, {"normalizeLoudness", normalizeLoudness},
+                      {"model", sawblade::toJson(model)}};
+  if (makeupDb != 0.0) j["makeupDb"] = makeupDb;  // v3; absent = 0
+  return j;
 }
 bool EqBlockParams::equals(const BlockParams& other) const {
   const auto* p = dynamic_cast<const EqBlockParams*>(&other);
@@ -440,6 +442,13 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
   p.busComp = parseBusComp(r);
   if (auto out = r.optionalObject("output")) {
     p.outputGainDb = out->number("gainDb", 0.0, kGainLo, kGainHi);
+    // v3: a trim without its hash cannot be checked, so it is read as "not measured".
+    const double trim = out->number("autoTrimDb", 0.0, -kMaxAutoTrimDb, kMaxAutoTrimDb);
+    const std::string hash = out->string("autoTrimHash", "");
+    if (!hash.empty()) {
+      p.autoTrim.db = trim;
+      p.autoTrim.hash = hash;
+    }
     out->finish();
   }
   // Plugin UI state (docs/PRESET_SCHEMA.md "playAlong"): not tone, so it is accepted and ignored here and
@@ -467,6 +476,10 @@ nlohmann::json toJson(const Preset& p) {
           {"postEq", eqListJson(p.postEq)},
           {"busComp", toJson(p.busComp)},
           {"output", {{"gainDb", p.outputGainDb}}}};
+  if (!p.autoTrim.hash.empty()) {
+    j["output"]["autoTrimDb"] = p.autoTrim.db;
+    j["output"]["autoTrimHash"] = p.autoTrim.hash;
+  }
   if (!p.category.empty()) j["category"] = p.category;
   return j;
 }

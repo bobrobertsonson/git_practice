@@ -159,7 +159,8 @@ struct SettingsPanel::Impl : private juce::Timer {
   juce::TextEditor cacheField;
   juce::TextButton cacheBrowse, cacheDefault, cacheOpen;
   // separation, takes, appearance, footer
-  juce::Label capSep, sepNote, capTakes, capTheme, capScale, scaleNote;
+  juce::Label capSep, sepNote, capTakes, capTheme, capScale, scaleNote, levelNote;
+  juce::ToggleButton levelToggle;
   juce::ComboBox sepCombo, themeCombo, scaleCombo;
   juce::TextEditor takesField;
   juce::TextButton takesBrowse, takesDefault, aboutBtn;
@@ -365,6 +366,22 @@ struct SettingsPanel::Impl : private juce::Timer {
     takesDefault.onClick = [this] { s.setTakesDir(std::nullopt); refresh(); };
     add(takesDefault);
 
+    // level match (v0.3 Task B)
+    levelToggle.setButtonText("LEVEL MATCH");
+    levelToggle.setColour(juce::ToggleButton::textColourId, L::text());
+    levelToggle.setColour(juce::ToggleButton::tickColourId, L::saw());
+    levelToggle.setColour(juce::ToggleButton::tickDisabledColourId, L::dimText());
+    levelToggle.setTitle("Level match");
+    levelToggle.setTooltip("Play every preset at the same loudness (-18 LUFS on a built-in reference DI) so a louder preset never sounds better. "
+                           "A plugin setting: it is not saved in presets and never changes an exported NAM model.");
+    levelToggle.onClick = [this] {
+      if (!building) s.setLevelMatch(levelToggle.getToggleState());
+    };
+    add(levelToggle);
+    styleLabel(levelNote, L::bodyFont(12.0f), L::dimText());
+    levelNote.setText("same loudness for every preset, capture and A/B (-18 LUFS); off = the levels presets always had", juce::dontSendNotification);
+    add(levelNote);
+
     // appearance
     caption(capTheme, "THEME");
     styleCombo(themeCombo, "Theme", "more themes later");
@@ -560,7 +577,7 @@ struct SettingsPanel::Impl : private juce::Timer {
           fetchRunning = false;
           if (res.outcome == ToolResult::Outcome::Ok) {
             std::string err;
-            if (!proc.loadPresetFile(out, &err)) fetchError = "Could not load the resolved preset: " + ju(err);
+            if (!proc.loadPresetFile(out, &err, /*undoable=*/true)) fetchError = "Could not load the resolved preset: " + ju(err);
           } else {
             fetchError = !res.error.empty() ? ju(res.error) : (res.lines.empty() ? "resolve failed (exit " + juce::String(res.exitCode) + ")" : ju(res.lines.back()));
           }
@@ -732,6 +749,7 @@ struct SettingsPanel::Impl : private juce::Timer {
         }
     }
     scaleCombo.setSelectedId(idx + 1, juce::dontSendNotification);
+    levelToggle.setToggleState(s.levelMatch(), juce::dontSendNotification);
     building = false;
     if (!takesField.hasKeyboardFocus(true)) {
       const juce::String t = ju(s.effectiveTakesDir().string());
@@ -918,6 +936,12 @@ struct SettingsPanel::Impl : private juce::Timer {
     place(takesField, m, y, w - 2 * m - 90 - 8 - 80 - 8, 30);
     place(takesBrowse, w - m - 90 - 8 - 80, y, 90, 30);
     place(takesDefault, w - m - 80, y, 80, 30);
+    y += 48;
+
+    // --- level match
+    heading("LEVEL MATCH");
+    place(levelToggle, m, y, 160, 30);
+    place(levelNote, m + 174, y, w - 2 * m - 174, 30);
     y += 48;
 
     // --- appearance

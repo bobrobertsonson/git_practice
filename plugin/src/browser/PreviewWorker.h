@@ -25,7 +25,16 @@ namespace sawblade::plugin {
 class PreviewWorker {
  public:
   using RenderFn = std::function<std::vector<float>(const Preset&, double hostRate, std::string& error)>;
+  // v0.3 LEVEL MATCH: the worker computes the slot's make-up (loudness of the slot's path alone on the reference DI before the swap
+  // minus after it) and the candidate's auto trim, and renders the preview at that level (PreviewRender.h). Only for the default render.
+  struct LevelMatch {
+    bool on = false;
+    Preset before;      // the rig as it is now (old capture, its make-up)
+    int path = -1;      // the swapped nam block (path 0 = a, 1 = b; -1 = an IR: no make-up, the trim still applies)
+    int block = -1;
+  };
   struct Job {
+    LevelMatch levelMatch;
     Preset preset;
     double hostRate = 48000.0;
     std::shared_ptr<std::atomic<bool>> alive;  // cleared by the owner on destruction (message thread)

@@ -262,6 +262,10 @@ jobs:
           SAWBLADE_TONERENDER: ${{ github.workspace }}/build/cli/tonerender
         run: match/.venv/bin/pytest match -rs
 
+      # Committed level-match trims are fresh (no captures needed: presets that need TONE3000 captures are skipped). ~10 s.
+      - name: compute_trims --check
+        run: match/.venv/bin/python scripts/compute_trims.py --check --tonerender build/cli/tonerender
+
       - name: ccache stats
         if: always()
         run: ccache -s

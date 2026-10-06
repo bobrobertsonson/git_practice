@@ -54,6 +54,10 @@ struct RenderOptions {
   // Optional, non-owning (must outlive the call; thread-safe, may be shared by concurrent renders):
   // NAM models and IRs are taken from it instead of being re-read. Output is bit-identical.
   CaptureCache* cache = nullptr;
+  // v0.3 level matching: apply the preset's `output.autoTrimDb` (after the output gain) as the plugin does with LEVEL MATCH on.
+  // Off by default, so renders, goldens, the matcher and the NAM export never see it. The caller makes sure the trim is fresh
+  // (ensureAutoTrim, auto_trim.h): a stale or missing one is applied as stored (0 when missing).
+  bool applyAutoTrim = false;
 };
 
 struct SignalStats {
@@ -81,6 +85,7 @@ struct RenderResult {
   ChainInfo info;
   SignalStats input, output;   // output stats are after normalization
   double normalizeGainDb = 0.0;
+  double autoTrimDb = 0.0;      // applied (RenderOptions::applyAutoTrim), else 0
   double prepareSeconds = 0.0;  // chain prepare() incl. NAM prewarm and the alignment probe
   double renderSeconds = 0.0;   // wall time of the process() loop only
   double resampleSeconds = 0.0;  // wall time of the input and output sample-rate conversions

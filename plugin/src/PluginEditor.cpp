@@ -171,7 +171,26 @@ class SawbladeEditor::Content : public juce::Component {
       knobs_[static_cast<size_t>(d.param)] = std::move(k);
       return *knobs_[static_cast<size_t>(d.param)];
     };
-    addKnob({kBlend, "BLEND", FilmstripKnob::Kind::Amp, 0xffff6a1a}).onValueChange = [this] { updateReadouts(); };
+    FilmstripKnob& blendKnob = addKnob({kBlend, "BLEND", FilmstripKnob::Kind::Amp, 0xffff6a1a});
+    blendKnob.onValueChange = [this] { updateReadouts(); };
+    // v0.3 Task C: only a USER gesture on the knob (mouse down .. up, the wheel) turns a single-path rig into a blend. The knob's drag
+    // start / end are fired by the Slider for user input only: host automation moves the value through the parameter attachment, which
+    // never starts a drag, so it cannot change the topology. The switch happens at the drag end: the value has settled, so the rebuild
+    // that follows writes back the same BLEND value and cannot snap the knob while it is being dragged.
+    // v0.3 Task D: the knob's own parameter gesture ends BEFORE this runs, so the drag and the fill it triggers are held together in
+    // one history gesture (opened here, after the parameter gesture's start, closed after blendTurnedUp): one undo step restores the
+    // knob and the SAW-only rig together.
+    blendKnob.onDragStart = [this] {
+      blendGesture_ = true;
+      blendBefore_ = knobs_[kBlend]->getValue();
+      if (rigController_) rigController_->beginGesture();
+    };
+    blendKnob.onDragEnd = [this] {
+      if (!blendGesture_) return;
+      blendGesture_ = false;
+      if (rigController_ && knobs_[kBlend]->getValue() > 0.0) rigController_->blendTurnedUp(blendBefore_);
+      if (rigController_) rigController_->endGesture();
+    };
     for (const KnobDef& d : kMaster) addKnob(d);
     for (int k = 0; k < kPostEqSlots; ++k) addKnob({kPostEqFirst + k, nullptr, FilmstripKnob::Kind::Pedal, 0xffff6a1a});
     knobs_[kGateThreshold]->onValueChange = [this] { updateReadouts(); };
@@ -309,9 +328,18 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
   void refresh() {
+    if (rigController_) rigController_->sync();  // drives the BLEND fill (BodyFill::tick) whether or not the rig editor is open
     const auto st = processor_.status();
     presetButton_.setButtonText(juce::String(st.presetName).toUpperCase());
-    latChip_.setText("LAT " + juce::String(st.latencySamples) + juce::String::fromUTF8(" smp \xc2\xb7 CPU \xe2\x80\x94"), juce::dontSendNotification);
+    // LEVEL MATCH (v0.3): while the trim of this rig is being measured (background, a few seconds) the chip says so; the trim is
+    // 0 (or the previous one) until then.
+    const bool levelPending = st.levelMatchOn && st.levelPending;
+    latChip_.setText(levelPending ? juce::String::fromUTF8("LEVEL \xe2\x80\xa6")
+                                  : "LAT " + juce::String(st.latencySamples) + juce::String::fromUTF8(" smp \xc2\xb7 CPU \xe2\x80\x94"),
+                     juce::dontSendNotification);
+    latChip_.setTooltip(levelPending ? "Matching this rig to -18 LUFS on a built-in reference signal (LEVEL MATCH, background); until then no trim is applied. "
+                                       "Reported plugin latency: " + juce::String(st.latencySamples) + " samples"
+                                     : juce::String("Reported plugin latency (CPU meter: not available in this prototype)"));
     modeChip_.setText(st.liveCompatible ? juce::String::fromUTF8("\xe2\x97\x8f LIVE") : juce::String::fromUTF8("\xe2\x97\x8f STUDIO"), juce::dontSendNotification);
     modeChip_.setColour(juce::Label::textColourId, st.liveCompatible ? L::live() : L::studio());
     modeChip_.setColour(juce::Label::outlineColourId, st.liveCompatible ? L::liveBorder() : L::studio().withAlpha(0.45f));
@@ -331,7 +359,7 @@ class SawbladeEditor::Content : public juce::Component {
 
     // Single topologies: path B is off, so its level and the blend are not editable (spec 4.1).
     const bool blendOn = rig::topologyOf(processor_.editBasePreset()) == rig::Topology::Blend;
-    knobs_[kBlend]->setEnabled(blendOn);
+    knobs_[kBlend]->setEnabled(true);  // always: turning it up from full SAW is what enables the blend topology (RigController::blendTurnedUp)
     knobs_[kLevelB]->setEnabled(blendOn);
 
     const SlotBands bands = processor_.postEqSlots();
@@ -339,7 +367,8 @@ class SawbladeEditor::Content : public juce::Component {
     updateReadouts();
     {
       const Preset shown = processor_.editBasePreset();
-      for (int path = 0; path < 2; ++path) ampHeads_[static_cast<size_t>(path)]->refresh(shown, processor_.ladderInfo(path));
+      const rig::FillStatus fill = rigController_ ? rigController_->bodyFill().status() : rig::FillStatus{};
+      for (int path = 0; path < 2; ++path) ampHeads_[static_cast<size_t>(path)]->refresh(shown, processor_.ladderInfo(path), fill);
     }
     face_->refresh();
     if (drawer_->isVisible()) drawer_->refresh();
@@ -426,20 +455,21 @@ class SawbladeEditor::Content : public juce::Component {
     presetBrowser_->step(dir);
   }
   rig::AmpHead& ampHead(int path) { return *ampHeads_[static_cast<size_t>(path)]; }
-  // Cmd / Ctrl + Z: undo the last BLEND fill (RigController::undo) when there is one.
+  // Cmd / Ctrl + Z: undo the last rig edit (RigController::undo); Cmd / Ctrl + Shift + Z: redo it. v0.3 Task D.
   bool handleKey(const juce::KeyPress& k) {
-    if (!(k.getModifiers().isCommandDown() && !k.getModifiers().isShiftDown() && (k.getKeyCode() == 'z' || k.getKeyCode() == 'Z'))) return false;
+    if (!(k.getModifiers().isCommandDown() && (k.getKeyCode() == 'z' || k.getKeyCode() == 'Z'))) return false;
+    const bool redo = k.getModifiers().isShiftDown();
     // Keys bubble up from children that did not take them: a text field (a read-only one passes Cmd+Z on) or an open overlay is
-    // the user's current context, so it must never undo a BLEND fill underneath it.
+    // the user's current context, so it must never undo a rig edit underneath it.
     if (dynamic_cast<juce::TextInputTarget*>(focusProbe_()) != nullptr) return false;
     if (anyOverlayOpen()) return false;
-    if (!rigController_->canUndo()) return false;
-    return rigController_->undo();
+    if (!(redo ? rigController_->canRedo() : rigController_->canUndo())) return false;
+    return redo ? rigController_->redo() : rigController_->undo();
   }
   // The component that has the keyboard focus (tests replace it: a headless X server gives no window, so no focus).
   std::function<juce::Component*()> focusProbe_ = [] { return juce::Component::getCurrentlyFocusedComponent(); };
-  // Overlays that cover or take over the editor's context: Cmd / Ctrl + Z must not undo underneath them. The RIG editor (rigPanel_) is NOT
-  // in this list on purpose: it is where path B's BLEND fill is visible and edited, so undoing the fill from there is the point.
+  // Overlays that cover or take over the editor's context: Cmd / Ctrl + Z (and + Shift) must not undo / redo underneath them. The RIG editor
+  // (rigPanel_) is NOT in this list on purpose: it is where the rig is edited, so undoing from there is the point.
   // New overlays: add them here (or document why not) and to the test "does not bubble into an undo" in test_amp_head.cpp.
   bool anyOverlayOpen() const {
     const auto vis = [](const juce::Component* c) { return c != nullptr && c->isVisible(); };
@@ -566,7 +596,7 @@ class SawbladeEditor::Content : public juce::Component {
     chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& fc) {
       const juce::File f = fc.getResult();
       if (f == juce::File()) return;
-      processor_.loadPresetFile(std::filesystem::path(f.getFullPathName().toStdString()));
+      processor_.loadPresetFile(std::filesystem::path(f.getFullPathName().toStdString()), nullptr, /*undoable=*/true);
     });
   }
 
@@ -578,6 +608,8 @@ class SawbladeEditor::Content : public juce::Component {
   juce::uint32 learnShownUntil_ = 0;
   // New overlays: add them to anyOverlayOpen() (Cmd / Ctrl + Z) or document why not.
   std::array<std::unique_ptr<rig::AmpHead>, 2> ampHeads_;
+  bool blendGesture_ = false;  // the BLEND knob is in a user drag / wheel gesture
+  double blendBefore_ = 0.0;   // its value when the gesture started
   std::unique_ptr<PedalFace> face_;
   std::unique_ptr<AdvancedDrawer> drawer_;
   std::unique_ptr<PlayAlongPanel> panel_;
@@ -615,6 +647,7 @@ SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEdito
 
 SawbladeEditor::~SawbladeEditor() {
   stopTimer();
+  processor_.historyAbortGestures();  // a drag still open when the window closes is one step, not a stuck gesture
   setLookAndFeel(nullptr);
 }
 

@@ -273,7 +273,7 @@ TEST_CASE("Body fill: a path B that already has blocks is left untouched", "[bod
   const Preset cur = h.p.currentPreset();
   CHECK(cur.b.enabled);
   CHECK(cur.b.blocks == pre.b.blocks);
-  CHECK_FALSE(ctl.canUndo());
+  CHECK(ctl.canUndo());  // v0.3 Task D: switching the topology is an edit like any other (one step); it is not a fill
   CHECK(ctl.bodyFill().toolRuns() == 0);
 }
 
@@ -497,7 +497,42 @@ TEST_CASE("Body fill: a model file without a meta entry is not cached; the model
   CHECK(h.p.currentPreset().b.blocks.size() == 1);
 }
 
-TEST_CASE("Body fill undo: any other edit makes undo() refuse and keeps the edit", "[bodyfill][rig][undo]") {
+TEST_CASE("Body fill undo: later edits are steps of their own; undo walks back through them, the fill is one step", "[bodyfill][rig][undo]") {
+  const BfCache cache;
+  cache.put("88689", "5001");
+  TempDir t;
+  const NoTool noTool(t.dir);
+  Host h(48000.0, 512);
+  h.load(writeSinglePreset(t.dir));
+  const Preset pre = h.p.currentPreset();
+  RigController ctl(h.p);
+  // BLEND, then an edit of path A: two steps. (v0.2 refused to undo the fill once anything else had changed.)
+  ctl.setTopology(Topology::Blend);
+  REQUIRE(h.p.waitForLoader());
+  const Preset filled = h.p.currentPreset();
+  ctl.edit([](Preset& p) { setBypass(p.a, 0, true); });
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.undoSteps() == 2);
+  REQUIRE(ctl.undo());  // the bypass
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(h.p.currentPreset().a.blocks[0].bypass);
+  CHECK(h.p.currentPreset() == filled);
+  CHECK(h.p.currentPreset().b.enabled);
+  REQUIRE(ctl.undo());  // the fill
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == pre);
+  CHECK_FALSE(ctl.canUndo());
+  // Redo walks forward again, to the fill and then the bypass.
+  REQUIRE(ctl.redo());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == filled);
+  REQUIRE(ctl.redo());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset().a.blocks[0].bypass);
+  CHECK_FALSE(ctl.canRedo());
+}
+
+TEST_CASE("Body fill undo: a host parameter change (automation) is not a step and is not rewound by an undo", "[bodyfill][rig][undo]") {
   const BfCache cache;
   cache.put("88689", "5001");
   TempDir t;
@@ -505,47 +540,22 @@ TEST_CASE("Body fill undo: any other edit makes undo() refuse and keeps the edit
   Host h(48000.0, 512);
   h.load(writeSinglePreset(t.dir));
   RigController ctl(h.p);
-  // BLEND, then an edit of path A: undo() would lose it, so it refuses.
   ctl.setTopology(Topology::Blend);
   REQUIRE(h.p.waitForLoader());
-  ctl.edit([](Preset& p) { setBypass(p.a, 0, true); });
+  REQUIRE(h.p.undoSteps() == 1);
+  h.setParam(kOutputGain, -3.0);  // the host: no gesture
+  CHECK(h.p.undoSteps() == 1);
+  REQUIRE(ctl.undo());
   REQUIRE(h.p.waitForLoader());
-  CHECK_FALSE(ctl.undo());
+  CHECK_FALSE(h.p.currentPreset().b.enabled);
+  CHECK(h.param(kOutputGain) == Catch::Approx(-3.0));  // the automation is still there: the fill step did not touch OUTPUT
+  REQUIRE(ctl.redo());
   REQUIRE(h.p.waitForLoader());
-  CHECK(h.p.currentPreset().a.blocks[0].bypass);  // the edit survived
   CHECK(h.p.currentPreset().b.enabled);
-  CHECK_FALSE(ctl.canUndo());
-  // A parameter edit does too.
-  ctl.setTopology(Topology::Single);
-  REQUIRE(h.p.waitForLoader());
-  ctl.edit([](Preset& p) { p.b.blocks.clear(); });  // path B empty again, BLEND off
-  REQUIRE(h.p.waitForLoader());
-  ctl.setTopology(Topology::Blend);
-  REQUIRE(h.p.waitForLoader());
-  REQUIRE(ctl.canUndo());
-  h.setParam(kOutputGain, -3.0);
-  CHECK_FALSE(ctl.undo());
-  REQUIRE(h.p.waitForLoader());
   CHECK(h.param(kOutputGain) == Catch::Approx(-3.0));
-  // BLEND turned off again: the fill is no longer the last word.
-  ctl.setTopology(Topology::Single);
-  REQUIRE(h.p.waitForLoader());
-  ctl.edit([](Preset& p) { p.b.blocks.clear(); });
-  REQUIRE(h.p.waitForLoader());
-  h.setParam(kOutputGain, 0.0);
-  ctl.setTopology(Topology::Blend);
-  REQUIRE(h.p.waitForLoader());
-  REQUIRE(ctl.canUndo());
-  ctl.setTopology(Topology::Single);
-  REQUIRE(h.p.waitForLoader());
-  CHECK_FALSE(ctl.canUndo());
-  ctl.edit([](Preset& p) { p.a.levelDb = -2.0; });
-  REQUIRE(h.p.waitForLoader());
-  CHECK_FALSE(ctl.undo());
-  CHECK(h.p.currentPreset().a.levelDb == Catch::Approx(-2.0));
 }
 
-TEST_CASE("Body fill undo: a second fill never resurrects the first snapshot", "[bodyfill][rig][undo]") {
+TEST_CASE("Body fill undo: a new edit after an undo ends the redo branch; a second fill never resurrects the first", "[bodyfill][rig][undo]") {
   const BfCache cache;
   cache.put("88689", "5001");
   TempDir t;
@@ -560,8 +570,10 @@ TEST_CASE("Body fill undo: a second fill never resurrects the first snapshot", "
   REQUIRE(h.p.waitForLoader());
   CHECK(h.p.currentPreset() == pre1);
   CHECK_FALSE(ctl.canUndo());
+  CHECK(ctl.canRedo());
   ctl.edit([](Preset& p) { p.a.levelDb = -4.0; });  // a change made after the first undo
   REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(ctl.canRedo());  // the first fill can no longer be redone
   const Preset pre2 = h.p.currentPreset();
   ctl.setTopology(Topology::Blend);
   REQUIRE(h.p.waitForLoader());
@@ -569,6 +581,9 @@ TEST_CASE("Body fill undo: a second fill never resurrects the first snapshot", "
   REQUIRE(h.p.waitForLoader());
   CHECK(h.p.currentPreset() == pre2);  // not pre1
   CHECK(h.p.currentPreset().a.levelDb == Catch::Approx(-4.0));
+  REQUIRE(ctl.undo());  // the level edit is a step of its own now
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == pre1);
   CHECK_FALSE(ctl.undo());
 }
 
@@ -601,7 +616,80 @@ TEST_CASE("Body fill: the suggestion is dropped if anything of path B or the ble
   }
 }
 
-// ---- an applied match candidate is one undo step (v0.2.1 Task A) ---------------------------------------------------------
+// --- v0.3 Task D: the BLEND fill and the undo history ------------------------------------------------------------------------------------
+
+TEST_CASE("Body fill undo: the fill's amp arriving is patched into the history; undoing a LATER edit keeps the amp (and adds no step)", "[bodyfill][rig][undo]") {
+  const AllowTool allowTool;
+  const BfCache cache;
+  cache.put("88689", "5001");
+  cache.put("T9", "m5");
+  TempDir t;
+  const FakeTool tool(t.dir, R"({"tone_id":"T9","model_id":"m5","title":"Diezel X","cached":true})");
+  tool.configure(t.dir);
+  BfEnv settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
+  Host h(48000.0, 512);
+  h.load(writeSinglePreset(t.dir));
+  const Preset pre = h.p.currentPreset();
+  RigController ctl(h.p);
+  ctl.setTopology(Topology::Blend);
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(ampOf(h.p.currentPreset().b)->model.source->id == "88689");  // the fallback, first
+  ctl.edit([](Preset& p) { p.a.levelDb = -2.0; });  // a later step: its "before" snapshot holds the fill with the FALLBACK amp
+  REQUIRE(h.p.waitForLoader());
+  pump(h, ctl);  // the suggestion arrives
+  REQUIRE(ampOf(h.p.currentPreset().b)->model.source->id == "T9");
+  CHECK(h.p.undoSteps() == 2);  // the fill and the edit: the arrival added none
+  REQUIRE(ctl.undo());  // the level edit
+  REQUIRE(h.p.waitForLoader());
+  const Preset cur = h.p.currentPreset();
+  CHECK(cur.a.levelDb == Catch::Approx(0.0));
+  REQUIRE(ampOf(cur.b) != nullptr);
+  CHECK(ampOf(cur.b)->model.source->id == "T9");  // the amp survived the undo
+  REQUIRE(ctl.redo());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(ampOf(h.p.currentPreset().b)->model.source->id == "T9");
+  // The snapshot from before BLEND did NOT gain the amp (its path B is not what the fill made): undo through the fill to the pre-BLEND preset.
+  REQUIRE(ctl.undo());  // the level edit
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(ctl.undo());  // the fill
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == pre);
+  CHECK(ampOf(h.p.currentPreset().b) == nullptr);
+}
+
+TEST_CASE("Body fill undo: redo into a blend path B that has no amp restarts the fill; an undo that empties path B cancels one in flight", "[bodyfill][rig][undo]") {
+  const AllowTool allowTool;
+  const BfCache cache;
+  TempDir t;
+  const FakeTool tool(t.dir, "null", /*delaySeconds=*/1);
+  tool.configure(t.dir);
+  BfEnv settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
+  Host h(48000.0, 512);
+  h.load(writeSinglePreset(t.dir));
+  RigController ctl(h.p);
+  ctl.setTopology(Topology::Blend);  // nothing cached: boost only for now, the fill is in flight
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(ctl.bodyFill().active());
+  REQUIRE(ampOf(h.p.currentPreset().b) == nullptr);
+  const Preset boostOnly = h.p.currentPreset();
+  REQUIRE(ctl.undo());  // path B is empty again: the fill is cancelled
+  REQUIRE(h.p.waitForLoader());
+  CHECK_FALSE(ctl.bodyFill().active());
+  CHECK(ctl.bodyFill().status().kind == FillStatus::Kind::Idle);
+  ctl.bodyFill().waitToolIdle(std::chrono::seconds(20));
+  ctl.sync();
+  CHECK(h.p.currentPreset().b.blocks.empty());  // the late answer did nothing
+  const std::size_t runsBefore = tool.calls().size();
+  REQUIRE(ctl.redo());  // a blend path B with a boost and no amp: the fill starts again
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset().b.blocks.size() == boostOnly.b.blocks.size());
+  CHECK(ctl.bodyFill().active());
+  pump(h, ctl);
+  CHECK(tool.calls().size() > runsBefore);  // it asked the tool again
+  CHECK(ampOf(h.p.currentPreset().b) != nullptr);  // and the fallback amp (fetched by the fake tool) arrived
+}
+
+// ---- an applied match candidate is one undo step (v0.2.1 Task A, ported to the v0.3 history) -----------------------------------------
 namespace {
 // A candidate file that is not the single preset: another name, path B with a block.
 fs::path writeCandidate(const fs::path& dir, const char* name) {
@@ -615,7 +703,7 @@ fs::path writeCandidate(const fs::path& dir, const char* name) {
 }
 }  // namespace
 
-TEST_CASE("Match apply after a BLEND fill: undo goes to the pre-audition preset and the BodyFill no longer swaps", "[bodyfill][rig][undo]") {
+TEST_CASE("Match apply after a BLEND fill: undo goes to the pre-audition preset, the BodyFill no longer swaps, the fill is the step below", "[bodyfill][rig][undo]") {
   const AllowTool allowTool;
   const BfCache cache;
   cache.put("88689", "5001");
@@ -626,6 +714,7 @@ TEST_CASE("Match apply after a BLEND fill: undo goes to the pre-audition preset 
   BfEnv settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
   Host h(48000.0, 512);
   h.load(writeSinglePreset(t.dir));
+  const Preset preFill = h.p.currentPreset();
   RigController ctl(h.p);
   ctl.setTopology(Topology::Blend);  // the fill; its suggestion is still to come
   REQUIRE(h.p.waitForLoader());
@@ -637,8 +726,9 @@ TEST_CASE("Match apply after a BLEND fill: undo goes to the pre-audition preset 
   REQUIRE(h.p.waitForLoader());
   const Preset applied = h.p.currentPreset();
   CHECK(applied.name == "cand");
-  REQUIRE(ctl.canUndo());  // the apply replaced the BLEND entry ...
-  CHECK_FALSE(ctl.bodyFill().active());  // ... and the pending suggestion was cancelled
+  CHECK(h.p.undoSteps() == 2);  // the fill and the apply: one step each (v0.2.1 had the apply replace the fill's entry)
+  ctl.sync();                   // the apply was a user load: the pending suggestion is cancelled
+  CHECK_FALSE(ctl.bodyFill().active());
   ctl.bodyFill().waitToolIdle(std::chrono::seconds(20));
   ctl.sync();
   REQUIRE(h.p.waitForLoader());
@@ -646,6 +736,10 @@ TEST_CASE("Match apply after a BLEND fill: undo goes to the pre-audition preset 
   REQUIRE(ctl.undo());
   REQUIRE(h.p.waitForLoader());
   CHECK(h.p.currentPreset() == pre);
+  CHECK(ctl.canUndo());  // the fill is still one step below
+  REQUIRE(ctl.undo());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == preFill);
   CHECK_FALSE(ctl.canUndo());
 }
 

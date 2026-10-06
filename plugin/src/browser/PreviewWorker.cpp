@@ -5,6 +5,7 @@
 #include <juce_events/juce_events.h>
 
 #include "PreviewRender.h"
+#include "sawblade/auto_trim.h"
 
 namespace sawblade::plugin {
 namespace {
@@ -96,7 +97,21 @@ void PreviewWorker::run() {
           err = std::string("preview riff: ") + e.what();
         }
       }
-      if (err.empty()) out = renderPreview(job.preset, riff_, job.hostRate, &cache_, err);
+      Preset p = job.preset;
+      if (err.empty() && job.levelMatch.on) {
+        try {
+          if (job.levelMatch.path >= 0) {
+            const Preset zero = withSlotMakeup(p, job.levelMatch.path, job.levelMatch.block, 0.0);
+            if (const auto mk = slotMakeupDb(job.levelMatch.before, zero, job.levelMatch.path, &cache_))
+              p = withSlotMakeup(p, job.levelMatch.path, job.levelMatch.block, *mk);
+          }
+          if (cancelled_.load()) return;
+          ensureAutoTrim(p, &cache_);
+        } catch (const std::exception& e) {
+          err = std::string("level match: ") + e.what();
+        }
+      }
+      if (err.empty()) out = renderPreview(p, riff_, job.hostRate, &cache_, err, job.levelMatch.on);
     }
     if (cancelled_.load() || !job.alive || !job.alive->load()) continue;
     juce::MessageManager::callAsync([alive = job.alive, cb = std::move(job.onDone), err = std::move(err), out = std::move(out)]() mutable {

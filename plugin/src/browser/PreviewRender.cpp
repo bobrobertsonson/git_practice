@@ -1,5 +1,6 @@
 #include "PreviewRender.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -67,7 +68,8 @@ AudioFile decodeWavMemory(const void* data, std::size_t size) {
 
 AudioFile embeddedPreviewRiff() { return decodeWavMemory(BinaryData::preview_riff_wav, static_cast<std::size_t>(BinaryData::preview_riff_wavSize)); }
 
-std::vector<float> renderPreview(const Preset& preset, const AudioFile& riff, double hostRate, CaptureCache* cache, std::string& error) {
+std::vector<float> renderPreview(const Preset& preset, const AudioFile& riff, double hostRate, CaptureCache* cache, std::string& error,
+                                 bool levelMatched) {
   try {
     AudioFile in;
     in.channels = 1;
@@ -75,9 +77,17 @@ std::vector<float> renderPreview(const Preset& preset, const AudioFile& riff, do
     in.interleaved = std::fabs(riff.sampleRate - hostRate) < 1e-9 ? riff.interleaved : resample(riff.interleaved, riff.sampleRate, hostRate);
     RenderOptions o;
     o.outRate = OutRate::Input;
-    o.normalizePeakDbfs = kPreviewNormalizeDbfs;
+    if (levelMatched) o.applyAutoTrim = true;
+    else o.normalizePeakDbfs = kPreviewNormalizeDbfs;
     o.cache = cache;
     RenderResult r = renderPreset(preset, in, o);
+    if (levelMatched) {
+      float peak = 0.0f;
+      for (float v : r.samples) peak = std::max(peak, std::fabs(v));
+      constexpr float kCeiling = 0.98855f;  // -0.1 dBFS
+      if (peak > kCeiling)
+        for (float& v : r.samples) v *= kCeiling / peak;
+    }
     return std::move(r.samples);
   } catch (const std::exception& e) {
     error = e.what();

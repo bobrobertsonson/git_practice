@@ -20,6 +20,15 @@ juce::String kindText(const PathPreset& path, int index, const Block& b) {
   return slot.toUpperCase() + juce::String::fromUTF8(" \xC2\xB7 ") + type;
 }
 
+// True when `shown` is `now` with some NAM blocks' input gains changed (a live edit), nothing else.
+bool onlyInputGainsDiffer(const PathPreset& now, const std::vector<Block>& shown) {
+  if (now.blocks.size() != shown.size()) return false;
+  PathPreset probe = now;
+  for (std::size_t i = 0; i < shown.size(); ++i)
+    if (const auto* nam = dynamic_cast<const NamBlockParams*>(shown[i].params.get())) setBlockInputGainDb(probe, static_cast<int>(i), nam->inputGainDb);
+  return probe.blocks == shown;
+}
+
 }  // namespace
 
 // --- one block card --------------------------------------------------------------------------------
@@ -112,6 +121,10 @@ class SlotStrip::Card : public juce::Component {
   juce::Button& rightButton() { return right_; }
   juce::Button& removeButton() { return remove_; }
   PresetKnob* inputKnob() { return input_.get(); }
+  // The preset's input gain for this block (a refresh shows it unless the knob is being turned).
+  void showInputGain(double db) {
+    if (input_) input_->setValueFromPreset(db);
+  }
   bool dimmed() const { return dimmed_; }
 
   void paint(juce::Graphics& g) override {
@@ -193,6 +206,14 @@ bool SlotStrip::cardShowsCaptureTag(int i) { return cards_[static_cast<std::size
 void SlotStrip::refresh(const Preset& p, bool emptyPedalSlot) {
   const PathPreset& pp = path_ == 0 ? p.a : p.b;
   if (pp.blocks == shown_ && emptyPedalSlot == shownEmpty_) return;
+  if (emptyPedalSlot == shownEmpty_ && cards_.size() == pp.blocks.size() && onlyInputGainsDiffer(pp, shown_)) {
+    // A live INPUT-gain edit changes the blocks but not the cards. Never rebuild them: that would destroy the knob under the
+    // hand mid-drag (the refresh runs 16 times a second); just show the value (a knob being turned ignores it).
+    for (std::size_t i = 0; i < cards_.size(); ++i)
+      if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp.blocks[i].params.get())) cards_[i]->showInputGain(nam->inputGainDb);
+    shown_ = pp.blocks;
+    return;
+  }
   shown_ = pp.blocks;
   shownEmpty_ = emptyPedalSlot;
   cards_.clear();

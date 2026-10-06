@@ -22,6 +22,7 @@ add_executable(sawblade_tests
   test_rt_resample.cpp
   test_chain_live.cpp
   test_level_match.cpp
+  test_auto_trim.cpp
   test_capture_cache.cpp
   test_stem_set.cpp
   test_stem_player.cpp

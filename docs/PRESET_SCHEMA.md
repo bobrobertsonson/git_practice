@@ -1,4 +1,4 @@
-# Preset schema — `sawblade.preset` v2
+# Preset schema — `sawblade.preset` v3
 
 A preset is one JSON document. Plugin state **is** the preset; `tonerender` renders exactly
 what the plugin will play. All unknown keys are rejected (strict parsing) so typos fail loudly.
@@ -8,6 +8,11 @@ Readers must reject `version` greater than they support and migrate lower versio
 unchanged, so a v1 file is a valid v2 file: the reader accepts 1 and 2, a v1 preset loads with every amp
 control at its default and renders bit-identically to before v2. The writer always emits `"version": 2` and
 omits `ampControls` while every knob is at 5 and there is no `gainStep`.
+
+v3 (v0.3) adds `output.autoTrimDb` / `output.autoTrimHash` and the nam block's `makeupDb` (see Level matching). Both are
+optional and absent until measured, so v1 and v2 files are valid v3 files: the reader accepts 1, 2 and 3 and renders them
+bit-identically to before (the trim is only applied when a player asks for it). The writer emits `"version": 3`; a v3 file with
+the new keys is rejected by a v2 reader (strict parsing), which is why the version moved.
 
 ## Conventions
 
@@ -22,7 +27,7 @@ omits `ampControls` while every knob is at 5 and there is no `gainStep`.
 ```jsonc
 {
   "schema": "sawblade.preset",        // required, exact string
-  "version": 2,                        // required, integer; 1 and 2 are read, 2 is written
+  "version": 3,                        // required, integer; 1, 2 and 3 are read, 3 is written
   "name": "Gatecreeper-ish v1",        // required
   "notes": "",                         // optional free text
   "category": "Death metal",           // optional UI metadata (see Category); not tone, ignored by the chain
@@ -36,7 +41,8 @@ omits `ampControls` while every knob is at 5 and there is no `gainStep`.
   "cab":    { ... },                   // required; see Cab
   "postEq": [ EqBand, ... ],           // optional, default []
   "busComp":{ ... },                   // optional; see Bus compressor
-  "output": { "gainDb": 0.0 },         // optional
+  "output": { "gainDb": 0.0,           // optional
+              "autoTrimDb": 0.0, "autoTrimHash": "" },  // v3, optional: see Level matching
   "playAlong": { ... },                // optional; plugin UI state, see Play-along (not tone)
   "instance": "<uuid>",                // optional; plugin state only (not tone, never in preset files): the id owning this instance's match / export job folders
   "export": { ... }                    // optional; plugin UI state of the export panel (not tone): mode, size, diSource, compChoice, outputFolder
@@ -200,9 +206,13 @@ carry no TONE3000 license or creator. UI names are generic descriptors (no trade
   "outputGainDb": 0.0,           // after the model
   "normalizeLoudness": false,    // if true and the model has metadata.loudness, add
                                  //   (-18 - loudness) dB after the model
+  "makeupDb": 0.0,               // v3: capture-swap make-up, +-48 (written +-24), added to outputGainDb; absent = 0
   "model": Capture
 }
 ```
+`makeupDb` is written by the plugin when the capture in a slot is replaced (capture browser: preview and USE), so that the
+path's loudness on the reference DI stays unchanged (see Level matching). It is kept apart from `outputGainDb`, which is the
+user's knob. It is part of the preset's sound: the chain, `tonerender`, the matcher and the NAM export all apply it.
 
 ### PedalHm (`type: "pedal.hm"`), PedalMuff (`type: "pedal.muff"`) and PedalTs (`type: "pedal.ts"`)
 
@@ -508,6 +518,54 @@ prints them. The render report (`tonerender --report`) carries:
 ```
 Feed-forward, peak detector, soft knee. Release > 150 ms is flagged in the report as
 "not NAM-trainable" (export phase will refuse or bypass it).
+
+## Level matching (v3: `output.autoTrimDb`, `output.autoTrimHash`, `makeupDb`)
+
+Goal: switching presets, captures or A/B never makes you judge "louder = better". Implemented in
+`core/include/sawblade/auto_trim.h`; one convention, shared by the plugin, `tonerender`, `scripts/compute_trims.py` and the tests.
+
+- **Reference signal** — the built-in *reference DI* (`core/include/sawblade/reference_di.h`, version 1): ~10 s at 48 kHz, mono,
+  palm-muted chugs on a low string, open power chords that ring out and a tremolo burst, peak -10 dBFS. **Deviation from the
+  spec:** the spec names the NAM export's held-out signal (`DI_BUILTIN`, `match/sawblade_match/export/signal.py`). That signal is
+  built with numpy (SeedSequence streams, FFT-shaped noise, scipy filters) and contains noise steps and sweeps, so it cannot be
+  reproduced in C++ and is not DI-shaped; the plugin and `tonerender` need to render the reference without Python. The reference
+  DI is therefore a deterministic generator in `core` (seeded xorshift64*, Karplus-Strong strings with whole-sample periods,
+  only +, -, *, / on doubles and no libm, compiled without FMA contraction), bit-identical on every IEEE-754 machine and the one
+  function every consumer calls. Its sha256 is pinned by a test. Changing it bumps `kReferenceDiVersion`.
+- **Measurement** — the reference DI through the whole preset (NAM models at their rate, cab, post EQ, bus comp; **`output.gainDb`
+  treated as 0 dB** and the trim not applied) with `renderPreset`, then BS.1770-4 integrated loudness (`integratedLoudnessLufs`,
+  K-weighting, 400 ms blocks, absolute gate -70 LUFS, relative gate -10 LU). Convention: the mono output is the left channel and the
+  right channel is digital silence, exactly as the 10.1 level match in `chain.cpp` measures a path.
+- **Target** — **-18 LUFS**. `autoTrimDb = -18 - measured`, clamped to **[-48, +12] dB**. It is applied as a plain gain *after*
+  the user's OUTPUT knob (`Chain::setAutoTrimDb`; ramped over 250 ms when it changes, immediate the first time).
+- **OUTPUT is a persistent user offset** — the trim does not depend on `output.gainDb` and `output.gainDb` is not in the staleness
+  hash, so a preset plays at **-18 LUFS + its `output.gainDb`**: save with OUTPUT at -6 and it reloads at -6 relative to the target.
+  Acceptance checks are "-18 +- 0.5 LU with OUTPUT at 0 dB" (a render with `output.gainDb` forced to 0 plus the trim). The
+  committed presets keep their stored output gains (four store -3 / -4 dB); the loudness table shows them in an "output offset" column.
+- **No trim without a non-linear block** — a rig with no active non-linear block (no non-bypassed `nam` or `pedal.*` block on an
+  enabled path: Init / empty, EQ and cab only, everything bypassed) gets trim 0: there is nothing to level-match and boosting a clean
+  pass-through would only raise a hot DI. A positive trim never exceeds +12 dB.
+- **Staleness** — `autoTrimHash` is the sha256 of the level-affecting parts of the preset (the serialised preset minus `name`,
+  `notes`, `category`, `version`, `output` and the stored trim and hash; a TONE3000 capture counts as provider + id + modelId, any other
+  as file name + sha256; titles, urls, creators, licences and absolute paths do not count) plus the recipe version (reference DI
+  version, target, `kAutoTrimVersion`). A trim is valid only while its hash equals the preset's current hash. A trim without a hash is
+  read as "not measured".
+- **When it is computed** — by `scripts/compute_trims.py` for `presets/**` (committed; presets whose TONE3000 captures are not on
+  the machine are skipped and keep none), and in the plugin on a background thread at load when the trim is missing or stale and,
+  debounced, whenever the rig changes. Never on the audio thread. Until it is known the trim is 0 and the LAT/CPU chip area shows
+  "LEVEL ...".
+- **LEVEL MATCH** — a plugin setting (Settings store, not the preset), default ON. OFF applies no trim; a preset then plays at
+  the levels it always did. Make-up (below) is part of the preset and applies either way; it is only *computed* with LEVEL MATCH on.
+- **Never in the trained chain** — the trim is not in `LiveParams`, not in the chain's own gains and `renderPreset` ignores it
+  unless `RenderOptions::applyAutoTrim` is set (`tonerender --level-match`). The NAM export, the matcher and the exported chain
+  always use the **un-trimmed** chain; the export code strips the trim from the preset it renders.
+- **Capture-swap make-up** — replacing the capture in a nam slot (capture browser preview and USE; gain-ladder rungs are
+  excluded, they already crossfade) stores `makeupDb` on that block, computed in the background as the loudness of the
+  **slot's path measured solo** (the other path disabled, blend hard to this path, so a blend's A / B balance is kept) on the
+  reference DI before the swap minus after it (`slotMakeupDb`, clamped to +-24 dB), so the path's loudness is unchanged within
+  0.5 LU. The capture browser shows "LEVEL MATCHING..." while it is computed (the old capture keeps playing); if it cannot be
+  measured the swap still happens with make-up 0 and the status says so.
+- **A/B** — each side plays at its own trim, so an A/B pair is within 0.5 LU of each other (both at -18 LUFS).
 
 ## Play-along (`playAlong`, plugin UI state, not tone)
 

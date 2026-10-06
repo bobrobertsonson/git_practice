@@ -24,6 +24,26 @@ const char* AmpHead::caption(int k) {
 juce::String AmpHead::noAmpText() { return "NO AMP IN THIS PATH"; }
 juce::String AmpHead::bodyOffText() { return juce::String::fromUTF8("BODY PATH OFF \xE2\x80\x94 turn up BLEND to add one"); }
 
+juce::String AmpHead::bodyDownloadingText(const juce::String& name) {
+  if (name.isEmpty()) return juce::String::fromUTF8("CHOOSING A BODY AMP\xE2\x80\xA6");
+  return juce::String::fromUTF8("BODY AMP DOWNLOADING\xE2\x80\xA6") + " (" + name + ")";
+}
+
+juce::String AmpHead::bodyMissingText() { return juce::String::fromUTF8("BODY AMP MISSING \xE2\x80\x94 touch BLEND"); }
+
+juce::String AmpHead::bodyFailedText(FillReason r) {
+  const juce::String dash = juce::String::fromUTF8(" \xE2\x80\x94 ");
+  switch (r) {
+    case FillReason::NotLoggedIn: return "NOT LOGGED IN" + dash + "log in via Settings, then touch BLEND";
+    case FillReason::Network: return "NO NETWORK" + dash + "check the connection, then touch BLEND";
+    case FillReason::NoCapture: return "NO BODY AMP FOUND" + dash + "pick one with BROWSE CAPTURES";
+    case FillReason::NoTool: return "TONE3000 TOOL NOT FOUND" + dash + "set its path in Settings";
+    case FillReason::License: return "AMP NOT ALLOWED" + dash + "pick another with BROWSE CAPTURES";
+    case FillReason::NetworkOff: return "NETWORK TOOLS DISABLED" + dash + "restart the host without SAWBLADE_NO_NETWORK";
+    default: return "BODY AMP FAILED" + dash + "pick one with BROWSE CAPTURES";
+  }
+}
+
 juce::String AmpHead::bodyOffWithBlocksText() { return juce::String::fromUTF8("BODY PATH OFF \xE2\x80\x94 turn up BLEND"); }
 
 juce::String AmpHead::gainReadout(double gain, const SawbladeProcessor::LadderInfo& l) {
@@ -31,6 +51,12 @@ juce::String AmpHead::gainReadout(double gain, const SawbladeProcessor::LadderIn
   if (!l.has) return g;
   if (l.pending) return g + dot() + "drive only (fetching " + juce::String(l.targetName.empty() ? l.targetModelId : l.targetName) + ")";
   return g + dot() + "capture: " + juce::String(l.activeName.empty() ? l.activeModelId : l.activeName);
+}
+
+juce::String AmpHead::stepsText(int steps) {
+  if (steps >= 2) return "STEPS " + juce::String(steps);
+  if (steps == 0) return juce::String::fromUTF8("STEPS \xE2\x80\x94");
+  return {};
 }
 
 AmpHead::AmpHead(SawbladeProcessor& p, int path) : proc_(p), path_(path) {
@@ -59,12 +85,23 @@ void AmpHead::refresh() {
   refresh(p, proc_.ladderInfo(path_));
 }
 
-void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo& ladder) {
+void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo& ladder, const FillStatus& fill) {
   const PathPreset& pp = path_ == 0 ? preset.a : preset.b;
-  juce::String text;
+  juce::String text, tag;
   bool on = true, reason = false;
   if (path_ == 1 && !pp.enabled) {
     text = pp.blocks.empty() ? bodyOffText() : bodyOffWithBlocksText();
+    on = false;
+    reason = true;
+  } else if (ampIndex(pp) < 0 && path_ == 1 && fill.kind == FillStatus::Kind::Downloading) {
+    text = bodyDownloadingText(juce::String::fromUTF8(fill.name.c_str()));
+    on = false;  // reason_ stays false: not a fault, the normal text style
+  } else if (ampIndex(pp) < 0 && path_ == 1 && fill.kind == FillStatus::Kind::Failed) {
+    text = bodyFailedText(fill.reason);
+    on = false;
+    reason = true;
+  } else if (ampIndex(pp) < 0 && path_ == 1) {
+    text = bodyMissingText();
     on = false;
     reason = true;
   } else if (ampIndex(pp) < 0) {
@@ -73,13 +110,19 @@ void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo&
     reason = true;
   } else {
     text = gainReadout(knob(kAmpGain).getValue(), ladder);
+    // The steps tag: from the preset as shown (so it follows an undo / redo and a ladder that just arrived), and what this session has checked.
+    if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp.blocks[static_cast<std::size_t>(ampIndex(pp))].params.get())) {
+      if (nam->model.ladder.size() >= 2) tag = stepsText(static_cast<int>(nam->model.ladder.size()));
+      else if (nam->model.source && nam->model.source->provider == "tone3000" && proc_.ladderCheckedNone(nam->model.source->id)) tag = stepsText(0);
+    }
   }
   if (on != enabled_) {
     enabled_ = on;
     for (auto& k : knobs_) k->setEnabled(on);
   }
-  if (text != readout_ || reason != reason_) {
+  if (text != readout_ || reason != reason_ || tag != stepsTag_) {
     readout_ = text;
+    stepsTag_ = tag;
     reason_ = reason;
     repaint();
   }
@@ -101,7 +144,16 @@ void AmpHead::paint(juce::Graphics& g) {
   g.fillRoundedRectangle(pill, 4.0f);
   g.setColour((reason_ ? L::warning() : L::text()).withAlpha(0.95f));
   g.setFont(L::monoFont(11.0f));
-  g.drawFittedText(readout_, pill.toNearestInt().reduced(6, 0), juce::Justification::centred, 1, 0.75f);
+  auto textArea = pill.toNearestInt().reduced(6, 0);
+  if (stepsTag_.isNotEmpty()) {  // the tag takes the right end of the pill; the read-out keeps the rest
+    const auto tagArea = textArea.removeFromRight(52);
+    g.setColour(L::dimText());
+    g.setFont(L::monoFont(9.0f));
+    g.drawText(stepsTag_, tagArea, juce::Justification::centredRight);
+    g.setColour((reason_ ? L::warning() : L::text()).withAlpha(0.95f));
+    g.setFont(L::monoFont(11.0f));
+  }
+  g.drawFittedText(readout_, textArea, juce::Justification::centred, 1, 0.75f);
 }
 
 }  // namespace sawblade::plugin::rig

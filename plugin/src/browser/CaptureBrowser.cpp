@@ -67,6 +67,10 @@ struct CaptureBrowser::Impl {
       styleLabel(licence, L::labelFont(12.0f), r.passes ? L::sawText() : L::warning());
       licence.setText(r.license.empty() ? juce::String("unknown licence") : juce::String(r.license), juce::dontSendNotification);
       licence.setComponentID("licence");
+      // v0.3 Task E: "STEPS n" when this tone's pack is known (the `ladder` tool, asked for the selected tone) to have a gain ladder; nothing otherwise.
+      styleLabel(steps, L::monoFont(11.0f), L::sawText(), juce::Justification::centredRight);
+      steps.setComponentID("steps");
+      steps.setTooltip("This pack has a gain ladder: the amp's GAIN knob steps through its captures");
       styleLabel(tags, L::labelFont(11.0f), L::text().withAlpha(0.85f), juce::Justification::topLeft);
       tags.setText(tagsText(r), juce::dontSendNotification);
       styleLabel(stats, L::monoFont(12.0f), L::dimText());
@@ -79,7 +83,7 @@ struct CaptureBrowser::Impl {
       use.setTitle("Use " + juce::String(r.title));
       use.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
       use.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb27a));
-      for (juce::Component* c : {static_cast<juce::Component*>(&title), static_cast<juce::Component*>(&creator), static_cast<juce::Component*>(&licence),
+      for (juce::Component* c : {static_cast<juce::Component*>(&title), static_cast<juce::Component*>(&creator), static_cast<juce::Component*>(&licence), static_cast<juce::Component*>(&steps),
                                  static_cast<juce::Component*>(&tags), static_cast<juce::Component*>(&stats), static_cast<juce::Component*>(&preview),
                                  static_cast<juce::Component*>(&use)})
         addAndMakeVisible(*c);
@@ -89,7 +93,9 @@ struct CaptureBrowser::Impl {
       auto b = getLocalBounds().reduced(12, 10);
       title.setBounds(b.removeFromTop(22));
       creator.setBounds(b.removeFromTop(16));
-      licence.setBounds(b.removeFromTop(16));
+      auto licRow = b.removeFromTop(16);
+      steps.setBounds(licRow.removeFromRight(72));
+      licence.setBounds(licRow);
       b.removeFromTop(4);
       auto bottom = b.removeFromBottom(26);
       stats.setBounds(b.removeFromBottom(18));
@@ -112,9 +118,10 @@ struct CaptureBrowser::Impl {
     void mouseDown(const juce::MouseEvent&) override {
       if (onSelect) onSelect(id);
     }
+    void setSteps(int n) { steps.setText(n >= 2 ? "STEPS " + juce::String(n) : juce::String(), juce::dontSendNotification); }
     std::int64_t id;
     bool selected, dim = false;
-    juce::Label title, creator, licence, tags, stats;
+    juce::Label title, creator, licence, steps, tags, stats;
     juce::TextButton preview, use;
     std::function<void(std::int64_t)> onSelect;
   };
@@ -422,6 +429,7 @@ struct CaptureBrowser::Impl {
       c->preview.setEnabled(!targets.empty());
       c->use.setEnabled(!targets.empty());
     }
+    refreshSteps();
 
     // Selected panel.
     const auto* rec = ctl.selected();
@@ -465,6 +473,22 @@ struct CaptureBrowser::Impl {
   bool perPathCab() const {
     std::string why;
     return slotIsCab() && ctl.targets(&why).size() == 2;
+  }
+  // The ladder answers arrive asynchronously (through the processor's ladder tool): the cards pick them up here, no rebuild.
+  // The cards on screen (inside the viewport), in display order, are the tones whose ladder is looked up.
+  void updateLadderWanted() {
+    const auto area = viewport.getViewArea();
+    std::vector<std::int64_t> ids;
+    // Hidden by the editor (its close button hides it before it is destroyed): nothing on screen. (A browser with no parent is not hidden by anyone.)
+    const bool hidden = owner.getParentComponent() != nullptr && !owner.isVisible();
+    if (viewport.isVisible() && !hidden)
+      for (auto& c : grid.cards)
+        if (c->getBounds().intersects(area)) ids.push_back(c->id);
+    ctl.wantLadders(ids);
+  }
+  void refreshSteps() {
+    updateLadderWanted();
+    for (auto& c : grid.cards) c->setSteps(ctl.ladderSteps(c->id));
   }
   juce::String gridSig() const {
     const auto& st = ctl.state();
@@ -513,6 +537,7 @@ struct CaptureBrowser::Impl {
       };
       c->preview.setEnabled(!targets.empty());
       c->use.setEnabled(!targets.empty());
+      c->setSteps(ctl.ladderSteps(id));
       grid.addAndMakeVisible(*c);
       grid.cards.push_back(std::move(c));
     }
@@ -564,7 +589,10 @@ CaptureBrowser::~CaptureBrowser() {
   ctl_->onChange = nullptr;
 }
 
-void CaptureBrowser::timerCallback() { ctl_->poll(); }
+void CaptureBrowser::timerCallback() {
+  ctl_->poll();
+  impl_->refreshSteps();
+}
 
 void CaptureBrowser::paint(juce::Graphics& g) {
   using L = SawbladeLookAndFeel;

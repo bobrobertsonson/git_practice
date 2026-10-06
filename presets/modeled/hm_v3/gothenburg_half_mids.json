@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Gothenburg Half-Mids",
   "notes": "Melodic-death saw: half the high-mids (900 Hz centre, wider spread), custom-mode gain, presence trimmed to 6 dB. Calibrated voicing (pedal.hm modelVersion 3, fitted to real captures in phase 7.1). Modeled pedal, no capture; the cab slot is the repo identity IR. Starting hypothesis, not a tuned tone.",
   "category": "Swedish death (HM-2)",
@@ -53,5 +53,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -5.795,
+    "autoTrimHash": "4395c4fb3cc2b0105a14c0cf6070ea8690d84f13cd75207a22638cfa3e103a2f"
   }
 }
