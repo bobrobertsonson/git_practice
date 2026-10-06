@@ -395,6 +395,8 @@ Sidecar `<take>.json`:
   "createdUtc": "2026-10-04T12:00:00.000Z" }
 ```
 
+An imported take (IMPORT DI..., below) has `"playAlong": null` and an extra `"imported": {"source": "di.wav", "channel": "left", "samePerformance": false, "offsetMs": null}`.
+
 `playAlong` is `null` when no song was loaded. `songFolder` is the stems directory that was playing: the folder for a song loaded as a folder, and the separation cache directory when the song came from a file (LOAD SONG on an audio file); MATCH uses it as the reference. `stemSampleIndex` is the stem sample that plays at the take's **first
 sample**: the playhead (the player's position in Standalone, the host position in plugin mode) minus the applied player
 offset, so the offset setting is already in it. The backing is delayed by the rig latency, which is exactly what lines the
@@ -504,7 +506,7 @@ file's own rate in the takes folder (named after the file, `-2`, `-3`... if take
 `"playAlong": null` and `"imported": {"source": <file name>, "channel": "mono"|"left"|"right"|"sum", "samePerformance": bool,
 "offsetMs": <ms or null>}` (`offsetMs` is stored only for the same performance). The list marks it `IMPORTED`. A file is refused
 with a one-line reason when it is **silent** (loudest sample of the chosen channel below -60 dBFS) or **clipped** (4 or more
-consecutive samples at |x| >= 0.999); a file with more than two channels is refused too. Decoding and writing run on a worker
+consecutive samples at |x| >= 0.999); a file with more than two channels, one longer than 30 minutes, one with non-finite samples, and a FLAC whose header states no length are refused too. The clipped rule needs a flat top (the run's samples equal within 1e-6), so a low sine normalised to full scale is accepted. Decoding and writing run on a worker
 thread, never on the audio thread.
 
 The results (`result.json`: `best` and `alternatives`, `loss` shown as dB, `topology`, a captures summary) list the matcher's

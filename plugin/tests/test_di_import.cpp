@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <fstream>
 #include <vector>
 
@@ -207,7 +208,8 @@ TEST_CASE("import: silent means a peak below -60 dBFS; clipped means 4 samples i
   c[5000] = 0.9989f;               // just under the level
   c[5001] = 0.9989f; c[5002] = 0.9989f; c[5003] = 0.9989f; c[5004] = 0.9989f;
   CHECK(di::rejectReason(c, fs48).empty());
-  c[1003] = 0.999f;                // 4 in a row
+  c[1002] = 1.0f;
+  c[1003] = 1.0f;                  // 4 flat in a row
   const std::string why = di::rejectReason(c, fs48);
   CHECK(why.find("clipped") != std::string::npos);
   CHECK(why.find("0:00.021") != std::string::npos);  // sample 1000 at 48 kHz = 20.8 ms
@@ -218,8 +220,16 @@ TEST_CASE("import: silent means a peak below -60 dBFS; clipped means 4 samples i
   // 16-bit full scale: +32767 / 32768 and -32768 / 32768
   std::vector<float> fsc(2000, 0.1f);
   fsc[10] = fsc[11] = 32767.0f / 32768.0f;
-  fsc[12] = fsc[13] = -1.0f;
+  fsc[12] = fsc[13] = -1.0f;  // a swing from + to - full scale is not a flat top
+  CHECK(di::rejectReason(fsc, fs48).empty());
+  fsc[12] = fsc[13] = fsc[14] = fsc[15] = -1.0f;
   CHECK(di::rejectReason(fsc, fs48).find("clipped") != std::string::npos);
+  // non-finite samples
+  std::vector<float> bad(2000, 0.1f);
+  bad[5] = std::numeric_limits<float>::quiet_NaN();
+  CHECK(di::rejectReason(bad, fs48).find("invalid samples") != std::string::npos);
+  bad[5] = std::numeric_limits<float>::infinity();
+  CHECK(di::rejectReason(bad, fs48).find("invalid samples") != std::string::npos);
 }
 
 // ---- the import --------------------------------------------------------------------------------------------------------------
@@ -535,4 +545,73 @@ TEST_CASE("import: only a same-performance take passes --matched mono and --offs
   REQUIRE(runner.startMatch(rp.request, &err));
   REQUIRE(runner.waitFinished(JobKind::Match));
   CHECK_FALSE(has(argvOf(runner.snapshot(JobKind::Match).dir), "--matched"));
+}
+
+TEST_CASE("import: a low sine normalised to full scale is not clipped; a flat top still is", "[import][reject]") {
+  for (const double rate : {44100.0, 48000.0})
+    for (const double hz : {55.0, 82.4}) {
+      std::vector<float> x(static_cast<std::size_t>(rate));
+      double peak = 0.0;
+      for (std::size_t i = 0; i < x.size(); ++i) {
+        x[i] = static_cast<float>(std::sin(6.283185307179586 * hz * static_cast<double>(i) / rate + 0.3));
+        peak = std::max(peak, static_cast<double>(std::fabs(x[i])));
+      }
+      for (auto& v : x) v = static_cast<float>(v / peak);  // peak exactly 1.0
+      INFO(hz << " Hz at " << rate);
+      CHECK(di::rejectReason(x, rate).empty());
+      for (auto& v : x) v = std::clamp(v * 1.5f, -1.0f, 1.0f);  // driven into a real clip
+      CHECK(di::rejectReason(x, rate).find("clipped") != std::string::npos);
+    }
+}
+
+TEST_CASE("import: a file longer than 30 minutes is refused at probe without allocating it", "[import][reject]") {
+  Takes t;
+  // A header-only WAV that claims 2 hours of 48 kHz mono 16-bit audio (no data follows).
+  const fs::path p = t.tmp.dir / "huge.wav";
+  {
+    std::ofstream o(p, std::ios::binary);
+    const std::uint32_t bytes = 48000u * 2u * 7200u;
+    o.write("RIFF", 4);
+    put32(o, 36 + bytes);
+    o.write("WAVEfmt ", 8);
+    put32(o, 16); put16(o, 1); put16(o, 1); put32(o, 48000); put32(o, 96000); put16(o, 2); put16(o, 16);
+    o.write("data", 4);
+    put32(o, bytes);
+  }
+  const di::Probe pr = di::probe(p);
+  // JUCE may trim the length to the bytes actually present; either way nothing is imported and nothing is written.
+  const di::Outcome out = di::importFile(t.rec, p, {});
+  CHECK_FALSE(out.ok);
+  CHECK(out.error.find('\n') == std::string::npos);
+  if (pr.frames > 48000 * 60 * 30) CHECK(pr.error.find("30 minutes") != std::string::npos);
+  CHECK(countTakeFiles(t.takes()) == 0);
+}
+
+TEST_CASE("import: a cancelled import writes no take; an unwritable takes folder fails cleanly", "[import][thread]") {
+  Takes t;
+  const Fixture fx = makeFixture(1, 16, false, 5000);
+  const fs::path src = t.tmp.dir / "c.wav";
+  writePcmWav(src, 48000.0, 1, 16, false, fx);
+  std::atomic<bool> cancel{true};
+  const di::Outcome c = di::importFile(t.rec, src, {}, &cancel);
+  CHECK_FALSE(c.ok);
+  CHECK(countTakeFiles(t.takes()) == 0);
+
+  // The takes "folder" is a regular file.
+  Takes u;
+  std::ofstream(u.tmp.dir / "takes") << "not a folder";
+  const di::Outcome o = di::importFile(u.rec, src, {});
+  CHECK_FALSE(o.ok);
+  CHECK_FALSE(o.error.empty());
+  CHECK(o.error.find('\n') == std::string::npos);
+  CHECK(fs::is_regular_file(u.tmp.dir / "takes"));
+
+  // Destroyed at once: either nothing or a complete WAV + sidecar, never a half take.
+  for (int i = 0; i < 20; ++i) {
+    Takes v;
+    { di::ImportJob job(v.rec, src, {}); }
+    const std::size_t n = countTakeFiles(v.takes());
+    CHECK((n == 0 || n == 2));
+    if (n == 2) CHECK(v.rec.listTakes().size() == 1);
+  }
 }

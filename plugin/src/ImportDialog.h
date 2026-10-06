@@ -34,6 +34,7 @@ class ImportDialog : public juce::Component, public juce::FileDragAndDropTarget,
   void resized() override;
   bool keyPressed(const juce::KeyPress&) override;
   void mouseDown(const juce::MouseEvent&) override {}  // the backdrop swallows clicks: the dialog is modal
+  void parentSizeChanged() override;  // the backdrop always covers the parent, also after the editor is resized
   void close();
   // Modal: a drag over the dialog is taken (and ignored), so it cannot fall through to the editor and replace the song.
   bool isInterestedInFileDrag(const juce::StringArray&) override { return true; }

@@ -359,17 +359,29 @@ bool TakeRecorder::importTake(const std::vector<float>& mono, double sampleRate,
     return false;
   };
   if (mono.empty() || !(sampleRate > 0.0)) return fail("There is no audio to import.");
+  try {
   const fs::path dir = takesDir();
   std::error_code ec;
   fs::create_directories(dir, ec);
   std::string base = sanitizeName(fs::path(info.source).stem().string());
   if (base.empty()) base = takeStamp();
-  std::string nm = base;
-  for (int i = 2; fs::exists(dir / (nm + ".wav"), ec) || fs::exists(dir / (nm + ".json"), ec); ++i) nm = base + "-" + std::to_string(i);
-  const fs::path wav = dir / (nm + ".wav"), jsonPath = dir / (nm + ".json");
+  std::string nm;
+  fs::path wav, jsonPath;
+  std::ofstream f;
   {
-    std::ofstream f(wav, std::ios::binary | std::ios::trunc);
-    if (!f) return fail("Cannot create " + wav.string());
+    // Name check and file creation under one lock: two imports never pick the same name.
+    std::lock_guard<std::mutex> lk(m_);
+    nm = base;
+    for (int i = 2; fs::exists(dir / (nm + ".wav"), ec) || fs::exists(dir / (nm + ".json"), ec); ++i) nm = base + "-" + std::to_string(i);
+    wav = dir / (nm + ".wav");
+    jsonPath = dir / (nm + ".json");
+    f.open(wav, std::ios::binary | std::ios::trunc);
+  }
+  if (!f) {
+    fs::remove(wav, ec);
+    return fail("Cannot create " + wav.string());
+  }
+  {
     char h[kHeaderBytes];
     makeHeader(h, static_cast<std::uint32_t>(std::lround(sampleRate)), mono.size());
     f.write(h, kHeaderBytes);
@@ -380,6 +392,7 @@ bool TakeRecorder::importTake(const std::vector<float>& mono, double sampleRate,
       fs::remove(wav, ec);
       return fail("Disk write failed for " + wav.string());
     }
+    f.close();
   }
   json j;
   j["version"] = 1;
@@ -402,6 +415,11 @@ bool TakeRecorder::importTake(const std::vector<float>& mono, double sampleRate,
   version_.fetch_add(1);
   if (name) *name = nm;
   return true;
+  } catch (const std::exception& e) {
+    return fail(std::string("Import failed: ") + e.what());
+  } catch (...) {
+    return fail("Import failed: unexpected error.");
+  }
 }
 
 // ---- audio thread ------------------------------------------------------------------------------------------------

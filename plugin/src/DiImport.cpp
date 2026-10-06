@@ -94,7 +94,11 @@ Probe probe(const fs::path& file) {
   if (p.channels < 1 || p.channels > 2) {
     p.error = "Only mono or stereo files can be imported (this one has " + std::to_string(p.channels) + " channels).";
   } else if (p.frames <= 0 || !(p.sampleRate > 0.0)) {
+    // A FLAC file whose header does not state its length (streamed encoders) reports 0 frames here and is refused too: JUCE cannot
+    // size it without decoding the whole file, and an import never guesses.
     p.error = "This file contains no audio.";
+  } else if (static_cast<double>(p.frames) / p.sampleRate > kMaxSeconds) {
+    p.error = "This file is longer than 30 minutes: cut the part you want to match and import that.";
   }
   return p;
 }
@@ -103,13 +107,18 @@ std::string rejectReason(const std::vector<float>& mono, double sampleRate) {
   if (mono.empty()) return "This file contains no audio.";
   float peak = 0.0f;
   int run = 0;
+  for (const float v : mono)
+    if (!std::isfinite(v)) return "This file contains invalid samples (not a number or infinite).";
   std::size_t clipAt = 0;
   bool clipped = false;
   for (std::size_t i = 0; i < mono.size(); ++i) {
     const float a = std::fabs(mono[i]);
     peak = std::max(peak, a);
     if (a >= kClipLevel) {
-      if (++run >= kClipRunSamples && !clipped) {
+      // A flat top only: consecutive samples that are (almost) the same value. The crest of a normalised low sine stays above 0.999
+      // for a dozen samples but keeps moving, so it is not clipping.
+      run = (run > 0 && std::fabs(mono[i] - mono[i - 1]) <= kFlatTolerance) ? run + 1 : 1;
+      if (run >= kClipRunSamples && !clipped) {
         clipped = true;
         clipAt = i + 1 - static_cast<std::size_t>(kClipRunSamples);
       }
@@ -125,6 +134,16 @@ std::string rejectReason(const std::vector<float>& mono, double sampleRate) {
 }
 
 Outcome importFile(TakeRecorder& rec, const fs::path& file, const Options& opt, const std::atomic<bool>* cancel) {
+  try {
+    return importFileImpl(rec, file, opt, cancel);
+  } catch (const std::exception& e) {
+    return Outcome{false, std::string("Import failed: ") + (e.what()[0] ? e.what() : "unexpected error"), {}};
+  } catch (...) {
+    return Outcome{false, "Import failed: unexpected error.", {}};
+  }
+}
+
+Outcome importFileImpl(TakeRecorder& rec, const fs::path& file, const Options& opt, const std::atomic<bool>* cancel) {
   Outcome out;
   auto fail = [&](std::string m) {
     out.ok = false;
@@ -157,6 +176,7 @@ Outcome importFile(TakeRecorder& rec, const fs::path& file, const Options& opt, 
     }
   }
   if (const std::string why = rejectReason(mono, pr.sampleRate); !why.empty()) return fail(why);
+  if (cancel != nullptr && cancel->load()) return fail("Cancelled.");
   ImportedInfo info;
   info.present = true;
   info.source = file.filename().string();
@@ -171,7 +191,7 @@ Outcome importFile(TakeRecorder& rec, const fs::path& file, const Options& opt, 
 
 ImportJob::ImportJob(TakeRecorder& rec, fs::path file, Options opt) {
   thread_ = std::thread([this, &rec, f = std::move(file), opt] {
-    outcome_ = importFile(rec, f, opt, &cancel_);
+    outcome_ = importFile(rec, f, opt, &cancel_);  // never throws: an exception on this thread would end the host
     done_.store(true, std::memory_order_release);
   });
 }

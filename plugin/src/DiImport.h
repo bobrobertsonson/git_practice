@@ -28,6 +28,10 @@ constexpr double kSilentPeakDb = -60.0;
 // catches 16-bit full scale (+32767/32768 = 0.99997 and -32768/32768 = -1).
 constexpr float kClipLevel = 0.999f;
 constexpr int kClipRunSamples = 4;
+// ... and the samples of that run must be equal within kFlatTolerance (a flat top), so a normalised low sine is not "clipped".
+constexpr float kFlatTolerance = 1e-6f;
+// Longer files are refused (memory, and the WAV header's 4 GB limit).
+constexpr double kMaxSeconds = 30.0 * 60.0;
 
 // Accepted containers, by extension (any case): WAV, AIFF, FLAC.
 bool isImportableName(const std::string& path);
@@ -51,7 +55,7 @@ struct Probe {
 // Reads the header only (cheap, message thread): format, channels (1 or 2 accepted), rate, length.
 Probe probe(const std::filesystem::path& file);
 
-// Pure: "" if `mono` is a usable DI, else the one-line reason it is not (empty, silent, clipped).
+// Pure: "" if `mono` is a usable DI, else the one-line reason it is not (empty, non-finite, silent, clipped).
 std::string rejectReason(const std::vector<float>& mono, double sampleRate);
 
 struct Options {
@@ -67,7 +71,8 @@ struct Outcome {
 };
 
 // Decodes `file`, picks the channel, checks it and writes the take. Blocking: call it off the message thread (ImportJob). `cancel`
-// is polled between blocks.
+// is polled between blocks and before the take is written. Never throws (any exception becomes a one-line error).
+Outcome importFileImpl(TakeRecorder& rec, const std::filesystem::path& file, const Options& opt, const std::atomic<bool>* cancel);
 Outcome importFile(TakeRecorder& rec, const std::filesystem::path& file, const Options& opt, const std::atomic<bool>* cancel = nullptr);
 
 // importFile on its own thread. The destructor cancels and joins, so a dialog that goes away never leaves a writer behind.

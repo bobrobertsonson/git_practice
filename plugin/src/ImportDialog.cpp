@@ -242,6 +242,10 @@ void ImportDialog::timerCallback() {
   impl_->updateEnabled();
 }
 
+void ImportDialog::parentSizeChanged() {
+  if (auto* p = getParentComponent()) setBounds(p->getLocalBounds());
+}
+
 void ImportDialog::resized() { impl_->layout(); }
 
 void ImportDialog::paint(juce::Graphics& g) {
