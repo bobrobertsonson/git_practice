@@ -600,3 +600,72 @@ TEST_CASE("Body fill: the suggestion is dropped if anything of path B or the ble
     CHECK(ampOf(h.p.currentPreset().b)->model.source->id == "88689");  // the fallback stayed
   }
 }
+
+// ---- an applied match candidate is one undo step (v0.2.1 Task A) ---------------------------------------------------------
+namespace {
+// A candidate file that is not the single preset: another name, path B with a block.
+fs::path writeCandidate(const fs::path& dir, const char* name) {
+  const fs::path src = writeSinglePreset(dir, /*bHasBlock=*/true);
+  json j;
+  { std::ifstream in(src); j = json::parse(in); }
+  j["name"] = name;
+  const fs::path f = dir / (std::string(name) + ".json");
+  std::ofstream(f) << j.dump(2);
+  return f;
+}
+}  // namespace
+
+TEST_CASE("Match apply after a BLEND fill: undo goes to the pre-audition preset and the BodyFill no longer swaps", "[bodyfill][rig][undo]") {
+  const AllowTool allowTool;
+  const BfCache cache;
+  cache.put("88689", "5001");
+  cache.put("T9", "m5");
+  TempDir t;
+  const FakeTool tool(t.dir, R"({"tone_id":"T9","model_id":"m5","title":"Diezel X","cached":true})");
+  tool.configure(t.dir);
+  BfEnv settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
+  Host h(48000.0, 512);
+  h.load(writeSinglePreset(t.dir));
+  RigController ctl(h.p);
+  ctl.setTopology(Topology::Blend);  // the fill; its suggestion is still to come
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(ctl.canUndo());
+  const Preset pre = h.p.currentPreset();  // the pre-audition preset: the filled rig
+  REQUIRE(h.p.audition().audition(writeCandidate(t.dir, "cand")));
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(h.p.audition().apply());
+  REQUIRE(h.p.waitForLoader());
+  const Preset applied = h.p.currentPreset();
+  CHECK(applied.name == "cand");
+  REQUIRE(ctl.canUndo());  // the apply replaced the BLEND entry ...
+  CHECK_FALSE(ctl.bodyFill().active());  // ... and the pending suggestion was cancelled
+  ctl.bodyFill().waitToolIdle(std::chrono::seconds(20));
+  ctl.sync();
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == applied);  // no swap into the applied candidate
+  REQUIRE(ctl.undo());
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == pre);
+  CHECK_FALSE(ctl.canUndo());
+}
+
+TEST_CASE("Match apply in one instance leaves another instance's undo alone", "[rig][undo]") {
+  TempDir t;
+  const NoTool noTool(t.dir);
+  Host a(48000.0, 512), b(48000.0, 512);
+  a.load(writeSinglePreset(t.dir));
+  b.load(writeSinglePreset(t.dir));
+  RigController ca(a.p), cb(b.p);
+  const Preset preA = a.p.currentPreset(), preB = b.p.currentPreset();
+  REQUIRE(a.p.audition().audition(writeCandidate(t.dir, "cand")));
+  REQUIRE(a.p.waitForLoader());
+  REQUIRE(a.p.audition().apply());
+  REQUIRE(a.p.waitForLoader());
+  CHECK(ca.canUndo());
+  CHECK_FALSE(cb.canUndo());
+  CHECK_FALSE(cb.undo());
+  REQUIRE(ca.undo());
+  REQUIRE(a.p.waitForLoader());
+  CHECK(a.p.currentPreset() == preA);
+  CHECK(b.p.currentPreset() == preB);
+}

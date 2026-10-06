@@ -58,12 +58,33 @@ StemSet loadStemFiles(const std::vector<std::pair<StemKind, std::filesystem::pat
 
 // Scans `dir` (non-recursive) for *.wav / *.flac (case-insensitive extension), in sorted file-name
 // order. Base names `drums`, `bass`, `vocals`, `other`, `guitar` or `guitars` (case-insensitive)
-// map to their kind; any other audio file (e.g. Demucs 6-stem `piano.wav`) is summed into `other`
-// with a warning naming it. Then `otherRole` applies (see OtherRole): with OtherRole::Guitar and no
+// map to their kind; `piano.wav` (6-stem separation) is summed into `other`; any other audio file is
+// summed into `other` with a warning naming it. Then `otherRole` applies (see OtherRole): with OtherRole::Guitar and no
 // guitar file in the folder, the whole `other` stem (unknown-named files included) is loaded as the
 // guitar stem, and StemSet::otherMappedToGuitar is set. Non-audio files are ignored. Throws
 // std::runtime_error when the directory is missing or holds no audio file, plus the loadStemFiles errors.
 StemSet loadStemDirectory(const std::filesystem::path& dir, double sampleRate, OtherRole otherRole = OtherRole::Guitar);
+
+// A dot-file name (macOS AppleDouble `._drums.wav` on FAT/exFAT/network volumes, `.DS_Store`). Both
+// loadStemDirectory and classifyStemFolder skip such files.
+bool isHiddenFileName(const std::string& fileName);
+// An audio file by extension (mp3 wav flac m4a aac aif aiff ogg, case-insensitive). The plugin's
+// "song file" test is the same list.
+bool isAudioFileName(const std::string& path);
+// A recognised stem base name (no extension, case-insensitive): drums bass vocals other guitar guitars
+// piano. `piano` (6-stem separation) loads into `other` like any unknown name, without the warning.
+bool isStemName(const std::string& baseName);
+
+// Is `dir` a set of separated stems? Pure: reads the directory listing only. ok when every audio file in
+// it (isAudioFileName; other files are ignored, not recursive) has a recognised stem name and at least
+// two distinct stems (guitar == guitars) are present. `reason` says why not. A path that is not a
+// directory returns ok = true (nothing to refuse; loadStemDirectory reports it).
+struct StemFolderCheck {
+  bool ok = true;
+  std::string reason;
+  int recognised = 0;  // distinct recognised stems found
+};
+StemFolderCheck classifyStemFolder(const std::filesystem::path& dir);
 
 using StemAudio = std::array<std::vector<float>, 2>;  // L, R
 

@@ -29,9 +29,16 @@ the first run configures and builds everything and takes a while.
 
 It pulls (fast-forward only), builds `build-mac/` (Release), copies the AU and VST3 into
 `~/Library/Audio/Plug-Ins/`, runs `auval -v aufx Swb1 Swbl`, resolves any presets that need
-TONE3000 captures, and prints what changed. Restart your DAW afterwards.
+TONE3000 captures, installs the stem-separation model for LOAD SONG if it is missing, and prints
+what changed. Restart your DAW afterwards.
 
-Options: `--no-resolve` (skip the TONE3000 step), `--clean` (wipe `build-mac/` first),
+The model step runs `match/.venv/bin/sawblade-models status --model htdemucs_6s`; only when that
+reports it missing does it `pip install -e 'match[models]' -c match/constraints-separation.txt`
+(torch is large) and `sawblade-models fetch --model htdemucs_6s` (a one-time download and export,
+several minutes). When the model is present the step is just the status check. It needs `match/.venv`
+(created above) and is skipped with a note if that is missing.
+
+Options: `--no-resolve` (skip the TONE3000 step), `--no-models` (skip the separation model step), `--clean` (wipe `build-mac/` first),
 `--standalone` (open the Standalone app at the end), `--dry-run` (print commands only).
 
 The Standalone app is at

@@ -94,7 +94,9 @@ wait. Next phases in order: **v0.3** core usability (`docs/specs/v0_3-core_usabi
 drag/move pedals on the main page; user: "accuracy, captures and models, and moving them around"). Then
 **v0.5** circuit-level pedal models with optional mods (`docs/specs/v0_5-circuit_pedals.md`; user: "build the
 pedals virtually based on their circuits and then add mods optional"). The 7-day usage limit was at `allowed_warning` on 2026-10-06 (resets 2026-10-12 21:40 UTC): one phase
-session at a time until then. **Lifted 2026-10-06 19:50 UTC: the user upgraded their plan;** v0.3, v0.2.1
+session at a time until then. **v0.2.1 merged 2026-10-06** (MATCH in Logic, IMPORT DI, LOAD SONG fixes, separation-model install; reviewer ACCEPT 85c753e,
+CI run 148 green; report `docs/specs/v0_2_1-match_in_host_REPORT.md`; Task G macOS confirmation still owed by the user).
+**Lifted 2026-10-06 19:50 UTC: the user upgraded their plan;** v0.3, v0.2.1
 (un-parked: MATCH in Logic + IMPORT DI) and v0.4 Task A (accuracy harness, match/ only) run in parallel.
 
 - (a)–(c) **Closed (v0.1.3, merged 559048d; report `docs/specs/v0_1_3-macos_green_REPORT.md`, CI run 69 all green

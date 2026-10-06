@@ -19,6 +19,20 @@ class SawbladeProcessor;
 
 std::optional<TakeInfo> selectedTake(SawbladeProcessor& p);  // the take chosen with "Use for MATCH" (if it still exists)
 
+// REC / STOP, the one place both the take band and the MATCH screen drive the recorder from: Idle -> start a take (the
+// loaded song's folder goes in the sidecar), anything else -> stop. REC needs nothing else: not a loaded song, not the host
+// transport (a take without a song just has no position in it; the matcher then searches for it). The Finalizing state
+// ignores the button (the UI disables it).
+void toggleRecording(SawbladeProcessor& p);
+// Why REC would do nothing right now ("" = it is available): the previous take is still being saved.
+std::string recordUnavailableReason(SawbladeProcessor& p);
+// The recorder's one-word state for both views: READY / ARMED / "REC mm:ss.t" / SAVING.
+std::string recordStateText(SawbladeProcessor& p);
+
+// Where a take came from, for the take lists (the band and the MATCH screen's picker): "IMPORTED" for a file brought in by IMPORT DI...,
+// else where in the song it starts ("@ 12.3 s") or "no song" when no backing was running.
+std::string takeOriginText(const TakeInfo& t);
+
 struct MatchPlan {
   bool ok = false;
   std::string message;                 // why MATCH cannot start / a caution
