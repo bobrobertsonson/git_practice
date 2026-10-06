@@ -95,16 +95,28 @@ PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::Film
   value_.setFont(L::monoFont(11.0f));
   value_.setColour(juce::Label::textColourId, L::dimText());
   value_.setMinimumHorizontalScale(0.7f);
-  knob_.onDragStart = [this] { dragging_ = true; };
+  // One gesture = mouse down .. mouse up (a double-click is one too; the wheel and typed values are one-event gestures).
+  knob_.onDragStart = [this] {
+    dragging_ = true;
+    if (onGestureBegin) onGestureBegin();
+  };
   knob_.onDragEnd = [this] {
     dragging_ = false;
-    if (!live_) submit(false);
+    finishGesture();
+    if (onGestureEnd) onGestureEnd();
   };
   knob_.onValueChange = [this] {
     updateText();
     if (updating_) return;
-    if (live_) submit(false);
-    else if (!dragging_) submit(true);
+    if (live_) {
+      submit(false);
+    } else if (dragging_) {
+      submit(true);  // during the drag: a rebuild only once the hand pauses (latest value wins)
+    } else {         // wheel / typed value
+      if (onGestureBegin) onGestureBegin();
+      submit(true);
+      if (onGestureEnd) onGestureEnd();
+    }
   };
   updateText();
 }
@@ -117,6 +129,7 @@ void PresetKnob::updateText() {
 void PresetKnob::submit(bool debounced) {
   const double v = knob_.getValue();
   if (live_) {
+    shown_ = v;
     controller_.live([a = apply_, v](Preset& p) { a(p, v); });
     return;
   }
@@ -125,6 +138,14 @@ void PresetKnob::submit(bool debounced) {
   auto f = [a = apply_, v](Preset& p) { a(p, v); };
   if (debounced) controller_.editDebounced(f);
   else controller_.edit(f);
+}
+
+// Mouse up: the final value goes to the controller now, one rebuild (it also flushes this drag's debounced edit). When the last
+// debounced value already is the final one, flushing it is all there is to do.
+void PresetKnob::finishGesture() {
+  if (live_) return;
+  if (knob_.getValue() != shown_) submit(false);
+  else controller_.flushPending();
 }
 
 void PresetKnob::setValueFromPreset(double v) {

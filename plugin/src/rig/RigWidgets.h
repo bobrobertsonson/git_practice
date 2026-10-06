@@ -48,8 +48,10 @@ class LedToggle : public juce::Button {
   juce::Colour on_;
 };
 
-// A knob for a preset-only value. Structural knobs (the default) submit on drag end, or debounced for
-// wheel / typed / double-click values; live knobs call the controller's live edit on every change.
+// A knob for a preset-only value; it drags exactly like a main-page knob (it is the same FilmstripKnob). Structural knobs (the
+// default) apply on a short debounce while dragged (a rebuild only once the hand pauses) and once on mouse-up; wheel and typed
+// values are debounced too. Live knobs call the controller's live edit on every change. The editor's refresh never writes into a
+// knob that is being dragged or has an edit pending.
 class PresetKnob : public juce::Component {
  public:
   using Apply = std::function<void(Preset&, double)>;
@@ -67,11 +69,17 @@ class PresetKnob : public juce::Component {
   juce::String valueText() const { return value_.getText(); }
   void setCaption(const juce::String& s) { caption_.setText(s, juce::dontSendNotification); }
 
+  // Gesture hooks (v0.3 Task A; Task D's one-undo-step-per-gesture builds on them): `onGestureBegin` runs when the
+  // mouse goes down on the knob (or a wheel / double-click edit starts), `onGestureEnd` after the last edit of the
+  // gesture has been handed to the controller.
+  std::function<void()> onGestureBegin, onGestureEnd;
+
   void resized() override;
 
  private:
   void updateText();
   void submit(bool debounced);
+  void finishGesture();
 
   RigController& controller_;
   skin::FilmstripKnob knob_;
