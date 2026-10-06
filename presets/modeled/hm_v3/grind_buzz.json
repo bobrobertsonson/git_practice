@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Grind Buzz",
   "notes": "Custom-mode grind: tight low cut at 7, presence moved up to 5.5 kHz and lifted 12 dB, highs maxed. Calibrated voicing (pedal.hm modelVersion 3, fitted to real captures in phase 7.1). Modeled pedal, no capture; the cab slot is the repo identity IR. Starting hypothesis, not a tuned tone.",
   "category": "Grind",
@@ -55,6 +55,8 @@
     }
   },
   "output": {
-    "gainDb": -4.0
+    "gainDb": -4.0,
+    "autoTrimDb": -6.397,
+    "autoTrimHash": "8084b3e561bd0b14477c1901bbbf0bf17ac57ec57b3a3dc20dd8c13994c95223"
   }
 }

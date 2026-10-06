@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "One-Knob Max",
   "notes": "The sealed all-tens buzzsaw at full gain (Sunlight-studio era); into a small solid-state amp. Starting hypothesis. Modeled pedal, no capture; the cab slot is the repo identity IR.",
   "category": "Swedish death (HM-2)",
@@ -35,5 +35,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -7.828,
+    "autoTrimHash": "dfe5cc1abb0b3f549c137a8e6e19d09ddacd43229a0193183fa5209700d61b23"
   }
 }

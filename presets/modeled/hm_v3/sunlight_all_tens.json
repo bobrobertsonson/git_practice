@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Sunlight All Tens",
   "notes": "All-tens Swedish buzzsaw on the calibrated model: the early-90s Stockholm studio sound, everything maxed, drive range from saturated. Into a low-gain British-style amp (TONE3000 86089). Calibrated voicing (pedal.hm modelVersion 3, fitted to real captures in phase 7.1). Modeled pedal, no capture; the cab slot is the repo identity IR. Starting hypothesis, not a tuned tone.",
   "category": "Swedish death (HM-2)",
@@ -55,6 +55,8 @@
     }
   },
   "output": {
-    "gainDb": -4.0
+    "gainDb": -4.0,
+    "autoTrimDb": -5.51,
+    "autoTrimHash": "5afadcb5458d943b0e792e529e2809279d41b8f4269050ed409be512edc36a46"
   }
 }

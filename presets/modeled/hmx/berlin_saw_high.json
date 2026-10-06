@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Berlin Saw High",
   "notes": "Modded chainsaw with the upper-mid cut-through voicing (2 kHz centre): the pick edge in front of a dense mix. Same knobs as the other two Berlin Saw presets; only midVoice differs. Modeled pedal, no capture; the cab slot is the repo identity IR.",
   "category": "Swedish death (HM-2)",
@@ -46,5 +46,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -6.467,
+    "autoTrimHash": "1f3bdd6e8e0bd8df7eb4f9712bdf39c55a0a0eb1dcba2e41eb08ad7e446a1ae5"
   }
 }

@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "category": "Swedish death (HM-2)",
   "name": "Modeled saw + body blend (level-match demo)",
   "notes": "Phase 10.1 demonstration blend that renders from files in this repo only: path a = the Blend Partner chainsaw saw (pedal.hm), path b = the modeled boost into the HM model at moderate settings (pedal.ts -> pedal.hm) as the body. The two paths differ in loudness by several dB at equal peak, which is what the level-match probe trims. levelMatch auto + constantLoudness blend law; shared identity IR (no cab colouring). A demonstration of the mechanism, not a tuned tone.",
@@ -79,5 +79,9 @@
     "ir": {
       "file": "../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -8.378,
+    "autoTrimHash": "785ec24c90f5aff3492035020ae10bdd9910b5e5a3fe555d8a6d33bee273e5c2"
   }
 }

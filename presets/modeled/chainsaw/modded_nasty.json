@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Modded Nasty",
   "category": "Death metal",
   "notes": "Bright, nasty modded chainsaw: the modded mode (higher interstage and post-clip filters) with LED clipping, presence at 6 kHz and an open roll-off. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
@@ -51,5 +51,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -7.528,
+    "autoTrimHash": "808c4af1c25a25d1ff4b124eda823ab912d3a571ec4c5c5a5d5318c48745451f"
   }
 }

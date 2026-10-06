@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Big Fuzz Doom Saw",
   "category": "Doom / Sludge / Fuzz",
   "notes": "Low-voiced doom and sludge saw: mids shifted down, dark top, soft clipping (Electric Wizard, Conan). Wide mid notch, roll-off at 7 kHz. Into a low-gain amp. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
@@ -46,5 +46,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -1.133,
+    "autoTrimHash": "cd4726d6cdd64fb1c34a8afa67bd45f4bc3af173a4eca4805ef0adf8d101356e"
   }
 }

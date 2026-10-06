@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Four-Band Doom",
   "notes": "Doom/sludge saw: low-mids up at 250 Hz, high-mids scooped, dark presence, asymmetric clip; into a low-gain amp. Starting hypothesis. Modeled pedal, no capture; the cab slot is the repo identity IR.",
   "category": "Doom / Sludge / Fuzz",
@@ -46,5 +46,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -3.475,
+    "autoTrimHash": "7353190cad6ec3218a935b011d74556787d14c88f2a942fedad699e5506bd35b"
   }
 }

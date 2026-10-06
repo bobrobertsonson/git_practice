@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Fuzz Into Saw",
   "category": "Doom / Sludge / Fuzz",
   "notes": "Two circuits chained: a mild fuzz pushing the chainsaw for a thicker, more compressed buzz. The second block is the chainsaw (low 8, high 9, distortion 6). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
@@ -73,5 +73,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -7.287,
+    "autoTrimHash": "6e8df65d2e63a806dc8ad3cf835a7223d67254eea23d1f280e78ce5d37dfd4f0"
   }
 }

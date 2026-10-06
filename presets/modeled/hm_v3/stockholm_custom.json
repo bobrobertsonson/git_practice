@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Stockholm Custom",
   "notes": "Custom-mode all-tens wall: the extra low shelf and top shelf of the later custom-mode units, low gyrator a touch lower (90 Hz), knobs at the measured custom map (low 6.5, high 5, distortion 10). Calibrated voicing (pedal.hm modelVersion 3, fitted to real captures in phase 7.1). Modeled pedal, no capture; the cab slot is the repo identity IR. Starting hypothesis, not a tuned tone.",
   "category": "Swedish death (HM-2)",
@@ -53,5 +53,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -7.772,
+    "autoTrimHash": "7ee0ae3b4102d716246f3a30a2ffde215b6543ccefe9953abf3f6c5d23dac491"
   }
 }
