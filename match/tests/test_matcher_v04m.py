@@ -347,7 +347,7 @@ def test_tight_boost_variant_can_win_on_a_hidden_boosted_chain(tmp_path):
     pool = Pool([], list(full.amps), list(full.cabs))                  # no pedal capture can make the clipping: only the boost
     hidden_combo = Combo((), full.amps[2], None, None, full.cabs[1], boost=True)
     v = Space.for_combo(hidden_combo).default()
-    v.update({"boost.drive": 2.5, "boost.level": 9.0, "boost.tone": 4.0, "post.g1": 1.0})
+    v.update({"boost.drive": 2.5, "boost.level": 8.0, "boost.tone": 4.0, "post.g1": 1.0})      # level is not searched: fixed at 8
     di, ref = _known(tmp_path, pool, hidden_combo, v)
     plan = mkplan(top_k={"blend": 0, "single": 2, "single2": 0}, gens_linear=16, gens_gain=4, gens_final=10,
                   pop_linear=12, pop_gain=6, n_rescore_single=12, n_cab_single=12)
@@ -355,8 +355,8 @@ def test_tight_boost_variant_can_win_on_a_hidden_boosted_chain(tmp_path):
                            write_audio=False, refine_offsets=False), Log())
     tb = res["tightBoost"]
     assert tb["tried"] == 3 and tb["won"] is True and tb["ablated"] is False and tb["refined"] >= 1
-    assert set(tb["params"]) == {"drive", "level", "tone"} and 0.0 <= tb["params"]["drive"] <= 3.0
-    assert 6.0 <= tb["params"]["level"] <= 10.0 and 3.0 <= tb["params"]["tone"] <= 8.0
+    assert set(tb["params"]) == {"drive", "tone"} and 0.0 <= tb["params"]["drive"] <= 3.0      # boost.level stays at its default 8
+    assert 3.0 <= tb["params"]["tone"] <= 8.0
     assert tb["bestBoostLoss"] + OCCAM_DB < tb["bestPlainSingleLoss"]
     assert res["best"]["tightBoost"] is True and res["best"]["topology"] == "single"
     assert any(c["tightBoost"] for c in res["stage1"]["top"]["single"])           # the variants compete in stage 1 ...
@@ -478,3 +478,23 @@ def test_ablate_switches_the_suspects_off_and_echoes_them(tmp_path):
     assert "gateSweep" in res                                               # the gate sweep is not an ablation switch
     with pytest.raises(ValueError, match="unknown suspect"):
         run_match(Config(di=di, ref=ref, pool=pool, out=tmp_path / "out2", ablate=("nope",)), Log())
+
+
+def test_choose_pedal_single_must_beat_the_pedal_less_single_by_the_margin():
+    from sawblade_match.matcher.run import PEDAL_OCCAM_DB
+    pool = fixture_pool()
+    bare = Combo((), pool.amps[0], None, None, pool.cabs[0], boost=True)
+    ped = Combo((pool.pedals[0],), pool.amps[0], None, None, pool.cabs[0], boost=True)
+    other = Combo((pool.pedals[0],), pool.amps[1], None, None, pool.cabs[0], boost=True)
+    mk = lambda c, l: Scored(c, l, 0.0, manual_align(), None, "refined", {})
+    w = choose([mk(bare, 1.0), mk(ped, 1.0 - PEDAL_OCCAM_DB * 0.5)])
+    assert w.combo is bare and w.extra["pedalOccamDropped"] == [ped.key()]                  # not enough: the pedal is spurious
+    w = choose([mk(bare, 1.0), mk(ped, 1.0 - PEDAL_OCCAM_DB * 2)])
+    assert w.combo is ped and w.extra["pedalOccamDropped"] == []                           # clearly better: kept
+    assert choose([mk(other, 1.0)]).combo is other                                          # no pedal-less single to compare with
+    assert choose([mk(bare, 1.0), mk(other, 0.98)]).combo is bare                          # other amp: compared with the best bare
+
+
+def test_gate_sweep_tightness_tolerance_is_noise_level():
+    from sawblade_match.matcher import gatesweep
+    assert gatesweep.TIGHT_TOL == 0.05 and gatesweep.LTAS_TOL_DB == 0.05
