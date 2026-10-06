@@ -8,7 +8,8 @@ import numpy as np
 import soundfile as sf
 
 from ..calibrate.channels import stem_guitar_signal
-from ..tonecheck.analysis import activity_mask, detect_onsets
+from ..tonecheck.analysis import activity_mask, detect_onsets, gap_regions
+from . import feel as FEEL
 from . import loss as L
 from .engine import RATE, to48
 from .excerpt import select_excerpt
@@ -33,6 +34,8 @@ class Reference:
     hf_limit_hz: float | None = None    # full-mix basis: LTAS above this is a one-sided ceiling (loss.py)
     matched_fmax: float = L.STFT_FMAX_MIX   # upper edge of the matched-pair STFT term (matched channel is a full mix)
     stem_channel: str | None = None
+    clean: bool = False             # the (matched) reference is an isolated guitar track (amp print), not a mix: its HF is a target
+    feel_cache: dict = field(default_factory=dict)   # soft-target feel features of the whole reference (feel.make_target)
 
 
 def _read(path: str | Path) -> tuple[np.ndarray, int]:
@@ -59,19 +62,27 @@ def find_stem(ref_path: Path, stems_dir: Path | None) -> Path | None:
 def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path | None = None,
                    matched: str | None = None, offset_ms: float | None = None,
                    sections: list[tuple[float, float]] | None = None,
-                   hf_limit_hz: float | None | str = "auto") -> Reference:
+                   hf_limit_hz: float | None | str = "auto", clean: bool | None = None) -> Reference:
     """``channel`` for the LTAS target: auto (stem if cached, else side for stereo), side, left, right, mid.
     ``hf_limit_hz`` (full-mix bases only; stems never get it): "auto" = 4.5 kHz one-sided ceiling for the automatic
     fallback and for ``side`` (a mix's side channel still holds stereo cymbals), none for an explicitly chosen
     left/right/mid channel (taken as given; pass a number to impose a limit); None = off.
     ``matched`` ("left"/"right"/"mono"): the reference is a time-aligned pair with the DI; that channel is the STFT
-    target (the LTAS target still follows ``channel``)."""
+    target (the LTAS target still follows ``channel``).
+    ``clean``: the reference is an isolated guitar track (e.g. the amp print of the same take), not a mix. Default: true
+    for ``matched="mono"`` (a mono matched file is an isolated track by intent), false otherwise. A clean reference is its
+    own guitar signal: no stem lookup, ``channel="auto"`` means the matched channel (``mid`` unmatched), no HF limit
+    (nothing above 5 kHz but the guitar), and the fizz feel term is on (loss.py)."""
     path = Path(path)
     x, fs = _read(path)
     notes: list[str] = []
     stereo = x.shape[1] >= 2
     basis, off_db, sig, stem_kind, auto_fallback = None, 0.0, None, None, False
-    if channel in ("auto",):
+    clean = (matched == "mono") if clean is None else bool(clean)
+    if channel == "auto" and clean:
+        channel = {"left": "left", "right": "right"}.get(matched or "", "mid")
+        notes.append(f"clean (isolated guitar) reference: its own '{channel}' signal is the target; no stem, no HF limit")
+    elif channel in ("auto",):
         stem = find_stem(path, stems_dir)
         if stem is not None:
             sx, sfs = _read(stem)
@@ -92,7 +103,7 @@ def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path |
             col = {"left": 0, "right": 1}.get(channel)
             m = x.mean(axis=1) if col is None else x[:, min(col, x.shape[1] - 1)]
             sig, basis = to48(m, fs), channel
-    ref = Reference(path.stem, str(path), basis, sig, off_db, notes=notes, stem_channel=stem_kind)
+    ref = Reference(path.stem, str(path), basis, sig, off_db, notes=notes, stem_channel=stem_kind, clean=clean)
     if stem_kind is not None:
         ref.texture = True
     else:
@@ -102,7 +113,7 @@ def load_reference(path: str | Path, *, channel: str = "auto", stems_dir: Path |
         if lim is not None:
             notes.append(f"full-mix reference ({basis}): LTAS above {lim:g} Hz is a one-sided ceiling (render may be "
                          "darker, never brighter); cymbals dominate there")
-        elif channel in ("left", "right", "mid") and not auto_fallback:
+        elif channel in ("left", "right", "mid") and not auto_fallback and not clean:
             notes.append(f"explicit full-mix channel '{channel}' has no HF limit: cymbals/hats in the mix will pull the "
                          "5-10 kHz fit brighter; consider --ref-hf-limit 4500")
     if matched:
@@ -152,13 +163,26 @@ def make_excerpt(di48: np.ndarray, length_s: float, lead_s: float = 0.5, window:
     return Excerpt(a, b, lead, np.ascontiguousarray(di48[a - lead:b], dtype=np.float32), info)
 
 
+def feel_fizz_state(ref: Reference) -> tuple[bool, str | None]:
+    """Is the reference's 5-12 kHz usable as a target for the fizz feel term? (False, reason) when it is not."""
+    if ref.hf_limit_hz is not None:
+        return False, f"reference HF limited to {ref.hf_limit_hz:g} Hz (full-mix basis)"
+    if ref.matched_sig is not None and not (ref.clean or ref.texture):
+        return False, ("matched channel is a full mix (cymbals above 5 kHz); pass --ref-clean if it is an isolated "
+                       "guitar track")
+    return True, None
+
+
 def build_target(ref: Reference, ex: Excerpt, offset_samples: int | None = None) -> L.Target:
     """Loss target for one DI excerpt. Unmatched: whole-reference LTAS (activity-gated) and the reference's own
     onsets. Matched: the reference segment at the DI->ref offset, same Welch segments and DI onsets as the output."""
     di = ex.x[ex.lead:]
     mask, _, _ = activity_mask(di.astype(np.float64), RATE)
     starts = L.segment_starts(len(di), mask)
-    onsets = detect_onsets(di.astype(np.float64), RATE)
+    di64 = di.astype(np.float64)
+    onsets = detect_onsets(di64, RATE)
+    gaps = gap_regions(di64, RATE)
+    fizz_on, fizz_why = feel_fizz_state(ref)
     matched = None
     if ref.matched_sig is not None:
         off = ref.offset_samples if offset_samples is None else offset_samples
@@ -168,10 +192,15 @@ def build_target(ref: Reference, ex: Excerpt, offset_samples: int | None = None)
             raise ValueError("matched reference segment runs past the end of the reference")
         rf = L.features(seg, starts, onsets if len(onsets) else None)
         matched = ref.matched_sig[a:a + ex.n]
+        # feel: the isolated guitar when there is one (stem basis), else the matched channel itself
+        feel = FEEL.make_target(di64, onsets, mask, gaps, seg if ref.texture else matched,
+                                fizz_on=fizz_on, fizz_reason=fizz_why)
     else:
         rmask, _, _ = activity_mask(ref.ltas_sig, RATE)
         rstarts = L.segment_starts(len(ref.ltas_sig), rmask)
         ron = detect_onsets(ref.ltas_sig, RATE)
         rf = L.features(ref.ltas_sig, rstarts, ron if len(ron) else None)
+        feel = FEEL.make_target(di64, onsets, mask, gaps, None, fizz_on=fizz_on, fizz_reason=fizz_why,
+                                soft_ref=(ref.ltas_sig, rmask, ron), cache=ref.feel_cache)
     return L.Target(starts, rf, onsets if len(onsets) else None, mask, matched, ref.texture, ref.hf_limit_hz,
-                    ref.matched_fmax)
+                    ref.matched_fmax, feel)

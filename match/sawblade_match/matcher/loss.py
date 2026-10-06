@@ -1,6 +1,6 @@
 """Matcher loss (documented weights).
 
-total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched pairs only) + W_REG * reg
+total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched pairs only) + W_REG * reg + feel
 
 * ``ltas``   A-weighted RMS difference (dB) of the 1/3-octave LTAS, bands 80 Hz-8 kHz, after removing the overall
              level offset. The offset is the A-weight-power-weighted mean difference, so the error is the weighted
@@ -22,6 +22,17 @@ total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched
              ``hf_limit_hz`` (4.5 kHz) are ignored by ``ltas`` and replaced by a one-sided ceiling (the render may be darker
              than the reference there, never brighter), plus a one-sided 8-12 kHz level ceiling (weight 0.12 / dB). The
              texture term is not used. The matched-pair STFT term is likewise limited to ``stft_fmax`` (a mix channel).
+* ``feel``   (v0.4M) how the tone behaves, not its average spectrum (``matcher/feel.py`` has the exact definitions):
+             ``feel = W_TIGHT * tight + W_FIZZ * fizz + W_POLISH * polish`` with initial weights 0.5 / 0.5 / 0.25 (tuned in
+             Task D). ``tight``: per-note 60-250 Hz decay time (t12) and sustain after the DI's palm-muted chugs, one-sided
+             (floppier than the reference counts fully, tighter half), t12 / 20 ms + sustain / 3 dB. ``fizz``: per-frame
+             5-12 kHz re 1-4 kHz level, 5-10 kHz flatness and 5-12 kHz envelope modulation, W1 distance of the
+             distributions / (1.5 dB, 0.03, 0.1); off when the reference HF is not usable (full-mix basis, HF limit set, or
+             a matched channel that is a full mix; see ``Reference.clean``). ``polish``: W1 of the spectral flux
+             (/ 0.5 dB) and of the per-400 ms crest (/ 1.5 dB), plus the inter-note floor re the active level, one-sided
+             (/ 6 dB). Matched pair: note by note against the aligned reference; otherwise the reference's own
+             features are compared as distributions, every weight x 0.5 and ``floor`` dropped. All gain invariant. Terms
+             with too little data (< 3 notes, < 100 ms of gaps, ...) are dropped and recorded in ``feelTerms.dropped``.
 """
 from __future__ import annotations
 
@@ -32,10 +43,12 @@ from scipy import signal
 
 from ..tonecheck.analysis import (NFFT, HOP, NOMINAL_CENTRES, _exact_centre, buzz_flatness, low_end_decay)
 from ..tonecheck.cli import a_weight_db
+from . import feel as _feel
 
 RATE = 48000
 W_LTAS, W_BUZZ, W_DECAY, W_STFT, W_REG = 1.0, 0.5, 2.0, 0.25, 0.02
 W_FLAT, W_HF = 25.0, 0.12
+W_TIGHT, W_FIZZ, W_POLISH = _feel.W_TIGHT, _feel.W_FIZZ, _feel.W_POLISH
 HF_LIMIT_HZ = 4500.0           # full-mix fallback reference: LTAS above this is a one-sided ceiling, not a target
 STFT_FMAX_MIX = 4500.0         # matched-pair STFT upper edge when the matched channel is a full mix (cymbals above)
 TEX_FLAT_BAND = (5000.0, 10000.0)
@@ -198,6 +211,7 @@ class Target:
     texture: bool = False               # stem basis: HF texture term (flatness 5-10 kHz, 8-12 kHz level) is a target
     hf_limit_hz: float | None = None    # full-mix basis: LTAS above this is a one-sided ceiling (and 8-12 kHz too)
     stft_fmax: float = 8000.0
+    feel: "_feel.FeelTarget | None" = None   # v0.4M feel features of the reference (None: no feel term)
 
 
 @dataclass
@@ -212,11 +226,20 @@ class LossResult:
     tex: float = 0.0           # texture term (stem basis) or one-sided HF ceiling (full-mix fallback), weighted units
     weights: dict = field(default_factory=lambda: {"ltas": W_LTAS, "buzz": W_BUZZ, "decay": W_DECAY,
                                                     "stft": W_STFT, "reg": W_REG,
-                                                    "texFlat": W_FLAT, "texHf": W_HF})
+                                                    "texFlat": W_FLAT, "texHf": W_HF,
+                                                    "feelTight": W_TIGHT, "feelFizz": W_FIZZ, "feelPolish": W_POLISH})
+    feel: float = 0.0          # weighted feel term (included in ``total``)
+    feel_terms: dict | None = None   # every feel sub-term (raw + normalised), note counts, noteSet, dropped terms
+
+    @property
+    def feelTerms(self) -> dict | None:
+        return self.feel_terms
 
     def as_dict(self) -> dict:
-        return {k: (None if v is None else (float(v) if not isinstance(v, dict) else v))
-                for k, v in self.__dict__.items()}
+        d = {k: (None if v is None else (float(v) if not isinstance(v, dict) else v))
+             for k, v in self.__dict__.items()}
+        d["feelTerms"] = d.pop("feel_terms")
+        return d
 
 
 def evaluate(out: np.ndarray, tgt: Target, eq_gains_db: np.ndarray | None = None) -> LossResult:
@@ -233,11 +256,15 @@ def evaluate(out: np.ndarray, tgt: Target, eq_gains_db: np.ndarray | None = None
     elif tgt.hf_limit_hz is not None:
         tex = W_HF * max(0.0, f.hf_db - tgt.ref.hf_db)
     reg = float(np.sqrt(np.mean(np.square(eq_gains_db)))) if eq_gains_db is not None and len(eq_gains_db) else 0.0
-    total = W_LTAS * ltas + W_BUZZ * buzz + W_REG * reg + tex
+    feel, feel_terms = 0.0, None
+    if tgt.feel is not None:
+        feel, feel_terms = _feel.evaluate(out, tgt.feel)
+    total = W_LTAS * ltas + W_BUZZ * buzz + W_REG * reg + tex + feel
     if decay is not None:
         total += W_DECAY * decay
     if stft is not None:
         total += W_STFT * stft
     if not np.isfinite(total):
         total = np.inf          # non-finite renders are never selected
-    return LossResult(float(total), ltas, buzz, decay, stft, reg, off, float(tex))
+    return LossResult(float(total), ltas, buzz, decay, stft, reg, off, float(tex), feel=float(feel),
+                      feel_terms=feel_terms)

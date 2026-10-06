@@ -311,14 +311,14 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result: dict = {"schema": "sawblade.match_result", "version": 1, "seed": cfg.seed, "budget": cfg.budget,
                     "mode": plan.mode, "plan": plan.__dict__, "di": str(cfg.di), "diR": str(cfg.di_r) if cfg.di_r else None,
                     "reference": {"path": ref.path, "basis": ref.basis, "stemChannel": ref.stem_channel,
-                                  "bandLimitHz": ref.hf_limit_hz, "textureTerm": ref.texture,
+                                  "bandLimitHz": ref.hf_limit_hz, "textureTerm": ref.texture, "clean": ref.clean,
                                   "matchedStftFmaxHz": ref.matched_fmax if ref.matched_sig is not None else None,
                                   "matched": ref.matched_channel,
                                   "sections": ref.sections, "notes": ref.notes},
                     "excerpt": {"startS": ex.start / RATE, "endS": ex.end / RATE, **ex.info},
                     "gate": gate, "diNoiseFloorDb": floor, "poolCounts": pool.counts(),
                     "lossWeights": {"texFlat": L.W_FLAT, "texHf": L.W_HF, "ltas": L.W_LTAS, "buzz": L.W_BUZZ, "decay": L.W_DECAY, "stft": L.W_STFT,
-                                    "reg": L.W_REG},
+                                    "reg": L.W_REG, "feelTight": L.W_TIGHT, "feelFizz": L.W_FIZZ, "feelPolish": L.W_POLISH},
                     "randomness": f"numpy default_rng(seed={cfg.seed}) for subset sampling and CMA-ES (seed + block)"}
 
     # ---- starter ("before") on the excerpt, which also gives the coarse offset refinement its render -----------------
@@ -374,10 +374,14 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result["profile"]["baseRulesStatusOnReference"] = {r["id"]: r["statusOnReference"] for r in ptable} \
         if cfg.profile == "derived" else None
     result["referenceTarget"] = {"buzzDb": tgt.ref.buzz_db, "lowDecayDbPerMs": tgt.ref.decay,
-                                 "onsetsMeasured": tgt.ref.n_onsets}
+                                 "onsetsMeasured": tgt.ref.n_onsets, "feel": tgt.feel.summary() if tgt.feel else None}
     before_ex = L.evaluate(ex.trim(y_st), tgt, None)
     result["starter"]["excerptLoss"] = before_ex.as_dict()
-    log(f"starter on excerpt: loss {before_ex.total:.3f} (ltas {before_ex.ltas:.2f} dB)")
+    log(f"starter on excerpt: loss {before_ex.total:.3f} (ltas {before_ex.ltas:.2f} dB, feel {before_ex.feel:.3f})")
+    if tgt.feel is not None:
+        fs_ = tgt.feel.summary()
+        log(f"feel term ({fs_['mode']}): fizz {'on' if fs_['fizzOn'] else 'OFF (' + str(fs_['fizzOffReason']) + ')'}; "
+            f"notes {fs_['noteSet'] or 'dropped'} {fs_['notes']}; dropped: {fs_['dropped'] or 'none'}")
     lap("targetAndProfile")
 
     # ---- stage 1 -----------------------------------------------------------------------------------------------------

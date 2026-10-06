@@ -30,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ref-hf-limit", type=float, metavar="HZ",
                    help="full-mix reference only: LTAS above HZ is a one-sided ceiling (default 4500 for the automatic/side "
                         "fallback, off for explicit left/right/mid; 0 = off)")
+    p.add_argument("--ref-clean", action="store_true",
+                   help="the reference is an isolated guitar track (e.g. the amp print of the same take), not a mix: "
+                        "no stem lookup, no HF limit, its 5-12 kHz is a target (fizz). Implied by --matched mono")
     p.add_argument("--stems-dir", help="directory with sawblade-calibrate stems (default testdata/stems)")
     p.add_argument("--matched", choices=["left", "right", "mono"],
                    help="the reference is a matched pair with --di (time-aligned STFT term vs this channel)")
@@ -77,7 +80,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         pool = load_pool(a.pool)
         ref = load_reference(a.ref, channel=a.ref_channel, stems_dir=Path(a.stems_dir) if a.stems_dir else None,
                              matched=a.matched, offset_ms=a.offset_ms, sections=a.ref_section,
-                             hf_limit_hz="auto" if a.ref_hf_limit is None else (a.ref_hf_limit or None))
+                             hf_limit_hz="auto" if a.ref_hf_limit is None else (a.ref_hf_limit or None),
+                             clean=True if a.ref_clean else None)
         cfg = Config(di=Path(a.di), ref=ref, pool=pool, out=out, di_r=Path(a.di_r) if a.di_r else None,
                      budget=a.budget, seed=a.seed, excerpt_s=a.excerpt_s, top_k=a.top_k, prescreen_n=a.prescreen, profile=a.profile,
                      base_profile=a.base_profile, threads=a.threads,
