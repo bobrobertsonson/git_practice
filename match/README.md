@@ -298,6 +298,7 @@ sawblade-match --di Guitar_L.wav [--di-r Guitar_R.wav] --ref REF.mp3 --pool ~/.c
                [--stems-dir DIR] [--profile derived|<id>|PATH] [--base-profile swedish_death_hm2] [--prescreen N]
                [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 3] [--threads|--jobs 4]
                [--quick | --thorough] [--progress-json PATH] [--listen]
+               [--ablate feel,boost,filters,irsweep,irblend,studio] [--trace-tones ID[,ID...]]
 python -m sawblade_match.matcher.known_answer --pool ... --di Guitar_L.wav --out DIR [--seed 1] [--topology blend|single|single2]
 python -m sawblade_match.matcher.recall --run RUN_DIR --di ... --ref ... [--matched left] --pool ... --ns 2,3,4,6,9
                [--quick [--coarse-s S]] [--old-pool] [--quick-run QUICK_RUN_DIR]
@@ -355,9 +356,45 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   features are compared as distributions at half weight (no floor). Stage 1's pair x pair blend screen stays LTAS-only; every full-loss
   evaluation (re-score, cab sweep, stage 2, finals) includes it.
 * **Loss** weights are in `matcher/loss.py` (A-weighted LTAS error after level-offset removal x1, buzz x0.5/dB, lowDecay x2 per
-  dB/ms, STFT x0.25/dB for matched pairs, EQ-gain regulariser x0.02/dB). **Not searched**: gate (DI floor measured on the gate's
-  own peak envelope +4 dB, hold 40 ms, release 150 ms, range -50 dB), bus comp (off), alignment (probed once per blend combo,
-  written as `manual`), output gain.
+  dB/ms, STFT x0.25/dB for matched pairs, EQ-gain regulariser x0.02/dB). **Not searched by the optimiser**: gate (starts at the DI
+  floor measured on the gate's own peak envelope +4 dB, hold 40 ms, release 150 ms, range -50 dB; matched to the reference after
+  stage 2, see below), bus comp (off), alignment (probed once per blend combo, written as `manual`), output gain.
+* **Search-space additions, all always on** (v0.4M Task B / B2.2, `--ablate` switches each one off for on/off pairs):
+  * **Tight boost** (`Combo.boost`, `matcher/space.py`): every `single` combo re-scored in stage 1 also competes with the modeled
+    `pedal.ts` ("green overdrive", slot `boost`, model version 1) directly in front of the amp (after any pedal). Its knobs are in
+    stage 2's NAM-gain group: `boost.drive` 0-3, `boost.level` 6-10, `boost.tone` 3-8 (defaults 1 / 8 / 5). Stage 2 always refines the
+    best boost variant and the best plain single. It costs like one extra block: it only wins if it beats the best plain single
+    candidate by more than 0.1 dB (`choose`). The modeled pedal adds 50 samples of latency, which the renderer already advances out of the
+    output, so the matcher's core stays sample-aligned. `result.json -> tightBoost {tried, refined, won, params, bestBoostLoss,
+    bestPlainSingleLoss, occamDb, ablated}`; every candidate row has `tightBoost`. Single-path `single2` chains and blend paths get none (no variant there yet).
+  * **Post-cab filters**: `post.hp` 60-140 Hz and `post.lp2` 6-11 kHz after the shared cab, each with a discrete slope parameter
+    (`post.hp_slope`, `post.lp2_slope`: < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct = two cascaded biquads with the 4th-order Butterworth Qs
+    0.541 / 1.307). Neutral at the range edge with 12 dB/oct (hp 60 Hz, lp2 11 kHz: the band is omitted); they are not in the EQ-gain
+    regulariser. The slopes are not CMA-ES dimensions: the frequencies are searched at 12 dB/oct, then each filter is tried at 24 dB/oct
+    (`refine.pick_slopes`). The existing `post.lp` roll-off (5-12 kHz) stays; `post_filters_from_eq` reads the filters back from a preset
+    (a single 12 dB low-pass cannot be told from `post.lp`). `result.json -> postFilters`.
+  * **Cab breadth** (`matcher/cabsweep.py`): after stage 2, the top 3 refined candidates per topology are scored with **every** cab of the pool
+    (full loss, the NAM cores come from the engine memo, so each IR costs two linear renders + the loss). When another cab wins, the last
+    linear CMA-ES block is re-run on it (`refine.relinear`). `result.json -> cabSweep {poolCabs, candidates[...irs]}` lists every IR's
+    loss, best / worst and whether the cab changed. `cab_sweep()` is a separate function with the contract candidate + cabs -> loss rows so the
+    analytic IR screen (B3) can replace it for large pools.
+  * **Gate matched to the reference** (`matcher/gatesweep.py`): on the final chain the threshold (DI floor + 4, 8, 12, 16, 20 dB) x release
+    (80, 150, 250 ms) grid is rendered (15 NAM cores per path; the gate is part of the core memo key) and the cell with the lowest feel
+    `floor` term (inter-note level re the reference's) is picked, subject to the A-weighted LTAS error rising by at most 0.05 dB and the
+    tightness term not getting worse than at the default cell (4 dB, 150 ms), which is part of the grid. Without a matched pair the
+    reference's own inter-note floor is the target (`reference_floor_db`; a mix without real silence has none and the sweep is skipped).
+    `result.json -> gateSweep` (whole grid, baseline, picked, constraints), `gateDefault`, `gateFinal`. The final preset carries the picked gate.
+  * **Why a DI's `gap_noise` stays high** (synthetic diagnosis): the fixed gate (floor + 4 dB,
+    hold 40 ms) sits inside the DI's own noise-peak statistics and never closes; the sweep fixes that. What is left depends on the gate
+    hold / range (not swept) and on what follows the gate (a high-gain chain and the IR tail).
+* **`--ablate LIST`** (`feel, boost, filters, irsweep, irblend, studio`): switches suspects off for on/off pairs; `result.json -> ablate` echoes the
+  list. `feel`: no feel term in the search's loss (it is still measured for the report and the gate sweep); `boost`: no boost variants;
+  `filters`: no post-cab hp/lp2; `irsweep`: only the stage-1 cab sweep (the pre-v0.4M behaviour). `irblend` and `studio` are accepted and echoed
+  but are no-ops until the two-IR blend (B2.1) and studio processing (B2.3) land. **`--trace-tones ID[,ID...]`** explains TONE3000 tones in
+  `result.json -> trace[id]`: in the manifest / downloaded, models, gear class, pre-screen score / rank in class / survived, best stage-1
+  pair (rank, LTAS error, best blend), its best candidate loss as the amp (the refined one, or the winner's pedals + cab + EQ with this amp
+  rendered once and one linear block), and `vsWinner`: the weighted loss terms minus the winner's, largest first, with a one-line `why`. Cab tones
+  list their IRs from the winner's cab sweep.
 * **Profiles** (`profiles/`, schema `sawblade.profile`; see `profiles/README.md`): guardrail rules only, the reference LTAS is the
   target. `--profile derived` (default) derives a profile from the reference's isolated guitars with loosen-only tolerances from the
   rule skeleton of `--base-profile`; written to `<out>/profile.derived.json`; result.json lists the changes and the base rules'
