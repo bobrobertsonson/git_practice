@@ -15,9 +15,17 @@ Continuous parameters (physical units; the optimizer works in the normalised box
 * post EQ roll-off (phase 3.4, a real cab + mic rolls off): a high shelf 3-7 kHz, -8..0 dB (q 0.707) and a low-pass
   5-12 kHz (12 dB/oct). Both are neutral at their default (shelf 0 dB, low-pass at 12 kHz = band omitted); neither counts
   toward the EQ-gain regulariser.
+* post-cab filters (v0.4M, always searched unless ``filters=False``): ``post.hp`` 60-140 Hz and ``post.lp2`` 6-11 kHz, each with
+  a discrete slope parameter (``post.hp_slope`` / ``post.lp2_slope`` in [0, 1]: < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct, emitted
+  as two cascaded biquads with the 4th-order Butterworth Qs 0.541 / 1.307). The slopes are not CMA-ES dimensions (group
+  ``discrete``): the frequencies are optimised at 12 dB/oct, then ``refine.pick_slopes`` tries 24 dB/oct for each filter. A filter at its range edge (hp 60 Hz, lp2 11 kHz)
+  with the 12 dB slope is "off" and omitted from the preset. They do not count toward the EQ-gain regulariser.
+* tight boost (v0.4M, ``Combo.boost``; single topology only): a modeled ``pedal.ts`` (slot ``boost``) directly in front of the
+  amp, after any pedal: ``boost.drive`` 0-3, ``boost.level`` 6-10, ``boost.tone`` 3-8 (defaults 1 / 8 / 5). The boost renders
+  inside the NAM core, so these three belong to the ``gain`` group.
 * NAM input gains +-12 dB for every NAM block (``gain.a.0``, ``gain.a.amp``, ``gain.b.0`` ...).
 
-Not searched (fixed): gate (from the DI noise floor), NAM output gains (0), loudness normalisation (on for amps),
+Not searched by the optimiser: gate (starts at the DI noise floor + 4 dB; a threshold x release sweep on the final chain follows stage 2, see gatesweep.py), NAM output gains (0), loudness normalisation (on for amps),
 alignment (resolved once per blend combo, written as manual), bus compressor (off), output gain (set from the level
 offset after the search). No fixed pre-EQ (the old HM-2 high-pass on path A was style-specific and is gone).
 """
@@ -36,6 +44,11 @@ PEAK_GAIN, POST_GAIN, NAM_GAIN = 9.0, 6.0, 12.0
 Q = 1.0
 SHELF_RANGE, SHELF_GAIN_RANGE, POST_LP_RANGE = (3000.0, 7000.0), (-8.0, 0.0), (5000.0, 12000.0)
 DEFAULT_HP, DEFAULT_LP = 60.0, 9000.0
+POST_HP_RANGE, POST_LP2_RANGE = (60.0, 140.0), (6000.0, 11000.0)
+SLOPE_DEFAULT = 0.4                       # discrete slope parameter: < 0.5 -> 12 dB/oct, >= 0.5 -> 24 dB/oct
+BUTTER4_Q = (0.541196, 1.306563)          # Qs of the two biquads of a 4th-order Butterworth (24 dB/oct) pass filter
+BOOST_PARAMS = (("drive", 0.0, 3.0, 1.0), ("level", 6.0, 10.0, 8.0), ("tone", 3.0, 8.0, 5.0))   # name, lo, hi, default
+PEDAL_LATENCY = 50                        # samples of every modeled pedal block (docs/PRESET_SCHEMA.md)
 
 
 TOPOLOGY_RANK = {"single": 0, "single2": 1, "blend": 2}      # simplest first (Occam)
@@ -48,6 +61,7 @@ class Combo:
     b_pedals: tuple[Capture, ...] | None     # None: no path B (single / single2)
     b_amp: Capture | None
     cab: Capture
+    boost: bool = False                      # modeled pedal.ts directly in front of the amp (single topology only)
 
     @property
     def topology(self) -> str:
@@ -65,7 +79,7 @@ class Combo:
         return out
 
     def key(self) -> tuple:
-        return (self.topology, *[c.key for c in self.nams()], self.cab.key)
+        return (self.topology + ("+ts" if self.boost else ""), *[c.key for c in self.nams()], self.cab.key)
 
     def pair_key(self) -> tuple:
         """Identity without the cab."""
@@ -81,7 +95,7 @@ class Combo:
         return {"pedal": (self.a_pedals or (None,))[0], "amp": self.a_amp, "cab": self.cab}
 
     def with_cab(self, cab: Capture) -> "Combo":
-        return Combo(self.a_pedals, self.a_amp, self.b_pedals, self.b_amp, cab)
+        return Combo(self.a_pedals, self.a_amp, self.b_pedals, self.b_amp, cab, self.boost)
 
     def model_bytes(self) -> int:
         return sum(c.size_bytes for c in self.nams())
@@ -92,7 +106,11 @@ class Combo:
         return sum(x[0] for x in r), sum(x[1] for x in r)
 
     def describe(self) -> str:
-        return f"{self.topology}: " + " | ".join(f"{k}={v.title}:{v.name}" for k, v in self.captures().items() if v)
+        parts = [f"{k}={v.title}:{v.name}" for k, v in self.captures().items() if v]
+        if self.boost:      # the boost sits right before the amp: show it in signal order
+            i = next((n for n, p in enumerate(parts) if p.startswith("amp=")), len(parts))
+            parts.insert(i, "boost=pedal.ts")
+        return f"{self.topology}{'+boost' if self.boost else ''}: " + " | ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -102,15 +120,17 @@ class P:
     hi: float
     default: float
     log: bool = False
-    group: str = "linear"      # "linear" (cheap, post-NAM) | "gain" (needs NAM re-render)
+    group: str = "linear"      # "linear" (cheap, post-NAM) | "gain" (needs NAM re-render) | "discrete" (not in CMA-ES: tried after it)
     eq_gain: bool = False      # counts toward the EQ-gain regulariser
 
 
 class Space:
     """Parameters for one combo shape ``(n_pedals_a, n_pedals_b | None)``."""
 
-    def __init__(self, shape: tuple):
+    def __init__(self, shape: tuple, boost: bool = False, filters: bool = True):
         na, nb = shape
+        if boost and nb is not None:
+            raise ValueError("the tight boost is a single-path variant")
         ps: list[P] = []
         paths = "a" if nb is None else "ab"
         if nb is not None:
@@ -127,19 +147,27 @@ class Space:
         ps.append(P("post.shelf_f", *SHELF_RANGE, float(np.sqrt(SHELF_RANGE[0] * SHELF_RANGE[1])), log=True))
         ps.append(P("post.shelf_g", *SHELF_GAIN_RANGE, 0.0))
         ps.append(P("post.lp", *POST_LP_RANGE, POST_LP_RANGE[1], log=True))
+        if filters:
+            ps.append(P("post.hp", *POST_HP_RANGE, POST_HP_RANGE[0], log=True))
+            ps.append(P("post.hp_slope", 0.0, 1.0, SLOPE_DEFAULT, group="discrete"))
+            ps.append(P("post.lp2", *POST_LP2_RANGE, POST_LP2_RANGE[1], log=True))
+            ps.append(P("post.lp2_slope", 0.0, 1.0, SLOPE_DEFAULT, group="discrete"))
         gains = [f"a.{i}" for i in range(na)] + ["a.amp"]
         if nb is not None:
             gains += [f"b.{i}" for i in range(nb)] + ["b.amp"]
         for g in gains:
             ps.append(P(f"gain.{g}", -NAM_GAIN, NAM_GAIN, 0.0, group="gain"))
+        if boost:
+            for name, lo, hi, d in BOOST_PARAMS:
+                ps.append(P(f"boost.{name}", lo, hi, d, group="gain"))
         self.params = ps
         self.names = [p.name for p in ps]
         self.idx = {p.name: i for i, p in enumerate(ps)}
         self.shape = shape
 
     @staticmethod
-    def for_combo(combo: Combo) -> "Space":
-        return Space(combo.shape())
+    def for_combo(combo: Combo, filters: bool = True) -> "Space":
+        return Space(combo.shape(), boost=combo.boost, filters=filters)
 
     def __len__(self) -> int:
         return len(self.params)
@@ -180,12 +208,48 @@ def path_eq(v: dict[str, float], path: str) -> list[dict]:
     return bands
 
 
+def pass_bands(kind: str, freq: float, slope: float) -> list[dict]:
+    """High-/low-pass band(s) for a slope parameter: < 0.5 = one 12 dB/oct biquad (q 0.707), >= 0.5 = 24 dB/oct as two
+    cascaded biquads with the 4th-order Butterworth Qs (0.541 and 1.307)."""
+    if slope >= 0.5:
+        return [{"type": kind, "freq": float(freq), "q": q} for q in BUTTER4_Q]
+    return [{"type": kind, "freq": float(freq), "q": 0.707}]
+
+
+def post_filters_from_eq(bands: list[dict]) -> dict:
+    """Inverse of the post-cab filter emission (round trip of the preset): ``{"hp": (freq, slope) | None, "lowpass":
+    [(freq, slope), ...]}`` with slope 12 or 24 dB/oct. A single 12 dB low-pass is ``post.lp`` or ``post.lp2`` (the preset
+    cannot tell them apart); a 24 dB pair is always ``post.lp2``."""
+    def groups(kind):
+        bs = [b for b in bands if b.get("type") == kind and b.get("enabled", True)]
+        out, i = [], 0
+        while i < len(bs):
+            if (i + 1 < len(bs) and abs(bs[i]["q"] - BUTTER4_Q[0]) < 2e-3 and abs(bs[i + 1]["q"] - BUTTER4_Q[1]) < 2e-3
+                    and abs(bs[i]["freq"] - bs[i + 1]["freq"]) < 1e-6 * bs[i]["freq"]):
+                out.append((float(bs[i]["freq"]), 24))
+                i += 2
+            else:
+                out.append((float(bs[i]["freq"]), 12))
+                i += 1
+        return out
+    hp = groups("highPass")
+    return {"hp": hp[0] if hp else None, "lowpass": groups("lowPass")}
+
+
 def post_eq(v: dict[str, float]) -> list[dict]:
     bands = [_peak(v[f"post.f{i}"], v[f"post.g{i}"]) for i in range(3)]
     if "post.shelf_g" in v and v["post.shelf_g"] < -1e-3:
         bands.append({"type": "highShelf", "freq": float(v["post.shelf_f"]), "gainDb": float(v["post.shelf_g"]), "q": 0.707})
     if "post.lp" in v and v["post.lp"] < POST_LP_RANGE[1] * 0.999:
         bands.append({"type": "lowPass", "freq": float(v["post.lp"]), "q": 0.707})
+    if "post.hp" in v:        # v0.4M post-cab filters; at the range edge with the 12 dB slope a filter is off
+        s = v.get("post.hp_slope", SLOPE_DEFAULT)
+        if v["post.hp"] > POST_HP_RANGE[0] * 1.001 or s >= 0.5:
+            bands += pass_bands("highPass", v["post.hp"], s)
+    if "post.lp2" in v:
+        s = v.get("post.lp2_slope", SLOPE_DEFAULT)
+        if v["post.lp2"] < POST_LP2_RANGE[1] * 0.999 or s >= 0.5:
+            bands += pass_bands("lowPass", v["post.lp2"], s)
     return bands
 
 
@@ -208,16 +272,30 @@ def _nam(id_, slot, cap: Capture, gain_db: float, normalize: bool) -> dict:
     return b
 
 
-def chain_blocks(pfx: str, pedals, amp: Capture, v: dict[str, float]) -> list[dict]:
-    """Blocks of one path: pedals then the amp (ids a1.., b1..; amps get loudness normalisation)."""
+def boost_block(id_: str, v: dict[str, float]) -> dict:
+    """The tight boost: modeled ``pedal.ts`` (slot ``boost``, model version 1) with the ``boost.*`` parameters."""
+    return {"id": id_, "type": "pedal.ts", "slot": "boost", "modelVersion": 1,
+            "params": {n: float(v.get(f"boost.{n}", d)) for n, _, _, d in BOOST_PARAMS}}
+
+
+def chain_blocks(pfx: str, pedals, amp: Capture, v: dict[str, float], boost: bool = False) -> list[dict]:
+    """Blocks of one path: pedals, the optional tight boost, then the amp (ids a1.., b1..; amps get loudness
+    normalisation)."""
     blocks = [_nam(f"{pfx}{i + 1}", "pedal", p, v.get(f"gain.{pfx}.{i}", 0.0), False) for i, p in enumerate(pedals)]
-    blocks.append(_nam(f"{pfx}{len(pedals) + 1}", "amp", amp, v.get(f"gain.{pfx}.amp", 0.0), True))
+    if boost:
+        blocks.append(boost_block(f"{pfx}{len(blocks) + 1}", v))
+    blocks.append(_nam(f"{pfx}{len(blocks) + 1}", "amp", amp, v.get(f"gain.{pfx}.amp", 0.0), True))
     return blocks
+
+
+def block_latency(blocks: list[dict]) -> int:
+    """Processing latency (samples) the modeled pedal blocks of a chain add (NAM captures: 0 in the matcher's pool)."""
+    return PEDAL_LATENCY * sum(1 for b in blocks if str(b.get("type", "")).startswith("pedal."))
 
 
 def path_blocks(combo: Combo, v: dict[str, float], path: str) -> list[dict]:
     if path == "a":
-        return chain_blocks("a", combo.a_pedals, combo.a_amp, v)
+        return chain_blocks("a", combo.a_pedals, combo.a_amp, v, combo.boost)
     return chain_blocks("b", combo.b_pedals or (), combo.b_amp, v)
 
 

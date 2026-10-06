@@ -141,6 +141,15 @@ class Screener:
         self.prog = prog or NullProgress()
         self.stats: dict = {}
         self.v0 = DEFAULT_V
+        # (pedal keys, amp key) -> {"coarse": LTAS err, "full": LTAS err, "blendBest": best blend LTAS err}; for --trace-tones
+        self.pair_log: dict[tuple, dict] = {}
+
+    def _log_pairs(self, pairs, errs, field: str, blend_best=None):
+        for i, (p, a) in enumerate(pairs):
+            d = self.pair_log.setdefault((tuple(c.key for c in p), a.key), {})
+            d[field] = float(errs[i])
+            if blend_best is not None:
+                d["blendBest"] = float(blend_best[i])
 
     # ---- helpers ------------------------------------------------------------------------------------------------
     def _cores(self, chains: list[tuple], ex=None, progress=None) -> list[np.ndarray]:
@@ -227,6 +236,7 @@ class Screener:
             del mats, lc
             n_keep = max(plan.coarse_min_keep, int(np.ceil(plan.coarse_keep * len(pairs))))
             keep = select_coarse(e1c, ebc, n_keep)
+            self._log_pairs(pairs, e1c, "coarse")
             self.prog.best(min(float(e1c.min()), float(ebc.min())))
             self.stats["coarse"] = {"pairs": len(pairs), "kept": len(keep), "bestSingleDb": float(e1c.min()),
                                     "bestBlendDb": float(ebc.min())}
@@ -246,6 +256,7 @@ class Screener:
         e1 = single_errors(pw, self.tgt.ref.band_db, self.tgt.hf_limit_hz)
         eb, bb = blend_errors(mats, pw, self.tgt.ref.band_db, self.tgt.hf_limit_hz)
         del mats
+        self._log_pairs(pairs, e1, "full", np.minimum(eb.min(axis=1), eb.min(axis=0)))
         self.prog.best(min(float(e1.min()), float(eb.min())))
         tm["pairScoring"] = time.time() - t1
         self.log(f"stage1: scored; best single {e1.min():.2f} dB, best blend {eb.min():.2f} dB ({time.time() - t0:.0f}s)")
@@ -312,6 +323,18 @@ class Screener:
             return self._score(combo, v, cores, align, levels=levels)
 
         res = eng.map(rescore, cands)
+        if name == "single" and getattr(self.plan, "boost", True):
+            # v0.4M tight boost: each re-scored single combo also competes with the modeled pedal.ts directly before the
+            # amp (default knobs 1 / 8 / 5); one extra NAM render per combo, everything else is the memoised linear part
+            def boost_job(item):
+                combo = item[0]
+                bc = Combo(combo.a_pedals, combo.a_amp, None, None, combo.cab, True)
+                v = Space.for_combo(bc).default()
+                return self._score(bc, v, (eng.core(bc, v, "a", self.ex.x),), manual_align(0, False))
+            boosted = eng.map(boost_job, cands)
+            self.stats["tightBoost"] = {"tried": len(boosted), "bestLoss": min((b.loss for b in boosted), default=None),
+                                        "bestPlainLoss": min((r.loss for r in res), default=None)}
+            res = res + boosted
         res.sort(key=lambda s: s.loss)
         self.log(f"stage1[{name}]: {len(res)} rescored with the full loss ({time.time() - t0:.0f}s); best {res[0].loss:.3f}")
 
