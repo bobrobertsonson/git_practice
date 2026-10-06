@@ -314,7 +314,83 @@ def test_build_target_carries_the_feel_target(tmp_path):
     t2 = build_target(mix, ex)
     assert not t2.feel.fizz_on and "fizz" in t2.feel.dropped
     # no matched pair: soft target from the reference's own features, every weight halved
-    soft_ref = load_reference(p, channel="mid", stems_dir=none)
+    soft_ref = load_reference(p, channel="mid", stems_dir=none, clean=True)
     t3 = build_target(soft_ref, ex)
     assert t3.feel.mode == "soft" and t3.feel.scale == 0.5 and t3.feel.fizz_on
     assert np.isfinite(L.evaluate(riff(2)[:3 * FS], t3).total)
+
+
+def test_full_mix_matched_channel_drops_tight_floor_flux_crest_with_reasons(tmp_path):
+    from sawblade_match.matcher import loss as L
+    from sawblade_match.matcher.reference import build_target, feel_off_terms, feel_tight_state, load_reference, make_excerpt
+    none = tmp_path / "no_stems"
+    st = _wav(tmp_path / "stereo.wav", np.stack([riff(1), riff(2)], axis=1))
+    mix = load_reference(st, matched="left", offset_ms=0.0, stems_dir=none, channel="left")
+    on, why = feel_tight_state(mix)
+    assert not on and "full mix" in why and "bass/kick" in why
+    assert set(feel_off_terms(mix)) == {"floor", "flux", "crest"}
+    di = riff(7).astype(np.float32)
+    ex = make_excerpt(di, 3.0, window=(0, 3 * FS), ref=mix)
+    tgt = build_target(mix, ex)
+    r = L.evaluate(riff(2, fizz_db=-14)[:3 * FS], tgt)
+    dr = r.feel_terms["dropped"]
+    assert {"tight", "fizz", "floor", "flux", "crest"} <= set(dr) and "bass/kick" in dr["tight"]
+    assert r.feel_terms["tight"] is None and r.feel_terms["fizz"] is None and r.feel_terms["polish"] is None
+    assert tgt.feel.summary()["dropped"]["tight"] == dr["tight"]
+    clean = load_reference(st, matched="left", offset_ms=0.0, stems_dir=none, clean=True)
+    assert feel_tight_state(clean) == (True, None) and feel_off_terms(clean) == {}
+    # a clean mono matched file declared a mix with --no-ref-clean / --ref-mix
+    p = _wav(tmp_path / "amp.wav", riff(1))
+    forced = load_reference(p, matched="mono", offset_ms=0.0, stems_dir=none, clean=False)
+    assert not feel_tight_state(forced)[0] and any("full mix" in n for n in forced.notes)
+    implied = load_reference(p, matched="mono", offset_ms=0.0, stems_dir=none)
+    assert any("implied by --matched mono" in n and "--ref-mix" in n for n in implied.notes)
+
+
+def test_stem_basis_keeps_flux_and_crest_but_not_floor():
+    from sawblade_match.matcher.reference import Reference, feel_off_terms, feel_tight_state
+    stem = Reference("r", "r.wav", "stem:x", np.zeros(10), 0.0, matched_sig=np.zeros(10), texture=True)
+    assert feel_off_terms(stem).keys() == {"floor"} and feel_tight_state(stem)[0]
+
+
+def test_cli_ref_clean_flags():
+    from sawblade_match.matcher.cli import build_parser
+    base = ["--di", "d.wav", "--ref", "r.wav", "--pool", "p.json"]
+    pr = build_parser()
+    assert pr.parse_args(base).ref_clean is None
+    assert pr.parse_args(base + ["--ref-clean"]).ref_clean is True
+    assert pr.parse_args(base + ["--no-ref-clean"]).ref_clean is False
+    assert pr.parse_args(base + ["--ref-mix"]).ref_clean is False
+
+
+def test_stft_cache_is_bit_identical():
+    from sawblade_match.matcher import loss as L
+    ref = riff(1, fizz_db=-14)
+    out = riff(2, tau=0.05)
+    act = activity(ref)
+    cache = {}
+    plain = L.stft_loss(out, ref, act, 8000.0)
+    first = L.stft_loss(out, ref, act, 8000.0, cache)
+    second = L.stft_loss(riff(2, tau=0.05), ref, act, 8000.0, cache)
+    assert plain == first == second and len(cache) == len(L.STFT_SIZES)
+    assert L.stft_loss(out * 0.5, ref, act, 8000.0, cache) == L.stft_loss(out * 0.5, ref, act, 8000.0)
+
+
+def test_odd_length_envelope_is_the_hilbert_envelope():
+    n = 1000
+    t = np.arange(n) / FS
+    x = np.sin(2 * np.pi * 6000 * t)
+    for m in (999, 1000):
+        env = F._analytic_abs(x[:m])
+        assert np.all(np.abs(env[100:m - 100] - 1.0) < 0.05)
+
+
+def test_non_finite_feel_is_null_in_the_json():
+    from sawblade_match.matcher import loss as L
+    x = riff(1)
+    starts = L.segment_starts(len(x), None)
+    tgt = L.Target(starts, L.features(x, starts, None), None, activity(x), None, feel=target(x))
+    bad = riff(2)
+    bad[10] = np.inf
+    d = L.evaluate(bad, tgt).as_dict()
+    assert d["feel"] is None and d["feelTerms"]["nonFinite"] is True

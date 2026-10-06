@@ -32,7 +32,10 @@ total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched
              (/ 0.5 dB) and of the per-400 ms crest (/ 1.5 dB), plus the inter-note floor re the active level, one-sided
              (/ 6 dB). Matched pair: note by note against the aligned reference; otherwise the reference's own
              features are compared as distributions, every weight x 0.5 and ``floor`` dropped. All gain invariant. Terms
-             with too little data (< 3 notes, < 100 ms of gaps, ...) are dropped and recorded in ``feelTerms.dropped``.
+             with too little data (< 3 notes, < 100 ms of gaps, ...) are dropped and recorded in ``feelTerms.dropped``. A reference
+             that is a full mix (matched channel not clean / not a stem) switches off fizz, tightness, flux, crest and floor;
+             the floor also needs a clean track (see ``reference.feel_*_state``). The Occam margins in ``run.choose`` (0.1 dB,
+             0.05 dB) now apply to a total that includes this dimensionless term; to be revisited in D.1.
 """
 from __future__ import annotations
 
@@ -172,28 +175,38 @@ def _logmag(x: np.ndarray, n: int) -> np.ndarray:
     return f, 20 * np.log10(np.maximum(np.abs(Z), 1e-7))
 
 
-def stft_loss(out: np.ndarray, ref: np.ndarray, active: np.ndarray | None = None, fmax: float = 8000.0) -> float:
-    """Asymmetric multi-resolution log-magnitude error (dB), see module docstring. ``out``/``ref`` aligned."""
+def stft_loss(out: np.ndarray, ref: np.ndarray, active: np.ndarray | None = None, fmax: float = 8000.0,
+              cache: dict | None = None) -> float:
+    """Asymmetric multi-resolution log-magnitude error (dB), see module docstring. ``out``/``ref`` aligned.
+    ``cache`` (a dict owned by one Target: the reference, ``active`` and ``fmax`` are fixed for it) keeps the reference
+    side per FFT size (selected log-magnitudes, valid mask, column mask); the result is bit-identical to the uncached call."""
     n = min(len(out), len(ref))
     out, ref = out[:n], ref[:n]
     vals = []
     for size in STFT_SIZES:
         if n < size * 2:
             continue
+        key = (size, n)
+        hit = None if cache is None else cache.get(key)
         f, lo = _logmag(out, size)
-        _, lr = _logmag(ref, size)
-        sel = (f >= 100) & (f <= fmax)
-        lo, lr = lo[sel], lr[sel]
-        cols = np.ones(lo.shape[1], bool)
-        if active is not None:
-            hop = size // 4
-            centres = np.arange(lo.shape[1]) * hop + size // 2
-            cols = active[np.minimum(centres, len(active) - 1)]
-            if cols.sum() < 4:
-                cols = np.ones(lo.shape[1], bool)
-        d = lo[:, cols] - lr[:, cols]
-        floor = lr[:, cols].max() - 80.0       # ignore bins >80 dB under the reference peak
-        valid = lr[:, cols] > floor
+        if hit is None:
+            _, lr = _logmag(ref, size)
+            sel = (f >= 100) & (f <= fmax)
+            lr = lr[sel]
+            cols = np.ones(lr.shape[1], bool)
+            if active is not None:
+                hop = size // 4
+                centres = np.arange(lr.shape[1]) * hop + size // 2
+                cols = active[np.minimum(centres, len(active) - 1)]
+                if cols.sum() < 4:
+                    cols = np.ones(lr.shape[1], bool)
+            lrc = lr[:, cols]
+            valid = lrc > (lrc.max() - 80.0)     # ignore bins >80 dB under the reference peak
+            hit = (sel, cols, lrc, valid)
+            if cache is not None:
+                cache[key] = hit
+        sel, cols, lrc, valid = hit
+        d = lo[sel][:, cols] - lrc
         d = d - np.mean(d[valid])
         e = np.where(d > 0, d, -STFT_UNDER_WEIGHT * d)
         vals.append(float(np.mean(e[valid])))
@@ -212,6 +225,7 @@ class Target:
     hf_limit_hz: float | None = None    # full-mix basis: LTAS above this is a one-sided ceiling (and 8-12 kHz too)
     stft_fmax: float = 8000.0
     feel: "_feel.FeelTarget | None" = None   # v0.4M feel features of the reference (None: no feel term)
+    stft_cache: dict = field(default_factory=dict, compare=False, repr=False)   # reference side of stft_loss, per size
 
 
 @dataclass
@@ -239,6 +253,8 @@ class LossResult:
         d = {k: (None if v is None else (float(v) if not isinstance(v, dict) else v))
              for k, v in self.__dict__.items()}
         d["feelTerms"] = d.pop("feel_terms")
+        if d.get("feel") is not None and not np.isfinite(d["feel"]):
+            d["feel"] = None                  # non-finite render: null in result.json (total is inf as before)
         return d
 
 
@@ -249,7 +265,7 @@ def evaluate(out: np.ndarray, tgt: Target, eq_gains_db: np.ndarray | None = None
     decay = None
     if f.decay is not None and tgt.ref.decay is not None:
         decay = abs(f.decay - tgt.ref.decay)
-    stft = stft_loss(out, tgt.matched, tgt.active, tgt.stft_fmax) if tgt.matched is not None else None
+    stft = stft_loss(out, tgt.matched, tgt.active, tgt.stft_fmax, tgt.stft_cache) if tgt.matched is not None else None
     tex = 0.0
     if tgt.texture:
         tex = W_FLAT * abs(f.flat - tgt.ref.flat) + W_HF * abs(f.hf_db - tgt.ref.hf_db)

@@ -261,7 +261,7 @@ def _analytic_abs(y: np.ndarray) -> np.ndarray:
         m = _fast_len(len(seg))
         Z = np.zeros(m, complex)
         Z[:m // 2 + 1] = np.fft.rfft(seg, m)
-        Z[1:m // 2] *= 2.0
+        Z[1:(m + 1) // 2] *= 2.0
         env = np.abs(np.fft.ifft(Z))[:len(seg)]
         out[s:min(len(y), s + chunk)] = env[s - a:s - a + min(chunk, len(y) - s)]
     return out
@@ -330,7 +330,8 @@ class Measured:
     floor: float | None = None
 
 
-def measure(x: np.ndarray, plan: _Plan, *, notes: bool = True, fizz: bool = True, floor: bool = True) -> Measured:
+def measure(x: np.ndarray, plan: _Plan, *, notes: bool = True, fizz: bool = True, floor: bool = True,
+            flux: bool = True, crest: bool = True) -> Measured:
     x = np.asarray(x, dtype=np.float64)
     if len(x) < plan.n:
         x = np.concatenate([x, np.zeros(plan.n - len(x))])
@@ -340,8 +341,10 @@ def measure(x: np.ndarray, plan: _Plan, *, notes: bool = True, fizz: bool = True
         m.notes = note_stats(lowband_power(x, plan.nf), plan)
     if fizz and len(plan.fizz_starts) >= MIN_FRAMES:
         m.fizz = fizz_features(x, plan.fizz_starts)
-    m.flux = flux_values(x, plan)
-    m.crest = crest_values(x, plan)
+    if flux:
+        m.flux = flux_values(x, plan)
+    if crest:
+        m.crest = crest_values(x, plan)
     if floor:
         m.floor = floor_db(x, plan)
     return m
@@ -364,6 +367,7 @@ class FeelTarget:
     ref_note_set: str | None = None
     ref_counts: dict | None = None
     dropped: dict = field(default_factory=dict)
+    off: frozenset = frozenset()        # terms switched off by the caller (floor / flux / crest), reasons in ``dropped``
 
     def summary(self) -> dict:
         """What the reference looks like through these features (for result.json)."""
@@ -389,19 +393,25 @@ class FeelTarget:
 def make_target(di: np.ndarray, onsets_s: np.ndarray | None, mask: np.ndarray | None,
                 gaps: list[tuple[int, int]] | None, ref_sig: np.ndarray | None = None, *,
                 fizz_on: bool = True, fizz_reason: str | None = None,
+                tight_on: bool = True, tight_reason: str | None = None, off: dict | None = None,
                 soft_ref: tuple | None = None, cache: dict | None = None) -> FeelTarget:
     """Feel target. Matched pair: ``ref_sig`` is the reference aligned to ``di`` (same length), compared note by note
     and frame by frame. Soft: ``soft_ref = (signal, active_mask, onsets_s)`` is the reference's guitar-dominant
     signal in its own timeline, compared as distributions; ``cache`` (a dict kept on the Reference) memoises its
-    features across the excerpts. ``di``, ``onsets_s``, ``mask`` and ``gaps`` (sample index pairs) are the DI's."""
+    features across the excerpts. ``fizz_on`` / ``tight_on`` switch those terms off (with the reason, recorded as
+    dropped) when the reference cannot be trusted there (a full mix: cymbals above 5 kHz, bass and kick in the low
+    band); ``off`` does the same for "floor", "flux" and "crest" ({name: reason}). ``di``, ``onsets_s``, ``mask`` and ``gaps`` (sample index pairs) are the DI's."""
     di = np.asarray(di, dtype=np.float64)
     plan = _Plan(len(di), mask, onsets_s, gaps)
     sel = note_set = None
     counts = {"onsets": int(len(plan.onsets)), "counting": 0, "chugs": 0, "used": 0}
     dropped: dict = {}
-    if len(plan.j0):
+    off = dict(off or {})
+    if tight_on and len(plan.j0):
         sel, note_set, counts = select_notes(note_stats(lowband_power(di, plan.nf), plan))
-    if sel is None:
+    if not tight_on:
+        dropped["tight"] = tight_reason or "reference low end not usable"
+    elif sel is None:
         dropped["tight"] = f"fewer than {MIN_NOTES} usable notes in the DI excerpt ({counts['onsets']} onsets, " \
                            f"{counts['counting']} counting)"
     if not fizz_on:
@@ -409,17 +419,19 @@ def make_target(di: np.ndarray, onsets_s: np.ndarray | None, mask: np.ndarray | 
     if soft_ref is None:
         assert ref_sig is not None
         rs = np.asarray(ref_sig, dtype=np.float64)[:len(di)]
-        ref = measure(rs, plan, notes=sel is not None, fizz=fizz_on)
+        ref = measure(rs, plan, notes=sel is not None, fizz=fizz_on, floor="floor" not in off,
+                      flux="flux" not in off, crest="crest" not in off)
         ft = FeelTarget("paired", 1.0, plan, sel, note_set, counts, fizz_on, fizz_reason, ref)
-        if not plan.gap_ok:
+        if "floor" not in off and not plan.gap_ok:
             dropped["floor"] = f"less than {int(FLOOR_MIN_S * 1000)} ms of DI gaps in the excerpt"
     else:
         sig, rmask, ron = soft_ref
-        key = ("soft", fizz_on)
+        key = ("soft", fizz_on, tight_on, "flux" not in off, "crest" not in off)
         hit = None if cache is None else cache.get(key)
         if hit is None:
             rplan = _Plan(len(sig), rmask, ron, None)
-            rm = measure(sig, rplan, notes=True, fizz=fizz_on, floor=False)
+            rm = measure(sig, rplan, notes=tight_on, fizz=fizz_on, floor=False, flux="flux" not in off,
+                         crest="crest" not in off)
             rsel, rns, rcounts = (None, None, {"onsets": int(len(rplan.onsets)), "counting": 0, "chugs": 0, "used": 0})
             if rm.notes is not None:
                 rsel, rns, rcounts = select_notes(rm.notes)
@@ -429,11 +441,13 @@ def make_target(di: np.ndarray, onsets_s: np.ndarray | None, mask: np.ndarray | 
         rplan, rm, rsel, rns, rcounts = hit
         ft = FeelTarget("soft", SOFT_SCALE, plan, sel, note_set, counts, fizz_on, fizz_reason, rm, rplan, rsel, rns,
                         rcounts)
-        if rsel is None:
+        if rsel is None and tight_on:
             dropped["tight"] = f"fewer than {MIN_NOTES} usable notes in the reference " \
                                f"({rcounts['onsets']} onsets, {rcounts['counting']} counting)"
         dropped["floor"] = "no matched pair: the reference has no clean DI-aligned gaps"
+    dropped.update({k: v for k, v in off.items()})
     ft.dropped = dropped
+    ft.off = frozenset(off)
     return ft
 
 
@@ -455,7 +469,9 @@ def evaluate(out: np.ndarray, ft: FeelTarget) -> tuple[float, dict]:
         return float("inf"), terms
     fz_on = ft.fizz_on and ft.ref.fizz is not None
     tight_on = ft.sel is not None and ft.ref.notes is not None and (not soft or ft.ref_sel is not None)
-    m = measure(out, ft.plan, notes=tight_on, fizz=fz_on, floor=not soft and ft.plan.gap_ok)
+    m = measure(out, ft.plan, notes=tight_on, fizz=fz_on,
+                floor=not soft and ft.plan.gap_ok and "floor" not in ft.off,
+                flux="flux" not in ft.off, crest="crest" not in ft.off)
     total = 0.0
     # --- tightness
     tight = None

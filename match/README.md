@@ -294,7 +294,7 @@ libraries although inference runs on CPU). The real-demucs test runs only with `
 
 ```
 sawblade-match --di Guitar_L.wav [--di-r Guitar_R.wav] --ref REF.mp3 --pool ~/.cache/sawblade/captures/pool_manifest.json
-               [--matched left|right|mono] [--offset-ms N] [--ref-clean] [--ref-channel auto|side|left|right|mid] [--ref-section A:B ...]
+               [--matched left|right|mono] [--offset-ms N] [--ref-clean|--no-ref-clean|--ref-mix] [--ref-channel auto|side|left|right|mid] [--ref-section A:B ...]
                [--stems-dir DIR] [--profile derived|<id>|PATH] [--base-profile swedish_death_hm2] [--prescreen N]
                [--out DIR] [--budget 1.0] [--seed 0] [--excerpt-s 6] [--top-k 3] [--threads|--jobs 4]
                [--quick | --thorough] [--progress-json PATH] [--listen]
@@ -340,11 +340,16 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   implementation) per topology, blocks linear -> NAM gains -> linear. **Stage 3**: full-length L/R renders with the real chain,
   `sawblade-tonecheck` against the profile on the best and on the **generic starter baseline** (first amp + first cab of the pool, no pedals, no EQ; class-agnostic, it is also the render used for the first offset refinement and the 'before' numbers), clip guard on max(L, R).
 * **Clean (isolated) references** (v0.4M): `--matched mono` (or `--ref-clean`, e.g. with `--matched left` on a stereo amp print) declares the
-  reference file an isolated guitar track, not a mix. Its own signal is then the target (`ref-channel auto` = the matched channel, no
-  stem lookup), there is **no HF limit** (nothing but the guitar above 5 kHz, so the LTAS is fitted up to 8 kHz and the STFT term is
-  not cut at 4.5 kHz) and the fizz feel term is on. Before v0.4M a mono `--matched mono` file took the full-mix fallback (basis `mid`,
-  4.5 kHz ceiling, fizz not measurable). A matched channel that is a full mix keeps the limit/fizz-off behaviour; `result.json ->
-  reference.clean` and `referenceTarget.feel.fizzOn` say which applies.
+  reference file an isolated guitar track, not a mix; `--no-ref-clean` / `--ref-mix` declares a mono matched file a full mix. The run
+  start logs which reading applies ("reference treated as an isolated guitar track (implied by --matched mono); use --ref-mix for a full
+  mix"). A clean reference's own signal is the target (`ref-channel auto` = the matched channel, no stem lookup), there is **no HF limit**
+  (the LTAS is fitted up to 8 kHz and the STFT term is not cut at 4.5 kHz) and all feel terms are on. Before v0.4M a `--matched mono` file
+  took the full-mix fallback (basis `mid`, 4.5 kHz ceiling, fizz not measurable). `--matched mono` on a stereo file uses the channel
+  mean for both the LTAS target and the STFT/feel signal. A matched full-mix channel (not clean, not a stem) switches off the feel
+  terms its content makes meaningless: fizz (cymbals), tightness (bass/kick), flux and crest (drums), and floor (also off on a stem
+  basis, whose gaps are separation artefacts); an unmatched full-mix channel keeps flux/crest but not fizz, and tightness only on the
+  side channel. Each switched-off term is listed with its reason in `feelTerms.dropped`, `referenceTarget.feel.dropped` and the run log;
+  `result.json -> reference.clean` says which reading was used.
 * **Feel term** (v0.4M, `matcher/feel.py`, `feelTerms` in every `breakdown`): the LTAS finds the average spectrum, this finds how the tone
   behaves. `feel = 0.5 tight + 0.5 fizz + 0.25 polish` added to the total (initial weights, tuned in Task D). *tight*: per-note 60-250 Hz
   12 dB decay time (t12) and 40-120 ms sustain after the DI's palm-muted chugs (>= 3, else all notes; one-sided: floppier than the
