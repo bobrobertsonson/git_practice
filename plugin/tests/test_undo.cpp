@@ -348,9 +348,9 @@ json ladderRungs() {
 }
 
 // A path A amp that is a TONE3000 capture (T1 / m1), optionally with its ladder and active rung.
-json ampPreset(bool ladder, const char* gainStep = nullptr) {
+json ampPreset(bool ladder, const char* gainStep = nullptr, const char* toneId = "T1") {
   json model = {{"file", (kFixtures / "nam" / "linear_identity.nam").string()},
-                {"source", {{"provider", "tone3000"}, {"id", "T1"}, {"modelId", "m1"}, {"title", "Marshall A"}}}};
+                {"source", {{"provider", "tone3000"}, {"id", toneId}, {"modelId", "m1"}, {"title", "Marshall A"}}}};
   if (ladder) model["ladder"] = ladderRungs();
   json a = {{"blocks", json::array({{{"id", "a1"}, {"type", "nam"}, {"slot", "amp"}, {"model", model}}})}};
   if (gainStep) a["ampControls"] = {{"gainStep", gainStep}};
@@ -437,10 +437,39 @@ TEST_CASE("undo: a ladder written back later is patched into the stored snapshot
   REQUIRE(ctl.redo());
   u.settle();
   CHECK(ladderOf(u.h.p.currentPreset()) == 3);
-  // The match is structure-only: a snapshot whose amp is ANOTHER capture does not get the ladder.
-  Preset other = u.h.p.editBasePreset();
-  u.h.p.patchHistory([&](Preset& snap) { applyLadderToPreset(snap, "OTHER", rungs); });
-  CHECK(ladderOf(u.h.p.currentPreset()) == 3);
+}
+
+TEST_CASE("undo: a fetched ladder is patched only into snapshots whose amp is that capture", "[undo][rig][ladder]") {
+  // A step whose snapshot holds ANOTHER tone's amp (same model id, so only the tone id differs): patching the first tone's ladder must not
+  // give it one, and undoing to it shows no ladder.
+  Undo u;
+  u.h.load(writeJsonFile(u.tmp.dir, "amp", ampPreset(false, nullptr, "OTHER")));
+  RigController ctl(u.h.p);
+  u.h.p.historyClear();
+  ctl.edit([](Preset& p) { p.b.levelDb = -1.0; });
+  u.settle();
+  REQUIRE(u.h.p.undoSteps() == 1);
+  const auto rungs = rungsOf(ladderRungs());
+  u.h.p.patchHistory([&](Preset& snap) { applyLadderToPreset(snap, "T1", rungs); });
+  REQUIRE(ctl.undo());
+  u.settle();
+  const auto* n = dynamic_cast<const NamBlockParams*>(u.h.p.currentPreset().a.blocks[0].params.get());
+  REQUIRE(n != nullptr);
+  CHECK(n->model.source->id == "OTHER");
+  CHECK(n->model.ladder.empty());
+  // The same with the matching tone does give the snapshot the ladder (the rule is the tone id).
+  Undo v;
+  v.h.load(writeJsonFile(v.tmp.dir, "amp", ampPreset(false)));
+  RigController ctl2(v.h.p);
+  v.h.p.historyClear();
+  ctl2.edit([](Preset& p) { p.b.levelDb = -1.0; });
+  v.settle();
+  v.h.p.patchHistory([&](Preset& snap) { applyLadderToPreset(snap, "T1", rungs); });
+  REQUIRE(ctl2.undo());
+  v.settle();
+  const auto* m = dynamic_cast<const NamBlockParams*>(v.h.p.currentPreset().a.blocks[0].params.get());
+  REQUIRE(m != nullptr);
+  CHECK(m->model.ladder.size() == 3);
 }
 
 TEST_CASE("undo: a live edit while a load is in flight is one step measured on the preset the user sees", "[undo][rig]") {

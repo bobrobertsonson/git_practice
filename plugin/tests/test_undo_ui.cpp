@@ -276,7 +276,9 @@ namespace {
 void wheel(skin::FilmstripKnob& k, float dy) {
   juce::MouseWheelDetails wd{};
   wd.deltaY = dy;
-  const auto now = juce::Time::getCurrentTime();
+  // JUCE drops a wheel event whose eventTime equals the previous one: every notch gets a later time.
+  static juce::int64 tick = juce::Time::currentTimeMillis();
+  const auto now = juce::Time(++tick);
   const juce::Point<float> p(15.0f, 15.0f);
   k.mouseWheelMove(juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), p, juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &k, &k, now, p, now, 1, false), wd);
 }

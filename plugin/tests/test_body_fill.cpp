@@ -629,6 +629,7 @@ TEST_CASE("Body fill undo: the fill's amp arriving is patched into the history; 
   BfEnv settings("SAWBLADE_SETTINGS_FILE", (t.dir / "settings.json").string());
   Host h(48000.0, 512);
   h.load(writeSinglePreset(t.dir));
+  const Preset pre = h.p.currentPreset();
   RigController ctl(h.p);
   ctl.setTopology(Topology::Blend);
   REQUIRE(h.p.waitForLoader());
@@ -647,6 +648,13 @@ TEST_CASE("Body fill undo: the fill's amp arriving is patched into the history; 
   REQUIRE(ctl.redo());
   REQUIRE(h.p.waitForLoader());
   CHECK(ampOf(h.p.currentPreset().b)->model.source->id == "T9");
+  // The snapshot from before BLEND did NOT gain the amp (its path B is not what the fill made): undo through the fill to the pre-BLEND preset.
+  REQUIRE(ctl.undo());  // the level edit
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(ctl.undo());  // the fill
+  REQUIRE(h.p.waitForLoader());
+  CHECK(h.p.currentPreset() == pre);
+  CHECK(ampOf(h.p.currentPreset().b) == nullptr);
 }
 
 TEST_CASE("Body fill undo: redo into a blend path B that has no amp restarts the fill; an undo that empties path B cancels one in flight", "[bodyfill][rig][undo]") {

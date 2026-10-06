@@ -167,8 +167,8 @@ changed: undo / redo put back only those, so a value the host automated meanwhil
 - Steps: add / remove / reorder / bypass a block, a capture swap with its make-up, block parameters, EQ edits, cab / mic, gate / comp / alignment,
   topology and the BLEND fill (one step, with the knob back on full SAW), a user preset load (browser, file chooser, resolve) and an applied match
   (audition APPLY: one step back to the preset before the audition; the audition's own loads and its A / B toggles are not steps).
-- One step per gesture: a mouse drag (mouse down to mouse up, or a double-click) however many rebuilds it makes. Only a held mouse opens the
-  history gesture: JUCE wraps every wheel notch in a drag notification too, and those take the debounced path (a burst of notches inside the 150 ms
+- One step per gesture: a mouse drag (mouse down to mouse up) however many rebuilds it makes. Only a held mouse opens the
+  history gesture (a double-click does not: JUCE sends mouseDoubleClick after the mouse-up, so it takes the debounced path): JUCE wraps every wheel notch in a drag notification too, and those take the debounced path (a burst of notches inside the 150 ms
   debounce = one flush = one rebuild = one step; notches further apart are a step each). A typed value is one flush. A live knob (no rebuild) records
   one step per wheel notch / typed value.
 - Gesture ends carry a token: an end that arrives after the editor aborted its gestures (window closed mid-drag) cannot close a newer gesture. A
