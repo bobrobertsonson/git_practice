@@ -54,6 +54,12 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   rig::RigController& rigController();
   void refreshNow();
   bool keyPressed(const juce::KeyPress& k) override;
+  // Test hooks for the overlay checks of Cmd / Ctrl + Z.
+  void openCaptureBrowserForTests();
+  bool captureBrowserOpen() const;
+  void closeAllOverlaysForTests();
+  bool advancedDrawerOpen() const;
+  void setAdvancedDrawerOpen(bool open);
   void setFocusProbeForTests(std::function<juce::Component*()> probe);
 
   // The cab mic page (mic/MicPage): an overlay over the rig + inspector, opened by double-clicking the cab; UI state, never saved.

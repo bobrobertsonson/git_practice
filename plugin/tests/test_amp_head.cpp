@@ -334,76 +334,49 @@ TEST_CASE("amp head: Cmd / Ctrl + Z does not bubble into an undo from a focused 
   rig.ed->setFocusProbeForTests([] { return static_cast<juce::Component*>(nullptr); });
   rig.ed->removeChildComponent(&field);
 
-  // 2. An overlay is open: the editor does not undo underneath it, however the key arrives.
-  rig.ed->setSettingsOpen(true);
-  REQUIRE(rig.ed->settingsOpen());
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));
-  CHECK_FALSE(bubble(*rig.ed));
-  CHECK(rig.proc.currentPreset() == filled);
-  CHECK(rig.ed->rigController().canUndo());
-  // About (opened through the settings panel's button, then the settings panel closed: the about box alone is open).
-  rig.ed->setSettingsOpen(true);
-  for (auto* b : findAll<juce::Button>(*rig.ed))
-    if (b->getTitle() == "About Sawblade...") {
-      const auto c = b->getLocalBounds().toFloat().getCentre();
-      juce::Component& comp = *b;
-      comp.mouseDown(ev(comp, c, c));  // a mouse click, as the About test in test_editor.cpp does
-      comp.mouseUp(ev(comp, c, c));
-    }
-  REQUIRE(rig.ed->aboutOpen());
-  rig.ed->setSettingsOpen(false);
-  if (rig.ed->aboutOpen()) {
+  // 2. An overlay is open: the editor does not undo underneath it, however the key arrives. Every overlay is checked on its own:
+  // start from a verified "nothing open" state, open exactly that overlay, check the direct and the bubbled chord, close it again.
+  const auto allClosed = [&] {
+    return !rig.ed->settingsOpen() && !rig.ed->aboutOpen() && !rig.ed->browserOpen() && !rig.ed->matchScreenOpen() && !rig.ed->exportPanelOpen() &&
+           !rig.ed->micPageOpen() && !rig.ed->playAlongOpen() && !rig.ed->captureBrowserOpen() && !rig.ed->advancedDrawerOpen() && !rig.ed->rigEditorOpen();
+  };
+  const auto closeAll = [&] {
+    rig.ed->closeAllOverlaysForTests();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(30);  // the capture browser is released on the next loop turn
+    REQUIRE(allClosed());
+  };
+  const auto check = [&](const char* name, const std::function<void()>& open, const std::function<bool()>& isOpen) {
+    INFO(name);
+    closeAll();
+    open();
+    REQUIRE(isOpen());
     CHECK_FALSE(rig.ed->keyPressed(undoKey));
     CHECK_FALSE(bubble(*rig.ed));
-  }
-  rig.ed->setSettingsOpen(true);
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));  // about + settings open
-  rig.ed->setSettingsOpen(false);
-  // The preset browser.
-  rig.ed->setBrowserOpen(true);
-  REQUIRE(rig.ed->browserOpen());
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));
-  CHECK_FALSE(bubble(*rig.ed));
-  rig.ed->setBrowserOpen(false);
-  // The advanced pedal drawer.
-  auto drawers = findAll<AdvancedDrawer>(*rig.ed);
-  REQUIRE(drawers.size() == 1);
-  drawers[0]->setOpen(true, /*animate=*/false);
-  REQUIRE(drawers[0]->isVisible());
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));
-  CHECK_FALSE(bubble(*rig.ed));
-  drawers[0]->setOpen(false, /*animate=*/false);
-  rig.ed->openExportPanel();
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));
-  rig.ed->setPlayAlongOpen(true);
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));
-  rig.ed->setPlayAlongOpen(false);
-  rig.ed->setBrowserOpen(true);
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));
-  rig.ed->setBrowserOpen(false);
-  rig.ed->openMatchScreen();
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));
-  rig.ed->setMicPageOpen(true);
-  CHECK_FALSE(rig.ed->keyPressed(undoKey));
-  rig.ed->setMicPageOpen(false);
-  CHECK(rig.proc.currentPreset() == filled);
-
-  // Close what is still open (the about box has its own CLOSE; the other overlays close with the next one).
-  for (auto* b : findAll<juce::Button>(*rig.ed))
-    if (b->getTitle() == "CLOSE" && b->findParentComponentOfClass<about::AboutBox>() != nullptr) {
-      const auto c = b->getLocalBounds().toFloat().getCentre();
-      juce::Component& comp = *b;
-      comp.mouseDown(ev(comp, c, c));
-      comp.mouseUp(ev(comp, c, c));
-      break;
-    }
-  rig.ed->setSettingsOpen(false);
-  rig.ed->setPlayAlongOpen(false);
-  rig.ed->setMicPageOpen(false);
-  rig.ed->setBrowserOpen(false);
-  rig.ed->exportPanel().setVisible(false);
-  juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
-  CHECK_FALSE(rig.ed->aboutOpen());
+    CHECK(rig.proc.currentPreset() == filled);
+    CHECK(rig.ed->rigController().canUndo());
+    closeAll();
+  };
+  check("settings", [&] { rig.ed->setSettingsOpen(true); }, [&] { return rig.ed->settingsOpen(); });
+  check("about", [&] {
+          rig.ed->setSettingsOpen(true);
+          for (auto* b : findAll<juce::Button>(*rig.ed))
+            if (b->getTitle() == "About Sawblade...") {
+              const auto c = b->getLocalBounds().toFloat().getCentre();
+              juce::Component& comp = *b;
+              comp.mouseDown(ev(comp, c, c));  // a mouse click, as the About test in test_editor.cpp does
+              comp.mouseUp(ev(comp, c, c));
+            }
+          rig.ed->setSettingsOpen(false);  // the about box alone
+        },
+        [&] { return rig.ed->aboutOpen() && !rig.ed->settingsOpen(); });
+  check("preset browser", [&] { rig.ed->setBrowserOpen(true); }, [&] { return rig.ed->browserOpen(); });
+  check("capture browser", [&] { rig.ed->openCaptureBrowserForTests(); }, [&] { return rig.ed->captureBrowserOpen(); });
+  check("advanced drawer", [&] { rig.ed->setAdvancedDrawerOpen(true); }, [&] { return rig.ed->advancedDrawerOpen(); });
+  check("export panel", [&] { rig.ed->openExportPanel(); }, [&] { return rig.ed->exportPanelOpen(); });
+  check("play-along panel", [&] { rig.ed->setPlayAlongOpen(true); }, [&] { return rig.ed->playAlongOpen(); });
+  check("match screen", [&] { rig.ed->openMatchScreen(); }, [&] { return rig.ed->matchScreenOpen(); });
+  check("mic page", [&] { rig.ed->setMicPageOpen(true); }, [&] { return rig.ed->micPageOpen(); });
+  closeAll();
 
   // 3. The RIG editor is deliberately not an overlay for this purpose: with it open the chord undoes the fill (that is where path B is edited).
   rig.ed->setRigEditorOpen(true);

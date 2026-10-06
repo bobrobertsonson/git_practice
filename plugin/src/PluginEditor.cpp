@@ -453,6 +453,22 @@ class SawbladeEditor::Content : public juce::Component {
     return vis(drawer_.get()) || vis(settingsPanel_.get()) || vis(about_.get()) || vis(presetBrowser_.get()) || vis(screen_.get()) ||
            vis(exportPanel_.get()) || vis(micPage_.get()) || vis(browser_.get()) || vis(panel_.get());
   }
+  // Test hooks: the capture browser (the BROWSE CAPTURES overlay), and closing every overlay.
+  void openCaptureBrowserForTests() { openBrowser(); }
+  bool captureBrowserOpen() const { return browser_ != nullptr && browser_->isVisible(); }
+  void closeAllOverlays() {
+    settingsPanel_->close();
+    settingsBtn_.setToggleState(false, juce::dontSendNotification);
+    if (about_ != nullptr) about_->setVisible(false);
+    drawer_->setOpen(false, /*animate=*/false);
+    for (juce::Component* c : std::initializer_list<juce::Component*>{presetBrowser_.get(), screen_.get(), exportPanel_.get(), micPage_.get(), panel_.get(), rigPanel_.get()})
+      c->setVisible(false);
+    rigButton_.setToggleState(false, juce::dontSendNotification);
+    playAlong_.setToggleState(false, juce::dontSendNotification);
+    if (browser_ != nullptr) browser_->onClose();
+  }
+  bool drawerOpen() const { return drawer_->isVisible(); }
+  void setDrawerOpen(bool open) { drawer_->setOpen(open, /*animate=*/false); }
   void setFocusProbe(std::function<juce::Component*()> p) { focusProbe_ = std::move(p); }
   rig::RigController& rigControllerRef() { return *rigController_; }
   void mouseDown(const juce::MouseEvent& e) override {
@@ -655,6 +671,11 @@ AbCompare& SawbladeEditor::abCompare() { return content_->abCompare(); }
 rig::AmpHead& SawbladeEditor::ampHead(int path) { return content_->ampHead(path); }
 rig::RigController& SawbladeEditor::rigController() { return content_->rigControllerRef(); }
 void SawbladeEditor::refreshNow() { content_->refresh(); }
+void SawbladeEditor::openCaptureBrowserForTests() { content_->openCaptureBrowserForTests(); }
+bool SawbladeEditor::captureBrowserOpen() const { return content_->captureBrowserOpen(); }
+void SawbladeEditor::closeAllOverlaysForTests() { content_->closeAllOverlays(); }
+bool SawbladeEditor::advancedDrawerOpen() const { return content_->drawerOpen(); }
+void SawbladeEditor::setAdvancedDrawerOpen(bool open) { content_->setDrawerOpen(open); }
 void SawbladeEditor::setFocusProbeForTests(std::function<juce::Component*()> probe) { content_->setFocusProbe(std::move(probe)); }
 bool SawbladeEditor::keyPressed(const juce::KeyPress& k) { return content_->handleKey(k); }
 void SawbladeEditor::openMatchScreen() { content_->openMatchScreen(); }
