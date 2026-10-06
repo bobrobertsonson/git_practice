@@ -694,6 +694,23 @@ allocation and lock guards while a fake export job runs and the panel's glue is 
   `listen/ab_original_then_export.mp3`, else `.wav`, with the system player; hidden when neither exists; there is no in-plugin
   playback), the licence note.
 
+**Export notes (v0.4 Task E).** The right column of every view ends with the EXPORT NOTES box and a COPY button: every stage of
+the rig that is NOT in the trained model, in signal order, with hardware settings (gate: open / close threshold, attack, hold,
+release, range; the cab IR; the post EQ bands; the bus comp: threshold, ratio, attack, release, knee, make-up), each as one plain
+sentence, plus the loader order. *Before training* (and while training) the box shows the notes the plugin computes
+(`ExportNotes.{h,cpp}`, JUCE-free) for the mode and DROP COMP shown, and updates when they change; in a no-cab export the cab, the
+post EQ and the comp are always listed (they sit after the cab, which the model leaves out; DROP vs KEEP COMP only decides what is
+trained / judged), in a with-cab export only the gate (and the comp if a plan bypasses it). *After training* it shows the run
+report's `exportNotes` (`export_report.json`, v0.4M) when it is an object of `version` 1, else the plugin's notes for the finished
+run's mode with a dim "(computed by the plugin)" line. COPY puts the same text (`formatNotesTxt`, the text of
+`<name>.export_notes.txt`, closed by the personal-use licence note) on the clipboard through `ExportPanel::copyToClipboard`, the
+test seam (default `juce::SystemClipboard`).
+*Dependency on v0.4M:* `ExportNotes.cpp` is a port of `match/sawblade_match/export/notes.py` (`NOTES_VERSION = 1`, v0.4M commit
+9074c0b: `build_export_notes`, `format_notes_txt`). The parity fixtures in `plugin/tests/fixtures/export_notes/` were produced by
+running that Python (`generate.py` there has the command) and `plugin/tests/test_export_notes.cpp` requires the C++ output to
+equal them (numbers within 1e-9, strings and the txt exact). If v0.4M changes the format before or after it merges, regenerate the
+fixtures and follow in the port; a report whose `version` differs is not shown (the plugin's notes are).
+
 **Mode and comp rules.** A rig whose no-cab export is exact (shared cab, `irMix`, or no cab) defaults to NO CAB; per-path cabs
 (studio blend) default to WITH CAB and the NO CAB card is disabled. A mode saved in the state is honoured only while it is exact
 for the loaded rig. Comp on, NO CAB: DROP COMP (default, exact: the exported preset has `busComp.enabled = false`, since
