@@ -1,6 +1,8 @@
 // v0.2.1 Task B (plugin part): IMPORT DI... without any UI. The decode / channel / check / write path (DiImport.h,
 // TakeRecorder::importTake), the sidecar, the match plan and the matcher's command line for an imported take. The dialog, the take
 // lists and the drops are in test_di_import_ui.cpp (needs a display). Audio is synthesised into temp dirs; nothing is committed.
+#include <unistd.h>
+
 #include <cmath>
 #include <cstdint>
 #include <cstring>
