@@ -53,6 +53,38 @@ four suspects are each a deliverable, not a hypothesis:
 Report each suspect's measured contribution (feel terms + A-weighted error with it on vs off) on the synthetic
 known answer and, after the user runs them, on Bloodbath HM2 and UBR.
 
+## Task B3 — IR library: the user's own catalog + a wide TONE3000 sweep (user, 2026-10-06)
+
+User: "I have a large catalog of IRs, but we could allow a huge gamut of them from TONE3000."
+1. **Local IR library:** `sawblade-match --ir-dir DIR` (repeatable) and a persistent list in
+   `~/.config/sawblade/ir_dirs.json`. Scans .wav IRs recursively (mono/stereo, any rate → resampled), dedupes by
+   content hash, caches an index (`~/.cache/sawblade/ir_index.json`: path, hash, rate, length, folder-derived
+   tags such as cab / speaker / mic / position when the folder or file names say so). Licence recorded as
+   `user-owned` (never committed, never uploaded; presets reference them by hash + path).
+2. **Wide TONE3000 IR pull:** `sawblade-t3k pull --gear ir` with higher caps for IR packs (all models of the
+   included IR tones, not 3), still honouring the quality filter; plus `--ir-search QUERY` for cab families.
+3. **Scale:** thousands of IRs must stay fast. The cab is linear, so screen IRs analytically: render the chain up
+   to the cab once per candidate, then rank every IR by the spectral fit of (pre-cab spectrum × IR response) to
+   the reference, plus the fizz term; only the top N IRs (and top-N pairs for the two-IR blend) get full
+   renders. Target: 2000 IRs screened in ≤ 60 s on 4 cores. Report the IR pool size per run.
+4. The result records which IR (source: local / TONE3000, path or tone id) won.
+
+## Task E — NAM export notes: everything left out of the model, with settings
+
+User (2026-10-06): "if there is a compressor, it should be mentioned (and settings noted) on the NAM export so
+one can be added on a hardware device." Generalise: every NAM export writes `<name>.export_notes.txt` (human)
+and an `exportNotes` block in the export JSON next to the `.nam` listing each stage of the preset that is **not
+in the trained model**, in signal order, with its settings in hardware terms:
+- bus comp: threshold dB, ratio, attack ms, release ms, knee, make-up dB, sidechain HPF;
+- gate: threshold dB, attack / hold / release ms, keyed on DI;
+- cab IR when the export is no-cab: the IR name/source and mic, with "load this IR in your device";
+- post EQ / filters if excluded: each band (type, freq, gain, Q), HPF/LPF (freq, slope);
+- output trim / level-match gain (dB).
+Plus one line on where to put each stage around the loader pedal (before / after the NAM block). Also shown in
+the plugin's export panel later (plugin work is a separate phase; this task covers `match/sawblade_match/export`
+and the notes format, documented in `docs/PRESET_SCHEMA.md` or the export README). Test: an export of a preset with
+gate + fast bus comp + post EQ writes all three with the right numbers.
+
 ## Task C — honest level for listening
 
 Every listening render the matcher writes is loudness-matched to the reference (BS.1770 integrated, same
