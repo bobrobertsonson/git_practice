@@ -178,7 +178,21 @@ class SawbladeEditor::Content : public juce::Component {
       knobs_[static_cast<size_t>(d.param)] = std::move(k);
       return *knobs_[static_cast<size_t>(d.param)];
     };
-    addKnob({kBlend, "BLEND", FilmstripKnob::Kind::Amp, 0xffff6a1a}).onValueChange = [this] { updateReadouts(); };
+    FilmstripKnob& blendKnob = addKnob({kBlend, "BLEND", FilmstripKnob::Kind::Amp, 0xffff6a1a});
+    blendKnob.onValueChange = [this] { updateReadouts(); };
+    // v0.3 Task C: only a USER gesture on the knob (mouse down .. up, the wheel) turns a single-path rig into a blend. The knob's drag
+    // start / end are fired by the Slider for user input only: host automation moves the value through the parameter attachment, which
+    // never starts a drag, so it cannot change the topology. The switch happens at the drag end: the value has settled, so the rebuild
+    // that follows writes back the same BLEND value and cannot snap the knob while it is being dragged.
+    blendKnob.onDragStart = [this] {
+      blendGesture_ = true;
+      blendBefore_ = knobs_[kBlend]->getValue();
+    };
+    blendKnob.onDragEnd = [this] {
+      if (!blendGesture_) return;
+      blendGesture_ = false;
+      if (rigController_ && knobs_[kBlend]->getValue() > 0.0) rigController_->blendTurnedUp(blendBefore_);
+    };
     for (const KnobDef& d : kMaster) addKnob(d);
     for (int k = 0; k < kPostEqSlots; ++k) addKnob({kPostEqFirst + k, nullptr, FilmstripKnob::Kind::Pedal, 0xffff6a1a});
     knobs_[kGateThreshold]->onValueChange = [this] { updateReadouts(); };
@@ -316,6 +330,7 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
   void refresh() {
+    if (rigController_) rigController_->sync();  // drives the BLEND fill (BodyFill::tick) whether or not the rig editor is open
     const auto st = processor_.status();
     presetButton_.setButtonText(juce::String(st.presetName).toUpperCase());
     // LEVEL MATCH (v0.3): while the trim of this rig is being measured (background, a few seconds) the chip says so; the trim is
@@ -346,7 +361,7 @@ class SawbladeEditor::Content : public juce::Component {
 
     // Single topologies: path B is off, so its level and the blend are not editable (spec 4.1).
     const bool blendOn = rig::topologyOf(processor_.editBasePreset()) == rig::Topology::Blend;
-    knobs_[kBlend]->setEnabled(blendOn);
+    knobs_[kBlend]->setEnabled(true);  // always: turning it up from full SAW is what enables the blend topology (RigController::blendTurnedUp)
     knobs_[kLevelB]->setEnabled(blendOn);
 
     const SlotBands bands = processor_.postEqSlots();
@@ -354,7 +369,8 @@ class SawbladeEditor::Content : public juce::Component {
     updateReadouts();
     {
       const Preset shown = processor_.editBasePreset();
-      for (int path = 0; path < 2; ++path) ampHeads_[static_cast<size_t>(path)]->refresh(shown, processor_.ladderInfo(path));
+      const rig::FillStatus fill = rigController_ ? rigController_->bodyFill().status() : rig::FillStatus{};
+      for (int path = 0; path < 2; ++path) ampHeads_[static_cast<size_t>(path)]->refresh(shown, processor_.ladderInfo(path), fill);
     }
     face_->refresh();
     if (drawer_->isVisible()) drawer_->refresh();
@@ -593,6 +609,8 @@ class SawbladeEditor::Content : public juce::Component {
   juce::uint32 learnShownUntil_ = 0;
   // New overlays: add them to anyOverlayOpen() (Cmd / Ctrl + Z) or document why not.
   std::array<std::unique_ptr<rig::AmpHead>, 2> ampHeads_;
+  bool blendGesture_ = false;  // the BLEND knob is in a user drag / wheel gesture
+  double blendBefore_ = 0.0;   // its value when the gesture started
   std::unique_ptr<PedalFace> face_;
   std::unique_ptr<AdvancedDrawer> drawer_;
   std::unique_ptr<PlayAlongPanel> panel_;

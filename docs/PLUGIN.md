@@ -168,6 +168,18 @@ A second fill replaces the entry. The suggestion is applied only if path B (all 
 `SAWBLADE_NO_NETWORK=1` (set for every test and for pluginval) and need a configured, existing `sawblade-t3k`. `T3kTool` has no timeout: a tool
 that hangs keeps its slot (one run at a time) until it exits (proposal: a watchdog that cancels a run after a limit).
 
+**The BLEND knob starts a blend, and the fill is never silent (v0.3 Task C).** Turning the main panel's BLEND knob up from full SAW on a rig
+whose path B is off calls `RigController::blendTurnedUp(blendBefore)` from the knob's drag end: the same switch and fill as the rig section's
+(`applyTopology`), one undo step that puts the knob back on full SAW. Only a user gesture on the knob does this (the Slider's drag start / end are never
+fired by host automation or a state restore, so those cannot change the topology); the topology change goes through the background loader like any
+rig edit. BLEND back to 0 leaves path B alone. Why the user once got only the boost: (1) with nothing cached the immediate fill is boost-only and the
+amp arrives later; (2) `BodyFill::tick()` ran only from the rig editor's refresh, so with the rig editor closed the amp was never applied
+(`Content::refresh` now calls `RigController::sync()`); (3) a completing fill was dropped when BLEND / LEVEL moved meanwhile (a fill that still lacks its amp
+now only needs path B's structure to be unchanged); (4) a missing tool, `SAWBLADE_NO_NETWORK` or a failed fetch (not logged in, network) returned or ended
+without a word. `BodyFill::status()` now reports Downloading (with the amp's name) or Failed (with a reason); the body head shows
+`BODY AMP DOWNLOADING… (name)` or `<reason> — <action>` (not logged in: log in via Settings; no network; no capture / not allowed: BROWSE CAPTURES; tool
+not found: Settings). After the fix, touching BLEND again retries a failed fill.
+
 ### Amp controls on the amp heads (v0.2 Task D)
 
 `rig::AmpHead` (`plugin/src/rig/AmpHead.*`) lays the six `knob_amp` filmstrip knobs of a path over the knob positions baked into the amp-head art

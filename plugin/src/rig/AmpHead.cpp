@@ -24,6 +24,23 @@ const char* AmpHead::caption(int k) {
 juce::String AmpHead::noAmpText() { return "NO AMP IN THIS PATH"; }
 juce::String AmpHead::bodyOffText() { return juce::String::fromUTF8("BODY PATH OFF \xE2\x80\x94 turn up BLEND to add one"); }
 
+juce::String AmpHead::bodyDownloadingText(const juce::String& name) {
+  return juce::String::fromUTF8("BODY AMP DOWNLOADING\xE2\x80\xA6") + (name.isEmpty() ? juce::String() : " (" + name + ")");
+}
+
+juce::String AmpHead::bodyFailedText(FillReason r) {
+  const juce::String dash = juce::String::fromUTF8(" \xE2\x80\x94 ");
+  switch (r) {
+    case FillReason::NotLoggedIn: return "NOT LOGGED IN" + dash + "log in via Settings, then touch BLEND";
+    case FillReason::Network: return "NO NETWORK" + dash + "check the connection, then touch BLEND";
+    case FillReason::NoCapture: return "NO BODY AMP FOUND" + dash + "pick one with BROWSE CAPTURES";
+    case FillReason::NoTool: return "TONE3000 TOOL NOT FOUND" + dash + "set its path in Settings";
+    case FillReason::License: return "AMP NOT ALLOWED" + dash + "pick another with BROWSE CAPTURES";
+    case FillReason::NetworkOff: return "NETWORK TOOLS ARE OFF" + dash + "unset SAWBLADE_NO_NETWORK";
+    default: return "BODY AMP FAILED" + dash + "pick one with BROWSE CAPTURES";
+  }
+}
+
 juce::String AmpHead::bodyOffWithBlocksText() { return juce::String::fromUTF8("BODY PATH OFF \xE2\x80\x94 turn up BLEND"); }
 
 juce::String AmpHead::gainReadout(double gain, const SawbladeProcessor::LadderInfo& l) {
@@ -59,12 +76,19 @@ void AmpHead::refresh() {
   refresh(p, proc_.ladderInfo(path_));
 }
 
-void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo& ladder) {
+void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo& ladder, const FillStatus& fill) {
   const PathPreset& pp = path_ == 0 ? preset.a : preset.b;
   juce::String text;
   bool on = true, reason = false;
   if (path_ == 1 && !pp.enabled) {
     text = pp.blocks.empty() ? bodyOffText() : bodyOffWithBlocksText();
+    on = false;
+    reason = true;
+  } else if (ampIndex(pp) < 0 && path_ == 1 && fill.kind == FillStatus::Kind::Downloading) {
+    text = bodyDownloadingText(juce::String::fromUTF8(fill.name.c_str()));
+    on = false;  // reason_ stays false: not a fault, the normal text style
+  } else if (ampIndex(pp) < 0 && path_ == 1 && fill.kind == FillStatus::Kind::Failed) {
+    text = bodyFailedText(fill.reason);
     on = false;
     reason = true;
   } else if (ampIndex(pp) < 0) {

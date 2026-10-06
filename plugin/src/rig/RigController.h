@@ -76,6 +76,11 @@ class RigController {
   // auto; the suggestion of `sawblade-t3k suggest-body` follows asynchronously (BodyFill) and swaps the amp in if path B is
   // untouched. The whole thing is one undo step.
   void setTopology(Topology t);
+  // v0.3 Task C: the BLEND knob was turned up from full SAW by a user gesture (never host automation or a state restore: the editor
+  // calls this from the knob's drag end). Enables the blend topology through the same code path as setTopology(Blend), so it fills
+  // path B and is one undo step (restoring the knob to `blendBefore`). When path B is a blend that has no amp because the last
+  // fill failed, it retries the fill. Moving BLEND back to 0 never touches path B. True when it acted.
+  bool blendTurnedUp(double blendBefore);
   // Undo of the last BLEND fill: restores the pre-BLEND preset (also after the asynchronous amp swap). There is ONE entry: the
   // pre-BLEND preset and the preset the fill (and its swap) left. undo() works only while the rig still is exactly that; any other
   // edit (path A, a parameter, BLEND off, path B's blocks) or a user preset load drops the entry, and undo() then returns false.
@@ -115,6 +120,7 @@ class RigController {
     }
   };
   void applyMonitor();
+  void applyTopology(Topology t, const std::optional<Preset>& preBlend);
   void resetTransient();
   AlignResult measuredAlign() const;
 

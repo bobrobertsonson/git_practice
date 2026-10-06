@@ -57,6 +57,7 @@ Block makeBlock(const std::string& type, const std::string& id, const std::strin
 // The fallback body amp: tone 88689, "EVH 5150iii Ivory FULL Pack", the first high-gain amp of presets/CAPTURE_SHORTLIST.md.
 // (No model id is fixed: a cached model of the tone is used, else `sawblade-t3k fetch` picks the tone's default model.)
 inline constexpr const char* kFallbackBodyTone = "88689";
+inline constexpr const char* kFallbackBodyTitle = "EVH 5150iii Ivory";  // shown while it downloads
 // The modeled boost in front of the body amp: pedal.ts, drive 0, tone 5, level 8 (slot "boost").
 Block makeTsBoost(const Preset& p);
 // A `nam` amp block (slot "amp") for path B holding `model`.

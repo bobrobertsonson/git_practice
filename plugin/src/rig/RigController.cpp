@@ -140,7 +140,29 @@ Topology RigController::topology() {
   return (t == Topology::Single && singlePlus_) ? Topology::SinglePlusTwoPedals : t;
 }
 
-void RigController::setTopology(Topology t) {
+void RigController::setTopology(Topology t) { applyTopology(t, std::nullopt); }
+
+// The BLEND knob was turned off full SAW by a user gesture (the editor's drag end): the same switch as the rig section's BLEND, with
+// the same fill and the same single undo step. `blendBefore` is the knob's value when the gesture started (0): the preset an undo
+// restores has the knob back there. When path B is already a blend whose body amp is missing and the last fill failed, the gesture
+// retries the fill instead. Returns true when it did something.
+bool RigController::blendTurnedUp(double blendBefore) {
+  sync();
+  const Preset cur = view();
+  if (topologyOf(cur) == Topology::Blend) {
+    if (ampIndex(cur.b) < 0 && body_.status().kind == FillStatus::Kind::Failed) {
+      body_.retry();
+      return true;
+    }
+    return false;
+  }
+  Preset pre = cur;
+  pre.blend = blendBefore;
+  applyTopology(Topology::Blend, pre);
+  return true;
+}
+
+void RigController::applyTopology(Topology t, const std::optional<Preset>& preBlend) {
   sync();
   const Preset cur = view();
   if (topologyOf(cur) == Topology::Blend && cur.blend > 0.0) lastBlend_ = cur.blend;
@@ -149,6 +171,11 @@ void RigController::setTopology(Topology t) {
   const bool fill = t == Topology::Blend && !cur.b.enabled && cur.b.blocks.empty();
   if (!fill) {
     edit([t, restore](Preset& p) { rig::setTopology(p, t, restore); });
+    if (t == Topology::Blend && !cur.b.enabled && ampIndex(cur.b) < 0) {  // path B kept blocks but has no amp: never a silent boost-only path
+      const Preset post = proc_.editBasePreset();
+      undo_ = UndoEntry{preBlend.value_or(cur), post};
+      body_.begin(post);
+    }
     return;
   }
   const std::optional<Capture> amp = cachedToneCapture(kFallbackBodyTone);
@@ -157,7 +184,7 @@ void RigController::setTopology(Topology t) {
     fillBodyPath(p, amp);
   });
   const Preset post = proc_.editBasePreset();
-  undo_ = UndoEntry{cur, post};  // replaces any older entry: a second fill never resurrects the first one's snapshot
+  undo_ = UndoEntry{preBlend.value_or(cur), post};  // replaces any older entry: a second fill never resurrects the first one's snapshot
   body_.begin(post);
 }
 

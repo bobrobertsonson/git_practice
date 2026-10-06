@@ -9,6 +9,8 @@
 //   NO AMP IN THIS PATH                     no amp block: the knobs are disabled
 //   BODY PATH OFF - turn up BLEND to add one   (body head, path B empty and off): the knobs are disabled
 //   BODY PATH OFF - turn up BLEND              (body head, path B off but it has blocks): the knobs are disabled
+//   BODY AMP DOWNLOADING... (name)             (body head, path B on with no amp yet, the BLEND fill is fetching one)
+//   <reason> - <the one action>                (body head, the fill failed: not logged in / network / no capture / tool missing ...)
 // No new art: the filmstrip is drawn at kKnob design px (smaller than the pedal knobs), never redrawn.
 
 #include <array>
@@ -17,6 +19,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginProcessor.h"
+#include "rig/BodyFill.h"
 #include "skin/FilmstripKnob.h"
 
 namespace sawblade::plugin::rig {
@@ -35,7 +38,8 @@ class AmpHead : public juce::Component {
 
   // The state for `preset` (the rig as shown) and `ladder` (what the processor reports for this path). The no-argument
   // form takes both from the processor.
-  void refresh(const Preset& preset, const SawbladeProcessor::LadderInfo& ladder);
+  // `fill`: the BLEND fill's state (BodyFill::status()); only the body head with no amp in path B reads it.
+  void refresh(const Preset& preset, const SawbladeProcessor::LadderInfo& ladder, const FillStatus& fill = {});
   void refresh();
 
   bool knobsEnabled() const noexcept { return enabled_; }
@@ -44,6 +48,10 @@ class AmpHead : public juce::Component {
   static juce::String gainReadout(double gain, const SawbladeProcessor::LadderInfo& ladder);
   static juce::String noAmpText();    // "NO AMP IN THIS PATH"
   static juce::String bodyOffText();  // path B empty, BLEND off: "BODY PATH OFF - turn up BLEND to add one" (with an em dash)
+  // The body head while the BLEND fill fetches the amp: "BODY AMP DOWNLOADING... (name)" (an ellipsis character).
+  static juce::String bodyDownloadingText(const juce::String& name);
+  // The body head when the fill failed: the reason and the one action that fixes it (see FillReason).
+  static juce::String bodyFailedText(FillReason reason);
   static juce::String bodyOffWithBlocksText();  // path B has blocks, BLEND off: "BODY PATH OFF - turn up BLEND"
 
   void paint(juce::Graphics&) override;

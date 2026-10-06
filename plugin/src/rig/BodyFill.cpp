@@ -55,6 +55,8 @@ BodyFill::~BodyFill() = default;  // T3kTool cancels and joins
 
 void BodyFill::cancel() {
   step_ = Step::Idle;
+  status_ = {};
+  lastFetchFail_ = FillReason::None;
   queued_.reset();
   ++run_;  // results of runs in flight are stale
   tool_.cancel();
@@ -76,17 +78,56 @@ void BodyFill::begin(const Preset& applied) {
   aTitle_.clear();
   if (a >= 0)
     if (const auto* nam = dynamic_cast<const NamBlockParams*>(applied.a.blocks[static_cast<std::size_t>(a)].params.get())) aTitle_ = captureTitle(nam->model);
+  // An immediate fill that already has an amp: the suggestion may swap it, but nothing is missing, so nothing is said.
+  const bool missingAmp = ampIndex(applied.b) < 0;
+  if (missingAmp) status_ = {FillStatus::Kind::Downloading, "choosing a high-gain amp", FillReason::None, {}};
   std::error_code ec;
-  if (networkToolsDisabled() || !fs::exists(settings::t3kExecutable(), ec)) return;  // no tool: the immediate fill is all there is
+  if (networkToolsDisabled()) {
+    if (missingAmp) fail(FillReason::NetworkOff, "network tools are disabled (SAWBLADE_NO_NETWORK)");
+    return;  // the immediate fill is all there is
+  }
+  const fs::path exe = settings::t3kExecutable();
+  if (exe.has_parent_path() && !fs::exists(exe, ec)) {  // a bare name is looked up on PATH by the tool run itself
+    if (missingAmp) fail(FillReason::NoTool, "cannot find the sawblade-t3k tool at " + exe.string());
+    return;
+  }
   start(Step::Suggest, {"suggest-body", "--a-title", aTitle_, "--cache-dir", captureCacheRoot().string(), "--json"});
+}
+
+void BodyFill::retry() {
+  const Preset cur = proc_.editBasePreset();
+  if (!cur.b.enabled) return;
+  begin(cur);
+}
+
+void BodyFill::fail(FillReason r, std::string detail) {
+  step_ = Step::Idle;
+  queued_.reset();
+  status_ = {FillStatus::Kind::Failed, {}, r, std::move(detail)};
+}
+
+// A tool run that did not give a capture: why, from the exit status and the `--json` {"error","code"} line.
+void BodyFill::failFrom(const Done& d, FillReason dflt) {
+  FillReason r = dflt;
+  std::string code;
+  const auto lo = d.output.find('{');
+  const auto hi = d.output.rfind('}');
+  if (lo != std::string::npos && hi != std::string::npos && hi > lo) {
+    const nlohmann::json j = nlohmann::json::parse(d.output.substr(lo, hi - lo + 1), nullptr, /*allow_exceptions=*/false);
+    if (j.is_object() && j.contains("code") && j["code"].is_string()) code = j["code"].get<std::string>();
+  }
+  if (d.status == T3kTool::Status::NotLoggedIn || code == "auth") r = FillReason::NotLoggedIn;
+  else if (d.status == T3kTool::Status::MissingExecutable) r = FillReason::NoTool;
+  else if (code == "network") r = FillReason::Network;
+  else if (code == "not_found") r = FillReason::NoCapture;
+  else if (code == "license") r = FillReason::License;
+  else if (!d.ok) r = FillReason::Other;
+  fail(r, d.message.empty() ? d.output : d.message);
 }
 
 void BodyFill::start(Step s, std::vector<std::string> args) {
   step_ = s;
-  if (networkToolsDisabled()) {
-    step_ = Step::Idle;
-    return;
-  }
+  if (networkToolsDisabled()) return fail(FillReason::NetworkOff, "network tools are disabled (SAWBLADE_NO_NETWORK)");
   // The previous run's completion is what led here, but T3kTool is still "running" until its thread ends: wait for the next tick.
   if (tool_.running()) {
     queued_ = std::make_pair(s, std::move(args));
@@ -101,20 +142,37 @@ void BodyFill::launch(Step s, std::vector<std::string> args) {
   ++runs_;
   const bool started = tool_.start(std::move(args), nullptr, [this, run](const T3kTool::Result& r) {  // background thread
     std::lock_guard<std::mutex> lk(m_);
-    done_.push_back({run, r.status == T3kTool::Status::Ok, r.output});
+    done_.push_back({run, r.status == T3kTool::Status::Ok, r.status, r.message, r.output});
   });
-  if (!started) step_ = Step::Idle;
+  if (!started) fail(FillReason::Other, "could not start the sawblade-t3k tool");
 }
 
-bool BodyFill::bodyUntouched(const Preset& cur) const { return cur.b.enabled && cur.b == expectedB_ && cur.blend == expectedBlend_; }
+// Path B is still what the fill made. A swap of an amp the fill already put there keeps the v0.2 rule: any edit of path B or the blend
+// drops the suggestion. A fill that is still COMPLETING a boost-only path (no amp yet: it is downloading) only needs the structure to be
+// unchanged: the parameter-backed values (LEVEL, the amp knobs, BLEND) moving meanwhile are not edits of the path. A player turning
+// the BLEND knob while the amp downloads is the normal case, and dropping the amp then left a silent boost-only path (v0.3 Task C).
+bool BodyFill::bodyUntouched(const Preset& cur) const {
+  if (!cur.b.enabled) return false;  // the topology was switched off: the suggestion no longer applies
+  if (ampIndex(expectedB_) >= 0) return cur.b == expectedB_ && cur.blend == expectedBlend_;
+  PathPreset b = cur.b;
+  b.levelDb = expectedB_.levelDb;
+  b.ampControls = expectedB_.ampControls;
+  return b == expectedB_;
+}
 
 void BodyFill::applyAmp(const Capture& model) {
   Preset cur = proc_.editBasePreset();
-  if (!bodyUntouched(cur)) return;  // path B was edited (or BLEND turned off) since: the suggestion is dropped
+  if (!bodyUntouched(cur)) {  // path B was edited (or the blend topology turned off) since: the suggestion is dropped
+    status_ = {};
+    return;
+  }
   const int amp = ampIndex(cur.b);
   if (amp >= 0)
     if (const auto* nam = dynamic_cast<const NamBlockParams*>(cur.b.blocks[static_cast<std::size_t>(amp)].params.get()))
-      if (nam->model.source && model.source && nam->model.source->id == model.source->id && nam->model.source->modelId == model.source->modelId) return;  // already there
+      if (nam->model.source && model.source && nam->model.source->id == model.source->id && nam->model.source->modelId == model.source->modelId) {  // already there
+        status_ = {};
+        return;
+      }
   setBodyAmp(cur, model);
   proc_.loadPreset(std::move(cur), /*keepMonitor=*/true);  // coalesced with the BLEND edit: no undo entry of its own
   // What the rig is now: loadPreset clamps the values to the parameter grid, so record that (off-grid values must not make the
@@ -122,6 +180,7 @@ void BodyFill::applyAmp(const Capture& model) {
   const Preset now = proc_.editBasePreset();
   expectedB_ = now.b;
   expectedBlend_ = now.blend;
+  status_ = {};
   if (onBodyChanged) onBodyChanged(now);
 }
 
@@ -129,12 +188,15 @@ void BodyFill::fallback() {
   const Preset cur = proc_.editBasePreset();
   if (!bodyUntouched(cur)) {
     step_ = Step::Idle;
+    status_ = {};
     return;
   }
   if (const int amp = ampIndex(cur.b); amp >= 0 && !cur.b.blocks.empty() && dynamic_cast<const NamBlockParams*>(cur.b.blocks[static_cast<std::size_t>(amp)].params.get())) {
     step_ = Step::Idle;  // the fallback amp is already there
+    status_ = {};
     return;
   }
+  status_ = {FillStatus::Kind::Downloading, kFallbackBodyTitle, FillReason::None, {}};
   start(Step::FetchFallback, {"fetch", kFallbackBodyTone, "--json", "--cache-dir", captureCacheRoot().string()});
 }
 
@@ -154,14 +216,17 @@ void BodyFill::tick() {
   if (d.run != run_ || step_ == Step::Idle) return;  // stale (cancelled / superseded)
   switch (step_) {
     case Step::Suggest: {
+      if (!d.ok && (d.status == T3kTool::Status::MissingExecutable)) return failFrom(d, FillReason::NoTool);
       const auto s = d.ok ? parseSuggestBody(d.output) : std::nullopt;
-      if (!s) return fallback();
+      if (!s) return fallback();  // the pool is empty / no high-gain amp in it / the tool failed: the shortlist amp
+      const std::string name = s->title.empty() ? "tone " + s->toneId : s->title;
       if (const auto c = cachedToneCapture(s->toneId, s->modelId)) {
         Capture cap = *c;
         if (cap.source->title.empty()) cap.source->title = s->title;
         step_ = Step::Idle;
         return applyAmp(cap);
       }
+      status_ = {FillStatus::Kind::Downloading, name, FillReason::None, {}};
       start(Step::FetchSuggested, {"fetch", s->toneId, "--model", s->modelId, "--json", "--cache-dir", captureCacheRoot().string()});
       return;
     }
@@ -173,8 +238,8 @@ void BodyFill::tick() {
     }
     case Step::FetchFallback: {
       step_ = Step::Idle;
-      if (const auto c = d.ok ? parseFetchedCapture(d.output) : std::nullopt) applyAmp(*c);
-      return;
+      if (const auto c = d.ok ? parseFetchedCapture(d.output) : std::nullopt) return applyAmp(*c);
+      return failFrom(d, FillReason::NoCapture);  // never silent: the head says why, and what to do
     }
     case Step::Idle: return;
   }
