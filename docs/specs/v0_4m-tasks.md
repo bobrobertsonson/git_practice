@@ -120,3 +120,51 @@ New module `match/sawblade_match/matcher/feel.py` (pure numpy/scipy, 48 kHz, no 
 
 `docs/specs/v0_4m-matcher_feel_REPORT.md`: reviewer verdicts per task, feature definitions + weights, synthetic results,
 timings, the Mac commands (lead writes those), user results when back.
+
+## Task B2: all four suspects (phase spec "Task B2"), plus the UBR findings
+
+Second data point (user, Bloodbath L DI -> real Überschall amp track, `--quick`): A-weighted 3.45 dB, chose Hex Drive ->
+Sovtek MIG 50 -> Marshall 1960BV "V30 3 SM58 6"; `gap_noise` -11.0, `fizz_texture` fail. The HM2 run chose the **same IR**.
+The pool has two Überschall captures (tone 57492, 79751) and neither won.
+
+### B2.1 Two-IR blend (dsp-engineer: renderer hook, then match-engineer)
+- Core: `cab.mode: "irMix"` already exists (`h = (1-mix) hA + mix hB`, no alignment). Add optional `offsetSamplesB` (int,
+  -256..256, default 0: hB shifted right when positive, zero-padded, applied before the sum) and `invertB` (bool, default
+  false), both only valid in `irMix` mode (strict keys), round-tripped, in `PRESET_SCHEMA.md`. Latency unchanged (the shift
+  is part of the IR). Tests: offset 0 / no invert is bit-identical to today; a shifted copy of the same IR at offset -k,
+  invert true, mix 0.5 cancels to <-100 dB; round trip. `core/` + `bindings/` + `tests/` only; no `plugin/` edits (the plugin
+  just carries the keys through the core parser).
+- Matcher: after the B cab sweep, for the winner try IR pairs from the top-6 single IRs: offset = the lag maximising
+  |xcorr| of the two IRs' first 5 ms (|lag| <= 256), invertB = sign of that peak, mix searched in stage 2's last linear
+  block (0.2-0.8). Competes with the single IR; Occam: a pair must win by >= 0.05. Live-compatible (one combined IR).
+
+### B2.2 Boost and filters as mandatory candidates
+The Task B boost variant and post-cab HP/LP are always in the search (quick and thorough). Report their contribution.
+
+### B2.3 Studio processing in the reference
+- Detection (after stage 2, on the best candidate without a bus comp): `compressed` if the reference's median 400 ms crest
+  is >= 1.5 dB below the candidate's, or its short-term loudness range (3 s windows, 10-95 % quantile spread) is >= 2 LU
+  narrower; `eqd` if the candidate's post-EQ gains sit at >= 90 % of their range, or the LTAS residual's best 3rd-order
+  polynomial in log-frequency explains >= 60 % of the residual's variance with the residual RMS >= 1.0 dB.
+  `result.json -> studio: {compressed, eqd, evidence}` is always written.
+- When detected: a "studio" stage refines the winner with the bus comp (threshold -30..-6 dB re the pre-headroom level,
+  ratio 1.5-4, knee 6, attack 1-30 ms, release 30-150 ms, makeup = level-neutral) and/or the post-EQ gain range widened to
+  +-9 dB. Kept only if the total loss falls by >= 0.05. Release stays <= 150 ms (trainable by the export rules). The bus
+  comp sits after the cab, so the no-cab export drops it and the existing export plan already says so (`export/plan.py`).
+  Record `studio.busCompUsed` and append "bus comp added by the matcher (studio processing); dropped from no-cab exports"
+  to the preset `notes`. No new preset keys.
+
+### B2.4 Ablations and diagnostics (needed for "each suspect's contribution")
+- `--ablate LIST` (comma list of `feel, boost, filters, irsweep, irblend, studio`) turns a suspect off (`irsweep` off = the
+  pre-v0.4M cab sweep). `result.json -> ablate` echoes it. The user runs on/off pairs on the Mac.
+- `--trace-tones ID[,ID...]` (TONE3000 tone ids): for each, `result.json -> trace[id]`: downloaded? models, gear class,
+  pre-screen rank / score / survived, best pair rank and loss, best candidate loss with it as the amp (render it once on the
+  excerpt with the winner's pedal + cab and stage 2's linear block if it was not refined), and why it lost (loss breakdown
+  vs the winner). Answers "why did the Sovtek beat the two Überschalls".
+- `result.json -> cabSweep` lists every IR's loss (Task B) so "the same IR twice" can be checked.
+
+### D.1 additions
+- Synthetic: hidden chain also with an irMix pair (offset, invert) and a fast bus comp. Recovery tolerances as D.1; the
+  studio detector must fire on it and must not fire on the plain hidden chain (no comp, no EQ).
+- Report each suspect's contribution on the synthetic case: the full run vs each `--ablate` item off (A-weighted error and
+  each feel term).
