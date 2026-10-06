@@ -431,3 +431,177 @@ def test_partially_labelled_captures_do_not_count_for_the_target():
     chk = PA.target_check([full, part], PA.spread_report([full, part]))
     assert chk["n_labelled"] == 1 and chk["n_partially_labelled"] == 1
     assert "partially labelled" in PA.verdict("hm", [full, part], chk)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# v0.4a.1: report fixes (manifests, TS labels, TS-only family, merge re-fit, unlabelled verdict)
+# ---------------------------------------------------------------------------------------------------------
+TS_NAMES = ([f"{39 + i}-TS808_Hot_LvlMax_OD{od}_T4" for i, od in enumerate(("5", "6", "7", "8", "9", "Max"))]
+            + [f"{45 + i}-TS808_Hot_Lvl6_OD{od}_T5" for i, od in enumerate(("0", "1", "2", "3", "4", "5"))])
+
+
+def test_ts_v24x_labels_parse_into_level_drive_tone():
+    _, ent = PF.load_manifest_pedal(PF.DEFAULT_TARGETS, "ts")
+    groups = tuple(ent["label_groups"])
+    assert groups == ("level", "drive", "tone")
+    names = ["39-TS808_Hot_LvlMax_OD5_T4", "44-TS808_Hot_LvlMax_ODMax_T4", "45-TS808_Hot_Lvl6_OD0_T5",
+             "50-TS808_Hot_Lvl6_OD5_T5"]
+    assert [PF.parse_labels(n, ent["label_regex"], groups) for n in names] == [
+        {"level": 10.0, "drive": 5.0, "tone": 4.0}, {"level": 10.0, "drive": 10.0, "tone": 4.0},
+        {"level": 6.0, "drive": 0.0, "tone": 5.0}, {"level": 6.0, "drive": 5.0, "tone": 5.0}]
+    got = [PF.parse_labels(n, ent["label_regex"], groups) for n in TS_NAMES]
+    assert len(TS_NAMES) == 12 and all(got)
+    assert [g["drive"] for g in got] == [5, 6, 7, 8, 9, 10, 0, 1, 2, 3, 4, 5]
+    assert [g["tone"] for g in got] == [4] * 6 + [5] * 6
+    assert PF.parse_labels("IBANEZ TS 808 (BOOST)", ent["label_regex"], groups) is None
+
+
+def test_ts_family_is_restricted_to_ts_circuits():
+    tones, _ = PF.load_manifest_pedal(PF.DEFAULT_TARGETS, "ts")
+    assert tones[70280][2] == [577277, 577278]
+
+
+def _manifest(path, tone, creator, lic, models):
+    path.write_text(json.dumps({"tones": [{"tone_id": tone, "creator": creator, "license": lic,
+                                           "models": [{"id": i, "name": n} for i, n in models]}]}))
+
+
+def test_manifests_merge_by_tone_id_and_second_manifest_supplies_name_and_licence(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    (cache / "6778").mkdir(parents=True)
+    (cache / "6778" / "1.nam").write_text("x")
+    (cache / "6778" / "2.nam").write_text("x")
+    _manifest(cache / "pool_manifest.json", 1, "c1", "cc-by", [(5, "other")])
+    pull = tmp_path / "pedal_pool.json"
+    _manifest(pull, 6778, "bigmuff", "t3k", [(1, "HM-2 A"), (2, "HM-2 B")])
+    monkeypatch.setattr(PA, "DEFAULT_PULL_MANIFEST", pull)       # defaults = pool_manifest.json + the pull manifest
+    errors: list = []
+    found, missing = PF.load_targets(cache, {6778: ("HM-2 1986", "cand", [])}, {"label_regex": None}, errors=errors)
+    assert errors == [] and missing == []
+    assert [(r["model_id"], r["name"], r["creator"], r["license"]) for r in found] == [
+        (1, "HM-2 A", "bigmuff", "t3k"), (2, "HM-2 B", "bigmuff", "t3k")]
+    only = PA.load_manifests([cache / "pool_manifest.json"])
+    assert 6778 not in only and only[1]["models"] == {5: "other"}
+    _manifest(tmp_path / "late.json", 6778, "someone else", "cc-by", [(3, "C")])
+    both = PA.load_manifests([pull, tmp_path / "late.json"])
+    assert both[6778]["creator"] == "bigmuff" and set(both[6778]["models"]) == {1, 2, 3}
+    with pytest.raises(ValueError, match="unreadable"):
+        PA.load_manifests([tmp_path / "nope.json"])
+
+
+def test_tone_with_zero_resolved_models_is_an_error_not_silence(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    man = tmp_path / "m.json"
+    _manifest(man, 1, "c", "t3k", [(5, "x")])
+    errors: list = []
+    found, missing = PF.load_targets(cache, {6778: ("HM-2 1986", "g", [])}, {"label_regex": None}, [man], errors)
+    assert found == [] and missing == [] and len(errors) == 1 and "6778" in errors[0] and "zero models" in errors[0]
+    monkeypatch.setattr(PA, "DEFAULT_PULL_MANIFEST", tmp_path / "absent.json")
+    with pytest.raises(ValueError, match="no manifest found"):
+        PF.load_targets(cache, {6778: ("u", "g", [])}, {"label_regex": None})
+
+
+def test_report_lists_missing_metadata_as_errors_and_not_none(tmp_path):
+    base = np.full((16, 6), -25.0)
+    m = _model(1, {"low": 5.0}, base)
+    m.update(creator=None, license=None, name="1")
+    doc = {"schema": "sawblade.pedal_fit", "version": 2, "pedal": "ts", "model_version": 1, "seed": 7,
+           "cost": {"harm_floor_db": -40.0}, "models": [m],
+           "errors": ["tone 6778 (HM-2): its model list resolves to zero models"]}
+    text = PA.generate({"ts": doc})
+    assert "ERROR: capture 1 (tone 1) has no name / licence / creator" in text
+    assert "ERROR: tone 6778" in text and "MISSING / MISSING" in text and "None" not in text
+    f = tmp_path / "fits_ts.json"                     # pedal-accuracy fills the gaps from a manifest
+    f.write_text(json.dumps(doc))
+    man = tmp_path / "m.json"
+    _manifest(man, 1, "maker", "cc-by-nc", [(1, "TS 808 real name")])
+    out = tmp_path / "a.md"
+    assert PA.main(["--fits", str(f), "--manifest", str(man), "--out", str(out)]) == 0
+    t = out.read_text()
+    assert "TS 808 real name (1)" in t and "cc-by-nc / maker (non-commercial)" in t
+    assert "capture 1 (tone 1) has no" not in t
+
+
+def test_other_circuits_are_listed_but_not_scored():
+    base = np.full((16, 6), -25.0)
+    ts = [_model(1, {"low": 5.0}, base, ltas_c=1.0), _model(2, {"low": 5.0}, base, ltas_c=1.5)]
+    other = _model(9, {"low": 5.0}, base, ltas_c=30.0)
+    other["name"] = "BOSS DS1"
+    doc = {"schema": "sawblade.pedal_fit", "version": 2, "pedal": "ts", "model_version": 1, "seed": 7,
+           "cost": {"harm_floor_db": -40.0}, "models": ts + [other], "target_models": [[1, 1], [1, 2]]}
+    scored, rest = PA.split_scored(doc)
+    assert [m["model_id"] for m in scored] == [1, 2] and [m["model_id"] for m in rest] == [9]
+    head, tail = PA.generate({"ts": doc}).split("#### Other circuits (not scored)")
+    assert "BOSS DS1" in tail and "BOSS DS1" not in head
+    assert "constrained LTAS <= 2 dB on 2/2 labelled (PASS" in head      # the 30 dB DS-1 is not in the verdict
+    full = PA.generate({"ts": {**doc, "target_models": [[1, 1], [1, 2], [1, 9]]}})
+    assert "Other circuits" not in full and "on 2/3 labelled" in full    # in the target list it is scored
+
+
+def test_verdict_for_unlabelled_captures_gives_free_fit_lower_bound():
+    base = np.full((16, 6), -25.0)
+    ms = [_model(1, None, base, ltas_f=1.0), _model(2, None, base + 6.0, ltas_f=3.0), _model(3, None, base, ltas_f=1.9)]
+    for m in ms:
+        m.pop("constrained")
+    sp = PA.spread_report(ms)
+    v = PA.verdict("eye", ms, PA.target_check(ms, sp))
+    assert "cannot be judged" in v and "2/3 free fits <= 2 dB" in v
+    assert "Lower bound (free fits can only do better than constrained)" in v
+    assert f"2 x family spread {2 * sp['family']['mean_rms_db']:.1f} dB" in v
+
+
+def _fake_fit_model(calls):
+    def fake(rec, ev, ref_dir, restarts, popsize, generations, say=print, refine_generations=0):
+        calls["free"].append(rec["model_id"])
+        r = _model(rec["model_id"], rec["labels"], np.full((16, 6), -25.0))
+        r.update({k: rec[k] for k in ("tone_id", "name", "unit", "group", "creator", "license")})
+        r["pinned_knobs"], r["pinned_is_assumed"] = rec["pin"], rec["labels"] is None
+        if not rec["pin"]:
+            r.pop("constrained")
+        return r, {}
+    return fake
+
+
+def test_merge_reruns_only_the_missing_constrained_fit(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    (cache / "7").mkdir(parents=True)
+    for mid in (1, 2, 3):
+        (cache / "7" / f"{mid}.nam").write_text("x")
+    man = tmp_path / "m.json"
+    _manifest(man, 7, "mk", "cc-by", [(1, "cap Lv-6 L-5 H-5 D-5"), (2, "cap Lv-6 L-5 H-5 D-7"), (3, "plain")])
+    targets = tmp_path / "targets.json"
+    targets.write_text(json.dumps({"pedals": {"hm": {"label_regex": "Lv-(\\d+)\\s+L-(\\d+)\\s+H-(\\d+)\\s+D-(\\d+)",
+        "tones": [{"tone_id": 7, "unit": "u", "group": "g", "models": [1, 2, 3]}], "assumed": {}}}}))
+    calls = {"free": [], "constrained": []}
+    monkeypatch.setattr(PF, "fit_model", _fake_fit_model(calls))
+    monkeypatch.setattr(PF, "fit_constrained_only", lambda rec, ev, d: calls["constrained"].append(rec["model_id"])
+                        or {"ltas_rms_db": 0.5, "harm_rms_db": 1.0, "dyn_db": 0.1})
+    out = tmp_path / "o"
+    argv = ["--pedal", "hm", "--cache", str(cache), "--targets", str(targets), "--manifest", str(man), "--di", str(DI),
+            "--work", str(tmp_path / "w"), "--out", str(out), "--short-probe", "--no-plots", "--merge"]
+    assert PF.main(argv) == 0
+    assert calls == {"free": [1, 2, 3], "constrained": []}
+    fits = out / "fits_hm.json"
+    doc = json.loads(fits.read_text())
+    assert doc["target_models"] == [[7, 1], [7, 2], [7, 3]]
+    for m in doc["models"]:      # a stored fit from before the labels were known: model 2 has no pin / constrained
+        if m["model_id"] == 2:
+            m["pinned_knobs"], m["labels"] = None, None
+            m.pop("constrained")
+            m["name"], m["creator"], m["license"] = "2", None, None
+    fits.write_text(json.dumps(doc))
+    calls["free"].clear()
+    assert PF.main(argv) == 0
+    assert calls == {"free": [], "constrained": [2]}              # free fits kept; only 2 gets its constrained fit
+    doc = json.loads(fits.read_text())
+    m2 = next(m for m in doc["models"] if m["model_id"] == 2)
+    assert m2["constrained"]["ltas_rms_db"] == 0.5 and m2["name"] == "cap Lv-6 L-5 H-5 D-7" and m2["creator"] == "mk"
+    assert m2["pinned_knobs"]["distortion"] == 7.0 and m2["pinned_is_assumed"] is False
+    for m in doc["models"]:      # a different pin on a stored constrained result also re-runs it
+        if m["model_id"] == 1:
+            m["pinned_knobs"] = {**m["pinned_knobs"], "distortion": 9.0}
+    fits.write_text(json.dumps(doc))
+    calls["constrained"].clear()
+    assert PF.main(argv) == 0 and calls["constrained"] == [1] and calls["free"] == []
+    assert PF.main(argv) == 0 and calls["constrained"] == [1]     # nothing left to do
