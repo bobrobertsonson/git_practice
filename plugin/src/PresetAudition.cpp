@@ -52,6 +52,11 @@ bool PresetAudition::apply() {
   applied_ = state_.candidate;
   appliedName_ = state_.candidateName;
   state_ = State{};
+  // Applying is the one point where the audition becomes the instance's saved state: the whole preset was swapped by a
+  // single load (every parameter notified the host as a preset load does), and the non-parameter part of the state (the
+  // blocks, captures, cab) changed too, so the host is told its project needs saving. (Auditioning and A/B are previews
+  // and do not set this.)
+  proc_.updateHostDisplay(juce::AudioProcessor::ChangeDetails().withNonParameterStateChanged(true));
   return true;
 }
 

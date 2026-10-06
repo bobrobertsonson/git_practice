@@ -8,6 +8,7 @@
 // another candidate keeps A. Apply makes the candidate the current preset (it is what a normal preset load
 // would leave), Revert goes back to A.
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -33,6 +34,8 @@ class PresetAudition {
 
   bool audition(const std::filesystem::path& resolvedPreset, std::string* error = nullptr);
   bool toggleAB();   // false when no audition is active
+  // apply() is message-thread only (as is every member of this class). It records ONE step in the processor's undo history (v0.3 Task D:
+  // pre = the preset current when the audition started, post = the applied candidate as loaded); there is no other undo store.
   bool apply();      // false when no audition is active; leaves the candidate loaded and ends the audition
   bool revert();     // back to A and ends the audition
   State state() const { return state_; }

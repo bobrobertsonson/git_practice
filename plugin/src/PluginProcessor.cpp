@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <thread>
+#include <set>
 
 #include "AppPaths.h"
 #include "PluginEditor.h"
@@ -39,6 +40,29 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   return layout;
 }
 
+// Instance ids in use in this process: a state that was copied (a duplicated track) must not give two live instances
+// the same id, or the copy would adopt the original's jobs.
+std::mutex gIdMutex;
+std::set<std::string>& liveIds() {
+  static std::set<std::string> ids;
+  return ids;
+}
+std::string claimNewId() {
+  std::lock_guard<std::mutex> lk(gIdMutex);
+  for (;;) {
+    std::string id = juce::Uuid().toString().toStdString();
+    if (liveIds().insert(id).second) return id;
+  }
+}
+bool claimId(const std::string& id) {
+  std::lock_guard<std::mutex> lk(gIdMutex);
+  return liveIds().insert(id).second;
+}
+void releaseId(const std::string& id) {
+  std::lock_guard<std::mutex> lk(gIdMutex);
+  liveIds().erase(id);
+}
+
 constexpr std::uint64_t kNoGeneration = ~std::uint64_t{0};
 constexpr int kMinChunk = 4096;  // audio-thread scratch size; larger host blocks are processed in chunks
 
@@ -69,6 +93,7 @@ SawbladeProcessor::SawbladeProcessor()
   loader_ = std::make_unique<EngineLoader>(slot_, [this](const EngineLoader::Outcome& o) { onOutcome(o); });
   apvts_.addParameterListener(paramSpec(kSawCircuit).id, this);
   for (auto* prm : paramObj_) prm->addListener(&historyListener_);
+  jobs_.setOwner(claimNewId());
   jobs_.pruneAsync();  // old match job folders: on the runner's own thread, not here
   startTimerHz(10);
 }
@@ -77,6 +102,7 @@ SawbladeProcessor::~SawbladeProcessor() {
   for (auto* prm : paramObj_) prm->removeListener(&historyListener_);
   stopTimer();
   levelWorker_.reset();  // joins: its callbacks use this object
+  releaseId(jobs_.owner());
   loader_.reset();  // joins the worker before the slot and the rest are destroyed
   apvts_.removeParameterListener(paramSpec(kSawCircuit).id, this);
 }
@@ -579,6 +605,13 @@ void SawbladeProcessor::getStateInformation(juce::MemoryBlock& dest) {
     j["export"] = exportSettingsToJson(es);
     s = j.dump(2);
   }
+  // The instance id, once there is a job (or a restored id) that a reloaded project should find again. Not part of
+  // the tone: presets never carry it.
+  if (instanceRestored_ || jobs_.snapshot(JobKind::Match).state != JobState::None || jobs_.snapshot(JobKind::Export).state != JobState::None) {
+    nlohmann::json j = nlohmann::json::parse(s);
+    j["instance"] = jobs_.owner();
+    s = j.dump(2);
+  }
   dest.replaceAll(s.data(), s.size());
 }
 
@@ -593,8 +626,14 @@ void SawbladeProcessor::setStateInformation(const void* data, int size) {
   // A `playAlong` that is not an object would make the core parser reject the whole state: drop it, so the
   // tone still loads.
   nlohmann::json j = nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/false);
+  std::string savedInstance;  // `instance` is plugin bookkeeping, not tone: taken out before the core parser sees the state
   if (j.is_object()) {
     bool dropped = false;
+    if (auto it = j.find("instance"); it != j.end()) {
+      if (it->is_string()) savedInstance = it->get<std::string>();
+      j.erase(it);
+      dropped = true;
+    }
     for (const char* key : {"playAlong", "export"})
       if (auto it = j.find(key); it != j.end() && !it->is_object()) {
         j.erase(it);
@@ -620,6 +659,21 @@ void SawbladeProcessor::setStateInformation(const void* data, int size) {
   if (j.is_object()) {
     auto it = j.find("export");
     setExportSettings(it != j.end() ? exportSettingsFromJson(*it) : ExportSettings{});
+  }
+  // `instance`: the owner of the jobs this instance started before the project was closed. Taken only when no other
+  // live instance in this process holds it (a duplicated track keeps the original's jobs with the original). Nothing is
+  // attached or started here: the jobs are picked up when the MATCH / EXPORT screen opens (attachExisting).
+  if (!savedInstance.empty()) {
+    const std::string mine = jobs_.owner();
+    if (savedInstance == mine) {
+      instanceRestored_ = true;
+    } else if (jobs_.snapshot(JobKind::Match).state != JobState::None || jobs_.snapshot(JobKind::Export).state != JobState::None) {
+      // this instance already holds a job under its own id: keep it
+    } else if (claimId(savedInstance)) {
+      releaseId(mine);
+      jobs_.setOwner(savedInstance);
+      instanceRestored_ = true;
+    }
   }
 }
 

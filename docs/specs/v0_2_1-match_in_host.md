@@ -109,3 +109,21 @@ state how the fix was checked on macOS (screenshot or the user's confirmation).
   fails with the message above).
 - Full suite green: gcc + clang `-Werror`, ctest, Python, pluginval 10, macOS (auval + pluginval).
 - Report `docs/specs/v0_2_1-match_in_host_REPORT.md` with reviewer verdicts and screenshots of the take band.
+
+## Lead decisions (v0.2.1 phase lead, 2026-10-06)
+
+- **Task B — the DI's song position only matters for a matched pair.** The matcher reads `--offset-ms` only
+  with `--matched` (`match/sawblade_match/matcher/reference.py`, matched branch); the plugin never passed
+  `--matched` (`plugin/src/JobRunner.cpp`, `makeMatchJob`), so a take's offset was a no-op. A take recorded
+  while playing along is a different performance from the record, so time-aligning it would be wrong.
+  Decision: plugin matches stay unmatched by default. The IMPORT DI dialog gains a checkbox **"same
+  performance as the song (my own recording)"**, default off; when on, the job passes `--matched mono` plus
+  the offset (or no offset when "don't know" is ticked → whole-song search). The checkbox is stored in the
+  take sidecar (`imported.samePerformance`).
+- **Task B — placement acceptance has two routes** (`match/sawblade_match/matcher/offset.py`,
+  `placement_accepted`): accepted when `(r1 − r2)/σ ≥ MIN_CONFIDENCE (4.0)`, or when the peak is strong in
+  absolute terms (`r1 ≥ 0.85`, `r1 − r2 ≥ 0.40`, and `(r1 − r2)/σ ≥ 0.75 · MIN_CONFIDENCE`). Reason: for a
+  short DI the best chance rival sits ≈ √(2 ln N) σ ≈ 4σ, so the relative test alone rejects perfect
+  placements once σ ≳ 0.12 (CI run 105: r1 0.949, r2 0.492, σ 0.118 → 3.88). Both routes' constants are
+  uncalibrated (synthetic fixtures only); recalibrate on real stems before relying on them. Unrelated,
+  looped and silent DIs fail both routes.

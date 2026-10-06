@@ -73,7 +73,7 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   PresetBrowser& browser();
   AbCompare& abCompare();
 
-  // The MATCH overlay (MatchScreen): opened from the play-along panel's button (Standalone only).
+  // The MATCH overlay (MatchScreen): opened from the top bar and the play-along panel's MATCH button (Standalone and plugin alike).
   void openMatchScreen();
   bool matchScreenOpen() const;
   // The EXPORT NAM panel (ExportPanel): opened from the top bar and the play-along panel, Standalone and plugin alike.

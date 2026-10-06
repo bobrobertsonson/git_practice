@@ -183,7 +183,7 @@ TEST_CASE("Directory scan maps names, aliases, unknown files and sorts", "[stems
   writeWavFloat32(t / "vocals.wav", 48000.0, v);
   writeWavFloat32(t / "other.wav", 48000.0, o);
   writeWavFloat32(t / "Guitars.wav", 48000.0, g);       // alias
-  writeWavFloat32(t / "piano.wav", 48000.0, piano);     // unknown: summed into other
+  writeWavFloat32(t / "piano.wav", 48000.0, piano);     // recognised (6-stem separation): summed into other, no warning
   writeWavFloat32(t / "zed.wav", 48000.0, zed);         // unknown, sorts after piano
   { std::ofstream(t / "notes.txt") << "ignored"; }
   fs::create_directories(t / "sub");
@@ -202,10 +202,10 @@ TEST_CASE("Directory scan maps names, aliases, unknown files and sorts", "[stems
   REQUIRE(fs::path(so[1].file).filename() == "piano.wav");
   REQUIRE(fs::path(so[2].file).filename() == "zed.wav");
   REQUIRE(s.audio[static_cast<int>(StemKind::Other)][0][10] == (o[10] + piano[10]) + zed[10]);
-  REQUIRE(hasWarning(s, "piano.wav"));
+  REQUIRE_FALSE(hasWarning(s, "piano.wav"));
   REQUIRE(hasWarning(s, "zed.wav"));
   REQUIRE_FALSE(hasWarning(s, "drums"));
-  REQUIRE(s.warnings.size() == 2);
+  REQUIRE(s.warnings.size() == 1);
 
   // Determinism: a second load is identical.
   const StemSet s2 = loadStemDirectory(t.dir, 48000.0);
@@ -325,5 +325,101 @@ TEST_CASE("Role mapping: a real guitar file wins, `other` stays other", "[stems]
   const StemSet s = loadStemDirectory(t.dir, 48000.0);
   REQUIRE(s.otherMappedToGuitar);
   REQUIRE(s.audio[static_cast<int>(StemKind::Guitar)][0][3] == o[3] + piano[3]);
-  REQUIRE(hasWarning(s, "piano.wav: unrecognised stem name; summed into 'guitar'"));
+  REQUIRE_FALSE(hasWarning(s, "piano.wav"));  // recognised: follows `other` silently
+}
+
+TEST_CASE("classifyStemFolder: only a set of recognised stems is a stem folder", "[stems][loader][dir][classify]") {
+  const auto x = noise(100, 60);
+  auto wav = [&](StemTempDir& t, const char* name) { writeWavFloat32(t / name, 48000.0, x); };
+
+  SECTION("a stems folder: names, case, extensions, alias, piano; non-audio extras ignored") {
+    StemTempDir t;
+    wav(t, "Drums.WAV");
+    wav(t, "bass.wav");
+    wav(t, "vocals.wav");
+    wav(t, "other.wav");
+    wav(t, "Guitars.wav");
+    wav(t, "piano.wav");
+    { std::ofstream(t / "notes.txt") << "x"; }
+    { std::ofstream(t / "info.json") << "{}"; }
+    { std::ofstream(t / ".DS_Store") << "x"; }
+    fs::create_directories(t / "sub");
+    { std::ofstream(t / "sub" / "song.mp3") << "x"; }  // not recursive
+    const auto r = classifyStemFolder(t.dir);
+    REQUIRE(r.ok);
+    REQUIRE(r.recognised == 6);
+  }
+  SECTION("two stems is enough, in any audio extension") {
+    StemTempDir t;
+    { std::ofstream(t / "drums.flac") << "x"; }
+    { std::ofstream(t / "BASS.m4a") << "x"; }
+    REQUIRE(classifyStemFolder(t.dir).ok);
+  }
+  SECTION("a mixed folder (stems plus one unrelated audio file) is refused") {
+    StemTempDir t;
+    wav(t, "drums.wav");
+    wav(t, "bass.wav");
+    { std::ofstream(t / "My Song.mp3") << "x"; }
+    const auto r = classifyStemFolder(t.dir);
+    REQUIRE_FALSE(r.ok);
+    REQUIRE(r.reason.find("My Song.mp3") != std::string::npos);
+  }
+  SECTION("a folder of unrelated audio files is refused") {
+    StemTempDir t;
+    wav(t, "a.wav");
+    wav(t, "b.wav");
+    REQUIRE_FALSE(classifyStemFolder(t.dir).ok);
+  }
+  SECTION("one stem only, or no audio at all, is refused") {
+    StemTempDir t;
+    REQUIRE_FALSE(classifyStemFolder(t.dir).ok);
+    { std::ofstream(t / "notes.txt") << "x"; }
+    REQUIRE_FALSE(classifyStemFolder(t.dir).ok);
+    wav(t, "drums.wav");
+    REQUIRE_FALSE(classifyStemFolder(t.dir).ok);
+    wav(t, "drums.flac");  // the same stem twice is still one stem
+    REQUIRE_FALSE(classifyStemFolder(t.dir).ok);
+    wav(t, "guitar.wav");
+    wav(t, "guitars.flac");  // alias of guitar
+    REQUIRE(classifyStemFolder(t.dir).recognised == 2);
+    REQUIRE(classifyStemFolder(t.dir).ok);
+  }
+  SECTION("a path that is not a directory is left to the loader") {
+    StemTempDir t;
+    REQUIRE(classifyStemFolder(t / "missing").ok);
+  }
+  SECTION("isStemName / isAudioFileName") {
+    REQUIRE(isStemName("Piano"));
+    REQUIRE(isStemName("GUITARS"));
+    REQUIRE_FALSE(isStemName("song"));
+    REQUIRE(isAudioFileName("/x/Song.M4A"));
+    REQUIRE_FALSE(isAudioFileName("/x/notes.txt"));
+  }
+}
+
+TEST_CASE("Dot-files are ignored by the loader and the stem-folder rule", "[stems][loader][dir][classify]") {
+  const auto d = noise(1000, 81), b = noise(1000, 82);
+  {
+    StemTempDir t;
+    writeWavFloat32(t / "drums.wav", 48000.0, d);
+    writeWavFloat32(t / "bass.wav", 48000.0, b);
+    { std::ofstream(t / "._drums.wav") << "AppleDouble, not audio"; }
+    { std::ofstream(t / "._bass.wav") << "x"; }
+    { std::ofstream(t / ".DS_Store") << "x"; }
+    REQUIRE(classifyStemFolder(t.dir).ok);
+    REQUIRE(classifyStemFolder(t.dir).recognised == 2);
+    const StemSet s = loadStemDirectory(t.dir, 48000.0, OtherRole::Other);
+    REQUIRE(s.audio[static_cast<int>(StemKind::Drums)][0][5] == d[5]);
+    REQUIRE(s.sources[static_cast<int>(StemKind::Drums)].size() == 1);
+    REQUIRE(s.warnings.empty());
+  }
+  {
+    StemTempDir t;  // only dot-files plus one stem: refused
+    writeWavFloat32(t / "drums.wav", 48000.0, d);
+    { std::ofstream(t / "._bass.wav") << "x"; }
+    { std::ofstream(t / ".DS_Store") << "x"; }
+    REQUIRE_FALSE(classifyStemFolder(t.dir).ok);
+  }
+  REQUIRE(isHiddenFileName("._a.wav"));
+  REQUIRE_FALSE(isHiddenFileName("a.wav"));
 }

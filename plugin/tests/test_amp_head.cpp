@@ -561,3 +561,31 @@ TEST_CASE("amp head: STEPS - when the capture was checked and has no ladder; not
     CHECK(rig.ed->ampHead(0).stepsTag().isEmpty());
   }
 }
+
+TEST_CASE("amp head: an applied match candidate is one step in the history; a later load of an identical preset adds none", "[ampd][editor][undo]") {
+  // v0.2.1 kept a separate applied-match entry that any user load dropped (even of an identical preset); v0.3 Task D has the one history: a
+  // load that changes nothing is no step, and the one apply step still undoes to the pre-audition preset exactly.
+  Rig rig;
+  rig.load(rigJson(true, false, false));
+  const juce::KeyPress undoKey('z', juce::ModifierKeys::commandModifier, 0);
+  const fs::path cand = rig.dir.dir / "cand.json";
+  std::ofstream(cand) << rigJson(true, true, true).dump(2);
+  const Preset pre = rig.proc.currentPreset();
+  rig.proc.historyClear();
+  REQUIRE(rig.proc.audition().audition(cand));
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(rig.proc.undoSteps() == 0);  // an audition is not a step
+  REQUIRE(rig.proc.audition().apply());
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(rig.proc.undoSteps() == 1);
+  const Preset applied = rig.proc.currentPreset();
+  REQUIRE(rig.proc.loadPresetFile(cand, nullptr, /*undoable=*/true));  // a user load of a preset equal to the applied one
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(rig.proc.editBasePreset() == applied);
+  CHECK(rig.proc.undoSteps() == 1);
+  REQUIRE(rig.ed->rigController().canUndo());
+  CHECK(rig.ed->keyPressed(undoKey));  // the apply
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(rig.proc.currentPreset() == pre);
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+}
