@@ -63,8 +63,30 @@ with the harmonic-profile term at ~40 dB on every model; v3 (7c) applied fixes b
 - Tests (mouse-driven): reorder within a path; move A→B and B→A; add from both picker tabs; remove; bypass; undo
   of each; the rendered chain matches the board order (render test); latency report updates.
 
+## Task D — main page layout: two heads on top, pedals below; the cab gets its own page
+
+User design direction (2026-10-06): "cab can be its own page — the main page should be the two heads on top and
+pedals for 1 or both below." Build to it with the existing skin (no new art); the user refines the look later.
+
+- **Main page (rig area):** the SAW head and the BODY head side by side across the top (SAW left, BODY right,
+  same scale as each other). Below each head, that path's pedalboard (Task C), so each column reads
+  pedals → head for one path. When path B is off, the BODY column shows the off state ("BODY PATH OFF — turn up
+  BLEND") with its head dimmed and an empty board; the SAW column keeps its width (no reflow jump). Single-path
+  presets look like one full column plus the dimmed one; blends show both.
+- **Cab page:** the cab moves off the main page to its own page, opened from the top bar (a CAB button next to RIG)
+  and from a small cab chip on the main page that names the current cab/IR and shows LIVE/STUDIO (shared vs
+  per-path). The page holds what the cab offers today: the cab/IR choice per path or shared, the existing mic page
+  (grille off, mic positions), and the cab's level. The existing double-click-cab → mic behaviour moves there.
+- Cables are redrawn for the new layout (pedals → head per column; the cab chip at the bottom shows where both
+  paths meet).
+- The inspector (right column) is unchanged.
+- Tests: layout test at 1280×800 (both columns, heads aligned, boards below, no overlap) for single-path and
+  blend presets; CAB button and cab chip open the cab page; everything the old cab area did is reachable on the
+  page (mouse-driven); screenshots of the main page (single, blend) and the cab page in the report.
+
 ## Out of scope (propose in the report)
 
+Final visual design of the main and cab pages (the user designs it);
 Circuit-level models and mods (v0.5); new pedal types beyond the chainsaw family and adjacent circuits
 (the user rejected non-chainsaw pedals once, `docs/specs/phase7c_zone_rat.md`: ask before proposing any);
 pedal art, amp-head art.
