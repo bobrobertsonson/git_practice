@@ -1588,18 +1588,163 @@ TEST_CASE("match: the export source is the loaded candidate, else the current pr
   CHECK(s.description.find("cand.json") != std::string::npos);
 }
 
-TEST_CASE("plugin mode: MATCH and EXPORT are Standalone-only", "[match][gating]") {
+TEST_CASE("plugin mode: recording works, and MATCH needs no Standalone wrapper (v0.2.1 Task A)", "[match][gating]") {
   Host h(kFs, 256);
-  CHECK_FALSE(h.p.matchEnabled());  // a processor outside the Standalone wrapper counts as a plugin
-  h.p.playAlong().setStandalone(true);
-  CHECK(h.p.matchEnabled());
-  h.p.playAlong().setStandalone(false);
-  CHECK_FALSE(h.p.matchEnabled());
-  // Recording is not gated: it works in plugin mode.
+  CHECK_FALSE(h.p.playAlong().standalone());  // a processor outside the Standalone wrapper counts as a plugin
+  // The only gate on starting a match is the tool: no executable, no job (and nothing is started to find out).
+  FakeTools t;
+  t.cfgMatch({{"progressJson", true}});
+  h.p.jobs().setJobsDir(t.jobs);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  CHECK(h.p.jobs().checkTools(JobKind::Match).ok());
+  REQUIRE(h.p.jobs().startMatch(t.request()));
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Match));
+  CHECK(h.p.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
   TempDir tmp;
   h.p.recorder().setTakesDir(tmp.dir / "takes");
   CHECK(h.p.recorder().start(""));
   h.p.recorder().stop();
+}
+
+TEST_CASE("match: two instances in one process keep their jobs apart (v0.2.1 Task A)", "[match][isolation]") {
+  FakeTools t;
+  t.cfgMatch({{"progressJson", true}});
+  auto make = [&](std::unique_ptr<Host>& h) {
+    h = std::make_unique<Host>(kFs, 256);
+    h->p.jobs().setJobsDir(t.jobs);  // the per-user jobs folder: one for every instance
+    h->p.matchSettings().setFile(t.root / "settings.xml");
+  };
+  std::unique_ptr<Host> a, b;
+  make(a);
+  make(b);
+  CHECK_FALSE(a->p.instanceId().empty());
+  CHECK(a->p.instanceId() != b->p.instanceId());
+
+  // A fresh instance saves exactly its tone: no job, nothing to recover, no id in the state.
+  juce::MemoryBlock fresh;
+  b->p.getStateInformation(fresh);
+  CHECK(fresh.toString().indexOf("\"instance\"") < 0);
+
+  REQUIRE(a->p.jobs().startMatch(t.request()));
+  REQUIRE(a->p.jobs().waitFinished(JobKind::Match));
+  const JobSnapshot sa = a->p.jobs().snapshot(JobKind::Match);
+  REQUIRE(sa.state == JobState::Succeeded);
+
+  // B (reopening its MATCH screen = attachExisting) must not find A's job, finished or not.
+  b->p.jobs().attachExisting();
+  CHECK(b->p.jobs().snapshot(JobKind::Match).state == JobState::None);
+  CHECK(b->p.jobs().refineSnapshot().state == JobState::None);
+
+  // Both may run: B starts its own while A's finished job is still the one A shows.
+  REQUIRE(b->p.jobs().startMatch(t.request(2000.0)));
+  REQUIRE(b->p.jobs().waitFinished(JobKind::Match));
+  const JobSnapshot sb = b->p.jobs().snapshot(JobKind::Match);
+  REQUIRE(sb.state == JobState::Succeeded);
+  CHECK(sb.dir != sa.dir);
+  CHECK(a->p.jobs().snapshot(JobKind::Match).dir == sa.dir);
+  a->p.jobs().attachExisting();  // does nothing for a kind that has a job; and never swaps to B's
+  CHECK(a->p.jobs().snapshot(JobKind::Match).dir == sa.dir);
+
+  // job.json names the owner.
+  const auto ownerOf = [](const fs::path& dir) {
+    std::ifstream in(dir / "job.json");
+    return json::parse(in).value("owner", std::string("(none)"));
+  };
+  CHECK(ownerOf(sa.dir) == a->p.instanceId());
+  CHECK(ownerOf(sb.dir) == b->p.instanceId());
+
+  // A fresh instance C and one for the Standalone-less tools (an unscoped runner) behave: C finds nothing; an
+  // unscoped runner (tests / tools) still adopts the newest job, as before.
+  std::unique_ptr<Host> c;
+  make(c);
+  c->p.jobs().attachExisting();
+  CHECK(c->p.jobs().snapshot(JobKind::Match).state == JobState::None);
+  MatchSettings ms(t.root / "settings.xml");
+  JobRunner unscoped(ms, t.jobs);
+  unscoped.attachExisting();
+  CHECK(unscoped.snapshot(JobKind::Match).state == JobState::Succeeded);
+
+  // Closing the host project and reopening it: the saved state carries A's id, and the reloaded instance finds A's job
+  // again (not B's). While A is alive, a copy of its state (a duplicated track) gets an id of its own.
+  juce::MemoryBlock stateA;
+  a->p.getStateInformation(stateA);
+  CHECK(stateA.toString().indexOf("\"instance\"") >= 0);
+  const std::string idA = a->p.instanceId();
+  c->p.setStateInformation(stateA.getData(), static_cast<int>(stateA.getSize()));
+  CHECK(c->p.instanceId() != idA);
+  c->p.jobs().attachExisting();
+  CHECK(c->p.jobs().snapshot(JobKind::Match).state == JobState::None);
+  c.reset();
+  a.reset();  // the project is closed
+  std::unique_ptr<Host> d;
+  make(d);
+  d->p.setStateInformation(stateA.getData(), static_cast<int>(stateA.getSize()));
+  CHECK(d->p.instanceId() == idA);
+  CHECK(d->p.jobs().snapshot(JobKind::Match).state == JobState::None);  // nothing is attached (or started) by a state load
+  d->p.jobs().attachExisting();
+  const JobSnapshot sd = d->p.jobs().snapshot(JobKind::Match);
+  CHECK(sd.state == JobState::Succeeded);
+  CHECK(sd.dir == sa.dir);
+  CHECK(sd.results.size() == 3);
+  // The restored instance keeps saving its id, even before it has touched a job again.
+  Host e(kFs, 256);
+  e.p.setStateInformation(stateA.getData(), static_cast<int>(stateA.getSize()));  // d holds the id: e is a copy
+  CHECK(e.p.instanceId() != idA);
+  juce::MemoryBlock stateD;
+  d->p.getStateInformation(stateD);
+  CHECK(stateD.toString().indexOf(juce::String(idA)) >= 0);
+}
+
+TEST_CASE("job runner: an owned runner adopts only its own jobs (v0.2.1 Task A)", "[match][isolation]") {
+  FakeTools t;
+  t.cfgMatch({{"progressJson", true}});
+  MatchSettings ms(t.root / "settings.xml");
+  JobRunner x(ms, t.jobs), y(ms, t.jobs), legacy(ms, t.jobs);
+  x.setOwner("owner-x");
+  y.setOwner("owner-y");
+  CHECK(x.owner() == "owner-x");
+  REQUIRE(x.startMatch(t.request()));
+  REQUIRE(x.waitFinished(JobKind::Match));
+  REQUIRE(legacy.startMatch(t.request(2000.0)));  // an unscoped runner's job has no owner in its job.json
+  REQUIRE(legacy.waitFinished(JobKind::Match));
+  const fs::path dirX = x.snapshot(JobKind::Match).dir;
+
+  y.attachExisting();
+  CHECK(y.snapshot(JobKind::Match).state == JobState::None);  // neither x's nor the ownerless job is y's
+
+  JobRunner x2(ms, t.jobs);
+  x2.setOwner("owner-x");  // the same instance after a restart
+  x2.attachExisting();
+  CHECK(x2.snapshot(JobKind::Match).state == JobState::Succeeded);
+  CHECK(x2.snapshot(JobKind::Match).dir == dirX);  // x's job, although the ownerless one is newer
+}
+
+TEST_CASE("match: applying a result tells the host the project state changed (v0.2.1 Task A)", "[match][apply]") {
+  struct Listener : juce::AudioProcessorListener {
+    int nonParam = 0;
+    void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override {}
+    void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails& d) override {
+      if (d.nonParameterStateChanged) ++nonParam;
+    }
+  };
+  FakeTools t;
+  t.cfgMatch({{"progressJson", true}});
+  Host h(kFs, 256);
+  h.p.jobs().setJobsDir(t.jobs);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  REQUIRE(h.p.jobs().startMatch(t.request()));
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Match));
+  const JobSnapshot s = h.p.jobs().snapshot(JobKind::Match);
+  REQUIRE(s.results.size() == 3);
+  Listener l;
+  h.p.addListener(&l);
+  REQUIRE(h.p.audition().audition(s.results[1].preset));
+  REQUIRE(h.p.waitForLoader());
+  CHECK(l.nonParam == 0);  // an audition is a preview: the host project is not dirtied by it
+  REQUIRE(h.p.audition().apply());
+  CHECK(l.nonParam == 1);  // one notification for the one state change
+  CHECK(h.p.status().presetName == "match alt 1");
+  h.p.removeListener(&l);
 }
 
 TEST_CASE("match: a finished match job's candidates audition and apply through the processor", "[match][integration]") {

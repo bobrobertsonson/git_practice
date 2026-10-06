@@ -2311,21 +2311,26 @@ TEST_CASE("record: an overrun shows in the panel", "[editor][record]") {
   CHECK(takes[0].overruns == 8);
 }
 
-TEST_CASE("record/match: in plugin mode MATCH says to open the Standalone app; EXPORT NAM works everywhere", "[editor][record][match]") {
+TEST_CASE("record/match: in plugin mode MATCH opens the match screen, as in Standalone; EXPORT NAM works too", "[editor][record][match]") {
   MatchRig rig;
   rig.ed->setPlayAlongOpen(true);
-  REQUIRE_FALSE(rig.proc.matchEnabled());
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());  // a plugin instance, not the Standalone wrapper
   auto* match = buttonTitled(rig.panel(), "MATCH");
   auto* exportBtn = buttonTitled(rig.panel(), "EXPORT NAM");
+  CHECK(match->getTooltip().isNotEmpty());
+  CHECK_FALSE(match->getTooltip().containsIgnoreCase("Standalone"));
+  CHECK_FALSE(anyLabelContains(rig.panel(), "Standalone app"));
   click(*match);
   rig.panel().refresh();
+  CHECK(rig.ed->matchScreenOpen());
+  CHECK_FALSE(anyLabelContains(rig.panel(), "Standalone app"));
+  CHECK_FALSE(anyLabelContains(rig.screen(), "Standalone app"));
+  click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
   CHECK_FALSE(rig.ed->matchScreenOpen());
-  CHECK(anyLabelContains(rig.panel(), "Standalone app"));
-  // EXPORT NAM opens its panel in plugin mode too, with no Standalone notice.
+  // EXPORT NAM opens its panel in plugin mode too.
   click(*exportBtn);
   CHECK(rig.ed->exportPanelOpen());
   CHECK_FALSE(rig.ed->matchScreenOpen());
-  CHECK_FALSE(anyLabelContains(rig.panel(), "EXPORT NAM runs"));
   click(*rig.exportButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
   CHECK_FALSE(rig.ed->exportPanelOpen());
   // Recording still works in plugin mode.
@@ -2334,7 +2339,7 @@ TEST_CASE("record/match: in plugin mode MATCH says to open the Standalone app; E
   click(*buttonTitled(rig.panel(), "REC"));  // the same button, now labelled STOP
   CHECK(rig.proc.recorder().state() == TakeRecorder::State::Idle);
 
-  // Standalone: MATCH opens the screen (which no longer has an export mode).
+  // Standalone: the same.
   rig.proc.playAlong().setStandalone(true);
   click(*match);
   CHECK(rig.ed->matchScreenOpen());
@@ -2592,7 +2597,7 @@ struct ExportRig : MatchRig {
 
 TEST_CASE("export panel: opens from the top bar in plugin mode; the mode default follows the cab mode", "[editor][export]") {
   ExportRig rig;
-  REQUIRE_FALSE(rig.proc.matchEnabled());  // plugin mode: no Standalone gating for EXPORT
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());  // plugin mode: no Standalone gating for EXPORT
   auto* top = topBarButton(*rig.ed, "EXPORT NAM");
   REQUIRE(top != nullptr);
   CHECK(top->isEnabled());
@@ -2972,10 +2977,10 @@ juce::Button* topBarButton(SawbladeEditor& ed, const juce::String& title) {
   return nullptr;
 }
 
-// Standalone mode, a song loaded, and a take recorded and chosen for MATCH. Returns the song folder.
-fs::path prepareMatchTake(MatchRig& rig, const char* takeName = nullptr) {
+// Standalone mode (or plugin mode: standalone = false), a song loaded, and a take recorded and chosen for MATCH. Returns the song folder.
+fs::path prepareMatchTake(MatchRig& rig, const char* takeName = nullptr, bool standalone = true) {
   auto& pa = rig.proc.playAlong();
-  pa.setStandalone(true);
+  pa.setStandalone(standalone);
   const auto song = writeSyntheticSong(rig.tmp.dir, "Song (stems)", 20.0);
   pa.loadFolder(song.string(), true);
   REQUIRE(pa.waitForLoader());
@@ -3011,7 +3016,7 @@ void startTwoPass(MatchRig& rig) {
 
 }  // namespace
 
-TEST_CASE("top bar: MATCH opens the play-along panel's record + match area; EXPORT NAM and A/B are live", "[editor][match][topbar]") {
+TEST_CASE("top bar: MATCH opens the match screen in a host; EXPORT NAM and A/B are live", "[editor][match][topbar]") {
   MatchRig rig;
   auto* match = topBarButton(*rig.ed, "MATCH");
   auto* exportBtn = topBarButton(*rig.ed, "EXPORT NAM");
@@ -3021,27 +3026,26 @@ TEST_CASE("top bar: MATCH opens the play-along panel's record + match area; EXPO
   REQUIRE(ab != nullptr);
   CHECK(match->isEnabled());
   CHECK(match->getTooltip().isNotEmpty());
+  CHECK_FALSE(match->getTooltip().containsIgnoreCase("Standalone"));
   CHECK(exportBtn->isEnabled());  // live since phase 12 (opens the export panel)
   CHECK(ab->isEnabled());  // live since p9
 
-  // Plugin mode: the panel opens, and says the same as the panel's MATCH: open the Standalone app.
-  REQUIRE_FALSE(rig.proc.matchEnabled());
+  // Plugin mode (v0.2.1 Task A): the same as Standalone, straight to the match screen, no note anywhere.
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());
   CHECK_FALSE(rig.ed->playAlongOpen());
   click(*match);
-  CHECK(rig.ed->playAlongOpen());
-  CHECK(rig.panel().isVisible());
-  CHECK_FALSE(rig.ed->matchScreenOpen());
-  CHECK(buttonTitled(rig.panel(), "REC")->isVisible());  // the record band is the area it opens
-  CHECK(buttonTitled(rig.panel(), "MATCH")->isVisible());
-  CHECK(anyLabelContains(rig.panel(), "MATCH runs in the Standalone app"));
-  CHECK(anyLabelContains(rig.panel(), "open the Standalone app"));
+  CHECK(rig.ed->matchScreenOpen());
+  CHECK_FALSE(rig.ed->playAlongOpen());
+  CHECK_FALSE(anyLabelContains(rig.panel(), "Standalone app"));
+  CHECK_FALSE(anyLabelContains(rig.screen(), "Standalone app"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "MATCH runs in the Standalone app"));
 
   click(*exportBtn);
   CHECK(rig.ed->exportPanelOpen());
   CHECK_FALSE(rig.ed->matchScreenOpen());
 }
 
-TEST_CASE("top bar: MATCH in the Standalone app opens the match screen directly", "[editor][match][topbar]") {
+TEST_CASE("top bar: MATCH in the Standalone app opens the match screen directly too", "[editor][match][topbar]") {
   MatchRig rig;
   rig.proc.playAlong().setStandalone(true);
   auto* match = topBarButton(*rig.ed, "MATCH");
@@ -3079,7 +3083,7 @@ std::string recordTakeNamed(MatchRig& rig, const std::string& songFolder, const 
 TEST_CASE("match screen: load a song, record a DI and start a match without leaving the screen (Task D)", "[editor][match][inputs]") {
   using A = PlayAlongPanel::ChooserAction;
   MatchRig rig;
-  rig.proc.playAlong().setStandalone(true);  // today's gate; Task A only flips it
+  rig.proc.playAlong().setStandalone(true);  // Standalone free-run transport; the plugin-mode flow is the test below
   rig.tools.cfgMatch({{"progressJson", true}});
   rig.ed->openMatchScreen();
   MatchScreen& screen = rig.screen();
@@ -4152,4 +4156,205 @@ TEST_CASE("settings: screenshot with the panel open and the checklist collapsed"
     for (int x = 960; x < 1280; ++x)
       if (open.getPixelAt(x, y) != closed.getPixelAt(x, y)) ++changedRight;
   CHECK(changedRight == 0);
+}
+
+// ---- v0.2.1 Task A: MATCH inside a host ---------------------------------------------------------------------------
+namespace {
+// Closes the editor the way a plugin wrapper does and opens a new one on the same processor.
+void reopenEditor(MatchRig& rig) {
+  rig.proc.editorBeingDeleted(rig.base.get());
+  rig.base.reset();
+  rig.ed = nullptr;
+  rig.base.reset(rig.proc.createEditorAndMakeActive());
+  rig.ed = dynamic_cast<SawbladeEditor*>(rig.base.get());
+  REQUIRE(rig.ed != nullptr);
+}
+
+// SAWBLADE_APPDATA in a temp dir for the life of the object: the settings file, the takes and the jobs of a
+// default-constructed processor all live there (what a plugin host gives a fresh install).
+struct AppDataEnv {
+  fs::path dir;
+  std::optional<std::string> old;
+  AppDataEnv() {
+    dir = fs::temp_directory_path() / ("sawblade_appdata_" + std::to_string(juce::Random::getSystemRandom().nextInt64() & 0xffffff));
+    fs::create_directories(dir);
+    if (const char* v = std::getenv("SAWBLADE_APPDATA")) old = v;
+    ::setenv("SAWBLADE_APPDATA", dir.c_str(), 1);
+  }
+  ~AppDataEnv() {
+    if (old) ::setenv("SAWBLADE_APPDATA", old->c_str(), 1);
+    else ::unsetenv("SAWBLADE_APPDATA");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+  }
+};
+}  // namespace
+
+TEST_CASE("match in a host: the top-bar MATCH, START MATCH and APPLY work in plugin mode", "[editor][match][host]") {
+  MatchRig rig;
+  prepareMatchTake(rig, nullptr, /*standalone=*/false);
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());
+  rig.tools.cfgMatch({{"progressJson", true}});
+
+  auto* top = topBarButton(*rig.ed, "MATCH");
+  REQUIRE(top != nullptr);
+  click(*top);
+  REQUIRE(rig.ed->matchScreenOpen());
+  auto* start = rig.screenButton("START MATCH");
+  REQUIRE(start != nullptr);
+  REQUIRE(start->isEnabled());
+  click(*start);
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Match, 15000ms));
+  rig.screen().refresh();
+  const JobSnapshot job = rig.proc.jobs().snapshot(JobKind::Match);
+  REQUIRE(job.state == JobState::Succeeded);
+  CHECK(job.dir.parent_path() == rig.tools.jobs);
+  REQUIRE(resultsList(rig).getListBoxModel()->getNumRows() == 3);
+  CHECK_FALSE(anyLabelContains(rig.screen(), "Standalone"));
+
+  // APPLY from the screen: the result becomes the instance's preset.
+  resultsList(rig).selectRow(1);
+  click(*rig.screenButton("APPLY"));
+  REQUIRE(rig.proc.waitForLoader());
+  rig.screen().refresh();
+  CHECK(rig.proc.status().presetName == "match alt 1");
+  CHECK(anyLabelContains(rig.screen(), "Applied"));
+
+  // The play-along band's MATCH reaches the same screen.
+  click(*rig.screenButton(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
+  REQUIRE_FALSE(rig.ed->matchScreenOpen());
+  rig.ed->setPlayAlongOpen(true);
+  click(*buttonTitled(rig.panel(), "MATCH"));
+  CHECK(rig.ed->matchScreenOpen());
+}
+
+TEST_CASE("match in a host: two instances run matches at once and each applies only its own result", "[editor][match][host][isolation]") {
+  MatchRig a;
+  MatchRig b;
+  b.proc.jobs().setJobsDir(a.tools.jobs);  // one per-user jobs folder for every instance, as in a host
+  prepareMatchTake(a, nullptr, false);
+  prepareMatchTake(b, nullptr, false);
+  CHECK_FALSE(a.proc.instanceId().empty());
+  CHECK(a.proc.instanceId() != b.proc.instanceId());
+  // A's matcher parks in its fine stage until released; B's runs straight through.
+  a.tools.cfgMatch({{"progressJson", true}, {"gates", nlohmann::json::array({"g2"})}});
+  b.tools.cfgMatch({{"progressJson", true}});
+
+  a.ed->openMatchScreen();
+  click(*a.screenButton("START MATCH"));
+  REQUIRE(waitUntilTrue([&] { return a.proc.jobs().snapshot(JobKind::Match).progress.message == "refining 1/3"; }));
+  const fs::path dirA = a.proc.jobs().snapshot(JobKind::Match).dir;
+
+  // B opens its screen while A's job runs: it shows no job (and its START MATCH is free), never A's.
+  b.ed->openMatchScreen();
+  CHECK(b.proc.jobs().snapshot(JobKind::Match).state == JobState::None);
+  CHECK_FALSE(anyLabelContains(b.screen(), "refining 1/3"));
+  if (auto* cancel = b.screenButton("CANCEL")) CHECK_FALSE(cancel->isEnabled());
+  REQUIRE(b.screenButton("START MATCH")->isEnabled());
+  click(*b.screenButton("START MATCH"));
+  REQUIRE(b.proc.jobs().waitFinished(JobKind::Match, 15000ms));  // B finishes while A is still running
+  CHECK(a.proc.jobs().snapshot(JobKind::Match).state == JobState::Running);
+  const fs::path dirB = b.proc.jobs().snapshot(JobKind::Match).dir;
+  CHECK(dirB != dirA);
+  CHECK(b.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
+  fake_tools::release(dirA, "g2");
+  REQUIRE(a.proc.jobs().waitFinished(JobKind::Match, 15000ms));
+  REQUIRE(a.proc.jobs().snapshot(JobKind::Match).state == JobState::Succeeded);
+
+  // Reopening each editor shows only its own job.
+  reopenEditor(a);
+  reopenEditor(b);
+  a.ed->openMatchScreen();
+  b.ed->openMatchScreen();
+  CHECK(a.proc.jobs().snapshot(JobKind::Match).dir == dirA);
+  CHECK(b.proc.jobs().snapshot(JobKind::Match).dir == dirB);
+  a.screen().refresh();
+  b.screen().refresh();
+  CHECK(resultsList(a).getListBoxModel()->getNumRows() == 3);
+  CHECK(resultsList(b).getListBoxModel()->getNumRows() == 3);
+
+  // Applying A's result touches A only.
+  const std::string bBefore = b.proc.status().presetName;
+  resultsList(a).selectRow(1);
+  click(*a.screenButton("APPLY"));
+  REQUIRE(a.proc.waitForLoader());
+  CHECK(a.proc.status().presetName == "match alt 1");
+  CHECK(b.proc.status().presetName == bBefore);
+  CHECK_FALSE(b.proc.audition().state().active);
+  CHECK_FALSE(b.proc.audition().appliedCandidateFile().has_value());
+  const auto applied = a.proc.audition().appliedCandidateFile();
+  REQUIRE(applied.has_value());
+  CHECK(applied->parent_path() == dirA);  // the candidate file sits in A's own job folder, never B's
+}
+
+TEST_CASE("pluginval / auval paths never start a job: a fresh processor with default settings spawns nothing", "[editor][match][pluginval]") {
+  AppDataEnv data;
+  Rig rig;  // a default-constructed processor: default settings file, jobs folder and takes folder (all under SAWBLADE_APPDATA)
+  auto& jobs = rig.proc.jobs();
+  REQUIRE(jobs.jobsDir() == data.dir / "jobs");
+  REQUIRE_FALSE(rig.proc.playAlong().standalone());
+
+  auto drive = [&] {
+    // state save / load (a validator's first calls), prepare at other rates, audio, and a sweep of every parameter
+    for (int i = 0; i < 2; ++i) {
+      juce::MemoryBlock state;
+      rig.proc.getStateInformation(state);
+      rig.proc.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    }
+    rig.proc.prepareToPlay(44100.0, 256);
+    processBlocks(rig.proc, 4);
+    rig.proc.prepareToPlay(96000.0, 1024);
+    processBlocks(rig.proc, 4);
+    for (auto* prm : rig.proc.getParameters())
+      for (const float v : {0.0f, 1.0f, 0.5f}) {
+        prm->setValueNotifyingHost(v);
+        processBlocks(rig.proc, 1);
+      }
+    // the editor: open and close every panel, close and reopen the whole editor, refresh timers
+    rig.ed->setPlayAlongOpen(true);
+    rig.panel().refresh();
+    rig.ed->setPlayAlongOpen(false);
+    rig.ed->openMatchScreen();
+    rig.screen().refresh();
+    CHECK_FALSE(rig.screenButton("START MATCH")->isEnabled());  // no song, no take, no tool: nothing to start
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(120);
+    rig.ed->openExportPanel();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(120);
+  };
+  drive();
+  rig.proc.editorBeingDeleted(rig.base.get());
+  rig.base.reset();
+  rig.ed = nullptr;
+  rig.base.reset(rig.proc.createEditorAndMakeActive());
+  rig.ed = dynamic_cast<SawbladeEditor*>(rig.base.get());
+  REQUIRE(rig.ed != nullptr);
+  drive();
+
+  for (const JobKind k : {JobKind::Match, JobKind::Export}) {
+    INFO(jobKindName(k));
+    CHECK(jobs.snapshot(k).state == JobState::None);
+    CHECK(jobs.snapshot(k).pid == 0);
+  }
+  CHECK(jobs.refineSnapshot().state == JobState::None);
+  // Nothing was written to the jobs folder (no job.json anywhere): no child was started by any of it.
+  int jobFolders = 0;
+  std::error_code ec;
+  if (fs::is_directory(data.dir / "jobs", ec))
+    for (const auto& e : fs::directory_iterator(data.dir / "jobs", ec))
+      if (fs::exists(e.path() / "job.json", ec)) ++jobFolders;
+  CHECK(jobFolders == 0);
+
+  // With no tool configured (the default on a validator's machine) a start is refused, not attempted. A machine that
+  // does have the tool installed at the default path skips this half; the half above holds either way.
+  const fs::path exe = rig.proc.matchSettings().matchExecutable();
+  INFO("default match executable: " << exe.string());
+  if (!jobs.checkTools(JobKind::Match).ok()) {
+    std::string err;
+    MatchRequest req;
+    req.di = data.dir / "di.wav";
+    req.ref = data.dir / "ref.wav";
+    CHECK_FALSE(jobs.startMatch(req, &err));
+    CHECK(err.find("was not found") != std::string::npos);
+    CHECK(jobs.snapshot(JobKind::Match).state == JobState::None);
+  }
 }
