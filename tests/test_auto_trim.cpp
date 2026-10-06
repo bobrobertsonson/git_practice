@@ -47,8 +47,10 @@ json nam(const std::string& id, const std::string& file, const char* slot = null
 }
 
 // Two paths with one fixture model each, align off, impulse cab, linear blend `blend`.
-json twoPaths(const std::string& aFile, const std::string& bFile, double blend = 0.5) {
-  return {{"schema", "sawblade.preset"}, {"version", 3}, {"name", "trim"},
+// `inputDb` keeps the fixture rigs (linear models: the reference DI is about -31 LUFS through them) loud enough that their trims stay
+// under the +12 dB limit.
+json twoPaths(const std::string& aFile, const std::string& bFile, double blend = 0.5, double inputDb = 10.0) {
+  return {{"schema", "sawblade.preset"}, {"version", 3}, {"name", "trim"}, {"input", {{"gainDb", inputDb}}},
           {"paths", {{"a", {{"blocks", json::array({nam("a1", aFile, "amp")})}}},
                      {"b", {{"blocks", json::array({nam("b1", bFile, "amp")})}}}}},
           {"align", {{"mode", "off"}}},
@@ -173,7 +175,8 @@ TEST_CASE("Auto trim hash: covers what affects level, ignores names, notes, stor
     return autoTrimHash(parse(j)) != h;
   };
   CHECK(differs([](json& j) { j["blend"] = 0.6; }));
-  CHECK(differs([](json& j) { j["output"] = {{"gainDb", -1.0}}; }));
+  // OUTPUT is the user's persistent offset: it is not in the hash (and the trim is measured with it at 0 dB).
+  CHECK_FALSE(differs([](json& j) { j["output"] = {{"gainDb", -1.0}}; }));
   CHECK(differs([](json& j) { j["input"] = {{"gainDb", 2.0}}; }));
   CHECK(differs([](json& j) { j["paths"]["b"]["levelDb"] = -2.0; }));
   CHECK(differs([](json& j) { j["paths"]["a"]["ampControls"] = {{"gain", 7.0}}; }));
@@ -224,11 +227,60 @@ TEST_CASE("Auto trim: brings a preset to -18 LUFS on the reference DI, only when
   CHECK(autoTrimFresh(p));
   CHECK(lufsWithTrim(p) == Approx(kAutoTrimTargetLufs).margin(0.01));
   CHECK(p.autoTrim.db != old);
-  // The OUTPUT knob is on top of the match: the preset as stored (its gain included) plays at the target.
+  // OUTPUT is a persistent offset on top of the match: the trim is measured with it at 0 dB, so it does not depend on it, and the
+  // preset as stored plays at -18 LUFS + its output gain.
   Preset g = parse(twoPaths("linear_05_025.nam", "linear_identity.nam"));
+  Preset g0 = g;
   g.outputGainDb = -4.0;
+  CHECK(autoTrimHash(g) == autoTrimHash(g0));
   REQUIRE(ensureAutoTrim(g));
-  CHECK(lufsWithTrim(g) == Approx(kAutoTrimTargetLufs).margin(0.01));
+  REQUIRE(ensureAutoTrim(g0));
+  CHECK(g.autoTrim.db == Approx(g0.autoTrim.db).margin(1e-9));
+  CHECK(lufsWithTrim(g) == Approx(kAutoTrimTargetLufs).margin(0.01));  // measured with OUTPUT forced to 0 dB
+  RenderOptions ao;
+  ao.applyAutoTrim = true;
+  CHECK(lufsOfSamples(renderPreset(g, in, ao).samples) == Approx(kAutoTrimTargetLufs - 4.0).margin(0.05));  // as stored
+}
+
+TEST_CASE("Auto trim: positive trims stop at +12 dB; rigs with no active non-linear block get 0", "[autotrim]") {
+  // A quiet non-linear rig wants more than +12 dB: it gets +12.
+  Preset quiet = parse(twoPaths("linear_identity.nam", "linear_identity.nam", 0.5, -20.0));
+  const auto r = computeAutoTrim(quiet);
+  REQUIRE(r.has_value());
+  CHECK(kAutoTrimTargetLufs - r->lufs > kMaxPositiveTrimDb);
+  CHECK(r->trimDb == kMaxPositiveTrimDb);
+  // A hot one is attenuated, down to the (larger) negative limit.
+  Preset hot = parse(twoPaths("linear_identity.nam", "linear_identity.nam", 0.5, 40.0));
+  const auto h = computeAutoTrim(hot);
+  REQUIRE(h.has_value());
+  CHECK(h->trimDb == Approx(kAutoTrimTargetLufs - h->lufs).margin(1e-9));
+  CHECK(h->trimDb < -kMaxPositiveTrimDb);
+  // No NAM, no pedal model: Init (empty), EQ and cab only, or every block bypassed / on a disabled path -> trim 0.
+  Preset init = parse({{"schema", "sawblade.preset"}, {"version", 3}, {"name", "empty"},
+                       {"paths", {{"a", {{"blocks", json::array()}}}, {"b", {{"blocks", json::array()}}}}},
+                       {"align", {{"mode", "off"}}}, {"cab", {{"mode", "shared"}, {"enabled", false}, {"ir", {{"file", "(none)"}}}}}});
+  CHECK_FALSE(hasNonlinearBlock(init));
+  const auto ri = computeAutoTrim(init);
+  REQUIRE(ri.has_value());
+  CHECK(ri->lufs < -25.0);  // it would have wanted a big boost
+  CHECK(ri->trimDb == 0.0);
+  Preset eqOnly = init;
+  eqOnly.postEq.push_back({EqType::Peak, 800.0, 3.0, 1.0, true});
+  CHECK(computeAutoTrim(eqOnly)->trimDb == 0.0);
+  Preset bypassed = quiet;
+  for (PathPreset* pp : {&bypassed.a, &bypassed.b})
+    for (Block& b : pp->blocks) b.bypass = true;
+  CHECK_FALSE(hasNonlinearBlock(bypassed));
+  CHECK(computeAutoTrim(bypassed)->trimDb == 0.0);
+  Preset oneDisabled = quiet;
+  oneDisabled.b.enabled = false;
+  CHECK(hasNonlinearBlock(oneDisabled));
+  oneDisabled.a.enabled = false;
+  CHECK_FALSE(hasNonlinearBlock(oneDisabled));
+  CHECK(hasNonlinearBlock(quiet));
+  // A modeled pedal counts.
+  const Preset pedal = loadPresetFile(kFactory / "modeled" / "hm_chainsaw.json");
+  CHECK(hasNonlinearBlock(pedal));
 }
 
 TEST_CASE("Auto trim: a silent preset has no trim", "[autotrim]") {
@@ -363,9 +415,8 @@ TEST_CASE("withSlotMakeup: only nam blocks carry it, and it is clamped", "[autot
 
 // ---- A/B at matched loudness ----------------------------------------------------------------------------
 TEST_CASE("A/B pair: two different presets, both at their trims, are within 0.5 LU of each other", "[autotrim][ab]") {
-  Preset a = parse(twoPaths("linear_identity.nam", "linear_identity.nam", 0.0));
-  Preset b = parse(twoPaths("wavenet.nam", "linear_05_025.nam", 0.7));
-  b.outputGainDb = 9.0;
+  Preset a = parse(twoPaths("linear_identity.nam", "linear_identity.nam", 0.0, 6.0));
+  Preset b = parse(twoPaths("wavenet.nam", "linear_05_025.nam", 0.7, 20.0));
   const double rawA = *measureReferenceLufs(a), rawB = *measureReferenceLufs(b);
   CHECK(std::fabs(rawA - rawB) > 3.0);  // audibly different without the match
   REQUIRE(ensureAutoTrim(a));

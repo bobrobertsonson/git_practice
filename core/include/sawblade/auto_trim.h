@@ -15,14 +15,19 @@
 //   * Loudness: BS.1770-4 integrated loudness (loudness.h; K-weighting, 400 ms blocks, -70 LUFS absolute and -10 LU relative
 //     gates) of the mono output, as the 10.1 level match in chain.cpp measures: the signal is the left channel, the right
 //     channel is digital silence (weight 1.0 per channel, no mono-to-stereo up-mix).
-//   * Target: kAutoTrimTargetLufs. autoTrimDb = target - measured, clamped to +-kMaxAutoTrimDb, applied as a plain gain after
-//     the OUTPUT knob (Chain::setAutoTrimDb). So the preset as stored (its own output.gainDb included) plays at the target;
-//     moving the OUTPUT knob afterwards moves the level relative to that.
+//   * Target: kAutoTrimTargetLufs. autoTrimDb = target - measured, clamped to [-kMaxAutoTrimDb, +kMaxPositiveTrimDb], applied as a
+//     plain gain after the OUTPUT knob (Chain::setAutoTrimDb).
+//   * OUTPUT: the preset is measured with output.gainDb treated as 0 dB, and output.gainDb is not in the staleness hash. OUTPUT is
+//     a persistent user offset from the target: the preset plays at target + output.gainDb, whatever its stored OUTPUT.
+//   * Rigs with no active non-linear block (no non-bypassed `nam` or `pedal.*` block on an enabled path: Init / empty, EQ and cab
+//     only) get trim 0: there is nothing to level-match and boosting a clean pass-through would only raise a hot DI.
 //   * The NAM export, the matcher and the trained chain always use the UN-trimmed chain: the trim is not in LiveParams, not in
 //     the chain's own gains, and renderPreset ignores it unless RenderOptions::applyAutoTrim is set.
 namespace sawblade {
 
 constexpr double kAutoTrimTargetLufs = -18.0;
+// A positive trim is limited to this (a quiet rig is not boosted without bound); a negative one only by kMaxAutoTrimDb.
+constexpr double kMaxPositiveTrimDb = 12.0;
 // Version of the whole recipe (reference signal id, loudness measure, target, hash inputs): part of the staleness hash.
 constexpr int kAutoTrimVersion = 1;
 // Capture-swap make-up (a slot's NamBlockParams::makeupDb) is limited to +-this.
@@ -42,7 +47,7 @@ std::string autoTrimHash(const Preset& p);
 // The preset carries a trim whose hash matches its current content.
 bool autoTrimFresh(const Preset& p);
 
-// Integrated loudness of the reference DI through `p` as it is (output gain included, auto trim not). nullopt: the render is
+// Integrated loudness of the reference DI through `p` with output.gainDb at 0 dB (auto trim not applied unless `applyTrim`). nullopt: the render is
 // silent or too quiet to measure. Throws RenderError (missing capture, bad preset). Not real-time safe; takes seconds.
 // With `applyTrim` the preset's own autoTrimDb is applied (RenderOptions::applyAutoTrim): the "after" side of the loudness table.
 std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache = nullptr, bool applyTrim = false);
@@ -69,6 +74,9 @@ std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* c
 // `before` to `after` (the same preset with another capture in that slot, make-up 0): measurePathLufs(before) -
 // measurePathLufs(after), clamped to +-kMaxSlotMakeupDb. nullopt when either side cannot be measured (the caller then keeps 0).
 std::optional<double> slotMakeupDb(const Preset& before, const Preset& after, int path, CaptureCache* cache = nullptr);
+
+// True when an enabled path has a non-bypassed `nam` or `pedal.*` block: otherwise the trim is 0.
+bool hasNonlinearBlock(const Preset& p);
 
 // Copy of `p` with the nam block `blockIndex` of `path` carrying `makeupDb` (the block is left alone when it is not a nam block).
 Preset withSlotMakeup(const Preset& p, int path, int blockIndex, double makeupDb);

@@ -31,6 +31,6 @@
   "cab": { "mode": "shared", "ir": { "file": "../../tests/fixtures/ir/impulse.wav" } },
   "output": {
     "autoTrimDb": -7.545,
-    "autoTrimHash": "e4c0997ce12101bc56efba7474e73f64ef261715a60e7fecd026576e428af039"
+    "autoTrimHash": "cf4c8a622cd2771ea2ade8efc0faf1611b397c86dcba4bae1800db6704020a34"
   }
 }

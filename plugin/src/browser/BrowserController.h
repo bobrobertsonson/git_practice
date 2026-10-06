@@ -105,7 +105,7 @@ class BrowserController {
   std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
   std::uint64_t listSeq_ = 0, modelsSeq_ = 0, fetchSeq_ = 0, previewGen_ = 0, useSeq_ = 0;
   bool awaitingLoad_ = false;
-  std::string loadedTitle_;
+  std::string loadedTitle_, levelNote_;
   bool previewStarted_ = false, previewSeenPlaying_ = false;
   juce::uint32 previewStartMs_ = 0;
 

@@ -36,6 +36,7 @@ void RigController::edit(const EditFn& f) {
 
 void RigController::editDebounced(const EditFn& f) {
   pending_.push_back({nullptr, f});
+  ++timerStarts_;
   debounce_.startTimer(kDebounceMs);
 }
 
@@ -43,7 +44,16 @@ void RigController::editThrottled(const void* key, const EditFn& f) {
   auto it = std::find_if(pending_.begin(), pending_.end(), [key](const Pending& e) { return e.key == key; });
   if (it != pending_.end()) it->fn = f;
   else pending_.push_back({key, f});
-  if (!debounce_.isTimerRunning()) debounce_.startTimer(kDebounceMs);
+  if (!debounce_.isTimerRunning()) {
+    ++timerStarts_;
+    debounce_.startTimer(kDebounceMs);
+  }
+}
+
+bool RigController::flushTimerForTests() {
+  if (!debounce_.isTimerRunning()) return false;
+  debounce_.timerCallback();
+  return true;
 }
 
 void RigController::flushPending() {

@@ -76,7 +76,7 @@ std::vector<std::string> missingCaptures(const Preset& p) {
 
 std::string autoTrimHash(const Preset& p) {
   json j = toJson(withoutTrim(p));
-  for (const char* k : {"name", "notes", "category", "version", "schema"}) j.erase(k);
+  for (const char* k : {"name", "notes", "category", "version", "schema", "output"}) j.erase(k);  // output.gainDb: the user's offset
   normaliseCaptures(j);
   const std::string text = "sawblade.autotrim." + std::to_string(kAutoTrimVersion) + ".ref." + std::to_string(kReferenceDiVersion) +
                            ".target." + std::to_string(static_cast<int>(kAutoTrimTargetLufs)) + "\n" + j.dump();
@@ -94,8 +94,19 @@ std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache,
   o.cache = cache;
   o.outRate = OutRate::Input;
   o.applyAutoTrim = applyTrim;
-  const RenderResult r = renderPreset(applyTrim ? p : withoutTrim(p), in, o);
+  Preset q = applyTrim ? p : withoutTrim(p);
+  q.outputGainDb = 0.0;  // the OUTPUT knob is a persistent offset on top of the match: it is measured at 0 dB
+  const RenderResult r = renderPreset(q, in, o);
   return lufsOf(r.samples, r.sampleRate);
+}
+
+bool hasNonlinearBlock(const Preset& p) {
+  for (const PathPreset* pp : {&p.a, &p.b}) {
+    if (!pp->enabled) continue;
+    for (const Block& b : pp->blocks)
+      if (!b.bypass && (b.type == "nam" || b.type.rfind("pedal.", 0) == 0)) return true;
+  }
+  return false;
 }
 
 std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache) {
@@ -103,7 +114,7 @@ std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cac
   if (!l) return std::nullopt;
   AutoTrimResult r;
   r.lufs = *l;
-  r.trimDb = std::min(kMaxAutoTrimDb, std::max(-kMaxAutoTrimDb, kAutoTrimTargetLufs - *l));
+  r.trimDb = hasNonlinearBlock(p) ? std::min(kMaxPositiveTrimDb, std::max(-kMaxAutoTrimDb, kAutoTrimTargetLufs - *l)) : 0.0;
   r.hash = autoTrimHash(p);
   return r;
 }

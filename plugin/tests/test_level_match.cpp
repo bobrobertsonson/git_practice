@@ -37,7 +37,7 @@ namespace {
 constexpr double kRate = 48000.0;
 
 // A two-path identity preset with absolute paths: `gainDb` on the input (a plain level change), `modelB` on path B.
-json rigJson(const std::string& name, double inputGainDb = 0.0, const std::string& modelB = "linear_identity.nam") {
+json rigJson(const std::string& name, double inputGainDb = 6.0, const std::string& modelB = "linear_identity.nam") {
   const auto block = [&](const std::string& id, const std::string& file) {
     return json{{"id", id}, {"type", "nam"}, {"slot", "amp"}, {"model", {{"file", (kFixtures / "nam" / file).string()}}}};
   };
@@ -120,7 +120,7 @@ TEST_CASE("level match: the setting is on by default, lives in the Settings stor
 
 TEST_CASE("level match: a loaded preset plays at 0 dB trim until the background measure is done, then at -18 LUFS", "[levelmatch][plugin]") {
   World w;
-  w.load(rigJson("quiet", /*inputGainDb=*/-9.0));
+  w.load(rigJson("quiet", /*inputGainDb=*/3.0));
   auto st = w.h.p.status();
   CHECK(st.levelMatchOn);
   CHECK(st.levelPending);  // the chip says "LEVEL ..."
@@ -162,10 +162,10 @@ TEST_CASE("level match: a fresh stored trim applies at once and nothing is measu
 
 TEST_CASE("level match: a stale stored trim is ignored and measured again", "[levelmatch][plugin]") {
   World w;
-  Preset p = parsePreset(rigJson("stale", 0.0), kFixtures);
+  Preset p = parsePreset(rigJson("stale", 8.0), kFixtures);
   REQUIRE(ensureAutoTrim(p));
   json j = json::parse(presetToStateJson(p));
-  j["input"]["gainDb"] = 12.0;  // the preset changed after the trim was measured
+  j["input"]["gainDb"] = 20.0;  // the preset changed after the trim was measured
   w.h.load(writeJson(w.tmp.dir, "stale", j));
   w.h.p.levelTick();
   CHECK(w.h.p.status().levelPending);
@@ -177,7 +177,7 @@ TEST_CASE("level match: a stale stored trim is ignored and measured again", "[le
 
 TEST_CASE("level match: with LEVEL MATCH off no trim is applied and nothing is measured", "[levelmatch][plugin]") {
   World w(R"({"levelMatch": false})");
-  w.load(rigJson("off", -9.0));
+  w.load(rigJson("off", 3.0));
   CHECK_FALSE(w.h.p.status().levelMatchOn);
   CHECK_FALSE(w.h.p.status().levelPending);
   CHECK(w.h.p.waitForLevelWork());
@@ -212,16 +212,16 @@ TEST_CASE("level match: a rig change is re-measured once, debounced; the OUTPUT 
   CHECK(playReference(w.h) == Approx(kAutoTrimTargetLufs + 6.0).margin(0.5));
   w.h.setParam(kOutputGain, 0.0);
   // INPUT +6 dB is a rig change: three quick edits inside the debounce give one job, and the trim follows.
-  w.h.p.setLevelDebounceMs(300);
+  w.h.p.setLevelDebounceMs(600000);  // never elapses here: the test releases it explicitly, no wall-clock race
   const double before = w.h.p.status().trimDb;
-  for (double v : {2.0, 4.0, 6.0}) {
+  for (double v : {8.0, 10.0, 12.0}) {
     w.h.setParam(kInputGain, v);
     w.h.p.levelTick();
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
   }
   CHECK(w.h.p.status().levelPending);
   CHECK(w.h.p.levelWorker().trimJobsRun() == jobs0);  // still waiting for the debounce
   CHECK(w.h.p.status().trimDb == before);              // the previous trim keeps playing meanwhile: no jump to 0
+  w.h.p.setLevelDebounceMs(0);                         // the debounce is over
   REQUIRE(w.h.p.waitForLevelWork());
   CHECK(w.h.p.levelWorker().trimJobsRun() == jobs0 + 1);
   CHECK(w.h.p.status().trimDb == Approx(before - 6.0).margin(0.3));
@@ -248,7 +248,7 @@ TEST_CASE("level match: the audio thread allocates nothing and takes no lock whi
 
 TEST_CASE("level match: A/B plays both sides at their trims, within 0.5 LU of each other", "[levelmatch][plugin][ab]") {
   World w;
-  w.load(rigJson("A", 0.0), "a");
+  w.load(rigJson("A", 6.0), "a");
   REQUIRE(w.h.p.waitForLevelWork());
   AbCompare ab(w.h.p);
   const double a0 = playReference(w.h);
@@ -334,4 +334,37 @@ TEST_CASE("level match: the NAM export source never carries the trim; a swap mak
   const json jb = json::parse(std::ifstream(b.file));
   CHECK(jb["paths"]["a"]["blocks"][0]["makeupDb"] == 3.5);
   CHECK_FALSE(jb["output"].contains("autoTrimDb"));
+}
+
+TEST_CASE("level match: OUTPUT is a persistent offset from -18 LUFS, not part of the trim or its hash", "[levelmatch][plugin]") {
+  World w;
+  json j = rigJson("offset");
+  j["output"] = {{"gainDb", -6.0}};
+  Preset p = parsePreset(j, kFixtures);
+  Preset p0 = parsePreset(rigJson("offset"), kFixtures);
+  REQUIRE(ensureAutoTrim(p));
+  REQUIRE(ensureAutoTrim(p0));
+  CHECK(p.autoTrim.db == Approx(p0.autoTrim.db).margin(1e-9));
+  CHECK(p.autoTrim.hash == p0.autoTrim.hash);
+  // Saved with OUTPUT at -6 and its (fresh) trim: reloads at -6 relative to the target, nothing re-measured.
+  w.h.load(writeJson(w.tmp.dir, "saved", json::parse(presetToStateJson(p))));
+  w.h.p.levelTick();
+  CHECK_FALSE(w.h.p.status().levelPending);
+  CHECK(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 0);
+  CHECK(playReference(w.h, 0.2) == Approx(kAutoTrimTargetLufs - 6.0).margin(0.5));
+  // Moving the knob from there is still relative: +6 dB lands on the target.
+  w.h.setParam(kOutputGain, 0.0);
+  CHECK(playReference(w.h) == Approx(kAutoTrimTargetLufs).margin(0.5));
+}
+
+TEST_CASE("level match: an empty rig (Init) gets trim 0", "[levelmatch][plugin]") {
+  World w;
+  w.h.p.loadPreset(makeInitPreset());
+  REQUIRE(w.h.p.waitForLoader());
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.status().trimDb == 0.0);
+  CHECK_FALSE(w.h.p.status().levelPending);
+  CHECK_FALSE(w.h.p.status().levelFailed);
 }

@@ -196,15 +196,14 @@ Switching presets, captures or A/B must never make you judge "louder = better". 
   Off = no trim is applied and none is measured: levels are what they always were.
 - **Measure** - `LevelWorker` (`plugin/src/LevelWorker.*`) is the one background thread: it renders the reference DI through the rig
   with the core (`computeAutoTrim`, its own capture cache) and returns the trim. `SawbladeProcessor::levelTick()` (10 Hz timer, tests
-  call it) hashes the current rig (`levelMeasurementPreset()`: the preset with the parameter values and the OUTPUT knob at the value the
-  preset was loaded with) and (a) uses a trim already known for that hash (a fresh trim stored in the preset, or measured earlier in
+  call it) hashes the current rig (`levelMeasurementPreset()`: the preset with the parameter values; OUTPUT is measured at 0 dB and is not in the hash) and (a) uses a trim already known for that hash (a fresh trim stored in the preset, or measured earlier in
   the session), (b) otherwise waits `kLevelDebounceMs` (400 ms) of stability and submits one job (latest wins). A user load or state
   restore resets the trim to 0 until the new one is known (`levelOnLoad`, in `commit`, before the engine is published, so a preset
   with a fresh stored trim starts at it with no ramp); an edit keeps the previous trim playing until the new one arrives.
   Measured trims are written back into the preset (`autoTrimDb` + hash) so saved state and A/B slots carry them.
 - **Apply** - the audio thread reads two atomics (`levelMatchOn_`, `trimTargetDb_`) and calls `Engine::setAutoTrimDb` ->
   `Chain::setAutoTrimDb`: a plain gain after the OUTPUT knob, first value immediate, later changes ramped over 250 ms (no allocation,
-  no lock). The OUTPUT knob is on top of the match and is not a rig change (no re-measure).
+  no lock). The OUTPUT knob is a persistent offset from -18 LUFS and is not a rig change (no re-measure). A rig with no active non-linear block gets 0 and positive trims stop at +12 dB.
 - **Chip** - while the trim of the current rig is being measured the top-bar LAT / CPU chip reads "LEVEL ..." (tooltip: what is
   happening and the latency); the latency chip returns when it is known.
 - **Capture swap** - capture browser USE on a NAM slot: the make-up (`slotMakeupDb`: the slot's path alone on the reference DI,

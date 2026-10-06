@@ -546,7 +546,7 @@ TEST_CASE("rig knobs: every PresetKnob sweeps min to max in a 250 px drag, a ref
         REQUIRE(alive != nullptr);    // the refresh did not rebuild the control under the hand
         CHECK(k.getValue() == before);  // ... and did not write the model back into it
         if (step == 12) {  // a pause mid-drag: the debounce fires and the rebuild lands; the knob still does not move
-          pump(rig::RigController::kDebounceMs + 120);
+          w.panel->controller().flushTimerForTests();  // the debounce / throttle timer, fired explicitly (no wall-clock wait)
           w.proc.waitForLoader(std::chrono::milliseconds(60000));
           const double v = k.getValue();
           w.tick();
@@ -584,7 +584,7 @@ TEST_CASE("rig knobs: while a structural knob is dragged the model follows on a 
   Hand hand(k);
   hand.to(-50.0f);
   CHECK(w.applied(makeup) == m0);  // nothing handed over yet: the debounce is running
-  pump(rig::RigController::kDebounceMs + 120);
+  w.panel->controller().flushTimerForTests();  // the debounce / throttle timer, fired explicitly (no wall-clock wait)
   w.settle();
   const double mid = w.applied(makeup);
   CHECK(mid != m0);  // applied during the drag, on the debounce
@@ -615,7 +615,7 @@ TEST_CASE("rig knobs: a PresetKnob drags like a main-page knob (shift = fine, do
   w.settle();
   k.mouseDoubleClick(mouseAtMods(k, {40.0f, 60.0f}, {40.0f, 60.0f}, juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 2));
   CHECK(k.getValue() == -90.0);  // the knob's default
-  pump(rig::RigController::kDebounceMs + 150);
+  w.panel->controller().flushTimerForTests();  // the debounce / throttle timer, fired explicitly (no wall-clock wait)
   w.settle();
   CHECK(w.model([](const Preset& p) { return rig::gateField(p.gate, rig::GateField::Range); }) == -90.0);
   const double before = k.getValue();
@@ -626,13 +626,14 @@ TEST_CASE("rig knobs: a PresetKnob drags like a main-page knob (shift = fine, do
   wd.isInertial = false;
   k.mouseWheelMove(mouseAtMods(k, {40.0f, 60.0f}, {40.0f, 60.0f}, juce::ModifierKeys()), wd);
   CHECK(k.getValue() > before);
-  pump(rig::RigController::kDebounceMs + 150);
+  w.panel->controller().flushTimerForTests();  // the debounce / throttle timer, fired explicitly (no wall-clock wait)
   w.settle();
   CHECK(std::abs(w.model([](const Preset& p) { return rig::gateField(p.gate, rig::GateField::Range); }) - k.getValue()) < 1e-6);
 }
 
 TEST_CASE("rig knobs: a continuous drag applies on a throttle (not only when the hand pauses), mouse-up leaves nothing pending",
           "[editor][live][rigknobs]") {
+  // Deterministic: the throttle timer is fired through a test hook (one "150 ms interval" every 5 hand events), never waited for.
   RigKnobWorld w;
   w.panel->setTab(rig::RigEditorPanel::Tab::Comp);
   w.panel->refresh();
@@ -641,24 +642,30 @@ TEST_CASE("rig knobs: a continuous drag applies on a throttle (not only when the
   skin::FilmstripKnob& k = knobs[5]->knob();  // MAKEUP
   const Reader makeup = [](const Preset& p) { return rig::compField(p.busComp, rig::CompField::Makeup); };
   const double m0 = w.applied(makeup);
+  auto& ctl = w.panel->controller();
+  const int starts0 = ctl.timerStartsForTests();
   Hand hand(k);
   float dy = 0.0f;
-  const auto t0 = juce::Time::getMillisecondCounter();
   std::vector<double> seen{m0};
   bool changedBeforeUp = false;
-  int events = 0;
-  while (juce::Time::getMillisecondCounter() - t0 < 700) {
-    dy -= 3.0f;  // an event every ~20 ms, never a gap near the 150 ms interval
+  int fires = 0;
+  for (int ev = 1; ev <= 40; ++ev) {
+    dy -= 3.0f;
     hand.to(dy);
-    ++events;
-    pump(20);
-    const double a = w.applied(makeup);
-    if (a != seen.back()) seen.push_back(a);
-    if (a != m0) changedBeforeUp = true;
+    if (ev <= 4) CHECK(w.applied(makeup) == m0);  // nothing handed over before the first interval is over
+    if (ev % 5 == 0) {
+      CHECK(ctl.flushTimerForTests());  // an interval ends: the latest value is applied (the timer was running)
+      ++fires;
+      const double a = w.applied(makeup);
+      if (a != seen.back()) seen.push_back(a);
+      if (a != m0) changedBeforeUp = true;
+      w.proc.waitForLoader(std::chrono::milliseconds(60000));
+    }
   }
-  CHECK(events >= 25);
-  CHECK(changedBeforeUp);        // applied while the hand was still moving
-  CHECK(seen.size() <= 10);      // ... but throttled: about one rebuild per interval, not one per event
+  CHECK(fires == 8);
+  CHECK(changedBeforeUp);                       // applied while the hand was still down: the model changed before mouse-up
+  CHECK(seen.size() == static_cast<std::size_t>(fires) + 1);  // every interval applied a newer value ...
+  CHECK(ctl.timerStartsForTests() - starts0 == fires);        // ... and the timer was started once per interval, never restarted per event
   hand.up(dy);
   CHECK_FALSE(w.panel->controller().hasPending());
   w.settle();
@@ -765,7 +772,7 @@ TEST_CASE("rig knobs: KEY HPF does not stick in its OFF / 40 Hz dead zone under 
     juce::MouseWheelDetails wd{};
     wd.deltaY = dy;
     k.mouseWheelMove(mouseAtMods(k, {40.0f, 60.0f}, {40.0f, 60.0f}, juce::ModifierKeys()), wd);
-    pump(rig::RigController::kDebounceMs + 150);
+    w.panel->controller().flushTimerForTests();  // the debounce / throttle timer, fired explicitly (no wall-clock wait)
     w.settle();
   };
   for (float notch : {0.1f, 0.2f}) {
@@ -856,7 +863,7 @@ TEST_CASE("rig knobs: mouseHeld() is false after a mouse-up and after a wheel ev
   wd.deltaY = 0.2f;
   k.mouseWheelMove(mouseAtMods(k, {40.0f, 60.0f}, {40.0f, 60.0f}, juce::ModifierKeys()), wd);
   CHECK_FALSE(k.mouseHeld());
-  pump(rig::RigController::kDebounceMs + 150);
+  w.panel->controller().flushTimerForTests();  // the debounce / throttle timer, fired explicitly (no wall-clock wait)
   w.settle();
   CHECK_FALSE(k.mouseHeld());
 }

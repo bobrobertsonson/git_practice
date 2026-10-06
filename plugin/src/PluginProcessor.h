@@ -193,8 +193,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // parts of the rig change. The audio thread applies the target through an atomic; until a trim is known a user load plays at 0.
   // Called by the 10 Hz timer; tests call it directly. Message thread.
   void levelTick();
-  // The rig the trim is measured for: the current preset with the parameter values, and with the OUTPUT knob at the value the
-  // preset was loaded with (the knob is the user's, on top of the match).
+  // The rig the trim is measured for: the current preset with the parameter values. The OUTPUT knob is measured at 0 dB and is not
+  // in the staleness hash: it is a persistent user offset from the target.
   Preset levelMeasurementPreset() const;
   // Blocks until the level worker is idle and no trim is waiting for its debounce (tests).
   bool waitForLevelWork(std::chrono::milliseconds timeout = std::chrono::milliseconds(60000));
@@ -265,7 +265,6 @@ class SawbladeProcessor : public juce::AudioProcessor,
 
   mutable std::mutex mutex_;  // guards preset_, status_, lastSubmitted_; never taken on the audio thread
   Preset preset_;
-  double outBaseline_ = 0.0;  // the OUTPUT knob value of the last user load (mutex_): the trim is measured with it
   Status status_;
   std::uint64_t lastSubmitted_ = 0;
   std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed

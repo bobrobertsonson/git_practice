@@ -531,16 +531,22 @@ Goal: switching presets, captures or A/B never makes you judge "louder = better"
   DI is therefore a deterministic generator in `core` (seeded xorshift64*, Karplus-Strong strings with whole-sample periods,
   only +, -, *, / on doubles and no libm, compiled without FMA contraction), bit-identical on every IEEE-754 machine and the one
   function every consumer calls. Its sha256 is pinned by a test. Changing it bumps `kReferenceDiVersion`.
-- **Measurement** — the reference DI through the whole preset (NAM models at their rate, cab, post EQ, bus comp, the preset's own
-  `output.gainDb`; not the trim) with `renderPreset`, then BS.1770-4 integrated loudness (`integratedLoudnessLufs`, K-weighting,
-  400 ms blocks, absolute gate -70 LUFS, relative gate -10 LU). Convention: the mono output is the left channel and the right
-  channel is digital silence, exactly as the 10.1 level match in `chain.cpp` measures a path.
-- **Target** — **-18 LUFS**. `autoTrimDb = -18 - measured`, clamped to +-48 dB. It is applied as a plain gain *after* the user's
-  OUTPUT knob (`Chain::setAutoTrimDb`; ramped over 250 ms when it changes, immediate the first time), so the preset as stored plays
-  at -18 LUFS and the OUTPUT knob moves the level relative to that.
+- **Measurement** — the reference DI through the whole preset (NAM models at their rate, cab, post EQ, bus comp; **`output.gainDb`
+  treated as 0 dB** and the trim not applied) with `renderPreset`, then BS.1770-4 integrated loudness (`integratedLoudnessLufs`,
+  K-weighting, 400 ms blocks, absolute gate -70 LUFS, relative gate -10 LU). Convention: the mono output is the left channel and the
+  right channel is digital silence, exactly as the 10.1 level match in `chain.cpp` measures a path.
+- **Target** — **-18 LUFS**. `autoTrimDb = -18 - measured`, clamped to **[-48, +12] dB**. It is applied as a plain gain *after*
+  the user's OUTPUT knob (`Chain::setAutoTrimDb`; ramped over 250 ms when it changes, immediate the first time).
+- **OUTPUT is a persistent user offset** — the trim does not depend on `output.gainDb` and `output.gainDb` is not in the staleness
+  hash, so a preset plays at **-18 LUFS + its `output.gainDb`**: save with OUTPUT at -6 and it reloads at -6 relative to the target.
+  Acceptance checks are "-18 +- 0.5 LU with OUTPUT at 0 dB" (a render with `output.gainDb` forced to 0 plus the trim). The
+  committed presets keep their stored output gains (four store -3 / -4 dB); the loudness table shows them in an "output offset" column.
+- **No trim without a non-linear block** — a rig with no active non-linear block (no non-bypassed `nam` or `pedal.*` block on an
+  enabled path: Init / empty, EQ and cab only, everything bypassed) gets trim 0: there is nothing to level-match and boosting a clean
+  pass-through would only raise a hot DI. A positive trim never exceeds +12 dB.
 - **Staleness** — `autoTrimHash` is the sha256 of the level-affecting parts of the preset (the serialised preset minus `name`,
-  `notes`, `category`, `version`, the stored trim and hash; a TONE3000 capture counts as provider + id + modelId, any other as
-  file name + sha256; titles, urls, creators, licences and absolute paths do not count) plus the recipe version (reference DI
+  `notes`, `category`, `version`, `output` and the stored trim and hash; a TONE3000 capture counts as provider + id + modelId, any other
+  as file name + sha256; titles, urls, creators, licences and absolute paths do not count) plus the recipe version (reference DI
   version, target, `kAutoTrimVersion`). A trim is valid only while its hash equals the preset's current hash. A trim without a hash is
   read as "not measured".
 - **When it is computed** — by `scripts/compute_trims.py` for `presets/**` (committed; presets whose TONE3000 captures are not on
@@ -554,8 +560,10 @@ Goal: switching presets, captures or A/B never makes you judge "louder = better"
   always use the **un-trimmed** chain; the export code strips the trim from the preset it renders.
 - **Capture-swap make-up** — replacing the capture in a nam slot (capture browser preview and USE; gain-ladder rungs are
   excluded, they already crossfade) stores `makeupDb` on that block, computed in the background as the loudness of the
-  slot's path alone on the reference DI before the swap minus after it (`slotMakeupDb`, clamped to +-24 dB), so the path's
-  loudness is unchanged within 0.5 LU.
+  **slot's path measured solo** (the other path disabled, blend hard to this path, so a blend's A / B balance is kept) on the
+  reference DI before the swap minus after it (`slotMakeupDb`, clamped to +-24 dB), so the path's loudness is unchanged within
+  0.5 LU. The capture browser shows "LEVEL MATCHING..." while it is computed (the old capture keeps playing); if it cannot be
+  measured the swap still happens with make-up 0 and the status says so.
 - **A/B** — each side plays at its own trim, so an A/B pair is within 0.5 LU of each other (both at -18 LUFS).
 
 ## Play-along (`playAlong`, plugin UI state, not tone)

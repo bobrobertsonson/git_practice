@@ -224,7 +224,7 @@ void BrowserController::loadSwapped(Preset p) {
   proc_.loadPreset(std::move(p));
   st_.busy = false;
   awaitingLoad_ = true;
-  setStatus("Loading " + loadedTitle_ + "...");
+  setStatus("Loading " + loadedTitle_ + "..." + levelNote_);
   changed();
 }
 
@@ -238,6 +238,7 @@ void BrowserController::use(int targetIndex) {
     std::string err;
     auto np = withCapture(cur, target, f, err);
     if (!np) return fail(err);
+    levelNote_.clear();
     if (target.isIr() || !proc_.levelMatchEnabled()) return loadSwapped(std::move(*np));
     // LEVEL MATCH: the new capture must not change the slot's loudness on the reference DI. The make-up is computed in the
     // background (the old capture keeps playing meanwhile) and the swap is loaded with it, so there is no jump.
@@ -245,7 +246,7 @@ void BrowserController::use(int targetIndex) {
     const Preset after = withSlotMakeup(*np, path, target.blockIndex, 0.0);
     const std::uint64_t seq = ++useSeq_;
     st_.busy = true;
-    setStatus("Matching the level of " + loadedTitle_ + "...");
+    setStatus("LEVEL MATCHING... (" + loadedTitle_ + ")");
     changed();
     proc_.computeSlotMakeup(cur, after, path, [this, alive = alive_, seq, target, f, path](const LevelWorker::MakeupResult& r) {
       juce::MessageManager::callAsync([this, alive, seq, target, f, path, mk = r.makeupDb] {
@@ -260,6 +261,7 @@ void BrowserController::use(int targetIndex) {
         if (t2 == nullptr) return fail("the slot is no longer in the rig");
         auto swapped = withCapture(now, *t2, f, e2);
         if (!swapped) return fail(e2);
+        levelNote_ = mk ? "" : " (no level match: could not be measured)";
         loadSwapped(mk ? withSlotMakeup(*swapped, path, t2->blockIndex, *mk) : std::move(*swapped));
       });
     });
@@ -333,7 +335,7 @@ void BrowserController::poll() {
     if (!s.loading) {
       awaitingLoad_ = false;
       if (!s.error.empty()) setStatus(s.error, true);
-      else setStatus("Using " + loadedTitle_);
+      else setStatus("Using " + loadedTitle_ + levelNote_);
       dirty = true;
     }
   }

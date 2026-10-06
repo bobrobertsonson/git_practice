@@ -5,7 +5,7 @@
                              [--table docs/reports/v0_3/loudness_table.md] [--check]
 
 For every preset under --presets (recursive) it runs `tonerender --trim-report`: the built-in reference DI
-(core/include/sawblade/reference_di.h) through the whole preset, BS.1770 integrated loudness, trim = -18 LUFS - measured,
+(core/include/sawblade/reference_di.h) through the whole preset, BS.1770 integrated loudness, trim = -18 LUFS - measured (limited to +12 dB; 0 for a rig with no active non-linear block),
 and the staleness hash of the level-affecting parts (docs/PRESET_SCHEMA.md "Level matching"). The result is patched into the
 preset file as text (only `version` -> 3 and the `output` object change, the rest of the file keeps its formatting) and the
 table `loudness_table.md` is regenerated (before = no trim, after = with the trim).
@@ -149,16 +149,16 @@ def main() -> int:
                     print(f"compute_trims: {rel}: trim {trim:+.3f} dB written")
                 else:
                     print(f"compute_trims: {rel}: trim missing or stale", file=sys.stderr)
-            rows.append(f"| `{rel}` | {fmt(e['lufsBefore'])} | {trim:+.2f} | {fmt(e['lufsAfter'])} |")
+            rows.append(f"| `{rel}` | {fmt(e['lufsBefore'])} | {trim:+.2f} | {fmt(e['lufsAfter'])} | {e.get('outputGainDb', 0.0):+.2f} |")
         elif e["status"] == "skipped":
             skipped += 1
             old, oldHash = stored_trim(path)
             note = f"skipped: {e['reason']}" + (f" (stored trim {old:+.2f} dB, not re-measured here)" if old is not None else "")
-            rows.append(f"| `{rel}` | {note} | | |")
+            rows.append(f"| `{rel}` | {note} | | | {e.get('outputGainDb', 0.0):+.2f} |")
             print(f"compute_trims: {rel}: skipped: {e['reason']}")
         else:
             errors += 1
-            rows.append(f"| `{rel}` | error: {e.get('reason', '?')} | | |")
+            rows.append(f"| `{rel}` | error: {e.get('reason', '?')} | | | |")
             print(f"compute_trims: {rel}: error: {e.get('reason', '?')}", file=sys.stderr)
 
     if not a.check:
@@ -170,11 +170,12 @@ def main() -> int:
             "(`core/include/sawblade/reference_di.h`, version 1, 10 s, 48 kHz, peak -10 dBFS) through the whole preset "
             "(cab, post EQ, bus comp, the preset's own output gain), BS.1770-4 integrated loudness of the mono output "
             f"(right channel silent). Target {report['target']:.0f} LUFS. *Before* = no trim, *after* = with "
-            "`output.autoTrimDb` applied after the output gain.\n\n"
+            "`output.autoTrimDb` applied; both at OUTPUT 0 dB. The preset as stored plays at -18 LUFS + its *output offset* "
+            "(its stored `output.gainDb`, a persistent user offset).\n\n"
             f"{computed} computed, {skipped} skipped, {errors} errors. Skipped presets need TONE3000 captures that are not on the "
             "machine that ran the script; their trim is computed in the plugin at load, or run the script again where the "
             "captures are cached.\n\n"
-            "| Preset | LUFS before | Trim (dB) | LUFS after |\n|---|---:|---:|---:|\n" + "\n".join(rows) + "\n"
+            "| Preset | LUFS before | Trim (dB) | LUFS after | Output offset (dB) |\n|---|---:|---:|---:|---:|\n" + "\n".join(rows) + "\n"
         )
         print(f"compute_trims: table written to {table}")
     print(f"compute_trims: {computed} computed, {skipped} skipped, {errors} errors")

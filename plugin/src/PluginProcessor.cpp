@@ -431,10 +431,7 @@ void SawbladeProcessor::commit(const Preset& p, std::uint64_t generation, bool c
     status_.presetName = p.name;
     presetGeneration_ = generation;
     ++presetSerial_;
-    if (clearMonitor) {
-      monitor_ = {};
-      outBaseline_ = p.outputGainDb;  // a user load: the OUTPUT knob is relative to this from now on (level matching)
-    }
+    if (clearMonitor) monitor_ = {};
     publishLive();
   }
   if (clearMonitor) levelOnLoad(p);  // before the engine for `p` is published: it starts at the right trim
@@ -662,12 +659,7 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
 }
 
 // --- level matching -----------------------------------------------------------------------------
-Preset SawbladeProcessor::levelMeasurementPreset() const {
-  Preset p = presetWithParams();
-  std::lock_guard<std::mutex> lk(mutex_);
-  p.outputGainDb = outBaseline_;
-  return p;
-}
+Preset SawbladeProcessor::levelMeasurementPreset() const { return presetWithParams(); }
 
 // levelMutex_ held.
 void SawbladeProcessor::rememberTrim(const std::string& hash, double db) {
@@ -683,7 +675,7 @@ void SawbladeProcessor::rememberTrim(const std::string& hash, double db) {
 // A user load or state restore is being committed (loader thread, or the caller's thread before the first prepare): the previous
 // preset's trim does not carry over. A stored trim that is fresh for this preset applies at once; otherwise 0 until measured.
 void SawbladeProcessor::levelOnLoad(const Preset& p) {
-  const std::string hash = autoTrimHash(p);  // p's own output gain is the baseline of a fresh load
+  const std::string hash = autoTrimHash(p);
   std::lock_guard<std::mutex> lk(levelMutex_);
   if (!p.autoTrim.hash.empty() && p.autoTrim.hash == hash) rememberTrim(hash, p.autoTrim.db);
   double known = 0.0;

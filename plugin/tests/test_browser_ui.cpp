@@ -557,12 +557,14 @@ struct SwapRig {
   SawbladeProcessor proc;
   std::unique_ptr<BrowserSettings> settings;
 
-  explicit SwapRig(const char* settingsJson) : settingsEnv(settingsJson) {
+  explicit SwapRig(const char* settingsJson, bool bEnabled = true) : settingsEnv(settingsJson) {
     juce::LookAndFeel::setDefaultLookAndFeel(&laf);
     settings = std::make_unique<BrowserSettings>(juce::File(juce::String((tmp.dir / "browser.settings").string())));
     settings->setExecutable(SAWBLADE_FAKE_T3K);
     const fs::path f = tmp.dir / "swap.json";
-    std::ofstream(f) << levelRigJson().dump(2);
+    nlohmann::json rj = levelRigJson();
+    rj["paths"]["b"]["enabled"] = bEnabled;
+    std::ofstream(f) << rj.dump(2);
     proc.loadPresetFile(f);
     proc.prepareToPlay(48000.0, 512);
     proc.waitForLoader();
@@ -581,9 +583,23 @@ TEST_CASE("browser: USE with LEVEL MATCH keeps the slot's loudness on the refere
   REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }));
   const Preset before = rig.proc.currentPreset();
   const double lBefore = *measurePathLufs(before, 1);
+  std::vector<std::pair<std::string, bool>> states;  // (status, busy) after every change
+  ctl.onChange = [&] { states.emplace_back(ctl.state().status, ctl.state().busy); };
   ctl.use(0);
   REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }, 60000));
   CHECK_FALSE(ctl.state().statusIsError);
+  {  // the delay is visible: LEVEL MATCHING... (busy) while the make-up is measured, then Loading / Using, no longer busy
+    int matching = -1, loading = -1;
+    for (std::size_t i = 0; i < states.size(); ++i) {
+      if (matching < 0 && states[i].first.rfind("LEVEL MATCHING", 0) == 0) matching = static_cast<int>(i);
+      if (loading < 0 && states[i].first.rfind("Loading", 0) == 0) loading = static_cast<int>(i);
+    }
+    REQUIRE(matching >= 0);
+    CHECK(states[static_cast<std::size_t>(matching)].second);  // busy
+    REQUIRE(loading > matching);
+    CHECK_FALSE(ctl.state().busy);
+    CHECK(ctl.state().status.rfind("LEVEL MATCHING", 0) != 0);  // cleared
+  }
   const Preset after = rig.proc.currentPreset();
   const auto& nb = static_cast<const NamBlockParams&>(*after.b.blocks[0].params);
   CHECK(nb.model.source->id == "104");
@@ -668,4 +684,28 @@ TEST_CASE("browser: the preview is level matched (make-up and trim, no peak norm
   REQUIRE(err.empty());
   REQUIRE(want.size() == matched.size());
   CHECK(want == matched);
+}
+
+TEST_CASE("browser: when the make-up cannot be measured the swap still happens with make-up 0 and a short status", "[browser][ui][levelmatch]") {
+  SwapRig rig("{}", /*bEnabled=*/false);  // path B is off: nothing to measure on it
+  rig.env.set("FAKE_T3K_FETCH", (kFixtures / "nam" / "wavenet.nam").string());
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::BodyAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return !ctl.state().records.empty() && !ctl.state().loading; }));
+  ctl.select(104);
+  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }));
+  std::vector<std::string> statuses;
+  ctl.onChange = [&] { statuses.push_back(ctl.state().status); };
+  ctl.use(0);
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }, 60000));
+  CHECK_FALSE(ctl.state().statusIsError);
+  CHECK(ctl.state().status.find("no level match") != std::string::npos);
+  CHECK_FALSE(ctl.state().busy);
+  const Preset after = rig.proc.currentPreset();
+  const auto& nb = static_cast<const NamBlockParams&>(*after.b.blocks[0].params);
+  CHECK(nb.model.source->id == "104");  // swapped anyway
+  CHECK(nb.makeupDb == 0.0);
+  bool sawMatching = false;
+  for (const auto& s : statuses) sawMatching = sawMatching || s.rfind("LEVEL MATCHING", 0) == 0;
+  CHECK(sawMatching);
 }

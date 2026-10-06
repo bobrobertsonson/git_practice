@@ -51,6 +51,10 @@ class RigController {
   // (editThrottled and editDebounced share one timer: a throttled flush also applies a pending debounced edit early; intended.)
   void editThrottled(const void* key, const EditFn& f);
   void flushPending();
+  // Test hooks: fire the debounce / throttle timer's callback now if it is running (what the timer does after kDebounceMs), so
+  // tests need no wall-clock waits; and the number of times that timer was started.
+  bool flushTimerForTests();
+  int timerStartsForTests() const noexcept { return timerStarts_; }
   bool hasPending() const noexcept { return !pending_.empty(); }
 
   // --- live -----------------------------------------------------------------------------------------
@@ -114,6 +118,7 @@ class RigController {
   void resetTransient();
   AlignResult measuredAlign() const;
 
+  int timerStarts_ = 0;
   SawbladeProcessor& proc_;
   BodyFill body_;
   struct UndoEntry {
