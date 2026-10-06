@@ -83,7 +83,7 @@ class PresetKnob : public juce::Component {
   void updateText();
   void submit(bool debounced);
   void finishGesture();
-  void showNormalised();
+  void showNormalised(bool directional);
 
   RigController& controller_;
   skin::FilmstripKnob knob_;

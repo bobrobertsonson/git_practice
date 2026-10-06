@@ -60,7 +60,13 @@ juce::String FilmstripKnob::getTextFromValue(double v) {
 
 void FilmstripKnob::mouseDown(const juce::MouseEvent& e) {
   lastY_ = e.position.y;
+  mouseHeld_ = true;
   juce::Slider::mouseDown(e);  // starts the host gesture and handles the popup menu / modifiers
+}
+
+void FilmstripKnob::mouseUp(const juce::MouseEvent& e) {
+  juce::Slider::mouseUp(e);  // ends the gesture (onDragEnd runs while mouseHeld() is still true)
+  mouseHeld_ = false;
 }
 
 void FilmstripKnob::mouseDrag(const juce::MouseEvent& e) {

@@ -48,6 +48,7 @@ class RigController {
   void editDebounced(const EditFn& f);  // latest wins: submitted kDebounceMs after the last call
   // Throttle for a drag: keeps only the LATEST closure per `key` (one entry per knob, no growth per mouse move) and starts the
   // timer only when it is not running, so a flush (one background rebuild) happens at most every kDebounceMs during motion.
+  // (editThrottled and editDebounced share one timer: a throttled flush also applies a pending debounced edit early; intended.)
   void editThrottled(const void* key, const EditFn& f);
   void flushPending();
   bool hasPending() const noexcept { return !pending_.empty(); }

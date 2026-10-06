@@ -752,3 +752,45 @@ TEST_CASE("rig knobs: the host-parameter knobs (BLEND, levels, gate THRESHOLD) s
     CHECK(k.proportion() > 0.999);
   }
 }
+
+TEST_CASE("rig knobs: KEY HPF does not stick in its OFF / 40 Hz dead zone under the mouse wheel", "[editor][live][rigknobs]") {
+  RigKnobWorld w;
+  w.panel->setTab(rig::RigEditorPanel::Tab::Gate);
+  w.panel->refresh();
+  auto knobs = shownPresetKnobs(*w.panel);
+  REQUIRE(knobs.size() == 7);
+  skin::FilmstripKnob& k = knobs[6]->knob();
+  const Reader hpf = [](const Preset& p) { return rig::gateField(p.gate, rig::GateField::KeyHpf); };
+  auto wheel = [&](float dy) {
+    juce::MouseWheelDetails wd{};
+    wd.deltaY = dy;
+    k.mouseWheelMove(mouseAtMods(k, {40.0f, 60.0f}, {40.0f, 60.0f}, juce::ModifierKeys()), wd);
+    pump(rig::RigController::kDebounceMs + 150);
+    w.settle();
+  };
+  for (float notch : {0.1f, 0.2f}) {
+    INFO("notch " << notch);
+    // (a) from OFF, up leaves OFF and keeps going up
+    w.panel->controller().edit([](Preset& p) { rig::setGateField(p, rig::GateField::KeyHpf, 0.0); });
+    w.settle();
+    w.panel->refresh();
+    REQUIRE(k.getValue() == 0.0);
+    wheel(notch);
+    CHECK(k.getValue() == 40.0);
+    CHECK(w.model(hpf) == 40.0);
+    wheel(notch);
+    const double second = k.getValue();
+    CHECK(second > 40.0);
+    CHECK(w.model(hpf) == second);
+    wheel(notch);
+    CHECK(k.getValue() > second);
+    // (b) from 40 Hz, down goes to OFF
+    w.panel->controller().edit([](Preset& p) { rig::setGateField(p, rig::GateField::KeyHpf, 40.0); });
+    w.settle();
+    w.panel->refresh();
+    REQUIRE(k.getValue() == 40.0);
+    wheel(-notch);
+    CHECK(k.getValue() == 0.0);
+    CHECK(w.model(hpf) == 0.0);
+  }
+}

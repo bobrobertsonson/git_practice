@@ -102,7 +102,7 @@ PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::Film
   };
   knob_.onDragEnd = [this] {
     dragging_ = false;
-    finishGesture();
+    if (knob_.mouseHeld()) finishGesture();  // a wheel / double-click edit was already submitted (debounced) with its value
     if (onGestureEnd) onGestureEnd();
   };
   knob_.onValueChange = [this] {
@@ -110,13 +110,13 @@ PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::Film
     if (updating_) return;
     if (live_) {
       submit(false);
-    } else if (dragging_) {
-      submit(true);  // during the drag: throttled, latest value wins
-    } else {         // wheel / typed value
-      if (onGestureBegin) onGestureBegin();
-      submit(true);
-      showNormalised();
-      if (onGestureEnd) onGestureEnd();
+    } else {
+      // The Slider's wheel and double-click edits also send drag start / end, but they are single steps (no mouse held): they
+      // get the direction-aware normalising. Typed values arrive without any drag notification.
+      if (!dragging_ && onGestureBegin) onGestureBegin();
+      if (!knob_.mouseHeld()) showNormalised(/*directional=*/true);  // before the submit: the model gets the value the knob ends on
+      submit(true);  // throttled during a mouse drag, debounced otherwise; latest value wins
+      if (!dragging_ && onGestureEnd) onGestureEnd();
     }
   };
   updateText();
@@ -148,18 +148,29 @@ void PresetKnob::finishGesture() {
   if (live_) return;
   if (knob_.getValue() != shown_) submit(false);
   else controller_.flushPending();
-  showNormalised();
+  showNormalised(/*directional=*/false);
 }
 
 // The knob shows what the model keeps (e.g. KEY HPF below 40 Hz is OFF or 40), at once rather than at the next refresh.
-void PresetKnob::showNormalised() {
+// A wheel / typed edit is a small step: when the normalised result is the value the knob came from (OFF + a notch up, 40 Hz + a
+// notch down), the step fell into a dead zone, so the knob goes on to the next valid value in the direction of travel.
+void PresetKnob::showNormalised(bool directional) {
   if (!normalise_) return;
-  const double n = normalise_(knob_.getValue());
-  if (n == knob_.getValue()) return;
+  const double prev = shown_, raw = knob_.getValue();
+  double n = normalise_(raw);
+  if (directional && n == prev && raw != prev) {
+    const double lo = knob_.getMinimum(), hi = knob_.getMaximum(), step = (hi - lo) / 400.0, dir = raw > prev ? 1.0 : -1.0;
+    for (double x = raw; x >= lo && x <= hi; x += dir * step)
+      if (const double m = normalise_(x); m != prev) {
+        n = m;
+        break;
+      }
+  }
+  if (n == raw) return;
   updating_ = true;
   knob_.setValue(n, juce::dontSendNotification);
   updating_ = false;
-  shown_ = knob_.getValue();
+  shown_ = directional ? shown_ : knob_.getValue();  // a wheel edit's submit() records the value next
   updateText();
 }
 

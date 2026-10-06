@@ -41,6 +41,10 @@ class FilmstripKnob : public juce::Slider {
   void paint(juce::Graphics&) override;
   void mouseDown(const juce::MouseEvent&) override;
   void mouseDrag(const juce::MouseEvent&) override;
+  void mouseUp(const juce::MouseEvent&) override;
+  // True from mouse down to the end of mouse up: tells a real drag from the Slider's wheel / double-click edits, which also send
+  // drag start / end notifications.
+  bool mouseHeld() const noexcept { return mouseHeld_; }
   juce::String getTextFromValue(double v) override;
 
   static constexpr int kPixelsForFullRange = 250;
@@ -55,6 +59,7 @@ class FilmstripKnob : public juce::Slider {
   Kind kind_;
   juce::Colour arc_;
   float lastY_ = 0.0f;
+  bool mouseHeld_ = false;
   std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment_;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FilmstripKnob)
