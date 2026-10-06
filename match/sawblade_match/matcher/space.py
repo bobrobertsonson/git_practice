@@ -140,7 +140,8 @@ class P:
 class Space:
     """Parameters for one combo shape ``(n_pedals_a, n_pedals_b | None)``."""
 
-    def __init__(self, shape: tuple, boost: bool = False, filters: bool = True, irmix: bool = False):
+    def __init__(self, shape: tuple, boost: bool = False, filters: bool = True, irmix: bool = False,
+                 post_gain: float = POST_GAIN):
         na, nb = shape
         if boost and nb is not None:
             raise ValueError("the tight boost is a single-path variant")
@@ -156,7 +157,7 @@ class Space:
             ps.append(P(f"{path}.lp", *LP_RANGE, DEFAULT_LP, log=True))
         for i, (lo, hi) in enumerate(POST_RANGES):
             ps.append(P(f"post.f{i}", lo, hi, float(np.sqrt(lo * hi)), log=True))
-            ps.append(P(f"post.g{i}", -POST_GAIN, POST_GAIN, 0.0, eq_gain=True))
+            ps.append(P(f"post.g{i}", -post_gain, post_gain, 0.0, eq_gain=True))
         ps.append(P("post.shelf_f", *SHELF_RANGE, float(np.sqrt(SHELF_RANGE[0] * SHELF_RANGE[1])), log=True))
         ps.append(P("post.shelf_g", *SHELF_GAIN_RANGE, 0.0))
         ps.append(P("post.lp", *POST_LP_RANGE, POST_LP_RANGE[1], log=True))
@@ -324,7 +325,7 @@ def path_blocks(combo: Combo, v: dict[str, float], path: str) -> list[dict]:
 
 
 def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align: dict, output_db: float = 0.0,
-                 name: str = "Matched tone", notes: str = "", levels=None) -> dict:
+                 name: str = "Matched tone", notes: str = "", levels=None, bus_comp: dict | None = None) -> dict:
     """Full ``sawblade.preset`` for a combo and physical parameter values (live-compatible shared cab)."""
     blend = combo.topology == "blend"
     pa = {"role": "saw" if blend else "body", "blocks": path_blocks(combo, v, "a"), "eq": path_eq(v, "a"),
@@ -340,6 +341,8 @@ def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align:
         "postEq": post_eq(v),
         "output": {"gainDb": float(output_db)},
     }
+    if bus_comp:        # v0.4M studio processing: a fast bus comp after the post EQ (release <= 150 ms stays trainable)
+        p["busComp"] = {"enabled": True, **bus_comp}
     if blend and levels is not None:
         # phase 10.1: ``v["blend"]`` is the level-matched *linear* blend fitted after the trims; emit the same A:B ratio on
         # the constant-loudness law, with the trims as manual level match.

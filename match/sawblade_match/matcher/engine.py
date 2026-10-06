@@ -162,6 +162,17 @@ class Engine:
         y, _ = self.render(self.linear_preset(cab, v, path, cab_obj), sig)
         return y
 
+    def apply_comp(self, y: np.ndarray, comp: dict | None, cab) -> np.ndarray:
+        """``y`` (the linear chain's output, pre-headroom level) through the bus compressor ``comp`` of the real chain
+        (empty path, no cab / EQ / gate, so only the sum node's headroom and the compressor act). None: ``y`` unchanged."""
+        if not comp:
+            return y
+        p = self._base(cab, blend=0.0, cab_enabled=False, gate=None)
+        p["paths"] = {"a": {"role": "saw", "blocks": []}, "b": self._disabled("body")}
+        p["busComp"] = {"enabled": True, **comp}
+        out, _ = self.render(p, y)
+        return np.asarray(out)
+
     def probe_align(self, combo: Combo, v: dict) -> dict:
         """One-time auto-align probe for a discrete combo (tiny render; the probe signal is internal to the renderer).
         Returns the manual-align dict to use from then on (``align.resolved`` of the report)."""

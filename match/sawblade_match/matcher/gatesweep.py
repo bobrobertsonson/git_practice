@@ -64,7 +64,8 @@ def render_gate(eng: Engine, cand: Scored, ex, gate: dict) -> np.ndarray:
     v = cand.extra["params"]
     paths = ("a", "b") if cand.combo.topology == "blend" else ("a",)
     cores = [eng.core(cand.combo, v, p, ex.x, gate=gate) for p in paths]
-    return ex.trim(eng.emulate(cand.combo, v, cores[0], cores[1] if len(cores) > 1 else None, cand.align, cand.levels))
+    y = ex.trim(eng.emulate(cand.combo, v, cores[0], cores[1] if len(cores) > 1 else None, cand.align, cand.levels))
+    return eng.apply_comp(y, cand.extra.get("busComp"), cand.combo.cab)      # studio processing, when the matcher added it
 
 
 def gate_sweep(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, floor_db: float,

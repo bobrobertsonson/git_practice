@@ -19,6 +19,7 @@ from sawblade_match.matcher.space import (BUTTER4_Q, Combo, POST_HP_RANGE, POST_
 core = pytest.importorskip("sawblade_match.core", reason="sawblade_core not built")
 from sawblade_match.matcher.cli import build_parser, parse_tone_ids      # noqa: E402
 from sawblade_match.matcher.engine import Engine, to48                   # noqa: E402
+from sawblade_match.matcher import studio as ST                       # noqa: E402
 from sawblade_match.matcher.irblend import ir_alignment, load_ir48        # noqa: E402
 from sawblade_match.matcher.gatesweep import (GATE_OFFSETS_DB, cell_gate, gate_sweep,    # noqa: E402
                                                reference_floor_db)
@@ -43,12 +44,12 @@ def _write_di(tmp: Path, x: np.ndarray, name="di.wav") -> Path:
     return p
 
 
-def _known(tmp: Path, pool: Pool, combo: Combo, v: dict, gate=None, di=None):
+def _known(tmp: Path, pool: Pool, combo: Combo, v: dict, gate=None, di=None, bus_comp=None):
     """Hidden preset -> matched reference of the DI (offset 0). Returns (di path, reference)."""
     x, fs = _loadwav(FIX / "di_riff.wav") if di is None else (di, FS)
     dip = _write_di(tmp, x)
     gate = gate or gate_preset(gate_envelope_floor_db(to48(x, fs), FS))
-    y, _ = core.render(build_preset(combo, v, gate=gate, align=manual_align()), x, float(fs))
+    y, _ = core.render(build_preset(combo, v, gate=gate, align=manual_align(), bus_comp=bus_comp), x, float(fs))
     refwav = tmp / "hidden.wav"
     sf.write(str(refwav), y, fs, subtype="FLOAT")
     return dip, load_reference(refwav, channel="mid", matched="mono", offset_ms=0.0)
@@ -124,7 +125,7 @@ def test_cli_flags_and_ablate_parsing():
     with pytest.raises(ValueError, match="tone id"):
         parse_tone_ids("12,abc")
     helptext = " ".join(build_parser().format_help().split())
-    assert "no-op until" in helptext or "no-ops until" in helptext and "--trace-tones" in helptext
+    assert "irblend = no two-IR blend" in helptext and "--trace-tones" in helptext
 
 
 def test_pool_catalog_records_what_the_manifest_says(tmp_path):
@@ -464,7 +465,7 @@ def test_ablate_switches_the_suspects_off_and_echoes_them(tmp_path):
     names = ("feel", "boost", "filters", "irsweep", "irblend", "studio")
     res = run_match(Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=2, excerpt_s=2.0, threads=2, plan=plan,
                            write_audio=False, refine_offsets=False, ablate=names), Log())
-    assert res["ablate"] == list(names) and "studio" in res["ablateNote"]
+    assert res["ablate"] == list(names)
     assert res["irBlend"] == {"ablated": True, "tried": 0, "won": False}
     assert (res["plan"]["boost"], res["plan"]["filters"], res["plan"]["cab_sweep"]) == (False, False, False)
     tb = res["tightBoost"]
@@ -552,3 +553,49 @@ def test_two_ir_blend_wins_on_a_hidden_irmix_chain_and_ablates(tmp_path):
     off_res = run_match(Config(out=tmp_path / "off", ablate=("irblend",), **kw), Log())
     assert off_res["irBlend"]["ablated"] is True and off_res["best"]["irMix"] is None
     assert off_res["best"]["loss"] > res["best"]["loss"]
+
+
+# ---- studio processing (B2.3) ---------------------------------------------------------------------------------------------------
+def test_polynomial_shape_detector_separates_a_smooth_curve_from_ripple():
+    from sawblade_match.matcher import loss as Lm
+    x = np.log10(np.array(Lm.BAND_CENTRES, float))
+    smooth = 2.5 * (x - x.mean()) ** 2 - 1.0 * (x - x.mean())
+    ripple = 2.0 * np.where(np.arange(len(x)) % 2 == 0, 1.0, -1.0)
+    assert ST._poly_explained(smooth - smooth.mean()) > 0.95 and ST._poly_explained(ripple) < ST.POLY_EXPLAINED
+
+
+def _studio_run(tmp_path, comp, ablate=()):
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool, "single")
+    di, ref = _known(tmp_path, pool, combo, v, bus_comp=comp)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=10, gens_gain=3, gens_final=8,
+                  pop_linear=10, pop_gain=4, n_rescore_single=6, n_cab_single=3)
+    return run_match(Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=2, excerpt_s=3.5, threads=2, plan=plan,
+                            write_audio=False, refine_offsets=False, ablate=ablate), Log())
+
+
+def test_a_fast_bus_comp_in_the_reference_fires_the_studio_detector_and_is_reproduced(tmp_path):
+    comp = {"thresholdDb": -30.0, "ratio": 4.0, "kneeDb": 6.0, "attackMs": 1.0, "releaseMs": 60.0, "makeupDb": 0.0}
+    res = _studio_run(tmp_path, comp)
+    st = res["studio"]
+    assert st["compressed"] is True and st["ablated"] is False
+    assert st["evidence"]["crestDropDb"] >= ST.CREST_DROP_DB and "lraCandidateLu" in st["evidence"]
+    assert st["busCompUsed"] is True and st["gainVsPlain"] >= ST.MIN_GAIN and "_won" not in st
+    c = st["busComp"]
+    assert c["releaseMs"] <= 150.0 and 1.5 <= c["ratio"] <= 4.0 and -30.0 <= c["thresholdDb"] <= -6.0 and c["kneeDb"] == 6.0
+    best = json.loads((tmp_path / "out" / "best.preset.resolved.json").read_text())
+    assert best["busComp"]["enabled"] is True and best["busComp"]["releaseMs"] == c["releaseMs"]
+    assert "bus comp added by the matcher (studio processing); dropped from no-cab exports" in best["notes"]
+    core.render(best, np.zeros(2048, np.float32), 48000.0)                      # strict parse, trainable release
+    # --ablate studio: still detected and reported, but nothing is added
+    res2 = _studio_run(tmp_path / "abl", comp, ablate=("studio",)) if (tmp_path / "abl").mkdir() is None else None
+    assert res2["studio"]["compressed"] is True and res2["studio"]["ablated"] is True and res2["studio"]["busCompUsed"] is False
+    assert res2["best"]["loss"] > res["best"]["loss"]
+
+
+def test_the_plain_chain_does_not_fire_the_studio_detector(tmp_path):
+    res = _studio_run(tmp_path, None)
+    st = res["studio"]
+    assert st["compressed"] is False and st["eqd"] is False and st["busCompUsed"] is False and "stage" not in st
+    best = json.loads((tmp_path / "out" / "best.preset.resolved.json").read_text())
+    assert not best.get("busComp", {}).get("enabled")

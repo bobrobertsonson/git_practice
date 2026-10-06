@@ -10,7 +10,7 @@ from typing import Sequence
 
 from .pool import load_pool
 from .reference import load_reference
-from .run import ABLATIONS, NOOP_ABLATIONS, Config, Log, parse_ablate, run_match
+from .run import ABLATIONS, Config, Log, parse_ablate, run_match
 
 
 def _section(s: str) -> tuple[float, float]:
@@ -70,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ablate", metavar="LIST", default="",
                    help="v0.4M on/off pairs: comma list of suspects to switch OFF (" + ", ".join(ABLATIONS) + "): feel = no feel "
                         "term in the loss; boost = no tight-boost variants; filters = no post-cab hp / low-pass slope; irsweep = only the "
-                        "stage-1 cab sweep (the pre-v0.4M behaviour). " + ", ".join(NOOP_ABLATIONS) + " are accepted and echoed "
-                        "in result.json -> ablate but are no-ops until their tasks (two-IR blend, studio processing) land")
+                        "stage-1 cab sweep (the pre-v0.4M behaviour); irblend = no two-IR blend of the winner's cab; studio = detect "
+                        "studio processing (always reported) but do not add a bus comp / wider post EQ")
     p.add_argument("--trace-tones", metavar="ID[,ID...]", default="",
                    help="TONE3000 tone ids to explain in result.json -> trace[id]: downloaded?, models, gear class, pre-screen "
                         "rank/score/survived, best pair, best candidate loss with it as the amp, and why it lost")
