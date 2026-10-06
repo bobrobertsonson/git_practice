@@ -30,6 +30,12 @@ A.3 polish.  ``flux`` = per-frame mean |delta dB| between consecutive 1024-pt lo
     ``max(0, d) / 6 + 0.25 max(0, -d) / 6`` (d = out - ref); dropped with < 100 ms of gaps.
     ``polish = flux + crest + floor``. Every normalised sub-term above passes through ``huber`` (quadratic below 1, linear above).
 
+Reported keys (``feelTerms``): ``tightRaw`` / ``fizzRaw`` / ``polishRaw`` are physical values (ms, dB, W1 distances);
+``tightT12``, ``tightSustain``, ``fizzHfRatio``, ``fizzHfFlat``, ``fizzHfMod`` are normalised (raw / normaliser), both
+PRE-Huber; the ``*Soft`` keys (``tightT12Soft``, ``tightSustainSoft``, ``fizzHfRatioSoft``, ``fizzHfFlatSoft``,
+``fizzHfModSoft``) are POST-Huber and sum to ``tight`` / ``fizz``; ``tight``, ``fizz``, ``flux``, ``crest``, ``floor``,
+``polish`` are POST-Huber (what enters the loss, times the weights in ``weights``).
+
 ``feel = W_TIGHT * tight + W_FIZZ * fizz + W_POLISH * polish`` (0.25 / 0.25 / 0.125; tuned in Task D). Without a matched
 pair (``mode == "soft"``) the reference's own features (its onsets, its chugs, its frames) are compared to the
 render's as W1 of the per-note / per-frame distributions, ``floor`` is dropped (a mix has no clean gaps) and every
@@ -510,6 +516,7 @@ def evaluate(out: np.ndarray, ft: FeelTarget) -> tuple[float, dict]:
         if a is not None and b is not None and used >= MIN_NOTES:
             tight = huber(a / T12_NORM_MS) + huber(b / SUS_NORM_DB)
             terms["tightT12"], terms["tightSustain"] = a / T12_NORM_MS, b / SUS_NORM_DB      # normalised, before huber()
+            terms["tightT12Soft"], terms["tightSustainSoft"] = huber(a / T12_NORM_MS), huber(b / SUS_NORM_DB)
             terms["notes"]["used"] = used
         else:
             terms["dropped"]["tight"] = "too few comparable notes in this render"
@@ -526,6 +533,8 @@ def evaluate(out: np.ndarray, ft: FeelTarget) -> tuple[float, dict]:
             fizz = huber(a / RATIO_NORM_DB) + huber(b / FLAT_NORM) + huber(c / MOD_NORM)
             terms["fizzRaw"] = {"hfRatioDb": a, "hfFlat": b, "hfMod": c}
             terms["fizzHfRatio"], terms["fizzHfFlat"], terms["fizzHfMod"] = a / RATIO_NORM_DB, b / FLAT_NORM, c / MOD_NORM
+            terms["fizzHfRatioSoft"], terms["fizzHfFlatSoft"], terms["fizzHfModSoft"] = (
+                huber(a / RATIO_NORM_DB), huber(b / FLAT_NORM), huber(c / MOD_NORM))
     elif ft.fizz_on:
         terms["dropped"]["fizz"] = f"fewer than {MIN_FRAMES} active 2048-pt frames"
     terms["fizz"] = fizz

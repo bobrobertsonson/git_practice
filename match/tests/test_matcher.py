@@ -734,3 +734,32 @@ def test_gate_preset_clamps_digital_silence_floor():
     assert gate_preset(-200.0)["thresholdDb"] == -86.0          # inside the schema range [-120, 0]
     assert gate_preset(-90.0)["thresholdDb"] == -86.0
     assert gate_preset(-37.1)["thresholdDb"] == pytest.approx(-33.1)   # normal floors are unchanged
+
+
+def test_stage2_first_linear_block_is_ltas_only(tmp_path, monkeypatch):
+    """Staged objective: refine's first linear block (L1) is scored without the feel term; the start score, the gain
+    block, the final linear block and the final score see the full target."""
+    from sawblade_match.matcher import refine as R
+
+    seen: list[bool] = []                        # per refine-side loss evaluation: does the target carry feel?
+
+    class Spy:
+        def __getattr__(self, name):
+            return getattr(L, name)
+
+        def evaluate(self, out, tgt, eq=None):
+            seen.append(tgt.feel is not None)
+            return L.evaluate(out, tgt, eq)
+
+    monkeypatch.setattr(R, "L", Spy())
+    pool, combo, di, ref = _setup_known(tmp_path, "blend")
+    plan = mkplan(top_k={"blend": 1, "single": 0, "single2": 0}, gens_linear=3, gens_gain=2, gens_final=2,
+                  pop_linear=8, pop_gain=4)
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=7, excerpt_s=2.0, threads=2, plan=plan,
+                 write_audio=False, refine_offsets=False)
+    res = run_match(cfg, Log())
+    n_l1 = 1 + plan.gens_linear * plan.pop_linear          # CMA-ES: initial point + gens x population
+    assert seen[0] is True                                  # start score: full target
+    assert seen[1:1 + n_l1] == [False] * n_l1               # L1: LTAS-only
+    assert len(seen) > 1 + n_l1 and all(seen[1 + n_l1:])    # gain block, L2 and the final score: feel present
+    assert res["best"]["breakdown"]["feelTerms"] is not None

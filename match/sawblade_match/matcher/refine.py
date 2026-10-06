@@ -92,7 +92,7 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
         u, f1, h1 = run_block(u, lin_idx, pop_linear, gens_linear, 0.2, "linear", 1, (ca_s, cb_s), "L1", (gx, gt_l1))
     else:
         u, f1, h1 = run_block(u, lin_idx, pop_linear, gens_linear, 0.2, "linear", 1, (ca, cb), "L1", (ex, tgt_l1))
-    log(f"  block L1: {f1:.3f} ({time.time() - t0:.0f}s)")
+    log(f"  block L1 (LTAS-only objective): {f1:.3f} ({time.time() - t0:.0f}s)")
     u, f2, h2 = run_block(u, gain_idx, pop_gain, gens_gain, 0.25, "gain", 2, None, "G")
     log(f"  block G : {f2:.3f} ({time.time() - t0:.0f}s)")
     v = space.decode(u)
@@ -101,5 +101,5 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
     v = space.decode(u)
     r = score(v, ca, cb)
     log(f"  block L2: {r.total:.3f} ({time.time() - t0:.0f}s)")
-    info.update(startLoss=r0.total, history={"L1": h1, "G": h2, "L2": h3}, seconds=time.time() - t0)
+    info.update(l1Objective="ltas-only (no feel term)", startLoss=r0.total, history={"L1": h1, "G": h2, "L2": h3}, seconds=time.time() - t0)
     return v, r, info

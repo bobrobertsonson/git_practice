@@ -416,3 +416,14 @@ def test_without_feel_keeps_everything_else():
     assert L.without_feel(plain) is plain
     out = riff(2, tau=0.06)
     assert L.evaluate(out, plain).feel == 0.0 and L.evaluate(out, tgt).feel > 0.0
+
+
+def test_soft_keys_sum_to_the_terms_and_small_flatness_gaps_are_negligible():
+    ft = target(riff(1, fizz_db=-14))
+    _, t = F.evaluate(riff(2, tau=0.06, fizz_db=-8), ft)
+    assert abs(t["tightT12Soft"] + t["tightSustainSoft"] - t["tight"]) < 1e-12
+    assert abs(t["fizzHfRatioSoft"] + t["fizzHfFlatSoft"] + t["fizzHfModSoft"] - t["fizz"]) < 1e-12
+    assert t["tightT12Soft"] <= t["tightT12"] + 1e-12 or t["tightT12"] > 1.0      # pre-Huber keys are the normalised ones
+    # the found-chain regression: an hfFlat W1 of 0.006 (0.2 normalisers) weighs 0.02 * W_FIZZ in the feel total
+    assert abs(F.huber(0.006 / F.FLAT_NORM) - 0.02) < 1e-12
+    assert F.W_FIZZ * F.huber(0.006 / F.FLAT_NORM) < 0.01

@@ -34,7 +34,7 @@ total = W_LTAS * ltas + W_BUZZ * buzz + W_DECAY * decay + W_STFT * stft (matched
              features are compared as distributions, every weight x 0.5 and ``floor`` dropped. All gain invariant. Each normalised
              sub-term is Huber-softened (``feel.huber``: quadratic below one normaliser, linear above), so mismatches inside
              the noise of these statistics have no pull against the spectral fit, and stage 2's first linear block runs
-             LTAS-only (``without_feel``; known-answer margin, see REPORT). Terms
+             LTAS-only (``without_feel``; known-answer margin, see docs/specs/v0_4m-tasks.md). Terms
              with too little data (< 3 notes, < 100 ms of gaps, ...) are dropped and recorded in ``feelTerms.dropped``. A reference
              that is a full mix (matched channel not clean / not a stem) switches off fizz, tightness, flux, crest and floor;
              the floor also needs a clean track (see ``reference.feel_*_state``). The Occam margins in ``run.choose`` (0.1 dB,
