@@ -31,7 +31,7 @@ GATE_RELEASES_MS = (20.0, 80.0, 150.0, 250.0)
 GATE_RANGES_DB = (-50.0, -90.0)
 DEFAULT_CELL = (4.0, 40.0, 150.0, -50.0)       # (threshold offset dB, hold ms, release ms, range dB) = space.gate_preset
 LTAS_TOL_DB = 0.05
-TIGHT_TOL = 1e-9
+TIGHT_TOL = 0.05      # normalised tightness term: a cell may be this much worse than the default cell's (noise level of the statistic)
 MIN_IMPROVEMENT = 1e-3           # the floor term must fall by at least this to leave the current cell
 THRESHOLD_MAX_DB = -6.0          # keep the swept threshold inside the schema range
 
