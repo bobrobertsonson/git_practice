@@ -19,6 +19,13 @@ const std::array<ParamSpec, kNumParams>& specs() {
         {"levelA", "Saw Level", "dB", -24.0, 12.0, 0.0},
         {"levelB", "Body Level", "dB", -24.0, 12.0, 0.0},
     }};
+    static const char* const kKnobId[kAmpKnobCount] = {"gain", "bass", "mid", "treble", "presence", "level"};
+    static const char* const kKnobName[kAmpKnobCount] = {"Gain", "Bass", "Mid", "Treble", "Presence", "Level"};
+    for (int path = 0; path < 2; ++path)
+      for (int k = 0; k < kAmpKnobCount; ++k)
+        a[static_cast<std::size_t>(ampParam(path, k))] = {std::string("amp") + (path == 0 ? "A_" : "B_") + kKnobId[k],
+                                                          std::string(path == 0 ? "Saw Amp " : "Body Amp ") + kKnobName[k], "",
+                                                          kAmpKnobMin, kAmpKnobMax, kAmpKnobDefault};
     for (int k = 0; k < kPostEqSlots; ++k)
       a[static_cast<std::size_t>(kPostEqFirst + k)] = {"postEq" + std::to_string(k + 1),
                                                        "Post EQ " + std::to_string(k + 1) + " Gain", "dB", -18.0, 18.0, 0.0};
@@ -59,6 +66,11 @@ ParamValues paramsFromPreset(const Preset& p) {
   v[kBlend] = clampTo(kBlend, p.blend);
   v[kLevelA] = clampTo(kLevelA, p.a.levelDb);
   v[kLevelB] = clampTo(kLevelB, p.b.levelDb);
+  for (int path = 0; path < 2; ++path) {
+    const AmpKnobs& a = (path == 0 ? p.a : p.b).ampControls;
+    const double vals[kAmpKnobCount] = {a.gain, a.bass, a.mid, a.treble, a.presence, a.level};
+    for (int k = 0; k < kAmpKnobCount; ++k) v[static_cast<std::size_t>(ampParam(path, k))] = clampTo(ampParam(path, k), vals[k]);
+  }
   const SlotBands bands = postEqSlotBands(p);
   for (int k = 0; k < kPostEqSlots; ++k) {
     const int b = bands[static_cast<std::size_t>(k)];
@@ -76,6 +88,16 @@ void applyParams(Preset& p, const ParamValues& v) {
   p.blend = v[kBlend];
   p.a.levelDb = v[kLevelA];
   p.b.levelDb = v[kLevelB];
+  for (int path = 0; path < 2; ++path) {  // the knobs only: gainStep is preset state, not a parameter
+    AmpControls& a = (path == 0 ? p.a : p.b).ampControls;
+    const auto val = [&](int k) { return v[static_cast<std::size_t>(ampParam(path, k))]; };
+    a.gain = val(kAmpGain);
+    a.bass = val(kAmpBass);
+    a.mid = val(kAmpMid);
+    a.treble = val(kAmpTreble);
+    a.presence = val(kAmpPresence);
+    a.level = val(kAmpLevel);
+  }
   const SlotBands bands = postEqSlotBands(p);
   for (int k = 0; k < kPostEqSlots; ++k) {
     const int b = bands[static_cast<std::size_t>(k)];

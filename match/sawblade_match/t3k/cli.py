@@ -1,4 +1,4 @@
-"""`sawblade-t3k` command line: login, whoami, pull, resolve."""
+"""`sawblade-t3k` command line: login, whoami, pull, resolve, ladder."""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,8 @@ from .fetch import ensure_capture, list_candidates
 from .licenses import check_license
 from .filter import FilterConfig
 from .ids import require_id
+from .suggest import load_pool_manifest, pool_candidates, suggest_body
+from .ladder import gain_ladder, parse_ladder
 from .pool import build_pool, write_manifest
 from .pack import build_pack
 from .resolve import default_output, resolve_file
@@ -203,11 +205,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         records = assess(tones, _filter_cfg(args), datetime.now(timezone.utc))
     else:
         cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
-        try:
-            manifest = json.loads((cache.root / "pool_manifest.json").read_text())
-        except (FileNotFoundError, ValueError):
-            manifest = None
-        records = pool_records(manifest if isinstance(manifest, dict) else None)
+        records = pool_records(load_pool_manifest(cache))
         if gears:
             records = [r for r in records if r["gear"] in gears]
         if args.query:
@@ -272,6 +270,29 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     print(f"Resolved {len(done)} capture(s) -> {dest}", file=out)
     for p in done:
         print(f"  {p}", file=out)
+    return 0
+
+
+def cmd_ladder(args: argparse.Namespace) -> int:
+    """Gain ladder of a tone as one JSON document: ``rungs`` is null when there is no (unambiguous) ladder."""
+    tone_id = require_id(args.tone_id, "tone id")      # validate before touching auth
+    client = make_client()
+    if args.architecture is None:          # same architecture choice as `resolve` (A2, then A1)
+        found = list_candidates(client, client.get_tone(tone_id))
+        rungs = parse_ladder(found[1], args.size, found[0]) if found else None   # models already listed
+    else:
+        rungs = gain_ladder(client, tone_id, args.size, args.architecture)
+    _emit({"tone_id": tone_id, "size": args.size,
+           "rungs": None if rungs is None else
+           [{"model_id": str(r.model_id), "gain": r.gain, "name": r.name} for r in rungs]})
+    return 0
+
+
+def cmd_suggest_body(args: argparse.Namespace) -> int:
+    """Offline: pick a body-path amp from the cached pool manifest; prints a JSON record or ``null``."""
+    cache = Cache(Path(args.cache_dir) if args.cache_dir else None)
+    pick = suggest_body(pool_candidates(load_pool_manifest(cache), cache), args.a_title)
+    _emit(pick)
     return 0
 
 
@@ -387,6 +408,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="print one JSON line per resolved capture to stdout: "
                         '{"done", "total", "capture", "title"}')
     r.set_defaults(fn=cmd_resolve)
+
+    ld = sub.add_parser("ladder", help="gain ladder (same amp at several gain settings) of a tone")
+    ld.add_argument("tone_id")
+    ld.add_argument("--size", default="standard", help="model size to consider (default: standard)")
+    ld.add_argument("--architecture", choices=["1", "2", "custom"], default=None,
+                    help="default: the one `resolve` would use (A2, then A1)")
+    ld.add_argument("--json", action="store_true", help="JSON output (the only format; accepted for symmetry)")
+    ld.set_defaults(fn=cmd_ladder, json=True)
+
+    sb = sub.add_parser("suggest-body", help="suggest a high-gain body amp from the cached pool (offline)")
+    sb.add_argument("--a-title", default="", help="title of path A's amp capture (\"\" = unknown)")
+    sb.add_argument("--json", action="store_true", help="JSON output (the only format)")
+    sb.add_argument("--cache-dir")
+    sb.set_defaults(fn=cmd_suggest_body, json=True)
 
     k = sub.add_parser("pack", help="download every model of an IR tone and write a manifest")
     k.add_argument("tone_id")

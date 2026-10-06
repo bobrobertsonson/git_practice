@@ -66,6 +66,7 @@ class EngineLoader {
     ChainInfo info;
     std::string presetName;
     std::shared_ptr<const Preset> wanted;
+    std::weak_ptr<Engine> engine;  // the published engine (empty if none): for non-audio-thread readers (ladder state)
   };
   // Called on the worker thread after the outcome is known (and after publishing).
   using Callback = std::function<void(const Outcome&)>;

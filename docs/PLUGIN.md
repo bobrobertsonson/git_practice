@@ -105,6 +105,7 @@ controls are host parameters:
 | `gateThreshold` | -80..-20 dB | `gate.thresholdDb` (audible when the preset's gate is enabled) |
 | `blend` | 0..1 | `blend` (0 = Saw only, 1 = Body only) |
 | `levelA`, `levelB` | -24..+12 dB | `paths.a/b.levelDb` |
+| `ampA_gain`, `ampA_bass`, `ampA_mid`, `ampA_treble`, `ampA_presence`, `ampA_level` and the same six with `ampB_` | 0..10, default 5 | `paths.a/b.ampControls.gain` ... `.level` (v0.2; see PRESET_SCHEMA.md "Amp controls"); they act only on a path that has an amp block. `gainStep` is preset state, not a parameter |
 | `postEq1..6` | -18..+18 dB | gain of the k-th gain-bearing band (peak/shelf, in order, skipping high/low-pass) of `postEq` |
 
 Loading a preset writes its values into the parameters (clamped to the ranges above and snapped to
@@ -116,6 +117,75 @@ preset with the current parameter values written back (rounded to 1e-4 so a stat
 byte-stable). Smoothing lives in `Chain::setLiveParams`: input/output gain, path levels and the blend
 ramp linearly per sample over 20 ms (block-size independent); post-EQ gains ramp in dB with the
 band redesigned every 32 samples; the gate threshold moves immediately.
+
+### Gain ladders (v0.2 Task B)
+
+A TONE3000 amp capture can carry a **gain ladder** (`model.ladder`, see PRESET_SCHEMA.md "Gain ladder"): the other models
+of the tone that are the same amp at other gain settings. In the plugin:
+
+- **Fetch.** `SawbladeProcessor::ladderTick()` (the 10 Hz timer; tests call it) runs `sawblade-t3k ladder <tone id> --size standard --json`
+  on a background thread for an amp capture that has a TONE3000 source but no ladder, once per tone per session
+  (`setLadderFetchEnabled(false)` switches it off). The result (`rungs: null` = no ladder, stored as absent) is applied with one
+  rebuild; a path whose GAIN is untouched gets the knob placed at the own rung's position, so its sound does not change.
+  The model size is the tool's default (`standard`): the capture's own size is not recorded in the preset.
+- **Preload.** `Engine::build` and the `RungPreloader` thread load the cached rung models nearest the rung the GAIN knob asks for
+  (at most 8 at a time; a longer ladder keeps the 8 nearest, the sounding rung always stays) and hand them to the audio thread
+  through the block's `SwapSlot`; replaced models are freed on the loader thread. A rung that is not cached leaves the block on its
+  current rung (GAIN is drive-only) and `LadderInfo::pending` / `missingRungs` say so; the rung files come from the capture cache by
+  model id. A missing rung of the nearest eight is fetched in the background with `sawblade-t3k fetch <tone> --model <id> --json --cache-dir <cache>` (the tool the resolve flow uses): at most one run in flight, once per rung per session, only when the tool is configured and exists, never on the audio thread; the rung loader picks the file up as soon as the run ends.
+- **Swap.** Moving GAIN picks the rung (hysteresis 0.15 past the midpoint) and the residual drive; the incoming model runs on the
+  signal for 10 ms (output discarded, so its state is warm), then an equal-power crossfade of 20 ms. No allocation, no lock, latency
+  unchanged (a rung with another latency is dropped and reported in `Engine::ladderMessages()`).
+- **Record.** The active rung is written back as `ampControls.gainStep` by `ladderTick()` once GAIN has moved it off the block's own
+  capture; a restored session or an offline render starts on that rung.
+- **For the UI (Task D).** `SawbladeProcessor::ladderInfo(path)`: `has`, `rungCount`, `activeIndex` / `activeName` / `activeGain` /
+  `activeModelId` (e.g. "Gain 6"), `targetIndex` / `targetName`, `pending` (the "rung pending" flag), `missingRungs`.
+
+### BLEND fills an empty path B (v0.2 Task C)
+
+`RigController::setTopology(Blend)` on a preset whose path B has no blocks fills it in one edit: a modeled TS boost (`pedal.ts`,
+drive 0, tone 5, level 8, slot `boost`) and the **fallback body amp**, a cached model of TONE3000 tone 88689 (EVH 5150iii Ivory FULL Pack,
+the first high-gain amp of `presets/CAPTURE_SHORTLIST.md`; `kFallbackBodyTone`) if the capture cache has one, else the TS alone (an
+uncached capture is never put in the preset, so the build cannot fail). Level match auto and the constant-loudness law are set as for any
+new blend (phase 10.1). A path B that already has blocks is left as it is.
+
+Then `BodyFill` (message thread; `RigController::sync()` ticks it) asks, through the configured `sawblade-t3k` and only if it exists:
+`suggest-body --a-title <path A amp title> --cache-dir <cache> --json` (offline rule in match/). A different amp replaces the fallback if path B is
+exactly what the fill left (nothing edited since, BLEND still on); a model that is not cached is fetched first (`fetch <tone> --model <id>`).
+`null`, an error or a failing fetch: the fallback amp is fetched if it is not already there. One tool run at a time; nothing runs without a tool.
+
+**Cached captures carry their licence.** A cached model is only used if `<cache>/<tone>/meta.json` (written by `sawblade-t3k fetch`) has an entry for
+it; the capture then gets that entry's sha256 and the tone's title, creator (display name, else username), licence and url, so a `cc-by-nc` amp marks
+the rig non-commercial as any other capture does. A model file without an entry is not cached (it goes through `fetch`). With no model id the fill
+takes the smallest model id that has an entry and a file; `fetch` without `--model` takes the tone's first candidate, which may be another model.
+
+**Undo.** `RigController::undo()` restores the preset as it was before BLEND. There is ONE entry, {pre-BLEND preset, the preset the fill and its
+asynchronous amp swap left}; the swap updates it, so it is one step. `undo()` succeeds only while the rig still is exactly that: any other edit (path A,
+a parameter, path B's blocks / level / controls, BLEND off) or a user preset load drops the entry, and `undo()` then returns false and keeps the edit.
+A second fill replaces the entry. The suggestion is applied only if path B (all of it) and the blend are exactly what the fill left.
+
+**Tools and the network.** The ladder fetch, the missing-rung fetch and the BLEND tool runs are started by the plugin on its own, so they honour
+`SAWBLADE_NO_NETWORK=1` (set for every test and for pluginval) and need a configured, existing `sawblade-t3k`. `T3kTool` has no timeout: a tool
+that hangs keeps its slot (one run at a time) until it exits (proposal: a watchdog that cancels a run after a limit).
+
+### Amp controls on the amp heads (v0.2 Task D)
+
+`rig::AmpHead` (`plugin/src/rig/AmpHead.*`) lays the six `knob_amp` filmstrip knobs of a path over the knob positions baked into the amp-head art
+(`amp_saw` / `amp_body`), bound to `ampA_*` / `ampB_*` with the usual `SliderAttachment`. The art's order is kept (GAIN, BASS, MID, TREBLE, LEVEL,
+PRESENCE; the art's own captions say LOW / HIGH, so code-drawn captions with the parameters' names sit over them). The filmstrip is drawn at 30 design px
+(the art's knobs are about 26), never redrawn. A read-out pill in the lower half of the head shows one line:
+
+| state | line |
+|---|---|
+| no ladder | `GAIN 7.0` |
+| ladder | `GAIN 7.0 · capture: <rung name>` |
+| rung pending | `GAIN 7.0 · drive only (fetching <target rung name>)` |
+| path has no amp block | `NO AMP IN THIS PATH` (knobs disabled) |
+| path B empty, BLEND off | `BODY PATH OFF — turn up BLEND to add one` (knobs disabled) |
+| path B has blocks, BLEND off | `BODY PATH OFF — turn up BLEND` (knobs disabled) |
+
+Capture blocks in the rig editor's slot strips show the tag `CAPTURE · FIXED TONE` (a capture is a fixed tone; its tone is shaped by the amp head's
+controls). Cmd / Ctrl + Z on the editor calls `RigController::undo()` when there is a BLEND fill to undo.
 
 ### Latency accounting (exact, in host samples)
 

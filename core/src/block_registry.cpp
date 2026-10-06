@@ -4,6 +4,7 @@
 
 #include "sawblade/capture_cache.h"
 #include "sawblade/eq.h"
+#include "sawblade/gain_ladder.h"
 #include "sawblade/nam_block.h"
 #include "sawblade/pedal_eye.h"
 #include "sawblade/pedal_hm.h"
@@ -21,7 +22,7 @@ std::shared_ptr<const BlockParams> parseNam(JsonObject& o, const std::filesystem
   p->normalizeLoudness = o.boolean("normalizeLoudness", false);
   const nlohmann::json* m = o.take("model");
   if (!m) throw PresetError(o.child("model"), "required field is missing");
-  p->model = parseCapture(*m, o.child("model"), baseDir);
+  p->model = parseCapture(*m, o.child("model"), baseDir, /*allowLadder=*/true);
   return p;
 }
 
@@ -32,13 +33,35 @@ std::unique_ptr<Processor> createNam(const Block& b, const BlockBuildContext& ct
   cfg.inputGainDb = p.inputGainDb;
   cfg.outputGainDb = p.outputGainDb;
   cfg.normalizeLoudness = p.normalizeLoudness;
-  if (ctx.cache) return NamBlock::load(*ctx.cache->namModel(p.model, filePath), cfg);  // bypass: see Chain
-  verifyCapture(p.model, filePath);
-  try {
-    return NamBlock::load(locateCapture(p.model), cfg);  // bypass is handled by the Chain
-  } catch (const std::exception& e) {
-    throw CaptureError(filePath, e.what());
+  const auto build = [&](const Capture& cap, const std::string& fp, bool verify) -> std::unique_ptr<NamBlock> {
+    if (ctx.cache) return NamBlock::load(*ctx.cache->namModel(cap, fp), cfg);  // bypass: see Chain
+    if (verify) verifyCapture(cap, fp);
+    try {
+      return NamBlock::load(locateCapture(cap), cfg);  // bypass is handled by the Chain
+    } catch (const std::exception& e) {
+      throw CaptureError(fp, e.what());
+    }
+  };
+  const int own = ownRungIndex(p.model);
+  if (p.model.ladder.size() >= 2 && own >= 0) {
+    // A gain ladder: the block starts on the rung `gainStep` names (offline renders use it directly, no crossfade) if
+    // that model is cached, else on its own capture; the Chain drives the rest.
+    int active = own;
+    if (ctx.gainStep && !ctx.gainStep->empty()) {
+      const int r = rungIndexOfModel(p.model.ladder, *ctx.gainStep);
+      if (r < 0) {
+        if (ctx.warnings) ctx.warnings->push_back(ctx.jsonPath + ".ampControls.gainStep: \"" + *ctx.gainStep + "\" is not a rung of the ladder; using the block's own capture");
+      } else if (r != own) {
+        if (locateRungFile(p.model, p.model.ladder[static_cast<std::size_t>(r)])) active = r;
+        else if (ctx.warnings) ctx.warnings->push_back(ctx.jsonPath + ".ampControls.gainStep: rung " + *ctx.gainStep + " is not in the capture cache; using the block's own capture (drive only)");
+      }
+    }
+    std::unique_ptr<NamBlock> nb = active == own
+        ? build(p.model, filePath, true)
+        : build(rungCapture(p.model, p.model.ladder[static_cast<std::size_t>(active)]), ctx.jsonPath + ".model.ladder", false);
+    return std::make_unique<LadderBlock>(static_cast<int>(p.model.ladder.size()), active, std::move(nb));
   }
+  return build(p.model, filePath, true);
 }
 
 std::shared_ptr<const BlockParams> parseEq(JsonObject& o, const std::filesystem::path&) {

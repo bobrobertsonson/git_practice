@@ -279,7 +279,7 @@ TEST_CASE("Preset errors carry the JSON path", "[preset]") {
     requireErrorAt(j, "postEq");
   }
   SECTION("version") {
-    json j = minimal(); j["version"] = 2; requireErrorAt(j, "version");
+    json j = minimal(); j["version"] = 3; requireErrorAt(j, "version");  // v2 is current (amp controls)
     j["version"] = 0; requireErrorAt(j, "version");
   }
   SECTION("root must be an object") { REQUIRE_THROWS_AS(parsePreset(json::array(), "/b"), PresetError); }

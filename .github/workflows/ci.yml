@@ -71,6 +71,8 @@ jobs:
           chmod +x pluginval/pluginval
 
       - name: pluginval (VST3, level 10)
+        env:
+          SAWBLADE_NO_NETWORK: "1"
         run: |
           xvfb-run -a pluginval/pluginval --strictness-level 10 --validate-in-process \
             --timeout-ms 300000 \
@@ -187,12 +189,16 @@ jobs:
           unzip -q -o pluginval_macOS.zip -d pluginval
 
       - name: pluginval (AU, level 10)
+        env:
+          SAWBLADE_NO_NETWORK: "1"
         run: |
           pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
             --timeout-ms 300000 \
             --validate "$HOME/Library/Audio/Plug-Ins/Components/Sawblade.component"
 
       - name: pluginval (VST3, level 10)
+        env:
+          SAWBLADE_NO_NETWORK: "1"
         run: |
           pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
             --timeout-ms 300000 \

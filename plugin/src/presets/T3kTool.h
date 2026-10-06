@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -29,6 +30,14 @@ std::filesystem::path t3kExecutable();              // key "t3kExecutable", else
 std::filesystem::path factoryPresetDir();           // key "factoryPresetDir", else <repo>/presets (compile definition)
 bool setT3kExecutable(const std::filesystem::path& exe, std::string* error = nullptr);
 }  // namespace settings
+
+// SAWBLADE_NO_NETWORK=1 (any value but empty / "0"): the plugin starts no network tool on its own (the v0.2 ladder fetch, missing-rung
+// fetch and the BLEND body-path suggestion / fallback fetch). Set for every test and for pluginval; user-initiated runs (resolve, the
+// capture browser) are not affected. Default: allowed.
+inline bool networkToolsDisabled() {
+  const char* e = std::getenv("SAWBLADE_NO_NETWORK");
+  return e != nullptr && *e != '\0' && std::string(e) != "0";
+}
 
 class T3kTool {
  public:

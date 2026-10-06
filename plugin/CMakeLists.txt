@@ -46,6 +46,8 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/ExportSettings.cpp
   src/ExportGlue.cpp
   src/SongDecoder.cpp
+  src/LadderFetch.cpp
+  src/RungPreloader.cpp
   src/PluginProcessor.cpp
   src/SongInput.cpp
   src/PlayAlongPanel.cpp
@@ -63,6 +65,8 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/about/CaptureList.cpp
   src/about/AboutBox.cpp
   src/rig/RigModel.cpp
+  src/rig/BodyFill.cpp
+  src/rig/AmpHead.cpp
   src/rig/RigController.cpp
   src/rig/RigWidgets.cpp
   src/rig/SlotStrip.cpp
@@ -212,6 +216,8 @@ if(SAWBLADE_BUILD_TESTS)
     tests/lock_guard.cpp
     tests/test_engine.cpp
     tests/test_processor.cpp
+    tests/test_ladder.cpp
+    tests/test_body_fill.cpp
     tests/test_playalong.cpp
     tests/test_browser_json.cpp
     tests/test_browser_preview.cpp
@@ -224,7 +230,7 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_settings.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
-    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_playalong.cpp
+    ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_ladder.cpp tests/test_body_fill.cpp tests/test_playalong.cpp
     tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp tests/test_pedal_face.cpp
     tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_settings.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
@@ -252,15 +258,15 @@ if(SAWBLADE_BUILD_TESTS)
     SAWBLADE_PLUGIN_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     SAWBLADE_RIFF_SCRIPT="${PROJECT_SOURCE_DIR}/design/render/make_preview_riff.py"
     SAWBLADE_PYTHON_EXE="${SAWBLADE_PYTHON}")
-  catch_discover_tests(sawblade_plugin_tests TEST_PREFIX "plugin: ")
+  catch_discover_tests(sawblade_plugin_tests TEST_PREFIX "plugin: " PROPERTIES ENVIRONMENT "SAWBLADE_NO_NETWORK=1")
 endif()
 
 # Editor tests (skin, layout, bindings, screenshots): need a display, so they live in their own
 # executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
 # compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
 if(SAWBLADE_BUILD_TESTS)
-  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp ${SAWBLADE_PLUGIN_SOURCES})
-  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp
+  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   add_dependencies(sawblade_editor_tests SawbladeBuildInfo)
   target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
@@ -282,7 +288,7 @@ if(SAWBLADE_BUILD_TESTS)
   if(SAWBLADE_XVFB_RUN AND NOT APPLE)
     set_property(TARGET sawblade_editor_tests PROPERTY CROSSCOMPILING_EMULATOR ${SAWBLADE_XVFB_RUN} -a)
   endif()
-  catch_discover_tests(sawblade_editor_tests TEST_PREFIX "editor: ")
+  catch_discover_tests(sawblade_editor_tests TEST_PREFIX "editor: " PROPERTIES ENVIRONMENT "SAWBLADE_NO_NETWORK=1")
 
   # plugin/assets/ budget (< 25 MB) and every file the exporter lists exists.
   if(SAWBLADE_PYTHON)
@@ -320,7 +326,7 @@ if(SAWBLADE_BUILD_TESTS)
   if(SAWBLADE_XVFB_RUN AND NOT APPLE)
     set_property(TARGET sawblade_integration_tests PROPERTY CROSSCOMPILING_EMULATOR ${SAWBLADE_XVFB_RUN} -a)
   endif()
-  catch_discover_tests(sawblade_integration_tests TEST_PREFIX "integration: " TEST_SPEC "[integration]")
+  catch_discover_tests(sawblade_integration_tests TEST_PREFIX "integration: " TEST_SPEC "[integration]" PROPERTIES ENVIRONMENT "SAWBLADE_NO_NETWORK=1")
 
   # The built Standalone app opens its window under xvfb, stays alive for 6 s, is captured with ImageMagick and ends on SIGTERM.
   # Needs the Standalone format target (Linux / macOS dev machines without a display server skip it).
@@ -330,7 +336,7 @@ if(SAWBLADE_BUILD_TESTS)
       COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/standalone_launch.sh ${SAWBLADE_XVFB_RUN} ${SAWBLADE_IMPORT_EXE}
               "$<TARGET_FILE:SawbladePlugin_Standalone>" ${CMAKE_BINARY_DIR}/screenshots/v01/22_standalone.png)
     set_tests_properties("integration: standalone launches" PROPERTIES TIMEOUT 60 DEPENDS SawbladePlugin_Standalone
-                          SKIP_RETURN_CODE 77)
+                          SKIP_RETURN_CODE 77 ENVIRONMENT "SAWBLADE_NO_NETWORK=1")
   endif()
 endif()
 
@@ -348,4 +354,5 @@ if(SAWBLADE_PLUGINVAL_EXECUTABLE AND SAWBLADE_BUILD_TESTS AND "VST3" IN_LIST SAW
   add_test(NAME "plugin: pluginval VST3"
     COMMAND ${_pv_prefix} ${SAWBLADE_PLUGINVAL_EXECUTABLE} --strictness-level 10 --validate-in-process
             --timeout-ms 120000 "$<GENEX_EVAL:$<TARGET_PROPERTY:SawbladePlugin_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+  set_tests_properties("plugin: pluginval VST3" PROPERTIES ENVIRONMENT "SAWBLADE_NO_NETWORK=1")  # no network tool from the plugin under validation
 endif()

@@ -15,12 +15,14 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <juce_events/juce_events.h>
 
 #include "PluginProcessor.h"
+#include "rig/BodyFill.h"
 #include "rig/RigModel.h"
 
 namespace sawblade::plugin::rig {
@@ -62,7 +64,16 @@ class RigController {
 
   // --- topology (5.5) -------------------------------------------------------------------------------
   Topology topology();
+  // -> Blend on a path B with no blocks fills it (v0.2 Task C): TS boost + the fallback amp (if cached), level match
+  // auto; the suggestion of `sawblade-t3k suggest-body` follows asynchronously (BodyFill) and swaps the amp in if path B is
+  // untouched. The whole thing is one undo step.
   void setTopology(Topology t);
+  // Undo of the last BLEND fill: restores the pre-BLEND preset (also after the asynchronous amp swap). There is ONE entry: the
+  // pre-BLEND preset and the preset the fill (and its swap) left. undo() works only while the rig still is exactly that; any other
+  // edit (path A, a parameter, BLEND off, path B's blocks) or a user preset load drops the entry, and undo() then returns false.
+  bool canUndo() const noexcept { return undo_.has_value(); }
+  bool undo();
+  BodyFill& bodyFill() noexcept { return body_; }
 
   // --- monitoring (5.3) -----------------------------------------------------------------------------
   void setMute(int path, bool on);  // path 0 = A, 1 = B
@@ -100,6 +111,11 @@ class RigController {
   AlignResult measuredAlign() const;
 
   SawbladeProcessor& proc_;
+  BodyFill body_;
+  struct UndoEntry {
+    Preset pre, post;
+  };
+  std::optional<UndoEntry> undo_;
   std::vector<EditFn> pending_;
   Timer debounce_, learnTimer_;
 

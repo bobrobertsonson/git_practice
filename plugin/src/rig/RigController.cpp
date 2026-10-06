@@ -6,7 +6,10 @@
 
 namespace sawblade::plugin::rig {
 
-RigController::RigController(SawbladeProcessor& p) : proc_(p), loadSerial_(p.userLoadSerial()) {
+RigController::RigController(SawbladeProcessor& p) : proc_(p), body_(p), loadSerial_(p.userLoadSerial()) {
+  body_.onBodyChanged = [this](const Preset& swapped) {  // the async amp swap: the fill's result moves with it
+    if (undo_) undo_->post = swapped;
+  };
   debounce_.fn = [this] { flushPending(); };
   learnTimer_.fn = [this] { finishLearn(); };
   lastBlend_ = [&] {
@@ -40,8 +43,10 @@ void RigController::flushPending() {
   debounce_.stopTimer();
   if (pending_.empty()) return;
   Preset p = proc_.editBasePreset();
+  const PathPreset bBefore = p.b;
   for (const auto& f : pending_) f(p);
   pending_.clear();
+  if (undo_ && p.b != bBefore) undo_.reset();  // path B was edited (blocks, BLEND on / off, ...): the fill is no longer the last word
   proc_.loadPreset(std::move(p), /*keepMonitor=*/true);
 }
 
@@ -96,7 +101,10 @@ void RigController::sync() {
   if (const auto serial = proc_.userLoadSerial(); serial != loadSerial_) {
     loadSerial_ = serial;
     resetTransient();
+    undo_.reset();  // another preset: the BLEND fill can no longer be undone, and its suggestion no longer applies
+    body_.cancel();
   }
+  body_.tick();
   if (!pending_.empty()) return;
   const Preset p = proc_.editBasePreset();
   if (p.b.enabled && p.blend > 0.0) lastBlend_ = p.blend;
@@ -121,7 +129,32 @@ void RigController::setTopology(Topology t) {
   if (topologyOf(cur) == Topology::Blend && cur.blend > 0.0) lastBlend_ = cur.blend;
   singlePlus_ = (t == Topology::SinglePlusTwoPedals);
   const double restore = lastBlend_;
-  edit([t, restore](Preset& p) { rig::setTopology(p, t, restore); });
+  const bool fill = t == Topology::Blend && !cur.b.enabled && cur.b.blocks.empty();
+  if (!fill) {
+    edit([t, restore](Preset& p) { rig::setTopology(p, t, restore); });
+    return;
+  }
+  const std::optional<Capture> amp = cachedToneCapture(kFallbackBodyTone);
+  edit([t, restore, amp](Preset& p) {
+    rig::setTopology(p, t, restore);
+    fillBodyPath(p, amp);
+  });
+  const Preset post = proc_.editBasePreset();
+  undo_ = UndoEntry{cur, post};  // replaces any older entry: a second fill never resurrects the first one's snapshot
+  body_.begin(post);
+}
+
+bool RigController::undo() {
+  sync();
+  if (!undo_) return false;
+  flushPending();  // an edit still waiting for its debounce counts as an edit (and may drop the entry)
+  if (!undo_) return false;
+  UndoEntry e = std::move(*undo_);
+  undo_.reset();
+  body_.cancel();
+  if (proc_.editBasePreset() != e.post) return false;  // something else changed since the fill: undoing would lose it
+  proc_.loadPreset(std::move(e.pre), /*keepMonitor=*/true);
+  return true;
 }
 
 void RigController::applyMonitor() {
