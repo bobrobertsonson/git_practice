@@ -4312,11 +4312,14 @@ TEST_CASE("pluginval / auval paths never start a job: a fresh processor with def
       }
     // the editor: open and close every panel, close and reopen the whole editor, refresh timers
     rig.ed->setPlayAlongOpen(true);
-    rig.panel().refresh();
+    all<PlayAlongPanel>(*rig.ed).at(0)->refresh();
     rig.ed->setPlayAlongOpen(false);
     rig.ed->openMatchScreen();
-    rig.screen().refresh();
-    CHECK_FALSE(rig.screenButton("START MATCH")->isEnabled());  // no song, no take, no tool: nothing to start
+    MatchScreen& screen = *all<MatchScreen>(*rig.ed).at(0);
+    screen.refresh();
+    auto* startBtn = buttonTitled(screen, "START MATCH");
+    REQUIRE(startBtn != nullptr);
+    CHECK_FALSE(startBtn->isEnabled());  // no song, no take, no tool: nothing to start
     juce::MessageManager::getInstance()->runDispatchLoopUntil(120);
     rig.ed->openExportPanel();
     juce::MessageManager::getInstance()->runDispatchLoopUntil(120);

@@ -374,6 +374,8 @@ void SawbladeProcessor::setStateInformation(const void* data, int size) {
     const std::string mine = jobs_.owner();
     if (savedInstance == mine) {
       instanceRestored_ = true;
+    } else if (jobs_.snapshot(JobKind::Match).state != JobState::None || jobs_.snapshot(JobKind::Export).state != JobState::None) {
+      // this instance already holds a job under its own id: keep it
     } else if (claimId(savedInstance)) {
       releaseId(mine);
       jobs_.setOwner(savedInstance);

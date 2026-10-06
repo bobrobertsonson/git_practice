@@ -33,6 +33,7 @@ Readers must reject `version` greater than they support and migrate lower versio
   "busComp":{ ... },                   // optional; see Bus compressor
   "output": { "gainDb": 0.0 },         // optional
   "playAlong": { ... },                // optional; plugin UI state, see Play-along (not tone)
+  "instance": "<uuid>",                // optional; plugin state only (not tone, never in preset files): the id owning this instance's match / export job folders
   "export": { ... }                    // optional; plugin UI state of the export panel (not tone): mode, size, diSource, compChoice, outputFolder
 }
 ```

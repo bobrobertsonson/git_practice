@@ -1495,24 +1495,34 @@ bool JobRunner::ownedByThisRunner(const fs::path& dir) const {
 
 void JobRunner::attachExisting() {
   std::lock_guard<std::mutex> lk(m_);
+  if (export_ && (match_ || refine_)) return;  // every slot already has a job
   std::error_code ec;
   if (!fs::is_directory(jobsDir_, ec)) return;
-  std::vector<fs::path> dirs;
-  for (fs::directory_iterator it(jobsDir_, ec), end; !ec && it != end; it.increment(ec))
-    if (it->is_directory(ec) && fs::exists(it->path() / "job.json", ec) && ownedByThisRunner(it->path())) dirs.push_back(it->path());
-  std::sort(dirs.begin(), dirs.end(), std::greater<>());
   auto endsWith = [](const std::string& n, const std::string& suffix) { return n.size() > suffix.size() && n.compare(n.size() - suffix.size(), suffix.size(), suffix) == 0; };
+  // The cheap name filter first; ownership (a job.json read) only for the candidates actually looked at, newest first.
+  std::vector<fs::path> exportDirs, matchDirs;
+  for (fs::directory_iterator it(jobsDir_, ec), end; !ec && it != end; it.increment(ec)) {
+    if (!it->is_directory(ec)) continue;
+    const std::string n = it->path().filename().string();
+    if (endsWith(n, "-export")) exportDirs.push_back(it->path());
+    else if (endsWith(n, "-match")) matchDirs.push_back(it->path());
+  }
+  std::sort(exportDirs.begin(), exportDirs.end(), std::greater<>());
+  std::sort(matchDirs.begin(), matchDirs.end(), std::greater<>());
   if (!export_)
-    for (const auto& d : dirs)
-      if (endsWith(d.filename().string(), "-export")) {
+    for (const auto& d : exportDirs)
+      if (fs::exists(d / "job.json", ec) && ownedByThisRunner(d)) {
         export_ = adoptJob(JobKind::Export, d);
         if (export_) break;
       }
   if (!match_ && !refine_)
-    for (const auto& d : dirs)
-      if (endsWith(d.filename().string(), "-match")) {
+    for (const auto& d : matchDirs)
+      if (fs::exists(d / "job.json", ec) && ownedByThisRunner(d)) {
         if (auto job = adoptJob(JobKind::Match, d)) {
-          adoptMatchGroup(std::move(job), dirs);
+          std::vector<fs::path> owned;
+          for (const auto& m : matchDirs)
+            if (fs::exists(m / "job.json", ec) && ownedByThisRunner(m)) owned.push_back(m);
+          adoptMatchGroup(std::move(job), owned);
           break;
         }
       }
@@ -1630,10 +1640,12 @@ bool recordedRunning(const json& j, const fs::path& dir) {
 
 void JobRunner::prune(int keepTakes) {
   fs::path root;
+  std::string owner;
   std::vector<fs::path> live;  // jobs this runner is running right now
   {
     std::lock_guard<std::mutex> lk(m_);
     root = jobsDir_;
+    owner = owner_;
     std::vector<std::shared_ptr<Job>> mine{match_, refine_};
     mine.insert(mine.end(), graveyard_.begin(), graveyard_.end());
     for (const auto& j : mine) {
@@ -1661,6 +1673,9 @@ void JobRunner::prune(int keepTakes) {
     try {
       const json j = json::parse(readFile(it->path() / "job.json"), nullptr, /*allow_exceptions=*/false);
       if (!j.is_object()) continue;  // not a job folder (or being written): never touched
+      // An owned runner prunes only its own folders and ownerless (legacy) ones: never another live instance's job.
+      if (!owner.empty())
+        if (auto o = j.find("owner"); o != j.end() && o->is_string() && o->get<std::string>() != owner) continue;
       if (auto k = j.find("kind"); k == j.end() || !k->is_string() || k->get<std::string>() != "match") continue;
       std::string take = takeOf(j);
       if (take.empty()) take = "dir:" + name;

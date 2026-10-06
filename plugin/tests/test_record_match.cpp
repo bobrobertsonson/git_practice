@@ -1719,6 +1719,26 @@ TEST_CASE("job runner: an owned runner adopts only its own jobs (v0.2.1 Task A)"
   CHECK(x2.snapshot(JobKind::Match).dir == dirX);  // x's job, although the ownerless one is newer
 }
 
+TEST_CASE("job runner: pruning an owned runner never deletes another owner's job (v0.2.1 Task A)", "[match][isolation][prune]") {
+  FakeTools t;
+  t.cfgMatch({{"progressJson", true}});
+  MatchSettings ms(t.root / "settings.xml");
+  JobRunner x(ms, t.jobs), y(ms, t.jobs);
+  x.setOwner("owner-x");
+  y.setOwner("owner-y");
+  REQUIRE(x.startMatch(t.request()));
+  REQUIRE(x.waitFinished(JobKind::Match));
+  const fs::path dirX = x.snapshot(JobKind::Match).dir;
+  REQUIRE(y.startMatch(t.request(2000.0)));
+  REQUIRE(y.waitFinished(JobKind::Match));
+  const fs::path dirY = y.snapshot(JobKind::Match).dir;
+  y.prune(0);  // keep no takes: y's own folder goes, x's stays
+  CHECK(fs::exists(dirX));
+  CHECK_FALSE(fs::exists(dirY));
+  x.prune(0);
+  CHECK_FALSE(fs::exists(dirX));
+}
+
 TEST_CASE("match: applying a result tells the host the project state changed (v0.2.1 Task A)", "[match][apply]") {
   struct Listener : juce::AudioProcessorListener {
     int nonParam = 0;

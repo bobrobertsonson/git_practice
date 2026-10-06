@@ -353,7 +353,13 @@ an owner adopts (`attachExisting()`, called when the MATCH / EXPORT screen opens
 owner (older builds, tools) belong to nobody. The id is saved in the plugin state (key `instance`, plugin bookkeeping outside the
 tone) once the instance has a job, so closing the host project and reopening it finds the same job again; a state restored
 while another live instance in the process holds the same id (a duplicated track) gets a fresh id and no jobs. Two instances may
-run matches at once, and a result is applied only by the instance whose screen shows it.
+run matches at once, and a result is applied only by the instance whose screen shows it. Pruning is scoped the same way: an owned
+runner deletes only its own folders and ownerless ones, never another instance's job.
+
+- Jobs from builds before this one have no owner and are not adopted by any instance.
+- Match settings (selected take, tool paths) are one per-user file shared by all instances.
+- A real undo of an applied match is deferred to v0.2's `RigController::undo` (hook at `PresetAudition::apply`); today apply = one
+  preset load + `updateHostDisplay`.
 
 **Job runner.** `JobRunner` (owned by the processor, so jobs survive the editor and the panel closing) starts
 `sawblade-match` and `sawblade-export` with `juce::ChildProcess`. Every job has a folder
