@@ -290,7 +290,14 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // The capture browser asks about the tone it shows (selected / previewed): queued for the next ladderTick(), run through the same tool and
   // the same once-per-tone-per-session rule as the preset's own fetch (so the answer is also applied to a rig that uses that capture). Message
   // thread; a no-op when the tone is known, was already asked, ladder fetching is off or network tools are disabled.
-  void requestLadderLookup(const std::string& toneId);
+  void requestLadderLookup(const std::string& toneId);  // jumps to the front of the queue
+  // The capture browser's visible rows, in display order (the caller caps them): the lookup queue becomes `toneIds` (minus the known / already
+  // asked), with `priorityId` (the selected tone, "" = none) first; queued tones that are no longer wanted are dropped, a run in flight is never
+  // cancelled. Message thread. A no-op once a tool failure stopped the lookups for the session.
+  void setLadderLookups(const std::vector<std::string>& toneIds, const std::string& priorityId = {});
+  std::vector<std::string> ladderLookupQueue() const { return {ladderLookups_.begin(), ladderLookups_.end()}; }  // tests
+  // A `ladder` run failed (not logged in, no network, garbage): the browser's lookups stay off for the rest of the session (no UI text).
+  bool ladderLookupsStopped() const noexcept { return ladderLookupsStopped_.load(); }
   std::uint64_t rungFetches() const noexcept { return rungFetches_.load(); }      // `fetch` runs started for missing rung models
 
   // Test hook: a CIRCUIT edit from another thread (or during a commit) is waiting for the timer. Commit's own
@@ -362,6 +369,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::atomic<bool> rungArrived_{false};  // a rung `fetch` finished: ask the rung loader at once
   std::set<std::string> rungTried_;       // "tone:model" already fetched (or failed) this session (message thread only)
   std::set<std::string> ladderTried_;  // tone ids already asked about (message thread only)
+  std::atomic<bool> ladderLookupsStopped_{false};
   std::deque<std::string> ladderLookups_;  // tone ids the capture browser wants checked (message thread only)
   std::map<std::string, int> ladderSteps_;  // fetchMutex_: tone id -> steps (0 = none), from the tool's answers
   std::set<std::string> ladderUnusable_;    // fetchMutex_: a ladder exists but no amp block could take it

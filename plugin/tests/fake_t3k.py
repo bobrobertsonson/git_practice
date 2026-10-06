@@ -110,6 +110,9 @@ elif cmd == "models":
 elif cmd == "ladder":
     # v0.3 Task E: tone 101 has a 5-step ladder (own model 1011 is one of the rungs), every other tone none (rungs null).
     tid = args[1]
+    if os.environ.get("FAKE_T3K_LADDER_FAIL"):
+        err("not logged in", "auth")
+    time.sleep(float(os.environ.get("FAKE_T3K_LADDER_SLEEP", "0")))
     rungs = None
     if tid == "101":
         rungs = [{"model_id": str(1010 + i), "gain": float(2 * i), "name": f"Gain {2 * i}"} for i in range(1, 6)]

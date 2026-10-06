@@ -50,6 +50,20 @@ const t3k::CaptureRecord* BrowserController::selected() const {
 
 int BrowserController::ladderSteps(std::int64_t toneId) const { return proc_.ladderSteps(std::to_string(toneId)); }
 
+void BrowserController::wantLadders(const std::vector<std::int64_t>& visibleToneIds) {
+  if (st_.gear != "amp" || st_.view != View::Browse) return;
+  std::vector<std::string> ids;
+  std::string sig = std::to_string(st_.selectedId);
+  for (std::int64_t id : visibleToneIds) {
+    if (ids.size() >= kLadderLookupCap) break;
+    ids.push_back(std::to_string(id));
+    sig += "," + ids.back();
+  }
+  if (sig == lastWanted_) return;
+  lastWanted_ = sig;
+  proc_.setLadderLookups(ids, st_.selectedId != 0 ? std::to_string(st_.selectedId) : std::string());
+}
+
 std::vector<SlotTarget> BrowserController::targets(std::string* why) const { return slotTargets(proc_.currentPreset(), slot_, why); }
 
 void BrowserController::setExecutable(const std::string& path) {

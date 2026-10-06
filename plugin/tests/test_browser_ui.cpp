@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <algorithm>
 #include <optional>
 #include <set>
 
@@ -760,62 +761,143 @@ juce::String stepsOf(juce::Component& root, const juce::String& title) {
 }
 }  // namespace
 
-TEST_CASE("browser: a card is marked STEPS n when its pack has a gain ladder; only checked tones are marked; each tone is asked once", "[browser][ui][steps]") {
-  Rig rig;
-  const NetworkOn net;
-  // The processor runs the ladder tool (its own settings); the browser's list / models use the browser's executable. Both are the fake CLI.
-  {
+// Points the processor's settings (its ladder tool) at the fake CLI, and logs every call of it.
+struct LadderRig : Rig {
+  fs::path log;
+  LadderRig() {
     std::ofstream out(std::getenv("SAWBLADE_SETTINGS_FILE"));
     out << nlohmann::json{{"version", 1}, {"firstRunCompleted", true}, {"t3kExecutable", SAWBLADE_FAKE_T3K}}.dump();
+    out.close();
+    sawblade::plugin::settings::Settings::resetSharedForTests();
+    log = tmp.dir / "calls.log";
+    env.set("FAKE_T3K_LOG", log.string());
   }
-  sawblade::plugin::settings::Settings::resetSharedForTests();
-  const fs::path log = rig.tmp.dir / "calls.log";
-  rig.env.set("FAKE_T3K_LOG", log.string());
-  CaptureBrowser b(rig.proc, *rig.settings, Slot::SawAmp);
-  auto& ctl = b.controller();
-  REQUIRE(pumpUntil([&] { return ctl.state().view == BrowserController::View::Browse && !ctl.state().records.empty() && !ctl.state().loading; }));
-  pumpFor(100);
-  const juce::String t101 = "Boss HM-2w CHAINSAW", t102 = juce::String::fromUTF8("Swedish Chainsaw \xc3\xa5\xc3\xa4\xc3\xb6"), t104 = "Tight Boost";
-  // Nothing is known yet: no row is marked (no per-row lookups either).
-  for (const auto& t : {t101, t102, t104}) CHECK(stepsOf(b, t) == "");
-  auto ladderCalls = [&] {
-    int n = 0;
+  // The tones the `ladder` tool was called for, in call order.
+  std::vector<std::string> ladderCalls() const {
+    std::vector<std::string> v;
     std::ifstream in(log);
     for (std::string line; std::getline(in, line);)
-      if (line.find("\"ladder\"") != std::string::npos) ++n;
-    return n;
-  };
-  CHECK(ladderCalls() == 0);
+      if (auto j = nlohmann::json::parse(line, nullptr, false); j.is_array() && j.size() > 1 && j[0] == "ladder") v.push_back(j[1].get<std::string>());
+    return v;
+  }
+  bool browsing(BrowserController& ctl) { return ctl.state().view == BrowserController::View::Browse && !ctl.state().records.empty() && !ctl.state().loading; }
+};
 
-  // Select the pack that has a ladder (the fake CLI: tone 101, five rungs): asked lazily, the tool runs off the UI thread, the card is marked.
-  ctl.select(101);
+TEST_CASE("browser: the visible rows are looked up, a pack with a ladder is marked STEPS n, each tone is asked once", "[browser][ui][steps]") {
+  LadderRig rig;
+  const NetworkOn net;
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::SawAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return rig.browsing(ctl); }));
+  const juce::String t101 = "Boss HM-2w CHAINSAW", t102 = juce::String::fromUTF8("Swedish Chainsaw \xc3\xa5\xc3\xa4\xc3\xb6"), t104 = "Tight Boost";
+  // The five visible rows are all asked (one run at a time, off the UI thread); 101 has a ladder (the fake CLI: five rungs), the others none.
   REQUIRE(pumpUntil([&] {
     rig.proc.ladderTick();
     return stepsOf(b, t101) == "STEPS 5";
   }));
-  CHECK(rig.proc.ladderSteps("101") == 5);
-  CHECK(stepsOf(b, t102) == "");  // not asked, not marked
-  CHECK(stepsOf(b, t104) == "");
-  // A pack without a ladder (tone 102: rungs null) is asked and stays unmarked.
-  ctl.select(102);
   REQUIRE(pumpUntil([&] {
     rig.proc.ladderTick();
-    return rig.proc.ladderSteps("102") == 0;
+    return rig.proc.ladderSteps("106") == 0;  // the last visible row
   }));
-  pumpFor(100);
-  CHECK(stepsOf(b, t102) == "");
-  CHECK(stepsOf(b, t101) == "STEPS 5");
-  // Back to the first one: not asked again (once per tone per session), and the mark stays.
+  pumpFor(150);
+  CHECK(rig.proc.ladderSteps("101") == 5);
+  CHECK(stepsOf(b, t102) == "");  // asked, none: not marked
+  CHECK(stepsOf(b, t104) == "");
+  // Reselecting, scrolling or a reload asks nothing again: once per tone per session.
   ctl.select(101);
   ctl.select(102);
   ctl.select(101);
+  ctl.reload();
+  REQUIRE(pumpUntil([&] { return rig.browsing(ctl); }));
   pumpFor(300);
   rig.proc.ladderTick();
   REQUIRE(rig.proc.waitForLadderWork());
-  CHECK(ladderCalls() == 2);
+  auto calls = rig.ladderCalls();
+  CHECK(calls.size() == 5);
+  std::sort(calls.begin(), calls.end());
+  CHECK(std::adjacent_find(calls.begin(), calls.end()) == calls.end());
   CHECK(stepsOf(b, t101) == "STEPS 5");
+}
+
+TEST_CASE("browser: the lookup queue is the visible rows in order, capped; leaving the screen drops them; the selected tone jumps ahead", "[browser][ui][steps]") {
+  LadderRig rig;
+  const NetworkOn net;
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::SawAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return rig.browsing(ctl); }));
+  // Stop the processor's own ticks from draining the queue while it is inspected: the queue is set directly through the controller's rule.
+  std::vector<std::int64_t> rows;
+  for (int i = 1; i <= 30; ++i) rows.push_back(500 + i);
+  ctl.wantLadders(rows);
+  auto q = rig.proc.ladderLookupQueue();
+  REQUIRE(q.size() == BrowserController::kLadderLookupCap);  // capped
+  CHECK(q.front() == "501");                                 // display order
+  CHECK(q.back() == "524");
+  // Scrolling to other rows drops the queued ones that left the screen.
+  ctl.wantLadders({520, 521, 522, 900});
+  CHECK(rig.proc.ladderLookupQueue() == std::vector<std::string>({"520", "521", "522", "900"}));
+  // The selected tone goes first, and stays first while the rows change.
+  ctl.select(101);
+  CHECK(rig.proc.ladderLookupQueue().front() == "101");
+  ctl.wantLadders({700, 701});
+  CHECK(rig.proc.ladderLookupQueue() == std::vector<std::string>({"101", "700", "701"}));
+  ctl.select(104);
+  CHECK(rig.proc.ladderLookupQueue().front() == "104");
+  // A known tone is not queued again.
+  rig.proc.ladderTick();  // starts the first run (104); the rest waits
+  REQUIRE(rig.proc.waitForLadderWork());
+  rig.proc.ladderTick();
+  CHECK(rig.proc.ladderSteps("104") == 0);
+  ctl.wantLadders({104, 701});
+  const auto q2 = rig.proc.ladderLookupQueue();
+  CHECK(std::find(q2.begin(), q2.end(), "104") == q2.end());
+}
+
+TEST_CASE("browser: a failing ladder tool stops the lookups for the session; no further calls", "[browser][ui][steps]") {
+  LadderRig rig;
+  const NetworkOn net;
+  rig.env.set("FAKE_T3K_LADDER_FAIL", "1");  // the ladder tool says "not logged in" (list / models / fetch still work)
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::SawAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return rig.browsing(ctl); }));
+  REQUIRE(pumpUntil([&] {
+    rig.proc.ladderTick();  // the first visible row is asked, fails, and the queue is dropped
+    return rig.proc.ladderLookupsStopped();
+  }));
+  CHECK(rig.proc.ladderLookupQueue().empty());
+  const std::size_t calls = rig.ladderCalls().size();
+  CHECK(calls == 1);
+  CHECK(rig.proc.ladderSteps("101") == -1);  // unknown, not "none"
+  ctl.wantLadders({601, 602, 603});
+  ctl.select(105);
+  pumpFor(400);
   rig.proc.ladderTick();
   rig.proc.waitForLadderWork();
+  CHECK(rig.proc.ladderLookupQueue().empty());
+  CHECK(rig.ladderCalls().size() == calls);
+}
+
+TEST_CASE("browser: USE does not wait on the ladder lookups", "[browser][ui][steps]") {
+  LadderRig rig;
+  const NetworkOn net;
+  rig.env.set("FAKE_T3K_LADDER_SLEEP", "2");  // every ladder run takes 2 s
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::BodyAmp);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return rig.browsing(ctl); }));
+  pumpUntil([&] {
+    rig.proc.ladderTick();  // a lookup is now running (the first visible row)
+    return !rig.ladderCalls().empty();
+  });
+  ctl.wantLadders({101, 102, 104});
+  ctl.select(104);
+  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }, 1500));
+  const auto t0 = std::chrono::steady_clock::now();
+  ctl.use(0);
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }, 1500));
+  CHECK_FALSE(ctl.state().statusIsError);
+  CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(1500));  // well under one 2 s lookup
+  CHECK(rig.proc.currentPreset().b.blocks.size() >= 1);
+  rig.proc.waitForLadderWork(std::chrono::milliseconds(15000));
 }
 
 TEST_CASE("browser: no ladder lookup when network tools are disabled, or for pedal and cab browsers", "[browser][ui][steps]") {

@@ -244,7 +244,11 @@ void SawbladeProcessor::ladderTick() {
     done.swap(fetched_);
   }
   for (const LadderFetchResult& r : done) {
-    if (!r.ok) continue;  // the tool failed or answered nonsense: unknown, not "no ladder"
+    if (!r.ok) {  // the tool failed or answered nonsense: unknown, not "no ladder"; the browser's lookups stop (no failing calls in a loop)
+      ladderLookupsStopped_.store(true);
+      ladderLookups_.clear();
+      continue;
+    }
     std::lock_guard<std::mutex> lk(fetchMutex_);
     ladderSteps_[r.toneId] = static_cast<int>(r.rungs.size());
     if (!r.rungs.empty()) ladderRungs_[r.toneId] = r.rungs;
@@ -403,10 +407,21 @@ bool SawbladeProcessor::ladderCheckedNone(const std::string& toneId) const {
 }
 
 void SawbladeProcessor::requestLadderLookup(const std::string& toneId) {
-  if (toneId.empty() || !ladderFetch_.load() || networkToolsDisabled()) return;
+  if (toneId.empty() || !ladderFetch_.load() || networkToolsDisabled() || ladderLookupsStopped_.load()) return;
   if (ladderTried_.count(toneId) > 0 || ladderSteps(toneId) >= 0) return;
-  if (std::find(ladderLookups_.begin(), ladderLookups_.end(), toneId) != ladderLookups_.end()) return;
-  ladderLookups_.push_back(toneId);
+  ladderLookups_.erase(std::remove(ladderLookups_.begin(), ladderLookups_.end(), toneId), ladderLookups_.end());
+  ladderLookups_.push_front(toneId);
+}
+
+void SawbladeProcessor::setLadderLookups(const std::vector<std::string>& toneIds, const std::string& priorityId) {
+  ladderLookups_.clear();
+  if (!ladderFetch_.load() || networkToolsDisabled() || ladderLookupsStopped_.load()) return;
+  const auto add = [&](const std::string& id) {
+    if (id.empty() || ladderTried_.count(id) > 0 || ladderSteps(id) >= 0) return;
+    if (std::find(ladderLookups_.begin(), ladderLookups_.end(), id) == ladderLookups_.end()) ladderLookups_.push_back(id);
+  };
+  add(priorityId);
+  for (const std::string& id : toneIds) add(id);
 }
 
 bool SawbladeProcessor::waitForLadderWork(std::chrono::milliseconds timeout) {

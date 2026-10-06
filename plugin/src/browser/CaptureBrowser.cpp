@@ -475,7 +475,17 @@ struct CaptureBrowser::Impl {
     return slotIsCab() && ctl.targets(&why).size() == 2;
   }
   // The ladder answers arrive asynchronously (through the processor's ladder tool): the cards pick them up here, no rebuild.
+  // The cards on screen (inside the viewport), in display order, are the tones whose ladder is looked up.
+  void updateLadderWanted() {
+    const auto area = viewport.getViewArea();
+    std::vector<std::int64_t> ids;
+    if (viewport.isVisible())
+      for (auto& c : grid.cards)
+        if (c->getBounds().intersects(area)) ids.push_back(c->id);
+    ctl.wantLadders(ids);
+  }
   void refreshSteps() {
+    updateLadderWanted();
     for (auto& c : grid.cards) c->setSteps(ctl.ladderSteps(c->id));
   }
   juce::String gridSig() const {

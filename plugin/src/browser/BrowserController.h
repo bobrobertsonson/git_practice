@@ -67,6 +67,10 @@ class BrowserController {
   // browser marks a card only when this is >= 2. select() asks about the tone it selects (lazily, once per tone per session, through the
   // processor's own ladder tool: no extra work per row, nothing queued on the browser's own tool runner).
   int ladderSteps(std::int64_t toneId) const;
+  // The rows on screen, in display order (amp slots only): at most kLadderLookupCap of them are queued for the same lookup, the selected tone
+  // first; tones that left the screen are dropped from the queue. USE / PREVIEW use the browser's own tool runner and never wait on it.
+  static constexpr std::size_t kLadderLookupCap = 24;
+  void wantLadders(const std::vector<std::int64_t>& visibleToneIds);
   // The slot's targets in the current preset (and why not, if none).
   std::vector<SlotTarget> targets(std::string* why = nullptr) const;
   std::string executable() const { return settings_.executable(); }
@@ -107,6 +111,7 @@ class BrowserController {
   State st_;
   T3kClient client_;
   std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+  std::string lastWanted_;
   std::uint64_t listSeq_ = 0, modelsSeq_ = 0, fetchSeq_ = 0, previewGen_ = 0, useSeq_ = 0;
   bool awaitingLoad_ = false;
   std::string loadedTitle_, levelNote_;

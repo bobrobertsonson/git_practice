@@ -147,12 +147,14 @@ of the tone that are the same amp at other gain settings. In the plugin:
     tone and found none (or a ladder without the capture's own model: `SawbladeProcessor::ladderCheckedNone`); nothing while that is unknown
     (never asked, the tool is missing / disabled / failed, a local-file amp). "Checked, no ladder" is session state in the processor
     (`ladderSteps(toneId)`: -1 unknown, 0 none, n steps), not in the preset: a new session asks again, once per tone.
-  - *Capture browser:* a card shows `STEPS n` (right end of the licence row) when the tone's ladder is known to exist. Only the tone the user
-    selects or previews is looked up (amp slots only): `BrowserController::select` calls `requestLadderLookup`, which the next `ladderTick()` runs
-    through the same tool and once-per-tone rule as above (one run at a time, off the UI thread, nothing queued on the browser's own tool runner).
-    Cards of tones nobody selected are never marked; a pack without a ladder is not marked. A looked-up ladder is also given to a rig whose amp
-    is a capture of that tone (so using it right after browsing shows the steps). `SAWBLADE_NO_NETWORK` turns the lookup off like the other
-    automatic tools.
+  - *Capture browser:* a card shows `STEPS n` (right end of the licence row) when the tone's ladder is known to exist; unknown and no-ladder
+    cards show nothing. In amp slots the rows on screen (inside the viewport, display order, at most 24) are looked up lazily: the browser's 10 Hz
+    timer calls `BrowserController::wantLadders`, which sets `SawbladeProcessor::setLadderLookups`; the next `ladderTick()` runs the head of the
+    queue through the same tool, `ladderRungs_` cache and once-per-tone-per-session rule as the preset's own fetch (one run at a time, off the UI
+    thread, never on the browser's own tool runner, so USE / PREVIEW never wait). The selected / previewed tone goes first. Scrolling or a new
+    search replaces the queue (tones that left the screen are dropped; a run in flight is never cancelled). A failed run (not logged in, no
+    network, garbage) stops the lookups for the session (`ladderLookupsStopped()`, no UI text); `SAWBLADE_NO_NETWORK` turns them off. A looked-up
+    ladder is also given to a rig whose amp is a capture of that tone.
 
 ### BLEND fills an empty path B (v0.2 Task C)
 
