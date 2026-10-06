@@ -71,9 +71,9 @@ def test_post_filters_are_neutral_by_default_and_not_in_the_regulariser():
         assert len(sp.eq_gains(v)) == len(Space(shape, filters=False).eq_gains(v))
         for n in ("post.hp", "post.hp_slope", "post.lp", "post.lp_slope"):
             assert not sp.params[sp.idx[n]].eq_gain
-        # the slopes are discrete: not CMA-ES dimensions in either group
+        # post.hp and the slopes are discrete: not CMA-ES dimensions in either group
         assert set(sp.indices("linear")) | set(sp.indices("gain")) == set(range(len(sp))) - set(sp.indices("discrete"))
-        assert {sp.names[i] for i in sp.indices("discrete")} == {"post.hp_slope", "post.lp_slope"}
+        assert {sp.names[i] for i in sp.indices("discrete")} == {"post.hp", "post.hp_slope", "post.lp_slope"}
     assert "post.hp" not in Space((1, None), filters=False).idx
     assert "post.hp" not in post_eq(Space((1, None), filters=False).default())
 

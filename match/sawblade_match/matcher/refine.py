@@ -20,19 +20,29 @@ from .space import Combo, Space
 
 
 DISCRETE_UP = 1.0       # slope parameter value of the 24 dB/oct alternative (>= 0.5)
+HP_GRID = tuple(float(f) for f in np.geomspace(60.0, 140.0, 8)[1:])      # post.hp tried after CMA-ES (60 Hz = off)
 
 
 def pick_slopes(space: Space, v: dict, score) -> tuple[dict, L.LossResult]:
-    """The discrete parameters (post-filter slopes, group ``discrete``) are not CMA-ES dimensions: after the linear block
-    each is switched to its 24 dB/oct alternative in turn and kept when the loss falls. ``score(v) -> LossResult``."""
+    """The post-cab filter parameters (group ``discrete``) are not CMA-ES dimensions (extra dimensions cost the short stage-2
+    budgets accuracy on the known answer): after the linear block ``post.hp`` is tried on a short log grid, then each
+    filter's slope is switched to its 24 dB/oct alternative in turn; a change is kept when the loss falls.
+    ``score(v) -> LossResult``."""
     best = dict(v)
     r = score(best)
-    for i in space.indices("discrete"):
-        n = space.names[i]
-        cand = {**best, n: DISCRETE_UP}
-        rc = score(cand)
-        if rc.total < r.total - 1e-9:
-            best, r = cand, rc
+    names = [space.names[i] for i in space.indices("discrete")]
+    if "post.hp" in names:
+        for f in HP_GRID:
+            cand = {**best, "post.hp": f}
+            rc = score(cand)
+            if rc.total < r.total - 1e-9:
+                best, r = cand, rc
+    for n in names:
+        if n.endswith("_slope"):
+            cand = {**best, n: DISCRETE_UP}
+            rc = score(cand)
+            if rc.total < r.total - 1e-9:
+                best, r = cand, rc
     return best, r
 
 

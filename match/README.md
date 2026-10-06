@@ -375,8 +375,8 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   * **Post-cab filters**: `post.hp` 60-140 Hz after the shared cab, and the existing post low-pass `post.lp` (5-12 kHz, 12 kHz = off) now with a
     slope choice. Each has a discrete slope parameter (`post.hp_slope`, `post.lp_slope`: < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct = two cascaded
     biquads with the 4th-order Butterworth Qs 0.541 / 1.307). A filter at its range edge (hp 60 Hz, lp 12 kHz) is off whatever the slope (the band
-    is omitted); they are not in the EQ-gain regulariser. The slopes are not CMA-ES dimensions: the frequencies are searched at 12 dB/oct, then each
-    filter is tried at 24 dB/oct (`refine.pick_slopes`). `post_filters_from_eq` reads the filters back from a preset. `result.json -> postFilters`.
+    is omitted); they are not in the EQ-gain regulariser. `post.hp` and the slopes are not CMA-ES dimensions (an extra dimension cost the short stage-2 budgets accuracy on the known answer):
+    after the last linear block `post.hp` is tried on a short log grid (60-140 Hz), then each filter at 24 dB/oct (`refine.pick_slopes`). `post_filters_from_eq` reads the filters back from a preset. `result.json -> postFilters`.
   * **Cab breadth** (`matcher/cabsweep.py`): after stage 2, the top 3 refined candidates per topology are scored with **every** cab of the pool
     (full loss, the NAM cores come from the engine memo, so each IR costs two linear renders + the loss). When another cab wins, the last
     linear CMA-ES block is re-run on it (`refine.relinear`). `result.json -> cabSweep {poolCabs, candidates[...irs]}` lists every IR's

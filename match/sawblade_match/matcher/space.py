@@ -18,8 +18,8 @@ Continuous parameters (physical units; the optimizer works in the normalised box
 * post-cab filters (v0.4M, always searched unless ``filters=False``): ``post.hp`` 60-140 Hz, and the post low-pass ``post.lp``
   above (5-12 kHz) gets a slope choice. Each has a discrete slope parameter (``post.hp_slope`` / ``post.lp_slope`` in [0, 1]:
   < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct, emitted as two cascaded biquads with the 4th-order Butterworth Qs 0.541 / 1.307). The
-  slopes are not CMA-ES dimensions (group ``discrete``): frequencies are optimised at 12 dB/oct, then ``refine.pick_slopes``
-  tries 24 dB/oct for each filter. A filter at its range edge (hp 60 Hz, lp 12 kHz) is "off" whatever its slope. They do not
+  ``post.hp`` and the slopes are not CMA-ES dimensions (group ``discrete``): ``refine.pick_slopes`` tries ``post.hp`` on a short
+  grid after the last linear block, then 24 dB/oct for each filter. A filter at its range edge (hp 60 Hz, lp 12 kHz) is "off" whatever its slope. They do not
   count toward the EQ-gain regulariser.
 * tight boost (v0.4M, ``Combo.boost``; single topology only): a modeled ``pedal.ts`` (slot ``boost``) directly in front of the
   amp, after any pedal: ``boost.drive`` 0-3, ``boost.level`` 6-10, ``boost.tone`` 3-8 (defaults 1 / 8 / 5). The boost renders
@@ -149,7 +149,7 @@ class Space:
         ps.append(P("post.shelf_g", *SHELF_GAIN_RANGE, 0.0))
         ps.append(P("post.lp", *POST_LP_RANGE, POST_LP_RANGE[1], log=True))
         if filters:
-            ps.append(P("post.hp", *POST_HP_RANGE, POST_HP_RANGE[0], log=True))
+            ps.append(P("post.hp", *POST_HP_RANGE, POST_HP_RANGE[0], log=True, group="discrete"))
             ps.append(P("post.hp_slope", 0.0, 1.0, SLOPE_DEFAULT, group="discrete"))
             ps.append(P("post.lp_slope", 0.0, 1.0, SLOPE_DEFAULT, group="discrete"))
         gains = [f"a.{i}" for i in range(na)] + ["a.amp"]
