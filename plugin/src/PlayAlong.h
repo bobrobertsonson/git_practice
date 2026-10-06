@@ -183,7 +183,8 @@ class PlayAlong {
     std::string fetchCommand;
     bool cacheHit = false;                    // Ready: the stems came from the stem cache, no separation ran
     // A load that was refused before anything changed (a folder that is not a stem set): the message shows in
-    // the status line over whatever state there is, and the loaded song stays loaded. Cleared by the next load.
+    // the status line over whatever state there is, and the loaded song stays loaded. Filled in by loadStatus()
+    // from a member the load worker never touches; cleared by the next accepted load, expires after kRefusalShown.
     std::string notice;
   };
   struct HostTransport {
@@ -211,11 +212,17 @@ class PlayAlong {
   // A folder that is not a set of separated stems (classifyStemFolder: every audio file has a stem name, at
   // least two stems) is refused synchronously: LoadStatus::notice says so, settings and the loaded song are
   // untouched. restore() does not check (a saved folder, or a cache folder, loads as before).
-  void loadFolder(const std::string& folder, bool userInitiated);
+  // Returns true when the load was accepted (started), false when refused.
+  bool loadFolder(const std::string& folder, bool userInitiated);
   // CHOOSE SONG FILE / CHOOSE STEMS FOLDER / a drop: a folder is loadFolder; an audio file (isSongFileName) is separated on the separation thread
   // (stem cache first: a second load is instant) and then loaded exactly like a folder. Never throws.
   // Without SAWBLADE_WITH_SEPARATOR a file fails with "not available in this build".
-  void loadSong(const std::string& path, bool userInitiated);
+  // Returns false only for a refused folder (see loadFolder).
+  bool loadSong(const std::string& path, bool userInitiated);
+  // How long a refusal notice shows, and a test hook for the clock that times it (null = steady_clock).
+  using Clock = std::chrono::steady_clock;
+  static constexpr std::chrono::seconds kRefusalShown{8};
+  void setClock(std::function<Clock::time_point()> clock);
   // Cancels a running or queued separation (no-op otherwise): the status becomes Cancelled and the previous
   // song, if any, stays loaded. Returns at once.
   void cancelSeparation();
@@ -313,6 +320,10 @@ class PlayAlong {
   mutable std::mutex m_;  // settings_, status_
   PlayAlongSettings settings_;
   LoadStatus status_;
+  std::string refusal_;  // m_: the last refused load's message (see LoadStatus::notice)
+  Clock::time_point refusalAt_;
+  std::function<Clock::time_point()> clock_;
+  Clock::time_point now() const;
 
   std::mutex producerM_;  // serialises queue producers (never taken by the audio thread)
   PlayAlongQueue queue_;

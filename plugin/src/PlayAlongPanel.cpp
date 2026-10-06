@@ -179,11 +179,15 @@ struct PlayAlongPanel::Impl {
       owner.addAndMakeVisible(*l);
     }
     fetchField.setName("fetchCommand");
-    fetchField.setMultiLine(false);
+    fetchField.setMultiLine(true, true);  // word-wrapped: the whole command is visible
+    fetchField.setReturnKeyStartsNewLine(false);
+    fetchField.setScrollbarsShown(false);
+    fetchField.setIndents(3, 1);
+    fetchField.setBorder(juce::BorderSize<int>(1));
     fetchField.setReadOnly(true);
     fetchField.setCaretVisible(false);
     fetchField.setSelectAllWhenFocused(true);
-    fetchField.setFont(L::monoFont(11.0f));
+    fetchField.setFont(L::monoFont(9.0f));
     fetchField.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff141210));
     fetchField.setColour(juce::TextEditor::textColourId, L::text());
     fetchField.setColour(juce::TextEditor::outlineColourId, L::chipBorder());
@@ -547,16 +551,22 @@ struct PlayAlongPanel::Impl {
       msg = pickNotice;
       col = L::error();
     }
-    status.setText(msg, juce::dontSendNotification);
-    status.setTooltip(msg);
-    // A missing model: the status line is one row; the complete command goes below it, selectable / copyable.
+    // A missing model: a short line in the status row (full message in the tooltip), then the complete command in a
+    // wrapped, selectable field below it, with COPY in the status row.
     const bool showFetch = st.state == PlayAlong::LoadStatus::State::Failed && st.modelMissing && !st.fetchCommand.empty() &&
                            pickNotice.isEmpty() && st.notice.empty();
-    if (showFetch && fetchField.getText() != juce::String(st.fetchCommand))
+    status.setText(showFetch ? juce::String("Separation model not installed. Run this from the repository root:") : msg,
+                   juce::dontSendNotification);
+    status.setTooltip(msg);
+    bool relayout = showFetch != fetchShown;
+    if (showFetch && fetchField.getText() != juce::String(st.fetchCommand)) {
       fetchField.setText(juce::String(st.fetchCommand), juce::dontSendNotification);
-    if (showFetch != fetchShown) {
-      fetchShown = showFetch;
+      relayout = true;
+    }
+    fetchShown = showFetch;
+    if (relayout) {
       layoutStatus();
+      fitFetchFont();
     }
     fetchField.setVisible(showFetch);
     fetchCopy.setVisible(showFetch);
@@ -609,15 +619,23 @@ struct PlayAlongPanel::Impl {
     refreshBand();
   }
 
+  // The longest font (9 pt down to 7 pt) at which the whole wrapped command fits the field, no scrolling.
+  void fitFetchFont() {
+    for (float h = 9.0f; h >= 7.0f; h -= 0.5f) {
+      fetchField.applyFontToAllText(SawbladeLookAndFeel::monoFont(h));  // setFont alone leaves the existing text
+      if (fetchField.getTextHeight() <= fetchField.getHeight()) break;
+    }
+  }
+
   // The status line, and below it (model missing only) the install command field and its COPY button.
   void layoutStatus() {
     constexpr int m = 18, stemsW = 138, songW = 112, statusX = 484;
     const int keepX = kWidth - m - stemsW - 8 - songW - 8 - 104;
     const int w = keepX - 8 - statusX;  // >= 380 px: the longest hint must not ellipsize
     if (fetchShown) {
-      status.setBounds(statusX, 8, w, 20);
-      fetchField.setBounds(statusX, 30, w - 60, 20);
-      fetchCopy.setBounds(statusX + w - 56, 30, 56, 20);
+      status.setBounds(statusX, 1, w - 60, 15);
+      fetchCopy.setBounds(statusX + w - 56, 1, 56, 15);
+      fetchField.setBounds(statusX, 17, w, 34);  // ends at y 51: the transport row starts at 52
     } else {
       status.setBounds(statusX, 10, w, 30);
     }
@@ -721,8 +739,7 @@ bool PlayAlongPanel::handlePicked(ChooserAction a, const juce::File& f) {
     return false;
   }
   impl_->pickNotice.clear();
-  impl_->pa().loadSong(f.getFullPathName().toStdString(), /*userInitiated=*/true);
-  return impl_->pa().loadStatus().notice.empty();  // a folder that is not a stem set is refused (notice), nothing loads
+  return impl_->pa().loadSong(f.getFullPathName().toStdString(), /*userInitiated=*/true);  // false: refused, nothing loads
 }
 
 bool PlayAlongPanel::isLoadableDrop(const juce::StringArray& files) {

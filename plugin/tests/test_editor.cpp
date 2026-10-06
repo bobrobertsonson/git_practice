@@ -604,7 +604,7 @@ TEST_CASE("play-along: a folder that is not a stem set is refused from the picke
 
   const auto mixed = writeSyntheticSong(tmp.dir, "desktop", 4.0);
   { std::ofstream(mixed / "holiday.mp3") << "x"; }  // one unrelated audio file
-  CHECK_FALSE(panel->handlePicked(A::StemsFolder, juce::File(juce::String(mixed.string()))));
+  CHECK_FALSE(panel->handlePicked(A::StemsFolder, juce::File(juce::String(mixed.string()))));  // the return value, not a status race
   CHECK(pa.waitForLoader());
   panel->refresh();
   CHECK(anyLabelContains(*panel, msg));
@@ -660,6 +660,10 @@ TEST_CASE("play-along: a missing separation model shows the full install command
   CHECK(field->isVisible());
   CHECK(field->isReadOnly());
   CHECK(field->getText().toStdString() == full);  // no truncation
+  CHECK(field->getTextHeight() <= field->getHeight());  // wrapped: the whole command is visible without scrolling
+  CHECK(field->getBounds().getBottom() <= PlayAlongPanel::kPlayAlongHeight);
+  for (auto* c : panel->getChildren())  // nothing visible overlaps the field (the progress bar is hidden here)
+    if (c != field && c->isVisible()) CHECK_FALSE(c->getBounds().intersects(field->getBounds()));
   CHECK(pa.loadStatus().message.find(full) != std::string::npos);
 }
 #endif

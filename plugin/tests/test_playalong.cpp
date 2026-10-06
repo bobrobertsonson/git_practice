@@ -4,6 +4,7 @@
 #include <atomic>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <memory>
 #include <thread>
 
 #include "PlayAlong.h"
@@ -628,7 +629,8 @@ TEST_CASE("PlayAlong: a folder that is not a stem set is refused and the loaded 
   }
 
   // The next accepted load clears the notice.
-  pa.loadFolder(good.string(), true);
+  CHECK_FALSE(pa.loadFolder(mixed.string(), true));
+  CHECK(pa.loadFolder(good.string(), true));
   REQUIRE(pa.waitForLoader());
   CHECK(pa.loadStatus().notice.empty());
   CHECK(pa.loadStatus().state == State::Ready);
@@ -1124,3 +1126,35 @@ TEST_CASE("PlayAlong: cancel mid-job, a folder replaces a job, and destruction m
   }
 }
 #endif
+
+TEST_CASE("PlayAlong: a refusal notice survives an in-flight load, expires, and loadFolder reports it (Task F)", "[playalong][stems][refuse]") {
+  using State = PlayAlong::LoadStatus::State;
+  TempDir t;
+  Host h(kFs, 512);
+  PlayAlong& pa = h.p.playAlong();
+  auto now = std::make_shared<PlayAlong::Clock::time_point>(PlayAlong::Clock::now());
+  pa.setClock([now] { return *now; });
+  const fs::path good = writeSong(t.dir, "good", rampStems(48000 * 20));
+  const fs::path bad = t.dir / "bad";
+  fs::create_directories(bad);
+  writeWavFloat32Stereo(bad / "a.wav", kFs, std::vector<float>(100, 0.1f), std::vector<float>(100, 0.1f));
+
+  CHECK(pa.loadFolder(good.string(), true));  // accepted: true
+  CHECK_FALSE(pa.loadFolder(bad.string(), true));  // refused while the load is (probably) still running
+  CHECK_FALSE(pa.loadSong(bad.string(), true));
+  REQUIRE(pa.waitForLoader());
+  CHECK(pa.loadStatus().state == State::Ready);  // the job finished and replaced status_ ...
+  CHECK(pa.loadStatus().notice.find("not a set of separated stems") != std::string::npos);  // ... the notice stays
+  CHECK(pa.settings().folder == good.string());
+
+  *now += std::chrono::seconds(7);
+  CHECK_FALSE(pa.loadStatus().notice.empty());
+  *now += std::chrono::seconds(2);  // past 8 s
+  CHECK(pa.loadStatus().notice.empty());
+
+  CHECK_FALSE(pa.loadFolder(bad.string(), true));
+  CHECK_FALSE(pa.loadStatus().notice.empty());
+  CHECK(pa.loadFolder(good.string(), true));  // the next accepted load clears it
+  CHECK(pa.loadStatus().notice.empty());
+  REQUIRE(pa.waitForLoader());
+}

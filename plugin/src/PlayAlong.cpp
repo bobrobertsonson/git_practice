@@ -1,7 +1,6 @@
 #include "PlayAlong.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <memory>
@@ -317,31 +316,41 @@ void PlayAlong::setKeepOther(bool keep) {
   if (reload) requestLoad(false);
 }
 
-void PlayAlong::loadFolder(const std::string& folder, bool userInitiated) {
+PlayAlong::Clock::time_point PlayAlong::now() const {
+  return clock_ ? clock_() : Clock::now();  // call with m_ held (clock_ is guarded by it)
+}
+
+void PlayAlong::setClock(std::function<Clock::time_point()> clock) {
+  std::lock_guard<std::mutex> lk(m_);
+  clock_ = std::move(clock);
+}
+
+bool PlayAlong::loadFolder(const std::string& folder, bool userInitiated) {
   if (!classifyStemFolder(std::filesystem::path(folder)).ok) {
     std::lock_guard<std::mutex> lk(m_);
-    status_.notice = "This folder is not a set of separated stems. Choose the song file (mp3, wav, flac, m4a) instead.";
-    return;
+    refusal_ = "This folder is not a set of separated stems. Choose the song file (mp3, wav, flac, m4a) instead.";
+    refusalAt_ = now();
+    return false;
   }
   {
     std::lock_guard<std::mutex> lk(m_);
+    refusal_.clear();
     settings_.folder = folder;
     settings_.songFile.clear();
   }
   requestLoad(userInitiated);
+  return true;
 }
 
-void PlayAlong::loadSong(const std::string& path, bool userInitiated) {
+bool PlayAlong::loadSong(const std::string& path, bool userInitiated) {
   std::error_code ec;
-  if (!isSongFileName(path) || std::filesystem::is_directory(std::filesystem::path(path), ec)) {
-    loadFolder(path, userInitiated);
-    return;
-  }
+  if (!isSongFileName(path) || std::filesystem::is_directory(std::filesystem::path(path), ec)) return loadFolder(path, userInitiated);
   std::string prevFolder, prevSong;
   {
     std::lock_guard<std::mutex> lk(m_);
     prevFolder = settings_.folder;
     prevSong = settings_.songFile;
+    refusal_.clear();
     settings_.songFile = path;
     settings_.folder.clear();
   }
@@ -352,6 +361,7 @@ void PlayAlong::loadSong(const std::string& path, bool userInitiated) {
     sepPrevSong_ = prevSong;
   }
   requestSong(s, s.keepOther ? OtherRole::Other : OtherRole::Guitar, userInitiated, /*allowSeparate=*/true);
+  return true;
 }
 
 void PlayAlong::setFourStemModel(bool fourStem) {
@@ -398,6 +408,7 @@ void PlayAlong::restore(const PlayAlongSettings& in) {
   {
     std::lock_guard<std::mutex> lk(m_);
     settings_ = s;
+    refusal_.clear();
   }
   applyAll();
   requestLoad(false);  // the restored level is kept: no suggestion
@@ -420,6 +431,8 @@ PlayAlong::LoadStatus PlayAlong::loadStatus() const {
   {
     std::lock_guard<std::mutex> lk(m_);
     st = status_;
+    // The refusal lives outside status_, which the load worker overwrites wholesale.
+    if (!refusal_.empty() && now() - refusalAt_ < kRefusalShown) st.notice = refusal_;
   }
   if (st.state == LoadStatus::State::Separating) {
     st.separationFraction = sepFraction_.load(std::memory_order_relaxed);
