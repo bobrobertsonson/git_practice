@@ -27,36 +27,54 @@ LP_FREQ_FACTORS = (0.8, 0.9, 1.0, 1.12, 1.25)      # post.lp tried around the CM
 SLOPE_12 = 0.0                                      # slope parameter value of the 12 dB/oct alternative (< 0.5)
 
 
-def pick_slopes(space: Space, v: dict, score, polish=None) -> tuple[dict, L.LossResult]:
-    """The post-cab filter parameters (group ``discrete``) are not CMA-ES dimensions (extra dimensions cost the short stage-2
-    budgets accuracy on the known answer). After the linear block they are chosen jointly, each change kept only when the loss
-    falls: ``post.hp`` over the short log grid x slope {12, 24 dB/oct}, then ``post.lp`` over a small grid around the CMA-ES
-    value x slope {12, 24}. (Trying 24 dB/oct only at the frequency found at 12 dB/oct left the filters unrecovered and the EQ
-    bands compensating.) If a filter changed, ``polish(v) -> (v, LossResult)`` (a short linear re-polish of the EQ bands) runs
-    and is kept when it does not raise the loss. ``score(v) -> LossResult``."""
-    best = dict(v)
-    r = score(best)
-    names = [space.names[i] for i in space.indices("discrete")]
+def _hp_step(space: Space, best: dict, r: L.LossResult, score) -> tuple[dict, L.LossResult, bool]:
+    """post.hp over the log grid x slope {12, 24 dB/oct}; a change is kept only when the loss falls."""
     changed = False
-    if "post.hp" in names:
+    if "post.hp" in space.idx and "post.hp_slope" in space.idx:
         for sl in (SLOPE_12, DISCRETE_UP):
             for f in HP_GRID:
                 cand = {**best, "post.hp": f, "post.hp_slope": sl}
                 rc = score(cand)
                 if rc.total < r.total - 1e-9:
                     best, r, changed = cand, rc, True
-    if "post.lp" in space.idx and "post.lp_slope" in names:
-        lo, hi = space.params[space.idx["post.lp"]].lo, space.params[space.idx["post.lp"]].hi
+    return best, r, changed
+
+
+def _lp_step(space: Space, best: dict, r: L.LossResult, score) -> tuple[dict, L.LossResult, bool]:
+    """post.lp over a small grid around its CMA-ES value x slope {12, 24 dB/oct}; kept only when the loss falls."""
+    changed = False
+    if "post.lp" in space.idx and "post.lp_slope" in space.idx:
+        p = space.params[space.idx["post.lp"]]
         f0 = best["post.lp"]
         for sl in (SLOPE_12, DISCRETE_UP):
             for k in LP_FREQ_FACTORS:
-                f = float(np.clip(f0 * k, lo, hi))
                 if sl == SLOPE_12 and k == 1.0 and best.get("post.lp_slope", 0.4) < 0.5:
                     continue                      # the current setting
-                cand = {**best, "post.lp": f, "post.lp_slope": sl}
+                cand = {**best, "post.lp": float(np.clip(f0 * k, p.lo, p.hi)), "post.lp_slope": sl}
                 rc = score(cand)
                 if rc.total < r.total - 1e-9:
                     best, r, changed = cand, rc, True
+    return best, r, changed
+
+
+# Post-CMA-ES grid steps, run in order by ``pick_slopes``; each is ``step(space, best, r, score) -> (best, r, changed)``.
+# Further discrete grids (cab mix, pre-EQ, ...) are appended here, not written into pick_slopes.
+POST_CMA_STEPS = [_hp_step, _lp_step]
+
+
+def pick_slopes(space: Space, v: dict, score, polish=None) -> tuple[dict, L.LossResult]:
+    """The post-cab filter parameters (group ``discrete``) are not CMA-ES dimensions (extra dimensions cost the short stage-2
+    budgets accuracy on the known answer). After the linear block the steps of ``POST_CMA_STEPS`` run in order, each change
+    kept only when the loss falls: ``post.hp`` over the short log grid x slope {12, 24 dB/oct}, then ``post.lp`` around its
+    CMA-ES value x slope. (Trying 24 dB/oct only at the frequency found at 12 dB/oct left the filters unrecovered and the EQ
+    bands compensating.) If any step changed something, ``polish(v) -> (v, LossResult)`` (a short linear re-polish of the EQ
+    bands) runs and is kept when it does not raise the loss. ``score(v) -> LossResult``."""
+    best = dict(v)
+    r = score(best)
+    changed = False
+    for step in POST_CMA_STEPS:
+        best, r, ch = step(space, best, r, score)
+        changed = changed or ch
     if changed and polish is not None:
         vp, rp = polish(best)
         if rp.total <= r.total:
