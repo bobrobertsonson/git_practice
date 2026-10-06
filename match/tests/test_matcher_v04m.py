@@ -139,7 +139,7 @@ def test_boost_block_is_schema_valid_and_emulation_equals_full_render():
     pool = fixture_pool()
     combo = Combo((pool.pedals[2],), pool.amps[2], None, None, pool.cabs[1], boost=True)
     sp = Space.for_combo(combo)
-    assert [n for n in sp.names if n.startswith("boost.")] == ["boost.drive", "boost.level", "boost.tone"]
+    assert [n for n in sp.names if n.startswith("boost.")] == ["boost.drive", "boost.tone"]      # boost.level is fixed at 8 (redundant with the amp gain)
     assert all(sp.params[sp.idx[n]].group == "gain" for n in sp.names if n.startswith("boost."))
     assert Space((1, None)).default().get("boost.drive") is None                      # only boost combos have the params
     with pytest.raises(ValueError):
