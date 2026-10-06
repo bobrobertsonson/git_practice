@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import subprocess
 import time
@@ -23,16 +24,21 @@ from .profile import DEFAULT_BASE, derive_profile, load_profile, profile_path, s
 from .excerpt import select_excerpt
 from .reference import Reference, build_target, make_excerpt
 from .progress import NullProgress, Progress
-from .refine import refine_combo
+from .cabsweep import TOP_PER_TOPOLOGY, cab_sweep, sweep_summary
+from .gatesweep import gate_sweep, reference_floor_db, render_gate
+from .refine import refine_combo, relinear
+from .trace import trace_tones
 from .screen import Scored, Screener, TOPOLOGIES
 from .levelmatch import emit_gain_correction_db
 from .loudness import choose_listen_section, match_gain_db, true_peak_db
-from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manual_align
+from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manual_align, post_eq, post_filters_from_eq
 
 CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level output exceeds it is "clipping"
 CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-length peak is below this
 OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
+ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio")      # --ablate names (v0.4M suspects)
+NOOP_ABLATIONS = ("irblend", "studio")                                        # accepted and echoed; implemented in later tasks
 
 
 @dataclass
@@ -70,6 +76,10 @@ class Plan:
     blend_extra_amp: int = 0
     gain_s: float = 0.0                # >0: the gain block of CMA-ES runs on this many seconds of the excerpt
     short_linear: bool = False         # ... and so does the first linear block (the last one always uses the full excerpt)
+    # ---- v0.4M suspects (always on; --ablate switches them off for the on/off pairs) -----------------------------------
+    boost: bool = True                 # single-path candidates also compete with a tight boost (modeled pedal.ts) before the amp
+    filters: bool = True               # post-cab high-pass / low-pass (post.hp, post.lp2) in the search
+    cab_sweep: bool = True             # after stage 2: every pool cab on the top candidates per topology (False: the old sweep only)
 
     @staticmethod
     def quick(budget: float = 1.0, top_k: int = 3, prescreen_n: int | None = None) -> "Plan":
@@ -120,6 +130,8 @@ class Config:
     quick: bool = False
     progress_json: Path | None = None
     timings_pre: dict | None = None      # seconds spent before run_match (reference loading), from the CLI
+    ablate: tuple = ()                   # v0.4M suspects switched off (ABLATIONS); echoed in result.json
+    trace_tones: tuple = ()              # TONE3000 tone ids to explain in result.json -> trace
 
 
 class Log:
@@ -213,6 +225,10 @@ def choose(cands: list[Scored]) -> Scored:
     if not cands:
         raise ValueError("no candidate with a finite loss")
     ok = [c for c in cands if not c.extra.get("clipped")] or cands
+    # the tight boost costs like one extra block: it must beat the best plain candidate of its topology by > OCCAM_DB
+    plain = [c for c in ok if not c.combo.boost]
+    ok = [c for c in ok if not c.combo.boost
+          or not any(p.topology == c.topology and p.loss <= c.loss + OCCAM_DB for p in plain)] or ok
     best = min(ok, key=lambda c: c.loss)
     near = [c for c in ok if c.loss <= best.loss + OCCAM_DB]
     rank = min(TOPOLOGY_RANK[c.topology] for c in near)
@@ -220,6 +236,20 @@ def choose(cands: list[Scored]) -> Scored:
     top = min(c.loss for c in same)
     tie = [c for c in same if c.loss <= top + SIZE_TIE_DB]
     return min(tie, key=lambda c: (c.combo.size_rank()[0], c.combo.size_rank()[1], c.loss))
+
+
+def parse_ablate(spec) -> tuple[str, ...]:
+    """``--ablate`` value (comma list or iterable) -> validated tuple, order kept, duplicates dropped."""
+    items = [x.strip() for x in spec.split(",")] if isinstance(spec, str) else [str(x).strip() for x in (spec or ())]
+    out: list[str] = []
+    for x in items:
+        if not x:
+            continue
+        if x not in ABLATIONS:
+            raise ValueError(f"--ablate: unknown suspect {x!r} (one of {', '.join(ABLATIONS)})")
+        if x not in out:
+            out.append(x)
+    return tuple(out)
 
 
 def encode_mp3(wav: Path, mp3: Path, log) -> bool:
@@ -263,6 +293,9 @@ def run_match(cfg: Config, log=None) -> dict:
     out = Path(cfg.out)
     out.mkdir(parents=True, exist_ok=True)
     plan = cfg.plan or Plan.from_budget(cfg.budget, cfg.top_k, cfg.prescreen_n, cfg.quick)
+    abl = parse_ablate(cfg.ablate)
+    plan = dataclasses.replace(plan, boost=plan.boost and "boost" not in abl, filters=plan.filters and "filters" not in abl,
+                               cab_sweep=plan.cab_sweep and "irsweep" not in abl)
     rng = np.random.default_rng(cfg.seed)
     ref, pool = cfg.ref, cfg.pool
     if not (pool.amps and pool.cabs):
@@ -319,6 +352,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                     "gate": gate, "diNoiseFloorDb": floor, "poolCounts": pool.counts(),
                     "lossWeights": {"texFlat": L.W_FLAT, "texHf": L.W_HF, "ltas": L.W_LTAS, "buzz": L.W_BUZZ, "decay": L.W_DECAY, "stft": L.W_STFT,
                                     "reg": L.W_REG, "feelTight": L.W_TIGHT, "feelFizz": L.W_FIZZ, "feelPolish": L.W_POLISH},
+                    "ablate": list(parse_ablate(cfg.ablate)),
+                    "ablateNote": "irblend and studio are accepted and echoed; they are no-ops until their tasks (B2.1 / B2.3) land",
                     "randomness": f"numpy default_rng(seed={cfg.seed}) for subset sampling and CMA-ES (seed + block)"}
 
     # ---- starter ("before") on the excerpt, which also gives the coarse offset refinement its render -----------------
@@ -343,20 +378,26 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         if r["envPeakRatio"] >= 2.0:
             ref.offset_samples = r["offset"]
     lap("starterAndOffset")
-    tgt = build_target(ref, ex)
+    ablate = parse_ablate(cfg.ablate)
+    tgt_full = build_target(ref, ex)        # always with the feel target: the gate sweep measures floor / tightness with it
+    tgt = dataclasses.replace(tgt_full, feel=None) if "feel" in ablate else tgt_full
+
+    def mk_target(e):
+        t = build_target(ref, e)
+        return dataclasses.replace(t, feel=None) if "feel" in ablate else t
     cex = ctgt = None
     if plan.coarse_s > 0 and ex.n > int(plan.coarse_s * 1.5 * RATE):
         # coarse excerpt: the densest `coarse_s` seconds inside the excerpt, with a short warm-up lead
         a0, b0, cinfo = select_excerpt(ex.x[ex.lead:], RATE, plan.coarse_s)
         cex = make_excerpt(di48, plan.coarse_s, lead_s=0.2, window=(ex.start + a0, ex.start + b0), ref=ref)
-        ctgt = build_target(ref, cex)
+        ctgt = mk_target(cex)
         result["coarseExcerpt"] = {"startS": cex.start / RATE, "endS": cex.end / RATE, "leadS": cex.lead / RATE}
         log(f"coarse excerpt {cex.start / RATE:.1f}-{cex.end / RATE:.1f} s")
     gex = gtgt = None
     if plan.gain_s > 0 and ex.n > int(plan.gain_s * 1.2 * RATE):
         a1, b1, _ = select_excerpt(ex.x[ex.lead:], RATE, plan.gain_s)
         gex = make_excerpt(di48, plan.gain_s, lead_s=0.3, window=(ex.start + a1, ex.start + b1), ref=ref)
-        gtgt = build_target(ref, gex)
+        gtgt = mk_target(gex)
         result["gainExcerpt"] = {"startS": gex.start / RATE, "endS": gex.end / RATE}
     # ---- profile: guardrail rules (the reference LTAS stays the target) ----------------------------------------------
     base = load_profile(cfg.targets and str(cfg.targets) or cfg.base_profile)
@@ -374,12 +415,12 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result["profile"]["baseRulesStatusOnReference"] = {r["id"]: r["statusOnReference"] for r in ptable} \
         if cfg.profile == "derived" else None
     result["referenceTarget"] = {"buzzDb": tgt.ref.buzz_db, "lowDecayDbPerMs": tgt.ref.decay,
-                                 "onsetsMeasured": tgt.ref.n_onsets, "feel": tgt.feel.summary() if tgt.feel else None}
+                                 "onsetsMeasured": tgt.ref.n_onsets, "feel": tgt_full.feel.summary() if tgt_full.feel else None}
     before_ex = L.evaluate(ex.trim(y_st), tgt, None)
     result["starter"]["excerptLoss"] = before_ex.as_dict()
     log(f"starter on excerpt: loss {before_ex.total:.3f} (ltas {before_ex.ltas:.2f} dB, feel {before_ex.feel:.3f})")
-    if tgt.feel is not None:
-        fs_ = tgt.feel.summary()
+    if tgt_full.feel is not None:
+        fs_ = tgt_full.feel.summary()
         log(f"feel term ({fs_['mode']}): fizz {'on' if fs_['fizzOn'] else 'OFF (' + str(fs_['fizzOffReason']) + ')'}; "
             f"notes {fs_['noteSet'] or 'dropped'} {fs_['notes']}; dropped: {fs_['dropped'] or 'none'}")
     lap("targetAndProfile")
@@ -397,48 +438,91 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     # ---- stage 2 -----------------------------------------------------------------------------------------------------
     refined: list[Scored] = []
     unrefined: list[Scored] = []
-    n_refine = sum(min(plan.top_k.get(t, 0), len(ranked.get(t, []))) for t in TOPOLOGIES)
-    n_done = 0
-    T["stage2PerCombo"] = []
+    work: list[tuple] = []
     for topo in TOPOLOGIES:
         lst = ranked.get(topo, [])
         kk = plan.top_k.get(topo, 0)
-        unrefined += lst[kk:kk + 2]
-        for k, s in enumerate(lst[:kk]):
-            t_combo = time.time()
+        sel = list(lst[:kk])
+        if topo == "single" and plan.boost and kk:     # the boost variant and a plain one are both always refined
+            for want in (True, False):
+                if not any(bool(c.combo.boost) == want for c in sel):
+                    extra = next((c for c in lst[kk:] if bool(c.combo.boost) == want), None)
+                    if extra is not None:
+                        sel.append(extra)
+        unrefined += [c for c in lst if not any(c is t for t in sel)][:2]
+        work += [(topo, k, len(sel), c) for k, c in enumerate(sel)]
+    n_refine = len(work)
+    n_done = 0
+    T["stage2PerCombo"] = []
 
-            def on_gen(block, g, n, _d=n_done):
-                base = {"L1": 0.0, "G": 0.4, "L2": 0.85}[block]
-                span = {"L1": 0.4, "G": 0.45, "L2": 0.15}[block]
-                prog.update((_d + base + span * g / max(n, 1)) / max(n_refine, 1))
-            log(f"stage2 {topo} [{k + 1}/{kk}] {s.combo.describe()} (screen loss {s.loss:.3f})")
-            sp = Space.for_combo(s.combo)
-            v0 = sp.default()
-            if "blend" in v0:
-                v0["blend"] = s.blend
-            v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + len(refined) * 10,
-                                      gens_linear=plan.gens_linear, pop_linear=plan.pop_linear,
-                                      gens_gain=plan.gens_gain, pop_gain=plan.pop_gain, gens_final=plan.gens_final,
-                                      patience=plan.patience, patience_gain=plan.patience_gain, tol=plan.plateau_tol,
-                                      on_gen=on_gen, gex=gex, gtgt=gtgt, short_linear=plan.short_linear,
-                                      levels=s.levels, log=log)
-            ca = eng.core(s.combo, v, "a", ex.x)
-            cb = eng.core(s.combo, v, "b", ex.x) if s.combo.topology == "blend" else None
-            y = ex.trim(eng.emulate(s.combo, v, ca, cb, s.align, s.levels))
-            g, clipped = pick_output_gain(float(np.max(np.abs(y))), r.offset_db, ref.level_offset_db)
-            if s.levels is not None:      # emitted preset uses the constantLoudness law + make-up: keep the fitted level
-                g -= emit_gain_correction_db(v["blend"], s.levels)
-            guard = _guardrails(y, profile)
-            refined.append(Scored(s.combo, r.total, v.get("blend", 0.0), s.align, r, "refined",
-                                  {"params": v, "outputGainDb": g, "clipped": clipped, "info": info,
-                                   "guardrails": guard}, s.levels))
-            n_done += 1
-            prog.best(r.ltas)
-            prog.update(n_done / max(n_refine, 1))
-            T["stage2PerCombo"].append({"topology": topo, "seconds": round(time.time() - t_combo, 1)})
+    def finish_refined(combo: Combo, base: Scored, v: dict, r: L.LossResult, info: dict) -> Scored:
+        """Stage-2 record of ``combo`` with parameters ``v`` (alignment / levels of the stage-1 candidate ``base``)."""
+        ca = eng.core(combo, v, "a", ex.x)
+        cb = eng.core(combo, v, "b", ex.x) if combo.topology == "blend" else None
+        y = ex.trim(eng.emulate(combo, v, ca, cb, base.align, base.levels))
+        g, clipped = pick_output_gain(float(np.max(np.abs(y))), r.offset_db, ref.level_offset_db)
+        if base.levels is not None:      # emitted preset uses the constantLoudness law + make-up: keep the fitted level
+            g -= emit_gain_correction_db(v["blend"], base.levels)
+        guard = _guardrails(y, profile)
+        return Scored(combo, r.total, v.get("blend", 0.0), base.align, r, "refined",
+                      {"params": v, "outputGainDb": g, "clipped": clipped, "info": info, "guardrails": guard}, base.levels)
+
+    for topo, k, kk, s in work:
+        t_combo = time.time()
+
+        def on_gen(block, g, n, _d=n_done):
+            base = {"L1": 0.0, "G": 0.4, "L2": 0.85}[block]
+            span = {"L1": 0.4, "G": 0.45, "L2": 0.15}[block]
+            prog.update((_d + base + span * g / max(n, 1)) / max(n_refine, 1))
+        log(f"stage2 {topo} [{k + 1}/{kk}] {s.combo.describe()} (screen loss {s.loss:.3f})")
+        sp = Space.for_combo(s.combo, plan.filters)
+        v0 = sp.default()
+        if "blend" in v0:
+            v0["blend"] = s.blend
+        v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + len(refined) * 10,
+                                  gens_linear=plan.gens_linear, pop_linear=plan.pop_linear,
+                                  gens_gain=plan.gens_gain, pop_gain=plan.pop_gain, gens_final=plan.gens_final,
+                                  patience=plan.patience, patience_gain=plan.patience_gain, tol=plan.plateau_tol,
+                                  on_gen=on_gen, gex=gex, gtgt=gtgt, short_linear=plan.short_linear,
+                                  levels=s.levels, log=log)
+        refined.append(finish_refined(s.combo, s, v, r, info))
+        n_done += 1
+        prog.best(r.ltas)
+        prog.update(n_done / max(n_refine, 1))
+        T["stage2PerCombo"].append({"topology": topo, "seconds": round(time.time() - t_combo, 1)})
     unrefined = sorted([c for c in unrefined if np.isfinite(c.loss)], key=lambda c: c.loss)
     refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
+
+    # ---- cab / IR breadth (v0.4M Task B): every pool cab on the top candidates per topology --------------------------
+    cab_sweeps: list[dict] = []
+    t_cab = time.time()
+    if plan.cab_sweep:
+        for topo in TOPOLOGIES:
+            for c in sorted((x for x in refined if x.topology == topo), key=lambda x: x.loss)[:TOP_PER_TOPOLOGY]:
+                sp = Space.for_combo(c.combo, plan.filters)
+                rows = cab_sweep(eng, c, pool.cabs, sp, ex, tgt)
+                summ = sweep_summary(c, rows)
+                cur = next(x for x in rows if x["cab"].key == c.combo.cab.key)
+                top = min(rows, key=lambda x: x["result"].total)
+                if top["cab"].key != cur["cab"].key and top["result"].total < cur["result"].total - 1e-9:
+                    combo2 = c.combo.with_cab(top["cab"])
+                    v2, r2 = relinear(eng, combo2, sp, ex, tgt, c.align, c.extra["params"], levels=c.levels,
+                                      seed=cfg.seed * 1000 + 900 + len(cab_sweeps), gens=plan.gens_final, pop=plan.pop_linear,
+                                      patience=plan.patience, tol=plan.plateau_tol, log=log)
+                    new = finish_refined(combo2, c, v2, r2, c.extra["info"])
+                    refined[next(i for i, x in enumerate(refined) if x is c)] = new
+                    summ.update(changed=True, newCab=top["cab"].key, lossBeforeRelinear=top["result"].total,
+                                lossAfterRelinear=r2.total)
+                    log(f"cab sweep {topo}: {cur['cab'].title}:{cur['cab'].name} -> {top['cab'].title}:{top['cab'].name} "
+                        f"(loss {cur['result'].total:.3f} -> {top['result'].total:.3f}, relinear {r2.total:.3f})")
+                cab_sweeps.append(summ)
+        refined.sort(key=lambda c: c.loss)
+        result["cabSweep"] = {"ablated": False, "topPerTopology": TOP_PER_TOPOLOGY, "poolCabs": len(pool.cabs),
+                              "candidates": cab_sweeps, "seconds": round(time.time() - t_cab, 2)}
+    else:
+        result["cabSweep"] = {"ablated": True, "note": "--ablate irsweep: only the stage-1 cab sweep ran"}
+    T["cabSweep"] = time.time() - t_cab
     best = choose(refined)
     result["stage2Seconds"] = time.time() - t_start - t1
     T["stage2"] = time.time() - t_mark
@@ -450,14 +534,59 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         if c:
             b = min(c, key=lambda x: x.loss)
             result["topologies"][topo] = {"loss": b.loss, "captures": caps_summary(b.combo), "blend": b.blend,
+                                          "tightBoost": bool(b.combo.boost),
                                           "breakdown": b.result.as_dict(), "guardrails": b.extra.get("guardrails")}
     log("topology bests: " + ", ".join(f"{t} {d['loss']:.3f}" for t, d in result["topologies"].items()))
     log(f"selected: {best.combo.describe()} loss {best.loss:.3f}")
 
+    # ---- gate matched to the reference (v0.4M Task B): sweep threshold x release on the final chain ----------------
+    t_gate = time.time()
+    gate_final = gate
+    sp_best = Space.for_combo(best.combo, plan.filters)
+    ref_floor = reference_floor_db(ref.ltas_sig) if (tgt_full.feel is not None and tgt_full.feel.mode == "soft") else None
+    gs = gate_sweep(eng, best, sp_best, ex, tgt_full, floor, ref_floor)
+    result["gateSweep"] = gs
+    result["gateDefault"] = gate
+    if gs.get("changed"):
+        gate_final = gs["gate"]
+        y = render_gate(eng, best, ex, gate_final)
+        r = L.evaluate(y, tgt, sp_best.eq_gains(best.extra["params"]))
+        g, clipped = pick_output_gain(float(np.max(np.abs(y))), r.offset_db, ref.level_offset_db)
+        if best.levels is not None:
+            g -= emit_gain_correction_db(best.extra["params"]["blend"], best.levels)
+        best.loss, best.result = r.total, r
+        best.extra.update(outputGainDb=g, clipped=clipped, guardrails=_guardrails(y, profile), gate=gate_final)
+        base_row, pick = gs["baseline"], gs["picked"]
+        log(f"gate sweep: threshold {base_row['thresholdDb']:+.1f} -> {pick['thresholdDb']:+.1f} dBFS, release "
+            f"{base_row['releaseMs']:.0f} -> {pick['releaseMs']:.0f} ms (floor term {base_row['floorTerm']:.3f} -> "
+            f"{pick['floorTerm']:.3f}, ltas {base_row['ltas']:.2f} -> {pick['ltas']:.2f} dB)")
+    else:
+        log("gate sweep: " + (f"skipped ({gs['skipped']})" if gs.get("skipped") else "the default gate (floor + 4 dB, 150 ms) stays"))
+    result["gateFinal"] = gate_final
+    T["gateSweep"] = time.time() - t_gate
+
+    # ---- reporting of the v0.4M suspects ---------------------------------------------------------------------------------
+    st_boost = scr.stats.get("tightBoost") or {}
+    won = bool(best.combo.boost)
+    bp = best.extra["params"]
+    result["tightBoost"] = {
+        "tried": int(st_boost.get("tried", 0)), "refined": sum(1 for c in refined if c.combo.boost), "won": won,
+        "params": {k.split(".", 1)[1]: bp[k] for k in bp if k.startswith("boost.")} if won else None,
+        "bestBoostLoss": min((c.loss for c in refined if c.combo.boost), default=None),
+        "bestPlainSingleLoss": min((c.loss for c in refined if c.topology == "single" and not c.combo.boost), default=None),
+        "occamDb": OCCAM_DB, "ablated": not plan.boost}
+    result["postFilters"] = {"searched": plan.filters, **post_filters_from_eq(post_eq(bp))}
+    if cfg.trace_tones:
+        t_tr = time.time()
+        result["trace"] = trace_tones(cfg.trace_tones, eng=eng, pool=pool, scr=scr, ranked=ranked, refined=refined, best=best,
+                                      ex=ex, tgt=tgt, plan=plan, cab_sweeps=cab_sweeps, seed=cfg.seed, filters=plan.filters,
+                                      log=log)
+        T["trace"] = time.time() - t_tr
+
     # ---- stage 3: full-length verification ----------------------------------------------------------------------
     v = best.extra["params"]
     gain_db = best.extra["outputGainDb"]
-    final = build_preset(best.combo, v, gate=gate, align=best.align, output_db=gain_db,
+    final = build_preset(best.combo, v, gate=gate_final, align=best.align, output_db=gain_db,
                          name="Sawblade match", notes=_notes(cfg, ref, best), levels=best.levels)
     full_jobs = {"best_L": (final, cfg.di)}
     if plan.mode != "quick" or cfg.write_audio:     # quick: no full-length "before" render (the excerpt loss has it)
@@ -617,7 +746,7 @@ def _guardrails(y: np.ndarray, profile: dict) -> dict:
 def _scored_json(s: Scored) -> dict:
     d = {"stage": s.stage, "topology": s.topology, "loss": s.loss, "blend": s.blend, "align": s.align,
          "levelMatch": s.levels and s.levels.preset_block(),
-         "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
+         "tightBoost": bool(s.combo.boost), "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
          "sizeRank": {"category": s.combo.size_rank()[0], "byteBucket": s.combo.size_rank()[1]}}
     if "guardrails" in s.extra:
         d["guardrails"] = s.extra["guardrails"]
