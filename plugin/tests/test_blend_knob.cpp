@@ -309,7 +309,7 @@ TEST_CASE("blend knob: the failure texts name a reason and an action", "[blendkn
     const juce::String t = rig::AmpHead::bodyFailedText(r);
     INFO(t);
     CHECK(t.contains(juce::String::fromUTF8(" \xE2\x80\x94 ")));  // "<reason> - <action>"
-    CHECK(t.length() <= 60);                                      // fits the head's read-out pill
+    CHECK(t.length() <= (r == R::NetworkOff ? 72 : 60));          // fits the head's read-out pill (it shrinks the text a little)
   }
   CHECK(rig::AmpHead::bodyFailedText(R::NotLoggedIn).contains("Settings"));
   CHECK(rig::AmpHead::bodyFailedText(R::NoCapture).contains("BROWSE CAPTURES"));
@@ -424,4 +424,59 @@ TEST_CASE("blend knob: the new topology is level matched in the background, from
   CHECK(autoTrimFresh(now));                            // the trim in the preset is the new topology's
   CHECK(rig.proc.status().trimDb == Catch::Approx(now.autoTrim.db).margin(1e-9));
   CHECK_FALSE(rig.proc.status().levelFailed);
+}
+
+TEST_CASE("blend knob: closing the editor during the download leaves a head that says so, and touching BLEND restarts the fill", "[blendknob][editor]") {
+  Rig rig;
+  rig.load(sawOnlyJson());
+  rig.holdFetches();
+  drag(rig.blendKnob(), -125.0f);
+  rig.settle();
+  REQUIRE(rig.pumpUntil([&] { return rig.bodyHead().startsWith("BODY AMP DOWNLOADING"); }));
+  // The window is closed (the fill and its tool run die with the editor) and opened again.
+  rig.base.reset();
+  rig.release();
+  auto* reopened = rig.proc.createEditor();
+  INFO("reopened=" << (reopened != nullptr));
+  rig.base.reset(reopened);
+  rig.ed = dynamic_cast<SawbladeEditor*>(rig.base.get());
+  REQUIRE(rig.ed != nullptr);
+  rig.ed->setSize(SawbladeEditor::kDesignWidth, SawbladeEditor::kDesignHeight);
+  REQUIRE(rig.pumpUntil([&] { return rig.bodyHead() == rig::AmpHead::bodyMissingText(); }));
+  CHECK(Rig::ampOf(rig.proc.currentPreset().b) == nullptr);
+  drag(rig.blendKnob(), -10.0f);  // touch BLEND
+  rig.settle();
+  REQUIRE(rig.pumpUntil([&] { return rig.bodyHead().startsWith("GAIN"); }));
+  rig.settle();
+  CHECK(Rig::ampOf(rig.proc.currentPreset().b) != nullptr);
+}
+
+TEST_CASE("blend knob: an amp dropped because path B was edited leaves the 'missing' head, not the neutral one", "[blendknob][editor]") {
+  Rig rig;
+  rig.load(sawOnlyJson());
+  rig.holdFetches();
+  drag(rig.blendKnob(), -125.0f);
+  rig.settle();
+  REQUIRE(rig.pumpUntil([&] { return rig.bodyHead().startsWith("BODY AMP DOWNLOADING"); }));
+  rig.ed->rigController().edit([](Preset& p) { p.b.invert = true; });  // the player edits path B
+  rig.settle();
+  rig.release();
+  REQUIRE(rig.pumpUntil([&] { return rig.bodyHead() == rig::AmpHead::bodyMissingText(); }));
+  CHECK(Rig::ampOf(rig.proc.currentPreset().b) == nullptr);
+}
+
+TEST_CASE("blend knob: a keepMonitor load leaves the provisional trim alone", "[blendknob][levelmatch]") {
+  SettingsEnv env("{}");
+  SawbladeProcessor p;
+  p.prepareToPlay(48000.0, 512);
+  Preset a = makeInitPreset();
+  p.loadPreset(a, /*keepMonitor=*/false, 3.0);
+  p.loadPreset(a, /*keepMonitor=*/true, std::nullopt);  // supersedes the first load; must not clear its provisional trim
+  CHECK(p.waitForLoader());
+  p.loadPreset(a, /*keepMonitor=*/false, std::nullopt);  // a plain user load: starts at 0
+  CHECK(p.waitForLoader());
+  CHECK(p.status().trimDb == 0.0);
+  p.loadPreset(a, /*keepMonitor=*/false, 3.0);
+  CHECK(p.waitForLoader());
+  CHECK(p.status().trimDb == 3.0);
 }

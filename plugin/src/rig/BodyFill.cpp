@@ -56,7 +56,6 @@ BodyFill::~BodyFill() = default;  // T3kTool cancels and joins
 void BodyFill::cancel() {
   step_ = Step::Idle;
   status_ = {};
-  lastFetchFail_ = FillReason::None;
   queued_.reset();
   ++run_;  // results of runs in flight are stale
   tool_.cancel();
@@ -80,7 +79,7 @@ void BodyFill::begin(const Preset& applied) {
     if (const auto* nam = dynamic_cast<const NamBlockParams*>(applied.a.blocks[static_cast<std::size_t>(a)].params.get())) aTitle_ = captureTitle(nam->model);
   // An immediate fill that already has an amp: the suggestion may swap it, but nothing is missing, so nothing is said.
   const bool missingAmp = ampIndex(applied.b) < 0;
-  if (missingAmp) status_ = {FillStatus::Kind::Downloading, "choosing a high-gain amp", FillReason::None, {}};
+  if (missingAmp) status_ = {FillStatus::Kind::Downloading, {}, FillReason::None, {}};  // no name yet: "CHOOSING A BODY AMP..."
   std::error_code ec;
   if (networkToolsDisabled()) {
     if (missingAmp) fail(FillReason::NetworkOff, "network tools are disabled (SAWBLADE_NO_NETWORK)");

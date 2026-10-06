@@ -52,6 +52,9 @@ class AmpHead : public juce::Component {
   static juce::String bodyDownloadingText(const juce::String& name);
   // The body head when the fill failed: the reason and the one action that fixes it (see FillReason).
   static juce::String bodyFailedText(FillReason reason);
+  // The body head with path B on, no amp, and no fill running (the window was closed during the download, or the amp was dropped
+  // because path B was edited): never the plain "NO AMP"; touching BLEND starts the fill again.
+  static juce::String bodyMissingText();
   static juce::String bodyOffWithBlocksText();  // path B has blocks, BLEND off: "BODY PATH OFF - turn up BLEND"
 
   void paint(juce::Graphics&) override;

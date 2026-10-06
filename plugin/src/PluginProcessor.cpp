@@ -380,7 +380,7 @@ void SawbladeProcessor::loadPreset(Preset preset, bool keepMonitor, std::optiona
   if (!keepMonitor) userLoadSerial_.fetch_add(1);
   {
     std::lock_guard<std::mutex> lk(levelMutex_);
-    provisionalTrim_ = keepMonitor ? std::nullopt : provisionalTrimDb;
+    if (!keepMonitor) provisionalTrim_ = provisionalTrimDb;  // a keepMonitor load never touches it
   }
   bool buildNow;
   {

@@ -178,7 +178,7 @@ amp arrives later; (2) `BodyFill::tick()` ran only from the rig editor's refresh
 now only needs path B's structure to be unchanged); (4) a missing tool, `SAWBLADE_NO_NETWORK` or a failed fetch (not logged in, network) returned or ended
 without a word. `BodyFill::status()` now reports Downloading (with the amp's name) or Failed (with a reason); the body head shows
 `BODY AMP DOWNLOADING… (name)` or `<reason> — <action>` (not logged in: log in via Settings; no network; no capture / not allowed: BROWSE CAPTURES; tool
-not found: Settings). After the fix, touching BLEND again retries a failed fill.
+not found: Settings). Switching the rig topology to Blend on an amp-less path B starts the fill too, and path B sounds when the BLEND knob is released. A path B that is on with no amp and no fill running (window closed during the download, or the amp dropped because path B was edited) reads `BODY AMP MISSING — touch BLEND`, and touching BLEND restarts the fill; an amp that arrives while the window is closed never lands (the fill lives in the editor). After the fix, touching BLEND again retries a failed fill.
 
 ### Amp controls on the amp heads (v0.2 Task D)
 

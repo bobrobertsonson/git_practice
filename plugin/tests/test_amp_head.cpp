@@ -187,7 +187,7 @@ TEST_CASE("amp head: no amp in the path, and the body path off: knobs disabled w
   CHECK(rig.ed->ampHead(0).knobsEnabled());
   CHECK(rig.ed->ampHead(0).readout() == "GAIN 5.0");
   CHECK_FALSE(rig.ed->ampHead(1).knobsEnabled());
-  CHECK(rig.ed->ampHead(1).readout() == "NO AMP IN THIS PATH");
+  CHECK(rig.ed->ampHead(1).readout() == rig::AmpHead::bodyMissingText());  // B on, no amp, no fill running: says so, not "NO AMP"
 
   rig.load(rigJson(true, true, false));  // path B has an amp but BLEND is off: the body head is off, and "add one" would be false
   CHECK(rig.ed->ampHead(0).knobsEnabled());

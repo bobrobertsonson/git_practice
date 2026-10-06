@@ -25,8 +25,11 @@ juce::String AmpHead::noAmpText() { return "NO AMP IN THIS PATH"; }
 juce::String AmpHead::bodyOffText() { return juce::String::fromUTF8("BODY PATH OFF \xE2\x80\x94 turn up BLEND to add one"); }
 
 juce::String AmpHead::bodyDownloadingText(const juce::String& name) {
-  return juce::String::fromUTF8("BODY AMP DOWNLOADING\xE2\x80\xA6") + (name.isEmpty() ? juce::String() : " (" + name + ")");
+  if (name.isEmpty()) return juce::String::fromUTF8("CHOOSING A BODY AMP\xE2\x80\xA6");
+  return juce::String::fromUTF8("BODY AMP DOWNLOADING\xE2\x80\xA6") + " (" + name + ")";
 }
+
+juce::String AmpHead::bodyMissingText() { return juce::String::fromUTF8("BODY AMP MISSING \xE2\x80\x94 touch BLEND"); }
 
 juce::String AmpHead::bodyFailedText(FillReason r) {
   const juce::String dash = juce::String::fromUTF8(" \xE2\x80\x94 ");
@@ -36,7 +39,7 @@ juce::String AmpHead::bodyFailedText(FillReason r) {
     case FillReason::NoCapture: return "NO BODY AMP FOUND" + dash + "pick one with BROWSE CAPTURES";
     case FillReason::NoTool: return "TONE3000 TOOL NOT FOUND" + dash + "set its path in Settings";
     case FillReason::License: return "AMP NOT ALLOWED" + dash + "pick another with BROWSE CAPTURES";
-    case FillReason::NetworkOff: return "NETWORK TOOLS ARE OFF" + dash + "unset SAWBLADE_NO_NETWORK";
+    case FillReason::NetworkOff: return "NETWORK TOOLS DISABLED" + dash + "restart the host without SAWBLADE_NO_NETWORK";
     default: return "BODY AMP FAILED" + dash + "pick one with BROWSE CAPTURES";
   }
 }
@@ -89,6 +92,10 @@ void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo&
     on = false;  // reason_ stays false: not a fault, the normal text style
   } else if (ampIndex(pp) < 0 && path_ == 1 && fill.kind == FillStatus::Kind::Failed) {
     text = bodyFailedText(fill.reason);
+    on = false;
+    reason = true;
+  } else if (ampIndex(pp) < 0 && path_ == 1) {
+    text = bodyMissingText();
     on = false;
     reason = true;
   } else if (ampIndex(pp) < 0) {

@@ -150,7 +150,7 @@ bool RigController::blendTurnedUp(double blendBefore) {
   sync();
   const Preset cur = view();
   if (topologyOf(cur) == Topology::Blend) {
-    if (ampIndex(cur.b) < 0 && body_.status().kind == FillStatus::Kind::Failed) {
+    if (ampIndex(cur.b) < 0 && body_.status().kind != FillStatus::Kind::Downloading) {  // Idle (editor reopened) or Failed
       body_.retry();
       return true;
     }

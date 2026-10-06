@@ -84,17 +84,16 @@ class BodyFill {
   void launch(Step s, std::vector<std::string> args);
 
   SawbladeProcessor& proc_;
-  T3kTool tool_;
   Step step_ = Step::Idle;
   PathPreset expectedB_;  // path B (blocks, controls, EQ, level ...) and the blend as the last BodyFill edit left them
   double expectedBlend_ = 0.0;
   std::optional<std::pair<Step, std::vector<std::string>>> queued_;  // a step waiting for the tool to finish
   std::string aTitle_;
   FillStatus status_;
-  FillReason lastFetchFail_ = FillReason::None;
   std::uint64_t run_ = 0, runs_ = 0;
   std::mutex m_;
   std::vector<Done> done_;
+  T3kTool tool_;  // LAST: destroyed first (cancels and joins), so its completion callback never meets a destroyed m_ / done_
 };
 
 }  // namespace sawblade::plugin::rig
