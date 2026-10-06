@@ -53,13 +53,15 @@ New module `match/sawblade_match/matcher/feel.py` (pure numpy/scipy, 48 kHz, no 
 - `polish = flux + crest + floor`.
 
 ### A.4 Loss integration
-- `feel = W_TIGHT * tight + W_FIZZ * fizz + W_POLISH * polish`, initial weights 0.5 / 0.5 / 0.25 (tuned in D.1; documented in
+- `feel = W_TIGHT * tight + W_FIZZ * fizz + W_POLISH * polish`, initial weights 0.25 / 0.25 / 0.125 (lowered from 0.5 / 0.5 / 0.25 after the known-answer CI failure; each
+  normalised sub-term is Huber-softened, delta 1 normaliser; tuned in D.1; documented in
   the `loss.py` docstring and README). Added to `total`. `LossResult` gains `feel` (weighted) and `feelTerms` (every
   sub-term, raw and normalised, the note counts and noteSet). `result.json` reports them for best, alts and the starter.
 - Without a matched pair (soft targets): same features from the reference's guitar-dominant excerpt, onsets detected on the
   reference itself for tightness, all comparisons as W1 of the per-note / per-frame distributions, every weight x 0.5.
 - Stage 1's cross-spectral pair x pair blend screen stays LTAS-only (no render). The feel term enters everywhere the full
-  loss is evaluated (re-score, cab sweep, stage 2, finals).
+  loss is evaluated (re-score, cab sweep, stage 2's gain and final linear blocks, finals). Stage 2's first linear block is
+  LTAS-only (`loss.without_feel`), so the spectral fit leads and feel refines it (known-answer CI fix).
 - Cost: report the time per `evaluate()` call on a 6 s excerpt before and after. The target is at most 1.5x.
 - Unit tests (synthetic, no captures): slow vs fast decaying low chug, so the floppy one scores worse and `t12` is within
   5 ms of the analytic value; white vs shaped (harmonic, low-passed) HF content, so the fizz features order correctly and an
