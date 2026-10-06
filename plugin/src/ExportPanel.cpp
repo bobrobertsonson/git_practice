@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <system_error>
 
@@ -202,7 +204,6 @@ struct ExportPanel::Impl {
   juce::String notesTextShown;   // what the box shows (= what COPY copies)
   bool notesFromReport = false;
   std::string notesKey;
-  std::uint64_t planEpoch = 0;
   // right column
   juce::Label capRight, stage, detail, bestEsr, timing, status, statusSummary, numEsr, numLtas, outPath, sidecarLabel, licenceNote, wallLabel, willWrite;
   Bar bar;
@@ -475,11 +476,25 @@ struct ExportPanel::Impl {
   void updateNotes(const JobSnapshot& snap) {
     const bool done = view == View::Result;
     const ExportResult& res = snap.result;
-    const std::string key = std::to_string(planEpoch) + (done ? "|r|" + snap.outDir.string() + "|" + res.namFile + "|" + snap.exportMode + (snap.allowInexact ? "|i|" : "|e|") + res.exportNotesJson
+    // Rebuilt only when what the notes depend on changed: the mode, DROP COMP, the exported preset's hash (plan.sourceSha256,
+    // recomputed with the plan) and, for a finished run, its folder / model / report.
+    const std::string key = plan.sourceSha256 + "|" + (done ? "|r|" + snap.outDir.string() + "|" + res.namFile + "|" + snap.exportMode + (snap.allowInexact ? "|i|" : "|e|") + res.exportNotesJson
                                                               : "|c|" + plan.mode + (plan.dropComp ? "|d" : "|k"));
     if (key == notesKey) return;
     notesKey = key;
-    const std::string presetName = proc.status().presetName;
+    // The finished run's own preset (the resolved file it exported) names the header; the live preset only without it.
+    std::string presetName = proc.status().presetName;
+    if (done && !snap.source.empty()) {
+      std::ifstream in(snap.source, std::ios::binary);
+      const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      const nlohmann::json pj = nlohmann::json::parse(bytes, nullptr, /*allow_exceptions=*/false);
+      if (pj.is_object() && pj.contains("name") && pj["name"].is_string()) presetName = pj["name"].get<std::string>();
+    }
+    // Did the run drop the comp from the preset it exported? (a no-cab export without --allow-inexact with the comp on:
+    // prepareExportSource sets busComp.enabled = false; same rule as ExportGlue's buildResumeRequest, judged on the live rig.)
+    // The exporter's own notes are then built from that comp-less preset, so they lack the comp the model does not contain either.
+    const std::string runMode = done && !snap.exportMode.empty() ? snap.exportMode : plan.mode;
+    const bool runDropped = done && runMode == "nocab" && plan.rig.compOn && !snap.allowInexact;
     const bool nonCommercial = plan.rig.nonCommercial || (done && res.nonCommercial);
     const std::string licence = std::string(kPersonalUse) + (nonCommercial ? "  Non-commercial: a cc-by-nc capture is in this rig." : "");
     nlohmann::json notes;
@@ -487,14 +502,18 @@ struct ExportPanel::Impl {
     if (done && !res.exportNotesJson.empty()) {
       notes = nlohmann::json::parse(res.exportNotesJson, nullptr, /*allow_exceptions=*/false);
       fromReport = exportNotesUsable(notes);
+      if (fromReport && runDropped) {
+        bool hasComp = false;
+        for (const auto& st : notes["stages"])
+          if (st.is_object() && st.value("stage", std::string()) == "busComp") hasComp = true;
+        if (!hasComp) fromReport = false;  // the dropped comp would vanish from the notes: show the plugin's (un-dropped rig)
+      }
     }
     if (!fromReport) {
-      std::string mode = plan.mode;
-      bool drop = plan.dropComp;
+      const std::string mode = runMode;
+      const bool drop = done ? runDropped : plan.dropComp;
       std::string nam, ir;
       if (done) {
-        if (!snap.exportMode.empty()) mode = snap.exportMode;
-        drop = mode == "nocab" && plan.rig.compOn && !snap.allowInexact;
         nam = res.namFile;
         std::error_code ec;
         if (mode == "nocab")
@@ -534,7 +553,6 @@ struct ExportPanel::Impl {
         plan = planExport(proc, cur);
         resumeOffer = findResumableExport(proc);
         planKey = k;
-        ++planEpoch;
         planValid = true;
         planAt = now;
       }
