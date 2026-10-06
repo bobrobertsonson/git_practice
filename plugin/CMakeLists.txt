@@ -79,6 +79,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/rig/CabControls.cpp
   src/rig/CabScreen.cpp
   src/rig/Pedalboard.cpp
+  src/rig/PedalPicker.cpp
   src/rig/RigEditorPanel.cpp
   src/mic/IrNameParser.cpp
   src/mic/IrPack.cpp
@@ -278,11 +279,11 @@ endif()
 # executable and run under xvfb-run when it is available. The editor sources and the JUCE modules are
 # compiled into it (as for sawblade_plugin_tests). Screenshots: ${CMAKE_BINARY_DIR}/screenshots/.
 if(SAWBLADE_BUILD_TESTS)
-  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_blend_knob.cpp tests/test_undo_ui.cpp tests/test_di_import_ui.cpp tests/test_layout.cpp ${SAWBLADE_PLUGIN_SOURCES})
-  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_blend_knob.cpp tests/test_undo_ui.cpp tests/test_di_import_ui.cpp tests/test_layout.cpp
+  add_executable(sawblade_editor_tests tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_blend_knob.cpp tests/test_undo_ui.cpp tests/test_di_import_ui.cpp tests/test_layout.cpp tests/test_pedalboard.cpp ${SAWBLADE_PLUGIN_SOURCES})
+  set_source_files_properties(tests/test_editor.cpp tests/test_browser_ui.cpp tests/test_mic_page.cpp tests/test_preset_browser.cpp tests/test_live_controls.cpp tests/test_amp_head.cpp tests/test_blend_knob.cpp tests/test_undo_ui.cpp tests/test_di_import_ui.cpp tests/test_layout.cpp tests/test_pedalboard.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   add_dependencies(sawblade_editor_tests SawbladeBuildInfo)
-  target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})
+  target_include_directories(sawblade_editor_tests PRIVATE src ${SAWBLADE_GENERATED_DIR} ${PROJECT_SOURCE_DIR}/tests)  # tests/latency_stub.h
   # JUCE_MODAL_LOOPS_PERMITTED: the page tests pump the message loop (MessageManager::runDispatchLoopUntil).
   target_compile_definitions(sawblade_editor_tests PRIVATE ${SAWBLADE_JUCE_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1
     SAWBLADE_TEST_TOOLS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/tools"

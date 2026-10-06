@@ -154,6 +154,11 @@ class SawbladeEditor::Content : public juce::Component {
       placeFace();
       updateSelection();
     };
+    board_->onScrolled = [this] {  // the live face follows its tile, or hides while the tile is scrolled out of view
+      placeFace();
+      if (face_) face_->refresh();
+    };
+    board_->onMessage = [this](const juce::String& m) { showMessage(m); };
     addAndMakeVisible(*board_);
     for (int path = 0; path < 2; ++path) {  // the amp controls (v0.2 Task D) lie over the amp heads' art
       ampHeads_[static_cast<size_t>(path)] = std::make_unique<rig::AmpHead>(processor_, path);
@@ -310,14 +315,14 @@ class SawbladeEditor::Content : public juce::Component {
     wordmark_.setBounds(18, 8, 190, 42);
     int x = 210;
     prev_.setBounds(x, y, 34, h);
-    presetButton_.setBounds(x + 34, y, 140, h);
-    next_.setBounds(x + 34 + 140, y, 34, h);
-    x += 34 + 140 + 34 + 12;
+    presetButton_.setBounds(x + 34, y, 128, h);
+    next_.setBounds(x + 34 + 128, y, 34, h);
+    x += 34 + 128 + 34 + 12;
     ab_.setBounds(x, y, 52, h);
-    playAlong_.setBounds(x + 52 + 12, y, 104, h);
-    rigButton_.setBounds(x + 52 + 12 + 104 + 12, y, 64, h);
-    cabButton_.setBounds(x + 52 + 12 + 104 + 12 + 64 + 12, y, 64, h);
-    settingsBtn_.setBounds(x + 52 + 12 + 104 + 12 + 64 + 12 + 64 + 12, y, 34, h);
+    playAlong_.setBounds(x + 52 + 12, y, 98, h);
+    rigButton_.setBounds(x + 52 + 12 + 98 + 12, y, 64, h);
+    cabButton_.setBounds(x + 52 + 12 + 98 + 12 + 64 + 12, y, 64, h);
+    settingsBtn_.setBounds(x + 52 + 12 + 98 + 12 + 64 + 12 + 64 + 12, y, 34, h);
     int r = kDesignWidth - 18;
     export_.setBounds(r - 130, y, 130, h);
     r -= 130 + 12;
@@ -325,7 +330,7 @@ class SawbladeEditor::Content : public juce::Component {
     r -= 84 + 12;
     modeChip_.setBounds(r - 88, y + 2, 88, 30);
     r -= 88 + 12;
-    latChip_.setBounds(r - 124, y + 2, 124, 30);
+    latChip_.setBounds(r - 136, y + 2, 136, 30);
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
     board_->setBounds(rig_.getBounds());
@@ -377,7 +382,10 @@ class SawbladeEditor::Content : public juce::Component {
     modeChip_.setColour(juce::Label::textColourId, st.liveCompatible ? L::live() : L::studio());
     modeChip_.setColour(juce::Label::outlineColourId, st.liveCompatible ? L::liveBorder() : L::studio().withAlpha(0.45f));
 
-    if (st.loading) {
+    if (transient_.isNotEmpty() && static_cast<juce::int32>(transientUntil_ - juce::Time::getMillisecondCounter()) > 0) {
+      message_.setColour(juce::Label::textColourId, L::warning());
+      message_.setText(transient_, juce::dontSendNotification);
+    } else if (st.loading) {
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText("Loading...", juce::dontSendNotification);
     } else if (!st.error.empty()) {
@@ -420,6 +428,14 @@ class SawbladeEditor::Content : public juce::Component {
     if (settingsPanel_ && settingsPanel_->isVisible()) settingsPanel_->refresh();
   }
 
+  // A short status-line message from the pedalboard ("SAW path full: 8 blocks"); it stays a few seconds.
+  void showMessage(const juce::String& m) {
+    transient_ = m;
+    transientUntil_ = juce::Time::getMillisecondCounter() + 6000;
+    message_.setColour(juce::Label::textColourId, L::warning());
+    message_.setText(m, juce::dontSendNotification);
+  }
+
   void updateReadouts() {
     const double b = knobs_[kBlend]->getValue();
     const bool showLearn = rigController_ && (rigController_->learning() ||
@@ -453,11 +469,15 @@ class SawbladeEditor::Content : public juce::Component {
   bool settingsOpen() const { return settingsPanel_->isVisible(); }
   bool aboutOpen() const { return about_ != nullptr && about_->isVisible(); }
 
-  // The capture browser overlay for the selected piece (closed with its "< RIG" button). A pedal tile the user picked on the
-  // pedalboard targets that very block (path + index); the default selection keeps the slot's usual block.
+  // The capture browser overlay for the selected piece (closed with its "< RIG" button). For a pedal it targets exactly the block of the
+  // tile the inspector shows (the picked one, else the path's first tile): a modeled circuit has no capture to replace and says so.
   void openBrowser() {
     static constexpr Slot kSlots[] = {Slot::SawAmp, Slot::BodyAmp, Slot::SawPedal, Slot::BodyPedal};  // Piece order
-    openBrowserFor(kSlots[static_cast<size_t>(rig_.selected())], rig_.selectedBlockId());
+    const Piece p = rig_.selected();
+    std::string pin;
+    if (p == Piece::SawPedal || p == Piece::BodyPedal)
+      if (const rig::BoardTile* t = board_->selectedTile()) pin = t->blockId();
+    openBrowserFor(kSlots[static_cast<size_t>(p)], pin);
   }
   // The capture browser for the cab's IR (the CAB page's BROWSE IR).
   void openCabBrowser() { openBrowserFor(Slot::Cab, {}); }
@@ -544,7 +564,7 @@ class SawbladeEditor::Content : public juce::Component {
   bool anyOverlayOpen() const {
     const auto vis = [](const juce::Component* c) { return c != nullptr && c->isVisible(); };
     return vis(drawer_.get()) || vis(settingsPanel_.get()) || vis(about_.get()) || vis(presetBrowser_.get()) || vis(screen_.get()) ||
-           vis(exportPanel_.get()) || vis(micPage_.get()) || vis(browser_.get()) || vis(panel_.get()) || vis(cabScreen_.get());
+           vis(exportPanel_.get()) || vis(micPage_.get()) || vis(browser_.get()) || vis(panel_.get()) || vis(cabScreen_.get()) || board_->pickerOpen();
   }
   // Test hooks: the capture browser (the BROWSE CAPTURES overlay), and closing every overlay.
   void openCaptureBrowserForTests() { openBrowser(); }
@@ -558,6 +578,7 @@ class SawbladeEditor::Content : public juce::Component {
                                                                        cabScreen_.get()})
       c->setVisible(false);
     micFromCab_ = false;
+    board_->closePicker();
     rigButton_.setToggleState(false, juce::dontSendNotification);
     cabButton_.setToggleState(false, juce::dontSendNotification);
     playAlong_.setToggleState(false, juce::dontSendNotification);
@@ -581,6 +602,7 @@ class SawbladeEditor::Content : public juce::Component {
     });
   }
   void setMicPageOpen(bool open) {
+    if (!open) micFromCab_ = false;  // (the page's own close handler has read it by now)
     if (open) closeOverlaysExcept(Overlay::Mic);
     micPage_->setVisible(open);
     if (open) {
@@ -616,6 +638,7 @@ class SawbladeEditor::Content : public juce::Component {
   // the play-along panel are not part of the group.
   enum class Overlay { None, Rig, Mic, Browser, Match, Export, Cab };
   void closeOverlaysExcept(Overlay keep) {
+    board_->closePicker();
     if (keep != Overlay::Rig) {
       rigPanel_->setVisible(false);
       rigButton_.setToggleState(false, juce::dontSendNotification);
@@ -685,11 +708,12 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
   // A circuit block has a tile (hence a place for the live face) when it is before its path's amp and the path is on.
+  // and, once the tile exists, that it is fully in view (a board that scrolls may hide it).
   bool circuitHosted(const CircuitSlot& slot) const {
     const Preset p = processor_.editBasePreset();
     const PathPreset& pp = slot.path == 0 ? p.a : p.b;
     if (slot.path == 1 && !pp.enabled) return false;
-    return slot.block < rig::boardBlockCount(pp);
+    return slot.block < rig::boardBlockCount(pp) && board_->tileFullyVisible(slot.path, slot.block);
   }
   bool isFaceTile(const rig::BoardTile& t) const {
     const auto slot = processor_.circuitSlot();
@@ -699,7 +723,7 @@ class SawbladeEditor::Content : public juce::Component {
   void placeFace() {
     const auto slot = processor_.circuitSlot();
     rig::BoardTile* t = slot && circuitHosted(*slot) ? board_->tileForBlock(slot->path, slot->block) : nullptr;
-    const auto pedal = (t != nullptr ? t->getBounds() : board_->slotBounds(0, 0)) + board_->getPosition();
+    const auto pedal = (t != nullptr ? board_->tileBounds(*t) : board_->slotBounds(0, 0)) + board_->getPosition();
     if (t != nullptr) {
       face_->setBounds(pedal);
       t->setTooltip(t->name() + " (click to select, double-click for the advanced controls, footswitch = bypass)");
@@ -725,6 +749,8 @@ class SawbladeEditor::Content : public juce::Component {
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
   juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, cabButton_, settingsBtn_;
   juce::uint32 learnShownUntil_ = 0;
+  juce::String transient_;         // the pedalboard's last status message
+  juce::uint32 transientUntil_ = 0;
   // New overlays: add them to anyOverlayOpen() (Cmd / Ctrl + Z) or document why not.
   std::array<std::unique_ptr<rig::AmpHead>, 2> ampHeads_;
   bool blendGesture_ = false;  // the BLEND knob is in a user drag / wheel gesture

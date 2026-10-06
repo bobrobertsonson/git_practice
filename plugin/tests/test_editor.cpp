@@ -1697,7 +1697,7 @@ TEST_CASE("pedal face: shown only when the preset has a circuit block", "[editor
   const rig::BoardTile* tile = rig.ed->pedalboard().tileForBlock(0, 0);
   REQUIRE(tile != nullptr);
   const auto& piece = *tile;
-  CHECK(face.getBounds() == piece.getBounds() + rig.ed->pedalboard().getPosition());
+  CHECK(face.getBounds() == rig.ed->pedalboard().tileBounds(piece) + rig.ed->pedalboard().getPosition());
   bool self = true, kids = false;
   face.getInterceptsMouseClicks(self, kids);
   CHECK_FALSE(self);
@@ -1845,7 +1845,7 @@ TEST_CASE("pedal drawer: closed by default, opens and closes on double-click, x 
 
   // Geometry: inside the rig, to the right of the pedal, aligned with its vertical span.
   const auto rigBounds = rigViewOf(rig).getBounds();
-  const auto pedal = piece.getBounds() + rig.ed->pedalboard().getPosition();
+  const auto pedal = rig.ed->pedalboard().tileBounds(piece) + rig.ed->pedalboard().getPosition();
   CHECK(rigBounds.contains(drawer.getBounds()));
   CHECK_FALSE(drawer.getBounds().intersects(pedal));
   CHECK(drawer.getX() == pedal.getRight() + AdvancedDrawer::kGap);

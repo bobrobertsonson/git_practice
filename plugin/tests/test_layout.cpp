@@ -396,7 +396,7 @@ TEST_CASE("layout: the pedal face lies over the circuit tile and the drawer open
   REQUIRE(face.isVisible());
   rig::BoardTile* tile = pb.tileForBlock(0, 0);
   REQUIRE(tile != nullptr);
-  CHECK(face.getBounds() == tile->getBounds() + pb.getPosition());
+  CHECK(face.getBounds() == pb.tileBounds(*tile) + pb.getPosition());
   doubleClick(*tile);  // the drawer belongs to the tile that carries the face
   CHECK(drawer.isOpen());
   drawer.finishAnimation();
@@ -410,7 +410,7 @@ TEST_CASE("layout: the pedal face lies over the circuit tile and the drawer open
   REQUIRE(face.isVisible());
   tile = pb.tileForBlock(1, 0);
   REQUIRE(tile != nullptr);
-  CHECK(face.getBounds() == tile->getBounds() + pb.getPosition());
+  CHECK(face.getBounds() == pb.tileBounds(*tile) + pb.getPosition());
   CHECK(face.getX() >= 478);  // in the BODY column
   doubleClick(*tile);
   CHECK(drawer.isOpen());
@@ -750,6 +750,87 @@ TEST_CASE("layout: Cmd / Ctrl + Z does not undo under the CAB page", "[editor][l
   CHECK(rig.ed->keyPressed(undoKey));  // nothing open: it undoes
   REQUIRE(rig.proc.waitForLoader(kLoad));
   CHECK_FALSE(rig.proc.currentPreset().a.blocks[0].bypass);
+}
+
+TEST_CASE("layout: BROWSE CAPTURES follows the tile the inspector names, also with the default selection (a modeled first tile + a capture later)", "[editor][layout][browser]") {
+  Rig rig;
+  auto& pb = rig.ed->pedalboard();
+  // first tile modeled, second a capture, then the amp
+  rig.load(rigJson({hmBlock("a1"), namBlock("a2", "pedal", "Pedal Two"), namBlock("a3", "amp")}, {}, false, sharedCab()));
+  REQUIRE(pb.tileCount(0) == 2);
+  const juce::String dot = juce::String::fromUTF8(" \xc2\xb7 ");
+  CHECK(rig.ed->selectedBlockId().empty());  // the default selection ...
+  CHECK(anyLabelEquals(*rig.ed, "CHAINSAW"));  // ... names the first tile
+  auto* browse = buttonTitled(*rig.ed, "BROWSE CAPTURES");
+  REQUIRE(browse != nullptr);
+  browse->triggerClick();
+  REQUIRE(pumpUntil([&] { return rig.ed->captureBrowserOpen(); }));
+  {
+    auto browsers = all<CaptureBrowser>(*rig.ed);
+    REQUIRE(browsers.size() == 1);
+    std::string why;
+    // not the capture further down the board: the tile shown is a modeled circuit and has nothing to replace
+    CHECK(browsers[0]->controller().targets(&why).empty());
+    CHECK(why.find("modeled circuit") != std::string::npos);
+  }
+  rig.ed->closeAllOverlaysForTests();
+  REQUIRE(pumpUntil([&] { return all<CaptureBrowser>(*rig.ed).empty(); }));
+  // picking the capture tile targets it
+  click(*pb.tile(0, 1));
+  browse->triggerClick();
+  REQUIRE(pumpUntil([&] { return rig.ed->captureBrowserOpen(); }));
+  {
+    auto browsers = all<CaptureBrowser>(*rig.ed);
+    REQUIRE(browsers.size() == 1);
+    const auto targets = browsers[0]->controller().targets();
+    REQUIRE(targets.size() == 1);
+    CHECK(targets[0].blockIndex == 1);
+  }
+  rig.ed->closeAllOverlaysForTests();
+  REQUIRE(pumpUntil([&] { return all<CaptureBrowser>(*rig.ed).empty(); }));
+  (void)dot;
+}
+
+TEST_CASE("layout: the top bar keeps every button and chip apart, and the latency chip is not squeezed", "[editor][layout]") {
+  Rig rig;
+  rig.load(rigJson(kSawPath, kBodyPath, true, sharedCab()));
+  auto* cabBtn = buttonTitled(*rig.ed, "Cab page");
+  REQUIRE(cabBtn != nullptr);
+  juce::Component* bar = cabBtn->getParentComponent();
+  std::vector<juce::Component*> parts;
+  juce::Label* lat = nullptr;
+  for (auto* c : bar->getChildren()) {
+    if (!c->isVisible() || c->getBottom() > 58) continue;
+    if (dynamic_cast<juce::Button*>(c) != nullptr) parts.push_back(c);
+    if (auto* l = dynamic_cast<juce::Label*>(c)) {
+      if (l->getTitle() == "Latency") lat = l;
+      if (l->getTitle() == "Latency" || l->getTitle() == "Blend mode") parts.push_back(c);
+    }
+  }
+  REQUIRE(lat != nullptr);
+  CHECK(lat->getWidth() >= 130);
+  CHECK(parts.size() >= 12);
+  for (std::size_t i = 0; i < parts.size(); ++i)
+    for (std::size_t j = i + 1; j < parts.size(); ++j) {
+      INFO(parts[i]->getTitle() << " vs " << parts[j]->getTitle());
+      CHECK_FALSE(parts[i]->getBounds().intersects(parts[j]->getBounds()));
+    }
+}
+
+TEST_CASE("layout: the mic page only returns to the CAB page when it was opened from it", "[editor][layout][cab]") {
+  Rig rig;
+  rig.load(rigJson(kSawPath, kBodyPath, true, sharedCab()));
+  rig.ed->setCabPageOpen(true);
+  click(rig.ed->cabScreen().controls().micButton());
+  REQUIRE(rig.ed->micPageOpen());
+  rig.ed->setMicPageOpen(false);  // closed by other means than its back button
+  CHECK_FALSE(rig.ed->cabPageOpen());
+  rig.ed->setMicPageOpen(true);   // opened again directly (not from the CAB page)
+  auto* back = rig.ed->micPage().buttonTitled(juce::String::fromUTF8("\xe2\x80\xb9 RIG"));
+  REQUIRE(back != nullptr);
+  click(*back);
+  CHECK_FALSE(rig.ed->micPageOpen());
+  CHECK_FALSE(rig.ed->cabPageOpen());  // a stale "came from the CAB page" must not bring it back
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------

@@ -513,6 +513,9 @@ void step01Main(Walk& w) {
   CHECK_FALSE(w.ed->playAlongOpen());
   const juce::Image img = shot(*w.ed, "01_main");
   CHECK(nonBackgroundFraction(img, {0, 58, 940, 742}) > 0.12);  // the rig renders are on screen (v0.4 Task D: the cab render left the main page)
+  // The region above also counts the board backgrounds, so the SAW head is checked on its own (the per-head checks of test_editor.cpp
+  // "snapshots 1x and 2x" and test_layout.cpp cover both heads and the tiles).
+  CHECK(nonBackgroundFraction(img, {74, 58 + 44, 330, 145}) > 0.2);
 }
 
 void step02PresetBrowser(Walk& w) {
