@@ -38,6 +38,14 @@ def distort(di: np.ndarray, seed: int) -> np.ndarray:
     return (0.5 * np.tanh(12.0 * di) + 0.02 * rng.standard_normal(len(di))).astype(np.float32)
 
 
+def _search(di, ref):
+    """resolve_offset, but a failed placement reports r1/r2/sigma/confidence in the assertion text."""
+    try:
+        return resolve_offset(di, ref, FS, offset_given=False)
+    except PlacementError as e:
+        pytest.fail(f"placement failed: {e.details}")
+
+
 @pytest.fixture(scope="module")
 def song():
     di_full = synth_di(1, 60.0)
@@ -49,18 +57,18 @@ def test_found_within_2_5_ms(song, start_s):
     di_full, ref = song
     a = int(round(start_s * FS))
     di = di_full[a:a + 12 * FS]
-    r = resolve_offset(di, ref, FS, offset_given=False)
-    assert r["mode"] == "whole_song"
+    r = _search(di, ref)
+    assert r["mode"] == "whole_song", r
     assert abs(r["offset_ms"] - start_s * 1000) <= 2.5, r       # coarse + fine stage
-    assert r["confidence"] >= offset.MIN_CONFIDENCE
+    assert r["confidence"] >= offset.MIN_CONFIDENCE, r
     assert r["coarse_ms"] == pytest.approx(start_s * 1000, abs=10.0)
 
 
 def test_clean_gain_does_not_matter(song):
     di_full, ref = song
     a = int(30.25 * FS)
-    r = resolve_offset(0.1 * di_full[a:a + 10 * FS], ref, FS, offset_given=False)
-    assert abs(r["offset_ms"] - 30250) <= 10.0
+    r = _search(0.1 * di_full[a:a + 10 * FS], ref)
+    assert abs(r["offset_ms"] - 30250) <= 10.0, r
 
 
 def test_unrelated_di_fails_with_message(song):
@@ -111,7 +119,7 @@ def test_di_not_shorter_uses_window(song, monkeypatch):
 def test_deterministic(song):
     di_full, ref = song
     di = di_full[int(10.1 * FS):int(10.1 * FS) + 9 * FS]
-    a, b = resolve_offset(di, ref, FS, False), resolve_offset(di.copy(), ref.copy(), FS, False)
+    a, b = _search(di, ref), _search(di.copy(), ref.copy())
     assert a["offset_samples"] == b["offset_samples"] and a["confidence"] == b["confidence"]
 
 
@@ -122,23 +130,30 @@ def test_five_minute_song_is_fast():
     a = int(151.234 * FS)
     di = di_full[a:a + 30 * FS]
     t0 = time.perf_counter()
-    r = resolve_offset(di, ref, FS, False)
+    r = _search(di, ref)
     dt = time.perf_counter() - t0
     print(f"whole-song search over {secs:.0f} s reference, 30 s DI: {dt:.2f} s")
-    assert abs(r["offset_ms"] - 151234) <= 10.0
+    assert abs(r["offset_ms"] - 151234) <= 10.0, r
     assert dt < 20.0
 
 
-def test_log_env_is_finite_after_loud_to_silent():
-    """Regression: the running-sum smoothing used to return tiny negative energies after a loud frame, so sqrt gave NaN."""
+def test_log_env_clamps_negative_smoothed_energy(monkeypatch):
+    """Regression: the running-sum smoothing can return tiny negative energies; sqrt then gave NaN (deterministic here)."""
     import warnings
-    x = np.zeros(4 * FS, np.float32)
-    x[FS:FS + 4800] = np.random.default_rng(3).standard_normal(4800).astype(np.float32) * 30.0
+    real = offset.ndimage.uniform_filter1d
+
+    def negative(x, size, **kw):
+        y = real(x, size, **kw)
+        if size == 5:                       # the energy smoothing (the detrend uses a larger window on the log)
+            y = y.copy()
+            y[3] = -1e-9
+        return y
+    monkeypatch.setattr(offset.ndimage, "uniform_filter1d", negative)
+    x = np.random.default_rng(3).standard_normal(48 * 100).astype(np.float32)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        for hop, sm in ((48, 5), (240, 3), (480, 1)):
-            e = offset._log_env(x, hop, 200, sm)
-            assert np.all(np.isfinite(e))
+        e = offset._log_env(x, 48, 200, 5)
+    assert np.all(np.isfinite(e))
 
 
 def test_ncc_is_finite_and_rejects_nonfinite_input():
@@ -149,8 +164,22 @@ def test_ncc_is_finite_and_rejects_nonfinite_input():
     assert np.all(np.isfinite(c)) and np.max(np.abs(c)) <= 1.0 + 1e-6
     bad = a.copy()
     bad[10] = np.nan
-    with pytest.raises(FloatingPointError):
+    with pytest.raises(offset.NonFiniteCorrelationError) as e:
         offset._ncc_valid(bad, b)
+    assert isinstance(e.value, RuntimeError)        # the CLI maps RuntimeError to "error: ..." + exit 3
+
+
+def test_nonfinite_audio_is_a_placement_error(song):
+    di_full, ref = song
+    di = di_full[:10 * FS].copy()
+    di[100] = np.nan
+    with pytest.raises(PlacementError) as e:
+        whole_song_search(di, ref, FS)
+    assert str(e.value) == PLACE_FAIL_MESSAGE
+    bad_ref = ref.copy()
+    bad_ref[5] = np.inf
+    with pytest.raises(PlacementError):
+        whole_song_search(di_full[:10 * FS], bad_ref, FS)
 
 
 def test_fine_stage_recentres_when_peak_is_on_the_window_edge(song):
@@ -164,6 +193,23 @@ def test_fine_stage_recentres_when_peak_is_on_the_window_edge(song):
         if not edge:
             break
     assert abs(1000.0 * (off - a) / FS) <= 2.5
+
+
+def test_whole_song_search_recentres_a_coarse_result_that_is_25_ms_off(song, monkeypatch):
+    """Hand the fine stage a centre 25 ms late: its first window peaks on the edge, so it must re-centre once."""
+    di_full, _ = song
+    a = int(20.0 * FS)
+    di = di_full[a:a + 10 * FS]
+    real = offset._fine_place
+    n = [0]
+
+    def late(d, ref, centre, w, fh):
+        n[0] += 1
+        return real(d, ref, centre + (int(0.025 * FS) if n[0] == 1 else 0), w, fh)
+    monkeypatch.setattr(offset, "_fine_place", late)
+    r = whole_song_search(di, di_full, FS)
+    assert n[0] == 2, r                                  # edge hit on the first call, re-centred once
+    assert abs(r["offsetMs"] - 20000) <= 2.5, r
 
 
 def test_cli_prints_failure_message(monkeypatch, capsys, tmp_path):
@@ -182,8 +228,8 @@ def test_window_slack_boundary(song):
     """2 s short -> window (the +-3 s search covers it); 3.5 s short -> whole-song search."""
     di_full, ref = song
     assert resolve_offset(di_full[:len(di_full) - 2 * FS], ref, FS, False)["mode"] == "window"
-    r = resolve_offset(di_full[:len(di_full) - int(3.5 * FS)], ref, FS, False)
-    assert r["mode"] == "whole_song" and abs(r["offset_ms"]) <= 2.5
+    r = _search(di_full[:len(di_full) - int(3.5 * FS)], ref)
+    assert r["mode"] == "whole_song" and abs(r["offset_ms"]) <= 2.5, r
 
 
 def test_result_never_exceeds_ref_minus_di(song):
@@ -241,4 +287,4 @@ def test_run_match_after_placement_refines_only_within_250_ms(tmp_path, monkeypa
     with pytest.raises(Stop):
         R.run_match(cfg, R.Log())
     assert calls and calls[0][1] == int(R.PLACED_WINDOW_MS * FS / 1000) == int(0.25 * FS)
-    assert abs(1000.0 * calls[0][0] / FS - 7300) <= 2.5          # handed the coarse placement, not 0
+    assert abs(1000.0 * calls[0][0] / FS - 7300) <= 2.5, calls          # handed the coarse placement, not 0

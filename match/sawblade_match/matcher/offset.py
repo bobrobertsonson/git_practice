@@ -71,15 +71,22 @@ def refine_offset(render: np.ndarray, ref: np.ndarray, fs: int, coarse: int, sta
 # Whole-song placement of a DI that is shorter than the reference (used when --offset-ms is absent).
 # ---------------------------------------------------------------------------------------------------------------------
 PLACE_FAIL_MESSAGE = "could not place the DI in the song: enter where it starts"
-COARSE_HOP_S = 0.005          # coarse envelope frame (200 Hz): 5 min of audio is 60 000 frames. Finer than the old 10 ms so
-COARSE_SMOOTH = 3             # a DI starting between frames loses little (<= 2.5 ms shift); 3 frames (15 ms) smooth the energy
+# Coarse envelope frame (200 Hz): 5 min of audio is 60 000 frames. The reference envelope is evaluated at two half-hop
+# phases (see ``whole_song_search``), so the coarse lag grid is 2.5 ms and a DI starting between frames loses little.
+COARSE_HOP_S = 0.005
+COARSE_SMOOTH = 3             # frames of energy smoothing (15 ms) at the coarse stage
 FINE_HOP_S = 0.001            # fine envelope frame (1 kHz), searched only +-FINE_SEARCH_S around the coarse peak
 FINE_SEARCH_S = 0.020
 DETREND_S = 1.0               # coarse envelope: remove a 1 s running mean (keeps onsets/mutes, drops level and sustain)
 EXCLUSION_S = 1.0             # a rival peak must be at least this far from the best one
 MIN_CONFIDENCE = 4.0          # see ``whole_song_search``
 WINDOW_SLACK_S = 3.0          # a DI at most this much shorter than the reference is covered by the +-3 s window search
-MIN_RIVAL_LAGS = 20
+MIN_RIVAL_LAGS = 20           # fewest rival lags (any hop) for which a confidence is meaningful
+
+
+class NonFiniteCorrelationError(RuntimeError):
+    """Internal invariant broken: a non-finite envelope or correlation (should be impossible after the energy clamp).
+    A RuntimeError, so the CLI maps it to "error: ..." and exit 3."""
 
 
 class PlacementError(ValueError):
@@ -115,7 +122,7 @@ def _ncc_valid(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     ncc[k] = sum_i (a[k+i] - mean_k) (b[i] - mean_b) / (|a_k - mean_k| |b - mean_b|), k = 0 .. len(a) - len(b);
     values in [-1, 1]."""
     if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
-        raise FloatingPointError("non-finite envelope passed to _ncc_valid")
+        raise NonFiniteCorrelationError("internal error: non-finite envelope passed to the placement correlation")
     n = len(b)
     a = a - a.mean()                  # mean removal first: the windowed variance below then cancels far less
     b = b - b.mean()
@@ -129,7 +136,7 @@ def _ncc_valid(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     var = np.maximum(var, 0.1 * float(np.median(var)) + 1e-12)   # near-silent windows must not score high
     out = raw / (nb * np.sqrt(var))
     if not np.all(np.isfinite(out)):
-        raise FloatingPointError("non-finite normalised cross-correlation")
+        raise NonFiniteCorrelationError("internal error: non-finite normalised cross-correlation in DI placement")
     return out
 
 
@@ -156,10 +163,12 @@ def _fine_place(di: np.ndarray, ref: np.ndarray, centre: int, w: int, fh: int) -
 def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: float = MIN_CONFIDENCE) -> dict:
     """Find where the (shorter) mono ``di`` starts inside the mono ``ref``; both at rate ``fs``.
 
-    Coarse: envelope cross-correlation. Both signals become a log RMS envelope at 200 Hz (15 ms smoothed) with a 1 s running mean
+    Coarse: envelope cross-correlation. Both signals become a log RMS envelope at 200 Hz (15 ms smoothed; the reference at two
+    half-hop phases) with a 1 s running mean
     removed (``_log_env``); the DI envelope is slid over every position of the reference envelope with an FFT-based
     normalised cross-correlation (cost O(M log M); 300 s of audio is a 60 000-point transform). Fine: the same at 1 kHz
-    within +-20 ms of the coarse peak (re-centred once if the peak lands on the window edge), so the result is good to about 1-2 ms on material whose envelopes correspond
+    within +-20 ms of the coarse peak (re-centred once if the peak lands on the window edge), so the result is good to
+    about 1-2 ms on material whose envelopes correspond
     (the downstream ``refine_offset`` then takes it to waveform accuracy on the rendered excerpt).
 
     **Confidence** = (r1 - r2) / sigma, where r1 is the best coarse NCC value, r2 the best value at least 1 s away from
@@ -173,15 +182,25 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
     Returns {offset (samples), offsetMs, coarseMs, confidence, r1, r2, sigma, ok}."""
     if len(di) >= len(ref):
         raise ValueError("whole-song search needs a DI shorter than the reference")
+    if not (np.all(np.isfinite(di)) and np.all(np.isfinite(ref))):
+        raise PlacementError(PLACE_FAIL_MESSAGE, {})          # NaN / inf audio: no honest placement exists
     hop = int(round(COARSE_HOP_S * fs))
+    half = hop // 2
     det = int(round(DETREND_S / COARSE_HOP_S))
-    a, b = _log_env(ref, hop, det, COARSE_SMOOTH), _log_env(di, hop, det, COARSE_SMOOTH)
-    if len(b) < 20 or len(a) <= len(b):
+    b = _log_env(di, hop, det, COARSE_SMOOTH)
+    a0 = _log_env(ref, hop, det, COARSE_SMOOTH)
+    a1 = _log_env(ref[half:], hop, det, COARSE_SMOOTH)        # reference frames shifted by half a hop
+    if len(b) < 20 or len(a1) <= len(b):
         return {"offset": 0, "offsetMs": 0.0, "coarseMs": 0.0, "confidence": 0.0, "r1": 0.0, "r2": 0.0, "sigma": 0.0,
                 "ok": False}
-    c = _ncc_valid(a, b)
+    # Two phases interleaved into one lag axis with step hop/2: lag 2k = DI at ref sample k*hop, lag 2k+1 = k*hop+half.
+    # A DI starting between frames then matches one phase to within hop/4 (1.25 ms at 5 ms), instead of hop/2.
+    c0, c1 = _ncc_valid(a0, b), _ncc_valid(a1, b)
+    c = np.empty(len(c0) + len(c1))
+    c[0::2], c[1::2] = c0, c1
+    step = half
     k1 = int(np.argmax(c))
-    ex = int(round(EXCLUSION_S / COARSE_HOP_S))
+    ex = int(round(EXCLUSION_S * fs / step))
     mask = np.ones(len(c), bool)
     mask[max(0, k1 - ex):k1 + ex + 1] = False
     r1 = float(c[k1])
@@ -191,7 +210,7 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
         conf = max(0.0, (r1 - r2) / sigma)
     else:
         r2, sigma, conf = 0.0, 0.0, 0.0       # too few alternative positions to judge
-    coarse = k1 * hop
+    coarse = k1 * step
     # fine stage: 1 ms frames, +-20 ms around the coarse peak (covers the 2.5 ms coarse quantisation plus smoothing).
     # Frame convention: frames start at sample 0 of their own signal and both signals use the same hop, smoothing and
     # detrend filters, so lag k * hop is the DI start exactly: no half-hop or filter-delay bias.
