@@ -44,6 +44,7 @@ def test_feel_deltas_are_zero_for_the_reference_itself(tmp_path):
     di = K.gap_di(6.0)
     combo, v, preset, gate = K.feel_hidden(pool, di, seed=1)
     assert combo.boost and preset["gate"]["thresholdDb"] > K.gate_preset(K.gate_envelope_floor_db(di, RATE))["thresholdDb"] + 5
+    assert v["post.hp"] in K.HP_GRID and preset["gate"]["holdMs"] == 10.0 and preset["gate"]["releaseMs"] == 80.0   # on the grids
     assert v["post.hp_slope"] >= 0.5 and v["post.lp_slope"] >= 0.5 and "highPass" in {b["type"] for b in preset["postEq"]}
     hidden, _ = K.render(preset, di, float(RATE))
     import soundfile as sf

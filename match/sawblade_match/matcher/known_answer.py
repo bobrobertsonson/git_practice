@@ -18,8 +18,11 @@ import soundfile as sf
 
 from ..core import render
 from . import feel as F
+from . import loss as L
 from .engine import Engine, RATE, to48
 from .excerpt import select_excerpt
+from .gatesweep import cell_gate
+from .refine import DISCRETE_UP, HP_GRID
 from .pool import default_cab, load_pool
 from .reference import build_target, load_reference, make_excerpt
 from .run import Config, Log, Plan, caps_summary, gate_envelope_floor_db, run_match
@@ -82,17 +85,19 @@ def gap_di(seconds: float = 8.0, seed: int = 3, floor_db: float = -70.0) -> np.n
     return x.astype(np.float32)
 
 
-def feel_hidden(pool, di48: np.ndarray, seed: int = 1, gate_above_db: float = 8.0):
-    """Hidden chain of D.1: [tight boost] -> amp -> cab, post high-pass 110 Hz and low-pass 7.5 kHz at 24 dB/oct, and a gate
-    whose threshold sits ``gate_above_db`` above the matcher's default (DI floor + 4). Returns (combo, values, preset)."""
+def feel_hidden(pool, di48: np.ndarray, seed: int = 1):
+    """Hidden chain of D.1, reachable by construction: every discrete parameter sits on the matcher's own grid (post.hp on
+    ``refine.HP_GRID`` at 24 dB/oct, the post low-pass at 24 dB/oct, the gate on a cell of the gate sweep grid), continuous
+    ones are inside their ranges. [tight boost] -> amp -> cab. Returns (combo, values, preset, gate)."""
     rng = np.random.default_rng(seed)
     combo = Combo((), pool.amps[int(rng.integers(len(pool.amps)))], None, None, pool.cabs[int(rng.integers(len(pool.cabs)))],
                   boost=True)
     sp = Space.for_combo(combo)
     v = sp.default()
-    v.update({"boost.drive": 2.0, "boost.level": 9.0, "boost.tone": 5.5, "post.hp": 110.0, "post.hp_slope": 0.9,
-              "post.lp": 7500.0, "post.lp_slope": 0.9})
-    gate = gate_preset(gate_envelope_floor_db(di48, RATE) + gate_above_db)
+    v.update({"boost.drive": 2.0, "boost.level": 9.0, "boost.tone": 5.5,
+              "post.hp": HP_GRID[2], "post.hp_slope": DISCRETE_UP, "post.lp": 7500.0, "post.lp_slope": DISCRETE_UP})
+    # gate cell: threshold = DI floor + 12 dB, hold 10 ms, release 80 ms, range -50 dB (all on the sweep grids, not the default)
+    gate = cell_gate(gate_envelope_floor_db(di48, RATE), 12.0, release_ms=80.0, hold_ms=10.0, range_db=-50.0)
     return combo, v, build_preset(combo, v, gate=gate, align=Engine(gate).probe_align(combo, v), name="hidden feel case"), gate
 
 
@@ -154,8 +159,16 @@ def feel_case(pool, out: Path, *, di48: np.ndarray | None = None, seed: int = 1,
         res = run_match(cfg, log or Log())
     found, _ = render(json.loads((out / "match" / "best.preset.resolved.json").read_text()), di48, float(RATE))
     ex = make_excerpt(di48, len(di48) / RATE, window=(0, len(di48)))
-    ft = build_target(ref, ex).feel
-    row = {"aWeightedErrorDb": res["after"][0]["aWeightedErrorDb"],
+    tgt = build_target(ref, ex)
+    ft = tgt.feel
+    fb = L.features(np.asarray(found, np.float64), tgt.starts, None).band_db
+    d = fb - tgt.ref.band_db
+    d = d - np.sum(L.A_POWER_W * d) / np.sum(L.A_POWER_W)
+    row = {"ltasResidualDbByBand": {str(c): round(float(x), 3) for c, x in zip(L.BAND_CENTRES, d)},
+           "hiddenCaptures": {k: (c.key if c else None) for k, c in combo.captures().items()},
+           "foundCaptures": {k: (c and f"{c['toneId']}/{c['modelId']}") for k, c in res["best"]["captures"].items()},
+           "foundParams": res["best"]["params"], "hiddenParams": v, "gateSweep": {k: res["gateSweep"].get(k) for k in ("changed", "picked", "skipped")},
+"aWeightedErrorDb": res["after"][0]["aWeightedErrorDb"],
            "beforeStarterDb": (res["before"] or [{}])[0].get("aWeightedErrorDb") if res.get("before") else None,
            **(feel_deltas(found, ft) if ft is not None else {}),
            "hiddenFloorDb": None if ft is None else ft.ref.floor, "ablate": list(ablate),
