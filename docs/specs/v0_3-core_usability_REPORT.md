@@ -15,9 +15,9 @@ Lead + dsp-engineer / match-engineer implementers + reviewer, per CLAUDE.md. Eve
 | E | Gain-step tags, browser marks, ladder list | 7cae092, a094007, 1df7b7b, aacd891 | **ACCEPT aacd891** |
 | merge | base (v0.2.1) into v0.3, match-apply = one step in the new history | 9c61f4b | **ACCEPT 9c61f4b** (+ 60de717 Task E should-fixes) |
 
-Post-merge macOS fix: 3d2949a (test-only, reviewer verdict pending).
+Post-merge macOS fix: 3d2949a (test-only, reviewer **ACCEPT 3d2949a**: cross-instance leak ruled out, no other test with the same race).
 
-CI of record: pending (run on the branch head after 3d2949a). History: green on 195f14c, d99b4de, fc0f53b, aacd891 (all jobs incl. macOS auval +
+CI of record: **run 163 on 2726b65, all green** (linux-gcc + pluginval VST3 10, linux-clang -Werror, python incl. `compute_trims --check`, macos-arm64 + auval + pluginval AU/VST3 10). The final commit after it only edits this report. History: green on 195f14c, d99b4de, fc0f53b, aacd891 (all jobs incl. macOS auval +
 pluginval AU/VST3 10). Red twice, both macOS-only test timing, both root-caused and fixed: 5aaeb42 (Task A
 throttle test waited on a wall-clock timer → driven explicitly in 195f14c) and 9c61f4b (the two-instance
 isolation test rendered before the instance's own async level trim landed → `settle()` waits for level work,
