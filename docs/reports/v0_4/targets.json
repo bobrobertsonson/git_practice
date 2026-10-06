@@ -1,0 +1,90 @@
+{
+  "schema": "sawblade.pedal_targets",
+  "version": 1,
+  "note": "Candidate TONE3000 captures per modeled pedal (v0.4a, docs/specs/v0_4a-pedal_accuracy.md). Only tone/model ids and knob-label rules live here: never capture files; licence and creator are read from the API into the fits JSON. An empty \"models\" list means every model of that tone that is in the pool manifest and cached (restrict with `pedal-fit --model`). \"assumed\" maps an exact model name to pinned knobs when the name carries no full label; pins are reported as `assumed` and do not count for the v0.4 target check. Ids marked to_resolve are filled at run time with `sawblade-t3k search`, then added here.",
+  "pedals": {
+    "hm": {
+      "family": "Boss HM-2 and clones (pedal.hm, default modelVersion 3)",
+      "param_map": {"Lv": "level", "L": "low", "H": "high", "D": "distortion"},
+      "label_regex": "Lv-(\\d+)\\s+L-(\\d+)\\s+H-(\\d+)\\s+D-(\\d+)",
+      "label_groups": ["level", "low", "high", "distortion"],
+      "tones": [
+        {"tone_id": 58569, "unit": "Boss HM-2 1985 MIJ (labelled Lv/L/H/D)", "group": "stock", "models": [497155, 496943, 496942, 496941, 496940, 496939, 496938, 496937]},
+        {"tone_id": 74487, "unit": "Boss HM-2W", "group": "hm2w", "models": [652448, 652449, 652450, 652451]},
+        {"tone_id": 78122, "unit": "Boss HM-2W (CHAINSAW)", "group": "hm2w", "models": [680197, 680198]},
+        {"tone_id": 88604, "unit": "Boss Waza HM-2", "group": "hm2w", "models": [754123, 747049]},
+        {"tone_id": 6778, "unit": "HM-2 family (candidate from docs; identity to confirm by search)", "group": "candidate", "models": []}
+      ],
+      "to_resolve": [
+        {"what": "peterny HM-2 MiJ v2.0 (cc-by-nc)", "search": ["peterny HM-2", "HM-2 MiJ v2.0"]}
+      ],
+      "assumed": {
+        "boss hm-2w - maxed out s mode": {"low": 10, "high": 10, "distortion": 10},
+        "boss hm-2w - maxed out c": {"low": 10, "high": 10, "distortion": 10},
+        "boss hm-2w - 2 o'clock distortion s": {"low": 10, "high": 10, "distortion": 7},
+        "boss hm-2w - 2 o'clock distortion c": {"low": 10, "high": 10, "distortion": 7},
+        "Boss HM-2w CHAINSAW Custom": {"low": 10, "high": 10, "distortion": 10},
+        "Boss HM-2w CHAINSAW Standard": {"low": 10, "high": 10, "distortion": 10},
+        "Boss_Waza_HM-2_Custom": {"low": 10, "high": 10, "distortion": 10},
+        "Boss_Waza_HM-2_Standard": {"low": 10, "high": 10, "distortion": 10}
+      },
+      "assumed_rule": "Rotary pots run 7 o'clock (0) to 5 o'clock (10); 12 o'clock = 5, +1 per hour clockwise; 'maxed' = 10."
+    },
+    "hmx": {
+      "family": "Modded chainsaw distortion (pedal.hmx, modelVersion 1)",
+      "param_map": {"Lv": "level", "L": "low", "LM": "lowMid", "HM": "highMid", "H": "high", "D": "distortion", "P": "presence"},
+      "label_regex": null,
+      "tones": [
+        {"tone_id": 72990, "unit": "Throne Torcher (modded HM-2)", "group": "mod", "models": [642541, 615089]}
+      ],
+      "to_resolve": [
+        {"what": "other modded chainsaw / 7-band HM-2 mods", "search": ["Torcher", "modded HM-2", "HM-2 mod"]}
+      ],
+      "assumed": {
+        "Throne Torcher Maxed V2": {"low": 10, "lowMid": 10, "highMid": 10, "high": 10, "distortion": 10, "presence": 10},
+        "Throne Torcher Maxed 0 Gain": {"low": 10, "lowMid": 10, "highMid": 10, "high": 10, "distortion": 0, "presence": 10}
+      },
+      "assumed_rule": "'Maxed' = every knob 10 (the Torcher's extra bands and presence are assumed maxed too); knobs the name does not carry are not labelled."
+    },
+    "eye": {
+      "family": "One-knob chainsaw (pedal.eye, modelVersion 1)",
+      "param_map": {"Gain": "gain", "Vol": "level"},
+      "label_regex": null,
+      "tones": [
+        {"tone_id": 60618, "unit": "TC Eyemaster", "group": "eyemaster", "models": [422214]},
+        {"tone_id": 62523, "unit": "TC Eyemaster", "group": "eyemaster", "models": [385385]}
+      ],
+      "assumed": {
+        "TC Electronic Eyemaster": {"gain": 10},
+        "EyemasterAHe_Gain12oclk_Vol4oclk": {"gain": 5}
+      },
+      "assumed_rule": "Eyemaster full distortion = gain 10; 'Gain12oclk' = gain 5. Level is solved in closed form, so 'Vol' is not pinned."
+    },
+    "ts": {
+      "family": "Tube Screamer family (pedal.ts, modelVersion 1)",
+      "param_map": {"Drive": "drive", "Tone": "tone", "Level": "level"},
+      "label_regex": null,
+      "tones": [
+        {"tone_id": 30104, "unit": "TS808 (JRI)", "group": "ts808", "models": []},
+        {"tone_id": 92212, "unit": "TS-style overdrive (candidate)", "group": "ts", "models": []},
+        {"tone_id": 70280, "unit": "boost pack: TS-style models only (restrict with --model)", "group": "ts-pack", "models": []}
+      ],
+      "to_resolve": [
+        {"what": "labelled knob settings of the TS captures (read the model names after the pull)", "search": ["TS808", "tube screamer"]}
+      ],
+      "assumed": {},
+      "assumed_rule": "No pins are assumed until the model names are read; add \"assumed\" entries (drive/tone) or a label_regex, then re-run."
+    },
+    "muff": {
+      "family": "Big-fuzz family (pedal.muff, modelVersion 1)",
+      "param_map": {"Vol": "volume", "Sus": "sustain", "Tone": "tone"},
+      "label_regex": null,
+      "tones": [],
+      "to_resolve": [
+        {"what": "big-fuzz tone ids: add them to \"tones\" after the search", "search": ["big muff", "russian big muff", "ram's head", "muff fuzz"]}
+      ],
+      "assumed": {},
+      "assumed_rule": "Resolved by search at run time; pin knobs only from labels in the model names."
+    }
+  }
+}
