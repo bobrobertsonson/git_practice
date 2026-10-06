@@ -159,10 +159,26 @@ it; the capture then gets that entry's sha256 and the tone's title, creator (dis
 the rig non-commercial as any other capture does. A model file without an entry is not cached (it goes through `fetch`). With no model id the fill
 takes the smallest model id that has an entry and a file; `fetch` without `--model` takes the tone's first candidate, which may be another model.
 
-**Undo.** `RigController::undo()` restores the preset as it was before BLEND. There is ONE entry, {pre-BLEND preset, the preset the fill and its
-asynchronous amp swap left}; the swap updates it, so it is one step. `undo()` succeeds only while the rig still is exactly that: any other edit (path A,
-a parameter, path B's blocks / level / controls, BLEND off) or a user preset load drops the entry, and `undo()` then returns false and keeps the edit.
-A second fill replaces the entry. The suggestion is applied only if path B (all of it) and the blend are exactly what the fill left.
+**Undo / redo (v0.3 Task D).** The history is owned by the processor (`EditHistory`, `PluginProcessorHistory.cpp`), so it survives closing and reopening
+the editor. It is message-thread data, never saved in the plugin state, and left alone by a host state restore. 64 whole-preset steps (the 65th drops
+the oldest); a new edit after an undo clears redo. Cmd / Ctrl + Z undoes, Cmd / Ctrl + Shift + Z redoes, with the same overlay and text-field rules
+as before (the rig editor is not an overlay for this purpose). A step stores the preset as it was before one edit and which host parameters the edit
+changed: undo / redo put back only those, so a value the host automated meanwhile is not rewound.
+- Steps: add / remove / reorder / bypass a block, a capture swap with its make-up, block parameters, EQ edits, cab / mic, gate / comp / alignment,
+  topology and the BLEND fill (one step, with the knob back on full SAW), a user preset load (browser, file chooser, resolve) and an applied match
+  (audition APPLY: one step back to the preset before the audition; the audition's own loads and its A / B toggles are not steps).
+- One step per gesture: a mouse drag (mouse down to mouse up) however many rebuilds it makes; a wheel notch or a typed value is its own one-event
+  gesture (one debounce flush = one step). Host parameters bound to the UI (the amp heads' controls, the main page's BLEND / INPUT / OUTPUT / EQ knobs
+  and every other APVTS knob) are undoable per USER gesture: they record on the parameter's change-gesture begin / end, which host automation never
+  sends. (A host that wraps its own automation writes in change gestures is indistinguishable from a user and is recorded.) An A / B compare toggle
+  is not a step.
+- Not steps: host automation, a state restore, and every asynchronous completion: the BLEND fill's amp arriving, a capture swap's make-up (it is part
+  of the swap's own load), the level-trim write-back, the gain-ladder write-back. Those that belong to the rig (the fill's amp, a fetched ladder) are
+  also written into the stored snapshots (`patchHistory`), so an undo never takes them away.
+- In-flight BLEND fill: an undo / redo that leaves path B without blocks cancels it; a redo into a blend path B that never got its amp starts the fill
+  again. A user preset load cancels it as before.
+- Level trim: an undo / redo is a load that keeps the running trim until the restored rig's own is known (the stored stamp if fresh, else a cached or
+  measured one): it never dips to 0. A preset-load step starts from the running trim as its provisional value.
 
 **Tools and the network.** The ladder fetch, the missing-rung fetch and the BLEND tool runs are started by the plugin on its own, so they honour
 `SAWBLADE_NO_NETWORK=1` (set for every test and for pluginval) and need a configured, existing `sawblade-t3k`. `T3kTool` has no timeout: a tool
@@ -197,7 +213,7 @@ PRESENCE; the art's own captions say LOW / HIGH, so code-drawn captions with the
 | path B has blocks, BLEND off | `BODY PATH OFF — turn up BLEND` (knobs disabled) |
 
 Capture blocks in the rig editor's slot strips show the tag `CAPTURE · FIXED TONE` (a capture is a fixed tone; its tone is shaped by the amp head's
-controls). Cmd / Ctrl + Z on the editor calls `RigController::undo()` when there is a BLEND fill to undo.
+controls). Cmd / Ctrl + Z / + Shift undo / redo the rig edits (see Undo / redo above).
 
 ### Level matching (v0.3 Task B)
 
