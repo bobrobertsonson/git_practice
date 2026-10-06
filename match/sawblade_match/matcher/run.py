@@ -322,7 +322,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             ref.offset_samples = offset_search["offset_samples"]
             offset_search["searchSeconds"] = time.time() - t_place
             log(f"whole-song placement: DI starts at {offset_search['offset_ms'] / 1000:.3f} s "
-                f"(confidence {offset_search['confidence']:.1f}, {offset_search['searchSeconds']:.2f} s)")
+                f"(confidence {offset_search['confidence']:.1f}, accepted by {offset_search['acceptedBy']}, "
+                f"{offset_search['searchSeconds']:.2f} s)")
     window = None if cfg.window_s is None else (int(cfg.window_s[0] * RATE), int(cfg.window_s[1] * RATE))
     ex = make_excerpt(di48, cfg.excerpt_s, window=window, ref=ref)
     lap("excerpt")

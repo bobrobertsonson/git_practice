@@ -60,7 +60,8 @@ def test_found_within_2_5_ms(song, start_s):
     r = _search(di, ref)
     assert r["mode"] == "whole_song", r
     assert abs(r["offset_ms"] - start_s * 1000) <= 2.5, r       # coarse + fine stage
-    assert r["confidence"] >= offset.MIN_CONFIDENCE, r
+    assert r["acceptedBy"] in ("relative", "strong"), r         # accepted by either route (47.985 s: strong, CI run 108)
+    assert r["confidence"] > 0 and r["r1"] > r["r2"], r
     assert r["coarse_ms"] == pytest.approx(start_s * 1000, abs=10.0)
 
 
@@ -92,6 +93,39 @@ def test_acceptance_rule_arithmetic():
     assert not acc(0.92, 0.91, 0.1)                          # looped riff: r1 ~ r2
     assert not acc(0.0, 0.0, 0.0)                            # silent DI / too few rival lags
     assert not acc(0.95, 0.50, 3.9, min_confidence=6.0)      # the strong floor scales with the caller's min_confidence
+
+
+def test_acceptance_route_names():
+    route = offset.placement_route
+    assert route(0.5, 0.1, 4.2) == "relative"
+    assert route(0.9491, 0.4923, 3.8847) == "strong"
+    assert route(0.49, 0.47, 0.2) is None and route(0.92, 0.91, 0.1) is None
+
+
+def _assert_placement_fails(di, ref, what):
+    """The search itself must reject (ok False, acceptedBy None), and resolve_offset must raise; details in the message."""
+    r = whole_song_search(di, ref, FS)
+    assert not r["ok"] and r["acceptedBy"] is None, f"{what} was accepted: {r}"
+    with pytest.raises(PlacementError) as e:
+        resolve_offset(di, ref, FS, offset_given=False)
+    assert e.value.details["r1"] == r["r1"], f"{what}: details {e.value.details}"
+
+
+@pytest.mark.parametrize("secs", [3.0, 4.0, 5.0])
+def test_short_unrelated_di_fails_against_the_song(song, secs):
+    """A 3-5 s DI of a different performance: sigma is large and chance peaks are high, still neither route may accept."""
+    _, ref = song
+    _assert_placement_fails(synth_di(99, secs), ref, f"unrelated {secs:.0f} s DI")
+
+
+def test_looped_riff_with_small_variation_fails():
+    """The riff is played twice, the second time with half a second changed: r2 stays close to r1, so it is ambiguous."""
+    loop = synth_di(5, 10.0)
+    var = loop.copy()
+    a = int(4.0 * FS)
+    var[a:a + FS // 2] = synth_di(77, 0.5)
+    ref = distort(np.concatenate([loop, var]), 6)
+    _assert_placement_fails(loop[:8 * FS], ref, "looped riff with a small variation")
 
 
 def test_odd_hop_uses_a_single_phase():
@@ -128,7 +162,7 @@ def test_offset_given_skips_search(song, monkeypatch):
     monkeypatch.setattr(offset, "whole_song_search", boom)
     r = resolve_offset(di_full[:10 * FS], ref, FS, offset_given=True, offset_samples=int(1.5 * FS))
     assert r["mode"] == "given" and r["offset_ms"] == pytest.approx(1500.0) and r["offset_samples"] == int(1.5 * FS)
-    assert r["confidence"] is None
+    assert r["confidence"] is None and r["acceptedBy"] is None
 
 
 def test_di_not_shorter_uses_window(song, monkeypatch):
@@ -140,6 +174,7 @@ def test_di_not_shorter_uses_window(song, monkeypatch):
     for di in (di_full, np.concatenate([di_full, di_full[:FS]]), di_full[:len(di_full) - 2 * FS]):   # equal, longer, 2 s short
         r = resolve_offset(di, ref, FS, offset_given=False)
         assert r["mode"] == "window" and r["offset_samples"] == 0 and r["confidence"] is None
+        assert r["acceptedBy"] is None
 
 
 def test_deterministic(song):

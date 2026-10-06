@@ -82,11 +82,21 @@ EXCLUSION_S = 1.0             # a rival peak must be at least this far from the 
 MIN_CONFIDENCE = 4.0          # see ``whole_song_search``
 # Second acceptance route for a short, strongly matching DI (see ``placement_accepted``): near-perfect best correlation,
 # a rival far below it, and still a clear multiple of the noise spread. All three must hold.
+# STRONG_*: uncalibrated; derived from one synthetic case (CI run 105); recalibrate on real stems.
 STRONG_R1 = 0.85              # best coarse NCC at least this (chance peaks sit near 4 sigma, ~0.5 for a 12 s DI)
 STRONG_MARGIN = 0.40          # r1 - r2 at least this, absolute (NCC units)
 STRONG_CONF_FRACTION = 0.75   # and (r1 - r2) / sigma >= this fraction of min_confidence (3.0 at the default)
 WINDOW_SLACK_S = 3.0          # a DI at most this much shorter than the reference is covered by the +-3 s window search
 MIN_RIVAL_LAGS = 20           # fewest rival lags (any hop) for which a confidence is meaningful
+
+
+def placement_route(r1: float, r2: float, conf: float, min_confidence: float = MIN_CONFIDENCE) -> str | None:
+    """Which acceptance route a placement passes: "relative" (conf >= min_confidence), "strong" (absolute test), or None."""
+    if conf >= min_confidence:
+        return "relative"
+    if r1 >= STRONG_R1 and (r1 - r2) >= STRONG_MARGIN and conf >= STRONG_CONF_FRACTION * min_confidence:
+        return "strong"
+    return None
 
 
 def placement_accepted(r1: float, r2: float, conf: float, min_confidence: float = MIN_CONFIDENCE) -> bool:
@@ -99,9 +109,7 @@ def placement_accepted(r1: float, r2: float, conf: float, min_confidence: float 
     exponential with mean sigma / sqrt(2 ln N) ~ 0.25 sigma, so P(gap >= 3 sigma) ~ exp(-3 * 3.9) ~ 1e-5, and in addition
     the best peak must be >= STRONG_R1 and the gap >= STRONG_MARGIN in absolute terms, which unrelated signals (r1 ~ 0.5)
     and loops (r1 - r2 ~ 0) are nowhere near."""
-    if conf >= min_confidence:
-        return True
-    return bool(r1 >= STRONG_R1 and (r1 - r2) >= STRONG_MARGIN and conf >= STRONG_CONF_FRACTION * min_confidence)
+    return placement_route(r1, r2, conf, min_confidence) is not None
 
 
 class NonFiniteCorrelationError(RuntimeError):
@@ -203,7 +211,8 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
     misses it is still accepted when it is strong in absolute terms (``placement_accepted``): r1 >= 0.85, r1 - r2 >= 0.40
     and (r1 - r2) / sigma >= 0.75 * min_confidence, which a short but flawless match needs because sigma grows as the DI
     shortens while NCC is capped at 1.
-    Returns {offset (samples), offsetMs, coarseMs, confidence, r1, r2, sigma, ok}.
+    Returns {offset (samples), offsetMs, coarseMs, confidence, r1, r2, sigma, ok, acceptedBy}
+    (acceptedBy: "relative" | "strong" | None when not ok).
     The coarse lag axis has step ``hop / 2`` (2.5 ms) with two reference phases, or ``hop`` when the hop is odd."""
     if len(di) >= len(ref):
         raise ValueError("whole-song search needs a DI shorter than the reference")
@@ -217,7 +226,7 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
     a1 = _log_env(ref[hop // 2:], hop, det, COARSE_SMOOTH) if two_phase else a0   # frames shifted by half a hop
     if len(b) < 20 or len(a1) <= len(b):
         return {"offset": 0, "offsetMs": 0.0, "coarseMs": 0.0, "confidence": 0.0, "r1": 0.0, "r2": 0.0, "sigma": 0.0,
-                "ok": False}
+                "ok": False, "acceptedBy": None}
     if two_phase:
         # Two phases interleaved into one lag axis with step hop/2: lag 2k = DI at ref sample k*hop, lag 2k+1 = k*hop+hop/2.
         # A DI starting between frames then matches one phase to within hop/4 (1.25 ms at 5 ms), instead of hop/2.
@@ -249,8 +258,9 @@ def whole_song_search(di: np.ndarray, ref: np.ndarray, fs: int, min_confidence: 
     if edge:                                   # peak on the window edge: re-centre on it once
         off, _ = _fine_place(di, ref, off, w, fh)
     off = min(int(off), len(ref) - len(di))          # never place the DI past the end of the song
+    route = placement_route(r1, r2, conf, min_confidence)
     return {"offset": int(off), "offsetMs": 1000.0 * off / fs, "coarseMs": 1000.0 * coarse / fs,
-            "confidence": float(conf), "r1": r1, "r2": r2, "sigma": sigma, "ok": placement_accepted(r1, r2, conf, min_confidence)}
+            "confidence": float(conf), "r1": r1, "r2": r2, "sigma": sigma, "ok": route is not None, "acceptedBy": route}
 
 
 def resolve_offset(di: np.ndarray, ref: np.ndarray, fs: int, offset_given: bool, offset_samples: int = 0,
@@ -264,19 +274,20 @@ def resolve_offset(di: np.ndarray, ref: np.ndarray, fs: int, offset_given: bool,
     The returned dict is the result JSON's ``offset_search``. Keys per mode:
       given       mode, offset_ms, offset_samples (the hint), confidence (null)
       window      mode, offset_ms, offset_samples (0 here), confidence (null)
-      whole_song  mode, offset_ms, offset_samples, confidence, coarse_ms, r1, r2, minConfidence, searchSeconds
+      whole_song  mode, offset_ms, offset_samples, confidence, coarse_ms, r1, r2, minConfidence, acceptedBy, searchSeconds
+      (acceptedBy: "relative" | "strong"; None for given / window)
     Here offset_ms / offset_samples are the search's own answer (1 ms resolution); ``run_match`` overwrites them with the
     value after the starter-render refinement for window and whole_song (``coarse_ms`` keeps the search's answer)."""
     if offset_given:
         return {"mode": "given", "offset_ms": 1000.0 * offset_samples / fs, "confidence": None,
-                "offset_samples": int(offset_samples)}
+                "offset_samples": int(offset_samples), "acceptedBy": None}
     if len(di) >= len(ref) - int(WINDOW_SLACK_S * fs):
         return {"mode": "window", "offset_ms": 1000.0 * offset_samples / fs, "confidence": None,
-                "offset_samples": int(offset_samples)}
+                "offset_samples": int(offset_samples), "acceptedBy": None}
     r = whole_song_search(di, ref, fs, min_confidence)
     if not r["ok"]:
         raise PlacementError(PLACE_FAIL_MESSAGE, {"r1": r["r1"], "r2": r["r2"], "sigma": r["sigma"],
                                                   "confidence": r["confidence"], "minConfidence": min_confidence})
     return {"mode": "whole_song", "offset_ms": r["offsetMs"], "confidence": r["confidence"],
             "offset_samples": r["offset"], "coarse_ms": r["coarseMs"], "r1": r["r1"], "r2": r["r2"],
-            "minConfidence": min_confidence}
+            "minConfidence": min_confidence, "acceptedBy": r["acceptedBy"]}
