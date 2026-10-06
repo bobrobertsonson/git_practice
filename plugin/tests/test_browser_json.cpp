@@ -172,6 +172,42 @@ TEST_CASE("browser slots: block mapping", "[browser][slots]") {
   CHECK(slotTargets(two, Slot::SawAmp).at(0).blockIndex == 1);
 }
 
+TEST_CASE("browser slots: a pinned pedal tile targets exactly that block (v0.4 Task D)", "[browser][slots]") {
+  const Preset lin = loadPresetFile(kPresets / "two_linear.json");
+  Preset two = lin;
+  two.a.blocks.push_back(two.a.blocks.front());
+  two.a.blocks.back().id = "a2";
+  std::string why;
+  // no pin: the slot's usual block (the first of two nam blocks is the pedal)
+  CHECK(slotTargets(two, Slot::SawPedal, &why).at(0).blockIndex == 0);
+  // pinned: that very block, even if the heuristic would call it the amp
+  auto t = slotTargets(two, Slot::SawPedal, &why, "a2");
+  REQUIRE(t.size() == 1);
+  CHECK(t[0].kind == SlotTarget::Kind::NamBlock);
+  CHECK(t[0].path == 'a');
+  CHECK(t[0].blockIndex == 1);
+  t = slotTargets(two, Slot::SawPedal, &why, "a1");
+  REQUIRE(t.size() == 1);
+  CHECK(t[0].blockIndex == 0);
+  // the block is looked up in the slot's own path: a path A id pinned on the BODY slot is no target
+  CHECK(slotTargets(two, Slot::BodyPedal, &why, "a1").empty());
+  CHECK_FALSE(why.empty());
+  // gone
+  CHECK(slotTargets(two, Slot::SawPedal, &why, "zz").empty());
+  CHECK(why.find("no longer") != std::string::npos);
+  // a modeled block is not a capture
+  Preset modeled = two;
+  Block eqb;
+  eqb.id = "a1";
+  eqb.type = "eq";
+  eqb.params = std::make_shared<EqBlockParams>();
+  modeled.a.blocks[0] = eqb;
+  CHECK(slotTargets(modeled, Slot::SawPedal, &why, "a1").empty());
+  CHECK(why.find("modeled circuit") != std::string::npos);
+  // the cab ignores a pin
+  CHECK(slotTargets(two, Slot::Cab, nullptr, "a1").size() == 1);
+}
+
 TEST_CASE("browser slots: withCapture substitutes only the capture", "[browser][slots]") {
   const Preset p = loadPresetFile(kPresets / "golden_shared.json");
   t3k::FetchResult f;

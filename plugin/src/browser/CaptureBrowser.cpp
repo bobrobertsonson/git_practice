@@ -570,8 +570,8 @@ struct CaptureBrowser::Impl {
   juce::String modelsSig;
 };
 
-CaptureBrowser::CaptureBrowser(SawbladeProcessor& p, BrowserSettings& settings, Slot slot)
-    : ctl_(std::make_unique<BrowserController>(p, settings, slot)), impl_(std::make_unique<Impl>(*this, *ctl_)) {
+CaptureBrowser::CaptureBrowser(SawbladeProcessor& p, BrowserSettings& settings, Slot slot, const std::string& pinnedBlockId)
+    : ctl_(std::make_unique<BrowserController>(p, settings, slot, pinnedBlockId)), impl_(std::make_unique<Impl>(*this, *ctl_)) {
   setSize(kWidth, kHeight);
   setOpaque(true);
   setTitle("Capture browser");

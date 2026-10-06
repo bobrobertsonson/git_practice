@@ -24,7 +24,10 @@ struct SlotTarget {
 
 // The targets a slot has in `preset`: one for pedals / amps / the shared cab, two (irA, irB) for per-path
 // cabs, none if the preset has no matching block (then `why` says so).
-std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string* why = nullptr);
+// v0.4 Task D: `pinnedBlockId` (pedal and amp slots only; "" = none) names the block the user picked on the pedalboard: the target is
+// exactly that block (in the slot's path) when it is a `nam` block, and there is no target (with a `why`) when it is a modeled
+// circuit or no longer exists. Without it the slot's usual heuristic picks the block.
+std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string* why = nullptr, const std::string& pinnedBlockId = {});
 
 // Copy of `preset` with the capture at `target` replaced by the fetched file (file = resolvedPath = path,
 // sha256, source). Everything else, including the block's gains, is kept. Empty optional and `error` set on
