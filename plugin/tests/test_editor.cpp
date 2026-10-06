@@ -3052,6 +3052,28 @@ TEST_CASE("export panel: after training the report's exportNotes are shown verba
   }
 }
 
+TEST_CASE("export panel: a dropped comp stays in the notes after training even when the report (built from the comp-less preset) lacks it", "[editor][export][notes]") {
+  using nlohmann::json;
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(rig.exportButton("DROP COMP")->getToggleState());  // the default: the exported preset has the comp switched off
+  const json gateOnly = {{"version", 1}, {"mode", "nocab"},
+                         {"stages", json::array({json{{"stage", "gate"}, {"position", "before NAM"}, {"inModel", false}, {"settings", json::object()}, {"hardware", "FAKE GATE FROM THE REPORT."}}})},
+                         {"loaderOrder", "Loader order: gate -> NAM (report.nam)"}};
+  rig.tools.cfgExport({{"progressJson", true}, {"exportNotes", gateOnly}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  CHECK_FALSE(panel.notesFromReport());
+  CHECK(anyLabelContains(panel, "(computed by the plugin)"));
+  CHECK(panel.notesText().contains("Bus compressor LAST"));
+  CHECK(panel.notesText().contains("ratio 4:1, attack 2 ms, release 80 ms"));
+  CHECK_FALSE(panel.notesText().contains("FAKE GATE FROM THE REPORT."));
+}
+
 TEST_CASE("export panel: a missing exporter shows a message and LOCATE; a refusal shows its message", "[editor][export]") {
   ExportRig rig;
   rig.loadRig("rig", false);
