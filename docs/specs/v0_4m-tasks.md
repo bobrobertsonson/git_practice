@@ -168,3 +168,48 @@ The Task B boost variant and post-cab HP/LP are always in the search (quick and 
   studio detector must fire on it and must not fire on the plain hidden chain (no comp, no EQ).
 - Report each suspect's contribution on the synthetic case: the full run vs each `--ablate` item off (A-weighted error and
   each feel term).
+
+## Task B3: IR library (phase spec "Task B3")
+
+- `match/sawblade_match/matcher/irlib.py` (new). `--ir-dir DIR` (repeatable) plus `~/.config/sawblade/ir_dirs.json`
+  (`{"dirs": [...]}`; `sawblade-match --ir-dirs-add DIR` / `--ir-dirs-list` maintain it). Recursive `.wav` scan; index at
+  `~/.cache/sawblade/ir_index.json` keyed by (path, size, mtime) so an unchanged file is not re-hashed; dedupe by content
+  sha256 (first path wins, the others listed as aliases). Tags from folder/file names (case-insensitive token match:
+  cab/speaker e.g. V30, G12T75, Greenback, 1960, Mesa, OS/standard; mic e.g. SM57, MD421, R121, 414, SM58; position
+  e.g. cap, edge, cone, off-axis, distance in inches). Unreadable files or IRs longer than 2 s / shorter than 2 ms are
+  skipped and counted in the report, never fatal.
+- Preset reference: `{"file": <absolute path>, "sha256": ..., "source": {"provider": "local", "id": <sha256[:16]>,
+  "title": <file stem>, "license": "user-owned"}}`. Check that the core parser accepts `provider: "local"` (the cache
+  fallback is tone3000-only, so a moved file fails cleanly). If it rejects it, stop and tell the lead (that would be a
+  dsp-engineer hook). Never upload or commit local IRs. `best.preset.json` (portable) keeps the file stem + hash.
+- `sawblade-t3k pull --gear ir`: `--max-models-per-tone` defaults to all for IR tones (pedal/amp keep 3); `--ir-search
+  QUERY` (repeatable) adds IR tones from search results, under the same quality filter and licence rules. `t3k/` edits only
+  in the pull/search CLI path.
+- Analytic screen (`irscreen.py`): per candidate, the pre-cab output on the excerpt is rendered once (cab disabled, post EQ
+  neutral). Each IR's magnitude response is precomputed once per run at the Welch resolution (rfft of the IR, normalised
+  as the core does: L2 = 1, truncated at 2 s, resampled to 48 kHz) and cached in the index (`.npy` sidecar keyed by sha).
+  Predicted band PSD = Welch PSD(pre-cab) x |H|^2 band-integrated, giving the LTAS error (A-weighted) plus the fizz
+  sub-terms that are spectral (hfRatio; hfFlat from the predicted per-frame spectra using the frame PSDs x |H|^2).
+  The top 24 IRs per candidate get full renders and the full loss; the top 6 feed the B2.1 pair search. Validation test:
+  the analytic predicted LTAS error is within 0.3 dB of the full-render error for the fixture IRs, and the rank
+  correlation is >= 0.9 over a synthetic 200-IR set (random 2nd-order-filtered fixture IRs).
+- Speed: 2000 IRs <= 60 s on 4 cores. Unit-test with 2000 synthetic short IRs (in memory, no files) and assert < 60 s on
+  the CI runner. The index build (hashing) is measured separately and reported.
+- `result.json -> irPool: {local, tone3000, total, skipped, screenSeconds}` and the winning IR's source (local path or
+  tone id).
+
+## Task E: NAM export notes (phase spec "Task E")
+
+- `match/sawblade_match/export/notes.py` (new) builds `exportNotes` from the resolved preset + the export plan:
+  `{"stages": [{"stage": "gate"|"preampEq"|"cab"|"postEq"|"busComp"|"output", "position": "before NAM"|"after NAM",
+  "inModel": false, "settings": {...}, "hardware": "<one-line instruction>"}], "loaderOrder": "<one line>"}` in signal
+  order. Only stages that are enabled and not in the trained model are listed (no-cab: cab and everything after it;
+  with-cab: whatever the plan dropped or bypassed). Settings use hardware units: comp threshold dB (re the chain's
+  pre-headroom level, also given re 0 dBFS out), ratio, attack/release ms, knee dB, make-up dB; gate threshold dB, attack/
+  hold/release ms, range dB, "keyed on the DI = put it first"; cab IR file/title/source/mic tags; EQ bands (type, Hz, dB, Q;
+  HP/LP slope in dB/oct); output gain dB.
+- Writes `<name>.export_notes.txt` (human, the same content) next to the `.nam` and adds `exportNotes` to the export
+  JSON/report. Documented in the export section of `match/README.md`. `export/` only, no plugin work.
+- Tests: a preset with gate + fast bus comp + post EQ exported no-cab lists gate (before), cab, post EQ, bus comp (after),
+  in that order, with the exact numbers; a with-cab export of a preset with nothing dropped lists only the gate; a preset
+  with nothing outside the model writes "nothing to add".
