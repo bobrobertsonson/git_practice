@@ -237,3 +237,25 @@ The Task B boost variant and post-cab HP/LP are always in the search (quick and 
 - Tests: a preset with gate + fast bus comp + post EQ exported no-cab lists gate (before), cab, post EQ, bus comp (after),
   in that order, with the exact numbers; a with-cab export of a preset with nothing dropped lists only the gate; a preset
   with nothing outside the model writes "nothing to add".
+
+## Task B4: pre-EQ before the drive (phase spec "Task B4")
+
+- Per path (path A for single topologies; both paths for blends, searched independently on each path's own winner),
+  in `space.py` as discrete pre-EQ settings written to the path's `preEq` (existing schema bands: `highPass` 12 dB/oct,
+  `peak`, `lowShelf`). Defaults = off, so every existing preset and test is unchanged when the grid picks "off".
+- Pruned grid (coordinate descent, <= 12 renders per top candidate on the screen excerpt, full loss incl. feel):
+  1. HPF {off, 80, 110, 150 Hz} with the others off (4); 2. at the best HPF, mid peak {+3, +6 dB} at {700, 900 Hz}, Q 0.8
+  (4); 3. at the best so far, low shelf -3 dB at 200 Hz (1); 4. up to 3 joint neighbours of the best (one step in two
+  dimensions). Keep a setting only if it beats the previous best by >= 0.02. Full renders/stage 2 only for the winner.
+  Runs on the top 2 candidates per topology after stage 1's re-score (before stage 2, since it changes the NAM input).
+- Guitar-difference widening, from the DI's LTAS (active segments): `diTilt` = least-squares slope in dB/octave over the
+  1/3-octave bands 100 Hz-3 kHz; `diLowExcess` = mean level 80-200 Hz minus mean level 200-800 Hz (dB). If `diTilt` <
+  -4.5 dB/oct (dark), add a +9 dB mid option; if `diTilt` > -1.5 (bright), add HPF 180 Hz; if `diLowExcess` > +3 dB
+  (bassy), add a -6 dB shelf option. The thresholds are provisional and get checked against the fixture DI and the user's
+  Bloodbath DIs (the run prints both numbers). `result.json -> preEq: {diTilt, diLowExcess, widened: [...], grid: [...
+  each tried setting with its loss], chosen, gainVsOff}`.
+- `--ablate preeq` (pre-EQ stays off). Export notes (Task E): add an informational line "pre-EQ (before the amp): trained
+  into the model" listing the bands, with `inModel: true`, position "inside NAM" — not a stage to add on hardware.
+- Tests: the grid recovers a hidden HPF 110 Hz + mid +6 dB pre-EQ on a fixture chain (exact grid point); grid size <= 12
+  (plus widening options) and deterministic; `--ablate preeq` leaves `preEq` empty; widening fires on a synthetic dark DI
+  and not on the fixture DI; export notes list the pre-EQ as in-model.
