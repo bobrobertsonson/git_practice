@@ -352,8 +352,18 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
 * **Output** (`--out`, default `~/.cache/sawblade/match_runs/<timestamp>`, never in the repo): `best.preset.resolved.json`
   (absolute capture paths + TONE3000 `source` ids/modelIds), `best.preset.json` (portable names), `alt1..5`, `result.json` (loss
   breakdown, topology, captures with gear class and size category, offsets, before/after, plan, timings, profile),
-  `tonecheck/*`, `render_*.wav`, and with `--listen` `listen/*.wav|mp3` (L/R DIs panned, peak-normalised to -1 dBFS; gain in
-  result.json; without `--listen` no listening files are made, in either mode (intentional default change); the R render is still made with `--di-r`, since the clip guard uses max(L, R)).
+  `tonecheck/*`, `render_*.wav`, and with `--listen` the `listen/` folder (without `--listen` no listening files are made, in
+  either mode (intentional default change); the R render is still made with `--di-r`, since the clip guard uses max(L, R)).
+  `listen/` is **loudness-matched, never peak-normalised** (BS.1770-4 integrated LUFS, `matcher/loudness.py`; float WAV so nothing
+  clips): `ref.wav`, `render.wav` and (when the starter was rendered) `before.wav` are the same 30 s guitar-dominant section
+  (the DI's densest window, moved into the reference when needed; the whole overlap if shorter), 48 kHz, mono for a matched
+  pair, time-aligned with the final found offset (the starter's offset search when no final one exists), the render and the
+  before each scaled to the reference's integrated loudness over that section. With a reference that is not a matched pair there
+  is no alignment: `ref.wav` is the reference's own guitar-isolation section. The full-length stereo `cover_guitars_L-R.wav` /
+  `guitar_L_mono.wav` (+ `.mp3`, attenuated only for the MP3 if it would clip; `mp3GainDb`) carries the render's gain.
+  `result.json -> listening`: `section [s0, s1]`, `lufsRef`, `lufsRenderRaw`, `gainDb`, `lufsBefore`, `gainBeforeDb`, `offsetMs`,
+  `truePeakDb {ref, render, before}` (4x oversampled), `fullLengthGainDb`; the run log says how much louder/quieter the render
+  was than the reference before matching (a large number means the level match, not just the tone, is off).
   Exported/derived models from TONE3000 captures are for the user's own use only.
 
 Cost model: one 4-NAM render runs at ~0.6x real time per core. The default plan (703 pair renders of a 6.5 s excerpt, 3 + 2 + 1
