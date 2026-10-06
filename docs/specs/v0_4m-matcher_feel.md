@@ -37,6 +37,22 @@ Without a matched pair, the same features enter as soft targets from the referen
 - **Cab/IR breadth:** IR choice dominates fizz: sweep all cached IRs (and mic positions) for the top candidates,
   not only the screen winner's family.
 
+## Task B2 — all four suspects are in scope (user, 2026-10-06: "need to do all 4")
+
+After the user A/B'd both Bloodbath paths ("the real one just sounds better, more refined, more perfect"), the
+four suspects are each a deliverable, not a hypothesis:
+1. **Cab/IR:** besides the sweep above, allow a **two-IR blend** (two mics or cabs, level + phase-aligned) as pros
+   do, and report which IR/mic choice won and by how much it moved the feel terms.
+2. **Tightening and filtering:** the boost and HPF/LPF above, mandatory candidates, with their contribution
+   reported.
+3. **Feel scoring:** Task A.
+4. **Studio processing:** detect it in the reference (dynamics + spectrum shape no capture + IR chain reaches),
+   and when present, let the search use the chain's existing post EQ and bus comp (signal graph: post EQ → bus
+   comp) to reproduce it. NAM export rule (CLAUDE.md): long-release compression stays out of trainable exports;
+   a fast bus comp used here must be flagged in the preset so export can exclude or warn.
+Report each suspect's measured contribution (feel terms + A-weighted error with it on vs off) on the synthetic
+known answer and, after the user runs them, on Bloodbath HM2 and UBR.
+
 ## Task C — honest level for listening
 
 Every listening render the matcher writes is loudness-matched to the reference (BS.1770 integrated, same
