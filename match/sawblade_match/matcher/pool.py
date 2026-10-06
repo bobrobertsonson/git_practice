@@ -34,6 +34,11 @@ class Capture:
     kind: str = ""       # gear class (classify.py): drive | distortion | fuzz | preamp | pedal_unknown | amp_low | amp_high | cab
     arch: str = ""       # manifest architecture_version ("1"/"2")
     size_label: str = "" # manifest size, else lite/feather/xstandard/standard parsed from the model name
+    provider: str = "tone3000"     # "local": a file of the user's own IR library (irlib.py), licence "user-owned"
+    local_id: str = ""             # local only: sha256[:16] of the original file
+    orig_path: str = ""            # local only: the user's file (``path`` is the file the core loads: a converted copy for aif/flac)
+    orig_sha: str = ""
+    tags: tuple = ()               # local only: folder/file-name tags (cab, speaker, mic, position)
 
     @property
     def size_rank(self) -> tuple[int, int]:
@@ -46,10 +51,19 @@ class Capture:
 
     @property
     def key(self) -> str:
-        return f"{self.tone_id}/{self.model_id}"
+        return f"local/{self.local_id}" if self.provider == "local" else f"{self.tone_id}/{self.model_id}"
+
+    def source_info(self) -> dict:
+        """Where this capture came from, for result.json."""
+        if self.provider == "local":
+            return {"source": "local", "path": self.orig_path or self.path, "sha256": self.orig_sha, "license": self.license}
+        return {"source": "tone3000", "toneId": self.tone_id, "modelId": self.model_id}
 
     def block_model(self) -> dict:
-        """Preset ``Capture`` object with TONE3000 source ids + resolved file path."""
+        """Preset ``Capture`` object with TONE3000 source ids + resolved file path (local IRs: provider "local")."""
+        if self.provider == "local":
+            return {"file": self.path, "sha256": self.sha256,
+                    "source": {"provider": "local", "id": self.local_id, "title": self.title, "license": self.license}}
         return {"file": self.path, "sha256": self.sha256,
                 "source": {"provider": "tone3000", "id": str(self.tone_id), "modelId": str(self.model_id),
                            "url": self.url, "title": self.title, "creator": self.creator,
