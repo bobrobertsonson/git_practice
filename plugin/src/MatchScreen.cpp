@@ -731,7 +731,7 @@ struct MatchScreen::Impl : juce::ListBoxModel {
       if (as.active)
         status = juce::String(std::string("A: ") + as.originalName + "    B: " + as.candidateName + "    now playing " + (as.onCandidate ? "B (the result)" : "A (your preset)"));
       else if (!appliedName.empty())
-        status = "Applied " + juce::String(appliedName);
+        status = "Applied " + juce::String(appliedName) + "    Cmd/Ctrl+Z (after closing MATCH) undoes this.";
       else if (!rows.empty())
         status = "AUDITION loads the selected result into the rig; A / B compares it with the preset you had.";
       if (promoted)

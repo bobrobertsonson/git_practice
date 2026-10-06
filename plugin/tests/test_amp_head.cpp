@@ -422,3 +422,24 @@ TEST_CASE("amp head: screenshots of the rig page", "[ampd][editor]") {
   rig.snap("rig_amp_bodyoff_blocks.png");  // B has blocks, BLEND off
   CHECK(rig.ed->ampHead(1).readout() == rig::AmpHead::bodyOffWithBlocksText());
 }
+
+TEST_CASE("amp head: an applied match candidate's undo step dies with a user preset load, even of an identical preset", "[ampd][editor][undo]") {
+  Rig rig;
+  rig.load(rigJson(true, false, false));
+  const juce::KeyPress undoKey('z', juce::ModifierKeys::commandModifier, 0);
+  const fs::path cand = rig.dir.dir / "cand.json";
+  std::ofstream(cand) << rigJson(true, true, true).dump(2);
+  REQUIRE(rig.proc.audition().audition(cand));
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  REQUIRE(rig.proc.audition().apply());
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  // A user load of a preset equal to the applied one: the "rig is still exactly post" rule alone would allow the undo, only the
+  // load-serial check (PresetAudition::takeUndoStep) rejects it. (No refresh in between: the step is still unadopted.)
+  REQUIRE(rig.proc.loadPresetFile(cand));
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  CHECK(rig.proc.editBasePreset() == rig.proc.currentPreset());
+  CHECK_FALSE(rig.ed->rigController().canUndo());
+  const Preset now = rig.proc.currentPreset();
+  CHECK_FALSE(rig.ed->keyPressed(undoKey));
+  CHECK(rig.proc.currentPreset() == now);
+}

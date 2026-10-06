@@ -34,6 +34,7 @@ class PresetAudition {
 
   bool audition(const std::filesystem::path& resolvedPreset, std::string* error = nullptr);
   bool toggleAB();   // false when no audition is active
+  // apply() and takeUndoStep() are message-thread only: the undo step has no lock (nor does any other member of this class).
   bool apply();      // false when no audition is active; leaves the candidate loaded and ends the audition
   bool revert();     // back to A and ends the audition
   State state() const { return state_; }

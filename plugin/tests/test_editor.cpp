@@ -3413,6 +3413,7 @@ TEST_CASE("match screen: an applied candidate is ONE Cmd / Ctrl + Z step back to
   screen.refresh();
   const Preset applied = rig.proc.currentPreset();
   CHECK(applied != pre);
+  CHECK(anyLabelContains(screen, "Cmd/Ctrl+Z (after closing MATCH) undoes this"));
   CHECK(rc.canUndo());
   CHECK_FALSE(rig.ed->keyPressed(undoKey));  // the match screen is open: the chord does not undo underneath it ...
   CHECK(rc.canUndo());                        // ... and does not consume the step
