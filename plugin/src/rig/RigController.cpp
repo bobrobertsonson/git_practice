@@ -72,9 +72,13 @@ void RigController::flushPending() {
 }
 
 // A live edit outside a gesture (a typed value, a wheel notch) is a step of its own; inside a drag the gesture records it.
-void RigController::liveRecorded(const EditFn& f) {
-  if (proc_.historyInGesture()) return proc_.applyLiveEdit(f);
+void RigController::liveRecorded(const EditFn& f, const std::function<void()>& beforeEdit) {
+  if (proc_.historyInGesture()) {
+    if (beforeEdit) beforeEdit();
+    return proc_.applyLiveEdit(f);
+  }
   Preset before = proc_.currentPreset();
+  if (beforeEdit) beforeEdit();  // a host-parameter write that belongs to the same step (a post EQ band's gain)
   proc_.applyLiveEdit(f);
   const Preset after = proc_.currentPreset();
   if (after != before) proc_.historyRecord(std::move(before), after, SawbladeProcessor::HistoryKind::Edit);
@@ -94,11 +98,12 @@ void RigController::eqLive(EqTarget t, int band, double freq, double gainDb, dou
     const int slot = postSlotOfBand(band);
     if (slot >= 0) {
       // The gain belongs to the host-visible parameter; the preset keeps its own value untouched.
-      setParam(kPostEqFirst + slot, gainDb);
-      liveRecorded([=](Preset& p) {
-        if (band < 0 || band >= static_cast<int>(p.postEq.size())) return;
-        setBandLive(p, t, band, freq, p.postEq[static_cast<std::size_t>(band)].gainDb, q);
-      });
+      liveRecorded(
+          [=](Preset& p) {
+            if (band < 0 || band >= static_cast<int>(p.postEq.size())) return;
+            setBandLive(p, t, band, freq, p.postEq[static_cast<std::size_t>(band)].gainDb, q);
+          },
+          [=, this] { setParam(kPostEqFirst + slot, gainDb); });
       return;
     }
   }

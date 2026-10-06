@@ -134,7 +134,7 @@ class RigController {
   void applyTopology(Topology t, const std::optional<Preset>& preBlend);
   bool stepHistory(bool undo);
   void reconcileFill(const PathPreset& bBefore);
-  void liveRecorded(const EditFn& f);
+  void liveRecorded(const EditFn& f, const std::function<void()>& beforeEdit = {});
   void resetTransient();
   AlignResult measuredAlign() const;
 
