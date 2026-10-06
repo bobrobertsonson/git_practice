@@ -54,7 +54,7 @@ struct AutoTrimResult {
 };
 // target - measured, with the hash it is valid for. nullopt when the preset is silent.
 std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache = nullptr);
-// computeAutoTrim, written into p.autoTrimDb / p.autoTrimHash. False (p unchanged) when silent.
+// computeAutoTrim, written into p.autoTrim (db and hash). False (p unchanged) when silent.
 bool stampAutoTrim(Preset& p, CaptureCache* cache = nullptr);
 // stampAutoTrim only when the preset's trim is missing or stale. True when p now has a fresh trim.
 bool ensureAutoTrim(Preset& p, CaptureCache* cache = nullptr);

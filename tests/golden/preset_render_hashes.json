@@ -1,5 +1,5 @@
 {
-  "_comment": "Output of every committed preset that renders without TONE3000 captures, on tests/fixtures/di_riff.wav with default tonerender options (no level match), recorded with core as of cdb4b9a (v0.2 merge) before the v0.3 level-matching change. sha256 is of the float32 sample bytes; tests/test_auto_trim.cpp requires equality on the reference platform (Linux x86-64) and rms / peak within 0.01 dB elsewhere (libm differences). Regenerate only for a deliberate tone change: SAWBLADE_UPDATE_GOLDEN=1 sawblade_tests '[golden-presets]'.",
+  "_comment": "Output of every committed preset that renders without TONE3000 captures, on tests/fixtures/di_riff.wav with default tonerender options (no level match), recorded with core as of cdb4b9a (v0.2 merge) before the v0.3 level-matching change. sha256 is of the float32 sample bytes; tests/test_auto_trim.cpp requires equality on the reference platform (Linux x86-64, gcc) and rms / peak within 0.01 dB elsewhere (libm differences). Regenerate only for a deliberate tone change: SAWBLADE_UPDATE_GOLDEN=1 sawblade_tests '[golden-presets]'.",
   "input": "tests/fixtures/di_riff.wav",
   "baseline": "cdb4b9a",
   "presets": {

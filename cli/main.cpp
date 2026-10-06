@@ -38,7 +38,7 @@ void usage(std::ostream& os) {
         "  the input is resampled to it and, by default, the result back to the input rate.\n"
         "  A model that records no rate counts as 48 kHz. With no NAM blocks, auto renders at the input\n"
         "  rate. A number forces that rate in Hz.\n"
-        "--level-match: apply the preset's output.autoTrimDb (computed first when missing or stale), the trim that brings the\n"
+        "--level-match: apply the preset's output.autoTrim.db (computed first when missing or stale), the trim that brings the\n"
         "  preset to -18 LUFS on the built-in reference DI; off by default (levels as the preset says; NAM export and the matcher\n"
         "  never see the trim).\n"
         "       tonerender --trim-report PRESET.json... [--out REPORT.json]\n"
@@ -337,8 +337,8 @@ int trimReportMode(int argc, char** argv) {
           e["status"] = "error";
           e["reason"] = "the render of the reference DI is silent";
         } else {
-          p.autoTrimDb = r->trimDb;
-          p.autoTrimHash = r->hash;
+          p.autoTrim.db = r->trimDb;
+          p.autoTrim.hash = r->hash;
           const auto after = sawblade::measureReferenceLufs(p, &cache, /*applyTrim=*/true);
           e["status"] = "ok";
           e["lufsBefore"] = r->lufs;

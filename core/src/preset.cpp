@@ -446,8 +446,8 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
     const double trim = out->number("autoTrimDb", 0.0, -kMaxAutoTrimDb, kMaxAutoTrimDb);
     const std::string hash = out->string("autoTrimHash", "");
     if (!hash.empty()) {
-      p.autoTrimDb = trim;
-      p.autoTrimHash = hash;
+      p.autoTrim.db = trim;
+      p.autoTrim.hash = hash;
     }
     out->finish();
   }
@@ -476,9 +476,9 @@ nlohmann::json toJson(const Preset& p) {
           {"postEq", eqListJson(p.postEq)},
           {"busComp", toJson(p.busComp)},
           {"output", {{"gainDb", p.outputGainDb}}}};
-  if (!p.autoTrimHash.empty()) {
-    j["output"]["autoTrimDb"] = p.autoTrimDb;
-    j["output"]["autoTrimHash"] = p.autoTrimHash;
+  if (!p.autoTrim.hash.empty()) {
+    j["output"]["autoTrimDb"] = p.autoTrim.db;
+    j["output"]["autoTrimHash"] = p.autoTrim.hash;
   }
   if (!p.category.empty()) j["category"] = p.category;
   return j;

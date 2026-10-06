@@ -136,6 +136,15 @@ struct CabPreset {
   bool operator==(const CabPreset&) const = default;
 };
 
+// The measurement the level matching stores in a preset (output.autoTrimDb / autoTrimHash): metadata about the sound, not part of it.
+// Two presets that differ only in their stamp are equal (the plugin writes a freshly measured trim into the running preset without
+// it being an edit; undo and "did anything change" comparisons must not see it).
+struct AutoTrimStamp {
+  double db = 0.0;
+  std::string hash;  // "" = not measured
+  bool operator==(const AutoTrimStamp&) const noexcept { return true; }
+};
+
 struct Preset {
   std::string schema = "sawblade.preset";
   int version = kPresetVersion;
@@ -157,8 +166,7 @@ struct Preset {
   // (auto_trim.h), and the hash of the level-affecting parts it was measured for ("" = not measured). It is a plain gain after
   // outputGainDb, applied only when the player asks for it (RenderOptions::applyAutoTrim, the plugin's LEVEL MATCH); the chain,
   // the NAM export and the matcher never see it.
-  double autoTrimDb = 0.0;
-  std::string autoTrimHash;
+  AutoTrimStamp autoTrim;
   bool operator==(const Preset&) const = default;
 };
 

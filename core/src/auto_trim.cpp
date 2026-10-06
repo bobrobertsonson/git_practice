@@ -37,8 +37,8 @@ void normaliseCaptures(json& j) {
 }
 
 Preset withoutTrim(Preset p) {
-  p.autoTrimDb = 0.0;
-  p.autoTrimHash.clear();
+  p.autoTrim.db = 0.0;
+  p.autoTrim.hash.clear();
   return p;
 }
 
@@ -83,7 +83,7 @@ std::string autoTrimHash(const Preset& p) {
   return sha256Hex(text.data(), text.size());
 }
 
-bool autoTrimFresh(const Preset& p) { return !p.autoTrimHash.empty() && p.autoTrimHash == autoTrimHash(p); }
+bool autoTrimFresh(const Preset& p) { return !p.autoTrim.hash.empty() && p.autoTrim.hash == autoTrimHash(p); }
 
 std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache, bool applyTrim) {
   AudioFile in;
@@ -111,8 +111,8 @@ std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cac
 bool stampAutoTrim(Preset& p, CaptureCache* cache) {
   const auto r = computeAutoTrim(p, cache);
   if (!r) return false;
-  p.autoTrimDb = r->trimDb;
-  p.autoTrimHash = r->hash;
+  p.autoTrim.db = r->trimDb;
+  p.autoTrim.hash = r->hash;
   return true;
 }
 

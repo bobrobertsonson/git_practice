@@ -116,13 +116,13 @@ TEST_CASE("Reference DI: 10 s, 48 kHz, peak -10 dBFS, finite, and the same bytes
 }
 
 // ---- schema v3 ----------------------------------------------------------------------------------
-TEST_CASE("Preset v3: output.autoTrimDb / autoTrimHash and nam makeupDb round-trip; v1 and v2 files still read", "[autotrim][preset]") {
+TEST_CASE("Preset v3: output.autoTrim.db / autoTrimHash and nam makeupDb round-trip; v1 and v2 files still read", "[autotrim][preset]") {
   json j = twoPaths("linear_identity.nam", "linear_identity.nam");
   for (int ver : {1, 2}) {
     j["version"] = ver;
     const Preset p = parse(j);
-    CHECK(p.autoTrimHash.empty());
-    CHECK(p.autoTrimDb == 0.0);
+    CHECK(p.autoTrim.hash.empty());
+    CHECK(p.autoTrim.db == 0.0);
     CHECK(slotMakeupOf(p, 0, 0) == 0.0);
     const json out = toJson(p);
     CHECK(out["version"] == kPresetVersion);
@@ -133,8 +133,8 @@ TEST_CASE("Preset v3: output.autoTrimDb / autoTrimHash and nam makeupDb round-tr
   j["output"] = {{"gainDb", -2.0}, {"autoTrimDb", -7.5}, {"autoTrimHash", "abc"}};
   j["paths"]["a"]["blocks"][0]["makeupDb"] = 3.25;
   const Preset p = parse(j);
-  CHECK(p.autoTrimDb == -7.5);
-  CHECK(p.autoTrimHash == "abc");
+  CHECK(p.autoTrim.db == -7.5);
+  CHECK(p.autoTrim.hash == "abc");
   CHECK(slotMakeupOf(p, 0, 0) == 3.25);
   CHECK(slotMakeupOf(p, 1, 0) == 0.0);
   const json out = toJson(p);
@@ -145,8 +145,8 @@ TEST_CASE("Preset v3: output.autoTrimDb / autoTrimHash and nam makeupDb round-tr
   // A trim with no hash cannot be checked: read as not measured.
   j["output"] = {{"gainDb", 0.0}, {"autoTrimDb", -7.5}};
   const Preset q = parse(j);
-  CHECK(q.autoTrimHash.empty());
-  CHECK(q.autoTrimDb == 0.0);
+  CHECK(q.autoTrim.hash.empty());
+  CHECK(q.autoTrim.db == 0.0);
   j["version"] = kPresetVersion + 1;
   CHECK_THROWS_WITH(parse(j), ContainsSubstring("unsupported preset version"));
 }
@@ -163,8 +163,8 @@ TEST_CASE("Auto trim hash: covers what affects level, ignores names, notes, stor
     p.notes = "n";
     p.category = "c";
     p.version = 1;
-    p.autoTrimDb = -3.0;
-    p.autoTrimHash = "stale";
+    p.autoTrim.db = -3.0;
+    p.autoTrim.hash = "stale";
     CHECK(autoTrimHash(p) == h);
   }
   const auto differs = [&](const std::function<void(json&)>& edit) {
@@ -200,30 +200,30 @@ TEST_CASE("Auto trim: brings a preset to -18 LUFS on the reference DI, only when
   CHECK(*raw != Approx(kAutoTrimTargetLufs).margin(0.5));  // the test would be vacuous otherwise
   REQUIRE(ensureAutoTrim(p));
   CHECK(autoTrimFresh(p));
-  CHECK(p.autoTrimDb == Approx(kAutoTrimTargetLufs - *raw).margin(1e-9));
+  CHECK(p.autoTrim.db == Approx(kAutoTrimTargetLufs - *raw).margin(1e-9));
   CHECK(lufsWithTrim(p) == Approx(kAutoTrimTargetLufs).margin(0.01));
   // Not applied unless asked for: the default render ignores the stored trim, bit for bit.
   AudioFile in{kFs, 1, referenceDi()};
   const RenderResult plain = renderPreset(p, in);
   Preset noTrim = p;
-  noTrim.autoTrimDb = 0.0;
-  noTrim.autoTrimHash.clear();
+  noTrim.autoTrim.db = 0.0;
+  noTrim.autoTrim.hash.clear();
   const RenderResult plain2 = renderPreset(noTrim, in);
   SAWBLADE_REQUIRE_SAME_SAMPLES(plain2.samples, plain.samples);
   CHECK(plain.autoTrimDb == 0.0);
   RenderOptions o;
   o.applyAutoTrim = true;
   const RenderResult trimmed = renderPreset(p, in, o);
-  CHECK(trimmed.autoTrimDb == p.autoTrimDb);
-  CHECK(lufsOfSamples(trimmed.samples) - lufsOfSamples(plain.samples) == Approx(p.autoTrimDb).margin(0.01));
+  CHECK(trimmed.autoTrimDb == p.autoTrim.db);
+  CHECK(lufsOfSamples(trimmed.samples) - lufsOfSamples(plain.samples) == Approx(p.autoTrim.db).margin(0.01));
   // An edit that changes the level makes it stale; ensureAutoTrim measures again.
   p.blend = 0.9;
   CHECK_FALSE(autoTrimFresh(p));
-  const double old = p.autoTrimDb;
+  const double old = p.autoTrim.db;
   REQUIRE(ensureAutoTrim(p));
   CHECK(autoTrimFresh(p));
   CHECK(lufsWithTrim(p) == Approx(kAutoTrimTargetLufs).margin(0.01));
-  CHECK(p.autoTrimDb != old);
+  CHECK(p.autoTrim.db != old);
   // The OUTPUT knob is on top of the match: the preset as stored (its gain included) plays at the target.
   Preset g = parse(twoPaths("linear_05_025.nam", "linear_identity.nam"));
   g.outputGainDb = -4.0;
@@ -237,7 +237,7 @@ TEST_CASE("Auto trim: a silent preset has no trim", "[autotrim]") {
   Preset p = parse(j);
   CHECK_FALSE(computeAutoTrim(p).has_value());
   CHECK_FALSE(stampAutoTrim(p));
-  CHECK(p.autoTrimHash.empty());
+  CHECK(p.autoTrim.hash.empty());
 }
 
 // ---- the chain's trim gain ----------------------------------------------------------------------------
@@ -384,14 +384,14 @@ TEST_CASE("Committed presets: every one that renders here is within 0.5 LU of -1
   if (const auto missing = missingCaptures(p); !missing.empty())
     SKIP("skipped: capture not cached (" << missing.front() << "); its trim is computed in the plugin at load, or run "
          "scripts/compute_trims.py on a machine that has the captures");
-  if (!p.autoTrimHash.empty()) {
+  if (!p.autoTrim.hash.empty()) {
     // A stored trim must belong to the preset as committed: edit a preset, rerun scripts/compute_trims.py.
     CHECK(autoTrimFresh(p));
   }
   CaptureCache cache;
   REQUIRE(ensureAutoTrim(p, &cache));  // a preset without a stored trim is measured, as the plugin does at load
   const double lu = lufsWithTrim(p, &cache);
-  INFO("trim " << p.autoTrimDb << " dB, loudness with trim " << lu << " LUFS");
+  INFO("trim " << p.autoTrim.db << " dB, loudness with trim " << lu << " LUFS");
   CHECK(lu == Approx(kAutoTrimTargetLufs).margin(0.5));
 }
 
@@ -412,7 +412,8 @@ TEST_CASE("Committed presets: every one that renders here has its trim committed
 
 // With LEVEL MATCH off (the default of every render) nothing about a committed preset changes: each one renders bit-identically to
 // what cdb4b9a rendered (the v0.2 merge, before level matching). The hashes were recorded with that core; the file also holds the
-// level so that platforms whose libm rounds differently (macOS) are still checked, to 0.01 dB.
+// level so that other platforms and compilers (macOS, clang: libm and constant folding may round differently) are still checked, to
+// 0.01 dB.
 TEST_CASE("Committed presets render bit-identically to cdb4b9a with LEVEL MATCH off", "[golden][golden-presets]") {
   const fs::path di = kFixtures / "di_riff.wav";
   json doc = fs::exists(kGolden) ? json::parse(std::ifstream(kGolden)) : json{{"presets", json::object()}};
@@ -444,7 +445,7 @@ TEST_CASE("Committed presets render bit-identically to cdb4b9a with LEVEL MATCH 
     const RenderResult r = renderFile(f, di);  // default options: no trim
     CHECK(r.autoTrimDb == 0.0);
     REQUIRE(r.samples.size() == want["frames"].get<std::size_t>());
-#if defined(__linux__) && defined(__x86_64__)
+#if defined(__linux__) && defined(__x86_64__) && defined(__GNUC__) && !defined(__clang__)  // the compiler the hashes were recorded with
     CHECK(sampleHash(r.samples) == want["sha256"].get<std::string>());
 #else
     CHECK(r.output.rmsDbfs == Approx(want["rmsDbfs"].get<double>()).margin(0.01));

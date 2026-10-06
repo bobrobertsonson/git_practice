@@ -169,7 +169,7 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
   }
   r.prepareSeconds = secondsSince(t0);
   if (opts.applyAutoTrim) {
-    chain->setAutoTrimDb(preset.autoTrimDb);
+    chain->setAutoTrimDb(preset.autoTrim.db);
     r.autoTrimDb = chain->autoTrimDb();
   }
   r.info = chain->info();
