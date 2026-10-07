@@ -26,10 +26,11 @@ reviewer on every task.
 | Task | Commits | Verdict | Rounds |
 |---|---|---|---|
 | A core/plugin audit | `b6da963`, `8ce7aa1` | ACCEPT | 1 (4 doc should-fixes folded in) |
-| A trainer audit, official A1 presets, fixtures | `972118d`, `33c4341`, `4b54500`, fixes `bd0764d`, `979fc0f` | ACCEPT (re-review of `253d1d0`) — PENDING | 2 (REVISE: preset test needed `nam` in CI; missing test-results section) |
-| B A2 playback + CPU | `21e233b`, `0c24470`, `5a7a542`, `ba62827`, `31ef98f` | ACCEPT | 2 (REVISE: bench table invisible in CI logs) |
+| A trainer audit, official A1 presets, fixtures | `972118d`, `33c4341`, `4b54500`, fixes `bd0764d`, `979fc0f`, `bb4f789` | ACCEPT | 3 (REVISE: preset test needed `nam` in CI; missing test-results section; fixture check flaky on CI) |
+| B A2 playback + CPU | `21e233b`, `0c24470`, `5a7a542`, `ba62827`, `31ef98f`, `45b5fb8` | ACCEPT | 2 (REVISE: bench table invisible in CI logs); generic-path rows ACCEPT |
 | C plugin half | `4a3d22e`, `26ba02d`, `45358b6` | ACCEPT | 2 (should-fix promoted: other A2 size's verdict hidden) |
-| C Python half + device-null | `d1ef210` … `45cac23`, fixes `54b7207`, `253d1d0` | PENDING re-review | 2 (REVISE: device-null band math, wrong reference render, overall-only verdict; drive-only rule; A2 require-accept tests) |
+| C Python half + device-null | `d1ef210` … `45cac23`, fixes `54b7207`, `253d1d0` | ACCEPT (delta) once CI is green | 3 (REVISE: device-null band math, wrong reference render, overall-only verdict; drive-only rule; A2 require-accept tests; then the CI fixture check) |
+| CI fix: macOS pedal-face test race (pre-existing) | uncommitted, see section 11 | ACCEPT (diff) | 1 |
 
 ## 3. Task A — audit
 
@@ -94,10 +95,25 @@ RTF = processing time / audio time on one core). CI run 238 (`5a075f8`):
 Gate: rig median RTF < 0.5 (Release only) → PASS on all runners; margin on macOS ≈ 4x. The rig is gate, HM pedal
 + A2 Full (path A), TS + A2 Full (path B), path EQs, auto align, blend, shared 4096-tap cab, post EQ, bus comp.
 
-**Why A2 Full is cheaper than A1 standard** (parameters ≈ multiply-adds per sample are close: 12 145 vs 13 801):
-PENDING the generic-path benchmark row (`a2_bench`, in progress). Layouts compared: A1 standard = 2 arrays, 16 then
-8 channels, 10+10 layers, kernel 3, **Tanh** (0.12.3 preset); A2 Full = 1 array, 8 channels, 23 layers,
-**LeakyReLU**, core fast path. The REPORT will state the measured share of the fast path vs the layout.
+**Why A2 Full is cheaper than A1 standard.** Weight counts (≈ multiply-adds per sample) are close: 12 146 vs
+13 802 (`a2_bench` counts the weights array incl. the head scale; the trainer's convention gives 12 145 / 13 801).
+Layouts, read from the fixtures' JSON: A1 standard = 2 arrays, 10×16 + 10×8 channel-layers, kernel 3, **Tanh**,
+240 nonlinearity evaluations per sample (NAM's 0.12.3 preset); A2 Full = 1 array, 23×8, **LeakyReLU 0.01**,
+184 evaluations; A2 Lite = 23×3, 69. To separate the layout from the core's A2 fast path, `a2_bench` also runs the
+same A2 weights forced onto the generic WaveNet path (one LeakyReLU slope perturbed; asserted not A2-shaped / not
+`A2FastModel`). CI run 246 (`bb4f789`), RTF:
+
+| Runner | A1 standard | A2 Full fast | A2 Full generic | A2 Lite fast | A2 Lite generic |
+|---|---|---|---|---|---|
+| Linux gcc | 0.215 | 0.080 | 0.093 | 0.015 | 0.071 |
+| Linux clang | 0.178 | 0.065 | **0.061** | 0.010 | 0.032 |
+
+Conclusion: **A2 Full's advantage over A1 standard comes from its layout** (8 channels throughout, cheap LeakyReLU
+instead of Tanh; generic-path A2 Full is still 2.3x / 2.9x cheaper than A1), **not from the fast path**, which buys
+A2 Full only ~15 % on gcc and nothing on clang (generic slightly faster). The fast path matters for **A2 Lite**
+(3–5x). macOS numbers for the generic rows are not available yet (the bench table step is skipped when macOS Test
+fails; see section 6); the ratio A1 / A2 Full differs between runners (macOS 2.0x in run 238, gcc 2.7x), so it is not
+portable.
 
 ## 5. Task C — A2 export with Anagram notes
 
@@ -142,13 +158,60 @@ device-null tests with real tiny trainings and the fixture `generate.py --check`
 
 ## 6. CI of record
 
-PENDING — final sha and run. History: runs 227–237 were cancelled by successive pushes; run 238 (`5a075f8`) green
-except python (stale v0.4M merge + preset test needing `nam`); run 240 (`45cac23`) all green; run 241 (`45358b6`)
-all green.
+PENDING — final sha and run. History:
+
+| Run | Head | Result |
+|---|---|---|
+| 227–237 | various | cancelled by successive pushes (process error, corrected) |
+| 238 | `5a075f8` | C++ / plugin / auval / pluginval green; python red (stale v0.4M merge; preset test needing `nam`) |
+| 240 | `45cac23` | all green (incl. new `python-export`) |
+| 241 | `45358b6` | all green |
+| 243 | `253d1d0` | python-export red (strict fixture compare); macOS red: integration 990/991 pedal face |
+| 244, 245 | `45b5fb8` | cancelled by the next push |
+| 246 | `bb4f789` | all green except macOS: integration 991 pedal drawer (same race) |
+
+**macOS integration 990/991 ("pedal face" / "pedal drawer").** Pre-existing test race, not v0.6 code (243/246 touch no
+C++ or plugin files; identical plugin code passed 238/240/241): `step10PedalFace` reads the face's bounds right after a
+preset load, but the bounds are only set by the editor's 4 Hz refresh (`placeFace`); `waitForLoader` blocks the
+message thread and `pump(60)` is shorter than 250 ms, so on an unlucky timer phase the measured rectangle is empty
+(fraction 0.0 for all four circuits). Fix (test-only, reviewer ACCEPT): `w.ed->refreshNow()` before reading the
+bounds, `REQUIRE(face.getWidth() > 0)`, re-read bounds per circuit. Commit status: see section 11.
+
+**Fixture check.** The strict byte compare of `tests/fixtures/a2` failed on run 243's runner but passed on 240/241 and
+locally; the exact differing value was not logged at the time. `bb4f789` compares `.nam` as JSON (weights 1e-6,
+forward-pass-derived metadata 1e-4 relative) and prints key paths on mismatch; run 246 reports "reproducible". The
+most likely cause (CPU torch wheel / runner CPU affecting forward-pass-derived loudness metadata) remains unproven.
 
 ## 7. Task D — proof on the Anagram (user-run)
 
-PENDING final command check after the device-null re-review.
+Run by the user; the lead relays these steps. Result: PENDING.
+
+1. **Export** one matched preset from the plugin's EXPORT panel (or `sawblade-export`) as **A2 FULL**, **no-cab**,
+   with a shared cab (live-compatible blend). The export folder then holds `<name>-nocab-full.a2_full.nam`,
+   `<name>-nocab.ir.wav` (cab + post EQ folded), the container and Lite files, `export_report.json`,
+   `<name>-nocab-full.anagram_notes.txt` and `listen/`.
+2. **Load on the Anagram** (KosmOS 1.16 or later): `<name>-nocab-full.a2_full.nam` into a **Neural Amp** block,
+   `<name>-nocab.ir.wav` into the **IR** block right after it. Leave gate / compressor / EQ blocks out for this test
+   (bypassed), and set the Neural Amp and IR block levels to unity (0 dB) if the device offers level controls.
+3. **Re-amp the same DI**: interface out → Anagram input → Anagram output → interface in. Record at 48 kHz (44.1 or
+   96 kHz also work; they are resampled). Keep the interface's input below clipping; level is matched automatically.
+   Record the whole DI with ~1 s of silence before it.
+4. **Run**
+   ```
+   sawblade-calibrate device-null --recording anagram_reamp.wav \
+       --model EXPORT_DIR/<name>-nocab-full.a2_full.nam --ir EXPORT_DIR/<name>-nocab.ir.wav \
+       --di di.wav --out device_null_out
+   ```
+   It renders the exported model + IR through Sawblade's core (what the plugin plays for those files), aligns the
+   recording (reports the round-trip latency), matches gain and polarity, and writes `device_null_report.json`,
+   `render.wav` and a level-matched, aligned A/B pair in `listen/`.
+5. **Send back** `device_null_report.json`, the console's band table, and your listening verdict on `listen/`.
+
+**Tolerance (proposal):** a match = overall residual ≤ −30 dB re the reference **and** every content octave band
+(within 40 dB of the loudest) within ±1.5 dB after the global gain. Guide: ≤ −40 dB indistinguishable, ≈ −20 dB
+audible. If it fails, the band table says whether it is level, filtering (per-band level differences) or noise /
+non-linearity (residual left after per-band correction). Do not compare against the original chain (`--preset`): the
+export itself is ~−17 dB (A2 Full) / ~−13 dB (A2 Lite) from it by design.
 
 ## 8. Proposals (not done)
 
@@ -170,3 +233,10 @@ PENDING final command check after the device-null re-review.
   `--notes-preset`). The resulting CI failures were first misread as container-specific; corrected in `45cac23`.
 - Commit trailers: `bd0764d` … `a53209a` carry "Claude Sonnet 5.5" and `918ebee`, `392ecd1` none (history not
   rewritten); all later commits carry the required trailers.
+
+## 11. Open blocker
+
+The macOS pedal-face test fix (section 6) is written and reviewer-ACCEPTed but **not committed**: the subagent's
+`git add … && git commit … && git pull --no-rebase … && git push …` was denied by the session's permission classifier
+("Git Destructive"). The phase lead does not commit around a permission denial; the decision is with the user. Until
+it lands, macOS CI cannot be green and the phase cannot be accepted.
