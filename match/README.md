@@ -427,7 +427,7 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   * **Why a DI's `gap_noise` stays high** (synthetic diagnosis): the fixed gate (floor + 4 dB,
     hold 40 ms) sits inside the DI's own noise-peak statistics and never closes; the sweep fixes that. What is left depends on the gate
     hold and range (swept too) and on what follows the gate (a high-gain chain and the IR tail).
-  * **Two-IR blend** (B2.1, `matcher/irblend.py`): after the cab sweep the winner tries every ordered pair of the top 6 IRs (a plain list; the
+  * **Two-IR blend** (B2.1, `matcher/irblend.py`): after the cab sweep the winner tries every pair of the top 6 IRs (one orientation: A = the lower key, so the choice cannot flip with the seed) (a plain list; the
     analytic IR screen of B3 will supply it) as one combined `irMix` cab: `offsetSamplesB` = minus the lag of the largest |cross-correlation| of the
     first 5 ms (|lag| <= 256; the core delays IR B for a positive offset), `invertB` = sign of that peak, `cab.mix` (0.2-0.8) on a grid after the
     last linear block (`refine.pick_slopes`), then one more linear block. The pair must beat the single IR by 0.05. Live-compatible (one IR).

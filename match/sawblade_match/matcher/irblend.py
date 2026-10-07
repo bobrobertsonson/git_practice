@@ -52,7 +52,7 @@ def ir_alignment(ha: np.ndarray, hb: np.ndarray, window_ms: float = WINDOW_MS, m
 
 def pair_search(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, irs: list[Capture], *, seed: int, gens: int,
                 pop: int, patience: int | None = None, tol: float = 0.0, log=print) -> dict:
-    """Try two-IR cabs for the refined candidate ``cand`` (its stage-2 parameters and NAM cores): every ordered pair of
+    """Try two-IR cabs for the refined candidate ``cand`` (its stage-2 parameters and NAM cores): every pair (A = the lower key) of
     ``irs`` at mix 0.5, the best ``GRID_PAIRS`` on the mix grid, then one more linear block (``relinear``) on the best. Returns
     the record ``tried, won, pair, offset, invert, mix, gainVsSingle, ...``; when the pair won it also holds ``_won`` =
     (combo, params, LossResult) for the caller to turn into the candidate (and to drop before writing JSON)."""
@@ -70,9 +70,9 @@ def pair_search(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, irs:
     jobs = []
     for a in irs:
         for b in irs:
-            if a.key != b.key:
-                off, inv, lag = ir_alignment(ir[a.key], ir[b.key])
-                jobs.append((a, b, off, inv))
+            if a.key < b.key:        # one orientation per pair (A = the lower key): (A, B, m) and (B, A, 1 - m) are the same
+                off, inv, lag = ir_alignment(ir[a.key], ir[b.key])       # blend up to a shift; the offset carries the alignment,
+                jobs.append((a, b, off, inv))                            # and the choice cannot flip with the seed
 
     def ev(job, mix):
         a, b, off, inv = job

@@ -546,7 +546,7 @@ def test_two_ir_blend_wins_on_a_hidden_irmix_chain_and_ablates(tmp_path):
     kw = dict(di=di, ref=ref, pool=pool, seed=4, excerpt_s=2.0, threads=2, plan=plan, write_audio=False, refine_offsets=False)
     res = run_match(Config(out=tmp_path / "on", **kw), Log())
     ib = res["irBlend"]
-    assert ib["ablated"] is False and ib["tried"] == 2 and ib["won"] is True and ib["gainVsSingle"] >= 0.05
+    assert ib["ablated"] is False and ib["tried"] == 1 and ib["won"] is True and ib["gainVsSingle"] >= 0.05
     assert {ib["pair"]["irA"], ib["pair"]["irB"]} == {"4/7", "4/8"} and 0.2 <= ib["mix"] <= 0.8
     assert "_won" not in ib and res["best"]["irMix"] is not None
     best = json.loads((tmp_path / "on" / "best.preset.resolved.json").read_text())
