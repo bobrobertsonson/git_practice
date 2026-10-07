@@ -75,8 +75,12 @@ std::vector<std::string> missingCaptures(const Preset& p) {
 }
 
 std::string autoTrimHash(const Preset& p) {
-  json j = toJson(withoutTrim(p));
-  for (const char* k : {"name", "notes", "category", "version", "schema", "output"}) j.erase(k);  // output.gainDb: the user's offset
+  // Hashed as the rig plays it: the active dynamics set sits in gate / busComp (resolveDynamics), and the labels that choose the set
+  // (dynamicsMode, liveDynamics, origin) are not hashed, so a preset whose live and record sets are equal keeps one hash in either
+  // mode and every stamp written before preset v4 stays fresh.
+  json j = toJson(resolveDynamics(withoutTrim(p)));
+  for (const char* k : {"name", "notes", "category", "version", "schema", "output", "dynamicsMode", "liveDynamics", "origin"})
+    j.erase(k);  // output.gainDb: the user's offset
   normaliseCaptures(j);
   const std::string text = "sawblade.autotrim." + std::to_string(kAutoTrimVersion) + ".ref." + std::to_string(kReferenceDiVersion) +
                            ".target." + std::to_string(static_cast<int>(kAutoTrimTargetLufs)) + "\n" + j.dump();

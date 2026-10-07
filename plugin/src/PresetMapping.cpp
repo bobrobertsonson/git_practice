@@ -118,6 +118,7 @@ void applyParams(Preset& p, const ParamValues& v) {
 Preset makeInitPreset() {
   Preset p;
   p.name = "Init";
+  p.dynamicsMode = DynamicsMode::Live;  // created in the plugin: live by default (and equal to its own clampedToParams)
   p.cab.enabled = false;
   p.align.mode = AlignMode::Off;
   p.cab.ir.file = kNoCaptureFile;  // the schema requires a file even when the cab is disabled; it is never loaded

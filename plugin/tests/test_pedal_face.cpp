@@ -296,7 +296,7 @@ TEST_CASE("Pedal params: classic_buzzsaw maps onto the parameters and back", "[p
 
   Preset q = p;
   applyParams(q, v);
-  CHECK(q == clampedToParams(p));
+  CHECK(clampedToParams(q) == clampedToParams(p));  // applyParams writes the values back (clampedToParams also defaults the mode to live)
 
   Host h(48000.0, 512);
   h.load(kChainsawDir / "classic_buzzsaw.json");
@@ -658,7 +658,7 @@ TEST_CASE("Pedal params: arizona_mids maps onto the modded-saw set and back; mov
   CHECK(v[hmxP(kHmxBoost)] == 0.0);
   Preset q = p;
   applyParams(q, v);  // writes the values back into the block
-  CHECK(q == clampedToParams(p));
+  CHECK(clampedToParams(q) == clampedToParams(p));  // applyParams writes the values back (clampedToParams also defaults the mode to live)
 
   Host h(48000.0, 512);
   h.load(kHmxDir / "arizona_mids.json");
@@ -720,7 +720,7 @@ TEST_CASE("Pedal params: one_knob_max maps onto the one-knob set; eyeGain moves 
   CHECK(v[eyeP(kEyeGain)] == 10.0);
   Preset q = p;
   applyParams(q, v);
-  CHECK(q == clampedToParams(p));
+  CHECK(clampedToParams(q) == clampedToParams(p));  // applyParams writes the values back (clampedToParams also defaults the mode to live)
 
   Host h(48000.0, 512);
   h.load(kEyeDir / "one_knob_max.json");

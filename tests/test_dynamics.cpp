@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "alloc_guard.h"
+#include "sawblade/auto_trim.h"
 #include "sawblade/chain.h"
 #include "sawblade/gate.h"
 #include "test_util.h"
@@ -379,4 +380,24 @@ TEST_CASE("resolveDynamics: the record slots hold the active set (what the expor
   CHECK(r.dynamicsMode == DynamicsMode::Live);  // the label survives
   CHECK(activeDynamics(r) == activeDynamics(p));  // what a reader of the resolved preset plays is what the rig plays
   CHECK(resolveDynamics(r) == r);
+}
+
+TEST_CASE("Auto trim hash follows the rig as it plays: mode labels do not change it when the sets are equal", "[dynamics][autotrim]") {
+  const Preset user = parse(mkDyn(3));  // origin user: live set == record set
+  Preset userLive = user;
+  userLive.dynamicsMode = DynamicsMode::Live;
+  CHECK(autoTrimHash(userLive) == autoTrimHash(user));  // so a stamp written before v4 stays fresh in the plugin (live by default)
+  Preset userRecord = user;
+  userRecord.dynamicsMode = DynamicsMode::Record;
+  CHECK(autoTrimHash(userRecord) == autoTrimHash(user));
+  Preset explicitSame = user;
+  explicitSame.liveDynamics = recordDynamicsOf(user);
+  CHECK(autoTrimHash(explicitSame) == autoTrimHash(user));
+
+  json jm = mkDyn(4);
+  jm["origin"] = "match";
+  Preset match = parse(jm);
+  const std::string rec = autoTrimHash(match);
+  match.dynamicsMode = DynamicsMode::Live;  // the live set differs (comp off): a different rig
+  CHECK(autoTrimHash(match) != rec);
 }
