@@ -104,9 +104,9 @@ def test_cli_with_render_files_writes_report_and_30s_listening_pair(tmp_path, ca
     ref = guitar_like(40.0, seed=8)
     dev = device_of(ref, 1234.5, -4.0)
     sf.write(tmp_path / "render.wav", ref.astype(np.float32), RATE, subtype="FLOAT")
-    sf.write(tmp_path / "rec44.wav", np.stack([dev, dev * 0.1], axis=1).astype(np.float32), RATE, subtype="FLOAT")   # stereo, left used
+    sf.write(tmp_path / "rec_stereo.wav", np.stack([dev, dev * 0.1], axis=1).astype(np.float32), RATE, subtype="FLOAT")   # stereo, left used
     out = tmp_path / "out"
-    rc = main(["device-null", "--recording", str(tmp_path / "rec44.wav"), "--render", str(tmp_path / "render.wav"),
+    rc = main(["device-null", "--recording", str(tmp_path / "rec_stereo.wav"), "--render", str(tmp_path / "render.wav"),
                "--di", str(tmp_path / "render.wav"), "--out", str(out)])
     assert rc == 0
     rep = json.loads((out / "device_null_report.json").read_text())
@@ -155,3 +155,91 @@ def test_preset_plus_di_renders_through_the_core_and_nulls(tmp_path):
     assert (out / "render.wav").is_file()
     assert abs(rep["alignment"]["latencySamples"] - 2400.0) < 0.2 and rep["residual"]["overallDb"] < -45.0
     assert rep["verdict"]["withinTolerance"] is True
+
+
+def _band_edit(x: np.ndarray, lo: float, hi: float, gain_db: float) -> np.ndarray:
+    X = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1 / RATE)
+    X[(f >= lo) & (f < hi)] *= 10 ** (gain_db / 20)
+    return np.fft.irfft(X, len(x))
+
+
+def test_band_powers_are_normalised_and_an_empty_band_does_not_enter_the_spread():
+    rng = np.random.default_rng(3)
+    n = 10 * RATE
+    sos = signal.butter(8, 4000, btype="low", fs=RATE, output="sos")
+    ref = signal.sosfilt(sos, guitar_like(10.0, seed=12) + 0.0)
+    burst = np.zeros(n)
+    for k in range(0, n - 2400, RATE // 2):                              # content in the 8 kHz octave: sparse tone bursts
+        burst[k:k + 2400] = 0.05 * np.sin(2 * np.pi * 8000 * np.arange(2400) / RATE) * np.hanning(2400)
+    ref = ref + burst
+    ref = _band_edit(ref, 11314, RATE / 2, -200.0)                        # the 16 kHz octave is empty
+    dev = _band_edit(ref, 5657, 11314, +6.0)                              # only the 8 kHz octave differs (+6 dB)
+    dev = dev + _band_edit(rng.standard_normal(n) * 1e-7, 0, 11314, -200.0)          # garbage far below the content
+    rep = DN.analyse(dev, ref)
+    by = {b["centreHz"]: b for b in rep["bands"]}
+    # normalised: the band powers add up to the time-domain power (no length-dependent offset)
+    tot = 10 * np.log10(sum(10 ** (b["renderDb"] / 10) for b in rep["bands"]))
+    assert abs(tot - rep["gain"]["rmsRenderDbfs"]) < 0.5
+    assert by[8000]["levelDiffDb"] > 4.0 and abs(by[1000]["levelDiffDb"]) < 0.5
+    assert by[16000]["renderDb"] < by[500]["renderDb"] - 60                # genuinely (near) empty
+    assert DN.content_bands(rep["bands"]) and 16000 not in [b["centreHz"] for b in DN.content_bands(rep["bands"])]
+    assert 4.0 < rep["bandLevelSpreadDb"] < 8.0                            # the one real difference, not the empty band's noise
+    v = DN.verdict(rep["residual"]["overallDb"], -30.0, rep)
+    assert any("largest at 8000 Hz" in h for h in v["whatDiffers"]) and v["bandsOutsideTolerance"] == [8000]
+    assert v["withinTolerance"] is False
+
+
+def test_verdict_needs_the_bands_as_well_as_the_overall_residual():
+    ref = guitar_like(12.0)
+    rep = DN.analyse(device_of(ref, 1795.37, -7.3), ref)                   # overall about -41 dB, but the 8 / 16 kHz bands are low
+    assert rep["residual"]["overallDb"] < -30.0
+    v = DN.verdict(rep["residual"]["overallDb"], -30.0, rep)
+    assert v["overallOk"] is True and v["bandsOk"] is False and v["withinTolerance"] is False
+    assert DN.verdict(rep["residual"]["overallDb"], -30.0, rep, band_tolerance_db=20.0)["withinTolerance"] is True
+
+
+def test_a_tanh_distorted_render_is_not_a_match():
+    ref = guitar_like(10.0, seed=7)
+    dev = np.tanh(8.0 * device_of(ref, 900.0, 0.0, lowpass_hz=None, noise_db=-80.0)) / 8.0
+    rep = DN.analyse(dev, ref)
+    v = DN.verdict(rep["residual"]["overallDb"], -30.0, rep)
+    assert v["withinTolerance"] is False and v["overallOk"] is False
+
+
+@pytest.mark.parametrize("rate", [44100, 96000])
+def test_recordings_at_other_sample_rates_go_through_the_resample_path(tmp_path, rate):
+    from math import gcd
+    ref = guitar_like(14.0, seed=13)
+    dev = device_of(ref, 1500.25, -3.0, lowpass_hz=None, noise_db=-70.0)
+    g = gcd(rate, RATE)
+    rec = signal.resample_poly(dev, rate // g, RATE // g)
+    sf.write(tmp_path / "rec.wav", rec.astype(np.float32), rate, subtype="FLOAT")
+    sf.write(tmp_path / "render.wav", ref.astype(np.float32), RATE, subtype="FLOAT")
+    out = tmp_path / "o"
+    assert main(["device-null", "--recording", str(tmp_path / "rec.wav"), "--render", str(tmp_path / "render.wav"),
+                 "--out", str(out)]) == 0
+    r = json.loads((out / "device_null_report.json").read_text())
+    assert r["inputs"]["recordingRateHz"] == rate
+    assert abs(r["alignment"]["latencySamples"] - 1500.25) < 0.3 and abs(r["gain"]["deviceVsRenderDb"] + 3.0) < 0.2
+    assert r["residual"]["overallDb"] < -40.0 and r["verdict"]["withinTolerance"] is True
+
+
+def test_cli_model_and_ir_render_the_exported_files_through_the_core(tmp_path, capsys):
+    pytest.importorskip("sawblade_match.core")
+    di = guitar_like(8.0, seed=14)
+    sf.write(tmp_path / "di.wav", di.astype(np.float32), RATE, subtype="FLOAT")
+    nam, ir = REPO / "tests" / "fixtures" / "nam" / "wavenet.nam", REPO / "tests" / "fixtures" / "ir" / "ir_a.wav"
+    ref = DN.render_model(nam, ir, tmp_path / "di.wav")
+    assert len(ref) == len(di) and np.max(np.abs(ref)) > 1e-3
+    sf.write(tmp_path / "rec.wav", device_of(ref, 2000.0, -5.0, lowpass_hz=None, noise_db=-80.0).astype(np.float32), RATE, subtype="FLOAT")
+    out = tmp_path / "o"
+    assert main(["device-null", "--recording", str(tmp_path / "rec.wav"), "--model", str(nam), "--ir", str(ir),
+                 "--di", str(tmp_path / "di.wav"), "--out", str(out)]) == 0
+    r = json.loads((out / "device_null_report.json").read_text())
+    assert "model" in r["inputs"]["render"] and "IR" in r["inputs"]["render"]
+    assert abs(r["alignment"]["latencySamples"] - 2000.0) < 0.2 and r["verdict"]["withinTolerance"] is True
+    txt = capsys.readouterr().out
+    assert txt.index("octave band") < txt.index("latency +")                # the band table comes first
+    # the no-IR form renders the model alone (different from model + IR)
+    assert not np.allclose(DN.render_model(nam, None, tmp_path / "di.wav"), ref)

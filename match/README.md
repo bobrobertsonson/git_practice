@@ -298,25 +298,44 @@ libraries although inference runs on CPU). The real-demucs test runs only with `
 ### `sawblade-calibrate device-null` (v0.6 Task D: hardware loader vs the plugin)
 
 ```
-sawblade-calibrate device-null --recording DEVICE.wav (--render PLUGIN_RENDER.wav | --preset P.json --di DI.wav)
-                               --out DIR [--di DI.wav] [--channel left|right|mean] [--polarity auto|normal|invert]
-                               [--max-lag-ms 1500] [--tolerance-db -30] [--excerpt-s 30]
+sawblade-calibrate device-null --recording DEVICE.wav --out DIR
+      ( --model X.a2_full.nam [--ir NAME-nocab.ir.wav] --di DI.wav     # recommended
+      | --render RENDER.wav [--di DI.wav] | --preset P.json --di DI.wav )
+      [--channel left|right|mean] [--polarity auto|normal|invert] [--max-lag-ms 1500]
+      [--tolerance-db -30] [--band-tolerance-db 1.5] [--excerpt-s 30]
 ```
 
-Checks how close a hardware NAM loader (the Darkglass Anagram) is to the plugin: play the same DI through the plugin (render it, or let
-this command render `--preset` + `--di` with the core) and through the device (interface out -> device -> interface in, recorded as
-`--recording`), then run this. It (1) **aligns** the recording to the render (coarse lag from 1 kHz envelopes, refined on the 80 Hz-6 kHz
-waveforms to a fraction of a sample and applied as an exact phase shift; the round-trip latency is reported in ms and samples), (2) **gain-matches**
-(least squares; level in dB, and the polarity is detected and reported, or forced with `--polarity`), (3) reports the **residual** (recording
-minus gain-matched render) in dB re the render overall (and ESR) and per octave band (63 Hz ... 16 kHz), each band's **level difference** (the
-device path's linear filtering), and the **residual after per-band level correction** (what is not a plain level / filter difference: noise,
-non-linearity, model or settings differences), and (4) writes `listen/ab_render_then_device.{wav,mp3}` (render, 0.8 s gap, device;
-level-matched, 30 s: the loudest window) plus `render_aligned.wav` and `device_aligned_levelmatched.wav`. `device_null_report.json` holds
-everything (`alignment`, `polarity`, `gain`, `residual`, `bands[]`, `verdict`, `warnings`); the console prints a summary and what differs.
-Tolerance (a proposal): overall residual <= -30 dB counts as a match (<= -40 dB indistinguishable, ~-20 dB audible). Warnings: clipping
-recordings, an ambiguous alignment peak, low correlation, and a lag vs the DI that differs from the lag vs the render by > 2 ms (the render is
-not sample-aligned to the DI). Offline and deterministic; tested on synthetic data (known fractional delay, gain, polarity, a gentle low-pass, a
-saturating stage). Needs only the base install (no trainer).
+Checks how close a hardware NAM loader (the Darkglass Anagram) is to what it was asked to reproduce. **Which reference:** the device loads the
+*exported* model and IR, so null against those: `--model` renders `--di` through `sawblade_core` with one `nam` block at the plugin NAM block's
+defaults (input gain 0 dB, output gain 0 dB, no loudness normalisation) and the exported IR as the cab *without* normalisation (the same check chain
+the export's own validation uses). `--preset` renders the *original* chain, which the export only approximates (held-out ESR about -17 dB for A2 Full
+and -13 dB for A2 Lite on a heavy tone, i.e. the residual cannot go below that floor, and it is the model's error, not the device's); use it to judge
+model + device together. `--render` takes any ready-made WAV (e.g. the plugin's render of the export).
+
+It (1) **aligns** the recording to the reference (coarse lag from 1 kHz envelopes, refined on the 80 Hz-6 kHz waveforms to a fraction of a sample and
+applied as an exact phase shift; the round-trip latency is reported in ms and samples; recordings at any sample rate are resampled to 48 kHz),
+(2) **gain-matches** (least squares; level in dB; polarity detected and reported, or forced with `--polarity`), (3) reports the **residual** (recording
+minus gain-matched reference) in dB re the reference overall (and ESR) and per octave band (63 Hz ... 16 kHz, powers normalised to dBFS-like mean-square
+so they add up to the broadband power), each band's **level difference** (the device path's linear filtering), and the **residual after per-band level
+correction** (what is not a plain level / filter difference: noise, non-linearity, model / settings differences), and (4) writes
+`listen/ab_render_then_device.{wav,mp3}` (reference, 0.8 s gap, device; level-matched, 30 s: the loudest window) plus `render_aligned.wav` and
+`device_aligned_levelmatched.wav`. `device_null_report.json` has `alignment`, `polarity`, `gain`, `residual`, `bands[]`, `verdict`, `warnings`; the console
+prints the band table first, then the summary and what differs.
+
+**Match (a proposal):** BOTH the overall residual <= `--tolerance-db` (default -30 dB re the reference; <= -40 dB is indistinguishable, ~-20 dB audible)
+AND every *content* octave band's level difference within +-`--band-tolerance-db` (default 1.5 dB) after the global gain. A content band is one within
+40 dB of the loudest band (the one rule used by the spread, the hints and the verdict; emptier bands are listed but ignored). Warnings: clipping
+recordings, an ambiguous alignment peak, low correlation, a lag vs the DI that differs from the lag vs the reference by > 2 ms, a forced polarity that
+disagrees with the recording. Offline and deterministic; tested on synthetic data (fractional delay, gain, polarity, a gentle low-pass, a saturating stage,
+44.1 / 96 kHz recordings, an 8 kHz-only difference next to an empty band). Needs only the base install (no trainer).
+
+**Task D command** (no-cab A2 Full export; the export directory holds `<name>-nocab-full.a2_full.nam`, `<name>-nocab.ir.wav` (the cab + post EQ
+fold the notes tell you to load, without loudness normalisation, in the Anagram's IR block after the Neural Amp block), the container and Lite file, the notes):
+
+```
+sawblade-calibrate device-null --recording anagram_reamp.wav \
+    --model EXPORT_DIR/<name>-nocab-full.a2_full.nam --ir EXPORT_DIR/<name>-nocab.ir.wav --di di.wav --out device_null_out
+```
 
 ## Matcher (`sawblade-match`, phase 3.2 + 3.3 A/B)
 

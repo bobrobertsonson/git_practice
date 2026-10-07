@@ -12,11 +12,21 @@ through the plugin (or through ``--preset`` + ``--di`` here, rendered by the cor
    a plain per-band level/filter difference: noise, non-linearity, time-varying behaviour);
 4. writes a level-matched, aligned **A/B listening pair** of a 30 s excerpt.
 
+**Which reference to use (Task D).** The device is asked to reproduce the *exported model + exported IR*, so that is the
+reference to null against: ``--model X.nam [--ir IR.wav] --di DI.wav`` (rendered through ``sawblade_core`` with the plugin's
+NAM-block conventions: input gain 0 dB, output gain 0 dB, no loudness normalisation, the IR loaded WITHOUT normalisation,
+the same single-block check chain the export's own validation uses).  ``--preset`` renders the ORIGINAL chain instead, which the
+export only approximates (held-out ESR about -17 dB for A2 Full and -13 dB for A2 Lite on a heavy tone, i.e. a floor of that
+size on the residual that is the model's error, not the device's); use it to judge model + device together.  ``--render`` takes
+any WAV (e.g. the plugin's own render of the export).
+
 Pure numpy/scipy analysis: no DSP of the amp chain here (the render comes from ``sawblade_core`` or a file).  Offline,
 deterministic (no randomness).
 
-Tolerance (a proposal, ``--tolerance-db``): overall residual <= -30 dB re the render counts as a match.  Clean converters
-and a faithful device null much deeper (-40 dB and below); ~-20 dB is audibly different.
+Tolerance (a proposal): a match needs BOTH the overall residual <= ``--tolerance-db`` (default -30 dB re the render) AND every
+content octave band's level within +-``--band-tolerance-db`` (default 1.5 dB) of the render after the global gain, so a device
+whose filtering is off cannot pass on a good broadband number.  A content band is one within 40 dB of the loudest band.  Clean
+converters and a faithful device null much deeper (-40 dB and below); ~-20 dB is audibly different.
 """
 from __future__ import annotations
 
@@ -42,6 +52,8 @@ FINE_SEARCH_MS = 5.0
 MAIN_LOBE = RATE // 2000      # +-0.5 ms around the correlation peak count as the main lobe
 AMBIGUOUS_BELOW = 1.05
 DEFAULT_TOLERANCE_DB = -30.0
+DEFAULT_BAND_TOLERANCE_DB = 1.5
+CONTENT_WINDOW_DB = 40.0
 VERDICTS = ((-40.0, "indistinguishable by this measure (residual <= -40 dB)"),
             (-30.0, "very close (residual <= -30 dB)"),
             (-20.0, "close but likely audible on a careful A/B (residual <= -20 dB)"),
@@ -143,6 +155,22 @@ def shift(x: np.ndarray, d: float, n_out: int) -> np.ndarray:
     return y[pad:pad + n_out]
 
 
+def band_ms(X: np.ndarray, mask: np.ndarray, n: int) -> float:
+    """Mean-square (power, same units as ``np.mean(x**2)``) of the part of the signal in ``mask``, from its rfft ``X``: one-sided
+    bins counted twice (not DC / Nyquist), divided by N^2 (Parseval), so the bands add up to the time-domain power."""
+    w = np.full(len(X), 2.0)
+    w[0] = 1.0
+    if n % 2 == 0:
+        w[-1] = 1.0
+    return float(np.sum(w[mask] * np.abs(X[mask]) ** 2) / (n * n))
+
+
+def content_bands(bands: list[dict], window_db: float = CONTENT_WINDOW_DB) -> list[dict]:
+    """The ONE 'has content' rule: bands within ``window_db`` of the loudest render band."""
+    top = max(b["renderDb"] for b in bands)
+    return [b for b in bands if b["renderDb"] > top - window_db]
+
+
 def _band_masks(n: int) -> list[np.ndarray]:
     f = np.fft.rfftfreq(n, 1.0 / RATE)
     return [(f >= lo) & (f < hi) if hi < RATE / 2 else (f >= lo) for lo, hi in zip(BAND_EDGES_HZ[:-1], BAND_EDGES_HZ[1:])]
@@ -185,17 +213,18 @@ def analyse(rec: np.ndarray, ref: np.ndarray, max_lag_ms: float = 1500.0, polari
     bands = []
     after_gain_res = 0.0
     for fc, m in zip(BAND_CENTRES_HZ, _band_masks(len(a))):
-        pa, pb = float(np.sum(np.abs(A[m]) ** 2)), float(np.sum(np.abs(B[m]) ** 2))
+        n = len(a)
+        pa, pb = band_ms(A, m, n), band_ms(B, m, n)
         pm = (g * g) * pb
-        pr = float(np.sum(np.abs(A[m] - g * B[m]) ** 2))
-        gb = float(np.real(np.sum(A[m] * np.conj(B[m]))) / max(pb, 1e-30))     # this band's own least-squares gain
-        pr_b = float(np.sum(np.abs(A[m] - gb * B[m]) ** 2))
+        pr = band_ms(A - g * B, m, n)
+        gb = float(np.real(np.sum(A[m] * np.conj(B[m]))) / max(float(np.sum(np.abs(B[m]) ** 2)), 1e-30))   # this band's own least-squares gain
+        pr_b = band_ms(A - gb * B, m, n)
         after_gain_res += pr_b
         bands.append({"centreHz": fc, "renderDb": _db(pm), "deviceDb": _db(pa), "levelDiffDb": _db(pa) - _db(pm),
                       "residualDb": _db(pr) - _db(pm), "residualAfterBandGainDb": _db(pr_b) - _db(pm)})
-    resid_after = _db(after_gain_res) - _db(float(np.sum(np.abs(B) ** 2)) * g * g)
+    resid_after = _db(after_gain_res) - _db(p_sig / len(a))
     overall = _db(p_res) - _db(p_sig)
-    spread = [bd["levelDiffDb"] for bd in bands if bd["renderDb"] > _db(p_sig) - 40.0]     # bands with real content
+    spread = [bd["levelDiffDb"] for bd in content_bands(bands)]
     out = {"alignment": {"latencyMs": lag / RATE * 1000.0, "latencySamples": float(lag), "coarseEnvelopeLagMs": coarse,
                          "correlation": rho, "peakConfidence": conf, "comparedSeconds": (n1 - n0) / RATE,
                          "note": "positive latency = the recording is later than the render (device + interface round trip)"},
@@ -226,23 +255,29 @@ def analyse(rec: np.ndarray, ref: np.ndarray, max_lag_ms: float = 1500.0, polari
     return out
 
 
-def verdict(overall_db: float, tolerance_db: float, rep: dict) -> dict:
+def verdict(overall_db: float, tolerance_db: float, rep: dict, band_tolerance_db: float = DEFAULT_BAND_TOLERANCE_DB) -> dict:
+    """A match needs the overall residual <= ``tolerance_db`` AND every content band's level difference within
+    +-``band_tolerance_db`` (see ``content_bands``)."""
     label = next(t for lim, t in VERDICTS if overall_db <= lim)
+    content = content_bands(rep["bands"])
+    off = [b for b in content if abs(b["levelDiffDb"]) > band_tolerance_db]
     hints = []
     al, ga = rep["alignment"], rep["gain"]
     if abs(al["latencyMs"]) > 0.0:
         hints.append(f"latency: the recording is {al['latencyMs']:.2f} ms later than the render (already removed)")
     if abs(ga["deviceVsRenderDb"]) > 0.5:
         hints.append(f"level: the device output is {ga['deviceVsRenderDb']:+.1f} dB vs the render (already matched)")
-    if rep["bandLevelSpreadDb"] > 1.5:
-        top = max(b["renderDb"] for b in rep["bands"])
-        worst = max((b for b in rep["bands"] if b["renderDb"] > top - 40.0), key=lambda b: abs(b["levelDiffDb"]))
+    if off:
+        worst = max(off, key=lambda b: abs(b["levelDiffDb"]))
         hints.append(f"filtering: octave-band levels differ by up to {rep['bandLevelSpreadDb']:.1f} dB between the device and the "
-                     f"render (largest at {worst['centreHz']} Hz: {worst['levelDiffDb']:+.1f} dB): a tone / filter in the device path")
+                     f"render; {len(off)} content band(s) are outside +-{band_tolerance_db:g} dB (largest at {worst['centreHz']} Hz: "
+                     f"{worst['levelDiffDb']:+.1f} dB): a tone / filter in the device path")
     if rep["residual"]["afterPerBandGainDb"] > overall_db - 3.0 and overall_db > tolerance_db:
         hints.append("the residual is not explained by per-band level: noise, non-linear behaviour or a model / settings difference")
-    return {"withinTolerance": bool(overall_db <= tolerance_db), "toleranceDb": tolerance_db, "overallResidualDb": overall_db,
-            "summary": label, "whatDiffers": hints}
+    overall_ok = bool(overall_db <= tolerance_db)
+    return {"withinTolerance": bool(overall_ok and not off), "overallOk": overall_ok, "bandsOk": not off,
+            "toleranceDb": tolerance_db, "bandToleranceDb": band_tolerance_db, "overallResidualDb": overall_db,
+            "bandsOutsideTolerance": [b["centreHz"] for b in off], "summary": label, "whatDiffers": hints}
 
 
 def excerpt_window(x: np.ndarray, seconds: float) -> tuple[int, int]:
@@ -297,6 +332,21 @@ def render_preset(preset_path, di_path) -> np.ndarray:
     return y.astype(np.float64)
 
 
+def render_model(model_path, ir_path, di_path) -> np.ndarray:
+    """Render ``di_path`` through the exported model (and the exported IR, loaded WITHOUT normalisation) with the C++ core, the
+    way the export validates it: one ``nam`` block at input gain 0 dB / output gain 0 dB / no loudness normalisation (the
+    plugin NAM block's defaults), cab disabled when there is no IR, unity output gain."""
+    import tempfile
+    from ..core import CaptureCache
+    from ..export import validate as V
+    from ..export.chain import render48
+    x, fs = sf.read(str(di_path), dtype="float32", always_2d=True)
+    with tempfile.TemporaryDirectory() as td:
+        chk = V.export_check_preset(model_path, ir_path, Path(td))
+        y, _ = render48(chk, np.ascontiguousarray(x[:, 0]), td, CaptureCache(), int(fs))
+    return y.astype(np.float64)
+
+
 def run(a: argparse.Namespace) -> int:
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -305,27 +355,37 @@ def run(a: argparse.Namespace) -> int:
     if a.render:
         ref, _ = read_mono48(a.render, "left")
         render_src = str(a.render)
+    elif a.model and a.di:
+        ref = render_model(a.model, a.ir, a.di)
+        sf.write(str(out / "render.wav"), ref.astype(np.float32), RATE, subtype="FLOAT")
+        render_src = f"model {a.model}" + (f" + IR {a.ir}" if a.ir else " (no IR)") + f" rendered from {a.di} (core, written to {out / 'render.wav'})"
     elif a.preset and a.di:
         ref = render_preset(a.preset, a.di)
         sf.write(str(out / "render.wav"), ref.astype(np.float32), RATE, subtype="FLOAT")
         render_src = f"{a.preset} rendered from {a.di} (core, written to {out / 'render.wav'})"
     else:
-        raise ValueError("give --render RENDER.wav (the plugin's render of the same DI), or --preset P.json together with --di DI.wav")
+        raise ValueError("give --model X.nam [--ir IR.wav] with --di DI.wav (recommended), or --render RENDER.wav, or --preset P.json with --di DI.wav")
     rep = analyse(rec, ref, a.max_lag_ms, a.polarity, di)
     rec_a, ref_m = rep["_rec"], rep["_ref"]
-    v = verdict(rep["residual"]["overallDb"], a.tolerance_db, rep)
+    v = verdict(rep["residual"]["overallDb"], a.tolerance_db, rep, a.band_tolerance_db)
     listen = write_listening(out, rec_a, ref_m, a.excerpt_s)
     full = {"schema": "sawblade.device_null", "version": 1, "inputs": {"recording": str(a.recording), "recordingRateHz": rec_fs,
             "channel": a.channel, "render": render_src, "di": str(a.di) if a.di else None, "sampleRateHz": RATE},
             **{k: v_ for k, v_ in rep.items() if not k.startswith("_")}, "verdict": v, "listening": listen}
     (out / "device_null_report.json").write_text(json.dumps(_json(full), indent=2))
     al, ga = rep["alignment"], rep["gain"]
+    print("octave band   render dB   device dB   level diff   residual dB   after band gain")
+    content = {b["centreHz"] for b in content_bands(rep["bands"])}
+    for b in rep["bands"]:
+        print(f"{b['centreHz']:>8} Hz {b['renderDb']:>10.1f} {b['deviceDb']:>11.1f} {b['levelDiffDb']:>+11.1f} "
+              f"{b['residualDb']:>+13.1f} {b['residualAfterBandGainDb']:>+16.1f}" + ("" if b["centreHz"] in content else "   (no content: ignored)"))
     print(f"latency {al['latencyMs']:+.3f} ms ({al['latencySamples']:+.2f} samples); gain {ga['deviceVsRenderDb']:+.2f} dB; "
           f"polarity {rep['polarity']['applied']}; correlation {al['correlation']:.3f}")
     print(f"residual {rep['residual']['overallDb']:.1f} dB re the render (ESR {rep['residual']['esr']:.5f}); "
           f"after per-band level correction {rep['residual']['afterPerBandGainDb']:.1f} dB")
-    print("octave band (Hz): " + "  ".join(f"{b['centreHz']}: {b['residualDb']:+.0f} dB (level {b['levelDiffDb']:+.1f})" for b in rep["bands"]))
-    print(f"verdict: {v['summary']}; tolerance {a.tolerance_db:g} dB: {'WITHIN' if v['withinTolerance'] else 'NOT within'}")
+    print(f"verdict: {v['summary']}; match = overall <= {a.tolerance_db:g} dB AND content bands within +-{a.band_tolerance_db:g} dB: "
+          f"{'WITHIN' if v['withinTolerance'] else 'NOT within'} (overall {'ok' if v['overallOk'] else 'NOT ok'}, bands "
+          f"{'ok' if v['bandsOk'] else 'outside at ' + ', '.join(map(str, v['bandsOutsideTolerance'])) + ' Hz'})")
     for h in v["whatDiffers"]:
         print(f"  - {h}")
     for w in rep["warnings"]:
@@ -340,16 +400,24 @@ def build_parser(prog: str = "sawblade-calibrate device-null") -> argparse.Argum
                                 "(overall and per octave band) plus an A/B listening pair.")
     p.add_argument("--recording", required=True, help="the device recording (WAV): the DI re-amped through the device")
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--render", help="the plugin's render of the same DI with the same preset (WAV, sample-aligned to the DI)")
-    g.add_argument("--preset", help="preset JSON to render --di with (the core, same engine as the plugin / tonerender)")
-    p.add_argument("--di", help="the DI that was played into the device (needed with --preset; with --render it is only a "
-                                "latency cross-check)")
+    g.add_argument("--model", help="RECOMMENDED: the exported .nam (A2 Full / Lite standalone file) to render --di with; the device "
+                                   "is asked to reproduce exactly this (+ --ir)")
+    g.add_argument("--render", help="a ready-made render of the same DI (WAV, sample-aligned to the DI), e.g. the plugin's")
+    g.add_argument("--preset", help="preset JSON: renders --di through the ORIGINAL chain (core, same engine as the plugin / "
+                                    "tonerender); the residual then includes the export's own error (about -17 dB A2 Full, "
+                                    "-13 dB A2 Lite on a heavy tone)")
+    p.add_argument("--ir", help="with --model: the exported IR (<name>-nocab.ir.wav), applied without loudness normalisation")
+    p.add_argument("--di", help="the DI that was played into the device (needed with --model / --preset; with --render it is only "
+                                "a latency cross-check)")
     p.add_argument("--channel", choices=("left", "right", "mean"), default="left", help="recording channel to use (default left)")
     p.add_argument("--polarity", choices=("auto", "normal", "invert"), default="auto",
                    help="auto: detected from the correlation and reported (default); or force it")
     p.add_argument("--max-lag-ms", type=float, default=1500.0, help="largest round-trip latency to search (default 1500 ms)")
     p.add_argument("--tolerance-db", type=float, default=DEFAULT_TOLERANCE_DB,
                    help=f"overall residual (dB re the render) that counts as a match (default {DEFAULT_TOLERANCE_DB:g})")
+    p.add_argument("--band-tolerance-db", type=float, default=DEFAULT_BAND_TOLERANCE_DB,
+                   help=f"largest octave-band level difference (content bands, after the global gain) that still counts as a match "
+                        f"(default {DEFAULT_BAND_TOLERANCE_DB:g})")
     p.add_argument("--excerpt-s", type=float, default=30.0, help="length of the listening excerpt (the loudest window; default 30)")
     p.add_argument("--out", required=True, help="output directory: device_null_report.json and listen/")
     return p
