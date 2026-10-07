@@ -367,7 +367,8 @@ jobs:
         env:
           SAWBLADE_CORE_DIR: ${{ github.workspace }}/build/python
           SAWBLADE_TONERENDER: ${{ github.workspace }}/build/cli/tonerender
-        run: match/.venv/bin/pytest match/tests/test_export.py match/tests/test_export_cancel.py match/tests/test_export_notes.py match/tests/test_export_plan.py match/tests/test_export_progress.py match/tests/test_a2_*.py match/tests/test_calibrate_device_null.py -rs
+          SAWBLADE_TEST_TRAIN: "1"          # real 1-2 epoch trainings (tiny budget): A1 smoke + resume, A2 end to end
+        run: match/.venv/bin/pytest match/tests/test_export*.py match/tests/test_a2_*.py match/tests/test_calibrate_device_null.py -rs
 
       - name: ccache stats
         if: always()
