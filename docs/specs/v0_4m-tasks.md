@@ -261,3 +261,65 @@ The Task B boost variant and post-cab HP/LP are always in the search (quick and 
 - Tests: the grid recovers a hidden HPF 110 Hz + mid +6 dB pre-EQ on a fixture chain (exact grid point); grid size <= 12
   (plus widening options) and deterministic; `--ablate preeq` leaves `preEq` empty; widening fires on a synthetic dark DI
   and not on the fixture DI; export notes list the pre-EQ as in-model.
+
+## Task F: blend reference and per-path check in the validation script (user correction, 2026-10-07)
+
+Why: the album guitar is a blend of two same-take amp tracks per side (HM2 path + body amp). Matching HM2 (18) and UBR
+(19) separately never tests the product's main case. Single-amp runs stay as per-path diagnostics.
+
+### F.1 `sawblade_match.matcher.refsum` (match-engineer)
+`python -m sawblade_match.matcher.refsum --a <hm2.wav> --b <body.wav> --out <blend.wav> [--blend-db A_DB,B_DB] [--json r.json]`
+- Reads both tracks (any channel count; reduce to mono as the matcher does for `--matched mono`), requires equal sample
+  rates (exit 2 otherwise), truncates to the shorter length, sums `a*10^(A_DB/20) + b*10^(B_DB/20)` (default 0,0 =
+  unity faders) and writes **float32** WAV (no clipping, no normalisation; peak reported).
+- Alignment check, report only (never shifts, never flips: the mic/amp phase is part of the record): lag of max |xcorr|
+  of the two tracks within +-50 ms (on the loudest 30 s), its sign (polarity), and the normalised correlation.
+  |lag| > 2 ms or negative peak -> a `WARNING:` line; the sum is still written.
+- JSON: `{gainsDb, lagMs, polarity, corr, peakDb, lufsA, lufsB, refRatioDb}` where
+  **refRatioDb = LUFS(a*gA) - LUFS(b*gB)** (BS.1770, `loudness.integrated_lufs`). Note: at unity faders the reference
+  ratio is the two tracks' loudness difference, not 0 dB.
+- Output paths are under the run's `$OUT`; nothing is written into the repo.
+
+### F.2 `sawblade_match.matcher.pathcheck` (match-engineer)
+`python -m sawblade_match.matcher.pathcheck --result <run>/result.json --di <di.wav> --ref-a <hm2.wav> --ref-b <body.wav>
+ [--ref-blend <blend.wav>] [--blend-db A_DB,B_DB] [--json out.json]`
+- Takes the winning preset from result.json and renders the DI over the full length three ways with the core engine:
+  full preset; path B `enabled: false` (A alone); path A `enabled: false` (B alone). Everything else unchanged (cab mode,
+  post EQ, bus comp, alignment). Gate as in the preset.
+- Uses the run's stored DI offset / alignment so the renders line up with the references as in the run (read from
+  result.json; if absent, the same offset search the matcher uses).
+- Per render, the same metrics the run reports for `after`: A-weighted LTAS error dB (`loss.ltas_error`, level offset
+  removed) and the feel terms (tight / fizz / polish values and the raw feel measures). Pairs: A alone vs ref-a, B alone
+  vs ref-b, full vs ref-blend (if given). Also the **swapped** pairing (A vs ref-b, B vs ref-a) for both LTAS errors, so
+  a role swap is visible; primary is A<->HM2 (18), B<->body (19).
+- **Blend ratio**: chosenRatioDb = LUFS(A alone) - LUFS(B alone) on the renders, vs refRatioDb (as F.1, with --blend-db);
+  report both and the difference.
+- Single-path result (one path disabled or level <= -60 dB in the winner) -> report `"singlePath": true`, which path,
+  and the full-vs-blend metrics only; not an error.
+- Prints a short human block and writes the JSON. Exit 0 unless inputs are unreadable.
+- Held-out transfer: the same tool pointed at the L_blend result with the R DI and R refs scores the L preset on R
+  without re-fitting (no extra code; the script calls it).
+
+### F.3 Script changes (`scripts/run_v04m_validation.sh`)
+- New option `--blend-db HM2_DB,BODY_DB` (default `0,0`), validated as two numbers; passed to refsum and pathcheck.
+- After the IR scan, build `$OUT/refs/L_blend.wav` (and `R_blend.wav` when R_OK) with refsum (+ `.json`), resumable
+  (skip if both exist unless --force).
+- `--quick-only`: runs `L_hm2_quick`, `L_ubr_quick`, then **`L_blend_quick`** (DI 17 vs L_blend).
+- Full: adds **`L_blend` (thorough)** first in step 3; step 5 adds **`R_blend` (thorough)** when R_OK. Ablations stay on
+  HM2 quick (unchanged).
+- New step "per-path check": pathcheck on every finished blend run (`L_blend_quick` / `L_blend`, `R_blend`) against
+  its side's 18/19 (21/22) and blend ref; plus the held-out transfer `L_blend` preset on R (when both exist), output
+  `$OUT/<run>/pathcheck.json` and `$OUT/L_blend_on_R.pathcheck.json`. A pathcheck failure is reported, non-fatal.
+- Summary printer and listen list: blend runs first, then single-amp runs; summary also prints each pathcheck's
+  per-path LTAS errors, swapped errors, chosen vs reference ratio, singlePath.
+- Dry run (`--dry-run`) prints the refsum / blend / pathcheck commands; the existing dry-run test covers them.
+
+### Tests
+- refsum: two synthetic tracks (a, b = a delayed 0 samples, different spectra) -> output == a*gA + b*gB to 1e-6, float32,
+  lagMs 0, refRatioDb matches LUFS difference to 0.05 dB; a 5 ms delayed b -> WARNING and lagMs ~5; a polarity-flipped b
+  -> polarity -1; mismatched sample rates -> exit 2; --blend-db applied.
+- pathcheck: a two-path fixture preset (blend) rendered from a fixture DI; refs = the same preset rendered with each path
+  alone -> per-path A-weighted errors < 0.1 dB, swapped errors larger, chosen ratio == ref ratio within 0.1 dB; a
+  single-path fixture -> singlePath true. Synthetic audio only, generated in the test, nothing committed.
+- Script: the dry-run test asserts the blend refs, `L_blend_quick` under --quick-only, `L_blend`/`R_blend` in full,
+  pathcheck lines and `--blend-db` parsing (bad value -> exit 2).
