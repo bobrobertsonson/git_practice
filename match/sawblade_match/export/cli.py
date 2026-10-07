@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
+from pathlib import Path
 from typing import Sequence
 
 from . import stop as STOP
@@ -51,7 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="continue an interrupted run: the run's output directory (refused if preset, signal, mode, size or "
                         "training settings differ), or 'auto' = the newest matching unfinished run in the exports dir "
                         "(else start fresh); --max-minutes counts training time across resumes")
-    p.add_argument("--notes-preset", default=None, metavar="PATH", help="preset JSON the export notes are written from, when the preset given trains a derived rig (e.g. bus comp switched off for a no-cab export): the notes then list the stages of this original rig")
+    p.add_argument("--notes-preset", default=None, metavar="PATH",
+                   help="no-cab 'drop' exports only: the ORIGINAL preset (same rig; it may differ from PRESET only in its bus "
+                        "comp and non-tone keys) the export notes are written from, so a bus comp switched off in PRESET is "
+                        "still listed with its settings. Repeat it on --resume")
     p.add_argument("--keep-scratch", action="store_true", help="keep the scratch + checkpoint directories (the run is marked complete, never auto-resumed)")
     return p
 
@@ -75,6 +79,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {msg}", file=sys.stderr)
         Progress(args.progress_json).update("error", message=msg)
         return EXIT_ERROR
+    if args.notes_preset:
+        err = None
+        if args.mode != "nocab":
+            err = "--notes-preset is only for no-cab exports (use --mode nocab)"
+        elif not Path(args.notes_preset).expanduser().is_file():
+            err = f"--notes-preset {args.notes_preset}: no such file"
+        if err:
+            print(f"error: {err}", file=sys.stderr)
+            Progress(args.progress_json).update("error", message=err)
+            return EXIT_ERROR
     from .run import run_export
     STOP.clear()
     old = _install_sigint()

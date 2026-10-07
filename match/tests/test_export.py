@@ -1032,3 +1032,82 @@ def test_render_stage_writes_heartbeats_while_the_target_render_runs(mx, monkeyp
     assert fr == sorted(fr) and fr[-1] > fr[0] and fr[-1] < 0.10
     allfr = [s["fraction"] for s in seen]
     assert allfr == sorted(allfr) and allfr[-1] == 1.0
+
+
+# ---- --notes-preset (the plugin trains a copy with the bus comp off; the notes come from the original rig) ----
+
+COMP_ON = {"enabled": True, "thresholdDb": -18.0, "ratio": 4.0, "kneeDb": 3.0, "attackMs": 5.0, "releaseMs": 80.0,
+           "makeupDb": 2.5}
+
+
+def _orig_file(mx, **over):
+    o = copy.deepcopy(mx.preset)
+    o["busComp"] = dict(COMP_ON)
+    o.update(over)
+    f = mx.tmp / "orig.json"
+    f.write_text(json.dumps(o))
+    return f, o
+
+
+def test_mock_notes_preset_lists_the_dropped_comp(mx):
+    f, orig = _orig_file(mx, name="renamed rig")                  # a non-tone key may differ
+    out = mx.tmp / "o1"
+    rep = mx.go(out=str(out), notes_preset=str(f))
+    assert "busComp" in [s["stage"] for s in rep["exportNotes"]["stages"]]
+    comp = [s for s in rep["exportNotes"]["stages"] if s["stage"] == "busComp"][0]
+    assert comp["settings"]["thresholdDb"] == -18 and comp["settings"]["makeupDb"] == 2.5
+    assert rep["notesPreset"]["sha256"] == P.preset_hash(orig) and rep["notesPreset"]["path"] == str(f.resolve())
+    assert rep["notesOnly"][0]["what"] == "busComp" and rep["notesOnly"][0]["original"]["ratio"] == 4.0
+    assert any("bus comp dropped from the model" in w for w in rep["plan"]["warnings"])
+    txt = next(out.glob("*.export_notes.txt")).read_text()
+    assert "busComp" in txt and "ratio 4:1" in txt
+    assert mx.fake.calls[-1]["identity"]["presetSha256"] == P.preset_hash(mx.preset)      # training input unchanged
+
+
+def test_mock_no_notes_preset_has_no_notes_keys(mx):
+    rep = mx.go(out=str(mx.tmp / "o1"))
+    assert "notesPreset" not in rep and "notesOnly" not in rep
+    assert "notesPresetSha256" not in mx.fake.calls[-1]["identity"]
+    assert "busComp" not in [s["stage"] for s in rep["exportNotes"]["stages"]]
+
+
+def test_mock_notes_preset_refusals_before_training(mx):
+    n = len(mx.fake.calls)
+    with pytest.raises(P.ExportRefused, match="cannot read"):
+        mx.go(out=str(mx.tmp / "o"), notes_preset=str(mx.tmp / "nowhere.json"))
+    f, _ = _orig_file(mx, blend=0.9)                              # differs beyond the bus comp
+    with pytest.raises(P.ExportRefused, match="beyond the bus comp"):
+        mx.go(out=str(mx.tmp / "o"), notes_preset=str(f))
+    f, _ = _orig_file(mx)
+    with pytest.raises(P.ExportRefused, match="only for no-cab"):
+        mx.go(out=str(mx.tmp / "o"), mode="withcab", notes_preset=str(f))
+    assert len(mx.fake.calls) == n
+
+
+def test_mock_cli_notes_preset_missing_path_and_withcab(mx, capsys):
+    from sawblade_match.export import cli
+    pj = mx.tmp / "preset.json"
+    assert cli.main([str(pj), "--notes-preset", str(mx.tmp / "nowhere.json"), "--no-validate"]) == 1
+    assert "no such file" in capsys.readouterr().err
+    f, _ = _orig_file(mx)
+    assert cli.main([str(pj), "--mode", "withcab", "--notes-preset", str(f), "--no-validate"]) == 1
+    assert "only for no-cab" in capsys.readouterr().err
+    assert not mx.fake.calls
+
+
+def test_mock_resume_needs_the_same_notes_preset(mx):
+    f, orig = _orig_file(mx)
+    sha = P.preset_hash(orig)
+    d = _unfinished(mx, "run-n", notesPresetSha256=sha)
+    with pytest.raises(P.ExportRefused, match="pass the same --notes-preset"):
+        mx.go(resume=str(d))                                      # flag missing
+    d2 = _unfinished(mx, "run-m", notesPresetSha256="0" * 64)
+    with pytest.raises(P.ExportRefused, match="pass the same --notes-preset"):
+        mx.go(resume=str(d2), notes_preset=str(f))                # another notes preset than the run's
+    assert not mx.fake.calls
+    rep = mx.go(resume=str(d), notes_preset=str(f))
+    assert mx.fake.calls[-1]["resume"] is True and rep["notesPreset"]["sha256"] == sha
+    assert mx.fake.calls[-1]["identity"]["notesPresetSha256"] == sha
+    d3 = _unfinished(mx, "run-p")                                 # a run without a notes preset refuses one given now
+    with pytest.raises(P.ExportRefused, match="notes preset differs"):
+        mx.go(resume=str(d3), notes_preset=str(f))

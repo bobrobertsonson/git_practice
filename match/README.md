@@ -559,8 +559,18 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   folded into the exported `.ir.wav`, which the notes point to) and the bus comp (threshold dB re the chain's pre-headroom level
   and re 0 dBFS at the exported output, which includes the output gain the model already has; ratio, attack/release ms, knee dB,
   make-up dB), the last only with `--allow-inexact`. `withcab` lists only the gate (and a bypassed bus comp, if the plan ever
-  drops one). `--notes-preset PATH` writes the notes from that preset instead of the one trained: a caller that trains a derived rig (the plugin switches the bus comp off for a no-cab "drop" export) passes the original, so the dropped comp is still listed (the report gets `notesPreset`). Nothing outside the model: the file says "Nothing to add". The output gain is never listed (it is inside the
+  drops one). Nothing outside the model: the file says "Nothing to add". The output gain is never listed (it is inside the
   model). The `.txt` ends with the licence note (NON-COMMERCIAL included).
+* **`--notes-preset PATH`** (no-cab exports only; refused with `--mode withcab`). A caller that trains a derived rig (the plugin
+  switches the bus comp off for a no-cab "drop" export) passes the ORIGINAL preset here, so the dropped comp is still listed in
+  the notes with its settings. It is validated before any work: the file must exist, and it may differ from the trained preset
+  only in `busComp` and the non-tone keys (`name`, `notes`, `export`, `playAlong`, `category`), otherwise the export is refused
+  (if the trained preset keeps its comp, the comp settings must match too). The report gets `notesPreset` (`path`, `sha256`) and
+  `notesOnly` (stages listed in the notes only, e.g. the comp, with their settings), and `plan.warnings` says the comp was
+  dropped from the model. Limitation: the validation reference, the trained signal and the `.nam` are unchanged by it (the comp
+  stays out of the model; validation compares against the trained preset). Its hash is part of the run's resume identity:
+  **repeat `--notes-preset` on `--resume`**; a resume without it (or with another file) is refused, and `--resume auto` skips
+  such runs.
 * **Folding (nocab).** The IR written next to the model is `cab IR (*) post-EQ impulse response`, obtained by rendering a unit impulse
   through the core's own `cab -> post EQ` (empty paths, blend 0): so IR loading, resampling to 48 kHz, the 2 s truncation and the L2
   normalisation are exactly the chain's, and the latency is already trimmed. Trailing samples below -120 dB (re. peak) are cut. The

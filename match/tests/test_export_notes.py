@@ -215,3 +215,18 @@ def test_pre_eq_is_listed_as_in_the_model_not_as_a_stage():
     q = base()
     q["paths"]["a"].pop("preEq", None)
     assert "inModel" not in N.build_export_notes(q, P.make_plan(q, "withcab"), "m.nam")
+
+
+def test_notes_preset_problems():
+    orig = full()
+    trained = copy.deepcopy(orig)
+    trained["busComp"]["enabled"] = False
+    trained["name"], trained["export"] = "other", {"mode": "nocab"}
+    assert P.notes_preset_problems(trained, orig) == []
+    assert P.notes_only(trained, orig)[0]["what"] == "busComp" and P.notes_only(orig, orig) == []
+    trained["blend"] = 0.123                                   # differs beyond the comp
+    assert "beyond the bus comp" in P.notes_preset_problems(trained, orig)[0]
+    assert any("only for no-cab" in m for m in P.notes_preset_problems(orig, orig, "withcab"))
+    kept = copy.deepcopy(orig)
+    kept["busComp"]["ratio"] = 9.0                             # trained keeps its comp: settings must match
+    assert "different bus comp settings" in P.notes_preset_problems(kept, orig)[0]
