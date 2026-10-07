@@ -39,6 +39,8 @@ BAND_CENTRES_HZ = (63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
 EDGE_S = 0.25                    # dropped at both ends of the comparison region (warm-up, FFT shift edges)
 MIN_REGION_S = 1.0
 FINE_SEARCH_MS = 5.0
+MAIN_LOBE = RATE // 2000      # +-0.5 ms around the correlation peak count as the main lobe
+AMBIGUOUS_BELOW = 1.05
 DEFAULT_TOLERANCE_DB = -30.0
 VERDICTS = ((-40.0, "indistinguishable by this measure (residual <= -40 dB)"),
             (-30.0, "very close (residual <= -30 dB)"),
@@ -123,7 +125,7 @@ def fine_lag_samples(rec: np.ndarray, ref: np.ndarray, coarse_ms: float) -> tupl
     eb = float(np.sum(b[n0 - lag:n1 - lag] ** 2)) if n1 > n0 else 0.0
     rho = float(cs[i] / max(np.sqrt(ea * eb), 1e-30))
     others = np.abs(cs).copy()
-    others[max(0, i - 3):i + 4] = 0.0
+    others[max(0, i - MAIN_LOBE):i + MAIN_LOBE + 1] = 0.0
     conf = float(np.abs(cs[i]) / max(float(others.max()), 1e-30)) if len(others) else float("inf")
     return lag + frac, rho, conf
 
@@ -170,6 +172,10 @@ def analyse(rec: np.ndarray, ref: np.ndarray, max_lag_ms: float = 1500.0, polari
     ref_d = shift(ref, lag, len(rec))
     a, b = rec[n0:n1], sign * ref_d[n0:n1]
     g = float(np.dot(a, b) / max(float(np.dot(b, b)), 1e-30))          # least squares gain, polarity already applied
+    if polarity != "auto" and g < 0:
+        warnings.append(f"the forced polarity '{polarity}' disagrees with the recording (it correlates inverted): the residual "
+                        "below is for the forced polarity, i.e. very bad on purpose; use --polarity auto")
+        g = abs(g)
     matched = g * b
     resid = a - matched
     p_sig, p_res, p_rec = float(np.sum(matched ** 2)), float(np.sum(resid ** 2)), float(np.sum(a ** 2))
@@ -204,7 +210,7 @@ def analyse(rec: np.ndarray, ref: np.ndarray, max_lag_ms: float = 1500.0, polari
                                 "when every octave band's level is also corrected, i.e. NOT a plain per-band level / filter difference"},
            "bands": bands,
            "bandLevelSpreadDb": (max(spread) - min(spread)) if spread else 0.0}
-    if conf < 1.5:
+    if conf < AMBIGUOUS_BELOW:
         warnings.append(f"the alignment peak is ambiguous (confidence {conf:.2f}): check that the recording is of the same DI "
                         "and that the render was made with the same preset")
     if abs(rho) < 0.3:
@@ -229,7 +235,8 @@ def verdict(overall_db: float, tolerance_db: float, rep: dict) -> dict:
     if abs(ga["deviceVsRenderDb"]) > 0.5:
         hints.append(f"level: the device output is {ga['deviceVsRenderDb']:+.1f} dB vs the render (already matched)")
     if rep["bandLevelSpreadDb"] > 1.5:
-        worst = max(rep["bands"], key=lambda b: abs(b["levelDiffDb"]) if b["renderDb"] > rep["residual"]["overallDb"] - 200 else 0)
+        top = max(b["renderDb"] for b in rep["bands"])
+        worst = max((b for b in rep["bands"] if b["renderDb"] > top - 40.0), key=lambda b: abs(b["levelDiffDb"]))
         hints.append(f"filtering: octave-band levels differ by up to {rep['bandLevelSpreadDb']:.1f} dB between the device and the "
                      f"render (largest at {worst['centreHz']} Hz: {worst['levelDiffDb']:+.1f} dB): a tone / filter in the device path")
     if rep["residual"]["afterPerBandGainDb"] > overall_db - 3.0 and overall_db > tolerance_db:
