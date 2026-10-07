@@ -239,11 +239,123 @@ def format_notes_txt(notes: dict, preset_name: str | None = None, licence_note: 
     return "\n".join(L) + "\n"
 
 
-def write_export_notes(preset: dict, plan, nam_path, ir_path=None, licence_note: str | None = None) -> tuple[dict, Path]:
-    """Build the notes for the export at ``nam_path`` and write ``<nam stem>.export_notes.txt`` next to it."""
+# ------------------------------------------------------------------ device profile: Darkglass Anagram (v0.6)
+#
+# ``exportNotes.deviceProfiles.anagram`` maps the generic stages onto the Anagram's PUBLISHED block list only (Neural Amp /
+# Neural Pedal / Neural Loader, IR, compressor, gate, EQ; up to three NAM blocks).  Nothing here claims anything about the
+# device's internals, its controls' scales or firmware behaviour: values are Sawblade's own (digital dBFS, ms, Hz) and
+# the text says to match them by ear / meter.  Key layout (plugin reader: ``plugin/src/ExportNotes.cpp``
+# ``anagramProfileOf``): {device, file, message, loaderOrder (string), stages[{stage, block, position, settings{},
+# hardware}]}.
+ANAGRAM_DEVICE = "Anagram"
+MATCH_BY_EAR = "Values are Sawblade's (digital dBFS / ms / Hz): match levels by ear or meter on the device."
+
+
+def _pos(i: int, n: int) -> str:
+    return f"{i} (first in the chain)" if i == 1 and n > 1 else f"{i} (last in the chain)" if i == n and n > 2 else str(i)
+
+
+def _anagram_gate(st: dict) -> dict:
+    g = st["settings"]
+    s = {"mode": g["mode"], "threshold dB": g["thresholdDb"], "close threshold dB": g["closeThresholdDb"],
+         "attack ms": g["attackMs"], "hold ms": g["holdMs"], "release ms": g["releaseMs"], "range dB": g["rangeDb"],
+         "keyed on": "guitar input (the signal before any pedal or amp)"}
+    if "ratio" in g:
+        s["ratio"] = g["ratio"]
+    if "keyHighPassHz" in g:
+        s["key high-pass Hz"] = g["keyHighPassHz"]
+    return {"stage": "gate", "block": "Gate", "settings": s,
+            "hardware": "Put the gate FIRST in the chain, before every NAM block, so it hears the guitar. " + MATCH_BY_EAR}
+
+
+def _anagram_comp(st: dict) -> dict:
+    c = st["settings"]
+    s = {"threshold dBFS": c["thresholdDbFsOut"], "ratio": c["ratio"], "attack ms": c["attackMs"],
+         "release ms": c["releaseMs"], "knee dB": c["kneeDb"], "make-up dB": c["makeupDb"], "detector": "peak"}
+    return {"stage": "busComp", "block": "Compressor", "settings": s,
+            "hardware": ("Put the compressor LAST, after the IR. The threshold is in dBFS at the exported output "
+                         "level (the preset's output gain is already inside the model). " + MATCH_BY_EAR)}
+
+
+def build_anagram_profile(preset: dict, plan, notes: dict, nam_name: str, ir_name: str | None = None,
+                          drive_only: bool = False, model_label: str | None = None, file: str | None = None) -> dict:
+    """The ``anagram`` device profile for ``notes`` (the generic ``exportNotes`` of the same export).
+
+    Block mapping, in signal order: gate -> Gate block (first, before the NAM block); the trained model -> Neural Amp
+    block (Neural Pedal when ``drive_only``: a no-cab export with no amp in the chain); the no-cab export's cab IR -> IR
+    block right after the model (the exported IR also holds the post EQ, so no EQ block is needed then); a post EQ that is
+    NOT folded into the IR -> EQ block after the IR; the bus comp -> Compressor block last.  Gate, model, IR, EQ and
+    compressor each take one block, so the chain is at most 5 blocks with one NAM block."""
+    by = {st["stage"]: st for st in notes["stages"]}
+    blocks: list[dict] = []
+    if "gate" in by:
+        blocks.append(_anagram_gate(by["gate"]))
+    kind = "Neural Pedal" if drive_only else "Neural Amp"
+    label = f" ({model_label})" if model_label else ""
+    blocks.append({"stage": "model", "block": kind, "settings": {"model": nam_name, "bypass": False},
+                   "hardware": f"Load {nam_name}{label} into the {kind} block. Set the block's levels so the output "
+                               "level matches the plugin by ear or meter."})
+    cab, peq = by.get("cab"), by.get("postEq")
+    if cab or (peq and peq["settings"].get("foldedIntoExportedIr")):
+        folded = bool(peq and peq["settings"].get("foldedIntoExportedIr"))
+        s = {"file": ir_name or "(cab IR)", "normalise": False}
+        text = "Load the IR WITHOUT loudness normalisation."
+        if ir_name:
+            s["contains"] = "cab and post EQ" if folded else "cab"
+            text += " The file already holds the " + ("cab and the post EQ" if folded else "cab") + "."
+        else:
+            text += " " + (cab or {}).get("hardware", "")
+        blocks.append({"stage": "cab", "block": "IR", "settings": s, "hardware": text.strip()})
+    if peq and not peq["settings"].get("foldedIntoExportedIr"):
+        blocks.append({"stage": "postEq", "block": "EQ",
+                       "settings": {f"band {i}": _eq_line(b) for i, b in enumerate(peq["settings"]["bands"], 1)},
+                       "hardware": "Put the EQ after the IR. " + MATCH_BY_EAR})
+    if "busComp" in by:
+        blocks.append(_anagram_comp(by["busComp"]))
+    n = len(blocks)
+    for i, b in enumerate(blocks, 1):
+        b["position"] = _pos(i, n)
+        b.setdefault("hardware", "")
+    out = [{"stage": b["stage"], "block": b["block"], "position": b["position"], "settings": b["settings"],
+            **({"hardware": b["hardware"]} if b["hardware"] else {})} for b in blocks]
+    prof = {"device": ANAGRAM_DEVICE, "message": "Blocks to set on the device, in signal order.", "stages": out,
+            "loaderOrder": "Anagram chain: " + " -> ".join(b["block"] for b in blocks)}
+    if file:
+        prof["file"] = file
+    return prof
+
+
+def format_anagram_txt(profile: dict, preset_name: str | None = None, licence_note: str | None = None) -> str:
+    """Text for ``<name>.anagram_notes.txt``; the same layout as the plugin's own rendering of the profile."""
+    L = [f"Sawblade export notes for the Anagram{f' - {preset_name}' if preset_name else ''}", "",
+         "Blocks to set on the device, in signal order:", ""]
+    for i, st in enumerate(profile["stages"], 1):
+        L.append(f"{i}. {st['block']} [{st['position']}]" + (f"  ({st['stage']})" if st["stage"] != st["block"] else ""))
+        for k in sorted(st["settings"]):
+            v = st["settings"][k]
+            L.append(f"   {k}: {'yes' if v is True else 'no' if v is False else _g(v, 3) if isinstance(v, (int, float)) else v}")
+        if st.get("hardware"):
+            L.append(f"   {st['hardware']}")
+        L.append("")
+    L += [profile["loaderOrder"], "", licence_note or DISCLAIMER]
+    return "\n".join(L) + "\n"
+
+
+def write_export_notes(preset: dict, plan, nam_path, ir_path=None, licence_note: str | None = None,
+                       stem: str | None = None, model_label: str | None = None) -> tuple[dict, Path]:
+    """Build the notes for the export at ``nam_path`` and write ``<stem>.export_notes.txt`` (generic) and
+    ``<stem>.anagram_notes.txt`` (Anagram device profile) next to it; ``stem`` defaults to the .nam's stem (A1)."""
+    from . import plan as P
     nam_path = Path(nam_path)
+    stem = stem or nam_path.stem
     notes = build_export_notes(preset, plan, nam_path.name, Path(ir_path).name if ir_path else None)
-    txt = nam_path.with_name(nam_path.stem + ".export_notes.txt")
+    txt = nam_path.with_name(stem + ".export_notes.txt")
     txt.write_text(format_notes_txt(notes, preset.get("name"), licence_note), encoding="utf-8")
     notes["file"] = txt.name
+    drive = P.drive_only(preset, plan)
+    atxt = nam_path.with_name(stem + ".anagram_notes.txt")
+    prof = build_anagram_profile(preset, plan, notes, nam_path.name, Path(ir_path).name if ir_path else None,
+                                 drive_only=drive, model_label=model_label, file=atxt.name)
+    atxt.write_text(format_anagram_txt(prof, preset.get("name"), licence_note), encoding="utf-8")
+    notes["deviceProfiles"] = {"anagram": prof}
     return notes, txt

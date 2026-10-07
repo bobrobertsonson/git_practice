@@ -595,7 +595,7 @@ def _unfinished(mocked, name, **over):
     (c / R.LAST).write_bytes(b"x")
     rc = mocked.fake_cfg
     prog = {"presetSha256": PL.preset_hash(mocked.preset), "signalSha256": "t" * 64, "validSha256": "v" * 64,
-            "mode": "nocab", "size": "feather", "epoch": 2, "complete": False,
+            "mode": "nocab", "size": "feather", "arch": "a1", "layout": "a1-official-0.12.3", "epoch": 2, "complete": False,
             "config": {"seed": 0, "batchSize": 16, "epochs": rc.epochs, "lrGamma": rc.lr_gamma}}
     prog.update(over)
     R.write_progress(c, prog)
@@ -631,6 +631,24 @@ def test_mock_resume_dir_continues_in_that_dir(mx):
     assert (d / "export_report.json").is_file()
 
 
+def test_mock_resume_refuses_pre_v06_lite_feather_and_cross_arch(mx):
+    """v0.6: an old lite/feather checkpoint (no arch / layout keys: the old layer split) and an A2 checkpoint must not resume an
+    official-layout A1 run; an old *standard* checkpoint (layout unchanged) still resumes."""
+    from sawblade_match.export import resume as R
+    d = _unfinished(mx, "old-feather")
+    prog = R.read_progress(R.ckpt_dir(d))
+    for k in ("arch", "layout"):
+        prog.pop(k)
+    R.write_progress(R.ckpt_dir(d), prog)
+    with pytest.raises(P.ExportRefused, match="old lite/feather layer split"):
+        mx.go(resume=str(d))
+    d2 = _unfinished(mx, "a2-run", arch="a2", layout="a2-packed-channels_3+channels_8")
+    with pytest.raises(P.ExportRefused, match="architecture differs"):
+        mx.go(resume=str(d2))
+    old_std = {"size": "standard", "mode": "nocab", "presetSha256": "x"}
+    assert R.legacy_identity(old_std)["layout"] == "a1-official-0.12.3" and R.legacy_identity(old_std)["arch"] == "a1"
+
+
 def test_mock_resume_refuses_sha_size_mode_mismatch_and_missing(mx):
     from sawblade_match.export.cli import main
     n = len(mx.fake.calls)
@@ -660,7 +678,7 @@ def test_mock_cli_refusal_exit_code_and_resume_flag(mx, capsys, monkeypatch):
     from sawblade_match.export import cli
     d = _unfinished(mx, "run-a", mode="withcab")
     pj = mx.tmp / "preset.json"
-    rc = cli.main([str(pj), "--size", "feather", "--resume", str(d), "--no-validate"])
+    rc = cli.main([str(pj), "--arch", "a1", "--size", "feather", "--resume", str(d), "--no-validate"])
     assert rc == 1 and "mode differs" in capsys.readouterr().err
     assert cli.build_parser().parse_args([str(pj), "--resume", "auto"]).resume == "auto"
 
@@ -748,7 +766,7 @@ def _shared_with(base: dict, ir: dict) -> dict:
 
 def _cli(mx, *extra):
     from sawblade_match.export import cli
-    return cli.main([str(mx.tmp / "preset.json"), "--size", "feather", "--exports-root", str(mx.tmp / "exports"), *extra])
+    return cli.main([str(mx.tmp / "preset.json"), "--arch", "a1", "--size", "feather", "--exports-root", str(mx.tmp / "exports"), *extra])
 
 
 def _fake_validation(mx, monkeypatch, esr_value=0.5):

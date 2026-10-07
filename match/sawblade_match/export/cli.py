@@ -19,7 +19,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("preset", help="resolved preset JSON (e.g. the matcher's best.preset.resolved.json)")
     p.add_argument("--mode", choices=("nocab", "withcab"), default="nocab",
                    help="nocab (default): model before the cab + IR (x) post EQ wav; withcab: the whole chain")
-    p.add_argument("--size", choices=("feather", "lite", "standard"), default="standard", help="A1 WaveNet size: NAM's official feather / lite / standard presets")
+    p.add_argument("--arch", choices=("a2", "a1"), default="a2",
+                   help="a2 (default): train the packed A2 net and write the container plus standalone A2 Full and A2 Lite "
+                        "files; a1: one A1 WaveNet for older loaders")
+    p.add_argument("--size", default=None, metavar="SIZE",
+                   help="a2: full (default) | lite = which standalone file is the primary one (both are always written and "
+                        "validated); a1: standard (default) | lite | feather, NAM's official A1 presets. Any other "
+                        "arch/size pair is refused")
     p.add_argument("--epochs", type=int, default=None, help="max epochs (default per size: see README)")
     p.add_argument("--max-minutes", type=float, default=None, help="training wall-time cap (default per size)")
     p.add_argument("--lr-gamma", type=float, default=None,
@@ -43,8 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto",
                    help="training device (auto: cuda > mps > cpu)")
     p.add_argument("--require-accept", action="store_true",
-                   help="exit 2 when the acceptance status is NOT MET (files are still written); other sizes are not judged "
-                        "and exit 0")
+                   help="exit 2 when the acceptance status of the primary size is NOT MET (files are still written); "
+                        "a1 sizes other than standard are not judged and exit 0")
     p.add_argument("--no-validate", action="store_true", help="skip validation + listening file")
     p.add_argument("--resume", metavar="DIR|auto", default=None,
                    help="continue an interrupted run: the run's output directory (refused if preset, signal, mode, size or "
@@ -73,11 +79,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {msg}", file=sys.stderr)
         Progress(args.progress_json).update("error", message=msg)
         return EXIT_ERROR
+    from . import train as T
+    try:
+        args.size = T.check_arch_size(args.arch, args.size)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        Progress(args.progress_json).update("error", message=str(e), arch=args.arch)
+        return EXIT_ERROR
     from .run import run_export
     STOP.clear()
     old = _install_sigint()
     try:
-        rep = run_export(args.preset, mode=args.mode, size=args.size, out=args.out, name=args.name,
+        rep = run_export(args.preset, mode=args.mode, size=args.size, arch=args.arch, out=args.out, name=args.name,
                          allow_inexact=args.allow_inexact, epochs=args.epochs, max_minutes=args.max_minutes,
                          seed=args.seed, threads=args.threads, di=args.di, validate=not args.no_validate,
                          signal_seed=args.signal_seed, target_esr=args.target_esr, lr_gamma=args.lr_gamma, batch_size=args.batch_size, device=args.device, keep_scratch=args.keep_scratch, resume=args.resume,
@@ -97,11 +110,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             signal.signal(signal.SIGINT, old)
         STOP.clear()
     if rep.get("validation"):
-        v = rep["validation"]
-        print(f"{v['acceptance']['summary']}")
-        print(f"held-out ESR {v['heldOut']['esr']:.4f}; DI LTAS error {v['diExcerpt']['ltas']['aWeightedErrorDb']:.2f} dB")
+        vals = ([(sz, rep["validation"][sz]) for sz in ("full", "lite")] if args.arch == "a2" else [(None, rep["validation"])])
+        for sz, v in vals:
+            print(f"{v['acceptance']['summary']}")
+            print(f"{(sz + ': ') if sz else ''}held-out ESR {v['heldOut']['esr']:.4f}; DI LTAS error {v['diExcerpt']['ltas']['aWeightedErrorDb']:.2f} dB")
     print(rep["licenceNote"])
-    if args.require_accept and rep["validation"]["acceptance"]["status"] == "NOT MET":
+    if args.require_accept and (rep["validation"][args.size] if args.arch == "a2" else rep["validation"])["acceptance"]["status"] == "NOT MET":
         print("acceptance NOT MET (--require-accept)", file=sys.stderr)
         return EXIT_NOT_MET
     return EXIT_OK

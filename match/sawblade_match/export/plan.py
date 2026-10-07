@@ -248,9 +248,36 @@ def gear_type(plan: Plan, preset: dict) -> str:
     return "amp_pedal_cab" if plan.mode == "withcab" else "pedal_amp"
 
 
+def drive_only(preset: dict, plan: "Plan | dict") -> bool:
+    """True when the exported model is a drive / boost stage and not an amp: a no-cab export whose enabled chain has
+    at least one block and none of them in an ``amp`` slot (pedals, boosts, modeled pedals, EQs only).  A with-cab export
+    contains the cab, so it is always amp-like.  Used to pick Neural Pedal over Neural Amp in the Anagram notes."""
+    if (plan["mode"] if isinstance(plan, dict) else plan.mode) != "nocab":
+        return False
+    seen = False
+    for _key, path, blk in _blocks(preset):
+        if blk.get("bypass") or not path.get("enabled", True):
+            continue
+        if blk.get("type") == "eq":
+            continue
+        seen = True
+        if blk.get("slot") == "amp":
+            return False
+    return seen
+
+
 def sawblade_block(preset: dict, plan: Plan, size: str, seed: int, signal_seed: int, signal_sha256: str,
-                   levels: dict, ir_file: str | None) -> dict:
-    """The ``metadata.sawblade`` block written into the ``.nam``: provenance, mode, attribution and the licence note."""
+                   levels: dict, ir_file: str | None, arch: str | None = None) -> dict:
+    """The ``metadata.sawblade`` block written into the ``.nam``: provenance, mode, attribution and the licence note.
+    ``arch`` (a2 exports only) is appended as the last key; A1 blocks are unchanged."""
+    blk = _sawblade_block(preset, plan, size, seed, signal_seed, signal_sha256, levels, ir_file)
+    if arch is not None:
+        blk["arch"] = arch
+    return blk
+
+
+def _sawblade_block(preset: dict, plan: Plan, size: str, seed: int, signal_seed: int, signal_sha256: str,
+                    levels: dict, ir_file: str | None) -> dict:
     return {"exporter": "sawblade-export",
             "preset": {"name": preset.get("name"), "sha256": preset_hash(preset)},
             "exportMode": plan.mode, "exact": plan.exact, "size": size,
