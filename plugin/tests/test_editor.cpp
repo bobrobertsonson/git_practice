@@ -3469,6 +3469,30 @@ TEST_CASE("export panel: a NAM standard input file in Settings is passed as --na
   CHECK(*(at + 1) == wav.string());
   CHECK(std::find(args.begin(), args.end(), "--signal") == args.end());
   CHECK(anyLabelContains(panel, "training signal   NAM standard input v3.0.0"));  // the report's object label
+  // The latest explicit choice wins: the toggle beats a stored path ...
+  st.setUseSawbladeSignal(true);
+  panel.refresh();
+  CHECK(anyLabelContains(panel, "Training signal: Sawblade's test signal"));
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  {
+    const auto a2 = exportArgv(rig.proc.jobs().snapshot(JobKind::Export).outDir);
+    const auto sg = std::find(a2.begin(), a2.end(), "--signal");
+    REQUIRE(sg != a2.end());
+    CHECK(*(sg + 1) == "sawblade");
+    CHECK(std::find(a2.begin(), a2.end(), "--nam-input") == a2.end());
+  }
+  // ... and choosing a file (a stored path set after the toggle) turns it off, so the file is used again.
+  st.setNamInputFile(wav);
+  st.setUseSawbladeSignal(false);  // what Browse / CHOOSE FILE do
+  panel.refresh();
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  {
+    const auto a3 = exportArgv(rig.proc.jobs().snapshot(JobKind::Export).outDir);
+    CHECK(std::find(a3.begin(), a3.end(), "--nam-input") != a3.end());
+    CHECK(std::find(a3.begin(), a3.end(), "--signal") == a3.end());
+  }
   // A set path that has vanished is not used: the prompt says so and nothing starts.
   fs::remove(wav);
   panel.refresh();

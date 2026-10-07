@@ -117,3 +117,8 @@ add_test(NAME nam_load_check_fixtures
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a2_lite.nam
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a2_container.nam
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a1_standard.nam)
+
+# A file that is not a NAM model must fail the check (WILL_FAIL): written at configure time into the build dir.
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/garbage.nam "this is not a NAM file\n")
+add_test(NAME nam_load_check_rejects_garbage COMMAND nam_load_check ${CMAKE_CURRENT_BINARY_DIR}/garbage.nam)
+set_tests_properties(nam_load_check_rejects_garbage PROPERTIES WILL_FAIL TRUE)

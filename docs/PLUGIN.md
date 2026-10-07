@@ -739,7 +739,7 @@ exporter without them behaves as before: A1, one `.nam`; a report whose `primary
 
 **Training signal (v0.6 decision 22).** Models are trained on the NAM project's standard input file (v3_0_0.wav / input.wav, from
 the NAM trainer's "Download input file" button), which the user supplies: the plugin never bundles or downloads it. It is the
-same Settings field as the reamp pair's (`namInputFile`). Every model export with a usable path passes `--nam-input <path>`
+same Settings field as the reamp pair's (`namInputFile`). Every model export with a usable path passes `--nam-input <path>` (unless the Settings toggle for Sawblade's signal is on: the latest explicit choice wins, so the toggle beats a stored path and choosing a file via CHOOSE FILE / Browse turns the toggle off)
 (a resume does not: it continues with the signal it started with). With no path, TRAIN EXPORT starts nothing and the panel asks:
 CHOOSE FILE... (stores the path and starts the export) or USE SAWBLADE'S TEST SIGNAL INSTEAD (passes `--signal sawblade`; remembered as
 `trainingSignalSawblade` in the settings file, revocable with the Settings checkbox or by setting a path; the model is labelled as

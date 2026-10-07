@@ -175,6 +175,17 @@ else:
     if cfg.get("requireSignal") and not opt("--reamp-pair") and not opt("--resume") and not (opt("--nam-input") or opt("--signal") == "sawblade"):
         print("error: pass --nam-input PATH or --signal sawblade", file=sys.stderr, flush=True)
         sys.exit(64)
+    # decision 23 (same rule as the real CLI): a resume reuses the run's recorded signal and passes none; one that names a different
+    # signal is refused. A fresh run records the signal it was given.
+    given = "nam" if opt("--nam-input") else ("sawblade" if opt("--signal") == "sawblade" else "")
+    rec_path = os.path.join(out, "signal_used.txt")
+    if opt("--resume"):
+        recorded = open(rec_path).read() if os.path.exists(rec_path) else ""
+        if given and given != recorded:
+            print("error: this run was started with the %s signal; a resume cannot change it" % (recorded or "default"), file=sys.stderr, flush=True)
+            sys.exit(64)
+    else:
+        open(rec_path, "w").write(given)
     prog_json("plan", 0.01, "plan")
     prog_json("signal", 0.04, "signal")
     prog_json("render", 0.08, "render")

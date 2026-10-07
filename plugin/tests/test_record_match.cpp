@@ -3313,6 +3313,40 @@ TEST_CASE("runner: --nam-input <file> or --signal sawblade for model training; n
   CHECK_FALSE(has(argv, "--nam-input"));
 }
 
+TEST_CASE("runner: a resume passes no signal flag and succeeds under requireSignal; naming a different signal is refused", "[match][runner][export][signal]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"requireSignal", true}, {"gates", json::array({"g1"})}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.exportsRoot = t.root / "exports";
+  er.namInput = t.root / "v3_0_0.wav";
+  sawblade::writeWavFloat32(er.namInput, 48000.0, std::vector<float>(480, 0.1f));
+  REQUIRE(runner.startExport(er));
+  REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.epoch == 3; }));
+  const fs::path run = runner.snapshot(JobKind::Export).outDir;
+  runner.cancel(JobKind::Export);
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  REQUIRE(runner.snapshot(JobKind::Export).state == JobState::Cancelled);
+
+  t.cfgExport({{"progressJson", true}, {"requireSignal", true}});
+  ExportRequest rr;
+  rr.preset = t.presetSrc;
+  rr.mode = "nocab";
+  rr.resumeDir = run;
+  rr.exportsRoot = t.root / "exports";
+  rr.sawbladeSignal = true;  // the runner passes no signal flag on a resume, whatever the request says (the run keeps its own)
+  REQUIRE(runner.startExport(rr));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  auto s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Succeeded);  // the runner drops the flag on a resume
+  CHECK_FALSE(has(argvOf(run), "--signal"));
+  CHECK_FALSE(has(argvOf(run), "--nam-input"));
+  CHECK(has(argvOf(run), "--resume"));
+}
+
 TEST_CASE("runner: an arch / size pair the exporter refuses fails the job with its message", "[match][runner][export][a2]") {
   using namespace sawblade::plugin;
   FakeTools t;

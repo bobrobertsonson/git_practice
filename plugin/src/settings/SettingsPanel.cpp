@@ -374,11 +374,11 @@ struct SettingsPanel::Impl : private juce::Timer {
     // reamp pair (v0.6): the official NAM standard input file, supplied by the user
     caption(capReamp, "NAM STANDARD INPUT FILE (TRAINING AND EXPORT REAMP PAIR)");
     styleField(reampField, "NAM standard input file", "The official NAM standard input .wav (v3_0_0.wav / input.wav). Model training and EXPORT REAMP PAIR use it");
-    reampField.onReturnKey = [this] { commitPath(reampField, s.namInputFile(), [this](std::optional<fs::path> p) { s.setNamInputFile(p); }, std::string()); };
+    reampField.onReturnKey = [this] { commitPath(reampField, s.namInputFile(), [this](std::optional<fs::path> p) { s.setNamInputFile(p); if (p) s.setUseSawbladeSignal(false); }, std::string()); };
     reampField.onFocusLost = reampField.onReturnKey;
     add(reampField);
     styleButton(reampBrowse, "Browse...", "Choose the NAM standard input .wav");
-    reampBrowse.onClick = [this] { browseWav("Choose the NAM standard input file", [this](fs::path p) { s.setNamInputFile(p); refresh(); }); };
+    reampBrowse.onClick = [this] { browseWav("Choose the NAM standard input file", [this](fs::path p) { s.setNamInputFile(p); s.setUseSawbladeSignal(false); refresh(); }); };
     add(reampBrowse);
     styleButton(reampClear, "Clear", "Forget the NAM standard input file");
     reampClear.onClick = [this] { s.setNamInputFile(std::nullopt); refresh(); };

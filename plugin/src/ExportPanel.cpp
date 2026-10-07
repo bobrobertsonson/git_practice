@@ -394,7 +394,8 @@ struct ExportPanel::Impl {
     ExportRequest r;
     std::string err;
     const auto namInput = usableNamInput();
-    if (!resume && !namInput && !settings::Settings::shared().useSawbladeSignal()) {
+    const bool sawbladeChosen = settings::Settings::shared().useSawbladeSignal();
+    if (!resume && !namInput && !sawbladeChosen) {
       // Neither the NAM file nor an explicit choice of Sawblade's signal: ask, start nothing.
       askSignal = true;
       askStarts = true;
@@ -405,8 +406,9 @@ struct ExportPanel::Impl {
     askSignal = false;
     bool ok = resume ? buildResumeRequest(proc, resumeOffer, r, &err) : buildExportRequest(proc, cur, plan, r, &err);
     if (ok && !resume) {
-      if (namInput) r.namInput = *namInput;
-      else r.sawbladeSignal = true;
+      // The latest explicit choice wins: the Settings toggle (Sawblade's signal) beats a stored path; choosing a file turns it off.
+      if (sawbladeChosen) r.sawbladeSignal = true;
+      else r.namInput = *namInput;
     }
     if (ok) ok = proc.jobs().startExport(r, &err);
     exportError = ok ? std::string() : err;
@@ -787,8 +789,8 @@ struct ExportPanel::Impl {
     else check(kCross, L::error(), "Bus comp (release " + juce::String(juce::roundToInt(rig.compReleaseMs)) + " ms)" + kDash + "too long to train: refused");
     check(kCross, L::error(), "Noise gate" + kDash + "left out, set it on your pedal");
     check(kCross, L::error(), "Time effects (delay / reverb / modulation)" + kDash + "none in this rig");
-    if (const auto in = usableNamInput()) check("i", L::warning(), "Training signal: NAM standard input file (" + juce::String(in->filename().string()) + ")");
-    else if (settings::Settings::shared().useSawbladeSignal()) check(kCross, L::error(), "Training signal: Sawblade's test signal (not the standard NAM signal)");
+    if (settings::Settings::shared().useSawbladeSignal()) check(kCross, L::error(), "Training signal: Sawblade's test signal (not the standard NAM signal)");
+    else if (const auto in = usableNamInput()) check("i", L::warning(), "Training signal: NAM standard input file (" + juce::String(in->filename().string()) + ")");
     else check("i", L::warning(), "Training signal: not set; TRAIN EXPORT asks for the NAM standard input file");
     {
       const double sec = proc.matchSettings().exportWallSeconds(cur.arch, cur.size);
