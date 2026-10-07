@@ -3,6 +3,7 @@
 #include <filesystem>
 
 #include "rig/RigModel.h"
+#include "settings/ToolEnv.h"
 
 namespace sawblade::plugin::rig {
 namespace fs = std::filesystem;
@@ -121,7 +122,7 @@ void BodyFill::failFrom(const Done& d, FillReason dflt) {
   else if (code == "not_found") r = FillReason::NoCapture;
   else if (code == "license") r = FillReason::License;
   else if (!d.ok) r = FillReason::Other;
-  fail(r, d.message.empty() ? d.output : d.message);
+  fail(r, d.message.empty() ? settings::lastSafeLine(d.output) : d.message);  // raw tool output is never shown unfiltered
 }
 
 void BodyFill::start(Step s, std::vector<std::string> args) {
