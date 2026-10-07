@@ -224,6 +224,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args and args[0] == "pedal-fit":   # phase 7.1: fit pedal.hm to captures of real HM-2 pedals
         from . import pedal_fit
         return pedal_fit.main(args[1:])
+    if args and args[0] == "pedal-accuracy":   # v0.4a: accuracy report from the per-pedal fits JSON files
+        from . import pedal_accuracy
+        return pedal_accuracy.main(args[1:])
     a = build_parser().parse_args(argv)
     try:
         return run(a)

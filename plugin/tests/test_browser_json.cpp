@@ -172,6 +172,117 @@ TEST_CASE("browser slots: block mapping", "[browser][slots]") {
   CHECK(slotTargets(two, Slot::SawAmp).at(0).blockIndex == 1);
 }
 
+TEST_CASE("browser slots: a pinned pedal tile targets exactly that block (v0.4 Task D)", "[browser][slots]") {
+  const Preset lin = loadPresetFile(kPresets / "two_linear.json");
+  Preset two = lin;
+  two.a.blocks.push_back(two.a.blocks.front());
+  two.a.blocks.back().id = "a2";
+  std::string why;
+  // no pin: the slot's usual block (the first of two nam blocks is the pedal)
+  CHECK(slotTargets(two, Slot::SawPedal, &why).at(0).blockIndex == 0);
+  // pinned: that very block, even if the heuristic would call it the amp
+  auto t = slotTargets(two, Slot::SawPedal, &why, "a2");
+  REQUIRE(t.size() == 1);
+  CHECK(t[0].kind == SlotTarget::Kind::NamBlock);
+  CHECK(t[0].path == 'a');
+  CHECK(t[0].blockIndex == 1);
+  t = slotTargets(two, Slot::SawPedal, &why, "a1");
+  REQUIRE(t.size() == 1);
+  CHECK(t[0].blockIndex == 0);
+  // the block is looked up in the slot's own path: a path A id pinned on the BODY slot is no target
+  CHECK(slotTargets(two, Slot::BodyPedal, &why, "a1").empty());
+  CHECK_FALSE(why.empty());
+  // gone
+  CHECK(slotTargets(two, Slot::SawPedal, &why, "zz").empty());
+  CHECK(why.find("no longer") != std::string::npos);
+  // a modeled block is not a capture
+  Preset modeled = two;
+  Block eqb;
+  eqb.id = "a1";
+  eqb.type = "eq";
+  eqb.params = std::make_shared<EqBlockParams>();
+  modeled.a.blocks[0] = eqb;
+  CHECK(slotTargets(modeled, Slot::SawPedal, &why, "a1").empty());
+  CHECK(why.find("modeled circuit") != std::string::npos);
+  // the cab ignores a pin
+  CHECK(slotTargets(two, Slot::Cab, nullptr, "a1").size() == 1);
+}
+
+TEST_CASE("browser slots: an insert point targets a NEW nam block on the board (v0.4 Task B)", "[browser][slots]") {
+  const Preset lin = loadPresetFile(kPresets / "two_linear.json");  // A: one nam block; B: one nam block (no slots)
+  Preset two = lin;
+  two.a.blocks.push_back(two.a.blocks.front());
+  two.a.blocks.back().id = "a2";
+  std::string why;
+  auto t = slotTargets(two, Slot::SawPedal, &why, {}, InsertPoint{'a', 1});
+  REQUIRE(t.size() == 1);
+  CHECK(t[0].kind == SlotTarget::Kind::InsertNamBlock);
+  CHECK(t[0].path == 'a');
+  CHECK(t[0].blockIndex == 1);
+  CHECK_FALSE(t[0].isIr());
+  CHECK(slotTargets(two, Slot::SawPedal, &why, {}, InsertPoint{'a', 99}).at(0).blockIndex == 1);  // clamped to the end of the BOARD: before the amp, never after it
+  CHECK(slotTargets(two, Slot::BodyPedal, &why, {}, InsertPoint{'b', 0}).at(0).path == 'b');
+  // amps and the cab ignore an insert point (it is for pedal slots)
+  CHECK(slotTargets(two, Slot::SawAmp, &why, {}, InsertPoint{'a', 1}).at(0).kind == SlotTarget::Kind::NamBlock);
+  CHECK(slotTargets(two, Slot::Cab, &why, {}, InsertPoint{'a', 1}).at(0).kind == SlotTarget::Kind::CabShared);
+
+  t3k::FetchResult f;
+  f.toneId = 9;
+  f.modelId = 91;
+  f.path = "/tmp/new.nam";
+  f.sha256 = "aa";
+  f.kind = "nam";
+  f.source = {"tone3000", "9", "91", "https://x/9", "T", "me", "cc-by-nc"};
+  std::string err;
+  const auto target = slotTargets(two, Slot::SawPedal, &why, {}, InsertPoint{'a', 1}).at(0);
+  auto q = withCapture(two, target, f, err);
+  REQUIRE(q.has_value());
+  REQUIRE(q->a.blocks.size() == 3);
+  CHECK(q->a.blocks[0] == two.a.blocks[0]);  // the others are untouched and keep their order
+  CHECK(q->a.blocks[2] == two.a.blocks[1]);
+  const Block& nb = q->a.blocks[1];
+  CHECK(nb.type == "nam");
+  CHECK(nb.slot == "pedal");
+  CHECK(nb.id != "a1");
+  CHECK(nb.id != "a2");
+  const auto& np = static_cast<const NamBlockParams&>(*nb.params);
+  CHECK(np.model.file == "/tmp/new.nam");
+  CHECK(np.model.source == f.source);  // licence and creator travel with it
+  CHECK(np.outputGainDb == 0.0);
+  CHECK(np.makeupDb == 0.0);
+  CHECK(q->b == two.b);
+  // an IR is refused, a full path too
+  auto irf = f;
+  irf.kind = "ir";
+  CHECK_FALSE(withCapture(two, target, irf, err).has_value());
+  Preset full = two;
+  while (static_cast<int>(full.a.blocks.size()) < kMaxBlocksPerPath) {
+    full.a.blocks.push_back(full.a.blocks.front());
+    full.a.blocks.back().id = "x" + std::to_string(full.a.blocks.size());
+  }
+  CHECK(slotTargets(full, Slot::SawPedal, &why, {}, InsertPoint{'a', 1}).empty());
+  CHECK(why.find("path full") != std::string::npos);
+  CHECK_FALSE(withCapture(full, target, f, err).has_value());
+  CHECK(err.find("path full") != std::string::npos);
+
+  // D0: a new pedal lands on the board, before the amp, however stale its index is
+  Preset three = two;  // [pedal a1, pedal a3, amp a2]
+  three.a.blocks.insert(three.a.blocks.begin() + 1, three.a.blocks.front());
+  three.a.blocks[1].id = "a3";
+  CHECK(slotTargets(two, Slot::SawPedal, &why, {}, InsertPoint{'a', 5}).at(0).blockIndex == 1);  // [pedal, amp]: index 5 -> 1
+  CHECK(slotTargets(three, Slot::SawPedal, &why, {}, InsertPoint{'a', 5}).at(0).blockIndex == 2);
+  // an index resolved before the user removed a pedal during the fetch / level match: withCapture re-clamps it
+  const auto stale = slotTargets(three, Slot::SawPedal, &why, {}, InsertPoint{'a', 2}).at(0);  // the end of the three-block board
+  REQUIRE(stale.blockIndex == 2);
+  const auto landed = withCapture(two, stale, f, err);  // the rig is [pedal, amp] by the time the capture lands
+  REQUIRE(landed.has_value());
+  REQUIRE(landed->a.blocks.size() == 3);
+  CHECK(landed->a.blocks[1].type == "nam");
+  CHECK(landed->a.blocks[1].slot == "pedal");
+  CHECK(landed->a.blocks[2].id == two.a.blocks[1].id);  // the amp is still last
+  CHECK(sawblade::ampIndex(landed->a) == 2);
+}
+
 TEST_CASE("browser slots: withCapture substitutes only the capture", "[browser][slots]") {
   const Preset p = loadPresetFile(kPresets / "golden_shared.json");
   t3k::FetchResult f;

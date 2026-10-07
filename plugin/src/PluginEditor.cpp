@@ -14,7 +14,10 @@
 #include "pedals/AdvancedDrawer.h"
 #include "pedals/PedalFace.h"
 #include "rig/AmpHead.h"
+#include "rig/CabScreen.h"
+#include "rig/Pedalboard.h"
 #include "rig/RigController.h"
+#include "rig/RigModel.h"
 #include "mic/MicPage.h"
 #include "presets/AbCompare.h"
 #include "presets/PresetBrowser.h"
@@ -30,18 +33,24 @@ const juce::String kDot = juce::String::fromUTF8(" \xc2\xb7 ");
 
 struct SelectionInfo {
   const char* kind;  // "SAW PEDAL"
-  const char* name;  // static block name in this prototype
+  const char* name;  // the amp heads' name; a pedal's name is its tile's (the pedalboard)
   juce::uint32 colour;
 };
 SelectionInfo selectionInfo(Piece p) {
   switch (p) {
     case Piece::SawAmp: return {"SAW AMP", "SAW HEAD", 0xffff6a1a};
     case Piece::BodyAmp: return {"BODY AMP", "BODY HEAD", 0xff4f8fd0};
-    case Piece::Cab: return {"SHARED CAB", "4x12 CAB", 0xffe8e1d2};
-    case Piece::SawPedal: return {"SAW PEDAL", "STOCKHOLM SYNDROME", 0xffff6a1a};
-    case Piece::BodyPedal: return {"BODY PEDAL", "TIGHTEN", 0xff4f8fd0};
+    case Piece::SawPedal: return {"SAW PEDAL", "", 0xffff6a1a};
+    case Piece::BodyPedal: return {"BODY PEDAL", "", 0xff4f8fd0};
   }
   return {"", "", 0xffffffff};
+}
+
+// The cab chip's name: the IR of a shared cab, "A + B" (or one name when both are the same IR) of the per-path and mixed cabs.
+juce::String cabChipName(const CabPreset& c) {
+  if (c.mode == CabMode::Shared) return juce::String(rig::captureTitle(c.ir));
+  const juce::String a = juce::String(rig::captureTitle(c.irA)), b = juce::String(rig::captureTitle(c.irB));
+  return a == b ? a : a + " + " + b;
 }
 
 const char* kNotAvailable = " (not available in this prototype)";
@@ -101,6 +110,11 @@ class SawbladeEditor::Content : public juce::Component {
     rigButton_.setClickingTogglesState(true);
     rigButton_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
     rigButton_.onClick = [this] { setRigEditorOpen(rigButton_.getToggleState()); };
+    configure(cabButton_, "CAB", "Show / hide the CAB page: the cab's impulse response(s), browse IRs, mic positions", false);
+    cabButton_.setTitle("Cab page");
+    cabButton_.setClickingTogglesState(true);
+    cabButton_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6b2f12));
+    cabButton_.onClick = [this] { setCabPageOpen(cabButton_.getToggleState()); };
     match_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a1a0e));
     match_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffb27a));
     export_.setColour(juce::TextButton::buttonColourId, L::saw());
@@ -127,7 +141,28 @@ class SawbladeEditor::Content : public juce::Component {
 
     // --- rig
     rig_.onSelect = [this](Piece) { updateSelection(); };
+    rig_.cabChip().onClick = [this] { setCabPageOpen(true); };
     addAndMakeVisible(rig_);
+    // The pedalboards (v0.4 Task D) lie over the rig view, under the amp controls, the pedal face and the drawer.
+    rigController_ = std::make_unique<rig::RigController>(processor_);
+    board_ = std::make_unique<rig::Pedalboard>(*rigController_);
+    board_->onSelect = [this](rig::BoardTile& t) { rig_.select(t.path() == 0 ? Piece::SawPedal : Piece::BodyPedal, t.blockId()); };
+    board_->onTileDoubleClick = [this](rig::BoardTile& t) {
+      if (isFaceTile(t)) drawer_->toggle();  // the advanced drawer belongs to the pedal that carries the live face
+    };
+    board_->onTilesChanged = [this] {
+      placeFace();
+      updateSelection();
+    };
+    board_->onScrolled = [this] {  // the live face follows its tile, or hides while the tile is scrolled out of view
+      placeFace();
+      if (face_) face_->refresh();
+    };
+    board_->onMessage = [this](const juce::String& m) { showMessage(m); };
+    board_->onSearchRequest = [this](int path, int index) {  // "SEARCH TONE3000...": the capture browser in insert mode (pedals, USE adds a block)
+      openBrowserFor(path == 0 ? Slot::SawPedal : Slot::BodyPedal, {}, InsertPoint{path == 0 ? 'a' : 'b', index});
+    };
+    addAndMakeVisible(*board_);
     for (int path = 0; path < 2; ++path) {  // the amp controls (v0.2 Task D) lie over the amp heads' art
       ampHeads_[static_cast<size_t>(path)] = std::make_unique<rig::AmpHead>(processor_, path);
       addAndMakeVisible(*ampHeads_[static_cast<size_t>(path)]);
@@ -171,33 +206,58 @@ class SawbladeEditor::Content : public juce::Component {
       knobs_[static_cast<size_t>(d.param)] = std::move(k);
       return *knobs_[static_cast<size_t>(d.param)];
     };
-    addKnob({kBlend, "BLEND", FilmstripKnob::Kind::Amp, 0xffff6a1a}).onValueChange = [this] { updateReadouts(); };
+    FilmstripKnob& blendKnob = addKnob({kBlend, "BLEND", FilmstripKnob::Kind::Amp, 0xffff6a1a});
+    blendKnob.onValueChange = [this] { updateReadouts(); };
+    // v0.3 Task C: only a USER gesture on the knob (mouse down .. up, the wheel) turns a single-path rig into a blend. The knob's drag
+    // start / end are fired by the Slider for user input only: host automation moves the value through the parameter attachment, which
+    // never starts a drag, so it cannot change the topology. The switch happens at the drag end: the value has settled, so the rebuild
+    // that follows writes back the same BLEND value and cannot snap the knob while it is being dragged.
+    // v0.3 Task D: the knob's own parameter gesture ends BEFORE this runs, so the drag and the fill it triggers are held together in
+    // one history gesture (opened here, after the parameter gesture's start, closed after blendTurnedUp): one undo step restores the
+    // knob and the SAW-only rig together.
+    blendKnob.onDragStart = [this] {
+      blendGesture_ = true;
+      blendBefore_ = knobs_[kBlend]->getValue();
+      if (rigController_) rigController_->beginGesture();
+    };
+    blendKnob.onDragEnd = [this] {
+      if (!blendGesture_) return;
+      blendGesture_ = false;
+      if (rigController_ && knobs_[kBlend]->getValue() > 0.0) rigController_->blendTurnedUp(blendBefore_);
+      if (rigController_) rigController_->endGesture();
+    };
     for (const KnobDef& d : kMaster) addKnob(d);
     for (int k = 0; k < kPostEqSlots; ++k) addKnob({kPostEqFirst + k, nullptr, FilmstripKnob::Kind::Pedal, 0xffff6a1a});
     knobs_[kGateThreshold]->onValueChange = [this] { updateReadouts(); };
 
-    // The live pedal controls: the face over the SAW pedal render, the advanced drawer to its right.
+    // The live pedal controls: the face over the pedalboard tile of the first circuit block, the advanced drawer beside it.
     face_ = std::make_unique<PedalFace>(processor_);
+    face_->setHostProbe([this](const CircuitSlot& slot) { return circuitHosted(slot); });
     addChildComponent(*face_);
     drawer_ = std::make_unique<AdvancedDrawer>(processor_);
     addChildComponent(*drawer_);
-    auto& sawPedal = rig_.piece(Piece::SawPedal);
-    sawPedal.setTooltip(sawPedal.getTitle() + " (click to select, double-click for the advanced controls)");
-    sawPedal.onDoubleClick = [this](Piece) { drawer_->toggle(); };
 
     panel_ = std::make_unique<PlayAlongPanel>(processor_);
     panel_->setVisible(false);
     addChildComponent(*panel_);  // on top of the rig and the inspector
 
-    rigController_ = std::make_unique<rig::RigController>(processor_);
     rigPanel_ = std::make_unique<rig::RigEditorPanel>(processor_, *rigController_);
     rigPanel_->setVisible(false);
     addChildComponent(*rigPanel_);  // last child; opening either overlay brings it to the front
     micPage_ = std::make_unique<MicPage>(processor_);
     micPage_->setVisible(false);
-    micPage_->onClose = [this] { setMicPageOpen(false); };
-    rig_.onCabOpen = [this] { setMicPageOpen(true); };
+    micPage_->onClose = [this] {
+      const bool backToCab = micFromCab_;  // opened by MIC POSITIONS: closing comes back to the CAB page
+      setMicPageOpen(false);
+      if (backToCab) setCabPageOpen(true);
+    };
     addChildComponent(*micPage_);
+    cabScreen_ = std::make_unique<rig::CabScreen>(processor_, *rigController_);
+    cabScreen_->setVisible(false);
+    cabScreen_->onClose = [this] { setCabPageOpen(false); };
+    cabScreen_->onBrowseIr = [this] { openCabBrowser(); };
+    cabScreen_->onMicPositions = [this] { openMicFromCab(); };
+    addChildComponent(*cabScreen_);
     presetBrowser_ = std::make_unique<PresetBrowser>(processor_);
     presetBrowser_->setVisible(false);
     presetBrowser_->onClose = [this] { setBrowserOpen(false); };
@@ -252,41 +312,41 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
   void resized() override {
-    // Top bar: left to right wordmark, preset selector, A/B; right to left EXPORT, MATCH, mode chip, latency chip.
+    // Top bar: left to right wordmark, preset selector, A/B, PLAY ALONG, RIG, CAB, settings; right to left EXPORT, MATCH, mode chip,
+    // latency chip.
     constexpr int y = 12, h = 34;
     wordmark_.setBounds(18, 8, 190, 42);
-    int x = 226;
+    int x = 210;
     prev_.setBounds(x, y, 34, h);
-    presetButton_.setBounds(x + 34, y, 170, h);
-    next_.setBounds(x + 34 + 170, y, 34, h);
-    x += 34 + 170 + 34 + 12;
+    presetButton_.setBounds(x + 34, y, 128, h);
+    next_.setBounds(x + 34 + 128, y, 34, h);
+    x += 34 + 128 + 34 + 12;
     ab_.setBounds(x, y, 52, h);
-    playAlong_.setBounds(x + 52 + 12, y, 104, h);
-    rigButton_.setBounds(x + 52 + 12 + 104 + 12, y, 64, h);
-    settingsBtn_.setBounds(x + 52 + 12 + 104 + 12 + 64 + 12, y, 34, h);
+    playAlong_.setBounds(x + 52 + 12, y, 98, h);
+    rigButton_.setBounds(x + 52 + 12 + 98 + 12, y, 64, h);
+    cabButton_.setBounds(x + 52 + 12 + 98 + 12 + 64 + 12, y, 64, h);
+    settingsBtn_.setBounds(x + 52 + 12 + 98 + 12 + 64 + 12 + 64 + 12, y, 34, h);
     int r = kDesignWidth - 18;
     export_.setBounds(r - 130, y, 130, h);
     r -= 130 + 12;
-    match_.setBounds(r - 90, y, 90, h);
-    r -= 90 + 12;
-    modeChip_.setBounds(r - 96, y + 2, 96, 30);
-    r -= 96 + 12;
+    match_.setBounds(r - 84, y, 84, h);
+    r -= 84 + 12;
+    modeChip_.setBounds(r - 88, y + 2, 88, 30);
+    r -= 88 + 12;
     latChip_.setBounds(r - 136, y + 2, 136, 30);
 
     rig_.setBounds(0, kTopBar, kRigW, skin::RigView::kHeight);
-    {
-      const auto pedal = rig_.piece(Piece::SawPedal).getBounds() + rig_.getPosition();
-      face_->setBounds(pedal);
-      drawer_->setAnchor(pedal, rig_.getBounds().withTrimmedRight(24));
-      ampHeads_[0]->setBounds(rig_.piece(Piece::SawAmp).getBounds() + rig_.getPosition());
-      ampHeads_[1]->setBounds(rig_.piece(Piece::BodyAmp).getBounds() + rig_.getPosition());
-    }
+    board_->setBounds(rig_.getBounds());
+    ampHeads_[0]->setBounds(rig_.head(0).getBounds() + rig_.getPosition());
+    ampHeads_[1]->setBounds(rig_.head(1).getBounds() + rig_.getPosition());
+    placeFace();
     panel_->setBounds(0, kDesignHeight - PlayAlongPanel::kHeight, PlayAlongPanel::kWidth, PlayAlongPanel::kHeight);
     screen_->setBounds(0, kTopBar, MatchScreen::kWidth, kDesignHeight - kTopBar);
     exportPanel_->setBounds(0, kTopBar, ExportPanel::kWidth, kDesignHeight - kTopBar);
     settingsPanel_->setBounds(0, kTopBar, settings::SettingsPanel::kWidth, settings::SettingsPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
     rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
+    cabScreen_->setBounds(0, kTopBar, rig::CabScreen::kWidth, rig::CabScreen::kHeight);
     micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
     presetBrowser_->setBounds(0, kTopBar, PresetBrowser::kWidth, PresetBrowser::kHeight);
 
@@ -309,14 +369,26 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
   void refresh() {
+    if (rigController_) rigController_->sync();  // drives the BLEND fill (BodyFill::tick) whether or not the rig editor is open
     const auto st = processor_.status();
     presetButton_.setButtonText(juce::String(st.presetName).toUpperCase());
-    latChip_.setText("LAT " + juce::String(st.latencySamples) + juce::String::fromUTF8(" smp \xc2\xb7 CPU \xe2\x80\x94"), juce::dontSendNotification);
+    // LEVEL MATCH (v0.3): while the trim of this rig is being measured (background, a few seconds) the chip says so; the trim is
+    // 0 (or the previous one) until then.
+    const bool levelPending = st.levelMatchOn && st.levelPending;
+    latChip_.setText(levelPending ? juce::String::fromUTF8("LEVEL \xe2\x80\xa6")
+                                  : "LAT " + juce::String(st.latencySamples) + juce::String::fromUTF8(" smp \xc2\xb7 CPU \xe2\x80\x94"),
+                     juce::dontSendNotification);
+    latChip_.setTooltip(levelPending ? "Matching this rig to -18 LUFS on a built-in reference signal (LEVEL MATCH, background); until then no trim is applied. "
+                                       "Reported plugin latency: " + juce::String(st.latencySamples) + " samples"
+                                     : juce::String("Reported plugin latency (CPU meter: not available in this prototype)"));
     modeChip_.setText(st.liveCompatible ? juce::String::fromUTF8("\xe2\x97\x8f LIVE") : juce::String::fromUTF8("\xe2\x97\x8f STUDIO"), juce::dontSendNotification);
     modeChip_.setColour(juce::Label::textColourId, st.liveCompatible ? L::live() : L::studio());
     modeChip_.setColour(juce::Label::outlineColourId, st.liveCompatible ? L::liveBorder() : L::studio().withAlpha(0.45f));
 
-    if (st.loading) {
+    if (transient_.isNotEmpty() && static_cast<juce::int32>(transientUntil_ - juce::Time::getMillisecondCounter()) > 0) {
+      message_.setColour(juce::Label::textColourId, L::warning());
+      message_.setText(transient_, juce::dontSendNotification);
+    } else if (st.loading) {
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText("Loading...", juce::dontSendNotification);
     } else if (!st.error.empty()) {
@@ -330,20 +402,41 @@ class SawbladeEditor::Content : public juce::Component {
     }
 
     // Single topologies: path B is off, so its level and the blend are not editable (spec 4.1).
-    const bool blendOn = rig::topologyOf(processor_.editBasePreset()) == rig::Topology::Blend;
-    knobs_[kBlend]->setEnabled(blendOn);
+    const Preset shown = processor_.editBasePreset();
+    const bool blendOn = rig::topologyOf(shown) == rig::Topology::Blend;
+    knobs_[kBlend]->setEnabled(true);  // always: turning it up from full SAW is what enables the blend topology (RigController::blendTurnedUp)
     knobs_[kLevelB]->setEnabled(blendOn);
 
     const SlotBands bands = processor_.postEqSlots();
     for (int k = 0; k < kPostEqSlots; ++k) knobs_[static_cast<size_t>(kPostEqFirst + k)]->setEnabled(bands[static_cast<size_t>(k)] >= 0);
     updateReadouts();
     {
-      const Preset shown = processor_.editBasePreset();
-      for (int path = 0; path < 2; ++path) ampHeads_[static_cast<size_t>(path)]->refresh(shown, processor_.ladderInfo(path));
+      const rig::FillStatus fill = rigController_ ? rigController_->bodyFill().status() : rig::FillStatus{};
+      for (int path = 0; path < 2; ++path) ampHeads_[static_cast<size_t>(path)]->refresh(shown, processor_.ladderInfo(path), fill);
     }
+    // Path B off: the BODY head and cable are dimmed (its controls are disabled by AmpHead), its board is empty and says so.
+    const bool bodyOff = !shown.b.enabled;
+    rig_.setBodyOff(bodyOff);
+    ampHeads_[1]->setAlpha(bodyOff ? skin::RigView::kOffAlpha : 1.0f);
+    board_->refresh(shown);
+    placeFace();
+    updateSelection();
+    {
+      using Mode = skin::CabChip::Mode;
+      rig_.cabChip().set(shown.cab.enabled ? cabChipName(shown.cab) : juce::String(), !shown.cab.enabled ? Mode::Off : st.liveCompatible ? Mode::Live : Mode::Studio);
+    }
+    if (cabScreen_->isVisible()) cabScreen_->refresh();
     face_->refresh();
     if (drawer_->isVisible()) drawer_->refresh();
     if (settingsPanel_ && settingsPanel_->isVisible()) settingsPanel_->refresh();
+  }
+
+  // A short status-line message from the pedalboard ("SAW path full: 8 blocks"); it stays a few seconds.
+  void showMessage(const juce::String& m) {
+    transient_ = m;
+    transientUntil_ = juce::Time::getMillisecondCounter() + 6000;
+    message_.setColour(juce::Label::textColourId, L::warning());
+    message_.setText(m, juce::dontSendNotification);
   }
 
   void updateReadouts() {
@@ -379,13 +472,23 @@ class SawbladeEditor::Content : public juce::Component {
   bool settingsOpen() const { return settingsPanel_->isVisible(); }
   bool aboutOpen() const { return about_ != nullptr && about_->isVisible(); }
 
-  // The capture browser overlay for the selected piece (closed with its "< RIG" button).
+  // The capture browser overlay for the selected piece (closed with its "< RIG" button). For a pedal it targets exactly the block of the
+  // tile the inspector shows (the picked one, else the path's first tile): a modeled circuit has no capture to replace and says so.
   void openBrowser() {
+    static constexpr Slot kSlots[] = {Slot::SawAmp, Slot::BodyAmp, Slot::SawPedal, Slot::BodyPedal};  // Piece order
+    const Piece p = rig_.selected();
+    std::string pin;
+    if (p == Piece::SawPedal || p == Piece::BodyPedal)
+      if (const rig::BoardTile* t = board_->selectedTile()) pin = t->blockId();
+    openBrowserFor(kSlots[static_cast<size_t>(p)], pin);
+  }
+  // The capture browser for the cab's IR (the CAB page's BROWSE IR).
+  void openCabBrowser() { openBrowserFor(Slot::Cab, {}); }
+  void openBrowserFor(Slot slot, const std::string& pinnedBlockId, std::optional<InsertPoint> insert = std::nullopt) {
     if (browser_ != nullptr) return;
     closeOverlaysExcept(Overlay::None);  // the capture browser covers the whole editor: nothing stays open under it
-    static constexpr Slot kSlots[] = {Slot::SawAmp, Slot::BodyAmp, Slot::Cab, Slot::SawPedal, Slot::BodyPedal};  // Piece order
     if (!browserSettings_) browserSettings_ = std::make_unique<BrowserSettings>();
-    browser_ = std::make_unique<CaptureBrowser>(processor_, *browserSettings_, kSlots[static_cast<size_t>(rig_.selected())]);
+    browser_ = std::make_unique<CaptureBrowser>(processor_, *browserSettings_, slot, pinnedBlockId, insert);
     browser_->onClose = [this] {
       browser_->setVisible(false);
       juce::MessageManager::callAsync([safe = juce::Component::SafePointer<Content>(this)] {
@@ -406,6 +509,25 @@ class SawbladeEditor::Content : public juce::Component {
   }
   bool rigEditorOpen() const { return rigPanel_->isVisible(); }
   rig::RigEditorPanel& rigEditor() { return *rigPanel_; }
+  // The CAB page (v0.4 Task D): in the mutually exclusive overlay group; UI state, never saved.
+  void setCabPageOpen(bool open) {
+    if (open) closeOverlaysExcept(Overlay::Cab);
+    cabScreen_->setVisible(open);
+    if (open) {
+      cabScreen_->refresh();
+      cabScreen_->toFront(false);
+    }
+    cabButton_.setToggleState(open, juce::dontSendNotification);
+  }
+  bool cabPageOpen() const { return cabScreen_->isVisible(); }
+  rig::CabScreen& cabScreen() { return *cabScreen_; }
+  rig::Pedalboard& pedalboard() { return *board_; }
+  skin::CabChip& cabChip() { return rig_.cabChip(); }
+  // MIC POSITIONS: the mic page, whose close button comes back to the CAB page.
+  void openMicFromCab() {
+    setMicPageOpen(true);
+    micFromCab_ = true;
+  }
   void refreshPanel() {
     if (panel_->isVisible()) panel_->refresh();
     if (rigPanel_->isVisible()) rigPanel_->refresh();
@@ -426,25 +548,26 @@ class SawbladeEditor::Content : public juce::Component {
     presetBrowser_->step(dir);
   }
   rig::AmpHead& ampHead(int path) { return *ampHeads_[static_cast<size_t>(path)]; }
-  // Cmd / Ctrl + Z: undo the last BLEND fill (RigController::undo) when there is one.
+  // Cmd / Ctrl + Z: undo the last rig edit (RigController::undo); Cmd / Ctrl + Shift + Z: redo it. v0.3 Task D.
   bool handleKey(const juce::KeyPress& k) {
-    if (!(k.getModifiers().isCommandDown() && !k.getModifiers().isShiftDown() && (k.getKeyCode() == 'z' || k.getKeyCode() == 'Z'))) return false;
+    if (!(k.getModifiers().isCommandDown() && (k.getKeyCode() == 'z' || k.getKeyCode() == 'Z'))) return false;
+    const bool redo = k.getModifiers().isShiftDown();
     // Keys bubble up from children that did not take them: a text field (a read-only one passes Cmd+Z on) or an open overlay is
-    // the user's current context, so it must never undo a BLEND fill underneath it.
+    // the user's current context, so it must never undo a rig edit underneath it.
     if (dynamic_cast<juce::TextInputTarget*>(focusProbe_()) != nullptr) return false;
     if (anyOverlayOpen()) return false;
-    if (!rigController_->canUndo()) return false;
-    return rigController_->undo();
+    if (!(redo ? rigController_->canRedo() : rigController_->canUndo())) return false;
+    return redo ? rigController_->redo() : rigController_->undo();
   }
   // The component that has the keyboard focus (tests replace it: a headless X server gives no window, so no focus).
   std::function<juce::Component*()> focusProbe_ = [] { return juce::Component::getCurrentlyFocusedComponent(); };
-  // Overlays that cover or take over the editor's context: Cmd / Ctrl + Z must not undo underneath them. The RIG editor (rigPanel_) is NOT
-  // in this list on purpose: it is where path B's BLEND fill is visible and edited, so undoing the fill from there is the point.
+  // Overlays that cover or take over the editor's context: Cmd / Ctrl + Z (and + Shift) must not undo / redo underneath them. The RIG editor
+  // (rigPanel_) is NOT in this list on purpose: it is where the rig is edited, so undoing from there is the point.
   // New overlays: add them here (or document why not) and to the test "does not bubble into an undo" in test_amp_head.cpp.
   bool anyOverlayOpen() const {
     const auto vis = [](const juce::Component* c) { return c != nullptr && c->isVisible(); };
     return vis(drawer_.get()) || vis(settingsPanel_.get()) || vis(about_.get()) || vis(presetBrowser_.get()) || vis(screen_.get()) ||
-           vis(exportPanel_.get()) || vis(micPage_.get()) || vis(browser_.get()) || vis(panel_.get());
+           vis(exportPanel_.get()) || vis(micPage_.get()) || vis(browser_.get()) || vis(panel_.get()) || vis(cabScreen_.get()) || board_->pickerOpen();
   }
   // Test hooks: the capture browser (the BROWSE CAPTURES overlay), and closing every overlay.
   void openCaptureBrowserForTests() { openBrowser(); }
@@ -454,9 +577,13 @@ class SawbladeEditor::Content : public juce::Component {
     settingsBtn_.setToggleState(false, juce::dontSendNotification);
     if (about_ != nullptr) about_->setVisible(false);
     drawer_->setOpen(false, /*animate=*/false);
-    for (juce::Component* c : std::initializer_list<juce::Component*>{presetBrowser_.get(), screen_.get(), exportPanel_.get(), micPage_.get(), panel_.get(), rigPanel_.get()})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{presetBrowser_.get(), screen_.get(), exportPanel_.get(), micPage_.get(), panel_.get(), rigPanel_.get(),
+                                                                       cabScreen_.get()})
       c->setVisible(false);
+    micFromCab_ = false;
+    board_->closePicker();
     rigButton_.setToggleState(false, juce::dontSendNotification);
+    cabButton_.setToggleState(false, juce::dontSendNotification);
     playAlong_.setToggleState(false, juce::dontSendNotification);
     if (browser_ != nullptr) browser_->onClose();
   }
@@ -478,6 +605,7 @@ class SawbladeEditor::Content : public juce::Component {
     });
   }
   void setMicPageOpen(bool open) {
+    if (!open) micFromCab_ = false;  // (the page's own close handler has read it by now)
     if (open) closeOverlaysExcept(Overlay::Mic);
     micPage_->setVisible(open);
     if (open) {
@@ -509,15 +637,23 @@ class SawbladeEditor::Content : public juce::Component {
   }
 
  private:
-  // The full-width overlays are mutually exclusive: opening one closes the others (the RIG button follows). The settings panel and
+  // The full-width overlays are mutually exclusive: opening one closes the others (the RIG and CAB buttons follow). The settings panel and
   // the play-along panel are not part of the group.
-  enum class Overlay { None, Rig, Mic, Browser, Match, Export };
+  enum class Overlay { None, Rig, Mic, Browser, Match, Export, Cab };
   void closeOverlaysExcept(Overlay keep) {
+    board_->closePicker();
     if (keep != Overlay::Rig) {
       rigPanel_->setVisible(false);
       rigButton_.setToggleState(false, juce::dontSendNotification);
     }
-    if (keep != Overlay::Mic) micPage_->setVisible(false);
+    if (keep != Overlay::Cab) {
+      cabScreen_->setVisible(false);
+      cabButton_.setToggleState(false, juce::dontSendNotification);
+    }
+    if (keep != Overlay::Mic) {
+      micPage_->setVisible(false);
+      micFromCab_ = false;
+    }
     if (keep != Overlay::Browser) presetBrowser_->setVisible(false);
     if (keep != Overlay::Match) screen_->setVisible(false);
     if (keep != Overlay::Export) exportPanel_->setVisible(false);
@@ -554,11 +690,51 @@ class SawbladeEditor::Content : public juce::Component {
     g.drawText(text, knob.getX() - 14, knob.getBottom() + 3, knob.getWidth() + 28, 14, juce::Justification::centred);
   }
 
+  // The inspector's selection: an amp head, or the pedal tile picked on the pedalboard ("SELECTED · SAW PEDAL" + the tile's name).
   void updateSelection() {
-    const auto s = selectionInfo(rig_.selected());
+    const Piece p = rig_.selected();
+    const auto s = selectionInfo(p);
+    const bool pedal = p == Piece::SawPedal || p == Piece::BodyPedal;
+    board_->setSelected(pedal ? (p == Piece::SawPedal ? 0 : 1) : -1, rig_.selectedBlockId());
+    if (pedal && !rig_.selectedBlockId().empty() && board_->selectedTile() == nullptr) {
+      rig_.select(p, {});  // the picked block left the board: back to the path's first tile (select() calls this again)
+      return;
+    }
+    juce::String name = s.name;
+    if (pedal) {
+      const rig::BoardTile* t = board_->selectedTile();
+      name = t != nullptr ? t->name() : juce::String("NO PEDAL");
+    }
     selKind_.setText("SELECTED" + kDot + s.kind, juce::dontSendNotification);
-    selName_.setText(s.name, juce::dontSendNotification);
+    selName_.setText(name, juce::dontSendNotification);
     selName_.setColour(juce::Label::textColourId, juce::Colour(s.colour));
+  }
+
+  // A circuit block has a tile (hence a place for the live face) when it is before its path's amp and the path is on.
+  // and, once the tile exists, that it is fully in view (a board that scrolls may hide it).
+  bool circuitHosted(const CircuitSlot& slot) const {
+    const Preset p = processor_.editBasePreset();
+    const PathPreset& pp = slot.path == 0 ? p.a : p.b;
+    if (slot.path == 1 && !pp.enabled) return false;
+    return slot.block < rig::boardBlockCount(pp) && board_->tileFullyVisible(slot.path, slot.block);
+  }
+  bool isFaceTile(const rig::BoardTile& t) const {
+    const auto slot = processor_.circuitSlot();
+    return slot && slot->path == t.path() && slot->block == t.blockIndex();
+  }
+  // The live face lies over the tile of the first circuit block; the advanced drawer opens beside that tile.
+  void placeFace() {
+    const auto slot = processor_.circuitSlot();
+    rig::BoardTile* t = slot && circuitHosted(*slot) ? board_->tileForBlock(slot->path, slot->block) : nullptr;
+    const auto pedal = (t != nullptr ? board_->tileBounds(*t) : board_->slotBounds(0, 0)) + board_->getPosition();
+    if (t != nullptr) {
+      face_->setBounds(pedal);
+      t->setTooltip(t->name() + " (click to select, double-click for the advanced controls, footswitch = bypass)");
+    }
+    if (pedal != anchor_) {  // setAnchor ends a running slide: only when the pedal moved
+      anchor_ = pedal;
+      drawer_->setAnchor(pedal, rig_.getBounds().withTrimmedRight(24));
+    }
   }
 
   void chooseFile() {
@@ -566,7 +742,7 @@ class SawbladeEditor::Content : public juce::Component {
     chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& fc) {
       const juce::File f = fc.getResult();
       if (f == juce::File()) return;
-      processor_.loadPresetFile(std::filesystem::path(f.getFullPathName().toStdString()));
+      processor_.loadPresetFile(std::filesystem::path(f.getFullPathName().toStdString()), nullptr, /*undoable=*/true);
     });
   }
 
@@ -574,10 +750,14 @@ class SawbladeEditor::Content : public juce::Component {
   AbCompare abCompare_{processor_};
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
-  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, settingsBtn_;
+  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, cabButton_, settingsBtn_;
   juce::uint32 learnShownUntil_ = 0;
+  juce::String transient_;         // the pedalboard's last status message
+  juce::uint32 transientUntil_ = 0;
   // New overlays: add them to anyOverlayOpen() (Cmd / Ctrl + Z) or document why not.
   std::array<std::unique_ptr<rig::AmpHead>, 2> ampHeads_;
+  bool blendGesture_ = false;  // the BLEND knob is in a user drag / wheel gesture
+  double blendBefore_ = 0.0;   // its value when the gesture started
   std::unique_ptr<PedalFace> face_;
   std::unique_ptr<AdvancedDrawer> drawer_;
   std::unique_ptr<PlayAlongPanel> panel_;
@@ -585,6 +765,10 @@ class SawbladeEditor::Content : public juce::Component {
   std::unique_ptr<CaptureBrowser> browser_;  // declared after the settings it uses
   std::unique_ptr<rig::RigController> rigController_;  // before the panel that uses it
   std::unique_ptr<rig::RigEditorPanel> rigPanel_;
+  std::unique_ptr<rig::Pedalboard> board_;  // after the controller it edits through
+  std::unique_ptr<rig::CabScreen> cabScreen_;
+  bool micFromCab_ = false;                 // the mic page was opened from the CAB page (its close returns there)
+  juce::Rectangle<int> anchor_;             // where the advanced drawer is anchored (the pedal tile it opens beside)
   std::unique_ptr<MicPage> micPage_;
   std::unique_ptr<PresetBrowser> presetBrowser_;
   std::unique_ptr<MatchScreen> screen_;
@@ -615,6 +799,7 @@ SawbladeEditor::SawbladeEditor(SawbladeProcessor& p) : juce::AudioProcessorEdito
 
 SawbladeEditor::~SawbladeEditor() {
   stopTimer();
+  processor_.historyAbortGestures();  // a drag still open when the window closes is one step, not a stuck gesture
   setLookAndFeel(nullptr);
 }
 
@@ -636,6 +821,12 @@ void SawbladeEditor::resized() {
 double SawbladeEditor::contentScale() const { return static_cast<double>(getWidth()) / kDesignWidth; }
 
 skin::Piece SawbladeEditor::selectedPiece() const { return content_->rig().selected(); }
+const std::string& SawbladeEditor::selectedBlockId() const { return content_->rig().selectedBlockId(); }
+void SawbladeEditor::setCabPageOpen(bool open) { content_->setCabPageOpen(open); }
+bool SawbladeEditor::cabPageOpen() const { return content_->cabPageOpen(); }
+rig::CabScreen& SawbladeEditor::cabScreen() { return content_->cabScreen(); }
+rig::Pedalboard& SawbladeEditor::pedalboard() { return content_->pedalboard(); }
+skin::CabChip& SawbladeEditor::cabChip() { return content_->cabChip(); }
 
 void SawbladeEditor::timerCallback() {
   if ((tick_++ & 3) == 0) {  // 4 Hz; the open play-along panel refreshes at the full rate

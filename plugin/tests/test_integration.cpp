@@ -51,7 +51,9 @@
 #include "presets/AbCompare.h"
 #include "presets/PresetBrowser.h"
 #include "presets/T3kTool.h"
+#include "rig/CabScreen.h"
 #include "rig/EqGraph.h"
+#include "rig/Pedalboard.h"
 #include "rig/RigEditorPanel.h"
 #include "settings/Settings.h"
 #include "settings/SettingsPanel.h"
@@ -426,10 +428,12 @@ struct Walk {
 
   // The visible overlays, as one string for messages and comparisons.
   struct Overlays {
-    bool rig, mic, browser, match, exportPanel, settings;
-    int count() const { return int(rig) + int(mic) + int(browser) + int(match) + int(exportPanel); }
+    bool rig, mic, browser, match, exportPanel, settings, cab;
+    int count() const { return int(rig) + int(mic) + int(browser) + int(match) + int(exportPanel) + int(cab); }
   };
-  Overlays overlays() const { return {ed->rigEditorOpen(), ed->micPageOpen(), ed->browserOpen(), ed->matchScreenOpen(), ed->exportPanelOpen(), ed->settingsOpen()}; }
+  Overlays overlays() const {
+    return {ed->rigEditorOpen(), ed->micPageOpen(), ed->browserOpen(), ed->matchScreenOpen(), ed->exportPanelOpen(), ed->settingsOpen(), ed->cabPageOpen()};
+  }
 
   PlayAlongPanel& panel() { return *all<PlayAlongPanel>(*ed).at(0); }
   MatchScreen& screen() { return *all<MatchScreen>(*ed).at(0); }
@@ -508,7 +512,14 @@ void step01Main(Walk& w) {
   CHECK_FALSE(o.settings);
   CHECK_FALSE(w.ed->playAlongOpen());
   const juce::Image img = shot(*w.ed, "01_main");
-  CHECK(nonBackgroundFraction(img, {0, 58, 940, 742}) > 0.2);  // the rig renders are on screen
+  // The rig renders are on screen (v0.4 Task D: the cab render left the main page). This preset's SAW pedal is a `nam` block in a pedal slot,
+  // i.e. a CAPTURE pedal since v0.4 Task B: its tile is a flat dark panel with a cream outline and text, not a full pedal render, so the region
+  // measures 0.1173 where 0.12+ was set for the render (nothing else on the page moved). An empty rig area stays far below 0.10; the heads
+  // and the tile are checked on their own below and in test_editor.cpp / test_layout.cpp.
+  CHECK(nonBackgroundFraction(img, {0, 58, 940, 742}) > 0.10);
+  // The region above also counts the board backgrounds, so the SAW head is checked on its own (the per-head checks of test_editor.cpp
+  // "snapshots 1x and 2x" and test_layout.cpp cover both heads and the tiles).
+  CHECK(nonBackgroundFraction(img, {74, 58 + 44, 330, 145}) > 0.2);
 }
 
 void step02PresetBrowser(Walk& w) {
@@ -659,18 +670,24 @@ void step11PedalDrawer(Walk& w) {
   INFO("11 pedal_drawer");
   auto& face = w.face();
   auto& drawer = w.drawer();
+  w.ed->refreshNow();
   face.refresh();
   REQUIRE(face.isVisible());
-  skin::RigPiece& piece = w.rigView().piece(skin::Piece::SawPedal);
+  rig::BoardTile* tile = w.ed->pedalboard().tileForBlock(0, 0);  // the circuit pedal's tile on the SAW board
+  REQUIRE(tile != nullptr);
   CHECK_FALSE(drawer.isOpen());
-  doubleClick(piece);
+  doubleClick(*tile);
   CHECK(drawer.isOpen());
   drawer.finishAnimation();
   CHECK(drawer.isVisible());
   CHECK(drawer.getBounds() == drawer.openBounds());
   drawer.refresh();
   const juce::Image img = shot(*w.ed, "11_pedal_drawer");
-  CHECK(nonBackgroundFraction(img, drawer.getBounds()) > 0.2);
+  // The drawer is fully open and inside the rig area (checked here and in test_editor.cpp "pedal drawer"). Its contents (ten knobs, two
+  // switches) are the same as before; the pedal sits at the left of the SAW board now, so the drawer is ~700 px wide instead of 574 and the
+  // same controls cover a smaller share of a larger, near-background panel: 0.18 measured (0.2 was set for the old width).
+  CHECK(w.rigView().getBounds().contains(drawer.getBounds()));
+  CHECK(nonBackgroundFraction(img, drawer.getBounds()) > 0.16);
   CHECK(drawer.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
   CHECK_FALSE(drawer.isOpen());
   drawer.finishAnimation();
@@ -718,18 +735,21 @@ void step13MicPage(Walk& w) {
   const fs::path manifest = packManifestPath("321");  // <appdata>/packs/321.json: what LOAD PACK caches
   writePack(w.root / "pack", manifest, "321");
   w.load(writeMicRig(w.root, manifest));
-  auto& rv = w.rigView();
-  skin::RigPiece* cab = nullptr;
-  for (auto* p : all<skin::RigPiece>(*w.ed))
-    if (p->piece() == skin::Piece::Cab) cab = p;
-  REQUIRE(cab != nullptr);
-  doubleClick(*cab);
+  // v0.4 Task D: the cab has its own page (the CAB button, or the cab chip), and MIC POSITIONS on it opens the mic page.
+  auto* cabBtn = buttonTitled(*w.ed, "Cab page");
+  REQUIRE(cabBtn != nullptr);
+  click(*cabBtn);
+  REQUIRE(w.ed->cabPageOpen());
+  CHECK(cabBtn->getToggleState());
+  auto* micBtn = buttonTitled(w.ed->cabScreen(), "MIC POSITIONS");
+  REQUIRE(micBtn != nullptr);
+  click(*micBtn);
   REQUIRE(w.ed->micPageOpen());
+  CHECK_FALSE(w.ed->cabPageOpen());
   MicPage& page = w.ed->micPage();
   CHECK(page.dotCount() == 8);  // the cached pack was found by the cab's tone id
   CHECK(page.session().pack().size() == 14);
   CHECK(page.responseShown());
-  (void)rv;
 
   const auto before = w.proc.currentPreset().cab.ir;
   auto& st = page.stage();
@@ -764,6 +784,11 @@ void step13MicPage(Walk& w) {
   CHECK(nonBackgroundFraction(img, {0, 58, 1280, 742}) > 0.1);
   click(*page.buttonTitled(juce::String::fromUTF8("\xe2\x80\xb9 RIG")));
   CHECK_FALSE(w.ed->micPageOpen());
+  CHECK(w.ed->cabPageOpen());  // closing the mic page returns to the CAB page it was opened from
+  shot(*w.ed, "13_cab_page");
+  click(*cabBtn);
+  CHECK_FALSE(w.ed->cabPageOpen());
+  CHECK(w.overlays().count() == 0);
 }
 
 void step14PlayAlongOpen(Walk& w) {
@@ -1091,11 +1116,21 @@ void step20Overlays(Walk& w) {
     CHECK(o.count() == 1);
     CHECK_FALSE(rigBtn->getToggleState());
   }
+  ed.setCabPageOpen(true);
+  {
+    const auto o = show("then the CAB page");
+    CHECK(o.cab);
+    CHECK_FALSE(o.mic);
+    CHECK(o.count() == 1);
+    CHECK(buttonTitled(ed, "Cab page")->getToggleState());
+  }
   ed.setBrowserOpen(true);
   {
     const auto o = show("then the preset browser");
     CHECK(o.browser);
+    CHECK_FALSE(o.cab);
     CHECK(o.count() == 1);
+    CHECK_FALSE(buttonTitled(ed, "Cab page")->getToggleState());
   }
   ed.openMatchScreen();
   {

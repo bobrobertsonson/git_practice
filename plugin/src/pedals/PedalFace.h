@@ -1,8 +1,10 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -33,6 +35,11 @@ class PedalFace : public juce::Component {
   explicit PedalFace(SawbladeProcessor& p);
   ~PedalFace() override;
 
+  // v0.4 Task D: the face lies over the pedalboard tile of the first circuit block. The editor installs a probe saying whether a
+  // circuit block has such a tile (a block after its path's amp has none); without one every circuit block is hosted. A circuit
+  // block that is not hosted counts as "no circuit": the face stays hidden.
+  void setHostProbe(std::function<bool(const CircuitSlot&)> probe) { probe_ = std::move(probe); }
+
   // Re-reads the processor: visibility, the active circuit's set, the OLED text. Called by the
   // editor's tick (and by tests).
   void refresh();
@@ -62,6 +69,7 @@ class PedalFace : public juce::Component {
   std::array<std::unique_ptr<PedalSwitch>, kNumCircuits> clip_, focus_;
   std::unique_ptr<PedalSwitch> circuit_;
   std::optional<Circuit> active_;
+  std::function<bool(const CircuitSlot&)> probe_;
   juce::String presetName_;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PedalFace)

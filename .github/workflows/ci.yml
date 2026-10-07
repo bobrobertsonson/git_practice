@@ -60,7 +60,17 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
+        env:
+          SAWBLADE_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: ctest --test-dir build --output-on-failure
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: v0_4-screenshots-linux-gcc
+          path: screenshots
+          if-no-files-found: warn
 
       - name: Download pluginval
         run: |
@@ -168,7 +178,17 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
+        env:
+          SAWBLADE_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: ctest --test-dir build --output-on-failure
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: v0_4-screenshots-macos-arm64
+          path: screenshots
+          if-no-files-found: warn
 
       - name: Install AU and run auval
         run: |
@@ -261,6 +281,10 @@ jobs:
           SAWBLADE_CORE_DIR: ${{ github.workspace }}/build/python
           SAWBLADE_TONERENDER: ${{ github.workspace }}/build/cli/tonerender
         run: match/.venv/bin/pytest match -rs
+
+      # Committed level-match trims are fresh (no captures needed: presets that need TONE3000 captures are skipped). ~10 s.
+      - name: compute_trims --check
+        run: match/.venv/bin/python scripts/compute_trims.py --check --tonerender build/cli/tonerender
 
       - name: ccache stats
         if: always()

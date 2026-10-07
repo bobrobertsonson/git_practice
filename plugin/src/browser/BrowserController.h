@@ -50,7 +50,10 @@ class BrowserController {
     bool previewing = false;
   };
 
-  BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot);
+  // pinnedBlockId (v0.4 Task D): the pedal tile the user selected on the pedalboard ("" = the slot's usual block); see slotTargets().
+  // insert (v0.4 Task B, pedal slots): USE adds a new nam block at that point of the path's pedalboard instead of replacing a capture;
+  // the gear stays "pedal".
+  BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot, std::string pinnedBlockId = {}, std::optional<InsertPoint> insert = std::nullopt);
   ~BrowserController();
   BrowserController(const BrowserController&) = delete;
   BrowserController& operator=(const BrowserController&) = delete;
@@ -61,8 +64,18 @@ class BrowserController {
 
   const State& state() const noexcept { return st_; }
   Slot slot() const noexcept { return slot_; }
+  bool insertMode() const noexcept { return insert_.has_value(); }
   std::vector<const t3k::CaptureRecord*> visible() const;
   const t3k::CaptureRecord* selected() const;
+  // What this session knows about the gain ladder of a tone: -1 unknown, 0 none, n >= 2 steps (the processor's `ladder` tool answers). The
+  // browser marks a card only when this is >= 2. select() asks about the tone it selects (lazily, once per tone per session, through the
+  // processor's own ladder tool: no extra work per row, nothing queued on the browser's own tool runner).
+  int ladderSteps(std::int64_t toneId) const;
+  // The rows on screen, in display order (amp slots only): at most kLadderLookupCap of them are queued for the same lookup, the selected tone
+  // first; tones that left the screen are dropped from the queue. USE / PREVIEW use the browser's own tool runner and never wait on it.
+  static constexpr std::size_t kLadderLookupCap = 24;
+  void wantLadders(const std::vector<std::int64_t>& visibleToneIds);
+  void stopLadderWants();  // drops what this browser queued (closing it, leaving the amp browse view)
   // The slot's targets in the current preset (and why not, if none).
   std::vector<SlotTarget> targets(std::string* why = nullptr) const;
   std::string executable() const { return settings_.executable(); }
@@ -95,16 +108,21 @@ class BrowserController {
   void setStatus(const std::string& text, bool error = false);
   void handleError(const t3k::ErrorInfo& e);
   void fetchSelected(std::function<void(const t3k::FetchResult&)> then);
+  void loadSwapped(Preset p);
 
   SawbladeProcessor& proc_;
   BrowserSettings& settings_;
   Slot slot_;
+  std::string pinnedBlockId_;
+  std::optional<InsertPoint> insert_;
   State st_;
   T3kClient client_;
   std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
-  std::uint64_t listSeq_ = 0, modelsSeq_ = 0, fetchSeq_ = 0, previewGen_ = 0;
+  std::string lastWanted_;
+  bool wantedAny_ = false;
+  std::uint64_t listSeq_ = 0, modelsSeq_ = 0, fetchSeq_ = 0, previewGen_ = 0, useSeq_ = 0;
   bool awaitingLoad_ = false;
-  std::string loadedTitle_;
+  std::string loadedTitle_, levelNote_;
   bool previewStarted_ = false, previewSeenPlaying_ = false;
   juce::uint32 previewStartMs_ = 0;
 

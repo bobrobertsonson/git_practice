@@ -2,8 +2,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <fstream>
+#include <functional>
+#include <iterator>
+#include <string>
+#include <system_error>
 
 #include "ExportGlue.h"
+#include "ExportNotes.h"
 #include "SawbladeLookAndFeel.h"
 
 namespace sawblade::plugin {
@@ -191,6 +198,14 @@ struct ExportPanel::Impl {
   juce::Label lastRun[3], diNote, compNote, folderLabel, rigChain, rigCab, notice, message;
   juce::Label checkMark[6], checkText[6];
   juce::Label credits, ncBadge;
+  // export notes (v0.4 Task E)
+  juce::Label capNotes, notesSource;
+  juce::TextEditor notesBox;
+  juce::TextButton copyBtn;
+  juce::String notesTextShown;   // what the box shows (= what COPY copies)
+  bool notesFromReport = false;
+  std::string notesKey;
+  std::string liveRigHash;       // of the LIVE preset (not the export preset: DROP COMP hides the comp from that one), with the plan
   // right column
   juce::Label capRight, stage, detail, bestEsr, timing, status, statusSummary, numEsr, numLtas, outPath, sidecarLabel, licenceNote, wallLabel, willWrite;
   Bar bar;
@@ -281,6 +296,21 @@ struct ExportPanel::Impl {
     text(notice, 12.5f, juce::Colour(0xffffd2ad));
     notice.setText(kPersonalUse, juce::dontSendNotification);
     text(message, 12.0f, L::warning());
+    caption(capNotes, "EXPORT NOTES: WHAT IS NOT IN THE MODEL");
+    text(notesSource, 10.5f, L::dimText());
+    notesBox.setMultiLine(true, true);
+    notesBox.setReadOnly(true);
+    notesBox.setCaretVisible(false);
+    notesBox.setScrollbarsShown(true);
+    notesBox.setPopupMenuEnabled(true);
+    notesBox.setFont(L::monoFont(10.5f));
+    notesBox.setColour(juce::TextEditor::backgroundColourId, L::background());
+    notesBox.setColour(juce::TextEditor::textColourId, L::text());
+    notesBox.setColour(juce::TextEditor::outlineColourId, L::rule());
+    notesBox.setColour(juce::TextEditor::focusedOutlineColourId, L::rule());
+    notesBox.setTitle("Export notes");
+    owner.addAndMakeVisible(notesBox);
+    button(copyBtn, "COPY", "Copy the export notes as text (what to add around the loader pedal)");
     button(trainBtn, "TRAIN EXPORT", "Train a NAM model of the loaded rig (runs sawblade-export)");
     button(resumeBtn, "RESUME", "Continue the cancelled run of this rig from its checkpoint");
     button(exeLocate, "LOCATE...", "Choose the sawblade-export executable");
@@ -393,6 +423,9 @@ struct ExportPanel::Impl {
         refresh();
       });
     };
+    copyBtn.onClick = [this] {
+      if (owner.copyToClipboard) owner.copyToClipboard(notesTextShown);
+    };
     trainBtn.onClick = [this] { startExport(false); };
     resumeBtn.onClick = [this] { startExport(true); };
     cancelBtn.onClick = [this] { proc.jobs().cancel(JobKind::Export); };
@@ -437,6 +470,70 @@ struct ExportPanel::Impl {
     return s.empty() ? juce::String("Starting...") : juce::String(s);
   }
 
+  // ---- export notes -----------------------------------------------------------------------------------------
+  static juce::String fromUtf8(const std::string& s) { return juce::String::fromUTF8(s.data(), static_cast<int>(s.size())); }
+
+  // The notes box and its source line: the report's `exportNotes` of a finished run when it is of the known version, else
+  // the plugin's own notes (mode and DROP COMP as shown before training, or as the finished run had them).
+  void updateNotes(const JobSnapshot& snap) {
+    const bool done = view == View::Result;
+    const ExportResult& res = snap.result;
+    // Rebuilt only when what the notes depend on changed: the mode, DROP COMP, the live rig (liveRigHash, refreshed with the
+    // plan, at most once a second) and, for a finished run, its folder / model / report.
+    const std::string key = liveRigHash + "|" + (done ? "|r|" + snap.outDir.string() + "|" + res.namFile + "|" + snap.exportMode + (snap.allowInexact ? "|i|" : "|e|") + res.exportNotesJson
+                                                              : "|c|" + plan.mode + (plan.dropComp ? "|d" : "|k"));
+    if (key == notesKey) return;
+    notesKey = key;
+    // The finished run's own preset (the resolved file it exported) names the header; the live preset only without it.
+    std::string presetName = proc.status().presetName;
+    if (done && !snap.source.empty()) {
+      std::ifstream in(snap.source, std::ios::binary);
+      const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      const nlohmann::json pj = nlohmann::json::parse(bytes, nullptr, /*allow_exceptions=*/false);
+      if (pj.is_object() && pj.contains("name") && pj["name"].is_string()) presetName = pj["name"].get<std::string>();
+    }
+    // Did the run drop the comp from the preset it exported? (a no-cab export without --allow-inexact with the comp on:
+    // prepareExportSource sets busComp.enabled = false; same rule as ExportGlue's buildResumeRequest, judged on the live rig.)
+    // The exporter's own notes are then built from that comp-less preset, so they lack the comp the model does not contain either.
+    const std::string runMode = done && !snap.exportMode.empty() ? snap.exportMode : plan.mode;
+    const bool runDropped = done && runMode == "nocab" && plan.rig.compOn && !snap.allowInexact;
+    const bool nonCommercial = plan.rig.nonCommercial || (done && res.nonCommercial);
+    const std::string licence = std::string(kPersonalUse) + (nonCommercial ? "  Non-commercial: a cc-by-nc capture is in this rig." : "");
+    nlohmann::json notes;
+    bool fromReport = false;
+    if (done && !res.exportNotesJson.empty()) {
+      notes = nlohmann::json::parse(res.exportNotesJson, nullptr, /*allow_exceptions=*/false);
+      fromReport = exportNotesUsable(notes);
+      if (fromReport && runDropped) {
+        bool hasComp = false;
+        for (const auto& st : notes["stages"])
+          if (st.is_object() && st.contains("stage") && st["stage"].is_string() && st["stage"].get<std::string>() == "busComp") hasComp = true;
+        if (!hasComp) fromReport = false;  // the dropped comp would vanish from the notes: show the plugin's (un-dropped rig)
+      }
+    }
+    if (!fromReport) {
+      const std::string mode = runMode;
+      const bool drop = done ? runDropped : plan.dropComp;
+      std::string nam, ir;
+      if (done) {
+        nam = res.namFile;
+        std::error_code ec;
+        if (mode == "nocab")
+          for (fs::directory_iterator it(snap.outDir, ec), end; !ec && it != end; it.increment(ec)) {
+            const std::string f = it->path().filename().string();
+            if (f.size() > 7 && f.compare(f.size() - 7, 7, ".ir.wav") == 0) ir = f;
+          }
+      }
+      notes = buildExportNotes(proc.currentPreset(), mode, drop, nam, ir);
+    }
+    notesFromReport = fromReport;
+    notesTextShown = fromUtf8(formatNotesTxt(notes, presetName, licence));
+    if (notesBox.getText() != notesTextShown) notesBox.setText(notesTextShown, juce::dontSendNotification);
+    setText(notesSource, fromReport ? juce::String("from the export report (sawblade-export)")
+                         : done    ? juce::String("(computed by the plugin)")
+                                   : juce::String("Follows the export settings above: set these on your pedal chain around the loader."));
+  }
+
   void refresh() {
     if (proc.exportSettingsSerial() != seenSerial) loadSettings();
     const JobSnapshot snap = proc.jobs().snapshot(JobKind::Export);
@@ -458,6 +555,7 @@ struct ExportPanel::Impl {
         plan = planExport(proc, cur);
         resumeOffer = findResumableExport(proc);
         planKey = k;
+        liveRigHash = std::to_string(std::hash<std::string>{}(toJson(proc.currentPreset()).dump()));
         planValid = true;
         planAt = now;
       }
@@ -470,6 +568,7 @@ struct ExportPanel::Impl {
       applyView();
     }
     const std::string stem = slug(proc.status().presetName) + (rig.nonCommercial ? "-nc" : "");
+    updateNotes(snap);
 
     // ---- mode cards
     const bool exactNoCab = rig.noCabExact;
@@ -726,6 +825,13 @@ struct ExportPanel::Impl {
     outPath.setBounds(rx, 314, rw, 44);
     sidecarLabel.setBounds(rx, 360, rw, 44);
     licenceNote.setBounds(rx, 420, rw, 64);
+
+    // The notes box fills the rest of the right column: below the status text, or (result view) below the licence note.
+    const int ny = view == View::Result ? 494 : 342;
+    capNotes.setBounds(rx, ny + 4, rw - 104, 14);
+    copyBtn.setBounds(rx + rw - 96, ny, 96, 24);
+    notesBox.setBounds(rx, ny + 30, rw, 676 - (ny + 30));
+    notesSource.setBounds(rx, 680, rw, 32);
   }
 };
 
@@ -735,6 +841,7 @@ ExportPanel::ExportPanel(SawbladeProcessor& p) : impl_(std::make_unique<Impl>(*t
   reveal = [](const juce::File& f) { f.revealToUser(); };
   openFolder = [](const juce::File& f) { f.startAsProcess(); };
   openFile = [](const juce::File& f) { f.startAsProcess(); };
+  copyToClipboard = [](const juce::String& t) { juce::SystemClipboard::copyTextToClipboard(t); };
   setSize(kWidth, kHeight);
   impl_->build();
   setVisible(false);
@@ -763,6 +870,9 @@ void ExportPanel::close() {
 void ExportPanel::refresh() {
   if (isVisible()) impl_->refresh();
 }
+
+juce::String ExportPanel::notesText() const { return impl_->notesTextShown; }
+bool ExportPanel::notesFromReport() const { return impl_->notesFromReport; }
 
 void ExportPanel::resized() { impl_->layout(); }
 

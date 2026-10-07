@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "rig/PedalKind.h"
 #include "sawblade/block_registry.h"
 
 namespace sawblade::plugin::rig {
@@ -20,13 +21,23 @@ juce::String kindText(const PathPreset& path, int index, const Block& b) {
   return slot.toUpperCase() + juce::String::fromUTF8(" \xC2\xB7 ") + type;
 }
 
+// True when `shown` is `now` with some NAM blocks' input gains changed (a live edit), nothing else.
+bool onlyInputGainsDiffer(const PathPreset& now, const std::vector<Block>& shown) {
+  if (now.blocks.size() != shown.size()) return false;
+  PathPreset probe = now;
+  for (std::size_t i = 0; i < shown.size(); ++i)
+    if (const auto* nam = dynamic_cast<const NamBlockParams*>(shown[i].params.get())) setBlockInputGainDb(probe, static_cast<int>(i), nam->inputGainDb);
+  return probe.blocks == shown;
+}
+
 }  // namespace
 
 // --- one block card --------------------------------------------------------------------------------
-class SlotStrip::Card : public juce::Component {
+class SlotStrip::Card : public juce::Component, public HasPedalKind {
  public:
   Card(SlotStrip& s, const PathPreset& path, int index, juce::Colour accent)
-      : strip_(s), id_(path.blocks[static_cast<std::size_t>(index)].id), accent_(accent) {
+      : strip_(s), id_(path.blocks[static_cast<std::size_t>(index)].id), accent_(accent),
+        pedalKind_(isCapturePedal(path, index) ? PedalKind::Capture : PedalKind::Modeled) {
     const Block& b = path.blocks[static_cast<std::size_t>(index)];
     const juce::String name = juce::String(b.id);
     setTitle("Block " + name);
@@ -105,6 +116,7 @@ class SlotStrip::Card : public juce::Component {
   }
 
   const std::string& id() const { return id_; }
+  PedalKind pedalKind() const noexcept override { return pedalKind_; }
   bool showsCaptureTag() const { return tag_.isShowing() || tag_.getParentComponent() == this; }
   const juce::Label& tag() const { return tag_; }
   juce::Button& bypassButton() { return *bypass_; }
@@ -112,14 +124,18 @@ class SlotStrip::Card : public juce::Component {
   juce::Button& rightButton() { return right_; }
   juce::Button& removeButton() { return remove_; }
   PresetKnob* inputKnob() { return input_.get(); }
+  // The preset's input gain for this block (a refresh shows it unless the knob is being turned).
+  void showInputGain(double db) {
+    if (input_) input_->setValueFromPreset(db);
+  }
   bool dimmed() const { return dimmed_; }
 
   void paint(juce::Graphics& g) override {
     auto r = getLocalBounds().toFloat().reduced(0.5f);
     g.setColour(L::panel());
     g.fillRoundedRectangle(r, 6.0f);
-    g.setColour((dimmed_ ? L::chipBorder() : accent_.withAlpha(0.55f)));
-    g.drawRoundedRectangle(r, 6.0f, 1.0f);
+    paintKindOutline(g, pedalKind_, r.expanded(0.5f), 6.0f, dimmed_ ? L::chipBorder() : accent_.withAlpha(0.55f));  // a capture: 2 px cream
+    paintKindBadge(g, pedalKind_, juce::Rectangle<float>(r.getRight() - 62.0f, r.getY() + 7.0f, 56.0f, 13.0f));  // v0.4 Task B
     if (dimmed_) {  // a bypassed block stays visible, just quieter
       g.setColour(L::background().withAlpha(0.45f));
       g.fillRoundedRectangle(r, 6.0f);
@@ -155,6 +171,7 @@ class SlotStrip::Card : public juce::Component {
   SlotStrip& strip_;
   std::string id_;
   juce::Colour accent_;
+  PedalKind pedalKind_;
   bool dimmed_ = false;
   juce::Label kind_, tag_, title_, credit_;
   std::unique_ptr<LedToggle> bypass_;
@@ -193,6 +210,14 @@ bool SlotStrip::cardShowsCaptureTag(int i) { return cards_[static_cast<std::size
 void SlotStrip::refresh(const Preset& p, bool emptyPedalSlot) {
   const PathPreset& pp = path_ == 0 ? p.a : p.b;
   if (pp.blocks == shown_ && emptyPedalSlot == shownEmpty_) return;
+  if (emptyPedalSlot == shownEmpty_ && cards_.size() == pp.blocks.size() && onlyInputGainsDiffer(pp, shown_)) {
+    // A live INPUT-gain edit changes the blocks but not the cards. Never rebuild them: that would destroy the knob under the
+    // hand mid-drag (the refresh runs 16 times a second); just show the value (a knob being turned ignores it).
+    for (std::size_t i = 0; i < cards_.size(); ++i)
+      if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp.blocks[i].params.get())) cards_[i]->showInputGain(nam->inputGainDb);
+    shown_ = pp.blocks;
+    return;
+  }
   shown_ = pp.blocks;
   shownEmpty_ = emptyPedalSlot;
   cards_.clear();

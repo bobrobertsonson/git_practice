@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "SawbladeLookAndFeel.h"
+#include "rig/CabControls.h"
 #include "rig/RigWidgets.h"
 #include "rig/SlotStrip.h"
 #include "skin/FilmstripKnob.h"
@@ -371,116 +372,12 @@ struct BlendPage : Page {
 };
 
 // ---------------------------------------------------------------------------------------------------
-// CAB
+// CAB: the shared cab controls (CabControls, also the CAB page of the main editor) without the page's extra buttons
 struct CabPage : Page {
-  struct IrCard : juce::Component {
-    IrCard(const juce::String& heading, juce::Colour accent, std::function<void()> choose) : accent_(accent) {
-      styleLabel(head, L::labelFont(11.0f), accent);
-      head.setText(heading, juce::dontSendNotification);
-      styleLabel(title, L::titleFont(15.0f), L::text());
-      styleLabel(credit, L::bodyFont(11.0f), L::dimText());
-      for (juce::Label* l : {&head, &title, &credit}) {
-        l->setMinimumHorizontalScale(0.8f);
-        addAndMakeVisible(*l);
-      }
-      setup(button, "CHOOSE...", "Choose a .wav impulse response file for " + heading);
-      button.setTitle("Choose IR " + heading);
-      button.onClick = std::move(choose);
-      addAndMakeVisible(button);
-    }
-    void set(const Capture& c) {
-      title.setText(captureTitle(c), juce::dontSendNotification);
-      credit.setText(captureCredit(c), juce::dontSendNotification);
-    }
-    void paint(juce::Graphics& g) override {
-      g.setColour(L::panelDeep());
-      g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
-      g.setColour(accent_.withAlpha(0.5f));
-      g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 8.0f, 1.0f);
-    }
-    void resized() override {
-      auto r = getLocalBounds().reduced(14, 10);
-      head.setBounds(r.removeFromTop(16));
-      title.setBounds(r.removeFromTop(26));
-      credit.setBounds(r.removeFromTop(20));
-      r.removeFromTop(8);
-      button.setBounds(r.removeFromTop(32).removeFromLeft(130));
-    }
-    juce::Colour accent_;
-    juce::Label head, title, credit;
-    juce::TextButton button;
-  };
-
-  CabPage(RigController& c) : controller(c) {
-    mode.setItems({{"SHARED", "Cab SHARED", "One cab IR after the blend: LIVE-COMPATIBLE, the no-cab NAM export is exact"},
-                   {"PER PATH", "Cab PER PATH", "One IR per path before the sum: STUDIO BLEND, only the with-cab NAM export is exact"}});
-    mode.onChange = [this](int i) {
-      const CabMode m = i == 0 ? CabMode::Shared : CabMode::PerPath;
-      controller.edit([m](Preset& p) { setCabMode(p, m); });
-    };
-    addAndMakeVisible(mode);
-    on = std::make_unique<LedToggle>("CAB ON", "Cabinet impulse response on / off", L::saw());
-    on->onClick = [this] {
-      const bool v = on->getToggleState();
-      controller.edit([v](Preset& p) { setCabEnabled(p, v); });
-    };
-    addAndMakeVisible(*on);
-    shared = std::make_unique<IrCard>("SHARED IR", L::text(), [this] { choose(CabSlot::Shared); });
-    cardA = std::make_unique<IrCard>("PATH A IR (SAW)", L::saw(), [this] { choose(CabSlot::A); });
-    cardB = std::make_unique<IrCard>("PATH B IR (BODY)", L::body(), [this] { choose(CabSlot::B); });
-    for (auto* k : {shared.get(), cardA.get(), cardB.get()}) addAndMakeVisible(*k);
-    styleLabel(notice, L::titleFont(14.0f), L::live());
-    addAndMakeVisible(notice);
-  }
-  void choose(CabSlot slot) {
-    chooser = std::make_unique<juce::FileChooser>("Choose an impulse response", juce::File(), "*.wav");
-    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this, slot](const juce::FileChooser& fc) {
-      const juce::File f = fc.getResult();
-      if (f == juce::File()) return;
-      Capture c;
-      c.file = f.getFullPathName().toStdString();
-      c.resolvedPath = c.file;
-      controller.edit([slot, c](Preset& p) { setCabIr(p, slot, c); });
-    });
-  }
-  void refresh(const Preset& p, const SawbladeProcessor::Status&, Topology) override {
-    const bool perPath = p.cab.mode == CabMode::PerPath;
-    mode.setSelected(perPath ? 1 : 0);
-    on->setToggleState(p.cab.enabled, juce::dontSendNotification);
-    shared->setVisible(!perPath);
-    cardA->setVisible(perPath);
-    cardB->setVisible(perPath);
-    shared->set(p.cab.ir);
-    cardA->set(p.cab.irA);
-    cardB->set(p.cab.irB);
-    // Same rule as the mode chip and exportExactness: a cab-less rig is live-compatible whatever the cab mode.
-    if (perPath && p.cab.enabled) {
-      notice.setText("STUDIO BLEND: only the with-cab NAM export is exact", juce::dontSendNotification);
-      notice.setColour(juce::Label::textColourId, L::studio());
-    } else {
-      notice.setText("LIVE-COMPATIBLE: the no-cab NAM export is exact", juce::dontSendNotification);
-      notice.setColour(juce::Label::textColourId, L::live());
-    }
-  }
-  void resized() override {
-    auto r = getLocalBounds().reduced(16, 8);
-    auto row = r.removeFromTop(32);
-    mode.setBounds(row.removeFromLeft(300));
-    row.removeFromLeft(16);
-    on->setBounds(row.removeFromLeft(120));
-    r.removeFromTop(16);
-    shared->setBounds(r.removeFromTop(120).removeFromLeft(440));
-    cardA->setBounds(shared->getBounds());
-    cardB->setBounds(shared->getBounds().translated(456, 0));
-    r.removeFromTop(16);
-    notice.setBounds(r.removeFromTop(28));
-  }
-  RigController& controller;
-  Segmented mode;
-  std::unique_ptr<LedToggle> on;
-  std::unique_ptr<IrCard> shared, cardA, cardB;
-  juce::Label notice;
-  std::unique_ptr<juce::FileChooser> chooser;
+  explicit CabPage(RigController& c) : controls(c, /*withActions=*/false) { addAndMakeVisible(controls); }
+  void refresh(const Preset& p, const SawbladeProcessor::Status&, Topology) override { controls.refresh(p); }
+  void resized() override { controls.setBounds(getLocalBounds()); }
+  CabControls controls;
 };
 
 // ---------------------------------------------------------------------------------------------------
@@ -510,7 +407,12 @@ struct GatePage : Page {
     threshold.knob().setTooltip("Gate threshold in dB (host automatable); LEARN sets it from your quiet input");
     auto add = [&](GateField f, const char* caption, const char* tip, FilmstripKnob::Range r, PresetKnob::Format fmt = {}) {
       knobs.push_back(std::make_unique<PresetKnob>(controller, caption, Kind::Pedal, L::saw(), r,
-                                                   [f](Preset& p, double v) { setGateField(p, f, v); }, false, std::move(fmt)));
+                                                   [f](Preset& p, double v) { setGateField(p, f, v); }, false, std::move(fmt),
+                                                   [f](double v) {
+                                                     Preset scratch;
+                                                     setGateField(scratch, f, v);
+                                                     return gateField(scratch.gate, f);
+                                                   }));
       knobs.back()->knob().setTooltip(juce::String(tip) + " (drag to turn, shift = fine, double-click = reset)");
       fields.push_back(f);
       addAndMakeVisible(*knobs.back());
@@ -581,7 +483,12 @@ struct CompPage : Page {
     addAndMakeVisible(*on);
     auto add = [&](CompField f, const char* caption, const char* tip, FilmstripKnob::Range r) {
       knobs.push_back(std::make_unique<PresetKnob>(controller, caption, Kind::Pedal, L::saw(), r,
-                                                   [f](Preset& p, double v) { setCompField(p, f, v); }));
+                                                   [f](Preset& p, double v) { setCompField(p, f, v); }, false, PresetKnob::Format{},
+                                                   [f](double v) {
+                                                     Preset scratch;
+                                                     setCompField(scratch, f, v);
+                                                     return compField(scratch.busComp, f);
+                                                   }));
       knobs.back()->knob().setTooltip(juce::String(tip) + " (drag to turn, shift = fine, double-click = reset)");
       fields.push_back(f);
       addAndMakeVisible(*knobs.back());
@@ -726,7 +633,7 @@ RigEditorPanel::Tab RigEditorPanel::tab() const noexcept { return impl_->current
 juce::Button& RigEditorPanel::tabButton(Tab t) { return impl_->tabs.button(static_cast<int>(t)); }
 juce::Button& RigEditorPanel::topologyButton(Topology t) { return impl_->topology.button(static_cast<int>(t)); }
 juce::Button& RigEditorPanel::eqTargetButton(EqTarget t) { return impl_->eq->target.button(static_cast<int>(t)); }
-juce::Button& RigEditorPanel::cabModeButton(CabMode m) { return impl_->cab->mode.button(m == CabMode::Shared ? 0 : 1); }
+juce::Button& RigEditorPanel::cabModeButton(CabMode m) { return impl_->cab->controls.mode.button(m == CabMode::Shared ? 0 : 1); }
 void RigEditorPanel::setEqTarget(EqTarget t) { impl_->eq->setTarget(t); }
 EqGraph& RigEditorPanel::eqGraph() { return impl_->eq->graph; }
 juce::String RigEditorPanel::statusText() const { return impl_->status.getText(); }

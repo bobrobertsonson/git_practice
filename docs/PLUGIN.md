@@ -141,6 +141,21 @@ of the tone that are the same amp at other gain settings. In the plugin:
 - **For the UI (Task D).** `SawbladeProcessor::ladderInfo(path)`: `has`, `rungCount`, `activeIndex` / `activeName` / `activeGain` /
   `activeModelId` (e.g. "Gain 6"), `targetIndex` / `targetName`, `pending` (the "rung pending" flag), `missingRungs`.
 
+- **Where steps exist (v0.3 Task E).** Text only, in the existing skin.
+  - *Amp head:* a small tag at the right end of the read-out pill: `STEPS n` when the capture has a ladder of n steps (read from the preset as
+    shown, so it follows a ladder that arrives asynchronously and an undo / redo); `STEPS -` (em dash) when the tool was asked about the capture's
+    tone and found none (or a ladder without the capture's own model: `SawbladeProcessor::ladderCheckedNone`); nothing while that is unknown
+    (never asked, the tool is missing / disabled / failed, a local-file amp). "Checked, no ladder" is session state in the processor
+    (`ladderSteps(toneId)`: -1 unknown, 0 none, n steps), not in the preset: a new session asks again, once per tone.
+  - *Capture browser:* a card shows `STEPS n` (right end of the licence row) when the tone's ladder is known to exist; unknown and no-ladder
+    cards show nothing. In amp slots the rows on screen (inside the viewport, display order, at most 24) are looked up lazily: the browser's 10 Hz
+    timer calls `BrowserController::wantLadders`, which sets `SawbladeProcessor::setLadderLookups`; the next `ladderTick()` runs the head of the
+    queue through the same tool, `ladderRungs_` cache and once-per-tone-per-session rule as the preset's own fetch (one run at a time, off the UI
+    thread, never on the browser's own tool runner, so USE / PREVIEW never wait). The selected / previewed tone goes first. Scrolling or a new
+    search replaces the queue (tones that left the screen are dropped; a run in flight is never cancelled). A failed run (not logged in, no
+    network, garbage) stops the lookups for the session (`ladderLookupsStopped()`, no UI text); `SAWBLADE_NO_NETWORK` turns them off. A looked-up
+    ladder is also given to a rig whose amp is a capture of that tone.
+
 ### BLEND fills an empty path B (v0.2 Task C)
 
 `RigController::setTopology(Blend)` on a preset whose path B has no blocks fills it in one edit: a modeled TS boost (`pedal.ts`,
@@ -159,14 +174,48 @@ it; the capture then gets that entry's sha256 and the tone's title, creator (dis
 the rig non-commercial as any other capture does. A model file without an entry is not cached (it goes through `fetch`). With no model id the fill
 takes the smallest model id that has an entry and a file; `fetch` without `--model` takes the tone's first candidate, which may be another model.
 
-**Undo.** `RigController::undo()` restores the preset as it was before BLEND. There is ONE entry, {pre-BLEND preset, the preset the fill and its
-asynchronous amp swap left}; the swap updates it, so it is one step. `undo()` succeeds only while the rig still is exactly that: any other edit (path A,
-a parameter, path B's blocks / level / controls, BLEND off) or a user preset load drops the entry, and `undo()` then returns false and keeps the edit.
-A second fill replaces the entry. The suggestion is applied only if path B (all of it) and the blend are exactly what the fill left.
+**Undo / redo (v0.3 Task D).** The history is owned by the processor (`EditHistory`, `PluginProcessorHistory.cpp`), so it survives closing and reopening
+the editor. It is message-thread data, never saved in the plugin state, and left alone by a host state restore. 64 whole-preset steps (the 65th drops
+the oldest); a new edit after an undo clears redo. Cmd / Ctrl + Z undoes, Cmd / Ctrl + Shift + Z redoes, with the same overlay and text-field rules
+as before (the rig editor is not an overlay for this purpose). A step stores the preset as it was before one edit and which host parameters the edit
+changed: undo / redo put back only those, so a value the host automated meanwhile is not rewound.
+- Steps: add / remove / reorder / bypass a block, a capture swap with its make-up, block parameters, EQ edits, cab / mic, gate / comp / alignment,
+  topology and the BLEND fill (one step, with the knob back on full SAW), a user preset load (browser, file chooser, resolve) and an applied match
+  (audition APPLY: one step back to the preset before the audition; the audition's own loads and its A / B toggles are not steps).
+- One step per gesture: a mouse drag (mouse down to mouse up) however many rebuilds it makes. Only a held mouse opens the
+  history gesture (a double-click does not: JUCE sends mouseDoubleClick after the mouse-up, so it takes the debounced path): JUCE wraps every wheel notch in a drag notification too, and those take the debounced path (a burst of notches inside the 150 ms
+  debounce = one flush = one rebuild = one step; notches further apart are a step each). A typed value is one flush. A live knob (no rebuild) records
+  one step per wheel notch / typed value.
+- Gesture ends carry a token: an end that arrives after the editor aborted its gestures (window closed mid-drag) cannot close a newer gesture. A
+  controller removes the history's pre-gesture flusher only if it is still its own.
+- A masked restore (host automation of GAIN since the step) keeps the current `gainStep` / ladder for a path whose GAIN the step did not change, when
+  the amp is the same capture, so the rung and the knob agree. Host parameters bound to the UI (the amp heads' controls, the main page's BLEND / INPUT / OUTPUT / EQ knobs
+  and every other APVTS knob) are undoable per USER gesture: they record on the parameter's change-gesture begin / end, which host automation never
+  sends. (A host that wraps its own automation writes in change gestures is indistinguishable from a user and is recorded.) An A / B compare toggle
+  is not a step.
+- Not steps: host automation, a state restore, and every asynchronous completion: the BLEND fill's amp arriving, a capture swap's make-up (it is part
+  of the swap's own load), the level-trim write-back, the gain-ladder write-back. Those that belong to the rig (the fill's amp, a fetched ladder) are
+  also written into the stored snapshots (`patchHistory`), so an undo never takes them away.
+- In-flight BLEND fill: an undo / redo that leaves path B without blocks cancels it; a redo into a blend path B that never got its amp starts the fill
+  again. A user preset load cancels it as before.
+- Level trim: an undo / redo is a load that keeps the running trim until the restored rig's own is known (the stored stamp if fresh, else a cached or
+  measured one): it never dips to 0. A preset-load step starts from the running trim as its provisional value.
 
 **Tools and the network.** The ladder fetch, the missing-rung fetch and the BLEND tool runs are started by the plugin on its own, so they honour
 `SAWBLADE_NO_NETWORK=1` (set for every test and for pluginval) and need a configured, existing `sawblade-t3k`. `T3kTool` has no timeout: a tool
 that hangs keeps its slot (one run at a time) until it exits (proposal: a watchdog that cancels a run after a limit).
+
+**The BLEND knob starts a blend, and the fill is never silent (v0.3 Task C).** Turning the main panel's BLEND knob up from full SAW on a rig
+whose path B is off calls `RigController::blendTurnedUp(blendBefore)` from the knob's drag end: the same switch and fill as the rig section's
+(`applyTopology`), one undo step that puts the knob back on full SAW. Only a user gesture on the knob does this (the Slider's drag start / end are never
+fired by host automation or a state restore, so those cannot change the topology); the topology change goes through the background loader like any
+rig edit. BLEND back to 0 leaves path B alone. Why the user once got only the boost: (1) with nothing cached the immediate fill is boost-only and the
+amp arrives later; (2) `BodyFill::tick()` ran only from the rig editor's refresh, so with the rig editor closed the amp was never applied
+(`Content::refresh` now calls `RigController::sync()`); (3) a completing fill was dropped when BLEND / LEVEL moved meanwhile (a fill that still lacks its amp
+now only needs path B's structure to be unchanged); (4) a missing tool, `SAWBLADE_NO_NETWORK` or a failed fetch (not logged in, network) returned or ended
+without a word. `BodyFill::status()` now reports Downloading (with the amp's name) or Failed (with a reason); the body head shows
+`BODY AMP DOWNLOADING… (name)` or `<reason> — <action>` (not logged in: log in via Settings; no network; no capture / not allowed: BROWSE CAPTURES; tool
+not found: Settings). Switching the rig topology to Blend on an amp-less path B starts the fill too, and path B sounds when the BLEND knob is released. A path B that is on with no amp and no fill running (window closed during the download, or the amp dropped because path B was edited) reads `BODY AMP MISSING — touch BLEND`, and touching BLEND restarts the fill; an amp that arrives while the window is closed never lands (the fill lives in the editor). After the fix, touching BLEND again retries a failed fill.
 
 ### Amp controls on the amp heads (v0.2 Task D)
 
@@ -185,7 +234,35 @@ PRESENCE; the art's own captions say LOW / HIGH, so code-drawn captions with the
 | path B has blocks, BLEND off | `BODY PATH OFF — turn up BLEND` (knobs disabled) |
 
 Capture blocks in the rig editor's slot strips show the tag `CAPTURE · FIXED TONE` (a capture is a fixed tone; its tone is shaped by the amp head's
-controls). Cmd / Ctrl + Z on the editor calls `RigController::undo()` when there is a BLEND fill to undo.
+controls). Cmd / Ctrl + Z / + Shift undo / redo the rig edits (see Undo / redo above).
+
+### Level matching (v0.3 Task B)
+
+Switching presets, captures or A/B must never make you judge "louder = better". The recipe (reference signal, BS.1770 measure,
+-18 LUFS target, hash, make-up) is specified in `docs/PRESET_SCHEMA.md` "Level matching"; this is how the plugin does it.
+
+- **LEVEL MATCH** is a Settings-store flag (`levelMatch`, default **on**; Settings panel, "LEVEL MATCH"), never part of the preset.
+  Off = no trim is applied and none is measured: levels are what they always were.
+- **Measure** - `LevelWorker` (`plugin/src/LevelWorker.*`) is the one background thread: it renders the reference DI through the rig
+  with the core (`computeAutoTrim`, its own capture cache) and returns the trim. `SawbladeProcessor::levelTick()` (10 Hz timer, tests
+  call it) hashes the current rig (`levelMeasurementPreset()`: the preset with the parameter values; OUTPUT is measured at 0 dB and is not in the hash) and (a) uses a trim already known for that hash (a fresh trim stored in the preset, or measured earlier in
+  the session), (b) otherwise waits `kLevelDebounceMs` (400 ms) of stability and submits one job (latest wins). A user load or state
+  restore resets the trim to 0 until the new one is known (`levelOnLoad`, in `commit`, before the engine is published, so a preset
+  with a fresh stored trim starts at it with no ramp); an edit keeps the previous trim playing until the new one arrives.
+  Measured trims are written back into the preset (`autoTrimDb` + hash) so saved state and A/B slots carry them.
+- **Apply** - the audio thread reads two atomics (`levelMatchOn_`, `trimTargetDb_`) and calls `Engine::setAutoTrimDb` ->
+  `Chain::setAutoTrimDb`: a plain gain after the OUTPUT knob, first value immediate, later changes ramped over 250 ms (no allocation,
+  no lock). The OUTPUT knob is a persistent offset from -18 LUFS and is not a rig change (no re-measure). A rig with no active non-linear block gets 0 and positive trims stop at +12 dB.
+- **Chip** - while the trim of the current rig is being measured the top-bar LAT / CPU chip reads "LEVEL ..." (tooltip: what is
+  happening and the latency); the latency chip returns when it is known.
+- **Capture swap** - capture browser USE on a NAM slot: the make-up (`slotMakeupDb`: the slot's path alone on the reference DI,
+  before minus after the swap) is computed on the level worker while the old capture keeps playing; the swap is then loaded with
+  `makeupDb` on that block, so the loudness does not jump. PREVIEW renders the candidate with its make-up and its trim and does not
+  peak-normalise (LEVEL MATCH off keeps the -3 dBFS peak normalisation). Gain-ladder rungs and IR (cab) swaps are not touched.
+- **A/B** - each slot is a complete preset carrying its measured trim, so both sides play at -18 LUFS (a slot never measured needs a
+  few seconds when first shown).
+- **NAM export** - always the un-trimmed chain: `prepareExportSource` strips `autoTrimDb` / `autoTrimHash` from the preset it writes
+  (the make-up is part of the sound and stays).
 
 ### Latency accounting (exact, in host samples)
 
@@ -430,8 +507,10 @@ runner deletes only its own folders and ownerless ones, never another instance's
 
 - Jobs from builds before this one have no owner and are not adopted by any instance.
 - Match settings (selected take, tool paths) are one per-user file shared by all instances.
-- A real undo of an applied match is deferred to v0.2's `RigController::undo` (hook at `PresetAudition::apply`); today apply = one
-  preset load + `updateHostDisplay`.
+- An applied match is ONE step in the processor's undo history (v0.3 "undo / redo"): `PresetAudition::apply` records pre = the preset current
+  when the audition started, post = the applied candidate, then loads it and calls `updateHostDisplay`. There is no second undo store. Cmd / Ctrl + Z
+  restores the pre-audition preset exactly; later edits are steps of their own above it (v0.2.1's separate applied-match entry, dropped by any
+  edit or load, is gone).
 
 **Job runner.** `JobRunner` (owned by the processor, so jobs survive the editor and the panel closing) starts
 `sawblade-match` and `sawblade-export` with `juce::ChildProcess`. Every job has a folder
@@ -614,6 +693,23 @@ allocation and lock guards while a fake export job runs and the panel's glue is 
   path, the sidecar path, REVEAL (`File::revealToUser` on the `.nam`), OPEN FOLDER, A/B LISTEN (opens
   `listen/ab_original_then_export.mp3`, else `.wav`, with the system player; hidden when neither exists; there is no in-plugin
   playback), the licence note.
+
+**Export notes (v0.4 Task E).** The right column of every view ends with the EXPORT NOTES box and a COPY button: every stage of
+the rig that is NOT in the trained model, in signal order, with hardware settings (gate: open / close threshold, attack, hold,
+release, range; the cab IR; the post EQ bands; the bus comp: threshold, ratio, attack, release, knee, make-up), each as one plain
+sentence, plus the loader order. *Before training* (and while training) the box shows the notes the plugin computes
+(`ExportNotes.{h,cpp}`, JUCE-free) for the mode and DROP COMP shown, and updates when they change; in a no-cab export the cab, the
+post EQ and the comp are always listed (they sit after the cab, which the model leaves out; DROP vs KEEP COMP only decides what is
+trained / judged), in a with-cab export only the gate (and the comp if a plan bypasses it). *After training* it shows the run
+report's `exportNotes` (`export_report.json`, v0.4M) when it is an object of `version` 1, else the plugin's notes for the finished
+run's mode with a dim "(computed by the plugin)" line. COPY puts the same text (`formatNotesTxt`, the text of
+`<name>.export_notes.txt`, closed by the personal-use licence note) on the clipboard through `ExportPanel::copyToClipboard`, the
+test seam (default `juce::SystemClipboard`).
+*Dependency on v0.4M:* `ExportNotes.cpp` is a port of `match/sawblade_match/export/notes.py` (`NOTES_VERSION = 1`, v0.4M commit
+9074c0b: `build_export_notes`, `format_notes_txt`). The parity fixtures in `plugin/tests/fixtures/export_notes/` were produced by
+running that Python (`generate.py` there has the command) and `plugin/tests/test_export_notes.cpp` requires the C++ output to
+equal them (numbers within 1e-9, strings and the txt exact). If v0.4M changes the format before or after it merges, regenerate the
+fixtures and follow in the port; a report whose `version` differs is not shown (the plugin's notes are).
 
 **Mode and comp rules.** A rig whose no-cab export is exact (shared cab, `irMix`, or no cab) defaults to NO CAB; per-path cabs
 (studio blend) default to WITH CAB and the NO CAB card is disabled. A mode saved in the state is honoured only while it is exact

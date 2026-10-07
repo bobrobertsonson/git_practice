@@ -202,6 +202,13 @@ class Chain {
   // RT-safe. Only changed fields act, so calling this every block with the same values is cheap.
   void setLiveParams(const LiveParams& p) noexcept;  // invalid (non-finite / out-of-range) fields are ignored
   const LiveParams& liveParams() const noexcept { return live_; }
+  // v0.3 level matching (auto_trim.h): a plain gain after the output gain, in dB (not part of LiveParams, the preset or the
+  // trained chain: NAM export and the matcher render without it). The first call sets it at once; later changes ramp over
+  // kAutoTrimRampMs. Non-finite values are ignored. RT-safe, cheap when unchanged. Unity (the default) leaves every sample
+  // bit-identical.
+  void setAutoTrimDb(double db) noexcept;
+  double autoTrimDb() const noexcept { return autoTrimNowDb_; }
+  static constexpr double kAutoTrimRampMs = 250.0;
   // Not RT-safe (call before audio): start with the paths muted, without a ramp.
   void presetMutes(bool a, bool b) noexcept;
 
@@ -296,7 +303,10 @@ class Chain {
   Preset preset_;
   ChainResources res_;
   std::array<Path, 2> path_;
-  Gain inGain_, outGain_;
+  Gain inGain_, outGain_, trimGain_;  // trimGain_: the auto trim, after outGain_
+  double autoTrimNowDb_ = 0.0;
+  bool trimSet_ = false;
+  int trimRampSamples_ = 1;
   Gate gate_;
   bool gateOn_ = false;
   std::unique_ptr<Convolver> cabShared_;

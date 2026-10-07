@@ -20,6 +20,7 @@ std::shared_ptr<const BlockParams> parseNam(JsonObject& o, const std::filesystem
   p->inputGainDb = o.number("inputGainDb", 0.0, -120.0, 60.0);
   p->outputGainDb = o.number("outputGainDb", 0.0, -120.0, 60.0);
   p->normalizeLoudness = o.boolean("normalizeLoudness", false);
+  p->makeupDb = o.number("makeupDb", 0.0, -kMaxAutoTrimDb, kMaxAutoTrimDb);
   const nlohmann::json* m = o.take("model");
   if (!m) throw PresetError(o.child("model"), "required field is missing");
   p->model = parseCapture(*m, o.child("model"), baseDir, /*allowLadder=*/true);
@@ -31,7 +32,7 @@ std::unique_ptr<Processor> createNam(const Block& b, const BlockBuildContext& ct
   const std::string filePath = ctx.jsonPath + ".model.file";
   NamBlockConfig cfg;
   cfg.inputGainDb = p.inputGainDb;
-  cfg.outputGainDb = p.outputGainDb;
+  cfg.outputGainDb = p.outputGainDb + p.makeupDb;
   cfg.normalizeLoudness = p.normalizeLoudness;
   const auto build = [&](const Capture& cap, const std::string& fp, bool verify) -> std::unique_ptr<NamBlock> {
     if (ctx.cache) return NamBlock::load(*ctx.cache->namModel(cap, fp), cfg);  // bypass: see Chain

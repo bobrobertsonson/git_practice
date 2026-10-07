@@ -105,3 +105,120 @@ All task tests; accuracy table published with targets met or gaps explained; ful
 `-Werror`, ctest, Python, pluginval 10 VST3, macOS auval + pluginval AU/VST3); v0.2/v0.3 tests still pass.
 Report `docs/specs/v0_4-pedals_REPORT.md` with reviewer verdicts, the accuracy table, and a hand-test checklist
 for the user (Logic, macOS).
+
+## Lead decisions (v0.4 Tasks B–E, 2026-10-06)
+
+Phase lead session for B–E; Task A is done (v0.4A merged) and not touched. Order: **D → C → B**, with **E** in
+parallel (independent files). Each task: dsp-engineer implements + full ctest, reviewer ACCEPT/REVISE loop.
+
+### Common
+
+- **D0. What the board shows.** A path's board is its blocks **before its amp** (`ampIndex`; all blocks when the path
+  has no amp), in path order. Blocks after the amp (only reachable from the rig editor; no committed preset has one)
+  are not tiles; the board shows a small "+n AFTER AMP (rig editor)" note. Drops always insert before the amp. Limit
+  is core's `kMaxBlocksPerPath` = 8 incl. the amp, so 7 pedals per path (≥ 6 as asked); a full path greys + PEDAL
+  ("path full: 8 blocks") and refuses drops from the other path with a status-line message.
+- **D1. Every board edit is exactly one `RigController::edit` call** (= one v0.3 undo step, rebuild prepared off the
+  audio thread by the existing load path, latency re-reported by the processor). Cross-path move = remove from the
+  source + insert into the target in the same edit; the moved block gets a fresh id (`newBlockId`) and keeps
+  everything else (params, bypass, capture, `makeupDb`). Async results (capture make-up) add no step (v0.3 rule).
+- **D2. No refresh may destroy a widget under the hand** (v0.3 Task A root cause). The board rebuilds tiles only when
+  the shown block list changed, never during a drag; the dragged tile survives until mouse-up.
+- **D3. Generic names only**: CHAINSAW (`pedal.hm`), MODDED SAW (`pedal.hmx`), ONE-KNOB SAW (`pedal.eye`), BIG FUZZ
+  (`pedal.muff`), GREEN OVERDRIVE (`pedal.ts`) — the existing `circuitInfo` / `docs/PEDALS.md` descriptors.
+- **D4. Existing skin only**; one new colour *token* is allowed: `SawbladeLookAndFeel::capture()` = the existing
+  cream `0xffe8e1d2` (distinct from SAW orange / BODY blue and from the LIVE/STUDIO semantics).
+
+### Task D — layout (first)
+
+- Rig area stays 940 × 742 (inspector unchanged). Two columns: SAW x 16..462, BODY x 478..924. Heads keep their
+  current size (330 px wide, art aspect; the v0.2 `AmpHead` overlays stay valid), centred in their column, both at
+  the same y (44). The status line stays at the rig's top. Boards: per column, from head bottom + 40 down to 672;
+  a column caption ("SAW · n PEDALS" / "BODY · n PEDALS") between head and board. Cab chip: centred at the
+  bottom (y ≈ 690, ~320 × 36): `CAB · <IR title> · ● LIVE|STUDIO` (shared vs per-path, same rule as the mode chip;
+  "CAB OFF" when disabled). Cables: board → head per column, then both heads → the cab chip (drawn under the
+  pedals). The static mockup pieces `SawPedal` / `BodyPedal` / `Cab` leave the main page.
+- Path B off: the BODY head is drawn dimmed (alpha ≈ 0.35) with its controls disabled, the BODY board is empty and
+  says "BODY PATH OFF — turn up BLEND"; it is not a drop target. SAW column geometry never depends on B.
+- **CAB page** (`CabScreen`, full overlay below the top bar, joins the mutually exclusive overlay group and
+  `anyOverlayOpen()`): opened by a new **CAB** toggle next to RIG and by clicking the cab chip. It holds the rig
+  editor's cab controls (mode SHARED / PER PATH, CAB ON, the IR cards; extract the rig editor's `CabPage` into a
+  reusable component so both places use one class), a **BROWSE IR** button per IR target that opens the capture
+  browser for `Slot::Cab` (what selecting the old cab + BROWSE CAPTURES did), the LIVE/STUDIO notice, and a
+  **MIC POSITIONS** button that opens the existing mic page (whose close returns to the CAB page). This replaces
+  double-click-cab → mic. **The cab has no level control today** (no field in `CabPreset`), so none is added (no
+  new DSP / schema in this phase); proposed in the report.
+- Inspector: unchanged layout. Selecting a pedal tile shows "SELECTED · SAW PEDAL" + the block title; BROWSE
+  CAPTURES on a selected capture tile targets **that** block (path + index), not "the first pedal".
+- Screenshots: a test (or test tool) that renders the editor via `createComponentSnapshot` to PNG when
+  `SAWBLADE_SCREENSHOT_DIR` is set; it must work with fixture captures from `tests/fixtures` (no TONE3000 needed).
+  PNGs go to `docs/reports/v0_4/` (UI only, no capture data).
+
+### Task C — pedalboard
+
+- One `Pedalboard` component owns both boards (so A↔B drags are handled by one component and are testable with
+  synthesized mouse events; **no** `juce::DragAndDropContainer`, whose desktop-mouse tracking does not work
+  headless). Drag starts after 6 px of movement on a tile's body (footswitch and face knobs never start a drag); a
+  translucent ghost follows the mouse; the target board outline highlights and an insertion bar shows the index;
+  drop outside both boards = REMOVE (the ghost says REMOVE while outside). Right-click / ctrl-click on a tile:
+  menu BYPASS / REMOVE.
+- Tiles: width = clamp(board inner width / n, **110**, 180) px at the pedal art's aspect; below 110 the board scrolls
+  horizontally (`juce::Viewport`, horizontal bar only). + PEDAL is always the last tile of each board and opens the
+  picker (Task B); in C it may offer only the MODELED tab.
+- Modeled tiles use the existing renders: circuit pedals (`pedal.hm/hmx/eye/muff`) `pedal_saw.png`, everything else
+  modeled (`pedal.ts`, `eq`, …) `pedal_body.png`, each with a name chip over the baked caption (PedalFace's chip
+  style). The live `PedalFace` (host parameters of the **first circuit block**, unchanged rule) is laid over that
+  block's tile, scaled with the tile; double-click opens the AdvancedDrawer as today. Other modeled tiles have no
+  on-board knobs in v0.4 (their params stay in the rig editor); per-pedal knob banks are a report proposal.
+- Footswitch + LED per tile (existing `FootswitchButton` / `LedIndicator`) = bypass, one undo step.
+- Refresh: the board re-reads `editBasePreset()` on the editor tick and right after its own edits; the rig editor
+  shows board edits on its next refresh and vice versa.
+- Tests (mouse-driven, `plugin/tests/test_pedalboard.cpp`): reorder within A; A→B; B→A; add (MODELED); remove by
+  drag-off and by menu; bypass by footswitch; one undo step each (undo restores the exact preset, redo re-applies);
+  refresh during a drag keeps the dragged tile; full path refuses; 6 pedals per path stay ≥ 110 px wide and the
+  board scrolls; render test: the processor's rendered output after a drag is identical to rendering a preset built
+  with that order directly; latency test: the reported latency after a move equals the core's compensated latency
+  of the new preset.
+
+### Task B — capture pedals
+
+- **Picker** (`PedalPicker`, small overlay anchored to the + PEDAL tile): tabs MODELED | CAPTURES. MODELED lists the
+  five models (D3) with no badge. CAPTURES lists cached pedal captures first (from the local capture cache's
+  `meta.json` entries whose tone gear is pedal; title, creator, licence tag, CAPTURE badge), then a
+  **SEARCH TONE3000…** row that opens the existing capture browser in a new **insert** mode
+  (`SlotTarget::Kind::InsertNamBlock {path, index}`; gear fixed to pedal; USE inserts a new `nam` block, slot
+  "pedal", instead of replacing). Fetch/resolve/licence flow unchanged; `-nc` captures keep their marking.
+- **Level match on add:** a new capture pedal gets `makeupDb` from v0.3's `slotMakeupDb` (path solo, before = the
+  path without the pedal, after = with it), so it drops in at matched loudness; the add is the undo step, the
+  make-up lands without a step. Modeled pedals drop in at their defaults (the global −18 LUFS trim still applies).
+- **Capture tile:** flat `L::panel()` enclosure, 2 px `L::capture()` outline, filled "CAPTURE" badge, title, creator
+  (where a modeled tile shows its circuit name), licence tag, `CAPTURE · FIXED TONE`, a LEVEL knob (the block's
+  output level as it exists today — the nam block's gain field; if a nam block has no output-level field, the
+  knob drives `makeupDb` within its ±24 dB clamp and the report says so), footswitch + LED. No other knobs.
+- **Setting selector:** when the capture's tone has ≥ 2 models (cached `meta.json`, or the browser's models list
+  when online), the tile shows a selector of the model names (v0.2 ladder order when the names parse as a ladder,
+  otherwise the plain list); choosing one swaps the capture through the existing swap path (+ make-up), one undo
+  step.
+- **Kind everywhere:** every pedal widget (board tile, rig-editor slot card, picker row) exposes
+  `pedalKind()` ∈ {Modeled, Capture}; one shared paint helper draws the badge/outline. Capture = a `nam` block in a
+  pedal slot. Amp captures are not pedals and get no badge.
+- Tests: kind + badge on tile, slot card and picker row; add from both picker tabs (CAPTURES with a fake cache
+  entry + the fake t3k tool already in `plugin/tests`); insert-mode USE inserts at the index; make-up applied without
+  an extra undo step; setting selector swaps; NAM-trainable (export plan still sees a `nam` block).
+
+### Task E — export notes (parallel)
+
+- v0.4M's notes format **has landed on its branch** (`match/sawblade_match/export/notes.py`, `NOTES_VERSION = 1`,
+  commit 9074c0b on `claude/sawblade-v0_4m-matcher-feel`), not yet on the base. So: a JUCE-free C++
+  `buildExportNotes(preset, mode, dropComp)` in the plugin mirrors `build_export_notes` + `format_notes_txt`
+  (same stages, order, settings and `hardware` sentences; `nam_name`/`ir_name` unknown before training).
+  **Before** training the panel shows the C++ notes for the current mode/DROP COMP; **after** training it shows the
+  run report's `exportNotes` when present (the Python tool is the source of truth once v0.4M merges) and otherwise
+  keeps the C++ notes with a dim "(computed by the plugin)" line. COPY puts the `format_notes_txt` text on the
+  clipboard (test seam for the clipboard).
+- Parity test: a fixture generated by running the v0.4M `notes.py` on two test presets (nocab with gate + fast bus
+  comp + post EQ; withcab with DROP COMP) is committed with the command that made it; the C++ output must equal it
+  (stages, settings numbers, hardware text, loaderOrder). Panel test: preset with gate + fast bus comp → both
+  shown with the right numbers; COPY copies the text.
+- Dependency note: if v0.4M changes the format before it merges, the fixture and the C++ port follow (version
+  field checked).

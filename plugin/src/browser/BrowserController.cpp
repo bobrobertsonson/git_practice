@@ -1,18 +1,21 @@
 #include "BrowserController.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "PreviewRender.h"
+#include "sawblade/auto_trim.h"
 
 namespace sawblade::plugin {
 
-BrowserController::BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot)
-    : proc_(p), settings_(s), slot_(slot), client_([&s] { return s.executable(); }) {
+BrowserController::BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot, std::string pinnedBlockId, std::optional<InsertPoint> insert)
+    : proc_(p), settings_(s), slot_(slot), pinnedBlockId_(std::move(pinnedBlockId)), insert_(insert), client_([&s] { return s.executable(); }) {
   st_.gear = slotGear(slot);
 }
 
 BrowserController::~BrowserController() {
   alive_->store(false);
+  stopLadderWants();
   proc_.previewPlayer().stop();
   client_.cancelAll();
   if (worker_) PreviewWorker::retire(std::move(worker_));  // never joins here
@@ -47,7 +50,35 @@ const t3k::CaptureRecord* BrowserController::selected() const {
   return nullptr;
 }
 
-std::vector<SlotTarget> BrowserController::targets(std::string* why) const { return slotTargets(proc_.currentPreset(), slot_, why); }
+int BrowserController::ladderSteps(std::int64_t toneId) const { return proc_.ladderSteps(std::to_string(toneId)); }
+
+void BrowserController::wantLadders(const std::vector<std::int64_t>& visibleToneIds) {
+  if (st_.gear != "amp" || st_.view != View::Browse) {  // not an amp browse view (login screen, pedal / cab slot): nothing of ours stays queued
+    stopLadderWants();
+    return;
+  }
+  std::vector<std::string> ids;
+  std::string sig = std::to_string(st_.selectedId);
+  for (std::int64_t id : visibleToneIds) {
+    if (ids.size() >= kLadderLookupCap) break;
+    ids.push_back(std::to_string(id));
+    sig += "," + ids.back();
+  }
+  if (sig == lastWanted_) return;
+  lastWanted_ = sig;
+  wantedAny_ = true;
+  if (ids.empty()) proc_.setLadderLookups({});  // nothing on screen (hidden, scrolled away): not even the selected tone is wanted
+  else proc_.setLadderLookups(ids, st_.selectedId != 0 ? std::to_string(st_.selectedId) : std::string());
+}
+
+void BrowserController::stopLadderWants() {
+  if (lastWanted_.empty() && !wantedAny_) return;
+  lastWanted_.clear();
+  wantedAny_ = false;
+  proc_.setLadderLookups({});  // queued lookups are dropped; a run in flight finishes
+}
+
+std::vector<SlotTarget> BrowserController::targets(std::string* why) const { return slotTargets(proc_.currentPreset(), slot_, why, pinnedBlockId_, insert_); }
 
 void BrowserController::setExecutable(const std::string& path) {
   settings_.setExecutable(path);
@@ -118,6 +149,7 @@ void BrowserController::setSource(Source s) {
   else changed();
 }
 void BrowserController::setGear(const std::string& g) {
+  if (insert_ && g != "pedal") return;  // an insert-mode browser lists pedals only
   st_.gear = g;
   if (st_.view == View::Browse) reload();
   else changed();
@@ -141,6 +173,7 @@ void BrowserController::select(std::int64_t toneId) {
   setStatus({});
   changed();
   if (toneId == 0) return;
+  if (st_.gear == "amp") proc_.requestLadderLookup(std::to_string(toneId));  // a ladder is an amp thing: not for pedals or cab IRs
   const std::uint64_t seq = ++modelsSeq_;
   client_.models(toneId, [this, seq, toneId](Reply<t3k::ModelsResult> r) {
     if (seq != modelsSeq_ || toneId != st_.selectedId) return;
@@ -219,20 +252,54 @@ void BrowserController::fetchSelected(std::function<void(const t3k::FetchResult&
   });
 }
 
+void BrowserController::loadSwapped(Preset p) {
+  // The swap keeps the rig's current trim until the new rig's measurement lands: no level jump (a hash change drops to 0 otherwise).
+  const auto s = proc_.status();
+  // One undo step (restored as an edit: the rig stays, the old capture and its make-up come back); the make-up that arrived with the swap is part of it.
+  proc_.loadPresetUndoable(std::move(p), SawbladeProcessor::HistoryKind::Edit, /*keepMonitor=*/false, s.levelMatchOn ? std::optional<double>(s.trimDb) : std::nullopt);
+  st_.busy = false;
+  awaitingLoad_ = true;
+  setStatus("Loading " + loadedTitle_ + "..." + levelNote_);
+  changed();
+}
+
 void BrowserController::use(int targetIndex) {
   fetchSelected([this, targetIndex](const t3k::FetchResult& f) {
     const Preset cur = proc_.currentPreset();
     std::string why;
-    const auto ts = slotTargets(cur, slot_, &why);
+    const auto ts = slotTargets(cur, slot_, &why, pinnedBlockId_, insert_);
     if (targetIndex < 0 || targetIndex >= static_cast<int>(ts.size())) return fail(why.empty() ? "no such target" : why);
+    const SlotTarget target = ts[static_cast<std::size_t>(targetIndex)];
     std::string err;
-    auto np = withCapture(cur, ts[static_cast<std::size_t>(targetIndex)], f, err);
+    auto np = withCapture(cur, target, f, err);
     if (!np) return fail(err);
-    proc_.loadPreset(std::move(*np));
-    st_.busy = false;
-    awaitingLoad_ = true;
-    setStatus("Loading " + loadedTitle_ + "...");
+    levelNote_.clear();
+    if (target.isIr() || !proc_.levelMatchEnabled()) return loadSwapped(std::move(*np));
+    // LEVEL MATCH: the new capture must not change the slot's loudness on the reference DI. The make-up is computed in the
+    // background (the old capture keeps playing meanwhile) and the swap is loaded with it, so there is no jump.
+    const int path = target.path == 'a' ? 0 : 1;
+    const Preset after = withSlotMakeup(*np, path, target.blockIndex, 0.0);
+    const std::uint64_t seq = ++useSeq_;
+    st_.busy = true;
+    setStatus("LEVEL MATCHING... (" + loadedTitle_ + ")");
     changed();
+    proc_.computeSlotMakeup(cur, after, path, [this, alive = alive_, seq, target, f, path](const LevelWorker::MakeupResult& r) {
+      juce::MessageManager::callAsync([this, alive, seq, target, f, path, mk = r.makeupDb] {
+        if (!alive->load() || seq != useSeq_) return;
+        // Edits made while the level was measured are kept: the swap is applied to the rig as it is now.
+        const Preset now = proc_.currentPreset();
+        const auto ts2 = slotTargets(now, slot_, nullptr, pinnedBlockId_, insert_);
+        std::string e2;
+        const SlotTarget* t2 = nullptr;
+        for (const auto& t : ts2)
+          if (t.kind == target.kind && t.path == target.path) t2 = &t;
+        if (t2 == nullptr) return fail("the slot is no longer in the rig");
+        auto swapped = withCapture(now, *t2, f, e2);
+        if (!swapped) return fail(e2);
+        levelNote_ = mk ? "" : " (no level match: could not be measured)";
+        loadSwapped(mk ? withSlotMakeup(*swapped, path, t2->blockIndex, *mk) : std::move(*swapped));
+      });
+    });
   });
 }
 
@@ -240,7 +307,7 @@ void BrowserController::preview() {
   fetchSelected([this](const t3k::FetchResult& f) {
     const Preset cur = proc_.currentPreset();
     std::string why;
-    const auto ts = slotTargets(cur, slot_, &why);
+    const auto ts = slotTargets(cur, slot_, &why, pinnedBlockId_, insert_);
     if (ts.empty()) return fail(why);
     Preset np = cur;
     std::string err;
@@ -250,6 +317,14 @@ void BrowserController::preview() {
       np = std::move(*r);
     }
     PreviewWorker::Job job;
+    if (proc_.levelMatchEnabled() && !previewRender) {  // LEVEL MATCH: the candidate is previewed at the rig's level
+      job.levelMatch.on = true;
+      job.levelMatch.before = cur;
+      if (!ts.front().isIr()) {
+        job.levelMatch.path = ts.front().path == 'a' ? 0 : 1;
+        job.levelMatch.block = ts.front().blockIndex;
+      }
+    }
     job.preset = std::move(np);
     const double hr = proc_.status().hostRate;
     job.hostRate = hr > 0.0 ? hr : 48000.0;
@@ -295,7 +370,7 @@ void BrowserController::poll() {
     if (!s.loading) {
       awaitingLoad_ = false;
       if (!s.error.empty()) setStatus(s.error, true);
-      else setStatus("Using " + loadedTitle_);
+      else setStatus("Using " + loadedTitle_ + levelNote_);
       dirty = true;
     }
   }

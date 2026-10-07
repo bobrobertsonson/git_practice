@@ -240,7 +240,7 @@ LiveParams LiveParams::fromPreset(const Preset& p) {
     fill(l.pathEq[k], pp[k]->eq);
     for (std::size_t i = 0; i < pp[k]->blocks.size() && i < l.blocks[k].size(); ++i)
       if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp[k]->blocks[i].params.get()))
-        l.blocks[k][i] = {nam->inputGainDb, nam->outputGainDb};
+        l.blocks[k][i] = {nam->inputGainDb, nam->outputGainDb + nam->makeupDb};
     l.amp[k] = pp[k]->ampControls.knobs();
   }
   return l;
@@ -341,6 +341,7 @@ void Chain::prepare(const ProcessSpec& spec) {
   if (spec.maxBlockSize < 1) throw std::runtime_error("Chain::prepare: maxBlockSize must be >= 1");
   maxBlock_ = spec.maxBlockSize;
   rampSamples_ = std::max(1, static_cast<int>(std::llround(kLiveRampMs * 0.001 * spec.sampleRate)));
+  trimRampSamples_ = std::max(1, static_cast<int>(std::llround(kAutoTrimRampMs * 0.001 * spec.sampleRate)));
   const auto nb = static_cast<std::size_t>(maxBlock_);
   work_.assign(nb, 0.0f);
   bufA_.assign(nb, 0.0f);
@@ -351,6 +352,7 @@ void Chain::prepare(const ProcessSpec& spec) {
   postEq_.prepare(spec);
   comp_.prepare(spec);
   outGain_.prepare(spec);
+  trimGain_.prepare(spec);
   if (cabShared_) cabShared_->prepare(spec);
   for (auto& p : path_) {
     p.preEq.prepare(spec);
@@ -504,6 +506,7 @@ void Chain::resetAll() {
   postEq_.reset();
   comp_.reset();
   outGain_.reset();
+  trimGain_.reset();
   if (cabShared_) cabShared_->reset();
   for (auto& p : path_) {
     p.preEq.reset();
@@ -796,6 +799,17 @@ void Chain::setBlockLiveParams(int path, int blockIndex, const float* v, int n) 
   if (auto* p = blocks[static_cast<std::size_t>(blockIndex)].processor.get()) p->setLiveParams(v, n);
 }
 
+void Chain::setAutoTrimDb(double db) noexcept {
+  if (!std::isfinite(db)) return;
+  db = std::min(kMaxAutoTrimDb, std::max(-kMaxAutoTrimDb, db));
+  if (trimSet_ && db == autoTrimNowDb_) return;
+  const auto g = static_cast<float>(std::pow(10.0, db / 20.0));
+  if (!trimSet_) trimGain_.setGainLinear(g);
+  else trimGain_.rampToLinear(g, trimRampSamples_);
+  trimSet_ = true;
+  autoTrimNowDb_ = db;
+}
+
 void Chain::setLiveParams(const LiveParams& in) noexcept {
   if (!prepared_) return;
   LiveParams p = in;
@@ -940,6 +954,7 @@ void Chain::processChunk(const float* in, float* out, int n) noexcept {
   eqCounter_ += static_cast<std::uint64_t>(n);
   if (compOn_) comp_.process(w, n);
   outGain_.process(w, n);
+  trimGain_.process(w, n);
   for (int j = 0; j < n; ++j) out[j] = w[j] * 2.0f;  // gives back the sum node's 6 dB headroom (exact)
 }
 

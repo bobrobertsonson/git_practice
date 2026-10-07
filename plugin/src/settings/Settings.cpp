@@ -277,7 +277,7 @@ std::string Settings::saveLocked() {
     // Read-modify-write: another store (presets/T3kTool: t3kExecutable, factoryPresetDir) may have written keys since
     // we loaded. The file wins for keys we do not own; for our own keys the in-memory document wins (including removal).
     static const char* const kOwned[] = {"version",    "matchVenvDir", "captureCacheDir", "tone3000ClientId", "separationModel",
-                                         "takesDir",   "theme",        "uiScale",         "firstRunCompleted"};
+                                         "takesDir",   "theme",        "uiScale",         "firstRunCompleted", "levelMatch"};
     std::ifstream in(file_, std::ios::binary);
     if (in) {
       const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -449,6 +449,11 @@ double Settings::uiScale() const {
   }
   return 1.0;
 }
+bool Settings::levelMatch() const {
+  std::lock_guard<std::mutex> lk(m_);
+  auto it = doc_.find("levelMatch");
+  return it == doc_.end() || !it->is_boolean() || it->get<bool>();
+}
 bool Settings::firstRunCompleted() const {
   std::lock_guard<std::mutex> lk(m_);
   auto it = doc_.find("firstRunCompleted");
@@ -527,6 +532,14 @@ Result Settings::setUiScale(double v) {
   {
     std::lock_guard<std::mutex> lk(m_);
     doc_["uiScale"] = std::clamp(v, 0.5, 2.0);
+  }
+  return finish({});
+}
+
+Result Settings::setLevelMatch(bool on) {
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    doc_["levelMatch"] = on;
   }
   return finish({});
 }

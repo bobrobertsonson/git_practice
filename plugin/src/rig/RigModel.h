@@ -45,6 +45,12 @@ void setBypass(PathPreset& p, int index, bool bypass);
 constexpr double kBlockGainMinDb = -24.0, kBlockGainMaxDb = 24.0;
 // `nam` blocks only (false otherwise); clamps to [-24, +24] dB. Replaces the block's params object.
 bool setBlockInputGainDb(PathPreset& p, int index, double db);
+// The block's output level (a capture pedal's LEVEL knob), the same clamp; `nam` blocks only.
+bool setBlockOutputGainDb(PathPreset& p, int index, double db);
+// v0.4 Task B: a capture pedal is a `nam` block in a pedal slot (not the path's amp); amp captures are not pedals.
+bool isCapturePedal(const PathPreset& p, int index);
+// The blocks of `p` that are pedalboard tiles: those before its amp (all of them when it has none). New pedals go in [0, this].
+int boardBlockCount(const PathPreset& p);
 // A block id that is unique within the preset: "a3" / "b2" (path 'a' or 'b').
 std::string newBlockId(const Preset& p, char path);
 // "amp" for the first `nam` block of a path without an amp, "fx" for `eq`, else "pedal".
@@ -57,6 +63,7 @@ Block makeBlock(const std::string& type, const std::string& id, const std::strin
 // The fallback body amp: tone 88689, "EVH 5150iii Ivory FULL Pack", the first high-gain amp of presets/CAPTURE_SHORTLIST.md.
 // (No model id is fixed: a cached model of the tone is used, else `sawblade-t3k fetch` picks the tone's default model.)
 inline constexpr const char* kFallbackBodyTone = "88689";
+inline constexpr const char* kFallbackBodyTitle = "EVH 5150iii Ivory";  // shown while it downloads
 // The modeled boost in front of the body amp: pedal.ts, drive 0, tone 5, level 8 (slot "boost").
 Block makeTsBoost(const Preset& p);
 // A `nam` amp block (slot "amp") for path B holding `model`.

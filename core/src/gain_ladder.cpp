@@ -81,7 +81,7 @@ std::unique_ptr<Processor> buildRungProcessor(const NamBlockParams& block, int r
   if (!locateRungFile(block.model, r)) return fail("rung " + r.modelId + " is not in the capture cache");
   NamBlockConfig cfg;
   cfg.inputGainDb = block.inputGainDb;
-  cfg.outputGainDb = block.outputGainDb;
+  cfg.outputGainDb = block.outputGainDb + block.makeupDb;
   cfg.normalizeLoudness = block.normalizeLoudness;
   try {
     std::unique_ptr<NamBlock> nb = cache ? NamBlock::load(*cache->namModel(c, "ladder." + r.modelId), cfg)

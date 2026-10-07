@@ -168,6 +168,10 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
                       std::string("preset cannot be prepared at ") + hzString(rate) + " Hz: " + e.what());
   }
   r.prepareSeconds = secondsSince(t0);
+  if (opts.applyAutoTrim) {
+    chain->setAutoTrimDb(preset.autoTrim.db);
+    r.autoTrimDb = chain->autoTrimDb();
+  }
   r.info = chain->info();
 
   // Process N + latency samples (zeros after the input flush the tail) and drop the first
@@ -279,6 +283,7 @@ nlohmann::json reportJson(const RenderResult& r) {
       {"input", stats(r.input)},
       {"output", stats(r.output)},
       {"normalizeGainDb", r.normalizeGainDb},
+      {"autoTrimDb", r.autoTrimDb},
       {"prepareSeconds", r.prepareSeconds},
       {"renderSeconds", r.renderSeconds},
       {"resampleSeconds", r.resampleSeconds},

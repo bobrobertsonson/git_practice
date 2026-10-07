@@ -16,6 +16,8 @@
 #ifdef SAWBLADE_WITH_SEPARATOR
 #include "separate_cli.h"
 #endif
+#include "sawblade/auto_trim.h"
+#include "sawblade/capture_cache.h"
 #include "sawblade/render.h"
 #include "sawblade/stem_player.h"
 #include "sawblade/stem_set.h"
@@ -27,7 +29,7 @@ constexpr int kExitOk = 0, kExitUsage = 2, kExitPreset = 3, kExitIo = 4;
 void usage(std::ostream& os) {
   os << "usage: tonerender --preset P.json --in DI.wav --out OUT.wav [--block N=256]\n"
         "                  [--report R.json] [--normalize-peak dBFS]\n"
-        "                  [--render-rate auto|HZ] [--out-rate input|render]\n"
+        "                  [--render-rate auto|HZ] [--out-rate input|render] [--level-match]\n"
         "                  [--backing STEMDIR [--backing-level dB=0] [--guitar-stem mute|ghost|full]]\n"
         "\n"
         "Renders a mono DI through a Sawblade preset. Output: float32 mono WAV, advanced by the\n"
@@ -36,6 +38,13 @@ void usage(std::ostream& os) {
         "  the input is resampled to it and, by default, the result back to the input rate.\n"
         "  A model that records no rate counts as 48 kHz. With no NAM blocks, auto renders at the input\n"
         "  rate. A number forces that rate in Hz.\n"
+        "--level-match: apply the preset's output.autoTrim.db (computed first when missing or stale), the trim that brings the\n"
+        "  preset to -18 LUFS on the built-in reference DI; off by default (levels as the preset says; NAM export and the matcher\n"
+        "  never see the trim).\n"
+        "       tonerender --trim-report PRESET.json... [--out REPORT.json]\n"
+        "--trim-report: no render to a file. For every preset prints (JSON, to stdout or --out) its loudness on the reference DI\n"
+        "  before and after the trim, the trim and the staleness hash; presets whose captures are not on this machine are\n"
+        "  reported as skipped. scripts/compute_trims.py writes the result into presets/** and the loudness table.\n"
         "--backing STEMDIR: play-along render. After the normal render, the stems in STEMDIR (drums, bass,\n"
         "  vocals, other, guitar|guitars; .wav or .flac; any other audio file is summed into 'other' with a\n"
         "  warning) are resampled to the output rate, played from 0 through the StemPlayer (free-run, no\n"
@@ -70,6 +79,7 @@ struct Args {
   std::string otherRole = "guitar";
   bool otherRoleGiven = false;
   sawblade::RenderOptions opts;
+  bool levelMatch = false;
   bool help = false;
 };
 
@@ -94,7 +104,9 @@ std::string parseArgs(int argc, char** argv, Args& a) {
       return true;
     };
     std::string v;
-    if (k == "--render-rate") {
+    if (k == "--level-match") {
+      a.levelMatch = true;
+    } else if (k == "--render-rate") {
       if (!value(v)) return "missing value for " + k;
       if (v == "auto") {
         a.opts.renderRate.reset();
@@ -277,11 +289,90 @@ int separateMode(int argc, char** argv) {
 #endif
 }
 
+// `tonerender --trim-report PRESET.json... [--out REPORT.json]` (v0.3 Task B): see usage().
+int trimReportMode(int argc, char** argv) {
+  using nlohmann::json;
+  std::vector<std::string> files;
+  std::string out;
+  for (int i = 1; i < argc; ++i) {
+    const std::string k = argv[i];
+    if (k == "--trim-report") continue;
+    if (k == "--help" || k == "-h") {
+      usage(std::cout);
+      return kExitOk;
+    }
+    if (k == "--out") {
+      if (i + 1 >= argc) {
+        std::cerr << "tonerender: missing value for --out\n";
+        return kExitUsage;
+      }
+      out = argv[++i];
+    } else if (k.rfind("--", 0) == 0) {
+      std::cerr << "tonerender: " << k << " cannot be combined with --trim-report\n";
+      return kExitUsage;
+    } else {
+      files.push_back(k);
+    }
+  }
+  if (files.empty()) {
+    std::cerr << "tonerender: --trim-report needs at least one preset\n";
+    return kExitUsage;
+  }
+  json rep = {{"target", sawblade::kAutoTrimTargetLufs}, {"version", sawblade::kAutoTrimVersion}, {"presets", json::array()}};
+  for (const std::string& f : files) {
+    json e = {{"file", f}};
+    try {
+      sawblade::Preset p = sawblade::loadPresetFile(f);
+      e["name"] = p.name;
+      e["outputGainDb"] = p.outputGainDb;
+      const auto missing = sawblade::missingCaptures(p);
+      if (!missing.empty()) {
+        e["status"] = "skipped";
+        e["reason"] = "capture not cached";
+        e["missing"] = missing;
+      } else {
+        sawblade::CaptureCache cache;
+        const auto r = sawblade::computeAutoTrim(p, &cache);
+        if (!r) {
+          e["status"] = "error";
+          e["reason"] = "the render of the reference DI is silent";
+        } else {
+          p.autoTrim.db = r->trimDb;
+          p.autoTrim.hash = r->hash;
+          const auto after = sawblade::measureReferenceLufs(p, &cache, /*applyTrim=*/true);
+          e["status"] = "ok";
+          e["lufsBefore"] = r->lufs;
+          e["trimDb"] = r->trimDb;
+          e["hash"] = r->hash;
+          e["lufsAfter"] = after ? json(*after) : json(nullptr);
+        }
+      }
+    } catch (const std::exception& ex) {
+      e["status"] = "error";
+      e["reason"] = ex.what();
+    }
+    rep["presets"].push_back(std::move(e));
+  }
+  if (out.empty()) {
+    std::cout << rep.dump(2) << "\n";
+  } else {
+    std::ofstream f(out);
+    f << rep.dump(2) << "\n";
+    if (!f) {
+      std::cerr << "tonerender: error: cannot write " << out << "\n";
+      return kExitIo;
+    }
+  }
+  return kExitOk;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i)
     if (std::string(argv[i]) == "--separate") return separateMode(argc, argv);
+  for (int i = 1; i < argc; ++i)
+    if (std::string(argv[i]) == "--trim-report") return trimReportMode(argc, argv);
   Args args;
   if (const std::string err = parseArgs(argc, argv, args); !err.empty()) {
     std::cerr << "tonerender: " << err << "\n";
@@ -293,7 +384,30 @@ int main(int argc, char** argv) {
     return kExitOk;
   }
   try {
-    const sawblade::RenderResult r = sawblade::renderFile(args.preset, args.in, args.opts);
+    sawblade::RenderResult r;
+    if (args.levelMatch) {
+      sawblade::RenderOptions o = args.opts;
+      o.applyAutoTrim = true;
+      sawblade::Preset p;
+      try {
+        p = sawblade::loadPresetFile(args.preset);
+      } catch (const sawblade::PresetError& e) {
+        throw sawblade::RenderError(sawblade::RenderErrorKind::Preset, args.preset + ": " + e.what());
+      } catch (const std::exception& e) {
+        throw sawblade::RenderError(sawblade::RenderErrorKind::Io, e.what());
+      }
+      if (!sawblade::autoTrimFresh(p) && !sawblade::stampAutoTrim(p, o.cache))
+        std::cerr << "tonerender: warning: --level-match: the reference DI renders silent through this preset; no trim applied\n";
+      sawblade::AudioFile in;
+      try {
+        in = sawblade::readWav(args.in);
+      } catch (const std::exception& e) {
+        throw sawblade::RenderError(sawblade::RenderErrorKind::Io, e.what());
+      }
+      r = sawblade::renderPreset(p, in, o);
+    } else {
+      r = sawblade::renderFile(args.preset, args.in, args.opts);
+    }
     BackingResult backing;
     if (!args.backing.empty()) {
       backing = mixBacking(args, r);

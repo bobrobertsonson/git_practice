@@ -26,6 +26,7 @@ class EqGraph : public juce::Component, public juce::SettableTooltipClient {
   static constexpr float kNodeRadius = 8.0f, kHitRadius = 14.0f;
 
   explicit EqGraph(RigController& c);
+  ~EqGraph() override;  // closes a drag still open (the controller outlives its panel)
 
   // --- the documented mapping (static, tested) ---
   static double xToFreq(double x, double w) noexcept;
@@ -80,6 +81,7 @@ class EqGraph : public juce::Component, public juce::SettableTooltipClient {
   EqBand dragStart_;
   juce::Point<float> dragNode_;
   int gestureParam_ = -1;
+  bool undoGesture_ = false;  // a controller history gesture is open (mouse down .. up on a band)
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EqGraph)
 };

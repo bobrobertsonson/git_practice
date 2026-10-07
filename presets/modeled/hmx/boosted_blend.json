@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Boosted Blend",
   "notes": "Thicker, more compressed buzz that keeps the pick attack: boost stage on, 35 % clean blend (Throne-Torcher-style); into a mid-gain British amp, TONE3000 86089. Starting hypothesis. Modeled pedal, no capture; the cab slot is the repo identity IR.",
   "category": "Swedish death (HM-2)",
@@ -46,5 +46,9 @@
     "ir": {
       "file": "../../../tests/fixtures/ir/impulse.wav"
     }
+  },
+  "output": {
+    "autoTrimDb": -6.782,
+    "autoTrimHash": "da37ebf4b27de1330409ae153e79a008131c4176c24f487897cff385a77e2ac0"
   }
 }

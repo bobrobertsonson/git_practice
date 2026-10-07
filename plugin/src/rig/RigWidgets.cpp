@@ -80,8 +80,8 @@ void LedToggle::paintButton(juce::Graphics& g, bool over, bool down) {
 
 // --- PresetKnob ------------------------------------------------------------------------------------
 PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::FilmstripKnob::Kind kind, juce::Colour arc,
-                       const skin::FilmstripKnob::Range& range, Apply apply, bool live, Format format)
-    : controller_(c), knob_(caption, kind, arc, range), apply_(std::move(apply)), format_(std::move(format)), live_(live), shown_(range.def) {
+                       const skin::FilmstripKnob::Range& range, Apply apply, bool live, Format format, Normalise normalise)
+    : controller_(c), knob_(caption, kind, arc, range), apply_(std::move(apply)), format_(std::move(format)), normalise_(std::move(normalise)), live_(live), shown_(range.def) {
   addAndMakeVisible(knob_);
   for (juce::Label* l : {&caption_, &value_}) {
     l->setInterceptsMouseClicks(false, false);
@@ -95,16 +95,41 @@ PresetKnob::PresetKnob(RigController& c, const juce::String& caption, skin::Film
   value_.setFont(L::monoFont(11.0f));
   value_.setColour(juce::Label::textColourId, L::dimText());
   value_.setMinimumHorizontalScale(0.7f);
-  knob_.onDragStart = [this] { dragging_ = true; };
+  // One gesture = mouse down .. mouse up (a double-click is one too; the wheel and typed values are one-event gestures).
+  // (v0.3 Task D: the controller's undo gesture follows these: a mouse drag is one undo step however many rebuilds it makes. A wheel
+  // notch or a typed value is one flush of the debounce = one step, recorded when it is applied.)
+  knob_.onDragStart = [this] {
+    dragging_ = true;
+    // Only a real mouse drag (or a double-click, which also has the mouse down) is an undo gesture. JUCE wraps every wheel notch in a drag
+    // notification too: those must take the debounced path (a burst of notches = one flush = one step), not flush at each notch.
+    if (knob_.mouseHeld()) {
+      undoGesture_ = true;
+      controller_.beginGesture();
+    }
+    if (onGestureBegin) onGestureBegin();
+  };
   knob_.onDragEnd = [this] {
     dragging_ = false;
-    if (!live_) submit(false);
+    if (knob_.mouseHeld()) finishGesture();  // a mouse gesture ends with its final value; a wheel edit (no mouse held) already took the throttled route
+    if (onGestureEnd) onGestureEnd();
+    if (undoGesture_) {
+      undoGesture_ = false;
+      controller_.endGesture();
+    }
   };
   knob_.onValueChange = [this] {
     updateText();
     if (updating_) return;
-    if (live_) submit(false);
-    else if (!dragging_) submit(true);
+    if (live_) {
+      submit(false);
+    } else {
+      // The Slider's wheel and double-click edits also send drag start / end, but they are single steps (no mouse held): they
+      // get the direction-aware normalising. Typed values arrive without any drag notification.
+      if (!dragging_ && onGestureBegin) onGestureBegin();
+      if (!knob_.mouseHeld()) showNormalised(/*directional=*/true);  // before the submit: the model gets the value the knob ends on
+      submit(true);  // throttled during a mouse drag, debounced otherwise; latest value wins
+      if (!dragging_ && onGestureEnd) onGestureEnd();
+    }
   };
   updateText();
 }
@@ -117,14 +142,62 @@ void PresetKnob::updateText() {
 void PresetKnob::submit(bool debounced) {
   const double v = knob_.getValue();
   if (live_) {
+    shown_ = v;
     controller_.live([a = apply_, v](Preset& p) { a(p, v); });
     return;
   }
   if (v == shown_) return;  // a click without a change submits nothing
   shown_ = v;
   auto f = [a = apply_, v](Preset& p) { a(p, v); };
-  if (debounced) controller_.editDebounced(f);
+  if (debounced && dragging_) controller_.editThrottled(this, f);
+  else if (debounced) controller_.editDebounced(f);
   else controller_.edit(f);
+}
+
+// Mouse up: the final value goes to the controller now, one rebuild (it also flushes this drag's debounced edit). When the last
+// debounced value already is the final one, flushing it is all there is to do.
+void PresetKnob::finishGesture() {
+  if (live_) return;
+  if (knob_.getValue() != shown_) submit(false);
+  else controller_.flushPending();
+  showNormalised(/*directional=*/false);
+}
+
+// The knob shows what the model keeps (e.g. KEY HPF below 40 Hz is OFF or 40), at once rather than at the next refresh.
+// A wheel / typed edit is a small step: when the normalised result is the value the knob came from (OFF + a notch up, 40 Hz + a
+// notch down), the step fell into a dead zone, so the knob goes on to the next valid value in the direction of travel.
+void PresetKnob::showNormalised(bool directional) {
+  if (!normalise_) return;
+  const double prev = shown_, raw = knob_.getValue();
+  double n = normalise_(raw);
+  if (directional && n == prev && raw != prev) {
+    const double lo = knob_.getMinimum(), hi = knob_.getMaximum(), step = (hi - lo) / 400.0, dir = raw > prev ? 1.0 : -1.0;
+    for (double x = raw; x >= lo && x <= hi; x += dir * step)
+      if (const double m = normalise_(x); m != prev) {
+        n = m;
+        break;
+      }
+  }
+  if (n == raw) return;
+  updating_ = true;
+  knob_.setValue(n, juce::dontSendNotification);
+  updating_ = false;
+  shown_ = directional ? shown_ : knob_.getValue();  // a wheel edit's submit() records the value next
+  updateText();
+}
+
+PresetKnob::~PresetKnob() {
+  knob_.onDragStart = nullptr;
+  knob_.onDragEnd = nullptr;
+  knob_.onValueChange = nullptr;
+  if (dragging_) {  // destroyed mid-drag: close the gesture so begin / end stay paired
+    dragging_ = false;
+    if (onGestureEnd) onGestureEnd();
+    if (undoGesture_) {
+      undoGesture_ = false;
+      controller_.endGesture();
+    }
+  }
 }
 
 void PresetKnob::setValueFromPreset(double v) {

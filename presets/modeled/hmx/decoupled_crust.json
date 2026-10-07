@@ -1,6 +1,6 @@
 {
   "schema": "sawblade.preset",
-  "version": 1,
+  "version": 3,
   "name": "Decoupled Crust",
   "notes": "D-beat crust with the mids decoupled: 1.2 kHz bark, less low, tight; into a plexi-style amp, TONE3000 76884. Starting hypothesis. Modeled pedal, no capture; the cab slot is the repo identity IR.",
   "category": "Hardcore / Crust",
@@ -48,6 +48,8 @@
     }
   },
   "output": {
-    "gainDb": -4.0
+    "gainDb": -4.0,
+    "autoTrimDb": -9.182,
+    "autoTrimHash": "3425009d6646828cb2acfc35be3e2174db834bfcd282a31be16dd56bff819f83"
   }
 }

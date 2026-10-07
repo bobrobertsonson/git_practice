@@ -75,6 +75,10 @@ class Engine {
   // `mutesFrom` (any snapshot) supplies the monitor mutes when `extras` is null (an outgoing engine).
   void setParams(const ParamValues& v, const LiveParams* extras = nullptr, const LiveParams* mutesFrom = nullptr) noexcept;
 
+  // v0.3 level matching: the auto trim in dB (a plain gain after the OUTPUT knob; Chain::setAutoTrimDb). RT-safe. The first call
+  // takes effect at once, later changes ramp over Chain::kAutoTrimRampMs. 0 = no trim.
+  void setAutoTrimDb(double db) noexcept { chain_->setAutoTrimDb(db); }
+
   // Before the engine is published: start with these paths muted (no ramp), so a rebuild keeps a mute / solo.
   void setInitialMutes(bool a, bool b) {
     baseline_.muteA = a;

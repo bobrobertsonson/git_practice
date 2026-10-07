@@ -110,6 +110,9 @@ struct ExportResult {
   bool nonCommercial = false;
   std::string namFile;                  // file name of the .nam inside outDir ("" = none found)
   std::filesystem::path listen;         // listen/ab_original_then_export.mp3, else .wav ("" = none)
+  // v0.4M: the report's `exportNotes` object, dumped ("" = the report has none): the stages that are NOT in the model, with
+  // hardware settings (ExportNotes.h; the panel checks its version before showing it).
+  std::string exportNotesJson;
 };
 // Reads <outDir>/export_report.json and looks for the .nam and the listening file. Never throws.
 ExportResult readExportResult(const std::filesystem::path& outDir);

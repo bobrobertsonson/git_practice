@@ -102,3 +102,12 @@ delay (they can't be removed and break NAM export).
 ```
 ./build/cli/tonerender --preset presets/chainsaw_body.json --in my_di.wav --out out.wav --report out.json
 ```
+
+## Level matching (v0.3)
+
+Every preset that renders without TONE3000 captures carries `output.autoTrimDb` and `output.autoTrimHash` (schema v3): the trim that
+brings it to -18 LUFS on the built-in reference DI (`docs/PRESET_SCHEMA.md` "Level matching"). They are generated, not hand-edited:
+`scripts/compute_trims.py` (rerunnable; `--check` verifies) also rewrites `docs/reports/v0_3/loudness_table.md`. Presets that need
+TONE3000 captures that are not cached on the machine are skipped ("skipped: capture not cached"); the plugin measures those at load,
+or run the script on a machine that has the captures (`sawblade-t3k resolve <preset>` fetches them). Editing a preset's sound makes its
+stored trim stale (the hash no longer matches): rerun the script.
