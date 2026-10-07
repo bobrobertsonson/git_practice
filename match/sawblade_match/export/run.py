@@ -17,6 +17,7 @@ from ..core import CaptureCache
 from ..core import _core as _core_mod
 from ..matcher.excerpt import select_excerpt
 from ..tonecheck.rules import load_targets
+from . import a2shape as A2S
 from . import notes as N
 from . import plan as P
 from . import progress as PG
@@ -283,6 +284,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
         paths = {"primary": paths[size], **paths}
         report["training"]["submodels"] = tres.submodels
         report["training"]["parametersContainer"] = tres.params
+        # the pinned core's A2 fast path (port of is_a2_shape): the standalone files should take it
+        report["a2FastPath"] = {sz: A2S.nam_file_fast_path(json.loads(paths[sz].read_text())) is not None for sz in T.A2_SIZES}
     report["arch"] = arch
     report["files"] = {k: v.name for k, v in paths.items()}
     sizes = list(T.A2_SIZES) if a2 else [size]
