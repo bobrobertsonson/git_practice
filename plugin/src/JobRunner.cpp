@@ -266,11 +266,16 @@ fs::path MatchSettings::poolManifest() const { return pathSetting(*props(), "poo
 std::string MatchSettings::selectedTake() const { return props()->getValue("selectedTake", juce::String()).toStdString(); }
 bool MatchSettings::autoRefine() const { return props()->getBoolValue("autoRefine", true); }
 
-double MatchSettings::exportWallSeconds(const std::string& size) const {
-  return props()->getDoubleValue(juce::String("exportWallSeconds.") + juce::String(size), 0.0);
+double MatchSettings::exportWallSeconds(const std::string& arch, const std::string& size) const {
+  const auto p = props();
+  const juce::String key = juce::String("exportWallSeconds.") + juce::String(arch) + "." + juce::String(size);
+  if (p->containsKey(key)) return p->getDoubleValue(key, 0.0);
+  // Before A2 the key had no architecture and every size was an A1 size.
+  if (arch == "a1") return p->getDoubleValue(juce::String("exportWallSeconds.") + juce::String(size), 0.0);
+  return 0.0;
 }
-void MatchSettings::setExportWallSeconds(const std::string& size, double seconds) {
-  saveSetting(*props(), (std::string("exportWallSeconds.") + size).c_str(), juce::String(seconds, 1));
+void MatchSettings::setExportWallSeconds(const std::string& arch, const std::string& size, double seconds) {
+  saveSetting(*props(), (std::string("exportWallSeconds.") + arch + "." + size).c_str(), juce::String(seconds, 1));
 }
 
 void MatchSettings::setMatchExecutable(const fs::path& p) { saveSetting(*props(), "matchExecutable", juce::String(p.string())); }
@@ -296,6 +301,7 @@ bool parseProgressJson(const std::string& text, JobProgress& out) {
   if (auto it = j.find("bestEsr"); it != j.end() && it->is_number()) p.bestEsr = it->get<double>();
   if (auto it = j.find("resumable"); it != j.end() && it->is_boolean()) p.resumable = it->get<bool>();
   if (auto it = j.find("outDir"); it != j.end() && it->is_string()) p.outDir = it->get<std::string>();
+  if (auto it = j.find("arch"); it != j.end() && it->is_string()) p.arch = it->get<std::string>();  // v0.6; an older exporter has none
   out = std::move(p);
   return true;
 }
@@ -342,6 +348,20 @@ CheckpointInfo readCheckpoint(const fs::path& outDir) {
   return c;
 }
 
+std::string exportBaseName(const std::string& namFile) {
+  std::string stem = fs::path(namFile).stem().string();
+  for (const char* suffix : {".a2_full", ".a2_lite", ".a2"}) {
+    const std::string sfx = suffix;
+    if (stem.size() > sfx.size() && stem.compare(stem.size() - sfx.size(), sfx.size(), sfx) == 0) {
+      stem.resize(stem.size() - sfx.size());
+      break;
+    }
+  }
+  return stem;
+}
+
+std::vector<std::string> exportArchArgs(const std::string& arch, const std::string& size) { return {"--arch", arch, "--size", size}; }
+
 ExportResult readExportResult(const fs::path& outDir) {
   ExportResult r;
   if (outDir.empty()) return r;
@@ -352,13 +372,37 @@ ExportResult readExportResult(const fs::path& outDir) {
     r.nonCommercial = j.value("nonCommercial", false);
     r.wallSeconds = num(j, "totalWallSeconds", 0.0);
     if (auto n = j.find("exportNotes"); n != j.end() && n->is_object()) r.exportNotesJson = n->dump();
+    // v0.6: arch / size / files {primary, container?, full?, lite?}. Read defensively: any member may be missing or mistyped.
+    if (auto it = j.find("arch"); it != j.end() && it->is_string()) r.arch = it->get<std::string>();
+    if (auto it = j.find("size"); it != j.end() && it->is_string()) r.size = it->get<std::string>();
+    if (auto fl = j.find("files"); fl != j.end() && fl->is_object()) {
+      if (auto it = fl->find("primary"); it != fl->end() && it->is_string()) r.namFile = fs::path(it->get<std::string>()).filename().string();
+      for (const char* role : {"container", "full", "lite"})
+        if (auto it = fl->find(role); it != fl->end() && it->is_string() && !it->get<std::string>().empty()) {
+          const std::string name = fs::path(it->get<std::string>()).filename().string();
+          if (name != r.namFile) r.otherFiles.push_back({role, name});
+        }
+    }
     if (auto t = j.find("training"); t != j.end() && t->is_object()) {
       if (r.wallSeconds <= 0.0) r.wallSeconds = num(*t, "wallSeconds", 0.0);
-      if (auto f = t->find("namFile"); f != t->end() && f->is_string()) r.namFile = f->get<std::string>();
+      if (r.namFile.empty())
+        if (auto f = t->find("namFile"); f != t->end() && f->is_string()) r.namFile = f->get<std::string>();
     }
     std::string status = "not judged";
-    if (auto v = j.find("validation"); v != j.end() && v->is_object())
-      if (auto a = v->find("acceptance"); a != v->end() && a->is_object()) {
+    // The acceptance block: A1 has `validation.acceptance`; an A2 run has one entry per standalone file
+    // (`validation.full` / `validation.lite`, decision 14), and the one `size` names is the judged one. The entry holds the
+    // block itself or an `acceptance` member (the exact key is the exporter's to define: read both, defensively).
+    const json* acc = nullptr;
+    if (auto v = j.find("validation"); v != j.end() && v->is_object()) {
+      if (auto a = v->find("acceptance"); a != v->end() && a->is_object()) acc = &*a;
+      else if (auto e = v->find(r.size); !r.size.empty() && e != v->end() && e->is_object()) {
+        if (auto a = e->find("acceptance"); a != e->end() && a->is_object()) acc = &*a;
+        else if (e->contains("status")) acc = &*e;
+      }
+    }
+    if (acc != nullptr) {
+      const json* a = acc;
+      {  // (kept as a block: the lambda below captures `a`)
         if (auto it = a->find("status"); it != a->end() && it->is_string()) status = it->get<std::string>();
         if (auto it = a->find("summary"); it != a->end() && it->is_string()) r.summary = it->get<std::string>();
         auto opt = [&](const char* k, std::optional<double>& dst) {
@@ -369,6 +413,7 @@ ExportResult readExportResult(const fs::path& outDir) {
         opt("esrLimit", r.esrLimit);
         opt("ltasLimitDb", r.ltasLimitDb);
       }
+    }
     const std::string l = lower(trim(status));
     r.status = l.rfind("not met", 0) == 0 ? "NOT MET" : l.rfind("met", 0) == 0 ? "MET" : "NOT JUDGED";
   }
@@ -614,6 +659,7 @@ struct JobRunner::Job {
     j["di"] = s.di;
     j["exportMode"] = s.exportMode;
     j["exportSize"] = s.exportSize;
+    j["exportArch"] = s.exportArch;
     if (!s.pass.empty()) j["pass"] = s.pass;
     if (!s.pairName.empty()) j["pair"] = s.pairName;
     if (!s.refineNote.empty()) j["refineNote"] = s.refineNote;
@@ -958,7 +1004,9 @@ bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
   job->exe = settings_.exportExecutable().string();
   job->settings = &settings_;
   job->wantProgressJson = true;  // probe --help for --progress-json (the checkpoint's progress.json is the fallback)
-  job->args = {r.preset.string(), "--mode", r.mode, "--size", r.size, "--device", "auto", "--require-accept"};
+  job->args = {r.preset.string(), "--mode", r.mode};
+  for (const std::string& a : exportArchArgs(r.arch, r.size)) job->args.push_back(a);
+  for (const char* a : {"--device", "auto", "--require-accept"}) job->args.push_back(a);
   if (r.di) job->args.insert(job->args.end(), {"--di", r.di->string()});
   else if (r.diBuiltin) job->args.insert(job->args.end(), {"--di", "builtin"});
   if (r.allowInexact) job->args.push_back("--allow-inexact");
@@ -978,6 +1026,7 @@ bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
   job->snap.source = r.preset;
   job->snap.exportMode = r.mode;
   job->snap.exportSize = r.size;
+  job->snap.exportArch = r.arch;
   job->snap.reference = r.preset.filename().string();
   job->snap.di = r.di ? r.di->filename().string() : r.diBuiltin ? "built-in signal" : "";
   std::lock_guard<std::mutex> lk(m_);
@@ -1259,10 +1308,10 @@ void JobRunner::finalizeJob(Job& job) {
       fin.result = readExportResult(job.outDir);
       fin.accepted = fin.result.status == "MET" ? "met" : fin.result.status == "NOT MET" ? "NOT MET" : "not judged";
       // The sidecar: the resolved preset that was exported, byte for byte, next to the model.
-      const std::string stem = !fin.result.namFile.empty() ? fs::path(fin.result.namFile).stem().string() : job.outDir.filename().string();
+      const std::string stem = !fin.result.namFile.empty() ? exportBaseName(fin.result.namFile) : job.outDir.filename().string();
       const fs::path sidecar = job.outDir / (stem + ".sawblade.json");
       if (!job.sourcePreset.empty() && fs::copy_file(job.sourcePreset, sidecar, fs::copy_options::overwrite_existing, ec) && !ec) fin.sidecar = sidecar;
-      if (job.settings != nullptr && fin.result.wallSeconds > 0.0) job.settings->setExportWallSeconds(fin.exportSize, fin.result.wallSeconds);
+      if (job.settings != nullptr && fin.result.wallSeconds > 0.0) job.settings->setExportWallSeconds(fin.exportArch.empty() ? "a1" : fin.exportArch, fin.exportSize, fin.result.wallSeconds);
     }
   }
   if (state == JobState::Succeeded) {
@@ -1388,6 +1437,7 @@ std::shared_ptr<JobRunner::Job> JobRunner::adoptJob(JobKind kind, const fs::path
   job->snap.di = j.value("di", std::string());
   job->snap.exportMode = j.value("exportMode", std::string());
   job->snap.exportSize = j.value("exportSize", std::string());
+  job->snap.exportArch = j.value("exportArch", std::string(kind == JobKind::Export ? "a1" : ""));  // a job written before A2 was A1
   job->snap.pass = j.value("pass", std::string());
   job->snap.pairName = j.value("pair", std::string());
   job->snap.refineNote = j.value("refineNote", std::string());

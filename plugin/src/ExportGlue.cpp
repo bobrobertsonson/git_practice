@@ -129,6 +129,7 @@ bool buildExportRequest(SawbladeProcessor& p, const ExportSettings& s, const Exp
   out = ExportRequest{};
   out.preset = src.file;
   out.mode = plan.mode;
+  out.arch = s.arch;
   out.size = s.size;
   if (!plan.diBuiltin && plan.take) out.di = plan.take->wav;
   else out.diBuiltin = true;
@@ -153,6 +154,7 @@ ResumeOffer findResumableExport(SawbladeProcessor& p) {
   o.epoch = ck.epoch;
   o.epochs = ck.epochs;
   o.mode = snap.exportMode;
+  o.arch = snap.exportArch.empty() ? "a1" : snap.exportArch;
   o.size = snap.exportSize;
   return o;
 }
@@ -169,6 +171,7 @@ bool buildResumeRequest(SawbladeProcessor& p, const ResumeOffer& offer, ExportRe
   out = ExportRequest{};
   out.preset = src.file;
   out.mode = offer.mode;
+  out.arch = offer.arch.empty() ? "a1" : offer.arch;
   out.size = offer.size;
   out.exportsRoot = snap.exportsRoot;
   out.allowInexact = snap.allowInexact;

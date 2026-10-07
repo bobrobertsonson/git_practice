@@ -40,12 +40,20 @@ def opt(n):
 
 # match: --out is the job folder. export (phase 12): the run folder is --resume <dir>, else
 # <--exports-root>/<preset stem>-<mode>-<size>-<ts> (the real exporter names it itself); --out still wins if given.
+# v0.6 contract (docs/specs/v0_6-a2_everywhere.md decision 14): --arch a2|a1 (default a2), --size full|lite for a2
+# (default full) or standard|lite|feather for a1 (default standard); anything else exits 64 with a message.
+ARCH = opt("--arch") or "a2"
+SIZE = opt("--size") or ("full" if ARCH == "a2" else "standard")
+if cfg["kind"] == "export":
+    if ARCH not in ("a2", "a1") or SIZE not in (("full", "lite") if ARCH == "a2" else ("standard", "lite", "feather")):
+        print("error: --size %s is not valid for --arch %s" % (SIZE, ARCH), file=sys.stderr, flush=True)
+        sys.exit(64)
 if cfg["kind"] == "export" and opt("--out") is None:
     if opt("--resume"):
         out = opt("--resume")
     else:
         stem0 = os.path.splitext(os.path.basename(argv[0]))[0].replace(".preset", "")
-        out = os.path.join(opt("--exports-root"), "%s-%s-%s-%d" % (stem0, opt("--mode"), opt("--size"), int(time.time() * 1000)))
+        out = os.path.join(opt("--exports-root"), "%s-%s-%s-%d" % (stem0, opt("--mode"), SIZE, int(time.time() * 1000)))
 else:
     out = opt("--out")
 os.makedirs(out, exist_ok=True)
@@ -129,7 +137,7 @@ if cfg["kind"] == "match":
 else:
     # sawblade-export, as far as the plugin cares: --progress-json in the phase 12 shape, the checkpoint folder, exit
     # 0 / 2 / 130 / 1, SIGINT = stop and keep the checkpoint, a .nam with a metadata.sawblade block, export_report.json.
-    mode, size = opt("--mode"), opt("--size")
+    mode, size, arch = opt("--mode"), SIZE, ARCH
     preset_file = argv[0]
     pj = opt("--progress-json")
     epochs = cfg.get("epochs", 10)
@@ -141,7 +149,7 @@ else:
     def prog_json(stage, frac, msg="", eta=-1, resumable=None):
         if not pj:
             return
-        atomic(pj, {"stage": stage, "fraction": frac, "etaSeconds": eta, "epoch": state["epoch"], "epochs": epochs,
+        atomic(pj, {"stage": stage, "fraction": frac, "etaSeconds": eta, "epoch": state["epoch"], "epochs": epochs, "arch": arch,
                     "bestEsr": state["best"], "message": msg, "outDir": os.path.abspath(out),
                     "resumable": os.path.exists(os.path.join(ck, "last.ckpt")) if resumable is None else resumable,
                     "elapsedSeconds": round(time.time() - T0, 1)})
@@ -159,7 +167,7 @@ else:
         sys.exit(130)
     def frac(epoch):
         return 0.1 + 0.8 * epoch / epochs
-    print("export " + mode + "/" + size + " -> " + out, flush=True)
+    print("export " + arch + "/" + mode + "/" + size + " -> " + out, flush=True)
     if opt("--resume"):
         rp = json.load(open(os.path.join(ck, "progress.json")))
         state["epoch"], state["best"] = rp["epoch"], rp.get("bestValEsr")
@@ -182,24 +190,41 @@ else:
             cancelled()
     ckpt(epochs)
     prog_json("validate", 0.95, "validating", 5.0)
-    nam = os.path.join(out, stem + ".nam")
     sha = hashlib.sha256(open(preset_file, "rb").read()).hexdigest()
-    json.dump({"version": "0.5.4", "architecture": "WaveNet", "config": {}, "weights": [0.0],
-               "metadata": {"name": stem, "sawblade": {"exporter": "sawblade-export", "preset": {"name": stem, "sha256": sha},
-                            "exportMode": mode, "size": size, "nonCommercial": nc, "attribution": [], "licenceNote": "for your own use"}}},
-              open(nam, "w"))
+    def write_nam(path):
+        json.dump({"version": "0.5.4", "architecture": "WaveNet", "config": {}, "weights": [0.0],
+                   "metadata": {"name": stem, "sawblade": {"exporter": "sawblade-export", "preset": {"name": stem, "sha256": sha},
+                                "exportMode": mode, "arch": arch, "size": size, "nonCommercial": nc, "attribution": [], "licenceNote": "for your own use"}}},
+                  open(path, "w"))
+    # a1: <stem>.nam. a2: the container plus the standalone Full and Lite files; the primary is the one --size names.
+    files = {}
+    if arch == "a2":
+        files = {"container": stem + ".a2.nam", "full": stem + ".a2_full.nam", "lite": stem + ".a2_lite.nam"}
+        files["primary"] = files[size]
+        for k in ("container", "full", "lite"):
+            write_nam(os.path.join(out, files[k]))
+    else:
+        files = {"primary": stem + ".nam"}
+        write_nam(os.path.join(out, files["primary"]))
+    nam = os.path.join(out, files["primary"])
     code = int(cfg.get("exit", 0))
     ok = code != 2
-    status = cfg.get("acceptance") or (("met" if ok else "NOT MET") if size == "standard" else "not judged (non-standard size)")
+    judged = arch == "a2" or size == "standard"
+    status = cfg.get("acceptance") or (("met" if ok else "NOT MET") if judged else "not judged (non-standard size)")
     held, ltas = (0.0123, 0.31) if ok else (0.0345, 0.92)
-    report = {"reportVersion": 1, "tool": "sawblade-export", "mode": mode, "size": size, "nonCommercial": nc,
+    acc = {"status": status, "summary": "acceptance %s: held-out ESR %.4f (limit 0.02), DI-excerpt LTAS error %.2f dB (limit 0.5)" % (status, held, ltas),
+           "heldOutEsr": held, "diLtasDb": ltas, "esrLimit": 0.02, "ltasLimitDb": 0.5}
+    # a1: validation.acceptance. a2 (decision 14): one entry per standalone file, validation.{full,lite}.acceptance.
+    validation = {"acceptance": acc} if arch == "a1" else {"full": {"acceptance": acc}, "lite": {"acceptance": dict(acc, heldOutEsr=held + 0.004)}}
+    report = {"reportVersion": 1, "tool": "sawblade-export", "mode": mode, "arch": arch, "size": size, "files": files, "nonCommercial": nc,
               "preset": {"path": os.path.abspath(preset_file), "sha256": sha},
               "training": {"namFile": os.path.basename(nam), "epochsDone": epochs, "wallSeconds": cfg.get("trainWall", 100.0)},
-              "validation": {"acceptance": {"status": status, "summary": "acceptance %s: held-out ESR %.4f (limit 0.02), DI-excerpt LTAS error %.2f dB (limit 0.5)" % (status, held, ltas),
-                              "heldOutEsr": held, "diLtasDb": ltas, "esrLimit": 0.02, "ltasLimitDb": 0.5}},
+              "validation": validation,
               "totalWallSeconds": cfg.get("wall", 150.0)}
     if cfg.get("exportNotes"):
         report["exportNotes"] = cfg["exportNotes"]
+        if cfg.get("anagramProfile"):
+            report["exportNotes"] = dict(cfg["exportNotes"], deviceProfiles={"anagram": cfg["anagramProfile"]})
     json.dump(report, open(os.path.join(out, "export_report.json"), "w"), indent=2)
     listen = cfg.get("listen")
     if listen:

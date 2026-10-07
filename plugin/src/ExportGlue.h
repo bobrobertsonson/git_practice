@@ -69,10 +69,10 @@ struct ResumeOffer {
   bool available = false;
   std::filesystem::path dir;              // the run's folder (--resume <dir>)
   int epoch = 0, epochs = 0;
-  std::string mode, size;
+  std::string mode, arch, size;
 };
 ResumeOffer findResumableExport(SawbladeProcessor& p);
-// Request that resumes `offer` with the run's own mode and size.
+// Request that resumes `offer` with the run's own mode, architecture and size.
 bool buildResumeRequest(SawbladeProcessor& p, const ResumeOffer& offer, ExportRequest& out, std::string* error);
 
 }  // namespace sawblade::plugin

@@ -47,9 +47,11 @@ class MatchSettings {
   std::filesystem::path poolManifest() const;      // default ~/.cache/sawblade/captures/pool_manifest.json
   std::string selectedTake() const;                // take name chosen for MATCH ("" = none)
   bool autoRefine() const;                         // MATCH starts the thorough pass after the quick one (default true)
-  // Wall time of the last finished export per size ("feather" / "lite" / "standard"); 0 = no run yet.
-  double exportWallSeconds(const std::string& size) const;
-  void setExportWallSeconds(const std::string& size, double seconds);
+  // Wall time of the last finished export per architecture + size ("a2" full / lite, "a1" feather / lite / standard);
+  // 0 = no run yet. Stored as `exportWallSeconds.<arch>.<size>`; before A2 the key was `exportWallSeconds.<size>`, which
+  // was always an A1 size, so an A1 lookup falls back to that legacy key (the history of an existing user survives).
+  double exportWallSeconds(const std::string& arch, const std::string& size) const;
+  void setExportWallSeconds(const std::string& arch, const std::string& size, double seconds);
   void setMatchExecutable(const std::filesystem::path& p);
   void setExportExecutable(const std::filesystem::path& p);
   void setPoolManifest(const std::filesystem::path& p);
@@ -86,6 +88,7 @@ struct JobProgress {
   std::optional<double> bestEsr;
   bool resumable = false;       // a checkpoint exists
   std::string outDir;           // the final output directory ("" = not reported)
+  std::string arch;             // v0.6: "a2" | "a1" as the exporter reports it ("" = not reported: an older exporter)
 };
 
 // One row of the match results (best first).
@@ -108,7 +111,16 @@ struct ExportResult {
   std::optional<double> heldOutEsr, diLtasDb, esrLimit, ltasLimitDb;
   double wallSeconds = 0.0;             // totalWallSeconds, else training.wallSeconds (0 = unknown)
   bool nonCommercial = false;
-  std::string namFile;                  // file name of the .nam inside outDir ("" = none found)
+  std::string namFile;                  // file name of the PRIMARY .nam inside outDir ("" = none found)
+  // v0.6 (docs/specs/v0_6-a2_everywhere.md decision 14): the report's `arch`, `size` and `files` block. An A2 run writes the
+  // container and the standalone Full and Lite files; the primary one is the file `size` names (shown first). Older reports
+  // have none of this: arch "" and no other files.
+  std::string arch, size;
+  struct ExtraFile {
+    std::string role;                   // "container" | "full" | "lite" (as the report names it)
+    std::string name;                   // file name inside outDir
+  };
+  std::vector<ExtraFile> otherFiles;    // the report's files other than the primary, in report order (container, full, lite)
   std::filesystem::path listen;         // listen/ab_original_then_export.mp3, else .wav ("" = none)
   // v0.4M: the report's `exportNotes` object, dumped ("" = the report has none): the stages that are NOT in the model, with
   // hardware settings (ExportNotes.h; the panel checks its version before showing it).
@@ -138,6 +150,7 @@ struct JobSnapshot {
   std::vector<MatchCandidate> results;  // match, once succeeded
   std::filesystem::path outDir;       // export: the result folder (revealed in the file manager); empty until the exporter reports it
   std::string exportMode, exportSize;
+  std::string exportArch;             // "a2" | "a1" ("a1" for a job written before A2 existed)
   // export (phase 12)
   std::filesystem::path source;       // the resolved preset file that was exported
   std::string sourceSha256;           // sha256 of its bytes: the "same rig" key
@@ -160,7 +173,8 @@ struct MatchRequest {
 struct ExportRequest {
   std::filesystem::path preset;        // resolved preset JSON
   std::string mode = "nocab";          // nocab / withcab
-  std::string size = "standard";       // feather / lite / standard
+  std::string arch = "a2";             // a2 / a1 (sawblade-export --arch)
+  std::string size = "full";           // a2: full / lite; a1: feather / lite / standard (sawblade-export --size)
   std::optional<std::filesystem::path> di;  // validation DI (a take); none + diBuiltin = the built-in signal; none = the exporter's default
   std::filesystem::path exportsRoot;   // --exports-root ("" = <job dir>/export)
   bool allowInexact = false;           // --allow-inexact (no-cab export that keeps the comp's absence as reported error)
@@ -180,6 +194,11 @@ struct ToolCheck {
 bool parseProgressJson(const std::string& text, JobProgress& out);       // tolerant: false on partial / bad JSON
 void parseLogLine(JobKind kind, const std::string& line, JobProgress& p); // the log-line fallback
 bool parseExportProgress(const std::string& text, JobProgress& out);     // <out>/checkpoint/progress.json (the fallback)
+// The base name of an export: the primary file's stem without the A2 file-name suffix (`.a2`, `.a2_full`, `.a2_lite`), so
+// the sidecar / notes files sit next to the models as `<base>.sawblade.json`.
+std::string exportBaseName(const std::string& namFile);
+// The command-line arguments that pick the architecture and size: {"--arch", arch, "--size", size}.
+std::vector<std::string> exportArchArgs(const std::string& arch, const std::string& size);
 // The checkpoint a cancelled export left behind: <dir>/checkpoint/progress.json exists and is not `complete`.
 struct CheckpointInfo {
   bool resumable = false;
