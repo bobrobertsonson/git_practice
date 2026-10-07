@@ -668,7 +668,7 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
 * **Determinism.** Everything is seeded (`--seed`: model init + batch order; `--signal-seed`). CPU training repeats bit-for-bit for the
   same seed, thread count, machine and library versions (smoke test); it is not guaranteed across thread counts/BLAS builds. The `.nam`
   carries a date stamp, so its bytes differ between runs.
-* **Metadata** (`.nam` `metadata`): `name`, `modeled_by: "Sawblade"`, `gear_type` (`pedal_amp` for nocab, `amp_pedal_cab` for withcab),
+* **Metadata** (`.nam` `metadata`): `name`, `modeled_by: "Sawblade"`, `gear_type` (`pedal` for a drive-only no-cab export, else `pedal_amp` for nocab, `amp_pedal_cab` for withcab),
   `tone_type: hi_gain`, `training.validation_esr` (the trainer's best validation ESR on level-normalised data, model output only; `validation_esr_source` says so), NAM's own `loudness`/`gain`, and `sawblade`: preset name + sha256 (canonical JSON without
   machine paths), export mode, exactness, bypassed items, seeds, signal hash, levels, IR file name, the full attribution list (title,
   creator, licence, TONE3000 URL, roles) and `licenceNote`: "Derived from TONE3000 captures; personal use only unless permitted by the

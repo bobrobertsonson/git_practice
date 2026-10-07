@@ -228,7 +228,7 @@ Run in this container (Python 3.11 venv with `match[dev,export]` + constraints, 
   They also fail on the merge base `6701294`. They are **not container-specific** (an earlier version of this section said so, wrongly): CI run 238 failed them too. The v0.4M
   merge in `6701294` was the stale head `bbae365`; v0.4M's `582ca3d` (in `bafcada`) fixes both, and the v0.6 branch now includes it (merge of `bafcada`).
 * `tests/fixtures/a2/generate.py --check` regenerates the fixtures byte-identically.
-* `test_a1_sizes_are_nams_official_presets` failed in a `[dev]`-only install (it imports `nam`); fixed in the review round by splitting it into a pure layout test and a ``_need_nam` (skip without the trainer) parameter-count test, plus the `python-export` CI job (decision 17).
+* `test_a1_sizes_are_nams_official_presets` failed in a `[dev]`-only install (it imports `nam`); fixed in the review round by splitting it into a pure layout test and a `_need_nam` (skip without the trainer) parameter-count test, plus the `python-export` CI job (decision 17).
 
 ## 5. Decisions / questions for lead
 

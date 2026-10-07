@@ -264,3 +264,42 @@ def test_end_to_end_a2_nocab_export_on_fixture_preset(tmp_path, size):
     assert prof["stages"][1]["settings"]["model"] == f"{stem}.a2_{size}.nam"
     assert json.loads(prog.read_text())["arch"] == "a2" and json.loads(prog.read_text())["stage"] == "done"
     assert "personal use only" in rep["licenceNote"]
+
+
+def test_drive_only_is_a_positive_rule_and_sets_gear_type_pedal():
+    p = json.loads((PRESETS / "golden_shared.json").read_text())
+    p["gate"] = {"enabled": False}
+    nam = lambda i, **kw: {"id": i, "type": "nam", "model": {"file": "../nam/wavenet.nam"}, **kw}
+    p["paths"]["a"]["blocks"] = [nam("a1", slot="pedal"), {"id": "a2", "type": "pedal.ts", "params": {}}]
+    p["paths"]["b"]["blocks"] = [nam("b1", slot="boost"), {"id": "e", "type": "eq", "bands": []}]
+    pl = P.make_plan(p, "nocab", True)
+    assert P.drive_only(p, pl) is True and P.gear_type(pl, p) == "pedal"
+    p["paths"]["b"]["blocks"].append(nam("b2"))                               # unlabelled NAM block: an amp
+    assert P.drive_only(p, pl) is False and P.gear_type(pl, p) == "pedal_amp"
+    p["paths"]["b"]["blocks"][-1]["slot"] = "fx"                              # any other slot too
+    assert P.drive_only(p, pl) is False
+    p["paths"]["b"]["blocks"][-1]["bypass"] = True                            # a bypassed block does not count
+    assert P.drive_only(p, pl) is True
+    assert P.gear_type(P.make_plan(p, "withcab", True), p) == "amp_pedal_cab"
+
+
+def _fake_report(full_status, lite_status):
+    def block(st):
+        return {"heldOut": {"esr": 0.01}, "diExcerpt": {"ltas": {"aWeightedErrorDb": 0.1}},
+                "acceptance": {"status": st, "summary": f"acceptance {st}"}}
+    return {"validation": {"full": block(full_status), "lite": block(lite_status)}, "licenceNote": "note"}
+
+
+@pytest.mark.parametrize("size,full,lite,rc", [("lite", "met", "NOT MET", 2), ("full", "met", "NOT MET", 0),
+                                               ("full", "NOT MET", "met", 2), ("lite", "NOT MET", "met", 0)])
+def test_cli_require_accept_judges_the_primary_a2_size_only(monkeypatch, tmp_path, size, full, lite, rc):
+    from sawblade_match.export import run as RUN
+    from sawblade_match.export.cli import main
+    seen = {}
+
+    def fake(preset, **kw):
+        seen.update(kw)
+        return _fake_report(full, lite)
+    monkeypatch.setattr(RUN, "run_export", fake)
+    out = main([str(PRESETS / "golden_shared.json"), "--arch", "a2", "--size", size, "--require-accept", "--out", str(tmp_path / "o")])
+    assert out == rc and seen["arch"] == "a2" and seen["size"] == size

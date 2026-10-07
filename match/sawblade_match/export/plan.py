@@ -281,12 +281,15 @@ def attribution(preset: dict) -> list[dict]:
 
 def gear_type(plan: Plan, preset: dict) -> str:
     """NAM GearType enum value for the metadata."""
+    if drive_only(preset, plan):
+        return "pedal"
     return "amp_pedal_cab" if plan.mode == "withcab" else "pedal_amp"
 
 
 def drive_only(preset: dict, plan: "Plan | dict") -> bool:
     """True when the exported model is a drive / boost stage and not an amp: a no-cab export whose enabled chain has
-    at least one block and none of them in an ``amp`` slot (pedals, boosts, modeled pedals, EQs only).  A with-cab export
+    at least one non-EQ block and EVERY such block is explicitly a pedal or boost (``slot`` "pedal" / "boost", or a modeled
+    pedal type ``pedal.*``); an unlabelled NAM block, an ``amp`` / ``fx`` slot or any other type makes it an amp.  A with-cab export
     contains the cab, so it is always amp-like.  Used to pick Neural Pedal over Neural Amp in the Anagram notes."""
     if (plan["mode"] if isinstance(plan, dict) else plan.mode) != "nocab":
         return False
@@ -297,7 +300,8 @@ def drive_only(preset: dict, plan: "Plan | dict") -> bool:
         if blk.get("type") == "eq":
             continue
         seen = True
-        if blk.get("slot") == "amp":
+        explicit = blk.get("slot") in ("pedal", "boost") or str(blk.get("type", "")).startswith("pedal.")
+        if not explicit:                 # positive rule: an unlabelled NAM block (or any other slot) counts as an amp
             return False
     return seen
 

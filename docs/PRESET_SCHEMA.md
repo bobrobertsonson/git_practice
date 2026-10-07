@@ -665,14 +665,15 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
 ```
 
 Mapping rules: the trained model is a **Neural Amp** block, or a **Neural Pedal** block for a *drive-only* export (no-cab export
-whose enabled chain has no `amp`-slot block: pedals, boosts, modeled pedals, EQs only; a with-cab export is always a Neural Amp);
+whose enabled non-EQ blocks are all explicitly pedals or boosts: `slot` "pedal"/"boost" or a `pedal.*` type; an unlabelled NAM block counts as an amp; a with-cab export is always a Neural Amp);
 `settings.model` is the primary file (A2: the standalone file `--size` names; the `.a2.nam` container is not named, whether the
 device takes a container is not published). The gate (if enabled) is the first block, before the model. The no-cab export's cab
 becomes an **IR** block right after the model; the exported IR already holds the post EQ, so the post EQ gets its own **EQ** block
 (`settings` = `band N`: description) only when it is not folded into the IR. The bus compressor (no-cab export with `--allow-inexact`)
 is a **Compressor** block last, `threshold dBFS` = the threshold at the exported output level. `position` is the 1-based chain
-index, with "(first in the chain)" / "(last in the chain)" on the ends of a chain of two or more blocks. A with-cab export whose
-model is the whole chain lists the model block only.
+index, with "(first in the chain)" / "(last in the chain)" on the ends of a chain of two or more blocks. A with-cab export lists the gate (if enabled)
+and the model block; the cab, post EQ and bus comp are inside the model, so nothing else. A with-cab export whose chain has no gate lists the
+model block only.
 
 ## Derived properties (not stored; reported by tonerender / plugin)
 

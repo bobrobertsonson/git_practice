@@ -3,7 +3,7 @@
 
     python -m venv .venv && .venv/bin/pip install -e 'match[export]' -c match/constraints-export.txt
     .venv/bin/python tests/fixtures/a2/generate.py            # writes next to this script (or pass --out DIR)
-    .venv/bin/python tests/fixtures/a2/generate.py --check     # regenerate into a temp dir and compare byte-for-byte
+    .venv/bin/python tests/fixtures/a2/generate.py --check     # regenerate into a temp dir and compare (.nam bytes exact, ref_*.wav within 1e-5)
 
 Synthetic only: no TONE3000 data, no recorded audio.  Weights are the trainer's seeded random initialisation (the null
 tests check the player against the trainer's forward pass, not tone quality).  For every model the reference output
@@ -221,10 +221,46 @@ def generate(out: Path) -> dict:
     return manifest
 
 
+REF_ATOL = 1e-5      # --check: ref_*.wav samples (float32 forward passes) and manifest floats may differ by this much (other CPU / BLAS)
+
+
+def _close(a, b) -> bool:
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_close(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b))
+    if isinstance(a, float) and isinstance(b, float):
+        return abs(a - b) <= REF_ATOL * max(1.0, abs(a))
+    return a == b
+
+
+def check_dirs(new: Path, old: Path) -> list[str]:
+    """Names that differ: .nam files and input.wav must match byte for byte (seeded init and export are deterministic); the
+    ``ref_*.wav`` forward-pass outputs and the numbers in manifest.json (reference RMS / peak) only within ``REF_ATOL``, so a
+    different CPU's float32 summation order cannot make the check flake.  The manifest's sha256 of the ref files is not compared
+    (it is of the .nam files, which are exact)."""
+    import soundfile as sf
+    bad = []
+    for p in sorted(new.iterdir()):
+        q = old / p.name
+        if not q.is_file():
+            bad.append(p.name)
+        elif p.name.startswith("ref_") and p.suffix == ".wav":
+            x, y = sf.read(str(p), dtype="float32"), sf.read(str(q), dtype="float32")
+            if x[1] != y[1] or x[0].shape != y[0].shape or float(np.max(np.abs(x[0] - y[0]))) > REF_ATOL:
+                bad.append(p.name)
+        elif p.name == "manifest.json":
+            if not _close(json.loads(p.read_text()), json.loads(q.read_text())):
+                bad.append(p.name)
+        elif q.read_bytes() != p.read_bytes():
+            bad.append(p.name)
+    return bad
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", default=str(HERE))
-    ap.add_argument("--check", action="store_true", help="regenerate into a temp dir and compare with --out byte for byte")
+    ap.add_argument("--check", action="store_true", help="regenerate into a temp dir and compare with --out: .nam / input.wav byte for byte, ref_*.wav within 1e-5")
     a = ap.parse_args()
     if not a.check:
         m = generate(Path(a.out))
@@ -234,11 +270,10 @@ def main() -> int:
         return 0
     with tempfile.TemporaryDirectory() as td:
         generate(Path(td))
-        bad = [p.name for p in sorted(Path(td).iterdir()) if not (Path(a.out) / p.name).is_file()
-               or (Path(a.out) / p.name).read_bytes() != p.read_bytes()]
-    print("fixtures differ: " + ", ".join(bad) if bad else "fixtures are reproducible (byte-identical)")
+        bad = check_dirs(Path(td), Path(a.out))
+    print("fixtures differ: " + ", ".join(bad) if bad
+          else f"fixtures are reproducible (.nam / input.wav byte-identical; ref_*.wav and manifest numbers within {REF_ATOL})")
     return 1 if bad else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
