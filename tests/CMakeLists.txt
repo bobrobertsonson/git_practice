@@ -101,4 +101,4 @@ target_link_libraries(a2_bench PRIVATE sawblade_core sawblade_warnings
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)
 target_compile_definitions(a2_bench PRIVATE SAWBLADE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 add_test(NAME a2_bench COMMAND a2_bench)
-set_tests_properties(a2_bench PROPERTIES LABELS "bench" TIMEOUT 300)
+set_tests_properties(a2_bench PROPERTIES LABELS "bench" TIMEOUT 300 RUN_SERIAL TRUE)

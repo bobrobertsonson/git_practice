@@ -64,6 +64,11 @@ jobs:
           SAWBLADE_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: ctest --test-dir build --output-on-failure
 
+      - name: A2 CPU benchmark table
+        run: |
+          ctest --test-dir build -R '^a2_bench$' -V | tee a2_bench.log
+          { echo '### A2 CPU benchmark (${{ github.job }})'; echo '```'; sed -n '/^[0-9]*: A2 CPU benchmark/,/Rig real-time check/p' a2_bench.log | sed 's/^[0-9]*: //'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -137,6 +142,11 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: A2 CPU benchmark table
+        run: |
+          ctest --test-dir build -R '^a2_bench$' -V | tee a2_bench.log
+          { echo '### A2 CPU benchmark (${{ github.job }})'; echo '```'; sed -n '/^[0-9]*: A2 CPU benchmark/,/Rig real-time check/p' a2_bench.log | sed 's/^[0-9]*: //'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: ccache stats
         if: always()
         run: ccache -s
@@ -181,6 +191,11 @@ jobs:
         env:
           SAWBLADE_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: ctest --test-dir build --output-on-failure
+
+      - name: A2 CPU benchmark table
+        run: |
+          ctest --test-dir build -R '^a2_bench$' -V | tee a2_bench.log
+          { echo '### A2 CPU benchmark (${{ github.job }})'; echo '```'; sed -n '/^[0-9]*: A2 CPU benchmark/,/Rig real-time check/p' a2_bench.log | sed 's/^[0-9]*: //'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload screenshots
         if: always()

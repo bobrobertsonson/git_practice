@@ -254,6 +254,12 @@ TEST_CASE("A2 Full and Lite take the NAM_ENABLE_A2_FAST path", "[a2][nam]") {
       int channels = 0;
       REQUIRE(nam::wavenet::a2_fast::is_a2_shape(sm["model"]["config"], &channels));
       ++seen;
+      // The core keeps the active submodel private, so build each submodel the way the container does (get_dsp on its
+      // nested model) and check the dynamic type: Full (8 ch, the one the container plays) and Lite both take the fast path.
+      auto sub = nam::get_dsp(sm["model"]);
+      REQUIRE(sub != nullptr);
+      const nam::DSP& sd = *sub;
+      REQUIRE(std::string(typeid(sd).name()).find("A2FastModel") != std::string::npos);
     }
     REQUIRE(seen == 2);
   }

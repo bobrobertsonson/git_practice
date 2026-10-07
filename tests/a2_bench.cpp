@@ -125,6 +125,13 @@ int main() {
   // Rig: the plugin's graph from a preset JSON. The cab IR path is patched to a generated file in a temp dir.
   const fs::path tmp = fs::temp_directory_path() / ("sawblade_a2_bench_" + std::to_string(std::random_device{}()));
   fs::create_directories(tmp);
+  struct TmpCleanup {  // removes the temp dir on every exit path, exceptions included
+    fs::path p;
+    ~TmpCleanup() {
+      std::error_code ec;
+      fs::remove_all(p, ec);
+    }
+  } tmpCleanup{tmp};
   writeCabIr(tmp / "rig_cab_ir.wav");
   nlohmann::json j;
   {
@@ -140,8 +147,6 @@ int main() {
   chain.prepare({kFs, kBlock});
   const Stats rig = measure([&](float* p, int n) { chain.process(p, p, n); }, x);
   row("rig: 2x A2 Full + pedals + cab", rig);
-  std::error_code ec;
-  fs::remove_all(tmp, ec);
 
   // Validity: the rig must really produce sound (a silent chain would benchmark the gate, not the amps).
   {
