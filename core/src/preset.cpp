@@ -537,7 +537,7 @@ DynamicsSet deriveLiveDynamics(const DynamicsSet& record) {
   g.rangeDb = -24.0;
   g.keyHighPassHz = 80.0;
   g.thresholdMode = GateThresholdMode::FloorRelative;
-  g.floorOffsetDb = 8.0;
+  g.floorOffsetDb = 10.0;
   g.holdMs = std::max(record.gate.holdMs, 40.0);
   g.releaseMs = std::max(record.gate.releaseMs, 120.0);
   d.gate = g;

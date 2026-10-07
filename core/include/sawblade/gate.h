@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
+#include <vector>
 #include <limits>
 
 #include "sawblade/processor.h"
@@ -30,7 +32,7 @@ struct GateParams {
   GateReleaseCurve releaseCurve = GateReleaseCurve::OnePole;  // linear-db: -rangeDb/releaseMs dB per ms
   // Live dynamics policy (preset v4). Defaults reproduce the earlier behaviour bit-for-bit.
   GateThresholdMode thresholdMode = GateThresholdMode::Absolute;
-  double floorOffsetDb = 8.0;  // floorRelative only: open threshold = floor estimate + this
+  double floorOffsetDb = 10.0;  // floorRelative only: open threshold = floor estimate + this
 };
 
 // Envelope: peak follower (0.1 ms attack / 10 ms release one-pole, fixed). State machine:
@@ -47,7 +49,7 @@ struct GateParams {
 // releaseCurve "linear-db" slews the falling gain at a constant dB/ms (rangeDb over releaseMs)
 // instead of the one-pole, which is slow near the end of a deep fall.
 //
-// Floor follower (thresholdMode floorRelative): minimum statistics on the (key-high-passed) key. 50 ms RMS frames;
+// Floor follower (thresholdMode floorRelative): minimum statistics on the gate's own peak envelope (key-high-passed). Frame statistic: the maximum of the peak envelope over 50 ms;
 // only frames below estimate + 20 dB feed the sub-window minima (playing never feeds the floor); the estimate is the
 // minimum over a 3 s window held as a fixed ring of 100 ms sub-window minima. When no frame has qualified for 10 s the
 // estimate leaks up at +1 dB/s. Clamped to [-96, -40] dBFS, seeded at -70 dBFS (until the first window has filled the
@@ -94,7 +96,7 @@ class Gate : public Processor {
   void updateCoefficients() noexcept;
   void setThresholdDb(double openDb) noexcept;
   void resetFloor() noexcept;
-  void floorFrame(double meanSquare) noexcept;
+  void floorFrame(double frameMaxEnv) noexcept;
 
   GateParams params_{};
   double sampleRate_ = 48000.0;
@@ -122,10 +124,15 @@ class Gate : public Processor {
   int ringHead_ = 0, subsDone_ = 0, frameInSub_ = 0;
   double subMin_ = kInf;
   int frameLen_ = 2400, frameCount_ = 0;
-  double frameSum_ = 0.0;
+  double frameMax_ = 0.0;
   int sinceQualFrames_ = 0;
   double floorDb_ = kFloorSeedDb;
   double openDb_ = -55.0;
 };
+
+// peakFloorDb: the matcher's DI floor, defined on the gate's own detector: the 92.5th percentile of the peak envelope
+// (kEnvAttackMs / kEnvReleaseMs, after the key high-pass when keyHpfHz > 0) over the samples where `mask` is non-zero (all
+// samples when null). dBFS; NaN when no sample is selected. Off the audio thread (allocates).
+double peakFloorDb(const std::vector<float>& x, double fs, double keyHpfHz = 0.0, const std::vector<std::uint8_t>* mask = nullptr);
 
 }  // namespace sawblade

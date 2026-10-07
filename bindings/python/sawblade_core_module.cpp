@@ -15,6 +15,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <exception>
 #include <array>
 #include <memory>
@@ -23,6 +24,7 @@
 #include <vector>
 
 #include "sawblade/capture_cache.h"
+#include "sawblade/gate.h"
 #include "sawblade/loudness.h"
 #include "sawblade/render.h"
 #include "sawblade/stem_player.h"
@@ -170,6 +172,30 @@ py::dict resolveDynamicsPy(const py::object& preset, const py::object& baseDir) 
            {"busComp", toJson(p).at("busComp")}};
   }
   return py::module_::import("json").attr("loads")(out.dump()).cast<py::dict>();
+}
+
+// H.1: the matcher's DI floor on the gate's own peak detector (core peakFloorDb).
+py::object peakFloorPy(const py::array_t<float, py::array::c_style | py::array::forcecast>& x, double fs, double keyHpfHz,
+                       const py::object& mask) {
+  if (x.ndim() != 1) throw py::value_error("x must be a 1-D array");
+  if (!(std::isfinite(fs) && fs >= 1000.0)) throw py::value_error("fs must be a rate in Hz, >= 1000");
+  if (!(std::isfinite(keyHpfHz) && keyHpfHz >= 0.0)) throw py::value_error("key_hpf_hz must be >= 0");
+  const std::vector<float> xs(x.data(), x.data() + x.size());
+  std::vector<std::uint8_t> m;
+  const std::vector<std::uint8_t>* mp = nullptr;
+  if (!mask.is_none()) {
+    const auto ma = py::array_t<std::uint8_t, py::array::c_style | py::array::forcecast>::ensure(mask);
+    if (!ma || ma.ndim() != 1 || ma.size() != x.size()) throw py::value_error("mask must be a 1-D array as long as x");
+    m.assign(ma.data(), ma.data() + ma.size());
+    mp = &m;
+  }
+  double r;
+  {
+    py::gil_scoped_release nogil;
+    r = peakFloorDb(xs, fs, keyHpfHz, mp);
+  }
+  if (std::isnan(r)) return py::none();
+  return py::float_(r);
 }
 
 // ---- stems ------------------------------------------------------------------------------------
@@ -435,6 +461,11 @@ The GIL is released while measuring. Raises PresetError or RenderIOError like re
 set is the explicit liveDynamics, else derived for origin "match", else the stored gate / busComp).
 
 Returns {"mode": "live" | "record", "gate": {...}, "busComp": {...}} (docs/PRESET_SCHEMA.md objects). Raises PresetError.)doc");
+
+  m.def("peak_floor_db", &peakFloorPy, py::arg("x"), py::arg("fs"), py::arg("key_hpf_hz") = 0.0, py::arg("mask") = py::none(),
+        R"doc(The DI floor on the gate's own detector: the 92.5th percentile of the peak envelope (0.1 ms attack / 10 ms
+release, after a key high-pass of key_hpf_hz when > 0) over the samples where `mask` is non-zero (all when None), in dBFS.
+Returns None when the mask selects nothing.)doc");
 
   bindStems(m);
 }

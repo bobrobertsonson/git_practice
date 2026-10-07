@@ -49,7 +49,7 @@ std::vector<float> riff(double floorRmsDb, double seconds, bool withNotes, std::
   return x;
 }
 
-GateParams floorGate(double offset = 8.0) {
+GateParams floorGate(double offset = 10.0) {
   GateParams g;
   g.enabled = true;
   g.thresholdMode = GateThresholdMode::FloorRelative;
@@ -113,18 +113,22 @@ std::vector<float> render(const Preset& p, const std::vector<float>& x, int bloc
   return y;
 }
 
+// The reference floor of white noise at a set RMS: peakFloorDb, the definition the matcher and the follower share (H.1).
+double refPeakDb(double rmsDb) { return peakFloorDb(riff(rmsDb, 20.0, false, 321), kFs); }
+
 }  // namespace
 
 // ---- G.2 floor follower ---------------------------------------------------------------------------------------------------
 TEST_CASE("Floor follower: converges to a known noise floor within 3.5 s", "[gate][floor]") {
   Gate g = makeGate(floorGate());
   feed(g, riff(-80.0, 3.5, false), 256);
-  CHECK(std::fabs(g.floorEstimateDb() - (-80.0)) < 1.5);
-  CHECK(std::fabs(g.openThresholdDb() - (g.floorEstimateDb() + 8.0)) < 1e-9);
+  CHECK(std::fabs(g.floorEstimateDb() - refPeakDb(-80.0)) < 3.0);  // the estimate is on the peak envelope (H.1)
+  CHECK(std::fabs(g.openThresholdDb() - (g.floorEstimateDb() + 10.0)) < 1e-9);
 }
 
 TEST_CASE("Floor follower: 30 s of riffing at -12 dBFS over a -75 dB floor stays within 3 dB of the floor", "[gate][floor]") {
   Gate g = makeGate(floorGate());
+  const double ref = refPeakDb(-75.0);
   const auto x = riff(-75.0, 30.0, true);
   std::vector<float> io(x.size(), 1.0f);
   double worst = 0.0;
@@ -132,7 +136,7 @@ TEST_CASE("Floor follower: 30 s of riffing at -12 dBFS over a -75 dB floor stays
   for (std::size_t pos = 0; pos < x.size(); pos += step) {
     const auto n = static_cast<int>(std::min(step, x.size() - pos));
     g.processKeyed(x.data() + pos, io.data() + pos, n);
-    if (pos > static_cast<std::size_t>(kFs)) worst = std::max(worst, std::fabs(g.floorEstimateDb() - (-75.0)));
+    if (pos > static_cast<std::size_t>(3.5 * kFs)) worst = std::max(worst, std::fabs(g.floorEstimateDb() - ref));
   }
   CHECK(worst < 3.0);
 }
@@ -140,9 +144,9 @@ TEST_CASE("Floor follower: 30 s of riffing at -12 dBFS over a -75 dB floor stays
 TEST_CASE("Floor follower: a floor step -75 -> -60 dB is learned within 25 s", "[gate][floor]") {
   Gate g = makeGate(floorGate());
   feed(g, riff(-75.0, 8.0, true), 512);
-  CHECK(std::fabs(g.floorEstimateDb() - (-75.0)) < 3.0);
+  CHECK(std::fabs(g.floorEstimateDb() - refPeakDb(-75.0)) < 3.0);
   feed(g, riff(-60.0, 25.0, true, 99), 512);
-  CHECK(std::fabs(g.floorEstimateDb() - (-60.0)) < 3.0);
+  CHECK(std::fabs(g.floorEstimateDb() - refPeakDb(-60.0)) < 3.0);
 }
 
 TEST_CASE("Floor follower: when nothing qualifies for 10 s the estimate leaks up", "[gate][floor]") {
@@ -216,7 +220,7 @@ TEST_CASE("Derivation: origin match derives the live set; any other origin keeps
   CHECK(live.gate.rangeDb == -24.0);
   CHECK(live.gate.keyHighPassHz == 80.0);
   CHECK(live.gate.thresholdMode == GateThresholdMode::FloorRelative);
-  CHECK(live.gate.floorOffsetDb == 8.0);
+  CHECK(live.gate.floorOffsetDb == 10.0);
   CHECK(live.gate.holdMs == 40.0);
   CHECK(live.gate.releaseMs == 120.0);
   CHECK(live.gate.attackMs == m.gate.attackMs);

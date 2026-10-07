@@ -72,7 +72,7 @@ gate's `thresholdMode` / `floorOffsetDb`. All are optional and absent in older f
   "keyHighPassHz": 0,     // 0 = off, else 40-400; 12 dB/oct high-pass on the key signal only
   "releaseCurve": "one-pole", // "one-pole" | "linear-db" (constant dB/ms: |rangeDb| over releaseMs)
   "thresholdMode": "absolute", // v4: "absolute" | "floorRelative" (written only when floorRelative)
-  "floorOffsetDb": 8.0         // v4, floorRelative only: open threshold = floor estimate + this (0-40)
+  "floorOffsetDb": 10.0         // v4, floorRelative only: open threshold = floor estimate + this (0-40)
 }
 ```
 Defaults are the values shown, with `enabled: false` if the object is omitted.
@@ -87,11 +87,11 @@ Gate is never part of any NAM export.
 
 **Floor follower (`thresholdMode: "floorRelative"`).** `thresholdDb` is then unused; the open threshold is
 `floorEstimate + floorOffsetDb`, re-evaluated as the estimate moves (hysteresis applies below it). The estimate is minimum
-statistics on the key (after `keyHighPassHz`): 50 ms RMS frames; only frames below `estimate + 20 dB` feed the sub-window
+statistics on the key (after `keyHighPassHz`): the gate's own peak envelope (0.1 ms attack / 10 ms release), per 50 ms frame its maximum; only frames below `estimate + 20 dB` feed the sub-window
 minima (playing never feeds the floor); the estimate is the minimum over a 3 s window held as a fixed ring of 30 sub-window
 minima of 100 ms, counted in samples (independent of block size, no allocation). When no frame has qualified for 10 s the
 estimate leaks up at +1 dB/s. Clamped to [-96, -40] dBFS, seed -70 dBFS (until the first window has filled the estimate is
-min(seed, running minimum)).
+min(seed, running minimum)). The same detector defines the matcher's DI floor, `peakFloorDb` (92.5th percentile of that envelope over the DI gap samples; pybind `sawblade_core.peak_floor_db`); the default record gate cell is open = peakFloor + 10 dB, hysteresis 6 dB.
 
 ## Live dynamics (v4)
 
@@ -103,7 +103,7 @@ matcher fits to the recording; unchanged meaning). `liveDynamics` is the **live 
 made, old files). When `liveDynamics` is absent the live set is **derived** (core `liveDynamicsOf`, the single source of truth):
 - `origin` is not `"match"`: the live set is the stored `gate` / `busComp`, unchanged (deliberate settings play as set).
 - `origin` is `"match"`: gate `enabled` = the record gate's; mode expander, ratio 2, rangeDb -24, keyHighPassHz 80,
-  thresholdMode floorRelative, floorOffsetDb +8, holdMs = max(record, 40), releaseMs = max(record, 120), attackMs /
+  thresholdMode floorRelative, floorOffsetDb +10 (close = floor + 4), holdMs = max(record, 40), releaseMs = max(record, 120), attackMs /
   hysteresisDb / releaseCurve from the record gate (record gate absent or disabled: live gate disabled); busComp disabled.
 
 `activeDynamics(preset)` resolves the set `dynamicsMode` selects; it is what the render path, the NAM exporter and the plugin use.
