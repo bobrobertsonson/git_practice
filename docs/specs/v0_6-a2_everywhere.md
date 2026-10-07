@@ -118,3 +118,13 @@ validation numbers, and the user's Task D result once run.
     - Plugin: export panel choice A2 Full (default) / A2 Lite / A1 (A1 keeps its standard/lite/feather sub-choice),
       passed as `--arch/--size`; wall-time history keyed by arch+size; the notes view can switch Generic / Anagram
       when `deviceProfiles.anagram` is present. Ladder fetch stays `standard` (decision 13).
+15. **Plugin settings migration** (accepted as built in `26ba02d`): saved export settings without `arch` → A1 + saved
+    size; no saved export settings → A2 Full (the new default; old builds never persisted the A1 Standard default, so
+    such users also land on A2 Full — intended, the user decided "the whole project should work on A2").
+16. **Anagram profile keys** follow the plugin reader built in `26ba02d` (`plugin/src/ExportNotes.cpp`
+    `anagramProfileOf`): `deviceProfiles.anagram = {file, message, loaderOrder[], stages[{stage, block, position,
+    settings{…}, hardware}]}`; match-engineer emits exactly these keys (settings as an ordered list of
+    `{name, value, unit}` is NOT used — an object, the plugin sorts keys). A2 file names follow the plugin preview
+    `<stem>-<mode>-<size>.a2_full.nam` / `.a2_lite.nam` / `.a2.nam` only if that matches the existing A1 naming
+    pattern in `export/run.py`; otherwise match-engineer keeps the existing pattern and the plugin preview is adjusted
+    (results are read from `files` either way).
