@@ -237,21 +237,29 @@ FORWARD_DIAGNOSTIC_KEYS = ("packedForwardMaxAbsDiff",)
 DIAGNOSTIC_ATOL = 1e-6
 
 
-def _tol(path: str) -> tuple[str, float]:
+GENERIC_FLOAT_RTOL = 1e-9    # every other float: summation-order noise only (CI run 248: input rmsDbfs differed by 1.8e-15)
+GENERIC_FLOAT_ATOL = 1e-12   # ... with an absolute floor for values near 0
+
+
+def _tol(path: str) -> tuple[float, float]:
+    """(relative, absolute) tolerance for a FLOAT at ``path``; ints, strings, bools and structure are always exact."""
     if path.endswith("/weights"):
-        return "abs", WEIGHT_ATOL
+        return 0.0, WEIGHT_ATOL
     if path.rsplit("/", 1)[-1] in FORWARD_DIAGNOSTIC_KEYS:
-        return "abs", DIAGNOSTIC_ATOL
+        return 0.0, DIAGNOSTIC_ATOL
     if path.endswith(FORWARD_DERIVED_SUFFIXES) or path.rsplit("/", 1)[-1] in FORWARD_DERIVED_MANIFEST_KEYS:
-        return "rel", META_RTOL
-    return "exact", 0.0
+        return META_RTOL, 0.0
+    return GENERIC_FLOAT_RTOL, GENERIC_FLOAT_ATOL
 
 
 def _walk(a, b, path, out):
-    """Collect (path, max abs diff, count) for every difference between two parsed JSON values.  Weights compare within
-    WEIGHT_ATOL, the forward-pass-derived floats within META_RTOL (relative); every other value, ints and floats included
-    (sample_rate, config numbers such as a LeakyReLU slope, version, architecture), compares exactly."""
+    """Collect (path, max abs diff, count) for every difference between two parsed JSON values.  Rule: ints, strings, bools and
+    structure (key sets, list lengths) exact; EVERY float within a tiny relative tolerance (``GENERIC_FLOAT_RTOL`` 1e-9, abs
+    floor 1e-12), so rounding noise passes while a changed sample_rate, LeakyReLU slope or parameter count (orders of magnitude
+    larger) is reported; weights within ``WEIGHT_ATOL``; forward-pass-derived values (``FORWARD_DERIVED_*``) within
+    ``META_RTOL`` / ``DIAGNOSTIC_ATOL``."""
     num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)
+    isf = lambda x: isinstance(x, float)
     if isinstance(a, dict) and isinstance(b, dict):
         for k in sorted(set(a) | set(b)):
             if k not in a or k not in b:
@@ -262,17 +270,19 @@ def _walk(a, b, path, out):
         if len(a) != len(b):
             out.append((path, None, 1))
         elif a and all(num(x) for x in a + b):
-            d = np.abs(np.asarray(a, np.float64) - np.asarray(b, np.float64))
-            kind, t = _tol(path)
-            tol = t * (max(1.0, float(np.max(np.abs(a)))) if kind == "rel" else 1.0)
+            x, y = np.asarray(a, np.float64), np.asarray(b, np.float64)
+            rt, at = _tol(path)
+            floats = np.array([isf(u) or isf(v) for u, v in zip(a, b)])
+            tol = np.where(floats, at + rt * np.maximum(np.abs(x), np.abs(y)), 0.0)
+            d = np.abs(x - y)
             if (d > tol).any():
                 out.append((path, float(d.max()), int((d > tol).sum())))
         else:
-            for i, (x, y) in enumerate(zip(a, b)):
-                _walk(x, y, f"{path}[{i}]", out)
+            for i, (u, v) in enumerate(zip(a, b)):
+                _walk(u, v, f"{path}[{i}]", out)
     elif num(a) and num(b):
-        kind, t = _tol(path)
-        tol = t * max(1.0, abs(a)) if kind == "rel" else t
+        rt, at = _tol(path)
+        tol = (at + rt * max(abs(a), abs(b))) if (isf(a) or isf(b)) else 0.0
         if a != b and abs(a - b) > tol:
             out.append((path, abs(a - b), 1))
     elif a != b:
@@ -356,7 +366,7 @@ def main() -> int:
         generate(Path(td))
         bad = check_dirs(Path(td), Path(a.out))
     print("fixtures differ: " + ", ".join(bad) if bad
-          else "fixtures are reproducible (input.wav byte-identical; .nam structure exact, weights within 1e-6, forward-derived loudness/gain within 1e-4 rel, all else exact; ref_*.wav within 1e-5)")
+          else "fixtures are reproducible (input.wav byte-identical; .nam structure exact, weights within 1e-6, forward-derived loudness/gain within 1e-4 rel, every other float within 1e-9 rel, ints/strings/structure exact; ref_*.wav within 1e-5)")
     return 1 if bad else 0
 
 if __name__ == "__main__":

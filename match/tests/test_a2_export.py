@@ -330,6 +330,8 @@ def test_fixture_check_tolerates_float_noise_and_reports_real_differences(tmp_pa
     for edit, key in ((lambda d: d.__setitem__("sample_rate", d["sample_rate"] + 1), "/sample_rate"),
                       (lambda d: d["config"]["layers"][0]["activation"][0].__setitem__(
                           "negative_slope", d["config"]["layers"][0]["activation"][0]["negative_slope"] + 5e-5), "negative_slope"),
+                      (lambda d: d["config"]["layers"][0]["activation"][0].__setitem__(
+                          "negative_slope", d["config"]["layers"][0]["activation"][0]["negative_slope"] + 1e-5), "negative_slope"),
                       (lambda d: d["metadata"].__setitem__("loudness", d["metadata"]["loudness"] + 0.5), "/metadata/loudness")):
         shutil.copy(FIX / "a2_lite.nam", new / "a2_lite.nam")
         d = json.loads((new / "a2_lite.nam").read_text())
@@ -342,6 +344,7 @@ def test_fixture_check_tolerates_float_noise_and_reports_real_differences(tmp_pa
     man = json.loads((new / "manifest.json").read_text())
     man["models"]["a2_lite"]["packedForwardMaxAbsDiff"] = 2.05e-8
     man["models"]["a2_lite"]["referencePeak"] *= 1 + 1e-6
+    man["input"]["rmsDbfs"] += 1.78e-15                     # CI run 248: numpy summation rounding on another CPU
     (new / "manifest.json").write_text(json.dumps(man))
     assert gen.check_dirs(new, FIX, log=lines.append) == ["a2_full.nam"]
     lines.clear()
