@@ -230,11 +230,18 @@ WEIGHT_ATOL = 1e-6   # --check: weights; seeded init, so normally identical, but
 # output_level_dbu are null, config / version / architecture / sample_rate come from the seeded config).
 FORWARD_DERIVED_SUFFIXES = ("/metadata/loudness", "/metadata/gain")
 FORWARD_DERIVED_MANIFEST_KEYS = ("metadataLoudnessDb", "metadataGain", "referenceRmsDbfs", "referencePeak")
+# Diagnostics that are themselves tiny forward-pass differences (packed vs standalone forward, ~0 .. 1e-8): absolute tolerance,
+# a relative one of a ~1e-8 number is meaningless.  CI run 247 saw 2.05e-8 on one runner CPU where the committed value is 0.0:
+# forward-pass outputs differ by ~1e-8 between runner CPUs, which is also what moved loudness / gain / ref_*.wav before.
+FORWARD_DIAGNOSTIC_KEYS = ("packedForwardMaxAbsDiff",)
+DIAGNOSTIC_ATOL = 1e-6
 
 
 def _tol(path: str) -> tuple[str, float]:
     if path.endswith("/weights"):
         return "abs", WEIGHT_ATOL
+    if path.rsplit("/", 1)[-1] in FORWARD_DIAGNOSTIC_KEYS:
+        return "abs", DIAGNOSTIC_ATOL
     if path.endswith(FORWARD_DERIVED_SUFFIXES) or path.rsplit("/", 1)[-1] in FORWARD_DERIVED_MANIFEST_KEYS:
         return "rel", META_RTOL
     return "exact", 0.0

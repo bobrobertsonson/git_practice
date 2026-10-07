@@ -338,6 +338,22 @@ def test_fixture_check_tolerates_float_noise_and_reports_real_differences(tmp_pa
         lines.clear()
         assert "a2_lite.nam" in gen.check_dirs(new, FIX, log=lines.append) and key in "\n".join(lines), key
     shutil.copy(FIX / "a2_lite.nam", new / "a2_lite.nam")
+    # manifest: forward-pass diagnostics (run 247: packedForwardMaxAbsDiff 2.05e-8 vs 0.0) absolute 1e-6; other numbers exact
+    man = json.loads((new / "manifest.json").read_text())
+    man["models"]["a2_lite"]["packedForwardMaxAbsDiff"] = 2.05e-8
+    man["models"]["a2_lite"]["referencePeak"] *= 1 + 1e-6
+    (new / "manifest.json").write_text(json.dumps(man))
+    assert gen.check_dirs(new, FIX, log=lines.append) == ["a2_full.nam"]
+    lines.clear()
+    shutil.copy(FIX / "a2_full.nam", new / "a2_full.nam")
+    assert gen.check_dirs(new, FIX, log=lines.append) == []
+    man["models"]["a2_lite"]["packedForwardMaxAbsDiff"] = 1e-3
+    man["models"]["a2_lite"]["parameters"] += 1
+    (new / "manifest.json").write_text(json.dumps(man))
+    assert gen.check_dirs(new, FIX, log=lines.append) == ["manifest.json"]
+    text = "\n".join(lines)
+    assert "packedForwardMaxAbsDiff" in text and "/parameters" in text
+    shutil.copy(FIX / "manifest.json", new / "manifest.json")
     (new / "a2_full.nam").unlink()
     lines.clear()
     assert "a2_full.nam" in gen.check_dirs(new, FIX, log=lines.append) and "only in the committed directory" in "\n".join(lines)
