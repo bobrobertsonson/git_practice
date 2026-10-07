@@ -93,3 +93,12 @@ if(SAWBLADE_WITH_SEPARATOR)
   sawblade_ort_build_rpath(sawblade_separator_tests)
   catch_discover_tests(sawblade_separator_tests TEST_PREFIX "separator: ")
 endif()
+
+# v0.6 Task B: CPU benchmark of A1 / A2 playback and the two-A2-Full rig. Prints a table; fails only if the rig is not
+# real-time (RTF < 0.5, optimised builds only). Plain executable (no Catch2): the table is the output.
+add_executable(a2_bench a2_bench.cpp)
+target_link_libraries(a2_bench PRIVATE sawblade_core sawblade_warnings
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)
+target_compile_definitions(a2_bench PRIVATE SAWBLADE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_test(NAME a2_bench COMMAND a2_bench)
+set_tests_properties(a2_bench PROPERTIES LABELS "bench" TIMEOUT 300)
