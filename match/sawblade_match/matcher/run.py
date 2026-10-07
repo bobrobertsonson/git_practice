@@ -158,11 +158,34 @@ class Log:
         print(line, flush=True)
 
 
+def _stationary_noise(x: np.ndarray, mask: np.ndarray, fs: int, frame_s: float = 0.010, within_db: float = 6.0) -> np.ndarray:
+    """Within ``mask`` (the DI's gap regions) keep the 10 ms frames whose RMS is within ``within_db`` of the 10th percentile of the
+    gap frames' RMS: the stationary noise floor. ``gap_regions`` only needs 10 ms RMS under -50 dBFS, so the tails of decaying
+    notes (ring-out) land in the mask too, and their peaks would inflate the floor the gate is set from. The mask is returned
+    unchanged when fewer than 100 ms of frames would remain."""
+    n = int(round(frame_s * fs))
+    nf = len(x) // n
+    if nf < 5:
+        return mask
+    fm = mask[: nf * n].reshape(nf, n).all(axis=1)
+    rms = np.sqrt(np.mean(x[: nf * n].reshape(nf, n) ** 2, axis=1))
+    if not fm.any():
+        return mask
+    db = 20 * np.log10(np.maximum(rms, 1e-10))
+    keep = fm & (db <= np.percentile(db[fm], 10) + within_db)
+    if int(keep.sum()) * n < 0.1 * fs:
+        return mask
+    out = np.zeros(len(x), bool)
+    out[: nf * n] = np.repeat(keep, n)
+    return out
+
+
 def gate_floor(x: np.ndarray, fs: int) -> dict:
     """The DI floor for the gate (Task H.1), recorded in result.json as ``gateFloor``.
 
     ``peakDb``: the core's ``peak_floor_db`` (92.5th percentile of the gate's own peak envelope, 0.1 ms attack / 10 ms release)
-    over the DI's gap regions: this is what the gate compares its threshold with, and what ``space.gate_preset`` /
+    over the DI's gap regions (reduced to their stationary-noise frames: those within 6 dB of the gaps' 10th-percentile 10 ms RMS, so
+    ring-out tails do not inflate it): this is what the gate compares its threshold with, and what ``space.gate_preset`` /
     ``gatesweep.cell_gate`` are relative to. ``rmsDb``: the plain RMS level of the same samples (the number the old "floor + 4 dB"
     rule used, ~10 dB below the peak floor for noise). The samples are the DI's real-silence gaps (``gap_regions``); a DI without
     any (a noise bed under the playing) falls back to its quietest 20 % of 20 ms frames, and a steady signal (frame levels within
@@ -172,6 +195,8 @@ def gate_floor(x: np.ndarray, fs: int) -> dict:
     for a, b in gap_regions(x64, fs):
         mask[a:b] = True
     source = "gaps"
+    if int(mask.sum()) >= 0.1 * fs:
+        mask = _stationary_noise(x64, mask, fs)          # decaying note tails also sit below -50 dBFS: keep the stationary floor only
     if int(mask.sum()) < 0.1 * fs:             # no real silence (a steady noise bed): the quietest 20 % of the 20 ms frames
         n = int(round(0.020 * fs))
         nf = len(x64) // n

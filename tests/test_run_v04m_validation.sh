@@ -220,6 +220,8 @@ out="$(bash "$script" "${args[@]}" --quick-only)"
 expect 'sawblade-match --di .*--ref .*/out/refs/L_blend\.wav .*--quick --topology blend --out .*/out/L_blend_quick_forced$'
 expect 'pathcheck --result .*/out/L_blend_quick_forced/result\.json .*--json .*/out/L_blend_quick_forced/pathcheck\.json$'
 expect 'dynsweep --result .*/out/L_blend_quick_forced/result\.json'
+qruns="$(grep -E '^run  ' <<<"$out" | head -n 2 | tr '\n' ' ')"
+[[ $qruns == "run  L_blend_quick run  L_blend_quick_forced " ]] || { echo "quick forced run not right after L_blend_quick: $qruns" >&2; fail=1; }
 [[ "$(grep -n -E '^open ' <<<"$out" | sed -n 2p)" == *"L_blend_quick_forced/listen"* ]] || { echo "quick forced is not the 2nd listen line" >&2; fail=1; }
 # a missing L file: ls of the Bloodbath folder and exit 1
 rm "$T/bb/19 GTR RHY L UBR AMP.wav"

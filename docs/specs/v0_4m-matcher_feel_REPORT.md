@@ -219,17 +219,31 @@ Before (first known-answer run, `--quick`): HM2 A-weighted 2.72 dB, UBR 3.45 dB;
 
 ## Task H (matcher side)
 
-- **Gate floor (H.1):** the gate is set from the core's `peak_floor_db` (92.5th percentile of the gate's own peak envelope over
-  the DI gaps; falls back to the quietest 20 % of 20 ms frames, then the whole DI). result.json `gateFloor: {rmsDb, peakDb, source}`.
+- **Gate floor (H.1):** the gate is set from the core's `peak_floor_db` (92.5th percentile of the gate's own peak envelope) over the
+  DI's gap regions, reduced to their stationary-noise frames (10 ms RMS within 6 dB of the gaps' 10th percentile: `gap_regions`
+  only needs 10 ms RMS under -50 dBFS, so decaying ring-out tails land in the mask and inflated the floor: on the synthetic gap DI
+  with true noise at -70 dBFS RMS the floor was -51.7 dBFS, now -62.72 against -62.8 for the noise alone). Without real gaps (the
+  user's -49.5 dBFS RMS bed never stays under -50 dBFS for 120 ms) it falls back to the quietest 20 % of 20 ms frames when
+  something plays over the bed, and to the whole DI for a steady signal. result.json `gateFloor: {rmsDb, peakDb, source}`.
   Default cell: open = peakFloor + 10 dB, hysteresis 6 (close = + 4); sweep grid {6, 8, 10, 12, 16, 20, 24, 28} dB re peakFloor.
   For a -49.5 dBFS RMS floor: old open -45.50 / close -51.50 dBFS, new open -32.27 / close -38.27 (peak floor -42.27); noise alone
   (white, pink) stays closed > 95 % after 0.5 s; a decaying note is not attenuated while it is > 12 dB above the floor (the
-  attenuation starts at about -3 dB re the floor). The live (expander, ratio 2) set only attenuates noise by a few dB.
+  attenuation starts about 3.1 dB above the floor on the record gate, 2.8 dB on the live gate).
+  Live set (core, ratio 4 / range -40, open = floor + 10): noise alone is attenuated by a median of about -10.8 to -11.1 dB at
+  -70, -65 and -49.5 dBFS floors (an expander, not a closed gate). Sustain loss of a note whose envelope sits 4 / 2 / 0 dB above the
+  floor: new ratio 4 / -40 gives 0.0 / 5.1 / 11.1 dB, the old ratio 2 / -24 gave 0.0 / 1.7 / 3.7 dB.
+  Core, follower: it qualifies only frames below the estimate + 20 dB and starts at -70 dBFS, so it learns a -49.5 dBFS RMS floor
+  (peak statistic about -42 dBFS) only after about 25 s (the 10 s leak, +1 dB/s). A per-device seed is parked for v0.8: a VST3/AU
+  host gives no device identity.
+  The D.1 feel known-answer case keeps its hidden gate at peak floor + 16 dB (the default is + 10).
 - **Full-DI gate sweep (H.2):** with < 100 ms of gaps in the excerpt the sweep takes up to 6 gap windows (longest, each <= 1 s,
   0.5 s pre-roll) from the full DI and the reference floor at the same windows; `gateSweep.gapSource: "excerpt" | "fullDi"`.
 - **Topology margin (H.3):** `BLEND_OCCAM_DB = 0.25` (a single beats the best blend when within 0.25 dB; single2 and the boost keep
   0.10). result.json `topology: {bestSingle, bestBlend, deltaPct, determined}` (determined = |delta| >= 10 % of the smaller
-  loss); `--topology single|blend|auto` (single = single and single2). The script adds `L_blend_quick_forced` / `L_blend_forced`.
+  loss; `BLEND_OCCAM_DB = 0.25` is the named constant); `--topology single|blend|auto` (single = single and single2). The script adds `L_blend_quick_forced` / `L_blend_forced`.
+- **Other result.json additions:** every candidate JSON (`best`, `alternatives`, `candidatesStage2`) carries `pairKey` (the candidate's
+  identity without its cab); the cab-sweep test matches a candidate to its own sweep with it. Known limitation: the full-DI gate
+  sweep indexes the reference with `ref.offset_samples` as refined at the start of the run, not the final per-render offset.
 
 ## User results
 

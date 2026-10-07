@@ -371,7 +371,7 @@ inherit mix processing by default.
   Export notes state which set was used; the plugin export panel shows "dynamics: live / record" next to the model type.
 
 ### G.2 Gate floor follower (dsp-engineer; core gate)
-- New GateParams: `thresholdMode` absolute (default, bit-identical) | floorRelative, `floorOffsetDb` (default 8).
+- New GateParams: `thresholdMode` absolute (default, bit-identical) | floorRelative, `floorOffsetDb` (default 10 (H.1); was 8).
 - floorRelative: threshold = floorEstimate + floorOffsetDb, re-evaluated per sample (hysteresis applies below it).
 - floorEstimate: RT-safe minimum statistics on the (key-HPF'd) key: 50 ms RMS frames -> running minimum over a 3 s window
   as a fixed ring of 100 ms sub-window minima (std::array, no allocation), counted in samples so it is independent of

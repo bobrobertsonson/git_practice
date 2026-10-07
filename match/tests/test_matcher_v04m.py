@@ -270,6 +270,8 @@ def test_gate_sweep_picks_a_higher_threshold_when_the_reference_gaps_are_cleaner
     assert gs["baseline"]["thresholdDb"] == pytest.approx(gate_preset(floor)["thresholdDb"])
     # the gate gets cleaner with the threshold: the output's floor falls (more negative) from +10 (default) to +20 dB at 150 ms
     by = {(r["offsetDb"], r["holdMs"], r["releaseMs"], r["rangeDb"]): r for r in gs["grid"]}
+    thr_axis = [by[(o, 40.0, 150.0, -50.0)]["floorDbOut"] for o in sorted(GATE_OFFSETS_DB)]          # grid monotonicity:
+    assert all(a > b for a, b in zip(thr_axis, thr_axis[1:])) and thr_axis[0] - thr_axis[-1] > 1.0    # a higher threshold, a cleaner gap
     assert by[(10.0, 40.0, 150.0, -50.0)] is gs["baseline"] and gs["picked"]["floorDbOut"] < gs["baseline"]["floorDbOut"] - 1.0
     assert {r["offsetDb"] for r in gs["grid"] if r["holdMs"] == 40.0 and r["releaseMs"] == 150.0 and r["rangeDb"] == -50.0} \
         == set(GATE_OFFSETS_DB)
@@ -905,7 +907,7 @@ def test_gate_sweep_uses_the_full_di_gaps_when_the_excerpt_has_none(tmp_path):
         assert skipped["skipped"] and skipped["gapSource"] == "excerpt"
         assert gs["skipped"] is None and gs["gapSource"] == "fullDi" and gs["gapWindows"] and gs["changed"]
         assert gs["picked"]["floorTerm"] < gs["baseline"]["floorTerm"]
-        assert gs["picked"]["feasible"] and gs["picked"]["offsetDb"] > 4.0
+        assert gs["picked"]["feasible"] and gs["picked"]["offsetDb"] > 10.0
         y0, _ = eng.render({**build_preset(combo, v, gate=gate_preset(floor), align=manual_align())}, di)
         y1, _ = eng.render({**build_preset(combo, v, gate=gs["gate"], align=manual_align())}, di)
     finally:

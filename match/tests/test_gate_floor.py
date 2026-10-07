@@ -8,6 +8,7 @@ from scipy import signal
 core = pytest.importorskip("sawblade_match.core", reason="sawblade_core not built")
 if getattr(core, "_core", None) is None or not hasattr(core._core, "peak_floor_db"):
     pytest.skip("sawblade_core built before Task H.1 (no peak_floor_db)", allow_module_level=True)
+from sawblade_match.matcher import known_answer as K                   # noqa: E402
 from sawblade_match.matcher.engine import Engine                      # noqa: E402
 from sawblade_match.matcher.gatesweep import DEFAULT_CELL, GATE_OFFSETS_DB, cell_gate   # noqa: E402
 from sawblade_match.matcher.run import gate_envelope_floor_db, gate_floor          # noqa: E402
@@ -88,7 +89,7 @@ def test_live_gate_attenuates_noise_alone_once_the_follower_has_learned_the_floo
     attenuated by about 11 dB (printed), not driven to the -40 dB range; the 'closed > 95 %' criterion only holds for the record gate."""
     closed, median = _live_closed_fraction(-70.0)
     print(f"live gate on -70 dBFS RMS noise after 9 s: median gain {median:.1f} dB, {100 * closed:.0f} % of the frames at the range")
-    assert median < -6.0                           # attenuated: the follower learned the floor
+    assert median <= -10.0                         # attenuated by ~11 dB: the follower learned the floor
     assert closed < 0.5                            # ... but it is an expander, not a closed gate (documented, see above)
 
 
@@ -124,3 +125,45 @@ def test_decay_tail_is_not_gated_while_the_note_is_well_above_the_floor():
     print(f"decay tail: attenuation > 1 dB starts when the note's envelope is {level:+.1f} dB re the peak floor "
           f"(floor {floor:.1f} dBFS, open {g['thresholdDb']:.1f}, close {g['thresholdDb'] - g['hysteresisDb']:.1f})")
     assert level <= 12.0
+
+
+# ---- gate_floor: which samples the floor is taken from -----------------------------------------------------------------------
+def _notes_over(noise, n_notes_period=0.3, ring=0.12, level_db=-12.0):
+    """Plucks (110 Hz, exponential decay) every 0.3 s over ``noise``: no real 120 ms silence in it (the bed is above -50 dBFS)."""
+    x = noise.astype(np.float64).copy()
+    t = np.arange(int(ring * FS)) / FS
+    for k in range(int(len(noise) / FS / n_notes_period) - 1):
+        s0 = int(k * n_notes_period * FS)
+        x[s0:s0 + len(t)] += 10 ** (level_db / 20) * np.exp(-t / 0.03) * np.sin(2 * np.pi * 110 * t)
+    return x.astype(np.float32)
+
+
+def test_gate_floor_quietest_frames_fallback_for_a_noise_bed_under_the_playing():
+    """The user's DI: noise at -49.5 dBFS RMS (10 ms RMS never stays under the -50 dBFS gap threshold for 120 ms), notes over it."""
+    noise = white(8.0, NOISE_DB, seed=7)
+    ref = gate_floor(noise, FS)["peakDb"]                                       # the noise-only peak floor, about -42.3
+    f = gate_floor(_notes_over(noise), FS)
+    assert f["source"] == "quietest 20 % of frames", f
+    assert abs(f["peakDb"] - ref) <= 2.0, (f, ref)
+
+
+def test_gate_floor_steady_signal_uses_the_whole_di_and_silence_is_clamped():
+    assert gate_floor(white(3.0, NOISE_DB), FS)["source"] == "whole DI"
+    z = np.zeros(3 * FS, np.float32)
+    f = gate_floor(z, FS)
+    floor = gate_envelope_floor_db(z, FS)
+    assert np.isfinite(floor)
+    assert floor == (f["peakDb"] if f["peakDb"] is not None else -90.0)
+    g = cell_gate(floor, DEFAULT_CELL[0])
+    assert -120.0 <= g["thresholdDb"] <= -6.0 and g["thresholdDb"] == pytest.approx(max(floor, -90.0) + 10.0, abs=0.01)
+
+
+def test_gate_floor_of_a_gap_di_ignores_the_ring_out_tails():
+    """K.gap_di (true noise -70 dBFS RMS, rests with a decaying ring-out): gap_regions admits the tails (they fall below -50 dBFS
+    10 ms RMS), but the floor must be that of the stationary noise."""
+    di = K.gap_di(8.0, seed=3, floor_db=-70.0)
+    ref = gate_floor(white(8.0, -70.0, seed=11), FS)["peakDb"]                  # noise-only peak floor, about -62.8
+    f = gate_floor(di, FS)
+    assert f["source"] == "gaps"
+    assert abs(f["peakDb"] - ref) <= 2.0, (f["peakDb"], ref)
+    print(f"gap DI: peak floor {f['peakDb']:.2f} dBFS (noise only {ref:.2f}), rms {f['rmsDb']:.2f}")
