@@ -96,7 +96,7 @@ def run_block(d: Path) -> list[str]:
     ds = _load(d / "dynsweep.json")
     if ds:
         try:
-            from .dynsweep import format_table
+            from .dynformat import format_table
             L += ["  " + ln for ln in format_table(ds).splitlines()]
         except Exception as e:                                 # pragma: no cover - reporting only
             L.append(f"  dynsweep: could not format ({e})")

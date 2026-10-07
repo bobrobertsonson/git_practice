@@ -793,10 +793,13 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     gain_db = best.extra["outputGainDb"]
     final = build_preset(best.combo, v, gate=gate_final, align=best.align, output_db=gain_db,
                          name="Sawblade match", notes=_notes(cfg, ref, best), levels=best.levels,
-                         bus_comp=best.extra.get("busComp"))
+                         bus_comp=best.extra.get("busComp"), emit=True)     # emitted: origin match, dynamicsMode live (Task G)
+    result["dynamics"] = {"scoredWith": "record", "emittedMode": "live", "origin": "match"}
     full_jobs = {"best_L": (final, cfg.di)}
     if plan.mode != "quick" or cfg.write_audio:     # quick: no full-length "before" render (the excerpt loss has it)
         full_jobs["starter_L"] = (starter_p, cfg.di)
+    if cfg.write_audio:             # listening: the live dynamics set (what a rig plays) next to render.wav (record set)
+        full_jobs["live_L"] = (final, cfg.di)
     if cfg.di_r is not None:       # always: the clip guard (peak = max of L/R) and the R offset refinement need it
         full_jobs["best_R"] = (final, cfg.di_r)
     log(f"stage3: full-length renders {list(full_jobs)}")
@@ -805,7 +808,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         name, (preset, path) = item
         x, fs = sf.read(str(path), dtype="float32")
         x = x if x.ndim == 1 else x[:, 0]
-        y, rep = eng.render(preset, x, fs)
+        y, rep = eng.render(preset, x, fs, dynamics="live" if name == "live_L" else "record")   # all scoring: record set
         return name, y, fs, rep
 
     renders = {n: (y, fs, rep) for n, y, fs, rep in eng.map(full_render, list(full_jobs.items()))}
@@ -818,7 +821,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         cut = 20 * np.log10(10 ** (CLIP_GUARD_DBFS / 20) / peak)
         gain_db += cut
         final["output"]["gainDb"] = float(gain_db)
-        for n in peaks:
+        for n in list(peaks) + (["live_L"] if "live_L" in renders else []):
             y, fs, rep = renders[n]
             renders[n] = ((y * 10 ** (cut / 20)).astype(np.float32), fs, rep)
         log(f"clip guard: full-length peak (max of L/R) {20 * np.log10(peak):.1f} dBFS -> output gain lowered by {-cut:.1f} dB")
@@ -896,7 +899,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             if s.levels is not None:
                 gdb -= emit_gain_correction_db(s.blend, s.levels)
         preset = build_preset(s.combo, v_alt, gate=gate_final, align=s.align, output_db=gdb, name=f"Sawblade match alt {i}",
-                              levels=s.levels)
+                              levels=s.levels, emit=True)
         (out / f"alt{i}.preset.resolved.json").write_text(json.dumps(preset, indent=2) + "\n")
         alts.append({**_scored_json(s), "file": f"alt{i}.preset.resolved.json"})
     result["alternatives"] = alts
@@ -1033,6 +1036,10 @@ def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None,
             gain_db, l_ref, l_raw = match_gain_db(ref_seg, sec, RATE)
             sf.write(str(d / "ref.wav"), ref_seg.astype(np.float32), RATE, subtype="FLOAT")
             sf.write(str(d / "render.wav"), (sec * 10 ** (gain_db / 20)).astype(np.float32), RATE, subtype="FLOAT")
+            live48 = to48(renders["live_L"][0], renders["live_L"][1]) if "live_L" in renders else None
+            if live48 is not None:      # the live dynamics set: same section, the SAME gain as render.wav (not re-matched)
+                live_sec = live48[a:b] * 10 ** (gain_db / 20)
+                sf.write(str(d / "render_live.wav"), live_sec.astype(np.float32), RATE, subtype="FLOAT")
             tp = {"ref": true_peak_db(ref_seg), "render": true_peak_db(sec * 10 ** (gain_db / 20))}
             info.update({"loudnessMatched": True, "section": [a / RATE, b / RATE], "lufsRef": l_ref, "lufsRenderRaw": l_raw,
                          "gainDb": gain_db, "offsetMs": 1000.0 * offset / RATE if matched else None,
@@ -1040,6 +1047,10 @@ def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None,
                          "files": {"ref": str(d / "ref.wav"), "render": str(d / "render.wav")}})
             if not matched:
                 info["refSection"] = [ra / RATE, rb / RATE]
+            if live48 is not None:
+                info["files"]["renderLive"] = str(d / "render_live.wav")
+                info["truePeakDb"]["renderLive"] = true_peak_db(live_sec)
+                info["lufsRenderLive"] = match_gain_db(ref_seg, live48[a:b], RATE)[2]
             if st48 is not None:
                 gb, _, l_bef = match_gain_db(ref_seg, st48[a:b], RATE)
                 bef = st48[a:b] * 10 ** (gb / 20)
@@ -1054,7 +1065,7 @@ def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None,
                 log("loudness matching skipped: the listening section is silent or shorter than 400 ms; gain 0 dB")
         except Exception as e:      # listening must never abort the run
             gain_db = 0.0
-            for f in ("ref.wav", "render.wav", "before.wav"):
+            for f in ("ref.wav", "render.wav", "render_live.wav", "before.wav"):
                 (d / f).unlink(missing_ok=True)
             info = {"loudnessMatched": False, "listenError": f"{type(e).__name__}: {e}"}
             log(f"warning: listening section files skipped ({info['listenError']}); full-length files at 0 dB")

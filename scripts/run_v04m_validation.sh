@@ -24,7 +24,7 @@
 # The product's case is a BLEND of two amp tracks per side, so the blend runs (L_blend_quick / L_blend / R_blend, matched
 # against $OUT/refs/<side>_blend.wav = HM2 + body) come first; the single-amp runs stay as per-path diagnostics. After the
 # runs: a per-path check of every blend run (pathcheck.json), the held-out transfer of the L blend preset on R
-# (L_blend_on_R.pathcheck.json) and a dynamics sweep of every run (dynsweep.json); all non-fatal.
+# (L_blend_on_R.pathcheck.json, same take: offset 0) and a dynamics sweep of every run (dynsweep.json); all non-fatal.
 # Everything printed is also appended to ~/sawblade-work/v04m_validation.log (each run also to <out>/<run>.log).
 #
 set -euo pipefail
@@ -335,7 +335,7 @@ done
 if [[ $R_OK -eq 1 && $QUICK_ONLY -eq 0 ]] && finished L_blend && [[ $DRY -eq 1 || -f "$OUT/refs/R_blend.wav" ]]; then
   tool_run "pathcheck L_blend preset on R (held out)" "$OUT/L_blend_on_R.pathcheck.json" "$PY" -m sawblade_match.matcher.pathcheck \
     --result "$OUT/L_blend/result.json" --di "$R_DI" --ref-a "$R_HM2" --ref-b "$R_UBR" --ref-blend "$OUT/refs/R_blend.wav" \
-    --blend-db "$BLEND_DB" --json "$OUT/L_blend_on_R.pathcheck.json"
+    --blend-db "$BLEND_DB" --offset-ms 0 --json "$OUT/L_blend_on_R.pathcheck.json"
 else
   say "(no held-out transfer: needs L_blend and the R side)"
 fi
@@ -364,7 +364,7 @@ else
   grep -H 'pre-EQ: DI tilt' "$OUT"/*.log 2>/dev/null || say "(none found in the run logs)"
 fi
 
-step "listen A/B (level-matched ref.wav vs render.wav, same 30 s)"
+step "listen A/B (level-matched, same 30 s: ref.wav vs render.wav = dynamics as matched (record set) vs render_live.wav = live dynamics)"
 for r in "${RUNS[@]}"; do
   if [[ $DRY -eq 0 ]]; then
     case " ${FAILED[*]-} " in *" $r "*) continue ;; esac

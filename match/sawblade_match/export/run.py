@@ -146,12 +146,15 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str =
     t_all = time.time()
     prog.update("plan", message="planning")
     preset, base = load_preset(preset_path)
-    plan = P.make_plan(preset, mode, allow_inexact)           # raises ExportRefused
+    plan = P.make_plan(preset, mode, allow_inexact)           # raises ExportRefused (plans on the active dynamics set)
+    preset, _ = P.flatten_dynamics(preset)                    # train / validate / note the active set (Task G); plan.dynamics says which
     notes_src = None
     notes_only: list[dict] = []
     if notes_preset:
         try:
             notes_src = load_preset(Path(notes_preset).expanduser())[0]
+            if isinstance(notes_src, dict):
+                notes_src = P.flatten_dynamics(notes_src)[0]
         except (OSError, ValueError) as e:
             raise P.ExportRefused(f"--notes-preset {notes_preset}: cannot read the preset ({e})") from e
         if not isinstance(notes_src, dict):

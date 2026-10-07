@@ -355,8 +355,14 @@ def path_blocks(combo: Combo, v: dict[str, float], path: str) -> list[dict]:
 
 
 def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align: dict, output_db: float = 0.0,
-                 name: str = "Matched tone", notes: str = "", levels=None, bus_comp: dict | None = None) -> dict:
-    """Full ``sawblade.preset`` for a combo and physical parameter values (live-compatible shared cab)."""
+                 name: str = "Matched tone", notes: str = "", levels=None, bus_comp: dict | None = None,
+                 emit: bool = False) -> dict:
+    """Full ``sawblade.preset`` for a combo and physical parameter values (live-compatible shared cab).
+
+    ``emit=True`` is for presets handed to the user (result.json, alternatives, the export input): version 4, ``origin:
+    "match"`` and ``dynamicsMode: "live"`` with no explicit ``liveDynamics`` (the core derives the live set from the record
+    gate / bus comp, which stay as fitted), and the gate threshold rounded to the plugin's 1e-4 dB grid so that loading the
+    preset never makes the live set explicit. Every internal render goes through ``Engine.render``, which forces "record"."""
     blend = combo.topology == "blend"
     pa = {"role": "saw" if blend else "body", "blocks": path_blocks(combo, v, "a"), "eq": path_eq(v, "a"),
           "levelDb": float(v.get("levelA", 0.0))}
@@ -377,6 +383,12 @@ def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align:
     }
     if bus_comp:        # v0.4M studio processing: a fast bus comp after the post EQ (release <= 150 ms stays trainable)
         p["busComp"] = {"enabled": True, **bus_comp}
+    if emit:
+        p["version"] = 4
+        p["origin"] = "match"
+        p["dynamicsMode"] = "live"
+        if isinstance(p["gate"].get("thresholdDb"), (int, float)):
+            p["gate"] = {**p["gate"], "thresholdDb": round(float(p["gate"]["thresholdDb"]), 4)}
     if blend and levels is not None:
         # phase 10.1: ``v["blend"]`` is the level-matched *linear* blend fitted after the trims; emit the same A:B ratio on
         # the constant-loudness law, with the trims as manual level match.

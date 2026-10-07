@@ -3,7 +3,8 @@
     python -m sawblade_match.matcher.dynsweep --result <run>/result.json --di <di.wav> [--json out.json]
 
 Renders the winning preset over the full DI at input offsets -12, -6, 0 and +6 dB (the DI is scaled before the chain), twice:
-dynamics as matched (the preset as stored) and bypassed (gate and bus comp both disabled): 8 renders. Per render: integrated
+dynamics as matched (the RECORD set, what the matcher scored) and bypassed (gate and bus comp both disabled), plus the LIVE
+set (``dynamicsMode: "live"``: what a rig plays; for a match preset the derived floor-following expander, bus comp off): 12 renders. Per render: integrated
 LUFS (BS.1770), the median 400 ms crest factor (``feel.crest_values``: the feel term's own active windows of the DI) and the
 inter-note floor (``feel.floor_db`` at the DI's gaps; null when the DI has too little gap). Per adjacent step the slope is
 dLUFS_out / dB_in (1.0 = the output follows the input; a gate shows a knee at the low step, a compressor flattens it). The
@@ -21,6 +22,7 @@ import numpy as np
 
 from ..tonecheck.analysis import activity_mask, detect_onsets, gap_regions
 from . import feel as FEEL
+from .dynformat import format_table, _f      # noqa: F401  (format_table is re-exported)
 from .engine import RATE, Engine, to48
 from .loudness import integrated_lufs
 from .pathcheck import PathcheckError, load_run
@@ -69,11 +71,11 @@ def dynsweep(result_path, di_path, engine: Engine | None = None, offsets=OFFSETS
     eng = engine or Engine(None, 1)
     sets: dict = {}
     try:
-        for name, p in (("matched", preset), ("bypassed", bypassed(preset))):
+        for name, p, dyn in (("matched", preset, "record"), ("bypassed", bypassed(preset), "record"), ("live", preset, "live")):
             rows = []
             for off in offsets:
                 xs = np.ascontiguousarray(x * np.float32(10 ** (off / 20)), dtype=np.float32)
-                y, _ = eng.render(p, xs, fs)
+                y, _ = eng.render(p, xs, fs, dynamics=dyn)
                 rows.append({"inputDb": float(off), **_measure(y, fs, plan)})
             sets[name] = {"rows": rows, "slopes": slopes([r["lufs"] for r in rows], offsets)}
     finally:
@@ -83,29 +85,20 @@ def dynsweep(result_path, di_path, engine: Engine | None = None, offsets=OFFSETS
     diffs = [None if a is None or b is None else a - b for a, b in zip(sm, sb)]
     ok = [abs(d) for d in diffs if d is not None]
     g, bc = preset.get("gate") or {}, preset.get("busComp") or {}
+    from ..core import resolve_dynamics
+    try:
+        lv = resolve_dynamics({**preset, "dynamicsMode": "live"})
+    except Exception:                                      # reporting only
+        lv = {"gate": {}, "busComp": {}}
+    sl = sets["live"]["slopes"]
+    ld = [abs(a - b) for a, b in zip(sl, sb) if a is not None and b is not None]
     return _finite_or_none({
         "schema": "sawblade.dynsweep", "version": 1, "result": str(result_path), "preset": str(Path(result_path).parent / pname),
         "di": str(di_path), "inputOffsetsDb": list(offsets), "gateEnabled": bool(g.get("enabled")),
-        "busCompEnabled": bool(bc.get("enabled")), **sets, "slopeDiff": diffs,
+        "busCompEnabled": bool(bc.get("enabled")), **sets,
+        "liveGateEnabled": bool(lv["gate"].get("enabled")), "liveBusCompEnabled": bool(lv["busComp"].get("enabled")),
+        "liveMaxAbsSlopeDiff": max(ld) if ld else None, "slopeDiff": diffs,
         "maxAbsSlopeDiff": max(ok) if ok else None, "randomness": "none (deterministic)"})
-
-
-def _f(v, fmt="{:.2f}") -> str:
-    return "n/a" if v is None else fmt.format(v)
-
-
-def format_table(r: dict) -> str:
-    offs = r["inputOffsetsDb"]
-    lines = [f"dynsweep: {r['result']} (gate {'on' if r['gateEnabled'] else 'off'}, bus comp {'on' if r['busCompEnabled'] else 'off'})",
-             "  input dB   | matched: LUFS  crest  floor   slope | bypassed: LUFS  crest  floor   slope"]
-    for i, o in enumerate(offs):
-        m, b = r["matched"]["rows"][i], r["bypassed"]["rows"][i]
-        sm = _f(r["matched"]["slopes"][i - 1], "{:+.2f}") if i else "    -"
-        sb = _f(r["bypassed"]["slopes"][i - 1], "{:+.2f}") if i else "    -"
-        lines.append(f"  {o:+6.1f}     | {_f(m['lufs'], '{:7.1f}')} {_f(m['crestDb'], '{:6.1f}')} {_f(m['floorDb'], '{:6.1f}')} {sm:>7}"
-                     f" | {_f(b['lufs'], '{:7.1f}')} {_f(b['crestDb'], '{:6.1f}')} {_f(b['floorDb'], '{:6.1f}')} {sb:>7}")
-    lines.append(f"  max |slope difference| matched vs bypassed: {_f(r['maxAbsSlopeDiff'], '{:.2f}')}")
-    return "\n".join(lines)
 
 
 def main(argv=None) -> int:

@@ -47,6 +47,10 @@ expect '^\+ match/\.venv/bin/python -m sawblade_match\.matcher\.dynsweep --resul
 expect 'dynsweep\.py|matcher\.dynsweep --result .*/out/R_ubr/result\.json --di .*20.*/out/R_ubr/dynsweep\.json$'
 reject 'dynsweep --result .*_no_'
 expect '^\+ match/\.venv/bin/python -m sawblade_match\.matcher\.validation_summary '
+# the listen pairs name render_live.wav; the held-out transfer passes --offset-ms 0
+expect 'listen A/B .*ref\.wav vs render\.wav .*render_live\.wav'
+expect 'L_blend_on_R\.pathcheck\.json$'
+expect '--blend-db 0\\?,0 --offset-ms 0 --json .*/out/L_blend_on_R\.pathcheck\.json$'
 # blend runs come first in the listen list
 lo="$(grep -n -E '^open ' <<<"$out" | head -n 1)"
 [[ $lo == *"L_blend/listen"* ]] || { echo "first listen line is not L_blend: $lo" >&2; fail=1; }

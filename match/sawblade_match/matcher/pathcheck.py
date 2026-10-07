@@ -17,8 +17,13 @@ The "swapped" pairing (A vs ref-b, B vs ref-a) shows a role swap; the primary pa
 ratio compares ``LUFS(A alone) - LUFS(B alone)`` of the renders with ``refRatioDb`` of the references (``refsum``).
 
 Trims: the chain measures the level-match trims only while both paths are enabled, so each single-path render gets the full
-preset's effective trim folded into that path's ``levelDb`` (and level matching off): a path alone is then exactly its own
-contribution to the blend, and the sum of the two single renders equals the full render (linear chain, no bus comp).
+preset's effective trim folded into that path's ``levelDb`` (and level matching off), which keeps the A/B level ratio faithful.
+The two solo renders sum to the full render only under the linear blend law with no bus comp (and a fixed alignment). Under
+``constantLoudness`` the solo renders lack the common make-up gain of the full render (a level offset only; the ratio and the
+LTAS errors do not depend on it). A bus comp acts on the sum, so with one enabled the solo renders are not the paths' own
+contributions (the report flags it: ``ratio.busCompEnabled``). ``align.mode: auto`` is not resolved for single renders (the
+auto-align probe needs both paths); a stored / manual delay and polarity are applied as stored, so check an auto-aligned
+preset's solo renders only for LTAS and ratio, never for phase. All renders run the RECORD dynamics set (``Engine.render``).
 
 DI offset: the run's stored offset (``offsetRefinement.final.L``, else the starter refinement, else ``offset_search``) when
 ``--di`` is the DI of that run; otherwise (e.g. the held-out transfer on another DI) the matcher's own search
@@ -211,16 +216,16 @@ def pathcheck(result_path: str | Path, di_path: str | Path, ref_a: str | Path, r
     y48 = {k: to48(v, fs) for k, v in renders.items()}
 
     # DI offset
+    same_di = False
+    try:
+        same_di = Path(res.get("di", "")).resolve() == Path(di_path).resolve()
+    except Exception:
+        pass
     ref_for_off = refs.get("blend") or refs["a"]
     if offset_ms is not None:
         off, src = int(round(offset_ms * RATE / 1000.0)), "--offset-ms"
     else:
-        same = False
-        try:
-            same = Path(res.get("di", "")).resolve() == Path(di_path).resolve()
-        except Exception:
-            pass
-        so = stored_offset(res) if same else None
+        so = stored_offset(res) if same_di else None
         off, src = so if so is not None else search_offset(di48, y48["full"], ref_for_off.matched_sig)
 
     def score(name: str, rname: str) -> dict:
@@ -232,12 +237,16 @@ def pathcheck(result_path: str | Path, di_path: str | Path, ref_a: str | Path, r
             d["feelError"] = str(e)
         return d
 
+    run_after = ((res.get("after") or [{}])[0]).get("aWeightedErrorDb")
     out: dict = {"schema": "sawblade.pathcheck", "version": 1, "result": str(result_path), "preset": str(result_path.parent / pname),
                  "di": str(di_path), "diRate": fs, "blendDb": list(blend_db),
                  "refs": {"a": str(ref_a), "b": str(ref_b), "blend": None if ref_blend is None else str(ref_blend)},
                  "offset": {"samples48": off, "ms": 1000.0 * off / RATE, "source": src},
-                 "runAfterDb": ((res.get("after") or [{}])[0]).get("aWeightedErrorDb"),
-                 "levelMatchTrimsDb": trims, "singlePath": bool(single), "randomness": "none (deterministic)"}
+                 "diIsRunDi": bool(same_di),
+                 "levelMatchTrimsDb": trims, "singlePath": bool(single), "busCompEnabled": bool((preset.get("busComp") or {}).get("enabled")),
+                 "randomness": "none (deterministic)"}
+    if same_di:                        # the run's number belongs to the run's DI only
+        out["runAfterDb"] = run_after
     if single:
         out["path"] = live
         rname = "blend" if "blend" in refs else live
@@ -261,7 +270,7 @@ def pathcheck(result_path: str | Path, di_path: str | Path, ref_a: str | Path, r
     chosen = ca - cb if np.isfinite(ca) and np.isfinite(cb) else None
     out["ratio"] = {"chosenDb": chosen, "refDb": ref_ratio,
                     "diffDb": None if chosen is None or ref_ratio is None else chosen - ref_ratio,
-                    "blendDb": list(blend_db), "chosenDefinition": "LUFS(A alone) - LUFS(B alone) on the renders",
+                    "blendDb": list(blend_db), "busCompEnabled": out["busCompEnabled"], "chosenDefinition": "LUFS(A alone) - LUFS(B alone) on the renders",
                     "refDefinition": "LUFS(ref-a * gA) - LUFS(ref-b * gB)"}
     return _finite_or_none(out)
 
@@ -280,8 +289,9 @@ def _feel_line(d: dict) -> str:
 
 
 def format_report(r: dict) -> str:
-    lines = [f"pathcheck: {r['result']}", f"  DI offset {r['offset']['ms']:+.2f} ms ({r['offset']['source']}); "
-             f"run's own after[0] A-weighted error {_f(r['runAfterDb'])} dB"]
+    lines = [f"pathcheck: {r['result']}", f"  DI offset {r['offset']['ms']:+.2f} ms ({r['offset']['source']})"
+             + (f"; run's own after[0] A-weighted error {_f(r.get('runAfterDb'))} dB" if r.get("diIsRunDi")
+                else "; (a different DI than the run's: no run number to compare)")]
 
     def row(label, d):
         lines.append(f"  {label:<14} vs ref-{d['ref']:<5} A-weighted {_f(d['aWeightedErrorDb'])} dB | LTAS loss "
@@ -299,6 +309,9 @@ def format_report(r: dict) -> str:
                  f"(primary: {_f(r['a']['aWeightedErrorDb'])} / {_f(r['b']['aWeightedErrorDb'])})")
     lines.append(f"  blend ratio A - B: chosen {_f(q['chosenDb'])} dB, reference {_f(q['refDb'])} dB, "
                  f"difference {_f(q['diffDb'], '{:+.2f}')} dB (faders {q['blendDb'][0]:+g} / {q['blendDb'][1]:+g} dB)")
+    if q.get("busCompEnabled"):
+        lines.append("  caveat: the preset has an enabled bus comp, which acts on the sum; the solo renders are not the "
+                     "paths' own contributions to the blend, so the chosen ratio is only indicative")
     return "\n".join(lines)
 
 

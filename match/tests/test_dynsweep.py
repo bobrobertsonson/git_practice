@@ -61,3 +61,30 @@ def test_cli_writes_json_and_unreadable_exits_2(tmp_path):
     assert DS.main(["--result", str(result), "--di", str(di), "--json", str(out)]) == 0
     assert json.loads(out.read_text())["schema"] == "sawblade.dynsweep"
     assert DS.main(["--result", str(tmp_path / "x.json"), "--di", str(di)]) == 2
+
+
+def test_live_set_is_swept_third_and_printed_after_matched_vs_bypassed(tmp_path):
+    def match_with_comp(p):
+        mk_gate(-60.0)(p)
+        p["busComp"] = {"enabled": True, "thresholdDb": -40.0, "ratio": 4.0, "kneeDb": 6.0, "attackMs": 10.0,
+                        "releaseMs": 100.0, "makeupDb": 0.0}
+        p["origin"], p["dynamicsMode"], p["version"] = "match", "live", 4     # core derives the live set: bus comp off
+    r, *_ = sweep(tmp_path, match_with_comp)
+    assert len(r["live"]["rows"]) == 4 and len(r["live"]["slopes"]) == 3
+    assert r["busCompEnabled"] is True and r["liveBusCompEnabled"] is False
+    sm, sb, sl = r["matched"]["slopes"], r["bypassed"]["slopes"], r["live"]["slopes"]
+    assert sum(sm) < sum(sb) - 0.5                       # the record comp flattens the matched slope ...
+    assert sum(sl) > sum(sm) + 0.5                       # ... the live set (comp off) does not
+    assert r["liveMaxAbsSlopeDiff"] is not None
+    txt = DS.format_table(r)
+    assert txt.index("bypassed") < txt.index("live set") and "max |slope difference| live vs bypassed" in txt
+
+
+def test_table_formatter_has_no_core_dependency():
+    import ast
+    import inspect
+    from sawblade_match.matcher import dynformat
+    tree = ast.parse(inspect.getsource(dynformat))
+    mods = [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)] + \
+           [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
+    assert not any("core" in m or "engine" in m or "dynsweep" in m for m in mods)

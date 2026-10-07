@@ -66,10 +66,32 @@ class Plan:
     inexact: list[dict] = field(default_factory=list)    # introduced error sources (only with --allow-inexact)
     warnings: list[str] = field(default_factory=list)
     exact: bool = True
+    dynamics: str | None = None   # "live" | "record": the dynamics set the export follows; None when the preset has no dynamicsMode
 
     def to_json(self) -> dict:
-        return {"mode": self.mode, "allowInexact": self.allow_inexact, "exact": self.exact,
-                "bypassed": self.bypassed, "inexact": self.inexact, "warnings": self.warnings}
+        d = {"mode": self.mode, "allowInexact": self.allow_inexact, "exact": self.exact,
+             "bypassed": self.bypassed, "inexact": self.inexact, "warnings": self.warnings}
+        if self.dynamics is not None:          # absent key: the JSON is exactly what it was before Task G
+            d["dynamics"] = self.dynamics
+        return d
+
+
+def flatten_dynamics(preset: dict) -> tuple[dict, str | None]:
+    """(preset to plan / train / validate, label). A preset with a ``dynamicsMode`` key follows its ACTIVE dynamics set (Task
+    G): the core resolver (``sawblade_match.core.resolve_dynamics``, the one the render path and the plugin use) gives the gate
+    and bus comp of the set ``dynamicsMode`` selects, which replace the stored ones; ``liveDynamics`` is dropped and the mode
+    becomes "record" so the engine runs exactly those objects as the one set (the training chain bypasses the gate, the bus
+    comp follows the usual export rules). The label is "live" / "record" for the notes. A preset without the key is returned
+    unchanged with label None (old files and the parity fixtures stay byte-identical). Call once on a raw preset."""
+    if "dynamicsMode" not in preset:
+        return preset, None
+    from ..core import resolve_dynamics
+    r = resolve_dynamics(preset)
+    p = copy.deepcopy(preset)
+    p["gate"], p["busComp"] = r["gate"], r["busComp"]
+    p.pop("liveDynamics", None)
+    p["dynamicsMode"] = "record"
+    return p, "live" if r["mode"] == "live" else "record"
 
 
 def _blocks(preset: dict):
@@ -99,7 +121,8 @@ def make_plan(preset: dict, mode: str, allow_inexact: bool = False) -> Plan:
     if mode not in MODES:
         raise ExportRefused(f"unknown mode {mode!r} (expected one of {', '.join(MODES)})")
     reasons: list[str] = []
-    plan = Plan(mode=mode, allow_inexact=allow_inexact)
+    preset, dyn = flatten_dynamics(preset)         # the active dynamics set (no-op without a dynamicsMode key)
+    plan = Plan(mode=mode, allow_inexact=allow_inexact, dynamics=dyn)
 
     # non-trainable blocks
     for key, path, blk in _blocks(preset):

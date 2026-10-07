@@ -169,3 +169,26 @@ def test_metrics_equal_the_runs_own_after_numbers(tmp_path):
     assert r["full"]["aWeightedErrorDb"] == pytest.approx(want, abs=6e-4)
     assert r["runAfterDb"] == want and r["offset"]["source"] == "run final offset"
     assert r["full"]["feel"] is not None and r["full"]["feel"]["mode"] == "paired"
+
+
+def test_run_number_only_for_the_runs_own_di_and_bus_comp_caveat(tmp_path):
+    def comp(p):
+        p["busComp"] = {"enabled": True, "thresholdDb": -40.0, "ratio": 4.0, "kneeDb": 6.0, "attackMs": 10.0,
+                        "releaseMs": 100.0, "makeupDb": 0.0}
+    result, di, preset = make_run(tmp_path, mutate=comp)
+    x, _ = sf.read(str(di), dtype="float32")
+    ref_a, ref_b = tmp_path / "a.wav", tmp_path / "b.wav"
+    render_wav(ref_a, PC.single_preset(preset, "a", {}), x)
+    render_wav(ref_b, PC.single_preset(preset, "b", {}), x)
+    res = json.loads(result.read_text())
+    res["after"] = [{"aWeightedErrorDb": 1.5}]
+    result.write_text(json.dumps(res))
+    same = PC.pathcheck(result, di, ref_a, ref_b)
+    assert same["diIsRunDi"] is True and same["runAfterDb"] == 1.5
+    assert same["busCompEnabled"] is True and same["ratio"]["busCompEnabled"] is True
+    assert "caveat" in PC.format_report(same) and "bus comp" in PC.format_report(same)
+    other = tmp_path / "other_di.wav"
+    sf.write(str(other), x, FS, subtype="FLOAT")
+    r2 = PC.pathcheck(result, other, ref_a, ref_b, offset_ms=0.0)
+    assert r2["diIsRunDi"] is False and "runAfterDb" not in r2 and r2["offset"]["source"] == "--offset-ms"
+    assert "no run number" in PC.format_report(r2)

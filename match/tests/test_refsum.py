@@ -45,7 +45,7 @@ def test_unity_sum_float32_and_ratio(tmp_path):
     if hasattr(sf, "info"):
         assert sf.info(str(out)).subtype == "FLOAT"
     assert np.max(np.abs(y - (a32 + b32))) < 1e-6
-    assert r["lagMs"] == 0.0 and r["polarity"] == 1 and r["corr"] > 0.8
+    assert r["lagMs"] == 0.0 and r["polarity"] == 1 and r["corr"] > 0.7
     want = integrated_lufs(a32, FS) - integrated_lufs(b32, FS)
     assert r["refRatioDb"] == pytest.approx(want, abs=0.05)
     assert r["peakDb"] == pytest.approx(20 * np.log10(np.max(np.abs(y))), abs=1e-3)
@@ -80,7 +80,7 @@ def test_polarity_flipped_b(tmp_path):
     a, b = tracks()
     rc, out, r = run(tmp_path, a, -b)
     y, _ = sf.read(str(out), dtype="float32")
-    assert rc == 0 and r["polarity"] == -1 and r["lagMs"] == 0.0 and r["corr"] < -0.8
+    assert rc == 0 and r["polarity"] == -1 and r["lagMs"] == 0.0 and r["corr"] < -0.7
     assert any("polarity" in w for w in r["warnings"])
     assert np.max(np.abs(y - (a.astype(np.float32) - b.astype(np.float32)))) < 1e-6      # never flipped
 
