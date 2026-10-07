@@ -109,3 +109,11 @@ target_link_libraries(a2_bench PRIVATE sawblade_core sawblade_warnings
 target_compile_definitions(a2_bench PRIVATE SAWBLADE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 add_test(NAME a2_bench COMMAND a2_bench)
 set_tests_properties(a2_bench PROPERTIES LABELS "bench" TIMEOUT 300 RUN_SERIAL TRUE)
+
+# v0.6 decision 18: every A2/A1 fixture loads and plays in a stock NAM core (nam_load_check links only nam_core).
+add_test(NAME nam_load_check_fixtures
+  COMMAND nam_load_check
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a2_full.nam
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a2_lite.nam
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a2_container.nam
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a1_standard.nam)

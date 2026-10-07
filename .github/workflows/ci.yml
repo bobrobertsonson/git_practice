@@ -353,12 +353,13 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DSAWBLADE_BUILD_PYTHON=ON -DSAWBLADE_BUILD_TESTS=OFF \
+            -DSAWBLADE_BUILD_NAM_LOAD_CHECK=ON \
             -DPython_EXECUTABLE=$PWD/match/.venv/bin/python \
             -DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel   # includes nam_load_check (links only NeuralAmpModelerCore)
 
       - name: A2 fixtures are reproducible
         run: match/.venv/bin/python tests/fixtures/a2/generate.py --check
@@ -367,6 +368,7 @@ jobs:
         env:
           SAWBLADE_CORE_DIR: ${{ github.workspace }}/build/python
           SAWBLADE_TONERENDER: ${{ github.workspace }}/build/cli/tonerender
+          SAWBLADE_NAM_LOAD_CHECK: ${{ github.workspace }}/build/nam_load_check
           SAWBLADE_TEST_TRAIN: "1"          # real 1-2 epoch trainings (tiny budget): A1 smoke + resume, A2 end to end
         run: match/.venv/bin/pytest match/tests/test_export*.py match/tests/test_a2_*.py match/tests/test_calibrate_device_null.py -rs
 
