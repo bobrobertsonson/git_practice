@@ -24,7 +24,9 @@ HP_GRID = tuple(float(f) for f in np.geomspace(60.0, 140.0, 8)[1:])      # post.
 
 
 LP_FREQ_FACTORS = (0.8, 0.9, 1.0, 1.12, 1.25)      # post.lp tried around the CMA-ES value, per slope
-MIN_FILTER_GAIN = 0.005                             # a post-filter change must lower the loss by this much to count (and trigger a polish)
+MIN_FILTER_GAIN = 1e-9                              # a post-filter change must lower the loss by this much to count (and trigger a polish).
+# Measured (D.1 review): 0.005 here blocks the filters that only pay off after the EQ re-polish (seed 1: 0.22 -> 0.57 dB A-weighted),
+# while the polish costs ~4 renders per candidate (fixture quick run: 649 vs 645 renders, 33.8 vs 33.2 s), so the gate stays tiny.
 SLOPE_12 = 0.0                                      # slope parameter value of the 12 dB/oct alternative (< 0.5)
 
 
