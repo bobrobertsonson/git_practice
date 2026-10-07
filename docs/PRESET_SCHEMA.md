@@ -180,7 +180,7 @@ Block types:
 
 | `type` | Purpose | Type-specific fields | NAM-trainable | Latency |
 |---|---|---|---|---|
-| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below | yes | the model's |
+| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below | yes | 0 (`NamBlock` reports 0 for every model; NAM models are causal and the trainer aligns the capture, so no delay is reported; the model's receptive field is prewarm cost, not latency) |
 | `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` | yes | 0 |
 | `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology), the CHAINSAW circuit | `modelVersion` (1, 2 or 3), `params`; see PedalHm below | yes | 50 samples (at any rate) |
 | `pedal.muff` | Modeled "big fuzz" (Big-Muff-family topology), the BIG FUZZ circuit | `modelVersion` (1), `params`; see PedalMuff below | yes | 50 samples (at any rate) |
@@ -210,6 +210,15 @@ carry no TONE3000 license or creator. UI names are generic descriptors (no trade
   "model": Capture
 }
 ```
+**A2 (and A1) models.** A `.nam` file does not declare "A2". An A2 model is either a standalone 23-layer `WaveNet` or a
+`SlimmableContainer` holding several of them; Sawblade's names are **A2 Full** (the 8-channel network) and **A2 Lite** (the
+3-channel network). All of A1, A2 Full, A2 Lite and the container load through the same `nam` block with the same fields
+and the same latency (0). A container plays its **largest (Full) submodel**: there is no size selector this phase, so
+use a standalone Lite file for A2 Lite. The core's A2 fast path (`NAM_ENABLE_A2_FAST`) is taken automatically by standalone
+files of exactly the A2 shape (8 or 3 channels); other shapes still play, just slower. The receptive field (prewarm
+at `prepare()` / `reset()`) is 6347 samples for A2 and 4093 for A1 standard. Tested against the trainer's own forward pass in
+`tests/test_a2_playback.cpp`; measured cost in `tests/a2_bench.cpp`.
+
 `makeupDb` is written by the plugin when the capture in a slot is replaced (capture browser: preview and USE), so that the
 path's loudness on the reference DI stays unchanged (see Level matching). It is kept apart from `outputGainDb`, which is the
 user's knob. It is part of the preset's sound: the chain, `tonerender`, the matcher and the NAM export all apply it.
