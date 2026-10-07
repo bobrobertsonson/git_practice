@@ -20,6 +20,9 @@ from sawblade_match.matcher.space import (BUTTER4_Q, Combo, POST_HP_RANGE, POST_
 core = pytest.importorskip("sawblade_match.core", reason="sawblade_core not built")
 from sawblade_match.matcher.cli import build_parser, parse_tone_ids      # noqa: E402
 from sawblade_match.matcher.engine import Engine, to48                   # noqa: E402
+from sawblade_match.matcher import preeq as PE                       # noqa: E402
+from sawblade_match.matcher import studio as ST                       # noqa: E402
+from sawblade_match.matcher.irblend import ir_alignment, load_ir48        # noqa: E402
 from sawblade_match.matcher.gatesweep import (GATE_OFFSETS_DB, cell_gate, gate_sweep,    # noqa: E402
                                                reference_floor_db)
 from sawblade_match.matcher.reference import build_target, load_reference, make_excerpt   # noqa: E402
@@ -43,12 +46,12 @@ def _write_di(tmp: Path, x: np.ndarray, name="di.wav") -> Path:
     return p
 
 
-def _known(tmp: Path, pool: Pool, combo: Combo, v: dict, gate=None, di=None):
+def _known(tmp: Path, pool: Pool, combo: Combo, v: dict, gate=None, di=None, bus_comp=None):
     """Hidden preset -> matched reference of the DI (offset 0). Returns (di path, reference)."""
     x, fs = _loadwav(FIX / "di_riff.wav") if di is None else (di, FS)
     dip = _write_di(tmp, x)
     gate = gate or gate_preset(gate_envelope_floor_db(to48(x, fs), FS))
-    y, _ = core.render(build_preset(combo, v, gate=gate, align=manual_align()), x, float(fs))
+    y, _ = core.render(build_preset(combo, v, gate=gate, align=manual_align(), bus_comp=bus_comp), x, float(fs))
     refwav = tmp / "hidden.wav"
     sf.write(str(refwav), y, fs, subtype="FLOAT")
     return dip, load_reference(refwav, channel="mid", matched="mono", offset_ms=0.0)
@@ -74,7 +77,8 @@ def test_post_filters_are_neutral_by_default_and_not_in_the_regulariser():
             assert not sp.params[sp.idx[n]].eq_gain
         # post.hp and the slopes are discrete: not CMA-ES dimensions in either group
         assert set(sp.indices("linear")) | set(sp.indices("gain")) == set(range(len(sp))) - set(sp.indices("discrete"))
-        assert {sp.names[i] for i in sp.indices("discrete")} == {"post.hp", "post.hp_slope", "post.lp_slope"}
+        assert {sp.names[i] for i in sp.indices("discrete") if not sp.names[i].startswith("pre.")} \
+            == {"post.hp", "post.hp_slope", "post.lp_slope"}
     assert "post.hp" not in Space((1, None), filters=False).idx
     assert "post.hp" not in post_eq(Space((1, None), filters=False).default())
 
@@ -118,13 +122,13 @@ def test_cli_flags_and_ablate_parsing():
                                    "--trace-tones", "57492,79751,57492"])
     assert parse_ablate(a.ablate) == ("feel", "boost", "irblend") and parse_tone_ids(a.trace_tones) == (57492, 79751)
     assert parse_ablate("") == () and parse_ablate(["studio"]) == ("studio",)
-    assert set(ABLATIONS) == {"feel", "boost", "filters", "irsweep", "irblend", "studio"}
+    assert set(ABLATIONS) == {"feel", "boost", "filters", "irsweep", "irblend", "studio", "preeq"}
     with pytest.raises(ValueError, match="unknown suspect"):
         parse_ablate("feel,bogus")
     with pytest.raises(ValueError, match="tone id"):
         parse_tone_ids("12,abc")
     helptext = " ".join(build_parser().format_help().split())
-    assert "no-ops until" in helptext and "--trace-tones" in helptext
+    assert "irblend = no two-IR blend" in helptext and "--trace-tones" in helptext
 
 
 def test_pool_catalog_records_what_the_manifest_says(tmp_path):
@@ -464,7 +468,8 @@ def test_ablate_switches_the_suspects_off_and_echoes_them(tmp_path):
     names = ("feel", "boost", "filters", "irsweep", "irblend", "studio")
     res = run_match(Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=2, excerpt_s=2.0, threads=2, plan=plan,
                            write_audio=False, refine_offsets=False, ablate=names), Log())
-    assert res["ablate"] == list(names) and "no-ops" in res["ablateNote"]
+    assert res["ablate"] == list(names)
+    assert res["irBlend"] == {"ablated": True, "tried": 0, "won": False}
     assert (res["plan"]["boost"], res["plan"]["filters"], res["plan"]["cab_sweep"]) == (False, False, False)
     tb = res["tightBoost"]
     assert tb["ablated"] is True and tb["tried"] == 0 and tb["won"] is False and tb["refined"] == 0
@@ -481,6 +486,236 @@ def test_ablate_switches_the_suspects_off_and_echoes_them(tmp_path):
         run_match(Config(di=di, ref=ref, pool=pool, out=tmp_path / "out2", ablate=("nope",)), Log())
 
 
+# ---- two-IR blend (B2.1) ------------------------------------------------------------------------------------------------------
+def test_ir_alignment_sign_conventions():
+    rng = np.random.default_rng(4)
+    ha = rng.standard_normal(400) * np.exp(-np.arange(400) / 80.0)
+    late = np.zeros(400)
+    late[7:] = -ha[:-7]                                    # B arrives 7 samples after A, opposite polarity
+    assert ir_alignment(ha, late) == (-7, True, 7)         # the core delays B for positive offsets: it needs -7
+    early = np.zeros(400)
+    early[:-5] = ha[5:]                                    # B arrives 5 samples before A
+    assert ir_alignment(ha, early) == (5, False, -5)
+    assert ir_alignment(ha, ha)[:2] == (0, False)
+
+
+def _irmix_combo(pool, offset, invert):
+    return Combo((), pool.amps[2], None, None, pool.cabs[0]).with_pair(pool.cabs[0], pool.cabs[1], offset, invert)
+
+
+def test_irmix_combo_emulation_equals_full_render_and_round_trips():
+    pool = fixture_pool()
+    ha, hb = load_ir48(pool.cabs[0]), load_ir48(pool.cabs[1])
+    off, inv, _ = ir_alignment(ha, hb)
+    combo = _irmix_combo(pool, off, inv)
+    assert combo.cab_b is not None and "irMix" in combo.describe() and combo.key()[-1].startswith("4/7+4/8@")
+    sp = Space.for_combo(combo)
+    assert sp.params[sp.idx["cab.mix"]].group == "discrete" and (sp.params[sp.idx["cab.mix"]].lo, sp.params[sp.idx["cab.mix"]].hi) == (0.2, 0.8)
+    v = sp.default()
+    v["cab.mix"] = 0.35
+    gate = gate_preset(-60.0)
+    preset = build_preset(combo, v, gate=gate, align=manual_align())
+    assert preset["cab"]["mode"] == "irMix" and preset["cab"]["mix"] == 0.35
+    assert preset["cab"].get("offsetSamplesB", 0) == off and preset["cab"].get("invertB", False) == inv
+    x, fs = _loadwav(FIX / "di_riff.wav")
+    x = to48(x, fs)[:FS * 2]
+    eng = Engine(gate, 2)
+    try:
+        ca = eng.core(combo, v, "a", x)
+        em = eng.emulate(combo, v, ca, None, manual_align())
+        full, rep = eng.render(preset, x)
+        assert rep["cabMode"] == "irMix" and rep["liveCompatible"] is True
+        assert np.max(np.abs(full - em)) < 1e-5 * max(1.0, np.max(np.abs(full)))
+        single = eng.emulate(combo.with_cab(pool.cabs[0]), v, ca, None, manual_align())
+        assert not np.allclose(single, em)
+    finally:
+        eng.close()
+    assert json.loads(json.dumps(preset)) == preset
+
+
+def test_two_ir_blend_wins_on_a_hidden_irmix_chain_and_ablates(tmp_path):
+    pool = fixture_pool()
+    ha, hb = load_ir48(pool.cabs[0]), load_ir48(pool.cabs[1])
+    off, inv, _ = ir_alignment(ha, hb)
+    hidden_combo = Combo((pool.pedals[0],), pool.amps[2], None, None, pool.cabs[0]).with_pair(pool.cabs[0], pool.cabs[1], off, inv)
+    v = Space.for_combo(hidden_combo).default()
+    v["cab.mix"] = 0.4
+    di, ref = _known(tmp_path, pool, hidden_combo, v)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=10, gens_gain=3, gens_final=8,
+                  pop_linear=10, pop_gain=4, n_rescore_single=6, n_cab_single=3)
+    kw = dict(di=di, ref=ref, pool=pool, seed=4, excerpt_s=2.0, threads=2, plan=plan, write_audio=False, refine_offsets=False)
+    res = run_match(Config(out=tmp_path / "on", **kw), Log())
+    ib = res["irBlend"]
+    assert ib["ablated"] is False and ib["tried"] == 1 and ib["won"] is True and ib["gainVsSingle"] >= 0.05
+    assert {ib["pair"]["irA"], ib["pair"]["irB"]} == {"4/7", "4/8"} and 0.2 <= ib["mix"] <= 0.8
+    assert "_won" not in ib and res["best"]["irMix"] is not None
+    best = json.loads((tmp_path / "on" / "best.preset.resolved.json").read_text())
+    assert best["cab"]["mode"] == "irMix" and best["cab"]["mix"] == pytest.approx(ib["mix"])
+    assert best["cab"].get("offsetSamplesB", 0) == ib["offset"] and best["cab"].get("invertB", False) == ib["invert"]
+    assert core.render(best, np.zeros(2048, np.float32), 48000.0)[1]["liveCompatible"] is True
+    off_res = run_match(Config(out=tmp_path / "off", ablate=("irblend",), **kw), Log())
+    assert off_res["irBlend"]["ablated"] is True and off_res["best"]["irMix"] is None
+    assert off_res["best"]["loss"] > res["best"]["loss"]
+
+
+# ---- studio processing (B2.3) ---------------------------------------------------------------------------------------------------
+def test_polynomial_shape_detector_separates_a_smooth_curve_from_ripple():
+    from sawblade_match.matcher import loss as Lm
+    x = np.log10(np.array(Lm.BAND_CENTRES, float))
+    smooth = 2.5 * (x - x.mean()) ** 2 - 1.0 * (x - x.mean())
+    ripple = 2.0 * np.where(np.arange(len(x)) % 2 == 0, 1.0, -1.0)
+    assert ST._poly_explained(smooth - smooth.mean()) > 0.95 and ST._poly_explained(ripple) < ST.POLY_EXPLAINED
+
+
+def _studio_run(tmp_path, comp, ablate=(), post=None):
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool, "single")
+    v = {**v, **(post or {})}
+    di, ref = _known(tmp_path, pool, combo, v, bus_comp=comp)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=10, gens_gain=3, gens_final=8,
+                  pop_linear=10, pop_gain=4, n_rescore_single=6, n_cab_single=3)
+    return run_match(Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=2, excerpt_s=3.5, threads=2, plan=plan,
+                            write_audio=False, refine_offsets=False, ablate=ablate), Log())
+
+
+def test_a_fast_bus_comp_in_the_reference_fires_the_studio_detector_and_is_reproduced(tmp_path):
+    comp = {"thresholdDb": -30.0, "ratio": 4.0, "kneeDb": 6.0, "attackMs": 1.0, "releaseMs": 60.0, "makeupDb": 0.0}
+    res = _studio_run(tmp_path, comp)
+    st = res["studio"]
+    assert st["compressed"] is True and st["ablated"] is False
+    assert st["evidence"]["crestDropDb"] >= ST.CREST_DROP_DB and "lraCandidateLu" in st["evidence"]
+    assert st["busCompUsed"] is True and st["gainVsPlain"] >= ST.MIN_GAIN and "_won" not in st
+    c = st["busComp"]
+    assert c["releaseMs"] <= 150.0 and 1.5 <= c["ratio"] <= 4.0 and -30.0 <= c["thresholdDb"] <= -6.0 and c["kneeDb"] == 6.0
+    best = json.loads((tmp_path / "out" / "best.preset.resolved.json").read_text())
+    assert best["busComp"]["enabled"] is True and best["busComp"]["releaseMs"] == c["releaseMs"]
+    assert "bus comp added by the matcher (studio processing); dropped from no-cab exports" in best["notes"]
+    core.render(best, np.zeros(2048, np.float32), 48000.0)                      # strict parse, trainable release
+    # --ablate studio: still detected and reported, but nothing is added
+    (tmp_path / "abl").mkdir()
+    res2 = _studio_run(tmp_path / "abl", comp, ablate=("studio",))
+    assert res2["studio"]["compressed"] is True and res2["studio"]["ablated"] is True and res2["studio"]["busCompUsed"] is False
+    assert res2["best"]["loss"] > res["best"]["loss"]
+
+
+def test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept(tmp_path):
+    """Reference = the chain with post EQ gains of -8.5 / +8.5 dB (beyond the +-6 dB range). The candidate is the same chain
+    with a flat post EQ (an unfitted stage-2 result): both eqd routes fire, and the widened post-EQ stage fits it."""
+    def hid(sp):
+        v = sp.default()
+        v.update({"post.g0": -8.5, "post.g2": 8.5})
+        return v
+    eng, cand, sp, ex, tgt = _stage1_candidate(tmp_path, hid)
+    try:
+        v = dict(sp.default())
+        core_a = eng.core(cand.combo, v, "a", ex.x)
+        y = ex.trim(eng.emulate(cand.combo, v, core_a, None, manual_align()))
+        det = ST.detect(True, tgt, tgt, y, v, None)                                  # route 2: the LTAS residual's shape
+        assert det["eqd"] is True and det["evidence"]["residualRmsDb"] >= ST.RESIDUAL_RMS_DB
+        assert det["evidence"]["residualPolyExplained"] >= ST.POLY_EXPLAINED and det["compressed"] is False
+        assert ST.detect(True, tgt, tgt, y, {**v, "post.g0": -5.8}, None)["evidence"]["postGainAtRange"] is True    # route 1
+        assert ST.detect(False, tgt, tgt, y, v, None)["evidence"]["skipped"]          # not judged on a mix reference
+        cand.extra.update(params=v, info={})
+        rec = ST.studio_stage(eng, cand, sp, ex, tgt, {"compressed": False, "eqd": True}, seed=3, gens=12, pop=12)
+    finally:
+        eng.close()
+    assert rec["widenedPostEq"] is True and rec["gainVsPlain"] >= ST.MIN_GAIN and rec["busCompUsed"] is False
+    assert [x["step"] for x in rec["stage"]] == ["post EQ +-9 dB"] and rec["stage"][0]["kept"] is True
+    v2 = rec["_won"][0]
+    assert max(abs(v2[f"post.g{i}"]) for i in range(3)) > 6.0                         # a gain outside the old range
+
+
+def test_the_plain_chain_does_not_fire_the_studio_detector(tmp_path):
+    res = _studio_run(tmp_path, None)
+    st = res["studio"]
+    assert st["compressed"] is False and st["eqd"] is False and st["busCompUsed"] is False and "stage" not in st
+    best = json.loads((tmp_path / "out" / "best.preset.resolved.json").read_text())
+    assert not best.get("busComp", {}).get("enabled")
+
+
+# ---- pre-EQ (B4) ----------------------------------------------------------------------------------------------------------------
+def _stage1_candidate(tmp_path, v_hidden):
+    pool = fixture_pool()
+    combo, sp, _ = hidden(pool, "single")
+    sp = Space.for_combo(combo)
+    di, ref = _known(tmp_path, pool, combo, v_hidden(sp))
+    x, fs = _loadwav(FIX / "di_riff.wav")
+    x48 = to48(x, fs)
+    ex = make_excerpt(x48, 2.0)
+    tgt = build_target(ref, ex)
+    eng = Engine(gate_preset(gate_envelope_floor_db(x48, FS)), 2)
+    v0 = sp.default()
+    core_ = eng.core(combo, v0, "a", ex.x)
+    r = ST.L.evaluate(ex.trim(eng.emulate(combo, v0, core_, None, manual_align())), tgt, sp.eq_gains(v0))
+    return eng, Scored(combo, r.total, 0.0, manual_align(), r, "screen", {}), sp, ex, tgt
+
+
+def test_pre_eq_grid_recovers_a_hidden_hpf_and_mid_peak_deterministically(tmp_path):
+    def hid(sp):
+        v = sp.default()
+        v.update({"pre.a.hpf": 110.0, "pre.a.mid_db": 6.0, "pre.a.mid_hz": 900.0})
+        return v
+    eng, cand, sp, ex, tgt = _stage1_candidate(tmp_path, hid)
+    try:
+        nums = PE.di_spectrum_numbers(ex.x[ex.lead:], tgt.starts)
+        wide = PE.widening(nums)
+        n_wide = len(wide["hpf"]) + len(wide["mid"]) + len(wide["shelf"])
+        rec = PE.preeq_candidate(eng, cand, sp, ex, tgt, wide)
+        rec2 = PE.preeq_candidate(eng, cand, sp, ex, tgt, wide)
+    finally:
+        eng.close()
+    a = rec["paths"]["a"]
+    assert a["values"] == [110.0, 6.0, 900.0, 0.0] and rec["loss"] < 0.01 < rec["offLoss"]            # the exact grid point
+    assert rec["params"]["pre.a.hpf"] == 110.0 and rec["params"]["pre.a.mid_db"] == 6.0 and rec["gainVsOff"] > 1.0
+    assert rec["renders"] <= 12 + n_wide and a["grid"][0]["setting"] == "off"                       # <= 12 settings + widening
+    assert rec2["paths"]["a"]["grid"] == a["grid"] and rec2["params"] == rec["params"]               # deterministic
+    # and the preset the grid implies carries the pre-EQ on that path (core renders it)
+    combo = cand.combo
+    v = {**sp.default(), **rec["params"]}
+    preset = build_preset(combo, v, gate=gate_preset(-60.0), align=manual_align())
+    assert [b["type"] for b in preset["paths"]["a"]["preEq"]] == ["highPass", "peak"] and preset["paths"]["a"]["preEq"][1]["q"] == 0.8
+    core.render(preset, np.zeros(2048, np.float32), 48000.0)
+
+
+def test_pre_eq_widening_fires_on_a_dark_di_and_not_on_the_fixture_for_dark(tmp_path):
+    rng = np.random.default_rng(1)
+    from sawblade_match.matcher import loss as Lm
+    n = FS * 4
+    white = rng.standard_normal(n)
+    dark = signal.sosfilt(signal.butter(2, 300.0, btype="lowpass", fs=FS, output="sos"), white)
+    bassy = signal.sosfilt(signal.butter(2, 250.0, btype="lowpass", fs=FS, output="sos"), white) + 0.02 * white
+    starts = Lm.segment_starts(n, None)
+    nd, nb, nw = (PE.di_spectrum_numbers(x, starts) for x in (dark, bassy, white))
+    assert nd["diTilt"] < PE.TILT_DARK and (9.0, 800.0) in PE.widening(nd)["mid"]
+    assert nb["diLowExcess"] > PE.LOW_EXCESS_BASSY and -6.0 in PE.widening(nb)["shelf"]
+    assert nw["diTilt"] > PE.TILT_BRIGHT and 180.0 in PE.widening(nw)["hpf"]
+    fx, fs = _loadwav(FIX / "di_riff.wav")
+    fnum = PE.di_spectrum_numbers(to48(fx, fs), Lm.segment_starts(len(fx), None))
+    assert not PE.widening(fnum)["mid"] and not PE.widening(fnum)["shelf"]       # the fixture DI is not dark / bassy
+
+
+def test_ablate_preeq_leaves_the_pre_eq_empty_and_the_default_run_reports_it(tmp_path):
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool, "single")
+    di, ref = _known(tmp_path, pool, combo, v)
+    plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=4, gens_gain=2, gens_final=3,
+                  n_rescore_single=6, n_cab_single=2)
+    kw = dict(di=di, ref=ref, pool=pool, seed=2, excerpt_s=2.0, threads=2, plan=plan, write_audio=False, refine_offsets=False)
+    off = run_match(Config(out=tmp_path / "off", ablate=("preeq",), **kw), Log())
+    assert off["ablate"] == ["preeq"] and off["preEq"]["ablated"] is True and off["preEq"]["candidates"] == []
+    assert off["preEq"]["chosen"] == {"a": "off"} and off["preEq"]["gainVsOff"] == 0.0 and "diTilt" in off["preEq"]
+    assert "preEq" not in json.loads((tmp_path / "off" / "best.preset.resolved.json").read_text())["paths"]["a"]
+    on = run_match(Config(out=tmp_path / "on", **kw), Log())
+    pe = on["preEq"]
+    assert pe["ablated"] is False and pe["candidates"] and all(c["renders"] <= 12 + len(pe["widened"]) for c in pe["candidates"])
+    assert all({"offLoss", "gridBest", "refitLoss", "kept", "gain"} <= set(c) for c in pe["candidates"])
+    assert set(pe["chosen"]) == {"a"} and pe["gainVsOff"] >= 0.0 and set(pe["grid"]) <= {"a"}
+    # a chain without a pre-EQ ends with it off, or not worse than with the grid ablated (a pick must survive the re-fit)
+    assert on["best"]["loss"] <= off["best"]["loss"] + 1e-9
+    best = json.loads((tmp_path / "on" / "best.preset.resolved.json").read_text())
+    assert ("preEq" in best["paths"]["a"]) == (pe["chosen"]["a"] != "off")
+    for c in pe["candidates"]:
+        assert c["kept"] == (c["refitLoss"] is not None and c["offLoss"] - c["refitLoss"] >= pe["keepDb"])
 def test_choose_pedal_single_must_beat_the_pedal_less_single_by_the_margin():
     from sawblade_match.matcher.run import PEDAL_OCCAM_DB
     pool = fixture_pool()

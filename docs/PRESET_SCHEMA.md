@@ -501,8 +501,7 @@ prints them. The render report (`tonerender --report`) carries:
   `h` keeps the length rule `max(len hA, len hB)` using the original lengths, so a delayed `hB`
   loses its last k samples and the IR never exceeds the 2.0 s cap. The combined IR is built at
   load (off the audio thread); latency is unchanged. The writer omits both keys at their
-  defaults, so existing presets round-trip byte-identically. Still one combined IR, so the
-  no-cab export stays exact. It is still one combined IR, so
+  defaults, so existing presets round-trip byte-identically. It is still one combined IR, so
   the no-cab export is exact (**live-compatible**).
 - IR files: mono WAV (stereo → left channel used, with a warning), any rate (resampled at
   load), truncated to 2.0 s max, normalized so the IR's L2 norm equals 1 unless

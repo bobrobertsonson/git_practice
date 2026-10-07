@@ -20,6 +20,7 @@ from .space import Combo, Space
 
 
 DISCRETE_UP = 1.0       # slope parameter value of the 24 dB/oct alternative (>= 0.5)
+MIX_GRID = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)           # cab.mix tried after CMA-ES
 HP_GRID = tuple(float(f) for f in np.geomspace(60.0, 140.0, 8)[1:])      # post.hp tried after CMA-ES (60 Hz = off)
 
 
@@ -63,9 +64,21 @@ def _lp_step(space: Space, best: dict, r: L.LossResult, score) -> tuple[dict, L.
     return best, r, changed
 
 
+def _mix_step(space: Space, best: dict, r: L.LossResult, score) -> tuple[dict, L.LossResult, bool]:
+    """``cab.mix`` of a two-IR cab (B2.1) over its grid; a change is kept only when the loss falls (and triggers the polish)."""
+    changed = False
+    if "cab.mix" in space.idx:
+        for m in MIX_GRID:
+            cand = {**best, "cab.mix": m}
+            rc = score(cand)
+            if rc.total < r.total - MIN_FILTER_GAIN:
+                best, r, changed = cand, rc, True
+    return best, r, changed
+
+
 # Post-CMA-ES grid steps, run in order by ``pick_slopes``; each is ``step(space, best, r, score) -> (best, r, changed)``.
 # Further discrete grids (cab mix, pre-EQ, ...) are appended here, not written into pick_slopes.
-POST_CMA_STEPS = [_hp_step, _lp_step]
+POST_CMA_STEPS = [_hp_step, _lp_step, _mix_step]
 
 
 def pick_slopes(space: Space, v: dict, score, polish=None) -> tuple[dict, L.LossResult]:

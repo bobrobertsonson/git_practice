@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import pytest
 from scipy import signal
 
 from sawblade_match.matcher import feel as F
@@ -423,7 +424,8 @@ def test_soft_keys_sum_to_the_terms_and_small_flatness_gaps_are_negligible():
     _, t = F.evaluate(riff(2, tau=0.06, fizz_db=-8), ft)
     assert abs(t["tightT12Soft"] + t["tightSustainSoft"] - t["tight"]) < 1e-12
     assert abs(t["fizzHfRatioSoft"] + t["fizzHfFlatSoft"] + t["fizzHfModSoft"] - t["fizz"]) < 1e-12
-    assert t["tightT12Soft"] <= t["tightT12"] + 1e-12 or t["tightT12"] > 1.0      # pre-Huber keys are the normalised ones
+    for k in ("tightT12", "tightSustain", "fizzHfRatio", "fizzHfFlat", "fizzHfMod"):    # pre-Huber keys are the normalised ones
+        assert t[k + "Soft"] == pytest.approx(F.huber(t[k]), abs=1e-12), k
     # the found-chain regression: an hfFlat W1 of 0.006 (0.2 normalisers) weighs 0.02 * W_FIZZ in the feel total
     assert abs(F.huber(0.006 / F.FLAT_NORM) - 0.02) < 1e-12
     assert F.W_FIZZ * F.huber(0.006 / F.FLAT_NORM) < 0.01

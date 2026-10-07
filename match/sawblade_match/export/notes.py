@@ -81,6 +81,22 @@ def _eq_line(e: dict) -> str:
     return f"{name} {_g(e['freqHz'])} Hz, {e['gainDb']:+.1f} dB, Q {_g(e['q'], 3)}"
 
 
+def _pre_eq_info(preset: dict) -> list[dict]:
+    """Informational lines for the path pre-EQs (DI -> gate -> pre-EQ -> blocks): linear and before the amp, so they are
+    trained into the NAM model. Not a stage to add on hardware (``inModel`` true, position "inside NAM")."""
+    out = []
+    for key, path in sorted((preset.get("paths") or {}).items()):
+        if not isinstance(path, dict) or path.get("enabled", True) is False:
+            continue
+        bands = _eq_bands(path.get("preEq"))
+        if bands:
+            out.append({"stage": "preEq", "path": key, "position": "inside NAM", "inModel": True,
+                        "settings": {"bands": bands},
+                        "hardware": "pre-EQ (before the amp): trained into the model, nothing to add: "
+                                    + "; ".join(_eq_line(e) for e in bands) + "."})
+    return out
+
+
 def _gate(g: dict) -> dict:
     thr = float(g.get("thresholdDb", -55.0))
     hyst = float(g.get("hysteresisDb", 6.0))
@@ -202,6 +218,9 @@ def build_export_notes(preset: dict, plan, nam_name: str | None = None, ir_name:
              "loaderOrder": "Loader order: " + " -> ".join(parts)}
     if not stages:
         notes["message"] = NOTHING
+    inside = _pre_eq_info(preset)
+    if inside:
+        notes["inModel"] = inside
     return notes
 
 
@@ -213,6 +232,8 @@ def format_notes_txt(notes: dict, preset_name: str | None = None, licence_note: 
         L += [notes.get("message", NOTHING), ""]
     for i, st in enumerate(notes["stages"], 1):
         L += [f"{i}. {st['stage']} [{st['position']}]", f"   {st['hardware']}", ""]
+    for st in notes.get("inModel", []):
+        L += [f"In the model (nothing to add) - path {st['path']}: {st['hardware']}", ""]
     L.append(notes["loaderOrder"])
     L += ["", licence_note or DISCLAIMER]
     return "\n".join(L) + "\n"

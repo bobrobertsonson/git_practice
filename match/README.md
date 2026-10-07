@@ -427,6 +427,24 @@ Needs the built `sawblade_core` (see "Core bindings"; `SAWBLADE_CORE_DIR` pins a
   * **Why a DI's `gap_noise` stays high** (synthetic diagnosis): the fixed gate (floor + 4 dB,
     hold 40 ms) sits inside the DI's own noise-peak statistics and never closes; the sweep fixes that. What is left depends on the gate
     hold and range (swept too) and on what follows the gate (a high-gain chain and the IR tail).
+  * **Two-IR blend** (B2.1, `matcher/irblend.py`): after the cab sweep the winner tries every pair of the top 6 IRs (one orientation: A = the lower key, so the choice cannot flip with the seed) (a plain list; the
+    analytic IR screen of B3 will supply it) as one combined `irMix` cab: `offsetSamplesB` = minus the lag of the largest |cross-correlation| of the
+    first 5 ms (|lag| <= 256; the core delays IR B for a positive offset), `invertB` = sign of that peak, `cab.mix` (0.2-0.8) on a grid after the
+    last linear block (`refine.pick_slopes`), then one more linear block. The pair must beat the single IR by 0.05. Live-compatible (one IR).
+    `result.json -> irBlend {tried, won, pair, offset, invert, mix, gainVsSingle, topPairs}`; `--ablate irblend`.
+  * **Studio processing** (B2.3, `matcher/studio.py`): `result.json -> studio {compressed, eqd, evidence}` is always written (clean references only).
+    `compressed`: reference median 400 ms crest >= 1.5 dB below the candidate's, or loudness range >= 2 LU narrower; `eqd`: a post-EQ gain at >= 90 %
+    of its range, or a 3rd-order log-frequency polynomial explaining >= 60 % of the LTAS residual with RMS >= 1 dB. When it fires, the winner is
+    refined with a fast bus comp (threshold -30..-6 dB, ratio 1.5-4, knee 6, attack 1-30 ms, release 30-150 ms so it stays trainable) and / or the
+    post EQ widened to +-9 dB, each kept only if the loss falls by 0.05; the preset notes say the comp is dropped from no-cab exports.
+    The detector judges crest / loudness range on the excerpt render *before* the final gate sweep (the gate changes only the gaps). `--ablate studio` keeps the detector but skips the stage.
+  * **Pre-EQ** (B4, `matcher/preeq.py`): after stage 2, on the refined winner per topology (quick: the winner; thorough: also the runner-up), a pruned
+    coordinate-descent grid on each path's `preEq` scored at the refined parameters (HPF 80/110/150 Hz, then mid peak +3/+6 dB at 700/900 Hz, the HPF
+    again at that peak, low shelf -3 dB at 200 Hz, joint neighbours; <= 12 NAM re-renders per path plus the widening options). A pick stays only if a short
+    seeded re-fit (gain block + last linear block) lowers the refined loss by 0.05 against pre-EQ off; otherwise the pre-EQ stays off. The DI's own LTAS
+    widens the grid: `diTilt` < -4.5 dB/oct adds mid +9 dB, > -1.5 an HPF at 180 Hz, `diLowExcess` > +3 dB a -6 dB shelf (provisional; the run prints both numbers).
+    `result.json -> preEq {diTilt, diLowExcess, widened, candidates[{offLoss, gridBest, refitLoss, kept, gain, paths: {path: grid}}], chosen, gainVsOff,
+    grid (the winner topology's per-path grid)}`; `--ablate preeq`. The pre-EQ is linear and before the amp, so export notes list it as in the model.
 * **`--ablate LIST`** (`feel, boost, filters, irsweep, irblend, studio`): switches suspects off for on/off pairs; `result.json -> ablate` echoes the
   list. `feel`: no feel term in the search's loss (it is still measured for the report and the gate sweep); `boost`: no boost variants;
   `filters`: no post-cab hp / low-pass slope; `irsweep`: only the stage-1 cab sweep (the pre-v0.4M behaviour). `irblend` and `studio` are accepted and echoed

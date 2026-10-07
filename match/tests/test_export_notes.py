@@ -176,3 +176,20 @@ def test_gate_object_without_enabled_defaults_on():
         assert N.build_export_notes(p, P.make_plan(p, "withcab"))["stages"] == []
     del p["gate"]
     assert N.build_export_notes(p, P.make_plan(p, "withcab"))["stages"] == []
+
+
+def test_pre_eq_is_listed_as_in_the_model_not_as_a_stage():
+    p = full()
+    p["paths"]["a"]["preEq"] = [{"type": "highPass", "freq": 110.0, "q": 0.707},
+                                {"type": "peak", "freq": 900.0, "gainDb": 6.0, "q": 0.8}]
+    n = N.build_export_notes(p, P.make_plan(p, "nocab", allow_inexact=True), "x-nocab-standard.nam", "x-nocab.ir.wav")
+    assert [s["stage"] for s in n["stages"]] == ["gate", "cab", "postEq", "busComp"]       # nothing to add on hardware
+    (pre,) = n["inModel"]
+    assert pre["stage"] == "preEq" and pre["inModel"] is True and pre["position"] == "inside NAM" and pre["path"] == "a"
+    assert [b["type"] for b in pre["settings"]["bands"]] == ["highPass", "peak"] and pre["settings"]["bands"][1]["gainDb"] == 6.0
+    assert "trained into the model" in pre["hardware"] and "110" in pre["hardware"]
+    txt = N.format_notes_txt(n, "x")
+    assert "In the model (nothing to add) - path a" in txt and "high-pass 110 Hz" in txt
+    q = base()
+    q["paths"]["a"].pop("preEq", None)
+    assert "inModel" not in N.build_export_notes(q, P.make_plan(q, "withcab"), "m.nam")

@@ -49,6 +49,7 @@ POST_HP_RANGE = (60.0, 140.0)
 SLOPE_DEFAULT = 0.4                       # discrete slope parameter: < 0.5 -> 12 dB/oct, >= 0.5 -> 24 dB/oct
 BUTTER4_Q = (0.541196, 1.306563)          # Qs of the two biquads of a 4th-order Butterworth (24 dB/oct) pass filter
 BOOST_PARAMS = (("drive", 0.0, 3.0, 1.0), ("level", 6.0, 10.0, 8.0), ("tone", 3.0, 8.0, 5.0))   # name, lo, hi, default
+IRMIX_RANGE = (0.2, 0.8)                  # mix of the second IR (B2.1)
 BOOST_FIXED = ("level",)                  # boost params that are not searched (the amp input gain covers the level)
 PEDAL_LATENCY = 50                        # samples of every modeled pedal block (docs/PRESET_SCHEMA.md)
 
@@ -64,6 +65,9 @@ class Combo:
     b_amp: Capture | None
     cab: Capture
     boost: bool = False                      # modeled pedal.ts directly in front of the amp (single topology only)
+    cab_b: Capture | None = None             # v0.4M B2.1: a second IR; the cab is then one combined "irMix" IR (cab = IR A)
+    cab_offset: int = 0                      # offsetSamplesB of the irMix cab (positive = IR B delayed)
+    cab_invert: bool = False                 # invertB of the irMix cab
 
     @property
     def topology(self) -> str:
@@ -81,7 +85,8 @@ class Combo:
         return out
 
     def key(self) -> tuple:
-        return (self.topology + ("+ts" if self.boost else ""), *[c.key for c in self.nams()], self.cab.key)
+        cab = self.cab.key if self.cab_b is None else f"{self.cab.key}+{self.cab_b.key}@{self.cab_offset}{'-' if self.cab_invert else ''}"
+        return (self.topology + ("+ts" if self.boost else ""), *[c.key for c in self.nams()], cab)
 
     def pair_key(self) -> tuple:
         """Identity without the cab."""
@@ -91,13 +96,20 @@ class Combo:
         """Ordered slot -> capture (for reports); slot names depend on the topology."""
         if self.topology == "blend":
             return {"a_pedal": (self.a_pedals or (None,))[0], "a_amp": self.a_amp,
-                    "b_pedal": (self.b_pedals or (None,))[0], "b_amp": self.b_amp, "cab": self.cab}
+                    "b_pedal": (self.b_pedals or (None,))[0], "b_amp": self.b_amp, **self._cabs()}
         if self.topology == "single2":
-            return {"pedal1": self.a_pedals[0], "pedal2": self.a_pedals[1], "amp": self.a_amp, "cab": self.cab}
-        return {"pedal": (self.a_pedals or (None,))[0], "amp": self.a_amp, "cab": self.cab}
+            return {"pedal1": self.a_pedals[0], "pedal2": self.a_pedals[1], "amp": self.a_amp, **self._cabs()}
+        return {"pedal": (self.a_pedals or (None,))[0], "amp": self.a_amp, **self._cabs()}
+
+    def _cabs(self) -> dict:
+        return {"cab": self.cab} if self.cab_b is None else {"cab": self.cab, "cab_b": self.cab_b}
 
     def with_cab(self, cab: Capture) -> "Combo":
         return Combo(self.a_pedals, self.a_amp, self.b_pedals, self.b_amp, cab, self.boost)
+
+    def with_pair(self, cab_a: Capture, cab_b: Capture, offset: int, invert: bool) -> "Combo":
+        """The same chain with a two-IR (irMix) cab: IR A, IR B shifted by ``offset`` samples (positive = B delayed)."""
+        return Combo(self.a_pedals, self.a_amp, self.b_pedals, self.b_amp, cab_a, self.boost, cab_b, int(offset), bool(invert))
 
     def model_bytes(self) -> int:
         return sum(c.size_bytes for c in self.nams())
@@ -112,7 +124,7 @@ class Combo:
         if self.boost:      # the boost sits right before the amp: show it in signal order
             i = next((n for n, p in enumerate(parts) if p.startswith("amp=")), len(parts))
             parts.insert(i, "boost=pedal.ts")
-        return f"{self.topology}{'+boost' if self.boost else ''}: " + " | ".join(parts)
+        return f"{self.topology}{'+boost' if self.boost else ''}{'+irMix' if self.cab_b is not None else ''}: " + " | ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -129,7 +141,8 @@ class P:
 class Space:
     """Parameters for one combo shape ``(n_pedals_a, n_pedals_b | None)``."""
 
-    def __init__(self, shape: tuple, boost: bool = False, filters: bool = True):
+    def __init__(self, shape: tuple, boost: bool = False, filters: bool = True, irmix: bool = False,
+                 post_gain: float = POST_GAIN, preeq: bool = True):
         na, nb = shape
         if boost and nb is not None:
             raise ValueError("the tight boost is a single-path variant")
@@ -137,6 +150,11 @@ class Space:
         paths = "a" if nb is None else "ab"
         if nb is not None:
             ps += [P("blend", 0.05, 0.95, 0.55), P("levelA", -6, 6, 0.0), P("levelB", -6, 6, 0.0)]
+        for path in paths if preeq else "":      # B4 pre-EQ settings: discrete, fixed before stage 2 (preeq.py)
+            ps.append(P(f"pre.{path}.hpf", 0.0, 200.0, 0.0, group="discrete"))
+            ps.append(P(f"pre.{path}.mid_db", 0.0, 9.0, 0.0, group="discrete"))
+            ps.append(P(f"pre.{path}.mid_hz", 700.0, 900.0, 800.0, group="discrete"))
+            ps.append(P(f"pre.{path}.shelf_db", -6.0, 0.0, 0.0, group="discrete"))
         for path in paths:
             for i, (lo, hi) in enumerate(PEAK_RANGES):
                 ps.append(P(f"{path}.f{i}", lo, hi, float(np.sqrt(lo * hi)), log=True))
@@ -145,7 +163,7 @@ class Space:
             ps.append(P(f"{path}.lp", *LP_RANGE, DEFAULT_LP, log=True))
         for i, (lo, hi) in enumerate(POST_RANGES):
             ps.append(P(f"post.f{i}", lo, hi, float(np.sqrt(lo * hi)), log=True))
-            ps.append(P(f"post.g{i}", -POST_GAIN, POST_GAIN, 0.0, eq_gain=True))
+            ps.append(P(f"post.g{i}", -post_gain, post_gain, 0.0, eq_gain=True))
         ps.append(P("post.shelf_f", *SHELF_RANGE, float(np.sqrt(SHELF_RANGE[0] * SHELF_RANGE[1])), log=True))
         ps.append(P("post.shelf_g", *SHELF_GAIN_RANGE, 0.0))
         ps.append(P("post.lp", *POST_LP_RANGE, POST_LP_RANGE[1], log=True))
@@ -158,6 +176,8 @@ class Space:
             gains += [f"b.{i}" for i in range(nb)] + ["b.amp"]
         for g in gains:
             ps.append(P(f"gain.{g}", -NAM_GAIN, NAM_GAIN, 0.0, group="gain"))
+        if irmix:       # B2.1: the IR mix, tried on a grid after CMA-ES (group discrete)
+            ps.append(P("cab.mix", *IRMIX_RANGE, 0.5, group="discrete"))
         if boost:
             for name, lo, hi, d in BOOST_PARAMS:
                 if name in BOOST_FIXED:      # redundant with the amp input gain: fixed at its default, not searched
@@ -169,8 +189,8 @@ class Space:
         self.shape = shape
 
     @staticmethod
-    def for_combo(combo: Combo, filters: bool = True) -> "Space":
-        return Space(combo.shape(), boost=combo.boost, filters=filters)
+    def for_combo(combo: Combo, filters: bool = True, preeq: bool = True) -> "Space":
+        return Space(combo.shape(), boost=combo.boost, filters=filters, irmix=combo.cab_b is not None, preeq=preeq)
 
     def __len__(self) -> int:
         return len(self.params)
@@ -202,6 +222,28 @@ class Space:
 
 def _peak(f, g):
     return {"type": "peak", "freq": float(f), "gainDb": float(g), "q": Q}
+
+
+PRE_HPF_OPTIONS = (80.0, 110.0, 150.0)        # B4 pre-EQ grid (before the drive); 180 Hz joins for a bright DI
+PRE_MID_OPTIONS = ((3.0, 700.0), (3.0, 900.0), (6.0, 700.0), (6.0, 900.0))
+PRE_SHELF_HZ, PRE_SHELF_DB = 200.0, -3.0
+PRE_MID_Q = 0.8
+
+
+def path_pre_eq(v: dict[str, float], path: str) -> list[dict]:
+    """The path's pre-EQ bands (DI -> gate -> pre-EQ -> blocks) from the discrete ``pre.<path>.*`` parameters; empty when off.
+    Linear and before the amp, so it is trained into a NAM export."""
+    bands = []
+    h = float(v.get(f"pre.{path}.hpf", 0.0))
+    if h > 1.0:
+        bands.append({"type": "highPass", "freq": h, "q": 0.707})
+    g = float(v.get(f"pre.{path}.mid_db", 0.0))
+    if abs(g) > 1e-9:
+        bands.append({"type": "peak", "freq": float(v.get(f"pre.{path}.mid_hz", 800.0)), "gainDb": g, "q": PRE_MID_Q})
+    s = float(v.get(f"pre.{path}.shelf_db", 0.0))
+    if abs(s) > 1e-9:
+        bands.append({"type": "lowShelf", "freq": PRE_SHELF_HZ, "gainDb": s, "q": 0.707})
+    return bands
 
 
 def path_eq(v: dict[str, float], path: str) -> list[dict]:
@@ -270,6 +312,20 @@ def _nam(id_, slot, cap: Capture, gain_db: float, normalize: bool) -> dict:
     return b
 
 
+def cab_block(combo: Combo, v: dict[str, float] | None = None) -> dict:
+    """The preset ``cab`` object of a combo: ``shared`` with one IR, or ``irMix`` (one combined IR, live-compatible) with
+    the pair's alignment (``offsetSamplesB`` / ``invertB``) and the mix ``cab.mix`` of ``v``."""
+    if combo.cab_b is None:
+        return {"mode": "shared", "ir": combo.cab.block_model(), "enabled": True}
+    c = {"mode": "irMix", "irA": combo.cab.block_model(), "irB": combo.cab_b.block_model(),
+         "mix": float((v or {}).get("cab.mix", 0.5)), "enabled": True}
+    if combo.cab_offset:
+        c["offsetSamplesB"] = int(combo.cab_offset)
+    if combo.cab_invert:
+        c["invertB"] = True
+    return c
+
+
 def boost_block(id_: str, v: dict[str, float]) -> dict:
     """The tight boost: modeled ``pedal.ts`` (slot ``boost``, model version 1) with the ``boost.*`` parameters."""
     return {"id": id_, "type": "pedal.ts", "slot": "boost", "modelVersion": 1,
@@ -299,22 +355,28 @@ def path_blocks(combo: Combo, v: dict[str, float], path: str) -> list[dict]:
 
 
 def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align: dict, output_db: float = 0.0,
-                 name: str = "Matched tone", notes: str = "", levels=None) -> dict:
+                 name: str = "Matched tone", notes: str = "", levels=None, bus_comp: dict | None = None) -> dict:
     """Full ``sawblade.preset`` for a combo and physical parameter values (live-compatible shared cab)."""
     blend = combo.topology == "blend"
     pa = {"role": "saw" if blend else "body", "blocks": path_blocks(combo, v, "a"), "eq": path_eq(v, "a"),
           "levelDb": float(v.get("levelA", 0.0))}
+    if path_pre_eq(v, "a"):
+        pa["preEq"] = path_pre_eq(v, "a")
     pb = ({"role": "body", "blocks": path_blocks(combo, v, "b"), "eq": path_eq(v, "b"), "levelDb": float(v["levelB"])}
           if blend else {"role": "body", "enabled": False, "blocks": []})
+    if blend and path_pre_eq(v, "b"):
+        pb["preEq"] = path_pre_eq(v, "b")
     p = {
         "schema": "sawblade.preset", "version": 1, "name": name, "notes": notes,
         "gate": gate if gate else {"enabled": False},
         "paths": {"a": pa, "b": pb},
         "align": align, "blend": float(v["blend"]) if blend else 0.0,
-        "cab": {"mode": "shared", "ir": combo.cab.block_model(), "enabled": True},
+        "cab": cab_block(combo, v),
         "postEq": post_eq(v),
         "output": {"gainDb": float(output_db)},
     }
+    if bus_comp:        # v0.4M studio processing: a fast bus comp after the post EQ (release <= 150 ms stays trainable)
+        p["busComp"] = {"enabled": True, **bus_comp}
     if blend and levels is not None:
         # phase 10.1: ``v["blend"]`` is the level-matched *linear* blend fitted after the trims; emit the same A:B ratio on
         # the constant-loudness law, with the trims as manual level match.

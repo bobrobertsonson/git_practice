@@ -49,7 +49,7 @@ def hidden_preset(pool, seed: int, gate: dict, engine: Engine, topology: str = "
                       pick(pool.cabs))
     else:
         combo = Combo(maybe(), pick(pool.amps), maybe(), pick(pool.amps), pick(pool.cabs))
-    sp = Space.for_combo(combo, filters=False)     # the hidden chain keeps its pre-v0.4M draws (no post-cab filters)
+    sp = Space.for_combo(combo, filters=False, preeq=False)     # the hidden chain keeps its pre-v0.4M draws
     u = np.clip(0.5 + 0.18 * rng.standard_normal(len(sp)), 0.05, 0.95)   # moderate, in-range values
     v = sp.decode(u)
     if "blend" in v:

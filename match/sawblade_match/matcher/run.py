@@ -27,7 +27,10 @@ from .progress import NullProgress, Progress
 from .cabsweep import TOP_PER_TOPOLOGY, cab_sweep, sweep_summary
 from . import irscreen
 from .gatesweep import gate_sweep, reference_floor_db, render_gate
+from .irblend import TOP_IRS, pair_search
+from .preeq import PRE_CONFIRM_DB, PRE_REFIT_L1, describe as describe_pre, di_spectrum_numbers, preeq_candidate, setting_params, widening
 from .refine import refine_combo, relinear
+from .studio import detect as detect_studio, studio_stage
 from .trace import trace_tones
 from .screen import Scored, Screener, TOPOLOGIES
 from .levelmatch import emit_gain_correction_db
@@ -39,10 +42,9 @@ CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-leng
 OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss
 PEDAL_OCCAM_DB = 0.05     # a single-path combo with a pedal must beat the best pedal-less single (same amp if available) by this
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
-ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio")      # --ablate names (v0.4M suspects)
+ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio", "preeq")      # --ablate names (v0.4M suspects)
 CAB_SWITCH_DB = 0.01      # a different cab must lower the loss by at least this to replace the stage-2 cab
 REFINE_SHARE = 0.95       # share of the refine stage's progress for stage 2; the cab / gate sweeps and the trace get the rest
-NOOP_ABLATIONS = ("irblend", "studio")                                        # accepted and echoed; implemented in later tasks
 
 
 @dataclass
@@ -406,7 +408,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                     "lossWeights": {"texFlat": L.W_FLAT, "texHf": L.W_HF, "ltas": L.W_LTAS, "buzz": L.W_BUZZ, "decay": L.W_DECAY, "stft": L.W_STFT,
                                     "reg": L.W_REG, "feelTight": L.W_TIGHT, "feelFizz": L.W_FIZZ, "feelPolish": L.W_POLISH},
                     "ablate": list(parse_ablate(cfg.ablate)),
-                    "ablateNote": "irblend and studio are accepted and echoed; they are no-ops until their tasks (B2.1 / B2.3) land",
+
                     "randomness": f"numpy default_rng(seed={cfg.seed}) for subset sampling and CMA-ES (seed + block)"}
 
     # ---- starter ("before") on the excerpt, which also gives the coarse offset refinement its render -----------------
@@ -498,6 +500,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     t_mark = time.time()
     prog.stage("refine", "refining the best candidates")
 
+    t_mark = time.time()
     # ---- stage 2 -----------------------------------------------------------------------------------------------------
     refined: list[Scored] = []
     unrefined: list[Scored] = []
@@ -518,17 +521,19 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     n_done = 0
     T["stage2PerCombo"] = []
 
-    def finish_refined(combo: Combo, base: Scored, v: dict, r: L.LossResult, info: dict) -> Scored:
+    def finish_refined(combo: Combo, base: Scored, v: dict, r: L.LossResult, info: dict, comp: dict | None = None) -> Scored:
         """Stage-2 record of ``combo`` with parameters ``v`` (alignment / levels of the stage-1 candidate ``base``)."""
         ca = eng.core(combo, v, "a", ex.x)
         cb = eng.core(combo, v, "b", ex.x) if combo.topology == "blend" else None
-        y = ex.trim(eng.emulate(combo, v, ca, cb, base.align, base.levels))
+        y = eng.apply_comp(ex.trim(eng.emulate(combo, v, ca, cb, base.align, base.levels)), comp, combo.cab)
         g, clipped = pick_output_gain(float(np.max(np.abs(y))), r.offset_db, ref.level_offset_db)
         if base.levels is not None:      # emitted preset uses the constantLoudness law + make-up: keep the fitted level
             g -= emit_gain_correction_db(v["blend"], base.levels)
         guard = _guardrails(y, profile)
-        return Scored(combo, r.total, v.get("blend", 0.0), base.align, r, "refined",
-                      {"params": v, "outputGainDb": g, "clipped": clipped, "info": info, "guardrails": guard}, base.levels)
+        extra = {"params": v, "outputGainDb": g, "clipped": clipped, "info": info, "guardrails": guard}
+        if comp:
+            extra["busComp"] = comp
+        return Scored(combo, r.total, v.get("blend", 0.0), base.align, r, "refined", extra, base.levels)
 
     for topo, k, kk, s in work:
         t_combo = time.time()
@@ -557,8 +562,49 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
 
+    # ---- pre-EQ before the drive (v0.4M B4): after stage 2, on the refined winner(s), confirmed by a short re-fit -------------
+    t_pre = time.time()
+    nums = di_spectrum_numbers(ex.x[ex.lead:], tgt.starts)
+    wide = widening(nums)
+    log(f"pre-EQ: DI tilt {nums['diTilt']:+.2f} dB/oct, low excess {nums['diLowExcess']:+.2f} dB; widened: "
+        f"{', '.join(wide['widened']) or 'none'}")
+    pre_res: dict = {**nums, "widened": wide["widened"], "ablated": "preeq" in ablate, "candidates": [], "chosen": {},
+                     "gainVsOff": 0.0, "keepDb": PRE_CONFIRM_DB, "grid": {}}
+    pre_gain: dict = {}
+    if "preeq" not in ablate:
+        n_per = 1 if plan.mode == "quick" else 2            # quick: the winner only; thorough: also the runner-up
+        for topo in TOPOLOGIES:
+            for c in sorted((x for x in refined if x.topology == topo), key=lambda x: x.loss)[:n_per]:
+                sp = Space.for_combo(c.combo, plan.filters)
+                rec = preeq_candidate(eng, c, sp, ex, tgt, wide, v0=c.extra["params"])
+                entry = {k: rec[k] for k in ("topology", "captures", "renders", "paths")}
+                entry.update(offLoss=c.loss, gridBest=rec["loss"], kept=False, refitLoss=None, gain=0.0, pairKey=list(c.combo.pair_key()))
+                if rec["gainVsOff"] > 0:
+                    v0 = {**c.extra["params"], **rec["params"]}
+                    v_new, r_new, info_new = refine_combo(
+                        eng, c.combo, sp, ex, tgt, c.align, v0, seed=cfg.seed * 1000 + 980 + len(pre_res["candidates"]),
+                        gens_linear=PRE_REFIT_L1, pop_linear=plan.pop_linear, gens_gain=max(2, plan.gens_gain // 2),
+                        pop_gain=plan.pop_gain, gens_final=max(3, plan.gens_final // 2), patience=plan.patience,
+                        patience_gain=plan.patience_gain, tol=plan.plateau_tol, gex=gex, gtgt=gtgt,
+                        short_linear=plan.short_linear, levels=c.levels, log=lambda *_: None)
+                    entry.update(refitLoss=r_new.total, gain=c.loss - r_new.total)
+                    if c.loss - r_new.total >= PRE_CONFIRM_DB:
+                        new = finish_refined(c.combo, c, v_new, r_new, info_new)
+                        refined[next(i for i, x in enumerate(refined) if x is c)] = new
+                        entry["kept"] = True
+                        pre_gain[c.combo.pair_key()] = c.loss - r_new.total
+                        log(f"pre-EQ {topo}: " + "; ".join(f"path {p} {x['chosen']}" for p, x in rec["paths"].items())
+                            + f" kept after the re-fit (refined loss {c.loss:.3f} -> {r_new.total:.3f})")
+                    else:
+                        log(f"pre-EQ {topo}: grid pick ({'; '.join(x['chosen'] for x in rec['paths'].values())}) not confirmed "
+                            f"(refined loss {c.loss:.3f} vs {r_new.total:.3f} with it): pre-EQ stays off")
+                pre_res["candidates"].append(entry)
+        refined.sort(key=lambda c: c.loss)
+    T["preEq"] = time.time() - t_pre
+
     # ---- cab / IR breadth (v0.4M Task B): every pool cab on the top candidates per topology --------------------------
     cab_sweeps: list[dict] = []
+    sw_caps: dict = {}
     t_cab = time.time()
     lib = cfg.ir_library if plan.cab_sweep else None
     bank, ir_pool = None, {"ablated": not plan.cab_sweep, "local": 0, "tone3000": len(pool.cabs), "total": len(pool.cabs),
@@ -604,6 +650,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                                 lossAfterRelinear=r2.total)
                     log(f"cab sweep {topo}: {cur['cab'].title}:{cur['cab'].name} -> {top['cab'].title}:{top['cab'].name} "
                         f"(loss {cur['result'].total:.3f} -> {top['result'].total:.3f}, relinear {r2.total:.3f})")
+                sw_caps[(c.topology, bool(c.combo.boost))] = {x.key: x for x in caps}
                 cab_sweeps.append(summ)
                 prog.update(REFINE_SHARE + 0.03 * len(cab_sweeps) / n_sw)
         refined.sort(key=lambda c: c.loss)
@@ -615,8 +662,63 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     T["cabSweep"] = time.time() - t_cab
     best = choose(refined)
     result["pedalOccam"] = {"minGainDb": PEDAL_OCCAM_DB, "dropped": best.extra.get("pedalOccamDropped", [])}
+    # ---- two-IR blend (v0.4M B2.1): the winner's cab as one combined irMix IR of two of the top IRs --------------------
+    t_ir = time.time()
+    if "irblend" in ablate:
+        result["irBlend"] = {"ablated": True, "tried": 0, "won": False}
+    else:
+        sw = next((x for x in cab_sweeps if x["topology"] == best.topology and x["boost"] == bool(best.combo.boost)), None)
+        bykey = {**{c.key: c for c in pool.cabs}, **(sw_caps.get((best.topology, bool(best.combo.boost))) or {})}
+        if sw and sw.get("screen"):            # B3's analytic screen: its full-render top 6 feed the pair search
+            keys = list(sw["screen"]["fullTop6"])
+        else:
+            keys = [i["cab"] for i in sw["irs"]][:TOP_IRS] if sw else [c.key for c in pool.cabs][:TOP_IRS]
+        irb = pair_search(eng, best, Space.for_combo(best.combo, plan.filters), ex, tgt, [bykey[k] for k in keys],
+                          seed=cfg.seed * 1000 + 950, gens=plan.gens_final, pop=plan.pop_linear, patience=plan.patience,
+                          tol=plan.plateau_tol, log=log)
+        won_pair = irb.pop("_won", None)
+        irb["ablated"] = False
+        if won_pair is not None:
+            combo2, v2, r2 = won_pair
+            new = finish_refined(combo2, best, v2, r2, best.extra["info"])
+            refined[next(i for i, x in enumerate(refined) if x is best)] = new
+            log(f"two-IR blend: {irb['pair']['titleA']} + {irb['pair']['titleB']} (offset {irb['offset']}, invert {irb['invert']}, "
+                f"mix {irb['mix']:.2f}) loss {best.loss:.3f} -> {new.loss:.3f}")
+            best = new
+        else:
+            log(f"two-IR blend: no pair beats the single IR by {irb['minGain']} (best gain {irb['gainVsSingle']:+.3f})")
+        result["irBlend"] = irb
+    T["irBlend"] = time.time() - t_ir
     ir_pool["winner"] = {"key": best.combo.cab.key, "title": best.combo.cab.title, **best.combo.cab.source_info()}
+    if best.combo.cab_b is not None:           # a winning two-IR blend: both IRs are recorded
+        ir_pool["winner"]["irB"] = {"key": best.combo.cab_b.key, "title": best.combo.cab_b.title,
+                                    **best.combo.cab_b.source_info(), "offsetSamplesB": best.combo.cab_offset,
+                                    "invertB": best.combo.cab_invert, "mix": best.extra["params"].get("cab.mix")}
     result["irPool"] = ir_pool
+    # ---- studio processing in the reference (v0.4M B2.3): detect, then bus comp / wider post EQ ----------------------------
+    t_st = time.time()
+    sp_st = Space.for_combo(best.combo, plan.filters)
+    paths_st = ("a", "b") if best.combo.topology == "blend" else ("a",)
+    cores_st = [eng.core(best.combo, best.extra["params"], p, ex.x) for p in paths_st]
+    y_st0 = ex.trim(eng.emulate(best.combo, best.extra["params"], cores_st[0], cores_st[1] if len(cores_st) > 1 else None,
+                                best.align, best.levels))
+    ref_sig = tgt_full.matched if tgt_full.matched is not None else (ref.ltas_sig if ref.clean else None)
+    det = detect_studio(bool(ref.clean), tgt_full, tgt, y_st0, best.extra["params"], ref_sig)
+    studio = {**det, "ablated": "studio" in ablate, "busCompUsed": False}
+    if (det["compressed"] or det["eqd"]) and "studio" not in ablate:
+        srec = studio_stage(eng, best, sp_st, ex, tgt, det, seed=cfg.seed * 1000 + 970, gens=plan.gens_final, pop=plan.pop_linear,
+                            patience=plan.patience, tol=plan.plateau_tol, log=log)
+        won_st = srec.pop("_won", None)
+        studio.update(srec)
+        if won_st is not None:
+            v_st, r_st, comp_st = won_st
+            new = finish_refined(best.combo, best, v_st, r_st, best.extra["info"], comp_st)
+            log(f"studio processing: loss {best.loss:.3f} -> {new.loss:.3f} (bus comp {'yes' if comp_st else 'no'}, "
+                f"post EQ widened {studio.get('widenedPostEq')})")
+            refined[next(i for i, x in enumerate(refined) if x is best)] = new
+            best = new
+    result["studio"] = studio
+    T["studio"] = time.time() - t_st
     result["stage2Seconds"] = time.time() - t_start - t1
     T["stage2"] = time.time() - t_mark
     t_mark = time.time()
@@ -672,6 +774,12 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         "bestPlainSingleLoss": min((c.loss for c in refined if c.topology == "single" and not c.combo.boost), default=None),
         "occamDb": OCCAM_DB, "ablated": not plan.boost}
     result["postFilters"] = {"searched": plan.filters, **post_filters_from_eq(post_eq(bp))}
+    pre_res["chosen"] = {p: describe_pre(tuple(float(bp.get(k, d)) for k, d in (
+        (f"pre.{p}.hpf", 0.0), (f"pre.{p}.mid_db", 0.0), (f"pre.{p}.mid_hz", 800.0), (f"pre.{p}.shelf_db", 0.0))))
+        for p in (("a", "b") if best.combo.topology == "blend" else ("a",))}
+    pre_res["gainVsOff"] = pre_gain.get(best.combo.pair_key(), 0.0)
+    pre_res["grid"] = next((c["paths"] for c in pre_res["candidates"] if c["topology"] == best.topology), {})   # the winner topology's grid, per path
+    result["preEq"] = pre_res
     if cfg.trace_tones:
         t_tr = time.time()
         result["trace"] = trace_tones(cfg.trace_tones, eng=eng, pool=pool, scr=scr, ranked=ranked, refined=refined, best=best,
@@ -684,7 +792,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     v = best.extra["params"]
     gain_db = best.extra["outputGainDb"]
     final = build_preset(best.combo, v, gate=gate_final, align=best.align, output_db=gain_db,
-                         name="Sawblade match", notes=_notes(cfg, ref, best), levels=best.levels)
+                         name="Sawblade match", notes=_notes(cfg, ref, best), levels=best.levels,
+                         bus_comp=best.extra.get("busComp"))
     full_jobs = {"best_L": (final, cfg.di)}
     if plan.mode != "quick" or cfg.write_audio:     # quick: no full-length "before" render (the excerpt loss has it)
         full_jobs["starter_L"] = (starter_p, cfg.di)
@@ -843,7 +952,9 @@ def _guardrails(y: np.ndarray, profile: dict) -> dict:
 def _scored_json(s: Scored) -> dict:
     d = {"stage": s.stage, "topology": s.topology, "loss": s.loss, "blend": s.blend, "align": s.align,
          "levelMatch": s.levels and s.levels.preset_block(),
-         "tightBoost": bool(s.combo.boost), "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
+         "tightBoost": bool(s.combo.boost), "irMix": None if s.combo.cab_b is None else
+         {"irB": s.combo.cab_b.key, "offsetSamplesB": s.combo.cab_offset, "invertB": s.combo.cab_invert},
+         "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
          "sizeRank": {"category": s.combo.size_rank()[0], "byteBucket": s.combo.size_rank()[1]}}
     if "guardrails" in s.extra:
         d["guardrails"] = s.extra["guardrails"]
@@ -856,7 +967,9 @@ def _scored_json(s: Scored) -> dict:
 
 def _notes(cfg, ref, best) -> str:
     return (f"Matched by sawblade-match seed {cfg.seed} against {Path(ref.path).name} ({ref.basis}). "
-            "Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.")
+            "Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only."
+            + (" bus comp added by the matcher (studio processing); dropped from no-cab exports"
+               if best.extra.get("busComp") else ""))
 
 
 def _err_summary(rep) -> list[dict]:
