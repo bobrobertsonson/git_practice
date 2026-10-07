@@ -166,6 +166,7 @@ struct ExportRequest {
   bool allowInexact = false;           // --allow-inexact (no-cab export that keeps the comp's absence as reported error)
   bool diBuiltin = false;              // --di builtin
   std::filesystem::path resumeDir;     // --resume <dir>: continue that run (its own mode / size / preset)
+  std::filesystem::path notesPreset;   // --notes-preset <file>: the ORIGINAL rig (bus comp on) when the trained preset dropped it, so the notes list the comp
 };
 
 // What the user must locate before a job can start.

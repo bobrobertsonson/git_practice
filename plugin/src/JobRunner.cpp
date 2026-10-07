@@ -962,6 +962,10 @@ bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
   if (r.di) job->args.insert(job->args.end(), {"--di", r.di->string()});
   else if (r.diBuiltin) job->args.insert(job->args.end(), {"--di", "builtin"});
   if (r.allowInexact) job->args.push_back("--allow-inexact");
+  if (!r.notesPreset.empty()) {
+    if (!fs::is_regular_file(r.notesPreset, ec)) return fail("The preset for the export notes was not found: " + r.notesPreset.string());
+    job->args.insert(job->args.end(), {"--notes-preset", r.notesPreset.string()});
+  }
   if (!r.resumeDir.empty()) {
     if (!fs::is_directory(r.resumeDir, ec)) return fail("The run to resume was not found: " + r.resumeDir.string());
     job->args.insert(job->args.end(), {"--resume", r.resumeDir.string()});

@@ -61,6 +61,11 @@ def mismatches(progress: dict, identity: dict, config: dict | None = None) -> li
     for k in IDENTITY_KEYS:
         if k in identity and progress.get(k) != identity[k]:
             out.append(f"{names[k]} differs (checkpoint {progress.get(k)!r}, requested {identity[k]!r})")
+    # a run that trained with a notes preset must be resumed with the same one (and vice versa): the notes are built at the end
+    if progress.get("notesPresetSha256") != identity.get("notesPresetSha256"):
+        out.append("notes preset differs (checkpoint " + ("none" if progress.get("notesPresetSha256") is None else "sha256 " +
+                   progress["notesPresetSha256"][:12]) + ", requested " + ("none" if identity.get("notesPresetSha256") is None
+                   else "sha256 " + identity["notesPresetSha256"][:12]) + "): pass the same --notes-preset on resume")
     for k, v in (config or {}).items():
         stored = (progress.get("config") or {}).get(k)
         if stored is None:
