@@ -225,7 +225,8 @@ LiveParams LiveParams::fromPreset(const Preset& p) {
   LiveParams l;
   l.inputGainDb = p.inputGainDb;
   l.outputGainDb = p.outputGainDb;
-  l.gateThresholdDb = p.gate.thresholdDb;
+  l.dynamics = activeDynamics(p);
+  l.gateThresholdDb = l.dynamics.gate.thresholdDb;
   l.blend = p.blend;
   l.blendLaw = p.blendLaw;
   l.levelDbA = p.a.levelDb;
@@ -306,15 +307,8 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
   }
   inGain_.setGainDb(preset_.inputGainDb);
   outGain_.setGainDb(preset_.outputGainDb);
-  gate_.setParams(preset_.gate);
-  gateOn_ = preset_.gate.enabled;
-  {
-    // The sum node runs kHeadroomDb down, so the threshold is referred to the pre-headroom level.
-    BusCompParams bp = preset_.busComp;
-    bp.thresholdDb += kHeadroomDb;
-    comp_.setParams(bp);
-  }
-  compOn_ = preset_.busComp.enabled;
+  const DynamicsSet dyn = activeDynamics(preset_);  // the record or the live set, per preset.dynamicsMode
+  applyDynamics(dyn);
   live_ = LiveParams::fromPreset(preset_);
   setBlendTargets(live_.blend, live_.blendLaw, false);
 
@@ -325,13 +319,25 @@ Chain::Chain(const Preset& preset, ChainResources&& resources) : preset_(preset)
       if (!lb.bypass && !lb.traits.namTrainable)
         warnings_.push_back("block '" + lb.id + "' (type '" + lb.type + "') is not NAM-trainable");
   }
-  if (compOn_ && preset_.busComp.releaseMs > kBusCompMaxTrainableReleaseMs)
-    warnings_.push_back("busComp: releaseMs " + std::to_string(preset_.busComp.releaseMs) + " > " +
+  if (compOn_ && dyn.busComp.releaseMs > kBusCompMaxTrainableReleaseMs)
+    warnings_.push_back("busComp: releaseMs " + std::to_string(dyn.busComp.releaseMs) + " > " +
                         std::to_string(static_cast<int>(kBusCompMaxTrainableReleaseMs)) +
                         " ms is not NAM-trainable");
 }
 
 Chain::~Chain() = default;
+
+// RT-safe: no allocation, locks or I/O. The whole set is applied in this one call, between blocks.
+void Chain::applyDynamics(const DynamicsSet& d) noexcept {
+  gate_.setParams(d.gate);
+  gateOn_ = d.gate.enabled;
+  // The sum node runs kHeadroomDb down, so the threshold is referred to the pre-headroom level.
+  BusCompParams bp = d.busComp;
+  bp.thresholdDb += kHeadroomDb;
+  comp_.setParams(bp);
+  if (d.busComp.enabled && !compOn_) comp_.reset();  // do not resume from a stale envelope
+  compOn_ = d.busComp.enabled;
+}
 
 void Chain::prepare(const ProcessSpec& spec) {
   if (spec.sampleRate != res_.sampleRate)
@@ -826,6 +832,7 @@ void Chain::setLiveParams(const LiveParams& in) noexcept {
     if (mute[k] && mute[k] == oldMute[k]) continue;  // a level change while muted only moves the stored target
     path_[k].level.rampToLinear(levelTarget(k, lv[k], mute[k]), rampSamples_);  // the trim stays
   }
+  if (!(p.dynamics == live_.dynamics)) applyDynamics(p.dynamics);
   if (p.gateThresholdDb != live_.gateThresholdDb && std::isfinite(p.gateThresholdDb)) {
     GateParams g = gate_.params();
     g.thresholdDb = p.gateThresholdDb;

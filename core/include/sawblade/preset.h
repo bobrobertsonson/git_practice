@@ -19,7 +19,7 @@
 // nam block's makeupDb). Parsing is strict (see PresetError).
 namespace sawblade {
 
-constexpr int kPresetVersion = 3;
+constexpr int kPresetVersion = 4;
 constexpr int kMaxBlocksPerPath = 8;
 // Limits of the level-matching gains (auto_trim.h): output.autoTrimDb and a nam block's makeupDb are clamped / bounded to +-.
 constexpr double kMaxAutoTrimDb = 48.0;
@@ -148,6 +148,18 @@ struct AutoTrimStamp {
   bool operator==(const AutoTrimStamp&) const noexcept { return true; }
 };
 
+// v4 (docs/PRESET_SCHEMA.md "Live dynamics"): who made the preset. Only "match" presets get the derived live dynamics.
+enum class PresetOrigin { User, Match, Official };
+// Which dynamics set the engine runs: the record set (the preset's `gate` / `busComp`, as fitted to a recording) or the live set.
+enum class DynamicsMode { Record, Live };
+
+// One complete set of dynamics processing; handed over as one object (plugin) so no block runs half old, half new.
+struct DynamicsSet {
+  GateParams gate = [] { GateParams g; g.enabled = false; return g; }();
+  BusCompParams busComp;
+  bool operator==(const DynamicsSet&) const = default;
+};
+
 struct Preset {
   std::string schema = "sawblade.preset";
   int version = kPresetVersion;
@@ -164,6 +176,11 @@ struct Preset {
   CabPreset cab;
   std::vector<EqBand> postEq;
   BusCompParams busComp;
+  // v4: `gate` + `busComp` above are the record set. `liveDynamics` is the explicit live set (absent = derived, see
+  // liveDynamicsOf); `dynamicsMode` absent in the file = record (nullopt; the plugin then sets Live on load).
+  std::optional<DynamicsSet> liveDynamics;
+  std::optional<DynamicsMode> dynamicsMode;
+  PresetOrigin origin = PresetOrigin::User;
   double outputGainDb = 0.0;
   // v3 (docs/PRESET_SCHEMA.md "Level matching"): the trim, in dB, that brings this preset to kAutoTrimTargetLufs on the reference DI
   // (auto_trim.h), and the hash of the level-affecting parts it was measured for ("" = not measured). It is a plain gain after
@@ -172,6 +189,18 @@ struct Preset {
   AutoTrimStamp autoTrim;
   bool operator==(const Preset&) const = default;
 };
+
+// The record set of a preset (its `gate` / `busComp`).
+DynamicsSet recordDynamicsOf(const Preset& p);
+// The derivation rule applied to a record set (origin "match" only; see liveDynamicsOf).
+DynamicsSet deriveLiveDynamics(const DynamicsSet& record);
+// The live set: the explicit `liveDynamics` if present; else, for origin "match", deriveLiveDynamics(record); else (user,
+// official, old files) the record set unchanged.
+DynamicsSet liveDynamicsOf(const Preset& p);
+// THE resolver: the set the preset's dynamicsMode selects (absent = record). Used by the render path (Chain), the NAM
+// exporter and the plugin.
+DynamicsSet activeDynamics(const Preset& p);
+inline DynamicsMode effectiveDynamicsMode(const Preset& p) { return p.dynamicsMode.value_or(DynamicsMode::Record); }
 
 // Block types are looked up in the BlockRegistry (unknown type -> PresetError).
 Preset parsePreset(const nlohmann::json& j, const std::filesystem::path& baseDir);

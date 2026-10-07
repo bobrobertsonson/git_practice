@@ -17,9 +17,54 @@ double dbToLin(double db) { return std::pow(10.0, db / 20.0); }
 
 }  // namespace
 
+void Gate::setThresholdDb(double openDb) noexcept {
+  openDb_ = openDb;
+  openLin_ = dbToLin(openDb);
+  closeLin_ = dbToLin(openDb - std::max(0.0, params_.hysteresisDb));
+  closeDb_ = openDb - std::max(0.0, params_.hysteresisDb);
+}
+
+void Gate::resetFloor() noexcept {
+  ring_.fill(kInf);
+  ringHead_ = subsDone_ = frameInSub_ = frameCount_ = sinceQualFrames_ = 0;
+  subMin_ = kInf;
+  frameSum_ = 0.0;
+  floorDb_ = kFloorSeedDb;
+}
+
 void Gate::setParams(const GateParams& p) noexcept {
+  // Entering floorRelative starts the follower from its seed.
+  if (p.thresholdMode == GateThresholdMode::FloorRelative && params_.thresholdMode != GateThresholdMode::FloorRelative)
+    resetFloor();
   params_ = p;
   updateCoefficients();
+}
+
+// One finished 50 ms frame (mean square of the key).
+void Gate::floorFrame(double meanSquare) noexcept {
+  const double rmsDb = 10.0 * std::log10(std::max(meanSquare, 1e-18));
+  if (rmsDb < floorDb_ + kQualifyDb) {
+    subMin_ = std::min(subMin_, rmsDb);
+    sinceQualFrames_ = 0;
+  } else if (sinceQualFrames_ < 1000000) {
+    ++sinceQualFrames_;
+  }
+  if (++frameInSub_ >= kFramesPerSub) {
+    ring_[static_cast<std::size_t>(ringHead_)] = subMin_;
+    ringHead_ = (ringHead_ + 1) % kSubWindows;
+    if (subsDone_ < kSubWindows) ++subsDone_;
+    subMin_ = kInf;
+    frameInSub_ = 0;
+  }
+  double m = subMin_;
+  for (double v : ring_) m = std::min(m, v);
+  if (m != kInf) {
+    floorDb_ = subsDone_ < kSubWindows ? std::min(kFloorSeedDb, m) : m;
+  } else if (sinceQualFrames_ * (kFrameMs * 0.001) > kLeakAfterS) {
+    floorDb_ += kLeakDbPerS * kFrameMs * 0.001;
+  }
+  floorDb_ = std::min(kFloorMaxDb, std::max(kFloorMinDb, floorDb_));
+  setThresholdDb(floorDb_ + params_.floorOffsetDb);
 }
 
 void Gate::updateCoefficients() noexcept {
@@ -27,9 +72,9 @@ void Gate::updateCoefficients() noexcept {
   envRel_ = onePoleCoeff(Gate::kEnvReleaseMs, sampleRate_);
   gainAtk_ = onePoleCoeff(params_.attackMs, sampleRate_);
   gainRel_ = onePoleCoeff(params_.releaseMs, sampleRate_);
-  openLin_ = dbToLin(params_.thresholdDb);
-  closeLin_ = dbToLin(params_.thresholdDb - std::max(0.0, params_.hysteresisDb));
-  closeDb_ = params_.thresholdDb - std::max(0.0, params_.hysteresisDb);
+  frameLen_ = std::max(1, static_cast<int>(std::lround(kFrameMs * 0.001 * sampleRate_)));
+  setThresholdDb(params_.thresholdMode == GateThresholdMode::FloorRelative ? floorDb_ + params_.floorOffsetDb
+                                                                           : params_.thresholdDb);
   rampStepDb_ = params_.releaseMs > 0.0 ? -params_.rangeDb / (params_.releaseMs * 0.001 * sampleRate_) : 1e9;
   keyHp_ = params_.keyHighPassHz > 0.0;
   if (keyHp_) {
@@ -58,12 +103,15 @@ void Gate::reset() {
   open_ = false;
   holdCount_ = 0;
   gainDb_ = params_.rangeDb;
+  resetFloor();
+  updateCoefficients();
 }
 
 void Gate::processKeyed(const float* key, float* io, int numSamples) noexcept {
   if (!params_.enabled) return;
   const double rangeDb = params_.rangeDb;
   const bool expander = params_.mode == GateMode::Expander;
+  const bool floorRel = params_.thresholdMode == GateThresholdMode::FloorRelative;
   const bool linearRelease = params_.releaseCurve == GateReleaseCurve::LinearDb;
   for (int i = 0; i < numSamples; ++i) {
     double k = static_cast<double>(key[i]);
@@ -72,6 +120,14 @@ void Gate::processKeyed(const float* key, float* io, int numSamples) noexcept {
       kz1_ = kb1_ * k - ka1_ * y + kz2_;
       kz2_ = kb2_ * k - ka2_ * y;
       k = y;
+    }
+    if (floorRel) {
+      frameSum_ += k * k;
+      if (++frameCount_ >= frameLen_) {
+        floorFrame(frameSum_ / frameLen_);
+        frameSum_ = 0.0;
+        frameCount_ = 0;
+      }
     }
     const double x = std::fabs(k);
     env_ = x > env_ ? x + envAtk_ * (env_ - x) : x + envRel_ * (env_ - x);

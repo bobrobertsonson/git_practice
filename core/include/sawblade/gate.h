@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <limits>
+
 #include "sawblade/processor.h"
 
 namespace sawblade {
@@ -8,6 +11,9 @@ namespace sawblade {
 // preset parser applies "enabled=false when the gate object is omitted".)
 enum class GateMode { Gate, Expander };
 enum class GateReleaseCurve { OnePole, LinearDb };
+// absolute: thresholdDb is used as set. floorRelative: threshold = the key's tracked noise floor + floorOffsetDb
+// (thresholdDb is then unused); see Gate "floor follower".
+enum class GateThresholdMode { Absolute, FloorRelative };
 
 struct GateParams {
   bool enabled = true;
@@ -22,6 +28,9 @@ struct GateParams {
   double ratio = 4.0;          // expander only: downward ratio below the close threshold (1.5-10)
   double keyHighPassHz = 0.0;  // 0 = off, else 40-400 Hz, 12 dB/oct; filters the key only
   GateReleaseCurve releaseCurve = GateReleaseCurve::OnePole;  // linear-db: -rangeDb/releaseMs dB per ms
+  // Live dynamics policy (preset v4). Defaults reproduce the earlier behaviour bit-for-bit.
+  GateThresholdMode thresholdMode = GateThresholdMode::Absolute;
+  double floorOffsetDb = 8.0;  // floorRelative only: open threshold = floor estimate + this
 };
 
 // Envelope: peak follower (0.1 ms attack / 10 ms release one-pole, fixed). State machine:
@@ -37,6 +46,13 @@ struct GateParams {
 // high-passed (biquad Butterworth, key only) so low-string rumble does not hold the gate open.
 // releaseCurve "linear-db" slews the falling gain at a constant dB/ms (rangeDb over releaseMs)
 // instead of the one-pole, which is slow near the end of a deep fall.
+//
+// Floor follower (thresholdMode floorRelative): minimum statistics on the (key-high-passed) key. 50 ms RMS frames;
+// only frames below estimate + 20 dB feed the sub-window minima (playing never feeds the floor); the estimate is the
+// minimum over a 3 s window held as a fixed ring of 100 ms sub-window minima. When no frame has qualified for 10 s the
+// estimate leaks up at +1 dB/s. Clamped to [-96, -40] dBFS, seeded at -70 dBFS (until the first window has filled the
+// estimate is min(seed, running minimum)). Everything is counted in samples, so the result does not depend on the block
+// size. The thresholds are refreshed whenever the estimate changes (frame boundaries).
 //
 // Not a "hard" gate in the allocation sense: all processing is allocation-free.
 class Gate : public Processor {
@@ -58,11 +74,27 @@ class Gate : public Processor {
   // written, per sample.
   void processKeyed(const float* key, float* io, int numSamples) noexcept;
 
+  // Floor follower constants.
+  static constexpr double kFrameMs = 50.0;
+  static constexpr int kFramesPerSub = 2;       // 100 ms sub-windows
+  static constexpr int kSubWindows = 30;        // 3 s
+  static constexpr double kQualifyDb = 20.0;    // a frame feeds the minima when below estimate + this
+  static constexpr double kLeakAfterS = 10.0;
+  static constexpr double kLeakDbPerS = 1.0;
+  static constexpr double kFloorSeedDb = -70.0, kFloorMinDb = -96.0, kFloorMaxDb = -40.0;
+
+  // The tracked floor estimate (dBFS) and the open threshold in force (dBFS). Any thread may read after the audio stops.
+  double floorEstimateDb() const noexcept { return floorDb_; }
+  double openThresholdDb() const noexcept { return openDb_; }
+
   bool isOpen() const noexcept { return open_; }
   double gainDb() const noexcept { return gainDb_; }
 
  private:
   void updateCoefficients() noexcept;
+  void setThresholdDb(double openDb) noexcept;
+  void resetFloor() noexcept;
+  void floorFrame(double meanSquare) noexcept;
 
   GateParams params_{};
   double sampleRate_ = 48000.0;
@@ -83,6 +115,17 @@ class Gate : public Processor {
   bool open_ = false;
   int holdCount_ = 0;
   double gainDb_ = -90.0;
+
+  // Floor follower state (floorRelative only).
+  static constexpr double kInf = std::numeric_limits<double>::infinity();
+  std::array<double, kSubWindows> ring_{};
+  int ringHead_ = 0, subsDone_ = 0, frameInSub_ = 0;
+  double subMin_ = kInf;
+  int frameLen_ = 2400, frameCount_ = 0;
+  double frameSum_ = 0.0;
+  int sinceQualFrames_ = 0;
+  double floorDb_ = kFloorSeedDb;
+  double openDb_ = -55.0;
 };
 
 }  // namespace sawblade
