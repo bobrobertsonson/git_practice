@@ -551,30 +551,61 @@ bool Pedalboard::removePedal(int path, const std::string& id) {
 }
 
 bool Pedalboard::movePedal(int path, const std::string& id, int toPath, int toIndex) {
+  return moveImpl(path, id, toPath, nullptr, toIndex, nullptr);
+}
+
+bool Pedalboard::moveImpl(int path, const std::string& id, int toPath, const Drop* anchor, int toIndex, bool* cancelled) {
   const PathView& dst = paths_[static_cast<std::size_t>(toPath)];
-  if (dst.off || !hasTile(path, id)) return false;  // a board that is off is not a drop target; an id that is not on the board moves nothing
-  if (path != toPath) {
-    if (pathFull(toPath)) {
-      say(juce::String(toPath == 0 ? "SAW" : "BODY") + " path full: 8 blocks");
-      return false;
-    }
-  } else {
-    const auto& tiles = paths_[static_cast<std::size_t>(path)].tiles;
-    int from = -1;
-    for (std::size_t i = 0; i < tiles.size(); ++i)
-      if (tiles[i]->blockId() == id) from = static_cast<int>(i);
-    if (from < 0 || from == juce::jlimit(0, static_cast<int>(tiles.size()) - 1, toIndex)) return false;  // nothing moves
+  if (dst.off) return false;  // a board that is off is not a drop target
+  if (anchor == nullptr && !hasTile(path, id)) return false;  // an id that is not on the board moves nothing
+  if (path != toPath && pathFull(toPath)) {
+    say(juce::String(toPath == 0 ? "SAW" : "BODY") + " path full: 8 blocks");
+    return false;
   }
-  controller_.edit([path, id, toPath, toIndex](Preset& p) {
+  // Everything below is decided on the preset as it is NOW, by id: the tiles the drag started from may be older than the rig.
+  bool edited = false, lost = false;
+  controller_.edit([&](Preset& p) {
     PathPreset& src = path == 0 ? p.a : p.b;
     PathPreset& dstPath = toPath == 0 ? p.a : p.b;
     const int srcTiles = boardBlockCount(src);
     int from = -1;
     for (int i = 0; i < srcTiles; ++i)
       if (src.blocks[static_cast<std::size_t>(i)].id == id) from = i;
-    if (from < 0) return;
+    if (from < 0) {
+      lost = anchor != nullptr;  // the dragged pedal is gone: cancel
+      return;
+    }
+    // The final index among the target's tiles once the dragged pedal is out of the way.
+    const int dstTiles = boardBlockCount(dstPath);
+    int index = toIndex;
+    if (anchor != nullptr) {
+      std::vector<const Block*> others;
+      for (int i = 0; i < dstTiles; ++i) {
+        const Block& b = dstPath.blocks[static_cast<std::size_t>(i)];
+        if (!(path == toPath && b.id == id)) others.push_back(&b);
+      }
+      auto find = [&others](const std::string& x) {
+        for (std::size_t i = 0; i < others.size(); ++i)
+          if (others[i]->id == x) return static_cast<int>(i);
+        return -1;
+      };
+      index = -1;
+      if (!anchor->beforeId.empty()) index = find(anchor->beforeId);
+      if (index < 0 && !anchor->afterId.empty() && (anchor->beforeId.empty() || find(anchor->afterId) >= 0)) {
+        const int after = find(anchor->afterId);
+        if (after >= 0) index = after + 1;
+      }
+      if (index < 0 && anchor->beforeId.empty() && anchor->afterId.empty() && others.empty()) index = 0;  // an empty board
+      if (index < 0) {  // the neighbours the user aimed between are gone: not a place we can name
+        lost = true;
+        return;
+      }
+    }
     if (path == toPath) {
-      moveBlock(src, from, std::clamp(toIndex, 0, srcTiles - 1));
+      const int to = std::clamp(index, 0, srcTiles - 1);
+      if (to == from) return;  // nothing moves
+      moveBlock(src, from, to);
+      edited = true;
       return;
     }
     if (static_cast<int>(dstPath.blocks.size()) >= kMaxBlocksPerPath) return;
@@ -582,10 +613,12 @@ bool Pedalboard::movePedal(int path, const std::string& id, int toPath, int toIn
     removeBlock(src, from);
     b.id = newBlockId(p, toPath == 0 ? 'a' : 'b');  // a fresh id; everything else (params, bypass, capture, make-up) is kept
     if (b.slot.empty() && b.type == "nam") b.slot = "pedal";  // stays a pedal whatever the target's blocks
-    addBlock(dstPath, std::clamp(toIndex, 0, boardBlockCount(dstPath)), std::move(b));
+    addBlock(dstPath, std::clamp(index, 0, boardBlockCount(dstPath)), std::move(b));
+    edited = true;
   });
-  refreshNow();
-  return true;
+  if (cancelled != nullptr) *cancelled = lost;
+  if (edited || lost) refreshNow();
+  return edited;
 }
 
 bool Pedalboard::addModeledPedal(int path, const std::string& type) {
@@ -846,16 +879,16 @@ void Pedalboard::endDrag(bool drop) {
   d.tile->setAlpha(1.0f);  // the tile was not rebuilt during the drag
   const std::string id = d.tile->blockId();
   const int path = d.tile->path();
-  bool edited = false;
+  bool edited = false, cancelled = false;
   if (drop && d.active) {
     switch (d.drop.kind) {
       case Drop::Kind::Remove: edited = removePedal(path, id); break;
-      case Drop::Kind::Insert: edited = movePedal(path, id, d.drop.path, d.drop.index); break;
+      case Drop::Kind::Insert: edited = moveImpl(path, id, d.drop.path, &d.drop, d.drop.index, &cancelled); break;
       case Drop::Kind::Refused: say(juce::String(d.drop.path == 0 ? "SAW" : "BODY") + " path full: 8 blocks"); break;
       case Drop::Kind::Cancel: break;
     }
   }
-  if (!edited && pending) refreshNow();
+  if (!edited && (pending || cancelled)) refreshNow();
 }
 
 Pedalboard::Drop Pedalboard::computeDrop(juce::Point<float> p) const {
@@ -882,6 +915,8 @@ Pedalboard::Drop Pedalboard::computeDrop(juce::Point<float> p) const {
     const auto vr = v.viewport->getBounds();
     d.kind = Drop::Kind::Insert;
     d.index = idx;
+    if (idx < static_cast<int>(others.size())) d.beforeId = others[static_cast<std::size_t>(idx)]->blockId();
+    if (idx > 0) d.afterId = others[static_cast<std::size_t>(idx - 1)]->blockId();
     d.bar = juce::Rectangle<float>(x - 1.5f, static_cast<float>(vr.getY() + 6), 3.0f, static_cast<float>(vr.getHeight() - 12 - kScrollBar));
     return d;
   }

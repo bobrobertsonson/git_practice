@@ -239,6 +239,9 @@ class Pedalboard : public juce::Component {
   struct Drop {
     enum class Kind { Cancel, Remove, Insert, Refused } kind = Kind::Cancel;
     int path = -1, index = -1;
+    // The target as the user sees it, by block id (the tiles may be stale by the time of the drop): the pedal it goes before / after
+    // (among the board's other tiles; "" = none on that side).
+    std::string beforeId, afterId;
     juce::Rectangle<float> bar;  // the insertion bar, in this component's coordinates
   };
   struct Drag {
@@ -260,6 +263,9 @@ class Pedalboard : public juce::Component {
   void abortDrag();  // forgets a drag without dropping it (the tile is shown normally again)
   bool hasTile(int path, const std::string& id) const;
   void endDrag(bool drop);
+  // The one implementation of a move. `anchor` (a drop) resolves the target by block id against the CURRENT preset; null = `toIndex`.
+  // `cancelled` is set when the target no longer exists (nothing is edited, nothing is recorded).
+  bool moveImpl(int path, const std::string& id, int toPath, const Drop* anchor, int toIndex, bool* cancelled);
   Drop computeDrop(juce::Point<float> p) const;
   void showTileMenu(BoardTile& t);
   void say(const juce::String& m);

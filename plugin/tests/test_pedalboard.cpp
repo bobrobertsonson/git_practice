@@ -484,8 +484,18 @@ TEST_CASE("pedalboard: the footswitch bypasses (one undo step); the LED follows"
   const Preset after = rig.preset();
   CHECK(after.a.blocks[0].bypass);
   CHECK(ids(after.a) == ids(before.a));
-  checkOneUndoStep(rig, before, after);
-  CHECK_FALSE(pb.tile(0, 0)->bypassed());  // the board follows the undo
+  checkOneUndoStep(rig, before, after);  // ends redone: the pedal is bypassed again
+  CHECK(pb.tile(0, 0)->bypassed());
+  CHECK_FALSE(pb.tile(0, 0)->led().isOn());
+  // the board follows the undo and the redo, one by one
+  REQUIRE(rig.ctl().undo());
+  rig.settle();
+  CHECK_FALSE(pb.tile(0, 0)->bypassed());
+  CHECK(pb.tile(0, 0)->led().isOn());
+  REQUIRE(rig.ctl().redo());
+  rig.settle();
+  CHECK(pb.tile(0, 0)->bypassed());
+  CHECK_FALSE(pb.tile(0, 0)->led().isOn());
 
   // a footswitch press is not a drag
   click(pb.tile(0, 0)->footswitch());
@@ -521,12 +531,68 @@ TEST_CASE("pedalboard: a refresh during a drag keeps the dragged tile", "[editor
   CHECK(pb.tileCount(0) == 3);  // still the old board: the rebuild waits for the mouse-up
   CHECK(pb.dragInfo().active);
 
-  // dropped where it was: nothing to do, and the board then follows the rig
+  // dropped on its own slot: nothing to do, and the board then follows the rig. The drop is resolved by block id against the rig as it
+  // is now (not by the stale index "end of the board", which would have moved a1 behind a2).
+  g.moveTo(rig.before(0, 0));
   g.release(rig.before(0, 0));
   rig.settle();
   CHECK(pb.tileCount(0) == 2);
   CHECK(ids(rig.preset().a) == Ids{"a1", "a2", "a4"});
+  CHECK_FALSE(rig.ctl().canUndo());
   CHECK_FALSE(pb.dragInfo().pressed);
+}
+
+TEST_CASE("pedalboard: a drop is resolved by block id when the rig changed during the drag", "[editor][pedalboard]") {
+  // SAW: a1 chainsaw, a2 overdrive (bypassed), a3 EQ, a4 amp.
+  const auto changeMidDrag = [](Rig& rig, auto&& edit) {
+    Preset p = rig.preset();
+    edit(p);
+    rig.proc.loadPreset(p);
+    REQUIRE(rig.proc.waitForLoader(kLoad));
+    pump(30);
+    rig.ed->refreshNow();
+  };
+  SECTION("a real move still lands by id") {
+    Rig rig;
+    rig.load(standard());
+    auto& pb = rig.board();
+    pb.setMouseDownProbe([] { return true; });
+    Gesture g(rig, *pb.tile(0, 0));
+    g.moveTo(rig.before(0, 2));  // between a2 and the EQ a3
+    REQUIRE(pb.dragInfo().active);
+    changeMidDrag(rig, [](Preset& p) { p.a.blocks.erase(p.a.blocks.begin() + 1); });  // a2 is removed: a1 a3 a4
+    g.moveTo(rig.before(0, 2));  // the stale board is still shown: before the EQ
+    g.release(rig.before(0, 2));
+    rig.settle();
+    CHECK(ids(rig.preset().a) == Ids{"a1", "a3", "a4"});  // before a3 is where a1 already is: nothing moved
+    CHECK_FALSE(rig.ctl().canUndo());
+
+    // and a move that does change the order is resolved against the new preset, not the old indices
+    rig.load(standard());
+    Gesture h(rig, *pb.tile(0, 0));
+    h.moveTo(rig.afterLast(0));  // after the EQ a3
+    REQUIRE(pb.dragInfo().active);
+    changeMidDrag(rig, [](Preset& p) { p.a.blocks.erase(p.a.blocks.begin() + 1); });  // a2 removed: a1 a3 a4
+    h.release(rig.afterLast(0));
+    rig.settle();
+    CHECK(ids(rig.preset().a) == Ids{"a3", "a1", "a4"});
+    CHECK(rig.ctl().canUndo());
+  }
+  SECTION("the target's neighbours are gone: the drop is cancelled, no undo step") {
+    Rig rig;
+    rig.load(standard());
+    auto& pb = rig.board();
+    pb.setMouseDownProbe([] { return true; });
+    Gesture g(rig, *pb.tile(0, 0));
+    g.moveTo(rig.afterLast(0));  // after the EQ a3, the last tile
+    REQUIRE(pb.dragInfo().active);
+    changeMidDrag(rig, [](Preset& p) { p.a.blocks.erase(p.a.blocks.begin() + 2); });  // the EQ is removed
+    g.release(rig.afterLast(0));
+    rig.settle();
+    CHECK(ids(rig.preset().a) == Ids{"a1", "a2", "a4"});
+    CHECK_FALSE(rig.ctl().canUndo());
+    CHECK(pb.tileCount(0) == 2);  // refreshed
+  }
 }
 
 TEST_CASE("pedalboard: a full path greys + PEDAL and refuses drops from the other path with a status message", "[editor][pedalboard]") {
