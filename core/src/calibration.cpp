@@ -38,7 +38,7 @@ PathPlan planPath(const DeviceCalibration& device, std::span<const BlockLevelInf
   PathPlan plan;
   plan.deviceUncalibrated = !device.calibrated();
   plan.blocks.reserve(blocks.size());
-  std::optional<double> ref = device.calibrated() ? device.dbu : std::nullopt;
+  double ref = device.calibrated() ? *device.dbu : kAssumedDeviceDbu;
 
   for (const auto& b : blocks) {
     BlockGain g;
@@ -50,17 +50,13 @@ PathPlan planPath(const DeviceCalibration& device, std::span<const BlockLevelInf
       g.outputMissing = !out;
       if (!in) in = finiteOnly(gd.inputDbu);
       if (!out) out = finiteOnly(gd.outputDbu);
-      if (ref && in) {
-        g.gainInDb = *ref - *in;
-      } else if (!ref && in) {
-        ref = in;  // unknown reference resolves neutrally: gain 0
-      }                // else no input known: neutral, gain 0
-      if (out) ref = out;
+      if (in) g.gainInDb = ref - *in;  // else no input known: neutral, gain 0
+      if (out) ref = *out;
     } else if (b.kind == LevelKind::NominalOutput) {
       auto out = finiteOnly(b.outputDbu);
       g.outputMissing = !out;
       if (!out) out = finiteOnly(gd.outputDbu);
-      if (out) ref = out;
+      if (out) ref = *out;
     }
     g.gainInLinear = static_cast<float>(dbToLinear(g.gainInDb));
     g.refAfterDbu = ref;

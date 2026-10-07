@@ -14,7 +14,7 @@ BlockLevelInfo nam(GearKind g, std::optional<double> in, std::optional<double> o
   return {LevelKind::Nam, g, in, out};
 }
 BlockLevelInfo eq() { return {LevelKind::Neutral, GearKind::Unknown, std::nullopt, std::nullopt}; }
-constexpr double kDev = 12.0;
+constexpr double kDev = 10.0;  // deliberately != kAssumedDeviceDbu
 DeviceCalibration dev(double dbu = kDev) { return {dbu}; }
 DeviceCalibration noDev() { return {std::nullopt}; }
 }  // namespace
@@ -135,56 +135,49 @@ TEST_CASE("calibration: non-finite metadata is missing; non-finite device is unc
   REQUIRE(planPath(DeviceCalibration{nan}, ok, defaultCalibrationDefaults()).deviceUncalibrated);
 }
 
-TEST_CASE("calibration: uncalibrated device resolves the reference neutrally", "[calibration]") {
+TEST_CASE("calibration: uncalibrated device assumes kAssumedDeviceDbu", "[calibration]") {
   const auto defs = defaultCalibrationDefaults();
+  REQUIRE(kAssumedDeviceDbu == 12.0);
 
-  SECTION("(a) amp: gain 0, device flagged, ref becomes the amp output") {
+  SECTION("lone amp: gain = assumed - in, device flagged") {
     std::vector<BlockLevelInfo> p{nam(GearKind::Amp, 7.0, 0.0)};
     auto plan = planPath(noDev(), p, defs);
     REQUIRE(plan.deviceUncalibrated);
-    REQUIRE(plan.blocks[0].gainInDb == 0.0);
-    REQUIRE(plan.blocks[0].gainInLinear == 1.0f);
-    REQUIRE_FALSE(plan.blocks[0].uncalibrated());  // block metadata is fine; the device is what is unknown
+    REQUIRE(plan.blocks[0].gainInDb == Approx(kAssumedDeviceDbu - 7.0));
+    REQUIRE_FALSE(plan.blocks[0].uncalibrated());  // block metadata is fine; the device is what is assumed
+    REQUIRE_FALSE(plan.anyUncalibrated);
     REQUIRE(plan.refOutDbu == 0.0);
   }
-  SECTION("(b) pedal then amp: first gain 0, hop is exact") {
+  SECTION("amp swap changes the gain by exactly -d even when uncalibrated") {
+    const double d = 2.5;
+    std::vector<BlockLevelInfo> a{nam(GearKind::Amp, 7.0, 0.0)}, b{nam(GearKind::Amp, 7.0 + d, 0.0)};
+    auto pa = planPath(noDev(), a, defs), pb = planPath(noDev(), b, defs);
+    REQUIRE(pb.blocks[0].gainInDb - pa.blocks[0].gainInDb == Approx(-d).margin(1e-12));
+  }
+  SECTION("pedal then amp: first gain from the assumed level, hop exact") {
     std::vector<BlockLevelInfo> p{nam(GearKind::Pedal, 5.0, -2.0), eq(), nam(GearKind::Amp, 8.0, 0.0)};
     auto plan = planPath(noDev(), p, defs);
     REQUIRE(plan.deviceUncalibrated);
-    REQUIRE(plan.blocks[0].gainInDb == 0.0);
+    REQUIRE(plan.blocks[0].gainInDb == Approx(kAssumedDeviceDbu - 5.0));
     REQUIRE(plan.blocks[1].gainInDb == 0.0);
     REQUIRE(plan.blocks[2].gainInDb == Approx(-2.0 - 8.0));
   }
-  SECTION("(c) amp swap: amp gain is 0 for both") {
-    // Expected: without a device level there is no physical anchor, so a lone amp is always 0 dB whatever its
-    // input_level_dbu. The absolute level only becomes correct once the device is calibrated.
-    std::vector<BlockLevelInfo> a{nam(GearKind::Amp, 7.0, 0.0)}, b{nam(GearKind::Amp, 12.0, 0.0)};
-    auto pa = planPath(noDev(), a, defs), pb = planPath(noDev(), b, defs);
-    REQUIRE(pa.blocks[0].gainInDb == 0.0);
-    REQUIRE(pb.blocks[0].gainInDb == 0.0);
-  }
-  SECTION("known input, missing output, no default: ref := input") {
+  SECTION("known input, missing output, no default: flagged, ref unchanged") {
     std::vector<BlockLevelInfo> p{nam(GearKind::Amp, 7.0, std::nullopt)};
     auto plan = planPath(noDev(), p, defs);
-    REQUIRE(plan.blocks[0].gainInDb == 0.0);
+    REQUIRE(plan.blocks[0].gainInDb == Approx(kAssumedDeviceDbu - 7.0));
     REQUIRE(plan.blocks[0].outputMissing);
     REQUIRE_FALSE(plan.blocks[0].inputMissing);
-    REQUIRE(plan.refOutDbu == 7.0);
+    REQUIRE(plan.refOutDbu == kAssumedDeviceDbu);
   }
-  SECTION("block with no input stays unknown; the next amp resolves the ref at 0 dB") {
+  SECTION("block with no input is neutral and flagged; the next amp hops from the unchanged ref") {
     std::vector<BlockLevelInfo> p{nam(GearKind::Pedal, std::nullopt, std::nullopt), nam(GearKind::Amp, 9.0, 1.0)};
-    auto plan = planPath(noDev(), p, defs);
-    REQUIRE_FALSE(plan.blocks[0].refAfterDbu.has_value());
-    REQUIRE(plan.blocks[1].gainInDb == 0.0);
-    REQUIRE_FALSE(plan.blocks[1].uncalibrated());
-    REQUIRE(plan.refOutDbu == 1.0);
-  }
-  SECTION("amp with no input metadata while ref unknown stays neutral and unknown") {
-    std::vector<BlockLevelInfo> p{nam(GearKind::Amp, std::nullopt, std::nullopt)};
     auto plan = planPath(noDev(), p, defs);
     REQUIRE(plan.blocks[0].gainInDb == 0.0);
     REQUIRE(plan.blocks[0].uncalibrated());
-    REQUIRE_FALSE(plan.refOutDbu.has_value());
+    REQUIRE(plan.blocks[0].refAfterDbu == kAssumedDeviceDbu);
+    REQUIRE(plan.blocks[1].gainInDb == Approx(kAssumedDeviceDbu - 9.0));
+    REQUIRE(plan.refOutDbu == 1.0);
   }
 }
 
@@ -229,5 +222,5 @@ TEST_CASE("calibration: implausible dBu values are treated as missing", "[calibr
   std::vector<BlockLevelInfo> ok{nam(GearKind::Amp, 7.0, 0.0)};
   auto pd = planPath(DeviceCalibration{1e6}, ok, defaultCalibrationDefaults());
   REQUIRE(pd.deviceUncalibrated);
-  REQUIRE(pd.blocks[0].gainInDb == 0.0);
+  REQUIRE(pd.blocks[0].gainInDb == Approx(kAssumedDeviceDbu - 7.0));
 }
