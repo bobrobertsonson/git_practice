@@ -19,8 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("preset", help="resolved preset JSON (e.g. the matcher's best.preset.resolved.json)")
     p.add_argument("--mode", choices=("nocab", "withcab"), default="nocab",
                    help="nocab (default): model before the cab + IR (x) post EQ wav; withcab: the whole chain")
-    p.add_argument("--size", choices=("feather", "lite", "standard"), default="standard", help="A1 WaveNet size (Sawblade's own approximations of the community sizes, recalled "
-                   "from memory; not NAM's official presets)")
+    p.add_argument("--size", choices=("feather", "lite", "standard"), default="standard", help="A1 WaveNet size: NAM's official feather / lite / standard presets")
     p.add_argument("--epochs", type=int, default=None, help="max epochs (default per size: see README)")
     p.add_argument("--max-minutes", type=float, default=None, help="training wall-time cap (default per size)")
     p.add_argument("--lr-gamma", type=float, default=None,

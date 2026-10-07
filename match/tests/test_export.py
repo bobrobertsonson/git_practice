@@ -329,11 +329,36 @@ def test_train_config_defaults_and_architectures():
     assert 0.8 <= c.lr_gamma <= 0.994 and abs(c.lr_gamma ** c.epochs - 0.05) < 1e-6      # anneals to 5 %
     assert T.TrainConfig(size="standard", epochs=1000).resolved().lr_gamma == 0.994      # the trainer's own recipe
     assert T.TrainConfig(size="feather", lr_gamma=0.9).resolved().lr_gamma == 0.9
-    for size, (c1, h1, c2) in T.SIZES.items():
+    for size, p in T.SIZES.items():
         a, b = T.wavenet_config(size)["layers_configs"]
-        assert (a["channels"], a["head"]["out_channels"], b["channels"], b["input_size"]) == (c1, h1, c2, c1)
-        assert h1 == c2 and b["head"]["out_channels"] == 1                              # array-1 head feeds array 2
+        assert (a["channels"], a["head"]["out_channels"], b["channels"], b["input_size"]) == (
+            p["channels1"], p["head1"], p["channels2"], p["channels1"])
+        assert p["head1"] == p["channels2"] and b["head"]["out_channels"] == 1          # array-1 head feeds array 2
     assert T.TrainConfig().size == "standard"                                           # default size
+
+
+def test_a1_sizes_are_nams_official_presets():
+    """Layer layouts of neural-amp-modeler 0.12.3 nam/train/core.py get_wavenet_config:845-955 (0.13.0 dropped them);
+    parameter counts and the 4093-sample receptive field measured with the pinned 0.13.0 WaveNet."""
+    from sawblade_match.export import train as T
+    T.import_nam()
+    from nam.models.wavenet import WaveNet
+    d1_512 = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+    d1_64 = [1, 2, 4, 8, 16, 32, 64]
+    d2 = [128, 256, 512, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+    expect = {"standard": ((16, 8, d1_512), (8, d1_512), 13801), "lite": ((12, 6, d1_64), (6, d2), 6553),
+              "feather": ((8, 4, d1_64), (4, d2), 3025)}
+    assert set(T.SIZES) == set(expect)
+    for size, ((c1, h1, da), (c2, db), n_params) in expect.items():
+        cfg = T.wavenet_config(size)
+        a, b = cfg["layers_configs"]
+        assert (a["channels"], a["head"]["out_channels"], a["dilations"], a["head"]["bias"]) == (c1, h1, da, False)
+        assert (b["channels"], b["dilations"], b["head"]["out_channels"], b["head"]["bias"]) == (c2, db, 1, True)
+        assert a["kernel_size"] == b["kernel_size"] == 3 and a["activation"] == b["activation"] == "Tanh"
+        assert cfg["head_scale"] == 0.02 and not a["gated"] and not b["gated"]
+        net = WaveNet.init_from_config(cfg)
+        assert net.receptive_field == 4093
+        assert sum(p.numel() for p in net.parameters()) == n_params
 
 
 # ---------------------------------------------------------------- CLI
@@ -413,7 +438,7 @@ def test_end_to_end_nocab_export_on_fixture_preset(tmp_path):
     assert nam["metadata"]["training"]["validation_esr"] == rep["training"]["validationEsr"]
     assert nam["metadata"]["sawblade"]["validation"]["heldOutEsr"] == rep["validation"]["heldOut"]["esr"]
     assert rep["validation"]["acceptance"]["status"] == "not judged (non-standard size)"
-    assert rep["training"]["config"]["device"] and "approximations" in rep["training"]["config"]["sizesNote"]
+    assert rep["training"]["config"]["device"] and "official A1 presets" in rep["training"]["config"]["sizesNote"]
     assert "personal use only" in rep["licenceNote"]
 
 

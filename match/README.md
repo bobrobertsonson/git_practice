@@ -580,9 +580,10 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   and imports `tkinter`; Sawblade drives the trainer's lower layers instead (`nam.data.Dataset` from arrays, `NormalizeJointDatasetOutput`
   -18 dBFS with the export hook that restores the level, `LightningModule` + `pytorch_lightning.Trainer` (`--device auto|cpu|cuda|mps`, default auto = cuda > mps > cpu; the model is moved to CPU before export; the device is in the report), `net.export` with
   `other_metadata`), using the loss/optimiser/scheduler recipe from the trainer's **A2 packed-model default config**, applied here to an A1 net (ESR validation loss, MR-STFT 5e-4, Adam 4e-3, ExponentialLR 0.994 unless annealed, see below).
-  `tkinter` is stubbed when absent. See `export/train.py`. Sizes are **Sawblade's own approximations of the community feather/lite/standard A1 sizes, recalled from memory, not NAM's official presets** (two layer arrays, 10 dilations
-  1..512, kernel 3, Tanh): feather 8/4 channels (3 637 params), lite 12/6 (7 903 params), standard 16/8 (13 801 params);
-  receptive field 4093. **A2:** 0.13.0 trains a packed A2 WaveNet by default (`PackedWaveNet`, `export_container`; the core is built
+  `tkinter` is stubbed when absent. See `export/train.py`. Sizes are **NAM's official A1 presets** (`feather` / `lite` / `standard`; `Architecture` + `get_wavenet_config`,
+  `nam/train/core.py:59-63, 845-955` of neural-amp-modeler 0.12.3: the pinned 0.13.0 no longer ships them, the block is identical in 0.11.0-0.12.3). Kernel 3, Tanh, receptive field 4093 for all:
+  `standard` 16/8 channels, 10 + 10 dilations (13 801 params); `lite` 12/6 channels, dilations 1..64 (7) then 128..512,1..512 (13) (6 553 params);
+  `feather` 8/4 channels, same dilation split as lite (3 025 params). (Until v0.6 lite and feather used Sawblade's own 10 + 10 layout: 7 903 and 3 637 params.) **A2:** 0.13.0 trains a packed A2 WaveNet by default (`PackedWaveNet`, `export_container`; the core is built
   with `NAM_ENABLE_A2_FAST`); that path is available in the pin but not enabled here, A1 being what loader pedals play.
 * **Resume (phase 4.1).** After every epoch the trainer writes `<out>/checkpoint/` atomically (temp file + rename): `last.ckpt`
   (Lightning checkpoint: model, optimiser, scheduler, epoch, plus the training history, elapsed time and the torch/numpy/python/

@@ -16,10 +16,12 @@ API path
 * ``net.export`` for the ``.nam`` (with ``other_metadata`` for the ``sawblade`` block).
 
 The trainer's default network in 0.13 is the *packed* A2 WaveNet (slimmable container); Sawblade trains the classic
-**A1 WaveNet** (``feather`` / ``lite`` / ``standard``, Sawblade's own approximations of the community sizes,
-recalled from memory, NOT NAM's official presets: two layer arrays, 10 dilations 1..512,
-kernel 3, Tanh) because every NAM loader pedal plays A1.  The same trainer can train the packed A2 model
-(``PackedWaveNet`` + ``export_container``); that is **possible with this pin but not enabled** here (see README).
+**A1 WaveNet** (``feather`` / ``lite`` / ``standard``) because every NAM loader pedal plays A1.  The layer layouts are
+NAM's **official A1 presets** (``Architecture`` + ``get_wavenet_config`` in ``nam/train/core.py``).  The pinned 0.13.0
+wheel no longer ships them (0.13.0 always builds the packed A2 net); they are copied from 0.12.3 (the last release that
+has them, byte-identical since 0.11.0), see ``A1_PRESETS`` below for file and line.  The same trainer can train the
+packed A2 model (``PackedWaveNet`` + ``export_container``); that is **possible with this pin but not enabled** here
+(v0.6 Task C, see README).
 
 ``tkinter`` is stubbed when absent (headless machines): it is only used by a GUI warning dialog in ``nam.train.core``.
 """
@@ -81,12 +83,27 @@ RATE = 48000
 NY = 8192
 BATCH = 16
 TARGET_RMS_DBFS = -18.0
-DILATIONS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
 
-SIZES_NOTE = ("feather/lite/standard are Sawblade's own approximations of the community A1 sizes, recalled from memory; "
-              "they are not NAM's official presets")
-# channels of array 1, head size of array 1 (= channels of array 2), channels of array 2
-SIZES = {"feather": (8, 4, 4), "lite": (12, 6, 6), "standard": (16, 8, 8)}
+# Official NAM A1 presets: `Architecture` (STANDARD/LITE/FEATHER/NANO) at nam/train/core.py:59-63 and
+# `get_wavenet_config` at nam/train/core.py:845-955 of neural-amp-modeler 0.12.3 (STANDARD 847-873, LITE 874-900,
+# FEATHER 901-927, NANO 928-954).  The pinned 0.13.0 has neither (its core.py always trains the packed A2 net,
+# `_get_configs` at core.py:899, `_get_packed_model_config` at core.py:883); the block is byte-identical in 0.11.0 (nam/train/core.py:797), 0.12.0 (:814),
+# 0.12.2 and 0.12.3 (:845).  Every layer: kernel_size 3, Tanh, not gated, head_scale 0.02, condition_size 1; array 1
+# input_size 1, head_bias False; array 2 input_size = channels of array 1, head_size 1, head_bias True.
+# Every preset has the same receptive field (4093 samples), only width and the dilation split differ.
+_D_1_512 = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512)                   # 10 layers
+_D_1_64 = (1, 2, 4, 8, 16, 32, 64)                                   # 7 layers
+_D_128_512_1_512 = (128, 256, 512, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512)   # 13 layers
+# size -> (array 1: channels, head_size, dilations | array 2: channels, dilations)   (array 1 head_size == array 2 input_size)
+A1_PRESETS = {
+    "feather": {"channels1": 8, "head1": 4, "dilations1": _D_1_64, "channels2": 4, "dilations2": _D_128_512_1_512},   # core.py:901-927
+    "lite": {"channels1": 12, "head1": 6, "dilations1": _D_1_64, "channels2": 6, "dilations2": _D_128_512_1_512},     # core.py:874-900
+    "standard": {"channels1": 16, "head1": 8, "dilations1": _D_1_512, "channels2": 8, "dilations2": _D_1_512},        # core.py:847-873
+}
+# (NANO, core.py:928-954, is official too: 4/2 channels, same dilation split as lite; not offered by Sawblade.)
+SIZES = A1_PRESETS
+SIZES_NOTE = ("feather/lite/standard are NAM's official A1 presets (neural-amp-modeler 0.12.3 nam/train/core.py "
+              "get_wavenet_config; the pinned 0.13.0 no longer ships them)")
 # Default epochs: sized from measured CPU speed (see README "NAM export"); the wall-time cap also applies.
 DEFAULT_EPOCHS = {"feather": 40, "lite": 30, "standard": 22}
 DEFAULT_MAX_MINUTES = {"feather": 15.0, "lite": 30.0, "standard": 55.0}
@@ -123,14 +140,18 @@ def resolve_device(requested: str = "auto", cuda: bool | None = None, mps: bool 
 
 
 def wavenet_config(size: str) -> dict:
-    c1, h1, c2 = SIZES[size]
+    """The official A1 preset ``size`` as a 0.13.0 ``WaveNet`` config (0.12.3's flat ``head_size`` / ``head_bias`` keys are
+    the nested ``head`` dict here)."""
+    p = SIZES[size]
 
-    def arr(input_size, channels, head_out, head_bias):
+    def arr(input_size, channels, dilations, head_out, head_bias):
         return {"input_size": input_size, "condition_size": 1, "channels": channels, "kernel_size": 3,
-                "dilations": list(DILATIONS), "activation": "Tanh", "gated": False,
+                "dilations": list(dilations), "activation": "Tanh", "gated": False,
                 "head": {"out_channels": head_out, "kernel_size": 1, "bias": head_bias}}
 
-    return {"layers_configs": [arr(1, c1, h1, False), arr(c1, c2, 1, True)], "head": None, "head_scale": 0.02}
+    return {"layers_configs": [arr(1, p["channels1"], p["dilations1"], p["head1"], False),
+                               arr(p["channels1"], p["channels2"], p["dilations2"], 1, True)],
+            "head": None, "head_scale": 0.02}
 
 
 def model_config(size: str) -> dict:
