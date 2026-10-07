@@ -13,13 +13,17 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <string>
+#include <typeinfo>
 #include <vector>
 
+#include "NAM/get_dsp.h"
+#include "NAM/wavenet/a2_fast.h"
 #include "json.hpp"
 #include "sawblade/chain.h"
 #include "sawblade/nam_block.h"
@@ -106,6 +110,28 @@ void writeCabIr(const fs::path& p) {  // 4096-tap decaying noise: a cab-length I
   writeWavFloat32(p, kFs, ir);
 }
 
+// Per-model counts computed from the file's JSON (nothing hardcoded). Nonlinearity evaluations per sample = sum over layer
+// arrays of channels x layers (one primary activation per layer; gated layers would add a second, none here).
+struct ModelCounts {
+  std::size_t params = 0;
+  int layers = 0, nonlin = 0;
+  std::string channels, activation;
+};
+
+ModelCounts countModel(const nlohmann::json& j) {
+  ModelCounts m;
+  m.params = j["weights"].size();
+  for (const auto& arr : j["config"]["layers"]) {
+    const int ch = arr["channels"].get<int>(), n = static_cast<int>(arr["dilations"].size());
+    m.layers += n;
+    m.nonlin += ch * n;
+    m.channels += (m.channels.empty() ? "" : "+") + std::to_string(n) + "x" + std::to_string(ch);
+    const std::string a = arr["activation"][0]["type"].get<std::string>();
+    if (m.activation.find(a) == std::string::npos) m.activation += (m.activation.empty() ? "" : "/") + a;
+  }
+  return m;
+}
+
 }  // namespace
 
 int main() {
@@ -114,13 +140,51 @@ int main() {
   std::printf("A2 CPU benchmark: 48 kHz, %d-sample blocks, %d s per pass, %d warm-up + %d timed passes, median.\n", kBlock,
               kPassBlocks * kBlock / static_cast<int>(kFs), kWarmup, kRuns);
   std::printf("RTF = processing time / audio time (one core). Block deadline = %.0f us.\n\n", 1e6 * kBlock / kFs);
-  std::printf("%-34s %8s %8s %8s %12s %12s\n", "case", "RTF med", "RTF min", "RTF max", "us/block med", "us/block p99");
+  std::printf("Per-model counts (from each file's JSON; params = weights incl. head scale; nonlin = activation evals per sample):\n");
+  for (const char* f : {"a1_standard.nam", "a2_full.nam", "a2_lite.nam"}) {
+    std::ifstream in(dir / f);
+    const ModelCounts m = countModel(nlohmann::json::parse(in));
+    std::printf("  %-18s params %6zu  layers %2d  layers x channels %-10s  activation %-10s  nonlin evals/sample %4d\n", f, m.params,
+                m.layers, m.channels.c_str(), m.activation.c_str(), m.nonlin);
+  }
+  std::printf("\n%-34s %8s %8s %8s %12s %12s\n", "case", "RTF med", "RTF min", "RTF max", "us/block med", "us/block p99");
 
   for (const char* f : {"a1_standard.nam", "a2_full.nam", "a2_lite.nam", "a2_container.nam"}) {
     auto b = NamBlock::load(dir / f, NamBlockConfig{});
     b->prepare({kFs, kBlock});
     row(f, measure([&](float* p, int n) { b->process(p, n); }, x));
   }
+
+  // Informational: the same weights forced onto the core's generic WaveNet path, to explain the fast path's saving. One layer's
+  // LeakyReLU slope is perturbed (the negative control of test_a2_playback) so is_a2_shape is false and get_dsp builds the
+  // generic WaveNet. The dependency is not patched. Its output differs slightly (one slope); only the cost matters here.
+  for (const char* f : {"a2_full.nam", "a2_lite.nam"}) {
+    std::ifstream in(dir / f);
+    auto j = nlohmann::json::parse(in);
+    j["config"]["layers"][0]["activation"][0]["negative_slope"] = 0.02;
+    int channels = 0;
+    if (nam::wavenet::a2_fast::is_a2_shape(j["config"], &channels)) {
+      std::printf("FAIL: perturbed %s is still A2-shaped, the generic-path row would be mislabelled.\n", f);
+      return 1;
+    }
+    auto dsp = nam::get_dsp(j);
+    const nam::DSP& d = *dsp;
+    if (std::string(typeid(d).name()).find("A2FastModel") != std::string::npos) {
+      std::printf("FAIL: perturbed %s still built A2FastModel.\n", f);
+      return 1;
+    }
+    dsp->ResetAndPrewarm(kFs, kBlock);
+    std::vector<float> out(kBlock);
+    const std::string name = std::string(f, std::strlen(f) - 4) + " (generic WaveNet path)";
+    row(name.c_str(), measure(
+                          [&](float* p, int n) {
+                            float* ip = p;
+                            float* op = out.data();
+                            dsp->process(&ip, &op, n);
+                          },
+                          x));
+  }
+  std::printf("(generic rows: same weights, one LeakyReLU slope perturbed so the A2 fast path is bypassed; output differs slightly, cost is what matters.)\n");
 
   // Rig: the plugin's graph from a preset JSON. The cab IR path is patched to a generated file in a temp dir.
   const fs::path tmp = fs::temp_directory_path() / ("sawblade_a2_bench_" + std::to_string(std::random_device{}()));
