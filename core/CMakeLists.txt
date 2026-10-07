@@ -30,6 +30,7 @@ add_library(sawblade_core STATIC
   src/loudness.cpp
   src/reference_di.cpp
   src/auto_trim.cpp
+  src/calibration.cpp
   src/stem_set.cpp
   src/stem_player.cpp
   src/sha256.cpp
