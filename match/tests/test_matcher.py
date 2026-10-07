@@ -734,9 +734,9 @@ def test_gate_preset_passes_phase35_fields_through():
 
 
 def test_gate_preset_clamps_digital_silence_floor():
-    assert gate_preset(-200.0)["thresholdDb"] == -86.0          # inside the schema range [-120, 0]
-    assert gate_preset(-90.0)["thresholdDb"] == -86.0
-    assert gate_preset(-37.1)["thresholdDb"] == pytest.approx(-33.1)   # normal floors are unchanged
+    assert gate_preset(-200.0)["thresholdDb"] == -80.0          # inside the schema range [-120, 0]: floor clamped at -90, + 10 dB
+    assert gate_preset(-90.0)["thresholdDb"] == -80.0
+    assert gate_preset(-37.1)["thresholdDb"] == pytest.approx(-27.1)   # normal floors: open at the peak floor + 10 dB
 
 
 def test_stage2_first_linear_block_is_ltas_only(tmp_path, monkeypatch):

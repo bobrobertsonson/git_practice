@@ -15,7 +15,7 @@ import soundfile as sf
 
 from ..tonecheck.cli import check_audio, format_table
 from .. import core
-from ..tonecheck.analysis import activity_mask, analyze, gap_regions
+from ..tonecheck.analysis import analyze, gap_regions
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
 from .engine import RATE, Engine, to48
@@ -165,15 +165,24 @@ def gate_floor(x: np.ndarray, fs: int) -> dict:
     over the DI's gap regions: this is what the gate compares its threshold with, and what ``space.gate_preset`` /
     ``gatesweep.cell_gate`` are relative to. ``rmsDb``: the plain RMS level of the same samples (the number the old "floor + 4 dB"
     rule used, ~10 dB below the peak floor for noise). The samples are the DI's real-silence gaps (``gap_regions``); a DI without
-    any falls back to its inactive samples (``activity_mask``), then to the whole signal (``source`` says which)."""
+    any (a noise bed under the playing) falls back to its quietest 20 % of 20 ms frames, and a steady signal (frame levels within
+    3 dB) to the whole signal (``source`` says which)."""
     x64 = np.asarray(x, dtype=np.float64)
     mask = np.zeros(len(x64), bool)
     for a, b in gap_regions(x64, fs):
         mask[a:b] = True
     source = "gaps"
-    if int(mask.sum()) < 0.1 * fs:
-        mask = ~activity_mask(x64, fs)[0]
-        source = "inactive"
+    if int(mask.sum()) < 0.1 * fs:             # no real silence (a steady noise bed): the quietest 20 % of the 20 ms frames
+        n = int(round(0.020 * fs))
+        nf = len(x64) // n
+        if nf >= 5:
+            rms = np.sqrt(np.mean(x64[: nf * n].reshape(nf, n) ** 2, axis=1))
+            db = 20 * np.log10(np.maximum(rms, 1e-10))
+            if np.percentile(db, 95) - np.percentile(db, 5) >= 3.0:        # something plays over the bed
+                quiet = rms <= np.percentile(rms, 20)
+                mask = np.zeros(len(x64), bool)
+                mask[: nf * n] = np.repeat(quiet, n)
+                source = "quietest 20 % of frames"
     if int(mask.sum()) < 0.1 * fs:
         mask = np.ones(len(x64), bool)
         source = "whole DI"

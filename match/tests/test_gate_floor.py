@@ -78,17 +78,17 @@ def _live_closed_fraction(noise_db, seconds=14.0, after_s=9.0):
     x = white(seconds, noise_db)
     g = gate_preset(gate_floor(x, FS)["peakDb"])
     gain = gain_db_per_frame(x, g, live=True)
-    return float(np.mean(gain[int(after_s / 0.05):] <= -24.0 + 1.0)), float(np.median(gain[int(after_s / 0.05):]))
+    return float(np.mean(gain[int(after_s / 0.05):] <= -40.0 + 1.0)), float(np.median(gain[int(after_s / 0.05):]))
 
 
 def test_live_gate_attenuates_noise_alone_once_the_follower_has_learned_the_floor():
-    """Live set (origin match, floor-following EXPANDER, ratio 2, range -24 dB), noise at -70 dBFS RMS (peak floor ~ -63): once
-    the follower has converged the noise is attenuated. NOTE for the lead: an expander with ratio 2 does not close the way the
+    """Live set (origin match, floor-following EXPANDER, ratio 4, range -40 dB), noise at -70 dBFS RMS (peak floor ~ -63): once
+    the follower has converged the noise is attenuated. NOTE for the lead: an expander does not close the way the
     record gate does; with open = floor + 10 the noise (peaks at the floor) sits only ~10 dB below the threshold, so it is
-    attenuated by a few dB (printed), not driven to the -24 dB range; the 'closed > 95 %' criterion only holds for the record gate."""
+    attenuated by about 11 dB (printed), not driven to the -40 dB range; the 'closed > 95 %' criterion only holds for the record gate."""
     closed, median = _live_closed_fraction(-70.0)
     print(f"live gate on -70 dBFS RMS noise after 9 s: median gain {median:.1f} dB, {100 * closed:.0f} % of the frames at the range")
-    assert median < -2.0                           # attenuated: the follower learned the floor
+    assert median < -6.0                           # attenuated: the follower learned the floor
     assert closed < 0.5                            # ... but it is an expander, not a closed gate (documented, see above)
 
 

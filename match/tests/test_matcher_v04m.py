@@ -425,10 +425,14 @@ def test_cab_sweep_covers_every_pool_cab_and_lists_every_ir_loss():
     for cand in res["candidatesStage2"]:
         sw = next((c for c in cs["candidates"] if c["pairKey"] == cand["pairKey"]), None)        # THIS candidate's own sweep
         if sw and cand["loss"] is not None:
-            assert cand["loss"] <= sw["best"]["loss"] + 1e-6 or sw["changed"]
+            slack = 0.05 if res["gateSweep"].get("changed") else 0.0          # the gate sweep (after the cab sweep) may cost <= its LTAS tolerance
+            assert cand["loss"] <= sw["best"]["loss"] + 1e-6 + slack or sw["changed"]
     assert res["ablate"] == [] and res["plan"]["boost"] is True and res["plan"]["filters"] is True
     assert "post.hp" in res["best"]["params"] and res["postFilters"]["searched"] is True
-    assert res["gateFinal"]["thresholdDb"] >= res["gateDefault"]["thresholdDb"] - 1e-9 and "gateSweep" in res
+    # the swept threshold stays on the grid {6 ... 28} dB re the peak floor; the default cell (10) is a member, 6 the lowest
+    assert res["gateFinal"]["thresholdDb"] >= res["gateDefault"]["thresholdDb"] - 4.0 - 1e-9 and "gateSweep" in res
+    assert res["gateFloor"]["peakDb"] is not None and "rmsDb" in res["gateFloor"]
+    assert res["gateDefault"]["thresholdDb"] == pytest.approx(res["gateFloor"]["peakDb"] + 10.0, abs=0.01)
 
 
 def test_trace_tones_reports_a_fixture_tone():

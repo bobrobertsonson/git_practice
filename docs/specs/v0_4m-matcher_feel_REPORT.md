@@ -220,7 +220,7 @@ Before (first known-answer run, `--quick`): HM2 A-weighted 2.72 dB, UBR 3.45 dB;
 ## Task H (matcher side)
 
 - **Gate floor (H.1):** the gate is set from the core's `peak_floor_db` (92.5th percentile of the gate's own peak envelope over
-  the DI gaps; falls back to the inactive samples, then the whole DI). result.json `gateFloor: {rmsDb, peakDb, source}`.
+  the DI gaps; falls back to the quietest 20 % of 20 ms frames, then the whole DI). result.json `gateFloor: {rmsDb, peakDb, source}`.
   Default cell: open = peakFloor + 10 dB, hysteresis 6 (close = + 4); sweep grid {6, 8, 10, 12, 16, 20, 24, 28} dB re peakFloor.
   For a -49.5 dBFS RMS floor: old open -45.50 / close -51.50 dBFS, new open -32.27 / close -38.27 (peak floor -42.27); noise alone
   (white, pink) stays closed > 95 % after 0.5 s; a decaying note is not attenuated while it is > 12 dB above the floor (the

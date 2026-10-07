@@ -96,8 +96,8 @@ def feel_hidden(pool, di48: np.ndarray, seed: int = 1):
     v = sp.default()
     v.update({"boost.drive": 2.0, "boost.level": 8.0, "boost.tone": 5.5,
               "post.hp": HP_GRID[2], "post.hp_slope": DISCRETE_UP, "post.lp": 7500.0, "post.lp_slope": DISCRETE_UP})
-    # gate cell: threshold = DI floor + 12 dB, hold 10 ms, release 80 ms, range -50 dB (all on the sweep grids, not the default)
-    gate = cell_gate(gate_envelope_floor_db(di48, RATE), 12.0, release_ms=80.0, hold_ms=10.0, range_db=-50.0)
+    # gate cell: threshold = DI peak floor + 16 dB (the default is + 10), hold 10 ms, release 80 ms, range -50 dB (all on the sweep grids, not the default)
+    gate = cell_gate(gate_envelope_floor_db(di48, RATE), 16.0, release_ms=80.0, hold_ms=10.0, range_db=-50.0)
     return combo, v, build_preset(combo, v, gate=gate, align=Engine(gate).probe_align(combo, v), name="hidden feel case"), gate
 
 
