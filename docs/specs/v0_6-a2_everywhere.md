@@ -178,3 +178,8 @@ validation numbers, and the user's Task D result once run.
       an injectable recognition table. The official-signal acceptance numbers (held-out ESR / LTAS for A2 Full and Lite
       vs the Sawblade-signal numbers) are a user-run Mac step next to Task D; the exact command is in the REPORT.
     - The reamp pair (decision 20) uses the same file, unchanged.
+23. **Signal on resume and precedence** (review of `ec7a32b`): a resumed export passes neither `--nam-input` nor
+    `--signal`; the CLI exempts `--resume` from the signal requirement and reuses the signal recorded in the run's
+    identity (a resume that does pass a different signal is refused). Precedence in the plugin: the latest explicit
+    choice wins — turning on "train on Sawblade's test signal" wins over a stored file path; choosing a file turns the
+    toggle off. The "use Sawblade's test signal" choice is remembered (explicit, revocable, shown in the checklist).
