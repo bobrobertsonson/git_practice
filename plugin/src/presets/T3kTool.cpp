@@ -240,7 +240,8 @@ T3kTool::Result T3kTool::runBlocking(const fs::path& exe, const std::vector<std:
     r.message = notLoggedInMessage();
   } else {
     r.status = Status::Failed;
-    r.message = !lastText.empty() ? lastText : "sawblade-t3k failed (exit code " + std::to_string(code) + ").";
+    const std::string safe = settings::safeToolLine(lastText);  // never show a credential-looking line
+    r.message = !safe.empty() ? safe : "sawblade-t3k failed (exit code " + std::to_string(code) + ").";
   }
   return r;
 }

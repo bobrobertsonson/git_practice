@@ -1153,12 +1153,22 @@ TEST_CASE("tool environment: the command line and the '=' path guard", "[setting
   CHECK(toolPathProblem("/venv/bin/sawblade-t3k").empty());
 #ifndef _WIN32
   const auto cmd = toolCommand("/venv/bin/sawblade-t3k", {"whoami", "--json"}, env);
-  REQUIRE(cmd.size() == 6);
+  REQUIRE(cmd.size() == 8);
   CHECK(cmd[0] == "/usr/bin/env");
-  CHECK(cmd[1] == "A=1");
-  CHECK(cmd[2] == "TONE3000_CLIENT_ID=t3k_pub_x");
-  CHECK(cmd[3] == "/venv/bin/sawblade-t3k");
-  CHECK(cmd[5] == "--json");
+  CHECK(cmd[1] == "-u");  // a host secret key never reaches the tool
+  CHECK(cmd[2] == "TONE3000_CLIENT_ID");
+  CHECK(cmd[3] == "A=1");
+  CHECK(cmd[4] == "TONE3000_CLIENT_ID=t3k_pub_x");
+  CHECK(cmd[5] == "/venv/bin/sawblade-t3k");
+  CHECK(cmd[7] == "--json");
+  // a host secret key is dropped when no valid id replaces it; a host public id is kept
+  ::setenv("TONE3000_CLIENT_ID", "t3k_cs_hostsecret", 1);
+  for (const auto& e : mergedEnvironment({{"A", "1"}})) CHECK(e.rfind("TONE3000_CLIENT_ID=", 0) != 0);
+  ::setenv("TONE3000_CLIENT_ID", "t3k_pub_host", 1);
+  bool kept = false;
+  for (const auto& e : mergedEnvironment({{"A", "1"}})) kept = kept || e == "TONE3000_CLIENT_ID=t3k_pub_host";
+  CHECK(kept);
+  ::unsetenv("TONE3000_CLIENT_ID");
   CHECK_THAT(toolPathProblem("/weird=dir/bin/sawblade-t3k"), ContainsSubstring("'='"));
   // the posix_spawn form: the host environment with the injected values replacing same-named ones
   ::setenv("TONE3000_CLIENT_ID", "from_host", 1);
@@ -1205,4 +1215,20 @@ TEST_CASE("tool environment: ToolRunner launches with the injected client id and
   std::string line;
   std::getline(in, line);
   CHECK(line == "t3k_pub_runner|" + s.effectiveCaptureCacheDir().string() + "|1");
+}
+
+TEST_CASE("tool environment: one credential filter", "[settings][toolenv]") {
+  CHECK_FALSE(looksLikeCredential("TONE3000_CLIENT_ID is not set"));
+  CHECK_FALSE(looksLikeCredential("error: the pack has no models"));
+  CHECK(looksLikeCredential("refresh_token=abc"));
+  CHECK(looksLikeCredential("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig"));
+  CHECK(looksLikeCredential("code 0123456789abcdefghijklmn"));
+  CHECK(looksLikeCredential("session=0123456789abcdef"));
+  CHECK(safeToolLine("note  \r") == "note");
+  CHECK(safeToolLine("Authorization: Bearer x").empty());
+  std::string big;
+  while (big.size() < 400) big += "\xc3\xa9 ";
+  const std::string u = safeToolLine(big);
+  CHECK(u.size() <= 300);
+  CHECK(u.size() >= 298);
 }

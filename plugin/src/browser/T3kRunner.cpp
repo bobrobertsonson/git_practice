@@ -8,21 +8,15 @@
 namespace sawblade::plugin {
 
 std::string lastErrorLine(const std::string& output) {
-  auto looksSecret = [](std::string l) {
-    std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    for (const char* k : {"token", "secret", "t3k_", "bearer", "password", "authorization"})
-      if (l.find(k) != std::string::npos) return true;
-    return false;
-  };
   std::size_t end = output.size();
   while (end > 0) {
     const std::size_t nl = output.rfind('\n', end - 1);
     const std::size_t begin = nl == std::string::npos ? 0 : nl + 1;
     std::string line = output.substr(begin, end - begin);
     end = nl == std::string::npos ? 0 : nl;
-    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-    if (line.empty() || line.front() == '{' || line.front() == '[' || looksSecret(line)) continue;
-    if (line.size() > 300) line.resize(300);
+    if (!line.empty() && (line.front() == '{' || line.front() == '[')) continue;
+    line = settings::safeToolLine(line);  // the one credential filter (settings/ToolEnv.h)
+    if (line.empty()) continue;
     return line;
   }
   return {};

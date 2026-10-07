@@ -27,7 +27,14 @@ std::string toolPathProblem(const std::filesystem::path& exe);
 // Windows the tool starts with the host environment and no injection). Precondition: toolPathProblem(exe).empty().
 std::vector<std::string> toolCommand(const std::filesystem::path& exe, const std::vector<std::string>& args, const ToolEnvMap& env);
 
-// The host's environment with `env` applied on top, as "KEY=VALUE" strings (for posix_spawn).
+// The host's environment with `env` applied on top, as "KEY=VALUE" strings (for posix_spawn). A host TONE3000_CLIENT_ID that holds a
+// t3k_cs_ secret key is dropped when `env` has no valid id to replace it.
 std::vector<std::string> mergedEnvironment(const ToolEnvMap& env);
+
+// One credential filter for every tool line the plugin may show. True for: the keywords token / secret / t3k_ / bearer / password /
+// authorization (any case), any run of 24+ characters of [A-Za-z0-9_.-] (JWTs, opaque codes), and `key=<16+ non-space characters>`.
+bool looksLikeCredential(const std::string& line);
+// `line` without trailing CR / spaces, cut to at most 300 bytes on a UTF-8 code-point boundary; "" if it is empty or looksLikeCredential.
+std::string safeToolLine(const std::string& line);
 
 }  // namespace sawblade::plugin::settings

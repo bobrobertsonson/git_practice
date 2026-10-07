@@ -919,5 +919,25 @@ TEST_CASE("T3kRunner lastErrorLine: the last plain line, never JSON or anything 
   CHECK(lastErrorLine("{\"event\": \"device_code\"}\nTONE3000_CLIENT_ID is not set\r\n\n") == "TONE3000_CLIENT_ID is not set");
   CHECK(lastErrorLine("real error\nrefresh_token=SECRETTOKEN123456\n{\"event\": \"x\"}\n") == "real error");
   CHECK(lastErrorLine("{\"a\": 1}\n") == "");
-  CHECK(lastErrorLine(std::string(500, 'x')).size() == 300);
+  // long lines are cut to 300 bytes on a code-point boundary (words stay short, so the credential filter keeps them)
+  std::string longLine;
+  while (longLine.size() < 500) longLine += "\xc3\xa9t\xc3\xa9 ";  // "été "
+  const std::string cut = lastErrorLine(longLine);
+  CHECK(cut.size() <= 300);
+  CHECK(cut.size() >= 298);
+  CHECK((static_cast<unsigned char>(cut.back()) & 0xC0) != 0xC0);  // not the lead byte of a split sequence
+  // JWT-like / opaque codes and key=<long> lines are dropped
+  CHECK(lastErrorLine("ok line\neyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc\n") == "ok line");
+  CHECK(lastErrorLine("ok line\nsession=0123456789abcdefghij\n") == "ok line");
+  CHECK(lastErrorLine("ok line\nrefresh_token=abc\n") == "ok line");
+}
+
+TEST_CASE("T3kTool: a credential-looking last line never becomes the failure message", "[t3k][env]") {
+  SettingsEnv env{"{\"version\": 1, \"firstRunCompleted\": true}"};
+  TempDir tmp;
+  const fs::path exe = writeScript(tmp.dir, "leaky", "echo 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0' >&2\nexit 1");
+  const auto res = runOnce({"whoami"}, exe);
+  CHECK(res.status == T3kTool::Status::Failed);
+  CHECK(res.message.find("eyJ") == std::string::npos);
+  CHECK(res.message.find("exit code 1") != std::string::npos);
 }

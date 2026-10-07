@@ -54,16 +54,24 @@ struct NoTool {
 
 struct BfCache {
   fs::path dir;
+  std::optional<std::string> oldSettings;
   BfCache() {
     static int n = 0;
     dir = fs::temp_directory_path() / ("sawblade_bodyfill_cache_" + std::to_string(std::random_device{}()) + "_" + std::to_string(n++));
     fs::create_directories(dir);
     // Create Settings::shared() FIRST: its first creation clears the capture-cache override (applyCacheEnv), and a tool launch
     // (toolEnvironment) creates it lazily, which would silently drop this override mid-test.
+    // It reads a throw-away settings file, so a developer's real settings (matchVenvDir) cannot leak into the test.
+    if (const char* o = std::getenv("SAWBLADE_SETTINGS_FILE")) oldSettings = o;
+    ::setenv("SAWBLADE_SETTINGS_FILE", (dir / "settings.json").string().c_str(), 1);
+    sawblade::plugin::settings::Settings::resetSharedForTests();
     (void)sawblade::plugin::settings::Settings::shared();
     setCaptureCacheRootOverride(dir);
   }
   ~BfCache() {
+    sawblade::plugin::settings::Settings::resetSharedForTests();
+    if (oldSettings) ::setenv("SAWBLADE_SETTINGS_FILE", oldSettings->c_str(), 1);
+    else ::unsetenv("SAWBLADE_SETTINGS_FILE");
     setCaptureCacheRootOverride(std::nullopt);
     std::error_code ec;
     fs::remove_all(dir, ec);
