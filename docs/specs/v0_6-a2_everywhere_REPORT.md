@@ -178,9 +178,13 @@ message thread and `pump(60)` is shorter than 250 ms, so on an unlucky timer pha
 bounds, `REQUIRE(face.getWidth() > 0)`, re-read bounds per circuit. Commit status: see section 11.
 
 **Fixture check.** The strict byte compare of `tests/fixtures/a2` failed on run 243's runner but passed on 240/241 and
-locally; the exact differing value was not logged at the time. `bb4f789` compares `.nam` as JSON (weights 1e-6,
-forward-pass-derived metadata 1e-4 relative) and prints key paths on mismatch; run 246 reports "reproducible". The
-most likely cause (CPU torch wheel / runner CPU affecting forward-pass-derived loudness metadata) remains unproven.
+locally. Root cause (established on run 247 via the diagnostics added in `bb4f789`): **forward-pass outputs differ by
+~1e-8 between runner CPUs** (run 247: `manifest.json/models/a2_lite/packedForwardMaxAbsDiff` off by 2.05e-08), which also
+moves the forward-derived loudness / gain metadata and `ref_*.wav`. Seeded weights and configs are identical. The check
+(`c2de2e0`, `f95ad5f`) compares structure, configs, versions and sample rates exactly, weights within 1e-6,
+forward-derived values within 1e-4 relative (`packedForwardMaxAbsDiff` 1e-6 absolute), and flags stray files.
+
+| 247 | `c2de2e0` | all green incl. macOS (race not hit) except python-export: `packedForwardMaxAbsDiff` compared exactly (fixed in `f95ad5f`) |
 
 ## 7. Task D — proof on the Anagram (user-run)
 
