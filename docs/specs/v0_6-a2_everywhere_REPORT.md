@@ -199,8 +199,8 @@ device-null tests with real tiny trainings and the fixture `generate.py --check`
 **Run 267 on `e7745b1` — all green** (gcc, clang -Werror, macOS arm64 incl. auval + pluginval AU/VST3 level 10,
 python, python-export): ctest 1025/1025 on every C++ job (skips: the documented environment skips), python 778 passed /
 20 skipped (trainer- or demucs-gated), python-export 160 passed with `SAWBLADE_TEST_TRAIN=1` incl. the core-only load
-check of a freshly exported A2, fixtures reproducible. The final REPORT commit on top is documentation only; its own
-run is the one cited in the PHASE line. History:
+check of a freshly exported A2, fixtures reproducible. The REPORT commit `4ef38ab` on top is documentation only; its own run
+(268) is all green and is the one cited in the PHASE line. History:
 
 | Run | Head | Result |
 |---|---|---|
@@ -227,9 +227,10 @@ bounds, `REQUIRE(face.getWidth() > 0)`, re-read bounds per circuit. Commit statu
 **Fixture check.** The strict byte compare of `tests/fixtures/a2` failed on run 243's runner but passed on 240/241 and
 locally. Root cause (established on run 247 via the diagnostics added in `bb4f789`): **forward-pass outputs differ by
 ~1e-8 between runner CPUs** (run 247: `manifest.json/models/a2_lite/packedForwardMaxAbsDiff` off by 2.05e-08), which also
-moves the forward-derived loudness / gain metadata and `ref_*.wav`. Seeded weights and configs are identical. The check
-(`c2de2e0`, `f95ad5f`) compares structure, configs, versions and sample rates exactly, weights within 1e-6,
-forward-derived values within 1e-4 relative (`packedForwardMaxAbsDiff` 1e-6 absolute), and flags stray files.
+moves the forward-derived loudness / gain metadata and `ref_*.wav`. Seeded weights and configs are identical. The final
+check (`1b82e38`, after `c2de2e0` / `f95ad5f`) compares ints, strings and structure exactly, weights within 1e-6,
+forward-derived values within 1e-4 relative (`packedForwardMaxAbsDiff` 1e-6 absolute), every other float within 1e-9
+relative, and flags stray files.
 
 
 ## 7. Task D — proof on the Anagram (user-run)
@@ -313,3 +314,5 @@ export itself is ~−17 dB (A2 Full) / ~−13 dB (A2 Lite) from it by design.
   (the plugin never passes a signal on resume).
 - The macOS pedal-face fix (`8205a3f`) was committed by the phase lead after the user approved it; a subagent's commit
   of the same file had been denied by the permission classifier ("Git Destructive").
+
+PHASE v0.6: ACCEPT 4ef38ab55a63a5afd89bd2e57694457250ba64bc
