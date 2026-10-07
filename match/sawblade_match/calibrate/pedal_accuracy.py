@@ -273,7 +273,7 @@ def generate(fits_by_pedal: dict[str, dict], known: dict | None = None) -> str:
                 pins = "partial (" + ", ".join(m["constrained"]["pins_filled_with_default"]) + " default)"
             lic = _lic(m)
             fc, cc = _fit_cells(m["free"]).split(" | "), _fit_cells(m.get("constrained")).split(" | ")
-            L.append(f"| {m['tone_id']} | {m['name']} ({m['model_id']}) | {lic} | {pins} | "
+            L.append(f"| {m['tone_id']} | {m.get('name') or m['model_id']} ({m['model_id']}) | {lic} | {pins} | "
                      f"{fc[0]} | {fc[1]} | {fc[2]} | {cc[0]} | {cc[1]} | {cc[2]} |")
         sp = spread_report(models) if doc.get("target_models") is not None else (doc.get("spread") or spread_report(models))
         chk = target_check(models, sp)
@@ -292,7 +292,7 @@ def generate(fits_by_pedal: dict[str, dict], known: dict | None = None) -> str:
                   "|---|---|---|---|---|---|"]
             for m in other:
                 fc = _fit_cells(m["free"]).split(" | ")
-                L.append(f"| {m['tone_id']} | {m['name']} ({m['model_id']}) | {_lic(m)} | {fc[0]} | {fc[1]} | {fc[2]} |")
+                L.append(f"| {m['tone_id']} | {m.get('name') or m['model_id']} ({m['model_id']}) | {_lic(m)} | {fc[0]} | {fc[1]} | {fc[2]} |")
             L.append("")
     L += ["## Verdicts", ""] + [f"* {v}" for v in verdicts] + [""]
     return "\n".join(L)
