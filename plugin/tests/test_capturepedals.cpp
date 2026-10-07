@@ -423,7 +423,7 @@ TEST_CASE("capture pedals: the SEARCH row opens the capture browser in insert mo
 TEST_CASE("capture pedals: a new capture drops in at matched loudness: the make-up lands without an extra undo step", "[editor][capturepedals][levelmatch]") {
   Rig rig;
   // model 7771 (the one the CAPTURES row adds) is quieter than the identity: 0.5 / 0.25 FIR taps, -2.6 LU on the reference DI (measured).
-  // (linear_identity_loud24.nam would be no test: its metadata loudness makes the NAM block normalise it back to the identity's level.)
+  // (linear_identity_loud24.nam would be no test: it is a plain identity; its metadata loudness is ignored because normalizeLoudness defaults to false.)
   writeTone(rig.cache, "777", "pedal", "Quiet Pedal", {{"7771", "Quiet", "linear_05_025.nam"}, {"7772", "Other", "linear_identity.nam"}});
   rig.load(rigJson({tsBlock("a1"), namAmp("a2")}, {}, false));
   REQUIRE(rig.proc.levelMatchEnabled());
