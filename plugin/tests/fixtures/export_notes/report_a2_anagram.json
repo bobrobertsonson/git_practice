@@ -33,7 +33,7 @@
         "message": "Blocks to set on the device, in signal order. Needs KosmOS 1.16 or later.",
         "stages": [
           {"stage": "gate", "block": "Gate", "position": "1 (first in the chain)", "settings": {"threshold": -52.0, "release ms": 60, "hold ms": 20.5, "keyed on": "guitar input"}},
-          {"stage": "model", "block": "Neural Amp", "position": "2", "settings": {"model": "riff-nocab-full.a2_full.nam", "bypass": false}, "hardware": "Load riff-nocab-full.a2_full.nam from file into the Neural Amp block (a Neural block, not the TONE3000 block). It is a local file for your own use: do not upload it to TONE3000."},
+          {"stage": "model", "block": "Neural Amp", "position": "2", "settings": {"model": "riff-nocab-full.a2_full.nam", "bypass": false}, "hardware": "Load riff-nocab-full.a2_full.nam from file into the Neural Amp block. It is a local file for your own use: do not upload it to TONE3000."},
           {"stage": "cab", "block": "IR", "position": "3", "settings": {"file": "riff-nocab-full.ir.wav", "normalise": false}, "hardware": "Load without loudness normalisation."}
         ],
         "loaderOrder": "Anagram chain: Gate -> Neural Amp -> IR"

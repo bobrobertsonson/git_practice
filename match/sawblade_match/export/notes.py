@@ -293,7 +293,7 @@ def build_anagram_profile(preset: dict, plan, notes: dict, nam_name: str, ir_nam
     kind = "Neural Pedal" if drive_only else "Neural Amp"
     label = f" ({model_label})" if model_label else ""
     blocks.append({"stage": "model", "block": kind, "settings": {"model": nam_name, "bypass": False},
-                   "hardware": f"Load {nam_name}{label} from file into the {kind} block (a Neural block, not the TONE3000 block). "
+                   "hardware": f"Load {nam_name}{label} from file into the {kind} block. "
                                "It is a local file for your own use: do not upload it to TONE3000 (models trained from "
                                "TONE3000 captures need the creators' permission to share). Up to three NAM blocks (Neural "
                                "Amp / Neural Pedal / Neural Loader) can run at once. Set the block's levels so the output "

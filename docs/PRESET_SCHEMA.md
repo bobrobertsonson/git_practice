@@ -654,7 +654,7 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
                     "release ms": 60, "range dB": -90, "keyed on": "guitar input (the signal before any pedal or amp)" },
       "hardware": "Put the gate FIRST in the chain, before every NAM block, so it hears the guitar. ..." },
     { "stage": "model",   "block": "Neural Amp",  "position": "2",
-      "settings": { "model": "<stem>.a2_full.nam", "bypass": false }, "hardware": "Load ... from file into the Neural Amp block (a Neural block, not the TONE3000 block). Local file for your own use: do not upload it to TONE3000. ..." },
+      "settings": { "model": "<stem>.a2_full.nam", "bypass": false }, "hardware": "Load ... from file into the Neural Amp block. Local file for your own use: do not upload it to TONE3000. ..." },
     { "stage": "cab",     "block": "IR",          "position": "3",
       "settings": { "file": "<name>-nocab.ir.wav", "normalise": false, "contains": "cab and post EQ" },
       "hardware": "Load the IR WITHOUT loudness normalisation. ..." },
@@ -665,8 +665,8 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
 ```
 
 Mapping rules: the trained model is a **Neural Amp** block, or a **Neural Pedal** block for a *drive-only* export (no-cab export
-whose enabled non-EQ blocks are all explicitly pedals or boosts: `slot` "pedal"/"boost" or a `pedal.*` type; an unlabelled NAM block counts as an amp; a with-cab export is always a Neural Amp);
-The model is always a local file loaded into a Neural block, never the TONE3000 block (which pulls library captures), and it is for the user's own use: the text says not to upload it to TONE3000, because models trained from TONE3000 captures need the creators' permission to share. `settings.model` is the primary file (A2: the standalone file `--size` names; the `.a2.nam` container is not named, whether the
+whose enabled non-EQ blocks are all explicitly pedals or boosts: `slot` "pedal"/"boost" or a `pedal.*` type; an unlabelled NAM block counts as an amp; a with-cab export is always a Neural Amp); the model is a local file loaded into the block, for the user's own use (the text says not to upload it to TONE3000, because models trained from TONE3000 captures need the creators' permission to share).
+`settings.model` is the primary file (A2: the standalone file `--size` names; the `.a2.nam` container is not named, whether the
 device takes a container is not published). The gate (if enabled) is the first block, before the model. The no-cab export's cab
 becomes an **IR** block right after the model; the exported IR already holds the post EQ, so the post EQ gets its own **EQ** block
 (`settings` = `band N`: description) only when it is not folded into the IR. The bus compressor (no-cab export with `--allow-inexact`)

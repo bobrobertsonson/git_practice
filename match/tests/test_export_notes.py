@@ -242,7 +242,7 @@ def test_anagram_gate_comp_posteq_nocab_blocks_order_and_numbers():
     assert "FIRST" in gate["hardware"] and "before every NAM block" in gate["hardware"]
     assert model["settings"] == {"model": "x-nocab-full.a2_full.nam", "bypass": False}
     assert "A2 Full" in model["hardware"] and "from file into the Neural Amp block" in model["hardware"]
-    assert "not the TONE3000 block" in model["hardware"] and "do not upload it to TONE3000" in model["hardware"]
+    assert "TONE3000 block" not in model["hardware"] and "do not upload it to TONE3000" in model["hardware"]
     assert "creators' permission" in model["hardware"] and "Up to three NAM blocks" in model["hardware"]
     assert "KosmOS 1.16 or later" in prof["message"]
     # the post EQ is folded into the exported IR: no EQ block, the IR block says so

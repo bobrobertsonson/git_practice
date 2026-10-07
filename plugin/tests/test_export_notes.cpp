@@ -273,6 +273,7 @@ TEST_CASE("export report: A2 files block, the primary file, the validation of th
   CHECK(txt.find("3. IR [3]  (cab)\n") != std::string::npos);
   CHECK(txt.find("   Load without loudness normalisation.\n") != std::string::npos);
   CHECK(txt.find("Anagram chain: Gate -> Neural Amp -> IR\n") != std::string::npos);
+  CHECK(txt.find("(KosmOS 1.16 or later), in signal order:\n") != std::string::npos);  // same header as the Python text
   CHECK(txt.find("Own use only.") != std::string::npos);
   CHECK(txt.find("model: riff-nocab-full.a2_full.nam\n") != std::string::npos);
   // The generic text of the same notes is the v0.4M text, with no Anagram block names in it.
