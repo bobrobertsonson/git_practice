@@ -154,6 +154,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str =
             notes_src = load_preset(Path(notes_preset).expanduser())[0]
         except (OSError, ValueError) as e:
             raise P.ExportRefused(f"--notes-preset {notes_preset}: cannot read the preset ({e})") from e
+        if not isinstance(notes_src, dict):
+            raise P.ExportRefused(f"--notes-preset {notes_preset}: not a preset object")
         problems = P.notes_preset_problems(preset, notes_src, mode)
         if problems:
             raise P.ExportRefused("; ".join(problems), problems)
