@@ -568,15 +568,32 @@ sawblade-export PRESET.resolved.json [--mode nocab|withcab] [--arch a2|a1] [--si
                 [--seed 0] [--signal-seed 1] [--threads 4] [--allow-inexact] [--target-esr E] [--out DIR] [--name STEM]
                 [--di Guitar_L.wav|builtin] [--no-validate] [--resume DIR|auto] [--keep-scratch]
                 [--exports-root DIR] [--progress-json PATH] [--require-accept]
+                [--nam-input NAM_INPUT.wav | --signal sawblade] [--reamp-pair NAM_INPUT.wav [--no-train]]
 ```
 
 Trains a NAM model of the preset, e.g. the matcher's `best.preset.resolved.json`. **`--arch a2` (default, v0.6)** trains the trainer's
-packed A2 WaveNet and writes three files: the container `<stem>.a2.nam` (`SlimmableContainer`) and the two submodels as standalone
-files `<stem>.a2_full.nam` (**A2 Full**, 8 channels, 12 145 parameters) and `<stem>.a2_lite.nam` (**A2 Lite**, 3 channels, 1 870 parameters;
-same weights as the container's submodels), `<stem>` = `<name>-<mode>-<size>`. `--size full|lite` (default `full`) only picks which standalone
-file is the *primary* one (shown first, judged by `--require-accept`, named in the export notes); both are always written and both validated.
-Why standalone files too: whether a loader takes a container is not published, and the core plays only the container's last (Full)
-submodel. **`--arch a1`** trains one A1 WaveNet for older loaders (`--size feather|lite|standard`, default `standard`, `<stem>.nam`; behaviour
+packed A2 WaveNet and writes three files. **The result is a standard NAM A2 file, usable on any A2 loader:** the container `<stem>.a2.nam`
+(`SlimmableContainer`, written by the trainer's own `export_container`) is the *primary* file (`files.primary`, named in the notes), and the two
+submodels come as standalone extras `<stem>.a2_full.nam` (**A2 Full**, 8 channels, 12 145 parameters) and `<stem>.a2_lite.nam` (**A2 Lite**,
+3 channels, 1 870 parameters; same weights as the container's submodels), `<stem>` = `<name>-<mode>-<size>`. `--size full|lite` (default `full`)
+only picks which extra is listed first and whose acceptance `--require-accept` judges (a standard player plays the container's Full submodel);
+all three files are always written and both sizes validated. Whether every A2 loader accepts the container is unverified (the standalone
+files are the fallback). **Training signal (decision 22).** Training needs a choice: `--nam-input NAM_INPUT.wav` (default and recommended) trains on the NAM
+project's standard input file, as used by the NAM trainer (you supply it; Sawblade never bundles, downloads or commits it, see
+`docs/THIRD_PARTY.md`), through the pinned trainer's own data pipeline (`export/official.py`): version recognition, blip latency
+calibration, data checks, train / validation split and the -18 dBFS output normalisation are the trainer's (`nam/train/core.py`
+`_analyze_latency`, `_check_data`, `_get_data_config`, `init_dataset`); the loop, checkpoints, export and metadata stay Sawblade's
+(resume, cancel, progress, per-submodel best checkpoints, `export_container` and the `sawblade` block need the lower-level path; the
+trainer's `train()` exposes none of them). `--signal sawblade` is the explicit, labelled fallback (Sawblade's own seeded test signal);
+with neither the CLI exits 1 with a message naming both. The recognised versions are the trainer's 48 kHz ones (v3 current; v2 / v1.1.1 /
+v1.0.0 are deprecated by the trainer and used with a log line; the 44.1 kHz Proteus file is refused). `trainingSignal` is
+`"nam-standard v3.0.0"` or `"sawblade-synthetic v1"` in the report, `metadata.sawblade` of every `.nam`, and the notes (which say "Trained on
+the standard NAM signal (...)" or "Trained on Sawblade's test signal, not the standard NAM signal"). The report's `validationSplit` says how
+the acceptance numbers are measured on the official path: the held-out ESR / LTAS use the trainer's validation split of the standard input
+(for v3 its last 9 s) rendered through `sawblade_core` with the exported model against the original chain, and `training.validationEsr`
+is the trainer's own ESR on that split. If the chain's render is too loud for 24-bit it is scaled down (`target.levelReducedDb`) and the
+trained model is that much quieter. `--nam-input` may be combined with `--reamp-pair` (same file).
+**`--arch a1`** trains one A1 WaveNet for older loaders (`--size feather|lite|standard`, default `standard`, `<stem>.nam`; behaviour
 unchanged apart from the official preset sizes). Any other arch / size pair exits 1 with a message. The library function `run_export`
 defaults to `arch="a1"` (unchanged for existing callers); the CLI defaults to `a2`. Default output
 `~/.cache/sawblade/exports/<name>-<mode>-<size>-<timestamp>/` (a2: `<name>-<mode>-a2-<size>-<timestamp>/`; never the repo): the model file(s), `<name>-nocab.ir.wav`
@@ -584,6 +601,16 @@ defaults to `arch="a1"` (unchanged for existing callers); the CLI defaults to `a
 the other one as `ab_original_then_export_<size>`). Exit codes: 0 = finished (acceptance met, or not
 judged for A1 feather/lite), 2 = trained but the primary size's acceptance is NOT MET (only with `--require-accept`; the files and the full report are still
 written), 1 = refused or error (message on stderr), 130 = interrupted.
+**`--reamp-pair NAM_INPUT.wav [--no-train]`** (v0.6): for training a model the standard NAM way (the NAM trainer, GUI or command line). `NAM_INPUT.wav`
+is the NAM project's standard input file, as used by the NAM trainer; you supply it (Sawblade never bundles, downloads or commits it). It is
+checked the way the pinned trainer (0.13.0, `nam/train/core.py`) recognises it: mono integer-PCM WAV at 48 kHz, long enough, and the trainer's MD5
+signature of a standard input (version 3 current; the deprecated older 48 kHz versions are accepted, the 44.1 kHz Proteus file is refused); anything else is
+refused with a message naming what was expected. It is copied unchanged as `<stem>.reamp_input.wav` and rendered through the same exportable chain
+as the model export (same mode: no gate, no time FX, no bus comp; no-cab = before the cab, with the IR written next to it) into
+`<stem>.reamp_output.wav` (48 kHz, 24-bit PCM mono, latency-compensated, same length; a render too loud for 24-bit is scaled down and the dB reported),
+with `<stem>.reamp_notes.txt`. **Personal use only, never upload or share** (derived from TONE3000 captures; non-commercial when any `-nc` capture is
+involved). `--no-train` writes only the pair, the notes, the IR (no-cab) and `export_report.json` (`trained: false`); no training or validation, so no
+`--require-accept`/`--resume`. Report: `files.reampPair = {input, output, notes}` and a `reamp` block (input version/match, levels, latency).
 `--exports-root DIR` puts the output directory at `DIR/<name>-<mode>-<size>-<ts>` (`--out` overrides it; `--resume auto` searches it).
 When any capture is `cc-by-nc*`, the file stem (`--name` or the preset slug) gets `-nc` (`.nam`, IR and directory names).
 `--di builtin` (also the fallback when the default test DI is missing, with a log line) validates and builds the listening file from
@@ -604,8 +631,8 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
 * **Never trained.** The gate is always bypassed in the training chain and reported (with its original settings) in
   `export_report.json -> plan.bypassed`. Non-bypassed blocks that are not NAM-trainable (unknown type, or the core's
   `namTrainable == false` trait, detected from the core's render warnings) are refused. `cc-by-nc*` captures are allowed (policy in CLAUDE.md): attribution entries and the `.nam` `sawblade` block get `nonCommercial: true` and the licence note adds NON-COMMERCIAL plus the capture names (it appears in the `.nam`, `export_report.json` and the CLI's final print). CLAUDE.md supersedes the phase 4 spec's note string; the note now reads "Derived from TONE3000 captures; for the user's personal use only; sharing needs permission from the creators and TONE3000."
-* **A2 report keys** (v0.6). `export_report.json` has `arch`, `size`, `files` (`{primary, container, full, lite}` for a2, `{primary}` for a1: names
-  relative to the output directory), `a2FastPath` (`{full, lite}`: the files have the exact shape the pinned core's `NAM_ENABLE_A2_FAST` path accepts;
+* **A2 report keys** (v0.6). `export_report.json` has `arch`, `size`, `files` (`{primary, container, <size>, <other size>}` for a2 (`primary` = the container, then the `--size` extra first), `{primary}` for a1; plus
+  `reampPair` with `--reamp-pair`: names relative to the output directory), `a2FastPath` (`{full, lite}`: the files have the exact shape the pinned core's `NAM_ENABLE_A2_FAST` path accepts;
   `export/a2shape.py` is a port of the core's `is_a2_shape` and the tests check it), `training.submodels` (per size: parameters, best epoch,
   best validation ESR, `maxValue`), `training.history[].submodels` (per-epoch ESR of each size) and `validation` = `{full: {...}, lite: {...}}`
   (one complete validation block per standalone file, same fields as the A1 block; A1 keeps the single block). The progress file gets `arch`.
@@ -630,6 +657,8 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   published blocks (gate -> Gate first; model -> Neural Amp, or Neural Pedal for a drive-only no-cab export; the no-cab cab (+ folded post EQ) -> IR
   after the model; unfolded post EQ -> EQ; bus comp -> Compressor last) with each block's position and the settings in plain hardware terms.
   Format: `docs/PRESET_SCHEMA.md` ("Export notes and device profiles"). No claims about the device beyond its published block list.
+  Notes (generic and Anagram) also carry the sentence derived from `trainingSignal` (`exportNotes.trainingNote`, `exportNotes.trainingSignal`; see above). The Anagram hint is generic: "Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or
+  Neural Pedal) block, KosmOS 1.16 or later." (not a claim about the device's file handling).
 * **`--notes-preset PATH`** (no-cab exports only; refused with `--mode withcab`). A caller that trains a derived rig (the plugin
   switches the bus comp off for a no-cab "drop" export) passes the ORIGINAL preset here, so the dropped comp is still listed in
   the notes with its settings. It is validated before any work: the file must exist, and it may differ from the trained preset

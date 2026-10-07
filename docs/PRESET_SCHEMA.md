@@ -646,7 +646,7 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
 "deviceProfiles": { "anagram": {
   "device": "Anagram",
   "file": "<stem>.anagram_notes.txt",
-  "message": "Blocks to set on the device, in signal order. Needs KosmOS 1.16 or later.",
+  "message": "Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later.",
   "loaderOrder": "Anagram chain: Gate -> Neural Amp -> IR -> Compressor",      // one string
   "stages": [                                                                  // signal order = chain order
     { "stage": "gate",    "block": "Gate",       "position": "1 (first in the chain)",
@@ -654,7 +654,7 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
                     "release ms": 60, "range dB": -90, "keyed on": "guitar input (the signal before any pedal or amp)" },
       "hardware": "Put the gate FIRST in the chain, before every NAM block, so it hears the guitar. ..." },
     { "stage": "model",   "block": "Neural Amp",  "position": "2",
-      "settings": { "model": "<stem>.a2_full.nam", "bypass": false }, "hardware": "Load ... from file into the Neural Amp block. Local file for your own use: do not upload it to TONE3000. ..." },
+      "settings": { "model": "<stem>.a2.nam", "bypass": false }, "hardware": "Load <file> (A2 container) into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later. It is a local file for your own use: do not upload it to TONE3000. ..." },
     { "stage": "cab",     "block": "IR",          "position": "3",
       "settings": { "file": "<name>-nocab.ir.wav", "normalise": false, "contains": "cab and post EQ" },
       "hardware": "Load the IR WITHOUT loudness normalisation. ..." },
@@ -666,14 +666,26 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
 
 Mapping rules: the trained model is a **Neural Amp** block, or a **Neural Pedal** block for a *drive-only* export (no-cab export
 whose enabled non-EQ blocks are all explicitly pedals or boosts: `slot` "pedal"/"boost" or a `pedal.*` type; an unlabelled NAM block counts as an amp; a with-cab export is always a Neural Amp); the model is a local file loaded into the block, for the user's own use (the text says not to upload it to TONE3000, because models trained from TONE3000 captures need the creators' permission to share).
-`settings.model` is the primary file (A2: the standalone file `--size` names; the `.a2.nam` container is not named, whether the
-device takes a container is not published). The gate (if enabled) is the first block, before the model. The no-cab export's cab
+`settings.model` is the primary file (A2: the standard NAM A2 container `<stem>.a2.nam`; the standalone `.a2_full.nam` / `.a2_lite.nam` extras are
+the fallback if a loader refuses a container, which is unverified). The Anagram text is a generic hint (any NAM A2 block; Neural Amp or Neural Pedal,
+KosmOS 1.16 or later), not a statement about the device's file handling. The gate (if enabled) is the first block, before the model. The no-cab export's cab
 becomes an **IR** block right after the model; the exported IR already holds the post EQ, so the post EQ gets its own **EQ** block
 (`settings` = `band N`: description) only when it is not folded into the IR. The bus compressor (no-cab export with `--allow-inexact`)
 is a **Compressor** block last, `threshold dBFS` = the threshold at the exported output level. `position` is the 1-based chain
 index, with "(first in the chain)" / "(last in the chain)" on the ends of a chain of two or more blocks. A with-cab export lists the gate (if enabled)
 and the model block; the cab, post EQ and bus comp are inside the model, so nothing else. A with-cab export whose chain has no gate lists the
 model block only.
+
+### Training signal and reamp pair (export report, v0.6)
+
+`export_report.json` top level: `trainingSignal` = `{"id", "kind", "version", "label", "fallback"}`: `id` is `"nam-standard v3.0.0"` (the NAM
+project's standard input file, user-supplied) or `"sawblade-synthetic v1"` (the labelled fallback, `fallback: true`); the same `id` string
+is `metadata.sawblade.trainingSignal` in every `.nam` and `exportNotes.trainingSignal`, and the notes carry a sentence derived from it.
+`signal` describes the input (`kind`, `version`, `match`, the validation slice); `validationSplit` (official path) says how the acceptance
+numbers are measured. `files` = `{primary (A2: the container), container?, <size>, <other size>, reampPair?: {input, output, notes}}`
+(file names relative to the output directory). `reamp` (with `--reamp-pair`) = the pair's details (input version / match / md5, `levelReducedDb`,
+latency). With `--no-train`, `trained: false` and only `files.reampPair`, `reamp`, `ir`, `plan` are present (no `training`, no `validation`).
+The NAM standard input file is never stored in the report, only its name, md5 and version.
 
 ## Derived properties (not stored; reported by tonerender / plugin)
 

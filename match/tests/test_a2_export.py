@@ -12,7 +12,10 @@ import pytest
 import soundfile as sf
 
 from sawblade_match.export import a2shape as A2S
+from sawblade_match.export import notes as N
 from sawblade_match.export import plan as P
+from sawblade_match.export import reamp as RP
+from sawblade_match.export import standard_input as SI
 from sawblade_match.export import resume as R
 from sawblade_match.export import signal as S
 from sawblade_match.export import train as T
@@ -59,7 +62,7 @@ def test_cli_refuses_bad_arch_size_pairs_before_any_work(capsys, tmp_path):
     from sawblade_match.export.cli import main
     prog = tmp_path / "p.json"
     for argv in (["--arch", "a2", "--size", "standard"], ["--arch", "a1", "--size", "full"]):
-        rc = main([str(PRESETS / "golden_shared.json"), *argv, "--out", str(tmp_path / "o"), "--progress-json", str(prog)])
+        rc = main([str(PRESETS / "golden_shared.json"), *argv, "--signal", "sawblade", "--out", str(tmp_path / "o"), "--progress-json", str(prog)])
         assert rc == 1 and "is not valid for --arch" in capsys.readouterr().err
         assert json.loads(prog.read_text())["stage"] == "error"
     assert not (tmp_path / "o").exists()
@@ -225,7 +228,7 @@ def _fixture_preset(tmp_path):
 
 @needs_train
 @pytest.mark.parametrize("size", ["full", "lite"])
-def test_end_to_end_a2_nocab_export_on_fixture_preset(tmp_path, size):
+def test_end_to_end_a2_nocab_export_on_fixture_preset(tmp_path, size, monkeypatch):
     _need_nam()
     from sawblade_match.export.run import run_export
     pj = _fixture_preset(tmp_path)
@@ -233,15 +236,22 @@ def test_end_to_end_a2_nocab_export_on_fixture_preset(tmp_path, size):
     sf.write(di, (0.2 * np.sin(2 * np.pi * 196 * np.arange(44100 * 4) / 44100)).astype(np.float32), 44100)
     out = tmp_path / "out"
     prog = tmp_path / "progress.json"
+    standin = _standin_input(tmp_path / "nam_input.wav", seconds=30)
+    _register_standin(monkeypatch, standin)
     rep = run_export(pj, mode="nocab", arch="a2", size=size, out=out, epochs=1, max_minutes=10, threads=2, di=di,
                      signal_spec=S.SignalSpec(seed=1, train_plucks_s=3.0, valid_plucks=1), log=lambda *_: None,
-                     progress_json=prog)
+                     progress_json=prog, reamp_pair=standin)
     stem = f"golden-shared-live-compatible-nocab-{size}"
     assert rep["arch"] == "a2" and rep["size"] == size
-    assert rep["files"] == {"primary": f"{stem}.a2_{size}.nam", "container": f"{stem}.a2.nam", "full": f"{stem}.a2_full.nam",
+    reamp = rep["files"].pop("reampPair")                                      # training + --reamp-pair: both
+    assert reamp["output"] == f"{stem}.reamp_output.wav" and (out / reamp["output"]).is_file() and (out / reamp["notes"]).is_file()
+    assert rep["files"] == {"primary": f"{stem}.a2.nam", "container": f"{stem}.a2.nam", "full": f"{stem}.a2_full.nam",
                             "lite": f"{stem}.a2_lite.nam"}
+    assert list(rep["files"])[2] == size                                       # --size: that extra is listed first
+    assert rep["training"]["namFile"] == f"{stem}.a2.nam"
     for f in rep["files"].values():
         assert (out / f).is_file()
+    assert json.loads((out / rep["files"]["container"]).read_text())["architecture"] == "SlimmableContainer"
     assert rep["a2FastPath"] == {"full": True, "lite": True}
     assert set(rep["validation"]) == {"full", "lite"}                          # both standalone files validated through the core
     for sz in ("full", "lite"):
@@ -256,12 +266,17 @@ def test_end_to_end_a2_nocab_export_on_fixture_preset(tmp_path, size):
     assert rep["training"]["validationEsr"] == rep["training"]["submodels"][size]["bestValEsr"]       # per-submodel, not the sum
     assert (out / "listen" / "ab_original_then_export.wav").is_file()
     assert (out / "listen" / f"ab_original_then_export_{'lite' if size == 'full' else 'full'}.wav").is_file()
-    # notes: generic + anagram, named by stem; the model line points at the primary file
+    # notes: generic + anagram, named by stem; the model line points at the primary file (the container)
     assert rep["exportNotes"]["file"] == f"{stem}.export_notes.txt" and (out / f"{stem}.anagram_notes.txt").is_file()
     prof = rep["exportNotes"]["deviceProfiles"]["anagram"]
     assert prof["file"] == f"{stem}.anagram_notes.txt"
     assert [s["block"] for s in prof["stages"]] == ["Gate", "Neural Amp", "IR"]
-    assert prof["stages"][1]["settings"]["model"] == f"{stem}.a2_{size}.nam"
+    assert prof["stages"][1]["settings"]["model"] == f"{stem}.a2.nam"
+    assert "any NAM A2 block" in prof["stages"][1]["hardware"] and prof["stages"][1]["hardware"].count("A2 container") == 1
+    for txtf in (out / f"{stem}.export_notes.txt", out / f"{stem}.anagram_notes.txt"):
+        assert TN in txtf.read_text(encoding="utf-8")
+    assert rep["exportNotes"]["trainingNote"] == TN and rep["trainingSignal"]["id"] == "sawblade-synthetic v1"
+    assert "not the standard NAM signal" in TN and "use the reamp pair" in TN
     assert json.loads(prog.read_text())["arch"] == "a2" and json.loads(prog.read_text())["stage"] == "done"
     assert "personal use only" in rep["licenceNote"]
 
@@ -301,7 +316,7 @@ def test_cli_require_accept_judges_the_primary_a2_size_only(monkeypatch, tmp_pat
         seen.update(kw)
         return _fake_report(full, lite)
     monkeypatch.setattr(RUN, "run_export", fake)
-    out = main([str(PRESETS / "golden_shared.json"), "--arch", "a2", "--size", size, "--require-accept", "--out", str(tmp_path / "o")])
+    out = main([str(PRESETS / "golden_shared.json"), "--arch", "a2", "--size", size, "--require-accept", "--signal", "sawblade", "--out", str(tmp_path / "o")])
     assert out == rc and seen["arch"] == "a2" and seen["size"] == size
 
 
@@ -360,3 +375,285 @@ def test_fixture_check_tolerates_float_noise_and_reports_real_differences(tmp_pa
     (new / "a2_full.nam").unlink()
     lines.clear()
     assert "a2_full.nam" in gen.check_dirs(new, FIX, log=lines.append) and "only in the committed directory" in "\n".join(lines)
+
+
+# ---------------------------------------------------------------- decision 18: the files are standard NAM A2 files
+
+@needs_train
+def test_exported_a2_files_load_in_the_core_only_check(tmp_path):
+    """Exports a tiny A2 and runs the core-only loader tool (``tests/tools/nam_load_check``: NeuralAmpModelerCore only, no
+    Sawblade code) on the container and both standalone files; exit 0 = all load and process finite audio."""
+    exe = os.environ.get("SAWBLADE_NAM_LOAD_CHECK")
+    if not exe:
+        pytest.skip("SAWBLADE_NAM_LOAD_CHECK is not set (path of the nam_load_check executable built from tests/tools)")
+    import subprocess
+    _need_nam()
+    from sawblade_match.export.run import run_export
+    pj = _fixture_preset(tmp_path)
+    out = tmp_path / "out"
+    rep = run_export(pj, mode="nocab", arch="a2", size="full", out=out, epochs=1, max_minutes=10, threads=2, di="builtin",
+                     signal_spec=S.SignalSpec(seed=1, train_plucks_s=3.0, valid_plucks=1), log=lambda *_: None,
+                     validate=False)
+    files = [str(out / rep["files"][k]) for k in ("container", "full", "lite")]
+    r = subprocess.run([exe, *files], capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, f"nam_load_check failed ({r.returncode}):\n{r.stdout}\n{r.stderr}"
+
+
+# ---------------------------------------------------------------- decision 20: the reamp pair
+
+TN = N.training_sentence(f"{N.SYNTHETIC_SIGNAL} v{S.SIGNAL_VERSION}")
+
+
+def _standin_input(path, seconds=30.0, rate=48000, subtype="PCM_24"):
+    rng = np.random.default_rng(7)
+    x = (0.25 * rng.standard_normal(int(seconds * rate))).astype(np.float32)
+    sf.write(str(path), x, rate, subtype=subtype)
+    return path
+
+
+def _v3_standin(path, seconds_train=20.0, amp=0.25):
+    """Synthetic stand-in with the V3 layout the trainer's pipeline needs (never the official audio): 9 s validation noise,
+    1 s silence, blips at 10.5 s / 11.5 s, chirp/noise filler, training noise, 0.5 s silence, the same 9 s validation again."""
+    r = 48000
+    rng = np.random.default_rng(11)
+    val = amp * rng.standard_normal(9 * r)
+    parts = [val, np.zeros(r), np.zeros(2 * r)]
+    parts[-1][int(0.5 * r)] = 0.9
+    parts[-1][int(1.5 * r)] = 0.9
+    parts += [amp * rng.standard_normal(5 * r), amp * rng.standard_normal(int(seconds_train * r)), np.zeros(r // 2), val]
+    x = np.concatenate(parts).astype(np.float32)
+    sf.write(str(path), x, r, subtype="PCM_24")
+    return path
+
+
+def _register_standin(monkeypatch, path):
+    """Make the synthetic stand-in count as the standard input (the official file never lives in the repo)."""
+    x, rate = SI.read_standard_samples(path)
+    monkeypatch.setattr(SI, "STANDARD_INPUT_STRONG_MD5", {})
+    monkeypatch.setattr(SI, "STANDARD_INPUT_WEAK", {"3.0.0": {(SI._md5_array(x[:17 * rate]), SI._md5_array(x[-9 * rate:]))}})
+
+
+def test_reamp_input_validation_follows_the_trainer(monkeypatch, tmp_path):
+    from sawblade_match.export.plan import ExportRefused
+    good = _standin_input(tmp_path / "good.wav")
+    with pytest.raises(ExportRefused, match="not a known NAM standard input file.*standard input file as used by the NAM trainer"):
+        SI.recognise(good)                                              # real tables: a stand-in is unknown
+    _register_standin(monkeypatch, good)
+    info = SI.recognise(good)
+    assert info["version"] == "3.0.0" and info["match"] == "weak" and info["rate"] == 48000
+    monkeypatch.setattr(SI, "STANDARD_INPUT_STRONG_MD5", {info["md5"]: "3.0.0"})
+    assert SI.recognise(good)["match"] == "strong"                       # strong (file bytes) wins first
+    with pytest.raises(ExportRefused, match="44100 Hz.*48000 Hz"):
+        SI.recognise(_standin_input(tmp_path / "r44.wav", rate=44100))
+    with pytest.raises(ExportRefused, match="10.0 s long.*at least 26 s"):
+        SI.recognise(_standin_input(tmp_path / "short.wav", seconds=10))
+    sf.write(str(tmp_path / "st.wav"), np.zeros((48000 * 30, 2), np.float32), 48000, subtype="PCM_24")
+    with pytest.raises(ExportRefused, match="2 channels"):
+        SI.recognise(tmp_path / "st.wav")
+    sf.write(str(tmp_path / "f.wav"), np.zeros(48000 * 30, np.float32), 48000, subtype="FLOAT")
+    with pytest.raises(ExportRefused, match="integer PCM"):
+        SI.recognise(tmp_path / "f.wav")
+    with pytest.raises(ExportRefused, match="no such file"):
+        SI.recognise(tmp_path / "missing.wav")
+    other = _standin_input(tmp_path / "other.wav")                           # right format, other content: unknown
+    x, _ = SI.read_standard_samples(other)
+    x2 = x.copy()
+    x2[100] += 0.5
+    sf.write(str(other), x2.astype(np.float32), 48000, subtype="PCM_24")
+    monkeypatch.setattr(SI, "STANDARD_INPUT_STRONG_MD5", {})
+    with pytest.raises(ExportRefused, match="not a known NAM standard input file"):
+        SI.recognise(other)
+
+
+def test_reamp_weak_hash_matches_the_trainers_own_function(tmp_path):
+    """Our weak hash must equal what ``nam.train.core`` computes (trainer 0.13.0), else a real file would be rejected."""
+    _need_nam()
+    from nam.train import core as NC
+    f = _standin_input(tmp_path / "a.wav", seconds=30)
+    x, rate = SI.read_standard_samples(f)
+    from nam.data import wav_to_np
+    ref = wav_to_np(f)
+    assert ref.dtype == x.dtype and np.array_equal(ref, x)
+    import hashlib
+    assert hashlib.md5(ref[:17 * rate]).hexdigest() == SI._md5_array(x[:17 * rate])
+    assert NC._V3_DATA_INFO.rate == SI.RATE
+
+
+def test_reamp_cli_argument_rules(capsys, tmp_path):
+    from sawblade_match.export.cli import main
+    pj = str(PRESETS / "golden_shared.json")
+    assert main([pj, "--no-train"]) == 1 and "--no-train needs --reamp-pair" in capsys.readouterr().err
+    assert main([pj, "--no-train", "--reamp-pair", "x.wav", "--require-accept"]) == 1
+    assert main([pj, "--reamp-pair", str(tmp_path / "nope.wav"), "--no-train", "--out", str(tmp_path / "o")]) == 1
+    assert "no such file" in capsys.readouterr().err
+
+
+def test_reamp_pair_only_renders_the_exportable_chain(monkeypatch, tmp_path):
+    from sawblade_match.export.run import run_export
+    pj = _fixture_preset(tmp_path)
+    src = _standin_input(tmp_path / "nam_input.wav", seconds=30)
+    _register_standin(monkeypatch, src)
+    out = tmp_path / "out"
+    prog = tmp_path / "progress.json"
+    rep = run_export(pj, mode="nocab", arch="a2", size="full", out=out, reamp_pair=src, no_train=True, log=lambda *_: None,
+                     progress_json=prog)
+    stem = "golden-shared-live-compatible-nocab-full"
+    assert rep["trained"] is False and "validation" not in rep and "training" not in rep
+    assert rep["files"] == {"reampPair": {"input": f"{stem}.reamp_input.wav", "output": f"{stem}.reamp_output.wav",
+                                          "notes": f"{stem}.reamp_notes.txt"}}
+    assert (out / f"{stem}.reamp_input.wav").read_bytes() == src.read_bytes()            # copied unchanged
+    y, rate = sf.read(str(out / f"{stem}.reamp_output.wav"), dtype="float64")
+    x, _ = SI.read_standard_samples(src)
+    info = sf.info(str(out / f"{stem}.reamp_output.wav"))
+    assert rate == 48000 and info.subtype == "PCM_24" and info.channels == 1 and len(y) == len(x)
+    assert np.max(np.abs(y)) < 1.0 and np.sqrt(np.mean(y ** 2)) > 1e-3
+    # same chain as the model export: the training preset rendered at 48 kHz (no gate, no cab / post EQ in nocab)
+    from sawblade_match.core import CaptureCache
+    pre, base = C.load_preset(pj)
+    tp = P.training_preset(pre, P.make_plan(pre, "nocab", False))
+    want, _ = C.render48(tp, x.astype(np.float32), base, CaptureCache())
+    g = np.max(np.abs(want))
+    ref = want * min(1.0, SI.CLIP_CEILING / g)
+    assert np.max(np.abs(y - ref)) < 2e-7 + 1e-6
+    assert (out / f"{stem.rsplit('-', 1)[0]}.ir.wav").is_file()                          # nocab: the IR for the loader
+    txt = (out / f"{stem}.reamp_notes.txt").read_text(encoding="utf-8")
+    assert "PERSONAL USE ONLY" in txt and "never upload or share" in txt and "standard input file" in txt
+    assert json.loads((out / "export_report.json").read_text())["reamp"]["inputVersion"] == "3.0.0"
+    st = json.loads(prog.read_text())
+    assert st["stage"] == "done" and st["arch"] == "a2"
+    assert not list(out.glob("*.nam"))                                                   # no training happened
+
+
+def test_reamp_pair_refuses_an_unknown_input_before_any_work(tmp_path):
+    from sawblade_match.export.plan import ExportRefused
+    from sawblade_match.export.run import run_export
+    pj = _fixture_preset(tmp_path)
+    src = _standin_input(tmp_path / "nam_input.wav", seconds=30)
+    with pytest.raises(ExportRefused, match="standard input file as used by the NAM trainer"):
+        run_export(pj, mode="nocab", arch="a2", out=tmp_path / "o", reamp_pair=src, no_train=True, log=lambda *_: None)
+    assert not (tmp_path / "o").exists()
+    with pytest.raises(ExportRefused, match="--no-train needs --reamp-pair"):
+        run_export(pj, mode="nocab", arch="a2", out=tmp_path / "o", no_train=True, log=lambda *_: None)
+
+
+# ---------------------------------------------------------------- decision 22: training on the NAM standard input
+
+def test_standard_input_tables_cover_every_version_the_trainer_knows():
+    _need_nam()
+    import inspect
+    from nam.train import core as NC
+    src = inspect.getsource(NC._detect_input_version)
+    for md5 in SI.STANDARD_INPUT_STRONG_MD5:
+        assert md5 in src
+    for ver, pairs in SI.STANDARD_INPUT_WEAK.items():
+        for a, b in pairs:
+            assert a in src and b in src, ver
+    assert set(SI.STANDARD_INPUT_STRONG_MD5.values()) == {"1.0.0", "1.1.1", "2.0.0", "3.0.0"}
+    # validation split per version matches the trainer's own data config
+    from nam.train._version import Version
+    for ver in ("1.0.0", "2.0.0", "3.0.0"):
+        cfg = NC._get_data_config(Version.from_string(ver), Path("a"), Path("b"), 8192, 0)
+        v = cfg["validation"]
+        n = 9_600_000
+        sl = SI.validation_slice(ver, n)
+        if "start_samples" in v:
+            assert (v["start_samples"] % n) == sl.start, ver
+
+
+def test_official_data_pipeline_uses_the_trainers_calibration_and_split(monkeypatch, tmp_path):
+    _need_nam()
+    from sawblade_match.export import official as OFF
+    src = _v3_standin(tmp_path / "in.wav")
+    _register_standin(monkeypatch, src)
+    info = SI.recognise(src)
+    x, _ = SI.read_standard_samples(src)
+    y = np.tanh(2 * x) * 0.5
+    sf.write(str(tmp_path / "out.wav"), y, 48000, subtype="PCM_24")
+    od = OFF.OfficialData(src, tmp_path / "out.wav", info["version"], log=lambda *_: None)
+    dtr, dva = od.build(rf=1023, ny=8192)
+    assert od.info["version"] == "3.0.0" and od.info["latencySamples"] == -1          # blip at the input sample: delay 0, safety factor 1
+    assert od.info["calibrationDelays"] == [0] and od.info["dataChecks"] == {"passed": True}
+    assert od.info["trainSplit"]["start_samples"] == 480000 and od.info["validationSplit"]["start_samples"] == -432000
+    assert len(dtr) > 100 and len(dva) == 1 and float(dtr.sample_rate) == 48000.0
+    # a chain that does not repeat (validation replicates differ) is refused by the trainer's check
+    y2 = y.copy()
+    y2[-432000:] *= 0.3
+    sf.write(str(tmp_path / "out2.wav"), y2, 48000, subtype="PCM_24")
+    from sawblade_match.export.plan import ExportRefused
+    with pytest.raises(ExportRefused, match="validation replicates"):
+        OFF.OfficialData(src, tmp_path / "out2.wav", "3.0.0", log=lambda *_: None).build(1023, 8192)
+
+
+def test_cli_demands_an_explicit_training_signal(capsys, tmp_path):
+    from sawblade_match.export.cli import main
+    pj = str(PRESETS / "golden_shared.json")
+    assert main([pj, "--out", str(tmp_path / "o")]) == 1
+    err = capsys.readouterr().err
+    assert "--nam-input" in err and "--signal sawblade" in err and not (tmp_path / "o").exists()
+    assert main([pj, "--nam-input", "a.wav", "--signal", "sawblade"]) == 1 and "contradict" in capsys.readouterr().err
+    assert main([pj, "--nam-input", str(tmp_path / "missing.wav"), "--out", str(tmp_path / "o")]) == 1
+    assert "no such file" in capsys.readouterr().err
+
+
+@needs_train
+def test_end_to_end_a2_on_the_standard_input_standin(monkeypatch, tmp_path):
+    _need_nam()
+    from sawblade_match.export.run import run_export
+    pj = _fixture_preset(tmp_path)
+    src = _v3_standin(tmp_path / "nam_input.wav")
+    _register_standin(monkeypatch, src)
+    out = tmp_path / "out"
+    rep = run_export(pj, mode="nocab", arch="a2", size="lite", out=out, epochs=1, max_minutes=10, threads=2, di="builtin",
+                     nam_input=src, log=lambda *_: None)
+    assert rep["trainingSignal"]["id"] == "nam-standard v3.0.0" and rep["trainingSignal"]["version"] == "3.0.0" and rep["signal"]["kind"] == "nam-standard"
+    assert rep["training"]["officialData"]["latencySamples"] in (-1, 0, 1, 2) and "validationSplit" in rep
+    assert rep["exportNotes"]["trainingSignal"] == "nam-standard v3.0.0"
+    assert "Trained on the standard NAM signal (nam-standard v3.0.0)" in (out / rep["exportNotes"]["file"]).read_text()
+    for k in ("container", "full", "lite"):
+        meta = json.loads((out / rep["files"][k]).read_text())["metadata"]
+        assert meta["sawblade"]["trainingSignal"] == "nam-standard v3.0.0"
+    assert set(rep["validation"]) == {"full", "lite"} and rep["validation"]["lite"]["heldOut"]["esr"] >= 0
+    # the other signal is the labelled fallback
+    out2 = tmp_path / "out2"
+    rep2 = run_export(pj, mode="nocab", arch="a2", size="full", out=out2, epochs=1, max_minutes=10, threads=2, validate=False,
+                      signal="sawblade", signal_spec=S.SignalSpec(seed=1, train_plucks_s=3.0, valid_plucks=1), log=lambda *_: None)
+    assert rep2["trainingSignal"]["id"].startswith("sawblade-synthetic v")
+    assert "not the standard NAM signal" in (out2 / rep2["exportNotes"]["file"]).read_text()
+
+
+def test_resume_reuses_the_recorded_signal_and_the_cli_does_not_demand_one(monkeypatch, tmp_path):
+    from sawblade_match.export import run as RUN
+    from sawblade_match.export.cli import main
+    from sawblade_match.export.plan import ExportRefused
+    run_dir = tmp_path / "run"
+    cd = R.ckpt_dir(run_dir)
+    cd.mkdir(parents=True)
+    (cd / R.LAST).write_bytes(b"x")
+    R.write_progress(cd, {"trainingSignal": "nam-standard v3.0.0", "namInputPath": str(tmp_path / "gone.wav"), "epoch": 1})
+    pj = _fixture_preset(tmp_path)
+    with pytest.raises(ExportRefused, match="not there any more.*--nam-input"):
+        RUN.run_export(pj, mode="nocab", arch="a2", resume=str(run_dir), log=lambda *_: None)
+    seen = {}
+    monkeypatch.setattr(RUN, "run_export", lambda preset, **kw: seen.update(kw) or (_ for _ in ()).throw(ExportRefused("stop")))
+    assert main([str(pj), "--resume", str(run_dir)]) == 1 and seen["nam_input"] is None and seen["signal"] is None
+    assert main([str(pj), "--resume", "auto"]) == 1                                  # auto cannot know the signal: asks
+    # the plugin's pair-only call: no --device / --di / --require-accept / training signal
+    assert main([str(pj), "--mode", "nocab", "--arch", "a2", "--size", "full", "--reamp-pair", "x.wav", "--no-train"]) == 1
+    assert seen["no_train"] is True and seen["reamp_pair"] == "x.wav"
+
+
+def test_resume_with_a_different_signal_refuses(tmp_path):
+    from sawblade_match.export.plan import ExportRefused
+    from sawblade_match.export.run import run_export
+    pj = _fixture_preset(tmp_path)
+    pre = json.loads(pj.read_text())
+    run_dir = tmp_path / "run"
+    cd = R.ckpt_dir(run_dir)
+    cd.mkdir(parents=True)
+    (cd / R.LAST).write_bytes(b"x")
+    R.write_progress(cd, {"trainingSignal": "nam-standard v3.0.0", "namInputPath": "x.wav", "presetSha256": P.preset_hash(pre),
+                          "signalSha256": "a" * 32, "validSha256": "a" * 32, "mode": "nocab", "size": "full", "arch": "a2",
+                          "layout": T.layout_of("a2"), "epoch": 1})
+    with pytest.raises(ExportRefused, match="cannot resume.*training-signal sha256 differs"):
+        run_export(pj, mode="nocab", arch="a2", size="full", resume=str(run_dir), signal="sawblade",
+                   signal_spec=S.SignalSpec(seed=1, train_plucks_s=3.0, valid_plucks=1), log=lambda *_: None)

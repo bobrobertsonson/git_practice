@@ -258,7 +258,7 @@ class TrainResult:
 
 def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scratch, user_metadata=None,
               other_metadata=None, log=print, basename: str = "model", ckpt_dir=None, resume: bool = False,
-              identity: dict | None = None, progress: PG.Progress | None = None) -> TrainResult:
+              identity: dict | None = None, progress: PG.Progress | None = None, datasets=None) -> TrainResult:
     """Train one A1 WaveNet (``cfg.arch == "a1"``) or the packed A2 WaveNet (``"a2"``) on (x, y) pairs (float32 mono, 48 kHz,
     sample aligned) and export ``<outdir>/<basename>.nam`` (A1), or for A2 the container ``<basename>.a2.nam`` plus the
     standalone ``<basename>.a2_full.nam`` / ``<basename>.a2_lite.nam`` (``TrainResult.nam_path`` = the one ``cfg.size``
@@ -280,6 +280,10 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
     epoch validate and checkpoint first, costing one validation pass, then cancels); the partial epoch writes no checkpoint
     (``progress.json`` only gets ``"interrupted": true``), nothing is exported and the result has
     ``stopped_by == "interrupt"`` and ``nam_path None``.  ``progress`` (optional) receives the train-stage updates.
+
+    ``datasets``: ``None`` = build the datasets from the arrays (Sawblade's own signal).  Otherwise a callable
+    ``datasets(receptive_field, ny) -> (train_dataset, validation_dataset)`` (``official.OfficialData.build``: the pinned trainer's
+    own datasets for the NAM standard input; the arrays are ignored and the output normalisation hook is the trainer's).
     """
     cfg = cfg.resolved()
     import_nam()
@@ -313,10 +317,15 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
     def tens(a):
         return torch.tensor(np.asarray(a, np.float32))
 
-    ds_train = Dataset(tens(x_train), tens(y_train), nx=rf, ny=cfg.ny, sample_rate=RATE,
-                       require_input_pre_silence=None)
-    ds_val = Dataset(tens(x_valid), tens(y_valid), nx=rf, ny=None, sample_rate=RATE, require_input_pre_silence=None)
-    NormalizeJointDatasetOutput(TARGET_RMS_DBFS).apply(dataset_train=ds_train, dataset_validation=ds_val)
+    if datasets is not None:
+        ds_train, ds_val = datasets(rf, cfg.ny)
+        if float(ds_train.sample_rate) != float(RATE):
+            raise ValueError(f"the standard input is {ds_train.sample_rate} Hz; Sawblade trains at {RATE} Hz")
+    else:
+        ds_train = Dataset(tens(x_train), tens(y_train), nx=rf, ny=cfg.ny, sample_rate=RATE,
+                           require_input_pre_silence=None)
+        ds_val = Dataset(tens(x_valid), tens(y_valid), nx=rf, ny=None, sample_rate=RATE, require_input_pre_silence=None)
+        NormalizeJointDatasetOutput(TARGET_RMS_DBFS).apply(dataset_train=ds_train, dataset_validation=ds_val)
     model.net.sample_rate = float(RATE)
     for ds in (ds_train, ds_val):
         ds.handshake(model.net)
@@ -325,7 +334,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
     gen = torch.Generator()
     gen.manual_seed(cfg.seed)
     if len(ds_train) < 1:
-        raise ValueError(f"training signal too short: {len(x_train)} samples for receptive field {rf} + ny {cfg.ny}")
+        raise ValueError(f"training signal too short for receptive field {rf} + ny {cfg.ny}")
     batch = max(1, min(cfg.batch_size, len(ds_train)))           # tiny smoke signals have < batch_size datums
     dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch, shuffle=True, drop_last=True,
                                            num_workers=0, generator=gen)

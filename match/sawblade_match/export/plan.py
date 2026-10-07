@@ -307,12 +307,15 @@ def drive_only(preset: dict, plan: "Plan | dict") -> bool:
 
 
 def sawblade_block(preset: dict, plan: Plan, size: str, seed: int, signal_seed: int, signal_sha256: str,
-                   levels: dict, ir_file: str | None, arch: str | None = None) -> dict:
+                   levels: dict, ir_file: str | None, arch: str | None = None,
+                   training_signal: str | None = None) -> dict:
     """The ``metadata.sawblade`` block written into the ``.nam``: provenance, mode, attribution and the licence note.
     ``arch`` (a2 exports only) is appended as the last key; A1 blocks are unchanged."""
     blk = _sawblade_block(preset, plan, size, seed, signal_seed, signal_sha256, levels, ir_file)
     if arch is not None:
         blk["arch"] = arch
+    if training_signal is not None:
+        blk["trainingSignal"] = training_signal      # "nam-standard v3.0.0" | "sawblade-synthetic v<N>"
     return blk
 
 

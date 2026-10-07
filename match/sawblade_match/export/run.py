@@ -1,6 +1,7 @@
 """End-to-end export: plan -> training signal -> target render (core) -> [IR fold] -> NAM training -> validation."""
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import hashlib
 import json
@@ -21,6 +22,9 @@ from . import a2shape as A2S
 from . import notes as N
 from . import plan as P
 from . import progress as PG
+from . import official as OFF
+from . import reamp as RP
+from . import standard_input as SI
 from . import resume as R
 from . import signal as S
 from . import stop as STOP
@@ -85,6 +89,47 @@ def _cached_signal(spec: S.SignalSpec, log):
     return tr, va, info
 
 
+def signal_block(tsig: str) -> dict:
+    """Report top-level ``trainingSignal``: ``{id, kind, version, label, fallback}`` (``id`` = what ``metadata.sawblade`` stores)."""
+    kind, _, ver = tsig.partition(" v")
+    nam = kind == "nam-standard"
+    return {"id": tsig, "kind": kind, "version": ver, "fallback": not nam,
+            "label": f"NAM standard input v{ver}" if nam else f"Sawblade test signal v{ver} (fallback, not the standard NAM signal)"}
+
+
+def _official_signal(path, info: dict):
+    """(input samples float32, validation-split input, info) of the NAM standard input file."""
+    x, _ = SI.read_standard_samples(Path(path).expanduser())
+    x32 = x.astype(np.float32)
+    sl = SI.validation_slice(info["version"], len(x32))
+    lv = lambda a: {"peakDbfs": float(20 * np.log10(np.max(np.abs(a)) + 1e-30)),
+                    "rmsDbfs": float(10 * np.log10(np.mean(a.astype(np.float64) ** 2) + 1e-30))}
+    return x32, x32[sl], {"kind": "nam-standard", "version": info["version"], "match": info["match"], "file": Path(path).name,
+                          "trainSha256": info["md5"], "validSha256": info["md5"], "samples": info["samples"],
+                          "validationSlice": [sl.start, sl.stop], "train": lv(x32), "valid": lv(x32[sl]),
+                          "note": "user-supplied NAM standard input file; never redistributed"}
+
+
+def _cached_official_target(tpreset, base, path, info, cache, log, check=None):
+    key = hashlib.sha256((P.preset_hash(tpreset) + info["md5"] + _core_id()).encode()).hexdigest()[:20]
+    f = CACHE_ROOT / "targets" / f"official-{key}.npz"
+    if f.exists():
+        d = np.load(f, allow_pickle=False)
+        log(f"training target (standard input): cache hit ({f.name})")
+        return d["yt"], None, {"cached": True, "key": key, **json.loads(str(d["info"]))}
+    t0 = time.time()
+    log(f"rendering the standard input through the chain ({info['samples'] / RATE:.0f} s) ...")
+    y, rep = RP.render_output(tpreset, base, cache, path, render48)
+    yt = y.astype(np.float32)
+    tinfo = {"renderSeconds": round(time.time() - t0, 1), "latencySamples": rep.get("latencySamples"), "align": rep.get("align"),
+             "warnings": rep.get("warnings", []),
+             "levels": {"trainOutRmsDbfs": float(10 * np.log10(np.mean(y ** 2) + 1e-30)),
+                        "trainOutPeakDbfs": float(20 * np.log10(np.max(np.abs(y)) + 1e-30))}}
+    f.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(f, yt=yt, info=json.dumps(tinfo))
+    return yt, None, {"cached": False, "key": key, **tinfo}
+
+
 def _cached_targets(tpreset: dict, base, spec_info: dict, tr, va, cache, log, check=None):
     key = hashlib.sha256((P.preset_hash(tpreset) + spec_info["trainSha256"] + spec_info["validSha256"] +
                           _core_id()).encode()).hexdigest()[:20]
@@ -140,11 +185,23 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
                threads: int = 4, di=None, validate: bool = True, signal_seed: int = 1, target_esr: float | None = None,
                keep_scratch: bool = False, log=print, signal_spec: S.SignalSpec | None = None,
                lr_gamma: float | None = None, batch_size: int = T.BATCH, device: str = "auto",
-               resume: str | None = None, exports_root=None, arch: str = "a1", notes_preset=None) -> dict:
-    """``arch`` ``"a2"`` (the CLI default) trains the packed A2 net and writes the container plus standalone ``a2_full`` /
-    ``a2_lite`` files (``size`` = which standalone file is the primary one: ``full`` default / ``lite``); ``"a1"`` (the
+               resume: str | None = None, exports_root=None, arch: str = "a1", notes_preset=None,
+               reamp_pair=None, no_train: bool = False, nam_input=None, signal: str | None = None,
+               nam_latency: int | None = None) -> dict:
+    """``arch`` ``"a2"`` (the CLI default) trains the packed A2 net and writes the container ``<stem>.a2.nam`` (the
+    primary file: the standard NAM A2 file) plus standalone ``a2_full`` / ``a2_lite`` extras (``size`` = which extra is
+    listed first and whose acceptance gates ``--require-accept``: ``full`` default / ``lite``); ``"a1"`` (the
     library default, unchanged behaviour) trains one A1 WaveNet (``size`` feather / lite / standard).  A bad
     arch / size pair raises ``ValueError``.
+
+    ``nam_input``: the NAM standard input file; trains on it through the pinned trainer's data pipeline (``official.py``).
+    ``signal``: ``"sawblade"`` = the labelled fallback (Sawblade's synthetic signal), ``"official"`` (needs ``nam_input``);
+    ``None`` = official when ``nam_input`` is given, else sawblade (library default; the CLI refuses to guess).
+    ``nam_latency``: manual latency override of the trainer's blip calibration (``None`` = calibrate).
+
+    ``reamp_pair``: path of the NAM standard input file; the exportable chain renders it into
+    ``<stem>.reamp_output.wav`` (input copied as ``<stem>.reamp_input.wav``).  ``no_train`` (needs ``reamp_pair``)
+    writes only the pair, its notes and the report.
 
     ``resume``: None (fresh), ``"auto"`` (newest matching unfinished run under ``exports_root`` / the default
     exports dir, else fresh) or the output directory of an unfinished run (refused when preset, signal, mode, size or
@@ -153,6 +210,29 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     size = T.check_arch_size(arch, size)
     a2 = arch == "a2"
     prog.update("plan", message="planning", arch=arch)
+    if no_train and not reamp_pair:
+        raise P.ExportRefused("--no-train needs --reamp-pair")
+    reamp_info = SI.recognise(reamp_pair) if reamp_pair else None             # raises ExportRefused, before any work
+    if resume and resume != "auto" and not nam_input and not signal and not no_train:
+        # a resumed run continues with the signal it started with (recorded in its progress file); older checkpoints = synthetic
+        prog0 = R.read_progress(R.ckpt_dir(Path(resume).expanduser())) or {}
+        if str(prog0.get("trainingSignal", "")).startswith("nam-standard"):
+            nam_input = prog0.get("namInputPath")
+            if not nam_input or not Path(nam_input).is_file():
+                raise P.ExportRefused(f"cannot resume {resume}: it was training on the NAM standard input file "
+                                      f"{nam_input or '(path not recorded)'}, which is not there any more; pass --nam-input PATH "
+                                      "with the same file")
+        else:
+            signal = "sawblade"
+    sig_mode = signal or ("official" if nam_input else "sawblade")
+    if sig_mode not in ("official", "sawblade"):
+        raise P.ExportRefused(f"unknown training signal {signal!r}: use the NAM standard input file (--nam-input) or sawblade")
+    if sig_mode == "official" and not nam_input:
+        raise P.ExportRefused("training signal 'official' needs the NAM standard input file (--nam-input PATH)")
+    if sig_mode == "sawblade" and nam_input and signal == "sawblade":
+        raise P.ExportRefused("--nam-input and --signal sawblade contradict each other: pick one")
+    nam_info = SI.recognise(nam_input) if (sig_mode == "official" and not no_train) else None
+    official = nam_info is not None
     preset, base = load_preset(preset_path)
     plan = P.make_plan(preset, mode, allow_inexact)           # raises ExportRefused
     notes_src = None
@@ -185,6 +265,12 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     stem = f"{pname}-{mode}-{size}"                          # file name stem (a2: <stem>.a2.nam / .a2_full.nam / .a2_lite.nam)
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
     out_root = Path(exports_root).expanduser() if exports_root else DEFAULT_OUT_ROOT
+    if no_train:
+        if resume:
+            raise P.ExportRefused("--no-train and --resume cannot be combined")
+        return _reamp_only(prog, preset, base, preset_path, plan, tpreset, probe, cache, mode, arch, size, seed, signal_seed,
+                           pname, stem, stamp, out, out_root, notes_src, notes_only, notes_preset, reamp_pair,
+                           reamp_info, log, t_all)
     if out:
         prog.update(out_dir=Path(out).expanduser().resolve())
     elif resume is None:
@@ -194,12 +280,21 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     _check_stop(prog)
 
     prog.update("signal", message="training signal")
-    tr, va, sinfo = _cached_signal(signal_spec or S.SignalSpec(seed=signal_seed), log)
+    if official:
+        tr, va, sinfo = _official_signal(nam_input, nam_info)
+        tsig = f"nam-standard v{nam_info['version']}"
+        if nam_info["version"].split(".")[0] != "3":
+            log(f"  NAM input v{nam_info['version']} is deprecated by the trainer; used as asked (data checks not enforced)")
+    else:
+        tr, va, sinfo = _cached_signal(signal_spec or S.SignalSpec(seed=signal_seed), log)
+        tsig = f"{N.SYNTHETIC_SIGNAL} v{S.SIGNAL_VERSION}"
+        log("training signal: Sawblade's test signal (fallback), not the standard NAM signal")
 
     cfg = T.TrainConfig(size=size, arch=arch, epochs=epochs, max_minutes=max_minutes, seed=seed, threads=threads,
                         target_esr=target_esr, lr_gamma=lr_gamma, batch_size=batch_size, device=device)
     rc = cfg.resolved()
-    identity = {"presetSha256": P.preset_hash(preset), "signalSha256": sinfo["trainSha256"],
+    identity = {"trainingSignal": tsig, "namInputPath": str(Path(nam_input).expanduser().resolve()) if official else None,
+                "presetSha256": P.preset_hash(preset), "signalSha256": sinfo["trainSha256"],
                 "validSha256": sinfo["validSha256"], "mode": mode, "size": size, "arch": arch,
                 "layout": T.layout_of(arch)}
     if notes_src is not None:
@@ -240,14 +335,28 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
 
     prog.update("render", message="rendering the training target")
     with prog.heartbeat("render"):               # the core render reports nothing: keep the progress file alive
-        yt, yv, tinfo = _cached_targets(tpreset, base, sinfo, tr, va, cache, log,
-                                        check=lambda: _check_stop(prog, outdir))
+        if official:
+            yt, yv, tinfo = _cached_official_target(tpreset, base, nam_input, nam_info, cache, log,
+                                                    check=lambda: _check_stop(prog, outdir))
+        else:
+            yt, yv, tinfo = _cached_targets(tpreset, base, sinfo, tr, va, cache, log,
+                                            check=lambda: _check_stop(prog, outdir))
+    odata = None
+    if official:
+        scratch.mkdir(parents=True, exist_ok=True)
+        lv = RP.write_output(yt.astype(np.float64), scratch / "nam_output.wav")
+        tinfo["levels"]["trainOutPeakDbfs"] = lv["outputPeakDbfs"]
+        tinfo["levelReducedDb"] = lv["levelReducedDb"]
+        if lv["levelReducedDb"]:
+            log(f"  warning: the render was {lv['levelReducedDb']:.2f} dB too loud for 24-bit and was scaled down; the "
+                "trained model is that much quieter than the chain")
+        odata = OFF.OfficialData(nam_input, scratch / "nam_output.wav", nam_info["version"], latency=nam_latency, log=log)
 
     report: dict = {"reportVersion": REPORT_VERSION, "tool": "sawblade-export", "created": stamp,
                     "preset": {"path": str(Path(preset_path).resolve()), "name": preset.get("name"),
                                "sha256": P.preset_hash(preset)},
                     "mode": mode, "arch": arch, "size": size, "seed": seed, "signalSeed": signal_seed,
-                    "plan": plan.to_json(), "signal": sinfo, "target": tinfo, "coreBuild": _core_id(),
+                    "trainingSignal": signal_block(tsig), "plan": plan.to_json(), "signal": sinfo, "target": tinfo, "coreBuild": _core_id(),
                     "levelMatch": P.level_match_info(probe),
                     "attribution": P.attribution(preset), "licenceNote": P.licence_note(preset), "nonCommercial": bool(P.nc_captures(preset))}
 
@@ -269,7 +378,7 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
                   "note": "digital chain without an analog reference: input_level_dbu / output_level_dbu are left empty"}
     ir_file = ir_info and ir_info.get("file")
     sawblade_meta = P.sawblade_block(preset, plan, size, seed, signal_seed, sinfo["trainSha256"], ref_for_io, ir_file,
-                                     arch="a2" if a2 else None)
+                                     arch="a2" if a2 else None, training_signal=tsig)
 
     T.import_nam()
     from nam.models.metadata import GearType, ToneType, UserMetadata
@@ -279,7 +388,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     prog.update("train", message="training")
     tres = T.train_nam(tr, yt, va, yv, cfg, outdir, scratch, user_metadata=um,
                        other_metadata={"sawblade": sawblade_meta}, log=log, basename=stem,
-                       ckpt_dir=R.ckpt_dir(outdir), resume=resumed_from is not None, identity=identity, progress=prog)
+                       ckpt_dir=R.ckpt_dir(outdir), resume=resumed_from is not None, identity=identity, progress=prog,
+                       **({"datasets": odata.build} if odata else {}))
     if tres.stopped_by == "interrupt":
         log(f"interrupted after {tres.epochs_done} epochs; resume with --resume {outdir}")
         _cancelled(prog, outdir)            # no report is written on cancel; the checkpoint stays
@@ -288,21 +398,30 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     log(f"trained in {tres.wall_s / 60:.1f} min, {tres.epochs_done} epochs, best val ESR {tres.best_val_esr:.5f} "
         f"(epoch {tres.best_epoch}), stopped by {tres.stopped_by}")
     report["resume"] = resumed_from
-    report["training"] = {"namFile": tres.nam_path.name, "epochsDone": tres.epochs_done, "bestEpoch": tres.best_epoch,
+    report["training"] = {"namFile": tres.files["container"].name if a2 else tres.nam_path.name, "epochsDone": tres.epochs_done, "bestEpoch": tres.best_epoch,
                           "validationEsr": tres.best_val_esr, "wallSeconds": round(tres.wall_s, 1),
                           "stoppedBy": tres.stopped_by, "parameters": tres.params,
                           "receptiveField": tres.receptive_field, "config": tres.config, "history": tres.history,
                           "a2Export": ("A2: packed WaveNet (PackedWaveNet + export_container): container plus standalone "
                                        "Full (8 ch) and Lite (3 ch) files; per-submodel best epochs and ESR_packed_i"
                                        if a2 else "not used (--arch a1)")}
-    # files (names relative to the output directory): a1 = {primary}; a2 = {primary, container, full, lite}
+    # files (names relative to the output directory): a1 = {primary}; a2 = {primary (= the container, the standard A2
+    # file), container, <size's extra>, <the other extra>}
     paths = {k: Path(v) for k, v in tres.files.items()} if a2 else {"primary": tres.nam_path}
     if a2:
-        paths = {"primary": paths[size], **{k: paths[k] for k in ("container", "full", "lite")}}
+        other = "lite" if size == "full" else "full"
+        paths = {"primary": paths["container"], "container": paths["container"], size: paths[size], other: paths[other]}
         report["training"]["submodels"] = tres.submodels
         report["training"]["parametersContainer"] = tres.params
         # the pinned core's A2 fast path (port of is_a2_shape): the standalone files should take it
         report["a2FastPath"] = {sz: A2S.nam_file_fast_path(json.loads(paths[sz].read_text())) is not None for sz in T.A2_SIZES}
+    if official:
+        report["training"]["officialData"] = odata.info
+        report["validationSplit"] = ("held-out ESR / LTAS are measured on the trainer's validation split of the standard input "
+                                     f"(version {nam_info['version']}: samples {sinfo['validationSlice'][0]}-{sinfo['validationSlice'][1]}, "
+                                     "the validation segment(s) the trainer holds out), rendered through sawblade_core with the "
+                                     "exported model (+IR) against the original chain; training.validationEsr is the trainer's own "
+                                     "ESR on the same split")
     report["arch"] = arch
     report["files"] = {k: v.name for k, v in paths.items()}
     sizes = list(T.A2_SIZES) if a2 else [size]
@@ -346,7 +465,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
         fpath.write_text(json.dumps(nam))
     if a2:
         report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, paths["primary"], ir_path, lic,
-                                                                 stem=stem, model_label={"full": "A2 Full", "lite": "A2 Lite"}[size])
+                                                                 stem=stem, model_label="A2 container",
+                                                                 training_note=N.training_sentence(tsig), training_signal=tsig)
     else:
         report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, tres.nam_path, ir_path, lic)
     # notes come from the ORIGINAL rig when the caller trained a derived preset (the plugin turns the bus comp off before a
@@ -355,6 +475,10 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
         report["notesPreset"] = {"path": str(Path(notes_preset).resolve()), "sha256": P.preset_hash(notes_src)}
         report["notesOnly"] = notes_only         # listed in the notes only; the validation reference is unchanged
     log(f"export notes: {notes_path}")
+    if reamp_pair:
+        report["reamp"] = _write_reamp(preset, tpreset, plan, base, cache, reamp_pair, reamp_info, outdir, stem, mode, notes_src,
+                                       ir_path, lic, log, prog)
+        report["files"]["reampPair"] = report["reamp"]["files"]
     report["totalWallSeconds"] = round(time.time() - t_all, 1)
     (outdir / "export_report.json").write_text(json.dumps(report, indent=2, default=float))
     if keep_scratch:
@@ -368,6 +492,60 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     val = report.get("validation")
     status = (val[size] if a2 else val)["acceptance"]["status"] if val else "done"
     prog.update("done", message=status, out_dir=outdir.resolve(), resumable=False, epoch=tres.epochs_done)
+    return report
+
+
+def _write_reamp(preset, tpreset, plan, base, cache, reamp_pair, info, outdir, stem, mode, notes_src, ir_path, lic, log,
+                 prog) -> dict:
+    """Render the standard input through the training chain and write the pair + ``<stem>.reamp_notes.txt``."""
+    log(f"reamp pair: rendering {info['samples'] / RATE:.0f} s of the standard input through the {mode} chain ...")
+    with (prog.heartbeat("render") if prog.state["stage"] == "render" else contextlib.nullcontext()):
+        pair = RP.render_pair(tpreset, base, cache, reamp_pair, info, outdir, stem, render48)
+    src = notes_src or preset
+    notes = N.build_export_notes(src, plan, None, Path(ir_path).name if ir_path else None)
+    txt = outdir / f"{stem}.reamp_notes.txt"
+    txt.write_text(RP.format_notes(src.get("name"), mode, pair, notes, lic, P.nc_captures(preset),
+                                   Path(ir_path).name if ir_path else None), encoding="utf-8")
+    pair["notes"] = txt.name
+    pair["nonCommercial"] = bool(P.nc_captures(preset))
+    pair["usage"] = "personal use only; never upload or share (derived from TONE3000 captures)"
+    log(f"reamp pair: {pair['input']} + {pair['output']} ({pair['notes']})")
+    return {**pair, "files": {"input": pair["input"], "output": pair["output"], "notes": pair["notes"]}}
+
+
+def _reamp_only(prog, preset, base, preset_path, plan, tpreset, probe, cache, mode, arch, size, seed, signal_seed, pname, stem,
+                stamp, out, out_root, notes_src, notes_only, notes_preset, reamp_pair, info, log, t_all) -> dict:
+    """``--no-train``: the reamp pair, its notes (and the no-cab IR) and the report; no training, no validation."""
+    outdir = Path(out).expanduser() if out else out_root / f"{pname}-{mode}-reamp-{stamp}"
+    outdir.mkdir(parents=True, exist_ok=True)
+    prog.update(out_dir=outdir.resolve())
+    log(f"reamp pair only ({arch}/{mode}) -> {outdir}")
+    for b in plan.bypassed:
+        log(f"  bypassed: {b['what']} ({b['why']})")
+    ir_info = ir_path = None
+    if mode == "nocab":
+        ir, ir_info = fold_cab_post_eq(preset, base, cache)
+        ir_path = outdir / f"{pname}-{mode}.ir.wav"
+        sf.write(str(ir_path), ir, RATE, subtype="FLOAT")
+        ir_info["file"] = ir_path.name
+    prog.update("render", message="rendering the reamp pair")
+    lic = P.licence_note(preset)
+    report: dict = {"reportVersion": REPORT_VERSION, "tool": "sawblade-export", "created": stamp, "trained": False,
+                    "preset": {"path": str(Path(preset_path).resolve()), "name": preset.get("name"),
+                               "sha256": P.preset_hash(preset)},
+                    "mode": mode, "arch": arch, "size": size, "seed": seed, "signalSeed": signal_seed,
+                    "plan": plan.to_json(), "coreBuild": _core_id(), "levelMatch": P.level_match_info(probe), "ir": ir_info,
+                    "attribution": P.attribution(preset), "licenceNote": lic, "nonCommercial": bool(P.nc_captures(preset))}
+    report["reamp"] = _write_reamp(preset, tpreset, plan, base, cache, reamp_pair, info, outdir, stem, mode, notes_src, ir_path,
+                                   lic, log, prog)
+    report["files"] = {"reampPair": report["reamp"]["files"]}
+    if notes_src is not None:
+        report["notesPreset"] = {"path": str(Path(notes_preset).resolve()), "sha256": P.preset_hash(notes_src)}
+        report["notesOnly"] = notes_only
+    report["totalWallSeconds"] = round(time.time() - t_all, 1)
+    (outdir / "export_report.json").write_text(json.dumps(report, indent=2, default=float))
+    log(f"report: {outdir / 'export_report.json'}")
+    prog.update("done", message="reamp pair written", out_dir=outdir.resolve(), resumable=False)
     return report
 
 

@@ -374,14 +374,14 @@ def test_a1_sizes_param_counts_and_receptive_field_vs_pinned_wavenet():
 
 def test_cli_refuses_studio_nocab_before_any_work(capsys, tmp_path):
     from sawblade_match.export.cli import main
-    rc = main([str(PRESETS / "golden_perpath.json"), "--mode", "nocab", "--out", str(tmp_path / "o")])
+    rc = main([str(PRESETS / "golden_perpath.json"), "--mode", "nocab", "--out", str(tmp_path / "o"), "--signal", "sawblade"])
     err = capsys.readouterr().err
     assert rc == 1 and "only the with-cab export is exact for studio blends" in err
 
 
 def test_cli_refuses_comp_nocab(capsys, tmp_path):
     from sawblade_match.export.cli import main
-    rc = main([str(PRESETS / "golden_shared.json"), "--out", str(tmp_path / "o")])
+    rc = main([str(PRESETS / "golden_shared.json"), "--out", str(tmp_path / "o"), "--signal", "sawblade"])
     assert rc == 1 and "bus compressor" in capsys.readouterr().err
 
 
@@ -678,7 +678,7 @@ def test_mock_cli_refusal_exit_code_and_resume_flag(mx, capsys, monkeypatch):
     from sawblade_match.export import cli
     d = _unfinished(mx, "run-a", mode="withcab")
     pj = mx.tmp / "preset.json"
-    rc = cli.main([str(pj), "--arch", "a1", "--size", "feather", "--resume", str(d), "--no-validate"])
+    rc = cli.main([str(pj), "--arch", "a1", "--size", "feather", "--resume", str(d), "--no-validate", "--signal", "sawblade"])
     assert rc == 1 and "mode differs" in capsys.readouterr().err
     assert cli.build_parser().parse_args([str(pj), "--resume", "auto"]).resume == "auto"
 
@@ -766,7 +766,7 @@ def _shared_with(base: dict, ir: dict) -> dict:
 
 def _cli(mx, *extra):
     from sawblade_match.export import cli
-    return cli.main([str(mx.tmp / "preset.json"), "--arch", "a1", "--size", "feather", "--exports-root", str(mx.tmp / "exports"), *extra])
+    return cli.main([str(mx.tmp / "preset.json"), "--arch", "a1", "--size", "feather", "--exports-root", str(mx.tmp / "exports"), *extra, "--signal", "sawblade"])
 
 
 def _fake_validation(mx, monkeypatch, esr_value=0.5):
@@ -1139,10 +1139,10 @@ def test_mock_notes_preset_refusals_before_training(mx):
 def test_mock_cli_notes_preset_missing_path_and_withcab(mx, capsys):
     from sawblade_match.export import cli
     pj = mx.tmp / "preset.json"
-    assert cli.main([str(pj), "--notes-preset", str(mx.tmp / "nowhere.json"), "--no-validate"]) == 1
+    assert cli.main([str(pj), "--notes-preset", str(mx.tmp / "nowhere.json"), "--no-validate", "--signal", "sawblade"]) == 1
     assert "no such file" in capsys.readouterr().err
     f, _ = _orig_file(mx)
-    assert cli.main([str(pj), "--mode", "withcab", "--notes-preset", str(f), "--no-validate"]) == 1
+    assert cli.main([str(pj), "--mode", "withcab", "--notes-preset", str(f), "--no-validate", "--signal", "sawblade"]) == 1
     assert "only for no-cab" in capsys.readouterr().err
     assert not mx.fake.calls
 

@@ -241,10 +241,11 @@ def test_anagram_gate_comp_posteq_nocab_blocks_order_and_numbers():
     assert gate["settings"]["range dB"] == -90 and "guitar input" in gate["settings"]["keyed on"]
     assert "FIRST" in gate["hardware"] and "before every NAM block" in gate["hardware"]
     assert model["settings"] == {"model": "x-nocab-full.a2_full.nam", "bypass": False}
-    assert "A2 Full" in model["hardware"] and "from file into the Neural Amp block" in model["hardware"]
+    assert "A2 Full" in model["hardware"] and "into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later." in model["hardware"]
     assert "TONE3000 block" not in model["hardware"] and "do not upload it to TONE3000" in model["hardware"]
     assert "creators' permission" in model["hardware"] and "Up to three NAM blocks" in model["hardware"]
-    assert "KosmOS 1.16 or later" in prof["message"]
+    assert prof["message"] == ("Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, "
+                               "KosmOS 1.16 or later.") == N.ANAGRAM_HINT
     # the post EQ is folded into the exported IR: no EQ block, the IR block says so
     assert ir["settings"] == {"file": "x-nocab.ir.wav", "normalise": False, "contains": "cab and post EQ"}
     assert "WITHOUT loudness normalisation" in ir["hardware"] and "post EQ" in ir["hardware"]
@@ -300,7 +301,7 @@ def test_write_export_notes_writes_both_text_files_and_the_device_profile(tmp_pa
     nam = tmp_path / "riff-nocab-full.a2_full.nam"
     nam.write_text("{}")
     notes, txt = N.write_export_notes(p, plan, nam, tmp_path / "riff-nocab.ir.wav", "licence text", stem="riff-nocab-full",
-                                      model_label="A2 Full")
+                                      model_label="A2 Full", training_note=N.training_sentence('sawblade-synthetic v1'))
     assert txt.name == "riff-nocab-full.export_notes.txt" and notes["file"] == txt.name
     a = tmp_path / "riff-nocab-full.anagram_notes.txt"
     prof = notes["deviceProfiles"]["anagram"]
@@ -311,7 +312,10 @@ def test_write_export_notes_writes_both_text_files_and_the_device_profile(tmp_pa
     assert "1. Gate [1 (first in the chain)]" in body and "2. Neural Amp [2]  (model)" in body
     assert "   model: riff-nocab-full.a2_full.nam" in body and "   bypass: no" in body and "   threshold dBFS: -21" in body
     assert "Anagram chain: Gate -> Neural Amp -> IR -> Compressor" in body and body.rstrip().endswith("licence text")
-    generic = json.loads(json.dumps({k: v for k, v in notes.items() if k != "deviceProfiles"}))
+    assert N.training_sentence('sawblade-synthetic v1') in body and N.training_sentence('sawblade-synthetic v1') in txt.read_text() and notes["trainingNote"] == N.training_sentence('sawblade-synthetic v1')
+    assert "use the reamp pair" in body and "standard NAM A2" in body and "not the standard NAM signal" in body
+    assert N.training_sentence("official v3").startswith("Trained on the standard NAM signal")
+    generic = json.loads(json.dumps({k: v for k, v in notes.items() if k not in ("deviceProfiles", "trainingNote", "trainingSignal")}))
     assert generic == {**N.build_export_notes(p, plan, nam.name, "riff-nocab.ir.wav"), "file": txt.name}   # v0.4M block unchanged
     assert N.NOTES_VERSION == 1
     # A1 exports (stem defaults to the .nam stem) get the same profile
