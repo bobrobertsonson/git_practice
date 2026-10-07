@@ -79,6 +79,11 @@ show its value when the reference is a render of the same kind of chain — that
 
 ## Open
 
+- Studio detector: CI under real scipy caught a false `eqd` on the plain chain (an unconverged fit's smooth residual);
+  fixed by judging only the residual the post EQ can't absorb within ±6 dB, and the ±9 dB stage must beat an
+  equal-budget ±6 dB re-fit (be378c0). Remaining (harmless) risk: a smooth mismatch < 100 Hz or > 8 kHz can still set
+  `studio.eqd`; the stage then runs but can't make the preset worse. Follow-up: restrict the judged bands to the post
+  EQ's reach.
 - Bright-DI widening threshold (`diTilt > −1.5 dB/oct`) fires on the fixture DI; rebase on the user's DIs (printed by
   every run).
 - TONE3000 `gears` value for IR tones ("cab" vs "ir") unverified against the live API (one constant, `IR_GEAR`).
