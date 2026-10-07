@@ -344,7 +344,9 @@ TEST_CASE("export report: A2 files block, the primary file, the validation of th
   CHECK(txt.find("(KosmOS 1.16 or later), in signal order:\n") != std::string::npos);  // same header as the Python text
   CHECK(txt.find("Own use only.") != std::string::npos);
   CHECK(txt.find("model: riff-nocab-full.a2.nam\n") != std::string::npos);
-  CHECK(txt.find("Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later.") != std::string::npos);
+  // The profile's `message` is data: neither the Python txt nor the plugin's prints it when there are stages (it is the empty-profile text).
+  CHECK(profile["message"] == "Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later.");
+  CHECK(txt.find("Load the .nam into any NAM A2 block") == std::string::npos);
   CHECK(txt.find("Load riff-nocab-full.a2.nam (A2 container) into any NAM A2 block;") != std::string::npos);
   CHECK(txt.find("Up to three NAM blocks (Neural Amp / Neural Pedal / Neural Loader) can run at once.") != std::string::npos);
   // The generic text of the same notes is the v0.4M text, with no Anagram block names in it.
