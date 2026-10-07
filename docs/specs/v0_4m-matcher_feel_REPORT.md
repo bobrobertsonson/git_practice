@@ -5,8 +5,10 @@ Branch: `claude/sawblade-v0_4m-matcher-feel` (base `claude/sawblade-plugin-setup
 not install scipy/pytest (pypi blocked), so engineers also ran the render tests against a local core build with a scipy
 shim — those numbers are labelled "shim" below and are indicative only.
 
-Status: **Tasks A–C, B2.1–B2.4, B3, B4, D.1 and E accepted by the reviewer and merged; CI of record on the merge head
-below.** Validation on the real Bloodbath audio (D.2/D.3) is the user's: Mac commands below.
+Status: **Tasks A–C, B2.1–B2.4, B3, B4, D.1 and E accepted by the reviewer and merged. CI of record: run 221 on
+abf089c — all jobs green (python, linux-gcc + pluginval, linux-clang -Werror, macOS arm64 + auval + pluginval AU/VST3).**
+The base (v0.4 B–E, 4d580a2) is merged in. Validation on the real Bloodbath audio (D.2/D.3) is the user's: Mac
+commands below.
 
 ## What changed, in one paragraph per suspect
 
@@ -75,9 +77,9 @@ show its value when the reference is a render of the same kind of chain — that
 | B2.1 core hook | ACCEPT (gcc + clang 356/356) | green (run 170) |
 | B3 IR library | ACCEPT after 1 REVISE (concurrent-write race on duplicate IRs; relative paths) | green (run 172) |
 | D.1 + search fixes | ACCEPT (joint HP/LP × slope with re-polish, boost level fixed, gate tolerance, pedal Occam) | green (run 185) |
-| B2.1 matcher, B2.3, B4 | ACCEPT after 1 REVISE (pre-EQ moved after stage 2 on the refined winner with a re-fit keep rule ≥ 0.05; it had picked a spurious HPF on a plain chain); merged with B3 + D.1; canonical IR-pair orientation | see CI of record |
-| CI fixes after the v0.4M merge (run 195/203) | ACCEPT: studio eqd judged only on residual the post EQ can't absorb; widened post EQ must beat an equal-budget ±6 dB re-fit; pre-EQ confirmation re-fit keeps feel in every block (a real bug the spy test caught) | see CI of record |
-| Task E follow-up: dropped bus comp in export notes (found by the v0.4 lead) | ACCEPT after 1 REVISE: `sawblade-export --notes-preset` (original rig; nocab only; repeated on resume; refuses a different rig) + plugin `ExportGlue.cpp` writes `<jobs>/inputs/<hash16>.notes_preset.json` and passes it for no-cab DROP COMP exports and resumes | see CI of record |
+| B2.1 matcher, B2.3, B4 | ACCEPT after 1 REVISE (pre-EQ moved after stage 2 on the refined winner with a re-fit keep rule ≥ 0.05; it had picked a spurious HPF on a plain chain); merged with B3 + D.1; canonical IR-pair orientation | green (run 221) |
+| CI fixes after the v0.4M merge (run 195/203) | ACCEPT: studio eqd judged only on residual the post EQ can't absorb; widened post EQ must beat an equal-budget ±6 dB re-fit; pre-EQ confirmation re-fit keeps feel in every block (a real bug the spy test caught) | green (run 221) |
+| Task E follow-up: dropped bus comp in export notes (found by the v0.4 lead) | ACCEPT after 1 REVISE: `sawblade-export --notes-preset` (original rig; nocab only; repeated on resume; refuses a different rig) + plugin `ExportGlue.cpp` writes `<jobs>/inputs/<hash16>.notes_preset.json` and passes it for no-cab DROP COMP exports and resumes | green (run 221) |
 
 ## Open
 
