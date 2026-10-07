@@ -23,6 +23,13 @@ const juce::String kDash = juce::String::fromUTF8(" \xe2\x80\x94 ");
 const juce::String kCheck = juce::String::fromUTF8("\xe2\x9c\x93");
 const juce::String kCross = juce::String::fromUTF8("\xe2\x9c\x95");
 
+// "A2 Full", "A2 Lite", "A1 Feather", "A1 Lite", "A1 Standard".
+juce::String modelName(const std::string& arch, const std::string& size) {
+  juce::String sz = juce::String(size);
+  sz = sz.substring(0, 1).toUpperCase() + sz.substring(1);
+  return (arch == "a1" ? juce::String("A1 ") : juce::String("A2 ")) + sz;
+}
+
 juce::String clock(double seconds) {
   if (!(seconds > 0.0)) seconds = 0.0;
   const int s = static_cast<int>(seconds + 0.5);
@@ -194,20 +201,22 @@ struct ExportPanel::Impl {
   juce::Label capMode, capSize, capDi, capComp, capOut, capRig, capChecks, capCredits;
   OptionCard noCab, withCab;
   InfoCard studio;
-  juce::TextButton feather, lite, standard, diTake, diBuiltin, compDrop, compKeep, chooseFolder, exeLocate, trainBtn, resumeBtn;
-  juce::Label lastRun[3], diNote, compNote, folderLabel, rigChain, rigCab, notice, message;
+  juce::TextButton a2Full, a2Lite, a1, feather, lite, standard, diTake, diBuiltin, compDrop, compKeep, chooseFolder, exeLocate, trainBtn, resumeBtn;
+  juce::Label lastRun, diNote, compNote, folderLabel, rigChain, rigCab, notice, message;
   juce::Label checkMark[6], checkText[6];
   juce::Label credits, ncBadge;
   // export notes (v0.4 Task E)
   juce::Label capNotes, notesSource;
   juce::TextEditor notesBox;
-  juce::TextButton copyBtn;
+  juce::TextButton copyBtn, notesGeneric, notesAnagram;   // the Generic / Anagram switch shows only when the report has an anagram profile
+  bool anagramAvailable = false, anagramShown = false;
+  juce::String anagramFile;      // the profile's text file path ("" = none)
   juce::String notesTextShown;   // what the box shows (= what COPY copies)
   bool notesFromReport = false;
   std::string notesKey;
   std::string liveRigHash;       // of the LIVE preset (not the export preset: DROP COMP hides the comp from that one), with the plan
   // right column
-  juce::Label capRight, stage, detail, bestEsr, timing, status, statusSummary, numEsr, numLtas, outPath, sidecarLabel, licenceNote, wallLabel, willWrite;
+  juce::Label capRight, stage, detail, bestEsr, timing, status, statusSummary, numEsr, numLtas, outPath, sidecarLabel, licenceNote, wallLabel, willWrite, otherFiles;
   Bar bar;
   juce::TextButton cancelBtn, revealBtn, openFolderBtn, abBtn;
   std::unique_ptr<juce::FileChooser> chooser;
@@ -262,11 +271,14 @@ struct ExportPanel::Impl {
     button(withCab, "WITH CAB", "Train the rig including the cab (exact for any rig; for pedals without an IR slot)");
     owner.addAndMakeVisible(studio);
 
-    caption(capSize, "SIZE");
-    button(feather, "FEATHER", "Smallest model: fastest to train, not judged against the acceptance limits");
-    button(lite, "LITE", "Small model: not judged against the acceptance limits");
-    button(standard, "STANDARD", "Standard-size model: judged against the acceptance limits");
-    for (auto& l : lastRun) text(l, 10.5f, L::dimText(), true);
+    caption(capSize, "MODEL TYPE");
+    button(a2Full, "A2 FULL", "Best quality, for loaders that play A2 models (such as the Anagram). Judged against the acceptance limits. The default");
+    button(a2Lite, "A2 LITE", "Lowest CPU, for loaders that play A2 models. Judged against the acceptance limits; expect a little less accuracy than A2 Full");
+    button(a1, "A1", "The older model type, for loaders that do not play A2. Pick FEATHER, LITE or STANDARD next to it");
+    button(feather, "FEATHER", "A1 Feather: the smallest A1 model, fastest to train. Not judged against the acceptance limits");
+    button(lite, "LITE", "A1 Lite: a small A1 model. Not judged against the acceptance limits");
+    button(standard, "STANDARD", "A1 Standard: the standard A1 model. Judged against the acceptance limits");
+    text(lastRun, 10.5f, L::dimText(), true);
     caption(capDi, "VALIDATION DI");
     button(diTake, "LAST TAKE", "Validate against the newest recorded take");
     button(diBuiltin, "BUILT-IN SIGNAL", "Validate against the built-in training signal");
@@ -310,6 +322,11 @@ struct ExportPanel::Impl {
     notesBox.setColour(juce::TextEditor::focusedOutlineColourId, L::rule());
     notesBox.setTitle("Export notes");
     owner.addAndMakeVisible(notesBox);
+    button(notesGeneric, "GENERIC", "Show the notes for any loader pedal");
+    button(notesAnagram, "ANAGRAM", "Show the notes as Anagram blocks: where each stage goes in the Anagram's chain and its settings");
+    text(otherFiles, 11.0f, L::dimText(), true);
+    notesGeneric.setVisible(false);
+    notesAnagram.setVisible(false);
     button(copyBtn, "COPY", "Copy the export notes as text (what to add around the loader pedal)");
     button(trainBtn, "TRAIN EXPORT", "Train a NAM model of the loaded rig (runs sawblade-export)");
     button(resumeBtn, "RESUME", "Continue the cancelled run of this rig from its checkpoint");
@@ -374,16 +391,30 @@ struct ExportPanel::Impl {
       save();
       refresh();
     };
-    auto size = [this](const char* s) {
-      return [this, s] {
-        cur.size = s;
+    // The architecture and the size are one choice in the settings (arch + size); a size both offer (lite) is kept when
+    // the architecture changes, any other falls back to the new architecture's default.
+    auto pickModel = [this](const char* arch, const char* size) {
+      return [this, arch, size] {
+        cur.arch = arch;
+        cur.size = size != nullptr && size[0] != '\0' ? std::string(size) : exportSizeValid(arch, cur.size) ? cur.size : defaultExportSize(arch);
         save();
         refresh();
       };
     };
-    feather.onClick = size("feather");
-    lite.onClick = size("lite");
-    standard.onClick = size("standard");
+    a2Full.onClick = pickModel("a2", "full");
+    a2Lite.onClick = pickModel("a2", "lite");
+    a1.onClick = pickModel("a1", "");
+    feather.onClick = pickModel("a1", "feather");
+    lite.onClick = pickModel("a1", "lite");
+    standard.onClick = pickModel("a1", "standard");
+    notesGeneric.onClick = [this] {
+      anagramShown = false;
+      refresh();
+    };
+    notesAnagram.onClick = [this] {
+      anagramShown = anagramAvailable;
+      refresh();
+    };
     diTake.onClick = [this] {
       cur.diSource = "take";
       save();
@@ -449,7 +480,7 @@ struct ExportPanel::Impl {
   void applyView() {
     const bool cfg = view == View::Configure, trn = view == View::Training, res = view == View::Result;
     for (juce::Component* c : std::initializer_list<juce::Component*>{&stage, &detail, &bestEsr, &timing, &bar, &cancelBtn}) c->setVisible(trn);
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&status, &statusSummary, &numEsr, &numLtas, &outPath, &sidecarLabel, &wallLabel, &licenceNote,
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&status, &statusSummary, &numEsr, &numLtas, &outPath, &sidecarLabel, &otherFiles, &wallLabel, &licenceNote,
                                                                       &revealBtn, &openFolderBtn})
       c->setVisible(res);
     willWrite.setVisible(cfg);
@@ -480,7 +511,7 @@ struct ExportPanel::Impl {
     const ExportResult& res = snap.result;
     // Rebuilt only when what the notes depend on changed: the mode, DROP COMP, the live rig (liveRigHash, refreshed with the
     // plan, at most once a second) and, for a finished run, its folder / model / report.
-    const std::string key = liveRigHash + "|" + (done ? "|r|" + snap.outDir.string() + "|" + res.namFile + "|" + snap.exportMode + (snap.allowInexact ? "|i|" : "|e|") + res.exportNotesJson
+    const std::string key = liveRigHash + "|" + (done ? "|r|" + snap.outDir.string() + "|" + res.namFile + "|" + snap.exportMode + (snap.allowInexact ? "|i|" : "|e|") + res.exportNotesJson + (anagramShown ? "|A" : "|G")
                                                               : "|c|" + plan.mode + (plan.dropComp ? "|d" : "|k"));
     if (key == notesKey) return;
     notesKey = key;
@@ -527,11 +558,30 @@ struct ExportPanel::Impl {
       notes = buildExportNotes(proc.currentPreset(), mode, drop, nam, ir);
     }
     notesFromReport = fromReport;
-    notesTextShown = fromUtf8(formatNotesTxt(notes, presetName, licence));
+    // The Anagram profile (v0.6): only the report carries it. The switch shows when it is there; a profile that goes away
+    // (another run, no profile) puts the box back on the generic notes.
+    const nlohmann::json profile = fromReport ? anagramProfileOf(notes) : nlohmann::json();
+    const bool hadSwitch = anagramAvailable;
+    anagramAvailable = profile.is_object();
+    if (!anagramAvailable) anagramShown = false;
+    anagramFile = {};
+    if (anagramAvailable && !snap.outDir.empty()) {
+      std::string name = anagramNotesFileName(profile);
+      if (name.empty() && !res.namFile.empty()) name = exportBaseName(res.namFile) + ".anagram_notes.txt";
+      if (!name.empty()) anagramFile = fromUtf8((snap.outDir / fs::path(name).filename()).string());
+    }
+    notesTextShown = fromUtf8(anagramShown ? formatAnagramNotesTxt(profile, presetName, licence) : formatNotesTxt(notes, presetName, licence));
     if (notesBox.getText() != notesTextShown) notesBox.setText(notesTextShown, juce::dontSendNotification);
-    setText(notesSource, fromReport ? juce::String("from the export report (sawblade-export)")
-                         : done    ? juce::String("(computed by the plugin)")
-                                   : juce::String("Follows the export settings above: set these on your pedal chain around the loader."));
+    juce::String src = fromReport ? juce::String("from the export report (sawblade-export)")
+                       : done    ? juce::String("(computed by the plugin)")
+                                 : juce::String("Follows the export settings above: set these on your pedal chain around the loader.");
+    if (anagramShown) src = "Anagram blocks, from the export report" + (anagramFile.isEmpty() ? juce::String() : "\nAlso written to " + anagramFile);
+    setText(notesSource, src);
+    notesGeneric.setVisible(anagramAvailable);
+    notesAnagram.setVisible(anagramAvailable);
+    setToggle(notesGeneric, !anagramShown);
+    setToggle(notesAnagram, anagramShown);
+    if (hadSwitch != anagramAvailable) layout();
   }
 
   void refresh() {
@@ -572,10 +622,12 @@ struct ExportPanel::Impl {
 
     // ---- mode cards
     const bool exactNoCab = rig.noCabExact;
+    // The model file the cards name: A1 `<name>.nam`; A2 the primary standalone file `<name>.a2_full.nam` / `.a2_lite.nam`.
+    const std::string namSuffix = cur.arch == "a2" ? ".a2_" + cur.size + ".nam" : ".nam";
     noCab.setContent("NO-CAB + IR", "Model of both paths without the cab, plus the cab IR as a .wav. Load both into your pedal.",
                      exactNoCab ? "EXACT" + juce::String(juce::CharPointer_UTF8(" \xe2\x80\x94 LIVE-COMPATIBLE BLEND")) : juce::String("NOT AVAILABLE: PER-PATH CABS"),
-                     exactNoCab ? L::live() : L::studio(), juce::String(stem + "-nocab-" + cur.size + ".nam + .ir.wav"), plan.mode == "nocab", !exactNoCab);
-    withCab.setContent("WITH CAB", "One model of the whole rig including the cab. For pedals without an IR slot.", "EXACT", L::live(), juce::String(stem + "-withcab-" + cur.size + ".nam"),
+                     exactNoCab ? L::live() : L::studio(), juce::String(stem + "-nocab-" + cur.size + namSuffix + " + .ir.wav"), plan.mode == "nocab", !exactNoCab);
+    withCab.setContent("WITH CAB", "One model of the whole rig including the cab. For pedals without an IR slot.", "EXACT", L::live(), juce::String(stem + "-withcab-" + cur.size + namSuffix),
                        plan.mode == "withcab", false);
     studio.setContent("STUDIO BLEND", "Per-path cabs: only the with-cab export is exact. The no-cab option is disabled for this preset type.",
                       exactNoCab ? juce::String("NO-CAB NOT EXACT (NOT THIS RIG)") : juce::String("NO-CAB NOT EXACT: THIS RIG"), L::studio(), !exactNoCab);
@@ -585,13 +637,20 @@ struct ExportPanel::Impl {
     withCab.setEnabled(!active);
 
     // ---- size, DI, comp, folder
-    const std::string sizes[3] = {"feather", "lite", "standard"};
-    juce::TextButton* sizeBtn[3] = {&feather, &lite, &standard};
-    for (int i = 0; i < 3; ++i) {
-      setToggle(*sizeBtn[i], cur.size == sizes[i]);
-      sizeBtn[i]->setEnabled(!active);
-      const double sec = proc.matchSettings().exportWallSeconds(sizes[i]);
-      setText(lastRun[i], sec > 0.0 ? (sec < 60.0 ? juce::String("last run: <1 min") : "last run: " + juce::String(static_cast<int>(std::lround(sec / 60.0))) + " min") : juce::String("no run yet"));
+    // Model type: A2 Full / A2 Lite / A1 (A1 shows its FEATHER / LITE / STANDARD sub-choice); the last run time is the one of
+    // the chosen arch + size, kept per arch + size.
+    const bool isA1 = cur.arch == "a1";
+    setToggle(a2Full, !isA1 && cur.size == "full");
+    setToggle(a2Lite, !isA1 && cur.size == "lite");
+    setToggle(a1, isA1);
+    setToggle(feather, isA1 && cur.size == "feather");
+    setToggle(lite, isA1 && cur.size == "lite");
+    setToggle(standard, isA1 && cur.size == "standard");
+    for (juce::Button* b : std::initializer_list<juce::Button*>{&a2Full, &a2Lite, &a1, &feather, &lite, &standard}) b->setEnabled(!active);
+    for (juce::Button* b : std::initializer_list<juce::Button*>{&feather, &lite, &standard}) b->setVisible(isA1);
+    {
+      const double sec = proc.matchSettings().exportWallSeconds(cur.arch, cur.size);
+      setText(lastRun, sec > 0.0 ? (sec < 60.0 ? juce::String("last run: <1 min") : "last run: " + juce::String(static_cast<int>(std::lround(sec / 60.0))) + " min") : juce::String("no run yet"));
     }
     setToggle(diTake, !plan.diBuiltin);
     setToggle(diBuiltin, plan.diBuiltin);
@@ -649,9 +708,9 @@ struct ExportPanel::Impl {
     check(kCross, L::error(), "Time effects (delay / reverb / modulation)" + kDash + "none in this rig");
     check("i", L::warning(), "Training uses the standard NAM capture signal at 48 kHz");
     {
-      const double sec = proc.matchSettings().exportWallSeconds(cur.size);
-      juce::String name = cur.size == "feather" ? "Feather" : cur.size == "lite" ? "Lite" : "Standard";
-      check("i", L::warning(), "Model size: " + name + kDot + (sec > 0.0 ? "last run " + juce::String(static_cast<int>(std::lround(sec / 60.0))) + " min on this machine" : juce::String("no run yet on this machine")));
+      const double sec = proc.matchSettings().exportWallSeconds(cur.arch, cur.size);
+      const juce::String name = modelName(cur.arch, cur.size);
+      check("i", L::warning(), "Model type: " + name + kDot + (sec > 0.0 ? "last run " + juce::String(static_cast<int>(std::lround(sec / 60.0))) + " min on this machine" : juce::String("no run yet on this machine")));
     }
     for (; row < 6; ++row) {
       setText(checkMark[row], {});
@@ -686,7 +745,7 @@ struct ExportPanel::Impl {
     resumeBtn.setEnabled(tools.ok() && offer);
     if (offer) {
       const juce::String t = "RESUME  epoch " + juce::String(resumeOffer.epoch) + " of " + juce::String(resumeOffer.epochs) + kDot + juce::String(resumeOffer.mode == "nocab" ? "NO CAB" : "WITH CAB") + kDot +
-                             juce::String(resumeOffer.size).toUpperCase();
+                             modelName(resumeOffer.arch, resumeOffer.size).toUpperCase();
       resumeBtn.setButtonText(t);
     }
 
@@ -712,16 +771,22 @@ struct ExportPanel::Impl {
       const juce::String st = juce::String(r.status.empty() ? std::string("NOT JUDGED") : r.status);
       setText(status, st);
       setColour(status, r.status == "MET" ? L::live() : r.status == "NOT MET" ? L::error() : L::warning());
-      setText(statusSummary, r.summary.empty() ? juce::String(r.haveReport ? "This size is not judged against the acceptance limits." : "No acceptance report was written.") : juce::String(r.summary));
+      setText(statusSummary, r.summary.empty() ? juce::String(r.haveReport ? "This model type is not judged against the acceptance limits." : "No acceptance report was written.") : juce::String(r.summary));
       auto num = [](const std::optional<double>& v, int dp) { return v ? juce::String(*v, dp) : juce::String("n/a"); };
       setText(numEsr, "held-out ESR   " + num(r.heldOutEsr, 4) + "   (limit " + num(r.esrLimit, 3) + ")");
       setText(numLtas, "DI LTAS error  " + num(r.diLtasDb, 2) + " dB (limit " + num(r.ltasLimitDb, 2) + " dB)");
       setColour(numEsr, r.heldOutEsr && r.esrLimit && r.status != "NOT JUDGED" ? (*r.heldOutEsr <= *r.esrLimit ? L::live() : L::error()) : L::text());
       setColour(numLtas, r.diLtasDb && r.ltasLimitDb && r.status != "NOT JUDGED" ? (*r.diLtasDb <= *r.ltasLimitDb ? L::live() : L::error()) : L::text());
       setText(outPath, "model   " + juce::String((snap.outDir / r.namFile).string()));
+      {
+        // The other files of the run (an A2 run writes the container and both standalone models; the primary is shown above).
+        juce::String others;
+        for (const auto& f : r.otherFiles) others += (others.isEmpty() ? "" : ", ") + juce::String(f.name);
+        setText(otherFiles, others.isEmpty() ? juce::String() : "also    " + others);
+      }
       setText(sidecarLabel, snap.sidecar.empty() ? juce::String("sidecar   (not written)") : "sidecar   " + juce::String(snap.sidecar.string()));
       setText(wallLabel, "trained in " + juce::String(r.wallSeconds / 60.0, 1) + " min" + kDot + juce::String(snap.exportMode == "nocab" ? "NO CAB" : "WITH CAB") + kDot +
-                             juce::String(snap.exportSize).toUpperCase());
+                             modelName(snap.exportArch.empty() ? "a1" : snap.exportArch, snap.exportSize).toUpperCase());
       setText(licenceNote, juce::String(kPersonalUse) + (r.nonCommercial ? juce::String("  Non-commercial: a cc-by-nc capture is in this rig.") : juce::String()));
       revealBtn.setEnabled(!snap.outDir.empty());
       openFolderBtn.setEnabled(!snap.outDir.empty());
@@ -732,10 +797,13 @@ struct ExportPanel::Impl {
     } else {
       juce::String h = "Ready";
       const std::string base = stem + "-" + plan.mode + "-" + cur.size;
-      juce::String body = "Will write to " + juce::String(plan.exportsRoot.string()) + ":\n  " + juce::String(base + ".nam") +
+      // A2 writes the container and both standalone models (the chosen size is the one validated and shown first).
+      const juce::String models = cur.arch == "a2" ? juce::String(base + ".a2_" + cur.size + ".nam (the model to load)\n  " + base + ".a2.nam (container) and the other size's .nam")
+                                                   : juce::String(base + ".nam");
+      juce::String body = "Will write to " + juce::String(plan.exportsRoot.string()) + ":\n  " + models +
                           (plan.mode == "nocab" ? juce::String("\n  " + stem + "-nocab.ir.wav (the cab IR and post EQ)") : juce::String()) + "\n  export_report.json\n  " +
                           juce::String(base + ".sawblade.json") + " (the resolved preset)\n\n" +
-                          "TRAIN EXPORT writes the model, the IR and an acceptance report into the output folder. The preset sha, mode, size, licences and the non-commercial flag go into the model's metadata.";
+                          "TRAIN EXPORT writes the model, the IR and an acceptance report into the output folder. The preset sha, mode, model type, licences and the non-commercial flag go into the model's metadata.";
       juce::Colour hc = L::text();
       if (snap.state == JobState::Failed) {
         h = "Failed";
@@ -768,12 +836,13 @@ struct ExportPanel::Impl {
     studio.setBounds(lx + 542, 94, 258, 128);
 
     capSize.setBounds(lx, 236, 300, 14);
-    feather.setBounds(lx, 254, 94, 30);
-    lite.setBounds(lx + 100, 254, 94, 30);
-    standard.setBounds(lx + 200, 254, 104, 30);
-    lastRun[0].setBounds(lx, 288, 100, 14);
-    lastRun[1].setBounds(lx + 100, 288, 100, 14);
-    lastRun[2].setBounds(lx + 200, 288, 120, 14);
+    a2Full.setBounds(lx, 254, 94, 30);
+    a2Lite.setBounds(lx + 100, 254, 94, 30);
+    a1.setBounds(lx + 200, 254, 60, 30);
+    feather.setBounds(lx, 288, 66, 22);       // A1 only: its size sub-choice
+    lite.setBounds(lx + 70, 288, 52, 22);
+    standard.setBounds(lx + 126, 288, 78, 22);
+    lastRun.setBounds(lx + 210, 292, 120, 14);
     capDi.setBounds(lx + 330, 236, 300, 14);
     diTake.setBounds(lx + 330, 254, 110, 30);
     diBuiltin.setBounds(lx + 446, 254, 146, 30);
@@ -822,15 +891,20 @@ struct ExportPanel::Impl {
     revealBtn.setBounds(rx, 268, 100, 34);
     openFolderBtn.setBounds(rx + 108, 268, 130, 34);
     abBtn.setBounds(rx + 246, 268, 120, 34);
-    outPath.setBounds(rx, 314, rw, 44);
-    sidecarLabel.setBounds(rx, 360, rw, 44);
-    licenceNote.setBounds(rx, 420, rw, 64);
+    outPath.setBounds(rx, 314, rw, 38);
+    sidecarLabel.setBounds(rx, 352, rw, 38);
+    otherFiles.setBounds(rx, 390, rw, 38);
+    licenceNote.setBounds(rx, 430, rw, 62);
 
     // The notes box fills the rest of the right column: below the status text, or (result view) below the licence note.
     const int ny = view == View::Result ? 494 : 342;
     capNotes.setBounds(rx, ny + 4, rw - 104, 14);
     copyBtn.setBounds(rx + rw - 96, ny, 96, 24);
-    notesBox.setBounds(rx, ny + 30, rw, 676 - (ny + 30));
+    // The Generic / Anagram switch (only when the report has an anagram profile) sits between the caption and the box.
+    const int top = ny + 30 + (anagramAvailable ? 26 : 0);
+    notesGeneric.setBounds(rx, ny + 28, 90, 22);
+    notesAnagram.setBounds(rx + 96, ny + 28, 90, 22);
+    notesBox.setBounds(rx, top, rw, 676 - top);
     notesSource.setBounds(rx, 680, rw, 32);
   }
 };
@@ -873,6 +947,9 @@ void ExportPanel::refresh() {
 
 juce::String ExportPanel::notesText() const { return impl_->notesTextShown; }
 bool ExportPanel::notesFromReport() const { return impl_->notesFromReport; }
+bool ExportPanel::anagramNotesAvailable() const { return impl_->anagramAvailable; }
+bool ExportPanel::anagramNotesShown() const { return impl_->anagramShown; }
+juce::String ExportPanel::anagramNotesFile() const { return impl_->anagramFile; }
 
 void ExportPanel::resized() { impl_->layout(); }
 

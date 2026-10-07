@@ -1,0 +1,42 @@
+{
+  "reportVersion": 1,
+  "tool": "sawblade-export",
+  "mode": "nocab",
+  "arch": "a2",
+  "size": "full",
+  "files": {
+    "primary": "riff-nocab-full.a2_full.nam",
+    "container": "riff-nocab-full.a2.nam",
+    "full": "riff-nocab-full.a2_full.nam",
+    "lite": "riff-nocab-full.a2_lite.nam"
+  },
+  "nonCommercial": false,
+  "training": {"namFile": "riff-nocab-full.a2_full.nam", "wallSeconds": 100.0},
+  "validation": {
+    "full": {"acceptance": {"status": "met", "summary": "acceptance met (full)", "heldOutEsr": 0.0123, "diLtasDb": 0.31, "esrLimit": 0.02, "ltasLimitDb": 0.5}},
+    "lite": {"acceptance": {"status": "NOT MET", "summary": "acceptance NOT MET (lite)", "heldOutEsr": 0.0345, "diLtasDb": 0.92, "esrLimit": 0.02, "ltasLimitDb": 0.5}}
+  },
+  "totalWallSeconds": 150.0,
+  "exportNotes": {
+    "version": 1,
+    "mode": "nocab",
+    "file": "riff-nocab-full.export_notes.txt",
+    "stages": [
+      {"stage": "gate", "position": "before NAM", "inModel": false, "settings": {"thresholdDb": -52.0}, "hardware": "Gate FIRST in the chain: open at -52 dB."},
+      {"stage": "cab", "position": "after NAM", "inModel": false, "settings": {"cabMode": "single"}, "hardware": "Load the cab IR."}
+    ],
+    "loaderOrder": "Loader order: gate -> NAM model -> cab IR",
+    "deviceProfiles": {
+      "anagram": {
+        "device": "Anagram",
+        "file": "riff-nocab-full.anagram_notes.txt",
+        "stages": [
+          {"stage": "gate", "block": "Gate", "position": "1 (first in the chain)", "settings": {"threshold": -52.0, "release ms": 60, "hold ms": 20.5, "keyed on": "guitar input"}},
+          {"stage": "model", "block": "Neural Amp", "position": "2", "settings": {"model": "riff-nocab-full.a2_full.nam", "bypass": false}},
+          {"stage": "cab", "block": "IR", "position": "3", "settings": {"file": "riff-nocab-full.ir.wav", "normalise": false}, "hardware": "Load without loudness normalisation."}
+        ],
+        "loaderOrder": "Anagram chain: Gate -> Neural Amp -> IR"
+      }
+    }
+  }
+}

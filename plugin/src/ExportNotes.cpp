@@ -320,4 +320,92 @@ std::string formatNotesTxt(const json& notes, const std::string& presetName, con
   return t;
 }
 
+namespace {
+
+// A settings value as one line of hardware text: numbers trimmed ("0.5" not "0.500000"), booleans on / off, lists joined.
+std::string profileValue(const json& v) {
+  if (v.is_string()) return v.get<std::string>();
+  if (v.is_boolean()) return v.get<bool>() ? "on" : "off";
+  if (v.is_number_integer()) return v.dump();
+  if (v.is_number()) return g(v.get<double>(), 3);
+  if (v.is_null()) return "-";
+  if (v.is_array()) {
+    std::string out;
+    for (std::size_t i = 0; i < v.size(); ++i) out += (i ? ", " : "") + profileValue(v[i]);
+    return out;
+  }
+  if (v.is_object()) {
+    std::string out;
+    bool first = true;
+    for (auto it = v.begin(); it != v.end(); ++it) {
+      out += (first ? "" : "; ") + it.key() + "=" + profileValue(it.value());
+      first = false;
+    }
+    return out;
+  }
+  return v.dump();
+}
+
+// The first of `keys` that is a non-empty string member.
+std::string firstString(const json& j, std::initializer_list<const char*> keys) {
+  for (const char* k : keys) {
+    const json v = get(j, k);
+    if (v.is_string() && !v.get<std::string>().empty()) return v.get<std::string>();
+  }
+  return {};
+}
+
+json profileStages(const json& profile) {
+  for (const char* k : {"stages", "blocks"}) {
+    const json v = get(profile, k);
+    if (v.is_array()) return v;
+  }
+  return json::array();
+}
+
+}  // namespace
+
+json anagramProfileOf(const json& notes) {
+  const json dp = get(notes, "deviceProfiles");
+  const json a = get(dp, "anagram");
+  return a.is_object() ? a : json();
+}
+
+std::string anagramNotesFileName(const json& profile) { return firstString(profile, {"file", "notesFile", "txtFile"}); }
+
+std::string formatAnagramNotesTxt(const json& profile, const std::string& presetName, const std::string& licenceNote) {
+  std::string t = "Sawblade export notes for the Anagram" + (presetName.empty() ? std::string() : " - " + presetName) + "\n\n";
+  const json stages = profileStages(profile);
+  const std::string message = firstString(profile, {"message"});
+  if (stages.empty()) t += (message.empty() ? std::string(kNothing) : message) + "\n\n";
+  else t += "Blocks to set on the device, in signal order:\n\n";
+  int i = 0;
+  for (const json& st : stages) {
+    ++i;
+    const std::string block = firstString(st, {"block", "anagramBlock", "name"});
+    const std::string position = firstString(st, {"position", "chainPosition", "where"});
+    const std::string origin = firstString(st, {"stage"});
+    t += std::to_string(i) + ". " + (block.empty() ? std::string("(block)") : block);
+    if (!position.empty()) t += " [" + position + "]";
+    if (!origin.empty() && origin != block) t += "  (" + origin + ")";
+    t += "\n";
+    const json settings = get(st, "settings");
+    if (settings.is_object()) {
+      for (auto it = settings.begin(); it != settings.end(); ++it) t += "   " + it.key() + ": " + profileValue(it.value()) + "\n";
+    } else if (settings.is_array()) {
+      for (const json& kv : settings) {
+        if (kv.is_object() && kv.contains("key")) t += "   " + profileValue(get(kv, "key")) + ": " + profileValue(get(kv, "value")) + "\n";
+        else t += "   " + profileValue(kv) + "\n";
+      }
+    }
+    const std::string hw = firstString(st, {"hardware", "text", "note"});
+    if (!hw.empty()) t += "   " + hw + "\n";
+    t += "\n";
+  }
+  const std::string order = firstString(profile, {"loaderOrder", "chain"});
+  if (!order.empty()) t += order + "\n\n";
+  t += (licenceNote.empty() ? std::string(kExportNotesDisclaimer) : licenceNote) + "\n";
+  return t;
+}
+
 }  // namespace sawblade::plugin

@@ -619,7 +619,9 @@ and ignored by the core parser, never part of the tone or of a resolved preset. 
 "export": {
   "mode": "",                // "" = follow the rig (shared cab: "nocab", per-path cabs: "withcab") | "nocab" | "withcab";
                              // a saved mode applies only while it is exact for the loaded rig
-  "size": "standard",        // "feather" | "lite" | "standard"
+  "arch": "a2",              // "a2" (default; A2-capable loaders such as the Anagram) | "a1" (older loaders). Absent = a state from
+                             // before v0.6: its `size` was an A1 size, so it reads as arch "a1" with that size (migration)
+  "size": "full",            // a2: "full" | "lite"; a1: "feather" | "lite" | "standard"; one that does not fit the arch = its default
   "diSource": "take",        // "take" (newest take, else the built-in signal) | "builtin"
   "compChoice": "drop",      // no-cab export of a rig with the bus comp on: "drop" (exact) | "keep" (inexact, --allow-inexact)
   "outputFolder": ""         // "" = <app data>/exports

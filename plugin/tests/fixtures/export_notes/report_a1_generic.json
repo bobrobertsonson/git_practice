@@ -1,0 +1,52 @@
+{
+  "reportVersion": 1,
+  "tool": "sawblade-export",
+  "mode": "nocab",
+  "arch": "a1",
+  "size": "standard",
+  "files": {
+    "primary": "riff-nocab-standard.nam"
+  },
+  "nonCommercial": false,
+  "training": {
+    "namFile": "riff-nocab-standard.nam",
+    "wallSeconds": 100.0
+  },
+  "validation": {
+    "acceptance": {
+      "status": "met",
+      "summary": "acceptance met (full)",
+      "heldOutEsr": 0.0123,
+      "diLtasDb": 0.31,
+      "esrLimit": 0.02,
+      "ltasLimitDb": 0.5
+    }
+  },
+  "totalWallSeconds": 150.0,
+  "exportNotes": {
+    "version": 1,
+    "mode": "nocab",
+    "file": "riff-nocab-full.export_notes.txt",
+    "stages": [
+      {
+        "stage": "gate",
+        "position": "before NAM",
+        "inModel": false,
+        "settings": {
+          "thresholdDb": -52.0
+        },
+        "hardware": "Gate FIRST in the chain: open at -52 dB."
+      },
+      {
+        "stage": "cab",
+        "position": "after NAM",
+        "inModel": false,
+        "settings": {
+          "cabMode": "single"
+        },
+        "hardware": "Load the cab IR."
+      }
+    ],
+    "loaderOrder": "Loader order: gate -> NAM model -> cab IR"
+  }
+}

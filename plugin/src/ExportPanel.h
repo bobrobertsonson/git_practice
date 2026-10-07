@@ -40,6 +40,12 @@ class ExportPanel : public juce::Component {
   // this build knows, else the plugin's own with a "(computed by the plugin)" line.
   juce::String notesText() const;
   bool notesFromReport() const;
+  // v0.6: when the finished run's report has `exportNotes.deviceProfiles.anagram`, a GENERIC / ANAGRAM switch appears above the
+  // notes box; ANAGRAM shows that profile (blocks, positions, settings) and COPY copies what is shown. anagramNotesFile() is
+  // the path of the run's `<name>.anagram_notes.txt` ("" = no profile).
+  bool anagramNotesAvailable() const;
+  bool anagramNotesShown() const;
+  juce::String anagramNotesFile() const;
 
   void paint(juce::Graphics&) override;
   void resized() override;
