@@ -123,7 +123,8 @@ def _polish_linear(eng, space: Space, score, v: dict, *, seed: int, gens: int, p
 def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, align: dict, v0: dict, *,
                  seed: int, levels=None, gens_linear: int = 30, pop_linear: int = 16, gens_gain: int = 8, pop_gain: int = 8,
                  gens_final: int = 20, patience: int | None = None, patience_gain: int | None = None, tol: float = 0.0, on_gen=None,
-                 gex=None, gtgt=None, short_linear: bool = False, log=print) -> tuple[dict, L.LossResult, dict]:
+                 gex=None, gtgt=None, short_linear: bool = False, staged: bool = True,
+                 log=print) -> tuple[dict, L.LossResult, dict]:
     t0 = time.time()
     lin_idx, gain_idx = space.indices("linear"), space.indices("gain")
     u = space.encode(v0)
@@ -136,8 +137,9 @@ def refine_combo(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, ali
     # staged objective: the first linear block (EQs/levels/blend, the coarse spectral fit) is LTAS-led, the feel term is
     # added from the gain block on. On a combo that is not the exact answer the feel optimum differs from the spectral
     # one; letting it steer the first fit trades spectral accuracy for feel before the spectrum is even in place.
-    tgt_l1 = L.without_feel(tgt)
-    gt_l1 = L.without_feel(gt)
+    # ``staged=False`` (a re-fit that starts from an already feel-fitted optimum, e.g. the pre-EQ confirmation) keeps feel in L1
+    tgt_l1 = L.without_feel(tgt) if staged else tgt
+    gt_l1 = L.without_feel(gt) if staged else gt
 
     def cores_for(vv):          # serial: also called from pool threads (never nest pool maps)
         r = [eng.core(combo, vv, p, gx.x) for p in paths]
