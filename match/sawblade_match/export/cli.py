@@ -51,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="continue an interrupted run: the run's output directory (refused if preset, signal, mode, size or "
                         "training settings differ), or 'auto' = the newest matching unfinished run in the exports dir "
                         "(else start fresh); --max-minutes counts training time across resumes")
+    p.add_argument("--notes-preset", default=None, metavar="PATH", help="preset JSON the export notes are written from, when the preset given trains a derived rig (e.g. bus comp switched off for a no-cab export): the notes then list the stages of this original rig")
     p.add_argument("--keep-scratch", action="store_true", help="keep the scratch + checkpoint directories (the run is marked complete, never auto-resumed)")
     return p
 
@@ -82,7 +83,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                          allow_inexact=args.allow_inexact, epochs=args.epochs, max_minutes=args.max_minutes,
                          seed=args.seed, threads=args.threads, di=args.di, validate=not args.no_validate,
                          signal_seed=args.signal_seed, target_esr=args.target_esr, lr_gamma=args.lr_gamma, batch_size=args.batch_size, device=args.device, keep_scratch=args.keep_scratch, resume=args.resume,
-                         exports_root=args.exports_root, progress_json=args.progress_json,
+                         exports_root=args.exports_root, progress_json=args.progress_json, notes_preset=args.notes_preset,
                          log=lambda m: print(m, flush=True))
     except ExportInterrupted:
         print("interrupted: the last complete epoch's checkpoint is kept (resume with --resume)", file=sys.stderr)

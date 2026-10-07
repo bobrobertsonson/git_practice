@@ -139,7 +139,7 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str =
                threads: int = 4, di=None, validate: bool = True, signal_seed: int = 1, target_esr: float | None = None,
                keep_scratch: bool = False, log=print, signal_spec: S.SignalSpec | None = None,
                lr_gamma: float | None = None, batch_size: int = T.BATCH, device: str = "auto",
-               resume: str | None = None, exports_root=None) -> dict:
+               resume: str | None = None, exports_root=None, notes_preset=None) -> dict:
     """``resume``: None (fresh), ``"auto"`` (newest matching unfinished run under ``exports_root`` / the default
     exports dir, else fresh) or the output directory of an unfinished run (refused when preset, signal, mode, size or
     training settings differ)."""
@@ -281,7 +281,12 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str =
                                           "acceptanceStatus": v["acceptance"]["status"],
                                           "note": "model + exported IR rendered through sawblade_core vs the original chain"}
     tres.nam_path.write_text(json.dumps(nam))
-    report["exportNotes"], notes_path = N.write_export_notes(preset, plan, tres.nam_path, ir_path, P.licence_note(preset))
+    # notes come from the ORIGINAL rig when the caller trained a derived preset (the plugin turns the bus comp off before a
+    # no-cab "drop" export; the comp still has to be listed so it can be added on hardware)
+    notes_src = load_preset(notes_preset)[0] if notes_preset else preset
+    report["exportNotes"], notes_path = N.write_export_notes(notes_src, plan, tres.nam_path, ir_path, P.licence_note(preset))
+    if notes_preset:
+        report["notesPreset"] = {"path": str(Path(notes_preset).resolve()), "sha256": P.preset_hash(notes_src)}
     log(f"export notes: {notes_path}")
     report["totalWallSeconds"] = round(time.time() - t_all, 1)
     (outdir / "export_report.json").write_text(json.dumps(report, indent=2, default=float))

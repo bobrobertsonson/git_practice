@@ -163,6 +163,28 @@ def test_deterministic():
     assert a == N.build_export_notes(p, plan, "a.nam", "a.ir.wav") and p == snap
 
 
+def test_nocab_drop_comp_lists_the_comp_from_the_original_preset():
+    # The plugin trains a copy with the bus comp switched off ("drop"); the notes must come from the original rig.
+    orig = full()
+    dropped = copy.deepcopy(orig)
+    dropped["busComp"]["enabled"] = False
+    plan = P.make_plan(dropped, "nocab")                       # what the export sees: no comp, nothing bypassed
+    assert "busComp" not in [s["stage"] for s in N.build_export_notes(dropped, plan, "m.nam", "m.ir.wav")["stages"]]
+    n = N.build_export_notes(orig, plan, "m.nam", "m.ir.wav")
+    assert [s["stage"] for s in n["stages"]] == ["gate", "cab", "postEq", "busComp"]
+    s = n["stages"][-1]
+    assert s["position"] == "after NAM" and s["inModel"] is False
+    assert (s["settings"]["thresholdDb"], s["settings"]["ratio"], s["settings"]["attackMs"],
+            s["settings"]["releaseMs"], s["settings"]["kneeDb"], s["settings"]["makeupDb"]) == (-18, 4, 5, 80, 3, 2.5)
+    assert n == N.build_export_notes(orig, P.make_plan(orig, "nocab", allow_inexact=True), "m.nam", "m.ir.wav")
+
+
+def test_cli_accepts_notes_preset():
+    from sawblade_match.export.cli import build_parser
+    a = build_parser().parse_args(["p.json", "--notes-preset", "orig.json"])
+    assert a.notes_preset == "orig.json" and build_parser().parse_args(["p.json"]).notes_preset is None
+
+
 def test_gate_object_without_enabled_defaults_on():
     p = base()
     p["gate"] = {"thresholdDb": -50.0}                     # core: enabled defaults to true when the object is present
