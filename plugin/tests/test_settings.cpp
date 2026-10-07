@@ -1218,14 +1218,28 @@ TEST_CASE("tool environment: ToolRunner launches with the injected client id and
 }
 
 TEST_CASE("tool environment: one credential filter", "[settings][toolenv]") {
-  CHECK_FALSE(looksLikeCredential("TONE3000_CLIENT_ID is not set"));
-  CHECK_FALSE(looksLikeCredential("error: the pack has no models"));
-  CHECK(looksLikeCredential("refresh_token=abc"));
+  // the CLI's own messages must survive unchanged
+  for (const char* m : {"TONE3000_CLIENT_ID is not set (your publishable key, t3k_pub_...). See match/README.md",
+                        "TONE3000_CLIENT_ID looks like a SECRET key (t3k_cs_...); use the publishable t3k_pub_ key",
+                        "token refresh failed: HTTP 500",
+                        "error: network failure: ConnectError: [Errno -2] Name or service not known",
+                        "not logged in; run `sawblade-t3k login`",
+                        "cannot read /home/u/presets/linear_identity_loud24.nam: [Errno 2] No such file or directory",
+                        "model 123456 is not one of tone 7890's candidate models",
+                        "Fix: export TONE3000_CLIENT_ID=t3k_pub_..., or set it in the plugin Settings and run login again",
+                        "TONE3000_CLIENT_ID is not set", "error: the pack has no models"}) {
+    INFO(m);
+    CHECK_FALSE(looksLikeCredential(m));
+    CHECK(safeToolLine(m) == m);
+  }
   CHECK(looksLikeCredential("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig"));
-  CHECK(looksLikeCredential("code 0123456789abcdefghijklmn"));
+  CHECK(looksLikeCredential("key t3k_cs_Ab3dEf6hIj9lMn2pQr5t"));
+  CHECK(looksLikeCredential("Authorization: Bearer abc12345678"));
+  CHECK(looksLikeCredential("refresh_token=abc123456789"));
+  CHECK(looksLikeCredential("code 0123456789abcdefghijklmnopqrstuv"));  // 32+ with letters and digits
   CHECK(looksLikeCredential("session=0123456789abcdef"));
+  CHECK_FALSE(looksLikeCredential("path=/home/user/some/long/path/x"));
   CHECK(safeToolLine("note  \r") == "note");
-  CHECK(safeToolLine("Authorization: Bearer x").empty());
   std::string big;
   while (big.size() < 400) big += "\xc3\xa9 ";
   const std::string u = safeToolLine(big);

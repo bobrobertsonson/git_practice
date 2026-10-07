@@ -929,7 +929,9 @@ TEST_CASE("T3kRunner lastErrorLine: the last plain line, never JSON or anything 
   // JWT-like / opaque codes and key=<long> lines are dropped
   CHECK(lastErrorLine("ok line\neyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc\n") == "ok line");
   CHECK(lastErrorLine("ok line\nsession=0123456789abcdefghij\n") == "ok line");
-  CHECK(lastErrorLine("ok line\nrefresh_token=abc\n") == "ok line");
+  CHECK(lastErrorLine("ok line\nrefresh_token=abc123456789\n") == "ok line");
+  CHECK(lastErrorLine("TONE3000_CLIENT_ID is not set (your publishable key, t3k_pub_...). See match/README.md\n") ==
+        "TONE3000_CLIENT_ID is not set (your publishable key, t3k_pub_...). See match/README.md");
 }
 
 TEST_CASE("T3kTool: a credential-looking last line never becomes the failure message", "[t3k][env]") {

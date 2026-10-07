@@ -2,20 +2,12 @@
 
 #include <algorithm>
 
+#include "../settings/ToolEnv.h"
+
 namespace sawblade::plugin {
 namespace {
 
 constexpr int kLoginDefaultMs = 15 * 60 * 1000;
-
-// The last non-empty lines of the merged output, bounded: shown when a failure has no error object.
-std::string tail(const std::string& out) {
-  std::string t = out;
-  while (!t.empty() && (t.back() == '\n' || t.back() == '\r' || t.back() == ' ')) t.pop_back();
-  constexpr std::size_t kMax = 300;
-  if (t.size() > kMax) t = t.substr(t.size() - kMax);
-  if (const auto nl = t.find('\n'); nl != std::string::npos && t.size() > 120) t = t.substr(nl + 1);
-  return t;
-}
 
 // Failure of a run: launch / timeout / the CLI's error object / a generic one with the output tail.
 t3k::ErrorInfo failure(const RunResult& r) {
@@ -23,7 +15,7 @@ t3k::ErrorInfo failure(const RunResult& r) {
   if (r.timedOut) return {"sawblade-t3k timed out", "timeout"};
   if (r.cancelled) return {"cancelled", "cancelled"};
   if (auto e = t3k::parseErrorObject(r.output)) return *e;
-  const std::string t = tail(r.output);
+  const std::string t = settings::lastSafeLine(r.output);  // raw output is never shown unfiltered
   return {"sawblade-t3k exited with status " + std::to_string(r.exitCode) + (t.empty() ? "" : ": " + t), "exit"};
 }
 

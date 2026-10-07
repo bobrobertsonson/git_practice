@@ -1,6 +1,7 @@
 #include "ToolEnv.h"
 
 #include <cctype>
+#include <regex>
 
 #if !defined(_WIN32)
 #if defined(__APPLE__)
@@ -68,20 +69,32 @@ std::vector<std::string> mergedEnvironment(const ToolEnvMap& env) {
 }
 
 bool looksLikeCredential(const std::string& line) {
-  std::string l = line;
-  for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  for (const char* k : {"token", "secret", "t3k_", "bearer", "password", "authorization"})
-    if (l.find(k) != std::string::npos) return true;
+  // Value-shaped patterns only: the CLI's own messages name "token", "t3k_pub_..." and "t3k_cs_..." and must stay readable.
+  static const std::regex kPatterns[] = {
+      std::regex(R"(t3k_cs_[A-Za-z0-9_-]{8,})"),                                                    // a secret key value
+      std::regex(R"(eyJ[A-Za-z0-9_-]{10,})"),                                                       // a JWT
+      std::regex(R"(bearer\s+\S{8,})", std::regex::icase),                                          // an Authorization header value
+      std::regex(R"((token|secret|password|authorization|api[_-]?key)\s*[=:]\s*\S{8,})", std::regex::icase)};
+  for (const auto& re : kPatterns)
+    if (std::regex_search(line, re)) return true;
+  // an opaque code: 32+ of [A-Za-z0-9_-] holding both letters and digits
   std::size_t run = 0;
+  bool letter = false, digit = false;
   for (char c : line) {
     const unsigned char u = static_cast<unsigned char>(c);
-    if (std::isalnum(u) || c == '_' || c == '.' || c == '-') {
-      if (++run >= 24) return true;
+    if (std::isalnum(u) || c == '_' || c == '-') {
+      ++run;
+      letter = letter || std::isalpha(u);
+      digit = digit || std::isdigit(u);
+      if (run >= 32 && letter && digit) return true;
     } else {
       run = 0;
+      letter = digit = false;
     }
   }
+  // key=<long value>, except a path (/, ., ~)
   for (std::size_t eq = line.find('='); eq != std::string::npos; eq = line.find('=', eq + 1)) {
+    if (eq + 1 < line.size() && (line[eq + 1] == '/' || line[eq + 1] == '.' || line[eq + 1] == '~')) continue;
     std::size_t n = 0;
     while (eq + 1 + n < line.size() && !std::isspace(static_cast<unsigned char>(line[eq + 1 + n]))) ++n;
     if (n >= 16) return true;
@@ -100,6 +113,19 @@ std::string safeToolLine(const std::string& line) {
     l.resize(cut);
   }
   return l;
+}
+
+std::string lastSafeLine(const std::string& output) {
+  std::size_t end = output.size();
+  while (end > 0) {
+    const std::size_t nl = output.rfind('\n', end - 1);
+    const std::size_t begin = nl == std::string::npos ? 0 : nl + 1;
+    const std::string line = output.substr(begin, end - begin);
+    end = nl == std::string::npos ? 0 : nl;
+    if (!line.empty() && (line.front() == '{' || line.front() == '[')) continue;
+    if (std::string safe = safeToolLine(line); !safe.empty()) return safe;
+  }
+  return {};
 }
 
 }  // namespace sawblade::plugin::settings

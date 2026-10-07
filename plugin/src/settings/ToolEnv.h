@@ -31,10 +31,14 @@ std::vector<std::string> toolCommand(const std::filesystem::path& exe, const std
 // t3k_cs_ secret key is dropped when `env` has no valid id to replace it.
 std::vector<std::string> mergedEnvironment(const ToolEnvMap& env);
 
-// One credential filter for every tool line the plugin may show. True for: the keywords token / secret / t3k_ / bearer / password /
-// authorization (any case), any run of 24+ characters of [A-Za-z0-9_.-] (JWTs, opaque codes), and `key=<16+ non-space characters>`.
+// One credential filter for every tool line the plugin may show. Value-shaped patterns only (the CLI's own messages name "token",
+// "t3k_pub_..." and "t3k_cs_..." and stay readable): t3k_cs_<8+>, a JWT (eyJ<10+>), `Bearer <8+>`,
+// `(token|secret|password|authorization|api_key) [=:] <8+>`, a 32+ run of [A-Za-z0-9_-] with letters and digits, and
+// `=<16+ non-space>` unless the value is a path (starts with / . ~).
 bool looksLikeCredential(const std::string& line);
 // `line` without trailing CR / spaces, cut to at most 300 bytes on a UTF-8 code-point boundary; "" if it is empty or looksLikeCredential.
 std::string safeToolLine(const std::string& line);
+// The last line of `output` that is not JSON ({ or [) and passes safeToolLine; "" if none. The only way raw tool output may be shown.
+std::string lastSafeLine(const std::string& output);
 
 }  // namespace sawblade::plugin::settings
