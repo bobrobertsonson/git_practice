@@ -635,12 +635,13 @@ void step10PedalFace(Walk& w) {
   INFO("10 pedal_face");
   w.load(fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "chainsaw" / "classic_buzzsaw.json");
   auto& face = w.face();
+  w.ed->refreshNow();  // the 4 Hz timer may not have run since the load: place the face (setBounds) before its bounds are read
   face.refresh();
   REQUIRE(face.isVisible());
   REQUIRE(face.activeCircuit().has_value());
   CHECK(*face.activeCircuit() == Circuit::Chainsaw);
   CHECK(w.param(kSawCircuit) == 0.0);
-  const auto pedal = face.getBounds();
+  REQUIRE(face.getWidth() > 0);
   const char* files[] = {"10_pedal_face", "10_pedal_face_bigfuzz", "10_pedal_face_moddedsaw", "10_pedal_face_oneknobsaw"};
   const Circuit order[] = {Circuit::Chainsaw, Circuit::BigFuzz, Circuit::ModdedSaw, Circuit::OneKnobSaw};
   PedalSwitch& circuit = face.circuitSwitch();
@@ -656,6 +657,7 @@ void step10PedalFace(Walk& w) {
     CHECK(w.param(kSawCircuit) == static_cast<double>(i));  // the host parameter follows
     CHECK(circuit.position() == i);
     const juce::Image img = shot(*w.ed, files[i]);
+    const auto pedal = face.getBounds();  // read after the shot's pump: the tile may have moved with the circuit
     CHECK(nonBackgroundFraction(img, {pedal.getX(), pedal.getY(), pedal.getWidth(), pedal.getHeight()}) > 0.3);
   }
   press(circuit);  // one-knob saw -> chainsaw
