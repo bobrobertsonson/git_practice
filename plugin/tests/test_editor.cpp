@@ -3341,6 +3341,7 @@ TEST_CASE("export panel: an A2 Full run whose Lite file is NOT MET shows that ve
 
 TEST_CASE("export panel: EXPORT REAMP PAIR needs the NAM standard input file from Settings, runs --reamp-pair --no-train and lists the pair", "[editor][export][reamp]") {
   ExportRig rig;
+  rig.tools.cfgExport({{"progressJson", true}});  // the fake exporter needs its cfg file (no cfg: it exits 1 at start)
   rig.loadRig("pair", false);
   rig.openPanel();
   ExportPanel& panel = rig.exportPanel();

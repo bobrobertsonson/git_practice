@@ -695,7 +695,9 @@ struct ExportPanel::Impl {
     }
     const RigSummary& rig = plan.rig;
     const bool active = snap.active();
-    const View newView = active ? View::Training : snap.state == JobState::Succeeded ? View::Result : View::Configure;
+    // The training-signal prompt lives in the configure view: asking over a finished run's result shows it (NOT NOW / an answer
+    // brings the result back, the job's state is untouched).
+    const View newView = active ? View::Training : askSignal ? View::Configure : snap.state == JobState::Succeeded ? View::Result : View::Configure;
     if (newView != view) {
       view = newView;
       applyView();
