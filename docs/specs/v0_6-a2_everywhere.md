@@ -133,3 +133,29 @@ validation numbers, and the user's Task D result once run.
     `python-export` installs `match[dev,export]` with `constraints-export.txt` (CPU torch) and runs only the export /
     A2 tests (preset pins, fixture `generate.py --check`, A2 export smoke with a tiny step budget). Keeps the main
     `python` job's time and pip exposure unchanged.
+18. **User decision (2026-10-07, relayed by the main lead): the hardware export is a standard NAM A2 file, loader-
+    agnostic** ("usable on any A2 loader; can even use the regular steps of creating a capture in a DAW").
+    - **The container is primary** (reverses decision 10's "standalone is primary"): `<stem>.a2.nam`, written by the
+      pinned trainer's own `PackedWaveNet.export_container`, is what the standard workflow produces. `--size full|lite`
+      now only selects which standalone extra is listed first and which size's acceptance gates `--require-accept`
+      (the container plays Full in standard players). Standalone `.a2_full.nam` / `.a2_lite.nam` stay as extras.
+      Whether every A2 loader accepts the container is unverified; Task D records what the Anagram accepts.
+    - **Core-only load check:** `tests/tools/nam_load_check` (links only NeuralAmpModelerCore: `nam::get_dsp` +
+      `process`, no Sawblade code) loads every exported `.nam`; the `python-export` job exports a tiny A2 and runs it on
+      all three files (env `SAWBLADE_NAM_LOAD_CHECK`). Extra metadata keys (`metadata.sawblade`) must not break it.
+19. **Built-in training keeps Sawblade's own seeded signal** (validated, reproducible, no third-party audio). Stated
+    plainly in the REPORT and export notes: "built-in training uses Sawblade's own test signal; the file format is
+    standard NAM A2; for a capture trained the standard NAM way, use the reamp pair."
+20. **Reamp-pair export** (new, small): `sawblade-export … --reamp-pair NAM_INPUT.wav [--no-train]` renders the
+    official NAM standard input file (supplied by the user; never committed, bundled or auto-downloaded until its
+    licence is checked and recorded in `docs/THIRD_PARTY.md`) through the preset's exportable chain (same rules as the
+    model export: no gate / time FX / long comp; no-cab or with-cab per `--mode`) and writes `<stem>.reamp_input.wav`
+    (the user's file, copied unchanged) and `<stem>.reamp_output.wav` (48 kHz, same length, latency-compensated, a
+    format the pinned trainer accepts), plus notes: personal use only, non-commercial when any `-nc` capture is involved,
+    never upload or share (derived from TONE3000 captures). The input is validated (sample rate, length, and the hash /
+    version check the pinned trainer applies to standard input files); anything else is rejected with a plain message.
+    Report JSON: `files.reampPair{input, output}`; `--no-train` writes only the pair and the notes. Plugin: a Settings
+    field for the NAM input file path and an "EXPORT REAMP PAIR" action (`--reamp-pair PATH --no-train`).
+21. **Anagram notes are an optional generic hint**, not part of the file: "load the `.nam` into any NAM A2 block; on the
+    Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16+". The REPORT drops "KosmOS 1.17 assumed": standard
+    A2 file; on the Anagram, A2 playback needs KosmOS 1.16+.
