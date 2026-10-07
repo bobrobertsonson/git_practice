@@ -143,8 +143,7 @@ Preset SawbladeProcessor::presetWithParams() const {
 
 Preset SawbladeProcessor::currentPreset() const { return presetWithParams(); }
 
-SawbladeProcessor::Status SawbladeProcessor::status() {
-  syncLevelMatchSetting();
+SawbladeProcessor::Status SawbladeProcessor::status() const {
   Status s;
   {
     std::lock_guard<std::mutex> lk(mutex_);
