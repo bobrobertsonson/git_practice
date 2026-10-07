@@ -24,6 +24,7 @@ HP_GRID = tuple(float(f) for f in np.geomspace(60.0, 140.0, 8)[1:])      # post.
 
 
 LP_FREQ_FACTORS = (0.8, 0.9, 1.0, 1.12, 1.25)      # post.lp tried around the CMA-ES value, per slope
+MIN_FILTER_GAIN = 0.005                             # a post-filter change must lower the loss by this much to count (and trigger a polish)
 SLOPE_12 = 0.0                                      # slope parameter value of the 12 dB/oct alternative (< 0.5)
 
 
@@ -35,7 +36,7 @@ def _hp_step(space: Space, best: dict, r: L.LossResult, score) -> tuple[dict, L.
             for f in HP_GRID:
                 cand = {**best, "post.hp": f, "post.hp_slope": sl}
                 rc = score(cand)
-                if rc.total < r.total - 1e-9:
+                if rc.total < r.total - MIN_FILTER_GAIN:
                     best, r, changed = cand, rc, True
     return best, r, changed
 
@@ -46,13 +47,16 @@ def _lp_step(space: Space, best: dict, r: L.LossResult, score) -> tuple[dict, L.
     if "post.lp" in space.idx and "post.lp_slope" in space.idx:
         p = space.params[space.idx["post.lp"]]
         f0 = best["post.lp"]
+        tried = set()
         for sl in (SLOPE_12, DISCRETE_UP):
             for k in LP_FREQ_FACTORS:
-                if sl == SLOPE_12 and k == 1.0 and best.get("post.lp_slope", 0.4) < 0.5:
-                    continue                      # the current setting
-                cand = {**best, "post.lp": float(np.clip(f0 * k, p.lo, p.hi)), "post.lp_slope": sl}
+                f = float(np.clip(f0 * k, p.lo, p.hi))
+                if (f, sl) in tried or (f == f0 and sl == (DISCRETE_UP if best.get("post.lp_slope", 0.4) >= 0.5 else SLOPE_12)):
+                    continue                      # already tried (clipped duplicates) or the current setting
+                tried.add((f, sl))
+                cand = {**best, "post.lp": f, "post.lp_slope": sl}
                 rc = score(cand)
-                if rc.total < r.total - 1e-9:
+                if rc.total < r.total - MIN_FILTER_GAIN:
                     best, r, changed = cand, rc, True
     return best, r, changed
 
@@ -216,7 +220,7 @@ def relinear(eng: Engine, combo: Combo, space: Space, ex, tgt: L.Target, align: 
     bx, bf, hist = cma.minimize(None, u[lin_idx], sigma, pop, gens, seed, evaluate_batch=lambda X: eng.map(f, list(X)),
                                 patience=patience, tol=tol, on_gen=on_gen)
     v, r = pick_slopes(space, space.decode(full_u(bx)), score,
-                       lambda vv: _polish_linear(eng, space, score, vv, seed=seed + 1, gens=max(4, gens // 2), pop=pop,
+                       lambda vv: _polish_linear(eng, space, score, vv, seed=seed + 1000003, gens=max(4, gens // 2), pop=pop,
                                                  patience=patience, tol=tol))
     log(f"  relinear: {hist[0]:.3f} -> {r.total:.3f} ({time.time() - t0:.0f}s)")
     return v, r
