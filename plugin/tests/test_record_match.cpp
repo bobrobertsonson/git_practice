@@ -3313,7 +3313,7 @@ TEST_CASE("runner: --nam-input <file> or --signal sawblade for model training; n
   CHECK_FALSE(has(argv, "--nam-input"));
 }
 
-TEST_CASE("runner: a resume passes no signal flag and succeeds under requireSignal; naming a different signal is refused", "[match][runner][export][signal]") {
+TEST_CASE("runner: a resume passes no signal flag (even if the request names one) and succeeds under requireSignal", "[match][runner][export][signal]") {
   using namespace sawblade::plugin;
   FakeTools t;
   t.cfgExport({{"progressJson", true}, {"requireSignal", true}, {"gates", json::array({"g1"})}});

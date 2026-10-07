@@ -267,6 +267,7 @@ TEST_CASE("export report: the training signal is read from the report, metadata 
   CHECK(read(json{{"trainingSignal", "NAM standard input v3.0.0"}}) == "NAM standard input v3.0.0");
   CHECK(read(json{{"trainingSignal", {{"label", "NAM v3.0.0"}, {"version", "3.0.0"}}}}) == "NAM v3.0.0");
   CHECK(read(json{{"trainingSignal", {{"version", "3.0.0"}}}}) == "3.0.0");
+  CHECK(read(json{{"trainingSignal", {{"id", "nam-v3.0.0"}, {"kind", "nam-standard"}, {"version", "v3.0.0"}, {"label", "NAM standard v3.0.0"}, {"fallback", false}}}}) == "NAM standard v3.0.0");
   CHECK(read(json{{"metadata", {{"trainingSignal", "from metadata"}}}}) == "from metadata");
   CHECK(read(json{{"training", {{"trainingSignal", "from training"}}}}) == "from training");
   CHECK(read(json{{"trainingSignal", 42}}).empty());  // wrong type: not reported, no crash
@@ -278,7 +279,7 @@ TEST_CASE("export report: the training signal is read from the report, metadata 
 TEST_CASE("export report: a reamp-pair-only report has the pair and no model; a pair beside a model is read too", "[export][report][reamp]") {
   const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_p_" + std::to_string(std::random_device{}()));
   fs::create_directories(dir);
-  const json pair = {{"input", "/some/where/riff.reamp_input.wav"}, {"output", "riff.reamp_output.wav"}};
+  const json pair = {{"input", "/some/where/riff.reamp_input.wav"}, {"output", "riff.reamp_output.wav"}, {"notes", "riff.reamp_notes.txt"}};  // `notes` is tolerated
   std::ofstream(dir / "export_report.json") << json{{"files", {{"reampPair", pair}}}}.dump();
   ExportResult r = readExportResult(dir);
   REQUIRE(r.haveReport);
@@ -342,7 +343,10 @@ TEST_CASE("export report: A2 files block, the primary file, the validation of th
   CHECK(txt.find("Anagram chain: Gate -> Neural Amp -> IR\n") != std::string::npos);
   CHECK(txt.find("(KosmOS 1.16 or later), in signal order:\n") != std::string::npos);  // same header as the Python text
   CHECK(txt.find("Own use only.") != std::string::npos);
-  CHECK(txt.find("model: riff-nocab-full.a2_full.nam\n") != std::string::npos);
+  CHECK(txt.find("model: riff-nocab-full.a2.nam\n") != std::string::npos);
+  CHECK(txt.find("Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later.") != std::string::npos);
+  CHECK(txt.find("Load riff-nocab-full.a2.nam (A2 container) into any NAM A2 block;") != std::string::npos);
+  CHECK(txt.find("Up to three NAM blocks (Neural Amp / Neural Pedal / Neural Loader) can run at once.") != std::string::npos);
   // The generic text of the same notes is the v0.4M text, with no Anagram block names in it.
   CHECK(formatNotesTxt(notes).find("Neural Amp") == std::string::npos);
   std::error_code ec;

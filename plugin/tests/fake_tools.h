@@ -196,7 +196,7 @@ else:
     if opt("--reamp-pair"):
         # v0.6 decision 20: --reamp-pair NAM_INPUT.wav [--no-train]: the pair and a report, no model with --no-train.
         src = opt("--reamp-pair")
-        pair = {"input": stem + ".reamp_input.wav", "output": stem + ".reamp_output.wav"}
+        pair = {"input": stem + ".reamp_input.wav", "output": stem + ".reamp_output.wav", "notes": stem + ".reamp_notes.txt"}
         shutil.copyfile(src, os.path.join(out, pair["input"]))
         shutil.copyfile(src, os.path.join(out, pair["output"]))
         rep = {"reportVersion": 1, "tool": "sawblade-export", "mode": mode, "arch": arch, "size": size, "files": {"reampPair": pair},
@@ -253,9 +253,9 @@ else:
               "totalWallSeconds": cfg.get("wall", 150.0)}
     # decision 22: --nam-input PATH (the NAM standard file) or --signal sawblade; the report says which one trained the model.
     if opt("--nam-input"):
-        report["trainingSignal"] = {"label": "NAM standard input v3.0.0 (fake)", "file": os.path.basename(opt("--nam-input"))}
+        report["trainingSignal"] = {"id": "nam-v3.0.0", "kind": "nam-standard", "version": "v3.0.0", "label": "NAM standard input v3.0.0 (fake)", "fallback": False}
     elif opt("--signal") == "sawblade":
-        report["trainingSignal"] = "Sawblade test signal (not the standard NAM signal)"
+        report["trainingSignal"] = {"id": "sawblade", "kind": "sawblade", "version": "1", "label": "Sawblade test signal (not the standard NAM signal)", "fallback": True}
     if cfg.get("exportNotes"):
         report["exportNotes"] = cfg["exportNotes"]
         if cfg.get("anagramProfile"):
