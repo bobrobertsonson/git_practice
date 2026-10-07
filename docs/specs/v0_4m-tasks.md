@@ -407,3 +407,42 @@ inherit mix processing by default.
   "user" (and an old v3 file) -> liveDynamics == stored gate/busComp. A v3 file renders in record mode bit-identically to before.
 - Toggle: switching sets atomically (no block runs half old / half new; test via the handover object); state round-trip.
 - Schema: v4 round-trip; a v3 reader rejects v4 (existing strictness test pattern).
+
+## Task H: gate floor on the gate's own detector, full-DI gate sweep, topology margin (lead decision 2026-10-07)
+
+Why: open = DI floor (RMS) + 4 dB with hysteresis 6 dB closes at floor - 2 dB, but the gate's envelope is a peak
+follower (0.1 / 10 ms) and noise peaks sit ~10 dB above its RMS: the gate opens on noise and never closes (user's L DI:
+open -45.55, close -51.55, floor -49.5 dBFS RMS; gap_noise -13 dB vs -60 target). The live gate (Task G) compares a
+50 ms-RMS minimum floor with the same peak detector, so it has the same flaw. No feel claim is made for this task unless
+a test shows one (dynsweep showed matched = bypassed = live).
+
+### H.1 Peak-detector floor (core: dsp-engineer; match: match-engineer)
+- **Definition (single, shared):** `peakFloorDb` = the 92.5th percentile of the gate's own peak envelope (0.1 ms attack /
+  10 ms release, `Gate::kEnvAttackMs/kEnvReleaseMs`, after the key HPF when one is set) over the DI gap regions.
+  Core exposes it (C++ function + pybind `peak_floor_db(x, fs, key_hpf_hz=0, mask=None)`), the matcher uses it.
+- **Matcher:** the DI floor used for the gate (space.gate_preset, gatesweep cell_gate) is the peak floor. Default cell:
+  open = peakFloor + 10 dB, hysteresis 6 dB (close = peakFloor + 4). The sweep's offsets are re peakFloor; grid
+  {6, 8, 10, 12, 16, 20, 24, 28} dB, default cell 10 is a member. Recorded in result.json: `gateFloor: {rmsDb, peakDb}`.
+- **Live follower (core gate floorRelative):** the per-frame statistic becomes the 50 ms frame's peak-envelope maximum
+  (not RMS); the qualification rule (< estimate + 20 dB), 3 s window, 10 s leak, clamps and seed are unchanged.
+  Live floorOffsetDb default 8 -> 10 (close = floor + 4). The derivation rule in G.1 uses 10. PRESET_SCHEMA updated.
+  Existing G follower tests are re-based on the new statistic (same scenarios, thresholds re the peak floor).
+- **Tests (record gate via the matcher default cell, and live gate):**
+  - DI noise alone (white/pink at a set RMS): gate closed (gain <= range + 1 dB) > 95 % of the time after 0.5 s.
+  - Decay tail: a synthetic plucked note decaying exponentially from -12 dBFS peak into the noise floor: report the level
+    (re the floor) where attenuation starts; attenuation <= 1 dB while the note's envelope is > 12 dB above the peak floor.
+  - Report (test output / REPORT) old vs new open/close for a noise floor of -49.5 dBFS RMS.
+
+### H.2 Gate sweep on the full DI (match-engineer)
+When the excerpt has < 100 ms of DI gaps, the gate sweep takes its gap regions (and, for a matched pair, the reference
+floor at those regions) from the full-length DI/ref pair; renders cover those gap windows (with enough pre-roll for the
+chain's state). Recorded: `gateSweep.gapSource: "excerpt" | "fullDi"`. Test: a fixture whose excerpt has no gaps but the
+full DI does -> the sweep runs (not skipped) and gap_noise improves vs the default cell.
+
+### H.3 Topology margin and --topology (match-engineer)
+- result.json `topology: {bestSingle, bestBlend, deltaPct, determined}`; `determined = |delta| >= 10 %` of the smaller
+  loss; the summary prints it and "topology not determined" when false.
+- Named constant `BLEND_OCCAM_DB = 0.25` (was the shared 0.10 for blend vs single); single2 unchanged. REPORT states it.
+- `--topology single|blend|auto` (default auto): restricts stage-1/2 candidates and `choose` to that topology.
+- Script: adds `L_blend_quick_forced` (`--topology blend`) in quick mode and `L_blend_forced` in full, next to auto; both
+  get pathcheck + dynsweep; summary lists them right after their auto runs.
