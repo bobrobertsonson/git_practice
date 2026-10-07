@@ -20,6 +20,7 @@
 #               "17 GTR RHY L DI.wav", "18 GTR RHY L HM2 AMP.wav", "19 GTR RHY L UBR AMP.wav",
 #               "20 GTR RHY R DI.wav", "21 GTR RHY R HM2 AMP.wav", "22 GTR RHY R UBR AMP.wav"
 # Everything printed is also appended to ~/sawblade-work/v04m_validation.log (each run also to <out>/<run>.log).
+#
 set -euo pipefail
 
 QUICK_ONLY=0
@@ -54,7 +55,7 @@ while [[ $# -gt 0 ]]; do
     --r-di) need_arg "$@"; R_DI_F="$2"; shift ;;
     --r-hm2) need_arg "$@"; R_HM2_F="$2"; shift ;;
     --r-ubr) need_arg "$@"; R_UBR_F="$2"; shift ;;
-    -h|--help) sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR > 1 { if (/^#/) { sub(/^# ?/, ""); print } else exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "run_v04m_validation: unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -69,9 +70,11 @@ if [[ $DRY -eq 0 ]]; then
   exec > >(tee -a "$LOG") 2>&1
 fi
 
-PY=match/.venv/bin/python
-M=match/.venv/bin/sawblade-match
-PIP=match/.venv/bin/pip
+PY="${V04M_PY:-match/.venv/bin/python}"          # the V04M_* overrides exist for the dry-run/stub test
+M="${V04M_MATCH:-match/.venv/bin/sawblade-match}"
+PIP="${V04M_PIP:-match/.venv/bin/pip}"
+CMAKE="${V04M_CMAKE:-cmake}"
+case "$PY" in /*) PY_ABS="$PY" ;; *) PY_ABS="$ROOT/$PY" ;; esac
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
@@ -107,10 +110,14 @@ find_r() {
   fi
   return 0
 }
-R_DI=""; R_HM2=""; R_UBR=""; R_OK=0
+R_DI=""; R_HM2=""; R_UBR=""; R_OK=0; R_MISSING=""
 if [[ $QUICK_ONLY -eq 0 ]]; then
   R_DI="$(find_r "$R_DI_F")"; R_HM2="$(find_r "$R_HM2_F")"; R_UBR="$(find_r "$R_UBR_F")"
   [[ -n $R_DI && -n $R_HM2 && -n $R_UBR ]] && R_OK=1
+  R_MISSING=""
+  [[ -n $R_DI ]] || R_MISSING+=" \"$R_DI_F\""
+  [[ -n $R_HM2 ]] || R_MISSING+=" \"$R_HM2_F\""
+  [[ -n $R_UBR ]] || R_MISSING+=" \"$R_UBR_F\""
 fi
 
 [[ $DRY -eq 1 ]] && say "run_v04m_validation: DRY RUN, commands are printed, not executed"
@@ -148,7 +155,7 @@ if [[ $QUICK_ONLY -eq 0 ]]; then
   if [[ $R_OK -eq 1 ]]; then
     say "R files: $R_DI | $R_HM2 | $R_UBR"
   else
-    say "R side files not found in $BB or $R_SEARCH_DIR; skipping held-out runs"
+    say "R side files not found in $BB or $R_SEARCH_DIR (missing:$R_MISSING); skipping held-out runs"
   fi
 fi
 run mkdir -p "$OUT"
@@ -156,11 +163,10 @@ run mkdir -p "$OUT"
 # ---------------------------------------------------------------- 1. build + install
 step "1 rebuild the core module and install the matcher"
 START=$SECONDS
-if [[ ! -f build-py/build.ninja ]]; then
-  run cmake -S . -B build-py -G Ninja -DCMAKE_BUILD_TYPE=Release -DSAWBLADE_BUILD_PYTHON=ON -DSAWBLADE_BUILD_TESTS=OFF \
-    "-DPython_EXECUTABLE=$ROOT/$PY"
-fi
-run cmake --build build-py
+# always configure: a stale build-py cache may point at another Python
+run "$CMAKE" -S . -B build-py -G Ninja -DCMAKE_BUILD_TYPE=Release -DSAWBLADE_BUILD_PYTHON=ON -DSAWBLADE_BUILD_TESTS=OFF \
+  "-DPython_EXECUTABLE=$PY_ABS"
+run "$CMAKE" --build build-py
 export SAWBLADE_CORE_DIR="$ROOT/build-py/python"
 say "SAWBLADE_CORE_DIR=$SAWBLADE_CORE_DIR"
 run "$PIP" install -q -e match
@@ -218,7 +224,7 @@ else
     match_run R_ubr "$R_DI" "$R_UBR" --thorough
     RUNS+=(R_hm2 R_ubr)
   else
-    say "R side files not found in $BB or $R_SEARCH_DIR; skipping held-out runs"
+    say "R side files not found in $BB or $R_SEARCH_DIR (missing:$R_MISSING); skipping held-out runs"
   fi
 fi
 
@@ -227,7 +233,7 @@ step "summary (paste this back to the lead)"
 if [[ $DRY -eq 1 ]]; then
   say "+ $PY - $OUT   (summary printer over $OUT/*/result.json)"
 else
-  "$PY" - "$OUT" <<'PY'
+  "$PY" - "$OUT" <<'PY' || say "summary printer failed (the run results in $OUT/*/result.json are still there)" >&2
 import json, sys, pathlib
 for d in sorted(pathlib.Path(sys.argv[1]).iterdir()):
     f = d / "result.json"
@@ -263,6 +269,10 @@ fi
 
 step "listen A/B (level-matched ref.wav vs render.wav, same 30 s)"
 for r in "${RUNS[@]}"; do
+  if [[ $DRY -eq 0 ]]; then
+    case " ${FAILED[*]-} " in *" $r "*) continue ;; esac
+    [[ -d "$OUT/$r/listen" ]] || { say "(no listen folder for $r)"; continue; }
+  fi
   say "open \"$OUT/$r/listen\""
 done
 
