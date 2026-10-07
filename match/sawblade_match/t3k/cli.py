@@ -74,8 +74,7 @@ def _resolve_client_id(store: TokenStore) -> str | None:
     cid = _env_client_id()
     if cid:
         return cid
-    s = store.load()
-    return s.client_id if s else None
+    return publishable_client_id(store.stored_client_id())
 
 
 def _base_url() -> str:

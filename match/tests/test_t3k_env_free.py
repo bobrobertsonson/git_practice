@@ -102,3 +102,23 @@ def test_secret_never_accepted(env, monkeypatch, capsys):
     monkeypatch.setenv("TONE3000_CLIENT_ID", "t3k_cs_nope")
     assert cli.main(["whoami"]) == 1
     assert "SECRET" in capsys.readouterr().err
+
+
+def test_revoked_refresh_keeps_client_id_so_login_still_works(env, respx_mock):
+    env.save(expired("t3k_pub_file"))
+    respx_mock.post(TOKEN_URL).respond(400, json={"error": "invalid_grant"})
+    assert cli.main(["whoami"]) == cli.EXIT_NOT_LOGGED_IN
+    assert json.loads(env.path.read_text()) == {"client_id": "t3k_pub_file"}   # tokens gone, id kept
+    assert env.load() is None
+    respx_mock.post(DEV_URL).respond(200, json=DEV_BODY)
+    respx_mock.post(TOKEN_URL).respond(200, json=TOK_BODY)
+    assert cli.main(["login"]) == 0   # no env var needed
+    assert json.loads(env.path.read_text())["client_id"] == "t3k_pub_file"
+
+
+def test_revoked_refresh_without_client_id_removes_file(env, respx_mock, monkeypatch):
+    monkeypatch.setenv("TONE3000_CLIENT_ID", "t3k_pub_env")
+    env.save(expired())
+    respx_mock.post(TOKEN_URL).respond(401, json={})
+    assert cli.main(["whoami"]) == cli.EXIT_NOT_LOGGED_IN
+    assert not env.path.exists()

@@ -109,6 +109,32 @@ class TokenStore:
                 pass
             raise
 
+    def stored_client_id(self) -> str | None:
+        """The publishable client id in the file, even when the file holds no usable tokens."""
+        try:
+            return publishable_client_id(json.loads(self.path.read_text()).get("client_id"))
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def clear_tokens(self) -> None:
+        """Drop the tokens but keep the publishable client id so `login` still works afterwards."""
+        cid = self.stored_client_id()
+        if not cid:
+            self.clear()
+            return
+        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".t3k_tokens.")
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump({"client_id": cid}, f)
+            os.replace(tmp, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
+
     def clear(self) -> None:
         try:
             self.path.unlink()
@@ -257,7 +283,7 @@ class TokenManager:
             "grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": cid})
         if r.status_code in (400, 401):
             self._session = None
-            self.store.clear()
+            self.store.clear_tokens()
             raise ReauthRequired("session expired or revoked; run `sawblade-t3k login`")
         if r.status_code != 200:
             raise AuthError(f"token refresh failed: HTTP {r.status_code}")
