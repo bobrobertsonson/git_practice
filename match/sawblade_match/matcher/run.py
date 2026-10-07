@@ -586,7 +586,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                         gens_linear=PRE_REFIT_L1, pop_linear=plan.pop_linear, gens_gain=max(2, plan.gens_gain // 2),
                         pop_gain=plan.pop_gain, gens_final=max(3, plan.gens_final // 2), patience=plan.patience,
                         patience_gain=plan.patience_gain, tol=plan.plateau_tol, gex=gex, gtgt=gtgt,
-                        short_linear=plan.short_linear, levels=c.levels, log=lambda *_: None)
+                        short_linear=plan.short_linear, levels=c.levels, staged=False, log=lambda *_: None)
                     entry.update(refitLoss=r_new.total, gain=c.loss - r_new.total)
                     if c.loss - r_new.total >= PRE_CONFIRM_DB:
                         new = finish_refined(c.combo, c, v_new, r_new, info_new)

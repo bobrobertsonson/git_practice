@@ -615,10 +615,20 @@ def test_absorbable_residual_is_what_the_post_eq_can_still_take_away():
     assert np.array_equal(ST.absorbable(d_in, {}), d_in)         # no post EQ in the params: nothing is absorbed
 
 
+class _PostOnlySpace(Space):
+    """Stage-2 space with the path EQs frozen: only the post EQ (and the other linear parameters) are free, so a reference whose
+    post EQ is beyond +-6 dB cannot be compensated by the +-9 dB pre-cab path EQ bands."""
+
+    def indices(self, group):
+        return [i for i in super().indices(group) if not self.names[i].startswith(("a.", "b."))]
+
+
 def test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept(tmp_path):
     """Reference = the chain with post EQ gains of -11 / +11 dB (far beyond the +-6 dB range). The candidate is the same chain
     with a flat post EQ (an unfitted stage-2 result): the unreachable residual fires eqd, and the +-9 dB stage keeps its wider
-    EQ because it beats an equal-budget re-fit at the normal range, not just the plain result."""
+    EQ because it beats an equal-budget re-fit at the normal range, not just the plain result. The path EQs are frozen in the
+    stage's space (``_PostOnlySpace``): with them free, the +-9 dB pre-cab bands can stand in for the missing post-EQ range and the
+    wider post EQ is rightly not needed."""
     def hid(sp):
         v = sp.default()
         v.update({"post.g0": -11.0, "post.g2": 11.0})
@@ -635,7 +645,8 @@ def test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept(t
         assert ev["residualAfterPostEqRmsDb"] < ev["residualRmsDb"]                  # the post EQ takes part of it away
         assert ST.detect(False, tgt, tgt, y, v, None)["evidence"]["skipped"]          # not judged on a mix reference
         cand.extra.update(params=v, info={})
-        rec = ST.studio_stage(eng, cand, sp, ex, tgt, {"compressed": False, "eqd": True}, seed=3, gens=12, pop=12)
+        post_only = _PostOnlySpace(cand.combo.shape())
+        rec = ST.studio_stage(eng, cand, post_only, ex, tgt, {"compressed": False, "eqd": True}, seed=3, gens=12, pop=12)
     finally:
         eng.close()
     st = rec["stage"][0]
@@ -826,3 +837,42 @@ def test_lp_step_skips_duplicate_and_current_candidates():
     _lp_step(sp, v, score(v), score)
     seen = seen[1:]
     assert len(seen) == len(set(seen)) and (12000.0, False) not in seen        # no duplicates, not the current setting
+
+
+def test_refit_without_staging_keeps_feel_in_its_first_block(monkeypatch):
+    """The pre-EQ confirmation re-fit starts from a feel-fitted optimum: refine_combo(staged=False) must not drop feel in L1
+    (the staged first block of stage 2 does, see test_matcher.test_stage2_first_linear_block_is_ltas_only)."""
+    from sawblade_match.matcher import loss as Lm
+    from sawblade_match.matcher import refine as R
+    seen = []
+
+    class Spy:
+        def __getattr__(self, name):
+            return getattr(Lm, name)
+
+        def evaluate(self, out, tgt, eq=None):
+            seen.append(tgt.feel is not None)
+            return Lm.evaluate(out, tgt, eq)
+
+    monkeypatch.setattr(R, "L", Spy())
+    tmp = Path(tempfile.mkdtemp())
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool, "single")
+    _, ref = _known(tmp, pool, combo, v)
+    x, fs = _loadwav(FIX / "di_riff.wav")
+    x48 = to48(x, fs)
+    ex = make_excerpt(x48, 2.0)
+    tgt = build_target(ref, ex)
+    eng = Engine(gate_preset(gate_envelope_floor_db(x48, FS)), 2)
+    kw = dict(seed=1, gens_linear=2, pop_linear=6, gens_gain=1, pop_gain=4, gens_final=1, log=lambda *_: None)
+    n_l1 = 1 + 2 * 6
+    try:
+        sp2 = Space.for_combo(combo)
+        R.refine_combo(eng, combo, sp2, ex, tgt, manual_align(), sp2.default(), **kw)
+        staged, seen[:] = list(seen), []
+        R.refine_combo(eng, combo, sp2, ex, tgt, manual_align(), sp2.default(), staged=False, **kw)
+        unstaged = list(seen)
+    finally:
+        eng.close()
+    assert staged[0] is True and staged[1:1 + n_l1] == [False] * n_l1 and all(staged[1 + n_l1:])
+    assert all(unstaged) and len(unstaged) == len(staged)
