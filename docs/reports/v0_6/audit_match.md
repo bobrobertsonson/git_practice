@@ -225,7 +225,8 @@ Expected latency of each fixture: **0 samples** (NAM models are causal; the trai
 Run in this container (Python 3.11 venv with `match[dev,export]` + constraints, `sawblade_core` built from this branch): **2 failed / 713 passed / 7 skipped**.
 
 * The two failures are `test_matcher_v04m.py::test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept` and `test_matcher.py::test_stage2_first_linear_block_is_ltas_only`.
-  Both also fail on the merge base `6701294` in this container, and the CI `python` job is green with the same pins, so they are container-specific (not caused by this task).
+  They also fail on the merge base `6701294`. They are **not container-specific** (an earlier version of this section said so, wrongly): CI run 238 failed them too. The v0.4M
+  merge in `6701294` was the stale head `bbae365`; v0.4M's `582ca3d` (in `bafcada`) fixes both, and the v0.6 branch now includes it (merge of `bafcada`).
 * `tests/fixtures/a2/generate.py --check` regenerates the fixtures byte-identically.
 * `test_a1_sizes_are_nams_official_presets` failed in a `[dev]`-only install (it imports `nam`); fixed in the review round by splitting it into a pure layout test and a ``_need_nam` (skip without the trainer) parameter-count test, plus the `python-export` CI job (decision 17).
 

@@ -340,3 +340,17 @@ def test_notes_preset_ignores_derived_auto_trim():
     assert P.notes_preset_problems(trained, orig) == []
     trained["output"]["gainDb"] = -4.0                         # a real output change is still refused
     assert "beyond the bus comp" in P.notes_preset_problems(trained, orig)[0]
+
+
+def test_anagram_profile_from_a_notes_preset_lists_the_dropped_comp(tmp_path):
+    """--notes-preset flow: the trained preset has no comp, the notes are built from the original rig: the Anagram profile
+    still ends with the Compressor block."""
+    orig = full()
+    trained = copy.deepcopy(orig)
+    trained["busComp"]["enabled"] = False
+    plan = P.make_plan(trained, "nocab")
+    nam = tmp_path / "r-nocab-full.a2_full.nam"
+    nam.write_text("{}")
+    notes, _ = N.write_export_notes(orig, plan, nam, tmp_path / "r-nocab.ir.wav", None, stem="r-nocab-full")
+    blocks = [s["block"] for s in notes["deviceProfiles"]["anagram"]["stages"]]
+    assert blocks == ["Gate", "Neural Amp", "IR", "Compressor"]
