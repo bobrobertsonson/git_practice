@@ -1,7 +1,8 @@
-"""Pre-EQ before the drive (v0.4M B4): a small pruned grid on the per-path ``preEq``, searched after stage 1's re-score.
+"""Pre-EQ before the drive (v0.4M B4): a small pruned grid on the per-path ``preEq``, searched after stage 2 on the refined winner.
 
 A pre-EQ changes the NAM input, so every setting costs one NAM re-render; the grid is therefore pruned (coordinate descent,
-<= 12 settings per path, plus the guitar-difference widening options) and only the winner goes on into stage 2:
+<= 12 settings per path, plus the guitar-difference widening options) and only the winner is confirmed: the grid is scored at the refined parameters, and a pick stays only if a short seeded re-fit (gain
+block + last linear block) lowers the refined loss by ``PRE_CONFIRM_DB`` (0.05) against pre-EQ off (run.py); otherwise it stays off:
 
 1. HPF {off, 80, 110, 150 Hz} (12 dB/oct), the others off;
 2. at the best HPF, a mid peak {+3, +6 dB} x {700, 900 Hz} (Q 0.8);
@@ -28,6 +29,8 @@ from .screen import Scored
 from .space import PRE_HPF_OPTIONS, PRE_MID_OPTIONS, PRE_SHELF_DB, PRE_SHELF_HZ, Space
 
 KEEP_DB = 0.02
+PRE_CONFIRM_DB = 0.05      # a grid pick stays only if the re-fitted refined loss falls this much vs pre-EQ off
+PRE_REFIT_L1 = 2           # first linear block generations of the confirmation re-fit (gain + last linear block do the work)
 MAX_NEIGHBOURS = 3
 MAX_RENDERS = 12           # settings per path besides the off setting and the widening options
 TILT_DARK, TILT_BRIGHT, LOW_EXCESS_BASSY = -4.5, -1.5, 3.0
@@ -134,13 +137,14 @@ def grid_search(score_many, wide: dict) -> tuple[tuple, float, list[dict]]:
     return best, best_l, log
 
 
-def preeq_candidate(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, wide: dict) -> dict:
-    """Search the pre-EQ of every path of the stage-1 candidate ``cand`` (default parameters). Returns the record; the chosen
-    ``pre.<path>.*`` parameters are in ``rec["params"]`` and the candidate's loss with them in ``rec["loss"]``."""
+def preeq_candidate(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, wide: dict, v0: dict | None = None) -> dict:
+    """Search the pre-EQ of every path of the candidate ``cand`` at the parameters ``v0`` (its refined parameters; default
+    parameters when None) with the other parameters fixed. Returns the record; the chosen ``pre.<path>.*`` parameters are in
+    ``rec["params"]`` and the candidate's loss with them (not re-fitted) in ``rec["loss"]``."""
     combo = cand.combo
     paths = ("a", "b") if combo.topology == "blend" else ("a",)
-    v = dict(space.default())
-    if "blend" in v:
+    v = dict(space.default() if v0 is None else v0)
+    if v0 is None and "blend" in v:
         v["blend"] = cand.blend
     eq = space.eq_gains(v)
     cur = cand.loss

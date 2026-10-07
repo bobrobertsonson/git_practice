@@ -566,9 +566,10 @@ def test_polynomial_shape_detector_separates_a_smooth_curve_from_ripple():
     assert ST._poly_explained(smooth - smooth.mean()) > 0.95 and ST._poly_explained(ripple) < ST.POLY_EXPLAINED
 
 
-def _studio_run(tmp_path, comp, ablate=()):
+def _studio_run(tmp_path, comp, ablate=(), post=None):
     pool = fixture_pool()
     combo, sp, v = hidden(pool, "single")
+    v = {**v, **(post or {})}
     di, ref = _known(tmp_path, pool, combo, v, bus_comp=comp)
     plan = mkplan(top_k={"blend": 0, "single": 1, "single2": 0}, gens_linear=10, gens_gain=3, gens_final=8,
                   pop_linear=10, pop_gain=4, n_rescore_single=6, n_cab_single=3)
@@ -590,9 +591,19 @@ def test_a_fast_bus_comp_in_the_reference_fires_the_studio_detector_and_is_repro
     assert "bus comp added by the matcher (studio processing); dropped from no-cab exports" in best["notes"]
     core.render(best, np.zeros(2048, np.float32), 48000.0)                      # strict parse, trainable release
     # --ablate studio: still detected and reported, but nothing is added
-    res2 = _studio_run(tmp_path / "abl", comp, ablate=("studio",)) if (tmp_path / "abl").mkdir() is None else None
+    (tmp_path / "abl").mkdir()
+    res2 = _studio_run(tmp_path / "abl", comp, ablate=("studio",))
     assert res2["studio"]["compressed"] is True and res2["studio"]["ablated"] is True and res2["studio"]["busCompUsed"] is False
     assert res2["best"]["loss"] > res["best"]["loss"]
+
+
+def test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept(tmp_path):
+    res = _studio_run(tmp_path, None, post={"post.g0": -8.5, "post.g2": 8.5})      # beyond the +-6 dB post-EQ range
+    st = res["studio"]
+    assert st["eqd"] is True and st["evidence"]["postGainAtRange"] is True and st["compressed"] is False
+    assert st["widenedPostEq"] is True and st["gainVsPlain"] >= ST.MIN_GAIN and st["busCompUsed"] is False
+    assert max(abs(res["best"]["params"][f"post.g{i}"]) for i in range(3)) > 6.0       # a gain outside the old range
+    assert [x["step"] for x in st["stage"]] == ["post EQ +-9 dB"] and st["stage"][0]["kept"] is True
 
 
 def test_the_plain_chain_does_not_fire_the_studio_detector(tmp_path):
@@ -678,6 +689,11 @@ def test_ablate_preeq_leaves_the_pre_eq_empty_and_the_default_run_reports_it(tmp
     on = run_match(Config(out=tmp_path / "on", **kw), Log())
     pe = on["preEq"]
     assert pe["ablated"] is False and pe["candidates"] and all(c["renders"] <= 12 + len(pe["widened"]) for c in pe["candidates"])
-    assert set(pe["chosen"]) == {"a"} and pe["gainVsOff"] >= 0.0
+    assert all({"offLoss", "gridBest", "refitLoss", "kept", "gain"} <= set(c) for c in pe["candidates"])
+    assert set(pe["chosen"]) == {"a"} and pe["gainVsOff"] >= 0.0 and set(pe["grid"]) <= {"a"}
+    # a chain without a pre-EQ ends with it off, or not worse than with the grid ablated (a pick must survive the re-fit)
+    assert on["best"]["loss"] <= off["best"]["loss"] + 1e-9
     best = json.loads((tmp_path / "on" / "best.preset.resolved.json").read_text())
     assert ("preEq" in best["paths"]["a"]) == (pe["chosen"]["a"] != "off")
+    for c in pe["candidates"]:
+        assert c["kept"] == (c["refitLoss"] is not None and c["offLoss"] - c["refitLoss"] >= pe["keepDb"])

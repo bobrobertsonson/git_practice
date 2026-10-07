@@ -28,7 +28,7 @@ from .cabsweep import TOP_PER_TOPOLOGY, cab_sweep, sweep_summary
 from . import irscreen
 from .gatesweep import gate_sweep, reference_floor_db, render_gate
 from .irblend import TOP_IRS, pair_search
-from .preeq import describe as describe_pre, di_spectrum_numbers, preeq_candidate, setting_params, widening
+from .preeq import PRE_CONFIRM_DB, PRE_REFIT_L1, describe as describe_pre, di_spectrum_numbers, preeq_candidate, setting_params, widening
 from .refine import refine_combo, relinear
 from .studio import detect as detect_studio, studio_stage
 from .trace import trace_tones
@@ -394,7 +394,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                     "lossWeights": {"texFlat": L.W_FLAT, "texHf": L.W_HF, "ltas": L.W_LTAS, "buzz": L.W_BUZZ, "decay": L.W_DECAY, "stft": L.W_STFT,
                                     "reg": L.W_REG, "feelTight": L.W_TIGHT, "feelFizz": L.W_FIZZ, "feelPolish": L.W_POLISH},
                     "ablate": list(parse_ablate(cfg.ablate)),
-                    
+
                     "randomness": f"numpy default_rng(seed={cfg.seed}) for subset sampling and CMA-ES (seed + block)"}
 
     # ---- starter ("before") on the excerpt, which also gives the coarse offset refinement its render -----------------
@@ -486,30 +486,6 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     t_mark = time.time()
     prog.stage("refine", "refining the best candidates")
 
-    # ---- pre-EQ before the drive (v0.4M B4): pruned grid on the top 2 candidates per topology -------------------------
-    t_pre = time.time()
-    nums = di_spectrum_numbers(ex.x[ex.lead:], tgt.starts)
-    wide = widening(nums)
-    log(f"pre-EQ: DI tilt {nums['diTilt']:+.2f} dB/oct, low excess {nums['diLowExcess']:+.2f} dB; widened: "
-        f"{', '.join(wide['widened']) or 'none'}")
-    pre_res: dict = {**nums, "widened": wide["widened"], "ablated": "preeq" in ablate, "candidates": [], "chosen": {},
-                     "gainVsOff": 0.0}
-    pre_gain: dict = {}
-    if "preeq" not in ablate:
-        for topo in TOPOLOGIES:
-            lst = ranked.get(topo, [])
-            for s in lst[:2]:
-                rec = preeq_candidate(eng, s, Space.for_combo(s.combo, plan.filters), ex, tgt, wide)
-                pre_res["candidates"].append({k: rec[k] for k in ("topology", "captures", "offLoss", "loss", "gainVsOff", "renders",
-                                                                   "paths")})
-                if rec["gainVsOff"] > 0:
-                    s.extra["pre"] = rec["params"]
-                    s.loss, s.result = rec["loss"], None
-                    pre_gain[s.combo.pair_key()] = rec["gainVsOff"]
-                    log(f"pre-EQ {topo}: {s.combo.describe()[:60]}: " + "; ".join(
-                        f"path {p} {x['chosen']}" for p, x in rec["paths"].items()) + f" (loss -{rec['gainVsOff']:.3f})")
-            lst.sort(key=lambda c: c.loss)
-    T["preEq"] = time.time() - t_pre
     t_mark = time.time()
     # ---- stage 2 -----------------------------------------------------------------------------------------------------
     refined: list[Scored] = []
@@ -555,7 +531,6 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         log(f"stage2 {topo} [{k + 1}/{kk}] {s.combo.describe()} (screen loss {s.loss:.3f})")
         sp = Space.for_combo(s.combo, plan.filters)
         v0 = sp.default()
-        v0.update(s.extra.get("pre", {}))           # the pre-EQ the grid chose (fixed through stage 2)
         if "blend" in v0:
             v0["blend"] = s.blend
         v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + len(refined) * 10,
@@ -572,6 +547,46 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     unrefined = sorted([c for c in unrefined if np.isfinite(c.loss)], key=lambda c: c.loss)
     refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
+
+    # ---- pre-EQ before the drive (v0.4M B4): after stage 2, on the refined winner(s), confirmed by a short re-fit -------------
+    t_pre = time.time()
+    nums = di_spectrum_numbers(ex.x[ex.lead:], tgt.starts)
+    wide = widening(nums)
+    log(f"pre-EQ: DI tilt {nums['diTilt']:+.2f} dB/oct, low excess {nums['diLowExcess']:+.2f} dB; widened: "
+        f"{', '.join(wide['widened']) or 'none'}")
+    pre_res: dict = {**nums, "widened": wide["widened"], "ablated": "preeq" in ablate, "candidates": [], "chosen": {},
+                     "gainVsOff": 0.0, "keepDb": PRE_CONFIRM_DB, "grid": {}}
+    pre_gain: dict = {}
+    if "preeq" not in ablate:
+        n_per = 1 if plan.mode == "quick" else 2            # quick: the winner only; thorough: also the runner-up
+        for topo in TOPOLOGIES:
+            for c in sorted((x for x in refined if x.topology == topo), key=lambda x: x.loss)[:n_per]:
+                sp = Space.for_combo(c.combo, plan.filters)
+                rec = preeq_candidate(eng, c, sp, ex, tgt, wide, v0=c.extra["params"])
+                entry = {k: rec[k] for k in ("topology", "captures", "renders", "paths")}
+                entry.update(offLoss=c.loss, gridBest=rec["loss"], kept=False, refitLoss=None, gain=0.0, pairKey=list(c.combo.pair_key()))
+                if rec["gainVsOff"] > 0:
+                    v0 = {**c.extra["params"], **rec["params"]}
+                    v_new, r_new, info_new = refine_combo(
+                        eng, c.combo, sp, ex, tgt, c.align, v0, seed=cfg.seed * 1000 + 980 + len(pre_res["candidates"]),
+                        gens_linear=PRE_REFIT_L1, pop_linear=plan.pop_linear, gens_gain=max(2, plan.gens_gain // 2),
+                        pop_gain=plan.pop_gain, gens_final=max(3, plan.gens_final // 2), patience=plan.patience,
+                        patience_gain=plan.patience_gain, tol=plan.plateau_tol, gex=gex, gtgt=gtgt,
+                        short_linear=plan.short_linear, levels=c.levels, log=lambda *_: None)
+                    entry.update(refitLoss=r_new.total, gain=c.loss - r_new.total)
+                    if c.loss - r_new.total >= PRE_CONFIRM_DB:
+                        new = finish_refined(c.combo, c, v_new, r_new, info_new)
+                        refined[next(i for i, x in enumerate(refined) if x is c)] = new
+                        entry["kept"] = True
+                        pre_gain[c.combo.pair_key()] = c.loss - r_new.total
+                        log(f"pre-EQ {topo}: " + "; ".join(f"path {p} {x['chosen']}" for p, x in rec["paths"].items())
+                            + f" kept after the re-fit (refined loss {c.loss:.3f} -> {r_new.total:.3f})")
+                    else:
+                        log(f"pre-EQ {topo}: grid pick ({'; '.join(x['chosen'] for x in rec['paths'].values())}) not confirmed "
+                            f"(refined loss {c.loss:.3f} vs {r_new.total:.3f} with it): pre-EQ stays off")
+                pre_res["candidates"].append(entry)
+        refined.sort(key=lambda c: c.loss)
+    T["preEq"] = time.time() - t_pre
 
     # ---- cab / IR breadth (v0.4M Task B): every pool cab on the top candidates per topology --------------------------
     cab_sweeps: list[dict] = []
@@ -748,6 +763,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         (f"pre.{p}.hpf", 0.0), (f"pre.{p}.mid_db", 0.0), (f"pre.{p}.mid_hz", 800.0), (f"pre.{p}.shelf_db", 0.0))))
         for p in (("a", "b") if best.combo.topology == "blend" else ("a",))}
     pre_res["gainVsOff"] = pre_gain.get(best.combo.pair_key(), 0.0)
+    pre_res["grid"] = next((c["paths"] for c in pre_res["candidates"] if c["topology"] == best.topology), {})   # the winner topology's grid, per path
     result["preEq"] = pre_res
     if cfg.trace_tones:
         t_tr = time.time()
@@ -860,7 +876,6 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             v_alt, gdb = s.extra["params"], s.extra["outputGainDb"]
         else:
             v_alt, gdb = Space.for_combo(s.combo).default(), 0.0
-            v_alt.update(s.extra.get("pre", {}))
             if "blend" in v_alt:
                 v_alt["blend"] = s.blend
             if s.levels is not None:
