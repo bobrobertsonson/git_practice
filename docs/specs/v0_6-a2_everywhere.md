@@ -58,3 +58,31 @@ filtering in the device path).
 Tasks A–C reviewer-ACCEPTed with tests; full suite green (gcc + clang `-Werror`, ctest, Python, pluginval 10,
 macOS auval + pluginval); REPORT `docs/specs/v0_6-a2_everywhere_REPORT.md` with the audit table, CPU table,
 validation numbers, and the user's Task D result once run.
+
+## Lead decisions (v0.6 lead, 2026-10-07)
+
+1. **Base.** Branch `claude/sawblade-v0_6-a2` from `4d580a2`, with the reviewer-accepted v0.4M head (`bbae365`,
+   `claude/sawblade-v0_4m-matcher-feel`) merged in (`6701294`), so the `anagram` profile extends the real
+   `export/notes.py` (`NOTES_VERSION` 1) instead of a copy of its format. **Dependency:** v0.4M must be merged into
+   the working branch before (or together with) v0.6. If v0.4M changes after `bbae365`, the integration lead
+   merges v0.4M first; v0.6 adds nothing to `notes.py` that v0.4M's tests rely on.
+2. **Who does what.** Task A is split: match-engineer audits the trainer side (A2 definition, sizes, presets,
+   `match/` inventory) and generates the fixtures; dsp-engineer audits the core/plugin side (pinned core's A2
+   support, `core/` + `plugin/` inventory). Task B = dsp-engineer; Task C = match-engineer (+ dsp-engineer for the
+   export panel's three-way choice). Reviewer on every task.
+3. **Fixtures.** Tiny A2 Full / A2 Lite / A1 `.nam` files are trained or initialised with the pinned trainer
+   (`neural-amp-modeler==0.13.0`) from synthetic signals only, plus the trainer's own forward-pass output on a
+   fixed synthetic input (the null-test reference). Generator script committed; the small fixtures are committed
+   under `tests/fixtures/a2/` (synthetic, no TONE3000 data — allowed). Weights may be untrained/random-seeded:
+   the null test checks the player, not tone quality.
+4. **No dependency bump** in this phase unless Task A proves the pinned core cannot play an A2 variant the Anagram
+   accepts; then it is a proposal in the REPORT + reviewer ACCEPT + THIRD_PARTY.md entry before any change.
+5. **CPU numbers** come from a ctest-registered benchmark that prints a table (not a pass/fail on absolute time
+   except the stated real-time margin for the two-A2-Full rig at 64 samples on macOS CI); numbers are copied from
+   the CI logs into the REPORT.
+6. **Anagram claims.** Only the published block list (Neural Amp / Neural Pedal / Neural Loader, IR, compressor,
+   gate, EQ) and "up to three NAM blocks" are used; nothing about internals, CPU limits or firmware behaviour
+   beyond the user's statement (KosmOS 1.16+ plays A2 Full / A2 Lite / A1).
+7. **device-null** (Task D tool) is built in Task C by match-engineer as `sawblade-calibrate device-null`
+   (align by cross-correlation + gain match, residual dB overall and per octave band, `listen/` A/B pair); it is
+   tested on synthetic data (a known delay + gain + filter must be recovered and reported).
