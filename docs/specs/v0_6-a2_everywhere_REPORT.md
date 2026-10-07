@@ -190,6 +190,13 @@ forward-derived values within 1e-4 relative (`packedForwardMaxAbsDiff` 1e-6 abso
 
 Run by the user; the lead relays these steps. Result: PENDING.
 
+Device: **KosmOS 1.17 assumed** (user: "assume the latest"; 1.17 per the main lead from press sources, 2026-08-11), **not yet
+read off the device**. 1.16 introduced the Neural Amp / Neural Pedal / Neural Loader blocks (up to three NAM instances, A2
+Full / A2 Lite / A1); 1.17 adds a TONE3000 block for library captures. A Sawblade export is a local file for your own use:
+load it in a **Neural Amp** block, not the TONE3000 block, and do not upload it to TONE3000 (models trained from
+TONE3000 captures need the creators' permission to share).
+
+0. **Confirm the KosmOS version** on the Anagram (1.16 or later is required) and send it back.
 1. **Export** one matched preset from the plugin's EXPORT panel (or `sawblade-export`) as **A2 FULL**, **no-cab**,
    with a shared cab (live-compatible blend). The export folder then holds `<name>-nocab-full.a2_full.nam`,
    `<name>-nocab.ir.wav` (cab + post EQ folded), the container and Lite files, `export_report.json`,
