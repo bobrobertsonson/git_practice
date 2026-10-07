@@ -200,7 +200,7 @@ class TokenManager:
 
     def __init__(
         self,
-        client_id: str,
+        client_id: str | None,
         http: httpx.Client,
         store: TokenStore | None = None,
         env_refresh_token: str | None = None,
@@ -247,8 +247,14 @@ class TokenManager:
             return self._refresh(rt).access_token
 
     def _refresh(self, refresh_token: str) -> Session:
+        # Same resolution as the CLI: the explicit/env id first, else the one stored in the token file.
+        cid = self.client_id or (self._session.client_id if self._session else None)
+        if not cid:
+            raise AuthError("token refresh needs the publishable client id: TONE3000_CLIENT_ID is not set and the "
+                            "token file has no client_id. Fix: export TONE3000_CLIENT_ID=t3k_pub_..., or set it "
+                            "in the plugin Settings and run login again")
         r = self._http.post("/api/v1/oauth/token", data={
-            "grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": self.client_id})
+            "grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": cid})
         if r.status_code in (400, 401):
             self._session = None
             self.store.clear()

@@ -170,9 +170,10 @@ def test_cli_pull_writes_manifest_and_table(cli_env, api, tmp_path, capsys):
     assert SECRET_ACCESS not in out
 
 
-def test_cli_missing_client_id(monkeypatch, capsys):
+def test_cli_missing_client_id(monkeypatch, tmp_path, capsys):
     monkeypatch.delenv("TONE3000_CLIENT_ID", raising=False)
-    assert cli.main(["whoami"]) == 1
+    monkeypatch.setenv("SAWBLADE_T3K_TOKEN_FILE", str(tmp_path / "none.json"))
+    assert cli.main(["login"]) == 1   # only login strictly needs a client id
     assert "TONE3000_CLIENT_ID" in capsys.readouterr().err
 
 
