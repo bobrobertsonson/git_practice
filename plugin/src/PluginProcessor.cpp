@@ -856,12 +856,22 @@ void SawbladeProcessor::onTrimResult(const LevelWorker::TrimResult& r) {  // lev
   }
 }
 
-void SawbladeProcessor::levelTick() {
+void SawbladeProcessor::syncLevelMatchSetting() {
   const bool on = settings::Settings::shared().levelMatch();
   if (levelMatchOn_.exchange(on) != on) {  // a LEVEL MATCH toggle retries what could not be measured
     std::lock_guard<std::mutex> lk(levelMutex_);
     failedTrims_.clear();
   }
+}
+
+bool SawbladeProcessor::levelMatchEnabled() {
+  syncLevelMatchSetting();
+  return levelMatchOn_.load();
+}
+
+void SawbladeProcessor::levelTick() {
+  syncLevelMatchSetting();
+  const bool on = levelMatchOn_.load();
   if (!on) return;
   // The hash of the measurement preset, recomputed only when the preset or a parameter changed (this runs at 10 Hz).
   const ParamValues pv = readParams();

@@ -714,6 +714,25 @@ TEST_CASE("browser: USE with LEVEL MATCH off swaps without make-up, at once", "[
   CHECK(rig.proc.levelWorker().makeupJobsRun() == 0);
 }
 
+TEST_CASE("browser: levelMatchEnabled follows the LEVEL MATCH setting at once, without a timer tick", "[browser][ui][levelmatch]") {
+  using sawblade::plugin::settings::Settings;
+  {  // setting off at construction: no stale default of "on" before the first 10 Hz tick
+    SwapRig rig(R"({"levelMatch": false})");
+    CHECK_FALSE(rig.proc.levelMatchEnabled());
+    // toggled in the store: the very next call sees it
+    Settings::shared().setLevelMatch(true);
+    CHECK(rig.proc.levelMatchEnabled());
+    Settings::shared().setLevelMatch(false);
+    CHECK_FALSE(rig.proc.levelMatchEnabled());
+  }
+  {  // setting on
+    SwapRig rig("{}");
+    CHECK(rig.proc.levelMatchEnabled());
+    Settings::shared().setLevelMatch(false);
+    CHECK_FALSE(rig.proc.levelMatchEnabled());
+  }
+}
+
 TEST_CASE("browser: the preview is level matched (make-up and trim, no peak normalisation) when LEVEL MATCH is on", "[browser][ui][levelmatch]") {
   SwapRig rig("{}");
   const Preset cur = rig.proc.currentPreset();

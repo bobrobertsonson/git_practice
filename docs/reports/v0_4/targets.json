@@ -63,17 +63,17 @@
     "ts": {
       "family": "Tube Screamer family (pedal.ts, modelVersion 1)",
       "param_map": {"Drive": "drive", "Tone": "tone", "Level": "level"},
-      "label_regex": null,
+      "label_regex": "Lvl(Max|\\d+)_OD(Max|\\d+)_T(Max|\\d+)",
+      "label_groups": ["level", "drive", "tone"],
+      "label_note": "v24x names (tone 30104), e.g. 39-TS808_Hot_LvlMax_OD5_T4 or 45-TS808_Hot_Lvl6_OD0_T5: Lvl<n> = Level, OD<n> = Drive, T<n> = Tone. Digits are taken as given on the 0-10 knob scale and 'Max' = 10. Level is a pure output gain (solved in closed form), so only drive and tone are pinned.",
       "tones": [
         {"tone_id": 30104, "unit": "TS808 (JRI)", "group": "ts808", "models": []},
         {"tone_id": 92212, "unit": "TS-style overdrive (candidate)", "group": "ts", "models": []},
-        {"tone_id": 70280, "unit": "boost pack: TS-style models only (restrict with --model)", "group": "ts-pack", "models": []}
+        {"tone_id": 70280, "unit": "boost pack: TS circuits only (577277 TS 808 BOOST, 577278 TS 808 MOD)", "group": "ts-pack", "models": [577277, 577278]}
       ],
-      "to_resolve": [
-        {"what": "labelled knob settings of the TS captures (read the model names after the pull)", "search": ["TS808", "tube screamer"]}
-      ],
+      "to_resolve": [],
       "assumed": {},
-      "assumed_rule": "No pins are assumed until the model names are read; add \"assumed\" entries (drive/tone) or a label_regex, then re-run."
+      "assumed_rule": "Pins come from the v24x label_regex only (see label_note); the other 70280 models (DS-1, Klon, Grind, Hex, SansAmp, Badass, Plumes, SD-1) are not TS circuits and are listed in the report as 'Other circuits (not scored)' when a fits file holds them."
     },
     "muff": {
       "family": "Big-fuzz family (pedal.muff, modelVersion 1)",

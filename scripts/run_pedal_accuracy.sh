@@ -14,6 +14,7 @@ cd "$ROOT"
 DI=""
 PEDALS="hm hmx eye ts"
 PULL=1
+MANIFEST="$HOME/sawblade-work/pedal_pool.json"   # the pull manifest: names, licences, creators of the pedal captures
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --di) DI="$2"; shift 2 ;;
@@ -41,7 +42,7 @@ echo "log: $LOG"
   if [[ $PULL -eq 1 ]]; then
     echo "== pulling pedal captures (needs your TONE3000 login)"
     "$VENV/sawblade-t3k" pull --no-trending --no-latest --gear pedal --max-models-per-tone 12 \
-      --manifest "$HOME/sawblade-work/pedal_pool.json" \
+      --manifest "$MANIFEST" \
       --force-tone 58569 --force-tone 74487 --force-tone 78122 --force-tone 88604 --force-tone 6778 \
       --force-tone 72990 --force-tone 60618 --force-tone 62523 \
       --force-tone 30104 --force-tone 92212 --force-tone 70280
@@ -49,11 +50,11 @@ echo "log: $LOG"
   FITS=()
   for p in $PEDALS; do
     echo "== $(date) fitting $p"
-    "$VENV/sawblade-calibrate" pedal-fit --pedal "$p" --di "$DI" --work "$W" --out "$O" --jobs 4 --merge \
+    "$VENV/sawblade-calibrate" pedal-fit --pedal "$p" --di "$DI" --work "$W" --out "$O" --jobs 4 --merge --manifest "$MANIFEST" \
       || echo "WARN: $p fit failed (see above); continuing"
     [[ -f "$O/fits_$p.json" ]] && FITS+=(--fits "$O/fits_$p.json")
   done
   echo "== report"
-  "$VENV/sawblade-calibrate" pedal-accuracy --out "$O/accuracy.md" --known-answers "$O/known_answers.json" "${FITS[@]}"
+  "$VENV/sawblade-calibrate" pedal-accuracy --manifest "$MANIFEST" --out "$O/accuracy.md" --known-answers "$O/known_answers.json" "${FITS[@]}"
   echo "== $(date) done. Report: $O/accuracy.md"
 } 2>&1 | tee -a "$LOG"
