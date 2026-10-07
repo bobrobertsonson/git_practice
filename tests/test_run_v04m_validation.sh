@@ -142,6 +142,71 @@ out="$(V04M_PY="$SD/python" bash "$script" "${sargs[@]}")"
 expect 'built with other settings \(or none recorded\)'
 expect '--thorough --out .*/refs_out/L_blend$'
 
+# real (non-dry) runs with stubs and a temp $OUT: stale / failed blend references remove what was derived from them, per side
+R3="$T/real"; mkdir -p "$R3/stub" "$R3/home" "$R3/rs"
+for f in "20 GTR RHY R DI.wav" "21 GTR RHY R HM2 AMP.wav" "22 GTR RHY R UBR AMP.wav"; do : >"$R3/rs/$f"; done
+printf '#!/usr/bin/env bash\nexit 0\n' >"$R3/stub/cmake"; cp "$R3/stub/cmake" "$R3/stub/pip"
+cat >"$R3/stub/python" <<'STUB'
+#!/usr/bin/env bash
+# --settings-key echoes the args; a refsum building R_blend fails when STUB_FAIL_R is set; everything else succeeds
+if [[ "$*" == *--settings-key* ]]; then echo "KEY[$*]"; exit 0; fi
+if [[ "$*" == *matcher.refsum* && "$*" == *R_blend.wav* && -n ${STUB_FAIL_R:-} ]]; then exit 2; fi
+exit 0
+STUB
+cat >"$R3/stub/match" <<'STUB'
+#!/usr/bin/env bash
+out=""
+while [[ $# -gt 0 ]]; do [[ $1 == --out ]] && out="$2"; shift; done
+mkdir -p "$out/listen"; : >"$out/result.json"
+STUB
+chmod +x "$R3/stub"/*
+LKEY='KEY[-m sawblade_match.matcher.refsum --settings-key --blend-db 0,0 --polarity auto]'
+mk_state() {      # every blend artefact of both sides present; the L reference current, the R one built with other settings
+  rm -rf "$R3/out"; mkdir -p "$R3/out/refs"
+  for r in L_blend R_blend; do
+    mkdir -p "$R3/out/$r"
+    : >"$R3/out/$r/result.json"; : >"$R3/out/$r/pathcheck.json"; : >"$R3/out/$r/dynsweep.json"
+    : >"$R3/out/refs/$r.wav"
+  done
+  : >"$R3/out/L_blend_on_R.pathcheck.json"
+  printf '{"settingsKey": "%s"}\n' "$LKEY" >"$R3/out/refs/L_blend.json"
+  printf '{"settingsKey": "OLD"}\n' >"$R3/out/refs/R_blend.json"
+}
+real() {          # real RUN_ARGS...: the full (non-quick) script on the temp $OUT, stubs for every tool
+  HOME="$R3/home" V04M_CMAKE="$R3/stub/cmake" V04M_PIP="$R3/stub/pip" V04M_PY="$R3/stub/python" V04M_MATCH="$R3/stub/match" \
+    bash "$script" --bb "$T/bb" --irs "$T/irs" --pool "$T/pool.json" --out "$R3/out" --r-search-dir "$R3/rs" "$@" 2>&1
+}
+gone() { [[ ! -e "$1" ]] || { echo "NOT REMOVED: $1" >&2; fail=1; }; }
+kept() { [[ -e "$1" ]] || { echo "WRONGLY REMOVED: $1" >&2; fail=1; }; }
+# (1) only the R reference is stale: R's results and the held-out transfer go, the L side stays
+mk_state
+set +e; out="$(real)"; rc=$?; set -e
+[[ $rc -eq 0 ]] || { echo "stale-R run: exit $rc, wanted 0" >&2; fail=1; }
+expect 'R_blend reference exists but was built with other settings'
+expect '^skip L_blend reference \(exists with the same settings'
+expect '^skip L_blend '
+expect '^done R_blend in '                       # redone although result.json existed
+gone "$R3/out/R_blend/pathcheck.json"; gone "$R3/out/R_blend/dynsweep.json"; gone "$R3/out/L_blend_on_R.pathcheck.json"
+kept "$R3/out/L_blend/pathcheck.json"; kept "$R3/out/L_blend/dynsweep.json"; kept "$R3/out/L_blend/result.json"; kept "$R3/out/refs/L_blend.wav"
+grep -qF "$LKEY" "$R3/out/refs/L_blend.json" || { echo "L reference JSON changed" >&2; fail=1; }
+# (2) a failing refsum for R: its old reference, results and the transfer are removed (not presented as current); L stays
+mk_state
+set +e; out="$(STUB_FAIL_R=1 real)"; rc=$?; set -e
+[[ $rc -eq 1 ]] || { echo "failed-refsum run: exit $rc, wanted 1" >&2; fail=1; }
+expect '^FAILED R_blend reference'
+expect '^skip R_blend \(no R blend reference\)'
+gone "$R3/out/R_blend/result.json"; gone "$R3/out/R_blend/pathcheck.json"; gone "$R3/out/R_blend/dynsweep.json"
+gone "$R3/out/refs/R_blend.wav"; gone "$R3/out/refs/R_blend.json"; gone "$R3/out/L_blend_on_R.pathcheck.json"
+kept "$R3/out/L_blend/result.json"; kept "$R3/out/L_blend/pathcheck.json"; kept "$R3/out/refs/L_blend.wav"; kept "$R3/out/refs/L_blend.json"
+# (3) the L reference stale: L's results and the transfer go; R stays
+mk_state
+printf '{"settingsKey": "OLD"}\n' >"$R3/out/refs/L_blend.json"
+printf '{"settingsKey": "%s"}\n' "$LKEY" >"$R3/out/refs/R_blend.json"
+set +e; out="$(real)"; rc=$?; set -e
+expect '^done L_blend in '
+gone "$R3/out/L_blend/pathcheck.json"; gone "$R3/out/L_blend_on_R.pathcheck.json"
+kept "$R3/out/R_blend/pathcheck.json"; kept "$R3/out/R_blend/dynsweep.json"
+
 # a missing L file: ls of the Bloodbath folder and exit 1
 rm "$T/bb/19 GTR RHY L UBR AMP.wav"
 set +e

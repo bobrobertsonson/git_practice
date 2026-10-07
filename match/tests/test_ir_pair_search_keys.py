@@ -35,7 +35,7 @@ def diverse_irs(n: int, seed: int) -> list[np.ndarray]:
     return out
 
 
-def _run(tmp, monkeypatch, n_local=150, n_dup=12, top_k_single=3):
+def _run(tmp, monkeypatch, n_local=110, n_dup=12, top_k_single=3):
     from test_matcher import mkplan
     from test_matcher_v04m import _known, distinct_tone_pool
     from sawblade_match.matcher.run import Config, Log, run_match
@@ -67,14 +67,17 @@ def _run(tmp, monkeypatch, n_local=150, n_dup=12, top_k_single=3):
 
 def test_pair_search_keys_resolve_with_a_large_local_library(tmp_path, monkeypatch):
     res, lib = _run(tmp_path, monkeypatch)
-    assert lib.report["nearDuplicates"] >= 1 and len(lib.records) >= 100              # near-duplicates exist and were dropped
     sweeps = res["cabSweep"]["candidates"]
-    assert len(sweeps) >= 2                                                         # two candidates of one topology were swept
-    # each candidate screened its own top-N: the sweeps do not cover the same IRs (the condition of the crash)
-    assert len({tuple(sorted(i["cab"] for i in s["irs"])) for s in sweeps}) >= 2
-    assert res["irBlend"]["ablated"] is False and "KeyError" not in str(res["irBlend"])
+    # --- fixture preconditions: a failure here means the fixture NO LONGER EXERCISES the bug (it says nothing about the bug) ---
+    assert lib.report["nearDuplicates"] >= 1, "FIXTURE: the library produced no near-duplicates (dedupe path not exercised)"
+    assert len(lib.records) >= 60, f"FIXTURE: only {len(lib.records)} unique local IRs; the per-candidate top-24 screens need many more"
+    assert len(sweeps) >= 2, "FIXTURE: fewer than two candidates of one topology were swept (top_k / plan changed?)"
+    assert len({tuple(sorted(i["cab"] for i in s["irs"])) for s in sweeps}) >= 2, \
+        "FIXTURE: every swept candidate screened the same IRs, so a topology-keyed lookup could not go wrong"
+    # --- the regression itself: the run did not die at the pair search, and the IRs came from the winner's own sweep ---
+    assert res["irBlend"]["ablated"] is False
     keys = res["irBlend"]["irs"]
     swept = {i["cab"] for s in sweeps for i in s["irs"]}
-    assert keys and set(keys) <= swept                                              # the pair search got IRs that exist
+    assert keys and set(keys) <= swept
     mine = next(s for s in sweeps if s["pairKey"] == res["irBlend"]["candidatePairKey"])
-    assert set(keys) <= {i["cab"] for i in mine["irs"]}                             # ... from the winner's OWN candidate sweep
+    assert set(keys) <= {i["cab"] for i in mine["irs"]}

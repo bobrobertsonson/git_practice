@@ -66,6 +66,7 @@ def test_blend_reference_polarity_choice_is_printed(tmp_path):
         "lagMs": 1.95, "corr": 0.269, "refRatioDb": 3.1, "gainsDb": [0.0, 0.0]}))
     (tmp_path / "refs" / "R_blend.json").write_text(json.dumps({"gainsDb": [0.0, 0.0], "polarity": 1}))   # an old reference
     txt = VS.summary(tmp_path)
-    assert "polarity auto -> invert-b" in txt and "as recorded -41.2 dB" in txt or "as recorded -41.3 dB" in txt
+    assert "polarity auto -> invert-b" in txt
+    assert ("as recorded -41.2 dB" in txt) or ("as recorded -41.3 dB" in txt)      # -41.25 rounds either way
     assert "b inverted -30.5 dB" in txt and "lag 1.95 ms (not shifted)" in txt
     assert "refs/R_blend: polarity: not recorded" in txt

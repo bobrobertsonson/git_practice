@@ -90,3 +90,27 @@ def test_run_emits_live_presets_scores_in_record_and_writes_render_live(tmp_path
     assert ra == rb and len(a) == len(b)
     assert set(res["best"]["fullLengthPeakDbfs"]) == {"best_L", "live_L"}          # the live render feeds the clip guard too
     assert "lufsRenderLive" in lst and "renderLive" in lst["truePeakDb"]
+
+
+def test_clip_guard_and_gain_do_not_depend_on_listen(tmp_path):
+    """The live render exists only with --listen (write_audio); the emitted gainDb, the guard cut and the level-dependent
+    tonecheck numbers must be identical with and without it. A hot R DI makes the guard act."""
+    res = {}
+    for tag, listen in (("off", False), ("on", True)):
+        d = tmp_path / tag
+        d.mkdir()
+        pool, combo, di, ref = _setup_known(d, "single")
+        x, fs = sf.read(str(di), dtype="float32")
+        di_r = d / "di_r.wav"
+        sf.write(str(di_r), x * 20.0, fs, subtype="FLOAT")
+        cfg = Config(di=di, ref=ref, pool=pool, out=d / "out", seed=1, excerpt_s=2.0, threads=2, di_r=di_r,
+                     plan=mkplan(top_k={"blend": 0, "single": 1, "single2": 0}), write_audio=listen, refine_offsets=False)
+        res[tag] = run_match(cfg, Log())
+    off, on = res["off"]["best"], res["on"]["best"]
+    assert off["clipGuardDb"] < -0.1                                    # the guard acted (so the comparison means something)
+    assert on["clipGuardDb"] == off["clipGuardDb"] and on["outputGainDb"] == off["outputGainDb"]
+    assert res["on"]["after"][0]["aWeightedErrorDb"] == res["off"]["after"][0]["aWeightedErrorDb"]
+    assert json.loads((tmp_path / "on" / "out" / on["preset"]).read_text())["output"]["gainDb"] == \
+        json.loads((tmp_path / "off" / "out" / off["preset"]).read_text())["output"]["gainDb"]
+    assert "live_L" in on["fullLengthPeakDbfs"] and "live_L" not in off["fullLengthPeakDbfs"]      # reported only with --listen
+    assert set(on["fullLengthPeakAfterGuardDbfs"]) >= {"best_L", "best_R", "live_L"}

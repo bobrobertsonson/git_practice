@@ -823,9 +823,14 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     renders = {n: (y, fs, rep) for n, y, fs, rep in eng.map(full_render, list(full_jobs.items()))}
     lap("fullRenders")
     prog.update(0.5, "measuring the result")
-    peaks = {n: float(np.max(np.abs(renders[n][0]))) for n in renders if n.startswith("best") or n == "live_L"}   # live set too
+    # The guard acts on the RECORD renders only, exactly as before G.4: the live render exists only with --listen, and the emitted
+    # gainDb, the cut and the level-dependent tonecheck numbers must not depend on that. The live peak is reported and warned about.
+    peaks = {n: float(np.max(np.abs(renders[n][0]))) for n in renders if n.startswith("best")}
     peak = max(peaks.values())
-    best.extra["fullLengthPeakDbfs"] = {n: float(20 * np.log10(max(p, 1e-12))) for n, p in peaks.items()}
+    live_peak = float(np.max(np.abs(renders["live_L"][0]))) if "live_L" in renders else None
+    db = lambda p_: float(20 * np.log10(max(p_, 1e-12)))
+    best.extra["fullLengthPeakDbfs"] = {**{n: db(p_) for n, p_ in peaks.items()}, **({} if live_peak is None else {"live_L": db(live_peak)})}
+    cut = 0.0
     if peak >= 10 ** (CLIP_GUARD_DBFS / 20):
         cut = 20 * np.log10(10 ** (CLIP_GUARD_DBFS / 20) / peak)
         gain_db += cut
@@ -833,15 +838,18 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         for n in peaks:
             y, fs, rep = renders[n]
             renders[n] = ((y * 10 ** (cut / 20)).astype(np.float32), fs, rep)
-        loud = max(peaks, key=peaks.get)
-        log(f"clip guard: full-length peak (max of L/R{' and the live render' if 'live_L' in peaks else ''}; loudest: {loud}) "
-            f"{20 * np.log10(peak):.1f} dBFS -> output gain lowered by {-cut:.1f} dB")
-        if loud == "live_L":
-            log("warning: the live-dynamics render is the loudest (the record set's compression holds its peak down); the "
-                "output gain was lowered for it")
+        log(f"clip guard: full-length peak (max of L/R) {20 * np.log10(peak):.1f} dBFS -> output gain lowered by {-cut:.1f} dB")
         best.extra["clipGuardDb"] = float(cut)
+    if live_peak is not None:                  # same gain as the record render (the preset's gain), reported, never steering it
+        y, fs, rep = renders["live_L"]
+        renders["live_L"] = ((y * 10 ** (cut / 20)).astype(np.float32), fs, rep)
+        live_after = live_peak * 10 ** (cut / 20)
+        if live_after >= 10 ** (CLIP_GUARD_DBFS / 20):
+            log(f"warning: the live-dynamics render peaks at {db(live_after):.1f} dBFS (above the {CLIP_GUARD_DBFS:g} dBFS guard ceiling; "
+                "the record set's compression holds the scored renders lower). The output gain is NOT changed for it.")
+            best.extra["liveClipWarning"] = True
     best.extra["fullLengthPeakAfterGuardDbfs"] = {n: float(20 * np.log10(max(float(np.max(np.abs(renders[n][0]))), 1e-12)))
-                                                  for n in peaks}
+                                                  for n in list(peaks) + (["live_L"] if live_peak is not None else [])}
     result["clipped"] = bool(max(float(np.max(np.abs(renders[n][0]))) for n in peaks) >= 1.0)
 
     targets = profile

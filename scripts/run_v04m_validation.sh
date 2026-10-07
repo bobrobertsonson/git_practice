@@ -237,6 +237,20 @@ say "Check the printout: accepted / unique counts, rejected by reason, near-dupl
 # make_blend SIDE HM2 BODY: $OUT/refs/SIDE_blend.wav (+ .json) from refsum; resumable. Sets BLEND_OK_<SIDE>.
 BLEND_OK_L=0; BLEND_OK_R=0
 BLEND_STALE_L=0; BLEND_STALE_R=0      # 1: the reference was rebuilt with other settings, so the runs that used it are redone
+# drop_blend SIDE [refs]: remove what was derived from (or built as) the side's blend reference: the blend runs' results,
+# pathchecks and dynamics sweeps, and the held-out transfer (scored against the R reference with the L preset, so either
+# side's change invalidates it); with "refs" the old reference itself too. Never touches the other side's files.
+drop_blend() {
+  local side="$1" n
+  [[ $DRY -eq 1 ]] && return 0
+  for n in "${side}_blend" "${side}_blend_quick"; do
+    rm -f "$OUT/$n/result.json" "$OUT/$n/pathcheck.json" "$OUT/$n/dynsweep.json"
+  done
+  rm -f "$OUT/L_blend_on_R.pathcheck.json"
+  [[ ${2-} == refs ]] && rm -f "$OUT/refs/${side}_blend.wav" "$OUT/refs/${side}_blend.json"
+  return 0
+}
+
 make_blend() {
   local side="$1" a="$2" b="$3"
   local wav="$OUT/refs/${side}_blend.wav" js="$OUT/refs/${side}_blend.json"
@@ -251,6 +265,7 @@ make_blend() {
     fi
     say "${side}_blend reference exists but was built with other settings (or none recorded); rebuilding it, and the ${side} blend runs that used it are redone"
     eval "BLEND_STALE_$side=1"
+    drop_blend "$side"
   fi
   say "ref  ${side}_blend (HM2 + body, faders $BLEND_DB dB, polarity $BLEND_POLARITY)"
   if [[ $DRY -eq 1 ]]; then
@@ -259,7 +274,8 @@ make_blend() {
   elif "$PY" -m sawblade_match.matcher.refsum --a "$a" --b "$b" --out "$wav" --blend-db "$BLEND_DB" --polarity "$REFSUM_POL" --json "$js"; then
     eval "BLEND_OK_$side=1"
   else
-    say "FAILED ${side}_blend reference (refsum); the ${side} blend runs are skipped" >&2
+    say "FAILED ${side}_blend reference (refsum); the ${side} blend runs are skipped and their old results removed" >&2
+    drop_blend "$side" refs
     FAILED+=("${side}_blend-ref")
   fi
 }
@@ -279,9 +295,6 @@ blend_run() {
   if [[ $ok -ne 1 ]]; then
     say "skip $name (no $side blend reference)"
     return 0
-  fi
-  if [[ $stale -eq 1 ]]; then      # the old result (and what was derived from it) belongs to the old reference
-    [[ $DRY -eq 1 ]] || rm -f "$OUT/$name/result.json" "$OUT/$name/pathcheck.json" "$OUT/$name/dynsweep.json" "$OUT/${name}_on_R.pathcheck.json"
   fi
   local force0=$FORCE
   [[ $stale -eq 1 ]] && FORCE=1
