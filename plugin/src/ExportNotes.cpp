@@ -378,7 +378,7 @@ std::string formatAnagramNotesTxt(const json& profile, const std::string& preset
   const json stages = profileStages(profile);
   const std::string message = firstString(profile, {"message"});
   if (stages.empty()) t += (message.empty() ? std::string(kNothing) : message) + "\n\n";
-  else t += "Blocks to set on the device, in signal order:\n\n";
+  else t += "Blocks to set on the device (KosmOS 1.16 or later), in signal order:\n\n";
   int i = 0;
   for (const json& st : stages) {
     ++i;

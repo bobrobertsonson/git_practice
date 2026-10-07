@@ -241,7 +241,10 @@ def test_anagram_gate_comp_posteq_nocab_blocks_order_and_numbers():
     assert gate["settings"]["range dB"] == -90 and "guitar input" in gate["settings"]["keyed on"]
     assert "FIRST" in gate["hardware"] and "before every NAM block" in gate["hardware"]
     assert model["settings"] == {"model": "x-nocab-full.a2_full.nam", "bypass": False}
-    assert "A2 Full" in model["hardware"] and "Neural Amp block" in model["hardware"]
+    assert "A2 Full" in model["hardware"] and "from file into the Neural Amp block" in model["hardware"]
+    assert "not the TONE3000 block" in model["hardware"] and "do not upload it to TONE3000" in model["hardware"]
+    assert "creators' permission" in model["hardware"] and "Up to three NAM blocks" in model["hardware"]
+    assert "KosmOS 1.16 or later" in prof["message"]
     # the post EQ is folded into the exported IR: no EQ block, the IR block says so
     assert ir["settings"] == {"file": "x-nocab.ir.wav", "normalise": False, "contains": "cab and post EQ"}
     assert "WITHOUT loudness normalisation" in ir["hardware"] and "post EQ" in ir["hardware"]
@@ -304,6 +307,7 @@ def test_write_export_notes_writes_both_text_files_and_the_device_profile(tmp_pa
     assert prof["file"] == a.name and a.is_file() and txt.is_file()
     body = a.read_text()
     assert body.startswith("Sawblade export notes for the Anagram - Golden shared (live-compatible)")
+    assert "Blocks to set on the device (KosmOS 1.16 or later), in signal order:" in body
     assert "1. Gate [1 (first in the chain)]" in body and "2. Neural Amp [2]  (model)" in body
     assert "   model: riff-nocab-full.a2_full.nam" in body and "   bypass: no" in body and "   threshold dBFS: -21" in body
     assert "Anagram chain: Gate -> Neural Amp -> IR -> Compressor" in body and body.rstrip().endswith("licence text")

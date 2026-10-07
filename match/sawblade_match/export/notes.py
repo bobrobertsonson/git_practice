@@ -293,7 +293,10 @@ def build_anagram_profile(preset: dict, plan, notes: dict, nam_name: str, ir_nam
     kind = "Neural Pedal" if drive_only else "Neural Amp"
     label = f" ({model_label})" if model_label else ""
     blocks.append({"stage": "model", "block": kind, "settings": {"model": nam_name, "bypass": False},
-                   "hardware": f"Load {nam_name}{label} into the {kind} block. Set the block's levels so the output "
+                   "hardware": f"Load {nam_name}{label} from file into the {kind} block (a Neural block, not the TONE3000 block). "
+                               "It is a local file for your own use: do not upload it to TONE3000 (models trained from "
+                               "TONE3000 captures need the creators' permission to share). Up to three NAM blocks (Neural "
+                               "Amp / Neural Pedal / Neural Loader) can run at once. Set the block's levels so the output "
                                "level matches the plugin by ear or meter."})
     cab, peq = by.get("cab"), by.get("postEq")
     if cab or (peq and peq["settings"].get("foldedIntoExportedIr")):
@@ -318,7 +321,7 @@ def build_anagram_profile(preset: dict, plan, notes: dict, nam_name: str, ir_nam
         b.setdefault("hardware", "")
     out = [{"stage": b["stage"], "block": b["block"], "position": b["position"], "settings": b["settings"],
             **({"hardware": b["hardware"]} if b["hardware"] else {})} for b in blocks]
-    prof = {"device": ANAGRAM_DEVICE, "message": "Blocks to set on the device, in signal order.", "stages": out,
+    prof = {"device": ANAGRAM_DEVICE, "message": "Blocks to set on the device, in signal order. Needs KosmOS 1.16 or later.", "stages": out,
             "loaderOrder": "Anagram chain: " + " -> ".join(b["block"] for b in blocks)}
     if file:
         prof["file"] = file
@@ -328,7 +331,7 @@ def build_anagram_profile(preset: dict, plan, notes: dict, nam_name: str, ir_nam
 def format_anagram_txt(profile: dict, preset_name: str | None = None, licence_note: str | None = None) -> str:
     """Text for ``<name>.anagram_notes.txt``; the same layout as the plugin's own rendering of the profile."""
     L = [f"Sawblade export notes for the Anagram{f' - {preset_name}' if preset_name else ''}", "",
-         "Blocks to set on the device, in signal order:", ""]
+         "Blocks to set on the device (KosmOS 1.16 or later), in signal order:", ""]
     for i, st in enumerate(profile["stages"], 1):
         L.append(f"{i}. {st['block']} [{st['position']}]" + (f"  ({st['stage']})" if st["stage"] != st["block"] else ""))
         for k in sorted(st["settings"]):

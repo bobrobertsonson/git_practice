@@ -638,7 +638,7 @@ that is NOT in the trained model, in signal order.
 
 v0.6 adds `exportNotes.deviceProfiles` (an object keyed by device; today only `anagram`) and a second text file
 `<stem>.anagram_notes.txt`. The `anagram` profile maps the same stages onto the Darkglass Anagram's **published block list**
-(Neural Amp / Neural Pedal / Neural Loader, IR, Compressor, Gate, EQ; up to three NAM blocks). Nothing is claimed about the
+(Neural Amp / Neural Pedal / Neural Loader, IR, Compressor, Gate, EQ; up to three NAM blocks; KosmOS 1.16 or later). Nothing is claimed about the
 device's internals, control scales or firmware: values are Sawblade's own (digital dBFS, ms, Hz) and the text says to match levels
 by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagramProfileOf`):
 
@@ -646,7 +646,7 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
 "deviceProfiles": { "anagram": {
   "device": "Anagram",
   "file": "<stem>.anagram_notes.txt",
-  "message": "Blocks to set on the device, in signal order.",
+  "message": "Blocks to set on the device, in signal order. Needs KosmOS 1.16 or later.",
   "loaderOrder": "Anagram chain: Gate -> Neural Amp -> IR -> Compressor",      // one string
   "stages": [                                                                  // signal order = chain order
     { "stage": "gate",    "block": "Gate",       "position": "1 (first in the chain)",
@@ -654,7 +654,7 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
                     "release ms": 60, "range dB": -90, "keyed on": "guitar input (the signal before any pedal or amp)" },
       "hardware": "Put the gate FIRST in the chain, before every NAM block, so it hears the guitar. ..." },
     { "stage": "model",   "block": "Neural Amp",  "position": "2",
-      "settings": { "model": "<stem>.a2_full.nam", "bypass": false }, "hardware": "Load ... into the Neural Amp block. ..." },
+      "settings": { "model": "<stem>.a2_full.nam", "bypass": false }, "hardware": "Load ... from file into the Neural Amp block (a Neural block, not the TONE3000 block). Local file for your own use: do not upload it to TONE3000. ..." },
     { "stage": "cab",     "block": "IR",          "position": "3",
       "settings": { "file": "<name>-nocab.ir.wav", "normalise": false, "contains": "cab and post EQ" },
       "hardware": "Load the IR WITHOUT loudness normalisation. ..." },
@@ -666,7 +666,7 @@ by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagram
 
 Mapping rules: the trained model is a **Neural Amp** block, or a **Neural Pedal** block for a *drive-only* export (no-cab export
 whose enabled non-EQ blocks are all explicitly pedals or boosts: `slot` "pedal"/"boost" or a `pedal.*` type; an unlabelled NAM block counts as an amp; a with-cab export is always a Neural Amp);
-`settings.model` is the primary file (A2: the standalone file `--size` names; the `.a2.nam` container is not named, whether the
+The model is always a local file loaded into a Neural block, never the TONE3000 block (which pulls library captures), and it is for the user's own use: the text says not to upload it to TONE3000, because models trained from TONE3000 captures need the creators' permission to share. `settings.model` is the primary file (A2: the standalone file `--size` names; the `.a2.nam` container is not named, whether the
 device takes a container is not published). The gate (if enabled) is the first block, before the model. The no-cab export's cab
 becomes an **IR** block right after the model; the exported IR already holds the post EQ, so the post EQ gets its own **EQ** block
 (`settings` = `band N`: description) only when it is not folded into the IR. The bus compressor (no-cab export with `--allow-inexact`)
