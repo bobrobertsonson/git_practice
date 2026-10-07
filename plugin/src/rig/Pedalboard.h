@@ -27,6 +27,8 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <map>
+#include <set>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -35,6 +37,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginProcessor.h"
+#include "browser/T3kClient.h"
 #include "rig/CapturePedals.h"
 #include "rig/PedalKind.h"
 #include "rig/PedalPicker.h"
@@ -46,8 +49,6 @@
 
 namespace sawblade::plugin::rig {
 
-// The blocks of `p` that are tiles: those before its amp (all of them when it has none).
-int boardBlockCount(const PathPreset& p);
 // The blocks after the amp (not tiles).
 int blocksAfterAmp(const PathPreset& p);
 // The name on a tile: CHAINSAW / BIG FUZZ / MODDED SAW / ONE-KNOB SAW (the circuit's generic descriptor), GREEN OVERDRIVE (pedal.ts),
@@ -61,7 +62,8 @@ class BoardTile : public juce::Component, public juce::SettableTooltipClient, pu
  public:
   enum class Gesture { Down, Drag, Up };
 
-  BoardTile(int path, int blockIndex, const Block& b, RigController& controller);
+  // `pp.blocks[blockIndex]` is the tile's block; it is a capture iff isCapturePedal(pp, blockIndex) (the one rule of the rig model).
+  BoardTile(int path, int blockIndex, const PathPreset& pp, RigController& controller);
   ~BoardTile() override;
 
   int path() const noexcept { return path_; }            // 0 = SAW (path A), 1 = BODY (path B)
@@ -84,8 +86,12 @@ class BoardTile : public juce::Component, public juce::SettableTooltipClient, pu
   const juce::String& captureLicence() const noexcept { return licence_; }  // upper case, "" when unknown
   PresetKnob* levelKnob() noexcept { return level_.get(); }
   void showLevel(double db);  // the block's output level, as the preset holds it (a knob being turned ignores it)
-  // The setting selector (shown only with >= 2 models): the cached models of the capture's tone, in setting order, and the current one.
+  // The setting selector (shown only with >= 2 models): the models of the capture's tone (cached ones, plus the tone's online list when the
+  // tool answered), in setting order, and the current one.
   void setSettings(std::vector<CachedModel> models, const std::string& currentModelId);
+  // While a model that is not cached yet downloads (the selector's online choice): the selector says so and is disabled.
+  void setFetching(bool f);
+  bool fetching() const noexcept { return fetching_; }
   const std::string& toneId() const noexcept { return toneId_; }    // the capture's TONE3000 tone ("" for a local file)
   const std::string& modelId() const noexcept { return modelId_; }
   bool hasSelector() const noexcept { return settings_.size() >= 2; }
@@ -112,6 +118,8 @@ class BoardTile : public juce::Component, public juce::SettableTooltipClient, pu
  private:
   void paintCapture(juce::Graphics& g);
   void layoutCapture();
+  void updateSelectorText();
+  bool fetching_ = false;
   int path_, index_;
   std::string id_;
   juce::String name_;
@@ -185,7 +193,6 @@ class Pedalboard : public juce::Component {
   bool addCapturePedal(int path, const Capture& capture);
   // Another model of a capture pedal's tone (the setting selector): the capture is swapped, make-up included, as one undo step.
   bool swapPedalCapture(int path, const std::string& id, const Capture& capture);
-  bool setPedalLevel(int path, const std::string& id, double db);  // the capture tile's LEVEL (one edit; the knob itself edits live)
   bool setPedalBypass(int path, const std::string& id, bool bypass);
   // The right-click / ctrl-click menu (BYPASS ticked while bypassed, REMOVE) and what its items do.
   juce::PopupMenu menuFor(const BoardTile& t) const;
@@ -196,6 +203,10 @@ class Pedalboard : public juce::Component {
   void closePicker();
   bool pickerOpen() const { return picker_ != nullptr && picker_->isVisible(); }
   PedalPicker* picker() { return picker_.get(); }
+
+  // The `sawblade-t3k` the selector asks for a tone's online models and downloads a chosen one with (default: settings::t3kExecutable()).
+  // The listing is skipped when network tools are disabled (SAWBLADE_NO_NETWORK) or the tool is not there: the selector then lists the cache.
+  void setModelsExecutable(std::function<std::string()> exe);
 
   // Whether a mouse button is down (default: the real state). A drag that is still active while this says no lost its mouse-up and is
   // abandoned by the next refresh. Tests replace it (their mouse is synthesized).
@@ -263,6 +274,10 @@ class Pedalboard : public juce::Component {
   void abortDrag();  // forgets a drag without dropping it (the tile is shown normally again)
   bool hasTile(int path, const std::string& id) const;
   void endDrag(bool drop);
+  BoardTile* tileById(int path, const std::string& id);
+  void applySettings(BoardTile& t);  // the selector's list: the cache merged with the tone's online models
+  void lookupModels(const std::string& toneId);
+  void chooseSetting(BoardTile& t, const std::string& modelId);
   // The one implementation of a move. `anchor` (a drop) resolves the target by block id against the CURRENT preset; null = `toIndex`.
   // `cancelled` is set when the target no longer exists (nothing is edited, nothing is recorded).
   bool moveImpl(int path, const std::string& id, int toPath, const Drop* anchor, int toIndex, bool* cancelled);
@@ -275,10 +290,20 @@ class Pedalboard : public juce::Component {
   int selPath_ = -1;
   std::string selId_;
   Drag drag_;
-  bool refreshPending_ = false;
+  bool refreshPending_ = false;  // a refresh arrived while a tile was pressed: the mouse-up re-reads the edit base
   std::function<bool()> mouseDown_ = [] { return juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown(); };
   std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);  // checked by the level worker callbacks
-  std::uint64_t swapSeq_ = 0;  // a newer capture swap supersedes the make-up still being measured for an older one  // a refresh arrived while a tile was pressed: the mouse-up re-reads the edit base
+  std::uint64_t swapSeq_ = 0;  // a newer capture swap supersedes the make-up still being measured for an older one
+  // The online models of each capture tone seen this session: asked once per tone (Fetching -> Done / Failed, never retried; Failed = the
+  // selector keeps listing the cache only).
+  struct ToneModels {
+    enum class State { Fetching, Done, Failed } state = State::Fetching;
+    std::vector<CachedModel> online;
+  };
+  std::map<std::string, ToneModels> toneModels_;
+  std::set<std::string> fetchingIds_;  // block ids whose chosen setting is downloading
+  std::function<std::string()> modelsExe_;
+  std::unique_ptr<T3kClient> t3k_;  // after alive_: its callbacks are dropped on destruction
   std::unique_ptr<PedalPicker> picker_;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Pedalboard)

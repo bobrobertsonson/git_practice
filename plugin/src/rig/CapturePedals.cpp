@@ -12,13 +12,20 @@
 #include "sawblade/preset.h"
 
 namespace sawblade::plugin::rig {
-namespace {
 namespace fs = std::filesystem;
+
+bool plainCacheId(const std::string& s) { return !s.empty() && s.find_first_of("/\\.") == std::string::npos; }
+
+bool plainCacheFile(const std::string& file) {
+  if (file.empty() || file.find_first_of("/\\") != std::string::npos || file.find("..") != std::string::npos) return false;
+  const fs::path p(file);
+  return p.filename().string() == file && plainCacheId(p.stem().string());
+}
+
+namespace {
 using nlohmann::json;
 
 std::string str(const json& o, const char* k) { return o.is_object() && o.contains(k) && o[k].is_string() ? o[k].get<std::string>() : std::string(); }
-
-bool plainId(const std::string& s) { return !s.empty() && s.find_first_of("/\\.") == std::string::npos; }
 
 std::string lower(std::string s) {
   for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -55,9 +62,9 @@ std::vector<CachedModel> modelsIn(const fs::path& dir, const json& meta, bool na
   if (!meta.contains("models") || !meta["models"].is_object()) return out;
   std::error_code ec;
   for (const auto& kv : meta["models"].items()) {
-    if (!plainId(kv.key()) || !kv.value().is_object()) continue;
+    if (!plainCacheId(kv.key()) || !kv.value().is_object()) continue;
     const std::string file = str(kv.value(), "file").empty() ? kv.key() + ".nam" : str(kv.value(), "file");
-    if (file.find('/') != std::string::npos || !fs::exists(dir / file, ec)) continue;
+    if (!plainCacheFile(file) || !fs::exists(dir / file, ec)) continue;
     if (namOnly && fs::path(file).extension() != ".nam") continue;
     const std::string name = str(kv.value().contains("model") ? kv.value()["model"] : json(), "name");
     out.push_back({kv.key(), name.empty() ? kv.key() : name});
@@ -80,7 +87,7 @@ std::vector<CachedModel> orderSettings(std::vector<CachedModel> models) {
 }
 
 std::vector<CachedModel> cachedModelsOf(const std::string& toneId) {
-  if (!plainId(toneId)) return {};
+  if (!plainCacheId(toneId)) return {};
   const fs::path dir = captureCacheRoot() / toneId;
   return modelsIn(dir, readMeta(dir), /*namOnly=*/false);
 }
@@ -93,7 +100,7 @@ std::vector<CachedPedal> cachedPedalCaptures() {
   for (const auto& e : fs::directory_iterator(root, ec)) {
     if (!e.is_directory(ec)) continue;
     const std::string toneId = e.path().filename().string();
-    if (!plainId(toneId)) continue;
+    if (!plainCacheId(toneId)) continue;
     const json meta = readMeta(e.path());
     if (!meta.contains("tone") || str(meta["tone"], "gear") != "pedal") continue;
     CachedPedal p;

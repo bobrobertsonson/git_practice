@@ -1,4 +1,5 @@
 // Tests of the JUCE-free rig model (plugin/src/rig/RigModel.*): topology, slots, EQ, cab, align, gate, comp.
+#include <algorithm>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -433,6 +434,55 @@ TEST_CASE("CapturePedals: the cache lists pedal tones (nam files only), by title
   CHECK(c->source->modelId == "112");
   CHECK(c->source->license == "cc-by-nc");
   CHECK(c->source->title == "Tight Boost");
+  sawblade::setCaptureCacheRootOverride(std::nullopt);
+  fs::remove_all(cache);
+}
+
+TEST_CASE("CapturePedals: a malformed or hostile cache entry is skipped, never thrown on and never read outside the tone's folder", "[rig][model][pedalb]") {
+  const fs::path cache = fs::temp_directory_path() / ("sawblade_capmal_" + std::to_string(::getpid()));
+  fs::remove_all(cache);
+  writeCachedTone(cache, "20", "pedal", "Good One", {{"201", "Gain 1"}});
+  const auto raw = [&](const std::string& tone, const std::string& text) {
+    fs::create_directories(cache / tone);
+    fs::copy_file(kFixtures / "nam" / "linear_identity.nam", cache / tone / "301.nam", fs::copy_options::overwrite_existing);
+    std::ofstream(cache / tone / "meta.json") << text;
+  };
+  raw("21", "this is not json {");                                                                     // not JSON
+  raw("22", R"([1, 2, 3])");                                                                           // not an object
+  raw("23", R"({"tone": {"gear": "pedal", "title": "T"}, "models": [1, 2]})");                         // models an array
+  raw("24", R"({"tone": "pedal", "models": {"301": {"file": "301.nam"}}})");                           // tone a string
+  raw("25", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": {"file": 7}}})");           // file not a string: 301.nam by default
+  raw("26", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": {"file": "gone.nam"}}})");  // the model file is missing
+  raw("27", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": {"file": "../20/201.nam"}}})");  // traversal in the file
+  raw("28", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"..": {"file": "301.nam"}, "a/b": {"file": "301.nam"}, "": {"file": "301.nam"}}})");  // traversal in the key
+  raw("29", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": {"file": "sub\\301.nam"}}})");  // a backslash
+  raw("30", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": "not an object"}})");
+  sawblade::setCaptureCacheRootOverride(cache);
+
+  std::vector<CachedPedal> tones;
+  REQUIRE_NOTHROW(tones = cachedPedalCaptures());
+  std::vector<std::string> ids;
+  for (const auto& t : tones) ids.push_back(t.toneId);
+  std::sort(ids.begin(), ids.end());
+  CHECK(ids == std::vector<std::string>{"20", "25"});  // 25: a non-string file falls back to <model>.nam, like an absent one
+
+  for (const char* t : {"21", "22", "23", "26", "27", "28", "29", "30"}) {
+    INFO("tone " << t);
+    CHECK(cachedModelsOf(t).empty());
+    CHECK_FALSE(cachedToneCapture(t).has_value());
+    CHECK_FALSE(cachedToneCapture(t, "301").has_value());
+  }
+  CHECK_NOTHROW(cachedModelsOf("24"));  // a tone that is a string: no gear, so no pedal; its model is still readable
+  CHECK_NOTHROW(cachedModelsOf("25"));
+  CHECK(cachedToneCapture("25", "301").has_value());
+  CHECK_FALSE(cachedToneCapture("20", "..").has_value());
+  CHECK_FALSE(cachedToneCapture("20", "../20/201").has_value());
+  CHECK(plainCacheId("201"));
+  CHECK_FALSE(plainCacheId(".."));
+  CHECK_FALSE(plainCacheId(""));
+  CHECK_FALSE(plainCacheId("a\\b"));
+  CHECK(plainCacheFile("201.nam"));
+  for (const char* bad : {"", "..", "../x.nam", "a/b.nam", "a\\b.nam", "x..nam", "a.b.nam"}) CHECK_FALSE(plainCacheFile(bad));
   sawblade::setCaptureCacheRootOverride(std::nullopt);
   fs::remove_all(cache);
 }

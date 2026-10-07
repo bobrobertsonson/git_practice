@@ -9,10 +9,12 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
 
 #include "ExportGlue.h"
@@ -172,6 +174,40 @@ struct Rig {
   rig::Pedalboard& board() { return ed->pedalboard(); }
   Preset preset() { return proc.currentPreset(); }
 };
+
+// An environment variable for the life of the guard.
+struct EnvGuard {
+  std::string key;
+  std::optional<std::string> old;
+  EnvGuard(const std::string& k, const std::string& v) : key(k) {
+    if (const char* c = std::getenv(k.c_str())) old = c;
+    ::setenv(k.c_str(), v.c_str(), 1);
+  }
+  ~EnvGuard() {
+    if (old) ::setenv(key.c_str(), old->c_str(), 1);
+    else ::unsetenv(key.c_str());
+  }
+};
+// How many times the fake tool was called with `cmd` (FAKE_T3K_LOG: one JSON argv per line).
+int callsOf(const fs::path& log, const std::string& cmd) {
+  int n = 0;
+  std::ifstream in(log);
+  for (std::string line; std::getline(in, line);)
+    if (const auto j = json::parse(line, nullptr, false); j.is_array() && !j.empty() && j[0] == cmd) ++n;
+  return n;
+}
+// A mouse drag on a knob in `moves` steps of `dy` pixels (negative = up).
+void dragKnob(juce::Component& k, float dy, int moves) {
+  const juce::Point<float> start(15.0f, 15.0f);
+  const auto mk = [&](juce::Point<float> pos) {
+    const auto now = juce::Time::getCurrentTime();
+    return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), pos, juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1.0f, 0.0f, 0.0f,
+                            0.0f, 0.0f, &k, &k, now, start, now, 1, true);
+  };
+  k.mouseDown(mk(start));
+  for (int i = 1; i <= moves; ++i) k.mouseDrag(mk({15.0f, 15.0f + dy * static_cast<float>(i)}));
+  k.mouseUp(mk({15.0f, 15.0f + dy * static_cast<float>(moves)}));
+}
 
 const NamBlockParams& namOf(const Block& b) { return static_cast<const NamBlockParams&>(*b.params); }
 
@@ -496,4 +532,86 @@ TEST_CASE("capture pedals: a capture is a nam block for the export (NAM-trainabl
   bool inChain = false;
   for (const auto& line : s.chainLines) inChain = inChain || line.find("Fuzz Tone") != std::string::npos;
   CHECK(inChain);
+}
+
+TEST_CASE("capture pedals: one LEVEL drag gesture on a capture tile is exactly one undo step", "[editor][capturepedals][undo]") {
+  Rig rig;
+  writeTone(rig.cache, "777", "pedal", "Fuzz Tone", {{"7771", "Gain 2", "linear_identity.nam"}});
+  rig.load(rigJson({capBlock("a1", rig.cache, "777", "7771", "Fuzz Tone"), namAmp("a2")}, {}, false));
+  const Preset before = rig.preset();
+  REQUIRE(rig.proc.undoSteps() == 0);
+  dragKnob(rig.board().tile(0, 0)->levelKnob()->knob(), -30.0f, 6);  // six mouse moves
+  rig.settle();
+  const double level = namOf(rig.preset().a.blocks[0]).outputGainDb;
+  REQUIRE(level != 0.0);
+  CHECK(rig.proc.undoSteps() == 1);
+  REQUIRE(rig.ed->rigController().undo());
+  rig.settle();
+  CHECK(rig.preset() == before);
+  CHECK_FALSE(rig.ed->rigController().canUndo());
+  REQUIRE(rig.ed->rigController().redo());
+  rig.settle();
+  CHECK(namOf(rig.preset().a.blocks[0]).outputGainDb == level);
+}
+
+TEST_CASE("capture pedals: the selector lists the cached models plus the tone's online ones; an uncached choice is fetched and swapped in one undo step", "[editor][capturepedals][selector][online]") {
+  Rig rig;
+  const fs::path log = rig.tmp.dir / "calls.log";
+  const EnvGuard net("SAWBLADE_NO_NETWORK", "0"), n("FAKE_T3K_MODELS_N", "3"), lg("FAKE_T3K_LOG", log.string());
+  rig.board().setModelsExecutable([] { return std::string(SAWBLADE_FAKE_T3K); });
+  writeTone(rig.cache, "777", "pedal", "Online Pedal", {{"7771", "Gain 1", "linear_identity.nam"}});  // one cached model; the tool knows three
+  rig.load(rigJson({capBlock("a1", rig.cache, "777", "7771", "Online Pedal"), namAmp("a2")}, {}, false));
+  auto& pb = rig.board();
+  REQUIRE(pumpUntil([&] { return pb.tile(0, 0)->settings().size() == 3; }));
+  rig.ed->refreshNow();
+  rig.ed->refreshNow();
+  CHECK(callsOf(log, "models") == 1);  // once per tone per session, however often the board refreshes
+  rig::BoardTile* t = pb.tile(0, 0);
+  CHECK(t->hasSelector());
+  CHECK(t->selectorButton().isVisible());
+  CHECK(t->settings()[0].name == "Gain 1");
+  CHECK(t->settings()[1].name == "Gain 2");
+  CHECK(t->settings()[2].name == "Gain 3");
+
+  const Preset before = rig.preset();
+  t->chooseSetting("7773");  // not in the cache
+  CHECK(t->fetching());
+  CHECK(t->selectorButton().getButtonText().containsIgnoreCase("FETCHING"));
+  CHECK_FALSE(t->selectorButton().isEnabled());
+  REQUIRE(pumpUntil([&] { return namOf(rig.preset().a.blocks[0]).model.source && namOf(rig.preset().a.blocks[0]).model.source->modelId == "7773"; }));
+  rig.settle();
+  CHECK(callsOf(log, "fetch") == 1);
+  const Preset after = rig.preset();
+  CHECK(after.a.blocks[0].id == "a1");
+  CHECK(after.a.blocks[1] == before.a.blocks[1]);
+  CHECK(namOf(after.a.blocks[0]).model.source->license == "cc-by");  // the fetch's licence and creator travel with it
+  CHECK(namOf(after.a.blocks[0]).model.source->creator == "fakecreator");
+  CHECK(rig.proc.undoSteps() == 1);
+  CHECK_FALSE(pb.tile(0, 0)->fetching());
+  CHECK(pb.tile(0, 0)->modelId() == "7773");
+  CHECK(pb.tile(0, 0)->settings().size() == 3);
+  CHECK(callsOf(log, "models") == 1);  // the rebuilt tile did not ask again
+
+  REQUIRE(rig.ed->rigController().undo());
+  rig.settle();
+  CHECK(rig.preset() == before);
+  CHECK_FALSE(rig.ed->rigController().canUndo());
+}
+
+TEST_CASE("capture pedals: the online list is asked once; a failing or disabled tool leaves the cached settings only", "[editor][capturepedals][selector][online]") {
+  const bool fail = GENERATE(true, false);
+  Rig rig;
+  const fs::path log = rig.tmp.dir / "calls.log";
+  const EnvGuard net("SAWBLADE_NO_NETWORK", fail ? "0" : "1"), mode("FAKE_T3K_MODE", "error"), lg("FAKE_T3K_LOG", log.string());
+  rig.board().setModelsExecutable([] { return std::string(SAWBLADE_FAKE_T3K); });
+  writeTone(rig.cache, "777", "pedal", "Offline Pedal", {{"7771", "Gain 1", "linear_identity.nam"}, {"7772", "Gain 2", "linear_identity.nam"}});
+  rig.load(rigJson({capBlock("a1", rig.cache, "777", "7771", "Offline Pedal"), namAmp("a2")}, {}, false));
+  pump(1500);  // a reply (or none) has time to land
+  for (int i = 0; i < 3; ++i) {
+    rig.ed->refreshNow();
+    pump(100);
+  }
+  CHECK(callsOf(log, "models") == (fail ? 1 : 0));  // asked once and never again after a failure; not at all with network tools off
+  REQUIRE(rig.board().tile(0, 0)->settings().size() == 2);  // the cache
+  CHECK(rig.board().tile(0, 0)->hasSelector());
 }

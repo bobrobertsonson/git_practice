@@ -220,7 +220,7 @@ TEST_CASE("browser slots: an insert point targets a NEW nam block on the board (
   CHECK(t[0].path == 'a');
   CHECK(t[0].blockIndex == 1);
   CHECK_FALSE(t[0].isIr());
-  CHECK(slotTargets(two, Slot::SawPedal, &why, {}, InsertPoint{'a', 99}).at(0).blockIndex == 2);  // clamped to the end
+  CHECK(slotTargets(two, Slot::SawPedal, &why, {}, InsertPoint{'a', 99}).at(0).blockIndex == 1);  // clamped to the end of the BOARD: before the amp, never after it
   CHECK(slotTargets(two, Slot::BodyPedal, &why, {}, InsertPoint{'b', 0}).at(0).path == 'b');
   // amps and the cab ignore an insert point (it is for pedal slots)
   CHECK(slotTargets(two, Slot::SawAmp, &why, {}, InsertPoint{'a', 1}).at(0).kind == SlotTarget::Kind::NamBlock);
@@ -264,6 +264,23 @@ TEST_CASE("browser slots: an insert point targets a NEW nam block on the board (
   CHECK(why.find("path full") != std::string::npos);
   CHECK_FALSE(withCapture(full, target, f, err).has_value());
   CHECK(err.find("path full") != std::string::npos);
+
+  // D0: a new pedal lands on the board, before the amp, however stale its index is
+  Preset three = two;  // [pedal a1, pedal a3, amp a2]
+  three.a.blocks.insert(three.a.blocks.begin() + 1, three.a.blocks.front());
+  three.a.blocks[1].id = "a3";
+  CHECK(slotTargets(two, Slot::SawPedal, &why, {}, InsertPoint{'a', 5}).at(0).blockIndex == 1);  // [pedal, amp]: index 5 -> 1
+  CHECK(slotTargets(three, Slot::SawPedal, &why, {}, InsertPoint{'a', 5}).at(0).blockIndex == 2);
+  // an index resolved before the user removed a pedal during the fetch / level match: withCapture re-clamps it
+  const auto stale = slotTargets(three, Slot::SawPedal, &why, {}, InsertPoint{'a', 2}).at(0);  // the end of the three-block board
+  REQUIRE(stale.blockIndex == 2);
+  const auto landed = withCapture(two, stale, f, err);  // the rig is [pedal, amp] by the time the capture lands
+  REQUIRE(landed.has_value());
+  REQUIRE(landed->a.blocks.size() == 3);
+  CHECK(landed->a.blocks[1].type == "nam");
+  CHECK(landed->a.blocks[1].slot == "pedal");
+  CHECK(landed->a.blocks[2].id == two.a.blocks[1].id);  // the amp is still last
+  CHECK(sawblade::ampIndex(landed->a) == 2);
 }
 
 TEST_CASE("browser slots: withCapture substitutes only the capture", "[browser][slots]") {

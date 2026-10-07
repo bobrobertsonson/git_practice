@@ -8,6 +8,7 @@
 #include <fstream>
 #include <set>
 
+#include "rig/CapturePedals.h"
 #include "sawblade/block_registry.h"
 
 namespace sawblade::plugin::rig {
@@ -117,6 +118,11 @@ bool isCapturePedal(const PathPreset& p, int index) {
   return index >= 0 && index < static_cast<int>(p.blocks.size()) && index != ampIndex(p) && p.blocks[static_cast<std::size_t>(index)].type == "nam";
 }
 
+int boardBlockCount(const PathPreset& p) {
+  const int amp = ampIndex(p);
+  return amp < 0 ? static_cast<int>(p.blocks.size()) : amp;
+}
+
 std::string newBlockId(const Preset& p, char which) {
   std::set<std::string> used;
   for (const PathPreset* pp : {&p.a, &p.b})
@@ -187,7 +193,7 @@ void setBodyAmp(Preset& p, const Capture& model) {
 std::optional<Capture> cachedToneCapture(const std::string& toneId, const std::string& modelId) {
   namespace fs = std::filesystem;
   using nlohmann::json;
-  const auto plain = [](const std::string& t) { return !t.empty() && t.find_first_of("/\\.") == std::string::npos; };
+  const auto plain = plainCacheId;  // the one rule (CapturePedals.h) for names read from meta.json
   std::error_code ec;
   if (!plain(toneId) || (!modelId.empty() && !plain(modelId))) return std::nullopt;
   const fs::path dir = captureCacheRoot() / toneId;
@@ -200,16 +206,16 @@ std::optional<Capture> cachedToneCapture(const std::string& toneId, const std::s
   std::string pick = modelId;
   if (pick.empty()) {  // the smallest model id with an entry and a file (the tool's fetch takes the tone's first candidate)
     for (const auto& kv : meta["models"].items()) {
-      if (!plain(kv.key()) || !fs::exists(dir / (kv.key() + ".nam"), ec)) continue;
+      if (!plain(kv.key()) || !kv.value().is_object() || !fs::exists(dir / (kv.key() + ".nam"), ec)) continue;
       if (pick.empty() || kv.key().size() < pick.size() || (kv.key().size() == pick.size() && kv.key() < pick)) pick = kv.key();
     }
     if (pick.empty()) return std::nullopt;
   }
   if (!meta["models"].contains(pick) || !meta["models"][pick].is_object()) return std::nullopt;
   const json& m = meta["models"][pick];
-  const std::string file = m.value("file", pick + ".nam");
-  if (!plain(fs::path(file).stem().string()) || file.find('/') != std::string::npos || !fs::exists(dir / file, ec)) return std::nullopt;
   const auto str = [](const json& o, const char* k) { return o.is_object() && o.contains(k) && o[k].is_string() ? o[k].get<std::string>() : std::string(); };
+  const std::string file = str(m, "file").empty() ? pick + ".nam" : str(m, "file");  // a non-string "file" is as good as none
+  if (!plainCacheFile(file) || !fs::exists(dir / file, ec)) return std::nullopt;
   const json tone = meta.contains("tone") ? meta["tone"] : json::object();
   const json user = tone.is_object() && tone.contains("user") ? tone["user"] : json::object();
   Capture c;

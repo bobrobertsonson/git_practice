@@ -11,6 +11,7 @@ environment variables:
   FAKE_T3K_STATE  directory: if set, whoami fails with code "auth" until `login` has created <dir>/logged_in
   FAKE_T3K_FETCH  file returned as the fetched capture (default tests/fixtures/nam/linear_identity.nam)
   FAKE_T3K_KIND   kind reported by fetch (default nam)
+  FAKE_T3K_MODELS_N  number: `models` answers that many models named "Gain 1"...
   FAKE_T3K_LOG    file: argv of every call is appended here
 """
 import hashlib
@@ -104,6 +105,10 @@ elif cmd == "models":
     tid = int(args[1])
     if tid == 999:
         err("unknown tone", "not_found")
+    n = int(os.environ.get("FAKE_T3K_MODELS_N", "0"))
+    if n:  # the pedalboard selector tests: n models "Gain 1".."Gain n"
+        out({"tone_id": tid, "architecture": "A2", "models": [
+            {"model_id": tid * 10 + i, "name": f"Gain {i}", "size": "standard"} for i in range(1, n + 1)]})
     out({"tone_id": tid, "architecture": "A2", "models": [
         {"model_id": tid * 10 + 1, "name": "Standard", "size": "standard"},
         {"model_id": tid * 10 + 2, "name": "Lite", "size": None}]})

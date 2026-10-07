@@ -80,7 +80,7 @@ std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string
     SlotTarget t;
     t.kind = SlotTarget::Kind::InsertNamBlock;
     t.path = insert->path;
-    t.blockIndex = std::clamp(insert->index, 0, static_cast<int>(path.blocks.size()));
+    t.blockIndex = std::clamp(insert->index, 0, rig::boardBlockCount(path));  // the board only: never behind the amp
     t.label = insert->path == 'a' ? "SAW PEDAL" : "BODY PEDAL";
     out.push_back(t);
     return out;
@@ -134,7 +134,8 @@ std::optional<Preset> withCapture(const Preset& preset, const SlotTarget& target
     auto np = std::make_shared<NamBlockParams>();
     np->model = cap;
     blk.params = std::move(np);
-    if (!rig::addBlock(path, target.blockIndex, std::move(blk))) {
+    // re-clamped to the board: the rig may have lost pedals during the fetch / level match
+    if (!rig::addBlock(path, std::clamp(target.blockIndex, 0, rig::boardBlockCount(path)), std::move(blk))) {
       error = std::string(target.path == 'a' ? "SAW" : "BODY") + " path full: 8 blocks";
       return std::nullopt;
     }

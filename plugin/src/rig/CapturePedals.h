@@ -9,6 +9,11 @@
 
 namespace sawblade::plugin::rig {
 
+// The ONE rule for a name read from a cache's meta.json (a tone id, a model id, a model file) before it becomes a path under the cache:
+// plain ids are non-empty with no '/', '\\' or '.'; a model file is a plain stem + extension that is its own filename (no separator, no "..").
+bool plainCacheId(const std::string& s);
+bool plainCacheFile(const std::string& file);
+
 struct CachedModel {
   std::string modelId;
   std::string name;  // the model's own name ("Gain 6", "Standard"); its id when it has none

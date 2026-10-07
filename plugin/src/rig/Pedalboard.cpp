@@ -1,11 +1,14 @@
 #include "rig/Pedalboard.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
+#include <filesystem>
 #include <utility>
 
 #include "SawbladeLookAndFeel.h"
 #include "pedals/CircuitParams.h"
+#include "presets/T3kTool.h"
 #include "rig/AmpHead.h"
 #include "rig/CapturePedals.h"
 #include "rig/RigModel.h"
@@ -48,11 +51,6 @@ class PlaceholderButton : public juce::TextButton {
 };
 }  // namespace
 
-int boardBlockCount(const PathPreset& p) {
-  const int amp = ampIndex(p);
-  return amp < 0 ? static_cast<int>(p.blocks.size()) : amp;
-}
-
 int blocksAfterAmp(const PathPreset& p) {
   const int amp = ampIndex(p);
   return amp < 0 ? 0 : static_cast<int>(p.blocks.size()) - amp - 1;
@@ -66,18 +64,19 @@ juce::String pedalName(const Block& b) {
 }
 
 // ---------------------------------------------------------------------------------------------
-BoardTile::BoardTile(int path, int blockIndex, const Block& b, RigController& controller)
+BoardTile::BoardTile(int path, int blockIndex, const PathPreset& pp, RigController& controller)
     : path_(path),
       index_(blockIndex),
-      id_(b.id),
-      name_(pedalName(b)),
-      kind_(b.type == "nam" ? PedalKind::Capture : PedalKind::Modeled),  // a tile is before its path's amp: a nam block here is a pedal capture
-      circuit_(circuitForBlockType(b.type).has_value()),
+      id_(pp.blocks[static_cast<std::size_t>(blockIndex)].id),
+      name_(pedalName(pp.blocks[static_cast<std::size_t>(blockIndex)])),
+      kind_(isCapturePedal(pp, blockIndex) ? PedalKind::Capture : PedalKind::Modeled),
+      circuit_(circuitForBlockType(pp.blocks[static_cast<std::size_t>(blockIndex)].type).has_value()),
       panel_(circuit_ ? skin::Panel::PedalSaw : skin::Panel::PedalBody),
       mmHeight_(circuit_ ? kSawPedalMmHeight : kBodyPedalMmHeight),
       switchMm_(circuit_ ? juce::Point<float>(-30.0f, -80.0f) : juce::Point<float>(0.0f, -50.0f)),
       ledMm_(circuit_ ? juce::Point<float>(-30.0f, -64.5f) : juce::Point<float>(0.0f, -29.0f)),
       fs_(bypassTitle(path, name_) + " footswitch") {
+  const Block& b = pp.blocks[static_cast<std::size_t>(blockIndex)];
   setTitle(bypassTitle(path, name_));
   setTooltip(name_ + " (click to select, footswitch = bypass)");
   setMouseCursor(juce::MouseCursor::PointingHandCursor);
@@ -196,12 +195,23 @@ void BoardTile::showLevel(double db) {
 void BoardTile::setSettings(std::vector<CachedModel> models, const std::string& currentModelId) {
   settings_ = std::move(models);
   modelId_ = currentModelId;
-  juce::String current = "SETTING";
-  for (const auto& m : settings_)
-    if (m.modelId == currentModelId) current = juce::String(m.name).toUpperCase();
-  selector_.setButtonText(current + juce::String::fromUTF8(" \xe2\x96\xbe"));
+  updateSelectorText();
   selector_.setVisible(hasSelector());
   if (kind_ == PedalKind::Capture) layoutCapture();
+}
+
+void BoardTile::updateSelectorText() {
+  juce::String current = "SETTING";
+  for (const auto& m : settings_)
+    if (m.modelId == modelId_) current = juce::String(m.name).toUpperCase();
+  selector_.setButtonText(fetching_ ? juce::String("FETCHING...") : current + juce::String::fromUTF8(" \xe2\x96\xbe"));
+}
+
+void BoardTile::setFetching(bool f) {
+  if (f == fetching_) return;
+  fetching_ = f;
+  selector_.setEnabled(!f);
+  updateSelectorText();
 }
 
 juce::PopupMenu BoardTile::settingsMenu() const {
@@ -454,15 +464,13 @@ void Pedalboard::rebuild(int path, const PathPreset& pp, std::vector<Key> keys, 
   v.off = off;
   v.keys = std::move(keys);
   for (int i = 0; i < static_cast<int>(v.keys.size()); ++i) {
-    auto t = std::make_unique<BoardTile>(path, i, pp.blocks[static_cast<std::size_t>(i)], controller_);
-    if (t->isCapture() && !t->toneId().empty()) {  // the setting selector: the models of the capture's tone that are in the cache
-      auto models = cachedModelsOf(t->toneId());
-      if (models.size() >= 2) t->setSettings(std::move(models), t->modelId());
+    auto t = std::make_unique<BoardTile>(path, i, pp, controller_);
+    if (t->isCapture() && !t->toneId().empty()) {  // the setting selector: the cache, plus the tone's online models once the tool answered
+      applySettings(*t);
+      lookupModels(t->toneId());
+      if (fetchingIds_.count(t->blockId())) t->setFetching(true);
     }
-    t->onSetting = [this](BoardTile& tile, const std::string& modelId) {
-      if (const auto cap = cachedToneCapture(tile.toneId(), modelId)) swapPedalCapture(tile.path(), tile.blockId(), *cap);
-      else say("that setting is not in the capture cache");
-    };
+    t->onSetting = [this](BoardTile& tile, const std::string& modelId) { chooseSetting(tile, modelId); };
     t->onSelect = [this](BoardTile& tile) {
       closePicker();
       if (onSelect) onSelect(tile);
@@ -562,19 +570,17 @@ bool Pedalboard::moveImpl(int path, const std::string& id, int toPath, const Dro
     say(juce::String(toPath == 0 ? "SAW" : "BODY") + " path full: 8 blocks");
     return false;
   }
-  // Everything below is decided on the preset as it is NOW, by id: the tiles the drag started from may be older than the rig.
-  bool edited = false, lost = false;
-  controller_.edit([&](Preset& p) {
+  // Everything below is decided on the preset as it is NOW, by id: the tiles the drag started from may be older than the rig. It is first
+  // tried on a copy of the edit base; the rig is touched (one edit, one reload, one undo step) only when something really moves.
+  enum class Outcome { Nothing, Moved, Lost };
+  const auto apply = [&](Preset& p) -> Outcome {
     PathPreset& src = path == 0 ? p.a : p.b;
     PathPreset& dstPath = toPath == 0 ? p.a : p.b;
     const int srcTiles = boardBlockCount(src);
     int from = -1;
     for (int i = 0; i < srcTiles; ++i)
       if (src.blocks[static_cast<std::size_t>(i)].id == id) from = i;
-    if (from < 0) {
-      lost = anchor != nullptr;  // the dragged pedal is gone: cancel
-      return;
-    }
+    if (from < 0) return anchor != nullptr ? Outcome::Lost : Outcome::Nothing;  // the dragged pedal is gone: cancel
     // The final index among the target's tiles once the dragged pedal is out of the way.
     const int dstTiles = boardBlockCount(dstPath);
     int index = toIndex;
@@ -584,41 +590,37 @@ bool Pedalboard::moveImpl(int path, const std::string& id, int toPath, const Dro
         const Block& b = dstPath.blocks[static_cast<std::size_t>(i)];
         if (!(path == toPath && b.id == id)) others.push_back(&b);
       }
-      auto find = [&others](const std::string& x) {
-        for (std::size_t i = 0; i < others.size(); ++i)
-          if (others[i]->id == x) return static_cast<int>(i);
+      const auto find = [&others](const std::string& x) {
+        if (!x.empty())
+          for (std::size_t i = 0; i < others.size(); ++i)
+            if (others[i]->id == x) return static_cast<int>(i);
         return -1;
       };
-      index = -1;
-      if (!anchor->beforeId.empty()) index = find(anchor->beforeId);
-      if (index < 0 && !anchor->afterId.empty() && (anchor->beforeId.empty() || find(anchor->afterId) >= 0)) {
-        const int after = find(anchor->afterId);
-        if (after >= 0) index = after + 1;
-      }
+      index = find(anchor->beforeId);
+      if (index < 0 && find(anchor->afterId) >= 0) index = find(anchor->afterId) + 1;
       if (index < 0 && anchor->beforeId.empty() && anchor->afterId.empty() && others.empty()) index = 0;  // an empty board
-      if (index < 0) {  // the neighbours the user aimed between are gone: not a place we can name
-        lost = true;
-        return;
-      }
+      if (index < 0) return Outcome::Lost;  // the neighbours the user aimed between are gone: not a place we can name
     }
     if (path == toPath) {
       const int to = std::clamp(index, 0, srcTiles - 1);
-      if (to == from) return;  // nothing moves
+      if (to == from) return Outcome::Nothing;
       moveBlock(src, from, to);
-      edited = true;
-      return;
+      return Outcome::Moved;
     }
-    if (static_cast<int>(dstPath.blocks.size()) >= kMaxBlocksPerPath) return;
+    if (static_cast<int>(dstPath.blocks.size()) >= kMaxBlocksPerPath) return Outcome::Nothing;
     Block b = src.blocks[static_cast<std::size_t>(from)];
     removeBlock(src, from);
     b.id = newBlockId(p, toPath == 0 ? 'a' : 'b');  // a fresh id; everything else (params, bypass, capture, make-up) is kept
     if (b.slot.empty() && b.type == "nam") b.slot = "pedal";  // stays a pedal whatever the target's blocks
     addBlock(dstPath, std::clamp(index, 0, boardBlockCount(dstPath)), std::move(b));
-    edited = true;
-  });
-  if (cancelled != nullptr) *cancelled = lost;
-  if (edited || lost) refreshNow();
-  return edited;
+    return Outcome::Moved;
+  };
+  Preset trial = controller_.processor().editBasePreset();
+  const Outcome outcome = apply(trial);
+  if (cancelled != nullptr) *cancelled = outcome == Outcome::Lost;
+  if (outcome == Outcome::Moved) controller_.edit([&apply](Preset& p) { apply(p); });
+  if (outcome != Outcome::Nothing) refreshNow();
+  return outcome == Outcome::Moved;
 }
 
 bool Pedalboard::addModeledPedal(int path, const std::string& type) {
@@ -694,7 +696,10 @@ bool Pedalboard::addCapturePedal(int path, const Capture& capture) {
       bool there = false;
       for (const PathPreset* pp : {&cur.a, &cur.b})
         for (const Block& b : pp->blocks) there = there || b.id == newId;
-      if (!there) return;  // removed meanwhile
+      // Keyed by block id on purpose: a pedal moved within its path keeps its id and still gets its make-up. Known limitation: one that was
+      // removed, undone away, or moved to the other path (a move there gives it a new id, and the make-up was measured for this path) before
+      // the measurement landed gets none (it plays at the capture's own level; the LEVEL knob corrects it by hand).
+      if (!there) return;
       pr.patchHistory([&newId, mk](Preset& snap) { setMakeupById(snap, newId, *mk); });
       setMakeupById(cur, newId, *mk);
       pr.loadPreset(std::move(cur), /*keepMonitor=*/true);  // not a user edit: records no undo step
@@ -744,15 +749,101 @@ bool Pedalboard::swapPedalCapture(int path, const std::string& id, const Capture
   return true;
 }
 
-bool Pedalboard::setPedalLevel(int path, const std::string& id, double db) {
-  if (!hasTile(path, id)) return false;
-  controller_.edit([path, id, db](Preset& p) {
-    PathPreset& pp = path == 0 ? p.a : p.b;
-    for (std::size_t i = 0; i < pp.blocks.size(); ++i)
-      if (pp.blocks[i].id == id) setBlockOutputGainDb(pp, static_cast<int>(i), db);
+// --- the setting selector: cache + online models --------------------------------------------------------------------------------------
+void Pedalboard::setModelsExecutable(std::function<std::string()> exe) {
+  modelsExe_ = std::move(exe);
+  t3k_.reset();  // a new tool: the next lookup builds its client
+  toneModels_.clear();
+}
+
+namespace {
+std::optional<std::int64_t> toId(const std::string& s) {
+  std::int64_t v = 0;
+  const auto r = std::from_chars(s.data(), s.data() + s.size(), v);
+  if (s.empty() || r.ec != std::errc() || r.ptr != s.data() + s.size() || v <= 0) return std::nullopt;
+  return v;
+}
+}  // namespace
+
+BoardTile* Pedalboard::tileById(int path, const std::string& id) {
+  for (auto& t : paths_[static_cast<std::size_t>(path)].tiles)
+    if (t->blockId() == id) return t.get();
+  return nullptr;
+}
+
+void Pedalboard::applySettings(BoardTile& t) {
+  std::vector<CachedModel> models = cachedModelsOf(t.toneId());
+  if (const auto it = toneModels_.find(t.toneId()); it != toneModels_.end() && it->second.state == ToneModels::State::Done)
+    for (const auto& m : it->second.online) {
+      const auto have = std::find_if(models.begin(), models.end(), [&m](const CachedModel& c) { return c.modelId == m.modelId; });
+      if (have == models.end()) models.push_back(m);
+      else if (have->name == have->modelId && m.name != m.modelId) have->name = m.name;  // a cached model with no name of its own
+    }
+  t.setSettings(orderSettings(std::move(models)), t.modelId());
+}
+
+void Pedalboard::lookupModels(const std::string& toneId) {
+  const auto id = toId(toneId);
+  if (!id || toneModels_.count(toneId) != 0 || networkToolsDisabled()) return;  // once per tone per session; a plugin that must not touch the network does not
+  std::error_code ec;
+  const std::string exe = modelsExe_ ? modelsExe_() : settings::t3kExecutable().string();
+  if (exe.empty() || !std::filesystem::exists(exe, ec)) return;  // no tool: the cache is all there is
+  toneModels_[toneId];  // Fetching: not asked again, whatever the answer
+  if (!t3k_) t3k_ = std::make_unique<T3kClient>([this] { return modelsExe_ ? modelsExe_() : settings::t3kExecutable().string(); });
+  t3k_->models(*id, [this, alive = alive_, toneId](Reply<t3k::ModelsResult> r) {
+    if (!alive->load()) return;
+    ToneModels& tm = toneModels_[toneId];
+    if (!r.ok) {  // never retried, never reported: the selector keeps listing the cache
+      tm.state = ToneModels::State::Failed;
+      return;
+    }
+    tm.state = ToneModels::State::Done;
+    for (const auto& m : r.value.models) tm.online.push_back({std::to_string(m.modelId), m.name.empty() ? std::to_string(m.modelId) : m.name});
+    for (auto& v : paths_)
+      for (auto& t : v.tiles)
+        if (t->isCapture() && t->toneId() == toneId) applySettings(*t);
   });
-  refreshNow();
-  return true;
+}
+
+void Pedalboard::chooseSetting(BoardTile& t, const std::string& modelId) {
+  const std::string id = t.blockId(), tone = t.toneId();
+  const int path = t.path();
+  if (fetchingIds_.count(id)) return;  // one download at a time per pedal
+  if (const auto cap = cachedToneCapture(tone, modelId)) {
+    swapPedalCapture(path, id, *cap);
+    return;
+  }
+  // Not in the cache: the model the tone's online list offered. The same fetch the capture browser's USE runs (the tool downloads it into
+  // the capture cache with its licence and creator), then the swap: one undo step, make-up included.
+  const auto tid = toId(tone), mid = toId(modelId);
+  if (!tid || !mid) {
+    say("that setting is not in the capture cache");
+    return;
+  }
+  fetchingIds_.insert(id);
+  t.setFetching(true);
+  say("FETCHING THE SETTING...");
+  if (!t3k_) t3k_ = std::make_unique<T3kClient>([this] { return modelsExe_ ? modelsExe_() : settings::t3kExecutable().string(); });
+  t3k_->fetch(*tid, *mid, [this, alive = alive_, path, id](Reply<t3k::FetchResult> r) {
+    if (!alive->load()) return;
+    fetchingIds_.erase(id);
+    if (BoardTile* tile = tileById(path, id)) tile->setFetching(false);
+    say(juce::String());
+    if (!r.ok) {
+      say("could not fetch that setting: " + juce::String(describe(r.error)));
+      return;
+    }
+    if (r.value.kind != "nam") {
+      say("that setting is not a NAM model");
+      return;
+    }
+    Capture cap;
+    cap.file = r.value.path;
+    cap.resolvedPath = r.value.path;
+    cap.sha256 = r.value.sha256;
+    cap.source = r.value.source;
+    swapPedalCapture(path, id, cap);
+  });
 }
 
 juce::PopupMenu Pedalboard::menuFor(const BoardTile& t) const {
