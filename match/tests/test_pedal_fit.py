@@ -658,3 +658,37 @@ def test_fit_constrained_only_pins_knobs_and_returns_the_constrained_result(monk
     res = PF.fit_constrained_only(rec, Ev(), Path("."))
     assert seen["vals"] == [4.0, 5.0] and seen["cache"] == {}      # ts level is a pure output gain: not a knob
     assert res["ltas_rms_db"] == 0.7                                # the dict the merge loop stores as "constrained"
+
+
+def test_merge_labels_follow_the_name(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    (cache / "7").mkdir(parents=True)
+    (cache / "7" / "1.nam").write_text("x")
+    man = tmp_path / "m.json"
+    _manifest(man, 7, "mk", "cc-by", [(1, "cap Lv-6 L-5 H-5 D-5")])
+    targets = tmp_path / "targets.json"
+    targets.write_text(json.dumps({"pedals": {"hm": {"label_regex": "Lv-(\\d+)\\s+L-(\\d+)\\s+H-(\\d+)\\s+D-(\\d+)",
+        "tones": [{"tone_id": 7, "unit": "u", "group": "g", "models": [1]}], "assumed": {}}}}))
+    calls = {"free": [], "constrained": []}
+    monkeypatch.setattr(PF, "fit_model", _fake_fit_model(calls))
+    monkeypatch.setattr(PF, "fit_constrained_only",
+                        lambda rec, ev, d: {"ltas_rms_db": 0.5, "harm_rms_db": 1.0, "dyn_db": 0.1})
+    out = tmp_path / "o"
+    argv = ["--pedal", "hm", "--cache", str(cache), "--targets", str(targets), "--manifest", str(man), "--di", str(DI),
+            "--work", str(tmp_path / "w"), "--out", str(out), "--short-probe", "--no-plots", "--merge"]
+    assert PF.main(argv) == 0
+    stored = json.loads((out / "fits_hm.json").read_text())["models"][0]
+    assert stored["labels"] and stored["pinned_knobs"]
+
+    def again(name):
+        mf = tmp_path / "again.json"
+        _manifest(mf, 7, "mk", "cc-by", [(1, name)])
+        assert PF.main([str(mf) if x == str(man) else x for x in argv]) == 0
+        return json.loads((out / "fits_hm.json").read_text())["models"][0]
+
+    m = again("1")                                    # bare id: nothing refreshed, labels and pins stay
+    assert m["labels"] == stored["labels"] and m["pinned_knobs"] == stored["pinned_knobs"]
+    assert m["pinned_is_assumed"] is False and m["name"] == "cap Lv-6 L-5 H-5 D-5"
+    m = again("Real pedal capture")                   # a real name without labels: labels (and pin) follow it
+    assert m["name"] == "Real pedal capture" and m["labels"] is None
+    assert not m["pinned_knobs"] and m["pinned_is_assumed"] is True

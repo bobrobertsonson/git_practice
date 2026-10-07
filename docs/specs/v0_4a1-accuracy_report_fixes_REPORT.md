@@ -57,6 +57,9 @@ Reviewer non-blocking findings, applied:
 
 1. `pedal-fit --merge` refresh only overwrites name / unit / group / creator / licence / labels when the new value is
    non-empty (a bare model-id name counts as empty), so a partial `--manifest` keeps good stored metadata.
+   Labels follow the name (lead decision): a refreshed name writes its parsed labels (and pin), even None; a bare-id or
+   empty name keeps the stored labels and pin and triggers no pin-change re-run. `non_commercial` is derived from the
+   stored licence.
 2. `pedal-accuracy` tables print `name or model_id` (no "None (id)").
 3. `scripts/run_pedal_accuracy.sh`: pedal-fit exit 4 prints "WARN: <pedal> fit finished with ERRORS (see the report's
    Errors section)"; other non-zero codes still print "fit failed". `set -euo pipefail` is kept (`rc` captured via `|| rc=$?`).
@@ -64,4 +67,4 @@ Reviewer non-blocking findings, applied:
    the dict stored as `constrained`).
 
 Tests added (`match/tests/test_pedal_fit.py`): partial-manifest merge, name=None report, `fit_constrained_only`.
-`tests/test_pedal_fit.py` with a locally built core-only `tonerender`: 47 passed.
+`tests/test_pedal_fit.py` with a locally built core-only `tonerender`: 48 passed (test_merge_labels_follow_the_name added).

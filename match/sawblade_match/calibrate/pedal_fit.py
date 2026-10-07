@@ -1139,17 +1139,22 @@ def run(a: argparse.Namespace) -> int:
             r = all_recs.get(mid)
             if r is None:
                 continue
-            if r in found and r["pin"] != m.get("pinned_knobs"):          # v0.4a.1 D: the pin changed
+            # labels (and so pins) follow the name: a refreshed name brings its own labels, even None; without a
+            # refreshed name (empty or bare model id) the stored labels and pins stay
+            renamed = bool(r["name"]) and str(r["name"]) != str(mid)
+            if renamed and r in found and r["pin"] != m.get("pinned_knobs"):      # v0.4a.1 D: the pin changed
                 todo_constrained.append((r, m))
-            elif r in found and r["pin"] and "constrained" not in m:     # no constrained result stored yet
+            elif renamed and r in found and r["pin"] and "constrained" not in m:  # no constrained result stored yet
                 todo_constrained.append((r, m))
-            for k in ("name", "unit", "group", "creator", "license", "labels"):
+            for k in ("name", "unit", "group", "creator", "license"):
                 v = r[k]                 # a partial --manifest must not wipe good stored metadata
-                if v in (None, "", {}) or (k == "name" and str(v) == str(mid)):
+                if v in (None, "", {}) or (k == "name" and not renamed):
                     continue
                 m[k] = v
-            m["pinned_knobs"], m["pinned_is_assumed"] = r["pin"], r["labels"] is None
-            m["non_commercial"] = str(r.get("license") or "").lower().startswith("cc-by-nc")
+            if renamed:
+                m["labels"] = r["labels"]
+                m["pinned_knobs"], m["pinned_is_assumed"] = r["pin"], r["labels"] is None
+            m["non_commercial"] = str(m.get("license") or "").lower().startswith("cc-by-nc")
         found = [r for r in found if r["model_id"] not in done]
     for rec, m in todo_constrained:
         if rec["pin"]:
