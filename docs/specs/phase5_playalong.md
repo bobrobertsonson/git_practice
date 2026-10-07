@@ -70,3 +70,21 @@ guitars removed, through the matched tone.
   to line up with it. The matcher already measures this offset, so expose it as a
   `StemPlayer` start offset and a `tonerender --backing-offset-ms` option (5.2). For live
   play-along there is no DI, and the offset is 0.
+
+## Addendum 2026-10-07 — sitting the guitar in the backing ("glue")
+
+User: "Bus compression may be helpful on the play along to help glue the guitar into the stems." Lead decision; to be
+scheduled as a play-along polish task after v0.8 (it depends on calibrated levels):
+
+- **Where:** a play-along-only **guitar bus** stage after the rig output (post cab/EQ/level match), before the sum with
+  the stems. Never on the stems (they are already mastered, so a second bus comp on the sum pumps), never in the live
+  rig chain, never in NAM export.
+- **Default glue:** the preset's **record** bus comp (v0.4M Task G `recordDynamics.busComp`, fitted to the record's crest)
+  when one exists, else a gentle default (ratio 2:1, 30 ms attack, 150–250 ms release, aim 1–3 dB gain reduction). The
+  gate stays on the **live** set — record gating was the cause of the unnatural feel.
+- **More important than compression [Likely]:** (1) guitar level matched to the removed guitar stem's loudness
+  (LUFS of the separated guitar vs the rig output), (2) a tilt/EQ match to the stem's guitar, so the rig sits where the
+  record's guitars sat. Compression is the third step.
+- **Feel guard:** the glue comp reacts only to the player's guitar (no sidechain from the backing by default); an
+  optional "breathe with the band" sidechain from the drum stem is a later opt-in.
+- UI: a single GLUE amount (0 = off) on the play-along transport, user to place it (the user designs the UI).
