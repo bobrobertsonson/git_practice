@@ -326,3 +326,18 @@ def test_fixture_check_tolerates_float_noise_and_reports_real_differences(tmp_pa
     assert gen.check_dirs(new, FIX, log=lines.append) == ["a2_full.nam"]
     text = "\n".join(lines)
     assert "a2_full.nam/weights: max abs diff 0.001, 1 value(s)" in text and "/config/layers[0]/channels" in text
+    # everything but weights and loudness / gain is exact: sample_rate, a LeakyReLU slope, loudness beyond 1e-4
+    for edit, key in ((lambda d: d.__setitem__("sample_rate", d["sample_rate"] + 1), "/sample_rate"),
+                      (lambda d: d["config"]["layers"][0]["activation"][0].__setitem__(
+                          "negative_slope", d["config"]["layers"][0]["activation"][0]["negative_slope"] + 5e-5), "negative_slope"),
+                      (lambda d: d["metadata"].__setitem__("loudness", d["metadata"]["loudness"] + 0.5), "/metadata/loudness")):
+        shutil.copy(FIX / "a2_lite.nam", new / "a2_lite.nam")
+        d = json.loads((new / "a2_lite.nam").read_text())
+        edit(d)
+        (new / "a2_lite.nam").write_text(json.dumps(d))
+        lines.clear()
+        assert "a2_lite.nam" in gen.check_dirs(new, FIX, log=lines.append) and key in "\n".join(lines), key
+    shutil.copy(FIX / "a2_lite.nam", new / "a2_lite.nam")
+    (new / "a2_full.nam").unlink()
+    lines.clear()
+    assert "a2_full.nam" in gen.check_dirs(new, FIX, log=lines.append) and "only in the committed directory" in "\n".join(lines)

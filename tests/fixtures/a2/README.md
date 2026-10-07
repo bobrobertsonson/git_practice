@@ -9,7 +9,7 @@ Regenerate (or verify) with the pinned trainer; the output is byte-identical on 
 ```
 python3.11 -m venv .venv && .venv/bin/pip install -e 'match[export]' -c match/constraints-export.txt
 .venv/bin/python tests/fixtures/a2/generate.py            # rewrite these files
-.venv/bin/python tests/fixtures/a2/generate.py --check    # regenerate to a temp dir and compare (.nam as JSON: structure exact, weights within 1e-6, derived floats 1e-4 rel; input.wav exact; ref_*.wav within 1e-5; differences are printed with key path and max abs diff)
+.venv/bin/python tests/fixtures/a2/generate.py --check    # regenerate to a temp dir and compare (.nam as JSON: structure exact, weights within 1e-6, only the forward-pass-derived metadata loudness / gain (and the manifest's reference RMS / peak copies) within 1e-4 rel, everything else exact, files missing from either side flagged; input.wav exact; ref_*.wav within 1e-5; differences are printed with key path and max abs diff)
 ```
 
 Provenance: `neural-amp-modeler==0.13.0`, `torch==2.5.1` (CPU, 1 thread), model-file version `0.7.0`, seeds

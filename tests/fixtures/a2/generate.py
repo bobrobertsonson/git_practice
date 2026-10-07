@@ -222,13 +222,29 @@ def generate(out: Path) -> dict:
 
 
 REF_ATOL = 1e-5      # --check: ref_*.wav samples (float32 forward passes) may differ by this much (other CPU / BLAS)
-META_RTOL = 1e-4     # --check: forward-pass-derived floats inside a .nam (metadata loudness / gain) and in manifest.json
+META_RTOL = 1e-4     # --check: ONLY the forward-pass-derived floats (see FORWARD_DERIVED); every other number is exact
 WEIGHT_ATOL = 1e-6   # --check: weights; seeded init, so normally identical, but a different CPU's float rounding is tolerated
+# Forward-pass-derived values (computed by running the exported model on a test signal, so they depend on the CPU's float
+# rounding): a .nam's metadata.loudness and metadata.gain (also inside container submodels), and the manifest's copies of them
+# plus the reference output's RMS / peak.  Nothing else is derived from a forward pass (the date is pinned, input_level_dbu /
+# output_level_dbu are null, config / version / architecture / sample_rate come from the seeded config).
+FORWARD_DERIVED_SUFFIXES = ("/metadata/loudness", "/metadata/gain")
+FORWARD_DERIVED_MANIFEST_KEYS = ("metadataLoudnessDb", "metadataGain", "referenceRmsDbfs", "referencePeak")
+
+
+def _tol(path: str) -> tuple[str, float]:
+    if path.endswith("/weights"):
+        return "abs", WEIGHT_ATOL
+    if path.endswith(FORWARD_DERIVED_SUFFIXES) or path.rsplit("/", 1)[-1] in FORWARD_DERIVED_MANIFEST_KEYS:
+        return "rel", META_RTOL
+    return "exact", 0.0
 
 
 def _walk(a, b, path, out):
-    """Collect (path, max abs diff, count) for every difference between two parsed JSON values; numbers compare within the
-    tolerance of their path (weights: WEIGHT_ATOL; anything else numeric: META_RTOL relative), everything else exactly."""
+    """Collect (path, max abs diff, count) for every difference between two parsed JSON values.  Weights compare within
+    WEIGHT_ATOL, the forward-pass-derived floats within META_RTOL (relative); every other value, ints and floats included
+    (sample_rate, config numbers such as a LeakyReLU slope, version, architecture), compares exactly."""
+    num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)
     if isinstance(a, dict) and isinstance(b, dict):
         for k in sorted(set(a) | set(b)):
             if k not in a or k not in b:
@@ -238,16 +254,19 @@ def _walk(a, b, path, out):
     elif isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
             out.append((path, None, 1))
-        elif a and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in a + b):
+        elif a and all(num(x) for x in a + b):
             d = np.abs(np.asarray(a, np.float64) - np.asarray(b, np.float64))
-            tol = WEIGHT_ATOL if path.endswith("/weights") else META_RTOL * max(1.0, float(np.max(np.abs(a))))
+            kind, t = _tol(path)
+            tol = t * (max(1.0, float(np.max(np.abs(a)))) if kind == "rel" else 1.0)
             if (d > tol).any():
                 out.append((path, float(d.max()), int((d > tol).sum())))
         else:
             for i, (x, y) in enumerate(zip(a, b)):
                 _walk(x, y, f"{path}[{i}]", out)
-    elif isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool) and not isinstance(b, bool):
-        if a != b and abs(a - b) > META_RTOL * max(1.0, abs(a)):
+    elif num(a) and num(b):
+        kind, t = _tol(path)
+        tol = t * max(1.0, abs(a)) if kind == "rel" else t
+        if a != b and abs(a - b) > tol:
             out.append((path, abs(a - b), 1))
     elif a != b:
         out.append((path, None, 1))
@@ -275,9 +294,9 @@ def _drop(o, key):
 
 def check_dirs(new: Path, old: Path, log=print) -> list[str]:
     """Names that differ.  input.wav must match byte for byte (seeded generator, no forward pass).  A ``.nam`` is compared as
-    parsed JSON: architecture / config / version / sample_rate and every non-numeric field exactly, ``weights`` within
-    ``WEIGHT_ATOL`` (the init is seeded, so they are normally bit-identical), other numbers (metadata loudness / gain, derived from
-    a forward pass) within ``META_RTOL`` relative.  ``ref_*.wav`` (float32 forward passes) within ``REF_ATOL``; manifest.json with
+    parsed JSON: everything exact (architecture, config, version, sample_rate, ints, floats) except ``weights`` within
+    ``WEIGHT_ATOL`` (the init is seeded, so they are normally bit-identical) and the forward-pass-derived floats
+    (``FORWARD_DERIVED_*``: metadata loudness / gain) within ``META_RTOL`` relative.  ``ref_*.wav`` (float32 forward passes) within ``REF_ATOL``; manifest.json with
     its sha256 strings dropped (the .nam files are checked directly) and numbers within ``META_RTOL``.  Every difference is
     printed with its key path, max abs difference and number of differing values, so a red CI is diagnosable from the log."""
     import soundfile as sf
@@ -289,6 +308,10 @@ def check_dirs(new: Path, old: Path, log=print) -> list[str]:
         if diffs:
             bad.append(name)
 
+    for q in sorted(f for f in old.iterdir() if f.is_file() and f.suffix in (".nam", ".wav") + (".json",) and f.name != "rig_two_a2_full.json"
+                    and not (new / f.name).is_file()):      # hand-written files (README, generate.py, the rig preset) are not outputs
+        log(f"  {q.name}: only in the committed directory (the generator no longer writes it)")
+        bad.append(q.name)
     for p in sorted(f for f in new.iterdir() if f.is_file()):
         q = old / p.name
         if not q.is_file():
@@ -314,7 +337,7 @@ def check_dirs(new: Path, old: Path, log=print) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", default=str(HERE))
-    ap.add_argument("--check", action="store_true", help="regenerate into a temp dir and compare with --out: .nam as JSON (weights within 1e-6, derived floats 1e-4 rel), input.wav byte for byte, ref_*.wav within 1e-5")
+    ap.add_argument("--check", action="store_true", help="regenerate into a temp dir and compare with --out: .nam as JSON (weights within 1e-6, loudness/gain 1e-4 rel, all else exact), input.wav byte for byte, ref_*.wav within 1e-5")
     a = ap.parse_args()
     if not a.check:
         m = generate(Path(a.out))
@@ -326,7 +349,7 @@ def main() -> int:
         generate(Path(td))
         bad = check_dirs(Path(td), Path(a.out))
     print("fixtures differ: " + ", ".join(bad) if bad
-          else "fixtures are reproducible (input.wav byte-identical; .nam structure exact, weights within 1e-6, derived floats within 1e-4 rel; ref_*.wav within 1e-5)")
+          else "fixtures are reproducible (input.wav byte-identical; .nam structure exact, weights within 1e-6, forward-derived loudness/gain within 1e-4 rel, all else exact; ref_*.wav within 1e-5)")
     return 1 if bad else 0
 
 if __name__ == "__main__":
