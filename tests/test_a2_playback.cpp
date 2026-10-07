@@ -226,7 +226,8 @@ TEST_CASE("A2 Full and Lite take the NAM_ENABLE_A2_FAST path", "[a2][nam]") {
   auto typeOf = [](const fs::path& p) {
     auto dsp = nam::get_dsp(p);
     REQUIRE(dsp != nullptr);
-    return std::string(typeid(*dsp).name());
+    const nam::DSP& d = *dsp;  // (typeid(*dsp) on a smart pointer trips clang's -Wpotentially-evaluated-expression)
+    return std::string(typeid(d).name());
   };
   for (const auto& [file, ch] : {std::pair<const char*, int>{"a2_full.nam", 8}, {"a2_lite.nam", 3}}) {
     DYNAMIC_SECTION(file) {
@@ -265,6 +266,7 @@ TEST_CASE("A2 Full and Lite take the NAM_ENABLE_A2_FAST path", "[a2][nam]") {
     REQUIRE_FALSE(nam::wavenet::a2_fast::is_a2_shape(j["config"], &channels));
     auto dsp = nam::get_dsp(j);
     REQUIRE(dsp != nullptr);
-    REQUIRE(std::string(typeid(*dsp).name()).find("A2FastModel") == std::string::npos);
+    const nam::DSP& d = *dsp;
+    REQUIRE(std::string(typeid(d).name()).find("A2FastModel") == std::string::npos);
   }
 }
