@@ -2983,6 +2983,83 @@ TEST_CASE("export glue: RESUME is offered for a cancelled run of the same rig an
   CHECK_FALSE(findResumableExport(h.p).available);  // finished: nothing left to resume
 }
 
+TEST_CASE("export glue: a dropped bus comp is still listed - --notes-preset carries the original rig, also on resume", "[export][glue][notes]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  Host h(kFs, 256);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  h.p.jobs().setJobsDir(t.jobs);
+  h.load(writeSourcedRig(t.root, "live", false, true));  // shared cab, comp on (release 80 ms)
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1"})}});
+  ExportSettings s;
+  s.outputFolder = (t.root / "exports").string();
+  s.size = "lite";
+
+  // DROP COMP (the default): the trained preset has the comp off, the notes preset is the original with it on.
+  const ExportPlan plan = planExport(h.p, s);
+  REQUIRE(plan.dropComp);
+  ExportRequest r;
+  std::string err;
+  REQUIRE(buildExportRequest(h.p, s, plan, r, &err));
+  REQUIRE_FALSE(r.notesPreset.empty());
+  REQUIRE(fs::is_regular_file(r.notesPreset));
+  CHECK(r.notesPreset != r.preset);
+  const json trained = readJson(r.preset);
+  const json notes = readJson(r.notesPreset);
+  CHECK(trained["busComp"]["enabled"] == false);
+  CHECK(notes["busComp"]["enabled"] == true);
+  CHECK(notes["busComp"]["releaseMs"] == 80.0);  // the original settings, not defaults
+  json withoutComp = notes;
+  withoutComp["busComp"]["enabled"] = false;
+  CHECK(withoutComp == trained);  // the only difference from what is trained
+  // Deterministic: the same rig is the same file.
+  ExportRequest r2;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), r2, &err));
+  CHECK(r2.notesPreset == r.notesPreset);
+  CHECK(h.p.currentPreset().busComp.enabled);  // the live rig is untouched
+
+  // The flag reaches sawblade-export.
+  REQUIRE(h.p.jobs().startExport(r, &err));
+  REQUIRE(waitUntil([&] { return h.p.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  const fs::path run = h.p.jobs().snapshot(JobKind::Export).outDir;
+  CHECK(after(argvOf(run), "--notes-preset") == r.notesPreset.string());
+  h.p.jobs().cancel(JobKind::Export);
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Export));
+
+  // RESUME: the file saved at the first export, byte for byte.
+  const std::string saved = readText(r.notesPreset);
+  const ResumeOffer o = findResumableExport(h.p);
+  REQUIRE(o.available);
+  t.cfgExport({{"progressJson", true}});
+  ExportRequest rr;
+  REQUIRE(buildResumeRequest(h.p, o, rr, &err));
+  CHECK(rr.notesPreset == r.notesPreset);
+  CHECK(readText(rr.notesPreset) == saved);
+  // If the saved file is gone it is rewritten from the rig (which hashes to the run's key): the same bytes.
+  fs::remove(r.notesPreset);
+  ExportRequest rr2;
+  REQUIRE(buildResumeRequest(h.p, o, rr2, &err));
+  CHECK(rr2.notesPreset == r.notesPreset);
+  CHECK(readText(rr2.notesPreset) == saved);
+  REQUIRE(h.p.jobs().startExport(rr2, &err));
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Export));
+  CHECK(after(argvOf(run), "--notes-preset") == r.notesPreset.string());
+  CHECK(after(argvOf(run), "--resume") == run.string());
+
+  // KEEP COMP and WITH CAB: no notes preset, no flag.
+  s.compChoice = "keep";
+  ExportRequest keep;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), keep, &err));
+  CHECK(keep.notesPreset.empty());
+  s.compChoice = "drop";
+  s.mode = "withcab";
+  const ExportPlan wcPlan = planExport(h.p, s);
+  CHECK_FALSE(wcPlan.dropComp);
+  ExportRequest wc;
+  REQUIRE(buildExportRequest(h.p, s, wcPlan, wc, &err));
+  CHECK(wc.notesPreset.empty());
+}
+
 TEST_CASE("export: no allocations or locks on the audio thread while an export runs and the panel's glue is polled", "[export][rt]") {
   using namespace sawblade::plugin;
   FakeTools t;
