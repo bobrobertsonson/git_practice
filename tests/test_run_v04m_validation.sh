@@ -33,8 +33,8 @@ expect "^\\+ grep -H 'pre-EQ: DI tilt'"
 expect '^open ".*/out/L_hm2/listen"$'
 expect '^open ".*/out/R_ubr/listen"$'
 # blend references, blend runs (first), per-path check, held-out transfer, dynamics sweep, summary module
-expect '^\+ match/\.venv/bin/python -m sawblade_match\.matcher\.refsum --a .*18\\ GTR\\ RHY\\ L\\ HM2\\ AMP\.wav --b .*19\\ GTR\\ RHY\\ L\\ UBR\\ AMP\.wav --out .*/out/refs/L_blend\.wav --blend-db 0\\?,0 --json .*/out/refs/L_blend\.json$'
-expect '--out .*/out/refs/R_blend\.wav --blend-db 0\\?,0 --json .*/out/refs/R_blend\.json$'
+expect '^\+ match/\.venv/bin/python -m sawblade_match\.matcher\.refsum --a .*18\\ GTR\\ RHY\\ L\\ HM2\\ AMP\.wav --b .*19\\ GTR\\ RHY\\ L\\ UBR\\ AMP\.wav --out .*/out/refs/L_blend\.wav --blend-db 0\\?,0 --polarity auto --json .*/out/refs/L_blend\.json$'
+expect '--out .*/out/refs/R_blend\.wav --blend-db 0\\?,0 --polarity auto --json .*/out/refs/R_blend\.json$'
 expect '^\+ match/\.venv/bin/sawblade-match --di .*17\\ GTR\\ RHY\\ L\\ DI\.wav --ref .*/out/refs/L_blend\.wav .*--thorough --out .*/out/L_blend$'
 expect '^\+ match/\.venv/bin/sawblade-match --di .*nested/20\\ GTR\\ RHY\\ R\\ DI\.wav --ref .*/out/refs/R_blend\.wav .*--thorough --out .*/out/R_blend$'
 reject 'L_blend_quick'
@@ -103,6 +103,44 @@ expect 'dynsweep --result .*/out/L_ubr_quick/result\.json'
 reject 'L_blend_on_R'
 expect '^\(no held-out transfer'
 [[ "$(grep -n -E '^open ' <<<"$out" | head -n 1)" == *"L_blend_quick/listen"* ]] || { echo "quick listen: blend not first" >&2; fail=1; }
+
+# polarity: auto by default, --blend-polarity maps to refsum's --polarity (hm2 = track a, body = track b); bad value -> exit 2
+out="$(bash "$script" "${args[@]}")"
+expect 'refsum .*--blend-db 0\\?,0 --polarity auto --json .*/out/refs/L_blend\.json$'
+for pair in "asis:asis" "invert-hm2:invert-a" "invert-body:invert-b" "auto:auto"; do
+  out="$(bash "$script" "${args[@]}" --blend-polarity "${pair%%:*}")"
+  expect "refsum .*--polarity ${pair##*:} --json .*/out/refs/L_blend\\.json\$"
+done
+for bad in "sideways" "invert" "" "INVERT-BODY"; do
+  set +e; bash "$script" "${args[@]}" --blend-polarity "$bad" >/dev/null 2>&1; rc=$?; set -e
+  [[ $rc -eq 2 ]] || { echo "bad --blend-polarity '$bad': exit $rc, wanted 2" >&2; fail=1; }
+done
+# a reference built with other settings is rebuilt, never reused; its blend runs are redone; same settings: reused
+SD="$T/stubdry"; mkdir -p "$SD" "$T/refs_out/refs" "$T/refs_out/L_blend"
+cat >"$SD/python" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$*" == *--settings-key* ]]; then echo "KEY[$*]"; fi
+exit 0
+STUB
+chmod +x "$SD/python"
+: >"$T/refs_out/refs/L_blend.wav"; : >"$T/refs_out/L_blend/result.json"
+printf '{"polarity": {"mode": "auto"}, "settingsKey": "KEY[-m sawblade_match.matcher.refsum --settings-key --blend-db 0,0 --polarity auto]"}\n' >"$T/refs_out/refs/L_blend.json"
+sargs=(--dry-run --bb "$T/bb" --irs "$T/irs" --pool "$T/pool.json" --out "$T/refs_out" --r-search-dir "$T/none")
+out="$(V04M_PY="$SD/python" bash "$script" "${sargs[@]}")"
+expect '^skip L_blend reference \(exists with the same settings'
+reject 'matcher\.refsum --a .*L_blend\.wav'
+expect '^skip L_blend '
+out="$(V04M_PY="$SD/python" bash "$script" "${sargs[@]}" --blend-polarity invert-body)"      # polarity mode changed
+expect 'L_blend reference exists but was built with other settings'
+expect 'refsum --a .*--polarity invert-b --json .*/refs/L_blend\.json$'
+expect '--thorough --out .*/refs_out/L_blend$'                          # redone although result.json exists
+reject '^skip L_blend '
+out="$(V04M_PY="$SD/python" bash "$script" "${sargs[@]}" --blend-db 0,-2)"          # faders changed
+expect 'built with other settings'
+printf '{"gainsDb": [0, 0], "polarity": 1}\n' >"$T/refs_out/refs/L_blend.json"      # a reference from before the polarity option
+out="$(V04M_PY="$SD/python" bash "$script" "${sargs[@]}")"
+expect 'built with other settings \(or none recorded\)'
+expect '--thorough --out .*/refs_out/L_blend$'
 
 # a missing L file: ls of the Bloodbath folder and exit 1
 rm "$T/bb/19 GTR RHY L UBR AMP.wav"

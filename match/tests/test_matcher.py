@@ -665,7 +665,7 @@ def test_di_r_end_to_end_writes_stereo(tmp_path):
     res = run_match(cfg, Log())
     st, _ = sf.read(res["listening"]["wav"], dtype="float32")
     assert st.ndim == 2 and st.shape[1] == 2
-    assert set(res["best"]["fullLengthPeakDbfs"]) == {"best_L", "best_R"}
+    assert set(res["best"]["fullLengthPeakDbfs"]) == {"best_L", "best_R", "live_L"}     # write_audio: the live render too
 
 
 def test_profiles_are_flagged_and_loadable():

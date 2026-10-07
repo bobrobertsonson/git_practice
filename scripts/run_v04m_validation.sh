@@ -4,6 +4,7 @@
 #
 #   bash scripts/run_v04m_validation.sh [--quick-only] [--force] [--dry-run]
 #        [--bb DIR] [--irs DIR] [--pool FILE] [--out DIR] [--r-search-dir DIR] [--blend-db HM2_DB,BODY_DB]
+#        [--blend-polarity auto|asis|invert-hm2|invert-body]
 #        [--l-di F] [--l-hm2 F] [--l-ubr F] [--r-di F] [--r-hm2 F] [--r-ubr F]
 #
 # --quick-only  IR scan, blend reference, quick L HM2 / UBR / blend runs, per-path check, dynamics sweep, summary,
@@ -17,6 +18,11 @@
 #               /Users/notsch/Desktop/NailTheMix/NailtheMix_March2023_Bloodbath_44k24b). Only the L files are required:
 #               if an R file is found in neither place the held-out R runs are skipped with a message
 # --blend-db HM2_DB,BODY_DB  faders of the blend reference (the sum of the HM2 and the body amp track), default 0,0
+# --blend-polarity MODE  how the two amp tracks are summed into the blend reference (default auto). The Bloodbath tracks are
+#               raw multitracks, so there is no recorded polarity to keep: auto sums a+b or a-b, whichever has the higher
+#               60-250 Hz level; asis keeps both as recorded; invert-hm2 / invert-body force the flip of track 18/21 or 19/22.
+#               A blend reference built with other faders / polarity settings (refs/<side>_blend.json records them; a
+#               JSON without them counts as different) is rebuilt together with the runs that used it, never reused
 # --out DIR     results folder (default $HOME/.cache/sawblade/match_runs/v04m)
 # --l-di/--l-hm2/--l-ubr/--r-di/--r-hm2/--r-ubr  file names (relative to --bb, or absolute); defaults are
 #               "17 GTR RHY L DI.wav", "18 GTR RHY L HM2 AMP.wav", "19 GTR RHY L UBR AMP.wav",
@@ -33,6 +39,7 @@ QUICK_ONLY=0
 FORCE=0
 DRY=0
 BLEND_DB="0,0"
+BLEND_POLARITY="auto"
 BB="$HOME/sawblade/testdata/ntm/bloodbath"
 IRS="/Users/notsch/Music/Studio_Notsch/_IRs/Guitar_Cabs"
 POOL="$HOME/.cache/sawblade/captures/pool_manifest.json"
@@ -56,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --pool) need_arg "$@"; POOL="$2"; shift ;;
     --out) need_arg "$@"; OUT="$2"; shift ;;
     --blend-db) need_arg "$@"; BLEND_DB="$2"; shift ;;
+    --blend-polarity) need_arg "$@"; BLEND_POLARITY="$2"; shift ;;
     --r-search-dir) need_arg "$@"; R_SEARCH_DIR="$2"; shift ;;
     --l-di) need_arg "$@"; L_DI_F="$2"; shift ;;
     --l-hm2) need_arg "$@"; L_HM2_F="$2"; shift ;;
@@ -75,6 +83,14 @@ if ! [[ $BLEND_DB =~ $BLEND_RE ]]; then
   echo "run_v04m_validation: --blend-db wants two numbers HM2_DB,BODY_DB (e.g. 0,-2.5), got: $BLEND_DB" >&2
   exit 2
 fi
+
+case "$BLEND_POLARITY" in
+  auto) REFSUM_POL="auto" ;;
+  asis) REFSUM_POL="asis" ;;
+  invert-hm2) REFSUM_POL="invert-a" ;;
+  invert-body) REFSUM_POL="invert-b" ;;
+  *) echo "run_v04m_validation: --blend-polarity wants auto, asis, invert-hm2 or invert-body, got: $BLEND_POLARITY" >&2; exit 2 ;;
+esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -220,19 +236,27 @@ say "Check the printout: accepted / unique counts, rejected by reason, near-dupl
 # ---------------------------------------------------------------- 2b. blend references
 # make_blend SIDE HM2 BODY: $OUT/refs/SIDE_blend.wav (+ .json) from refsum; resumable. Sets BLEND_OK_<SIDE>.
 BLEND_OK_L=0; BLEND_OK_R=0
+BLEND_STALE_L=0; BLEND_STALE_R=0      # 1: the reference was rebuilt with other settings, so the runs that used it are redone
 make_blend() {
   local side="$1" a="$2" b="$3"
   local wav="$OUT/refs/${side}_blend.wav" js="$OUT/refs/${side}_blend.json"
   if [[ $FORCE -eq 0 && -f $wav && -f $js ]]; then
-    say "skip ${side}_blend reference (exists; --force to redo)"
-    eval "BLEND_OK_$side=1"
-    return 0
+    # reuse only a reference built with these faders and polarity flags (its JSON records them as settingsKey)
+    local key
+    key="$("$PY" -m sawblade_match.matcher.refsum --settings-key --blend-db "$BLEND_DB" --polarity "$REFSUM_POL" 2>/dev/null)" || key=""
+    if [[ -n $key ]] && grep -qF "\"settingsKey\": \"$key\"" "$js"; then
+      say "skip ${side}_blend reference (exists with the same settings: $key; --force to redo)"
+      eval "BLEND_OK_$side=1"
+      return 0
+    fi
+    say "${side}_blend reference exists but was built with other settings (or none recorded); rebuilding it, and the ${side} blend runs that used it are redone"
+    eval "BLEND_STALE_$side=1"
   fi
-  say "ref  ${side}_blend (HM2 + body, faders $BLEND_DB dB)"
+  say "ref  ${side}_blend (HM2 + body, faders $BLEND_DB dB, polarity $BLEND_POLARITY)"
   if [[ $DRY -eq 1 ]]; then
-    run "$PY" -m sawblade_match.matcher.refsum --a "$a" --b "$b" --out "$wav" --blend-db "$BLEND_DB" --json "$js"
+    run "$PY" -m sawblade_match.matcher.refsum --a "$a" --b "$b" --out "$wav" --blend-db "$BLEND_DB" --polarity "$REFSUM_POL" --json "$js"
     eval "BLEND_OK_$side=1"
-  elif "$PY" -m sawblade_match.matcher.refsum --a "$a" --b "$b" --out "$wav" --blend-db "$BLEND_DB" --json "$js"; then
+  elif "$PY" -m sawblade_match.matcher.refsum --a "$a" --b "$b" --out "$wav" --blend-db "$BLEND_DB" --polarity "$REFSUM_POL" --json "$js"; then
     eval "BLEND_OK_$side=1"
   else
     say "FAILED ${side}_blend reference (refsum); the ${side} blend runs are skipped" >&2
@@ -248,14 +272,21 @@ make_blend L "$L_HM2" "$L_UBR"
 blend_run() {
   local name="$1" side="$2"
   shift 2
-  local ok di
+  local ok di stale
   eval "ok=\$BLEND_OK_$side"
+  eval "stale=\$BLEND_STALE_$side"
   [[ $side == L ]] && di="$L_DI" || di="$R_DI"
   if [[ $ok -ne 1 ]]; then
     say "skip $name (no $side blend reference)"
     return 0
   fi
+  if [[ $stale -eq 1 ]]; then      # the old result (and what was derived from it) belongs to the old reference
+    [[ $DRY -eq 1 ]] || rm -f "$OUT/$name/result.json" "$OUT/$name/pathcheck.json" "$OUT/$name/dynsweep.json" "$OUT/${name}_on_R.pathcheck.json"
+  fi
+  local force0=$FORCE
+  [[ $stale -eq 1 ]] && FORCE=1
   match_run "$name" "$di" "$OUT/refs/${side}_blend.wav" "$@"
+  FORCE=$force0
   BLEND_RUNS+=("$name")
 }
 

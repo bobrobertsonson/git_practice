@@ -74,9 +74,8 @@ class Engine:
         file, dynsweep)."""
         if dynamics not in ("record", "live"):
             raise ValueError(f"dynamics must be 'record' or 'live', got {dynamics!r}")
-        if preset.get("dynamicsMode") != dynamics or int(preset.get("version", 1)) < 4:
-            # the strict parser accepts the v4 keys only in a version 4 file (versions 1-3 are subsets, so bumping is safe)
-            preset = {**preset, "dynamicsMode": dynamics, "version": max(4, int(preset.get("version", 1)))}
+        if preset.get("dynamicsMode") != dynamics:      # the core reads dynamicsMode from any preset version (1-4)
+            preset = {**preset, "dynamicsMode": dynamics}
         x = np.ascontiguousarray(x, dtype=np.float32)
         y, rep = _core.render(preset, x, fs, cache=self.cache)
         self.n_renders += 1

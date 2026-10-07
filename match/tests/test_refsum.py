@@ -45,7 +45,7 @@ def test_unity_sum_float32_and_ratio(tmp_path):
     if hasattr(sf, "info"):
         assert sf.info(str(out)).subtype == "FLOAT"
     assert np.max(np.abs(y - (a32 + b32))) < 1e-6
-    assert r["lagMs"] == 0.0 and r["polarity"] == 1 and r["corr"] > 0.7
+    assert r["lagMs"] == 0.0 and r["corrPolarity"] == 1 and r["polarity"]["chosen"] == "asis" and r["corr"] > 0.7
     want = integrated_lufs(a32, FS) - integrated_lufs(b32, FS)
     assert r["refRatioDb"] == pytest.approx(want, abs=0.05)
     assert r["peakDb"] == pytest.approx(20 * np.log10(np.max(np.abs(y))), abs=1e-3)
@@ -68,21 +68,12 @@ def test_delayed_b_warns_and_reports_lag(tmp_path):
     a, b = tracks()
     d = int(0.005 * FS)
     bd = np.concatenate([np.zeros(d), b[:-d]])
-    rc, out, r = run(tmp_path, a, bd)
+    rc, out, r = run(tmp_path, a, bd, ["--polarity", "asis"])     # (a 5 ms delay is half a cycle at 100 Hz: auto would flip)
     assert rc == 0 and out.exists()                                  # the sum is still written, unshifted
-    assert r["lagMs"] == pytest.approx(5.0, abs=0.1) and r["polarity"] == 1
+    assert r["lagMs"] == pytest.approx(5.0, abs=0.1) and r["corrPolarity"] == 1
     assert any(w.startswith("WARNING:") for w in r["warnings"])
     y, _ = sf.read(str(out), dtype="float32")
     assert np.max(np.abs(y - (a.astype(np.float32) + bd.astype(np.float32)))) < 1e-6
-
-
-def test_polarity_flipped_b(tmp_path):
-    a, b = tracks()
-    rc, out, r = run(tmp_path, a, -b)
-    y, _ = sf.read(str(out), dtype="float32")
-    assert rc == 0 and r["polarity"] == -1 and r["lagMs"] == 0.0 and r["corr"] < -0.7
-    assert any("polarity" in w for w in r["warnings"])
-    assert np.max(np.abs(y - (a.astype(np.float32) - b.astype(np.float32)))) < 1e-6      # never flipped
 
 
 def test_mismatched_rates_exit_2(tmp_path):
@@ -106,3 +97,82 @@ def test_stereo_and_unequal_lengths(tmp_path):
     assert rc == 0 and len(y) == len(a) - 1000 and y.ndim == 1
     ref = (st.astype(np.float32).astype(np.float64).mean(axis=1)[:len(y)] + b.astype(np.float32).astype(np.float64)[:len(y)])
     assert np.max(np.abs(y - ref)) < 1e-6
+
+
+
+
+def f32(x):
+    return x.astype(np.float32).astype(np.float64)
+
+
+def test_auto_polarity_flips_a_track_that_cancels_the_lows(tmp_path):
+    a, b = tracks()
+    rc, out, r = run(tmp_path, a, -b)                                    # default mode: auto
+    y, _ = sf.read(str(out), dtype="float32")
+    pol = r["polarity"]
+    assert rc == 0 and pol["mode"] == "auto" and pol["chosen"] == "invert-b"
+    assert pol["lowBandDbInvert"] > pol["lowBandDbAsis"] + 3.0             # the lows add when b is flipped back
+    assert np.max(np.abs(y - (f32(a) + f32(b)))) < 1e-6                   # b's recorded -b is flipped back: a + b
+    assert r["corrPolarity"] == 1 and r["corr"] > 0.7 and r["warnings"] == [] and r["lagMs"] == 0.0     # lag stays as recorded
+    assert r["settingsKey"] == RS.settings_key(0.0, 0.0, "auto")
+
+
+def test_asis_keeps_both_as_recorded(tmp_path):
+    a, b = tracks()
+    rc, out, r = run(tmp_path, a, -b, ["--polarity", "asis"])
+    y, _ = sf.read(str(out), dtype="float32")
+    assert rc == 0 and r["polarity"]["mode"] == "asis" and r["polarity"]["chosen"] == "asis"
+    assert np.max(np.abs(y - (f32(a) - f32(b)))) < 1e-6
+    assert r["corrPolarity"] == -1 and r["corr"] < -0.7 and any("opposite polarity" in w for w in r["warnings"])
+    # both levels are still measured and recorded
+    assert r["polarity"]["lowBandDbInvert"] > r["polarity"]["lowBandDbAsis"]
+
+
+def test_auto_keeps_asis_for_same_polarity_tracks(tmp_path):
+    a, b = tracks()
+    rc, out, r = run(tmp_path, a, b)
+    y, _ = sf.read(str(out), dtype="float32")
+    assert r["polarity"]["chosen"] == "asis" and r["polarity"]["lowBandDbAsis"] > r["polarity"]["lowBandDbInvert"] + 3.0
+    assert np.max(np.abs(y - (f32(a) + f32(b)))) < 1e-6
+
+
+def test_forced_flips_and_ratio_unaffected(tmp_path):
+    a, b = tracks()
+    for d in ("ia", "ib", "asis"):
+        (tmp_path / d).mkdir()
+    _, out_a, ra = run(tmp_path / "ia", a, b, ["--polarity", "invert-a"])
+    _, out_b, rb = run(tmp_path / "ib", a, b, ["--polarity", "invert-b"])
+    ya, _ = sf.read(str(out_a), dtype="float32")
+    yb, _ = sf.read(str(out_b), dtype="float32")
+    assert np.max(np.abs(ya - (f32(b) - f32(a)))) < 1e-6 and ra["polarity"]["chosen"] == "invert-a"
+    assert np.max(np.abs(yb - (f32(a) - f32(b)))) < 1e-6 and rb["polarity"]["chosen"] == "invert-b"
+    assert np.max(np.abs(ya + yb)) < 1e-6                                 # the same sum up to overall sign
+    _, _, rd = run(tmp_path / "asis", a, b, ["--polarity", "asis"])
+    assert ra["refRatioDb"] == pytest.approx(rd["refRatioDb"], abs=1e-9)
+    assert rb["refRatioDb"] == pytest.approx(rd["refRatioDb"], abs=1e-9)
+
+
+def test_json_has_the_polarity_block(tmp_path):
+    a, b = tracks(3.0)
+    rc, out, r = run(tmp_path, a, b, ["--blend-db", "-3,0"])
+    pol = r["polarity"]
+    for k in ("mode", "chosen", "lowBandDbAsis", "lowBandDbInvert"):
+        assert k in pol
+    assert pol["lowBandHz"] == [60.0, 250.0] and r["settingsKey"] == RS.settings_key(-3.0, 0.0, "auto")
+    for k in ("lagMs", "corr", "corrPolarity", "refRatioDb", "gainsDb"):
+        assert k in r
+
+
+def test_bad_polarity_and_settings_key(tmp_path):
+    code = None
+    try:
+        RS.main(["--a", "a", "--b", "b", "--out", "o", "--polarity", "sideways"])       # argparse: invalid choice -> exit 2
+    except SystemExit as e:
+        code = e.code
+    assert code == 2
+    with pytest.raises(ValueError):
+        RS.blend_refs(*tracks(1.0), FS, polarity="sideways")
+    k = RS.settings_key(0.0, 0.0)
+    assert k != RS.settings_key(0.0, 0.0, "asis") != RS.settings_key(0.0, 0.0, "invert-b") and k != RS.settings_key(-3.0, 0.0)
+    assert RS.main(["--settings-key", "--blend-db", "-3,2.5", "--polarity", "asis"]) == 0
+    assert RS.main(["--a", "x.wav"]) == 2                                 # without --settings-key all of a/b/out are required

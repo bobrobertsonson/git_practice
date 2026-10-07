@@ -3,6 +3,10 @@ without loading ``sawblade_core``."""
 from __future__ import annotations
 
 
+def _onoff(v) -> str:
+    return "n/a" if v is None else ("on" if v else "off")
+
+
 def _f(v, fmt="{:.2f}") -> str:
     return "n/a" if v is None else fmt.format(v)
 
@@ -26,7 +30,7 @@ def format_table(r: dict) -> str:
             sl = _f(lv["slopes"][i - 1], "{:+.2f}") if i else "    -"
             lines.append(f"  {o:+6.1f}     | {_f(m['lufs'], '{:7.1f}')} {_f(m['crestDb'], '{:6.1f}')} {_f(m['floorDb'], '{:6.1f}')} {sl:>7}")
         lines.append(f"  max |slope difference| live vs bypassed: {_f(r.get('liveMaxAbsSlopeDiff'), '{:.2f}')}; "
-                     f"live gate {'on' if r.get('liveGateEnabled') else 'off'}, live bus comp {'on' if r.get('liveBusCompEnabled') else 'off'}")
+                     f"live gate {_onoff(r.get('liveGateEnabled'))}, live bus comp {_onoff(r.get('liveBusCompEnabled'))}")
     return "\n".join(lines)
 
 

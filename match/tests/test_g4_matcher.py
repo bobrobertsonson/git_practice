@@ -88,4 +88,5 @@ def test_run_emits_live_presets_scores_in_record_and_writes_render_live(tmp_path
     a, ra = sf.read(str(d / "render.wav"), dtype="float32")
     b, rb = sf.read(str(d / "render_live.wav"), dtype="float32")
     assert ra == rb and len(a) == len(b)
+    assert set(res["best"]["fullLengthPeakDbfs"]) == {"best_L", "live_L"}          # the live render feeds the clip guard too
     assert "lufsRenderLive" in lst and "renderLive" in lst["truePeakDb"]

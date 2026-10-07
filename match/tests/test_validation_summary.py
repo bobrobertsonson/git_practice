@@ -57,3 +57,15 @@ def test_blend_runs_first_pathcheck_and_held_out(tmp_path):
     assert "A vs ref-a 1.10, B vs ref-b 2.20" in txt and "swapped: A vs ref-b 5.50, B vs ref-a 6.60" in txt
     assert "chosen 3.00 dB vs reference 2.50 dB" in txt
     assert "L_blend_on_R.pathcheck.json" in txt and "singlePath true" in txt
+
+
+def test_blend_reference_polarity_choice_is_printed(tmp_path):
+    (tmp_path / "refs").mkdir()
+    (tmp_path / "refs" / "L_blend.json").write_text(json.dumps({
+        "polarity": {"mode": "auto", "chosen": "invert-b", "lowBandDbAsis": -41.25, "lowBandDbInvert": -30.5},
+        "lagMs": 1.95, "corr": 0.269, "refRatioDb": 3.1, "gainsDb": [0.0, 0.0]}))
+    (tmp_path / "refs" / "R_blend.json").write_text(json.dumps({"gainsDb": [0.0, 0.0], "polarity": 1}))   # an old reference
+    txt = VS.summary(tmp_path)
+    assert "polarity auto -> invert-b" in txt and "as recorded -41.2 dB" in txt or "as recorded -41.3 dB" in txt
+    assert "b inverted -30.5 dB" in txt and "lag 1.95 ms (not shifted)" in txt
+    assert "refs/R_blend: polarity: not recorded" in txt

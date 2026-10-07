@@ -108,9 +108,29 @@ def order_key(d: Path):
     return (0 if "_blend" in n else (2 if "_no_" in n else 1), n)
 
 
-def summary(out: Path) -> str:
+def ref_lines(out: Path) -> list[str]:
+    """One block per blend reference (``refs/<side>_blend.json``): the polarity choice and both 60-250 Hz levels, the lag
+    (reported, never shifted), the correlation and the reference ratio."""
     lines: list[str] = []
-    for d in sorted((p for p in out.iterdir() if p.is_dir()), key=order_key):
+    for f in sorted((out / "refs").glob("*_blend.json")) if (out / "refs").is_dir() else []:
+        r = _load(f)
+        if not r:
+            continue
+        pol = r.get("polarity")
+        g = lambda v, fmt="{:.2f}": "n/a" if v is None else fmt.format(v)
+        if isinstance(pol, dict):
+            p = (f"polarity {pol.get('mode')} -> {pol.get('chosen')} (60-250 Hz: as recorded {g(pol.get('lowBandDbAsis'), '{:.1f}')} dB, "
+                 f"b inverted {g(pol.get('lowBandDbInvert'), '{:.1f}')} dB)")
+        else:
+            p = "polarity: not recorded (built before the polarity option)"
+        lines.append(f"== refs/{f.stem}: {p}; lag {g(r.get('lagMs'))} ms (not shifted), corr {g(r.get('corr'), '{:+.3f}')}, "
+                     f"reference ratio A-B {g(r.get('refRatioDb'))} dB, faders {r.get('gainsDb')}")
+    return lines
+
+
+def summary(out: Path) -> str:
+    lines: list[str] = ref_lines(out)
+    for d in sorted((p for p in out.iterdir() if p.is_dir() and p.name != "refs"), key=order_key):
         lines += run_block(d)
     for f in sorted(out.glob("*.pathcheck.json")):
         pc = _load(f)

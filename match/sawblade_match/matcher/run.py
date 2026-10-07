@@ -634,6 +634,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                     caps = pool.cabs
                 rows = cab_sweep(eng, c, caps, sp, ex, tgt)
                 summ = sweep_summary(c, rows)
+                summ["pairKey"] = list(c.combo.pair_key())      # identity of the swept candidate (the cab is what the sweep changes)
                 if screen_rec is not None:
                     full = sorted(rows, key=lambda r: r["result"].total)
                     summ["screen"] = {**screen_rec, "fullTop6": [r["cab"].key for r in full[:irscreen.TOP_PAIR]]}
@@ -650,7 +651,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                                 lossAfterRelinear=r2.total)
                     log(f"cab sweep {topo}: {cur['cab'].title}:{cur['cab'].name} -> {top['cab'].title}:{top['cab'].name} "
                         f"(loss {cur['result'].total:.3f} -> {top['result'].total:.3f}, relinear {r2.total:.3f})")
-                sw_caps[(c.topology, bool(c.combo.boost))] = {x.key: x for x in caps}
+                sw_caps[c.combo.pair_key()] = {x.key: x for x in caps}      # per CANDIDATE: each one screens its own top IRs
                 cab_sweeps.append(summ)
                 prog.update(REFINE_SHARE + 0.03 * len(cab_sweeps) / n_sw)
         refined.sort(key=lambda c: c.loss)
@@ -667,17 +668,25 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     if "irblend" in ablate:
         result["irBlend"] = {"ablated": True, "tried": 0, "won": False}
     else:
-        sw = next((x for x in cab_sweeps if x["topology"] == best.topology and x["boost"] == bool(best.combo.boost)), None)
-        bykey = {**{c.key: c for c in pool.cabs}, **(sw_caps.get((best.topology, bool(best.combo.boost))) or {})}
+        # the winner's OWN sweep and capture set: matched by candidate identity (pair key), never by topology / boost (several
+        # candidates of one topology are swept and each screens a different top-N of the IR bank)
+        pk = best.combo.pair_key()
+        sw = next((x for x in cab_sweeps if tuple(x["pairKey"]) == pk), None)
+        bykey = {**{c.key: c for c in pool.cabs}, **(sw_caps.get(pk) or {})}
         if sw and sw.get("screen"):            # B3's analytic screen: its full-render top 6 feed the pair search
             keys = list(sw["screen"]["fullTop6"])
         else:
             keys = [i["cab"] for i in sw["irs"]][:TOP_IRS] if sw else [c.key for c in pool.cabs][:TOP_IRS]
+        missing = [k for k in keys if k not in bykey]
+        if missing:                            # internal invariant: the keys come from this candidate's own sweep
+            raise RuntimeError(f"two-IR blend: IRs {missing} are not among the captures swept for the winning candidate {pk}")
         irb = pair_search(eng, best, Space.for_combo(best.combo, plan.filters), ex, tgt, [bykey[k] for k in keys],
                           seed=cfg.seed * 1000 + 950, gens=plan.gens_final, pop=plan.pop_linear, patience=plan.patience,
                           tol=plan.plateau_tol, log=log)
         won_pair = irb.pop("_won", None)
         irb["ablated"] = False
+        irb["candidatePairKey"] = list(pk)
+        irb["sweepFound"] = sw is not None
         if won_pair is not None:
             combo2, v2, r2 = won_pair
             new = finish_refined(combo2, best, v2, r2, best.extra["info"])
@@ -814,17 +823,22 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     renders = {n: (y, fs, rep) for n, y, fs, rep in eng.map(full_render, list(full_jobs.items()))}
     lap("fullRenders")
     prog.update(0.5, "measuring the result")
-    peaks = {n: float(np.max(np.abs(renders[n][0]))) for n in renders if n.startswith("best")}
+    peaks = {n: float(np.max(np.abs(renders[n][0]))) for n in renders if n.startswith("best") or n == "live_L"}   # live set too
     peak = max(peaks.values())
     best.extra["fullLengthPeakDbfs"] = {n: float(20 * np.log10(max(p, 1e-12))) for n, p in peaks.items()}
     if peak >= 10 ** (CLIP_GUARD_DBFS / 20):
         cut = 20 * np.log10(10 ** (CLIP_GUARD_DBFS / 20) / peak)
         gain_db += cut
         final["output"]["gainDb"] = float(gain_db)
-        for n in list(peaks) + (["live_L"] if "live_L" in renders else []):
+        for n in peaks:
             y, fs, rep = renders[n]
             renders[n] = ((y * 10 ** (cut / 20)).astype(np.float32), fs, rep)
-        log(f"clip guard: full-length peak (max of L/R) {20 * np.log10(peak):.1f} dBFS -> output gain lowered by {-cut:.1f} dB")
+        loud = max(peaks, key=peaks.get)
+        log(f"clip guard: full-length peak (max of L/R{' and the live render' if 'live_L' in peaks else ''}; loudest: {loud}) "
+            f"{20 * np.log10(peak):.1f} dBFS -> output gain lowered by {-cut:.1f} dB")
+        if loud == "live_L":
+            log("warning: the live-dynamics render is the loudest (the record set's compression holds its peak down); the "
+                "output gain was lowered for it")
         best.extra["clipGuardDb"] = float(cut)
     best.extra["fullLengthPeakAfterGuardDbfs"] = {n: float(20 * np.log10(max(float(np.max(np.abs(renders[n][0]))), 1e-12)))
                                                   for n in peaks}

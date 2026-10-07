@@ -88,15 +88,18 @@ def dynsweep(result_path, di_path, engine: Engine | None = None, offsets=OFFSETS
     from ..core import resolve_dynamics
     try:
         lv = resolve_dynamics({**preset, "dynamicsMode": "live"})
-    except Exception:                                      # reporting only
-        lv = {"gate": {}, "busComp": {}}
+    except Exception as e:                                 # reporting only: say so, leave the live-set fields empty (None)
+        print(f"dynsweep: cannot resolve the live dynamics set ({type(e).__name__}: {e}); live gate / bus comp fields are null",
+              file=sys.stderr)
+        lv = None
     sl = sets["live"]["slopes"]
     ld = [abs(a - b) for a, b in zip(sl, sb) if a is not None and b is not None]
     return _finite_or_none({
         "schema": "sawblade.dynsweep", "version": 1, "result": str(result_path), "preset": str(Path(result_path).parent / pname),
         "di": str(di_path), "inputOffsetsDb": list(offsets), "gateEnabled": bool(g.get("enabled")),
         "busCompEnabled": bool(bc.get("enabled")), **sets,
-        "liveGateEnabled": bool(lv["gate"].get("enabled")), "liveBusCompEnabled": bool(lv["busComp"].get("enabled")),
+        "liveGateEnabled": None if lv is None else bool(lv["gate"].get("enabled")),
+        "liveBusCompEnabled": None if lv is None else bool(lv["busComp"].get("enabled")),
         "liveMaxAbsSlopeDiff": max(ld) if ld else None, "slopeDiff": diffs,
         "maxAbsSlopeDiff": max(ok) if ok else None, "randomness": "none (deterministic)"})
 
