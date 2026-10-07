@@ -323,3 +323,67 @@ Why: the album guitar is a blend of two same-take amp tracks per side (HM2 path 
   single-path fixture -> singlePath true. Synthetic audio only, generated in the test, nothing committed.
 - Script: the dry-run test asserts the blend refs, `L_blend_quick` under --quick-only, `L_blend`/`R_blend` in full,
   pathcheck lines and `--blend-db` parsing (bad value -> exit 2).
+
+### F.4 Dynamics sweep (lead decision 2026-10-07; match-engineer)
+`python -m sawblade_match.matcher.dynsweep --result <run>/result.json --di <di.wav> [--json out.json]`
+- Renders the winning preset over the full DI at input offsets -12, -6, 0, +6 dB (DI scaled before the chain), twice:
+  dynamics as matched (the record set, see Task G) and with gate and bus comp both disabled. 8 renders.
+- Per render: integrated LUFS, median 400 ms crest factor (feel.py's crest windows), inter-note floor (feel ``floor_db``
+  at the DI gaps). Per adjacent step: slope = dLUFS_out / dB_in. Table matched vs bypassed, plus max |slope difference|.
+- When Task G lands, a third set: live dynamics.
+- Script: run on every finished run (blend and single-amp), `$OUT/<run>/dynsweep.json`; non-fatal. The summary prints
+  the table, matched-vs-bypassed first.
+- Test: on a fixture preset with gate + bus comp the bypassed slopes are ~monotone and smooth; a fixture with a
+  high-threshold gate shows a slope knee at the low step; a 4:1 comp flattens the matched slope vs bypassed.
+
+## Task G: live dynamics policy (lead decision 2026-10-07)
+
+Principle: the matcher may copy the record's gating and bus compression to score the match; a rig played live must not
+inherit mix processing by default.
+
+### G.1 Preset (dsp-engineer; preset version 4, PRESET_SCHEMA updated)
+- The existing `gate` and `busComp` objects are the **record set** (fitted by the matcher; unchanged meaning, so the matcher,
+  the exporter and every golden keep working).
+- New optional `liveDynamics: { "gate": {...}, "busComp": {...} }` (same object schemas) and
+  `dynamicsMode: "live" | "record"`. **File-format default when absent: "record"** (old files and goldens render
+  bit-identically). The writer emits version 4 when either key is present (v3 otherwise is fine too; follow the schema's
+  existing versioning convention: bump to 4, read 1-4).
+- **Derivation rule** (core, single source of truth; applied by the parser when `liveDynamics` is absent):
+  - gate: `enabled` = record gate enabled; mode expander, ratio 2, rangeDb -24, keyHighPassHz 80,
+    thresholdMode `floorRelative`, floorOffsetDb +8, holdMs = max(record holdMs, 40), releaseMs = max(record releaseMs,
+    120), attack/hysteresis/releaseCurve from the record gate. Record gate absent/disabled -> live gate disabled.
+  - busComp: disabled.
+- `dynamicsMode` selects which set the engine runs. NAM export: unchanged (uses the record `gate`/`busComp` per the
+  existing export rules).
+
+### G.2 Gate floor follower (dsp-engineer; core gate)
+- New GateParams: `thresholdMode` absolute (default, bit-identical) | floorRelative, `floorOffsetDb` (default 8).
+- floorRelative: threshold = floorEstimate + floorOffsetDb, re-evaluated per sample (hysteresis applies below it).
+- floorEstimate: RT-safe minimum statistics on the (key-HPF'd) key: 50 ms RMS frames -> running minimum over a 3 s window
+  as a fixed ring of 100 ms sub-window minima (std::array, no allocation), counted in samples so it is independent of
+  block size. Clamped to [-96, -40] dBFS; initial value -70 dBFS (until the first window fills: min(initial, running min)).
+- Rendering is deterministic and block-size independent (existing determinism tests extended to a floorRelative gate).
+
+### G.3 Plugin (dsp-engineer; plugin/ authorized for this task only)
+- Presets loaded/created in the plugin with no `dynamicsMode` get `"live"` (the plugin state is the preset, so it is then
+  written). The matcher's emitted presets carry `dynamicsMode: "live"` (G.4).
+- A plain **RECORD DYNAMICS** toggle (on = record) in Settings or the existing rig/CAB page, not a new main-UI element.
+  Report flags it "needs a UI home" (the user designs the main UI).
+- The switch is atomic: the whole dynamics set (gate + busComp params) is built off the audio thread and handed over
+  lock-free as one object, applied between blocks. Gate/comp UI controls (if any) edit the active set.
+
+### G.4 Matcher (match-engineer, after F and G.1)
+- Scoring, listening and all match quality numbers render with `dynamicsMode: "record"` (unchanged numbers).
+- Emitted presets (result.json `preset`, alts, export input) carry `dynamicsMode: "live"` and no explicit `liveDynamics`
+  (core derives it).
+- `--listen` writes a third file `render_live.wav` (live set, same section, same loudness match gain as render.wav).
+  The validation script lists it in the listen pairs. dynsweep gains the live set.
+
+### Tests (G)
+- Floor follower: converges to a known noise floor within 3.5 s; follows a -12 dB input change (threshold moves -12 +-1
+  dB) with no re-match; zero allocations in process(); block sizes 1/64/512/odd give identical output (float tolerance
+  per existing determinism tests).
+- Derivation: an old v3 preset with a gate (hold 10, release 20) and a bus comp -> live gate expander/2/-24/80 Hz,
+  hold 40, release 120, floorRelative +8; live busComp off; renders in record mode bit-identical to v3.
+- Toggle: switching sets atomically (no block runs half old / half new; test via the handover object); state round-trip.
+- Schema: v4 round-trip; a v3 reader rejects v4 (existing strictness test pattern).
