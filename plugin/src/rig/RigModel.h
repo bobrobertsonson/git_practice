@@ -112,6 +112,11 @@ void nudgeAlign(Preset& p, int samples, const AlignResult& measured = {});
 void setInvertB(Preset& p, bool invert, const AlignResult& measured = {});
 
 // --- 4.6 gate / comp -------------------------------------------------------------------------------
+// The gate / comp the edit functions below write to: the active set's (the record set in record mode; in live mode the live set,
+// made explicit first). The Settings / rig "RECORD DYNAMICS" toggle only changes dynamicsMode.
+GateParams& activeGateForEdit(Preset& p);
+BusCompParams& activeCompForEdit(Preset& p);
+void setDynamicsMode(Preset& p, DynamicsMode m);
 enum class GateField { Threshold, Hysteresis, Attack, Hold, Release, Range, Ratio, KeyHpf };
 struct Range {
   double lo, hi;

@@ -139,7 +139,8 @@ std::string exportBlockedReason(const Preset& p) {
 ExportSource prepareExportSource(SawbladeProcessor& p, bool dropComp, bool write) {
   ExportSource s;
   Preset current;
-  const bool compOn = (current = p.currentPreset()).busComp.enabled;
+  // NAM export follows the ACTIVE dynamics set (live or record): the exporter is handed a preset whose gate / busComp are that set.
+  const bool compOn = (current = resolveDynamics(p.currentPreset())).busComp.enabled;
   // The auditioned / applied candidate is exported as it is, unless the comp has to go (a no-cab export that drops it).
   if (const auto f = p.audition().currentCandidateFile(); f && fs::exists(*f) && !(dropComp && compOn)) {
     std::ifstream in(*f, std::ios::binary);

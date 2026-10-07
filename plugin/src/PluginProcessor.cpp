@@ -971,6 +971,27 @@ void SawbladeProcessor::applyLiveEdit(const std::function<void(Preset&)>& edit) 
   publishLive();
 }
 
+void SawbladeProcessor::setDynamicsMode(DynamicsMode m) {
+  double thr = 0.0;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    applyParams(preset_, readParams());  // keep a threshold the user moved since the last commit in the set it belonged to
+    preset_.dynamicsMode = m;
+    ++presetRev_;
+    publishLive();  // one snapshot carries the whole new set
+    thr = activeDynamics(preset_).gate.thresholdDb;
+  }
+  // The GATE THRESHOLD parameter belongs to the active set.
+  const ParamSpec& spec = paramSpec(kGateThreshold);
+  paramObj_[kGateThreshold]->setValueNotifyingHost(
+      paramObj_[kGateThreshold]->convertTo0to1(static_cast<float>(snapParam(std::clamp(thr, spec.min, spec.max)))));
+}
+
+DynamicsMode SawbladeProcessor::dynamicsMode() const {
+  std::lock_guard<std::mutex> lk(mutex_);
+  return effectiveDynamicsMode(preset_);
+}
+
 void SawbladeProcessor::setMonitor(bool muteA, bool muteB) {
   std::lock_guard<std::mutex> lk(mutex_);
   monitor_ = {muteA, muteB};

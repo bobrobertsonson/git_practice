@@ -62,7 +62,7 @@ ParamValues paramsFromPreset(const Preset& p) {
   ParamValues v{};
   v[kInputGain] = clampTo(kInputGain, p.inputGainDb);
   v[kOutputGain] = clampTo(kOutputGain, p.outputGainDb);
-  v[kGateThreshold] = clampTo(kGateThreshold, p.gate.thresholdDb);
+  v[kGateThreshold] = clampTo(kGateThreshold, activeDynamics(p).gate.thresholdDb);  // the parameter belongs to the active set
   v[kBlend] = clampTo(kBlend, p.blend);
   v[kLevelA] = clampTo(kLevelA, p.a.levelDb);
   v[kLevelB] = clampTo(kLevelB, p.b.levelDb);
@@ -84,7 +84,8 @@ ParamValues paramsFromPreset(const Preset& p) {
 void applyParams(Preset& p, const ParamValues& v) {
   p.inputGainDb = v[kInputGain];
   p.outputGainDb = v[kOutputGain];
-  p.gate.thresholdDb = v[kGateThreshold];
+  if (p.liveDynamics && effectiveDynamicsMode(p) == DynamicsMode::Live) p.liveDynamics->gate.thresholdDb = v[kGateThreshold];
+  else p.gate.thresholdDb = v[kGateThreshold];  // record mode, or a live set derived from / equal to the record set
   p.blend = v[kBlend];
   p.a.levelDb = v[kLevelA];
   p.b.levelDb = v[kLevelB];
@@ -117,6 +118,9 @@ Preset makeInitPreset() {
 }
 
 Preset clampedToParams(Preset p) {
+  // Live dynamics policy: a preset that has no dynamicsMode plays its LIVE set in the plugin (the plugin state is the preset, so
+  // the mode is then written). Files and goldens outside the plugin keep the file-format default, "record".
+  if (!p.dynamicsMode) p.dynamicsMode = DynamicsMode::Live;
   applyParams(p, paramsFromPreset(p));
   return p;
 }

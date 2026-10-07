@@ -55,9 +55,11 @@ RigSummary summariseRig(const Preset& p) {
   RigSummary r;
   r.cabEnabled = p.cab.enabled;
   r.noCabExact = !p.cab.enabled || p.cab.mode != CabMode::PerPath;  // shared and irMix are one convolver
-  r.compOn = p.busComp.enabled;
-  r.compReleaseMs = p.busComp.releaseMs;
-  r.compTrainable = p.busComp.releaseMs <= kBusCompMaxTrainableReleaseMs;
+  const DynamicsSet dyn = activeDynamics(p);  // the export follows the active set
+  r.dynamics = effectiveDynamicsMode(p) == DynamicsMode::Live ? "live" : "record";
+  r.compOn = dyn.busComp.enabled;
+  r.compReleaseMs = dyn.busComp.releaseMs;
+  r.compTrainable = dyn.busComp.releaseMs <= kBusCompMaxTrainableReleaseMs;
 
   // Captures in rig order: path A's NAM blocks, path B's, then the cab IR(s).
   std::vector<LicenceLine> a, b, cab;
@@ -133,7 +135,7 @@ bool prepareNotesPreset(SawbladeProcessor& p, const std::string& trainedSha256, 
   file = dir / (trainedSha256.substr(0, 16) + ".notes_preset.json");
   std::error_code ec;
   if (reuse && fs::is_regular_file(file, ec)) return true;
-  Preset original = p.currentPreset();
+  Preset original = resolveDynamics(p.currentPreset());
   original.autoTrim.db = 0.0;
   original.autoTrim.hash.clear();
   const std::string text = presetToStateJson(original);

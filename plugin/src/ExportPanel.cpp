@@ -524,7 +524,7 @@ struct ExportPanel::Impl {
             if (f.size() > 7 && f.compare(f.size() - 7, 7, ".ir.wav") == 0) ir = f;
           }
       }
-      notes = buildExportNotes(proc.currentPreset(), mode, drop, nam, ir);
+      notes = buildExportNotes(proc.currentPreset(), mode, drop, nam, ir);  // (resolves the active dynamics set itself)
     }
     notesFromReport = fromReport;
     notesTextShown = fromUtf8(formatNotesTxt(notes, presetName, licence));
@@ -651,7 +651,7 @@ struct ExportPanel::Impl {
     {
       const double sec = proc.matchSettings().exportWallSeconds(cur.size);
       juce::String name = cur.size == "feather" ? "Feather" : cur.size == "lite" ? "Lite" : "Standard";
-      check("i", L::warning(), "Model size: " + name + kDot + (sec > 0.0 ? "last run " + juce::String(static_cast<int>(std::lround(sec / 60.0))) + " min on this machine" : juce::String("no run yet on this machine")));
+      check("i", L::warning(), "Model size: " + name + kDot + "dynamics: " + juce::String(rig.dynamics) + kDot + (sec > 0.0 ? "last run " + juce::String(static_cast<int>(std::lround(sec / 60.0))) + " min on this machine" : juce::String("no run yet on this machine")));
     }
     for (; row < 6; ++row) {
       setText(checkMark[row], {});

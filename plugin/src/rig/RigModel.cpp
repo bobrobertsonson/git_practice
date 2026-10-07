@@ -366,6 +366,20 @@ void setInvertB(Preset& p, bool invert, const AlignResult& measured) {
 }
 
 // --- gate / comp -----------------------------------------------------------------------------------
+// Gate / comp edits go to the ACTIVE set. In live mode the live set is made explicit first (a derived live set has nothing of its
+// own to edit), so the record set the matcher fitted stays untouched.
+DynamicsSet& liveSetForEdit(Preset& p) {
+  if (!p.liveDynamics) p.liveDynamics = liveDynamicsOf(p);
+  return *p.liveDynamics;
+}
+GateParams& activeGateForEdit(Preset& p) {
+  return effectiveDynamicsMode(p) == DynamicsMode::Live ? liveSetForEdit(p).gate : p.gate;
+}
+BusCompParams& activeCompForEdit(Preset& p) {
+  return effectiveDynamicsMode(p) == DynamicsMode::Live ? liveSetForEdit(p).busComp : p.busComp;
+}
+void setDynamicsMode(Preset& p, DynamicsMode m) { p.dynamicsMode = m; }
+
 Range gateRange(GateField f) {
   switch (f) {
     case GateField::Threshold: return {-120.0, 0.0};
@@ -399,7 +413,7 @@ void setGateField(Preset& p, GateField f, double v) {
   const Range r = gateRange(f);
   v = std::clamp(v, r.lo, r.hi);
   if (f == GateField::KeyHpf) v = v < 20.0 ? 0.0 : std::max(v, 40.0);
-  GateParams& g = p.gate;
+  GateParams& g = activeGateForEdit(p);
   switch (f) {
     case GateField::Threshold: g.thresholdDb = v; break;
     case GateField::Hysteresis: g.hysteresisDb = v; break;
@@ -412,9 +426,9 @@ void setGateField(Preset& p, GateField f, double v) {
   }
 }
 
-void setGateEnabled(Preset& p, bool on) { p.gate.enabled = on; }
-void setGateMode(Preset& p, GateMode m) { p.gate.mode = m; }
-void setGateReleaseCurve(Preset& p, GateReleaseCurve c) { p.gate.releaseCurve = c; }
+void setGateEnabled(Preset& p, bool on) { activeGateForEdit(p).enabled = on; }
+void setGateMode(Preset& p, GateMode m) { activeGateForEdit(p).mode = m; }
+void setGateReleaseCurve(Preset& p, GateReleaseCurve c) { activeGateForEdit(p).releaseCurve = c; }
 
 Range compRange(CompField f) {
   switch (f) {
@@ -444,7 +458,7 @@ void setCompField(Preset& p, CompField f, double v) {
   if (!std::isfinite(v)) return;
   const Range r = compRange(f);
   v = std::clamp(v, r.lo, r.hi);
-  BusCompParams& c = p.busComp;
+  BusCompParams& c = activeCompForEdit(p);
   switch (f) {
     case CompField::Threshold: c.thresholdDb = v; break;
     case CompField::Ratio: c.ratio = v; break;
@@ -455,6 +469,6 @@ void setCompField(Preset& p, CompField f, double v) {
   }
 }
 
-void setCompEnabled(Preset& p, bool on) { p.busComp.enabled = on; }
+void setCompEnabled(Preset& p, bool on) { activeCompForEdit(p).enabled = on; }
 
 }  // namespace sawblade::plugin::rig

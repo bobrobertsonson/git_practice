@@ -374,10 +374,31 @@ struct BlendPage : Page {
 // ---------------------------------------------------------------------------------------------------
 // CAB: the shared cab controls (CabControls, also the CAB page of the main editor) without the page's extra buttons
 struct CabPage : Page {
-  explicit CabPage(RigController& c) : controls(c, /*withActions=*/false) { addAndMakeVisible(controls); }
-  void refresh(const Preset& p, const SawbladeProcessor::Status&, Topology) override { controls.refresh(p); }
-  void resized() override { controls.setBounds(getLocalBounds()); }
+  explicit CabPage(RigController& c) : controls(c, /*withActions=*/false), controller(c) {
+    addAndMakeVisible(controls);
+    // Live dynamics policy: on = the rig plays the record set (the gate / bus comp fitted to the recording); off (the default for
+    // plugin presets) = the live set. Needs a UI home: the user designs the main UI; this is a plain placeholder.
+    recordDynamics = std::make_unique<LedToggle>(
+        "RECORD DYNAMICS",
+        "On: play the gate and bus comp the matcher copied from the record. Off: the live set (floor-following expander, no bus comp for matched presets)");
+    recordDynamics->onClick = [this] {
+      const DynamicsMode m = recordDynamics->getToggleState() ? DynamicsMode::Record : DynamicsMode::Live;
+      controller.processor().setDynamicsMode(m);  // one object, applied between blocks; no rebuild
+    };
+    addAndMakeVisible(*recordDynamics);
+  }
+  void refresh(const Preset& p, const SawbladeProcessor::Status&, Topology) override {
+    controls.refresh(p);
+    recordDynamics->setToggleState(effectiveDynamicsMode(p) == DynamicsMode::Record, juce::dontSendNotification);
+  }
+  void resized() override {
+    auto r = getLocalBounds();
+    recordDynamics->setBounds(r.removeFromBottom(40).withTrimmedLeft(16).withWidth(210).withTrimmedBottom(4));
+    controls.setBounds(r);
+  }
   CabControls controls;
+  RigController& controller;
+  std::unique_ptr<LedToggle> recordDynamics;
 };
 
 // ---------------------------------------------------------------------------------------------------
@@ -432,12 +453,13 @@ struct GatePage : Page {
     addAndMakeVisible(learnText);
   }
   void refresh(const Preset& p, const SawbladeProcessor::Status&, Topology) override {
-    on->setToggleState(p.gate.enabled, juce::dontSendNotification);
-    mode.setSelected(p.gate.mode == GateMode::Gate ? 0 : 1);
-    curve.setSelected(p.gate.releaseCurve == GateReleaseCurve::OnePole ? 0 : 1);
+    const DynamicsSet dyn = activeDynamics(p);  // the gate / comp pages show the active set
+    on->setToggleState(dyn.gate.enabled, juce::dontSendNotification);
+    mode.setSelected(dyn.gate.mode == GateMode::Gate ? 0 : 1);
+    curve.setSelected(dyn.gate.releaseCurve == GateReleaseCurve::OnePole ? 0 : 1);
     threshold.updateText();
-    for (std::size_t i = 0; i < knobs.size(); ++i) knobs[i]->setValueFromPreset(gateField(p.gate, fields[i]));
-    const bool expander = p.gate.mode == GateMode::Expander;
+    for (std::size_t i = 0; i < knobs.size(); ++i) knobs[i]->setValueFromPreset(gateField(dyn.gate, fields[i]));
+    const bool expander = dyn.gate.mode == GateMode::Expander;
     knobs[5]->setEnabled(expander);  // RATIO
     knobs[5]->setAlpha(expander ? 1.0f : 0.4f);
     learnText.setText(controller.learnStatus(), juce::dontSendNotification);
@@ -503,9 +525,10 @@ struct CompPage : Page {
     addChildComponent(warn);
   }
   void refresh(const Preset& p, const SawbladeProcessor::Status&, Topology) override {
-    on->setToggleState(p.busComp.enabled, juce::dontSendNotification);
-    for (std::size_t i = 0; i < knobs.size(); ++i) knobs[i]->setValueFromPreset(compField(p.busComp, fields[i]));
-    const double rel = knobs[4]->knob().isMouseButtonDown() ? knobs[4]->value() : p.busComp.releaseMs;
+    const DynamicsSet dyn = activeDynamics(p);
+    on->setToggleState(dyn.busComp.enabled, juce::dontSendNotification);
+    for (std::size_t i = 0; i < knobs.size(); ++i) knobs[i]->setValueFromPreset(compField(dyn.busComp, fields[i]));
+    const double rel = knobs[4]->knob().isMouseButtonDown() ? knobs[4]->value() : dyn.busComp.releaseMs;
     const bool slow = rel > kBusCompMaxTrainableReleaseMs;
     warn.setText("release > 150 ms: not NAM-trainable", juce::dontSendNotification);
     warn.setVisible(slow);

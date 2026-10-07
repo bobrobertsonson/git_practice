@@ -216,6 +216,12 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // parameters) or structure. Does not touch the pending load: an edit made while a structural load is
   // in flight can be overwritten when that load commits (EQ drags are absolute and self-heal).
   void applyLiveEdit(const std::function<void(Preset&)>& edit);
+  // Live dynamics policy (docs/PRESET_SCHEMA.md "Live dynamics"): selects which dynamics set (gate + bus comp) the rig plays.
+  // The new mode is published to the audio thread inside one LiveSnapshot, so the whole set (gate and comp together) is adopted
+  // by the engine between two blocks: no block runs half old, half new (Chain::setLiveParams applies LiveParams::dynamics as one
+  // object). Also moves the GATE THRESHOLD parameter to the new active gate's value. Message thread; no rebuild.
+  void setDynamicsMode(DynamicsMode m);
+  DynamicsMode dynamicsMode() const;
   struct Monitor {
     bool muteA = false, muteB = false;
   };
