@@ -1,6 +1,6 @@
 # v0.6 — A2 everywhere: REPORT
 
-Spec: [`v0_6-a2_everywhere.md`](v0_6-a2_everywhere.md) (Tasks A–D, Lead decisions 1–17). Branch
+Spec: [`v0_6-a2_everywhere.md`](v0_6-a2_everywhere.md) (Tasks A–D, Lead decisions 1–23). Branch
 `claude/sawblade-v0_6-a2`, based on `4d580a2` plus v0.4M (`bafcada`, merged in `bc0c4a6`; it was `bbae365`
 before, see "Process notes"). Owners: dsp-engineer (core/plugin), match-engineer (trainer/export/device-null),
 reviewer on every task.
@@ -14,11 +14,15 @@ reviewer on every task.
   (tested). Zero allocations in `process()`, block-size independent, latency 0.
 - **CPU:** on the macOS arm64 CI runner, two A2 Full amps + pedals + cab cost **RTF 0.123** at 64-sample blocks
   (real-time limit 1.0; test gate 0.5 → about 4x margin). A2 Full costs half of A1 standard, A2 Lite about 1/12.
-- **Export:** `sawblade-export` trains **A2 by default** (`--arch a2 --size full|lite`; A1 kept as `--arch a1
-  --size standard|lite|feather` with NAM's official presets). One A2 run writes three files (container, A2 Full,
-  A2 Lite), each validated and judged. The plugin's export panel offers A2 FULL (default) / A2 LITE / A1.
-- **Anagram:** export notes gain an `anagram` device profile (block, position, settings in hardware terms) and an
-  `.anagram_notes.txt`; `sawblade-calibrate device-null` measures how closely the Anagram reproduces the export.
+- **Export = a standard NAM A2 file** (user decision): `sawblade-export` trains **A2 by default** and the primary
+  output is the trainer's own packed container `<stem>.a2.nam` (standalone Full / Lite as extras; A1 kept as `--arch a1`
+  with NAM's official presets). A core-only check (NAM code only, no Sawblade code) loads every exported file in CI.
+- **Training signal:** by default the **official NAM standard input file**, supplied by the user (`--nam-input`, plugin
+  Settings / first-export prompt) and run through the pinned trainer's own data pipeline; Sawblade's synthetic signal is
+  an explicit, labelled fallback (`--signal sawblade`). The file is never committed, bundled or downloaded (licence
+  finding below). A **reamp pair** export (`--reamp-pair`) lets the user train with any standard NAM trainer.
+- **Anagram:** export notes carry an optional generic hint ("any NAM A2 block; on the Anagram a Neural Amp or Neural
+  Pedal block, KosmOS 1.16+"); `sawblade-calibrate device-null` measures how closely the Anagram reproduces the export.
 - **Task D** (user-run on the Anagram) is pending: steps in section 7.
 
 ## 2. Reviewer verdicts
@@ -30,7 +34,10 @@ reviewer on every task.
 | B A2 playback + CPU | `21e233b`, `0c24470`, `5a7a542`, `ba62827`, `31ef98f`, `45b5fb8` | ACCEPT | 2 (REVISE: bench table invisible in CI logs); generic-path rows ACCEPT |
 | C plugin half | `4a3d22e`, `26ba02d`, `45358b6` | ACCEPT | 2 (should-fix promoted: other A2 size's verdict hidden) |
 | C Python half + device-null | `d1ef210` … `45cac23`, fixes `54b7207`, `253d1d0` | ACCEPT (delta) once CI is green | 3 (REVISE: device-null band math, wrong reference render, overall-only verdict; drive-only rule; A2 require-accept tests; then the CI fixture check) |
-| CI fix: macOS pedal-face test race (pre-existing) | uncommitted, see section 11 | ACCEPT (diff) | 1 |
+| CI fix: macOS pedal-face test race (pre-existing) | `8205a3f` (committed with the user's approval) | ACCEPT | 1 |
+| Anagram wording (device info) | `999e7f0`, `a326d62` | ACCEPT | 2 (unconfirmed TONE3000-block claim removed) |
+| Decisions 18–23, plugin + load check | `48476d2`, `ec7a32b`, `9bb6213`, `9870999`, `ea922d2`, `4b5e54e`, `d2c9b62`, CI fix `e7745b1` | ACCEPT | 4 (REVISE: resume signal contract; then parity follow-ups; CI run 263: reamp test missing fake setup, signal prompt invisible over a finished result) |
+| Decisions 18–23, Python | `ffd1110`, `39e705a` | ACCEPT | 2 (REVISE: official-path held-out ESR misaligned by the trainer's 1-sample latency; A1 notes signal; A1 wording) |
 
 ## 3. Task A — audit
 
@@ -153,6 +160,29 @@ explicitly a pedal/boost); no-cab export's IR (cab + post EQ folded) → IR bloc
 block (last). Only the published block list is used; values are Sawblade's, to be matched by ear/meter. The generic
 v0.4M notes are unchanged (`NOTES_VERSION` 1).
 
+**Decisions 18–23 (user: "a standard NAM A2 file, usable on any A2 loader").**
+- **Primary file** = `<stem>.a2.nam`, written by the pinned trainer's `PackedWaveNet.export_container` (what its
+  standard workflow produces); `files.primary` points to it, standalone `.a2_full.nam` / `.a2_lite.nam` stay as extras
+  with their own verdicts. `tests/tools/nam_load_check` (links only NeuralAmpModelerCore) loads the fixtures in every C++
+  job and all three freshly exported files in `python-export`. Whether every A2 loader accepts a container is unverified.
+- **Licence finding (verbatim):** MIT covers the trainer code (neural-amp-modeler 0.13.0); the trainer ships no input
+  file — its GUI links the files on Google Drive (`nam/train/gui/__init__.py:267-269`); no terms are stated for the
+  audio; the file is **user-supplied and not redistributed** (recorded in `docs/THIRD_PARTY.md`).
+- **Training on the standard input:** `export/standard_input.py` recognises every 48 kHz version the trainer does (its
+  MD5 tables, `nam/train/core.py:91-96, 112-158, 204-233`; v1/v2 accepted with the trainer's deprecation log);
+  `export/official.py` uses the trainer's latency calibration, data checks, validation split, datasets and −18 dBFS
+  normalisation, with Sawblade's own training loop and export (documented deviation: `train()` has no resume, cancel,
+  progress, per-submodel checkpoints, `export_container` or metadata). The installed trainer must equal the pin. Held-out
+  ESR / LTAS on this path are measured after removing the trainer's latency offset (its safety factor makes models one
+  sample late — standard NAM behaviour; recorded as `alignedSamples`). The signal used is recorded per export
+  (`trainingSignal`: "nam-standard v3.0.0" / "sawblade-synthetic v1") in metadata, report and notes.
+- **Fallback:** `--signal sawblade`, labelled "Trained on Sawblade's test signal, not the standard NAM signal". The
+  plugin asks for the file on the first export (CHOOSE FILE / USE SAWBLADE'S TEST SIGNAL INSTEAD / NOT NOW) and never
+  falls back silently; the latest explicit choice wins. A resume reuses the recorded signal.
+- **Reamp pair:** `--reamp-pair NAM_INPUT.wav [--no-train]` copies the input unchanged and writes the chain's render
+  (24-bit mono 48 kHz, same length, latency-compensated) + notes (personal use only, non-commercial with `-nc` captures,
+  never upload or share). Plugin: EXPORT REAMP PAIR.
+
 **CI.** New `python-export` job installs `match[dev,export]` (constraints file, CPU torch) and runs the export / A2 /
 device-null tests with real tiny trainings and the fixture `generate.py --check`.
 
@@ -190,18 +220,17 @@ forward-derived values within 1e-4 relative (`packedForwardMaxAbsDiff` 1e-6 abso
 
 Run by the user; the lead relays these steps. Result: PENDING.
 
-Device: **KosmOS 1.17 assumed** (user: "assume the latest"; 1.17 per the main lead from press sources, 2026-08-11), **not yet
-read off the device**. 1.16 introduced the Neural Amp / Neural Pedal / Neural Loader blocks (up to three NAM instances, A2
-Full / A2 Lite / A1); 1.17 adds a TONE3000 block for library captures. A Sawblade export is a local file for your own use:
-load it in a **Neural Amp** block, not the TONE3000 block, and do not upload it to TONE3000 (models trained from
-TONE3000 captures need the creators' permission to share).
+Device: the export is a **standard NAM A2 file**; on the Anagram, A2 playback needs **KosmOS 1.16 or later** (Neural Amp /
+Neural Pedal / Neural Loader blocks, up to three NAM instances). The file is for your own use — do not upload it to
+TONE3000 (models trained from TONE3000 captures need the creators' permission to share).
 
 0. **Confirm the KosmOS version** on the Anagram (1.16 or later is required) and send it back.
 1. **Export** one matched preset from the plugin's EXPORT panel (or `sawblade-export`) as **A2 FULL**, **no-cab**,
-   with a shared cab (live-compatible blend). The export folder then holds `<name>-nocab-full.a2_full.nam`,
-   `<name>-nocab.ir.wav` (cab + post EQ folded), the container and Lite files, `export_report.json`,
-   `<name>-nocab-full.anagram_notes.txt` and `listen/`.
-2. **Load on the Anagram** (KosmOS 1.16 or later): `<name>-nocab-full.a2_full.nam` into a **Neural Amp** block,
+   with a shared cab (live-compatible blend), trained on your NAM standard input file (set it when the panel asks).
+   The export folder then holds the container `<name>-nocab-full.a2.nam`, the extras `.a2_full.nam` / `.a2_lite.nam`,
+   `<name>-nocab.ir.wav` (cab + post EQ folded), `export_report.json`, the notes and `listen/`.
+2. **Load on the Anagram**: the **container** `<name>-nocab-full.a2.nam` into a **Neural Amp** block (if the device
+   rejects it, load `<name>-nocab-full.a2_full.nam` instead and tell me which file it accepted), and
    `<name>-nocab.ir.wav` into the **IR** block right after it. Leave gate / compressor / EQ blocks out for this test
    (bypassed), and set the Neural Amp and IR block levels to unity (0 dB) if the device offers level controls.
 3. **Re-amp the same DI**: interface out → Anagram input → Anagram output → interface in. Record at 48 kHz (44.1 or
@@ -210,13 +239,15 @@ TONE3000 captures need the creators' permission to share).
 4. **Run**
    ```
    sawblade-calibrate device-null --recording anagram_reamp.wav \
-       --model EXPORT_DIR/<name>-nocab-full.a2_full.nam --ir EXPORT_DIR/<name>-nocab.ir.wav \
+       --model EXPORT_DIR/<name>-nocab-full.a2.nam --ir EXPORT_DIR/<name>-nocab.ir.wav \
        --di di.wav --out device_null_out
    ```
    It renders the exported model + IR through Sawblade's core (what the plugin plays for those files), aligns the
    recording (reports the round-trip latency), matches gain and polarity, and writes `device_null_report.json`,
    `render.wav` and a level-matched, aligned A/B pair in `listen/`.
-5. **Send back** `device_null_report.json`, the console's band table, and your listening verdict on `listen/`.
+   (If the Anagram only accepted the standalone file, pass that file to `--model`.)
+5. **Send back** `device_null_report.json`, the console's band table, which file the Anagram accepted, and your
+   listening verdict on `listen/`.
 
 **Tolerance (proposal):** a match = overall residual ≤ −30 dB re the reference **and** every content octave band
 (within 40 dB of the loudest) within ±1.5 dB after the global gain. Guide: ≤ −40 dB indistinguishable, ≈ −20 dB
@@ -235,6 +266,18 @@ export itself is ~−17 dB (A2 Full) / ~−13 dB (A2 Lite) from it by design.
 
 ## 9. User checks
 
+- **U2 Official-signal acceptance (Mac, decision 22):** A2 Full + Lite trained on the standard input vs Sawblade's
+  signal, same preset (no TONE3000 captures needed):
+  ```
+  cd match && source .venv/bin/activate
+  sawblade-export ../presets/modeled/hm_chainsaw.json --mode nocab --arch a2 \
+    --nam-input ~/NAM/input.wav --di builtin --out ~/sawblade-acceptance/official
+  sawblade-export ../presets/modeled/hm_chainsaw.json --mode nocab --arch a2 \
+    --signal sawblade --di builtin --out ~/sawblade-acceptance/synthetic
+  ```
+  Send `validation.full` / `validation.lite` (`heldOut.esr`, `diExcerpt.ltas.aWeightedErrorDb`, `acceptance.status`,
+  `alignedSamples`) and `trainingSignal` from both `export_report.json`. The official path has only run on a synthetic
+  stand-in here; if the trainer cannot calibrate latency from the rendered blips the run stops with that message.
 - **U1** TONE3000 size strings for A2 models (pool ranking, ladder): `sawblade-t3k models <an A2 tone id>` and send
   the `size` values.
 
@@ -245,9 +288,12 @@ export itself is ~−17 dB (A2 Full) / ~−13 dB (A2 Lite) from it by design.
 - Commit trailers: `bd0764d` … `a53209a` carry "Claude Sonnet 5.5" and `918ebee`, `392ecd1` none (history not
   rewritten); all later commits carry the required trailers.
 
-## 11. Open blocker
+## 11. Known gaps and divergences
 
-The macOS pedal-face test fix (section 6) is written and reviewer-ACCEPTed but **not committed**: the subagent's
-`git add … && git commit … && git pull --no-rebase … && git push …` was denied by the session's permission classifier
-("Git Destructive"). The phase lead does not commit around a permission denial; the decision is with the user. Until
-it lands, macOS CI cannot be green and the phase cannot be accepted.
+- The plugin's generic notes text omits the "In the model (nothing to add)" lines that the exporter's
+  `.export_notes.txt` prints (pre-existing since the v0.4 port).
+- No test asserts that NOT NOW on the training-signal prompt returns the panel to the Result view (the code does).
+- The refusal of a resume that names a different training signal is tested in the exporter, not through the plugin
+  (the plugin never passes a signal on resume).
+- The macOS pedal-face fix (`8205a3f`) was committed by the phase lead after the user approved it; a subagent's commit
+  of the same file had been denied by the permission classifier ("Git Destructive").
