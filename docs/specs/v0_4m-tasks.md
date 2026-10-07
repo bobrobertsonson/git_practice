@@ -363,6 +363,8 @@ inherit mix processing by default.
     120), attack/hysteresis/releaseCurve from the record gate. Record gate absent/disabled -> live gate disabled.
   - busComp: disabled.
 - `dynamicsMode` selects which set the engine runs.
+- Export notes always carry `"dynamics": "live" | "record"` when the preset has a `dynamicsMode` key (absent key: no
+  line, so the existing parity fixtures stay byte-identical).
 - **NAM export follows the active set** (lead decision): a "live" rig trains with the live busComp (off for a match), a
   "record" rig trains the record busComp if it passes the existing export rules; the gate stays excluded as before.
   Core exposes one resolver (active gate/busComp of a preset) used by the render path, the exporter and the plugin.
@@ -402,7 +404,6 @@ inherit mix processing by default.
   per existing determinism tests).
 - Derivation, both paths: a v4 `origin: "match"` preset with a gate (hold 10, release 20) and a bus comp -> live gate
   expander/2/-24/80 Hz, hold 40, release 120, floorRelative +8, live busComp off; the same preset with origin absent /
-  "user" (and an old v3 file) -> liveDynamics == stored gate/busComp. Old v3 preset with a gate (hold 10, release 20) and a bus comp -> live gate expander/2/-24/80 Hz,
-  hold 40, release 120, floorRelative +8; live busComp off; renders in record mode bit-identical to v3.
+  "user" (and an old v3 file) -> liveDynamics == stored gate/busComp. A v3 file renders in record mode bit-identically to before.
 - Toggle: switching sets atomically (no block runs half old / half new; test via the handover object); state round-trip.
 - Schema: v4 round-trip; a v3 reader rejects v4 (existing strictness test pattern).
