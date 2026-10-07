@@ -221,38 +221,92 @@ def generate(out: Path) -> dict:
     return manifest
 
 
-REF_ATOL = 1e-5      # --check: ref_*.wav samples (float32 forward passes) and manifest floats may differ by this much (other CPU / BLAS)
+REF_ATOL = 1e-5      # --check: ref_*.wav samples (float32 forward passes) may differ by this much (other CPU / BLAS)
+META_RTOL = 1e-4     # --check: forward-pass-derived floats inside a .nam (metadata loudness / gain) and in manifest.json
+WEIGHT_ATOL = 1e-6   # --check: weights; seeded init, so normally identical, but a different CPU's float rounding is tolerated
 
 
-def _close(a, b) -> bool:
+def _walk(a, b, path, out):
+    """Collect (path, max abs diff, count) for every difference between two parsed JSON values; numbers compare within the
+    tolerance of their path (weights: WEIGHT_ATOL; anything else numeric: META_RTOL relative), everything else exactly."""
     if isinstance(a, dict) and isinstance(b, dict):
-        return a.keys() == b.keys() and all(_close(a[k], b[k]) for k in a)
-    if isinstance(a, list) and isinstance(b, list):
-        return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b))
-    if isinstance(a, float) and isinstance(b, float):
-        return abs(a - b) <= REF_ATOL * max(1.0, abs(a))
-    return a == b
+        for k in sorted(set(a) | set(b)):
+            if k not in a or k not in b:
+                out.append((f"{path}/{k}", None, 1))
+            else:
+                _walk(a[k], b[k], f"{path}/{k}", out)
+    elif isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            out.append((path, None, 1))
+        elif a and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in a + b):
+            d = np.abs(np.asarray(a, np.float64) - np.asarray(b, np.float64))
+            tol = WEIGHT_ATOL if path.endswith("/weights") else META_RTOL * max(1.0, float(np.max(np.abs(a))))
+            if (d > tol).any():
+                out.append((path, float(d.max()), int((d > tol).sum())))
+        else:
+            for i, (x, y) in enumerate(zip(a, b)):
+                _walk(x, y, f"{path}[{i}]", out)
+    elif isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool) and not isinstance(b, bool):
+        if a != b and abs(a - b) > META_RTOL * max(1.0, abs(a)):
+            out.append((path, abs(a - b), 1))
+    elif a != b:
+        out.append((path, None, 1))
 
 
-def check_dirs(new: Path, old: Path) -> list[str]:
-    """Names that differ: .nam files and input.wav must match byte for byte (seeded init and export are deterministic); the
-    ``ref_*.wav`` forward-pass outputs and the numbers in manifest.json (reference RMS / peak) only within ``REF_ATOL``, so a
-    different CPU's float32 summation order cannot make the check flake.  The manifest's sha256 of the ref files is not compared
-    (it is of the .nam files, which are exact)."""
+def _json_diffs(new: Path, old: Path, skip: tuple = ()) -> list[tuple]:
+    out: list[tuple] = []
+    na, nb = json.loads(new.read_text()), json.loads(old.read_text())
+    for k in skip:
+        for d in (na, nb):
+            _drop(d, k)
+    _walk(na, nb, "", out)
+    return out
+
+
+def _drop(o, key):
+    if isinstance(o, dict):
+        o.pop(key, None)
+        for v in o.values():
+            _drop(v, key)
+    elif isinstance(o, list):
+        for v in o:
+            _drop(v, key)
+
+
+def check_dirs(new: Path, old: Path, log=print) -> list[str]:
+    """Names that differ.  input.wav must match byte for byte (seeded generator, no forward pass).  A ``.nam`` is compared as
+    parsed JSON: architecture / config / version / sample_rate and every non-numeric field exactly, ``weights`` within
+    ``WEIGHT_ATOL`` (the init is seeded, so they are normally bit-identical), other numbers (metadata loudness / gain, derived from
+    a forward pass) within ``META_RTOL`` relative.  ``ref_*.wav`` (float32 forward passes) within ``REF_ATOL``; manifest.json with
+    its sha256 strings dropped (the .nam files are checked directly) and numbers within ``META_RTOL``.  Every difference is
+    printed with its key path, max abs difference and number of differing values, so a red CI is diagnosable from the log."""
     import soundfile as sf
     bad = []
-    for p in sorted(new.iterdir()):
+
+    def report(name, diffs):
+        for path, mx, n in diffs[:12]:
+            log(f"  {name}{path}: " + ("structure / value differs" if mx is None else f"max abs diff {mx:.3g}, {n} value(s) beyond tolerance"))
+        if diffs:
+            bad.append(name)
+
+    for p in sorted(f for f in new.iterdir() if f.is_file()):
         q = old / p.name
         if not q.is_file():
+            log(f"  {p.name}: missing")
             bad.append(p.name)
+        elif p.suffix == ".nam":
+            report(p.name, _json_diffs(p, q))
+        elif p.name == "manifest.json":
+            report(p.name, _json_diffs(p, q, skip=("sha256",)))
         elif p.name.startswith("ref_") and p.suffix == ".wav":
             x, y = sf.read(str(p), dtype="float32"), sf.read(str(q), dtype="float32")
-            if x[1] != y[1] or x[0].shape != y[0].shape or float(np.max(np.abs(x[0] - y[0]))) > REF_ATOL:
-                bad.append(p.name)
-        elif p.name == "manifest.json":
-            if not _close(json.loads(p.read_text()), json.loads(q.read_text())):
-                bad.append(p.name)
+            if x[1] != y[1] or x[0].shape != y[0].shape:
+                report(p.name, [("", None, 1)])
+            else:
+                d = float(np.max(np.abs(x[0] - y[0])))
+                report(p.name, [("", d, int((np.abs(x[0] - y[0]) > REF_ATOL).sum()))] if d > REF_ATOL else [])
         elif q.read_bytes() != p.read_bytes():
+            log(f"  {p.name}: bytes differ")
             bad.append(p.name)
     return bad
 
@@ -260,7 +314,7 @@ def check_dirs(new: Path, old: Path) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", default=str(HERE))
-    ap.add_argument("--check", action="store_true", help="regenerate into a temp dir and compare with --out: .nam / input.wav byte for byte, ref_*.wav within 1e-5")
+    ap.add_argument("--check", action="store_true", help="regenerate into a temp dir and compare with --out: .nam as JSON (weights within 1e-6, derived floats 1e-4 rel), input.wav byte for byte, ref_*.wav within 1e-5")
     a = ap.parse_args()
     if not a.check:
         m = generate(Path(a.out))
@@ -272,7 +326,7 @@ def main() -> int:
         generate(Path(td))
         bad = check_dirs(Path(td), Path(a.out))
     print("fixtures differ: " + ", ".join(bad) if bad
-          else f"fixtures are reproducible (.nam / input.wav byte-identical; ref_*.wav and manifest numbers within {REF_ATOL})")
+          else "fixtures are reproducible (input.wav byte-identical; .nam structure exact, weights within 1e-6, derived floats within 1e-4 rel; ref_*.wav within 1e-5)")
     return 1 if bad else 0
 
 if __name__ == "__main__":

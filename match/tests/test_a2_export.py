@@ -303,3 +303,26 @@ def test_cli_require_accept_judges_the_primary_a2_size_only(monkeypatch, tmp_pat
     monkeypatch.setattr(RUN, "run_export", fake)
     out = main([str(PRESETS / "golden_shared.json"), "--arch", "a2", "--size", size, "--require-accept", "--out", str(tmp_path / "o")])
     assert out == rc and seen["arch"] == "a2" and seen["size"] == size
+
+
+def test_fixture_check_tolerates_float_noise_and_reports_real_differences(tmp_path):
+    import importlib.util
+    import shutil
+    spec = importlib.util.spec_from_file_location("a2gen", FIX / "generate.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    shutil.copytree(FIX, tmp_path / "f")
+    new = tmp_path / "f"
+    lines = []
+    assert gen.check_dirs(new, FIX, log=lines.append) == []
+    m = json.loads((new / "a2_full.nam").read_text())
+    m["metadata"]["loudness"] += 1e-6                       # another CPU's forward pass: tolerated
+    m["weights"][0] += 1e-8
+    (new / "a2_full.nam").write_text(json.dumps(m))
+    assert gen.check_dirs(new, FIX, log=lines.append) == []
+    m["weights"][5] += 1e-3                                 # a real weight change: reported with path and size
+    m["config"]["layers"][0]["channels"] = 9
+    (new / "a2_full.nam").write_text(json.dumps(m))
+    assert gen.check_dirs(new, FIX, log=lines.append) == ["a2_full.nam"]
+    text = "\n".join(lines)
+    assert "a2_full.nam/weights: max abs diff 0.001, 1 value(s)" in text and "/config/layers[0]/channels" in text
