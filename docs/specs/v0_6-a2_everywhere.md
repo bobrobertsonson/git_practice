@@ -104,3 +104,17 @@ validation numbers, and the user's Task D result once run.
 12. **Resume identity** gains the architecture/layout key in Task C (old lite/feather checkpoints refuse cleanly).
 13. **TONE3000 A2 `size` strings** (pool ranking, ladder size "standard") cannot be verified offline: Task C keeps the
     current behaviour and the REPORT lists a one-line user check (`sawblade-t3k models <A2 tone>`).
+14. **Task C interface contract** (so match and plugin halves can run in parallel):
+    - CLI: `sawblade-export … --arch a2|a1` (default `a2`); `--size` = `full|lite` for a2 (default `full`),
+      `standard|lite|feather` for a1 (default `standard`). Any other combination exits non-zero with a clear message.
+      `--arch a1` without `--size` keeps today's behaviour exactly.
+    - Files (a2): `<name>.a2.nam` (container), `<name>.a2_full.nam`, `<name>.a2_lite.nam`; the primary file is the
+      one `--size` names. Export JSON gains `arch`, `size`, `files: {primary, container?, full?, lite?}` and
+      `validation: {full: {...}, lite: {...}}` for a2 (one entry for a1). Progress/status JSON adds `arch`.
+    - Export notes: the existing v0.4M `exportNotes` block is unchanged (generic profile). It gains
+      `deviceProfiles.anagram` (structured, per stage: anagram block, position in chain, settings in hardware terms)
+      and a second text file `<name>.anagram_notes.txt`; the generic `<name>.export_notes.txt` stays. Documented in
+      `docs/PRESET_SCHEMA.md` next to the v0.4M format.
+    - Plugin: export panel choice A2 Full (default) / A2 Lite / A1 (A1 keeps its standard/lite/feather sub-choice),
+      passed as `--arch/--size`; wall-time history keyed by arch+size; the notes view can switch Generic / Anagram
+      when `deviceProfiles.anagram` is present. Ladder fetch stays `standard` (decision 13).
