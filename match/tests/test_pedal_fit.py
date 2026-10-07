@@ -692,3 +692,55 @@ def test_merge_labels_follow_the_name(tmp_path, monkeypatch):
     m = again("Real pedal capture")                   # a real name without labels: labels (and pin) follow it
     assert m["name"] == "Real pedal capture" and m["labels"] is None
     assert not m["pinned_knobs"] and m["pinned_is_assumed"] is True
+    assert "constrained" not in m
+
+
+def _merge_rig(tmp_path, monkeypatch, lic="cc-by", name="cap Lv-6 L-5 H-5 D-5"):
+    cache = tmp_path / "cache"
+    (cache / "7").mkdir(parents=True)
+    (cache / "7" / "1.nam").write_text("x")
+    man = tmp_path / "m.json"
+    _manifest(man, 7, "mk", lic, [(1, name)])
+    targets = tmp_path / "targets.json"
+    targets.write_text(json.dumps({"pedals": {"hm": {"label_regex": "Lv-(\\d+)\\s+L-(\\d+)\\s+H-(\\d+)\\s+D-(\\d+)",
+        "tones": [{"tone_id": 7, "unit": "u", "group": "g", "models": [1]}], "assumed": {}}}}))
+    calls = {"free": [], "constrained": []}
+    monkeypatch.setattr(PF, "fit_model", _fake_fit_model(calls))
+    monkeypatch.setattr(PF, "fit_constrained_only", lambda rec, ev, d: calls["constrained"].append(rec["model_id"])
+                        or {"ltas_rms_db": 0.9, "harm_rms_db": 1.0, "dyn_db": 0.1})
+    out = tmp_path / "o"
+    argv = ["--pedal", "hm", "--cache", str(cache), "--targets", str(targets), "--manifest", str(man), "--di", str(DI),
+            "--work", str(tmp_path / "w"), "--out", str(out), "--short-probe", "--no-plots", "--merge"]
+
+    def again(lic, name, extra=()):
+        mf = tmp_path / "again.json"
+        _manifest(mf, 7, "mk", lic, [(1, name)])
+        assert PF.main([str(mf) if x == str(man) else x for x in argv] + list(extra)) == 0
+        return json.loads((out / "fits_hm.json").read_text())["models"][0]
+    assert PF.main(argv) == 0
+    return calls, again
+
+
+def test_merge_non_commercial_follows_the_stored_licence(tmp_path, monkeypatch):
+    calls, again = _merge_rig(tmp_path, monkeypatch, lic="cc-by-nc")
+    assert again(None, "cap Lv-6 L-5 H-5 D-5")["non_commercial"] is True      # empty licence: stored one stays
+    m = again("cc-by", "cap Lv-6 L-5 H-5 D-5")
+    assert m["license"] == "cc-by" and m["non_commercial"] is False
+
+
+def test_merge_rename_to_other_labels_reruns_constrained_and_keeps_free_fit(tmp_path, monkeypatch):
+    calls, again = _merge_rig(tmp_path, monkeypatch)
+    free_before = json.loads(json.dumps(again("cc-by", "cap Lv-6 L-5 H-5 D-5")["free"]))
+    calls["free"].clear()
+    m = again("cc-by", "cap Lv-6 L-5 H-5 D-9")
+    assert calls["constrained"] == [1] and calls["free"] == []
+    assert m["pinned_knobs"]["distortion"] == 9.0 and m["constrained"]["ltas_rms_db"] == 0.9
+    assert m["free"] == free_before
+
+
+def test_merge_pin_change_outside_the_filter_drops_the_stale_constrained(tmp_path, monkeypatch):
+    calls, again = _merge_rig(tmp_path, monkeypatch)
+    m = again("cc-by", "cap Lv-6 L-5 H-5 D-9", extra=["--model", "999"])      # capture 1 is filtered out
+    assert calls["constrained"] == [] and m["pinned_knobs"]["distortion"] == 9.0 and "constrained" not in m
+    m = again("cc-by", "cap Lv-6 L-5 H-5 D-9")                                  # unfiltered run re-fits it
+    assert calls["constrained"] == [1] and m["constrained"]["ltas_rms_db"] == 0.9

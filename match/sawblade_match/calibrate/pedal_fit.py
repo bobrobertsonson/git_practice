@@ -1146,6 +1146,9 @@ def run(a: argparse.Namespace) -> int:
                 todo_constrained.append((r, m))
             elif renamed and r in found and r["pin"] and "constrained" not in m:  # no constrained result stored yet
                 todo_constrained.append((r, m))
+            elif renamed and r not in found and r["pin"] != m.get("pinned_knobs"):
+                m.pop("constrained", None)       # filtered out (--tone / --model): drop the stale result; an
+                                                 # unfiltered run re-fits it
             for k in ("name", "unit", "group", "creator", "license"):
                 v = r[k]                 # a partial --manifest must not wipe good stored metadata
                 if v in (None, "", {}) or (k == "name" and not renamed):

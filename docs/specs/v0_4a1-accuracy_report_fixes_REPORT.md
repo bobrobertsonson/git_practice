@@ -67,4 +67,6 @@ Reviewer non-blocking findings, applied:
    the dict stored as `constrained`).
 
 Tests added (`match/tests/test_pedal_fit.py`): partial-manifest merge, name=None report, `fit_constrained_only`.
-`tests/test_pedal_fit.py` with a locally built core-only `tonerender`: 48 passed (test_merge_labels_follow_the_name added).
+`tests/test_pedal_fit.py` with a locally built core-only `tonerender`: 51 passed.
+
+Also: a renamed capture whose pin changed but that --tone / --model filtered out has its stored `constrained` dropped (an unfiltered run re-fits it). Tests: non_commercial follows the stored licence, rename to other labels re-runs only the constrained fit, filtered pin change drops the stale result.
