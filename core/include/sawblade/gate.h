@@ -49,7 +49,8 @@ struct GateParams {
 // releaseCurve "linear-db" slews the falling gain at a constant dB/ms (rangeDb over releaseMs)
 // instead of the one-pole, which is slow near the end of a deep fall.
 //
-// Floor follower (thresholdMode floorRelative): minimum statistics on the gate's own peak envelope (key-high-passed). Frame statistic: the maximum of the peak envelope over 50 ms;
+// Floor follower (thresholdMode floorRelative): minimum statistics on the gate's own peak envelope (key-high-passed).
+// Frame statistic: the maximum of the peak envelope over 50 ms;
 // only frames below estimate + 20 dB feed the sub-window minima (playing never feeds the floor); the estimate is the
 // minimum over a 3 s window held as a fixed ring of 100 ms sub-window minima. When no frame has qualified for 10 s the
 // estimate leaks up at +1 dB/s. Clamped to [-96, -40] dBFS, seeded at -70 dBFS (until the first window has filled the

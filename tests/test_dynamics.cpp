@@ -131,14 +131,18 @@ TEST_CASE("Floor follower: 30 s of riffing at -12 dBFS over a -75 dB floor stays
   const double ref = refPeakDb(-75.0);
   const auto x = riff(-75.0, 30.0, true);
   std::vector<float> io(x.size(), 1.0f);
-  double worst = 0.0;
+  double worst = 0.0, earlyLow = 1e9;
   const std::size_t step = 4800;
   for (std::size_t pos = 0; pos < x.size(); pos += step) {
     const auto n = static_cast<int>(std::min(step, x.size() - pos));
     g.processKeyed(x.data() + pos, io.data() + pos, n);
     if (pos > static_cast<std::size_t>(3.5 * kFs)) worst = std::max(worst, std::fabs(g.floorEstimateDb() - ref));
+    // Before the first 3 s window has filled the estimate is min(seed -70, running minimum): it may sit above the reference (at
+    // the seed) but never meaningfully below it.
+    else if (pos > 0) earlyLow = std::min(earlyLow, g.floorEstimateDb() - ref);
   }
   CHECK(worst < 3.0);
+  CHECK(earlyLow > -3.0);
 }
 
 TEST_CASE("Floor follower: a floor step -75 -> -60 dB is learned within 25 s", "[gate][floor]") {

@@ -76,11 +76,11 @@ void Gate::setParams(const GateParams& p) noexcept {
   updateCoefficients();
 }
 
-// One finished 50 ms frame (mean square of the key).
+// One finished 50 ms frame: its statistic is the maximum of the gate's peak envelope over the frame (linear).
 void Gate::floorFrame(double frameMaxEnv) noexcept {
-  const double rmsDb = 20.0 * std::log10(std::max(frameMaxEnv, 1e-9));  // (name kept: the frame statistic, in dB)
-  if (rmsDb < floorDb_ + kQualifyDb) {
-    subMin_ = std::min(subMin_, rmsDb);
+  const double framePeakDb = 20.0 * std::log10(std::max(frameMaxEnv, 1e-9));
+  if (framePeakDb < floorDb_ + kQualifyDb) {
+    subMin_ = std::min(subMin_, framePeakDb);
     sinceQualFrames_ = 0;
   } else if (sinceQualFrames_ < 1000000) {
     ++sinceQualFrames_;
