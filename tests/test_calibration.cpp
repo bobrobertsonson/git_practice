@@ -224,3 +224,18 @@ TEST_CASE("calibration: implausible dBu values are treated as missing", "[calibr
   REQUIRE(pd.deviceUncalibrated);
   REQUIRE(pd.blocks[0].gainInDb == Approx(kAssumedDeviceDbu - 7.0));
 }
+
+TEST_CASE("calibration: implausible gear default is ignored", "[calibration]") {
+  CalibrationDefaults defs;
+  defs.amp.inputDbu = 1e6;
+  std::vector<BlockLevelInfo> p{nam(GearKind::Amp, std::nullopt, std::nullopt)};
+  auto plan = planPath(dev(), p, defs);
+  REQUIRE(plan.blocks[0].gainInDb == 0.0);
+  REQUIRE(plan.blocks[0].inputMissing);
+  REQUIRE(std::isfinite(plan.blocks[0].gainInLinear));
+}
+
+TEST_CASE("calibration: device range bounds are inclusive", "[calibration]") {
+  REQUIRE(DeviceCalibration{kMaxPlausibleDbu}.calibrated());
+  REQUIRE(DeviceCalibration{kMinPlausibleDbu}.calibrated());
+}
