@@ -166,7 +166,7 @@ def studio_stage(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, det
     best_v, best_r, comp = v, cand.result, None
     wide = None
     if det["eqd"]:
-        wide = Space(cand.combo.shape(), boost=cand.combo.boost, filters="post.hp" in space.idx,
+        wide = type(space)(cand.combo.shape(), boost=cand.combo.boost, filters="post.hp" in space.idx,
                      irmix=cand.combo.cab_b is not None, post_gain=WIDE_POST_GAIN)
         v2, r2 = relinear(eng, cand.combo, wide, ex, tgt, cand.align, v, levels=cand.levels, seed=seed, gens=gens, pop=pop,
                           patience=patience, tol=tol, log=log)

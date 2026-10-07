@@ -1,12 +1,14 @@
 # v0.4M — matcher matches the feel: report
 
 Spec: `docs/specs/v0_4m-matcher_feel.md` (Tasks A–E, B2–B4). Lead-pinned definitions: `docs/specs/v0_4m-tasks.md`.
-Branch: `claude/sawblade-v0_4m-matcher-feel`. CI (GitHub Actions) is the validation of record; the local container could
+Branch: `claude/sawblade-v0_4m-matcher-feel` (base `claude/sawblade-plugin-setup-7k0b8q` at 4d580a2 — v0.4 B–E — merged in). CI (GitHub Actions) is the validation of record; the local container could
 not install scipy/pytest (pypi blocked), so engineers also ran the render tests against a local core build with a scipy
 shim — those numbers are labelled "shim" below and are indicative only.
 
-Status: **Tasks A–C, B2.1–B2.4, B3, B4, D.1 and E accepted by the reviewer and merged; CI of record on the merge head
-below.** Validation on the real Bloodbath audio (D.2/D.3) is the user's: Mac commands below.
+Status: **Tasks A–C, B2.1–B2.4, B3, B4, D.1 and E accepted by the reviewer and merged. CI of record: run 226 on
+0d16fdb — all jobs green (python, linux-gcc + pluginval, linux-clang -Werror, macOS arm64 + auval + pluginval AU/VST3).**
+The base (v0.4 B–E, 4d580a2; then v0.4 pedals + TONE3000-in-DAW hotfix, 743bf1d) is merged in. Validation on the real Bloodbath audio (D.2/D.3) is the user's: Mac
+commands below.
 
 ## What changed, in one paragraph per suspect
 
@@ -75,7 +77,9 @@ show its value when the reference is a render of the same kind of chain — that
 | B2.1 core hook | ACCEPT (gcc + clang 356/356) | green (run 170) |
 | B3 IR library | ACCEPT after 1 REVISE (concurrent-write race on duplicate IRs; relative paths) | green (run 172) |
 | D.1 + search fixes | ACCEPT (joint HP/LP × slope with re-polish, boost level fixed, gate tolerance, pedal Occam) | green (run 185) |
-| B2.1 matcher, B2.3, B4 | ACCEPT after 1 REVISE (pre-EQ moved after stage 2 on the refined winner with a re-fit keep rule ≥ 0.05; it had picked a spurious HPF on a plain chain); merged with B3 + D.1; canonical IR-pair orientation | see CI of record |
+| B2.1 matcher, B2.3, B4 | ACCEPT after 1 REVISE (pre-EQ moved after stage 2 on the refined winner with a re-fit keep rule ≥ 0.05; it had picked a spurious HPF on a plain chain); merged with B3 + D.1; canonical IR-pair orientation | green (run 221) |
+| CI fixes after the v0.4M merge (run 195/203) | ACCEPT: studio eqd judged only on residual the post EQ can't absorb; widened post EQ must beat an equal-budget ±6 dB re-fit; pre-EQ confirmation re-fit keeps feel in every block (a real bug the spy test caught) | green (run 221) |
+| Task E follow-up: dropped bus comp in export notes (found by the v0.4 lead) | ACCEPT after 1 REVISE: `sawblade-export --notes-preset` (original rig; nocab only; repeated on resume; refuses a different rig) + plugin `ExportGlue.cpp` writes `<jobs>/inputs/<hash16>.notes_preset.json` and passes it for no-cab DROP COMP exports and resumes | green (run 221) |
 
 ## Open
 
@@ -84,6 +88,9 @@ show its value when the reference is a render of the same kind of chain — that
   equal-budget ±6 dB re-fit (be378c0). Remaining (harmless) risk: a smooth mismatch < 100 Hz or > 8 kHz can still set
   `studio.eqd`; the stage then runs but can't make the preset worse. Follow-up: restrict the judged bands to the post
   EQ's reach.
+- Export resume edge case (deferred, fails safe): if the user toggles the bus comp between cancelling and resuming a
+  drop-comp export, the panel offers RESUME and Python refuses it (notes-preset mismatch). Fix: record "used a notes
+  preset" on the job snapshot and decide the resume flag from the run, not the rig.
 - Bright-DI widening threshold (`diTilt > −1.5 dB/oct`) fires on the fixture DI; rebase on the user's DIs (printed by
   every run).
 - TONE3000 `gears` value for IR tones ("cab" vs "ir") unverified against the live API (one constant, `IR_GEAR`).
@@ -92,7 +99,24 @@ show its value when the reference is a render of the same kind of chain — that
 
 ## Mac validation commands
 
-Run in Terminal on the Mac. Paste the printed summaries (step 7) back to the lead; listen to step 4's `listen/` files.
+Run in Terminal on the Mac (your shell is zsh, so the script is started with `bash`). Two lines:
+
+```
+cd ~/sawblade && git fetch origin claude/sawblade-v0_4m-matcher-feel && git checkout claude/sawblade-v0_4m-matcher-feel && scripts/mac_update.sh --no-models
+bash scripts/run_v04m_validation.sh            # add --quick-only first if you want a few-minute smoke test
+```
+
+The script rebuilds the Python core, installs the matcher, indexes your IR folder, runs the left-side quick timing run and the thorough
+HM2 / UBR runs (with `--listen`), the seven `--ablate` quick runs, and the right-side held-out runs when the R files are found (in the
+Bloodbath folder, else searched under `~/Desktop/NailTheMix/...`; otherwise it says so and skips them). It then prints the step-7
+summary and the `pre-EQ: DI tilt` lines, and the `open ".../listen"` commands for the A/B folders. Everything is logged to
+`~/sawblade-work/v04m_validation.log`; an interrupted run resumes (finished runs are skipped, `--force` redoes them); `--help` lists the
+flags for other file names or folders. Paste the printed summary and tilt lines back to the lead and listen to the `listen/` folders.
+
+### Manual equivalent
+
+The same steps by hand (the script is exactly this, with the paths as defaults). Paste the printed summaries (step 7) back to the lead;
+listen to step 4's `listen/` files.
 
 ### 1. Update (once)
 

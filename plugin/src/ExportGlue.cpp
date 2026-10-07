@@ -1,10 +1,13 @@
 #include "ExportGlue.h"
 
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 
 #include "AppPaths.h"
 #include "presets/PresetLibrary.h"
 #include "PluginProcessor.h"
+#include "PresetMapping.h"
 #include "sawblade/bus_comp.h"
 
 namespace sawblade::plugin {
@@ -120,6 +123,39 @@ ExportPlan planExport(SawbladeProcessor& p, const ExportSettings& s) {
   return plan;
 }
 
+namespace {
+// The ORIGINAL rig for the export notes (sawblade-export --notes-preset): the current preset serialised exactly as the export
+// source is (prepareExportSource: auto trim cleared), but with the bus comp left on, so it differs from the trained preset only
+// in busComp.enabled. Named by the trained source's hash: the same rig is the same file, and a resume reuses the very file the
+// run started with (sawblade-export refuses a resume whose notes preset changed). `reuse`: keep an existing file as it is (resume).
+bool prepareNotesPreset(SawbladeProcessor& p, const std::string& trainedSha256, bool reuse, fs::path& file, std::string* error) {
+  const fs::path dir = p.jobs().jobsDir() / "inputs";
+  file = dir / (trainedSha256.substr(0, 16) + ".notes_preset.json");
+  std::error_code ec;
+  if (reuse && fs::is_regular_file(file, ec)) return true;
+  Preset original = p.currentPreset();
+  original.autoTrim.db = 0.0;
+  original.autoTrim.hash.clear();
+  const std::string text = presetToStateJson(original);
+  fs::create_directories(dir, ec);
+  bool same = false;
+  {
+    std::ifstream in(file, std::ios::binary);
+    if (in) same = std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()) == text;
+  }
+  if (!same) {
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out << text;
+    out.close();
+    if (!out) {
+      if (error) *error = "Could not write the preset for the export notes to " + file.string();
+      return false;
+    }
+  }
+  return true;
+}
+}  // namespace
+
 bool buildExportRequest(SawbladeProcessor& p, const ExportSettings& s, const ExportPlan& plan, ExportRequest& out, std::string* error) {
   const ExportSource src = prepareExportSource(p, plan.dropComp, /*write=*/true);
   if (!src.ok) {
@@ -135,6 +171,8 @@ bool buildExportRequest(SawbladeProcessor& p, const ExportSettings& s, const Exp
   else out.diBuiltin = true;
   out.exportsRoot = plan.exportsRoot;
   out.allowInexact = plan.allowInexact;
+  // A dropped comp is still part of the rig: the notes list it from the original preset (no-cab export only).
+  if (plan.dropComp && plan.mode == "nocab" && !prepareNotesPreset(p, src.sha256, /*reuse=*/false, out.notesPreset, error)) return false;
   return true;
 }
 
@@ -176,6 +214,8 @@ bool buildResumeRequest(SawbladeProcessor& p, const ResumeOffer& offer, ExportRe
   out.exportsRoot = snap.exportsRoot;
   out.allowInexact = snap.allowInexact;
   out.resumeDir = offer.dir;
+  // Same notes preset as the run started with (the saved file; rewritten from the rig only if it is gone: the rig hashes to the run's key).
+  if (drop && !prepareNotesPreset(p, src.sha256, /*reuse=*/true, out.notesPreset, error)) return false;
   if (!snap.di.empty() && !snap.diBuiltin) {
     // The same validation DI as the cancelled run, if that take still exists.
     for (const auto& t : p.recorder().listTakes())

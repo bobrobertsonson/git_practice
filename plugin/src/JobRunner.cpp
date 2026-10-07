@@ -1,5 +1,6 @@
 #include "JobRunner.h"
 #include "settings/Settings.h"
+#include "settings/ToolEnv.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -30,16 +31,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#endif
-
-#if !JUCE_WINDOWS
-#if defined(__APPLE__)
-#include <crt_externs.h>
-#define SAWBLADE_ENVIRON (*_NSGetEnviron())
-#else
-extern char** environ;
-#define SAWBLADE_ENVIRON environ
-#endif
 #endif
 
 #ifndef SAWBLADE_SOURCE_DIR
@@ -1010,6 +1001,10 @@ bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
   if (r.di) job->args.insert(job->args.end(), {"--di", r.di->string()});
   else if (r.diBuiltin) job->args.insert(job->args.end(), {"--di", "builtin"});
   if (r.allowInexact) job->args.push_back("--allow-inexact");
+  if (!r.notesPreset.empty()) {
+    if (!fs::is_regular_file(r.notesPreset, ec)) return fail("The preset for the export notes was not found: " + r.notesPreset.string());
+    job->args.insert(job->args.end(), {"--notes-preset", r.notesPreset.string()});
+  }
   if (!r.resumeDir.empty()) {
     if (!fs::is_directory(r.resumeDir, ec)) return fail("The run to resume was not found: " + r.resumeDir.string());
     job->args.insert(job->args.end(), {"--resume", r.resumeDir.string()});
@@ -1177,7 +1172,13 @@ bool JobRunner::launchLocked(Slot sl, std::shared_ptr<Job> job, std::string* err
       std::vector<char*> argv;
       for (auto& s : store) argv.push_back(s.data());
       argv.push_back(nullptr);
-      const int rc = posix_spawn(&pid, job->exe.c_str(), &fa, &at, argv.data(), SAWBLADE_ENVIRON);
+      // The host's environment plus the shared tool environment (client id, cache dir; settings/ToolEnv.h): a DAW started from
+      // the Dock has no shell exports.
+      std::vector<std::string> envStore = settings::mergedEnvironment(settings::toolEnvironment());
+      std::vector<char*> envp;
+      for (auto& s : envStore) envp.push_back(s.data());
+      envp.push_back(nullptr);
+      const int rc = posix_spawn(&pid, job->exe.c_str(), &fa, &at, argv.data(), envp.data());
       posix_spawn_file_actions_destroy(&fa);
       posix_spawnattr_destroy(&at);
       if (rc != 0) {

@@ -140,7 +140,7 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
                threads: int = 4, di=None, validate: bool = True, signal_seed: int = 1, target_esr: float | None = None,
                keep_scratch: bool = False, log=print, signal_spec: S.SignalSpec | None = None,
                lr_gamma: float | None = None, batch_size: int = T.BATCH, device: str = "auto",
-               resume: str | None = None, exports_root=None, arch: str = "a1") -> dict:
+               resume: str | None = None, exports_root=None, arch: str = "a1", notes_preset=None) -> dict:
     """``arch`` ``"a2"`` (the CLI default) trains the packed A2 net and writes the container plus standalone ``a2_full`` /
     ``a2_lite`` files (``size`` = which standalone file is the primary one: ``full`` default / ``lite``); ``"a1"`` (the
     library default, unchanged behaviour) trains one A1 WaveNet (``size`` feather / lite / standard).  A bad
@@ -155,6 +155,21 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     prog.update("plan", message="planning", arch=arch)
     preset, base = load_preset(preset_path)
     plan = P.make_plan(preset, mode, allow_inexact)           # raises ExportRefused
+    notes_src = None
+    notes_only: list[dict] = []
+    if notes_preset:
+        try:
+            notes_src = load_preset(Path(notes_preset).expanduser())[0]
+        except (OSError, ValueError) as e:
+            raise P.ExportRefused(f"--notes-preset {notes_preset}: cannot read the preset ({e})") from e
+        if not isinstance(notes_src, dict):
+            raise P.ExportRefused(f"--notes-preset {notes_preset}: not a preset object")
+        problems = P.notes_preset_problems(preset, notes_src, mode)
+        if problems:
+            raise P.ExportRefused("; ".join(problems), problems)
+        notes_only = P.notes_only(preset, notes_src)
+        if notes_only:
+            plan.warnings.append("bus comp dropped from the model; listed in the export notes with its settings")
     tpreset = P.training_preset(preset, plan)
     cache = CaptureCache()
 
@@ -187,6 +202,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     identity = {"presetSha256": P.preset_hash(preset), "signalSha256": sinfo["trainSha256"],
                 "validSha256": sinfo["validSha256"], "mode": mode, "size": size, "arch": arch,
                 "layout": T.layout_of(arch)}
+    if notes_src is not None:
+        identity["notesPresetSha256"] = P.preset_hash(notes_src)
     run_config = {"seed": seed, "batchSize": batch_size, "epochs": rc.epochs, "lrGamma": rc.lr_gamma}
     resumed_from = None
     resume_dir = None
@@ -328,10 +345,15 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
                                                       + ("; container: the Full submodel's numbers (the core plays the last submodel)" if which == "container" else "")}
         fpath.write_text(json.dumps(nam))
     if a2:
-        report["exportNotes"], notes_path = N.write_export_notes(preset, plan, paths["primary"], ir_path, lic, stem=stem,
-                                                                 model_label={"full": "A2 Full", "lite": "A2 Lite"}[size])
+        report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, paths["primary"], ir_path, lic,
+                                                                 stem=stem, model_label={"full": "A2 Full", "lite": "A2 Lite"}[size])
     else:
-        report["exportNotes"], notes_path = N.write_export_notes(preset, plan, tres.nam_path, ir_path, lic)
+        report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, tres.nam_path, ir_path, lic)
+    # notes come from the ORIGINAL rig when the caller trained a derived preset (the plugin turns the bus comp off before a
+    # no-cab "drop" export; the comp still has to be listed so it can be added on hardware)
+    if notes_src is not None:
+        report["notesPreset"] = {"path": str(Path(notes_preset).resolve()), "sha256": P.preset_hash(notes_src)}
+        report["notesOnly"] = notes_only         # listed in the notes only; the validation reference is unchanged
     log(f"export notes: {notes_path}")
     report["totalWallSeconds"] = round(time.time() - t_all, 1)
     (outdir / "export_report.json").write_text(json.dumps(report, indent=2, default=float))

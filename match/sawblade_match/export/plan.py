@@ -146,6 +146,42 @@ def make_plan(preset: dict, mode: str, allow_inexact: bool = False) -> Plan:
     return plan
 
 
+NON_TONE_KEYS = ("name", "notes", "export", "playAlong", "category")
+
+
+def _tone_hash(preset: dict, drop_comp: bool) -> str:
+    q = {k: v for k, v in preset.items() if k not in NON_TONE_KEYS and not (drop_comp and k == "busComp")}
+    if isinstance(q.get("output"), dict):      # the plugin clears the derived auto trim from the exported preset
+        q["output"] = {k: v for k, v in q["output"].items() if k not in ("autoTrimDb", "autoTrimHash")}
+    return preset_hash(q)
+
+
+def notes_preset_problems(trained: dict, notes: dict, mode: str = "nocab") -> list[str]:
+    """Why ``notes`` (the preset the export notes are written from) cannot stand in for ``trained`` (the preset that is
+    trained). They may differ only in the bus comp (a no-cab "drop" export trains a copy with the comp off) and in
+    non-tone keys (name, notes, export, playAlong, category). Empty list = consistent."""
+    out = []
+    if mode != "nocab":
+        out.append("--notes-preset is only for no-cab exports (it lists a bus comp dropped from the model)")
+    if _tone_hash(trained, True) != _tone_hash(notes, True):
+        out.append("the notes preset differs from the trained preset beyond the bus comp (and name/notes/export/"
+                   "playAlong/category): it must be the same rig")
+    elif (trained.get("busComp") or {}).get("enabled") and \
+            json.dumps(trained.get("busComp"), sort_keys=True) != json.dumps(notes.get("busComp"), sort_keys=True):
+        out.append("the trained preset keeps its bus comp but the notes preset has different bus comp settings")
+    return out
+
+
+def notes_only(trained: dict, notes: dict) -> list[dict]:
+    """Stages listed in the export notes that the trained model does not contain only because the caller switched them
+    off in the trained copy (today: the bus comp). Does not change validation or the reference."""
+    nc, tc = notes.get("busComp") or {}, trained.get("busComp") or {}
+    if nc.get("enabled") and not tc.get("enabled"):
+        return [{"what": "busComp", "why": "switched off in the trained preset; listed in the export notes with its settings",
+                 "original": dict(nc)}]
+    return []
+
+
 def level_match_info(render_report: dict) -> dict | None:
     """Trims and make-up the core measured (phase 10.1 render report: ``levelMatch`` and ``blend.makeupDb``); None for
     older reports without them."""

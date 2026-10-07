@@ -79,6 +79,11 @@ def mismatches(progress: dict, identity: dict, config: dict | None = None) -> li
             if k == "layout" and stored.get(k) == LEGACY_LAYOUT:
                 msg += ": written before v0.6 with the old lite/feather layer split, which no longer loads; start a new run"
             out.append(msg)
+    # a run that trained with a notes preset must be resumed with the same one (and vice versa): the notes are built at the end
+    if progress.get("notesPresetSha256") != identity.get("notesPresetSha256"):
+        out.append("notes preset differs (checkpoint " + ("none" if progress.get("notesPresetSha256") is None else "sha256 " +
+                   progress["notesPresetSha256"][:12]) + ", requested " + ("none" if identity.get("notesPresetSha256") is None
+                   else "sha256 " + identity["notesPresetSha256"][:12]) + "): pass the same --notes-preset on resume")
     for k, v in (config or {}).items():
         stored = (progress.get("config") or {}).get(k)
         if stored is None:

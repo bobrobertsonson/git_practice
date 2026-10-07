@@ -117,9 +117,9 @@ def test_error_codes_auth_network_error(make_client, monkeypatch, capsys, world)
     monkeypatch.delenv("TONE3000_CLIENT_ID", raising=False)
     monkeypatch.undo()
     monkeypatch.delenv("TONE3000_CLIENT_ID", raising=False)
-    assert cli.main(["whoami", "--json"]) == 1
+    assert cli.main(["whoami", "--json"]) == cli.EXIT_NOT_LOGGED_IN   # no token, no env: "not logged in", not a client-id error
     out = json.loads(capsys.readouterr().out)
-    assert out["code"] == "auth" and "TONE3000_CLIENT_ID" in out["error"]
+    assert out["code"] == "auth" and "not logged in" in out["error"]
 
     def boom():
         raise httpx.ConnectError("no route")

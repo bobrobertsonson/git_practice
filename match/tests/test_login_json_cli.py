@@ -53,10 +53,10 @@ def test_whoami_json_ok(api, make_client, monkeypatch, tmp_path, capsys):
 
 def test_whoami_json_error_shape(respx_mock, monkeypatch, capsys):
     monkeypatch.delenv("TONE3000_CLIENT_ID")
-    assert cli.main(["whoami", "--json"]) == 1
+    assert cli.main(["whoami", "--json"]) == cli.EXIT_NOT_LOGGED_IN   # no token file: not logged in
     out, objs = lines(capsys)
     assert len(objs) == 1 and set(objs[0]) == {"error", "code"} and objs[0]["code"] == "auth"
-    assert "TONE3000_CLIENT_ID" in objs[0]["error"]
+    assert "not logged in" in objs[0]["error"]
 
 
 def test_whoami_json_api_error(api, respx_mock, make_client, monkeypatch, capsys):

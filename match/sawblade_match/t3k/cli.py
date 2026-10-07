@@ -54,13 +54,27 @@ def _tone_ids(values) -> list[int]:
 GEAR_TO_SLOT = {"amp": "amp", "pedal": "pedal", "ir": "cab", "cab": "cab"}
 
 
-def _env_client_id() -> str:
+NO_CLIENT_ID_MSG = ("TONE3000_CLIENT_ID is not set and the token file has no client_id (your publishable key, "
+                    "t3k_pub_...). Fix: export TONE3000_CLIENT_ID=t3k_pub_..., or set it in the plugin Settings "
+                    "and run login again. See match/README.md")
+
+
+def _env_client_id() -> str | None:
+    """The publishable client id from the environment, or None when unset. A secret key is always an error."""
     cid = os.environ.get("TONE3000_CLIENT_ID", "").strip()
     if not cid:
-        raise AuthError("TONE3000_CLIENT_ID is not set (your publishable key, t3k_pub_...). See match/README.md")
+        return None
     if cid.startswith("t3k_cs_"):
         raise AuthError("TONE3000_CLIENT_ID looks like a SECRET key (t3k_cs_...); use the publishable t3k_pub_ key")
     return cid
+
+
+def _resolve_client_id(store: TokenStore) -> str | None:
+    """Env var if set, else the client_id stored in the token file, else None."""
+    cid = _env_client_id()
+    if cid:
+        return cid
+    return publishable_client_id(store.stored_client_id())
 
 
 def _base_url() -> str:
@@ -70,7 +84,8 @@ def _base_url() -> str:
 def make_client(http: httpx.Client | None = None) -> T3KClient:
     base = _base_url()
     http = http or httpx.Client(base_url=base, timeout=30.0, follow_redirects=True)
-    tm = TokenManager(_env_client_id(), http, TokenStore(), os.environ.get("TONE3000_REFRESH_TOKEN") or None)
+    store = TokenStore()
+    tm = TokenManager(_resolve_client_id(store), http, store, os.environ.get("TONE3000_REFRESH_TOKEN") or None)
     return T3KClient(tm, base, http=http)
 
 
@@ -81,7 +96,9 @@ def _emit(obj: dict) -> None:
 
 def cmd_login(args: argparse.Namespace) -> int:
     base = _base_url()
-    cid = _env_client_id()
+    cid = _resolve_client_id(TokenStore())
+    if not cid:
+        raise AuthError(NO_CLIENT_ID_MSG)
     http = httpx.Client(base_url=base, timeout=30.0)
     dc = request_device_code(http, cid)
     events = args.json_events
@@ -315,7 +332,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sawblade-t3k", description="TONE3000 access for Sawblade")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
-    lg = sub.add_parser("login", help="device-flow login (needs TONE3000_CLIENT_ID)")
+    lg = sub.add_parser("login", help="device-flow login (needs TONE3000_CLIENT_ID or a client_id in the token file)")
     lg.add_argument("--json-events", "--json", dest="json_events", action="store_true",
                     help="print JSON event lines (device_code, logged_in) and never the refresh token")
     lg.set_defaults(fn=cmd_login, json=False)

@@ -22,6 +22,11 @@ match/.venv/bin/pytest match          # no network needed
 export TONE3000_CLIENT_ID=t3k_pub_xxxxxxxx
 ```
 
+`TONE3000_CLIENT_ID` is needed only for `login` (it can also come from the plugin Settings, or from the
+`client_id` already in the token file). `login` stores the publishable key in `~/.config/sawblade/t3k_tokens.json`;
+every other command (`whoami`, `models`, `fetch`, `pull`, `resolve`, ...) and token refresh then use that stored
+id, so they work without the env var, e.g. when a DAW is launched from the Dock.
+
 ### Log in (device flow, works headless)
 
 ```
@@ -606,6 +611,16 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   published blocks (gate -> Gate first; model -> Neural Amp, or Neural Pedal for a drive-only no-cab export; the no-cab cab (+ folded post EQ) -> IR
   after the model; unfolded post EQ -> EQ; bus comp -> Compressor last) with each block's position and the settings in plain hardware terms.
   Format: `docs/PRESET_SCHEMA.md` ("Export notes and device profiles"). No claims about the device beyond its published block list.
+* **`--notes-preset PATH`** (no-cab exports only; refused with `--mode withcab`). A caller that trains a derived rig (the plugin
+  switches the bus comp off for a no-cab "drop" export) passes the ORIGINAL preset here, so the dropped comp is still listed in
+  the notes with its settings. It is validated before any work: the file must exist, and it may differ from the trained preset
+  only in `busComp` and the non-tone keys (`name`, `notes`, `export`, `playAlong`, `category`), otherwise the export is refused
+  (if the trained preset keeps its comp, the comp settings must match too). The report gets `notesPreset` (`path`, `sha256`) and
+  `notesOnly` (stages listed in the notes only, e.g. the comp, with their settings), and `plan.warnings` says the comp was
+  dropped from the model. Limitation: the validation reference, the trained signal and the `.nam` are unchanged by it (the comp
+  stays out of the model; validation compares against the trained preset). Its hash is part of the run's resume identity:
+  **repeat `--notes-preset` on `--resume`**; a resume without it (or with another file) is refused, and `--resume auto` skips
+  such runs.
 * **Folding (nocab).** The IR written next to the model is `cab IR (*) post-EQ impulse response`, obtained by rendering a unit impulse
   through the core's own `cab -> post EQ` (empty paths, blend 0): so IR loading, resampling to 48 kHz, the 2 s truncation and the L2
   normalisation are exactly the chain's, and the latency is already trimmed. Trailing samples below -120 dB (re. peak) are cut. The

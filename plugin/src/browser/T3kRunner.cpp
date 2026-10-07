@@ -1,8 +1,40 @@
 #include "T3kRunner.h"
 
 #include <algorithm>
+#include <cctype>
+
+#include "../settings/ToolEnv.h"
 
 namespace sawblade::plugin {
+
+std::string lastErrorLine(const std::string& output) {
+  std::size_t end = output.size();
+  while (end > 0) {
+    const std::size_t nl = output.rfind('\n', end - 1);
+    const std::size_t begin = nl == std::string::npos ? 0 : nl + 1;
+    std::string line = output.substr(begin, end - begin);
+    end = nl == std::string::npos ? 0 : nl;
+    if (!line.empty() && (line.front() == '{' || line.front() == '[')) continue;
+    line = settings::safeToolLine(line);  // the one credential filter (settings/ToolEnv.h)
+    if (line.empty()) continue;
+    return line;
+  }
+  return {};
+}
+
+std::string lastErrorObjectLine(const std::string& output) {
+  std::size_t end = output.size();
+  while (end > 0) {
+    const std::size_t nl = output.rfind('\n', end - 1);
+    const std::size_t begin = nl == std::string::npos ? 0 : nl + 1;
+    std::string line = output.substr(begin, end - begin);
+    end = nl == std::string::npos ? 0 : nl;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    if (!line.empty() && line.front() == '{' && line.find("\"error\"") != std::string::npos && line.find("t3k_cs_") == std::string::npos) return line;
+  }
+  return {};
+}
+
 namespace {
 constexpr std::size_t kMaxOutput = 8u << 20;
 using Clock = std::chrono::steady_clock;
@@ -83,10 +115,12 @@ void T3kRunner::execute(Job& job) {
   const juce::File f(exe);
   if (exe.find('/') != std::string::npos && !f.existsAsFile()) {
     res.launchError = "not found: " + exe;
+  } else if (const std::string problem = settings::toolPathProblem(exe); !problem.empty()) {
+    res.launchError = problem;
   } else {
     juce::StringArray argv;
-    argv.add(juce::String(exe));
-    for (const auto& a : job.args) argv.add(juce::String(a));
+    // The same environment as every other tool launch (client id, cache dir): a DAW started from the Dock has no shell exports.
+    for (const auto& a : settings::toolCommand(exe, job.args, settings::toolEnvironment())) argv.add(juce::String::fromUTF8(a.c_str()));
     juce::ChildProcess child;
     {
       std::lock_guard<std::mutex> lk(procM_);
@@ -104,12 +138,14 @@ void T3kRunner::execute(Job& job) {
       }
       procCv_.notify_all();
       res.launched = true;
-      std::string pending;
+      std::string pending, tailBuf;
       char buf[4096];
       for (;;) {
         const int n = child.readProcessOutput(buf, sizeof buf);
         if (n <= 0) break;
         if (job.keepOutput && res.output.size() < kMaxOutput) res.output.append(buf, static_cast<std::size_t>(n));
+        tailBuf.append(buf, static_cast<std::size_t>(n));  // kept even when keepOutput is off: only a filtered last line leaves (lastErrorLine)
+        if (tailBuf.size() > 4096) tailBuf.erase(0, tailBuf.size() - 2048);
         if (job.onWorkerLine || job.onLine) {
           pending.append(buf, static_cast<std::size_t>(n));
           std::size_t nl;
@@ -142,6 +178,8 @@ void T3kRunner::execute(Job& job) {
         res.cancelled = cancel_ && !timedOut_;
       }
       res.exitCode = static_cast<int>(child.getExitCode());
+      res.lastLine = lastErrorLine(tailBuf);
+      res.lastErrorObject = lastErrorObjectLine(tailBuf);
       if (child.isRunning()) child.kill();
     }
   }

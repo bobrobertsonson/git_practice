@@ -61,6 +61,13 @@ if(SAWBLADE_BASH)
             ${PROJECT_SOURCE_DIR}/scripts/mac_update.sh)
 endif()
 
+# Dry-run check of scripts/run_v04m_validation.sh (fake inputs; nothing runs).
+if(SAWBLADE_BASH)
+  add_test(NAME run_v04m_validation_dry_run
+    COMMAND ${SAWBLADE_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/test_run_v04m_validation.sh
+            ${PROJECT_SOURCE_DIR}/scripts/run_v04m_validation.sh)
+endif()
+
 # Build stamp (v0.1.3 task C): the BuildInfo.h generator follows HEAD without a reconfigure, is a no-op on an
 # unchanged HEAD, and falls back to "unknown" without git. Pure cmake -P; needs git, no plugin build.
 find_package(Git QUIET)

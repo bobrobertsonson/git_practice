@@ -711,6 +711,9 @@ test seam (default `juce::SystemClipboard`).
 running that Python (`generate.py` there has the command) and `plugin/tests/test_export_notes.cpp` requires the C++ output to
 equal them (numbers within 1e-9, strings and the txt exact). If v0.4M changes the format before or after it merges, regenerate the
 fixtures and follow in the port; a report whose `version` differs is not shown (the plugin's notes are).
+*Notes-preset contract:* for a no-cab DROP COMP export (and its resume) the plugin writes the original rig, comp on, to
+`<jobs>/inputs/<hash16>.notes_preset.json` and passes it as `--notes-preset`, so the report's notes still list the comp; the
+exporter refuses a resume without the same file (`match/README.md`, export section).
 
 **Model type (v0.6 Task C).** `ExportSettings` holds `arch` (`a2` | `a1`) and `size` (a2: `full` | `lite`; a1: `feather` | `lite` |
 `standard`). The buttons, in plain terms: *A2 FULL* = best quality, for loaders that play A2 models (such as the Anagram), the
