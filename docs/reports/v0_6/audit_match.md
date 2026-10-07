@@ -227,7 +227,7 @@ Run in this container (Python 3.11 venv with `match[dev,export]` + constraints, 
 * The two failures are `test_matcher_v04m.py::test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept` and `test_matcher.py::test_stage2_first_linear_block_is_ltas_only`.
   Both also fail on the merge base `6701294` in this container, and the CI `python` job is green with the same pins, so they are container-specific (not caused by this task).
 * `tests/fixtures/a2/generate.py --check` regenerates the fixtures byte-identically.
-* `test_a1_sizes_are_nams_official_presets` failed in a `[dev]`-only install (it imports `nam`); fixed in the review round by splitting it into a pure layout test and a `pytest.importorskip("nam")` parameter-count test, plus the `python-export` CI job (decision 17).
+* `test_a1_sizes_are_nams_official_presets` failed in a `[dev]`-only install (it imports `nam`); fixed in the review round by splitting it into a pure layout test and a ``_need_nam` (skip without the trainer) parameter-count test, plus the `python-export` CI job (decision 17).
 
 ## 5. Decisions / questions for lead
 

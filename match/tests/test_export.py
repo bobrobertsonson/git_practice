@@ -361,9 +361,8 @@ def test_a1_sizes_layout_matches_nams_official_presets():
 
 def test_a1_sizes_param_counts_and_receptive_field_vs_pinned_wavenet():
     """Parameter counts (13801 / 6553 / 3025) and the 4093-sample receptive field measured with the pinned 0.13.0 WaveNet."""
-    pytest.importorskip("nam")
     from sawblade_match.export import train as T
-    T.import_nam()
+    _need_nam(T)                 # skips without neural-amp-modeler; stubs tkinter on headless machines (importorskip alone would skip there)
     from nam.models.wavenet import WaveNet
     for size, (_a, _b, n_params) in _A1_EXPECT.items():
         net = WaveNet.init_from_config(T.wavenet_config(size))
