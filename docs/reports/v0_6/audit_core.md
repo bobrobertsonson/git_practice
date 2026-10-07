@@ -13,7 +13,7 @@ Sources: NeuralAmpModelerCore commit `0b3d3c97b0859a3a8c92a8628c4dd89a25eb5842` 
 | Question | Answer |
 |---|---|
 | Does the pinned core load packed / slimmable / container A2 files? | Yes. Architectures `WaveNet`, `SlimmableContainer`, `LSTM`, `ConvNet`, `Linear`, `Sequential` are registered. |
-| Does it play A2 Full and A2 Lite? | Yes, both. A2 Full = WaveNet, 23 layers, 8 channels; A2 Lite = same shape, 3 channels (`NAM/wavenet/a2_fast.h:1-5`). A packed `.nam` is a `SlimmableContainer` holding both (upstream `example_models/A2.nam`: Lite at `max_value` 0.5, Full at 1.0). |
+| Does it play A2 Full and A2 Lite? | Yes, both. The core itself only fixes the A2 shape and the channel counts {3, 8} (`NAM/wavenet/a2_fast.h:1-5`, `a2_fast.cpp:876`); the names "Full = 8" and "Lite = 3" are taken from upstream's `A2.nam` submodel ordering (Lite at `max_value` 0.5, Full at 1.0), pending reconciliation with `audit_match.md`. A packed `.nam` is a `SlimmableContainer` holding both (upstream `example_models/A2.nam`: Lite at `max_value` 0.5, Full at 1.0). |
 | Which A2 variants take the fast path? | A2 Full (8 ch) and A2 Lite (3 ch) with the exact A2 shape; everything else is the generic WaveNet (correct, slower). Details in 1.4. |
 | Is a dependency bump needed? | **No.** The pin is upstream `main` HEAD and the `v0.6.0` tag (0 commits behind `origin/main` when fetched 2026-10-07). No bump proposal. |
 | Built here? | Yes: core, CLI and the whole test suite build with `-Werror` and zero warnings; `ctest` 371/371 pass (1 skipped by design). The plugin was not attempted (needs JUCE/X11). See section 4. |
@@ -60,7 +60,7 @@ submodel**: A2 Full for an A2 container. There is no way for a user or preset to
 
 ### 1.3 Does the pin play every A2 variant the Anagram accepts?
 
-The user's statement is KosmOS 1.16+ runs A2 Full, A2 Lite and A1. All three play in the pinned core:
+The user's statement is KosmOS 1.16+ runs A2 Full, A2 Lite and A1. The core fixes only channels {3, 8} for the A2 shape; mapping Full = 8 and Lite = 3 comes from upstream's `A2.nam` submodel ordering, pending reconciliation with `audit_match.md`. All three play in the pinned core:
 
 | File type | Core path | Verified here |
 |---|---|---|
@@ -96,7 +96,7 @@ Fallback (slow path) cases, all correct output but generic cost:
 1. any A2-like config that differs in one of the above (other channel counts such as 4/5/6, different slope, gating, FiLM, extra layer array);
 2. single-file slimmable WaveNet (1.2 item 2), at every size;
 3. a `.nam` read with the macro off (not our build).
-Measured here (one run, 4 s of audio, 64-sample blocks, Intel Xeon 2.1 GHz cloud VM, Release): A2 Lite fast 0.068 s vs the same weights forced
+Measured here by the uncommitted scratchpad probe, indicative only (one run, 4 s of audio, 64-sample blocks, Intel Xeon 2.1 GHz cloud VM, Release): A2 Lite fast 0.068 s vs the same weights forced
 generic (slope 0.02) 0.310 s = 4.6x; A2 Full fast 0.348 s vs generic 0.353 s = no measurable gain on this x86 build. So the fast path
 matters for Lite, and for Full only where upstream's benchmarks say so (macOS/arm, Task B CPU table). Indicative only; Task B owns the real numbers.
 
@@ -147,13 +147,15 @@ Watch item for later: file version 0.8.0 would be rejected by this core; if a fu
 | `docs/PRESET_SCHEMA.md:359` | `source.modelId` "which model variant (size/architecture) of the tone" | still true; a preset records one model id, so an A2 tone with Full and Lite variants records one of them. No schema change needed unless a container-size choice is added |
 | `plugin/src/browser/T3kJson.h:23,36`, `T3kJson.cpp:102-103,165` | parses `models_count`, `a2_models_count`, `a1_models_count`, and a free-text `architecture` per model list | already carries A2/A1 counts; `architecture` is stored but not interpreted. No Full/Lite distinction exists in the record |
 | `plugin/src/browser/CaptureBrowser.cpp:33` | chip "A2" when `a2Count > 0`, then sizes from the tool | A2 is shown as one tag; no A2 Full vs A2 Lite, no A1-only marker (a tone with only A1 simply has no "A2" chip). If the pool tool starts reporting Full/Lite sizes they print through `r.sizes` (line 36) with no code change |
-| `plugin/src/LadderFetch.h:24`, `plugin/src/PluginProcessor.cpp:303-310` | the gain ladder is fetched at size `"standard"`; a capture of another size "is not one of them" and gets no ladder (message at 308) | `standard` is an A1 size name. If the pool prefers A2 models (match/ side, `t3k/fetch.py`), the amp capture a user picked may be an A2 model that is not a "standard" rung, so the ladder is silently refused ("GAIN stays drive-only"). Needs the match side to define the ladder size for A2 (probably `a2`/`full`) and this constant to follow |
+| `plugin/src/LadderFetch.h:24`, `plugin/src/PluginProcessor.cpp:303-310`, `docs/PLUGIN.md:126,130` | the plugin passes only `--size standard`; the tool (`match/sawblade_match/t3k/ladder.py:67-95`, `gain_ladder(..., architecture=ARCH_A2)`) already defaults to A2, so the ladder is built from the tone's **A2** models of size "standard" | not an A1 assumption on the plugin side. Real risks: (a) A2 models on TONE3000 may use other size labels than "standard" (match audit to settle), in which case no ladder is found; (b) A1-only tones get no ladder because only A2 is queried; (c) the mismatch note at `PluginProcessor.cpp:308` says "another model size?", which would be misleading if the cause is architecture or label |
 | `plugin/src/ExportPanel.cpp:266-268` | SIZE buttons FEATHER / LITE / STANDARD; tooltips "not judged against the acceptance limits" / "Standard-size model: judged against the acceptance limits" | these are the A1 size names. Task C: three-way A2 Full (default) / A2 Lite / A1, text and acceptance wording per size; the A1 sizes must stay reachable under A1 |
 | `plugin/src/ExportPanel.cpp:384-386,588-589,653` | `size("feather"/"lite"/"standard")`, name mapping Feather/Lite/Standard | same; the per-size "last run N min" row (588-595) is keyed by these three strings |
 | `plugin/src/ExportPanel.cpp:650` | "Training uses the standard NAM capture signal at 48 kHz" | A2 training signal/rate must match what the trainer uses; wording check in Task C |
 | `plugin/src/ExportSettings.h:14`, `ExportSettings.cpp:23` | `size` is one of `{"feather","lite","standard"}`, default `"standard"` | the persisted setting rejects other strings; a new `arch` field (a2/a1) and size values (`full`, `lite`) need a new key plus a migration that maps the old value to A1. `docs/PRESET_SCHEMA.md:613` documents the same triple |
 | `plugin/src/JobRunner.h:50,163`, `plugin/src/JobRunner.cpp:961` | passes `--size <feather|lite|standard>` to `sawblade-export`; wall time kept per size | needs `--arch`; the wall-time map (`MatchSettings::exportWallSeconds(size)`) keys must include the architecture or A2 Lite and A1 lite would share a timing |
 | `plugin/src/ExportNotes.cpp:280-291` | the exported model is written as "NAM (name)" in a generic `loaderOrder`; only a generic loader | no A1-specific text; the `anagram` profile (Task C) extends it. No change needed for A2 itself |
+| `docs/PLUGIN.md:685` (also 734) | export panel documented as FEATHER / LITE / STANDARD buttons with `exportWallSeconds.<size>` | update with the Task C arch/size split |
+| `plugin/tests/test_ladder.cpp:57,111,125,322,375,516`, `plugin/tests/test_amp_head.cpp:514,544` | hard-coded `"standard"` ladder size in the tests | change together with the ladder size decision |
 | `tests/fixtures/nam/wavenet.nam`, `lstm.nam`, `linear_*.nam` (`NOTICE`, `THIRD_PARTY.md:84`) | every NAM fixture is A1 (v0.5.4) or Linear | no A2 fixture exists: nothing in the suite loads an A2 file today. Task B adds `tests/fixtures/a2/` (synthetic) |
 | `tests/test_nam_block.cpp:107,128,141-142` | alloc-free, block-size and metadata tests loop over `wavenet.nam`, `lstm.nam`, `linear_*.nam` | add A2 Full, A2 Lite, A1 and a container to those loops (Task B) |
 | `tests/test_resample.cpp:380` | "48 kHz WaveNet fixture" (A1) | unaffected |
@@ -167,6 +169,8 @@ render report's latency fields, `tonerender`, the Python bindings, and the metad
 core/plugin/cli/bindings** (grep over all four returns only filesystem paths named "sawblade"); the block is produced and consumed on the match side.
 
 ## 3. Evidence
+
+**Status of the numbers in this report:** apart from the 6347-sample prewarm (independently checked against the formula at `a2_fast.cpp:183-190`), every probe-derived figure (A1 prewarm 4093, the probe table, allocation counts, CPU timings and ratios, e.g. in 1.4 and 1.5) is indicative only. They come from an uncommitted scratchpad probe and are to be superseded by Task B's committed benchmark and tests.
 
 ### 3.1 Probe (scratchpad, not committed)
 
