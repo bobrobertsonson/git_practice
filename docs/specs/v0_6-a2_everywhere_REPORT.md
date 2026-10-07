@@ -115,12 +115,20 @@ same A2 weights forced onto the generic WaveNet path (one LeakyReLU slope pertur
 | Linux gcc | 0.215 | 0.080 | 0.093 | 0.015 | 0.071 |
 | Linux clang | 0.178 | 0.065 | **0.061** | 0.010 | 0.032 |
 
+CI run 267 (`e7745b1`, the CI of record), all three runners, RTF median:
+
+| Runner | A1 standard | A2 Full fast | A2 Full generic | A2 Lite fast | A2 Lite generic | Container | Rig (2× A2 Full + pedals + cab) |
+|---|---|---|---|---|---|---|---|
+| macOS arm64 | 0.135 | 0.069 | 0.079 | 0.010 | 0.056 | 0.065 | **0.177** (p99 block 667 µs of 1333) |
+| Linux gcc | 0.227 | 0.080 | 0.092 | 0.017 | 0.077 | 0.080 | 0.184 |
+| Linux clang | 0.219 | 0.092 | 0.086 | 0.014 | 0.050 | 0.092 | 0.213 |
+
 Conclusion: **A2 Full's advantage over A1 standard comes from its layout** (8 channels throughout, cheap LeakyReLU
 instead of Tanh; generic-path A2 Full is still 2.3x / 2.9x cheaper than A1), **not from the fast path**, which buys
 A2 Full only ~15 % on gcc and nothing on clang (generic slightly faster). The fast path matters for **A2 Lite**
-(3–5x). macOS numbers for the generic rows are not available yet (the bench table step is skipped when macOS Test
-fails; see section 6); the ratio A1 / A2 Full differs between runners (macOS 2.0x in run 238, gcc 2.7x), so it is not
-portable.
+(3–5x). On macOS (run 267) the fast path buys A2 Full ~15 % and A2 Lite ~5.5x; A1 / A2 Full is 1.9x there and 2.4–2.9x on
+Linux, so the ratio is not portable. Runner-to-runner noise is visible (macOS rig 0.123 in run 238, 0.177 in run 267):
+the real-time gate (0.5) keeps ≥2.8x margin in every run.
 
 ## 5. Task C — A2 export with Anagram notes
 
@@ -188,7 +196,11 @@ device-null tests with real tiny trainings and the fixture `generate.py --check`
 
 ## 6. CI of record
 
-PENDING — final sha and run. History:
+**Run 267 on `e7745b1` — all green** (gcc, clang -Werror, macOS arm64 incl. auval + pluginval AU/VST3 level 10,
+python, python-export): ctest 1025/1025 on every C++ job (skips: the documented environment skips), python 778 passed /
+20 skipped (trainer- or demucs-gated), python-export 160 passed with `SAWBLADE_TEST_TRAIN=1` incl. the core-only load
+check of a freshly exported A2, fixtures reproducible. The final REPORT commit on top is documentation only; its own
+run is the one cited in the PHASE line. History:
 
 | Run | Head | Result |
 |---|---|---|
@@ -199,6 +211,11 @@ PENDING — final sha and run. History:
 | 243 | `253d1d0` | python-export red (strict fixture compare); macOS red: integration 990/991 pedal face |
 | 244, 245 | `45b5fb8` | cancelled by the next push |
 | 246 | `bb4f789` | all green except macOS: integration 991 pedal drawer (same race) |
+| 247, 248 | `c2de2e0`, `f95ad5f` | python-export: fixture check too strict (forward-pass ~1e-8, numpy ~1e-15 across runner CPUs); fixed `1b82e38` |
+| 250 | `8205a3f` | all green (pedal-face fix) |
+| 251 | `f49777b` | all green |
+| 263 | `d2c9b62` | ctest red on all C++ jobs: editor tests 821–823 (reamp test missing fake setup; signal prompt invisible over a finished result); fixed `e7745b1` |
+| 267 | `e7745b1` | **all green** |
 
 **macOS integration 990/991 ("pedal face" / "pedal drawer").** Pre-existing test race, not v0.6 code (243/246 touch no
 C++ or plugin files; identical plugin code passed 238/240/241): `step10PedalFace` reads the face's bounds right after a
@@ -214,7 +231,6 @@ moves the forward-derived loudness / gain metadata and `ref_*.wav`. Seeded weigh
 (`c2de2e0`, `f95ad5f`) compares structure, configs, versions and sample rates exactly, weights within 1e-6,
 forward-derived values within 1e-4 relative (`packedForwardMaxAbsDiff` 1e-6 absolute), and flags stray files.
 
-| 247 | `c2de2e0` | all green incl. macOS (race not hit) except python-export: `packedForwardMaxAbsDiff` compared exactly (fixed in `f95ad5f`) |
 
 ## 7. Task D — proof on the Anagram (user-run)
 
