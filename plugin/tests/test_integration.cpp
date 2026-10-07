@@ -512,7 +512,11 @@ void step01Main(Walk& w) {
   CHECK_FALSE(o.settings);
   CHECK_FALSE(w.ed->playAlongOpen());
   const juce::Image img = shot(*w.ed, "01_main");
-  CHECK(nonBackgroundFraction(img, {0, 58, 940, 742}) > 0.12);  // the rig renders are on screen (v0.4 Task D: the cab render left the main page)
+  // The rig renders are on screen (v0.4 Task D: the cab render left the main page). This preset's SAW pedal is a `nam` block in a pedal slot,
+  // i.e. a CAPTURE pedal since v0.4 Task B: its tile is a flat dark panel with a cream outline and text, not a full pedal render, so the region
+  // measures 0.1173 where 0.12+ was set for the render (nothing else on the page moved). An empty rig area stays far below 0.10; the heads
+  // and the tile are checked on their own below and in test_editor.cpp / test_layout.cpp.
+  CHECK(nonBackgroundFraction(img, {0, 58, 940, 742}) > 0.10);
   // The region above also counts the board backgrounds, so the SAW head is checked on its own (the per-head checks of test_editor.cpp
   // "snapshots 1x and 2x" and test_layout.cpp cover both heads and the tiles).
   CHECK(nonBackgroundFraction(img, {74, 58 + 44, 330, 145}) > 0.2);

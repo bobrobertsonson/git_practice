@@ -439,7 +439,8 @@ TEST_CASE("pedalboard: dropping outside both boards removes the pedal (the ghost
   CHECK(rig.preset().a.blocks[0].bypass);
   CHECK(pb.tile(0, 0)->bypassed());
   {
-    juce::PopupMenu::MenuItemIterator it(pb.menuFor(*pb.tile(0, 0)));
+    const juce::PopupMenu m = pb.menuFor(*pb.tile(0, 0));  // the iterator keeps a pointer to its menu: not a temporary
+    juce::PopupMenu::MenuItemIterator it(m);
     while (it.next())
       if (it.getItem().text == "BYPASS") CHECK(it.getItem().isTicked);  // ticked while bypassed
   }

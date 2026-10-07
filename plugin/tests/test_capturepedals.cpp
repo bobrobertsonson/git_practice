@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -30,6 +31,7 @@
 #include "rig/RigModel.h"
 #include "sawblade/auto_trim.h"
 #include "sawblade/block_registry.h"
+#include "sawblade/sha256.h"
 #include "skin/FilmstripKnob.h"
 
 using namespace sawblade;
@@ -110,7 +112,10 @@ void writeTone(const fs::path& cache, const std::string& tone, const std::string
                {"creatorUsername", "someone"}, {"models", json::object()}};
   for (const auto& m : models) {
     fs::copy_file(kFx / "nam" / m.fixture, cache / tone / (m.id + ".nam"), fs::copy_options::overwrite_existing);
-    meta["models"][m.id] = {{"file", m.id + ".nam"}, {"sha256", "x"}, {"model", {{"name", m.name}}}};
+    // the real hash: a capture made from this entry carries it, and the load verifies it (a made-up one is a load error)
+    std::ifstream in(cache / tone / (m.id + ".nam"), std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    meta["models"][m.id] = {{"file", m.id + ".nam"}, {"sha256", sha256Hex(bytes.data(), bytes.size())}, {"model", {{"name", m.name}}}};
   }
   std::ofstream(cache / tone / "meta.json") << meta.dump(2);
 }
@@ -160,6 +165,7 @@ struct Rig {
 
   void settle() {
     REQUIRE(proc.waitForLoader(kLoad));
+    INFO("the processor's load error: " << proc.status().error);
     REQUIRE(proc.status().error.empty());
     pump(40);
     ed->refreshNow();
