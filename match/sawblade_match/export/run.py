@@ -105,7 +105,9 @@ def _official_signal(path, info: dict):
     lv = lambda a: {"peakDbfs": float(20 * np.log10(np.max(np.abs(a)) + 1e-30)),
                     "rmsDbfs": float(10 * np.log10(np.mean(a.astype(np.float64) ** 2) + 1e-30))}
     return x32, x32[sl], {"kind": "nam-standard", "version": info["version"], "match": info["match"], "file": Path(path).name,
-                          "trainSha256": info["md5"], "validSha256": info["md5"], "samples": info["samples"],
+                          "trainSha256": info["md5"], "validSha256": info["md5"],
+                          "hashNote": "trainSha256 / validSha256 / signalSha256 hold the MD5 of the standard input file (the trainer's own hash), not a SHA-256",
+                          "samples": info["samples"],
                           "validationSlice": [sl.start, sl.stop], "train": lv(x32), "valid": lv(x32[sl]),
                           "note": "user-supplied NAM standard input file; never redistributed"}
 
@@ -291,7 +293,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
         log("training signal: Sawblade's test signal (fallback), not the standard NAM signal")
 
     cfg = T.TrainConfig(size=size, arch=arch, epochs=epochs, max_minutes=max_minutes, seed=seed, threads=threads,
-                        target_esr=target_esr, lr_gamma=lr_gamma, batch_size=batch_size, device=device)
+                        target_esr=target_esr, lr_gamma=lr_gamma, batch_size=batch_size, device=device,
+                        nam_latency=nam_latency if official else None)
     rc = cfg.resolved()
     identity = {"trainingSignal": tsig, "namInputPath": str(Path(nam_input).expanduser().resolve()) if official else None,
                 "presetSha256": P.preset_hash(preset), "signalSha256": sinfo["trainSha256"],
@@ -300,6 +303,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     if notes_src is not None:
         identity["notesPresetSha256"] = P.preset_hash(notes_src)
     run_config = {"seed": seed, "batchSize": batch_size, "epochs": rc.epochs, "lrGamma": rc.lr_gamma}
+    if official and nam_latency is not None:
+        run_config["namLatency"] = nam_latency
     resumed_from = None
     resume_dir = None
     if resume == "auto":
@@ -428,17 +433,20 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     models = {sz: paths[sz] for sz in sizes} if a2 else {size: tres.nam_path}
     if validate:
         prog.update("validate", message="validating", epoch=tres.epochs_done)
+        # a model trained on the standard input carries the trainer's latency offset (Dataset delay = calibrated delay - 1):
+        # its output lags the chain by -delay samples; both are aligned before ESR / LTAS
+        lag = -int(odata.info["latencySamples"]) if odata is not None and odata.info else 0
         if a2:
             ref_cache: dict = {}
             vals = {}
             for sz in sizes:             # primary first; both standalone files go through sawblade_core
                 vals[sz] = _validate(preset, base, plan, models[sz], ir_path, outdir, scratch, sz, cache, va,
                                      resolve_di(di, log), log, prog, arch=arch, tag=sz, ref_cache=ref_cache,
-                                     listen_name="ab_original_then_export" + ("" if sz == size else f"_{sz}"))
+                                     listen_name="ab_original_then_export" + ("" if sz == size else f"_{sz}"), lag=lag)
             report["validation"] = {sz: vals[sz] for sz in sizes}
         else:
             report["validation"] = _validate(preset, base, plan, tres.nam_path, ir_path, outdir, scratch, size, cache,
-                                             va, resolve_di(di, log), log, prog)
+                                             va, resolve_di(di, log), log, prog, lag=lag)
     lic = P.licence_note(preset)
     for fk, fpath in ({k: v for k, v in paths.items() if k != "primary"} if a2 else {"a1": tres.nam_path}).items():
         nam = json.loads(fpath.read_text())
@@ -466,9 +474,11 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     if a2:
         report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, paths["primary"], ir_path, lic,
                                                                  stem=stem, model_label="A2 container",
-                                                                 training_note=N.training_sentence(tsig), training_signal=tsig)
+                                                                 training_note=N.training_sentence(tsig), training_signal=tsig, a2=True)
     else:
-        report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, tres.nam_path, ir_path, lic)
+        report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, tres.nam_path, ir_path, lic,
+                                                                 training_note=N.training_sentence(tsig, a2=False),
+                                                                 training_signal=tsig, a2=False)
     # notes come from the ORIGINAL rig when the caller trained a derived preset (the plugin turns the bus comp off before a
     # no-cab "drop" export; the comp still has to be listed so it can be added on hardware)
     if notes_src is not None:
@@ -551,9 +561,10 @@ def _reamp_only(prog, preset, base, preset_path, plan, tpreset, probe, cache, mo
 
 def _validate(preset, base, plan, nam_path, ir_path, outdir, scratch, size, cache, va_, di_path, log,
               prog: PG.Progress | None = None, arch: str = "a1", tag: str | None = None, ref_cache: dict | None = None,
-              listen_name: str = "ab_original_then_export") -> dict:
+              listen_name: str = "ab_original_then_export", lag: int = 0) -> dict:
     """``di_path`` None = excerpt of the built-in held-out signal ``va_`` (report file ``"builtin"``).  ``tag`` (a2:
-    ``full`` / ``lite``) separates the renders of the two standalone files; ``ref_cache`` shares the reference renders."""
+    ``full`` / ``lite``) separates the renders of the two standalone files; ``ref_cache`` shares the reference renders.
+    ``lag``: samples the model's output lags the chain by (official path: the trainer's latency offset); aligned before the metrics."""
     prog = prog or PG.Progress()
     scratch.mkdir(parents=True, exist_ok=True)
     targets = load_targets(V.targets_path())
@@ -564,8 +575,9 @@ def _validate(preset, base, plan, nam_path, ir_path, outdir, scratch, size, cach
                  (" (bus comp left on)" if plan.inexact else "")}
     log("validating on the held-out segment ...")
     ho, _, _ = V.compare_signals("heldout", va_, RATE, ref_preset, base, check, cache, targets, renders_dir=rdir,
-                                 drop=int(1.0 * RATE), ref_cache=ref_cache)
+                                 drop=int(1.0 * RATE), ref_cache=ref_cache, lag=lag)
     out["heldOut"] = ho
+    out["alignedSamples"] = int(lag)
     _check_stop(prog, outdir)
     prog.update("validate", PG.stage_fraction("validate", 0.4), message="held-out segment done")
     out["metricsSkipFirstS"] = 1.0
@@ -582,7 +594,7 @@ def _validate(preset, base, plan, nam_path, ir_path, outdir, scratch, size, cach
     _check_stop(prog, outdir)
     dres, ref_o, out_e = V.compare_signals("di_excerpt", di[a:b], fs, ref_preset, base, check, cache, targets,
                                            extra_refs=orig_with_gate, drop=int(V.PREROLL_S * RATE), renders_dir=rdir,
-                                           ref_cache=ref_cache)
+                                           ref_cache=ref_cache, lag=lag)
     dres["excerpt"] = {"file": src, "startS": a / fs, "endS": b / fs, "prerollDroppedS": V.PREROLL_S, **info}
     out["diExcerpt"] = dres
     _check_stop(prog, outdir)

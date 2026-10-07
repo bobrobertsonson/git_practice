@@ -9,8 +9,12 @@ checks (``_check_data``), the train / validation split and its dataset config (`
 What is NOT the monolithic ``train()``: its loop, callbacks and export.  Sawblade keeps its own (``train.train_nam``) because
 it needs resume, cancel, progress, per-submodel best checkpoints, ``PackedWaveNet.export_container`` and the ``sawblade``
 metadata block, none of which ``train()`` exposes.  The model config (``config_model_packed.json``), loss and optimiser
-recipe are the same as ``train()``'s.  Those underscore functions are private; the pin (exactly 0.13.0) is what makes this safe,
-and a test compares them with ``train()``'s own use.
+recipe are the same as ``train()``'s.  Those underscore functions are private; the pin (exactly 0.13.0) is what makes this safe:
+``build`` refuses any other installed version, and a test checks the signature tables against the trainer's source.
+
+Latency: the trainer calibrates ``final = delay - 1`` from the blips and builds the datasets with that delay, so a model trained
+this way reproduces the chain ``-final`` samples late (standard NAM behaviour; a pair trained in the user's own trainer gets the
+same offset).  Validation aligns by that amount (``validation.*.alignedSamples``).
 """
 from __future__ import annotations
 
@@ -42,6 +46,15 @@ class OfficialData:
 
     def build(self, rf: int, ny: int):
         import_nam()
+        from importlib import metadata
+        from .train import NAM_PIN
+        try:
+            have = metadata.version("neural-amp-modeler")
+        except metadata.PackageNotFoundError:
+            have = None
+        if have != NAM_PIN:
+            raise ExportRefused(f"training on the NAM standard input uses the trainer's private data functions and needs "
+                                f"neural-amp-modeler {NAM_PIN}; installed: {have or 'none'}")
         from nam.train import core
         from nam.train._version import Version
         ver = Version.from_string(self.version)

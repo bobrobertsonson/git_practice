@@ -223,6 +223,7 @@ class TrainConfig:
     ny: int = NY
     target_esr: float | None = None      # optional early stop on validation ESR
     lr_gamma: float | None = None        # ExponentialLR gamma per epoch; None = anneal to ~5 % of lr over the epochs
+    nam_latency: int | None = None       # official path: manual latency override of the trainer's calibration (resume identity)
 
     def resolved(self) -> "TrainConfig":
         c = copy.copy(self)
@@ -459,7 +460,7 @@ def train_nam(x_train, y_train, x_valid, y_valid, cfg: TrainConfig, outdir, scra
                                     "elapsedTrainingS": round(self.elapsed(), 1), "complete": False,
                                     "arch": cfg.arch, "layout": layout_of(cfg.arch),
                                     "config": {"seed": cfg.seed, "batchSize": cfg.batch_size, "epochs": cfg.epochs,
-                                               "lrGamma": cfg.lr_gamma, "maxMinutes": cfg.max_minutes,
+                                               "lrGamma": cfg.lr_gamma, "namLatency": cfg.nam_latency, "maxMinutes": cfg.max_minutes,
                                                "threads": cfg.threads, "ny": cfg.ny, "device": device}})
             self._report(trainer, 0.0, force=True)               # now resumable
             epoch_end_cancel(self, cdir)

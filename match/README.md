@@ -593,6 +593,12 @@ the acceptance numbers are measured on the official path: the held-out ESR / LTA
 (for v3 its last 9 s) rendered through `sawblade_core` with the exported model against the original chain, and `training.validationEsr`
 is the trainer's own ESR on that split. If the chain's render is too loud for 24-bit it is scaled down (`target.levelReducedDb`) and the
 trained model is that much quieter. `--nam-input` may be combined with `--reamp-pair` (same file).
+**Latency offset.** The trainer calibrates the latency from the blips and trains with `delay = calibrated - 1` (a safety factor), so a model
+trained on the standard input reproduces the chain about 1 sample late (standard NAM behaviour; the reamp pair gets the same offset in the
+user's own trainer). On the official path validation aligns the model render by that amount before ESR / LTAS
+(`validation.<size>.alignedSamples`, `training.officialData.latencySamples`). `sawblade-calibrate device-null --model` aligns by
+cross-correlation itself, so it is unaffected; plugin playback of the file simply carries the same sub-millisecond offset.
+For A1 exports the notes use A1 wording ("any NAM block (A1 model)", no KosmOS mention) and the training sentence without the A2 phrase.
 **`--arch a1`** trains one A1 WaveNet for older loaders (`--size feather|lite|standard`, default `standard`, `<stem>.nam`; behaviour
 unchanged apart from the official preset sizes). Any other arch / size pair exits 1 with a message. The library function `run_export`
 defaults to `arch="a1"` (unchanged for existing callers); the CLI defaults to `a2`. Default output

@@ -19,8 +19,9 @@ from .plan import ExportRefused
 RATE = 48000
 
 # ---- the trainer's known standard inputs (neural-amp-modeler 0.13.0, nam/train/core.py) -------------------------------
-# Strong match: MD5 of the file's bytes (core.py:91-96).  Only V3 is current; V1/V2 and the 44.1 kHz Proteus file are
-# deprecated by the trainer (core.py:802-806, data checks fail for any major version other than 3), so they are not accepted.
+# Strong match: MD5 of the file's bytes (core.py:91-96).  Only V3 is current; V1/V2 are deprecated by the trainer (core.py:802-810:
+# its data checks fail for any major version other than 3) but still recognised and accepted here (logged); the 44.1 kHz
+# Proteus file is refused by the rate check.
 # Weak match: MD5 of the float64 sample array (int sample / 2^(8*sampwidth-1)) of the first 17 s and of the last 9 s
 # (core.py:146-158 (17 s / 9 s: 154-155), table core.py:204-211).  Tests monkeypatch these tables with a synthetic stand-in's signature.
 STANDARD_INPUT_STRONG_MD5 = {"4d54a958861bf720ec4637f43d44a7ef": "1.0.0", "7c3b6119c74465f79d96c761a0e27370": "1.1.1",

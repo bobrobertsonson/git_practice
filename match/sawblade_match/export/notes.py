@@ -253,6 +253,7 @@ def format_notes_txt(notes: dict, preset_name: str | None = None, licence_note: 
 ANAGRAM_DEVICE = "Anagram"
 ANAGRAM_HINT = ("Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, "
                 "KosmOS 1.16 or later.")
+ANAGRAM_HINT_A1 = ("Load the .nam into any NAM block (A1 model); on the Anagram that is a Neural Amp (or Neural Pedal) block.")
 # v0.6 decision 19 (revised): the sentence is derived from the report's ``trainingSignal`` so a later switch of the built-in
 # signal only changes that value.
 SYNTHETIC_SIGNAL = "sawblade-synthetic"
@@ -295,7 +296,8 @@ def _anagram_comp(st: dict) -> dict:
 
 
 def build_anagram_profile(preset: dict, plan, notes: dict, nam_name: str, ir_name: str | None = None,
-                          drive_only: bool = False, model_label: str | None = None, file: str | None = None) -> dict:
+                          drive_only: bool = False, model_label: str | None = None, file: str | None = None,
+                          a2: bool = True) -> dict:
     """The ``anagram`` device profile for ``notes`` (the generic ``exportNotes`` of the same export).
 
     Block mapping, in signal order: gate -> Gate block (first, before the NAM block); the trained model -> Neural Amp
@@ -310,8 +312,9 @@ def build_anagram_profile(preset: dict, plan, notes: dict, nam_name: str, ir_nam
     kind = "Neural Pedal" if drive_only else "Neural Amp"
     label = f" ({model_label})" if model_label else ""
     blocks.append({"stage": "model", "block": kind, "settings": {"model": nam_name, "bypass": False},
-                   "hardware": f"Load {nam_name}{label} into any NAM A2 block; on the Anagram that is a Neural Amp "
-                               "(or Neural Pedal) block, KosmOS 1.16 or later. "
+                   "hardware": f"Load {nam_name}{label} " + (
+                       "into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later. "
+                       if a2 else "into any NAM block (A1 model); on the Anagram that is a Neural Amp (or Neural Pedal) block. ") +
                                "It is a local file for your own use: do not upload it to TONE3000 (models trained from "
                                "TONE3000 captures need the creators' permission to share). Up to three NAM blocks (Neural "
                                "Amp / Neural Pedal / Neural Loader) can run at once. Set the block's levels so the output "
@@ -339,7 +342,7 @@ def build_anagram_profile(preset: dict, plan, notes: dict, nam_name: str, ir_nam
         b.setdefault("hardware", "")
     out = [{"stage": b["stage"], "block": b["block"], "position": b["position"], "settings": b["settings"],
             **({"hardware": b["hardware"]} if b["hardware"] else {})} for b in blocks]
-    prof = {"device": ANAGRAM_DEVICE, "message": ANAGRAM_HINT, "stages": out,
+    prof = {"device": ANAGRAM_DEVICE, "message": ANAGRAM_HINT if a2 else ANAGRAM_HINT_A1, "stages": out,
             "loaderOrder": "Anagram chain: " + " -> ".join(b["block"] for b in blocks)}
     if file:
         prof["file"] = file
@@ -350,7 +353,8 @@ def format_anagram_txt(profile: dict, preset_name: str | None = None, licence_no
                        training_note: str | None = None) -> str:
     """Text for ``<name>.anagram_notes.txt``; the same layout as the plugin's own rendering of the profile."""
     L = [f"Sawblade export notes for the Anagram{f' - {preset_name}' if preset_name else ''}", "",
-         "Blocks to set on the device (KosmOS 1.16 or later), in signal order:", ""]
+         ("Blocks to set on the device, in signal order:" if profile.get("message") == ANAGRAM_HINT_A1 else
+          "Blocks to set on the device (KosmOS 1.16 or later), in signal order:"), ""]
     for i, st in enumerate(profile["stages"], 1):
         L.append(f"{i}. {st['block']} [{st['position']}]" + (f"  ({st['stage']})" if st["stage"] != st["block"] else ""))
         for k in sorted(st["settings"]):
@@ -368,7 +372,8 @@ def format_anagram_txt(profile: dict, preset_name: str | None = None, licence_no
 
 def write_export_notes(preset: dict, plan, nam_path, ir_path=None, licence_note: str | None = None,
                        stem: str | None = None, model_label: str | None = None,
-                       training_note: str | None = None, training_signal: str | None = None) -> tuple[dict, Path]:
+                       training_note: str | None = None, training_signal: str | None = None,
+                       a2: bool = True) -> tuple[dict, Path]:
     """Build the notes for the export at ``nam_path`` and write ``<stem>.export_notes.txt`` (generic) and
     ``<stem>.anagram_notes.txt`` (Anagram device profile) next to it; ``stem`` defaults to the .nam's stem (A1)."""
     from . import plan as P
@@ -385,7 +390,7 @@ def write_export_notes(preset: dict, plan, nam_path, ir_path=None, licence_note:
     drive = P.drive_only(preset, plan)
     atxt = nam_path.with_name(stem + ".anagram_notes.txt")
     prof = build_anagram_profile(preset, plan, notes, nam_path.name, Path(ir_path).name if ir_path else None,
-                                 drive_only=drive, model_label=model_label, file=atxt.name)
+                                 drive_only=drive, model_label=model_label, file=atxt.name, a2=a2)
     atxt.write_text(format_anagram_txt(prof, preset.get("name"), licence_note, training_note), encoding="utf-8")
     notes["deviceProfiles"] = {"anagram": prof}
     return notes, txt

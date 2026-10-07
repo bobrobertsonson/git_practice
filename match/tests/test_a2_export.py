@@ -612,7 +612,13 @@ def test_end_to_end_a2_on_the_standard_input_standin(monkeypatch, tmp_path):
     for k in ("container", "full", "lite"):
         meta = json.loads((out / rep["files"][k]).read_text())["metadata"]
         assert meta["sawblade"]["trainingSignal"] == "nam-standard v3.0.0"
-    assert set(rep["validation"]) == {"full", "lite"} and rep["validation"]["lite"]["heldOut"]["esr"] >= 0
+    assert set(rep["validation"]) == {"full", "lite"}
+    lag = -rep["training"]["officialData"]["latencySamples"]
+    for sz in ("full", "lite"):
+        v = rep["validation"][sz]
+        assert v["alignedSamples"] == v["heldOut"]["alignedSamples"] == v["diExcerpt"]["alignedSamples"] == lag
+        assert 0 <= v["heldOut"]["esr"] < 5 and v["heldOut"]["seconds"] > 5      # aligned, finite (1 epoch: not accurate)
+    assert rep["files"]["primary"].endswith(".a2.nam")
     # the other signal is the labelled fallback
     out2 = tmp_path / "out2"
     rep2 = run_export(pj, mode="nocab", arch="a2", size="full", out=out2, epochs=1, max_minutes=10, threads=2, validate=False,
@@ -657,3 +663,44 @@ def test_resume_with_a_different_signal_refuses(tmp_path):
     with pytest.raises(ExportRefused, match="cannot resume.*training-signal sha256 differs"):
         run_export(pj, mode="nocab", arch="a2", size="full", resume=str(run_dir), signal="sawblade",
                    signal_spec=S.SignalSpec(seed=1, train_plucks_s=3.0, valid_plucks=1), log=lambda *_: None)
+
+
+def test_validation_aligns_a_model_that_carries_the_trainers_latency_offset(monkeypatch):
+    """A model trained on the standard input reproduces the chain `-final` samples late; with real HF content the unaligned ESR is
+    huge and the aligned one ~0."""
+    rng = np.random.default_rng(3)
+    x = (0.3 * rng.standard_normal(48000 * 3)).astype(np.float32)
+    ref_y = np.tanh(4 * x).astype(np.float32)
+    delayed = np.concatenate([np.zeros(1, np.float32), ref_y[:-1]])                  # a perfect model, 1 sample late
+
+    def fake_render(preset, sig, base, cache=None, in_rate=48000):
+        return (delayed if preset.get("name") == "check" else ref_y), {}
+    monkeypatch.setattr(V, "render48", fake_render)
+    kw = dict(name="t", x=x, in_rate=48000, ref_preset={}, ref_base=".", check_preset={"name": "check"}, cache=None, targets={}, drop=4800)
+    monkeypatch.setattr(V, "ltas_error", lambda *a, **k: {"aWeightedErrorDb": 0.0})
+    raw, _, _ = V.compare_signals(**kw)
+    fixed, ref_o, out_o = V.compare_signals(**kw, lag=1)
+    assert raw["esr"] > 0.3 and raw["alignedSamples"] == 0
+    assert fixed["esr"] < 1e-12 and fixed["alignedSamples"] == 1 and len(ref_o) == len(out_o) == len(x) - 4800 - 1
+    # a model that leads (negative lag)
+    early = np.concatenate([ref_y[1:], np.zeros(1, np.float32)])
+    monkeypatch.setattr(V, "render48", lambda p, *a, **k: ((early if p.get("name") == "check" else ref_y), {}))
+    assert V.compare_signals(**kw, lag=-1)[0]["esr"] < 1e-12
+
+
+def test_a1_notes_carry_the_training_sentence_and_a1_wording(tmp_path):
+    p = json.loads((PRESETS / "golden_shared.json").read_text())
+    plan = P.make_plan(p, "nocab", True)
+    nam = tmp_path / "x-nocab-standard.nam"
+    nam.write_text("{}")
+    tsig = "sawblade-synthetic v1"
+    notes, txt = N.write_export_notes(p, plan, nam, None, "lic", training_note=N.training_sentence(tsig, a2=False),
+                                      training_signal=tsig, a2=False)
+    prof = notes["deviceProfiles"]["anagram"]
+    model = next(s for s in prof["stages"] if s["stage"] == "model")
+    assert "any NAM block (A1 model)" in model["hardware"] and "A2" not in model["hardware"] and "KosmOS" not in model["hardware"]
+    assert prof["message"] == N.ANAGRAM_HINT_A1 and "A2" not in prof["message"]
+    body = (tmp_path / "x-nocab-standard.anagram_notes.txt").read_text()
+    assert "KosmOS" not in body and "standard NAM A2" not in body and "Trained on Sawblade's test signal" in body
+    assert notes["trainingSignal"] == tsig and "standard NAM A2" not in notes["trainingNote"]
+    assert "Trained on Sawblade's test signal" in txt.read_text()

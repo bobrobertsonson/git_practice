@@ -25,7 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "primary file) plus standalone A2 Full and A2 Lite extras; a1: one A1 WaveNet for older loaders")
     p.add_argument("--size", default=None, metavar="SIZE",
                    help="a2: full (default) | lite = which standalone extra is listed first and whose acceptance "
-                        "--require-accept judges (the container, both extras are always written and validated); a1: standard (default) | lite | feather, NAM's official A1 presets. Any other "
+                        "--require-accept judges (the container and both extras are always written and "
+                        "validated); a1: standard (default) | lite | feather, NAM's official A1 presets. Any other "
                         "arch/size pair is refused")
     p.add_argument("--epochs", type=int, default=None, help="max epochs (default per size: see README)")
     p.add_argument("--max-minutes", type=float, default=None, help="training wall-time cap (default per size)")

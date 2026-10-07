@@ -1121,6 +1121,10 @@ def test_mock_no_notes_preset_has_no_notes_keys(mx):
     assert "notesPreset" not in rep and "notesOnly" not in rep
     assert "notesPresetSha256" not in mx.fake.calls[-1]["identity"]
     assert "busComp" not in [s["stage"] for s in rep["exportNotes"]["stages"]]
+    assert rep["exportNotes"]["trainingSignal"].startswith("sawblade-synthetic v")          # A1 gets the training sentence too
+    assert "Trained on Sawblade's test signal" in rep["exportNotes"]["trainingNote"] and "A2" not in rep["exportNotes"]["trainingNote"]
+    prof = rep["exportNotes"]["deviceProfiles"]["anagram"]
+    assert "A2" not in prof["message"] and "A1 model" in prof["stages"][0 if prof["stages"][0]["stage"] == "model" else 1]["hardware"]
 
 
 def test_mock_notes_preset_refusals_before_training(mx):

@@ -59,13 +59,24 @@ def export_check_preset(nam_path, ir_path, scratch: Path, name: str = "export ch
             "align": {"mode": "off"}, "blend": 0.0, "cab": cab, "postEq": [], "output": {"gainDb": 0.0}}
 
 
+def align(ref: np.ndarray, out: np.ndarray, lag: int) -> tuple[np.ndarray, np.ndarray]:
+    """``out[k] ~ ref[k - lag]``: drop the first ``lag`` samples of ``out`` and the last ``lag`` of ``ref`` (lag < 0: the
+    other way round).  Equal lengths are returned."""
+    n = min(len(ref), len(out)) - abs(int(lag))
+    if lag >= 0:
+        return ref[:n], out[lag:lag + n]
+    return ref[-lag:-lag + n], out[:n]
+
+
 def compare_signals(name: str, x: np.ndarray, in_rate: int, ref_preset: dict, ref_base, check_preset: dict,
                     cache: CaptureCache, targets: dict, extra_refs: dict | None = None, drop: int = 0,
-                    renders_dir: Path | None = None, ref_cache: dict | None = None
+                    renders_dir: Path | None = None, ref_cache: dict | None = None, lag: int = 0
                     ) -> tuple[dict, np.ndarray, np.ndarray]:
     """Render ``x`` through the reference chain and the exported-model chain; metrics skip the first ``drop`` samples.
     ``ref_cache`` (a dict the caller keeps across calls) reuses the reference renders when several exported models
-    (A2 Full and Lite) are compared on the same signal."""
+    (A2 Full and Lite) are compared on the same signal.  ``lag``: the exported model's output lags the reference by this many
+    samples (a model trained on the NAM standard input carries the trainer's latency offset, ``-final latency``); both are
+    aligned before any metric (negative = the model leads)."""
     if ref_cache is not None and name in ref_cache:
         ref, extra = ref_cache[name]
     else:
@@ -74,18 +85,21 @@ def compare_signals(name: str, x: np.ndarray, in_rate: int, ref_preset: dict, re
         if ref_cache is not None:
             ref_cache[name] = (ref, extra)
     out, rep = render48(check_preset, x, ".", cache, in_rate)
-    res = {"seconds": (len(ref) - drop) / RATE,
-           "esr": esr(out[drop:], ref[drop:]), "ltas": ltas_error(out[drop:], ref[drop:], targets),
-           "refRmsDbfs": float(10 * np.log10(np.mean(ref[drop:].astype(np.float64) ** 2) + 1e-30)),
-           "outRmsDbfs": float(10 * np.log10(np.mean(out[drop:].astype(np.float64) ** 2) + 1e-30)),
+    ref, out, extra = ref[drop:], out[drop:], {k: v[drop:] for k, v in extra.items()}
+    extra = {k: align(v, out, lag)[0] for k, v in extra.items()}
+    ref, out = align(ref, out, lag)
+    res = {"seconds": len(ref) / RATE, "alignedSamples": int(lag),
+           "esr": esr(out, ref), "ltas": ltas_error(out, ref, targets),
+           "refRmsDbfs": float(10 * np.log10(np.mean(ref.astype(np.float64) ** 2) + 1e-30)),
+           "outRmsDbfs": float(10 * np.log10(np.mean(out.astype(np.float64) ** 2) + 1e-30)),
            "exportRealTimeFactor": rep.get("realTimeFactor")}
     for label, r2 in extra.items():
-        res[label] = {"esr": esr(out[drop:], r2[drop:]), "ltas": ltas_error(out[drop:], r2[drop:], targets)}
+        res[label] = {"esr": esr(out, r2), "ltas": ltas_error(out, r2, targets)}
     if renders_dir is not None:
         renders_dir.mkdir(parents=True, exist_ok=True)
-        sf.write(str(renders_dir / f"{name}_original.wav"), ref[drop:], RATE, subtype="PCM_24")
-        sf.write(str(renders_dir / f"{name}_export.wav"), out[drop:], RATE, subtype="PCM_24")
-    return res, ref[drop:], out[drop:]
+        sf.write(str(renders_dir / f"{name}_original.wav"), ref, RATE, subtype="PCM_24")
+        sf.write(str(renders_dir / f"{name}_export.wav"), out, RATE, subtype="PCM_24")
+    return res, ref, out
 
 
 # A2 (v0.6, proposed thresholds): Full is judged like A1 standard (8 channels, 12 145 parameters: the same capacity class);
