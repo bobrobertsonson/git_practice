@@ -26,7 +26,7 @@ Continuous parameters (physical units; the optimizer works in the normalised box
   inside the NAM core, so these three belong to the ``gain`` group.
 * NAM input gains +-12 dB for every NAM block (``gain.a.0``, ``gain.a.amp``, ``gain.b.0`` ...).
 
-Not searched by the optimiser: gate (starts at the DI noise floor + 4 dB; a threshold x release sweep on the final chain follows stage 2, see gatesweep.py), NAM output gains (0), loudness normalisation (on for amps),
+Not searched by the optimiser: gate (starts at the DI peak floor + 10 dB; a threshold x release sweep on the final chain follows stage 2, see gatesweep.py), NAM output gains (0), loudness normalisation (on for amps),
 alignment (resolved once per blend combo, written as manual), bus compressor (off), output gain (set from the level
 offset after the search). No fixed pre-EQ (the old HM-2 high-pass on path A was style-specific and is gone).
 """
@@ -293,10 +293,14 @@ def post_eq(v: dict[str, float]) -> list[dict]:
     return bands
 
 
+GATE_OPEN_OFFSET_DB = 10.0       # default gate: open this far above the DI peak floor (close = floor + 4 with hysteresis 6)
+
+
 def gate_preset(noise_floor_db: float, extra: dict | None = None) -> dict:
-    """Fixed gate ("medium"): open at the DI noise floor + 4 dB, hold 40 ms, release 150 ms, range -50 dB."""
+    """Fixed gate ("medium"): open at the DI floor on the gate's own detector (``noise_floor_db`` = ``run.gate_floor`` peakDb, the
+    core's ``peak_floor_db``) + 10 dB, hysteresis 6 dB (so it closes at floor + 4), hold 40 ms, release 150 ms, range -50 dB."""
     # a DI with digital silence measures a floor of -200 dBFS: keep the threshold inside the schema range (>= -120)
-    g = {"enabled": True, "thresholdDb": round(max(noise_floor_db, -90.0) + 4.0, 2), "hysteresisDb": 6.0, "attackMs": 0.5,
+    g = {"enabled": True, "thresholdDb": round(max(noise_floor_db, -90.0) + GATE_OPEN_OFFSET_DB, 2), "hysteresisDb": 6.0, "attackMs": 0.5,
          "holdMs": 40.0, "releaseMs": 150.0, "rangeDb": -50.0}
     if extra:  # phase 3.5 fields (mode, ratio, keyHighPassHz, releaseCurve) pass straight through
         g.update(extra)

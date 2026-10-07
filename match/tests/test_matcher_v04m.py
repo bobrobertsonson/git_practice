@@ -259,24 +259,24 @@ def test_gate_sweep_picks_a_higher_threshold_when_the_reference_gaps_are_cleaner
     gs, floor = _gate_case(tmp_path, lambda f: cell_gate(f, 20.0, 20.0, 2.0, -90.0))      # a reference gated hard and fast
     assert gs["skipped"] is None and gs["mode"] == "paired" and gs["renders"] == len(gs["grid"]) <= 20
     assert [st["axis"] for st in gs["steps"]] == ["thresholdOffsetDb", "holdMs", "releaseMs", "rangeDb"]
-    assert gs["changed"] and gs["picked"]["offsetDb"] > 4.0
+    assert gs["changed"] and gs["picked"]["offsetDb"] > 10.0
     assert gs["gate"]["holdMs"] == gs["picked"]["holdMs"] and gs["gate"]["rangeDb"] == gs["picked"]["rangeDb"]
     assert gs["picked"]["thresholdDb"] == gs["gate"]["thresholdDb"]
     assert gs["picked"]["thresholdDb"] > gs["baseline"]["thresholdDb"] and gs["gate"]["thresholdDb"] == gs["picked"]["thresholdDb"]
     assert gs["picked"]["floorTerm"] < gs["baseline"]["floorTerm"]
     assert gs["picked"]["feasible"] and gs["picked"]["ltas"] <= gs["baseline"]["ltas"] + gs["ltasToleranceDb"]
     assert (gs["baseline"]["offsetDb"], gs["baseline"]["holdMs"], gs["baseline"]["releaseMs"],
-            gs["baseline"]["rangeDb"]) == (4.0, 40.0, 150.0, -50.0)
+            gs["baseline"]["rangeDb"]) == (10.0, 40.0, 150.0, -50.0)
     assert gs["baseline"]["thresholdDb"] == pytest.approx(gate_preset(floor)["thresholdDb"])
-    # the gate gets cleaner with the threshold: the output's floor falls (more negative) from +4 to +20 dB at 150 ms
+    # the gate gets cleaner with the threshold: the output's floor falls (more negative) from +10 (default) to +20 dB at 150 ms
     by = {(r["offsetDb"], r["holdMs"], r["releaseMs"], r["rangeDb"]): r for r in gs["grid"]}
-    assert by[(20.0, 40.0, 150.0, -50.0)]["floorDbOut"] < by[(4.0, 40.0, 150.0, -50.0)]["floorDbOut"] - 3.0
+    assert by[(10.0, 40.0, 150.0, -50.0)] is gs["baseline"] and gs["picked"]["floorDbOut"] < gs["baseline"]["floorDbOut"] - 1.0
     assert {r["offsetDb"] for r in gs["grid"] if r["holdMs"] == 40.0 and r["releaseMs"] == 150.0 and r["rangeDb"] == -50.0} \
         == set(GATE_OFFSETS_DB)
 
 
 def test_gate_sweep_keeps_the_default_when_the_reference_has_the_default_gate(tmp_path):
-    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 4.0))
+    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 10.0))
     assert gs["skipped"] is None and not gs["changed"]
     assert gs["picked"] is gs["baseline"] and gs["baseline"]["floorTerm"] == pytest.approx(0.0, abs=1e-6)
     assert gs["gate"] == gate_preset(gs["diNoiseFloorDb"])             # untouched
@@ -301,9 +301,9 @@ def test_gate_sweep_descends_threshold_then_hold_then_release_then_range(monkeyp
     sp = types.SimpleNamespace(eq_gains=lambda v: None)
     gs = gate_sweep(eng, types.SimpleNamespace(extra={"params": {}}), sp, None, types.SimpleNamespace(feel=ft), -60.0)
     assert [st["axis"] for st in gs["steps"]] == ["thresholdOffsetDb", "holdMs", "releaseMs", "rangeDb"]
-    assert gs["picked"]["holdMs"] == 2.0 and gs["picked"]["rangeDb"] == -90.0 and gs["picked"]["offsetDb"] == 4.0
+    assert gs["picked"]["holdMs"] == 2.0 and gs["picked"]["rangeDb"] == -90.0 and gs["picked"]["offsetDb"] == 10.0
     assert gs["picked"]["releaseMs"] == 150.0 and gs["changed"] and gs["renders"] == len(gs["grid"]) <= 20
-    assert gs["gate"]["holdMs"] == 2.0 and gs["gate"]["rangeDb"] == -90.0 and gs["gate"]["thresholdDb"] == -56.0
+    assert gs["gate"]["holdMs"] == 2.0 and gs["gate"]["rangeDb"] == -90.0 and gs["gate"]["thresholdDb"] == -50.0
     # an acceptance guard: when the LTAS error rises by more than 0.05 dB the cell is not feasible and the default stays
     monkeypatch.setattr(G.L, "evaluate", lambda y, tgt, eq: types.SimpleNamespace(
         total=1.0, ltas=1.0 + (0.0 if (y[0], y[1]) == (40.0, -50.0) else 0.5), feel_terms={"tight": 0.1}))
@@ -327,7 +327,7 @@ def test_gate_sweep_honours_the_feel_floor_switch_and_the_clean_reference_rule()
 
 
 def test_a_matched_mono_reference_is_clean_so_the_gate_sweep_runs_paired(tmp_path):
-    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 4.0))
+    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 10.0))
     assert gs["mode"] == "paired" and gs["skipped"] is None and gs["floorRefSource"].startswith("matched")
 
 
@@ -343,7 +343,7 @@ def test_gate_sweep_is_skipped_without_gaps(tmp_path):
         gs = gate_sweep(eng, Scored(combo, 0.0, 0.0, manual_align(), None, "refined", {"params": v}), sp, ex, tgt, -60.0)
     finally:
         eng.close()
-    assert gs["skipped"] and not gs["changed"] and gs["gate"] == gate_preset(-60.0, {"thresholdDb": -56.0, "releaseMs": 150.0})
+    assert gs["skipped"] and not gs["changed"] and gs["gate"] == gate_preset(-60.0, {"thresholdDb": -50.0, "releaseMs": 150.0})
 
 
 # ---- the search: boost, filters, cab sweep, ablation, trace ------------------------------------------------------------------
@@ -423,7 +423,7 @@ def test_cab_sweep_covers_every_pool_cab_and_lists_every_ir_loss():
             assert c["newCab"] == c["best"]["cab"] and c["lossAfterRelinear"] <= c["lossBeforeRelinear"] + 1e-9
     # whatever the winner's cab is, no refined candidate ends with a cab that is worse than another cab of the sweep
     for cand in res["candidatesStage2"]:
-        sw = next((c for c in cs["candidates"] if c["topology"] == cand["topology"] and c["boost"] == cand["tightBoost"]), None)
+        sw = next((c for c in cs["candidates"] if c["pairKey"] == cand["pairKey"]), None)        # THIS candidate's own sweep
         if sw and cand["loss"] is not None:
             assert cand["loss"] <= sw["best"]["loss"] + 1e-6 or sw["changed"]
     assert res["ablate"] == [] and res["plan"]["boost"] is True and res["plan"]["filters"] is True
@@ -916,7 +916,7 @@ def test_gate_sweep_uses_the_full_di_gaps_when_the_excerpt_has_none(tmp_path):
             m[a:b] = True
         y = np.asarray(y, np.float64)
         return 10 * np.log10(np.mean(y[m] ** 2) / np.mean(y[~m] ** 2))
-    assert gap_noise_db(y1) < gap_noise_db(y0) - 3.0                         # gap_noise improves vs the default cell
+    assert gap_noise_db(y1) < gap_noise_db(y0) - 1.0                         # gap_noise improves vs the default cell
 
 
 # ---- Task H.3: topology margin, BLEND_OCCAM_DB, --topology ------------------------------------------------------------------

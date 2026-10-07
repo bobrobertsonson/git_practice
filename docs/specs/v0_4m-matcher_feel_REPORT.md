@@ -217,6 +217,20 @@ thresholds.
 Before (first known-answer run, `--quick`): HM2 A-weighted 2.72 dB, UBR 3.45 dB; `gap_noise` −10.8 / −11.0 (fail),
 `fizz_texture` fail on both; chosen IR "V30 3 SM58 6" both times; neither Überschall capture won UBR.
 
+## Task H (matcher side)
+
+- **Gate floor (H.1):** the gate is set from the core's `peak_floor_db` (92.5th percentile of the gate's own peak envelope over
+  the DI gaps; falls back to the inactive samples, then the whole DI). result.json `gateFloor: {rmsDb, peakDb, source}`.
+  Default cell: open = peakFloor + 10 dB, hysteresis 6 (close = + 4); sweep grid {6, 8, 10, 12, 16, 20, 24, 28} dB re peakFloor.
+  For a -49.5 dBFS RMS floor: old open -45.50 / close -51.50 dBFS, new open -32.27 / close -38.27 (peak floor -42.27); noise alone
+  (white, pink) stays closed > 95 % after 0.5 s; a decaying note is not attenuated while it is > 12 dB above the floor (the
+  attenuation starts at about -3 dB re the floor). The live (expander, ratio 2) set only attenuates noise by a few dB.
+- **Full-DI gate sweep (H.2):** with < 100 ms of gaps in the excerpt the sweep takes up to 6 gap windows (longest, each <= 1 s,
+  0.5 s pre-roll) from the full DI and the reference floor at the same windows; `gateSweep.gapSource: "excerpt" | "fullDi"`.
+- **Topology margin (H.3):** `BLEND_OCCAM_DB = 0.25` (a single beats the best blend when within 0.25 dB; single2 and the boost keep
+  0.10). result.json `topology: {bestSingle, bestBlend, deltaPct, determined}` (determined = |delta| >= 10 % of the smaller
+  loss); `--topology single|blend|auto` (single = single and single2). The script adds `L_blend_quick_forced` / `L_blend_forced`.
+
 ## User results
 
 (pending)

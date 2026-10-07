@@ -1,9 +1,10 @@
 """Gate matched to the reference (v0.4M Task B).
 
-The gate is keyed on the DI and sits in front of the NAMs. Until stage 2 it is the fixed "DI floor + 4 dB / hold 40 ms /
-release 150 ms / range -50 dB" gate (``space.gate_preset``); once the final chain is known, ``gate_sweep`` does a coordinate
-descent on it (<= 15 renders of the chain's NAM cores, the linear part is the memoised cheap one): threshold = DI floor +
-{4, 8, ..., 36} dB, then hold {2, 10, 40} ms, release {20, 80, 150, 250} ms, range {-50, -90} dB. Each step keeps the cell
+The gate is keyed on the DI and sits in front of the NAMs. Until stage 2 it is the fixed "DI peak floor + 10 dB / hold 40 ms /
+release 150 ms / range -50 dB" gate (``space.gate_preset``; the floor is the core's ``peak_floor_db``, the 92.5th percentile of
+the gate's own peak envelope over the DI gaps; Task H.1); once the final chain is known, ``gate_sweep`` does a coordinate
+descent on it (<= 15 renders of the chain's NAM cores, the linear part is the memoised cheap one): threshold = DI peak floor +
+{6, 8, 10, 12, 16, 20, 24, 28} dB, then hold {2, 10, 40} ms, release {20, 80, 150, 250} ms, range {-50, -90} dB. Each step keeps the cell
 whose inter-note level is closest to the reference's: the feel ``floor`` term of ``feel.py`` (output power in the DI's gap
 regions re its active power, against the reference's), subject to
 
@@ -31,11 +32,11 @@ from .engine import RATE, Engine
 from .screen import Scored
 from .space import Space, gate_preset
 
-GATE_OFFSETS_DB = (4.0, 8.0, 12.0, 16.0, 20.0, 24.0, 28.0, 32.0, 36.0)
+GATE_OFFSETS_DB = (6.0, 8.0, 10.0, 12.0, 16.0, 20.0, 24.0, 28.0)     # dB re the DI peak floor
 GATE_HOLDS_MS = (2.0, 10.0, 40.0)
 GATE_RELEASES_MS = (20.0, 80.0, 150.0, 250.0)
 GATE_RANGES_DB = (-50.0, -90.0)
-DEFAULT_CELL = (4.0, 40.0, 150.0, -50.0)       # (threshold offset dB, hold ms, release ms, range dB) = space.gate_preset
+DEFAULT_CELL = (10.0, 40.0, 150.0, -50.0)       # (threshold offset dB, hold ms, release ms, range dB) = space.gate_preset
 LTAS_TOL_DB = 0.05
 TIGHT_TOL = 0.05      # normalised tightness term: a cell may be this much worse than the default cell's (noise level of the statistic)
 MIN_IMPROVEMENT = 1e-3           # the floor term must fall by at least this to leave the current cell
@@ -56,7 +57,7 @@ def cell_feasible(r: dict, base: dict) -> bool:
 
 def cell_gate(floor_db: float, offset_db: float, release_ms: float = DEFAULT_CELL[2], hold_ms: float = DEFAULT_CELL[1],
               range_db: float = DEFAULT_CELL[3]) -> dict:
-    """The matcher's gate (``gate_preset``) with threshold = DI floor + ``offset_db`` and the given release / hold / range."""
+    """The matcher's gate (``gate_preset``) with threshold = DI peak floor + ``offset_db`` and the given release / hold / range."""
     thr = min(round(max(floor_db, -90.0) + offset_db, 2), THRESHOLD_MAX_DB)
     return gate_preset(floor_db, {"thresholdDb": thr, "releaseMs": float(release_ms), "holdMs": float(hold_ms),
                                   "rangeDb": float(range_db)})

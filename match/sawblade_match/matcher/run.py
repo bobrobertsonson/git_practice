@@ -14,7 +14,8 @@ import numpy as np
 import soundfile as sf
 
 from ..tonecheck.cli import check_audio, format_table
-from ..tonecheck.analysis import analyze
+from .. import core
+from ..tonecheck.analysis import activity_mask, analyze, gap_regions
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
 from .engine import RATE, Engine, to48
@@ -157,21 +158,34 @@ class Log:
         print(line, flush=True)
 
 
+def gate_floor(x: np.ndarray, fs: int) -> dict:
+    """The DI floor for the gate (Task H.1), recorded in result.json as ``gateFloor``.
+
+    ``peakDb``: the core's ``peak_floor_db`` (92.5th percentile of the gate's own peak envelope, 0.1 ms attack / 10 ms release)
+    over the DI's gap regions: this is what the gate compares its threshold with, and what ``space.gate_preset`` /
+    ``gatesweep.cell_gate`` are relative to. ``rmsDb``: the plain RMS level of the same samples (the number the old "floor + 4 dB"
+    rule used, ~10 dB below the peak floor for noise). The samples are the DI's real-silence gaps (``gap_regions``); a DI without
+    any falls back to its inactive samples (``activity_mask``), then to the whole signal (``source`` says which)."""
+    x64 = np.asarray(x, dtype=np.float64)
+    mask = np.zeros(len(x64), bool)
+    for a, b in gap_regions(x64, fs):
+        mask[a:b] = True
+    source = "gaps"
+    if int(mask.sum()) < 0.1 * fs:
+        mask = ~activity_mask(x64, fs)[0]
+        source = "inactive"
+    if int(mask.sum()) < 0.1 * fs:
+        mask = np.ones(len(x64), bool)
+        source = "whole DI"
+    peak = core.peak_floor_db(np.asarray(x, dtype=np.float32), float(fs), 0.0, mask.astype(np.uint8))
+    rms = 10.0 * np.log10(max(float(np.mean(x64[mask] ** 2)), 1e-20))
+    return {"peakDb": None if peak is None else float(peak), "rmsDb": float(rms), "source": source, "samples": int(mask.sum())}
+
+
 def gate_envelope_floor_db(x: np.ndarray, fs: int) -> float:
-    """DI noise floor as the gate sees it: 5th percentile of the mean level (dB) of 20 ms frames of the gate's peak
-    envelope detector (peak follower, 0.1 ms attack / 10 ms release; docs/PRESET_SCHEMA.md). Analysis only."""
-    a_c = float(np.exp(-1.0 / (0.0001 * fs)))
-    r_c = float(np.exp(-1.0 / (0.010 * fs)))
-    ax = np.abs(np.asarray(x, dtype=np.float64))
-    env = np.empty_like(ax)
-    e = 0.0
-    for i, v in enumerate(ax.tolist()):
-        e = a_c * e + (1 - a_c) * v if v > e else r_c * e + (1 - r_c) * v
-        env[i] = e
-    n = int(round(0.020 * fs))
-    nf = len(env) // n
-    lvl = 20 * np.log10(np.maximum(env[: nf * n].reshape(nf, n).mean(axis=1), 1e-10))
-    return float(np.percentile(lvl, 5))
+    """The DI floor the gate is set from: ``gate_floor(...)["peakDb"]`` (dBFS)."""
+    f = gate_floor(x, fs)["peakDb"]
+    return float(f) if f is not None else -90.0
 
 
 def _sha(p) -> str:
@@ -378,13 +392,15 @@ def run_match(cfg: Config, log=None) -> dict:
     if di_x.ndim > 1:
         di_x = di_x[:, 0]
     di48 = to48(di_x, di_fs)
-    floor = gate_envelope_floor_db(di48, RATE)
+    gfloor = gate_floor(di48, RATE)
+    floor = gfloor["peakDb"] if gfloor["peakDb"] is not None else -90.0
     gate = gate_preset(floor)
-    log(f"DI floor on the gate's peak envelope {floor:.1f} dBFS -> gate {gate}")
+    log(f"DI floor on the gate's peak envelope {floor:.1f} dBFS (RMS {gfloor['rmsDb']:.1f} dBFS, from the DI's {gfloor['source']}) "
+        f"-> gate {gate}")
     eng = Engine(gate, cfg.threads)
     prog = Progress(cfg.progress_json, plan.mode).start() if cfg.progress_json else NullProgress()
     try:
-        res = _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog)
+        res = _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog, gfloor)
         prog.close("done", res["after"][0]["aWeightedErrorDb"] if res.get("after") else None)
         return res
     except BaseException as e:
@@ -394,7 +410,7 @@ def run_match(cfg: Config, log=None) -> dict:
         eng.close()
 
 
-def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog=None):
+def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog=None, gfloor=None):
     prog = prog or NullProgress()
     cpu0 = time.process_time()
     prog.stage("prepare", "preparing the excerpt and the reference")
@@ -800,6 +816,10 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         log(f"gate sweep: the excerpt has no DI gaps; using {len(gs.get('gapWindows', []))} gap window(s) of the full-length DI")
     result["gateSweep"] = gs
     result["gateDefault"] = gate
+    result["gateFloor"] = {"rmsDb": None if gfloor is None else gfloor["rmsDb"], "peakDb": floor,
+                           **({} if gfloor is None else {"source": gfloor["source"]}),
+                           "definition": "peakDb = 92.5th percentile of the gate's own peak envelope over the DI gaps (core peak_floor_db); "
+                                         "default gate opens at peakDb + 10 dB, closes at + 4"}
     if gs.get("changed"):
         gate_final = gs["gate"]
         y = render_gate(eng, best, ex, gate_final)
@@ -814,7 +834,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             f"{base_row['releaseMs']:.0f} -> {pick['releaseMs']:.0f} ms (floor term {base_row['floorTerm']:.3f} -> "
             f"{pick['floorTerm']:.3f}, ltas {base_row['ltas']:.2f} -> {pick['ltas']:.2f} dB)")
     else:
-        log("gate sweep: " + (f"skipped ({gs['skipped']})" if gs.get("skipped") else "the default gate (floor + 4 dB, 150 ms) stays"))
+        log("gate sweep: " + (f"skipped ({gs['skipped']})" if gs.get("skipped") else "the default gate (peak floor + 10 dB, 150 ms) stays"))
     result["gateFinal"] = gate_final
     prog.update(REFINE_SHARE + 0.04)
     T["gateSweep"] = time.time() - t_gate
@@ -1025,7 +1045,7 @@ def _guardrails(y: np.ndarray, profile: dict) -> dict:
 def _scored_json(s: Scored) -> dict:
     d = {"stage": s.stage, "topology": s.topology, "loss": s.loss, "blend": s.blend, "align": s.align,
          "levelMatch": s.levels and s.levels.preset_block(),
-         "tightBoost": bool(s.combo.boost), "irMix": None if s.combo.cab_b is None else
+         "pairKey": list(s.combo.pair_key()), "tightBoost": bool(s.combo.boost), "irMix": None if s.combo.cab_b is None else
          {"irB": s.combo.cab_b.key, "offsetSamplesB": s.combo.cab_offset, "invertB": s.combo.cab_invert},
          "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
          "sizeRank": {"category": s.combo.size_rank()[0], "byteBucket": s.combo.size_rank()[1]}}
