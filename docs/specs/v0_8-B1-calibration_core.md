@@ -12,10 +12,11 @@ CMake lines to build/test them. **No** edits to `chain.*`, `nam_block.*`, `prese
 A "reference" is the dBu level that corresponds to 0 dBFS at some point in the chain (NAM convention: a full-scale
 sine at the converter equals `X` dBu; Task A confirms the exact wording). Levels are tracked through a path:
 
-- Start: `ref = deviceDbu` (interface max input at minimum gain, dBu at 0 dBFS). **No numeric default** (lead,
-  2026-10-07: user interfaces differ, Scarlett 4i4 +12/+12.5 dBu, Darkglass Anagram unpublished). Device unset →
-  `ref` unknown; the first block needing it resolves neutrally (NAM: `ref := inputDbu`, gain 0 dB = today's
-  behaviour; NominalOutput: sets `ref`); later hops are exact; `deviceUncalibrated` set.
+- Start: `ref = deviceDbu` (interface max input at minimum gain, dBu at 0 dBFS). Device unset / non-finite / out of
+  range → `ref = kAssumedDeviceDbu` (+12 dBu: NAM plugin default, Scarlett 4i4 4th gen, Audient iD4 MKII — sources in the
+  REPORT A1b) and `deviceUncalibrated` set. Lead decision 2026-10-07 after Task A: a neutral fallback would make amp
+  swaps change drive again (the problem v0.8 fixes); an assumed level keeps every capture-to-capture difference exact
+  and only shifts the absolute level (≈ ±1 dB across sourced interfaces). Metadata outside [−60, +60] dBu = missing.
 - NAM block with `inputDbu`: its input gain is `gainInDb = ref − inputDbu`; afterwards `ref = outputDbu`.
 - A block with no level conversion (EQ, gain-neutral DSP): `gainInDb = 0`, `ref` unchanged.
 - A modelled DSP pedal declaring a nominal output: `gainInDb = 0`, afterwards `ref = nominalOutputDbu`.
@@ -30,6 +31,7 @@ Consequence the tests must show: a pedal→amp hop is `pedal.outputDbu − amp.i
 
 ```cpp
 namespace sawblade::calibration {
+constexpr double kAssumedDeviceDbu = 12.0;                    // cited; used while uncalibrated
 double dbfsToDbu(double dbfs, double deviceDbu) noexcept;   // dbfs + deviceDbu
 double dbuToDbfs(double dbu, double deviceDbu) noexcept;    // dbu - deviceDbu
 double dbToLinear(double db) noexcept;
@@ -42,7 +44,7 @@ struct CalibrationDefaults { GearDefault amp, pedal, fullRig, unknown; };   // d
 struct DeviceCalibration { std::optional<double> dbu; bool calibrated() const noexcept; }; // method/date/gain-at-min owned by caller layer
 struct BlockGain { double gainInDb; float gainInLinear; double refAfterDbu;
                    bool inputMissing, outputMissing; bool uncalibrated() const noexcept; };
-struct PathPlan { std::vector<BlockGain> blocks; std::optional<double> refOutDbu; bool deviceUncalibrated; bool anyUncalibrated; };
+struct PathPlan { std::vector<BlockGain> blocks; double refOutDbu; bool deviceUncalibrated; bool anyUncalibrated; };
 
 PathPlan planPath(const DeviceCalibration&, std::span<const BlockLevelInfo>, const CalibrationDefaults&);
 }
@@ -59,7 +61,7 @@ precomputed linear gains later. Non-finite metadata is treated as missing. All m
 4. Amp swap: two plans differing only in amp `inputDbu` by `d` → amp gain differs by exactly `−d`, every other block
    identical.
 5. Missing metadata: gear default applied and flagged; no default → neutral (0 dB) and flagged; both flag fields correct.
-6. NaN/Inf metadata → treated as missing. Uncalibrated device: amp alone → 0 dB + flag; pedal→amp → first 0 dB, hop
-   exact; amp swap → 0 dB both (absolute level needs device calibration).
+6. NaN/Inf/out-of-range metadata → treated as missing. Uncalibrated device: amp alone → `12 − in` + plan flag; amp
+   swap → exactly `−d`; pedal→amp hop exact.
 7. Nominal-output DSP pedal sets the reference for the next NAM block.
 8. Full suite passes; warnings-as-errors clean.
