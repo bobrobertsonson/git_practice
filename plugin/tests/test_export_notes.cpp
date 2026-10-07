@@ -355,6 +355,21 @@ TEST_CASE("export report: A2 files block, the primary file, the validation of th
   fs::remove_all(dir, ec);
 }
 
+TEST_CASE("anagram notes: an A1 profile's header has no KosmOS version; A2 keeps it (same as the Python text)", "[export][report][a1]") {
+  const json rep = readJson(kDir / "report_a1_anagram.json");
+  const json notes = rep["exportNotes"];
+  const json profile = anagramProfileOf(notes);
+  REQUIRE(profile.is_object());
+  CHECK(profile["message"] == "Load the .nam into any NAM block (A1 model); on the Anagram that is a Neural Amp (or Neural Pedal) block.");
+  const std::string txt = formatAnagramNotesTxt(profile, "My riff", "Own use only.");
+  CHECK(txt.find("Blocks to set on the device, in signal order:\n") != std::string::npos);
+  CHECK(txt.find("KosmOS") == std::string::npos);
+  CHECK(txt.find("model: riff-nocab-standard.nam\n") != std::string::npos);
+  CHECK(txt.find("Load riff-nocab-standard.nam into any NAM block (A1 model);") != std::string::npos);
+  const json a2 = anagramProfileOf(readJson(kDir / "report_a2_anagram.json")["exportNotes"]);
+  CHECK(formatAnagramNotesTxt(a2).find("Blocks to set on the device (KosmOS 1.16 or later), in signal order:\n") != std::string::npos);
+}
+
 TEST_CASE("export report: A1 without deviceProfiles keeps the single-file contract", "[export][report][a2]") {
   const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report1_" + std::to_string(std::random_device{}()));
   fs::create_directories(dir);

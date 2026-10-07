@@ -355,6 +355,9 @@ std::string firstString(const json& j, std::initializer_list<const char*> keys) 
   return {};
 }
 
+// The profile message the exporter gives an A1 model; the Python format_anagram_txt keys its header on exactly this string.
+const char* const kAnagramHintA1 = "Load the .nam into any NAM block (A1 model); on the Anagram that is a Neural Amp (or Neural Pedal) block.";
+
 json profileStages(const json& profile) {
   for (const char* k : {"stages", "blocks"}) {
     const json v = get(profile, k);
@@ -378,6 +381,7 @@ std::string formatAnagramNotesTxt(const json& profile, const std::string& preset
   const json stages = profileStages(profile);
   const std::string message = firstString(profile, {"message"});
   if (stages.empty()) t += (message.empty() ? std::string(kNothing) : message) + "\n\n";
+  else if (message == kAnagramHintA1) t += "Blocks to set on the device, in signal order:\n\n";  // A1: no KosmOS version (same rule as the Python text)
   else t += "Blocks to set on the device (KosmOS 1.16 or later), in signal order:\n\n";
   int i = 0;
   for (const json& st : stages) {
