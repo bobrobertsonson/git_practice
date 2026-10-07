@@ -198,6 +198,8 @@ else:
               "validation": {"acceptance": {"status": status, "summary": "acceptance %s: held-out ESR %.4f (limit 0.02), DI-excerpt LTAS error %.2f dB (limit 0.5)" % (status, held, ltas),
                               "heldOutEsr": held, "diLtasDb": ltas, "esrLimit": 0.02, "ltasLimitDb": 0.5}},
               "totalWallSeconds": cfg.get("wall", 150.0)}
+    if cfg.get("exportNotes"):
+        report["exportNotes"] = cfg["exportNotes"]
     json.dump(report, open(os.path.join(out, "export_report.json"), "w"), indent=2)
     listen = cfg.get("listen")
     if listen:

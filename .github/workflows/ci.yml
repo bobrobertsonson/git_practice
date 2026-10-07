@@ -60,7 +60,17 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
+        env:
+          SAWBLADE_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: ctest --test-dir build --output-on-failure
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: v0_4-screenshots-linux-gcc
+          path: screenshots
+          if-no-files-found: warn
 
       - name: Download pluginval
         run: |
@@ -168,7 +178,17 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
+        env:
+          SAWBLADE_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: ctest --test-dir build --output-on-failure
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: v0_4-screenshots-macos-arm64
+          path: screenshots
+          if-no-files-found: warn
 
       - name: Install AU and run auval
         run: |

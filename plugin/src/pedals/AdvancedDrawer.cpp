@@ -62,9 +62,21 @@ AdvancedDrawer::~AdvancedDrawer() { animator_.removeChangeListener(this); }
 
 void AdvancedDrawer::setAnchor(juce::Rectangle<int> pedal, juce::Rectangle<int> limit) {
   const int x = pedal.getRight() + kGap;
-  open_ = juce::Rectangle<int>(x, pedal.getY(), std::max(0, limit.getRight() - x), pedal.getHeight());
+  const int right = std::max(0, limit.getRight() - x);
+  const int left = std::max(0, pedal.getX() - kGap - limit.getX());
+  openLeft_ = right < kMinOpenWidth && left > right;
+  if (openLeft_) {
+    const int w = std::min(kPreferredWidth, left);
+    open_ = juce::Rectangle<int>(pedal.getX() - kGap - w, pedal.getY(), w, pedal.getHeight());
+  } else {
+    open_ = juce::Rectangle<int>(x, pedal.getY(), right, pedal.getHeight());
+  }
   finishAnimation();
   if (wantOpen_) setBounds(open_);
+}
+
+juce::Rectangle<int> AdvancedDrawer::closedBounds() const {
+  return openLeft_ ? juce::Rectangle<int>(open_.getRight() - 8, open_.getY(), 8, open_.getHeight()) : open_.withWidth(8);
 }
 
 juce::String AdvancedDrawer::title() const {
@@ -74,7 +86,7 @@ juce::String AdvancedDrawer::title() const {
 void AdvancedDrawer::setOpen(bool open, bool animate) {
   if (open == wantOpen_ && (open ? isVisible() : true)) return;
   wantOpen_ = open;
-  const auto closed = open_.withWidth(8);
+  const auto closed = closedBounds();
   if (open) {
     refresh();
     if (!isVisible()) {

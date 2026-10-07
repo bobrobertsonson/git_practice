@@ -34,6 +34,12 @@ class ExportPanel : public juce::Component {
   // The settings as the controls show them (the processor's, which the plugin state saves).
   ExportSettings settings() const;
   void refresh();
+  // EXPORT NOTES (v0.4 Task E): the stages of the rig that are NOT in the trained model, with hardware settings, as the
+  // notes box shows them (and COPY puts on the clipboard). Before training: computed by the plugin (ExportNotes.h) for
+  // the mode and DROP COMP shown; after training: the run report's `exportNotes` (v0.4M) when it has one of the version
+  // this build knows, else the plugin's own with a "(computed by the plugin)" line.
+  juce::String notesText() const;
+  bool notesFromReport() const;
 
   void paint(juce::Graphics&) override;
   void resized() override;
@@ -42,6 +48,8 @@ class ExportPanel : public juce::Component {
   std::function<void()> onClose;
   // Hooks the tests replace: REVEAL (File::revealToUser), OPEN FOLDER and A/B LISTEN (File::startAsProcess).
   std::function<void(const juce::File&)> reveal, openFolder, openFile;
+  // The COPY button's clipboard (default: juce::SystemClipboard::copyTextToClipboard); tests replace it.
+  std::function<void(const juce::String&)> copyToClipboard;
 
  private:
   struct Impl;

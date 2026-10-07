@@ -19,6 +19,7 @@
 #include "PluginProcessor.h"
 #include "SettingsEnv.h"
 #include "rig/AmpHead.h"
+#include "rig/Pedalboard.h"
 #include "rig/RigEditorPanel.h"
 #include "rig/SlotStrip.h"
 #include "skin/FilmstripKnob.h"
@@ -339,7 +340,8 @@ TEST_CASE("amp head: Cmd / Ctrl + Z does not bubble into an undo from a focused 
   // start from a verified "nothing open" state, open exactly that overlay, check the direct and the bubbled chord, close it again.
   const auto allClosed = [&] {
     return !rig.ed->settingsOpen() && !rig.ed->aboutOpen() && !rig.ed->browserOpen() && !rig.ed->matchScreenOpen() && !rig.ed->exportPanelOpen() &&
-           !rig.ed->micPageOpen() && !rig.ed->playAlongOpen() && !rig.ed->captureBrowserOpen() && !rig.ed->advancedDrawerOpen() && !rig.ed->rigEditorOpen();
+           !rig.ed->micPageOpen() && !rig.ed->playAlongOpen() && !rig.ed->captureBrowserOpen() && !rig.ed->advancedDrawerOpen() && !rig.ed->rigEditorOpen() &&
+           !rig.ed->cabPageOpen() && !rig.ed->pedalboard().pickerOpen();
   };
   const auto closeAll = [&] {
     rig.ed->closeAllOverlaysForTests();
@@ -377,6 +379,8 @@ TEST_CASE("amp head: Cmd / Ctrl + Z does not bubble into an undo from a focused 
   check("play-along panel", [&] { rig.ed->setPlayAlongOpen(true); }, [&] { return rig.ed->playAlongOpen(); });
   check("match screen", [&] { rig.ed->openMatchScreen(); }, [&] { return rig.ed->matchScreenOpen(); });
   check("mic page", [&] { rig.ed->setMicPageOpen(true); }, [&] { return rig.ed->micPageOpen(); });
+  check("cab page", [&] { rig.ed->setCabPageOpen(true); }, [&] { return rig.ed->cabPageOpen(); });  // v0.4 Task D
+  check("pedal picker", [&] { rig.ed->pedalboard().showPicker(0); }, [&] { return rig.ed->pedalboard().pickerOpen(); });  // v0.4 Task C
   closeAll();
 
   // 3. The RIG editor is deliberately not an overlay for this purpose: with it open the chord undoes the fill (that is where path B is edited).
@@ -394,6 +398,7 @@ TEST_CASE("amp head: Cmd / Ctrl + Z does not bubble into an undo from a focused 
   // 4. Nothing open and no text focus: it does undo.
   rig.ed->setRigEditorOpen(false);
   rig.ed->setMicPageOpen(false);
+  rig.ed->setCabPageOpen(false);
   rig.ed->setBrowserOpen(false);
   rig.ed->setSettingsOpen(false);
   rig.ed->setPlayAlongOpen(false);

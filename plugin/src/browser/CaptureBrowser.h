@@ -17,7 +17,9 @@ class CaptureBrowser : public juce::Component, private juce::Timer {
  public:
   static constexpr int kWidth = 1280, kHeight = 800;
 
-  CaptureBrowser(SawbladeProcessor& p, BrowserSettings& settings, Slot slot);
+  // pinnedBlockId: the pedal tile selected on the pedalboard ("" = the slot's usual block), see slotTargets().
+  CaptureBrowser(SawbladeProcessor& p, BrowserSettings& settings, Slot slot, const std::string& pinnedBlockId = {},
+                 std::optional<InsertPoint> insert = std::nullopt);
   ~CaptureBrowser() override;
 
   void paint(juce::Graphics&) override;

@@ -1,10 +1,15 @@
 // Tests of the JUCE-free rig model (plugin/src/rig/RigModel.*): topology, slots, EQ, cab, align, gate, comp.
+#include <algorithm>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <cmath>
 #include <filesystem>
+#include <unistd.h>
+#include <fstream>
 
 #include "latency_stub.h"
+#include "rig/CapturePedals.h"
 #include "rig/RigModel.h"
 
 using namespace sawblade;
@@ -347,4 +352,137 @@ TEST_CASE("RigModel: gate and comp setters clamp to the schema ranges", "[rig][m
   }
   setCompEnabled(p, true);
   CHECK(roundTrip(p) == p);
+}
+
+// ---- v0.4 Task B: capture pedals -----------------------------------------------------------------------------------------------------
+TEST_CASE("RigModel: a capture pedal is a nam block in a pedal slot; its LEVEL is the output gain", "[rig][model][pedalb]") {
+  Preset p = rig();
+  // A: [eq a2, eq a3, nam a1 (amp)]: no capture pedal yet; the amp capture is not a pedal
+  for (int i = 0; i < 3; ++i) CHECK_FALSE(isCapturePedal(p.a, i));
+  REQUIRE(addBlock(p.a, 1, namBlock("a4", "pedal")));
+  CHECK(isCapturePedal(p.a, 1));
+  CHECK_FALSE(isCapturePedal(p.a, 3));  // the amp
+  CHECK_FALSE(isCapturePedal(p.a, 0));  // an EQ
+  CHECK_FALSE(isCapturePedal(p.a, 9));
+
+  CHECK(setBlockOutputGainDb(p.a, 1, 6.5));
+  CHECK(static_cast<const NamBlockParams&>(*p.a.blocks[1].params).outputGainDb == 6.5);
+  CHECK(setBlockOutputGainDb(p.a, 1, 99.0));
+  CHECK(static_cast<const NamBlockParams&>(*p.a.blocks[1].params).outputGainDb == kBlockGainMaxDb);
+  CHECK(setBlockOutputGainDb(p.a, 1, -99.0));
+  CHECK(static_cast<const NamBlockParams&>(*p.a.blocks[1].params).outputGainDb == kBlockGainMinDb);
+  CHECK(static_cast<const NamBlockParams&>(*p.a.blocks[1].params).inputGainDb == 0.0);  // the input gain is untouched
+  CHECK_FALSE(setBlockOutputGainDb(p.a, 0, 3.0));  // an EQ has none
+  CHECK_FALSE(setBlockOutputGainDb(p.a, 1, std::nan("")));
+  CHECK_FALSE(setBlockOutputGainDb(p.a, 7, 1.0));
+}
+
+namespace {
+// <cache>/<tone>/meta.json + one file per model, as `sawblade-t3k fetch` writes them.
+void writeCachedTone(const fs::path& cache, const std::string& tone, const std::string& gear, const std::string& title, const std::vector<std::pair<std::string, std::string>>& models,
+                     const std::string& ext = "nam") {
+  fs::create_directories(cache / tone);
+  json meta = {{"tone", {{"title", title}, {"gear", gear}, {"license", "cc-by-nc"}, {"url", "https://www.tone3000.com/tones/" + tone}, {"user", {{"username", "someone"}}}}},
+               {"creatorUsername", "someone"}, {"models", json::object()}};
+  for (const auto& [id, name] : models) {
+    fs::copy_file(kFixtures / "nam" / "linear_identity.nam", cache / tone / (id + "." + ext), fs::copy_options::overwrite_existing);
+    meta["models"][id] = {{"file", id + "." + ext}, {"sha256", "x"}, {"model", {{"name", name}}}};
+  }
+  std::ofstream(cache / tone / "meta.json") << meta.dump(2);
+}
+}  // namespace
+
+TEST_CASE("CapturePedals: the cache lists pedal tones (nam files only), by title; settings come in ladder order", "[rig][model][pedalb]") {
+  const fs::path cache = fs::temp_directory_path() / ("sawblade_capped_" + std::to_string(::getpid()));
+  fs::remove_all(cache);
+  writeCachedTone(cache, "11", "pedal", "Tight Boost", {{"112", "Gain 6"}, {"111", "Gain 2"}, {"113", "Gain 10"}});  // ids out of ladder order
+  writeCachedTone(cache, "12", "pedal", "alpha drive", {{"121", "Standard"}});
+  writeCachedTone(cache, "13", "amp", "Some Amp", {{"131", "Clean"}});
+  writeCachedTone(cache, "14", "pedal", "IR-ish", {{"141", "x"}}, "wav");  // no .nam model: not a pedal capture
+  writeCachedTone(cache, "15", "pedal", "Plain List", {{"152", "Bright"}, {"151", "Dark"}, {"1510", "Mid"}});
+  fs::create_directories(cache / "99");  // no meta.json
+  sawblade::setCaptureCacheRootOverride(cache);
+
+  const auto tones = cachedPedalCaptures();
+  REQUIRE(tones.size() == 3);
+  CHECK(tones[0].toneId == "12");  // "alpha drive" < "Plain List" < "Tight Boost", case-insensitively
+  CHECK(tones[1].toneId == "15");
+  CHECK(tones[2].toneId == "11");
+  CHECK(tones[2].title == "Tight Boost");
+  CHECK(tones[2].creator == "someone");
+  CHECK(tones[2].license == "cc-by-nc");
+  REQUIRE(tones[2].models.size() == 3);
+  CHECK(tones[2].models[0].name == "Gain 2");  // the v0.2 ladder order: by the number in the name
+  CHECK(tones[2].models[1].name == "Gain 6");
+  CHECK(tones[2].models[2].name == "Gain 10");
+  REQUIRE(tones[1].models.size() == 3);        // no numbers in the names: the plain list, by model id (numerically)
+  CHECK(tones[1].models[0].modelId == "151");
+  CHECK(tones[1].models[1].modelId == "152");
+  CHECK(tones[1].models[2].modelId == "1510");
+  CHECK(tones[0].models.size() == 1);
+
+  CHECK(cachedModelsOf("11").size() == 3);
+  CHECK(cachedModelsOf("13").size() == 1);  // any gear
+  CHECK(cachedModelsOf("99").empty());
+  CHECK(cachedModelsOf("nope").empty());
+  CHECK(cachedModelsOf("../x").empty());
+
+  // the same cache gives a swap its capture (licence and creator kept)
+  const auto c = cachedToneCapture("11", "112");
+  REQUIRE(c.has_value());
+  REQUIRE(c->source.has_value());
+  CHECK(c->source->modelId == "112");
+  CHECK(c->source->license == "cc-by-nc");
+  CHECK(c->source->title == "Tight Boost");
+  sawblade::setCaptureCacheRootOverride(std::nullopt);
+  fs::remove_all(cache);
+}
+
+TEST_CASE("CapturePedals: a malformed or hostile cache entry is skipped, never thrown on and never read outside the tone's folder", "[rig][model][pedalb]") {
+  const fs::path cache = fs::temp_directory_path() / ("sawblade_capmal_" + std::to_string(::getpid()));
+  fs::remove_all(cache);
+  writeCachedTone(cache, "20", "pedal", "Good One", {{"201", "Gain 1"}});
+  const auto raw = [&](const std::string& tone, const std::string& text) {
+    fs::create_directories(cache / tone);
+    fs::copy_file(kFixtures / "nam" / "linear_identity.nam", cache / tone / "301.nam", fs::copy_options::overwrite_existing);
+    std::ofstream(cache / tone / "meta.json") << text;
+  };
+  raw("21", "this is not json {");                                                                     // not JSON
+  raw("22", R"([1, 2, 3])");                                                                           // not an object
+  raw("23", R"({"tone": {"gear": "pedal", "title": "T"}, "models": [1, 2]})");                         // models an array
+  raw("24", R"({"tone": "pedal", "models": {"301": {"file": "301.nam"}}})");                           // tone a string
+  raw("25", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": {"file": 7}}})");           // file not a string: 301.nam by default
+  raw("26", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": {"file": "gone.nam"}}})");  // the model file is missing
+  raw("27", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": {"file": "../20/201.nam"}}})");  // traversal in the file
+  raw("28", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"..": {"file": "301.nam"}, "a/b": {"file": "301.nam"}, "": {"file": "301.nam"}}})");  // traversal in the key
+  raw("29", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": {"file": "sub\\301.nam"}}})");  // a backslash
+  raw("30", R"({"tone": {"gear": "pedal", "title": "T"}, "models": {"301": "not an object"}})");
+  sawblade::setCaptureCacheRootOverride(cache);
+
+  std::vector<CachedPedal> tones;
+  REQUIRE_NOTHROW(tones = cachedPedalCaptures());
+  std::vector<std::string> ids;
+  for (const auto& t : tones) ids.push_back(t.toneId);
+  std::sort(ids.begin(), ids.end());
+  CHECK(ids == std::vector<std::string>{"20", "25"});  // 25: a non-string file falls back to <model>.nam, like an absent one
+
+  for (const char* t : {"21", "22", "23", "26", "27", "28", "29", "30"}) {
+    INFO("tone " << t);
+    CHECK(cachedModelsOf(t).empty());
+    CHECK_FALSE(cachedToneCapture(t).has_value());
+    CHECK_FALSE(cachedToneCapture(t, "301").has_value());
+  }
+  CHECK_NOTHROW(cachedModelsOf("24"));  // a tone that is a string: no gear, so no pedal; its model is still readable
+  CHECK_NOTHROW(cachedModelsOf("25"));
+  CHECK(cachedToneCapture("25", "301").has_value());
+  CHECK_FALSE(cachedToneCapture("20", "..").has_value());
+  CHECK_FALSE(cachedToneCapture("20", "../20/201").has_value());
+  CHECK(plainCacheId("201"));
+  CHECK_FALSE(plainCacheId(".."));
+  CHECK_FALSE(plainCacheId(""));
+  CHECK_FALSE(plainCacheId("a\\b"));
+  CHECK(plainCacheFile("201.nam"));
+  for (const char* bad : {"", "..", "../x.nam", "a/b.nam", "a\\b.nam", "x..nam", "a.b.nam"}) CHECK_FALSE(plainCacheFile(bad));
+  sawblade::setCaptureCacheRootOverride(std::nullopt);
+  fs::remove_all(cache);
 }

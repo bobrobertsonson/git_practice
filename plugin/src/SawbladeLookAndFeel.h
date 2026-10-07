@@ -35,6 +35,8 @@ class SawbladeLookAndFeel : public juce::LookAndFeel_V4 {
   static juce::Colour text() { return juce::Colour(0xffe8e1d2); }
   static juce::Colour dimText() { return juce::Colour(0xffa39a8a); }
   static juce::Colour placeholderText() { return juce::Colour(0xff8a8273); }
+  // v0.4: the colour of a capture (a NAM model, a fixed tone) as opposed to a modeled pedal: the existing cream of the CAB / OUTPUT knobs.
+  static juce::Colour capture() { return juce::Colour(0xffe8e1d2); }
   static juce::Colour live() { return juce::Colour(0xff7fe08f); }
   static juce::Colour liveBorder() { return juce::Colour(0xff2f5a37); }
   static juce::Colour studio() { return juce::Colour(0xffe0b341); }

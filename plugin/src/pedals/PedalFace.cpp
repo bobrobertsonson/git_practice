@@ -102,7 +102,7 @@ void PedalFace::showActive() {
 
 void PedalFace::refresh() {
   const auto slot = proc_.circuitSlot();
-  const std::optional<Circuit> next = slot ? std::optional<Circuit>(slot->circuit) : std::nullopt;
+  const std::optional<Circuit> next = slot && (!probe_ || probe_(*slot)) ? std::optional<Circuit>(slot->circuit) : std::nullopt;
   const juce::String name = juce::String(proc_.status().presetName);
   const bool changed = next != active_ || name != presetName_ || isVisible() != next.has_value();
   active_ = next;

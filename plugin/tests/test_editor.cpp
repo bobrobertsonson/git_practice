@@ -37,6 +37,7 @@
 #include "pedals/PedalFace.h"
 #include "pedals/PedalSwitch.h"
 #include "rig/EqGraph.h"
+#include "rig/Pedalboard.h"
 #include "rig/RigEditorPanel.h"
 #include "rig/RigModel.h"
 #include "rig/SlotStrip.h"
@@ -122,6 +123,7 @@ struct Rig {
     REQUIRE(proc.status().error.empty());
     // The loader thread wrote the parameters: let the attachments deliver to the controls.
     juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+    ed->refreshNow();  // v0.4 Task D: the pedalboard tiles (and the pedal face over one) follow the preset
   }
   void loadInit() {
     proc.loadPreset(makeInitPreset());
@@ -184,15 +186,23 @@ void checkSnapshot(Rig& rig, float scale, const char* file) {
   INFO("luminance sd " << sd);
   CHECK(sd > 0.03);
 
-  // the amp image region is not the background colour
+  // the amp image regions and the pedal tiles are not the background colour
+  auto scaledArea = [&](juce::Component& c) {
+    const auto area = rig.ed->getLocalArea(&c, c.getLocalBounds());
+    return juce::Rectangle<int>(juce::roundToInt(area.getX() * scale), juce::roundToInt(area.getY() * scale), juce::roundToInt(area.getWidth() * scale),
+                                juce::roundToInt(area.getHeight() * scale));
+  };
   auto rig_ = all<skin::RigPiece>(*rig.ed);
-  REQUIRE(rig_.size() == 5);
+  REQUIRE(rig_.size() == 2);  // the two amp heads (v0.4 Task D: the cab and the static pedals left the main page)
   for (auto* piece : rig_) {
-    const auto area = rig.ed->getLocalArea(piece, piece->getLocalBounds());
-    const juce::Rectangle<int> scaled(juce::roundToInt(area.getX() * scale), juce::roundToInt(area.getY() * scale),
-                                      juce::roundToInt(area.getWidth() * scale), juce::roundToInt(area.getHeight() * scale));
     INFO(piece->getTitle());
-    CHECK(nonBackgroundFraction(img, scaled) > 0.2);  // the renders are dark, but never plain background
+    CHECK(nonBackgroundFraction(img, scaledArea(*piece)) > 0.2);  // the renders are dark, but never plain background
+  }
+  auto tiles = all<rig::BoardTile>(*rig.ed);
+  REQUIRE(tiles.size() >= 1);
+  for (auto* tile : tiles) {
+    INFO(tile->getTitle());
+    CHECK(nonBackgroundFraction(img, scaledArea(*tile)) > 0.2);
   }
   savePng(img, file);
 }
@@ -201,6 +211,8 @@ void checkSnapshot(Rig& rig, float scale, const char* file) {
 
 TEST_CASE("snapshots 1x and 2x", "[editor]") {
   Rig rig;
+  // A blend of modeled pedals (renders from files in this repo only): both heads undimmed, tiles on both boards.
+  rig.load(std::filesystem::path(SAWBLADE_PRESETS_DIR) / "modeled" / "saw_body_blend_demo.json");
   checkSnapshot(rig, 1.0f, "sawblade_skin_1x.png");
   checkSnapshot(rig, 2.0f, "sawblade_skin_2x.png");
 }
@@ -365,10 +377,12 @@ TEST_CASE("knob interaction: drag, shift, horizontal, double-click", "[editor]")
 
 TEST_CASE("footswitch press look and paired LED", "[editor]") {
   Rig rig;
+  // v0.4 Task D: a footswitch + LED per pedal tile; the blend demo has one pedal on the SAW board and two on the BODY board.
+  rig.load(std::filesystem::path(SAWBLADE_PRESETS_DIR) / "modeled" / "saw_body_blend_demo.json");
   auto switches = all<skin::FootswitchButton>(*rig.ed);
   auto leds = all<skin::LedIndicator>(*rig.ed);
-  REQUIRE(switches.size() == 2);
-  REQUIRE(leds.size() == 2);
+  REQUIRE(switches.size() == 3);
+  REQUIRE(leds.size() == 3);
   skin::FootswitchButton& fs = *switches[0];
 
   const auto up = fs.createComponentSnapshot(fs.getLocalBounds(), true, 1.0f);
@@ -415,6 +429,7 @@ TEST_CASE("footswitch press look and paired LED", "[editor]") {
     for (int x = 0; x < lit.getWidth(); ++x)
       if (!sprite.contains(x, y) && lit.getPixelAt(x, y) != dark.getPixelAt(x, y)) ++glow;
   CHECK(glow > 200);
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));  // the clicks above are bypass edits (see test_layout.cpp)
 }
 
 TEST_CASE("accessibility: titles and tooltips on every control", "[editor]") {
@@ -441,10 +456,19 @@ TEST_CASE("accessibility: titles and tooltips on every control", "[editor]") {
 
 TEST_CASE("clicking a rig piece selects it", "[editor]") {
   Rig rig;
+  rig.load(std::filesystem::path(SAWBLADE_PRESETS_DIR) / "modeled" / "saw_body_blend_demo.json");
   CHECK(rig.ed->selectedPiece() == skin::Piece::SawPedal);
-  for (auto* p : all<skin::RigPiece>(*rig.ed)) {
+  auto heads = all<skin::RigPiece>(*rig.ed);
+  REQUIRE(heads.size() == 2);
+  for (auto* p : heads) {
     p->mouseDown(mouse(*p, {5.0f, 5.0f}, {5.0f, 5.0f}, false));
     CHECK(rig.ed->selectedPiece() == p->piece());
+  }
+  // a pedal tile selects its path's pedal slot and remembers which block
+  for (auto* t : all<rig::BoardTile>(*rig.ed)) {
+    t->mouseDown(mouse(*t, {5.0f, 5.0f}, {5.0f, 5.0f}, false));
+    CHECK(rig.ed->selectedPiece() == (t->path() == 0 ? skin::Piece::SawPedal : skin::Piece::BodyPedal));
+    CHECK(rig.ed->selectedBlockId() == t->blockId());
   }
 }
 
@@ -1306,26 +1330,28 @@ TEST_CASE("rig editor: topology and cab buttons change the preset through the lo
   CHECK(rig.proc.currentPreset().blend == 0.5);
   CHECK_FALSE(anyLabelContains(*rig.ed, "BLEND OFF"));
 
+  // The notice of the rig editor's own CAB tab (the CAB page has a second one that is refreshed only while it is shown, so the search
+  // is scoped to the panel).
   panel.setTab(rig::RigEditorPanel::Tab::Cab);
-  CHECK(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE"));
-  CHECK_FALSE(anyLabelContains(*rig.ed, "STUDIO BLEND"));
+  CHECK(anyLabelContains(panel, "LIVE-COMPATIBLE"));
+  CHECK_FALSE(anyLabelContains(panel, "STUDIO BLEND"));
   click(panel.cabModeButton(CabMode::PerPath));
   rig.wait();
   panel.refresh();
   CHECK(rig.proc.currentPreset().cab.mode == CabMode::PerPath);
-  CHECK(anyLabelContains(*rig.ed, "STUDIO BLEND: only the with-cab NAM export is exact"));
-  CHECK_FALSE(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE"));
+  CHECK(anyLabelContains(panel, "STUDIO BLEND: only the with-cab NAM export is exact"));
+  CHECK_FALSE(anyLabelContains(panel, "LIVE-COMPATIBLE"));
   click(panel.cabModeButton(CabMode::Shared));
   rig.wait();
   panel.refresh();
   CHECK(rig.proc.currentPreset().cab.mode == CabMode::Shared);
-  CHECK(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE: the no-cab NAM export is exact"));
+  CHECK(anyLabelContains(panel, "LIVE-COMPATIBLE: the no-cab NAM export is exact"));
 
   // Per path with the cab switched off is a cab-less rig: the notice follows the chip (LIVE-COMPATIBLE), not the mode alone.
   click(panel.cabModeButton(CabMode::PerPath));
   rig.wait();
   panel.refresh();
-  CHECK(anyLabelContains(*rig.ed, "STUDIO BLEND: only the with-cab NAM export is exact"));
+  CHECK(anyLabelContains(panel, "STUDIO BLEND: only the with-cab NAM export is exact"));
   juce::Button* cabOn = nullptr;
   for (auto* b : all<juce::Button>(panel))
     if (b->getButtonText() == "CAB ON" || b->getTitle() == "CAB ON") cabOn = b;
@@ -1336,8 +1362,8 @@ TEST_CASE("rig editor: topology and cab buttons change the preset through the lo
   panel.refresh();
   CHECK(rig.proc.currentPreset().cab.mode == CabMode::PerPath);
   CHECK_FALSE(rig.proc.currentPreset().cab.enabled);
-  CHECK(anyLabelContains(*rig.ed, "LIVE-COMPATIBLE: the no-cab NAM export is exact"));
-  CHECK_FALSE(anyLabelContains(*rig.ed, "STUDIO BLEND"));
+  CHECK(anyLabelContains(panel, "LIVE-COMPATIBLE: the no-cab NAM export is exact"));
+  CHECK_FALSE(anyLabelContains(panel, "STUDIO BLEND"));
 }
 
 namespace {
@@ -1668,9 +1694,12 @@ TEST_CASE("pedal face: shown only when the preset has a circuit block", "[editor
   REQUIRE(face.activeCircuit().has_value());
   CHECK(*face.activeCircuit() == Circuit::Chainsaw);
 
-  // The face lies exactly over the saw pedal render and lets background clicks through.
-  const auto& piece = rigViewOf(rig).piece(skin::Piece::SawPedal);
-  CHECK(face.getBounds() == piece.getBounds() + rigViewOf(rig).getPosition());
+  // The face lies exactly over the circuit pedal's tile on the pedalboard and lets background clicks through.
+  rig.ed->refreshNow();
+  const rig::BoardTile* tile = rig.ed->pedalboard().tileForBlock(0, 0);
+  REQUIRE(tile != nullptr);
+  const auto& piece = *tile;
+  CHECK(face.getBounds() == rig.ed->pedalboard().tileBounds(piece) + rig.ed->pedalboard().getPosition());
   bool self = true, kids = false;
   face.getInterceptsMouseClicks(self, kids);
   CHECK_FALSE(self);
@@ -1804,7 +1833,8 @@ TEST_CASE("pedal drawer: closed by default, opens and closes on double-click, x 
   AdvancedDrawer& drawer = drawerOf(rig);
   rig.load(kChainsawPresets / "classic_buzzsaw.json");
   face.refresh();
-  skin::RigPiece& piece = rigViewOf(rig).piece(skin::Piece::SawPedal);
+  rig.ed->refreshNow();
+  rig::BoardTile& piece = *rig.ed->pedalboard().tileForBlock(0, 0);  // the circuit pedal's tile
 
   CHECK_FALSE(drawer.isOpen());
   CHECK_FALSE(drawer.isVisible());
@@ -1817,7 +1847,7 @@ TEST_CASE("pedal drawer: closed by default, opens and closes on double-click, x 
 
   // Geometry: inside the rig, to the right of the pedal, aligned with its vertical span.
   const auto rigBounds = rigViewOf(rig).getBounds();
-  const auto pedal = piece.getBounds() + rigViewOf(rig).getPosition();
+  const auto pedal = rig.ed->pedalboard().tileBounds(piece) + rig.ed->pedalboard().getPosition();
   CHECK(rigBounds.contains(drawer.getBounds()));
   CHECK_FALSE(drawer.getBounds().intersects(pedal));
   CHECK(drawer.getX() == pedal.getRight() + AdvancedDrawer::kGap);
@@ -2539,7 +2569,8 @@ TEST_CASE("record + match: screenshots of REC armed, the match progress and the 
 namespace {
 
 // A preset on the identity fixtures whose captures carry TONE3000 sources (title, creator, licence).
-fs::path writeExportRig(const fs::path& dir, const std::string& name, bool perPath, bool comp, double releaseMs, const std::string& license) {
+fs::path writeExportRig(const fs::path& dir, const std::string& name, bool perPath, bool comp, double releaseMs, const std::string& license,
+                        const nlohmann::json& extra = nlohmann::json::object()) {
   using nlohmann::json;
   const std::string nam = (fs::path(SAWBLADE_FIXTURES_DIR) / "nam" / "linear_identity.nam").string();
   const std::string ir = (fs::path(SAWBLADE_FIXTURES_DIR) / "ir" / "impulse.wav").string();
@@ -2557,6 +2588,7 @@ fs::path writeExportRig(const fs::path& dir, const std::string& name, bool perPa
   if (perPath) j["cab"] = {{"mode", "perPath"}, {"irA", cap(ir, "21", "V30 Mesa 4x12 A", "@OutmodedElectronics", "t3k")}, {"irB", cap(ir, "22", "V30 Mesa 4x12 B", "@OutmodedElectronics", "t3k")}};
   else j["cab"] = {{"mode", "shared"}, {"ir", cap(ir, "21", "V30 Mesa 4x12", "@OutmodedElectronics", "t3k")}};
   if (comp) j["busComp"] = {{"enabled", true}, {"releaseMs", releaseMs}};
+  for (const auto& [k, v] : extra.items()) j[k] = v;  // e.g. a gate, or a fully set bus comp
   const fs::path p = dir / (name + ".json");
   std::ofstream(p) << j.dump(2);
   return p;
@@ -2580,8 +2612,9 @@ struct ExportRig : MatchRig {
     s.outputFolder = exportsDir.string();
     proc.setExportSettings(s);
   }
-  void loadRig(const std::string& name, bool perPath, bool comp = false, double releaseMs = 80.0, const std::string& license = "cc-by") {
-    load(writeExportRig(tmp.dir, name, perPath, comp, releaseMs, license));
+  void loadRig(const std::string& name, bool perPath, bool comp = false, double releaseMs = 80.0, const std::string& license = "cc-by",
+               const nlohmann::json& extra = nlohmann::json::object()) {
+    load(writeExportRig(tmp.dir, name, perPath, comp, releaseMs, license, extra));
   }
   void openPanel() {
     click(*topBarButton(*ed, "EXPORT NAM"));
@@ -2884,6 +2917,211 @@ TEST_CASE("export panel: training, cancel, RESUME, the result and its buttons", 
   CHECK_FALSE(anyLabelContains(panel, "NOT MET"));
   CHECK_FALSE(rig.visible("A/B LISTEN"));
   CHECK(anyLabelContains(panel, "last run: 3 min"));  // 150 s of wall time
+}
+
+// ---- export notes (v0.4 Task E): the stages that are not in the trained model, with hardware settings, and COPY ----
+namespace {
+nlohmann::json gateAndFastComp() {
+  return {{"gate", {{"enabled", true}, {"thresholdDb", -52.0}, {"hysteresisDb", 5.0}, {"attackMs", 0.5}, {"holdMs", 20.0}, {"releaseMs", 70.0}, {"rangeDb", -90.0}}},
+          {"busComp", {{"enabled", true}, {"thresholdDb", -9.0}, {"ratio", 4.0}, {"kneeDb", 3.0}, {"attackMs", 2.0}, {"releaseMs", 80.0}, {"makeupDb", 1.5}}}};
+}
+bool overlaps(const juce::Component& a, const juce::Component& b) { return a.getBounds().intersects(b.getBounds()); }
+}  // namespace
+
+TEST_CASE("export panel: the notes box lists the gate and the fast bus comp with their numbers; COPY copies the text; the mode updates it", "[editor][export][notes]") {
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  REQUIRE(panel.view() == ExportPanel::View::Configure);
+  const juce::String nocab = panel.notesText();
+  CHECK(nocab.startsWith("Sawblade export notes - notes (nocab export)"));
+  CHECK(nocab.contains("1. gate [before NAM]"));
+  CHECK(nocab.contains("open at -52 dB, close at -57 dB (hysteresis 5 dB), attack 0.5 ms, hold 20 ms, release 70 ms, range -90 dB"));
+  CHECK(nocab.contains("busComp [after NAM]"));
+  CHECK(nocab.contains("Bus compressor LAST"));
+  CHECK(nocab.contains("threshold -9 dB"));
+  CHECK(nocab.contains("ratio 4:1, attack 2 ms, release 80 ms, knee 3 dB, make-up +1.5 dB"));
+  CHECK(nocab.contains("Load the cab IR V30 Mesa 4x12"));
+  CHECK(nocab.contains("Loader order: gate -> NAM model -> cab IR -> bus comp"));
+  CHECK(nocab.contains("Built from TONE3000 captures"));  // the plugin's licence note closes the text
+  CHECK_FALSE(panel.notesFromReport());
+  // The visible box holds exactly that text.
+  const auto editors = all<juce::TextEditor>(panel);
+  REQUIRE(editors.size() == 1);
+  CHECK(editors[0]->isVisible());
+  CHECK(editors[0]->isReadOnly());
+  CHECK(editors[0]->getText().trimEnd() == nocab.trimEnd());
+  CHECK(anyLabelContains(panel, "Follows the export settings"));
+
+  // COPY puts the same text on the clipboard (the seam replaces the system clipboard).
+  juce::String copied;
+  panel.copyToClipboard = [&](const juce::String& t) { copied = t; };
+  REQUIRE(rig.visible("COPY"));
+  CHECK(rig.exportButton("COPY")->isEnabled());
+  CHECK(rig.exportButton("COPY")->getTooltip().isNotEmpty());
+  click(*rig.exportButton("COPY"));
+  CHECK(copied == nocab);
+
+  // DROP / KEEP COMP changes what is trained, not what the model leaves out: the comp stays in the list of a no-cab export.
+  click(*rig.exportButton("KEEP COMP"));
+  CHECK(panel.notesText().contains("Bus compressor LAST"));
+  click(*rig.exportButton("DROP COMP"));
+  CHECK(panel.notesText() == nocab);
+
+  // WITH CAB: the cab and the comp are trained into the model, only the gate is left out; it follows the click at once.
+  click(*rig.exportButton("WITH CAB"));
+  const juce::String withcab = panel.notesText();
+  CHECK(withcab.startsWith("Sawblade export notes - notes (withcab export)"));
+  CHECK(withcab.contains("1. gate [before NAM]"));
+  CHECK_FALSE(withcab.contains("Bus compressor"));
+  CHECK_FALSE(withcab.contains("Load the cab IR"));
+  CHECK(withcab.contains("Loader order: gate -> NAM model"));
+  CHECK(editors[0]->getText().trimEnd() == withcab.trimEnd());
+  click(*rig.exportButton("COPY"));
+  CHECK(copied == withcab);
+  click(*rig.exportButton("NO CAB"));
+  CHECK(panel.notesText() == nocab);
+
+  // A new rig replaces the notes; a rig with nothing to add says so.
+  rig.loadRig("plain", false);
+  panel.refresh();
+  CHECK(panel.notesText().contains("1. cab [after NAM]"));
+  click(*rig.exportButton("WITH CAB"));
+  CHECK(panel.notesText().contains("Nothing to add: the trained model (and its IR, if any) contains the whole chain."));
+}
+
+TEST_CASE("export panel: the notes box sits in the right column without overlapping anything, in every view", "[editor][export][notes]") {
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.tools.cfgExport({{"progressJson", true}, {"gates", nlohmann::json::array({"g1"})}});
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  auto checkLayout = [&](const char* view) {
+    INFO(view);
+    juce::TextEditor* box = all<juce::TextEditor>(panel).at(0);
+    juce::Button* copy = rig.exportButton("COPY");
+    REQUIRE(copy != nullptr);
+    CHECK(box->isVisible());
+    CHECK(copy->isVisible());
+    CHECK(panel.getLocalBounds().contains(box->getBounds()));
+    CHECK(panel.getLocalBounds().contains(copy->getBounds()));
+    CHECK(box->getHeight() >= 140);
+    CHECK_FALSE(overlaps(*box, *copy));
+    for (auto* c : panel.getChildren()) {
+      if (c == box || c == copy || !c->isVisible() || c->getBounds().isEmpty()) continue;
+      // The header row and the source line belong to the notes; every other visible child stays clear of the box and COPY.
+      if (auto* l = dynamic_cast<juce::Label*>(c);
+          l != nullptr && (l->getText().startsWith("EXPORT NOTES") || l->getText().startsWith("Follows the export") || l->getText() == "(computed by the plugin)" ||
+                           l->getText().startsWith("from the export report")))
+        continue;
+      INFO(c->getTitle() << " / " << c->getBounds().toString());
+      CHECK_FALSE(overlaps(*c, *box));
+      CHECK_FALSE(overlaps(*c, *copy));
+    }
+  };
+  checkLayout("configure");
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Training);
+  checkLayout("training");
+  fake_tools::release(rig.proc.jobs().snapshot(JobKind::Export).outDir, "g1");
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  checkLayout("result");
+}
+
+TEST_CASE("export panel: after training the report's exportNotes are shown verbatim; without usable ones the plugin's notes stay with a note", "[editor][export][notes]") {
+  using nlohmann::json;
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  juce::String copied;
+  panel.copyToClipboard = [&](const juce::String& t) { copied = t; };
+  const juce::String computed = panel.notesText();
+  CHECK(computed.contains("Loader order: gate -> NAM model"));
+
+  const json fake = {{"version", 1}, {"mode", "nocab"}, {"file", "notes-nocab-standard.export_notes.txt"},
+                     {"stages", json::array({json{{"stage", "gate"}, {"position", "before NAM"}, {"inModel", false}, {"settings", json::object()}, {"hardware", "FAKE GATE FROM THE REPORT."}},
+                                             json{{"stage", "busComp"}, {"position", "after NAM"}, {"inModel", false}, {"settings", json::object()}, {"hardware", "FAKE COMP FROM THE REPORT."}}})},
+                     {"loaderOrder", "Loader order: gate -> NAM (report.nam) -> bus comp"}};
+  rig.tools.cfgExport({{"progressJson", true}, {"exportNotes", fake}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  CHECK(panel.notesFromReport());
+  const juce::String shown = panel.notesText();
+  CHECK(shown.contains("1. gate [before NAM]\n   FAKE GATE FROM THE REPORT.\n"));
+  CHECK(shown.contains("2. busComp [after NAM]\n   FAKE COMP FROM THE REPORT.\n"));
+  CHECK(shown.contains("Loader order: gate -> NAM (report.nam) -> bus comp"));
+  CHECK_FALSE(shown.contains("open at -52 dB"));  // not the plugin's computation
+  CHECK(all<juce::TextEditor>(panel).at(0)->getText().trimEnd() == shown.trimEnd());
+  CHECK_FALSE(anyLabelContains(panel, "(computed by the plugin)"));
+  CHECK(anyLabelContains(panel, "from the export report"));
+  click(*rig.exportButton("COPY"));
+  CHECK(copied == shown);
+
+  // A report without exportNotes, or with a version this build does not know: the plugin's notes and the dim note.
+  for (const json& notes : {json(), json{{"version", 2}, {"stages", json::array()}, {"loaderOrder", "Loader order: other"}}}) {
+    rig.tools.cfgExport({{"progressJson", true}, {"exportNotes", notes}});
+    click(*rig.exportButton("TRAIN EXPORT"));
+    REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+    panel.refresh();
+    REQUIRE(panel.view() == ExportPanel::View::Result);
+    CHECK_FALSE(panel.notesFromReport());
+    CHECK(anyLabelContains(panel, "(computed by the plugin)"));
+    CHECK(panel.notesText().contains("open at -52 dB, close at -57 dB"));
+    CHECK(panel.notesText().contains("Loader order: gate -> NAM ("));  // the finished run's model name is known
+    CHECK_FALSE(panel.notesText().contains("Loader order: other"));
+    click(*rig.exportButton("COPY"));
+    CHECK(copied == panel.notesText());
+  }
+}
+
+TEST_CASE("export panel: a dropped comp stays in the notes after training even when the report (built from the comp-less preset) lacks it", "[editor][export][notes]") {
+  using nlohmann::json;
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(rig.exportButton("DROP COMP")->getToggleState());  // the default: the exported preset has the comp switched off
+  const json gateOnly = {{"version", 1}, {"mode", "nocab"},
+                         {"stages", json::array({json{{"stage", "gate"}, {"position", "before NAM"}, {"inModel", false}, {"settings", json::object()}, {"hardware", "FAKE GATE FROM THE REPORT."}}})},
+                         {"loaderOrder", "Loader order: gate -> NAM (report.nam)"}};
+  rig.tools.cfgExport({{"progressJson", true}, {"exportNotes", gateOnly}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  CHECK_FALSE(panel.notesFromReport());
+  CHECK(anyLabelContains(panel, "(computed by the plugin)"));
+  CHECK(panel.notesText().contains("Bus compressor LAST"));
+  CHECK(panel.notesText().contains("ratio 4:1, attack 2 ms, release 80 ms"));
+  CHECK_FALSE(panel.notesText().contains("FAKE GATE FROM THE REPORT."));
+}
+
+TEST_CASE("export panel: with DROP COMP a live edit of the comp refreshes the notes", "[editor][export][notes]") {
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(rig.exportButton("DROP COMP")->getToggleState());
+  CHECK(panel.notesText().contains("threshold -9 dB re the chain's pre-headroom level"));
+  CHECK(panel.notesText().contains("ratio 4:1"));
+  Preset p = rig.proc.currentPreset();
+  p.busComp.thresholdDb = -20.0;
+  p.busComp.ratio = 6.0;
+  p.busComp.attackMs = 5.0;
+  rig.proc.loadPreset(p);
+  REQUIRE(rig.proc.waitForLoader());
+  panel.refresh();
+  CHECK(panel.notesText().contains("threshold -20 dB re the chain's pre-headroom level"));
+  CHECK(panel.notesText().contains("ratio 6:1, attack 5 ms"));
+  CHECK_FALSE(panel.notesText().contains("ratio 4:1"));
 }
 
 TEST_CASE("export panel: a missing exporter shows a message and LOCATE; a refusal shows its message", "[editor][export]") {

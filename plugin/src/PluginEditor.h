@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -14,6 +15,10 @@
 namespace sawblade::plugin {
 
 class MicPage;
+namespace rig {
+class CabScreen;
+class Pedalboard;
+}  // namespace rig
 class PresetBrowser;
 class AbCompare;
 class ExportPanel;
@@ -37,6 +42,8 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   // Scale of the content component (editor width / 1280).
   double contentScale() const;
   skin::Piece selectedPiece() const;
+  // The selected pedal tile of selectedPiece() == SawPedal / BodyPedal ("" = the first tile of that path).
+  const std::string& selectedBlockId() const;
 
   // The PLAY ALONG overlay (PlayAlongPanel): closed by default; open / closed is UI state, never saved.
   void setPlayAlongOpen(bool open);
@@ -47,6 +54,14 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   void setRigEditorOpen(bool open);
   bool rigEditorOpen() const;
   rig::RigEditorPanel& rigEditor();
+
+  // v0.4 Task D: the CAB page (rig::CabScreen), opened by the CAB button next to RIG and by the cab chip; a full overlay in the mutually
+  // exclusive overlay group. UI state, never saved. The pedalboards sit under the two amp heads, the cab chip where the paths meet.
+  void setCabPageOpen(bool open);
+  bool cabPageOpen() const;
+  rig::CabScreen& cabScreen();
+  rig::Pedalboard& pedalboard();
+  skin::CabChip& cabChip();
 
   // v0.2 Task D: the amp controls over the amp head of path 0 = SAW / 1 = BODY, the rig controller (BLEND fill undo), a
   // synchronous refresh of the main screen (the timer does it at 4 Hz), and Cmd / Ctrl + Z for the undo.
@@ -62,7 +77,8 @@ class SawbladeEditor : public juce::AudioProcessorEditor, public juce::FileDragA
   void setAdvancedDrawerOpen(bool open);
   void setFocusProbeForTests(std::function<juce::Component*()> probe);
 
-  // The cab mic page (mic/MicPage): an overlay over the rig + inspector, opened by double-clicking the cab; UI state, never saved.
+  // The cab mic page (mic/MicPage): an overlay over the rig + inspector, opened by MIC POSITIONS on the CAB page (v0.4 Task D; it was a
+  // double-click on the cab); its close button returns to the CAB page in that case. UI state, never saved.
   void setMicPageOpen(bool open);
   bool micPageOpen() const;
   MicPage& micPage();

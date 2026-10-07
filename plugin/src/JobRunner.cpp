@@ -351,6 +351,7 @@ ExportResult readExportResult(const fs::path& outDir) {
     r.haveReport = true;
     r.nonCommercial = j.value("nonCommercial", false);
     r.wallSeconds = num(j, "totalWallSeconds", 0.0);
+    if (auto n = j.find("exportNotes"); n != j.end() && n->is_object()) r.exportNotesJson = n->dump();
     if (auto t = j.find("training"); t != j.end() && t->is_object()) {
       if (r.wallSeconds <= 0.0) r.wallSeconds = num(*t, "wallSeconds", 0.0);
       if (auto f = t->find("namFile"); f != t->end() && f->is_string()) r.namFile = f->get<std::string>();

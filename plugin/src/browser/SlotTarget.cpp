@@ -1,5 +1,9 @@
 #include "SlotTarget.h"
 
+#include <algorithm>
+
+#include "rig/RigModel.h"
+
 namespace sawblade::plugin {
 namespace {
 
@@ -45,7 +49,8 @@ const char* slotGear(Slot s) {
   return "";
 }
 
-std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string* why) {
+std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string* why, const std::string& pinnedBlockId,
+                                    const std::optional<InsertPoint>& insert) {
   std::vector<SlotTarget> out;
   if (slot == Slot::Cab) {
     SlotTarget t;
@@ -66,7 +71,36 @@ std::vector<SlotTarget> slotTargets(const Preset& preset, Slot slot, std::string
   const bool saw = slot == Slot::SawPedal || slot == Slot::SawAmp;
   const bool pedal = slot == Slot::SawPedal || slot == Slot::BodyPedal;
   const char which = saw ? 'a' : 'b';
-  const int idx = findNamBlock(pathOf(preset, which), pedal);
+  if (insert && pedal) {
+    const PathPreset& path = pathOf(preset, insert->path);
+    if (static_cast<int>(path.blocks.size()) >= kMaxBlocksPerPath) {
+      if (why) *why = std::string(insert->path == 'a' ? "SAW" : "BODY") + " path full: 8 blocks";
+      return out;
+    }
+    SlotTarget t;
+    t.kind = SlotTarget::Kind::InsertNamBlock;
+    t.path = insert->path;
+    t.blockIndex = std::clamp(insert->index, 0, rig::boardBlockCount(path));  // the board only: never behind the amp
+    t.label = insert->path == 'a' ? "SAW PEDAL" : "BODY PEDAL";
+    out.push_back(t);
+    return out;
+  }
+  int idx = -1;
+  if (!pinnedBlockId.empty()) {
+    const PathPreset& path = pathOf(preset, which);
+    bool found = false;
+    for (std::size_t i = 0; i < path.blocks.size(); ++i)
+      if (path.blocks[i].id == pinnedBlockId) {
+        found = true;
+        if (path.blocks[i].type == "nam") idx = static_cast<int>(i);
+      }
+    if (idx < 0) {
+      if (why) *why = found ? "this pedal is a modeled circuit, not a capture: it has no capture to replace" : "the pedal you selected is no longer in this path";
+      return out;
+    }
+  } else {
+    idx = findNamBlock(pathOf(preset, which), pedal);
+  }
   if (idx < 0) {
     if (why) *why = std::string("this preset has no ") + (pedal ? "pedal" : "amp") + " in the " + (saw ? "saw" : "body") + " path";
     return out;
@@ -87,6 +121,26 @@ std::optional<Preset> withCapture(const Preset& preset, const SlotTarget& target
   cap.sha256 = f.sha256;
   cap.source = f.source;
   Preset out = preset;
+  if (target.kind == SlotTarget::Kind::InsertNamBlock) {
+    if (f.kind != "nam") {
+      error = "this capture is an impulse response, but a pedal needs a NAM model";
+      return std::nullopt;
+    }
+    PathPreset& path = pathOf(out, target.path);
+    Block blk;
+    blk.id = rig::newBlockId(out, target.path);
+    blk.type = "nam";
+    blk.slot = "pedal";
+    auto np = std::make_shared<NamBlockParams>();
+    np->model = cap;
+    blk.params = std::move(np);
+    // re-clamped to the board: the rig may have lost pedals during the fetch / level match
+    if (!rig::addBlock(path, std::clamp(target.blockIndex, 0, rig::boardBlockCount(path)), std::move(blk))) {
+      error = std::string(target.path == 'a' ? "SAW" : "BODY") + " path full: 8 blocks";
+      return std::nullopt;
+    }
+    return out;
+  }
   if (target.isIr()) {
     if (f.kind != "ir") {
       error = "this capture is a NAM model, but the cab needs an impulse response";
