@@ -43,7 +43,7 @@ import numpy as np
 import soundfile as sf
 from scipy import signal
 
-from .pedal_accuracy import spread_report
+from .pedal_accuracy import default_manifests, load_manifests, metadata_errors, spread_report
 
 FS = 48000
 SEED = 20261004
@@ -557,7 +557,7 @@ def parse_labels(name: str, regex: re.Pattern | str = LABEL_RE, groups: Sequence
     m = re.search(regex, name) if isinstance(regex, str) else regex.search(name)
     if not m:
         return None
-    return {g: float(v) for g, v in zip(groups, m.groups())}
+    return {g: (10.0 if v.lower() == "max" else float(v)) for g, v in zip(groups, m.groups())}   # "Max" = 10
 
 
 # Knob positions assumed for captures that do not carry a full "Lv L H D" label (see the report). Rotary pots run
@@ -589,13 +589,20 @@ DEFAULT_TONES = {
 }
 
 
-def load_targets(cache: Path, tones: dict | None = None, pedal: dict | None = None) -> tuple[list[dict], list[dict]]:
-    """(models found in the cache, models listed but missing). Reads pool_manifest.json for names, creators and
-    licences. ``tones``: tone id -> (unit, group, [model ids]); an empty model list means every model of that tone
-    in the pool manifest that is cached. ``pedal``: a targets-manifest entry (``label_regex``, ``label_groups``,
-    ``assumed``) used to label the records."""
-    man = json.loads((cache / "pool_manifest.json").read_text())
-    by_tone = {t["tone_id"]: t for t in man["tones"]}
+def load_targets(cache: Path, tones: dict | None = None, pedal: dict | None = None,
+                 manifests: Sequence[Path] | None = None, errors: list[str] | None = None
+                 ) -> tuple[list[dict], list[dict]]:
+    """(models found in the cache, models listed but missing). Names, creators and licences come from the merged
+    ``manifests`` (default: every one of ``<cache>/pool_manifest.json`` and ``~/sawblade-work/pedal_pool.json`` that
+    exists; see ``pedal_accuracy.load_manifests``). ``tones``: tone id -> (unit, group, [model ids]); an empty model
+    list means every model of that tone in the manifests that is cached. A tone whose list resolves to no model at
+    all is appended to ``errors`` (a message per tone), never skipped silently. ``pedal``: a targets-manifest entry
+    (``label_regex``, ``label_groups``, ``assumed``) used to label the records."""
+    paths = list(manifests) if manifests else default_manifests(cache)
+    if not paths:
+        raise ValueError(f"no manifest found: neither {cache / 'pool_manifest.json'} nor the pull manifest "
+                         "~/sawblade-work/pedal_pool.json exists; pass --manifest PATH")
+    by_tone = load_manifests(paths)
     builtin = not pedal      # the 7.1 list (--targets builtin-7.1): HM-2 labels and the ASSUMED table
     pedal = pedal or {}
     regex = LABEL_RE if builtin else (re.compile(pedal["label_regex"]) if pedal.get("label_regex") else None)  # null: no labels
@@ -604,7 +611,10 @@ def load_targets(cache: Path, tones: dict | None = None, pedal: dict | None = No
     found, missing = [], []
     for tid, (unit, group, mids) in (tones or DEFAULT_TONES).items():
         t = by_tone.get(tid)
-        names = {m["id"]: m["name"] for m in (t["models"] if t else [])}
+        names = {k: v for k, v in (t["models"] if t else {}).items() if v}
+        if not mids and not names and errors is not None:
+            errors.append(f"tone {tid} ({unit}): its model list resolves to zero models (no model ids in the targets "
+                          "file and the tone has no models in any manifest; pull it or pass --manifest)")
         for mid in (mids or sorted(names)):
             f = cache / str(tid) / f"{mid}.nam"
             name = names.get(mid, str(mid))
@@ -643,6 +653,24 @@ def _pin_vector(spec: PedalSpec, pin: dict) -> tuple[list[float], list[str]]:
     return vals, filled
 
 
+def constrained_fit(ref: dict, ev: Evaluator, pin: dict) -> tuple[dict, dict]:
+    """Score the capture at its pinned knob positions (only level is free)."""
+    spec = ev.spec
+    cvec, filled = _pin_vector(spec, pin)
+    cr, cmod = evaluate_params(ref, ev, *cvec, *([LEVEL_REF] if not spec.level_pure_gain else []))
+    if filled:
+        cr["pins_filled_with_default"] = filled
+    return cr, cmod
+
+
+def fit_constrained_only(rec: dict, ev: Evaluator, ref_wav_dir: Path) -> dict:
+    """The constrained fit of a capture whose free fit is already stored (``--merge``): one reference render plus
+    the pinned evaluation, no search."""
+    ref = reference_features(rec["file"], ev, ref_wav_dir / f"{rec['model_id']}.wav")
+    ev.cache.clear()
+    return constrained_fit(ref, ev, rec["pin"])[0]
+
+
 def fit_model(rec: dict, ev: Evaluator, ref_wav_dir: Path, restarts: int, popsize: int, generations: int,
               say: Callable[[str], None] = print, refine_generations: int = 0) -> tuple[dict, dict]:
     spec = ev.spec
@@ -668,10 +696,7 @@ def fit_model(rec: dict, ev: Evaluator, ref_wav_dir: Path, restarts: int, popsiz
                 "free": fr})
     feats = {"ref": ref, "free": fmod}
     if pin:
-        cvec, filled = _pin_vector(spec, pin)
-        cr, cmod = evaluate_params(ref, ev, *cvec, *([LEVEL_REF] if not spec.level_pure_gain else []))
-        if filled:
-            cr["pins_filled_with_default"] = filled
+        cr, cmod = constrained_fit(ref, ev, pin)
         out["constrained"] = cr
         feats["constrained"] = cmod
     fp = fr["params"]
@@ -1000,6 +1025,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"floor (dB re fundamental) of the harmonic term in the cost (default {HARM_FIXED_FLOOR_DB:g}; "
                         f"{HARM_FLOOR_DB:g} reproduces the 7.1 cost)")
     p.add_argument("--cache", default=str(DEFAULT_CACHE), help="capture cache (default ~/.cache/sawblade/captures)")
+    p.add_argument("--manifest", action="append", default=[], metavar="PATH",
+                   help="t3k manifest with capture names / licences / creators (repeatable; same shape as "
+                        "pool_manifest.json). Default: every one of <cache>/pool_manifest.json and "
+                        "~/sawblade-work/pedal_pool.json that exists, merged by tone id")
     p.add_argument("--di", default=None, help="DI for the probe's last 30 s (default testdata/gatecreeper_cover/"
                                                 "Guitar_L.wav; --known-answers: tests/fixtures/di_riff.wav)")
     p.add_argument("--work", required=True, help="scratch dir for rendered audio (outside the repo)")
@@ -1080,12 +1109,16 @@ def run(a: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     (work / "refs").mkdir(exist_ok=True)
     targets = None if a.targets == BUILTIN_TARGETS else Path(a.targets or DEFAULT_TARGETS)
+    manifests = [Path(x) for x in a.manifest]
+    errors: list[str] = []
     if targets is None:
-        found, missing = load_targets(Path(a.cache))
+        found, missing = load_targets(Path(a.cache), manifests=manifests, errors=errors)
     else:
         tones, ent = load_manifest_pedal(targets, spec.name)
-        found, missing = load_targets(Path(a.cache), tones, ent)
+        found, missing = load_targets(Path(a.cache), tones, ent, manifests, errors)
     licenses = {r["model_id"]: r["license"] for r in found + missing}
+    target_models = [[r["tone_id"], r["model_id"]] for r in found + missing]   # the scored list (before --tone/--model)
+    all_recs = {r["model_id"]: r for r in found + missing}
     if a.tone:
         found = [r for r in found if r["tone_id"] in a.tone]
     if a.model:
@@ -1100,8 +1133,29 @@ def run(a: argparse.Namespace) -> int:
     head = doc_header(a, spec, layout)
     prev = load_previous(fits_path, a, spec, layout) if (a.merge and fits_path.exists()) else {"models": []}
     done = {m["model_id"]: m for m in prev["models"]}
+    todo_constrained = []
     if a.merge:
+        for mid, m in done.items():      # names / licences / labels may have appeared since the stored fit
+            r = all_recs.get(mid)
+            if r is None:
+                continue
+            if r in found and r["pin"] != m.get("pinned_knobs"):          # v0.4a.1 D: the pin changed
+                todo_constrained.append((r, m))
+            elif r in found and r["pin"] and "constrained" not in m:     # no constrained result stored yet
+                todo_constrained.append((r, m))
+            m.update({k: r[k] for k in ("name", "unit", "group", "creator", "license", "labels")})
+            m["pinned_knobs"], m["pinned_is_assumed"] = r["pin"], r["labels"] is None
+            m["non_commercial"] = str(r.get("license") or "").lower().startswith("cc-by-nc")
         found = [r for r in found if r["model_id"] not in done]
+    for rec, m in todo_constrained:
+        if rec["pin"]:
+            m["constrained"] = fit_constrained_only(rec, ev, work / "refs")
+            print(f"  {rec['model_id']} {rec['name']}: constrained ltas {m['constrained']['ltas_rms_db']:.2f} "
+                  "(free fit kept)")
+        else:
+            m.pop("constrained", None)
+        fits_path.write_text(json.dumps({**head, "partial": True,
+                                         "models": sorted(done.values(), key=lambda m: m["model_id"])}))
     for rec in found:
         r, feats = fit_model(rec, ev, work / "refs", a.restarts, a.popsize, a.generations,
                              refine_generations=a.refine_generations)
@@ -1126,13 +1180,19 @@ def run(a: argparse.Namespace) -> int:
         agg["custom_mode"] = custom_mode_report(fits, work / "refs", ev)
         if not a.no_plots:
             aggregate_plot(out / f"aggregate_{spec.name}.png", fits, agg["knob_map"], mean_residual(fits))
+    tm = {(t, m) for t, m in target_models}
+    scored = [f for f in fits if (f["tone_id"], f["model_id"]) in tm]
     doc = {**head, "missing_models": [{k: m[k] for k in ("tone_id", "model_id", "name")} for m in missing],
-           "models": fits, "spread": spread_report(fits), "aggregate": agg}
+           "target_models": target_models, "errors": errors,
+           "models": fits, "spread": spread_report(scored), "aggregate": agg}
     fits_path.write_text(json.dumps(doc, indent=1))
     print(f"wrote {fits_path}")
+    errors = errors + metadata_errors(scored)
+    for e in errors:
+        print(f"ERROR: {e}", file=sys.stderr)
     if "mean_free_ltas_rms_db_stock" in agg:
         print(f"mean free-fit LTAS error over stock HM-2 models: {agg['mean_free_ltas_rms_db_stock']:.2f} dB RMS")
-    return 0
+    return 4 if errors else 0      # fits are written either way; 4 = target list has errors (see the report)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

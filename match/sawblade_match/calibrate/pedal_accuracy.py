@@ -23,6 +23,68 @@ TARGET_HARM_SPREAD_X = 2.0    # ... and constrained harmonic error within this m
 
 
 # ---------------------------------------------------------------------------------------------------------
+# manifests: capture names, licences and creators (CLAUDE.md: every capture keeps its licence + creator)
+# ---------------------------------------------------------------------------------------------------------
+DEFAULT_PULL_MANIFEST = Path.home() / "sawblade-work" / "pedal_pool.json"   # written by scripts/run_pedal_accuracy.sh
+
+
+def default_manifests(cache: Path) -> list[Path]:
+    """Every default manifest that exists: the matcher pool, then the pedal pull manifest."""
+    return [p for p in (Path(cache) / "pool_manifest.json", DEFAULT_PULL_MANIFEST) if p.is_file()]
+
+
+def load_manifests(paths: Sequence[Path]) -> dict[int, dict]:
+    """Merge ``sawblade-t3k`` manifests (``pool_manifest.json`` and ``pull --manifest`` files share one shape) by tone
+    id: ``{tone_id: {"creator", "license", "models": {model_id: name}}}``. Per field the first manifest that has a
+    non-empty value wins; model lists are unioned. A path that does not exist or is not a manifest is an error."""
+    out: dict[int, dict] = {}
+    for path in paths:
+        path = Path(path)
+        try:
+            doc = json.loads(path.read_text())
+            tones = doc["tones"]
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            raise ValueError(f"manifest {path} is unreadable or has no \"tones\" list ({e})") from e
+        for t in tones:
+            ent = out.setdefault(int(t["tone_id"]), {"creator": None, "license": None, "models": {}})
+            for k in ("creator", "license"):
+                ent[k] = ent[k] or t.get(k)
+            for m in t.get("models") or []:
+                ent["models"].setdefault(int(m["id"]), m.get("name"))
+    return out
+
+
+def metadata_missing(m: dict) -> list[str]:
+    """Which of name / licence / creator a fit record lacks (a name equal to the bare model id counts as missing)."""
+    miss = []
+    name = str(m.get("name") or "")
+    if not name or name == str(m.get("model_id")):
+        miss.append("name")
+    if not m.get("license"):
+        miss.append("licence")
+    if not m.get("creator"):
+        miss.append("creator")
+    return miss
+
+
+def metadata_errors(models: Sequence[dict]) -> list[str]:
+    return [f"capture {m['model_id']} (tone {m['tone_id']}) has no {' / '.join(miss)} in any manifest"
+            for m in models if (miss := metadata_missing(m))]
+
+
+def split_scored(doc: dict) -> tuple[list[dict], list[dict]]:
+    """(scored models, other circuits). A fits file records ``target_models`` (the pedal's target list as
+    [tone_id, model_id] pairs); fits outside it are information only. Files without it score everything."""
+    models = doc["models"]
+    tm = doc.get("target_models")
+    if tm is None:
+        return list(models), []
+    keep = {(int(t), int(m)) for t, m in tm}
+    return ([m for m in models if (m["tone_id"], m["model_id"]) in keep],
+            [m for m in models if (m["tone_id"], m["model_id"]) not in keep])
+
+
+# ---------------------------------------------------------------------------------------------------------
 # capture-to-capture spread
 # ---------------------------------------------------------------------------------------------------------
 def harm_spread(profiles: Sequence) -> dict:
@@ -81,6 +143,10 @@ def target_check(models: Sequence[dict], spread: dict) -> dict:
     out: dict = {"n_labelled": len(lab), "n_partially_labelled": len(full) - len(lab), "ltas_ok": None, "harm_ok": None}
     ref_sp = reference_spread_db(spread)
     out["reference_spread_db"] = ref_sp
+    out["n_models"] = len(models)
+    if models:      # the lower-bound view (v0.4a.1 E): free fits are the best the block can do, so they bound the error
+        out["free_ltas_within"] = int(sum(m["free"]["ltas_rms_db"] <= TARGET_LTAS_DB for m in models))
+        out["mean_free_harm_db"] = float(np.mean([m["free"]["harm_rms_db"] for m in models]))
     if lab:
         ok = [m["constrained"]["ltas_rms_db"] <= TARGET_LTAS_DB for m in lab]
         out["ltas_within"] = int(sum(ok))
@@ -100,8 +166,17 @@ def verdict(name: str, models: Sequence[dict], chk: dict) -> str:
         free = float(np.mean([m["free"]["ltas_rms_db"] for m in models]))
         part = (f" ({chk['n_partially_labelled']} partially labelled, unlabelled knobs pinned at the block default, "
                 "not counted)") if chk.get("n_partially_labelled") else ""
+        sp = chk.get("reference_spread_db")
+        if sp is None:
+            harm = "harmonic error vs spread n/a (no capture spread)"
+        else:
+            fh = chk["mean_free_harm_db"]
+            harm = (f"mean free-fit harmonic error {fh:.1f} dB vs {TARGET_HARM_SPREAD_X:g} x family spread "
+                    f"{TARGET_HARM_SPREAD_X * sp:.1f} dB ({'within' if fh <= TARGET_HARM_SPREAD_X * sp else 'above'})")
         return (f"{name}: no fully labelled captures{part}, so the v0.4 target cannot be judged; mean free-fit LTAS "
-                f"{free:.2f} dB over {len(models)} captures.")
+                f"{free:.2f} dB over {len(models)} captures. Lower bound (free fits can only do better than "
+                f"constrained): {chk['free_ltas_within']}/{chk['n_models']} free fits <= {TARGET_LTAS_DB:g} dB LTAS; "
+                f"{harm}.")
     parts = [f"constrained LTAS <= {TARGET_LTAS_DB:g} dB on {chk['ltas_within']}/{chk['n_labelled']} labelled "
              f"({'PASS' if chk['ltas_ok'] else 'MISS'}, need {TARGET_LTAS_FRACTION:.0%})"]
     if chk["harm_ok"] is None:
@@ -121,6 +196,11 @@ def verdict(name: str, models: Sequence[dict], chk: dict) -> str:
 # ---------------------------------------------------------------------------------------------------------
 def _f(x, nd: int = 2) -> str:
     return "-" if x is None else f"{x:.{nd}f}"
+
+
+def _lic(m: dict) -> str:
+    return f"{m.get('license') or 'MISSING'} / {m.get('creator') or 'MISSING'}" + (
+        " (non-commercial)" if m.get("non_commercial") else "")
 
 
 def _fit_cells(r: dict | None) -> str:
@@ -178,7 +258,10 @@ def generate(fits_by_pedal: dict[str, dict], known: dict | None = None) -> str:
             L += ["PENDING USER RUN: no fits file.", ""]
             verdicts.append(verdict(name, [], {}))
             continue
-        models = doc["models"]
+        models, other = split_scored(doc)
+        errs = list(doc.get("errors") or []) + metadata_errors(models)
+        if errs:
+            L += ["**Errors**", ""] + [f"* ERROR: {e}" for e in errs] + [""]
         L += [f"Model version {doc.get('model_version')}, harmonic floor {doc.get('cost', {}).get('harm_floor_db')} dB, "
               f"seed base {doc.get('seed')}.", "",
               "| tone | model | licence / creator | pins | free LTAS | free harm (even/odd) | free dyn "
@@ -188,11 +271,11 @@ def generate(fits_by_pedal: dict[str, dict], known: dict | None = None) -> str:
             pins = "none" if not m.get("pinned_knobs") else ("assumed" if m.get("pinned_is_assumed") else "labelled")
             if pins == "labelled" and m.get("constrained", {}).get("pins_filled_with_default"):
                 pins = "partial (" + ", ".join(m["constrained"]["pins_filled_with_default"]) + " default)"
-            lic = f"{m.get('license')} / {m.get('creator')}" + (" (non-commercial)" if m.get("non_commercial") else "")
+            lic = _lic(m)
             fc, cc = _fit_cells(m["free"]).split(" | "), _fit_cells(m.get("constrained")).split(" | ")
             L.append(f"| {m['tone_id']} | {m['name']} ({m['model_id']}) | {lic} | {pins} | "
                      f"{fc[0]} | {fc[1]} | {fc[2]} | {cc[0]} | {cc[1]} | {cc[2]} |")
-        sp = doc.get("spread") or spread_report(models)
+        sp = spread_report(models) if doc.get("target_models") is not None else (doc.get("spread") or spread_report(models))
         chk = target_check(models, sp)
         L += ["", f"Capture spread (RMS distance of each fixed harmonic profile to its group mean, dB): "
                   f"family {_f(sp['family']['mean_rms_db'])} (n={sp['family']['n']})"
@@ -201,6 +284,16 @@ def generate(fits_by_pedal: dict[str, dict], known: dict | None = None) -> str:
         v = verdict(name, models, chk)
         verdicts.append(v)
         L += [f"**Verdict.** {v}", ""]
+        if other:
+            L += ["#### Other circuits (not scored)", "",
+                  "Fits in the file that are not in this pedal's target list. Information for future pedal models; "
+                  "no verdict uses them.", "",
+                  "| tone | model | licence / creator | free LTAS | free harm (even/odd) | free dyn |",
+                  "|---|---|---|---|---|---|"]
+            for m in other:
+                fc = _fit_cells(m["free"]).split(" | ")
+                L.append(f"| {m['tone_id']} | {m['name']} ({m['model_id']}) | {_lic(m)} | {fc[0]} | {fc[1]} | {fc[2]} |")
+            L.append("")
     L += ["## Verdicts", ""] + [f"* {v}" for v in verdicts] + [""]
     return "\n".join(L)
 
@@ -210,6 +303,12 @@ def build_parser() -> argparse.ArgumentParser:
                                 description="Write docs/reports/v0_4/accuracy.md from per-pedal fits JSON files.")
     p.add_argument("--fits", action="append", default=[], metavar="PATH",
                    help="a fits_<pedal>.json written by pedal-fit (repeatable); the pedal is read from the file")
+    p.add_argument("--manifest", action="append", default=[], metavar="PATH",
+                   help="t3k manifest with capture names / licences / creators (repeatable); fills records whose fits "
+                        "file lacks them. Default: <cache>/pool_manifest.json and ~/sawblade-work/pedal_pool.json, "
+                        "whichever exist")
+    p.add_argument("--cache", default=str(Path.home() / ".cache" / "sawblade" / "captures"),
+                   help="capture cache (only locates the default pool_manifest.json)")
     p.add_argument("--known-answers", metavar="PATH", help="known_answers.json written by pedal-fit --known-answers")
     p.add_argument("--out", default=str(DEFAULT_OUT))
     return p
@@ -225,6 +324,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError(f"{f}: not a pedal_fit schema-2 file (re-run pedal-fit; 7.1 files have no even/odd "
                                  "harmonic terms or capture profiles)")
             fits[doc["pedal"]] = doc
+        meta = load_manifests([Path(x) for x in a.manifest] or default_manifests(Path(a.cache)))
+        for doc in fits.values():
+            for m in doc["models"]:
+                t = meta.get(m["tone_id"])
+                if not t:
+                    continue
+                if "name" in metadata_missing(m) and t["models"].get(m["model_id"]):
+                    m["name"] = t["models"][m["model_id"]]
+                m["creator"] = m.get("creator") or t["creator"]
+                m["license"] = m.get("license") or t["license"]
+                if m["license"]:
+                    m["non_commercial"] = str(m["license"]).lower().startswith("cc-by-nc")
         known = json.loads(Path(a.known_answers).read_text()) if a.known_answers else None
         text = generate(fits, known)
     except (ValueError, OSError, KeyError) as e:
