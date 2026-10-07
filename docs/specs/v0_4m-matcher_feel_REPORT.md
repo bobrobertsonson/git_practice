@@ -5,9 +5,9 @@ Branch: `claude/sawblade-v0_4m-matcher-feel` (base `claude/sawblade-plugin-setup
 not install scipy/pytest (pypi blocked), so engineers also ran the render tests against a local core build with a scipy
 shim — those numbers are labelled "shim" below and are indicative only.
 
-Status: **Tasks A–C, B2.1–B2.4, B3, B4, D.1 and E accepted by the reviewer and merged. CI of record: run 221 on
-abf089c — all jobs green (python, linux-gcc + pluginval, linux-clang -Werror, macOS arm64 + auval + pluginval AU/VST3).**
-The base (v0.4 B–E, 4d580a2) is merged in. Validation on the real Bloodbath audio (D.2/D.3) is the user's: Mac
+Status: **Tasks A–C, B2.1–B2.4, B3, B4, D.1 and E accepted by the reviewer and merged. CI of record: run 226 on
+0d16fdb — all jobs green (python, linux-gcc + pluginval, linux-clang -Werror, macOS arm64 + auval + pluginval AU/VST3).**
+The base (v0.4 B–E, 4d580a2; then v0.4 pedals + TONE3000-in-DAW hotfix, 743bf1d) is merged in. Validation on the real Bloodbath audio (D.2/D.3) is the user's: Mac
 commands below.
 
 ## What changed, in one paragraph per suspect
