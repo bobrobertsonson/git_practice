@@ -45,8 +45,10 @@ namespace sawblade::plugin {
 //   loader thread  EngineLoader's worker: builds Engines for submitted requests, publishes them
 //                  into the SwapSlot, destroys the ones the audio thread replaced, and reports
 //                  the new latency to the host (setLatencySamples).
-//   other threads  (message thread, tests) loadPreset*/get/setStateInformation/status(): guarded
-//                  by mutex_, which the audio thread never touches.
+//   other threads  (message thread, tests) loadPreset*/get/setStateInformation: guarded by mutex_, which
+//                  the audio thread never touches. status() is message thread (and tests) only: it also
+//                  re-reads the Settings store (syncLevelMatchSetting()), so never call it from the audio
+//                  thread or a worker.
 // Parameter changes never rebuild anything: they only change the atomics the audio thread reads
 // and the chain smooths them in place. A rebuild happens only for a preset load, a state restore,
 // or prepareToPlay (new sample rate / block size). The one exception is the CIRCUIT switch
