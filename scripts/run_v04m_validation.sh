@@ -3,10 +3,11 @@
 # Run it AFTER `scripts/mac_update.sh --no-models`. Your shell is zsh, so invoke it with bash:
 #
 #   bash scripts/run_v04m_validation.sh [--quick-only] [--force] [--dry-run]
-#        [--bb DIR] [--irs DIR] [--pool FILE] [--out DIR] [--r-search-dir DIR]
+#        [--bb DIR] [--irs DIR] [--pool FILE] [--out DIR] [--r-search-dir DIR] [--blend-db HM2_DB,BODY_DB]
 #        [--l-di F] [--l-hm2 F] [--l-ubr F] [--r-di F] [--r-hm2 F] [--r-ubr F]
 #
-# --quick-only  IR scan, quick L HM2, quick L UBR, summary, DI-tilt lines, open commands (a few minutes)
+# --quick-only  IR scan, blend reference, quick L HM2 / UBR / blend runs, per-path check, dynamics sweep, summary,
+#               DI-tilt lines, open commands (a few minutes)
 # --force       redo runs whose result.json already exists (default: skip them, so an interrupted run resumes)
 # --dry-run     print the commands instead of running them (safe on any machine; inputs are still checked)
 # --bb DIR      Bloodbath NTM folder (default $HOME/sawblade/testdata/ntm/bloodbath)
@@ -15,10 +16,15 @@
 # --r-search-dir DIR  where to look for the R files when they are not in --bb (recursive, exact file name; default
 #               /Users/notsch/Desktop/NailTheMix/NailtheMix_March2023_Bloodbath_44k24b). Only the L files are required:
 #               if an R file is found in neither place the held-out R runs are skipped with a message
+# --blend-db HM2_DB,BODY_DB  faders of the blend reference (the sum of the HM2 and the body amp track), default 0,0
 # --out DIR     results folder (default $HOME/.cache/sawblade/match_runs/v04m)
 # --l-di/--l-hm2/--l-ubr/--r-di/--r-hm2/--r-ubr  file names (relative to --bb, or absolute); defaults are
 #               "17 GTR RHY L DI.wav", "18 GTR RHY L HM2 AMP.wav", "19 GTR RHY L UBR AMP.wav",
 #               "20 GTR RHY R DI.wav", "21 GTR RHY R HM2 AMP.wav", "22 GTR RHY R UBR AMP.wav"
+# The product's case is a BLEND of two amp tracks per side, so the blend runs (L_blend_quick / L_blend / R_blend, matched
+# against $OUT/refs/<side>_blend.wav = HM2 + body) come first; the single-amp runs stay as per-path diagnostics. After the
+# runs: a per-path check of every blend run (pathcheck.json), the held-out transfer of the L blend preset on R
+# (L_blend_on_R.pathcheck.json) and a dynamics sweep of every run (dynsweep.json); all non-fatal.
 # Everything printed is also appended to ~/sawblade-work/v04m_validation.log (each run also to <out>/<run>.log).
 #
 set -euo pipefail
@@ -26,6 +32,7 @@ set -euo pipefail
 QUICK_ONLY=0
 FORCE=0
 DRY=0
+BLEND_DB="0,0"
 BB="$HOME/sawblade/testdata/ntm/bloodbath"
 IRS="/Users/notsch/Music/Studio_Notsch/_IRs/Guitar_Cabs"
 POOL="$HOME/.cache/sawblade/captures/pool_manifest.json"
@@ -48,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --irs) need_arg "$@"; IRS="$2"; shift ;;
     --pool) need_arg "$@"; POOL="$2"; shift ;;
     --out) need_arg "$@"; OUT="$2"; shift ;;
+    --blend-db) need_arg "$@"; BLEND_DB="$2"; shift ;;
     --r-search-dir) need_arg "$@"; R_SEARCH_DIR="$2"; shift ;;
     --l-di) need_arg "$@"; L_DI_F="$2"; shift ;;
     --l-hm2) need_arg "$@"; L_HM2_F="$2"; shift ;;
@@ -60,6 +68,13 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+NUM='[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)'
+BLEND_RE="^$NUM,$NUM\$"
+if ! [[ $BLEND_DB =~ $BLEND_RE ]]; then
+  echo "run_v04m_validation: --blend-db wants two numbers HM2_DB,BODY_DB (e.g. 0,-2.5), got: $BLEND_DB" >&2
+  exit 2
+fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -202,14 +217,59 @@ step "2 index the IR library"
 run "$PY" -m sawblade_match.matcher.irlib --scan "$IRS" --json "$OUT/ir_scan.json"
 say "Check the printout: accepted / unique counts, rejected by reason, near-duplicate pairs, truncated, tag coverage."
 
+# ---------------------------------------------------------------- 2b. blend references
+# make_blend SIDE HM2 BODY: $OUT/refs/SIDE_blend.wav (+ .json) from refsum; resumable. Sets BLEND_OK_<SIDE>.
+BLEND_OK_L=0; BLEND_OK_R=0
+make_blend() {
+  local side="$1" a="$2" b="$3"
+  local wav="$OUT/refs/${side}_blend.wav" js="$OUT/refs/${side}_blend.json"
+  if [[ $FORCE -eq 0 && -f $wav && -f $js ]]; then
+    say "skip ${side}_blend reference (exists; --force to redo)"
+    eval "BLEND_OK_$side=1"
+    return 0
+  fi
+  say "ref  ${side}_blend (HM2 + body, faders $BLEND_DB dB)"
+  if [[ $DRY -eq 1 ]]; then
+    run "$PY" -m sawblade_match.matcher.refsum --a "$a" --b "$b" --out "$wav" --blend-db "$BLEND_DB" --json "$js"
+    eval "BLEND_OK_$side=1"
+  elif "$PY" -m sawblade_match.matcher.refsum --a "$a" --b "$b" --out "$wav" --blend-db "$BLEND_DB" --json "$js"; then
+    eval "BLEND_OK_$side=1"
+  else
+    say "FAILED ${side}_blend reference (refsum); the ${side} blend runs are skipped" >&2
+    FAILED+=("${side}_blend-ref")
+  fi
+}
+step "2b blend references (the sum of the HM2 and the body amp track)"
+run mkdir -p "$OUT/refs"
+make_blend L "$L_HM2" "$L_UBR"
+[[ $R_OK -eq 1 ]] && make_blend R "$R_HM2" "$R_UBR"
+
+# blend_run NAME SIDE EXTRA...: a match run of the side's DI against the side's blend reference (skipped without it)
+blend_run() {
+  local name="$1" side="$2"
+  shift 2
+  local ok di
+  eval "ok=\$BLEND_OK_$side"
+  [[ $side == L ]] && di="$L_DI" || di="$R_DI"
+  if [[ $ok -ne 1 ]]; then
+    say "skip $name (no $side blend reference)"
+    return 0
+  fi
+  match_run "$name" "$di" "$OUT/refs/${side}_blend.wav" "$@"
+  BLEND_RUNS+=("$name")
+}
+
 RUNS=()
+BLEND_RUNS=()
 if [[ $QUICK_ONLY -eq 1 ]]; then
-  step "3 quick runs (left side)"
+  step "3 quick runs (left side): blend first, then the single amps"
+  blend_run L_blend_quick L --quick
   match_run L_hm2_quick "$L_DI" "$L_HM2" --quick
   match_run L_ubr_quick "$L_DI" "$L_UBR" --quick
   RUNS=(L_hm2_quick L_ubr_quick)
 else
-  step "3 main runs: left side, quick timing + thorough HM2 and UBR"
+  step "3 main runs: left side, blend first (thorough), then quick timing + thorough HM2 and UBR"
+  blend_run L_blend L --thorough
   match_run L_hm2_quick "$L_DI" "$L_HM2" --quick
   match_run L_hm2 "$L_DI" "$L_HM2" --thorough
   match_run L_ubr "$L_DI" "$L_UBR" --thorough
@@ -220,6 +280,7 @@ else
   RUNS=(L_hm2 L_ubr)
   step "5 held-out check: right side"
   if [[ $R_OK -eq 1 ]]; then
+    blend_run R_blend R --thorough
     match_run R_hm2 "$R_DI" "$R_HM2" --thorough
     match_run R_ubr "$R_DI" "$R_UBR" --thorough
     RUNS+=(R_hm2 R_ubr)
@@ -228,36 +289,72 @@ else
   fi
 fi
 
+# blend runs first, then the single-amp runs (summary and listen list follow this order)
+RUNS=(${BLEND_RUNS[@]+"${BLEND_RUNS[@]}"} ${RUNS[@]+"${RUNS[@]}"})
+
+# finished NAME: the run completed (dry run: every planned run counts)
+finished() {
+  [[ $DRY -eq 1 ]] && return 0
+  case " ${FAILED[*]-} " in *" $1 "*) return 1 ;; esac
+  [[ -f "$OUT/$1/result.json" ]]
+}
+# side_of NAME -> L or R
+side_of() { case "$1" in R_*) printf 'R' ;; *) printf 'L' ;; esac; }
+
+# tool_run LABEL OUTJSON CMD...: resumable (skips when OUTJSON exists unless --force), failure reported, never fatal
+tool_run() {
+  local label="$1" outj="$2"
+  shift 2
+  if [[ $FORCE -eq 0 && $DRY -eq 0 && -f $outj ]]; then
+    say "skip $label (exists; --force to redo)"
+    return 0
+  fi
+  say "$label"
+  if [[ $DRY -eq 1 ]]; then
+    run "$@"
+  elif ! "$@"; then
+    say "$label failed (non-fatal)" >&2
+  fi
+}
+
+# ---------------------------------------------------------------- 6. per-path check
+step "6 per-path check of every blend run (A alone vs HM2, B alone vs body, full vs the blend reference)"
+for r in ${BLEND_RUNS[@]+"${BLEND_RUNS[@]}"}; do
+  finished "$r" || continue
+  if [[ $(side_of "$r") == L ]]; then
+    tool_run "pathcheck $r" "$OUT/$r/pathcheck.json" "$PY" -m sawblade_match.matcher.pathcheck --result "$OUT/$r/result.json" \
+      --di "$L_DI" --ref-a "$L_HM2" --ref-b "$L_UBR" --ref-blend "$OUT/refs/L_blend.wav" --blend-db "$BLEND_DB" \
+      --json "$OUT/$r/pathcheck.json"
+  else
+    tool_run "pathcheck $r" "$OUT/$r/pathcheck.json" "$PY" -m sawblade_match.matcher.pathcheck --result "$OUT/$r/result.json" \
+      --di "$R_DI" --ref-a "$R_HM2" --ref-b "$R_UBR" --ref-blend "$OUT/refs/R_blend.wav" --blend-db "$BLEND_DB" \
+      --json "$OUT/$r/pathcheck.json"
+  fi
+done
+# held-out transfer: the L blend preset scored on the R DI / R refs, not re-fitted
+if [[ $R_OK -eq 1 && $QUICK_ONLY -eq 0 ]] && finished L_blend && [[ $DRY -eq 1 || -f "$OUT/refs/R_blend.wav" ]]; then
+  tool_run "pathcheck L_blend preset on R (held out)" "$OUT/L_blend_on_R.pathcheck.json" "$PY" -m sawblade_match.matcher.pathcheck \
+    --result "$OUT/L_blend/result.json" --di "$R_DI" --ref-a "$R_HM2" --ref-b "$R_UBR" --ref-blend "$OUT/refs/R_blend.wav" \
+    --blend-db "$BLEND_DB" --json "$OUT/L_blend_on_R.pathcheck.json"
+else
+  say "(no held-out transfer: needs L_blend and the R side)"
+fi
+
+# ---------------------------------------------------------------- 7. dynamics sweep
+step "7 dynamics sweep of every run (input -12 / -6 / 0 / +6 dB, dynamics as matched vs gate and bus comp bypassed)"
+for r in ${RUNS[@]+"${RUNS[@]}"}; do
+  finished "$r" || continue
+  di="$L_DI"; [[ $(side_of "$r") == R ]] && di="$R_DI"
+  tool_run "dynsweep $r" "$OUT/$r/dynsweep.json" "$PY" -m sawblade_match.matcher.dynsweep --result "$OUT/$r/result.json" \
+    --di "$di" --json "$OUT/$r/dynsweep.json"
+done
+
 # ---------------------------------------------------------------- summary
 step "summary (paste this back to the lead)"
 if [[ $DRY -eq 1 ]]; then
-  say "+ $PY - $OUT   (summary printer over $OUT/*/result.json)"
+  say "+ $PY -m sawblade_match.matcher.validation_summary $OUT   (blend runs first; gate + bus comp in full; per-path check; dynamics table)"
 else
-  "$PY" - "$OUT" <<'PY' || say "summary printer failed (the run results in $OUT/*/result.json are still there)" >&2
-import json, sys, pathlib
-for d in sorted(pathlib.Path(sys.argv[1]).iterdir()):
-    f = d / "result.json"
-    if not f.exists(): continue
-    r = json.loads(f.read_text())
-    def g(*ks):
-        v = r
-        for k in ks:
-            v = v.get(k) if isinstance(v, dict) else None
-        return v
-    b = r.get("best", {}); bd = b.get("breakdown", {}) or {}; ft = bd.get("feelTerms") or {}
-    print(f"== {d.name}  wall {r.get('wallSeconds', 0)/60:.1f} min")
-    print("  A-weighted dB:", (r.get("after") or [{}])[0].get("aWeightedErrorDb"), "| loss", bd.get("total"),
-          "ltas", bd.get("ltas"), "feel", bd.get("feel"))
-    print("  feel: tight", ft.get("tight"), "fizz", ft.get("fizz"), "polish", ft.get("polish"), "dropped", ft.get("dropped"))
-    print("  chain:", b.get("topology"), {k: (v or {}).get("title") for k, v in (b.get("captures") or {}).items()})
-    print("  boost won:", g("tightBoost", "won"), "| IR pair won:", g("irBlend", "won"), "| IR winner:", g("irPool", "winner"))
-    print("  pre-EQ:", g("preEq", "chosen"), "| studio:", {k: g("studio", k) for k in ("compressed", "eqd", "busCompUsed")})
-    print("  gate:", r.get("gateFinal"), "| post filters:", r.get("postFilters"))
-    print("  listening gain dB:", g("listening", "gainDb"), "| IR pool:", {k: g("irPool", k) for k in ("total", "screened", "prefiltered")})
-    tc = r.get("tonecheck", {}).get("best_L", {})
-    print("  guardrails:", [(x.get("id"), x.get("status")) for x in tc.get("rules", []) if x.get("status") != "pass"])
-    if r.get("trace"): print("  trace:", {k: (v or {}).get("why") for k, v in r["trace"].items()})
-PY
+  "$PY" -m sawblade_match.matcher.validation_summary "$OUT" || say "summary printer failed (the run results in $OUT/*/result.json are still there)" >&2
 fi
 
 step "pre-EQ DI tilt lines (one per run; they calibrate the guitar-difference thresholds)"
