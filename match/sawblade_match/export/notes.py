@@ -252,7 +252,7 @@ MATCH_BY_EAR = "Values are Sawblade's (digital dBFS / ms / Hz): match levels by 
 
 
 def _pos(i: int, n: int) -> str:
-    return f"{i} (first in the chain)" if i == 1 and n > 1 else f"{i} (last in the chain)" if i == n and n > 2 else str(i)
+    return f"{i} (first in the chain)" if i == 1 and n > 1 else f"{i} (last in the chain)" if i == n and n > 1 else str(i)
 
 
 def _anagram_gate(st: dict) -> dict:

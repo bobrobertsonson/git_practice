@@ -193,3 +193,104 @@ def test_pre_eq_is_listed_as_in_the_model_not_as_a_stage():
     q = base()
     q["paths"]["a"].pop("preEq", None)
     assert "inModel" not in N.build_export_notes(q, P.make_plan(q, "withcab"), "m.nam")
+
+
+# ---------------------------------------------------------------- Anagram device profile (v0.6 Task C)
+
+def _anagram(p, mode="nocab", **kw):
+    plan = P.make_plan(p, mode, allow_inexact=True)
+    n = N.build_export_notes(p, plan, "x-nocab-full.a2_full.nam", "x-nocab.ir.wav")
+    return N.build_anagram_profile(p, plan, n, "x-nocab-full.a2_full.nam", "x-nocab.ir.wav",
+                                   drive_only=P.drive_only(p, plan), **kw), n
+
+
+def test_anagram_gate_comp_posteq_nocab_blocks_order_and_numbers():
+    p = full()
+    p["busComp"].update({"attackMs": 1.0, "releaseMs": 40.0})                       # a fast bus comp
+    prof, generic = _anagram(p, model_label="A2 Full", file="x-nocab-full.anagram_notes.txt")
+    assert set(prof) == {"device", "message", "stages", "loaderOrder", "file"}
+    assert [(s["stage"], s["block"]) for s in prof["stages"]] == [("gate", "Gate"), ("model", "Neural Amp"),
+                                                                    ("cab", "IR"), ("busComp", "Comp" "ressor")]
+    assert [s["position"] for s in prof["stages"]] == ["1 (first in the chain)", "2", "3", "4 (last in the chain)"]
+    assert prof["loaderOrder"] == "Anagram chain: Gate -> Neural Amp -> IR -> Compressor"
+    gate, model, ir, comp = prof["stages"]
+    assert gate["settings"]["threshold dB"] == -55 and gate["settings"]["close threshold dB"] == -61
+    assert (gate["settings"]["attack ms"], gate["settings"]["hold ms"], gate["settings"]["release ms"]) == (0.5, 20, 60)
+    assert gate["settings"]["range dB"] == -90 and "guitar input" in gate["settings"]["keyed on"]
+    assert "FIRST" in gate["hardware"] and "before every NAM block" in gate["hardware"]
+    assert model["settings"] == {"model": "x-nocab-full.a2_full.nam", "bypass": False}
+    assert "A2 Full" in model["hardware"] and "Neural Amp block" in model["hardware"]
+    # the post EQ is folded into the exported IR: no EQ block, the IR block says so
+    assert ir["settings"] == {"file": "x-nocab.ir.wav", "normalise": False, "contains": "cab and post EQ"}
+    assert "WITHOUT loudness normalisation" in ir["hardware"] and "post EQ" in ir["hardware"]
+    assert comp["settings"] == {"threshold dBFS": -21.0, "ratio": 4, "attack ms": 1.0, "release ms": 40.0,
+                                "knee dB": 3, "make-up dB": 2.5, "detector": "peak"}
+    assert "LAST, after the IR" in comp["hardware"]
+    assert all(set(s) <= {"stage", "block", "position", "settings", "hardware"} for s in prof["stages"])
+    blocks = {s["block"] for s in prof["stages"]}
+    assert blocks <= {"Neural Amp", "Neural Pedal", "Neural Loader", "IR", "Compressor", "Gate", "EQ"}   # published list only
+    assert generic["stages"] and "deviceProfiles" not in generic                      # the generic block is untouched
+
+
+def test_anagram_model_block_is_neural_pedal_only_for_a_nocab_drive_only_export():
+    p = full()
+    p["paths"]["a"]["blocks"] = [{"id": "a1", "type": "pedal.ts", "slot": "boost", "modelVersion": 1, "params": {}}]
+    p["paths"]["b"]["blocks"] = [{"id": "b1", "type": "nam", "slot": "pedal", "model": {"file": "../nam/wavenet.nam"}}]
+    assert P.drive_only(p, P.make_plan(p, "nocab", True)) is True
+    prof, _ = _anagram(p)
+    assert [s["block"] for s in prof["stages"]][:2] == ["Gate", "Neural Pedal"]
+    assert prof["loaderOrder"].startswith("Anagram chain: Gate -> Neural Pedal")
+    # a chain with an amp, or any with-cab export, is a Neural Amp
+    q = full()
+    assert P.drive_only(q, P.make_plan(q, "nocab", True)) is False
+    assert P.drive_only(p, P.make_plan(p, "withcab", True)) is False
+    prof_w, _ = _anagram(p, mode="withcab")
+    assert [s["block"] for s in prof_w["stages"]] == ["Gate", "Neural Amp"]           # nothing else to add around the model
+
+
+def test_anagram_unfolded_post_eq_becomes_an_eq_block_after_the_ir():
+    p = full()
+    plan = P.make_plan(p, "nocab", allow_inexact=True)
+    n = N.build_export_notes(p, plan, "m.nam", "m.ir.wav")
+    for st in n["stages"]:
+        if st["stage"] == "postEq":
+            st["settings"]["foldedIntoExportedIr"] = False
+    prof = N.build_anagram_profile(p, plan, n, "m.nam", "m.ir.wav")
+    assert [s["block"] for s in prof["stages"]] == ["Gate", "Neural Amp", "IR", "EQ", "Compressor"]
+    eq = prof["stages"][3]
+    assert eq["settings"]["band 2"] == "peak 1500 Hz, +2.0 dB, Q 1.2" and eq["settings"]["band 1"].startswith("high-pass 80 Hz")
+    assert prof["stages"][2]["settings"]["contains"] == "cab"
+
+
+def test_anagram_profile_when_the_model_is_the_whole_chain():
+    p = base()
+    prof, _ = _anagram(p, mode="withcab")
+    assert [s["block"] for s in prof["stages"]] == ["Neural Amp"] and prof["stages"][0]["position"] == "1"
+    assert prof["loaderOrder"] == "Anagram chain: Neural Amp"
+
+
+def test_write_export_notes_writes_both_text_files_and_the_device_profile(tmp_path):
+    p = full()
+    plan = P.make_plan(p, "nocab", allow_inexact=True)
+    nam = tmp_path / "riff-nocab-full.a2_full.nam"
+    nam.write_text("{}")
+    notes, txt = N.write_export_notes(p, plan, nam, tmp_path / "riff-nocab.ir.wav", "licence text", stem="riff-nocab-full",
+                                      model_label="A2 Full")
+    assert txt.name == "riff-nocab-full.export_notes.txt" and notes["file"] == txt.name
+    a = tmp_path / "riff-nocab-full.anagram_notes.txt"
+    prof = notes["deviceProfiles"]["anagram"]
+    assert prof["file"] == a.name and a.is_file() and txt.is_file()
+    body = a.read_text()
+    assert body.startswith("Sawblade export notes for the Anagram - Golden shared (live-compatible)")
+    assert "1. Gate [1 (first in the chain)]" in body and "2. Neural Amp [2]  (model)" in body
+    assert "   model: riff-nocab-full.a2_full.nam" in body and "   bypass: no" in body and "   threshold dBFS: -21" in body
+    assert "Anagram chain: Gate -> Neural Amp -> IR -> Compressor" in body and body.rstrip().endswith("licence text")
+    generic = json.loads(json.dumps({k: v for k, v in notes.items() if k != "deviceProfiles"}))
+    assert generic == {**N.build_export_notes(p, plan, nam.name, "riff-nocab.ir.wav"), "file": txt.name}   # v0.4M block unchanged
+    assert N.NOTES_VERSION == 1
+    # A1 exports (stem defaults to the .nam stem) get the same profile
+    nam1 = tmp_path / "x-nocab-standard.nam"
+    nam1.write_text("{}")
+    n1, t1 = N.write_export_notes(p, plan, nam1, tmp_path / "x-nocab.ir.wav", None)
+    assert t1.name == "x-nocab-standard.export_notes.txt" and (tmp_path / "x-nocab-standard.anagram_notes.txt").is_file()
+    assert n1["deviceProfiles"]["anagram"]["stages"][1]["settings"]["model"] == "x-nocab-standard.nam"

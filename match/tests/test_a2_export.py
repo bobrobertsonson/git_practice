@@ -207,3 +207,60 @@ def test_a2_lite_primary_and_budget_defaults():
     assert (c.epochs, c.max_minutes) == (T.A2_DEFAULT_EPOCHS, T.A2_DEFAULT_MAX_MINUTES)
     c1 = T.TrainConfig(size="standard").resolved()
     assert (c1.epochs, c1.max_minutes) == (22, 55.0)                           # A1 budget unchanged
+
+
+# ---------------------------------------------------------------- end to end (opt-in: SAWBLADE_TEST_TRAIN=1)
+
+def _fixture_preset(tmp_path):
+    p = json.loads((PRESETS / "golden_shared.json").read_text())
+    p["busComp"]["enabled"] = False
+    for k in ("a", "b"):
+        for blk in p["paths"][k]["blocks"]:
+            blk["model"]["file"] = str((PRESETS / blk["model"]["file"]).resolve())
+    p["cab"]["ir"]["file"] = str((PRESETS / p["cab"]["ir"]["file"]).resolve())
+    pj = tmp_path / "preset.json"
+    pj.write_text(json.dumps(p))
+    return pj
+
+
+@needs_train
+@pytest.mark.parametrize("size", ["full", "lite"])
+def test_end_to_end_a2_nocab_export_on_fixture_preset(tmp_path, size):
+    _need_nam()
+    from sawblade_match.export.run import run_export
+    pj = _fixture_preset(tmp_path)
+    di = tmp_path / "di.wav"
+    sf.write(di, (0.2 * np.sin(2 * np.pi * 196 * np.arange(44100 * 4) / 44100)).astype(np.float32), 44100)
+    out = tmp_path / "out"
+    prog = tmp_path / "progress.json"
+    rep = run_export(pj, mode="nocab", arch="a2", size=size, out=out, epochs=1, max_minutes=10, threads=2, di=di,
+                     signal_spec=S.SignalSpec(seed=1, train_plucks_s=3.0, valid_plucks=1), log=lambda *_: None,
+                     progress_json=prog)
+    stem = f"golden-shared-live-compatible-nocab-{size}"
+    assert rep["arch"] == "a2" and rep["size"] == size
+    assert rep["files"] == {"primary": f"{stem}.a2_{size}.nam", "container": f"{stem}.a2.nam", "full": f"{stem}.a2_full.nam",
+                            "lite": f"{stem}.a2_lite.nam"}
+    for f in rep["files"].values():
+        assert (out / f).is_file()
+    assert rep["a2FastPath"] == {"full": True, "lite": True}
+    assert set(rep["validation"]) == {"full", "lite"}                          # both standalone files validated through the core
+    for sz in ("full", "lite"):
+        v = rep["validation"][sz]
+        assert v["heldOut"]["esr"] >= 0 and v["acceptance"]["evaluated"] is True and v["acceptance"]["appliesTo"] == f"a2 {sz}"
+        assert v["acceptance"]["status"] in ("met", "NOT MET") and v["exportedModelLoadsInCore"] is True
+        nam = json.loads((out / rep["files"][sz]).read_text())
+        assert nam["metadata"]["sawblade"]["size"] == sz and nam["metadata"]["sawblade"]["arch"] == "a2"
+        assert nam["metadata"]["sawblade"]["validation"]["heldOutEsr"] == v["heldOut"]["esr"]
+        assert nam["metadata"]["training"]["validation_esr"] == rep["training"]["submodels"][sz]["bestValEsr"]
+        assert nam["metadata"]["name"].endswith(f"A2 {sz.capitalize()})")
+    assert rep["training"]["validationEsr"] == rep["training"]["submodels"][size]["bestValEsr"]       # per-submodel, not the sum
+    assert (out / "listen" / "ab_original_then_export.wav").is_file()
+    assert (out / "listen" / f"ab_original_then_export_{'lite' if size == 'full' else 'full'}.wav").is_file()
+    # notes: generic + anagram, named by stem; the model line points at the primary file
+    assert rep["exportNotes"]["file"] == f"{stem}.export_notes.txt" and (out / f"{stem}.anagram_notes.txt").is_file()
+    prof = rep["exportNotes"]["deviceProfiles"]["anagram"]
+    assert prof["file"] == f"{stem}.anagram_notes.txt"
+    assert [s["block"] for s in prof["stages"]] == ["Gate", "Neural Amp", "IR"]
+    assert prof["stages"][1]["settings"]["model"] == f"{stem}.a2_{size}.nam"
+    assert json.loads(prog.read_text())["arch"] == "a2" and json.loads(prog.read_text())["stage"] == "done"
+    assert "personal use only" in rep["licenceNote"]
