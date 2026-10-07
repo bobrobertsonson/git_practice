@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <pthread.h>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "AppPaths.h"
@@ -1227,7 +1228,8 @@ TEST_CASE("tool environment: one credential filter", "[settings][toolenv]") {
                         "cannot read /home/u/presets/linear_identity_loud24.nam: [Errno 2] No such file or directory",
                         "model 123456 is not one of tone 7890's candidate models",
                         "Fix: export TONE3000_CLIENT_ID=t3k_pub_..., or set it in the plugin Settings and run login again",
-                        "TONE3000_CLIENT_ID is not set", "error: the pack has no models"}) {
+                        "TONE3000_CLIENT_ID is not set", "error: the pack has no models",
+                        "error: token: invalid_grant"}) {  // a keyword with a short, digit-free value is an error message, not a secret
     INFO(m);
     CHECK_FALSE(looksLikeCredential(m));
     CHECK(safeToolLine(m) == m);
@@ -1238,6 +1240,8 @@ TEST_CASE("tool environment: one credential filter", "[settings][toolenv]") {
   CHECK(looksLikeCredential("refresh_token=abc123456789"));
   CHECK(looksLikeCredential("code 0123456789abcdefghijklmnopqrstuv"));  // 32+ with letters and digits
   CHECK(looksLikeCredential("session=0123456789abcdef"));
+  // intended: a 64-hex digest is an opaque 32+ letters-and-digits run, so a "sha256 mismatch" line is not shown
+  CHECK(looksLikeCredential("sha256 mismatch: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
   CHECK_FALSE(looksLikeCredential("path=/home/user/some/long/path/x"));
   CHECK(safeToolLine("note  \r") == "note");
   std::string big;
@@ -1246,3 +1250,34 @@ TEST_CASE("tool environment: one credential filter", "[settings][toolenv]") {
   CHECK(u.size() <= 300);
   CHECK(u.size() >= 298);
 }
+
+#ifndef _WIN32
+// The filter must not recurse per character: very long lines on a small-stack secondary thread (a macOS secondary thread has 512 KB).
+TEST_CASE("tool environment: the credential filter survives huge lines on a small stack", "[settings][toolenv]") {
+  struct Out {
+    bool token = false, bearer = false, spaces = true, again = false;
+  } out;
+  auto work = [](void* p) -> void* {
+    auto* o = static_cast<Out*>(p);
+    const std::string a = "token=" + std::string(1u << 20, 'a');
+    const std::string b = "Bearer " + std::string(1u << 20, 'a');
+    const std::string c = "token" + std::string(65536, ' ') + "x";
+    o->token = looksLikeCredential(a);
+    o->bearer = looksLikeCredential(b);
+    o->spaces = looksLikeCredential(c);
+    o->again = looksLikeCredential(a) && looksLikeCredential(b) && !looksLikeCredential(c);  // deterministic
+    return nullptr;
+  };
+  pthread_attr_t at;
+  pthread_attr_init(&at);
+  pthread_attr_setstacksize(&at, 256 * 1024);
+  pthread_t th;
+  REQUIRE(pthread_create(&th, &at, work, &out) == 0);
+  pthread_join(th, nullptr);
+  pthread_attr_destroy(&at);
+  CHECK(out.token);
+  CHECK(out.bearer);
+  CHECK_FALSE(out.spaces);
+  CHECK(out.again);
+}
+#endif
