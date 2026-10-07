@@ -1143,7 +1143,11 @@ def run(a: argparse.Namespace) -> int:
                 todo_constrained.append((r, m))
             elif r in found and r["pin"] and "constrained" not in m:     # no constrained result stored yet
                 todo_constrained.append((r, m))
-            m.update({k: r[k] for k in ("name", "unit", "group", "creator", "license", "labels")})
+            for k in ("name", "unit", "group", "creator", "license", "labels"):
+                v = r[k]                 # a partial --manifest must not wipe good stored metadata
+                if v in (None, "", {}) or (k == "name" and str(v) == str(mid)):
+                    continue
+                m[k] = v
             m["pinned_knobs"], m["pinned_is_assumed"] = r["pin"], r["labels"] is None
             m["non_commercial"] = str(r.get("license") or "").lower().startswith("cc-by-nc")
         found = [r for r in found if r["model_id"] not in done]

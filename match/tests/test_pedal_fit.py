@@ -4,6 +4,7 @@ tonerender binary (skipped without it); the rest are numpy-only."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -605,3 +606,55 @@ def test_merge_reruns_only_the_missing_constrained_fit(tmp_path, monkeypatch):
     calls["constrained"].clear()
     assert PF.main(argv) == 0 and calls["constrained"] == [1] and calls["free"] == []
     assert PF.main(argv) == 0 and calls["constrained"] == [1]     # nothing left to do
+
+
+def test_merge_refresh_keeps_stored_metadata_when_manifest_is_partial(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    (cache / "7").mkdir(parents=True)
+    (cache / "7" / "1.nam").write_text("x")
+    man = tmp_path / "m.json"
+    _manifest(man, 7, "mk", "cc-by", [(1, "cap Lv-6 L-5 H-5 D-5")])
+    targets = tmp_path / "targets.json"
+    targets.write_text(json.dumps({"pedals": {"hm": {"label_regex": "Lv-(\\d+)\\s+L-(\\d+)\\s+H-(\\d+)\\s+D-(\\d+)",
+        "tones": [{"tone_id": 7, "unit": "u", "group": "g", "models": [1]}], "assumed": {}}}}))
+    calls = {"free": [], "constrained": []}
+    monkeypatch.setattr(PF, "fit_model", _fake_fit_model(calls))
+    monkeypatch.setattr(PF, "fit_constrained_only",
+                        lambda rec, ev, d: {"ltas_rms_db": 0.5, "harm_rms_db": 1.0, "dyn_db": 0.1})
+    out = tmp_path / "o"
+    argv = ["--pedal", "hm", "--cache", str(cache), "--targets", str(targets), "--manifest", str(man), "--di", str(DI),
+            "--work", str(tmp_path / "w"), "--out", str(out), "--short-probe", "--no-plots", "--merge"]
+    assert PF.main(argv) == 0
+    bare = tmp_path / "bare.json"                     # a later manifest that lacks name, creator and licence
+    _manifest(bare, 7, None, None, [(1, "1")])
+    assert PF.main([str(bare) if x == str(man) else x for x in argv]) == 0
+    m = json.loads((out / "fits_hm.json").read_text())["models"][0]
+    assert m["name"] == "cap Lv-6 L-5 H-5 D-5" and m["creator"] == "mk" and m["license"] == "cc-by"
+
+
+def test_report_name_none_falls_back_to_model_id():
+    m = _model(5, {"low": 5.0}, np.full((16, 6), -25.0))
+    m["name"] = None
+    doc = {"schema": "sawblade.pedal_fit", "version": 2, "pedal": "ts", "model_version": 1, "seed": 7,
+           "cost": {"harm_floor_db": -40.0}, "models": [m]}
+    text = PA.generate({"ts": doc})
+    assert "None" not in text and "| 5 (5) |" in text
+
+
+def test_fit_constrained_only_pins_knobs_and_returns_the_constrained_result(monkeypatch):
+    seen = {}
+
+    class Ev:
+        spec = PF.PEDALS["ts"]
+        cache = {"stale": 1}
+
+    monkeypatch.setattr(PF, "reference_features", lambda f, ev, p: {"ref": f})
+
+    def fake_eval(ref, ev, *vals):
+        seen["vals"], seen["cache"] = list(vals), dict(ev.cache)
+        return {"ltas_rms_db": 0.7, "params": {}}, {}
+    monkeypatch.setattr(PF, "evaluate_params", fake_eval)
+    rec = {"file": "x.nam", "model_id": 3, "pin": {"drive": 4, "tone": 5, "level": 6}}
+    res = PF.fit_constrained_only(rec, Ev(), Path("."))
+    assert seen["vals"] == [4.0, 5.0] and seen["cache"] == {}      # ts level is a pure output gain: not a knob
+    assert res["ltas_rms_db"] == 0.7                                # the dict the merge loop stores as "constrained"

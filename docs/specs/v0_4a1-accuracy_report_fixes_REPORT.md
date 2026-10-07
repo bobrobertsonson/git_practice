@@ -50,3 +50,18 @@ Existing fits files keep their free fits; the old 70280 non-TS fits stay in the 
 
 * An explicit `--manifest` replaces the default manifest list (it does not add to it).
 * `pedal-fit` returns exit 4 when the target list has errors (fits still written).
+
+## Follow-ups
+
+Reviewer non-blocking findings, applied:
+
+1. `pedal-fit --merge` refresh only overwrites name / unit / group / creator / licence / labels when the new value is
+   non-empty (a bare model-id name counts as empty), so a partial `--manifest` keeps good stored metadata.
+2. `pedal-accuracy` tables print `name or model_id` (no "None (id)").
+3. `scripts/run_pedal_accuracy.sh`: pedal-fit exit 4 prints "WARN: <pedal> fit finished with ERRORS (see the report's
+   Errors section)"; other non-zero codes still print "fit failed". `set -euo pipefail` is kept (`rc` captured via `|| rc=$?`).
+4. Direct unit test of `fit_constrained_only` (pins {drive:4,tone:5,level:6} on ts give knob vector [4,5]; result is
+   the dict stored as `constrained`).
+
+Tests added (`match/tests/test_pedal_fit.py`): partial-manifest merge, name=None report, `fit_constrained_only`.
+`tests/test_pedal_fit.py` with a locally built core-only `tonerender`: 47 passed.

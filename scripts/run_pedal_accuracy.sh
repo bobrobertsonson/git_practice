@@ -50,8 +50,14 @@ echo "log: $LOG"
   FITS=()
   for p in $PEDALS; do
     echo "== $(date) fitting $p"
+    rc=0
     "$VENV/sawblade-calibrate" pedal-fit --pedal "$p" --di "$DI" --work "$W" --out "$O" --jobs 4 --merge --manifest "$MANIFEST" \
-      || echo "WARN: $p fit failed (see above); continuing"
+      || rc=$?
+    if [[ $rc -eq 4 ]]; then
+      echo "WARN: $p fit finished with ERRORS (see the report's Errors section)"
+    elif [[ $rc -ne 0 ]]; then
+      echo "WARN: $p fit failed (see above); continuing"
+    fi
     [[ -f "$O/fits_$p.json" ]] && FITS+=(--fits "$O/fits_$p.json")
   done
   echo "== report"
