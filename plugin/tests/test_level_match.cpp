@@ -175,6 +175,15 @@ TEST_CASE("level match: a stale stored trim is ignored and measured again", "[le
   CHECK(w.h.p.status().trimDb == Approx(p.autoTrim.db - 12.0).margin(0.2));
 }
 
+TEST_CASE("level match: status() follows a Settings toggle without a timer tick", "[levelmatch][plugin]") {
+  World w("{}");
+  CHECK(w.h.p.status().levelMatchOn);
+  sawblade::plugin::settings::Settings::shared().setLevelMatch(false);
+  CHECK_FALSE(w.h.p.status().levelMatchOn);
+  sawblade::plugin::settings::Settings::shared().setLevelMatch(true);
+  CHECK(w.h.p.status().levelMatchOn);
+}
+
 TEST_CASE("level match: with LEVEL MATCH off no trim is applied and nothing is measured", "[levelmatch][plugin]") {
   World w(R"({"levelMatch": false})");
   w.load(rigJson("off", 3.0));

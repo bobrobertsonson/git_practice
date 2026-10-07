@@ -125,7 +125,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
 
   // The preset with the current parameter values written into it (what getStateInformation saves).
   Preset currentPreset() const;
-  Status status() const;
+  // Message thread (and tests). Not const: it re-reads the LEVEL MATCH setting first (see levelMatchEnabled()), so levelMatchOn /
+  // trimDb / levelPending never lag a Settings toggle by a timer tick.
+  Status status();
   juce::AudioProcessorValueTreeState& parameters() { return apvts_; }
   // Which post-EQ slots currently control a band (for the UI).
   SlotBands postEqSlots() const;
@@ -245,7 +247,6 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // parts of the rig change. The audio thread applies the target through an atomic; until a trim is known a user load plays at 0.
   // Called by the 10 Hz timer; tests call it directly. Message thread.
   void levelTick();
-  void syncLevelMatchSetting();  // levelMatchOn_ <- Settings (message thread); a toggle retries what could not be measured
   // The rig the trim is measured for: the current preset with the parameter values. The OUTPUT knob is measured at 0 dB and is not
   // in the staleness hash: it is a persistent user offset from the target.
   Preset levelMeasurementPreset() const;
@@ -312,6 +313,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   bool circuitEditPending() const noexcept { return circuitDirty_.load(); }
 
  private:
+  void syncLevelMatchSetting();  // levelMatchOn_ <- Settings (message thread); a toggle retries what could not be measured
   Preset presetWithParams() const;
   ParamValues readParams() const noexcept;
   void writeParams(const ParamValues& v);
