@@ -5,8 +5,8 @@ Branch: `claude/sawblade-v0_4m-matcher-feel`. CI (GitHub Actions) is the validat
 not install scipy/pytest (pypi blocked), so engineers also ran the render tests against a local core build with a scipy
 shim — those numbers are labelled "shim" below and are indicative only.
 
-Status: **Tasks A, B, B2.1 (core), B3, C, D.1 and E accepted and green on CI.** B2.1 (matcher half), B2.3 and B4 are in
-the final review/merge round (see "Open"). Validation on the real Bloodbath audio is the user's (Mac commands below).
+Status: **Tasks A–C, B2.1–B2.4, B3, B4, D.1 and E accepted by the reviewer and merged; CI of record on the merge head
+below.** Validation on the real Bloodbath audio (D.2/D.3) is the user's: Mac commands below.
 
 ## What changed, in one paragraph per suspect
 
@@ -75,11 +75,10 @@ show its value when the reference is a render of the same kind of chain — that
 | B2.1 core hook | ACCEPT (gcc + clang 356/356) | green (run 170) |
 | B3 IR library | ACCEPT after 1 REVISE (concurrent-write race on duplicate IRs; relative paths) | green (run 172) |
 | D.1 + search fixes | ACCEPT (joint HP/LP × slope with re-polish, boost level fixed, gate tolerance, pedal Occam) | green (run 185) |
-| B2.1 matcher, B2.3, B4 | REVISE (pre-EQ placement) — in progress | — |
+| B2.1 matcher, B2.3, B4 | ACCEPT after 1 REVISE (pre-EQ moved after stage 2 on the refined winner with a re-fit keep rule ≥ 0.05; it had picked a spurious HPF on a plain chain); merged with B3 + D.1; canonical IR-pair orientation | see CI of record |
 
 ## Open
 
-- B2.1 matcher half / B2.3 / B4: pre-EQ moved after stage 2 on the refined winner; merge with B3 + D.1; re-review; CI.
 - Bright-DI widening threshold (`diTilt > −1.5 dB/oct`) fires on the fixture DI; rebase on the user's DIs (printed by
   every run).
 - TONE3000 `gears` value for IR tones ("cab" vs "ir") unverified against the live API (one constant, `IR_GEAR`).
@@ -88,7 +87,106 @@ show its value when the reference is a render of the same kind of chain — that
 
 ## Mac validation commands
 
-(written at READY-FOR-USER-VALIDATION; see the final section of this report)
+Run in Terminal on the Mac. Paste the printed summaries (step 7) back to the lead; listen to step 4's `listen/` files.
+
+### 1. Update (once)
+
+```
+cd ~/sawblade
+git fetch origin claude/sawblade-v0_4m-matcher-feel
+git checkout claude/sawblade-v0_4m-matcher-feel
+scripts/mac_update.sh --no-models
+match/.venv/bin/pip install -e match
+# the Python core module must be rebuilt (the core gained irMix offset/invert keys)
+cmake -S . -B build-py -G Ninja -DCMAKE_BUILD_TYPE=Release -DSAWBLADE_BUILD_PYTHON=ON -DSAWBLADE_BUILD_TESTS=OFF \
+      -DPython_EXECUTABLE=$PWD/match/.venv/bin/python
+cmake --build build-py
+export SAWBLADE_CORE_DIR=$PWD/build-py/python
+```
+
+### 2. Set the paths once per Terminal window (edit the Bloodbath file names to match your NTM folder)
+
+```
+BB="$HOME/path/to/Bloodbath Zombie Inferno"            # NTM session folder
+L_DI="$BB/<left rhythm DI>.wav";  L_HM2="$BB/<left HM2 AMP>.wav";  L_UBR="$BB/<left UBR AMP>.wav"
+R_DI="$BB/<right rhythm DI>.wav"; R_HM2="$BB/<right HM2 AMP>.wav"; R_UBR="$BB/<right UBR AMP>.wav"
+IRS="/Users/notsch/Music/Studio_Notsch/_IRs/Guitar_Cabs"
+POOL="$HOME/.cache/sawblade/captures/pool_manifest.json"
+OUT="$HOME/.cache/sawblade/match_runs/v04m"; mkdir -p "$OUT"
+M="match/.venv/bin/sawblade-match"
+COMMON=(--pool "$POOL" --matched mono --offset-ms 0 --ir-dir "$IRS" --listen --trace-tones 57492,79751)
+```
+
+### 3. Index your IR library (one time; first run may take a minute, later runs are seconds)
+
+```
+match/.venv/bin/python -m sawblade_match.matcher.irlib --scan "$IRS" --json "$OUT/ir_scan.json"
+```
+Check the printout: accepted / unique counts, rejected files by reason, **near-duplicate pairs** (are any of them
+genuinely different mics? say so), truncated count, tag coverage.
+
+Optional, wider TONE3000 IR set (all models of each IR tone): `match/.venv/bin/sawblade-t3k pull --gear ir`
+(add `--ir-search "V30"` etc. for more cab families). If it finds no IR tones, tell the lead (one API constant to flip).
+
+### 4. Main runs: left side, quick timing + thorough HM2 and UBR (the A/B files)
+
+```
+time $M --di "$L_DI" --ref "$L_HM2" "${COMMON[@]}" --quick    --out "$OUT/L_hm2_quick"
+     $M --di "$L_DI" --ref "$L_HM2" "${COMMON[@]}" --thorough --out "$OUT/L_hm2"
+     $M --di "$L_DI" --ref "$L_UBR" "${COMMON[@]}" --thorough --out "$OUT/L_ubr"
+```
+A/B (both level-matched, same 30 s, time-aligned): `open "$OUT/L_hm2/listen"` and `open "$OUT/L_ubr/listen"` —
+compare `ref.wav` vs `render.wav` (and `before.wav`). Does it still sound floppy / fizzy / less pro? What is still off?
+
+### 5. What each suspect buys (quick runs, HM2, one suspect switched off each)
+
+```
+for a in feel boost filters irsweep irblend studio preeq; do
+  $M --di "$L_DI" --ref "$L_HM2" "${COMMON[@]}" --quick --ablate $a --out "$OUT/L_hm2_quick_no_$a"
+done
+```
+
+### 6. Held-out check: right side
+
+```
+$M --di "$R_DI" --ref "$R_HM2" "${COMMON[@]}" --thorough --out "$OUT/R_hm2"
+$M --di "$R_DI" --ref "$R_UBR" "${COMMON[@]}" --thorough --out "$OUT/R_ubr"
+```
+
+### 7. Print the numbers to send back
+
+```
+match/.venv/bin/python - "$OUT" <<'PY'
+import json, sys, pathlib
+for d in sorted(pathlib.Path(sys.argv[1]).iterdir()):
+    f = d / "result.json"
+    if not f.exists(): continue
+    r = json.loads(f.read_text())
+    def g(*ks):
+        v = r
+        for k in ks:
+            v = v.get(k) if isinstance(v, dict) else None
+        return v
+    b = r.get("best", {}); bd = b.get("breakdown", {}) or {}; ft = bd.get("feelTerms") or {}
+    print(f"== {d.name}  wall {r.get('wallSeconds', 0)/60:.1f} min")
+    print("  A-weighted dB:", (r.get("after") or [{}])[0].get("aWeightedErrorDb"), "| loss", bd.get("total"),
+          "ltas", bd.get("ltas"), "feel", bd.get("feel"))
+    print("  feel: tight", ft.get("tight"), "fizz", ft.get("fizz"), "polish", ft.get("polish"), "dropped", ft.get("dropped"))
+    print("  chain:", b.get("topology"), {k: (v or {}).get("title") for k, v in (b.get("captures") or {}).items()})
+    print("  boost won:", g("tightBoost", "won"), "| IR pair won:", g("irBlend", "won"), "| IR winner:", g("irPool", "winner"))
+    print("  pre-EQ:", g("preEq", "chosen"), "| studio:", {k: g("studio", k) for k in ("compressed", "eqd", "busCompUsed")})
+    print("  gate:", r.get("gateFinal"), "| post filters:", r.get("postFilters"))
+    print("  listening gain dB:", g("listening", "gainDb"), "| IR pool:", {k: g("irPool", k) for k in ("total", "screened", "prefiltered")})
+    tc = r.get("tonecheck", {}).get("best_L", {})
+    print("  guardrails:", [(x.get("id"), x.get("status")) for x in tc.get("rules", []) if x.get("status") != "pass"])
+    if r.get("trace"): print("  trace:", {k: (v or {}).get("why") for k, v in r["trace"].items()})
+PY
+```
+Also paste the run-log lines that start with `pre-EQ: DI tilt` (one per run): they calibrate the guitar-difference
+thresholds.
+
+Before (first known-answer run, `--quick`): HM2 A-weighted 2.72 dB, UBR 3.45 dB; `gap_noise` −10.8 / −11.0 (fail),
+`fizz_texture` fail on both; chosen IR "V30 3 SM58 6" both times; neither Überschall capture won UBR.
 
 ## User results
 
