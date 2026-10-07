@@ -682,6 +682,20 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   models of heavy two-path high-gain chains normally need hundreds of epochs on a GPU. The same code trains on a GPU box unchanged
   with `--device cuda` or `--device mps` (default auto).
   `--batch-size 4` gave a better ESR per minute in a 10-minute trial (0.51 vs ~0.58 at the same time) but did not change the picture.
+  **A2 budget and a first measurement (v0.6, CPU only).** `--arch a2` defaults to 22 epochs / 80 min (one run trains both sizes; the packed net costs about 1.5x an
+  A1 standard epoch). Measured on this shared 4-core box (4 threads, 188 s of training audio = 68 steps/epoch), on the in-repo fixture preset
+  `tests/fixtures/presets/golden_shared.json` (no-cab, bus comp off; fixture NAMs only, no TONE3000 captures), 5 epochs each, `--di builtin`, seed 0:
+
+  | model | params | s/epoch | train wall | trainer val ESR (best) | held-out ESR (after IR) | DI LTAS error | acceptance | core render RTF |
+  |---|---|---|---|---|---|---|---|---|
+  | A1 standard | 13 801 | 96 | 483 s | 0.0156 | 0.0069 | 0.15 dB | met (<= 0.02 / 0.5) | 0.279 |
+  | A2 Full | 12 145 (22 783 packed) | 141 | 710 s (both sizes) | 0.0369 | 0.0181 | 0.19 dB | met (<= 0.02 / 0.5) | 0.096 |
+  | A2 Lite | 1 870 | (same run) | (same run) | 0.0769 | 0.0433 | 0.39 dB | met (<= 0.05 / 1.0) | 0.022 |
+
+  These are **CPU-budget numbers on a simple fixture chain, not final quality**: five epochs is far from converged, and the fixture chain is not a
+  heavy high-gain tone (the A2 receptive field of 6347 samples is mostly wasted on it). They show that the A2 pipeline trains, exports, validates
+  both standalone files through the core and costs about 1.5x the A1 training time per epoch for both sizes together. RTF is `sawblade_core`'s
+  real-time factor of the validation chain (x86 here; the A2 fast path is why A2 Full renders faster than A1 standard).
 
 ## Separation models (`sawblade-models`)
 
