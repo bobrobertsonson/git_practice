@@ -135,8 +135,10 @@ void T3kClient::login(std::function<void(const t3k::LoginEvent&)> onEvent, std::
       out.error = {r.launchError, "launch"};
     } else if (r.cancelled) {
       out.error = {"cancelled", "cancelled"};
+    } else if (auto e = t3k::parseErrorObject(r.lastErrorObject)) {
+      out.error = *e;  // the CLI's own error object first (as failure() does), then the stderr line
     } else {
-      out.error = {"login did not complete (exit status " + std::to_string(r.exitCode) + ")", "exit"};
+      out.error = {"login did not complete (exit status " + std::to_string(r.exitCode) + ")" + (r.lastLine.empty() ? "" : ": " + r.lastLine), "exit"};
     }
     done(std::move(out));
   };

@@ -9,6 +9,7 @@
 #include "Engine.h"
 #include "LadderFetch.h"
 #include "rig/RigController.h"
+#include "settings/Settings.h"
 #include "PluginProcessor.h"
 #include "alloc_guard.h"
 #include "latency_stub.h"
@@ -30,6 +31,9 @@ struct LadderCache {
     static int n = 0;
     dir = fs::temp_directory_path() / ("sawblade_plugin_ladder_" + std::to_string(std::random_device{}()) + "_" + std::to_string(n++));
     fs::create_directories(dir / "T1");
+    // Create Settings::shared() FIRST: its first creation clears the capture-cache override (applyCacheEnv), and a tool launch
+    // (toolEnvironment) creates it lazily, which would silently drop this override mid-test.
+    (void)sawblade::plugin::settings::Settings::shared();
     setCaptureCacheRootOverride(dir);
   }
   ~LadderCache() {

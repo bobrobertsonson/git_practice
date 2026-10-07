@@ -274,6 +274,29 @@ TEST_CASE("t3k client: a newer query supersedes a queued older one", "[browser][
   CHECK(lastDone == 10);  // "one" was dropped before it ran (or at worst ran first); never both callbacks
 }
 
+TEST_CASE("t3k client: the client id comes from Settings; a failed login shows the tool's stderr line (v0.3.0.1)", "[browser][client][env]") {
+  Rig rig(nullptr);  // SettingsEnv scrubbed TONE3000_CLIENT_ID from this process
+  TempDir state;
+  rig.env.set("FAKE_T3K_REQUIRE_ID", "1");
+  rig.env.set("FAKE_T3K_STATE", state.dir.string());
+  rig.env.set("FAKE_T3K_LOGIN_DELAY", "0.1");
+  T3kClient c(rig.exe());
+  auto doLogin = [&] { return await<bool>([&](auto cb) { c.login([](const t3k::LoginEvent&) {}, cb); }); };
+  // no id in Settings, none in the environment: the login screen's error carries the tool's last stderr line
+  auto bad = doLogin();
+  CHECK_FALSE(bad.ok);
+  CHECK(bad.error.message.find("TONE3000_CLIENT_ID is not set") != std::string::npos);
+  auto badWho = await<t3k::WhoAmI>([&](auto cb) { c.whoami(cb); });
+  CHECK_FALSE(badWho.ok);
+  CHECK(badWho.error.message.find("TONE3000_CLIENT_ID is not set") != std::string::npos);
+  // the id is stored in Settings only: login and every command now work
+  REQUIRE(sawblade::plugin::settings::Settings::shared().setTone3000ClientId("t3k_pub_fromsettings").ok);
+  CHECK(doLogin().ok);
+  auto who = await<t3k::WhoAmI>([&](auto cb) { c.whoami(cb); });
+  REQUIRE(who.ok);
+  CHECK(who.value.username == "tester");
+}
+
 TEST_CASE("browser: login view, device code, logged_in retries the query, nothing secret is shown", "[browser][login]") {
   Rig rig;
   TempDir state;

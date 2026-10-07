@@ -11,6 +11,7 @@
 #include "ExportGlue.h"
 #include "presets/PresetLibrary.h"
 #include "rig/BodyFill.h"
+#include "settings/Settings.h"
 #include "rig/RigController.h"
 #include "test_util.h"
 
@@ -57,6 +58,9 @@ struct BfCache {
     static int n = 0;
     dir = fs::temp_directory_path() / ("sawblade_bodyfill_cache_" + std::to_string(std::random_device{}()) + "_" + std::to_string(n++));
     fs::create_directories(dir);
+    // Create Settings::shared() FIRST: its first creation clears the capture-cache override (applyCacheEnv), and a tool launch
+    // (toolEnvironment) creates it lazily, which would silently drop this override mid-test.
+    (void)sawblade::plugin::settings::Settings::shared();
     setCaptureCacheRootOverride(dir);
   }
   ~BfCache() {

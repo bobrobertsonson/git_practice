@@ -1,6 +1,7 @@
 #include "T3kTool.h"
 #include "../AppPaths.h"
 #include "../settings/Settings.h"
+#include "../settings/ToolEnv.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -187,9 +188,14 @@ T3kTool::Result T3kTool::runBlocking(const fs::path& exe, const std::vector<std:
     r.message = "Cannot find the sawblade-t3k tool at " + exe.string() + ". Locate it, or set it up (match/README.md).";
     return r;
   }
+  // The same environment as every other tool launch (client id, cache dir): a DAW started from the Dock has no shell exports.
+  if (const std::string problem = settings::toolPathProblem(exe); !problem.empty()) {
+    r.status = Status::MissingExecutable;
+    r.message = problem;
+    return r;
+  }
   juce::StringArray cmd;
-  cmd.add(juce::String(exe.string()));
-  for (const auto& a : args) cmd.add(juce::String(juce::CharPointer_UTF8(a.c_str())));
+  for (const auto& a : settings::toolCommand(exe, args, settings::toolEnvironment())) cmd.add(juce::String(juce::CharPointer_UTF8(a.c_str())));
 
   juce::ChildProcess child;
   if (!child.start(cmd, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr)) {

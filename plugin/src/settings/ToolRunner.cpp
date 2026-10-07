@@ -1,4 +1,5 @@
 #include "ToolRunner.h"
+#include "ToolEnv.h"
 
 #include <algorithm>
 #include <cctype>
@@ -110,24 +111,10 @@ std::shared_ptr<ToolRunner::Job> ToolRunner::run(ToolRequest req, std::function<
   if (!err.empty()) {
     job->result_.error = err;
   } else {
-    std::map<std::string, std::string> env;
-    env["PYTHONUNBUFFERED"] = "1";
-    if (const std::string id = settings_.effectiveTone3000ClientId(); !id.empty()) env["TONE3000_CLIENT_ID"] = id;
-    env["SAWBLADE_CACHE_DIR"] = settings_.effectiveCaptureCacheDir().string();
+    ToolEnvMap env = toolEnvironment(settings_);  // the one shared rule (ToolEnv.h)
     for (auto& kv : req.env) env[kv.first] = kv.second;
-    auto& cmd = job->command_;
-#ifndef _WIN32
-    if (exe.string().find('=') != std::string::npos) {  // `env` would read it as a KEY=VALUE assignment
-      job->result_.error = "cannot run " + exe.string() + ": the path contains '='. Move the match venv to a folder without '=' in its name.";
-    } else {
-      cmd.push_back("/usr/bin/env");
-      for (auto& kv : env) cmd.push_back(kv.first + "=" + kv.second);
-    }
-#endif
-    if (job->result_.error.empty()) {
-      cmd.push_back(exe.string());
-      for (auto& a : req.args) cmd.push_back(a);
-    }
+    if (const std::string problem = toolPathProblem(exe); !problem.empty()) job->result_.error = problem;
+    else job->command_ = toolCommand(exe, req.args, env);
   }
 
   {

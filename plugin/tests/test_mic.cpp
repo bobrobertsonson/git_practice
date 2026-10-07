@@ -15,7 +15,9 @@
 #include <thread>
 #include <vector>
 
+#include <optional>
 #include "BinaryData.h"
+#include "browser/T3kRunner.h"
 #include "PluginProcessor.h"
 #include "mic/IrNameParser.h"
 #include "mic/IrPack.h"
@@ -811,4 +813,111 @@ TEST_CASE("no capture: the \"(none)\" placeholder is never a file", "[mic][init]
   CHECK(json::parse(presetToStateJson(init))["cab"]["ir"]["file"] == "(none)");  // not absolutised
   CHECK(summariseCaptures(init).empty());
   CHECK(IrPack::single(init.cab.ir).empty());
+}
+
+// ---- v0.3.0.1: the tool gets the client id from Settings, not from the DAW's environment -----------------------------
+namespace {
+// Runs the tests/fake_t3k.py CLI behind a one-line wrapper (a DAW launched from the Dock has no TONE3000_CLIENT_ID).
+struct EnvTool {
+  TempDir tmp;
+  fs::path exe, envLog;
+  std::vector<std::pair<std::string, std::optional<std::string>>> saved;
+  EnvTool() {
+    const fs::path py = fs::path(SAWBLADE_TEST_TOOLS_DIR).parent_path() / "fake_t3k.py";
+    exe = writeScript(tmp.dir, "sawblade-t3k", "exec python3 \"" + py.string() + "\" \"$@\"");
+    envLog = tmp.dir / "env.jsonl";
+    set("FAKE_T3K_REQUIRE_ID", "1");
+    set("FAKE_T3K_ENV_LOG", envLog.string());
+  }
+  void set(const char* k, const std::string& v) {
+    const char* cur = std::getenv(k);
+    saved.emplace_back(k, cur ? std::optional<std::string>(cur) : std::nullopt);
+    ::setenv(k, v.c_str(), 1);
+  }
+  ~EnvTool() {
+    for (auto it = saved.rbegin(); it != saved.rend(); ++it) {
+      if (it->second) ::setenv(it->first.c_str(), it->second->c_str(), 1);
+      else ::unsetenv(it->first.c_str());
+    }
+  }
+  std::vector<json> calls() const {
+    std::vector<json> v;
+    std::ifstream in(envLog);
+    std::string line;
+    while (std::getline(in, line))
+      if (!line.empty()) v.push_back(json::parse(line));
+    return v;
+  }
+};
+
+T3kTool::Result runOnce(const std::vector<std::string>& args, const fs::path& exe) {
+  Run r;  // before the tool: the tool's thread calls back into r until the tool is destroyed
+  T3kTool tool;
+  REQUIRE(start(tool, r, args, exe));
+  REQUIRE(r.wait());
+  return r.result;
+}
+}  // namespace
+
+TEST_CASE("T3kTool: every command runs with TONE3000_CLIENT_ID from Settings when the host environment has none", "[t3k][env]") {
+  SettingsEnv env{"{\"version\": 1, \"firstRunCompleted\": true, \"tone3000ClientId\": \"t3k_pub_fromsettings\"}"};  // scrubs TONE3000_CLIENT_ID
+  REQUIRE(std::getenv("TONE3000_CLIENT_ID") == nullptr);
+  EnvTool t;
+  // the entry points the capture browser, body fill, preset fetch and ladders use all end in T3kTool::start
+  const std::vector<std::vector<std::string>> commands = {
+      {"whoami", "--json"}, {"fetch", "101", "--json"}, {"ladder", "101"}, {"search", "--json", "--", "hm-2"}, {"models", "101", "--json"}};
+  for (const auto& args : commands) {
+    const auto res = runOnce(args, t.exe);
+    INFO(args.front() << ": " << res.message << " / " << res.output);
+    CHECK(res.status == T3kTool::Status::Ok);
+  }
+  const auto calls = t.calls();
+  REQUIRE(calls.size() == commands.size());
+  for (const auto& c : calls) {
+    CHECK(c["TONE3000_CLIENT_ID"] == "t3k_pub_fromsettings");
+    CHECK(c["PYTHONUNBUFFERED"] == "1");
+    CHECK(c["SAWBLADE_CACHE_DIR"] == sawblade::plugin::settings::Settings::shared().effectiveCaptureCacheDir().string());
+  }
+}
+
+TEST_CASE("T3kTool: with no client id anywhere the failure message carries the tool's stderr line", "[t3k][env]") {
+  SettingsEnv env{"{\"version\": 1, \"firstRunCompleted\": true}"};
+  EnvTool t;
+  const auto res = runOnce({"fetch", "101", "--json"}, t.exe);
+  CHECK(res.status == T3kTool::Status::Failed);
+  CHECK(res.exitCode == 1);
+  CHECK(res.message == "TONE3000_CLIENT_ID is not set");
+  CHECK(t.calls().size() == 1);
+  CHECK(t.calls()[0]["TONE3000_CLIENT_ID"].is_null());
+}
+
+TEST_CASE("T3kTool: a secret key in settings or the environment is never passed to the tool", "[t3k][env]") {
+  SettingsEnv env{"{\"version\": 1, \"firstRunCompleted\": true, \"tone3000ClientId\": \"t3k_cs_notapublicid\"}"};
+  EnvTool t;
+  t.set("TONE3000_CLIENT_ID", "t3k_cs_alsonot");  // the host environment
+  const auto res = runOnce({"whoami", "--json"}, t.exe);
+  CHECK(res.status == T3kTool::Status::Failed);
+  CHECK(res.message.find("t3k_cs_") == std::string::npos);
+  for (const auto& c : t.calls()) {
+    if (c["TONE3000_CLIENT_ID"].is_string()) CHECK(c["TONE3000_CLIENT_ID"].get<std::string>().find("t3k_cs_") == std::string::npos);
+  }
+}
+
+TEST_CASE("T3kTool: a path with '=' is reported, not run through env", "[t3k][env]") {
+  SettingsEnv env{"{\"version\": 1, \"firstRunCompleted\": true}"};
+  TempDir tmp;
+  fs::create_directories(tmp.dir / "a=b");
+  const fs::path exe = writeScript(tmp.dir / "a=b", "sawblade-t3k", "exit 0");
+  const auto res = runOnce({"whoami"}, exe);
+  CHECK(res.status == T3kTool::Status::MissingExecutable);
+  CHECK(res.message.find("'='") != std::string::npos);
+}
+
+TEST_CASE("T3kRunner lastErrorLine: the last plain line, never JSON or anything credential-like", "[t3k][env]") {
+  CHECK(lastErrorLine("") == "");
+  CHECK(lastErrorLine("TONE3000_CLIENT_ID is not set\n") == "TONE3000_CLIENT_ID is not set");
+  CHECK(lastErrorLine("{\"event\": \"device_code\"}\nTONE3000_CLIENT_ID is not set\r\n\n") == "TONE3000_CLIENT_ID is not set");
+  CHECK(lastErrorLine("real error\nrefresh_token=SECRETTOKEN123456\n{\"event\": \"x\"}\n") == "real error");
+  CHECK(lastErrorLine("{\"a\": 1}\n") == "");
+  CHECK(lastErrorLine(std::string(500, 'x')).size() == 300);
 }

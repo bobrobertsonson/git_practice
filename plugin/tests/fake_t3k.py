@@ -12,6 +12,8 @@ environment variables:
   FAKE_T3K_FETCH  file returned as the fetched capture (default tests/fixtures/nam/linear_identity.nam)
   FAKE_T3K_KIND   kind reported by fetch (default nam)
   FAKE_T3K_LOG    file: argv of every call is appended here
+  FAKE_T3K_REQUIRE_ID  any value: fail ("TONE3000_CLIENT_ID is not set" on stderr, exit 1) unless the id is in the environment
+  FAKE_T3K_ENV_LOG     file: the injected TONE3000_CLIENT_ID / SAWBLADE_CACHE_DIR / PYTHONUNBUFFERED of every call (JSON line)
 """
 import hashlib
 import json
@@ -26,6 +28,16 @@ state = os.environ.get("FAKE_T3K_STATE")
 if os.environ.get("FAKE_T3K_LOG"):
     with open(os.environ["FAKE_T3K_LOG"], "a") as f:
         f.write(json.dumps(args) + "\n")
+
+
+# v0.3.0.1: FAKE_T3K_REQUIRE_ID=1 makes every command (login included) fail like the real CLI inside a DAW with no shell exports:
+# no TONE3000_CLIENT_ID in the environment -> a stderr line and exit 1. FAKE_T3K_ENV_LOG: file that receives the injected variables.
+if os.environ.get("FAKE_T3K_ENV_LOG"):
+    with open(os.environ["FAKE_T3K_ENV_LOG"], "a") as f:
+        f.write(json.dumps({k: os.environ.get(k) for k in ("TONE3000_CLIENT_ID", "SAWBLADE_CACHE_DIR", "PYTHONUNBUFFERED")}) + "\n")
+if os.environ.get("FAKE_T3K_REQUIRE_ID") and not os.environ.get("TONE3000_CLIENT_ID"):
+    print("TONE3000_CLIENT_ID is not set", file=sys.stderr)
+    sys.exit(1)
 
 
 def out(obj):

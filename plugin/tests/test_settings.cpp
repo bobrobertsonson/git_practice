@@ -28,6 +28,7 @@
 #include "presets/T3kTool.h"
 #include "settings/LoginFlow.h"
 #include "settings/Settings.h"
+#include "settings/ToolEnv.h"
 #include "settings/ToolRunner.h"
 
 using namespace sawblade::plugin::settings;
@@ -1119,4 +1120,89 @@ TEST_CASE("ToolRunner: cancel and timeout after the child has finished never sig
     c->job->cancel();  // after reaping
     CHECK(c->done->outcome == ToolResult::Outcome::NonZeroExit);
   }
+}
+
+// --- v0.3.0.1: one environment for every tool launch (settings/ToolEnv.h) -----------------------------------------
+TEST_CASE("tool environment: client id from Settings, cache dir, unbuffered; never a secret key", "[settings][toolenv]") {
+  TempDir t;
+  {
+    Settings s(t / "s.json", makeEnv(t.dir));  // no id anywhere
+    s.load();
+    const ToolEnvMap env = toolEnvironment(s);
+    CHECK(env.count("TONE3000_CLIENT_ID") == 0);
+    CHECK(env.at("PYTHONUNBUFFERED") == "1");
+    CHECK(env.at("SAWBLADE_CACHE_DIR") == s.effectiveCaptureCacheDir().string());
+  }
+  {
+    Settings s(t / "s2.json", makeEnv(t.dir));
+    s.load();
+    REQUIRE(s.setTone3000ClientId("t3k_pub_abc123").ok);
+    CHECK(toolEnvironment(s).at("TONE3000_CLIENT_ID") == "t3k_pub_abc123");
+    CHECK_FALSE(s.setTone3000ClientId("t3k_cs_nope").ok);
+    CHECK(toolEnvironment(s).at("TONE3000_CLIENT_ID") == "t3k_pub_abc123");  // the refused value changed nothing
+  }
+  {
+    Settings s(t / "s3.json", makeEnv(t.dir, {{"TONE3000_CLIENT_ID", "t3k_cs_secretvalue"}}));  // a secret from the host environment
+    s.load();
+    CHECK(toolEnvironment(s).count("TONE3000_CLIENT_ID") == 0);
+  }
+}
+
+TEST_CASE("tool environment: the command line and the '=' path guard", "[settings][toolenv]") {
+  const ToolEnvMap env{{"A", "1"}, {"TONE3000_CLIENT_ID", "t3k_pub_x"}};
+  CHECK(toolPathProblem("/venv/bin/sawblade-t3k").empty());
+#ifndef _WIN32
+  const auto cmd = toolCommand("/venv/bin/sawblade-t3k", {"whoami", "--json"}, env);
+  REQUIRE(cmd.size() == 6);
+  CHECK(cmd[0] == "/usr/bin/env");
+  CHECK(cmd[1] == "A=1");
+  CHECK(cmd[2] == "TONE3000_CLIENT_ID=t3k_pub_x");
+  CHECK(cmd[3] == "/venv/bin/sawblade-t3k");
+  CHECK(cmd[5] == "--json");
+  CHECK_THAT(toolPathProblem("/weird=dir/bin/sawblade-t3k"), ContainsSubstring("'='"));
+  // the posix_spawn form: the host environment with the injected values replacing same-named ones
+  ::setenv("TONE3000_CLIENT_ID", "from_host", 1);
+  ::setenv("SAWBLADE_TOOLENV_PROBE", "kept", 1);
+  const auto merged = mergedEnvironment(env);
+  ::unsetenv("TONE3000_CLIENT_ID");
+  ::unsetenv("SAWBLADE_TOOLENV_PROBE");
+  int ids = 0;
+  bool probe = false;
+  for (const auto& e : merged) {
+    if (e.rfind("TONE3000_CLIENT_ID=", 0) == 0) {
+      ++ids;
+      CHECK(e == "TONE3000_CLIENT_ID=t3k_pub_x");
+    }
+    if (e == "SAWBLADE_TOOLENV_PROBE=kept") probe = true;
+  }
+  CHECK(ids == 1);
+  CHECK(probe);
+#endif
+}
+
+TEST_CASE("tool environment: ToolRunner launches with the injected client id and cache dir", "[settings][toolenv][toolrunner]") {
+  TempDir t;
+  const fs::path log = t / "env.txt";
+  const fs::path script = t / "tool.sh";
+  {
+    std::ofstream f(script);
+    f << "#!/bin/sh\necho \"$TONE3000_CLIENT_ID|$SAWBLADE_CACHE_DIR|$PYTHONUNBUFFERED\" > \"" << log.string() << "\"\n";
+  }
+  fs::permissions(script, fs::perms::owner_all);
+  ::unsetenv("TONE3000_CLIENT_ID");
+  Settings s(t / "s.json", makeEnv(t.dir));
+  s.load();
+  REQUIRE(s.setTone3000ClientId("t3k_pub_runner").ok);
+  ToolRunner runner(s);
+  ToolRequest req;
+  req.tool = "sawblade-t3k";
+  req.executable = script;
+  req.callbacksOnMessageThread = false;
+  auto c = runTool(runner, std::move(req));
+  REQUIRE(waitDone(*c, 10000ms));
+  CHECK(c->done->outcome == ToolResult::Outcome::Ok);
+  std::ifstream in(log);
+  std::string line;
+  std::getline(in, line);
+  CHECK(line == "t3k_pub_runner|" + s.effectiveCaptureCacheDir().string() + "|1");
 }

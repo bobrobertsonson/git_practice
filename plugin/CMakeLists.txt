@@ -65,6 +65,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/skin/RigView.cpp
   src/settings/Settings.cpp
   src/settings/ToolRunner.cpp
+  src/settings/ToolEnv.cpp
   src/settings/SettingsPanel.cpp
   src/about/CaptureList.cpp
   src/about/AboutBox.cpp
