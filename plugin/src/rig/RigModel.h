@@ -116,7 +116,6 @@ void setInvertB(Preset& p, bool invert, const AlignResult& measured = {});
 // made explicit first). The Settings / rig "RECORD DYNAMICS" toggle only changes dynamicsMode.
 GateParams& activeGateForEdit(Preset& p);
 BusCompParams& activeCompForEdit(Preset& p);
-void setDynamicsMode(Preset& p, DynamicsMode m);
 enum class GateField { Threshold, Hysteresis, Attack, Hold, Release, Range, Ratio, KeyHpf };
 struct Range {
   double lo, hi;

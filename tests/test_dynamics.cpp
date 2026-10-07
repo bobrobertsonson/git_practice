@@ -157,7 +157,11 @@ TEST_CASE("Floor follower: follows a -12 dB input change without a re-match", "[
   Gate g = makeGate(floorGate());
   feed(g, riff(-70.0, 6.0, true), 512);
   const double t0 = g.openThresholdDb();
-  feed(g, riff(-82.0, 6.0, true, 5), 512);
+  // The whole input (notes and floor) scaled by -12 dB.
+  std::vector<float> scaled = riff(-70.0, 6.0, true, 5);
+  const auto k = static_cast<float>(std::pow(10.0, -12.0 / 20.0));
+  for (float& s : scaled) s *= k;
+  feed(g, scaled, 512);
   CHECK(std::fabs((g.openThresholdDb() - t0) - (-12.0)) < 1.0);
 }
 

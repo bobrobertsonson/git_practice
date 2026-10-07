@@ -971,6 +971,7 @@ void SawbladeProcessor::applyLiveEdit(const std::function<void(Preset&)>& edit) 
   publishLive();
 }
 
+// Same caveat as applyLiveEdit: a structural load that is in flight at the same time can overwrite this when it commits.
 void SawbladeProcessor::setDynamicsMode(DynamicsMode m) {
   double thr = 0.0;
   {

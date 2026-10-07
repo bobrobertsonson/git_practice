@@ -160,5 +160,34 @@ TEST_CASE("Dynamics policy: the export follows the active set", "[dynamics][expo
   CHECK(rec.dynamics == "record");
   CHECK(rec.compOn);
   CHECK(rec.compReleaseMs == 100.0);
-  CHECK_FALSE(json(buildExportNotes(p, "nocab", false)).contains("dynamics"));
+  CHECK(json(buildExportNotes(p, "nocab", false))["dynamics"] == "record");
+}
+
+TEST_CASE("Dynamics policy: a host threshold move in live mode leaves the record gate alone", "[dynamics][mapping]") {
+  Preset p = parseFile(writeDynPreset(TempDir().dir, "match"));
+  p.dynamicsMode = DynamicsMode::Live;  // live set derived, not explicit
+  REQUIRE_FALSE(p.liveDynamics.has_value());
+  ParamValues v = paramsFromPreset(p);
+  applyParams(p, v);  // an unchanged value makes nothing explicit
+  CHECK_FALSE(p.liveDynamics.has_value());
+  v[kGateThreshold] = -43.0;
+  applyParams(p, v);
+  REQUIRE(p.liveDynamics.has_value());
+  CHECK(p.liveDynamics->gate.thresholdDb == -43.0);
+  CHECK(p.liveDynamics->gate.thresholdMode == GateThresholdMode::FloorRelative);  // still the derived set otherwise
+  CHECK(p.gate.thresholdDb == -50.0);  // the record gate is untouched
+}
+
+TEST_CASE("Dynamics policy: toggling the mode invalidates the applied-candidate export source", "[dynamics][audition]") {
+  TempDir t;
+  Host h(48000.0, 512);
+  h.load(writeIdentityPreset(t.dir, "orig", 0));
+  const fs::path cand = writeDynPreset(t.dir, "match");
+  std::string err;
+  REQUIRE(h.p.audition().audition(cand, &err));
+  REQUIRE(h.p.audition().apply());
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(h.p.audition().currentCandidateFile().has_value());  // applied candidate == current preset (live by default)
+  h.p.setDynamicsMode(DynamicsMode::Record);
+  CHECK_FALSE(h.p.audition().currentCandidateFile().has_value());  // the file says live, the rig records: not the same preset
 }

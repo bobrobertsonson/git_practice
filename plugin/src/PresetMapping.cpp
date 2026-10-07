@@ -84,8 +84,16 @@ ParamValues paramsFromPreset(const Preset& p) {
 void applyParams(Preset& p, const ParamValues& v) {
   p.inputGainDb = v[kInputGain];
   p.outputGainDb = v[kOutputGain];
-  if (p.liveDynamics && effectiveDynamicsMode(p) == DynamicsMode::Live) p.liveDynamics->gate.thresholdDb = v[kGateThreshold];
-  else p.gate.thresholdDb = v[kGateThreshold];  // record mode, or a live set derived from / equal to the record set
+  if (effectiveDynamicsMode(p) == DynamicsMode::Live) {
+    // The parameter belongs to the live set. A derived live set is made explicit only when the value really differs, and the
+    // record gate (what the matcher fitted) is left alone.
+    if (p.liveDynamics || v[kGateThreshold] != activeDynamics(p).gate.thresholdDb) {
+      if (!p.liveDynamics) p.liveDynamics = liveDynamicsOf(p);
+      p.liveDynamics->gate.thresholdDb = v[kGateThreshold];
+    }
+  } else {
+    p.gate.thresholdDb = v[kGateThreshold];
+  }
   p.blend = v[kBlend];
   p.a.levelDb = v[kLevelA];
   p.b.levelDb = v[kLevelB];

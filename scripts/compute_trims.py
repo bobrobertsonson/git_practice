@@ -90,7 +90,7 @@ def patch_preset(text: str, trim_db: float, digest: str) -> str:
     out["autoTrimDb"] = round(trim_db, TRIM_DECIMALS)
     out["autoTrimHash"] = digest
     edits = []  # (start, end, replacement)
-    if "version" in spans and spans["version"][2] != 3:
+    if "version" in spans and spans["version"][2] not in (3, 4):  # never downgrade a v4 file
         edits.append((spans["version"][0], spans["version"][1], "3"))
     if old_out:
         edits.append((old_out[0], old_out[1], render_output(out, text[old_out[0]:old_out[1]], indent)))

@@ -50,6 +50,7 @@ class PresetAudition {
     std::filesystem::file_time_type mtime{};
     std::uint64_t builds = 0;
     std::string presetName;
+    DynamicsMode mode = DynamicsMode::Record;  // a RECORD DYNAMICS toggle changes the preset without a rebuild
     std::vector<float> params;
     bool operator==(const CacheKey&) const = default;
   };

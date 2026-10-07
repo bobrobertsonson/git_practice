@@ -378,7 +378,6 @@ GateParams& activeGateForEdit(Preset& p) {
 BusCompParams& activeCompForEdit(Preset& p) {
   return effectiveDynamicsMode(p) == DynamicsMode::Live ? liveSetForEdit(p).busComp : p.busComp;
 }
-void setDynamicsMode(Preset& p, DynamicsMode m) { p.dynamicsMode = m; }
 
 Range gateRange(GateField f) {
   switch (f) {

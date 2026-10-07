@@ -290,9 +290,9 @@ json buildExportNotesFromJson(const json& preset, const std::string& mode, bool 
 
   json notes = {{"version", kExportNotesVersion}, {"mode", mode}, {"stages", stages}, {"loaderOrder", order}};
   if (stages.empty()) notes["message"] = kNothing;
-  // Which dynamics set the rig (and so the model) follows. Only written for "live": a record rig has no key, so notes of
-  // presets without dynamicsMode stay identical to the exporter's (the parity fixtures).
-  if (strOf(preset, "dynamicsMode") == "live") notes["dynamics"] = "live";
+  // Which dynamics set the rig (and so the model) follows: written whenever the preset has a dynamicsMode key. No key (the
+  // parity fixtures) writes no line.
+  if (has(preset, "dynamicsMode")) notes["dynamics"] = strOf(preset, "dynamicsMode") == "live" ? "live" : "record";
   return notes;
 }
 
