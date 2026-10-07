@@ -281,7 +281,7 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     # files (names relative to the output directory): a1 = {primary}; a2 = {primary, container, full, lite}
     paths = {k: Path(v) for k, v in tres.files.items()} if a2 else {"primary": tres.nam_path}
     if a2:
-        paths = {"primary": paths[size], **paths}
+        paths = {"primary": paths[size], **{k: paths[k] for k in ("container", "full", "lite")}}
         report["training"]["submodels"] = tres.submodels
         report["training"]["parametersContainer"] = tres.params
         # the pinned core's A2 fast path (port of is_a2_shape): the standalone files should take it
