@@ -44,6 +44,7 @@
       }
     ],
     "loaderOrder": "Loader order: gate -> NAM model -> cab IR",
+    "trainingNote": "Trained on the NAM standard input v3.0.0.",
     "deviceProfiles": {
       "anagram": {
         "device": "Anagram",

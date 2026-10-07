@@ -647,7 +647,7 @@ struct ExportPanel::Impl {
       if (name.empty() && !res.namFile.empty()) name = exportBaseName(res.namFile) + ".anagram_notes.txt";
       if (!name.empty()) anagramFile = fromUtf8((snap.outDir / fs::path(name).filename()).string());
     }
-    notesTextShown = fromUtf8(anagramShown ? formatAnagramNotesTxt(profile, presetName, licence) : formatNotesTxt(notes, presetName, licence));
+    notesTextShown = fromUtf8(anagramShown ? formatAnagramNotesTxt(profile, presetName, licence, notes.is_object() && notes.contains("trainingNote") && notes["trainingNote"].is_string() ? notes["trainingNote"].get<std::string>() : std::string()) : formatNotesTxt(notes, presetName, licence));
     if (notesBox.getText() != notesTextShown) notesBox.setText(notesTextShown, juce::dontSendNotification);
     juce::String src = fromReport ? juce::String("from the export report (sawblade-export)")
                        : done    ? juce::String("(computed by the plugin)")

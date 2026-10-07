@@ -316,7 +316,11 @@ std::string formatNotesTxt(const json& notes, const std::string& presetName, con
       t += std::to_string(i) + ". " + strOf(st, "stage") + " [" + strOf(st, "position") + "]\n   " + strOf(st, "hardware") + "\n\n";
     }
   }
-  t += strOf(notes, "loaderOrder") + "\n\n" + (licenceNote.empty() ? std::string(kExportNotesDisclaimer) : licenceNote) + "\n";
+  // The exporter's training sentence (exportNotes.trainingNote) sits between the loader order and the licence line.
+  const json tn = get(notes, "trainingNote");
+  if (tn.is_string() && !tn.get<std::string>().empty()) t += strOf(notes, "loaderOrder") + "\n\n" + tn.get<std::string>() + "\n\n";
+  else t += strOf(notes, "loaderOrder") + "\n\n";
+  t += (licenceNote.empty() ? std::string(kExportNotesDisclaimer) : licenceNote) + "\n";
   return t;
 }
 
@@ -376,7 +380,7 @@ json anagramProfileOf(const json& notes) {
 
 std::string anagramNotesFileName(const json& profile) { return firstString(profile, {"file", "notesFile", "txtFile"}); }
 
-std::string formatAnagramNotesTxt(const json& profile, const std::string& presetName, const std::string& licenceNote) {
+std::string formatAnagramNotesTxt(const json& profile, const std::string& presetName, const std::string& licenceNote, const std::string& trainingNote) {
   std::string t = "Sawblade export notes for the Anagram" + (presetName.empty() ? std::string() : " - " + presetName) + "\n\n";
   const json stages = profileStages(profile);
   const std::string message = firstString(profile, {"message"});
@@ -408,6 +412,7 @@ std::string formatAnagramNotesTxt(const json& profile, const std::string& preset
   }
   const std::string order = firstString(profile, {"loaderOrder", "chain"});
   if (!order.empty()) t += order + "\n\n";
+  if (!trainingNote.empty()) t += trainingNote + "\n\n";
   t += (licenceNote.empty() ? std::string(kExportNotesDisclaimer) : licenceNote) + "\n";
   return t;
 }

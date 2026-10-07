@@ -344,6 +344,17 @@ TEST_CASE("export report: A2 files block, the primary file, the validation of th
   CHECK(txt.find("(KosmOS 1.16 or later), in signal order:\n") != std::string::npos);  // same header as the Python text
   CHECK(txt.find("Own use only.") != std::string::npos);
   CHECK(txt.find("model: riff-nocab-full.a2.nam\n") != std::string::npos);
+  // exportNotes.trainingNote: after the loader order, before the licence line (as the Python text); the panel passes it in
+  const std::string tn = notes["trainingNote"].get<std::string>();
+  CHECK(tn == "Trained on the NAM standard input v3.0.0.");
+  const std::string withTn = formatAnagramNotesTxt(profile, "My riff", "Own use only.", tn);
+  CHECK(withTn.find("Anagram chain: Gate -> Neural Amp -> IR\n\n" + tn + "\n\nOwn use only.\n") != std::string::npos);
+  CHECK(txt.find(tn) == std::string::npos);  // none given: nothing added
+  const std::string generic = formatNotesTxt(notes, "My riff", "Own use only.");
+  CHECK(generic.find("Loader order: gate -> NAM model -> cab IR\n\n" + tn + "\n\nOwn use only.\n") != std::string::npos);
+  json noTn = notes;
+  noTn["trainingNote"] = 5;  // wrong type: ignored
+  CHECK(formatNotesTxt(noTn, "My riff", "Own use only.").find("cab IR\n\nOwn use only.\n") != std::string::npos);
   // The profile's `message` is data: neither the Python txt nor the plugin's prints it when there are stages (it is the empty-profile text).
   CHECK(profile["message"] == "Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later.");
   CHECK(txt.find("Load the .nam into any NAM A2 block") == std::string::npos);

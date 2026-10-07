@@ -53,6 +53,9 @@ nlohmann::json anagramProfileOf(const nlohmann::json& notes);
 // The file name the profile names for its text file ("" = it names none).
 std::string anagramNotesFileName(const nlohmann::json& profile);
 // The text of the Anagram view of the notes box (also what COPY copies). Never throws; foreign / missing members are skipped.
-std::string formatAnagramNotesTxt(const nlohmann::json& profile, const std::string& presetName = {}, const std::string& licenceNote = {});
+// `trainingNote` = exportNotes.trainingNote (the exporter's training sentence; "" = none), placed before the licence line like the
+// Python text.
+std::string formatAnagramNotesTxt(const nlohmann::json& profile, const std::string& presetName = {}, const std::string& licenceNote = {},
+                                  const std::string& trainingNote = {});
 
 }  // namespace sawblade::plugin
