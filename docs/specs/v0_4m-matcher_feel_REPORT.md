@@ -99,7 +99,24 @@ show its value when the reference is a render of the same kind of chain — that
 
 ## Mac validation commands
 
-Run in Terminal on the Mac. Paste the printed summaries (step 7) back to the lead; listen to step 4's `listen/` files.
+Run in Terminal on the Mac (your shell is zsh, so the script is started with `bash`). Two lines:
+
+```
+cd ~/sawblade && git fetch origin claude/sawblade-v0_4m-matcher-feel && git checkout claude/sawblade-v0_4m-matcher-feel && scripts/mac_update.sh --no-models
+bash scripts/run_v04m_validation.sh            # add --quick-only first if you want a few-minute smoke test
+```
+
+The script rebuilds the Python core, installs the matcher, indexes your IR folder, runs the left-side quick timing run and the thorough
+HM2 / UBR runs (with `--listen`), the seven `--ablate` quick runs, and the right-side held-out runs when the R files are found (in the
+Bloodbath folder, else searched under `~/Desktop/NailTheMix/...`; otherwise it says so and skips them). It then prints the step-7
+summary and the `pre-EQ: DI tilt` lines, and the `open ".../listen"` commands for the A/B folders. Everything is logged to
+`~/sawblade-work/v04m_validation.log`; an interrupted run resumes (finished runs are skipped, `--force` redoes them); `--help` lists the
+flags for other file names or folders. Paste the printed summary and tilt lines back to the lead and listen to the `listen/` folders.
+
+### Manual equivalent
+
+The same steps by hand (the script is exactly this, with the paths as defaults). Paste the printed summaries (step 7) back to the lead;
+listen to step 4's `listen/` files.
 
 ### 1. Update (once)
 
