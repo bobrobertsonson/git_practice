@@ -230,3 +230,14 @@ def test_notes_preset_problems():
     kept = copy.deepcopy(orig)
     kept["busComp"]["ratio"] = 9.0                             # trained keeps its comp: settings must match
     assert "different bus comp settings" in P.notes_preset_problems(kept, orig)[0]
+
+
+def test_notes_preset_ignores_derived_auto_trim():
+    orig = full()
+    orig["output"] = {"gainDb": -3.0, "autoTrimDb": -4.2, "autoTrimHash": "abc"}
+    trained = copy.deepcopy(orig)
+    trained["busComp"]["enabled"] = False
+    trained["output"] = {"gainDb": -3.0}                       # the plugin strips autoTrimDb / autoTrimHash
+    assert P.notes_preset_problems(trained, orig) == []
+    trained["output"]["gainDb"] = -4.0                         # a real output change is still refused
+    assert "beyond the bus comp" in P.notes_preset_problems(trained, orig)[0]

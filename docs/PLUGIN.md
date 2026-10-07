@@ -710,6 +710,9 @@ test seam (default `juce::SystemClipboard`).
 running that Python (`generate.py` there has the command) and `plugin/tests/test_export_notes.cpp` requires the C++ output to
 equal them (numbers within 1e-9, strings and the txt exact). If v0.4M changes the format before or after it merges, regenerate the
 fixtures and follow in the port; a report whose `version` differs is not shown (the plugin's notes are).
+*Notes-preset contract:* for a no-cab DROP COMP export (and its resume) the plugin writes the original rig, comp on, to
+`<jobs>/inputs/<hash16>.notes_preset.json` and passes it as `--notes-preset`, so the report's notes still list the comp; the
+exporter refuses a resume without the same file (`match/README.md`, export section).
 
 **Mode and comp rules.** A rig whose no-cab export is exact (shared cab, `irMix`, or no cab) defaults to NO CAB; per-path cabs
 (studio blend) default to WITH CAB and the NO CAB card is disabled. A mode saved in the state is honoured only while it is exact

@@ -151,6 +151,8 @@ NON_TONE_KEYS = ("name", "notes", "export", "playAlong", "category")
 
 def _tone_hash(preset: dict, drop_comp: bool) -> str:
     q = {k: v for k, v in preset.items() if k not in NON_TONE_KEYS and not (drop_comp and k == "busComp")}
+    if isinstance(q.get("output"), dict):      # the plugin clears the derived auto trim from the exported preset
+        q["output"] = {k: v for k, v in q["output"].items() if k not in ("autoTrimDb", "autoTrimHash")}
     return preset_hash(q)
 
 

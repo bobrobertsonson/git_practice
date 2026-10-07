@@ -1111,3 +1111,11 @@ def test_mock_resume_needs_the_same_notes_preset(mx):
     d3 = _unfinished(mx, "run-p")                                 # a run without a notes preset refuses one given now
     with pytest.raises(P.ExportRefused, match="notes preset differs"):
         mx.go(resume=str(d3), notes_preset=str(f))
+
+
+def test_mock_notes_preset_must_be_an_object(mx):
+    f = mx.tmp / "list.json"
+    f.write_text("[1, 2]")
+    with pytest.raises(P.ExportRefused, match="not a preset object"):
+        mx.go(out=str(mx.tmp / "o"), notes_preset=str(f))
+    assert not mx.fake.calls
