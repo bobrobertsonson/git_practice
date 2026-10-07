@@ -16,6 +16,7 @@ from .types import Tone
 
 SLOT_GEAR = {"pedal": "pedal", "amp": "amp", "cab": "cab"}
 ALL_SLOTS = ("pedal", "amp", "cab")
+IR_GEAR = SLOT_GEAR["cab"]         # the tones/search `gears` value of IR tones; used by --search (cab slot) and --ir-search
 
 
 def collect(
@@ -26,6 +27,7 @@ def collect(
     latest: bool = True,
     searches: Iterable[str] = (),
     add_tones: Iterable[int] = (),
+    ir_searches: Iterable[str] = (),
 ) -> tuple[dict[int, Tone], dict[int, list[str]]]:
     """Favorited (always) + free-tier trending/latest; ``searches`` (each a tones/search query) and
     ``add_tones`` (specific ids, source ``lead-pick``) are opt-in. Duplicates merge, sources accumulate."""
@@ -49,6 +51,8 @@ def collect(
     for q in searches:
         # Opt-in; check the TONE3000 API terms before sharing anything that uses search.
         add("search", client.search(q, gears=gears))
+    for q in ir_searches:      # IR-only searches (cab families); same opt-in terms as --search
+        add("ir-search", client.search(q, gears=IR_GEAR))
     for tid in add_tones:
         add("lead-pick", [client.get_tone(tid)])
     return tones, sources
@@ -84,17 +88,24 @@ def build_pool(
     force_tones: Iterable[int] = (),
     download: bool = True,
     max_models_per_tone: int = 3,
+    max_ir_models_per_tone: int | None = None,
+    ir_searches: Iterable[str] = (),
     now: datetime | None = None,
 ) -> dict[str, Any]:
+    """``max_models_per_tone`` caps downloads of pedal/amp tones; ``max_ir_models_per_tone`` (None = all) those of IR tones
+    (cab slot: an IR pack's models are the individual IRs, the screen of the matcher ranks them cheaply).
+    ``ir_searches`` add IR tones from tones/search (gear ir), under the same filter and licence rules."""
     now = now or datetime.now(timezone.utc)
     slots = list(slots)
+    ir_searches = list(dict.fromkeys(ir_searches))
+    eval_slots = slots + ["cab"] if ir_searches and "cab" not in slots else slots    # slots decides what is *collected*
     searches = list(dict.fromkeys(searches))
     force_tones = list(dict.fromkeys(int(t) for t in force_tones))
     # a forced tone is also a lead pick, so it is fetched even without --add-tone
     add_tones = list(dict.fromkeys([*(int(t) for t in add_tones), *force_tones]))
     tones, sources = collect(client, slots, trending=trending, latest=latest, searches=searches,
-                             add_tones=add_tones)
-    decisions, thresholds = evaluate(tones, sources, cfg, now, gears=slots, forced=force_tones)
+                             add_tones=add_tones, ir_searches=ir_searches)
+    decisions, thresholds = evaluate(tones, sources, cfg, now, gears=eval_slots, forced=force_tones)
 
     for d in decisions:
         if d.status != "included":
@@ -107,8 +118,9 @@ def build_pool(
         arch, models = found
         d.models = [{"id": m.id, "name": m.name, "architecture_version": m.architecture_version,
                      "size": m.size, "architecture_queried": arch} for m in models]
-        if download:  # cap per tone so 168-IR packs are not bulk-downloaded
-            for m in models[:max_models_per_tone]:
+        if download:  # pedals/amps: cap per tone; IR tones: all models (each is one IR of the pack) unless capped
+            cap_n = max_ir_models_per_tone if d.slot == "cab" else max_models_per_tone
+            for m in models[:cap_n]:
                 e = ensure_capture(client, cache, d.tone, m)
                 d.downloads.append({"model_id": m.id, "path": str(e.path), "sha256": e.sha256})
 
@@ -121,9 +133,10 @@ def build_pool(
         "generated_at": now.isoformat(timespec="seconds"),
         "config": config_dict(cfg),
         "max_models_per_tone": max_models_per_tone,
+        "max_ir_models_per_tone": max_ir_models_per_tone,
         "slots": slots,
         "sources": {"favorited": True, "trending": trending, "latest": latest,
-                    "search": searches, "lead_picks": add_tones, "forced": force_tones},
+                    "search": searches, "ir_search": ir_searches, "lead_picks": add_tones, "forced": force_tones},
         "popularity_thresholds": thresholds,
         "counts": counts,
         "tones": [decision_to_json(d) for d in decisions if d.status == "included"],

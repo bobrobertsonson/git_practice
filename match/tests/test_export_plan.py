@@ -32,6 +32,24 @@ def irmix_preset(base: dict, mix: float = 0.3) -> dict:
     return p
 
 
+def boosted(base: dict, typ: str = "pedal.ts") -> dict:
+    p = copy.deepcopy(base)
+    blocks = p["paths"]["a"]["blocks"]
+    blocks.insert(len(blocks) - 1, {"id": "a_boost", "type": typ, "slot": "boost", "modelVersion": 1,
+                                    "params": {"drive": 1.0, "tone": 5.0, "level": 8.0}})
+    return p
+
+
+def test_modeled_pedals_are_trainable_so_a_boosted_match_can_be_exported(shared):
+    """The matcher's tight boost is a pedal.ts block; the core registry declares every modeled pedal NAM-trainable."""
+    for typ in ("pedal.ts", "pedal.hm", "pedal.muff", "pedal.hmx", "pedal.eye"):
+        p = boosted(shared, typ)
+        assert P.make_plan(p, "withcab").exact
+        assert P.make_plan(p, "nocab", allow_inexact=True).mode == "nocab"
+    with pytest.raises(P.ExportRefused, match="not NAM-trainable"):
+        P.make_plan(boosted(shared, "pedal.delay"), "withcab")
+
+
 def test_irmix_is_live_compatible_nocab_allowed(shared):
     p = irmix_preset(shared)
     pl = P.make_plan(p, "nocab")

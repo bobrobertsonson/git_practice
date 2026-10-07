@@ -34,6 +34,11 @@ class Capture:
     kind: str = ""       # gear class (classify.py): drive | distortion | fuzz | preamp | pedal_unknown | amp_low | amp_high | cab
     arch: str = ""       # manifest architecture_version ("1"/"2")
     size_label: str = "" # manifest size, else lite/feather/xstandard/standard parsed from the model name
+    provider: str = "tone3000"     # "local": a file of the user's own IR library (irlib.py), licence "user-owned"
+    local_id: str = ""             # local only: sha256[:16] of the original file
+    orig_path: str = ""            # local only: the user's file (``path`` is the file the core loads: a converted copy for aif/flac)
+    orig_sha: str = ""
+    tags: tuple = ()               # local only: folder/file-name tags (cab, speaker, mic, position)
 
     @property
     def size_rank(self) -> tuple[int, int]:
@@ -46,10 +51,19 @@ class Capture:
 
     @property
     def key(self) -> str:
-        return f"{self.tone_id}/{self.model_id}"
+        return f"local/{self.local_id}" if self.provider == "local" else f"{self.tone_id}/{self.model_id}"
+
+    def source_info(self) -> dict:
+        """Where this capture came from, for result.json."""
+        if self.provider == "local":
+            return {"source": "local", "path": self.orig_path or self.path, "sha256": self.orig_sha, "license": self.license}
+        return {"source": "tone3000", "toneId": self.tone_id, "modelId": self.model_id}
 
     def block_model(self) -> dict:
-        """Preset ``Capture`` object with TONE3000 source ids + resolved file path."""
+        """Preset ``Capture`` object with TONE3000 source ids + resolved file path (local IRs: provider "local")."""
+        if self.provider == "local":
+            return {"file": self.path, "sha256": self.sha256,
+                    "source": {"provider": "local", "id": self.local_id, "title": self.title, "license": self.license}}
         return {"file": self.path, "sha256": self.sha256,
                 "source": {"provider": "tone3000", "id": str(self.tone_id), "modelId": str(self.model_id),
                            "url": self.url, "title": self.title, "creator": self.creator,
@@ -61,6 +75,8 @@ class Pool:
     pedals: list[Capture] = field(default_factory=list)
     amps: list[Capture] = field(default_factory=list)
     cabs: list[Capture] = field(default_factory=list)
+    # tone id -> what the manifest says about it (title, slot, status, models with a downloaded flag); for --trace-tones
+    catalog: dict = field(default_factory=dict)
 
     def counts(self) -> dict:
         out = {"pedals": len(self.pedals), "amps": len(self.amps), "cabs": len(self.cabs)}
@@ -98,19 +114,31 @@ def load_pool(manifest: str | Path, cache_root: Path | None = None) -> Pool:
                                  else default_cache_root()))
     pool = Pool()
     for t in m.get("tones", []):
-        if t.get("status", "included") != "included":
-            continue
         gear = t.get("slot") or t.get("gear")
+        mds = [md for md in t.get("models", []) if "id" in md]        # a model entry without an id is skipped
+        cat = {"title": t.get("title"), "slot": gear, "status": t.get("status", "included"), "license": t.get("license"),
+               "models": [{"modelId": int(md["id"]), "name": md.get("name", ""), "downloaded": False}
+                          for md in mds], "reason": None}
+        try:
+            pool.catalog[int(t["tone_id"])] = cat
+        except (KeyError, TypeError, ValueError):
+            pass
+        if t.get("status", "included") != "included":
+            cat["reason"] = f"status {t.get('status')}"
+            continue
         if gear not in ("pedal", "amp", "cab"):
+            cat["reason"] = f"gear {gear!r} is not a pool slot"
             continue
         try:
             check_license(t.get("license"), f"tone {t['tone_id']}")
         except Exception:
+            cat["reason"] = f"license {t.get('license')!r} not allowed"
             continue
-        for md in t.get("models", []):
+        for md, cm in zip(mds, cat["models"]):
             entry = cache.get(t["tone_id"], md["id"])
             if entry is None:      # not downloaded (or sha mismatch): not a candidate
                 continue
+            cm["downloaded"] = True
             kind = md.get("classOverride") or t.get("classOverride") or classify(gear, t["title"], md.get("name", ""))
             allowed = {"pedal": PEDAL_CLASSES, "amp": AMP_CLASSES, "cab": ("cab",)}[gear]
             if kind not in allowed:

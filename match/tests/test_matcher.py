@@ -637,7 +637,8 @@ def test_determinism_with_seed(tmp_path):
 
 
 def test_listening_stereo_with_di_r(tmp_path):
-    """--di-r path: L and R renders are hard-panned into one stereo file with a single peak-normalising gain."""
+    """--di-r path: L and R renders are hard-panned into one stereo float file; no reference -> no loudness matching and
+    no peak normalisation (gain 0 dB)."""
     from sawblade_match.matcher.run import _listening
     fs = 44100
     rng = np.random.default_rng(0)
@@ -647,9 +648,8 @@ def test_listening_stereo_with_di_r(tmp_path):
     info = _listening(tmp_path, {"best_L": (yl, fs, {}), "best_R": (yr, fs, {})}, cfg, lambda *_: None)
     st, rate = sf.read(info["wav"], dtype="float32")
     assert rate == fs and st.shape == (fs - 7, 2) and "cover_guitars_L-R" in info["wav"]
-    g = 10 ** (info["normalisationGainDb"] / 20)
-    assert np.max(np.abs(st)) == pytest.approx(10 ** (-1 / 20), abs=1e-3)
-    assert np.allclose(st[:, 0], yl[:fs - 7] * g, atol=2e-6) and np.allclose(st[:, 1], yr * g, atol=2e-6)
+    assert info["loudnessMatched"] is False and info["fullLengthGainDb"] == 0.0
+    assert np.array_equal(st[:, 0], yl[:fs - 7]) and np.array_equal(st[:, 1], yr)
     assert np.corrcoef(st[:, 0], st[:, 1])[0, 1] < 0.2                  # not a mono copy
     assert Path(info.get("mp3", info["wav"])).exists()
     # without R: mono-in-both
@@ -734,3 +734,32 @@ def test_gate_preset_clamps_digital_silence_floor():
     assert gate_preset(-200.0)["thresholdDb"] == -86.0          # inside the schema range [-120, 0]
     assert gate_preset(-90.0)["thresholdDb"] == -86.0
     assert gate_preset(-37.1)["thresholdDb"] == pytest.approx(-33.1)   # normal floors are unchanged
+
+
+def test_stage2_first_linear_block_is_ltas_only(tmp_path, monkeypatch):
+    """Staged objective: refine's first linear block (L1) is scored without the feel term; the start score, the gain
+    block, the final linear block and the final score see the full target."""
+    from sawblade_match.matcher import refine as R
+
+    seen: list[bool] = []                        # per refine-side loss evaluation: does the target carry feel?
+
+    class Spy:
+        def __getattr__(self, name):
+            return getattr(L, name)
+
+        def evaluate(self, out, tgt, eq=None):
+            seen.append(tgt.feel is not None)
+            return L.evaluate(out, tgt, eq)
+
+    monkeypatch.setattr(R, "L", Spy())
+    pool, combo, di, ref = _setup_known(tmp_path, "blend")
+    plan = mkplan(top_k={"blend": 1, "single": 0, "single2": 0}, gens_linear=3, gens_gain=2, gens_final=2,
+                  pop_linear=8, pop_gain=4)
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=7, excerpt_s=2.0, threads=2, plan=plan,
+                 write_audio=False, refine_offsets=False)
+    res = run_match(cfg, Log())
+    n_l1 = 1 + plan.gens_linear * plan.pop_linear          # CMA-ES: initial point + gens x population
+    assert seen[0] is True                                  # start score: full target
+    assert seen[1:1 + n_l1] == [False] * n_l1               # L1: LTAS-only
+    assert len(seen) > 1 + n_l1 and all(seen[1 + n_l1:])    # gain block, L2 and the final score: feel present
+    assert res["best"]["breakdown"]["feelTerms"] is not None
