@@ -337,26 +337,36 @@ def test_train_config_defaults_and_architectures():
     assert T.TrainConfig().size == "standard"                                           # default size
 
 
-def test_a1_sizes_are_nams_official_presets():
-    """Layer layouts of neural-amp-modeler 0.12.3 nam/train/core.py get_wavenet_config:845-955 (0.13.0 dropped them);
-    parameter counts and the 4093-sample receptive field measured with the pinned 0.13.0 WaveNet."""
+_A1_D_1_512 = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+_A1_D_1_64 = [1, 2, 4, 8, 16, 32, 64]
+_A1_D2 = [128, 256, 512, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+# Literal layer layouts of neural-amp-modeler 0.12.3 nam/train/core.py get_wavenet_config:845-955 (0.13.0 dropped them).
+_A1_EXPECT = {"standard": ((16, 8, _A1_D_1_512), (8, _A1_D_1_512), 13801),
+              "lite": ((12, 6, _A1_D_1_64), (6, _A1_D2), 6553),
+              "feather": ((8, 4, _A1_D_1_64), (4, _A1_D2), 3025)}
+
+
+def test_a1_sizes_layout_matches_nams_official_presets():
+    """Pure layout check against literal 0.12.3 values; needs no ``nam`` (runs in the [dev]-only CI job)."""
     from sawblade_match.export import train as T
-    T.import_nam()
-    from nam.models.wavenet import WaveNet
-    d1_512 = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
-    d1_64 = [1, 2, 4, 8, 16, 32, 64]
-    d2 = [128, 256, 512, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
-    expect = {"standard": ((16, 8, d1_512), (8, d1_512), 13801), "lite": ((12, 6, d1_64), (6, d2), 6553),
-              "feather": ((8, 4, d1_64), (4, d2), 3025)}
-    assert set(T.SIZES) == set(expect)
-    for size, ((c1, h1, da), (c2, db), n_params) in expect.items():
+    assert set(T.SIZES) == set(_A1_EXPECT)
+    for size, ((c1, h1, da), (c2, db), _n) in _A1_EXPECT.items():
         cfg = T.wavenet_config(size)
         a, b = cfg["layers_configs"]
         assert (a["channels"], a["head"]["out_channels"], a["dilations"], a["head"]["bias"]) == (c1, h1, da, False)
         assert (b["channels"], b["dilations"], b["head"]["out_channels"], b["head"]["bias"]) == (c2, db, 1, True)
         assert a["kernel_size"] == b["kernel_size"] == 3 and a["activation"] == b["activation"] == "Tanh"
         assert cfg["head_scale"] == 0.02 and not a["gated"] and not b["gated"]
-        net = WaveNet.init_from_config(cfg)
+
+
+def test_a1_sizes_param_counts_and_receptive_field_vs_pinned_wavenet():
+    """Parameter counts (13801 / 6553 / 3025) and the 4093-sample receptive field measured with the pinned 0.13.0 WaveNet."""
+    pytest.importorskip("nam")
+    from sawblade_match.export import train as T
+    T.import_nam()
+    from nam.models.wavenet import WaveNet
+    for size, (_a, _b, n_params) in _A1_EXPECT.items():
+        net = WaveNet.init_from_config(T.wavenet_config(size))
         assert net.receptive_field == 4093
         assert sum(p.numel() for p in net.parameters()) == n_params
 

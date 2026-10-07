@@ -616,7 +616,7 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   report has `validation.acceptance.status` (`met` / `NOT MET` / `not judged (non-standard size)`) and a one-line summary, which the CLI prints; `--require-accept` exits 2 when the status is `NOT MET`.
 * **Listening file.** `listen/ab_original_then_export.mp3`: the DI excerpt through the original chain, 0.8 s gap, then the export
   (RMS-matched to the original; the gain is in the report). The gate is bypassed in both.
-* **Budget and measured results (CPU only).** Defaults: feather 40 epochs / 15 min, lite 30 epochs / 30 min, standard 22 epochs /
+* **Budget and measured results (CPU only; pre-v0.6 layout: the lite/feather numbers below were measured with the old, non-official layer split, and are stale for the official 0.12.3 presets).** Defaults: feather 40 epochs / 15 min, lite 30 epochs / 30 min, standard 22 epochs /
   55 min (whichever comes first; the learning rate decays to 5 % over `--epochs`, `--lr-gamma` overrides), 188 s of training audio =
   1099 datums = 68 steps of batch 16 per epoch. Measured on the shared 4-core box with the matcher's best `original` preset
   (nocab, seed 0): uncontended ~53 s/epoch for lite (4 threads); with other jobs on the cores 100-170 s/epoch for lite and 100-165

@@ -38,7 +38,7 @@ Sources, all read from the installed packages (venv: `pip install -e 'match[expo
 
 ### 1.1 The packed / slimmable container
 
-* `models/factory.py:75-82` registers the nets `ConvNet, Linear, LSTM, Sequential, WaveNet, PackedWaveNet`; `models/wavenet/__init__.py:51-52` exports
+* `models/factory.py:22-29` registers the nets `ConvNet, Linear, LSTM, Sequential, WaveNet, PackedWaveNet` (`PackedWaveNet` imported at `:18`); `models/wavenet/__init__.py:51-52` exports
   `PackedWaveNet` and the classic `WaveNet`.
 * `PackedWaveNet` (`models/wavenet/_packed_wavenet.py:28`) is **one wide network holding several submodels**. Its config is
   `{"submodels": [{"name", "config"}...], "export": {...}}` (`_packed_wavenet.py:41-50`). The submodels must be identical in layer-array count, depth,
@@ -72,7 +72,7 @@ Sources, all read from the installed packages (venv: `pip install -e 'match[expo
 | `sample_rate` | top level, when the net has one (always set by the trainer: 48000.0) | `:164-165` |
 | `metadata` | top level: `date`, `loudness`, `gain` **copied from the highest-quality submodel**, then `UserMetadata` and `other_metadata` merged in (so Sawblade's `sawblade` block can sit on the container) | `:163, 166-169, 223-234` |
 | each `model` | full standalone file: `version`, own `metadata` (date/loudness/gain), `architecture: "WaveNet"`, `config`, `weights`, `sample_rate` | `models/exportable.py:187-194`, `models/base.py:108-119` |
-| export hook | the `Dataset` output-scale hook is applied to the container (every submodel's `head_scale` and last weight, plus loudness) | `_packed_wavenet.py:170`, `data.py:338-388` (`SlimmableContainer` handled at `:43-46`) |
+| export hook | the `Dataset` output-scale hook is applied to the container (every submodel's `head_scale` and last weight, plus loudness) | `_packed_wavenet.py:170`, `data.py:338-388` (`SlimmableContainer` handler `:350`, docstring `:377`) |
 
 A standalone A2 `WaveNet` entry has `config = {"layers": [one array], "head": null, "head_scale": 0.01}`; the array has `channels` 3 or 8, 23 `kernel_sizes`
 (6 x 14, 15, 15, 6 x 7), 23 `dilations` (1,3,7,17,41,101,239 / 1,3,7,17,41,101,239 / 1,13 / 1,3,7,17,41,101,239), 23 `LeakyReLU` (`negative_slope` 0.01) activation objects,
@@ -149,7 +149,7 @@ where stated.
 | `export/train.py:98-109` `A1_PRESETS` / `SIZES` / `DEFAULT_EPOCHS` / `DEFAULT_MAX_MINUTES` | size keys are A1 names (`feather`/`lite`/`standard`); epochs/minute caps tuned for A1 CPU speed | add `--arch a1|a2`; A2 sizes `full`/`lite` (both produced by ONE run, section 1.3) and an A2 default budget (about 1.5x the time per epoch; see section 3) |
 | `export/train.py:143-154` `wavenet_config` | A1 two-array config with the nested 0.13.0 `head` dict | A2 has one array, kernels/dilations lists, LeakyReLU (copy from `config_model_packed.json`, not hand-built) |
 | `export/train.py:238, 244-246, 256` | receptive field read from the net and passed as `nx` (generic); error message mentions it | works for 6347; the minimum training-signal length check is generic. No hard-coded 4093 in code (only in README text) |
-| `export/train.py:249-253` | `NormalizeJointDatasetOutput(-18 dBFS)` + `net.handshake(ds)` | works for the container (hook supports `SlimmableContainer`, `data.py:43-46`); verify with a smoke test in Task C |
+| `export/train.py:249-253` | `NormalizeJointDatasetOutput(-18 dBFS)` + `net.handshake(ds)` | works for the container (hook supports `SlimmableContainer`, `data.py:350`); verify with a smoke test in Task C |
 | `export/train.py:340-345` | one `ESR` and one `val_loss` per epoch; best epoch by `val_loss` | A2: aggregate `ESR`/`val_loss` are sums over submodels (`lightning_module.py:507-527`): read `ESR_packed_i`; best epoch per submodel |
 | `export/train.py:389` | log line says "A1 WaveNet" | name the architecture |
 | `export/train.py:416-436` | one `best.ckpt`; `net.export(outdir, basename, user_metadata, other_metadata)` | A2: per-submodel best checkpoints -> `export_container(checkpoint_paths_by_submodel=...)`; `other_metadata` lands on the container top level (what the core reads) |
@@ -219,6 +219,15 @@ so `ref_a2_full.wav` is also the container's reference.
 
 Expected latency of each fixture: **0 samples** (NAM models are causal; the trainer aligns capture latency out at training time; `audit_core.md` 1.5). Receptive field / warm-up: 6347 samples (132 ms) for A2,
 4093 (85 ms) for A1. The generator pins the metadata `date` (the trainer would stamp "now") so regeneration is byte-identical; that is the only edit after the trainer's export.
+
+## 4b. Test results
+
+Run in this container (Python 3.11 venv with `match[dev,export]` + constraints, `sawblade_core` built from this branch): **2 failed / 713 passed / 7 skipped**.
+
+* The two failures are `test_matcher_v04m.py::test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept` and `test_matcher.py::test_stage2_first_linear_block_is_ltas_only`.
+  Both also fail on the merge base `6701294` in this container, and the CI `python` job is green with the same pins, so they are container-specific (not caused by this task).
+* `tests/fixtures/a2/generate.py --check` regenerates the fixtures byte-identically.
+* `test_a1_sizes_are_nams_official_presets` failed in a `[dev]`-only install (it imports `nam`); fixed in the review round by splitting it into a pure layout test and a `pytest.importorskip("nam")` parameter-count test, plus the `python-export` CI job (decision 17).
 
 ## 5. Decisions / questions for lead
 

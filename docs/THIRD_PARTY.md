@@ -69,6 +69,7 @@ Developer-machine tool, never bundled with the plugin: `pip install -e 'match[ex
 | Name | Version | License | Use |
 |------|---------|---------|-----|
 | neural-amp-modeler (sdatkinson) | 0.13.0 | MIT | The NAM trainer: `Dataset`, `LightningModule`, WaveNet export (`.nam`). Driven programmatically on Sawblade's own training signal (see `match/sawblade_match/export/train.py`); its standard `v3_0_0.wav` input is **not** used or fetched. `tkinter` (imported by `nam.train.core` for a GUI dialog) is stubbed on headless machines. |
+| neural-amp-modeler (sdatkinson) | 0.12.3 (read only, not installed or pinned) | MIT | A1 preset layer sizes (`standard` / `lite` / `feather`) read from `nam/train/core.py:845-955`; no code vendored (see `A1_PRESETS` in `export/train.py`). |
 | pytorch-lightning | 2.6.1 | Apache-2.0 | Training loop (NAM dependency) |
 | librosa, wavio, pydantic, tensorboard, transformers, sounddevice, scikit-learn, numba | see constraints file | ISC / BSD / MIT / Apache-2.0 | Imported or required by NAM 0.13.0 (most are not exercised by Sawblade's path; `sounddevice` is not imported) |
 
