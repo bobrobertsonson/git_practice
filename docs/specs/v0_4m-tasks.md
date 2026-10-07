@@ -313,6 +313,11 @@ Why: the album guitar is a blend of two same-take amp tracks per side (HM2 path 
 - Summary printer and listen list: blend runs first, then single-amp runs; summary also prints each pathcheck's
   per-path LTAS errors, swapped errors, chosen vs reference ratio, singlePath.
 - Dry run (`--dry-run`) prints the refsum / blend / pathcheck commands; the existing dry-run test covers them.
+- Summary printer (`sawblade_match.matcher.validation_summary`): for every run, the matched gate and bus comp in full, one
+  line each, read from the winning preset (`best.preset`, not just `gateFinal`): gate `enabled, mode, thresholdDb,
+  hysteresisDb, attackMs, holdMs, releaseMs, rangeDb, ratio (expander only), keyHighPassHz, releaseCurve` plus the DI noise
+  floor the threshold was set from (`diNoiseFloorDb`, when recorded); busComp `enabled, thresholdDb, ratio, kneeDb, attackMs,
+  releaseMs`, or `busComp: off` when absent. Unit-tested on a fixture result.json (`match/tests/test_validation_summary.py`).
 
 ### Tests
 - refsum: two synthetic tracks (a, b = a delayed 0 samples, different spectra) -> output == a*gA + b*gB to 1e-6, float32,
