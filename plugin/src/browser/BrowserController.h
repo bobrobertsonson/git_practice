@@ -51,7 +51,9 @@ class BrowserController {
   };
 
   // pinnedBlockId (v0.4 Task D): the pedal tile the user selected on the pedalboard ("" = the slot's usual block); see slotTargets().
-  BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot, std::string pinnedBlockId = {});
+  // insert (v0.4 Task B, pedal slots): USE adds a new nam block at that point of the path's pedalboard instead of replacing a capture;
+  // the gear stays "pedal".
+  BrowserController(SawbladeProcessor& p, BrowserSettings& s, Slot slot, std::string pinnedBlockId = {}, std::optional<InsertPoint> insert = std::nullopt);
   ~BrowserController();
   BrowserController(const BrowserController&) = delete;
   BrowserController& operator=(const BrowserController&) = delete;
@@ -62,6 +64,7 @@ class BrowserController {
 
   const State& state() const noexcept { return st_; }
   Slot slot() const noexcept { return slot_; }
+  bool insertMode() const noexcept { return insert_.has_value(); }
   std::vector<const t3k::CaptureRecord*> visible() const;
   const t3k::CaptureRecord* selected() const;
   // What this session knows about the gain ladder of a tone: -1 unknown, 0 none, n >= 2 steps (the processor's `ladder` tool answers). The
@@ -111,6 +114,7 @@ class BrowserController {
   BrowserSettings& settings_;
   Slot slot_;
   std::string pinnedBlockId_;
+  std::optional<InsertPoint> insert_;
   State st_;
   T3kClient client_;
   std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);

@@ -7,7 +7,9 @@
 #include "SawbladeLookAndFeel.h"
 #include "pedals/CircuitParams.h"
 #include "rig/AmpHead.h"
+#include "rig/CapturePedals.h"
 #include "rig/RigModel.h"
+#include "sawblade/auto_trim.h"
 
 namespace sawblade::plugin::rig {
 namespace {
@@ -64,11 +66,12 @@ juce::String pedalName(const Block& b) {
 }
 
 // ---------------------------------------------------------------------------------------------
-BoardTile::BoardTile(int path, int blockIndex, const Block& b)
+BoardTile::BoardTile(int path, int blockIndex, const Block& b, RigController& controller)
     : path_(path),
       index_(blockIndex),
       id_(b.id),
       name_(pedalName(b)),
+      kind_(b.type == "nam" ? PedalKind::Capture : PedalKind::Modeled),  // a tile is before its path's amp: a nam block here is a pedal capture
       circuit_(circuitForBlockType(b.type).has_value()),
       panel_(circuit_ ? skin::Panel::PedalSaw : skin::Panel::PedalBody),
       mmHeight_(circuit_ ? kSawPedalMmHeight : kBodyPedalMmHeight),
@@ -87,6 +90,42 @@ BoardTile::BoardTile(int path, int blockIndex, const Block& b)
   };
   addAndMakeVisible(fs_);
   addAndMakeVisible(led_);
+  if (kind_ == PedalKind::Capture) {
+    const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get());
+    title_ = juce::String(blockTitle(b));
+    if (nam != nullptr) {
+      const Capture& c = nam->model;
+      creator_ = c.source ? (c.source->creator.empty() ? juce::String("UNKNOWN CREATOR") : "@" + juce::String(c.source->creator)) : juce::String("LOCAL FILE");
+      licence_ = c.source ? juce::String(c.source->license).toUpperCase() : juce::String();
+      if (c.source) {
+        toneId_ = c.source->id;
+        modelId_ = c.source->modelId;
+      }
+    }
+    setTooltip(title_ + " " + creator_ + (licence_.isNotEmpty() ? " " + licence_ : juce::String()) + ": a capture, fixed tone (click to select, footswitch = bypass)");
+    const auto rid = id_;
+    const int pth = path;
+    level_ = std::make_unique<PresetKnob>(
+        controller, "LEVEL", skin::FilmstripKnob::Kind::Pedal, L::capture(), skin::FilmstripKnob::Range{kBlockGainMinDb, kBlockGainMaxDb, 0.0, 1, "dB"},
+        [rid, pth](Preset& p, double v) {
+          PathPreset& pp = pth == 0 ? p.a : p.b;
+          for (std::size_t i = 0; i < pp.blocks.size(); ++i)
+            if (pp.blocks[i].id == rid) setBlockOutputGainDb(pp, static_cast<int>(i), v);
+        },
+        /*live=*/true);
+    level_->knob().setTitle("Level " + title_);
+    level_->knob().setTooltip("Output level of this capture, -24 to +24 dB, changes live (drag, shift = fine, double-click = 0)");
+    if (nam != nullptr) level_->setValueFromPreset(nam->outputGainDb);
+    addAndMakeVisible(*level_);
+    selector_.setTitle("Setting " + title_);
+    selector_.setTooltip("Choose another model (setting) of this capture: the capture is swapped, one undo step");
+    selector_.onClick = [this] {
+      settingsMenu().showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&selector_), [safe = juce::Component::SafePointer<BoardTile>(this)](int r) {
+        if (safe != nullptr && r > 0 && r <= static_cast<int>(safe->settings_.size())) safe->chooseSetting(safe->settings_[static_cast<std::size_t>(r - 1)].modelId);
+      });
+    };
+    addChildComponent(selector_);
+  }
   showBypass(b.bypass);
 }
 
@@ -106,6 +145,7 @@ void BoardTile::setSelected(bool s) {
 }
 
 void BoardTile::resized() {
+  if (kind_ == PedalKind::Capture) return layoutCapture();
   const float ppm = static_cast<float>(getHeight()) / mmHeight_;  // design px per mm
   const auto centre = getLocalBounds().toFloat().getCentre();
   // Pedal coordinates: +x right, +y toward the top of the image (the switches sit at negative y).
@@ -116,6 +156,7 @@ void BoardTile::resized() {
 }
 
 void BoardTile::paint(juce::Graphics& g) {
+  if (kind_ == PedalKind::Capture) return paintCapture(g);
   const auto b = getLocalBounds().toFloat();
   const float radius = juce::jlimit(3.0f, 10.0f, b.getWidth() * 10.0f / 180.0f);
   juce::Path clip;
@@ -147,6 +188,77 @@ void BoardTile::paint(juce::Graphics& g) {
   g.drawFittedText(name_, chip.toNearestInt().reduced(3, 1), juce::Justification::centred, 1, 0.5f);
 }
 
+// --- capture tiles ---------------------------------------------------------------------------------------------------------------
+void BoardTile::showLevel(double db) {
+  if (level_) level_->setValueFromPreset(db);
+}
+
+void BoardTile::setSettings(std::vector<CachedModel> models, const std::string& currentModelId) {
+  settings_ = std::move(models);
+  modelId_ = currentModelId;
+  juce::String current = "SETTING";
+  for (const auto& m : settings_)
+    if (m.modelId == currentModelId) current = juce::String(m.name).toUpperCase();
+  selector_.setButtonText(current + juce::String::fromUTF8(" \xe2\x96\xbe"));
+  selector_.setVisible(hasSelector());
+  if (kind_ == PedalKind::Capture) layoutCapture();
+}
+
+juce::PopupMenu BoardTile::settingsMenu() const {
+  juce::PopupMenu m;
+  int id = 1;
+  for (const auto& s : settings_) m.addItem(id++, juce::String(s.name), true, s.modelId == modelId_);
+  return m;
+}
+
+void BoardTile::chooseSetting(const std::string& modelId) {
+  if (modelId == modelId_) return;
+  const auto cb = onSetting;
+  if (cb) cb(*this, modelId);
+}
+
+void BoardTile::layoutCapture() {
+  const float w = static_cast<float>(getWidth()), h = static_cast<float>(getHeight());
+  const float fsSize = 0.17f * h;
+  fs_.setBounds(juce::Rectangle<float>(0.0f, 0.0f, fsSize, fsSize + static_cast<float>(skin::FootswitchButton::kPressOffsetPx)).withCentre({w * 0.5f, h * 0.885f}).toNearestInt());
+  led_.setBounds(skin::LedIndicator::boundsFor({w * 0.82f, h * 0.885f}, 0.045f * h));
+  selector_.setBounds(juce::Rectangle<float>(w * 0.08f, h * 0.465f, w * 0.84f, h * 0.075f).toNearestInt());
+  if (level_) {
+    const float top = hasSelector() ? 0.55f : 0.47f;
+    const float kh = h * (0.80f - top), kw = std::min(w * 0.84f, kh * 0.9f);
+    level_->setBounds(juce::Rectangle<float>(kw, kh).withCentre({w * 0.5f, h * (top + 0.80f) * 0.5f}).toNearestInt());
+  }
+}
+
+void BoardTile::paintCapture(juce::Graphics& g) {
+  const auto b = getLocalBounds().toFloat();
+  const float w = b.getWidth(), h = b.getHeight();
+  const float radius = juce::jlimit(3.0f, 10.0f, w * 10.0f / 180.0f);
+  g.setColour(L::panel());
+  g.fillRoundedRectangle(b, radius);
+  if (bypassed()) {
+    g.setColour(juce::Colours::black.withAlpha(0.35f));
+    g.fillRoundedRectangle(b, radius);
+  }
+  paintKindOutline(g, PedalKind::Capture, b, radius, L::capture());
+  paintKindBadge(g, PedalKind::Capture, juce::Rectangle<float>(w * 0.08f, h * 0.045f, w * 0.62f, h * 0.075f));
+  g.setColour(L::text());
+  g.setFont(L::labelFont(std::max(8.0f, h * 0.062f)));
+  g.drawFittedText(title_, juce::Rectangle<float>(w * 0.08f, h * 0.14f, w * 0.84f, h * 0.15f).toNearestInt(), juce::Justification::topLeft, 2, 0.7f);
+  g.setColour(L::dimText());  // where a modeled tile shows its circuit name: the creator
+  g.setFont(L::bodyFont(std::max(8.0f, h * 0.05f)));
+  g.drawFittedText(creator_, juce::Rectangle<float>(w * 0.08f, h * 0.295f, w * 0.84f, h * 0.06f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+  if (licence_.isNotEmpty()) {
+    g.setColour(L::sawText());
+    g.setFont(L::labelFont(std::max(7.0f, h * 0.042f)));
+    g.drawFittedText(licence_, juce::Rectangle<float>(w * 0.08f, h * 0.355f, w * 0.84f, h * 0.05f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+  }
+  g.setColour(L::dimText());
+  g.setFont(L::labelFont(std::max(6.0f, h * 0.036f)));
+  g.drawFittedText(juce::String::fromUTF8("CAPTURE \xc2\xb7 FIXED TONE"), juce::Rectangle<float>(w * 0.08f, h * 0.41f, w * 0.84f, h * 0.045f).toNearestInt(),
+                   juce::Justification::centredLeft, 1, 0.6f);
+}
+
 void BoardTile::paintOverChildren(juce::Graphics& g) {
   if (!selected_) return;
   g.setColour(path_ == 0 ? L::saw() : L::body());
@@ -161,8 +273,8 @@ void BoardTile::mouseDown(const juce::MouseEvent& e) {
     return;
   }
   const auto select = onSelect;
+  const auto g = onGesture;  // both copied first: the first callback may rebuild (destroy) this tile
   if (select) select(*this);
-  const auto g = onGesture;
   if (g) g(*this, Gesture::Down, e);
 }
 
@@ -220,7 +332,7 @@ Pedalboard::Pedalboard(RigController& c) : controller_(c) {
   }
 }
 
-Pedalboard::~Pedalboard() = default;
+Pedalboard::~Pedalboard() { alive_->store(false); }
 
 std::vector<juce::Rectangle<int>> Pedalboard::slotRects(int path, int tiles, bool withAdd) {
   const int slots = std::max(1, tiles + (withAdd ? 1 : 0));
@@ -273,6 +385,14 @@ juce::String Pedalboard::afterAmpText(int path) const {
   return n > 0 ? "+" + juce::String(n) + " AFTER AMP (rig editor)" : juce::String();
 }
 
+bool Pedalboard::hasTile(int path, const std::string& id) const {
+  for (const auto& t : paths_[static_cast<std::size_t>(path)].tiles)
+    if (t->blockId() == id) return true;
+  return false;
+}
+
+void Pedalboard::setMouseDownProbe(std::function<bool()> probe) { mouseDown_ = probe ? std::move(probe) : [] { return juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown(); }; }
+
 void Pedalboard::say(const juce::String& m) {
   if (onMessage) onMessage(m);
 }
@@ -280,6 +400,8 @@ void Pedalboard::say(const juce::String& m) {
 void Pedalboard::refresh(const Preset& shown) {
   // A press that never got its mouse-up (lost mouse capture) must not freeze the board for good: give up on it after 10 s.
   if (drag_.tile != nullptr && !drag_.active && juce::Time::getMillisecondCounter() - drag_.downMs > 10000u) drag_ = Drag{};
+  // An ACTIVE drag whose mouse button is no longer down lost its mouse-up (capture stolen): drop the ghost, restore the tile, carry on.
+  if (drag_.tile != nullptr && drag_.active && !mouseDown_()) endDrag(/*drop=*/false);
   if (drag_.tile != nullptr) {  // a tile is pressed or dragged: nothing is rebuilt under the hand; the mouse-up re-reads the preset
     refreshPending_ = true;
     return;
@@ -294,14 +416,21 @@ void Pedalboard::refresh(const Preset& shown) {
     keys.reserve(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
       const Block& b = pp.blocks[static_cast<std::size_t>(i)];
-      keys.push_back({b.id, b.type, pedalName(b)});
+      std::string detail;
+      if (const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get()))
+        detail = nam->model.source ? nam->model.source->id + "/" + nam->model.source->modelId : nam->model.file;
+      keys.push_back({b.id, b.type, pedalName(b), detail});
     }
     v.blocks = static_cast<int>(pp.blocks.size());
     if (off != v.off || keys != v.keys) {
       rebuild(path, pp, std::move(keys), off);
       rebuilt = true;
     } else {
-      for (int i = 0; i < n; ++i) v.tiles[static_cast<std::size_t>(i)]->showBypass(pp.blocks[static_cast<std::size_t>(i)].bypass);
+      for (int i = 0; i < n; ++i) {
+        const Block& b = pp.blocks[static_cast<std::size_t>(i)];
+        v.tiles[static_cast<std::size_t>(i)]->showBypass(b.bypass);
+        if (const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get())) v.tiles[static_cast<std::size_t>(i)]->showLevel(nam->outputGainDb);
+      }
     }
     const bool full = pathFull(path);
     if (v.add->isEnabled() == full) {  // + PEDAL greys while the path holds its 8 blocks (the amp counts)
@@ -325,7 +454,15 @@ void Pedalboard::rebuild(int path, const PathPreset& pp, std::vector<Key> keys, 
   v.off = off;
   v.keys = std::move(keys);
   for (int i = 0; i < static_cast<int>(v.keys.size()); ++i) {
-    auto t = std::make_unique<BoardTile>(path, i, pp.blocks[static_cast<std::size_t>(i)]);
+    auto t = std::make_unique<BoardTile>(path, i, pp.blocks[static_cast<std::size_t>(i)], controller_);
+    if (t->isCapture() && !t->toneId().empty()) {  // the setting selector: the models of the capture's tone that are in the cache
+      auto models = cachedModelsOf(t->toneId());
+      if (models.size() >= 2) t->setSettings(std::move(models), t->modelId());
+    }
+    t->onSetting = [this](BoardTile& tile, const std::string& modelId) {
+      if (const auto cap = cachedToneCapture(tile.toneId(), modelId)) swapPedalCapture(tile.path(), tile.blockId(), *cap);
+      else say("that setting is not in the capture cache");
+    };
     t->onSelect = [this](BoardTile& tile) {
       closePicker();
       if (onSelect) onSelect(tile);
@@ -385,6 +522,7 @@ void Pedalboard::applySelection() {
 
 // --- editing: one RigController::edit each ----------------------------------------------------------------------------------------
 bool Pedalboard::setPedalBypass(int path, const std::string& id, bool bypass) {
+  if (!hasTile(path, id)) return false;
   controller_.edit([path, id, bypass](Preset& p) {
     PathPreset& pp = path == 0 ? p.a : p.b;
     for (std::size_t i = 0; i < pp.blocks.size(); ++i)
@@ -398,6 +536,7 @@ bool Pedalboard::setPedalBypass(int path, const std::string& id, bool bypass) {
 }
 
 bool Pedalboard::removePedal(int path, const std::string& id) {
+  if (!hasTile(path, id)) return false;  // nothing to remove: no needless reload
   controller_.edit([path, id](Preset& p) {
     PathPreset& pp = path == 0 ? p.a : p.b;
     const int tiles = boardBlockCount(pp);
@@ -413,7 +552,7 @@ bool Pedalboard::removePedal(int path, const std::string& id) {
 
 bool Pedalboard::movePedal(int path, const std::string& id, int toPath, int toIndex) {
   const PathView& dst = paths_[static_cast<std::size_t>(toPath)];
-  if (dst.off) return false;  // a board that is off is not a drop target
+  if (dst.off || !hasTile(path, id)) return false;  // a board that is off is not a drop target; an id that is not on the board moves nothing
   if (path != toPath) {
     if (pathFull(toPath)) {
       say(juce::String(toPath == 0 ? "SAW" : "BODY") + " path full: 8 blocks");
@@ -473,6 +612,116 @@ bool Pedalboard::addModeledPedal(int path, const std::string& type) {
   return true;
 }
 
+namespace {
+// Sets the make-up of the nam block `id` wherever it is in `p` (no-op when it is not there / not a nam block).
+void setMakeupById(Preset& p, const std::string& id, double makeupDb) {
+  for (int path = 0; path < 2; ++path) {
+    const PathPreset& pp = path == 0 ? p.a : p.b;
+    for (std::size_t i = 0; i < pp.blocks.size(); ++i)
+      if (pp.blocks[i].id == id) p = withSlotMakeup(p, path, static_cast<int>(i), makeupDb);
+  }
+}
+}  // namespace
+
+bool Pedalboard::addCapturePedal(int path, const Capture& capture) {
+  if (paths_[static_cast<std::size_t>(path)].off) return false;
+  if (pathFull(path)) {
+    say(juce::String(path == 0 ? "SAW" : "BODY") + " path full: 8 blocks");
+    return false;
+  }
+  SawbladeProcessor& proc = controller_.processor();
+  const Preset before = proc.editBasePreset();
+  std::string newId;
+  controller_.edit([path, capture, &newId](Preset& p) {
+    PathPreset& pp = path == 0 ? p.a : p.b;
+    if (static_cast<int>(pp.blocks.size()) >= kMaxBlocksPerPath) return;
+    Block b;
+    b.id = newBlockId(p, path == 0 ? 'a' : 'b');
+    b.type = "nam";
+    b.slot = "pedal";
+    auto np = std::make_shared<NamBlockParams>();
+    np->model = capture;
+    b.params = std::move(np);
+    newId = b.id;
+    addBlock(pp, boardBlockCount(pp), std::move(b));
+  });
+  refreshNow();
+  if (newId.empty() || !proc.levelMatchEnabled()) return !newId.empty();
+  // LEVEL MATCH: the pedal drops in at matched loudness. The add is the undo step; the make-up (the path alone, before vs after) lands when
+  // the background measurement is done and adds none: it goes into the rig and into every stored snapshot that has the block.
+  const Preset after = proc.editBasePreset();
+  say("LEVEL MATCHING...");
+  proc.computeSlotMakeup(before, after, path, [this, alive = alive_, newId](const LevelWorker::MakeupResult& r) {
+    juce::MessageManager::callAsync([this, alive, newId, mk = r.makeupDb] {
+      if (!alive->load()) return;
+      say(juce::String());
+      if (!mk) return;
+      SawbladeProcessor& pr = controller_.processor();
+      Preset cur = pr.editBasePreset();
+      bool there = false;
+      for (const PathPreset* pp : {&cur.a, &cur.b})
+        for (const Block& b : pp->blocks) there = there || b.id == newId;
+      if (!there) return;  // removed meanwhile
+      pr.patchHistory([&newId, mk](Preset& snap) { setMakeupById(snap, newId, *mk); });
+      setMakeupById(cur, newId, *mk);
+      pr.loadPreset(std::move(cur), /*keepMonitor=*/true);  // not a user edit: records no undo step
+      refreshNow();
+    });
+  });
+  return true;
+}
+
+bool Pedalboard::swapPedalCapture(int path, const std::string& id, const Capture& capture) {
+  SawbladeProcessor& proc = controller_.processor();
+  const Preset cur = proc.editBasePreset();
+  const PathPreset& pp = path == 0 ? cur.a : cur.b;
+  int idx = -1;
+  for (int i = 0; i < boardBlockCount(pp); ++i)
+    if (pp.blocks[static_cast<std::size_t>(i)].id == id && pp.blocks[static_cast<std::size_t>(i)].type == "nam") idx = i;
+  if (idx < 0) return false;
+  const auto replace = [path, id, capture](Preset& p, std::optional<double> makeup) {
+    PathPreset& q = path == 0 ? p.a : p.b;
+    for (std::size_t i = 0; i < q.blocks.size(); ++i)
+      if (q.blocks[i].id == id)
+        if (const auto* nam = dynamic_cast<const NamBlockParams*>(q.blocks[i].params.get())) {
+          auto np = std::make_shared<NamBlockParams>(*nam);
+          np->model = capture;
+          if (makeup) np->makeupDb = *makeup;
+          q.blocks[i].params = std::move(np);
+        }
+  };
+  const std::uint64_t seq = ++swapSeq_;
+  if (!proc.levelMatchEnabled()) {
+    controller_.edit([replace](Preset& p) { replace(p, std::nullopt); });
+    refreshNow();
+    return true;
+  }
+  // LEVEL MATCH: measure the path with the new capture (make-up 0) against the old one, then swap with the make-up in ONE step.
+  Preset swapped = cur;
+  replace(swapped, 0.0);
+  say("LEVEL MATCHING...");
+  proc.computeSlotMakeup(cur, swapped, path, [this, alive = alive_, seq, replace](const LevelWorker::MakeupResult& r) {
+    juce::MessageManager::callAsync([this, alive, seq, replace, mk = r.makeupDb] {
+      if (!alive->load() || seq != swapSeq_) return;
+      say(juce::String());
+      controller_.edit([replace, mk](Preset& p) { replace(p, mk ? mk : std::optional<double>()); });
+      refreshNow();
+    });
+  });
+  return true;
+}
+
+bool Pedalboard::setPedalLevel(int path, const std::string& id, double db) {
+  if (!hasTile(path, id)) return false;
+  controller_.edit([path, id, db](Preset& p) {
+    PathPreset& pp = path == 0 ? p.a : p.b;
+    for (std::size_t i = 0; i < pp.blocks.size(); ++i)
+      if (pp.blocks[i].id == id) setBlockOutputGainDb(pp, static_cast<int>(i), db);
+  });
+  refreshNow();
+  return true;
+}
+
 juce::PopupMenu Pedalboard::menuFor(const BoardTile& t) const {
   juce::PopupMenu m;
   m.addItem(kMenuBypass, "BYPASS", true, t.bypassed());
@@ -512,6 +761,18 @@ void Pedalboard::showPicker(int path) {
       closePicker();
       addModeledPedal(p, type);
     };
+    picker_->onPickCapture = [this](const CachedPedal& tone) {
+      const int p = picker_->path();
+      closePicker();
+      const auto cap = tone.models.empty() ? std::nullopt : cachedToneCapture(tone.toneId, tone.models.front().modelId);
+      if (cap) addCapturePedal(p, *cap);
+      else say("that capture is not in the capture cache any more");
+    };
+    picker_->onSearch = [this] {
+      const int p = picker_->path();
+      closePicker();
+      if (onSearchRequest) onSearchRequest(p, tileCount(p));
+    };
     picker_->onClose = [this] { closePicker(); };
   }
   if (picker_->getParentComponent() != parent) parent->addChildComponent(*picker_);
@@ -533,6 +794,7 @@ void Pedalboard::gesture(BoardTile& t, BoardTile::Gesture g, const juce::MouseEv
   switch (g) {
     case BoardTile::Gesture::Down:
       closePicker();
+      abortDrag();  // a previous drag that never ended: its tile is shown normally again
       drag_ = Drag{};
       drag_.tile = &t;
       drag_.down = drag_.pos = p;
@@ -559,6 +821,12 @@ void Pedalboard::gesture(BoardTile& t, BoardTile::Gesture g, const juce::MouseEv
       endDrag(true);
       break;
   }
+}
+
+void Pedalboard::abortDrag() {
+  if (drag_.tile != nullptr && drag_.active) drag_.tile->setAlpha(1.0f);
+  drag_ = Drag{};
+  repaint();
 }
 
 void Pedalboard::startDrag(BoardTile& t) {

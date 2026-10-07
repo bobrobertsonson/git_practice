@@ -130,7 +130,8 @@ Reply<T> await(std::function<void(std::function<void(Reply<T>)>)> start, int ms 
 }
 
 void savePng(const juce::Image& img, const juce::String& name) {
-  const juce::File dir(SAWBLADE_SCREENSHOT_DIR);
+  const char* envDir = std::getenv("SAWBLADE_SCREENSHOT_DIR");  // CI uploads this folder
+  const juce::File dir(envDir != nullptr && *envDir != '\0' ? envDir : SAWBLADE_SCREENSHOT_DIR);
   REQUIRE(dir.createDirectory().wasOk());
   const juce::File f = dir.getChildFile(name);
   f.deleteFile();
@@ -371,6 +372,62 @@ TEST_CASE("browser: licences are shown on every card and in the selected panel; 
   REQUIRE(img.getWidth() == 1280);
   REQUIRE(img.getHeight() == 800);
   savePng(img, "capture_browser.png");
+}
+
+TEST_CASE("browser: in insert mode USE adds a new nam pedal at the index (one undo step, licence kept); the others stay", "[browser][ui][insert]") {
+  Rig rig;  // golden_shared: SAW [pedal, amp], BODY [boost, amp]
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::SawPedal, {}, InsertPoint{'a', 1});
+  auto& ctl = b.controller();
+  CHECK(ctl.insertMode());
+  CHECK(ctl.state().gear == "pedal");
+  ctl.setGear("amp");  // an insert-mode browser lists pedals only
+  CHECK(ctl.state().gear == "pedal");
+  REQUIRE(pumpUntil([&] { return !ctl.state().records.empty() && !ctl.state().loading; }));
+  const auto targets = ctl.targets();
+  REQUIRE(targets.size() == 1);
+  CHECK(targets[0].kind == SlotTarget::Kind::InsertNamBlock);
+  CHECK(targets[0].blockIndex == 1);
+  ctl.select(102);
+  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }));
+  pumpFor(100);
+  CHECK(allText(b).contains("ADD AS SAW PEDAL"));
+  const Preset before = rig.proc.currentPreset();
+  REQUIRE(before.a.blocks.size() == 2);
+  CHECK(rig.proc.undoSteps() == 0);
+  ctl.use(0);
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }));
+  CHECK_FALSE(ctl.state().statusIsError);
+  REQUIRE(rig.proc.waitForLoader());
+  const Preset after = rig.proc.currentPreset();
+  REQUIRE(after.a.blocks.size() == 3);
+  CHECK(after.a.blocks[0] == before.a.blocks[0]);
+  CHECK(after.a.blocks[2] == before.a.blocks[1]);  // the amp is still last
+  const Block& nb = after.a.blocks[1];
+  CHECK(nb.type == "nam");
+  CHECK(nb.slot == "pedal");
+  const auto& m = static_cast<const NamBlockParams&>(*nb.params).model;
+  REQUIRE(m.source.has_value());
+  CHECK(m.source->id == "102");
+  CHECK(m.source->license == "cc-by");  // the licence (and creator) travel with the capture
+  CHECK(m.source->creator == "fakecreator");
+  CHECK(after.b == before.b);
+  CHECK(rig.proc.undoSteps() == 1);
+  REQUIRE(rig.proc.undo());
+  REQUIRE(rig.proc.waitForLoader());
+  CHECK(rig.proc.currentPreset() == before);
+  CHECK(rig.proc.undoSteps() == 0);
+
+  // a full path: nothing to insert into
+  Preset full = rig.proc.currentPreset();
+  while (static_cast<int>(full.a.blocks.size()) < kMaxBlocksPerPath) {
+    full.a.blocks.push_back(full.a.blocks.front());
+    full.a.blocks.back().id = "f" + std::to_string(full.a.blocks.size());
+  }
+  rig.proc.loadPreset(full);
+  REQUIRE(rig.proc.waitForLoader());
+  std::string why;
+  CHECK(ctl.targets(&why).empty());
+  CHECK(why.find("path full") != std::string::npos);
 }
 
 TEST_CASE("browser: USE swaps the capture through the loader; mismatches and missing blocks do not", "[browser][ui]") {

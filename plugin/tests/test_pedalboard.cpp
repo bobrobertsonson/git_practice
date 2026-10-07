@@ -337,8 +337,9 @@ TEST_CASE("pedalboard: + PEDAL opens the picker; MODELED lists the five generic 
   click(pb.addButton(0));
   REQUIRE(pb.pickerOpen());
   rig::PedalPicker& picker = *pb.picker();
-  CHECK(picker.tabCount() == 1);
+  CHECK(picker.tabCount() == 2);  // MODELED and (Task B) CAPTURES
   CHECK(picker.tabButton(0).getButtonText() == "MODELED");
+  CHECK(picker.tabButton(1).getButtonText() == "CAPTURES");
   CHECK(picker.path() == 0);
   const auto& models = rig::PedalPicker::modeledModels();
   REQUIRE(models.size() == 5);
@@ -496,6 +497,7 @@ TEST_CASE("pedalboard: a refresh during a drag keeps the dragged tile", "[editor
   Rig rig;
   rig.load(standard());
   auto& pb = rig.board();
+  pb.setMouseDownProbe([] { return true; });  // the synthesized mouse is "down" for the whole drag
   rig::BoardTile* t = pb.tile(0, 0);
   Gesture g(rig, *t);
   g.moveTo(rig.afterLast(0));
@@ -787,4 +789,138 @@ TEST_CASE("pedalboard: Cmd / Ctrl + Z does not undo under an open picker", "[edi
   REQUIRE(pb.pickerOpen());
   rig.ed->setCabPageOpen(true);
   CHECK_FALSE(pb.pickerOpen());
+}
+
+TEST_CASE("pedalboard: a drag whose mouse-up was lost is abandoned by the next refresh (ghost gone, tile back, the board follows the rig again)", "[editor][pedalboard]") {
+  Rig rig;
+  rig.load(standard());
+  auto& pb = rig.board();
+  bool down = true;
+  pb.setMouseDownProbe([&down] { return down; });
+  rig::BoardTile* t = pb.tile(0, 0);
+  Gesture g(rig, *t);
+  g.moveTo(rig.afterLast(0));
+  REQUIRE(pb.dragInfo().active);
+  CHECK(t->getAlpha() < 1.0f);
+  const Preset before = rig.preset();
+
+  // the rig changes under the drag, then the mouse capture is lost: no mouse-up ever arrives
+  Preset other = before;
+  other.a.blocks.erase(other.a.blocks.begin() + 2);  // the EQ
+  rig.proc.loadPreset(other);
+  REQUIRE(rig.proc.waitForLoader(kLoad));
+  pump(30);
+  rig.ed->refreshNow();
+  CHECK(pb.dragInfo().active);  // the button is still down: the drag is kept (and the old board with it)
+  CHECK(pb.tileCount(0) == 3);
+
+  down = false;
+  rig.ed->refreshNow();
+  const auto d = pb.dragInfo();
+  CHECK_FALSE(d.active);
+  CHECK_FALSE(d.pressed);
+  CHECK(d.tile == nullptr);
+  CHECK(pb.tileCount(0) == 2);  // the board follows the rig again
+  CHECK(pb.tile(0, 0)->getAlpha() == 1.0f);
+  CHECK(ids(rig.preset().a) == Ids{"a1", "a2", "a4"});  // and nothing was dropped
+  CHECK_FALSE(rig.ctl().canUndo());
+
+  // a stale press (tile pressed, never released) does not leave a dimmed tile behind either: the next press starts clean
+  down = true;
+  Gesture first(rig, *pb.tile(0, 0));
+  first.moveTo(rig.afterLast(0));
+  REQUIRE(pb.dragInfo().active);
+  rig::BoardTile* second = pb.tile(0, 1);
+  Gesture again(rig, *second);  // a new press while the old drag never ended
+  CHECK(pb.tile(0, 0)->getAlpha() == 1.0f);
+  CHECK_FALSE(pb.dragInfo().active);
+  CHECK(pb.dragInfo().tile == second);
+  again.release(rig.before(0, 1));
+  rig.settle();
+  CHECK_FALSE(pb.dragInfo().pressed);
+}
+
+TEST_CASE("pedalboard: a path with a block after the amp keeps the amp and that block through reorder, cross-path insert and remove", "[editor][pedalboard]") {
+  Rig rig;
+  // SAW: chainsaw a1, overdrive a2, amp a3, EQ a4 (after the amp: not a tile).  BODY: overdrive b1, amp b2, EQ b3 (after its amp).
+  rig.load(rigJson({hmBlock("a1"), tsBlock("a2", 2), namAmp("a3"), eqBlock("a4")}, {tsBlock("b1", 4), namAmp("b2"), eqBlock("b3")}, true));
+  auto& pb = rig.board();
+  REQUIRE(pb.tileCount(0) == 2);
+  REQUIRE(pb.tileCount(1) == 1);
+  CHECK(pb.afterAmpText(0) == "+1 AFTER AMP (rig editor)");
+  CHECK(pb.afterAmpText(1) == "+1 AFTER AMP (rig editor)");
+  const Preset before = rig.preset();
+  const auto sameTail = [&](const Preset& p) {  // the amps and the blocks after them are exactly as before
+    return p.a.blocks[p.a.blocks.size() - 2] == before.a.blocks[2] && p.a.blocks.back() == before.a.blocks[3] &&
+           p.b.blocks[p.b.blocks.size() - 2] == before.b.blocks[1] && p.b.blocks.back() == before.b.blocks[2];
+  };
+
+  // reorder within SAW
+  {
+    Gesture g(rig, *pb.tile(0, 0));
+    g.moveTo(rig.afterLast(0));
+    g.release(rig.afterLast(0));
+    rig.settle();
+    const Preset p = rig.preset();
+    CHECK(ids(p.a) == Ids{"a2", "a1", "a3", "a4"});
+    CHECK(sameTail(p));
+    CHECK(ids(p.b) == ids(before.b));
+    CHECK(pb.afterAmpText(0) == "+1 AFTER AMP (rig editor)");
+  }
+  // SAW -> BODY: in before BODY's amp, the amp and its trailing EQ stay put
+  {
+    Gesture g(rig, *pb.tile(0, 0));  // a2
+    g.moveTo(rig.afterLast(1));
+    g.release(rig.afterLast(1));
+    rig.settle();
+    const Preset p = rig.preset();
+    CHECK(ids(p.a) == Ids{"a1", "a3", "a4"});
+    REQUIRE(p.b.blocks.size() == 4);
+    CHECK(p.b.blocks[0].id == "b1");
+    CHECK(p.b.blocks[2].id == "b2");  // BODY's amp
+    CHECK(p.b.blocks[3].id == "b3");  // and its EQ after it
+    CHECK(p.b.blocks[1].type == "pedal.ts");  // the moved pedal sits before the amp
+    CHECK(p.a.blocks[1] == before.a.blocks[2]);
+    CHECK(p.a.blocks[2] == before.a.blocks[3]);
+  }
+  // remove: a tile goes, the amp and the block after it stay
+  {
+    Gesture g(rig, *pb.tile(1, 0));
+    const juce::Point<float> off(470.0f, 100.0f);
+    g.moveTo(off);
+    g.release(off);
+    rig.settle();
+    const Preset p = rig.preset();
+    CHECK(p.b.blocks.size() == 3);
+    CHECK(p.b.blocks[p.b.blocks.size() - 2] == before.b.blocks[1]);
+    CHECK(p.b.blocks.back() == before.b.blocks[2]);
+  }
+}
+
+TEST_CASE("pedalboard: dropping on the right half of a tile puts the pedal after it (a1 onto a2 -> a2, a1, a3)", "[editor][pedalboard]") {
+  Rig rig;
+  rig.load(rigJson({hmBlock("a1"), tsBlock("a2", 2), eqBlock("a3"), namAmp("a4")}, {tsBlock("b1"), namAmp("b2")}, true));
+  auto& pb = rig.board();
+  REQUIRE(pb.tileCount(0) == 3);
+  const Preset before = rig.preset();
+  const auto b2 = pb.tileBounds(*pb.tile(0, 1));
+  const juce::Point<float> rightHalf(static_cast<float>(b2.getCentreX() + 6), static_cast<float>(b2.getCentreY()));
+  Gesture g(rig, *pb.tile(0, 0));
+  g.moveTo(rightHalf);
+  CHECK(pb.dragInfo().insertIndex == 1);
+  g.release(rightHalf);
+  rig.settle();
+  const Preset after = rig.preset();
+  CHECK(ids(after.a) == Ids{"a2", "a1", "a3", "a4"});
+  checkOneUndoStep(rig, before, after);
+
+  // and the left half of the same tile puts it before: a3 onto the left half of a2 -> a1, a3, a2
+  const auto c2 = pb.tileBounds(*pb.tile(0, 1));  // a1 now
+  const juce::Point<float> leftHalf(static_cast<float>(c2.getX() + 6), static_cast<float>(c2.getCentreY()));
+  Gesture h(rig, *pb.tile(0, 2));  // a3
+  h.moveTo(leftHalf);
+  CHECK(pb.dragInfo().insertIndex == 1);
+  h.release(leftHalf);
+  rig.settle();
+  CHECK(ids(rig.preset().a) == Ids{"a2", "a3", "a1", "a4"});
 }

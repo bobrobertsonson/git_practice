@@ -102,6 +102,21 @@ bool setBlockInputGainDb(PathPreset& p, int index, double db) {
   return true;
 }
 
+bool setBlockOutputGainDb(PathPreset& p, int index, double db) {
+  if (index < 0 || index >= static_cast<int>(p.blocks.size()) || !std::isfinite(db)) return false;
+  Block& b = p.blocks[static_cast<std::size_t>(index)];
+  const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get());
+  if (!nam) return false;
+  auto np = std::make_shared<NamBlockParams>(*nam);
+  np->outputGainDb = std::clamp(db, kBlockGainMinDb, kBlockGainMaxDb);
+  b.params = std::move(np);
+  return true;
+}
+
+bool isCapturePedal(const PathPreset& p, int index) {
+  return index >= 0 && index < static_cast<int>(p.blocks.size()) && index != ampIndex(p) && p.blocks[static_cast<std::size_t>(index)].type == "nam";
+}
+
 std::string newBlockId(const Preset& p, char which) {
   std::set<std::string> used;
   for (const PathPreset* pp : {&p.a, &p.b})

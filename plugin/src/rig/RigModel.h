@@ -45,6 +45,10 @@ void setBypass(PathPreset& p, int index, bool bypass);
 constexpr double kBlockGainMinDb = -24.0, kBlockGainMaxDb = 24.0;
 // `nam` blocks only (false otherwise); clamps to [-24, +24] dB. Replaces the block's params object.
 bool setBlockInputGainDb(PathPreset& p, int index, double db);
+// The block's output level (a capture pedal's LEVEL knob), the same clamp; `nam` blocks only.
+bool setBlockOutputGainDb(PathPreset& p, int index, double db);
+// v0.4 Task B: a capture pedal is a `nam` block in a pedal slot (not the path's amp); amp captures are not pedals.
+bool isCapturePedal(const PathPreset& p, int index);
 // A block id that is unique within the preset: "a3" / "b2" (path 'a' or 'b').
 std::string newBlockId(const Preset& p, char path);
 // "amp" for the first `nam` block of a path without an amp, "fx" for `eq`, else "pedal".

@@ -201,7 +201,9 @@ struct CaptureBrowser::Impl {
     title.setText("CAPTURES", juce::dontSendNotification);
     styleLabel(title, juce::Font(juce::FontOptions(24.0f, juce::Font::bold)), L::saw());
     owner.addAndMakeVisible(title);
-    forSlot.setText(juce::String("FOR") + kDot + slotName(ctl.slot()) + " SLOT", juce::dontSendNotification);
+    forSlot.setText(ctl.insertMode() ? juce::String("FOR") + kDot + "A NEW " + slotName(ctl.slot()) + " ON THE BOARD"
+                                     : juce::String("FOR") + kDot + slotName(ctl.slot()) + " SLOT",
+                    juce::dontSendNotification);
     styleLabel(forSlot, L::labelFont(12.0f), L::dimText());
     owner.addAndMakeVisible(forSlot);
     caption(searchCap, "SEARCH");
@@ -221,6 +223,8 @@ struct CaptureBrowser::Impl {
     pill(gearPedal, "PEDAL", "Pedal captures", 702);
     pill(gearAmp, "AMP", "Amp captures", 702);
     pill(gearIr, "CAB IR", "Cabinet impulse responses", 702);
+    gearAmp.setEnabled(!ctl.insertMode());  // an insert-mode browser lists pedals only
+    gearIr.setEnabled(!ctl.insertMode());
     gearPedal.onClick = [this] { ctl.setGear("pedal"); };
     gearAmp.onClick = [this] { ctl.setGear("amp"); };
     gearIr.onClick = [this] { ctl.setGear("ir"); };
@@ -456,14 +460,16 @@ struct CaptureBrowser::Impl {
       const bool shown = has && i < static_cast<int>(targets.size());
       selUse[i].setVisible(shown);
       if (shown) {
-        selUse[i].setButtonText(perPath ? "USE IN " + juce::String(targets[static_cast<std::size_t>(i)].label) : "USE IN " + juce::String(slotName(ctl.slot())));
+        selUse[i].setButtonText(ctl.insertMode() ? "ADD AS " + juce::String(slotName(ctl.slot()))
+                                : perPath       ? "USE IN " + juce::String(targets[static_cast<std::size_t>(i)].label)
+                                                : "USE IN " + juce::String(slotName(ctl.slot())));
         selUse[i].setTitle(selUse[i].getButtonText());
         selUse[i].setEnabled(!busy);
       }
     }
     if (has && targets.empty()) {
       selUse[0].setVisible(true);
-      selUse[0].setButtonText("USE IN " + juce::String(slotName(ctl.slot())));
+      selUse[0].setButtonText((ctl.insertMode() ? "ADD AS " : "USE IN ") + juce::String(slotName(ctl.slot())));
       selUse[0].setEnabled(false);
     }
   }
@@ -570,8 +576,8 @@ struct CaptureBrowser::Impl {
   juce::String modelsSig;
 };
 
-CaptureBrowser::CaptureBrowser(SawbladeProcessor& p, BrowserSettings& settings, Slot slot, const std::string& pinnedBlockId)
-    : ctl_(std::make_unique<BrowserController>(p, settings, slot, pinnedBlockId)), impl_(std::make_unique<Impl>(*this, *ctl_)) {
+CaptureBrowser::CaptureBrowser(SawbladeProcessor& p, BrowserSettings& settings, Slot slot, const std::string& pinnedBlockId, std::optional<InsertPoint> insert)
+    : ctl_(std::make_unique<BrowserController>(p, settings, slot, pinnedBlockId, insert)), impl_(std::make_unique<Impl>(*this, *ctl_)) {
   setSize(kWidth, kHeight);
   setOpaque(true);
   setTitle("Capture browser");

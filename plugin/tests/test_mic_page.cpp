@@ -56,7 +56,9 @@ void click(juce::Button& b) {
 }
 
 void savePng(const juce::Image& img, const juce::String& name) {
-  const juce::File dir(SAWBLADE_SCREENSHOT_DIR);
+  // build/screenshots by default; SAWBLADE_SCREENSHOT_DIR (environment) puts them anywhere else (CI uploads that folder).
+  const char* envDir = std::getenv("SAWBLADE_SCREENSHOT_DIR");
+  const juce::File dir(envDir != nullptr && *envDir != '\0' ? envDir : SAWBLADE_SCREENSHOT_DIR);
   REQUIRE(dir.createDirectory().wasOk());
   const juce::File f = dir.getChildFile(name);
   f.deleteFile();

@@ -25,7 +25,9 @@
 // is skipped until the mouse goes up), so a refresh cannot destroy a widget under the user's hand.
 
 #include <array>
+#include <atomic>
 #include <functional>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,8 +35,11 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginProcessor.h"
+#include "rig/CapturePedals.h"
+#include "rig/PedalKind.h"
 #include "rig/PedalPicker.h"
 #include "rig/RigController.h"
+#include "rig/RigWidgets.h"
 #include "skin/FootswitchButton.h"
 #include "skin/LedIndicator.h"
 #include "skin/RigView.h"
@@ -49,17 +54,22 @@ int blocksAfterAmp(const PathPreset& p);
 // the EQ's or the capture's title otherwise (upper case).
 juce::String pedalName(const Block& b);
 
-class BoardTile : public juce::Component, public juce::SettableTooltipClient {
+// A pedal tile. A modeled pedal shows its render; a CAPTURE (a nam block in a pedal slot, v0.4 Task B) is a flat panel with a 2 px cream
+// outline, the CAPTURE badge, the capture's title, creator and licence tag, "CAPTURE · FIXED TONE", a LEVEL knob (the block's output
+// level), a setting selector when the tone has several cached models, and the footswitch + LED: no other knob.
+class BoardTile : public juce::Component, public juce::SettableTooltipClient, public HasPedalKind {
  public:
   enum class Gesture { Down, Drag, Up };
 
-  BoardTile(int path, int blockIndex, const Block& b);
+  BoardTile(int path, int blockIndex, const Block& b, RigController& controller);
   ~BoardTile() override;
 
   int path() const noexcept { return path_; }            // 0 = SAW (path A), 1 = BODY (path B)
   int blockIndex() const noexcept { return index_; }     // index in the path's blocks
   const std::string& blockId() const noexcept { return id_; }
   const juce::String& name() const noexcept { return name_; }
+  PedalKind pedalKind() const noexcept override { return kind_; }
+  bool isCapture() const noexcept { return kind_ == PedalKind::Capture; }
   bool isCircuit() const noexcept { return circuit_; }   // a circuit pedal (pedal.hm / .hmx / .eye / .muff): the live face may lie over it
   bool bypassed() const noexcept { return !fs_.getToggleState(); }
   bool selected() const noexcept { return selected_; }
@@ -68,6 +78,22 @@ class BoardTile : public juce::Component, public juce::SettableTooltipClient {
 
   // Shows the bypass state (no callback; repaints only on a change).
   void showBypass(bool bypass);
+  // --- capture tiles ---
+  const juce::String& captureName() const noexcept { return title_; }
+  const juce::String& captureCreator() const noexcept { return creator_; }  // "@creator" / "LOCAL FILE"
+  const juce::String& captureLicence() const noexcept { return licence_; }  // upper case, "" when unknown
+  PresetKnob* levelKnob() noexcept { return level_.get(); }
+  void showLevel(double db);  // the block's output level, as the preset holds it (a knob being turned ignores it)
+  // The setting selector (shown only with >= 2 models): the cached models of the capture's tone, in setting order, and the current one.
+  void setSettings(std::vector<CachedModel> models, const std::string& currentModelId);
+  const std::string& toneId() const noexcept { return toneId_; }    // the capture's TONE3000 tone ("" for a local file)
+  const std::string& modelId() const noexcept { return modelId_; }
+  bool hasSelector() const noexcept { return settings_.size() >= 2; }
+  juce::TextButton& selectorButton() noexcept { return selector_; }
+  const std::vector<CachedModel>& settings() const noexcept { return settings_; }
+  juce::PopupMenu settingsMenu() const;          // one item per setting, the current one ticked
+  void chooseSetting(const std::string& modelId);  // what an item of the menu does
+  std::function<void(BoardTile&, const std::string& modelId)> onSetting;
   void setSelected(bool s);
 
   std::function<void(BoardTile&)> onSelect, onDoubleClick, onContextMenu;
@@ -84,9 +110,12 @@ class BoardTile : public juce::Component, public juce::SettableTooltipClient {
   void mouseDoubleClick(const juce::MouseEvent&) override;
 
  private:
+  void paintCapture(juce::Graphics& g);
+  void layoutCapture();
   int path_, index_;
   std::string id_;
   juce::String name_;
+  PedalKind kind_;
   bool circuit_;
   skin::Panel panel_;
   float mmHeight_;
@@ -94,6 +123,11 @@ class BoardTile : public juce::Component, public juce::SettableTooltipClient {
   bool selected_ = false;
   skin::FootswitchButton fs_;
   skin::LedIndicator led_;
+  juce::String title_, creator_, licence_;
+  std::string toneId_, modelId_;
+  std::vector<CachedModel> settings_;
+  std::unique_ptr<PresetKnob> level_;
+  juce::TextButton selector_;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BoardTile)
 };
@@ -120,6 +154,8 @@ class Pedalboard : public juce::Component {
   std::function<void()> onTilesChanged;  // after a rebuild: the editor re-places the pedal face
   std::function<void()> onScrolled;      // a board was scrolled
   std::function<void(const juce::String&)> onMessage;  // a status-line message ("path full: 8 blocks")
+  // "SEARCH TONE3000...": the editor opens the capture browser in insert mode for path `path` at `index` (the end of its board).
+  std::function<void(int path, int index)> onSearchRequest;
 
   int tileCount(int path) const noexcept { return static_cast<int>(paths_[static_cast<std::size_t>(path)].tiles.size()); }
   BoardTile* tile(int path, int index);                  // index among the shown tiles
@@ -143,6 +179,13 @@ class Pedalboard : public juce::Component {
   bool movePedal(int path, const std::string& id, int toPath, int toIndex);
   bool removePedal(int path, const std::string& id);
   bool addModeledPedal(int path, const std::string& type);  // before the amp, at the end of the board
+  // A capture pedal (a nam block, slot "pedal") before the amp, at the end of the board: one undo step. With LEVEL MATCH on, its make-up
+  // (v0.3 slotMakeupDb: the path alone without / with the pedal) is measured in the background and lands when it is done, WITHOUT a step of
+  // its own (it is patched into the history, so undo / redo carry it).
+  bool addCapturePedal(int path, const Capture& capture);
+  // Another model of a capture pedal's tone (the setting selector): the capture is swapped, make-up included, as one undo step.
+  bool swapPedalCapture(int path, const std::string& id, const Capture& capture);
+  bool setPedalLevel(int path, const std::string& id, double db);  // the capture tile's LEVEL (one edit; the knob itself edits live)
   bool setPedalBypass(int path, const std::string& id, bool bypass);
   // The right-click / ctrl-click menu (BYPASS ticked while bypassed, REMOVE) and what its items do.
   juce::PopupMenu menuFor(const BoardTile& t) const;
@@ -153,6 +196,10 @@ class Pedalboard : public juce::Component {
   void closePicker();
   bool pickerOpen() const { return picker_ != nullptr && picker_->isVisible(); }
   PedalPicker* picker() { return picker_.get(); }
+
+  // Whether a mouse button is down (default: the real state). A drag that is still active while this says no lost its mouse-up and is
+  // abandoned by the next refresh. Tests replace it (their mouse is synthesized).
+  void setMouseDownProbe(std::function<bool()> probe);
 
   // --- a drag in progress (introspection for tests) ---
   struct DragInfo {
@@ -176,7 +223,8 @@ class Pedalboard : public juce::Component {
   struct Key {
     std::string id, type;
     juce::String name;
-    bool operator==(const Key& o) const { return id == o.id && type == o.type && name == o.name; }
+    std::string detail;  // a capture's model (a swap rebuilds the tile)
+    bool operator==(const Key& o) const { return id == o.id && type == o.type && name == o.name && detail == o.detail; }
   };
   struct PathView {
     bool off = false;
@@ -209,6 +257,8 @@ class Pedalboard : public juce::Component {
   void refreshNow();  // re-reads the processor's edit base (after this component's own edits)
   void gesture(BoardTile& t, BoardTile::Gesture g, const juce::MouseEvent& e);
   void startDrag(BoardTile& t);
+  void abortDrag();  // forgets a drag without dropping it (the tile is shown normally again)
+  bool hasTile(int path, const std::string& id) const;
   void endDrag(bool drop);
   Drop computeDrop(juce::Point<float> p) const;
   void showTileMenu(BoardTile& t);
@@ -219,7 +269,10 @@ class Pedalboard : public juce::Component {
   int selPath_ = -1;
   std::string selId_;
   Drag drag_;
-  bool refreshPending_ = false;  // a refresh arrived while a tile was pressed: the mouse-up re-reads the edit base
+  bool refreshPending_ = false;
+  std::function<bool()> mouseDown_ = [] { return juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown(); };
+  std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);  // checked by the level worker callbacks
+  std::uint64_t swapSeq_ = 0;  // a newer capture swap supersedes the make-up still being measured for an older one  // a refresh arrived while a tile was pressed: the mouse-up re-reads the edit base
   std::unique_ptr<PedalPicker> picker_;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Pedalboard)

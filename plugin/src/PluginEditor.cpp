@@ -159,6 +159,9 @@ class SawbladeEditor::Content : public juce::Component {
       if (face_) face_->refresh();
     };
     board_->onMessage = [this](const juce::String& m) { showMessage(m); };
+    board_->onSearchRequest = [this](int path, int index) {  // "SEARCH TONE3000...": the capture browser in insert mode (pedals, USE adds a block)
+      openBrowserFor(path == 0 ? Slot::SawPedal : Slot::BodyPedal, {}, InsertPoint{path == 0 ? 'a' : 'b', index});
+    };
     addAndMakeVisible(*board_);
     for (int path = 0; path < 2; ++path) {  // the amp controls (v0.2 Task D) lie over the amp heads' art
       ampHeads_[static_cast<size_t>(path)] = std::make_unique<rig::AmpHead>(processor_, path);
@@ -481,11 +484,11 @@ class SawbladeEditor::Content : public juce::Component {
   }
   // The capture browser for the cab's IR (the CAB page's BROWSE IR).
   void openCabBrowser() { openBrowserFor(Slot::Cab, {}); }
-  void openBrowserFor(Slot slot, const std::string& pinnedBlockId) {
+  void openBrowserFor(Slot slot, const std::string& pinnedBlockId, std::optional<InsertPoint> insert = std::nullopt) {
     if (browser_ != nullptr) return;
     closeOverlaysExcept(Overlay::None);  // the capture browser covers the whole editor: nothing stays open under it
     if (!browserSettings_) browserSettings_ = std::make_unique<BrowserSettings>();
-    browser_ = std::make_unique<CaptureBrowser>(processor_, *browserSettings_, slot, pinnedBlockId);
+    browser_ = std::make_unique<CaptureBrowser>(processor_, *browserSettings_, slot, pinnedBlockId, insert);
     browser_->onClose = [this] {
       browser_->setVisible(false);
       juce::MessageManager::callAsync([safe = juce::Component::SafePointer<Content>(this)] {
