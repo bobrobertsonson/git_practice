@@ -121,6 +121,9 @@ struct ExportResult {
     std::string name;                   // file name inside outDir
     std::string verdict;                // a standalone file's own acceptance: "MET" | "NOT MET" | "NOT JUDGED" ("" = none: the container, A1)
   };
+  // v0.6 decision 20: report `files.reampPair{input, output}` (file names inside outDir; "" = no pair). A pair-only run has no model.
+  std::string reampInput, reampOutput;
+  std::string trainingSignal;           // decision 22: the training signal the run used, as the report names it ("" = not reported)
   std::vector<ExtraFile> otherFiles;    // the report's files other than the primary, in report order (container, full, lite)
   std::filesystem::path listen;         // listen/ab_original_then_export.mp3, else .wav ("" = none)
   // v0.4M: the report's `exportNotes` object, dumped ("" = the report has none): the stages that are NOT in the model, with
@@ -151,6 +154,7 @@ struct JobSnapshot {
   std::vector<MatchCandidate> results;  // match, once succeeded
   std::filesystem::path outDir;       // export: the result folder (revealed in the file manager); empty until the exporter reports it
   std::string exportMode, exportSize;
+  bool reampPair = false;             // v0.6: a reamp-pair-only run (--reamp-pair --no-train): no model is trained
   std::string exportArch;             // "a2" | "a1" ("a1" for a job written before A2 existed)
   // export (phase 12)
   std::filesystem::path source;       // the resolved preset file that was exported
@@ -181,6 +185,9 @@ struct ExportRequest {
   bool allowInexact = false;           // --allow-inexact (no-cab export that keeps the comp's absence as reported error)
   bool diBuiltin = false;              // --di builtin
   std::filesystem::path resumeDir;     // --resume <dir>: continue that run (its own mode / size / preset)
+  std::filesystem::path namInput;      // v0.6 decision 22: --nam-input <the NAM standard input file> (model training; ignored for a pair-only run and a resume)
+  bool sawbladeSignal = false;         // --signal sawblade (the user chose Sawblade's test signal instead; never a silent fallback)
+  std::filesystem::path reampInput;    // v0.6: --reamp-pair <NAM standard input .wav> --no-train (no model is trained; only the pair and notes are written)
   std::filesystem::path notesPreset;   // --notes-preset <file>: the ORIGINAL rig (bus comp on) when the trained preset dropped it, so the notes list the comp
 };
 

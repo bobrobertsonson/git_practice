@@ -277,7 +277,8 @@ std::string Settings::saveLocked() {
     // Read-modify-write: another store (presets/T3kTool: t3kExecutable, factoryPresetDir) may have written keys since
     // we loaded. The file wins for keys we do not own; for our own keys the in-memory document wins (including removal).
     static const char* const kOwned[] = {"version",    "matchVenvDir", "captureCacheDir", "tone3000ClientId", "separationModel",
-                                         "takesDir",   "theme",        "uiScale",         "firstRunCompleted", "levelMatch"};
+                                         "takesDir",   "theme",        "uiScale",         "firstRunCompleted", "levelMatch",
+                                         "namInputFile",   "trainingSignalSawblade"};
     std::ifstream in(file_, std::ios::binary);
     if (in) {
       const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -439,6 +440,15 @@ fs::path Settings::effectiveTakesDir() const {
   if (auto p = pathKey("takesDir")) return *p;
   return Paths::takesDir(env_);
 }
+std::optional<fs::path> Settings::namInputFile() const {
+  std::lock_guard<std::mutex> lk(m_);
+  return pathKey("namInputFile");
+}
+bool Settings::useSawbladeSignal() const {
+  std::lock_guard<std::mutex> lk(m_);
+  auto it = doc_.find("trainingSignalSawblade");
+  return it != doc_.end() && it->is_boolean() && it->get<bool>();
+}
 std::string Settings::theme() const { return "dark"; }
 double Settings::uiScale() const {
   std::lock_guard<std::mutex> lk(m_);
@@ -495,6 +505,15 @@ Settings::~Settings() {
   applyCacheEnv();
 }
 Result Settings::setTakesDir(std::optional<fs::path> v) { return setPathKey("takesDir", std::move(v)); }
+Result Settings::setUseSawbladeSignal(bool on) {
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    if (on) doc_["trainingSignalSawblade"] = true;
+    else doc_.erase("trainingSignalSawblade");
+  }
+  return finish({});
+}
+Result Settings::setNamInputFile(std::optional<fs::path> v) { return setPathKey("namInputFile", std::move(v)); }
 
 Result Settings::setTone3000ClientId(std::string v) {
   if (containsSecretKey(v)) return {false, kSecretKeyMessage, ""};  // never stored, written or logged

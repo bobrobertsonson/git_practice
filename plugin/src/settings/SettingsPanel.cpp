@@ -164,6 +164,11 @@ struct SettingsPanel::Impl : private juce::Timer {
   juce::ComboBox sepCombo, themeCombo, scaleCombo;
   juce::TextEditor takesField;
   juce::TextButton takesBrowse, takesDefault, aboutBtn;
+  // v0.6: the NAM standard input file for EXPORT REAMP PAIR (a .wav the user supplies; never bundled)
+  juce::Label capReamp, reampNote;
+  juce::TextEditor reampField;
+  juce::TextButton reampBrowse, reampClear;
+  juce::ToggleButton sawbladeSignalToggle;
   juce::HyperlinkButton settingsFile;
   juce::Label loadErr;  // the settings file's load error (malformed file, dropped secret key), red
 
@@ -366,6 +371,32 @@ struct SettingsPanel::Impl : private juce::Timer {
     takesDefault.onClick = [this] { s.setTakesDir(std::nullopt); refresh(); };
     add(takesDefault);
 
+    // reamp pair (v0.6): the official NAM standard input file, supplied by the user
+    caption(capReamp, "NAM STANDARD INPUT FILE (TRAINING AND EXPORT REAMP PAIR)");
+    styleField(reampField, "NAM standard input file", "The official NAM standard input .wav (v3_0_0.wav / input.wav). Model training and EXPORT REAMP PAIR use it");
+    reampField.onReturnKey = [this] { commitPath(reampField, s.namInputFile(), [this](std::optional<fs::path> p) { s.setNamInputFile(p); }, std::string()); };
+    reampField.onFocusLost = reampField.onReturnKey;
+    add(reampField);
+    styleButton(reampBrowse, "Browse...", "Choose the NAM standard input .wav");
+    reampBrowse.onClick = [this] { browseWav("Choose the NAM standard input file", [this](fs::path p) { s.setNamInputFile(p); refresh(); }); };
+    add(reampBrowse);
+    styleButton(reampClear, "Clear", "Forget the NAM standard input file");
+    reampClear.onClick = [this] { s.setNamInputFile(std::nullopt); refresh(); };
+    add(reampClear);
+    styleLabel(reampNote, L::bodyFont(12.0f), L::dimText());
+    reampNote.setText("The NAM project's standard input file (v3_0_0.wav / input.wav, from the NAM trainer's 'Download input file' button). Download it yourself; Sawblade does not bundle it. Used to train models and by EXPORT REAMP PAIR.", juce::dontSendNotification);
+    add(reampNote);
+    sawbladeSignalToggle.setButtonText("Train on Sawblade's test signal instead (not the standard NAM signal)");
+    sawbladeSignalToggle.setColour(juce::ToggleButton::textColourId, L::text());
+    sawbladeSignalToggle.setColour(juce::ToggleButton::tickColourId, L::saw());
+    sawbladeSignalToggle.setColour(juce::ToggleButton::tickDisabledColourId, L::dimText());
+    sawbladeSignalToggle.setTitle("Use Sawblade's test signal for training");
+    sawbladeSignalToggle.setTooltip("Off (default): model training uses the NAM standard input file above, and the export panel asks for it when it is not set. On: training uses Sawblade's own test signal; the model is labelled as such.");
+    sawbladeSignalToggle.onClick = [this] {
+      if (!building) s.setUseSawbladeSignal(sawbladeSignalToggle.getToggleState());
+    };
+    add(sawbladeSignalToggle);
+
     // level match (v0.3 Task B)
     levelToggle.setButtonText("LEVEL MATCH");
     levelToggle.setColour(juce::ToggleButton::textColourId, L::text());
@@ -405,6 +436,10 @@ struct SettingsPanel::Impl : private juce::Timer {
     add(loadErr);
 
     // footer
+    if (!reampField.hasKeyboardFocus(true)) {
+      const juce::String t = ju(effectiveText(s.namInputFile()));
+      if (reampField.getText() != t) reampField.setText(t, false);
+    }
     settingsFile.setButtonText("Settings file: " + ju(s.file().string()));
     settingsFile.setTitle("Reveal settings file");
     settingsFile.setTooltip("Show the settings file in the file manager");
@@ -443,6 +478,13 @@ struct SettingsPanel::Impl : private juce::Timer {
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [done = std::move(done)](const juce::FileChooser& fc) {
       const juce::File f = fc.getResult();
       if (f != juce::File() && f.isDirectory()) done(fs::path(f.getFullPathName().toStdString()));
+    });
+  }
+  void browseWav(const juce::String& title, std::function<void(fs::path)> done) {
+    chooser = std::make_unique<juce::FileChooser>(title, juce::File(), "*.wav");
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [done = std::move(done)](const juce::FileChooser& fc) {
+      const juce::File f = fc.getResult();
+      if (f != juce::File() && f.existsAsFile()) done(fs::path(f.getFullPathName().toStdString()));
     });
   }
   void browseVenv() {
@@ -750,6 +792,7 @@ struct SettingsPanel::Impl : private juce::Timer {
     }
     scaleCombo.setSelectedId(idx + 1, juce::dontSendNotification);
     levelToggle.setToggleState(s.levelMatch(), juce::dontSendNotification);
+    sawbladeSignalToggle.setToggleState(s.useSawbladeSignal(), juce::dontSendNotification);
     building = false;
     if (!takesField.hasKeyboardFocus(true)) {
       const juce::String t = ju(s.effectiveTakesDir().string());
@@ -936,6 +979,19 @@ struct SettingsPanel::Impl : private juce::Timer {
     place(takesField, m, y, w - 2 * m - 90 - 8 - 80 - 8, 30);
     place(takesBrowse, w - m - 90 - 8 - 80, y, 90, 30);
     place(takesDefault, w - m - 80, y, 80, 30);
+    y += 48;
+
+    // --- reamp pair
+    heading("REAMP PAIR");
+    place(capReamp, m, y, 400, 14);
+    y += 16;
+    place(reampField, m, y, w - 2 * m - 90 - 8 - 80 - 8, 30);
+    place(reampBrowse, w - m - 90 - 8 - 80, y, 90, 30);
+    place(reampClear, w - m - 80, y, 80, 30);
+    y += 36;
+    place(reampNote, m, y, w - 2 * m, 30);
+    y += 34;
+    place(sawbladeSignalToggle, m, y, w - 2 * m, 30);
     y += 48;
 
     // --- level match

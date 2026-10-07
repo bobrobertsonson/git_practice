@@ -100,6 +100,11 @@ class Settings {
   std::string separationModel() const;
   std::optional<std::filesystem::path> takesDir() const;
   std::filesystem::path effectiveTakesDir() const;
+  // v0.6: the official NAM standard input file (a user-supplied .wav; never bundled) that EXPORT REAMP PAIR renders. Unset by default.
+  std::optional<std::filesystem::path> namInputFile() const;
+  // v0.6 decision 22: the user chose "Use Sawblade's test signal instead" for model training (instead of the NAM standard input
+  // file). Remembered until revoked; default false (the export panel then asks for the NAM file; it never falls back silently).
+  bool useSawbladeSignal() const;
   std::string theme() const;
   double uiScale() const;
   bool firstRunCompleted() const;
@@ -112,6 +117,8 @@ class Settings {
   Result setTone3000ClientId(std::string);
   Result setSeparationModel(std::string);
   Result setTakesDir(std::optional<std::filesystem::path>);
+  Result setUseSawbladeSignal(bool);
+  Result setNamInputFile(std::optional<std::filesystem::path>);  // none / empty clears it
   Result setTheme(std::string);
   Result setUiScale(double);
   Result setLevelMatch(bool);

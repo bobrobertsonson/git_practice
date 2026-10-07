@@ -389,10 +389,29 @@ ExportResult readExportResult(const fs::path& outDir) {
     r.wallSeconds = num(j, "totalWallSeconds", 0.0);
     if (auto n = j.find("exportNotes"); n != j.end() && n->is_object()) r.exportNotesJson = n->dump();
     // v0.6: arch / size / files {primary, container?, full?, lite?}. Read defensively: any member may be missing or mistyped.
+    {
+      // The report's `trainingSignal` (or metadata.trainingSignal / training.trainingSignal): a string, or an object with a label.
+      auto signalText = [](const json& v) -> std::string {
+        if (v.is_string()) return v.get<std::string>();
+        if (!v.is_object()) return {};
+        for (const char* k : {"label", "name", "description", "version", "id"})
+          if (auto it = v.find(k); it != v.end() && it->is_string() && !it->get<std::string>().empty()) return it->get<std::string>();
+        return {};
+      };
+      for (const json* holder : {&j, j.contains("metadata") ? &j["metadata"] : nullptr, j.contains("training") ? &j["training"] : nullptr}) {
+        if (holder == nullptr || !holder->is_object()) continue;
+        if (auto it = holder->find("trainingSignal"); it != holder->end()) r.trainingSignal = signalText(*it);
+        if (!r.trainingSignal.empty()) break;
+      }
+    }
     if (auto it = j.find("arch"); it != j.end() && it->is_string()) r.arch = it->get<std::string>();
     if (auto it = j.find("size"); it != j.end() && it->is_string()) r.size = it->get<std::string>();
     if (auto fl = j.find("files"); fl != j.end() && fl->is_object()) {
       if (auto it = fl->find("primary"); it != fl->end() && it->is_string()) r.namFile = fs::path(it->get<std::string>()).filename().string();
+      if (auto rp = fl->find("reampPair"); rp != fl->end() && rp->is_object()) {
+        for (auto [key, dst] : {std::pair<const char*, std::string*>{"input", &r.reampInput}, {"output", &r.reampOutput}})
+          if (auto it = rp->find(key); it != rp->end() && it->is_string()) *dst = fs::path(it->get<std::string>()).filename().string();
+      }
       for (const char* role : {"container", "full", "lite"})
         if (auto it = fl->find(role); it != fl->end() && it->is_string() && !it->get<std::string>().empty()) {
           const std::string name = fs::path(it->get<std::string>()).filename().string();
@@ -670,6 +689,7 @@ struct JobRunner::Job {
     j["exportMode"] = s.exportMode;
     j["exportSize"] = s.exportSize;
     j["exportArch"] = s.exportArch;
+    if (s.reampPair) j["reampPair"] = true;
     if (!s.pass.empty()) j["pass"] = s.pass;
     if (!s.pairName.empty()) j["pair"] = s.pairName;
     if (!s.refineNote.empty()) j["refineNote"] = s.refineNote;
@@ -1016,9 +1036,24 @@ bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
   job->wantProgressJson = true;  // probe --help for --progress-json (the checkpoint's progress.json is the fallback)
   job->args = {r.preset.string(), "--mode", r.mode};
   for (const std::string& a : exportArchArgs(r.arch, r.size)) job->args.push_back(a);
-  for (const char* a : {"--device", "auto", "--require-accept"}) job->args.push_back(a);
-  if (r.di) job->args.insert(job->args.end(), {"--di", r.di->string()});
-  else if (r.diBuiltin) job->args.insert(job->args.end(), {"--di", "builtin"});
+  const bool pairOnly = !r.reampInput.empty();
+  if (pairOnly) {
+    // Reamp pair only: no training, so no device, acceptance gate or validation DI.
+    if (!fs::is_regular_file(r.reampInput, ec)) return fail("The NAM standard input file was not found: " + r.reampInput.string());
+    job->args.insert(job->args.end(), {"--reamp-pair", r.reampInput.string(), "--no-train"});
+  } else {
+    for (const char* a : {"--device", "auto", "--require-accept"}) job->args.push_back(a);
+    if (r.di) job->args.insert(job->args.end(), {"--di", r.di->string()});
+    else if (r.diBuiltin) job->args.insert(job->args.end(), {"--di", "builtin"});
+    if (r.resumeDir.empty()) {  // a resumed run continues with the signal it started with
+      if (!r.namInput.empty()) {
+        if (!fs::is_regular_file(r.namInput, ec)) return fail("The NAM standard input file was not found: " + r.namInput.string());
+        job->args.insert(job->args.end(), {"--nam-input", r.namInput.string()});
+      } else if (r.sawbladeSignal) {
+        job->args.insert(job->args.end(), {"--signal", "sawblade"});
+      }
+    }
+  }
   if (r.allowInexact) job->args.push_back("--allow-inexact");
   if (!r.notesPreset.empty()) {
     if (!fs::is_regular_file(r.notesPreset, ec)) return fail("The preset for the export notes was not found: " + r.notesPreset.string());
@@ -1041,6 +1076,7 @@ bool JobRunner::startExport(const ExportRequest& r, std::string* error) {
   job->snap.exportMode = r.mode;
   job->snap.exportSize = r.size;
   job->snap.exportArch = r.arch;
+  job->snap.reampPair = pairOnly;
   job->snap.reference = r.preset.filename().string();
   job->snap.di = r.di ? r.di->filename().string() : r.diBuiltin ? "built-in signal" : "";
   std::lock_guard<std::mutex> lk(m_);
@@ -1331,7 +1367,8 @@ void JobRunner::finalizeJob(Job& job) {
       const std::string stem = !fin.result.namFile.empty() ? exportBaseName(fin.result.namFile) : job.outDir.filename().string();
       const fs::path sidecar = job.outDir / (stem + ".sawblade.json");
       if (!job.sourcePreset.empty() && fs::copy_file(job.sourcePreset, sidecar, fs::copy_options::overwrite_existing, ec) && !ec) fin.sidecar = sidecar;
-      if (job.settings != nullptr && fin.result.wallSeconds > 0.0) job.settings->setExportWallSeconds(fin.exportArch.empty() ? "a1" : fin.exportArch, fin.exportSize, fin.result.wallSeconds);
+      // A pair-only run trains nothing: its time must not become the model type's "last run".
+      if (job.settings != nullptr && !fin.reampPair && fin.result.wallSeconds > 0.0) job.settings->setExportWallSeconds(fin.exportArch.empty() ? "a1" : fin.exportArch, fin.exportSize, fin.result.wallSeconds);
     }
   }
   if (state == JobState::Succeeded) {
@@ -1457,6 +1494,7 @@ std::shared_ptr<JobRunner::Job> JobRunner::adoptJob(JobKind kind, const fs::path
   job->snap.di = j.value("di", std::string());
   job->snap.exportMode = j.value("exportMode", std::string());
   job->snap.exportSize = j.value("exportSize", std::string());
+  job->snap.reampPair = j.value("reampPair", false);
   job->snap.exportArch = j.value("exportArch", std::string(kind == JobKind::Export ? "a1" : ""));  // a job written before A2 was A1
   job->snap.pass = j.value("pass", std::string());
   job->snap.pairName = j.value("pair", std::string());

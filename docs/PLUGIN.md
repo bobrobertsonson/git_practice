@@ -729,10 +729,35 @@ existing user keeps what they had (an unknown old size becomes A1 Standard). Onl
 settings (they were all defaults, and the old default was A1 Standard), starts on A2 Full. The wall-time history is kept per
 `exportWallSeconds.<arch>.<size>`; an A1 lookup falls back to the pre-A2 key `exportWallSeconds.<size>` (always an A1 size), A2
 lookups never do. Ladder fetch is unchanged and still passes `--size standard` (spec decision 13).
-An A2 run writes three files (`<name>.a2.nam` container, `<name>.a2_full.nam`, `<name>.a2_lite.nam`); the report's `files.primary`
-is the one `size` names, which the panel shows, reveals and takes the acceptance verdict of (`validation.<size>`, else
-`validation.acceptance`); the others are listed. Progress JSON may carry `arch`; reports, progress and `files` are read
-defensively (an older exporter without them behaves as before: A1, one `.nam`).
+An A2 run writes three files (`<name>.a2.nam` container, `<name>.a2_full.nam`, `<name>.a2_lite.nam`). Since decision 18 the
+**container is primary**: it is the standard NAM A2 file, usable on any A2 loader, and the report's `files.primary` names it. The
+panel shows it as "the model to load" (mode cards, the will-write text, the result's `model` line) and REVEAL selects it. The
+standalone Full and Lite files are extras, listed after it ("also ...") each with its own verdict (`validation.full` /
+`validation.lite`, e.g. "A2 Lite: NOT MET"); the headline verdict is still the one of the size `size` names (`validation.<size>`,
+else `validation.acceptance`). Progress JSON may carry `arch`; reports, progress and `files` are read defensively (an older
+exporter without them behaves as before: A1, one `.nam`; a report whose `primary` is a standalone file reads the same way).
+
+**Training signal (v0.6 decision 22).** Models are trained on the NAM project's standard input file (v3_0_0.wav / input.wav, from
+the NAM trainer's "Download input file" button), which the user supplies: the plugin never bundles or downloads it. It is the
+same Settings field as the reamp pair's (`namInputFile`). Every model export with a usable path passes `--nam-input <path>`
+(a resume does not: it continues with the signal it started with). With no path, TRAIN EXPORT starts nothing and the panel asks:
+CHOOSE FILE... (stores the path and starts the export) or USE SAWBLADE'S TEST SIGNAL INSTEAD (passes `--signal sawblade`; remembered as
+`trainingSignalSawblade` in the settings file, revocable with the Settings checkbox or by setting a path; the model is labelled as
+not trained on the standard NAM signal); NOT NOW starts nothing. A stored path whose file is missing counts as no path, and the prompt says so.
+There is never a silent fallback. The checklist names the signal in use and a TRAINING SIGNAL... button reopens the prompt. The result
+view shows "training signal" from the report (`trainingSignal`, else `metadata.trainingSignal` / `training.trainingSignal`; a string,
+or an object read by its `label` / `name` / `description` / `version`), nothing if the report has none.
+
+**EXPORT REAMP PAIR (v0.6 decision 20).** The standard NAM workflow trains from a reamped capture. The export panel's EXPORT
+REAMP PAIR button renders the official NAM standard input file (supplied by the user, never bundled) through the rig's
+exportable chain and writes `<name>.reamp_input.wav` + `<name>.reamp_output.wav` (no model is trained). The input file is the
+Settings field **NAM STANDARD INPUT FILE (EXPORT REAMP PAIR)** (`namInputFile` in the settings file, with Browse and Clear; absent
+by default, so older settings files need no migration). With no path, or a path whose file is missing, the button is disabled
+and the message beside it says to set the file in Settings. The runner passes `--reamp-pair <file> --no-train` and, for such a
+run, leaves out `--device`, `--require-accept` and `--di`. The result view shows REAMP PAIR, the two files and the notes
+(personal use only; non-commercial when a cc-by-nc capture is involved; never upload or share them: they are derived from
+TONE3000 captures). `files.reampPair{input, output}` is read from the report (names only); a pair-only run records no training
+wall time. The pair can also come beside a trained model (the report then has both).
 
 **Anagram notes (v0.6 Task C).** When the finished run's `exportNotes.deviceProfiles.anagram` is an object, a GENERIC / ANAGRAM
 switch appears above the notes box. ANAGRAM shows the profile (`formatAnagramNotesTxt`, JUCE-free) and COPY copies what is shown; the
@@ -985,6 +1010,8 @@ overwrites it):
 | `tone3000ClientId` | the publishable key (`t3k_pub_...`). A value containing `t3k_cs_` (any case) is refused by `setTone3000ClientId`, never stored, written or logged; `load()` also drops one found in a file. Anything not starting with `t3k_pub_` is accepted with a warning. Effective value: stored, else the `TONE3000_CLIENT_ID` environment variable (never a `t3k_cs_` value). |
 | `separationModel` | `htdemucs_6s` (default), `htdemucs`, `htdemucs_ft` |
 | `takesDir` | absent = the platform default above |
+| `trainingSignalSawblade` | `true` = the user chose Sawblade's test signal for training; absent / anything else = not chosen (the export panel asks). |
+| `namInputFile` | the NAM standard input `.wav` for EXPORT REAMP PAIR; absent = not set (the action is disabled). A wrong-typed value reads as not set. |
 | `theme` | only `"dark"` exists |
 | `uiScale` | 0.5 to 2.0 (clamped), initial editor size = 1280 x 800 x `uiScale` |
 | `firstRunCompleted` | set by DONE / closing the panel on a first run |
@@ -1039,7 +1066,7 @@ gear button, closed by Esc, the x button or DONE (UI state, never saved). Sectio
 path, Browse, Auto, status light, Test = `sawblade-t3k --help`), TONE3000 (client id with the secret-key refusal shown in
 red, token-file status, Test = `whoami --json`, Log in with the device code box: code in a 40 px mono font, COPY CODE,
 COPY URL, OPEN, CANCEL, countdown, RETRY on failure), Captures (cache folder, count of `*.nam` / `*.wav` counted on a
-background thread, Open folder), Separation, Recording (takes folder), Appearance (theme, UI scale; applies when the
+background thread, Open folder), Separation, Recording (takes folder), Reamp pair (NAM standard input file), Appearance (theme, UI scale; applies when the
 window is next opened), and a footer with the settings file path and **About Sawblade...**.
 
 **First run.** `Settings::isFirstRun()` is true when no settings file existed at the instance's first `load()`. The

@@ -3172,7 +3172,8 @@ TEST_CASE("runner: --arch and --size for each of the five model choices; the fil
     CHECK(s.result.arch == c.arch);
     CHECK(s.result.size == c.size);
     const bool a2 = std::string(c.arch) == "a2";
-    const std::string primary = a2 ? std::string("seed-nocab-") + c.size + ".a2_" + c.size + ".nam" : std::string("seed-nocab-") + c.size + ".nam";
+    // decision 18: the A2 primary file is the container
+    const std::string primary = a2 ? std::string("seed-nocab-") + c.size + ".a2.nam" : std::string("seed-nocab-") + c.size + ".nam";
     CHECK(s.result.namFile == primary);
     CHECK(fs::exists(s.outDir / primary));
     CHECK(s.result.otherFiles.size() == (a2 ? 2u : 0u));
@@ -3208,11 +3209,108 @@ TEST_CASE("runner: an A2 export whose primary file is NOT MET still succeeds, wi
   CHECK(s.accepted == "NOT MET");
   CHECK(s.result.status == "NOT MET");
   CHECK(fs::exists(s.sidecar));
-  CHECK(s.result.namFile == "seed-nocab-full.a2_full.nam");
+  CHECK(s.result.namFile == "seed-nocab-full.a2.nam");  // the container is primary (decision 18)
   REQUIRE(s.result.otherFiles.size() == 2);
+  CHECK(s.result.otherFiles[0].role == "full");
+  CHECK(s.result.otherFiles[0].verdict == "NOT MET");
   for (const auto& f : s.result.otherFiles) CHECK(fs::exists(s.outDir / f.name));
   CHECK(s.result.otherFiles[1].role == "lite");
   CHECK(s.result.otherFiles[1].verdict == "NOT MET");
+}
+
+TEST_CASE("runner: a reamp-pair export passes --reamp-pair <file> --no-train and no training flags, and reads the pair from the report", "[match][runner][export][reamp]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.arch = "a2";
+  er.size = "full";
+  er.exportsRoot = t.root / "exports";
+  er.di = t.di;          // a validation DI is not passed for a pair-only run
+  er.diBuiltin = false;
+  std::string err;
+
+  er.reampInput = t.root / "missing_input.wav";  // a file that is not there is refused before anything starts
+  CHECK_FALSE(runner.startExport(er, &err));
+  CHECK(err.find("NAM standard input file was not found") != std::string::npos);
+
+  er.reampInput = t.root / "nam_input.wav";
+  sawblade::writeWavFloat32(er.reampInput, 48000.0, std::vector<float>(480, 0.1f));
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const JobSnapshot s = runner.snapshot(JobKind::Export);
+  REQUIRE(s.state == JobState::Succeeded);
+  const auto argv = argvOf(s.outDir);
+  CHECK(after(argv, "--reamp-pair") == er.reampInput.string());
+  CHECK(has(argv, "--no-train"));
+  CHECK(after(argv, "--arch") == "a2");
+  CHECK_FALSE(has(argv, "--require-accept"));
+  CHECK_FALSE(has(argv, "--di"));
+  CHECK_FALSE(has(argv, "--device"));
+  CHECK(s.reampPair);
+  CHECK(readJson(s.dir / "job.json")["reampPair"] == true);
+  CHECK(s.result.namFile.empty());
+  CHECK(s.result.reampInput == "seed-nocab-full.reamp_input.wav");
+  CHECK(s.result.reampOutput == "seed-nocab-full.reamp_output.wav");
+  CHECK(fs::exists(s.outDir / s.result.reampInput));
+  CHECK(fs::exists(s.outDir / s.result.reampOutput));
+  CHECK(s.accepted == "not judged");
+  CHECK(t.settings.exportWallSeconds("a2", "full") == 0.0);  // nothing was trained: no wall time recorded
+
+  // A normal export after it passes neither flag.
+  er.reampInput.clear();
+  er.di.reset();
+  er.diBuiltin = true;
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const auto argv2 = argvOf(runner.snapshot(JobKind::Export).outDir);
+  CHECK_FALSE(has(argv2, "--reamp-pair"));
+  CHECK_FALSE(has(argv2, "--no-train"));
+  CHECK(has(argv2, "--require-accept"));
+  CHECK_FALSE(runner.snapshot(JobKind::Export).reampPair);
+}
+
+TEST_CASE("runner: --nam-input <file> or --signal sawblade for model training; neither on a resume; a missing file is refused", "[match][runner][export][signal]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.exportsRoot = t.root / "exports";
+  std::string err;
+  er.namInput = t.root / "v3_0_0.wav";
+  CHECK_FALSE(runner.startExport(er, &err));
+  CHECK(err.find("NAM standard input file was not found") != std::string::npos);
+  sawblade::writeWavFloat32(er.namInput, 48000.0, std::vector<float>(480, 0.1f));
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  auto s = runner.snapshot(JobKind::Export);
+  auto argv = argvOf(s.outDir);
+  CHECK(after(argv, "--nam-input") == er.namInput.string());
+  CHECK_FALSE(has(argv, "--signal"));
+  CHECK(s.result.trainingSignal == "NAM standard input v3.0.0 (fake)");  // the report's object, read by its label
+
+  er.namInput.clear();
+  er.sawbladeSignal = true;
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  s = runner.snapshot(JobKind::Export);
+  argv = argvOf(s.outDir);
+  CHECK(after(argv, "--signal") == "sawblade");
+  CHECK_FALSE(has(argv, "--nam-input"));
+  CHECK(s.result.trainingSignal == "Sawblade test signal (not the standard NAM signal)");
+
+  er.sawbladeSignal = false;  // neither: the runner adds nothing (the panel never gets here; the exporter would say so)
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  argv = argvOf(runner.snapshot(JobKind::Export).outDir);
+  CHECK_FALSE(has(argv, "--signal"));
+  CHECK_FALSE(has(argv, "--nam-input"));
 }
 
 TEST_CASE("runner: an arch / size pair the exporter refuses fails the job with its message", "[match][runner][export][a2]") {

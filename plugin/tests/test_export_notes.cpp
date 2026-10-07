@@ -232,6 +232,73 @@ TEST_CASE("export wall-time history is kept per arch + size; the pre-A2 keys are
   fs::remove_all(dir, ec);
 }
 
+TEST_CASE("export report: the container is the primary file, the standalone files are extras with their verdicts (decision 18)", "[export][report][a2]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_c_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  for (const char* n : {"riff-nocab-full.a2.nam", "riff-nocab-full.a2_full.nam", "riff-nocab-full.a2_lite.nam"}) std::ofstream(dir / n) << "{}";
+  const json acc = {{"acceptance", {{"status", "met"}, {"heldOutEsr", 0.01}}}};
+  const json lite = {{"acceptance", {{"status", "not met"}}}};
+  const json rep = {{"arch", "a2"}, {"size", "full"},
+                    {"files", {{"primary", "riff-nocab-full.a2.nam"}, {"container", "riff-nocab-full.a2.nam"}, {"full", "riff-nocab-full.a2_full.nam"}, {"lite", "riff-nocab-full.a2_lite.nam"}}},
+                    {"validation", {{"full", acc}, {"lite", lite}}}};
+  std::ofstream(dir / "export_report.json") << rep.dump();
+  const ExportResult r = readExportResult(dir);
+  CHECK(r.namFile == "riff-nocab-full.a2.nam");
+  REQUIRE(r.otherFiles.size() == 2);
+  CHECK(r.otherFiles[0].role == "full");
+  CHECK(r.otherFiles[0].verdict == "MET");
+  CHECK(r.otherFiles[1].role == "lite");
+  CHECK(r.otherFiles[1].verdict == "NOT MET");
+  CHECK(r.status == "MET");  // the headline is still validation.<size>
+  CHECK(exportBaseName(r.namFile) == "riff-nocab-full");
+  CHECK(r.reampInput.empty());
+  CHECK(r.reampOutput.empty());
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("export report: the training signal is read from the report, metadata or training, as a string or an object", "[export][report][signal]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_s_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  auto read = [&](const json& rep) {
+    std::ofstream(dir / "export_report.json") << rep.dump();
+    return readExportResult(dir).trainingSignal;
+  };
+  CHECK(read(json{{"trainingSignal", "NAM standard input v3.0.0"}}) == "NAM standard input v3.0.0");
+  CHECK(read(json{{"trainingSignal", {{"label", "NAM v3.0.0"}, {"version", "3.0.0"}}}}) == "NAM v3.0.0");
+  CHECK(read(json{{"trainingSignal", {{"version", "3.0.0"}}}}) == "3.0.0");
+  CHECK(read(json{{"metadata", {{"trainingSignal", "from metadata"}}}}) == "from metadata");
+  CHECK(read(json{{"training", {{"trainingSignal", "from training"}}}}) == "from training");
+  CHECK(read(json{{"trainingSignal", 42}}).empty());  // wrong type: not reported, no crash
+  CHECK(read(json::object()).empty());
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("export report: a reamp-pair-only report has the pair and no model; a pair beside a model is read too", "[export][report][reamp]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_p_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  const json pair = {{"input", "/some/where/riff.reamp_input.wav"}, {"output", "riff.reamp_output.wav"}};
+  std::ofstream(dir / "export_report.json") << json{{"files", {{"reampPair", pair}}}}.dump();
+  ExportResult r = readExportResult(dir);
+  REQUIRE(r.haveReport);
+  CHECK(r.namFile.empty());
+  CHECK(r.reampInput == "riff.reamp_input.wav");  // file names only
+  CHECK(r.reampOutput == "riff.reamp_output.wav");
+  CHECK(r.otherFiles.empty());
+  // a wrong-typed pair is ignored
+  std::ofstream(dir / "export_report.json") << json{{"files", {{"reampPair", "oops"}}}}.dump();
+  r = readExportResult(dir);
+  CHECK(r.reampOutput.empty());
+  std::ofstream(dir / "export_report.json") << json{{"files", {{"primary", "m.a2.nam"}, {"reampPair", pair}}}}.dump();
+  std::ofstream(dir / "m.a2.nam") << "{}";
+  r = readExportResult(dir);
+  CHECK(r.namFile == "m.a2.nam");
+  CHECK(r.reampOutput == "riff.reamp_output.wav");
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 TEST_CASE("export report: A2 files block, the primary file, the validation of the chosen size, the Anagram profile", "[export][report][a2]") {
   const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_" + std::to_string(std::random_device{}()));
   fs::create_directories(dir);

@@ -6,12 +6,14 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <system_error>
 
 #include "ExportGlue.h"
 #include "ExportNotes.h"
 #include "SawbladeLookAndFeel.h"
+#include "settings/Settings.h"
 
 namespace sawblade::plugin {
 namespace {
@@ -164,6 +166,9 @@ class InfoCard : public juce::Component {
   bool highlighted_ = false;
 };
 
+// What the reamp pair is, in the same plain terms the export notes use (v0.6 decision 20).
+const char* kReampNotes = "Reamp pair: for your own use only. It is derived from TONE3000 captures, so never upload or share it. Non-commercial when a cc-by-nc capture is in this rig.";
+
 const char* kPersonalUse = "Built from TONE3000 captures: for your own use. Sharing or selling exports needs permission from the capture creators and TONE3000.";
 
 }  // namespace
@@ -177,6 +182,8 @@ struct ExportPanel::Impl {
   std::uint64_t seenSerial = 0;
   View view = View::Configure;
   std::string exportError;
+  bool askSignal = false;      // decision 22: the prompt for the NAM standard input file (never a silent fallback)
+  bool askStarts = false;      // the prompt came from TRAIN EXPORT: the answer starts the export
   ExportPlan plan;
   ResumeOffer resumeOffer;
   // planExport / findResumableExport rebuild the preset JSON and hash it: recomputed only when something they depend on
@@ -201,7 +208,7 @@ struct ExportPanel::Impl {
   juce::Label capMode, capSize, capDi, capComp, capOut, capRig, capChecks, capCredits;
   OptionCard noCab, withCab;
   InfoCard studio;
-  juce::TextButton a2Full, a2Lite, a1, feather, lite, standard, diTake, diBuiltin, compDrop, compKeep, chooseFolder, exeLocate, trainBtn, resumeBtn;
+  juce::TextButton a2Full, a2Lite, a1, feather, lite, standard, diTake, diBuiltin, compDrop, compKeep, chooseFolder, exeLocate, trainBtn, resumeBtn, reampBtn, signalBtn, signalChoose, signalSawblade, signalCancel;
   juce::Label lastRun, diNote, compNote, folderLabel, rigChain, rigCab, notice, message;
   juce::Label checkMark[6], checkText[6];
   juce::Label credits, ncBadge;
@@ -216,7 +223,7 @@ struct ExportPanel::Impl {
   std::string notesKey;
   std::string liveRigHash;       // of the LIVE preset (not the export preset: DROP COMP hides the comp from that one), with the plan
   // right column
-  juce::Label capRight, stage, detail, bestEsr, timing, status, statusSummary, numEsr, numLtas, outPath, sidecarLabel, licenceNote, wallLabel, willWrite, otherFiles;
+  juce::Label capRight, stage, detail, bestEsr, timing, status, statusSummary, numEsr, numLtas, outPath, sidecarLabel, licenceNote, wallLabel, willWrite, otherFiles, signalPrompt, signalLabel;
   Bar bar;
   juce::TextButton cancelBtn, revealBtn, openFolderBtn, abBtn;
   std::unique_ptr<juce::FileChooser> chooser;
@@ -329,6 +336,13 @@ struct ExportPanel::Impl {
     notesAnagram.setVisible(false);
     button(copyBtn, "COPY", "Copy the export notes as text (what to add around the loader pedal)");
     button(trainBtn, "TRAIN EXPORT", "Train a NAM model of the loaded rig (runs sawblade-export)");
+    button(signalBtn, "TRAINING SIGNAL...", "Choose the signal models are trained on: the NAM standard input file (default) or Sawblade's test signal");
+    button(signalChoose, "CHOOSE FILE...", "Choose the NAM standard input .wav (v3_0_0.wav / input.wav)");
+    button(signalSawblade, "USE SAWBLADE'S TEST SIGNAL INSTEAD", "Train on Sawblade's own test signal. The model is labelled as not trained on the standard NAM signal. Remembered in Settings until you change it");
+    button(signalCancel, "NOT NOW", "Close this prompt");
+    text(signalPrompt, 12.0f, L::text());
+    text(signalLabel, 11.0f, L::dimText(), true);
+    button(reampBtn, "EXPORT REAMP PAIR", "Render the NAM standard input file through this rig and write the pair (input and output wavs) to train a standard NAM capture yourself. Trains nothing here");
     button(resumeBtn, "RESUME", "Continue the cancelled run of this rig from its checkpoint");
     button(exeLocate, "LOCATE...", "Choose the sawblade-export executable");
     trainBtn.setColour(juce::TextButton::buttonColourId, L::saw());
@@ -369,10 +383,42 @@ struct ExportPanel::Impl {
     seenSerial = proc.exportSettingsSerial();
   }
 
+  // The NAM standard input file from Settings if it is there.
+  static std::optional<fs::path> usableNamInput() {
+    const auto p = settings::Settings::shared().namInputFile();
+    std::error_code ec;
+    return p && fs::is_regular_file(*p, ec) ? p : std::nullopt;
+  }
+
   void startExport(bool resume) {
     ExportRequest r;
     std::string err;
+    const auto namInput = usableNamInput();
+    if (!resume && !namInput && !settings::Settings::shared().useSawbladeSignal()) {
+      // Neither the NAM file nor an explicit choice of Sawblade's signal: ask, start nothing.
+      askSignal = true;
+      askStarts = true;
+      exportError.clear();
+      refresh();
+      return;
+    }
+    askSignal = false;
     bool ok = resume ? buildResumeRequest(proc, resumeOffer, r, &err) : buildExportRequest(proc, cur, plan, r, &err);
+    if (ok && !resume) {
+      if (namInput) r.namInput = *namInput;
+      else r.sawbladeSignal = true;
+    }
+    if (ok) ok = proc.jobs().startExport(r, &err);
+    exportError = ok ? std::string() : err;
+    refresh();
+  }
+
+  void startReampPair() {
+    ExportRequest r;
+    std::string err;
+    const auto input = settings::Settings::shared().namInputFile();
+    bool ok = input && buildReampPairRequest(proc, cur, plan, *input, r, &err);
+    if (!input) err = "Set the NAM standard input file in Settings first.";
     if (ok) ok = proc.jobs().startExport(r, &err);
     exportError = ok ? std::string() : err;
     refresh();
@@ -459,6 +505,34 @@ struct ExportPanel::Impl {
     };
     trainBtn.onClick = [this] { startExport(false); };
     resumeBtn.onClick = [this] { startExport(true); };
+    reampBtn.onClick = [this] { startReampPair(); };
+    signalBtn.onClick = [this] {
+      askSignal = true;
+      askStarts = false;
+      refresh();
+    };
+    signalCancel.onClick = [this] {
+      askSignal = false;
+      refresh();
+    };
+    signalSawblade.onClick = [this] {
+      settings::Settings::shared().setUseSawbladeSignal(true);
+      askSignal = false;
+      if (askStarts) startExport(false);
+      else refresh();
+    };
+    signalChoose.onClick = [this] {
+      chooser = std::make_unique<juce::FileChooser>("Choose the NAM standard input file (v3_0_0.wav / input.wav)", juce::File(), "*.wav");
+      chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& fc) {
+        const juce::File f = fc.getResult();
+        if (f == juce::File() || !f.existsAsFile()) return;
+        settings::Settings::shared().setNamInputFile(fs::path(f.getFullPathName().toStdString()));
+        settings::Settings::shared().setUseSawbladeSignal(false);
+        askSignal = false;
+        if (askStarts) startExport(false);
+        else refresh();
+      });
+    };
     cancelBtn.onClick = [this] { proc.jobs().cancel(JobKind::Export); };
     revealBtn.onClick = [this] {
       const auto s = proc.jobs().snapshot(JobKind::Export);
@@ -481,9 +555,10 @@ struct ExportPanel::Impl {
     const bool cfg = view == View::Configure, trn = view == View::Training, res = view == View::Result;
     for (juce::Component* c : std::initializer_list<juce::Component*>{&stage, &detail, &bestEsr, &timing, &bar, &cancelBtn}) c->setVisible(trn);
     for (juce::Component* c : std::initializer_list<juce::Component*>{&status, &statusSummary, &numEsr, &numLtas, &outPath, &sidecarLabel, &otherFiles, &wallLabel, &licenceNote,
-                                                                      &revealBtn, &openFolderBtn})
+                                                                      &revealBtn, &openFolderBtn, &signalLabel})
       c->setVisible(res);
-    willWrite.setVisible(cfg);
+    willWrite.setVisible(cfg && !askSignal);
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&signalPrompt, &signalChoose, &signalSawblade, &signalCancel}) c->setVisible(cfg && askSignal);
     if (!res) abBtn.setVisible(false);
     // stage doubles as the headline of a cancelled / failed run in the configure view
     layout();
@@ -628,8 +703,8 @@ struct ExportPanel::Impl {
 
     // ---- mode cards
     const bool exactNoCab = rig.noCabExact;
-    // The model file the cards name: A1 `<name>.nam`; A2 the primary standalone file `<name>.a2_full.nam` / `.a2_lite.nam`.
-    const std::string namSuffix = cur.arch == "a2" ? ".a2_" + cur.size + ".nam" : ".nam";
+    // The model file the cards name: A1 `<name>.nam`; A2 the container `<name>.a2.nam`, the standard NAM A2 file (decision 18).
+    const std::string namSuffix = cur.arch == "a2" ? ".a2.nam" : ".nam";
     noCab.setContent("NO-CAB + IR", "Model of both paths without the cab, plus the cab IR as a .wav. Load both into your pedal.",
                      exactNoCab ? "EXACT" + juce::String(juce::CharPointer_UTF8(" \xe2\x80\x94 LIVE-COMPATIBLE BLEND")) : juce::String("NOT AVAILABLE: PER-PATH CABS"),
                      exactNoCab ? L::live() : L::studio(), juce::String(stem + "-nocab-" + cur.size + namSuffix + " + .ir.wav"), plan.mode == "nocab", !exactNoCab);
@@ -712,7 +787,9 @@ struct ExportPanel::Impl {
     else check(kCross, L::error(), "Bus comp (release " + juce::String(juce::roundToInt(rig.compReleaseMs)) + " ms)" + kDash + "too long to train: refused");
     check(kCross, L::error(), "Noise gate" + kDash + "left out, set it on your pedal");
     check(kCross, L::error(), "Time effects (delay / reverb / modulation)" + kDash + "none in this rig");
-    check("i", L::warning(), "Training uses the standard NAM capture signal at 48 kHz");
+    if (const auto in = usableNamInput()) check("i", L::warning(), "Training signal: NAM standard input file (" + juce::String(in->filename().string()) + ")");
+    else if (settings::Settings::shared().useSawbladeSignal()) check(kCross, L::error(), "Training signal: Sawblade's test signal (not the standard NAM signal)");
+    else check("i", L::warning(), "Training signal: not set; TRAIN EXPORT asks for the NAM standard input file");
     {
       const double sec = proc.matchSettings().exportWallSeconds(cur.arch, cur.size);
       const juce::String name = modelName(cur.arch, cur.size);
@@ -746,6 +823,20 @@ struct ExportPanel::Impl {
     // WITH CAB with a comp whose release cannot be trained: the exporter would refuse, so do not start (the note says why).
     const bool refused = plan.mode == "withcab" && rig.compOn && !rig.compTrainable;
     trainBtn.setEnabled(tools.ok() && !active && plan.blocked.empty() && !refused);
+    // EXPORT REAMP PAIR needs the NAM standard input file from Settings; without it the button is off and the message says why.
+    const auto namInput = settings::Settings::shared().namInputFile();
+    std::error_code reampEc;
+    const bool reampFile = namInput && fs::is_regular_file(*namInput, reampEc);
+    reampBtn.setEnabled(tools.ok() && !active && plan.blocked.empty() && !refused && reampFile);
+    reampBtn.setVisible(tools.ok());
+    if (msg.isEmpty()) {
+      if (!namInput) msg = "EXPORT REAMP PAIR: set the NAM standard input file in Settings first.";
+      else if (!reampFile) msg = "EXPORT REAMP PAIR: the NAM standard input file was not found: " + juce::String(namInput->string());
+      if (msg.isNotEmpty()) {
+        setText(message, msg);
+        setColour(message, L::dimText());
+      }
+    }
     const bool offer = resumeOffer.available && !active;
     resumeBtn.setVisible(offer);
     resumeBtn.setEnabled(tools.ok() && offer);
@@ -753,6 +844,22 @@ struct ExportPanel::Impl {
       const juce::String t = "RESUME  epoch " + juce::String(resumeOffer.epoch) + " of " + juce::String(resumeOffer.epochs) + kDot + juce::String(resumeOffer.mode == "nocab" ? "NO CAB" : "WITH CAB") + kDot +
                              modelName(resumeOffer.arch, resumeOffer.size).toUpperCase();
       resumeBtn.setButtonText(t);
+    }
+
+    // ---- training signal prompt (decision 22)
+    {
+      const bool cfgView = view == View::Configure;
+      const bool showPrompt = cfgView && askSignal;
+      willWrite.setVisible(cfgView && !askSignal);
+      for (juce::Component* c : std::initializer_list<juce::Component*>{&signalPrompt, &signalChoose, &signalSawblade, &signalCancel}) c->setVisible(showPrompt);
+      signalBtn.setEnabled(!active);
+      if (showPrompt) {
+        juce::String t = "Training signal\n\n";
+        const auto stored = settings::Settings::shared().namInputFile();
+        if (stored && !usableNamInput()) t += "The file set in Settings was not found: " + juce::String(stored->string()) + "\n\n";
+        t += "Models are trained on the NAM project's standard input file, v3_0_0.wav / input.wav (from the NAM trainer's 'Download input file' button). Sawblade does not bundle it.";
+        setText(signalPrompt, t);
+      }
     }
 
     // ---- right column
@@ -779,11 +886,23 @@ struct ExportPanel::Impl {
       setColour(status, r.status == "MET" ? L::live() : r.status == "NOT MET" ? L::error() : L::warning());
       setText(statusSummary, r.summary.empty() ? juce::String(r.haveReport ? "This model type is not judged against the acceptance limits." : "No acceptance report was written.") : juce::String(r.summary));
       auto num = [](const std::optional<double>& v, int dp) { return v ? juce::String(*v, dp) : juce::String("n/a"); };
+      const bool pairOnly = r.namFile.empty() && !r.reampOutput.empty();
+      if (pairOnly) {
+        setText(status, "REAMP PAIR");
+        setColour(status, L::live());
+        setText(statusSummary, "The pair is written. No model was trained: train it yourself with the standard NAM steps.");
+      }
       setText(numEsr, "held-out ESR   " + num(r.heldOutEsr, 4) + "   (limit " + num(r.esrLimit, 3) + ")");
       setText(numLtas, "DI LTAS error  " + num(r.diLtasDb, 2) + " dB (limit " + num(r.ltasLimitDb, 2) + " dB)");
       setColour(numEsr, r.heldOutEsr && r.esrLimit && r.status != "NOT JUDGED" ? (*r.heldOutEsr <= *r.esrLimit ? L::live() : L::error()) : L::text());
       setColour(numLtas, r.diLtasDb && r.ltasLimitDb && r.status != "NOT JUDGED" ? (*r.diLtasDb <= *r.ltasLimitDb ? L::live() : L::error()) : L::text());
-      setText(outPath, "model   " + juce::String((snap.outDir / r.namFile).string()));
+      if (pairOnly) {
+        setText(numEsr, juce::String());
+        setText(numLtas, juce::String());
+        setText(outPath, "reamp input   " + juce::String((snap.outDir / r.reampInput).string()) + "\nreamp output  " + juce::String((snap.outDir / r.reampOutput).string()));
+      } else {
+        setText(outPath, "model   " + juce::String((snap.outDir / r.namFile).string()));
+      }
       {
         // The other files of the run (an A2 run writes the container and both standalone models; the primary is shown above).
         // A standalone size's own verdict goes next to its file ("A2 Lite: NOT MET"): the headline above is the primary file's only.
@@ -797,13 +916,16 @@ struct ExportPanel::Impl {
             anyNotMet = anyNotMet || f.verdict == "NOT MET";
           }
         }
+        if (!pairOnly && !r.reampOutput.empty()) others += (others.isEmpty() ? "" : ", ") + juce::String(r.reampInput) + ", " + juce::String(r.reampOutput) + " (reamp pair)";
         setText(otherFiles, others.isEmpty() ? juce::String() : "also    " + others);
         setColour(otherFiles, anyNotMet ? L::error() : L::dimText());
       }
       setText(sidecarLabel, snap.sidecar.empty() ? juce::String("sidecar   (not written)") : "sidecar   " + juce::String(snap.sidecar.string()));
-      setText(wallLabel, "trained in " + juce::String(r.wallSeconds / 60.0, 1) + " min" + kDot + juce::String(snap.exportMode == "nocab" ? "NO CAB" : "WITH CAB") + kDot +
+      if (pairOnly) setText(wallLabel, "reamp pair" + kDot + juce::String(snap.exportMode == "nocab" ? "NO CAB" : "WITH CAB") + kDot + "nothing trained");
+      else setText(wallLabel, "trained in " + juce::String(r.wallSeconds / 60.0, 1) + " min" + kDot + juce::String(snap.exportMode == "nocab" ? "NO CAB" : "WITH CAB") + kDot +
                              modelName(snap.exportArch.empty() ? "a1" : snap.exportArch, snap.exportSize).toUpperCase());
-      setText(licenceNote, juce::String(kPersonalUse) + (r.nonCommercial ? juce::String("  Non-commercial: a cc-by-nc capture is in this rig.") : juce::String()));
+      setText(licenceNote, juce::String(r.reampOutput.empty() ? kPersonalUse : r.namFile.empty() ? kReampNotes : std::string(kPersonalUse) + "\n" + kReampNotes) + (r.nonCommercial ? juce::String("  Non-commercial: a cc-by-nc capture is in this rig.") : juce::String()));
+      setText(signalLabel, !r.trainingSignal.empty() && !pairOnly ? "training signal   " + juce::String(r.trainingSignal) : juce::String());
       revealBtn.setEnabled(!snap.outDir.empty());
       openFolderBtn.setEnabled(!snap.outDir.empty());
       const bool ab = !r.listen.empty();
@@ -813,8 +935,8 @@ struct ExportPanel::Impl {
     } else {
       juce::String h = "Ready";
       const std::string base = stem + "-" + plan.mode + "-" + cur.size;
-      // A2 writes the container and both standalone models (the chosen size is the one validated and shown first).
-      const juce::String models = cur.arch == "a2" ? juce::String(base + ".a2_" + cur.size + ".nam (the model to load)\n  " + base + ".a2.nam (container) and the other size's .nam")
+      // A2 writes the container (the standard NAM A2 file, the one to load) and the standalone Full and Lite models as extras.
+      const juce::String models = cur.arch == "a2" ? juce::String(base + ".a2.nam (the model to load)\n  " + base + ".a2_full.nam and .a2_lite.nam (standalone extras)")
                                                    : juce::String(base + ".nam");
       juce::String body = "Will write to " + juce::String(plan.exportsRoot.string()) + ":\n  " + models +
                           (plan.mode == "nocab" ? juce::String("\n  " + stem + "-nocab.ir.wav (the cab IR and post EQ)") : juce::String()) + "\n  export_report.json\n  " +
@@ -885,10 +1007,11 @@ struct ExportPanel::Impl {
     ncBadge.setBounds(lx + 480, 604, 130, 20);
 
     notice.setBounds(lx + 8, 636, 786, 36);
-    trainBtn.setBounds(lx, 684, 200, 40);
-    resumeBtn.setBounds(lx + 212, 684, 300, 40);
-    message.setBounds(lx + 524, 680, 190, 48);
-    exeLocate.setBounds(lx + 704, 690, 96, 28);
+    trainBtn.setBounds(lx, 684, 150, 40);
+    reampBtn.setBounds(lx + 158, 684, 180, 40);
+    exeLocate.setBounds(lx + 158, 690, 96, 28);  // shown instead of the reamp button while the exporter is missing
+    resumeBtn.setBounds(lx + 346, 684, 270, 40);
+    message.setBounds(lx + 624, 680, 176, 48);
 
     capRight.setBounds(rx, 76, rw, 14);
     stage.setBounds(rx, 98, rw, 26);
@@ -898,6 +1021,11 @@ struct ExportPanel::Impl {
     timing.setBounds(rx, 206, rw, 18);
     cancelBtn.setBounds(rx, 240, 140, 36);
     willWrite.setBounds(rx, 132, rw, 200);
+    signalPrompt.setBounds(rx, 100, rw, 124);
+    signalChoose.setBounds(rx, 232, 180, 34);
+    signalCancel.setBounds(rx + 188, 232, 90, 34);
+    signalSawblade.setBounds(rx, 274, rw, 34);
+    signalBtn.setBounds(lx + 620, 604, 180, 22);
 
     status.setBounds(rx, 98, rw, 34);
     statusSummary.setBounds(rx, 136, rw, 46);
@@ -910,7 +1038,8 @@ struct ExportPanel::Impl {
     outPath.setBounds(rx, 314, rw, 38);
     sidecarLabel.setBounds(rx, 352, rw, 38);
     otherFiles.setBounds(rx, 390, rw, 38);
-    licenceNote.setBounds(rx, 430, rw, 62);
+    licenceNote.setBounds(rx, 430, rw, 46);
+    signalLabel.setBounds(rx, 476, rw, 16);
 
     // The notes box fills the rest of the right column: below the status text, or (result view) below the licence note.
     const int ny = view == View::Result ? 494 : 342;
@@ -944,6 +1073,7 @@ ExportSettings ExportPanel::settings() const { return impl_->cur; }
 
 void ExportPanel::open() {
   impl_->exportError.clear();
+  impl_->askSignal = false;
   impl_->planValid = false;
   impl_->proc.jobs().attachExisting();
   impl_->loadSettings();

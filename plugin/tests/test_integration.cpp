@@ -1000,6 +1000,7 @@ void step18Export(Walk& w) {
   const juce::Image configure = shot(*w.ed, "18_export");
   CHECK(nonBackgroundFraction(configure, {0, 58, 1280, 742}) > 0.05);
 
+  settings::Settings::shared().setUseSawbladeSignal(true);  // an explicit choice: without one TRAIN EXPORT asks for the NAM file
   click(*w.exportButton("TRAIN EXPORT"));
   REQUIRE(waitUntilTrue([&] { return proc.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
   const fs::path run = proc.jobs().snapshot(JobKind::Export).outDir;

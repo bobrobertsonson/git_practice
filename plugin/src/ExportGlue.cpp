@@ -176,6 +176,18 @@ bool buildExportRequest(SawbladeProcessor& p, const ExportSettings& s, const Exp
   return true;
 }
 
+bool buildReampPairRequest(SawbladeProcessor& p, const ExportSettings& s, const ExportPlan& plan, const fs::path& namInput, ExportRequest& out, std::string* error) {
+  if (namInput.empty()) {
+    if (error) *error = "Set the NAM standard input file in Settings first.";
+    return false;
+  }
+  if (!buildExportRequest(p, s, plan, out, error)) return false;
+  out.reampInput = namInput;
+  out.di.reset();
+  out.diBuiltin = false;
+  return true;
+}
+
 ResumeOffer findResumableExport(SawbladeProcessor& p) {
   ResumeOffer o;
   const JobSnapshot snap = p.jobs().snapshot(JobKind::Export);

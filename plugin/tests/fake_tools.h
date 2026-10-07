@@ -172,6 +172,9 @@ else:
         rp = json.load(open(os.path.join(ck, "progress.json")))
         state["epoch"], state["best"] = rp["epoch"], rp.get("bestValEsr")
         print("resuming from epoch %d" % state["epoch"], flush=True)
+    if cfg.get("requireSignal") and not opt("--reamp-pair") and not opt("--resume") and not (opt("--nam-input") or opt("--signal") == "sawblade"):
+        print("error: pass --nam-input PATH or --signal sawblade", file=sys.stderr, flush=True)
+        sys.exit(64)
     prog_json("plan", 0.01, "plan")
     prog_json("signal", 0.04, "signal")
     prog_json("render", 0.08, "render")
@@ -179,6 +182,22 @@ else:
         print("error: the preset has no cab", file=sys.stderr, flush=True)
         prog_json("error", 0.08, "the preset has no cab")
         sys.exit(1)
+    if opt("--reamp-pair"):
+        # v0.6 decision 20: --reamp-pair NAM_INPUT.wav [--no-train]: the pair and a report, no model with --no-train.
+        src = opt("--reamp-pair")
+        pair = {"input": stem + ".reamp_input.wav", "output": stem + ".reamp_output.wav"}
+        shutil.copyfile(src, os.path.join(out, pair["input"]))
+        shutil.copyfile(src, os.path.join(out, pair["output"]))
+        rep = {"reportVersion": 1, "tool": "sawblade-export", "mode": mode, "arch": arch, "size": size, "files": {"reampPair": pair},
+               "nonCommercial": bool(cfg.get("nonCommercial")), "totalWallSeconds": 2.0}
+        if "--no-train" not in argv:
+            print("error: the fake only does --reamp-pair with --no-train", file=sys.stderr, flush=True)
+            sys.exit(64)
+        json.dump(rep, open(os.path.join(out, "export_report.json"), "w"), indent=2)
+        shutil.rmtree(ck)
+        prog_json("done", 1.0, "done", 0, False)
+        print("reamp pair: " + out, flush=True)
+        sys.exit(0)
     for e, g in ((3, "g1"), (7, "g2")):
         if e <= state["epoch"]:
             continue
@@ -196,11 +215,11 @@ else:
                    "metadata": {"name": stem, "sawblade": {"exporter": "sawblade-export", "preset": {"name": stem, "sha256": sha},
                                 "exportMode": mode, "arch": arch, "size": size, "nonCommercial": nc, "attribution": [], "licenceNote": "for your own use"}}},
                   open(path, "w"))
-    # a1: <stem>.nam. a2: the container plus the standalone Full and Lite files; the primary is the one --size names.
+    # a1: <stem>.nam. a2 (decision 18): the container <stem>.a2.nam is primary; the standalone Full and Lite files are extras.
     files = {}
     if arch == "a2":
         files = {"container": stem + ".a2.nam", "full": stem + ".a2_full.nam", "lite": stem + ".a2_lite.nam"}
-        files["primary"] = files[size]
+        files["primary"] = files["container"]
         for k in ("container", "full", "lite"):
             write_nam(os.path.join(out, files[k]))
     else:
@@ -221,6 +240,11 @@ else:
               "training": {"namFile": os.path.basename(nam), "epochsDone": epochs, "wallSeconds": cfg.get("trainWall", 100.0)},
               "validation": validation,
               "totalWallSeconds": cfg.get("wall", 150.0)}
+    # decision 22: --nam-input PATH (the NAM standard file) or --signal sawblade; the report says which one trained the model.
+    if opt("--nam-input"):
+        report["trainingSignal"] = {"label": "NAM standard input v3.0.0 (fake)", "file": os.path.basename(opt("--nam-input"))}
+    elif opt("--signal") == "sawblade":
+        report["trainingSignal"] = "Sawblade test signal (not the standard NAM signal)"
     if cfg.get("exportNotes"):
         report["exportNotes"] = cfg["exportNotes"]
         if cfg.get("anagramProfile"):

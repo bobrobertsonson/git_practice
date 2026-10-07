@@ -64,6 +64,11 @@ ExportPlan planExport(SawbladeProcessor& p, const ExportSettings& s);
 // Writes the resolved preset and builds the request. False (and *error) if the rig cannot be exported.
 bool buildExportRequest(SawbladeProcessor& p, const ExportSettings& s, const ExportPlan& plan, ExportRequest& out, std::string* error);
 
+// The same, for EXPORT REAMP PAIR (v0.6 decision 20): the preset is exported as for a model, but the request carries the NAM
+// standard input file and no validation DI (`--reamp-pair <file> --no-train`: no model is trained).
+bool buildReampPairRequest(SawbladeProcessor& p, const ExportSettings& s, const ExportPlan& plan, const std::filesystem::path& namInput, ExportRequest& out,
+                           std::string* error);
+
 // A cancelled run of THIS rig whose checkpoint is intact (contract item 8).
 struct ResumeOffer {
   bool available = false;
