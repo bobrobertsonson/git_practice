@@ -1,7 +1,7 @@
 # v0.4M — matcher matches the feel: report
 
 Spec: `docs/specs/v0_4m-matcher_feel.md` (Tasks A–E, B2–B4). Lead-pinned definitions: `docs/specs/v0_4m-tasks.md`.
-Branch: `claude/sawblade-v0_4m-matcher-feel`. CI (GitHub Actions) is the validation of record; the local container could
+Branch: `claude/sawblade-v0_4m-matcher-feel` (base `claude/sawblade-plugin-setup-7k0b8q` at 4d580a2 — v0.4 B–E — merged in). CI (GitHub Actions) is the validation of record; the local container could
 not install scipy/pytest (pypi blocked), so engineers also ran the render tests against a local core build with a scipy
 shim — those numbers are labelled "shim" below and are indicative only.
 
@@ -76,6 +76,8 @@ show its value when the reference is a render of the same kind of chain — that
 | B3 IR library | ACCEPT after 1 REVISE (concurrent-write race on duplicate IRs; relative paths) | green (run 172) |
 | D.1 + search fixes | ACCEPT (joint HP/LP × slope with re-polish, boost level fixed, gate tolerance, pedal Occam) | green (run 185) |
 | B2.1 matcher, B2.3, B4 | ACCEPT after 1 REVISE (pre-EQ moved after stage 2 on the refined winner with a re-fit keep rule ≥ 0.05; it had picked a spurious HPF on a plain chain); merged with B3 + D.1; canonical IR-pair orientation | see CI of record |
+| CI fixes after the v0.4M merge (run 195/203) | ACCEPT: studio eqd judged only on residual the post EQ can't absorb; widened post EQ must beat an equal-budget ±6 dB re-fit; pre-EQ confirmation re-fit keeps feel in every block (a real bug the spy test caught) | see CI of record |
+| Task E follow-up: dropped bus comp in export notes (found by the v0.4 lead) | ACCEPT after 1 REVISE: `sawblade-export --notes-preset` (original rig; nocab only; repeated on resume; refuses a different rig) + plugin `ExportGlue.cpp` writes `<jobs>/inputs/<hash16>.notes_preset.json` and passes it for no-cab DROP COMP exports and resumes | see CI of record |
 
 ## Open
 
@@ -84,6 +86,9 @@ show its value when the reference is a render of the same kind of chain — that
   equal-budget ±6 dB re-fit (be378c0). Remaining (harmless) risk: a smooth mismatch < 100 Hz or > 8 kHz can still set
   `studio.eqd`; the stage then runs but can't make the preset worse. Follow-up: restrict the judged bands to the post
   EQ's reach.
+- Export resume edge case (deferred, fails safe): if the user toggles the bus comp between cancelling and resuming a
+  drop-comp export, the panel offers RESUME and Python refuses it (notes-preset mismatch). Fix: record "used a notes
+  preset" on the job snapshot and decide the resume flag from the run, not the rig.
 - Bright-DI widening threshold (`diTilt > −1.5 dB/oct`) fires on the fixture DI; rebase on the user's DIs (printed by
   every run).
 - TONE3000 `gears` value for IR tones ("cab" vs "ir") unverified against the live API (one constant, `IR_GEAR`).
