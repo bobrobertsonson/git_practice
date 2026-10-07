@@ -8,13 +8,17 @@ double dbfsToDbu(double dbfs, double deviceDbu) noexcept { return dbfs + deviceD
 double dbuToDbfs(double dbu, double deviceDbu) noexcept { return dbu - deviceDbu; }
 double dbToLinear(double db) noexcept { return std::pow(10.0, db / 20.0); }
 
-bool DeviceCalibration::calibrated() const noexcept { return dbu && std::isfinite(*dbu); }
+namespace {
+bool plausible(double v) noexcept { return std::isfinite(v) && v >= kMinPlausibleDbu && v <= kMaxPlausibleDbu; }
+}  // namespace
+
+bool DeviceCalibration::calibrated() const noexcept { return dbu && plausible(*dbu); }
 
 CalibrationDefaults defaultCalibrationDefaults() noexcept { return {}; }
 
 namespace {
 std::optional<double> finiteOnly(const std::optional<double>& v) noexcept {
-  if (v && std::isfinite(*v)) return v;
+  if (v && plausible(*v)) return v;
   return std::nullopt;
 }
 

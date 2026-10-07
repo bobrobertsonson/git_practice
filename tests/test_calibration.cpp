@@ -163,6 +163,22 @@ TEST_CASE("calibration: uncalibrated device resolves the reference neutrally", "
     REQUIRE(pa.blocks[0].gainInDb == 0.0);
     REQUIRE(pb.blocks[0].gainInDb == 0.0);
   }
+  SECTION("known input, missing output, no default: ref := input") {
+    std::vector<BlockLevelInfo> p{nam(GearKind::Amp, 7.0, std::nullopt)};
+    auto plan = planPath(noDev(), p, defs);
+    REQUIRE(plan.blocks[0].gainInDb == 0.0);
+    REQUIRE(plan.blocks[0].outputMissing);
+    REQUIRE_FALSE(plan.blocks[0].inputMissing);
+    REQUIRE(plan.refOutDbu == 7.0);
+  }
+  SECTION("block with no input stays unknown; the next amp resolves the ref at 0 dB") {
+    std::vector<BlockLevelInfo> p{nam(GearKind::Pedal, std::nullopt, std::nullopt), nam(GearKind::Amp, 9.0, 1.0)};
+    auto plan = planPath(noDev(), p, defs);
+    REQUIRE_FALSE(plan.blocks[0].refAfterDbu.has_value());
+    REQUIRE(plan.blocks[1].gainInDb == 0.0);
+    REQUIRE_FALSE(plan.blocks[1].uncalibrated());
+    REQUIRE(plan.refOutDbu == 1.0);
+  }
   SECTION("amp with no input metadata while ref unknown stays neutral and unknown") {
     std::vector<BlockLevelInfo> p{nam(GearKind::Amp, std::nullopt, std::nullopt)};
     auto plan = planPath(noDev(), p, defs);
@@ -190,4 +206,28 @@ TEST_CASE("calibration: nominal-output DSP pedal sets the next reference", "[cal
   REQUIRE(pu.deviceUncalibrated);
   REQUIRE(pu.blocks[0].gainInDb == 0.0);
   REQUIRE(pu.blocks[1].gainInDb == Approx(-3.0 - 5.0));
+}
+
+TEST_CASE("calibration: implausible dBu values are treated as missing", "[calibration]") {
+  std::vector<BlockLevelInfo> p{nam(GearKind::Amp, 1e6, -1e6)};
+  auto plan = planPath(dev(), p, defaultCalibrationDefaults());
+  REQUIRE(plan.blocks[0].inputMissing);
+  REQUIRE(plan.blocks[0].outputMissing);
+  REQUIRE(plan.blocks[0].gainInDb == 0.0);
+  REQUIRE(std::isfinite(plan.blocks[0].gainInLinear));
+  REQUIRE(plan.refOutDbu == kDev);
+
+  // Bounds are inclusive.
+  std::vector<BlockLevelInfo> edge{nam(GearKind::Amp, kMaxPlausibleDbu, kMinPlausibleDbu)};
+  auto pe = planPath(dev(), edge, defaultCalibrationDefaults());
+  REQUIRE_FALSE(pe.blocks[0].uncalibrated());
+  REQUIRE(std::isfinite(pe.blocks[0].gainInLinear));
+
+  // Implausible device value counts as uncalibrated.
+  REQUIRE_FALSE(DeviceCalibration{1e6}.calibrated());
+  REQUIRE_FALSE(DeviceCalibration{-1e6}.calibrated());
+  std::vector<BlockLevelInfo> ok{nam(GearKind::Amp, 7.0, 0.0)};
+  auto pd = planPath(DeviceCalibration{1e6}, ok, defaultCalibrationDefaults());
+  REQUIRE(pd.deviceUncalibrated);
+  REQUIRE(pd.blocks[0].gainInDb == 0.0);
 }

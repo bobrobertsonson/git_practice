@@ -7,6 +7,9 @@
 
 namespace sawblade::calibration {
 
+// Outside any real interface/capture level; treated as missing.
+constexpr double kMinPlausibleDbu = -60.0, kMaxPlausibleDbu = 60.0;
+
 double dbfsToDbu(double dbfs, double deviceDbu) noexcept;  // dbfs + deviceDbu
 double dbuToDbfs(double dbu, double deviceDbu) noexcept;   // dbu - deviceDbu
 double dbToLinear(double db) noexcept;                     // 10^(db/20)
@@ -41,7 +44,7 @@ CalibrationDefaults defaultCalibrationDefaults() noexcept;
 // Method + date strings live in the caller layer (Settings).
 struct DeviceCalibration {
   std::optional<double> dbu;
-  bool calibrated() const noexcept;  // true iff dbu holds a finite value
+  bool calibrated() const noexcept;  // true iff dbu is finite and within the plausible range
 };
 
 struct BlockGain {
