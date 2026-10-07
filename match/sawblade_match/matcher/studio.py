@@ -4,8 +4,10 @@ Detection (after stage 2 / the IR blend, on the best candidate without a bus com
 
 * ``compressed``: the reference's median 400 ms crest factor is >= 1.5 dB below the candidate's, or its short-term loudness
   range (EBU 3342 style, 3 s windows, 95th - 10th percentile) is >= 2 LU narrower;
-* ``eqd``: a candidate post-EQ gain sits at >= 90 % of its +-6 dB range, or the LTAS residual's best 3rd-order polynomial in
-  log-frequency explains >= 60 % of the residual's variance and the residual RMS is >= 1.0 dB.
+* ``eqd``: an EQ the chain cannot reach. What is left of the LTAS residual after the candidate's own post EQ took what it could
+  within its +-6 dB range (``absorbable``: a search that is merely not converged leaves a residual the post EQ can still
+  absorb) is >= 1.0 dB RMS and either a 3rd-order polynomial in log-frequency explains >= 60 % of it, or a post-EQ gain
+  already sits at >= 90 % of its range.
 
 Only a clean guitar reference can be judged (a mix has other instruments' dynamics and spectrum): otherwise the detector reports
 ``skipped``. When it fires, ``studio_stage`` refines the winner with the bus compressor (threshold -30..-6 dB re the pre-headroom
@@ -50,6 +52,42 @@ def _poly_explained(d: np.ndarray) -> float:
     return float(1.0 - np.sum(w * w * (res - np.sum(w * w * res)) ** 2) / tot) if tot > 1e-12 else 0.0
 
 
+def _peak_db(f: np.ndarray, f0: float, gain_db: float, q: float = 1.0, fs: float = 48000.0) -> np.ndarray:
+    """Magnitude (dB) of an RBJ peaking biquad at ``f`` (the same filter as the post-EQ bands)."""
+    A = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * np.pi * f0 / fs
+    al = np.sin(w0) / (2.0 * q)
+    b = np.array([1.0 + al * A, -2.0 * np.cos(w0), 1.0 - al * A])
+    a = np.array([1.0 + al / A, -2.0 * np.cos(w0), 1.0 - al / A])
+    z = np.exp(-1j * 2.0 * np.pi * np.asarray(f, float) / fs)
+    h = (b[0] + b[1] * z + b[2] * z * z) / (a[0] + a[1] * z + a[2] * z * z)
+    return 20.0 * np.log10(np.abs(h))
+
+
+def absorbable(d: np.ndarray, v: dict) -> np.ndarray:
+    """What the candidate's own post EQ could still absorb of the LTAS residual ``d`` (dB per band, level offset removed):
+    the residual left after the three post-EQ gains move, within the normal +-6 dB range, to their A-weighted least-squares
+    best (coordinate descent on three variables). An unconverged search leaves a smooth residual that the post EQ can still
+    take away; only what remains is evidence of an EQ the chain cannot reach."""
+    fc = np.array(L.BAND_CENTRES, float)
+    w = L.A_POWER_W / L.A_POWER_W.sum()
+    idx = [i for i in range(3) if f"post.f{i}" in v and f"post.g{i}" in v]
+    if not idx:
+        return d
+    basis = np.stack([_peak_db(fc, v[f"post.f{i}"], 1.0) for i in idx], axis=1)         # dB response per +1 dB gain
+    basis = basis - (w[:, None] * basis).sum(axis=0, keepdims=True)                      # the overall level is free in the loss
+    d = d - float(np.sum(w * d))
+    g0 = np.array([v[f"post.g{i}"] for i in idx])
+    delta = np.zeros(len(idx))
+    for _ in range(60):
+        for k in range(len(idx)):
+            r = d + basis @ delta - basis[:, k] * delta[k]            # the residual without band k's move
+            best = -np.sum(w * basis[:, k] * r) / max(np.sum(w * basis[:, k] ** 2), 1e-12)
+            delta[k] = float(np.clip(best, -POST_GAIN - g0[k], POST_GAIN - g0[k]))
+    r = d + basis @ delta
+    return r - float(np.sum(w * r))
+
+
 def detect(ref_clean: bool, tgt_full: L.Target, tgt: L.Target, y: np.ndarray, v: dict, ref_sig: np.ndarray | None) -> dict:
     """The detector on the candidate's excerpt output ``y`` (pre-comp). ``tgt_full`` carries the feel target (crest of the
     reference); ``ref_sig``: the reference signal over the excerpt for the loudness range (None: not measurable)."""
@@ -79,8 +117,14 @@ def detect(ref_clean: bool, tgt_full: L.Target, tgt: L.Target, y: np.ndarray, v:
     d = d - float(np.sum(w * d) / np.sum(w))
     ev["residualRmsDb"] = float(np.sqrt(np.sum(w * d * d) / np.sum(w)))
     ev["residualPolyExplained"] = _poly_explained(d)
-    out["eqd"] = bool(ev["postGainAtRange"] or (ev["residualPolyExplained"] >= POLY_EXPLAINED
-                                                and ev["residualRmsDb"] >= RESIDUAL_RMS_DB))
+    # An EQ the chain cannot reach: what is left of the residual after the post EQ took what it could within +-6 dB must still be
+    # >= 1 dB RMS, and either have the smooth shape of an EQ curve (3rd-order polynomial in log-frequency, >= 60 % explained) or
+    # come with post-EQ gains at the range limit. A search that is simply not converged leaves a residual its post EQ can absorb.
+    left = absorbable(d, v)
+    ev["residualAfterPostEqRmsDb"] = float(np.sqrt(np.sum(w * left * left) / np.sum(w)))
+    ev["residualAfterPostEqPolyExplained"] = _poly_explained(left)
+    unreachable = ev["residualAfterPostEqRmsDb"] >= RESIDUAL_RMS_DB
+    out["eqd"] = bool(unreachable and (ev["postGainAtRange"] or ev["residualAfterPostEqPolyExplained"] >= POLY_EXPLAINED))
     return out
 
 
@@ -126,8 +170,12 @@ def studio_stage(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, det
                      irmix=cand.combo.cab_b is not None, post_gain=WIDE_POST_GAIN)
         v2, r2 = relinear(eng, cand.combo, wide, ex, tgt, cand.align, v, levels=cand.levels, seed=seed, gens=gens, pop=pop,
                           patience=patience, tol=tol, log=log)
-        rec["stage"].append({"step": "post EQ +-9 dB", "loss": r2.total, "kept": bool(best_r.total - r2.total >= MIN_GAIN)})
-        if best_r.total - r2.total >= MIN_GAIN:
+        # the same re-fit at the normal range: the wider range must beat it, not just the (possibly unconverged) plain result
+        _, r_norm = relinear(eng, cand.combo, space, ex, tgt, cand.align, v, levels=cand.levels, seed=seed, gens=gens, pop=pop,
+                             patience=patience, tol=tol, log=log)
+        keep = r_norm.total - r2.total >= MIN_GAIN and best_r.total - r2.total >= MIN_GAIN
+        rec["stage"].append({"step": "post EQ +-9 dB", "loss": r2.total, "normalRefitLoss": r_norm.total, "kept": bool(keep)})
+        if keep:
             best_v, best_r, rec["widenedPostEq"] = v2, r2, True
     if det["compressed"]:
         paths = ("a", "b") if cand.combo.topology == "blend" else ("a",)
