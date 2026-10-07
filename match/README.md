@@ -290,6 +290,29 @@ choose it). Method 1 is installed with `pip install -e 'match[separation]' -c ma
 (the constraints file pins the resolved transitive set; the PyPI linux torch wheel also pulls ~2.5 GB of CUDA
 libraries although inference runs on CPU). The real-demucs test runs only with `SAWBLADE_TEST_DEMUCS=1`.
 
+### `sawblade-calibrate device-null` (v0.6 Task D: hardware loader vs the plugin)
+
+```
+sawblade-calibrate device-null --recording DEVICE.wav (--render PLUGIN_RENDER.wav | --preset P.json --di DI.wav)
+                               --out DIR [--di DI.wav] [--channel left|right|mean] [--polarity auto|normal|invert]
+                               [--max-lag-ms 1500] [--tolerance-db -30] [--excerpt-s 30]
+```
+
+Checks how close a hardware NAM loader (the Darkglass Anagram) is to the plugin: play the same DI through the plugin (render it, or let
+this command render `--preset` + `--di` with the core) and through the device (interface out -> device -> interface in, recorded as
+`--recording`), then run this. It (1) **aligns** the recording to the render (coarse lag from 1 kHz envelopes, refined on the 80 Hz-6 kHz
+waveforms to a fraction of a sample and applied as an exact phase shift; the round-trip latency is reported in ms and samples), (2) **gain-matches**
+(least squares; level in dB, and the polarity is detected and reported, or forced with `--polarity`), (3) reports the **residual** (recording
+minus gain-matched render) in dB re the render overall (and ESR) and per octave band (63 Hz ... 16 kHz), each band's **level difference** (the
+device path's linear filtering), and the **residual after per-band level correction** (what is not a plain level / filter difference: noise,
+non-linearity, model or settings differences), and (4) writes `listen/ab_render_then_device.{wav,mp3}` (render, 0.8 s gap, device;
+level-matched, 30 s: the loudest window) plus `render_aligned.wav` and `device_aligned_levelmatched.wav`. `device_null_report.json` holds
+everything (`alignment`, `polarity`, `gain`, `residual`, `bands[]`, `verdict`, `warnings`); the console prints a summary and what differs.
+Tolerance (a proposal): overall residual <= -30 dB counts as a match (<= -40 dB indistinguishable, ~-20 dB audible). Warnings: clipping
+recordings, an ambiguous alignment peak, low correlation, and a lag vs the DI that differs from the lag vs the render by > 2 ms (the render is
+not sample-aligned to the DI). Offline and deterministic; tested on synthetic data (known fractional delay, gain, polarity, a gentle low-pass, a
+saturating stage). Needs only the base install (no trainer).
+
 ## Matcher (`sawblade-match`, phase 3.2 + 3.3 A/B)
 
 ```
@@ -517,16 +540,25 @@ A-weighted error; on failure `message` starts with `error:`.
 
 ```
 pip install -e 'match[export]' -c match/constraints-export.txt     # neural-amp-modeler 0.13.0; torch stays 2.5.1 (CPU)
-sawblade-export PRESET.resolved.json [--mode nocab|withcab] [--size feather|lite|standard] [--epochs N] [--max-minutes M]
+sawblade-export PRESET.resolved.json [--mode nocab|withcab] [--arch a2|a1] [--size full|lite | feather|lite|standard] [--epochs N] [--max-minutes M]
                 [--seed 0] [--signal-seed 1] [--threads 4] [--allow-inexact] [--target-esr E] [--out DIR] [--name STEM]
                 [--di Guitar_L.wav|builtin] [--no-validate] [--resume DIR|auto] [--keep-scratch]
                 [--exports-root DIR] [--progress-json PATH] [--require-accept]
 ```
 
-Trains one `.nam` (A1 WaveNet) of the preset, e.g. the matcher's `best.preset.resolved.json`. Default output
-`~/.cache/sawblade/exports/<name>-<mode>-<size>-<timestamp>/` (never the repo): `<name>-<mode>-<size>.nam`, `<name>-nocab.ir.wav`
-(nocab), `export_report.json`, `validation_renders/*.wav`, `listen/ab_original_then_export.{wav,mp3}`. Exit codes: 0 = finished (acceptance met, or not
-judged for feather/lite), 2 = trained but acceptance NOT MET (only with `--require-accept`; the files and the full report are still
+Trains a NAM model of the preset, e.g. the matcher's `best.preset.resolved.json`. **`--arch a2` (default, v0.6)** trains the trainer's
+packed A2 WaveNet and writes three files: the container `<stem>.a2.nam` (`SlimmableContainer`) and the two submodels as standalone
+files `<stem>.a2_full.nam` (**A2 Full**, 8 channels, 12 145 parameters) and `<stem>.a2_lite.nam` (**A2 Lite**, 3 channels, 1 870 parameters;
+same weights as the container's submodels), `<stem>` = `<name>-<mode>-<size>`. `--size full|lite` (default `full`) only picks which standalone
+file is the *primary* one (shown first, judged by `--require-accept`, named in the export notes); both are always written and both validated.
+Why standalone files too: whether a loader takes a container is not published, and the core plays only the container's last (Full)
+submodel. **`--arch a1`** trains one A1 WaveNet for older loaders (`--size feather|lite|standard`, default `standard`, `<stem>.nam`; behaviour
+unchanged apart from the official preset sizes). Any other arch / size pair exits 1 with a message. The library function `run_export`
+defaults to `arch="a1"` (unchanged for existing callers); the CLI defaults to `a2`. Default output
+`~/.cache/sawblade/exports/<name>-<mode>-<size>-<timestamp>/` (a2: `<name>-<mode>-a2-<size>-<timestamp>/`; never the repo): the model file(s), `<name>-nocab.ir.wav`
+(nocab), `export_report.json`, `validation_renders/*.wav` (a2: `full/`, `lite/`), `listen/ab_original_then_export.{wav,mp3}` (a2: the primary size;
+the other one as `ab_original_then_export_<size>`). Exit codes: 0 = finished (acceptance met, or not
+judged for A1 feather/lite), 2 = trained but the primary size's acceptance is NOT MET (only with `--require-accept`; the files and the full report are still
 written), 1 = refused or error (message on stderr), 130 = interrupted.
 `--exports-root DIR` puts the output directory at `DIR/<name>-<mode>-<size>-<ts>` (`--out` overrides it; `--resume auto` searches it).
 When any capture is `cc-by-nc*`, the file stem (`--name` or the preset slug) gets `-nc` (`.nam`, IR and directory names).
@@ -548,6 +580,15 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
 * **Never trained.** The gate is always bypassed in the training chain and reported (with its original settings) in
   `export_report.json -> plan.bypassed`. Non-bypassed blocks that are not NAM-trainable (unknown type, or the core's
   `namTrainable == false` trait, detected from the core's render warnings) are refused. `cc-by-nc*` captures are allowed (policy in CLAUDE.md): attribution entries and the `.nam` `sawblade` block get `nonCommercial: true` and the licence note adds NON-COMMERCIAL plus the capture names (it appears in the `.nam`, `export_report.json` and the CLI's final print). CLAUDE.md supersedes the phase 4 spec's note string; the note now reads "Derived from TONE3000 captures; for the user's personal use only; sharing needs permission from the creators and TONE3000."
+* **A2 report keys** (v0.6). `export_report.json` has `arch`, `size`, `files` (`{primary, container, full, lite}` for a2, `{primary}` for a1: names
+  relative to the output directory), `a2FastPath` (`{full, lite}`: the files have the exact shape the pinned core's `NAM_ENABLE_A2_FAST` path accepts;
+  `export/a2shape.py` is a port of the core's `is_a2_shape` and the tests check it), `training.submodels` (per size: parameters, best epoch,
+  best validation ESR, `maxValue`), `training.history[].submodels` (per-epoch ESR of each size) and `validation` = `{full: {...}, lite: {...}}`
+  (one complete validation block per standalone file, same fields as the A1 block; A1 keeps the single block). The progress file gets `arch`.
+  Per-submodel numbers are the trainer's `ESR_packed_i` (the trainer's aggregate `ESR` / `val_loss` are *sums* over the submodels and are never
+  used); `training.validationEsr` and `.nam` `metadata.training.validation_esr` are the file's own submodel's best epoch (the container: Full's).
+  Every file keeps `name` / `gear_type` / `modeled_by`, the `sawblade` block (+ `arch`, `size` = full / lite / container, validation) and `loudness`
+  at the top level of the `.nam` (that is where the core reads them).
 * **Export notes** (`export/notes.py`). Every export writes `<name>.export_notes.txt` next to the `.nam` (`<name>` = the `.nam`
   stem) and an `exportNotes` block into `export_report.json`: every enabled stage of the preset that is **not in the trained
   model**, in signal order (gate -> [pre-NAM] -> NAM -> cab IR -> post EQ -> bus comp), so it can be rebuilt around a loader
@@ -561,6 +602,10 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   make-up dB), the last only with `--allow-inexact`. `withcab` lists only the gate (and a bypassed bus comp, if the plan ever
   drops one). Nothing outside the model: the file says "Nothing to add". The output gain is never listed (it is inside the
   model). The `.txt` ends with the licence note (NON-COMMERCIAL included).
+  **Device profiles (v0.6):** `exportNotes.deviceProfiles.anagram` and `<stem>.anagram_notes.txt` map the same stages onto the Darkglass Anagram's
+  published blocks (gate -> Gate first; model -> Neural Amp, or Neural Pedal for a drive-only no-cab export; the no-cab cab (+ folded post EQ) -> IR
+  after the model; unfolded post EQ -> EQ; bus comp -> Compressor last) with each block's position and the settings in plain hardware terms.
+  Format: `docs/PRESET_SCHEMA.md` ("Export notes and device profiles"). No claims about the device beyond its published block list.
 * **Folding (nocab).** The IR written next to the model is `cab IR (*) post-EQ impulse response`, obtained by rendering a unit impulse
   through the core's own `cab -> post EQ` (empty paths, blend 0): so IR loading, resampling to 48 kHz, the 2 s truncation and the L2
   normalisation are exactly the chain's, and the latency is already trimmed. Trailing samples below -120 dB (re. peak) are cut. The
@@ -579,12 +624,15 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
 * **Trainer API path.** `nam.train.core.train` only accepts NAM's own standard input files (hash-matched, blip latency calibration)
   and imports `tkinter`; Sawblade drives the trainer's lower layers instead (`nam.data.Dataset` from arrays, `NormalizeJointDatasetOutput`
   -18 dBFS with the export hook that restores the level, `LightningModule` + `pytorch_lightning.Trainer` (`--device auto|cpu|cuda|mps`, default auto = cuda > mps > cpu; the model is moved to CPU before export; the device is in the report), `net.export` with
-  `other_metadata`), using the loss/optimiser/scheduler recipe from the trainer's **A2 packed-model default config**, applied here to an A1 net (ESR validation loss, MR-STFT 5e-4, Adam 4e-3, ExponentialLR 0.994 unless annealed, see below).
+  `other_metadata`), using the loss/optimiser/scheduler recipe from the trainer's **A2 packed-model default config** (ESR validation loss, MR-STFT 5e-4, Adam 4e-3, ExponentialLR 0.994 unless annealed, see below), applied to an A1 net for `--arch a1`.
+  **A2** uses that config as shipped: `PackedWaveNet` (submodels `channels_3` = Lite, `channels_8` = Full), `PackedLightningModule` + `PackedMaskCallback`, one best
+  checkpoint per submodel (`packed_best_submodel_{i}.ckpt`, the trainer's `PackedBestCheckpoint` plus resume state), the container through `export_container`
+  (the dataset's output-scale hook is applied to every submodel), the standalone files cut from the container's submodels.
   `tkinter` is stubbed when absent. See `export/train.py`. Sizes are **NAM's official A1 presets** (`feather` / `lite` / `standard`; `Architecture` + `get_wavenet_config`,
   `nam/train/core.py:59-63, 845-955` of neural-amp-modeler 0.12.3: the pinned 0.13.0 no longer ships them, the block is identical in 0.11.0-0.12.3). Kernel 3, Tanh, receptive field 4093 for all:
   `standard` 16/8 channels, 10 + 10 dilations (13 801 params); `lite` 12/6 channels, dilations 1..64 (7) then 128..512,1..512 (13) (6 553 params);
   `feather` 8/4 channels, same dilation split as lite (3 025 params). (Until v0.6 lite and feather used Sawblade's own 10 + 10 layout: 7 903 and 3 637 params.) **A2:** 0.13.0 trains a packed A2 WaveNet by default (`PackedWaveNet`, `export_container`; the core is built
-  with `NAM_ENABLE_A2_FAST`); that path is available in the pin but not enabled here, A1 being what loader pedals play.
+  with `NAM_ENABLE_A2_FAST`; 23 layers, LeakyReLU, receptive field 6347); that path is what `--arch a2` trains (v0.6); A1 stays available for older loaders.
 * **Resume (phase 4.1).** After every epoch the trainer writes `<out>/checkpoint/` atomically (temp file + rename): `last.ckpt`
   (Lightning checkpoint: model, optimiser, scheduler, epoch, plus the training history, elapsed time and the torch/numpy/python/
   DataLoader RNG states), `best.ckpt` (best-so-far model) and `progress.json` (epoch, best val ESR, elapsed training seconds, preset /
@@ -597,7 +645,11 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   lr gamma differ, or if `--out` names another directory. `--max-minutes` counts the training time of all sessions together. On CPU
   with the same thread count a resumed run is bit-identical to an uninterrupted one (test). The checkpoint dir is removed after a
   successful export; `--keep-scratch` keeps it (marked complete, so `auto` never picks it). Runs started before 4.1 have no checkpoint
-  and cannot be resumed.
+  and cannot be resumed. **v0.6:** the identity also holds the architecture (`arch`) and the network layout; an A2 run keeps
+  `packed_best_submodel_{0,1}.ckpt` (+ their bookkeeping inside `last.ckpt`) next to `last.ckpt`, and a resumed A2 run is bit-identical to an
+  uninterrupted one (test). A1 and A2 runs never resume each other, and a **lite / feather checkpoint written before v0.6** (old layer split;
+  its weights no longer fit) is refused with "written before v0.6 with the old lite/feather layer split, which no longer loads; start a new run".
+  Old `standard` checkpoints (layout unchanged) still resume.
 * **Determinism.** Everything is seeded (`--seed`: model init + batch order; `--signal-seed`). CPU training repeats bit-for-bit for the
   same seed, thread count, machine and library versions (smoke test); it is not guaranteed across thread counts/BLAS builds. The `.nam`
   carries a date stamp, so its bytes differ between runs.
@@ -612,8 +664,11 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   exported model, with the exported IR (not re-normalised) as the cab for `nocab`; both via `sawblade_core` (this proves the `.nam`
   loads in the core's `NamBlock`, the plugin's engine). Metrics: ESR (broadband, level-sensitive) and the A-weighted 1/3-octave LTAS
   error (tonecheck's `--ref` definition: bands 80 Hz-8 kHz, both spectra normalised at 1 kHz). The DI excerpt is also compared with the
-  *gated* original. Acceptance for `standard`: ESR <= 0.02 on the held-out segment and LTAS error <= 0.5 dB on the DI excerpt; the
+  *gated* original. Acceptance for A1 `standard`: ESR <= 0.02 on the held-out segment and LTAS error <= 0.5 dB on the DI excerpt; the
   report has `validation.acceptance.status` (`met` / `NOT MET` / `not judged (non-standard size)`) and a one-line summary, which the CLI prints; `--require-accept` exits 2 when the status is `NOT MET`.
+  **A2 (v0.6; thresholds are a proposal):** both standalone files are judged, each on its own numbers: **A2 Full** ESR <= 0.02 and LTAS <= 0.5 dB (the A1
+  standard rule: same capacity class, 12 145 vs 13 801 parameters); **A2 Lite** ESR <= 0.05 and LTAS <= 1.0 dB (1 870 parameters). Both are reported
+  whatever the status (`validation.full.acceptance`, `validation.lite.acceptance`: `appliesTo` "a2 full" / "a2 lite", limits, numbers, status); `--require-accept` uses the primary size's.
 * **Listening file.** `listen/ab_original_then_export.mp3`: the DI excerpt through the original chain, 0.8 s gap, then the export
   (RMS-matched to the original; the gain is in the report). The gate is bypassed in both.
 * **Budget and measured results (CPU only; pre-v0.6 layout: the lite/feather numbers below were measured with the old, non-official layer split, and are stale for the official 0.12.3 presets).** Defaults: feather 40 epochs / 15 min, lite 30 epochs / 30 min, standard 22 epochs /
