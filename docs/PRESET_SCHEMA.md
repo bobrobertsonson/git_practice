@@ -102,7 +102,7 @@ matcher fits to the recording; unchanged meaning). `liveDynamics` is the **live 
 `origin` says who made the preset: `"match"` (written by the matcher), `"official"` (shipped presets) or `"user"` (default; hand
 made, old files). When `liveDynamics` is absent the live set is **derived** (core `liveDynamicsOf`, the single source of truth):
 - `origin` is not `"match"`: the live set is the stored `gate` / `busComp`, unchanged (deliberate settings play as set).
-- `origin` is `"match"`: gate `enabled` = the record gate's; mode expander, ratio 2, rangeDb -24, keyHighPassHz 80,
+- `origin` is `"match"`: gate `enabled` = the record gate's; mode expander, ratio 4, rangeDb -40, keyHighPassHz 80,
   thresholdMode floorRelative, floorOffsetDb +10 (close = floor + 4), holdMs = max(record, 40), releaseMs = max(record, 120), attackMs /
   hysteresisDb / releaseCurve from the record gate (record gate absent or disabled: live gate disabled); busComp disabled.
 

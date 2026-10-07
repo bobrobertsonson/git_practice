@@ -3,7 +3,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "sawblade/gate.h"
@@ -77,14 +79,14 @@ GateParams recordCell(double peakFloor) {
 }
 
 // The live set core derives for a match preset (without the key high-pass, so key = audio in these tests).
-GateParams liveGate() {
+GateParams liveGate(double ratio = 4.0, double rangeDb = -40.0) {
   GateParams g;
   g.enabled = true;
   g.thresholdMode = GateThresholdMode::FloorRelative;
   g.floorOffsetDb = 10.0;
   g.mode = GateMode::Expander;
-  g.ratio = 2.0;
-  g.rangeDb = -24.0;
+  g.ratio = ratio;
+  g.rangeDb = rangeDb;
   g.holdMs = 40.0;
   g.releaseMs = 120.0;
   return g;
@@ -139,9 +141,9 @@ TEST_CASE("Noise alone: the matcher's default cell stays closed (> 95 % after 0.
        << 100.0 * fracNew << " % of the time");
   CHECK(fracNew > 0.95);
 
-  // Live gate (floorRelative +10, expander 2:1, range -24): the follower seeds at -70 dBFS. A floor whose peak envelope is above
+  // Live gate (floorRelative +10, expander 4:1, range -40): the follower seeds at -70 dBFS. A floor whose peak envelope is above
   // seed + 20 dB is only learned through the 10 s / +1 dB/s leak, so a -49.5 dBFS RMS floor is attenuated after ~25 s; quieter
-  // ones at once. An expander does not "close": its gain on noise is -(ratio - 1) * (close - envelope), a few dB at the floor.
+  // ones at once. An expander does not "close": its gain on noise is -(ratio - 1) * (close - envelope), -(4-1) x (close - envelope), ~10 dB at the floor.
   const auto liveStats = [&](double db, double seconds, std::size_t from, const char* label) {
     const auto q = gaussian(db, static_cast<std::size_t>(seconds * kFs), 22);
     Gate g = makeGate(liveGate());
@@ -154,9 +156,9 @@ TEST_CASE("Noise alone: the matcher's default cell stays closed (> 95 % after 0.
          << " close " << g.openThresholdDb() - 6.0 << " dBFS; gain on the noise: median " << med << " dB, 95th percentile (loudest) " << p95 << " dB");
     return med;
   };
-  CHECK(liveStats(-49.5, 60.0, static_cast<std::size_t>(40 * kFs), "a -49.5 dBFS RMS floor (steady state after 40 s)") < -3.0);
-  CHECK(liveStats(-75.0, 8.0, begin, "a -75 dBFS RMS floor") < -3.0);
-  CHECK(liveStats(-65.0, 8.0, begin, "a -65 dBFS RMS floor") < -3.0);
+  CHECK(liveStats(-49.5, 60.0, static_cast<std::size_t>(40 * kFs), "a -49.5 dBFS RMS floor (steady state after 40 s)") <= -10.0);
+  CHECK(liveStats(-75.0, 8.0, begin, "a -75 dBFS RMS floor") <= -10.0);
+  CHECK(liveStats(-65.0, 8.0, begin, "a -65 dBFS RMS floor") <= -10.0);
 }
 
 TEST_CASE("Decay tail: no attenuation while the note's envelope is > 12 dB above the peak floor", "[gate][peakfloor]") {
@@ -193,4 +195,52 @@ TEST_CASE("Decay tail: no attenuation while the note's envelope is > 12 dB above
     INFO(c.name);
     CHECK(worstAbove12 >= -1.0);
   }
+}
+
+// Sustain loss of the live gate: a steady tone whose peak envelope sits at floor + 4 / + 2 / + 0 dB (close = floor + 4). Printed for
+// the old derivation (ratio 2, range -24) and the new one (ratio 4, range -40); the gate must not touch a tone at the close threshold.
+TEST_CASE("Live gate sustain loss at a steady envelope near the floor (printed table)", "[gate][peakfloor]") {
+  const std::size_t learn = static_cast<std::size_t>(4 * kFs), tone = static_cast<std::size_t>(1 * kFs);
+  const auto noise = gaussian(-75.0, learn, 41);
+  struct Variant {
+    const char* name;
+    double ratio, range;
+  };
+  const Variant variants[] = {{"OLD ratio 2, range -24", 2.0, -24.0}, {"NEW ratio 4, range -40", 4.0, -40.0}};
+  double lossNewAtClose = 0.0;
+  std::string table = "REPORT live gate sustain loss (dB of attenuation at a steady envelope re the follower's floor estimate):\n";
+  for (const Variant& v : variants) {
+    table += std::string("  ") + v.name + ":";
+    for (double delta : {4.0, 2.0, 0.0}) {
+      Gate g = makeGate(liveGate(v.ratio, v.range));
+      (void)gains(g, noise);
+      const double est = g.floorEstimateDb();
+      // A 196 Hz tone whose measured mean peak envelope is est + delta (the amplitude is calibrated on the detector itself).
+      const auto makeTone = [&](double amp) {
+        std::vector<float> t(tone);
+        for (std::size_t i = 0; i < tone; ++i) t[i] = static_cast<float>(amp * std::sin(2.0 * 3.14159265358979 * 196.0 * static_cast<double>(i) / kFs));
+        return t;
+      };
+      const auto meanEnv = [&](const std::vector<float>& t) {
+        const auto e = peakEnvDb(t);
+        double sum = 0.0;
+        for (std::size_t i = tone / 2; i < tone; ++i) sum += e[i];
+        return sum / static_cast<double>(tone - tone / 2);
+      };
+      const double a0 = std::pow(10.0, (est + delta) / 20.0);
+      const double a1 = a0 * std::pow(10.0, ((est + delta) - meanEnv(makeTone(a0))) / 20.0);
+      const auto t = makeTone(a1);
+      const auto gl = gains(g, t);
+      double sum = 0.0;
+      for (std::size_t i = tone * 3 / 4; i < tone; ++i) sum += gainDbAt(gl, i);
+      const double loss = -sum / static_cast<double>(tone - tone * 3 / 4);
+      char buf[64];
+      std::snprintf(buf, sizeof buf, "  floor+%.0f: %.1f dB", delta, loss);
+      table += buf;
+      if (v.ratio == 4.0 && delta == 4.0) lossNewAtClose = loss;
+    }
+    table += "\n";
+  }
+  WARN(table);
+  CHECK(lossNewAtClose < 1.0);  // at the close threshold itself nothing is taken
 }

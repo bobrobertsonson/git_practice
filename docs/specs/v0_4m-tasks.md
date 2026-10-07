@@ -358,8 +358,8 @@ inherit mix processing by default.
   - `origin` != "match" (hand-made, official, old files): `liveDynamics` = the stored `gate` and `busComp` unchanged, so
     deliberate settings play as set.
   - `origin` == "match":
-  - gate: `enabled` = record gate enabled; mode expander, ratio 2, rangeDb -24, keyHighPassHz 80,
-    thresholdMode `floorRelative`, floorOffsetDb +8, holdMs = max(record holdMs, 40), releaseMs = max(record releaseMs,
+  - gate: `enabled` = record gate enabled; mode expander, ratio 4, rangeDb -40, keyHighPassHz 80,
+    thresholdMode `floorRelative`, floorOffsetDb +10 (close = floor + 4), holdMs = max(record holdMs, 40), releaseMs = max(record releaseMs,
     120), attack/hysteresis/releaseCurve from the record gate. Record gate absent/disabled -> live gate disabled.
   - busComp: disabled.
 - `dynamicsMode` selects which set the engine runs.
@@ -403,7 +403,7 @@ inherit mix processing by default.
   dB) with no re-match; zero allocations in process(); block sizes 1/64/512/odd give identical output (float tolerance
   per existing determinism tests).
 - Derivation, both paths: a v4 `origin: "match"` preset with a gate (hold 10, release 20) and a bus comp -> live gate
-  expander/2/-24/80 Hz, hold 40, release 120, floorRelative +8, live busComp off; the same preset with origin absent /
+  expander/4/-40/80 Hz, hold 40, release 120, floorRelative +10, live busComp off; the same preset with origin absent /
   "user" (and an old v3 file) -> liveDynamics == stored gate/busComp. A v3 file renders in record mode bit-identically to before.
 - Toggle: switching sets atomically (no block runs half old / half new; test via the handover object); state round-trip.
 - Schema: v4 round-trip; a v3 reader rejects v4 (existing strictness test pattern).

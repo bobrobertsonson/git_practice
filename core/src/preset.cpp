@@ -533,8 +533,8 @@ DynamicsSet deriveLiveDynamics(const DynamicsSet& record) {
   GateParams g = record.gate;  // attack, hysteresis, releaseCurve from the record gate
   g.enabled = true;
   g.mode = GateMode::Expander;
-  g.ratio = 2.0;
-  g.rangeDb = -24.0;
+  g.ratio = 4.0;
+  g.rangeDb = -40.0;
   g.keyHighPassHz = 80.0;
   g.thresholdMode = GateThresholdMode::FloorRelative;
   g.floorOffsetDb = 10.0;

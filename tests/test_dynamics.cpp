@@ -55,8 +55,8 @@ GateParams floorGate(double offset = 10.0) {
   g.thresholdMode = GateThresholdMode::FloorRelative;
   g.floorOffsetDb = offset;
   g.mode = GateMode::Expander;
-  g.ratio = 2.0;
-  g.rangeDb = -24.0;
+  g.ratio = 4.0;
+  g.rangeDb = -40.0;
   g.holdMs = 40.0;
   g.releaseMs = 120.0;
   return g;
@@ -216,8 +216,8 @@ TEST_CASE("Derivation: origin match derives the live set; any other origin keeps
   const DynamicsSet live = liveDynamicsOf(m);
   CHECK(live.gate.enabled);
   CHECK(live.gate.mode == GateMode::Expander);
-  CHECK(live.gate.ratio == 2.0);
-  CHECK(live.gate.rangeDb == -24.0);
+  CHECK(live.gate.ratio == 4.0);
+  CHECK(live.gate.rangeDb == -40.0);
   CHECK(live.gate.keyHighPassHz == 80.0);
   CHECK(live.gate.thresholdMode == GateThresholdMode::FloorRelative);
   CHECK(live.gate.floorOffsetDb == 10.0);
