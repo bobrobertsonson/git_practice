@@ -86,3 +86,21 @@ validation numbers, and the user's Task D result once run.
 7. **device-null** (Task D tool) is built in Task C by match-engineer as `sawblade-calibrate device-null`
    (align by cross-correlation + gain match, residual dB overall and per octave band, `listen/` A/B pair); it is
    tested on synthetic data (a known delay + gain + filter must be recovered and reported).
+8. **A2 names (Task A result).** A `.nam` does not declare "A2"; an A2 file is a `SlimmableContainer` or a standalone
+   23-layer WaveNet. Sawblade's names: **A2 Full = 8-channel submodel, A2 Lite = 3-channel submodel** (trainer
+   `config_model_packed.json` `channels_8` / `channels_3`, container `max_value` 1.0 / 0.5; the core's fast-path shapes).
+   That TONE3000 and the Anagram use the words Full/Lite for these is the user's statement, recorded as such.
+9. **Official A1 presets** are cited from `neural-amp-modeler` 0.12.3 `nam/train/core.py:845-955` (identical since
+   0.11.0; removed in 0.13.0) and pinned by a test against the 0.13.0 `WaveNet`. No vendoring, no pin change. `nano` is
+   not offered. Sawblade keeps the 0.13.0 training recipe for A1 (no A/B in this phase; noted in the REPORT).
+10. **A2 export files (Task C).** One A2 run trains the packed net (both sizes, per-submodel best checkpoints) and
+    writes **three files**: the container plus standalone `…_a2_full.nam` and `…_a2_lite.nam` (extracted submodels,
+    same weights). `--size full|lite` picks which standalone file is the "primary" output (shown first, validated
+    against the acceptance rule, named in the export notes); both standalone files are always validated and their ESR
+    reported (per-submodel `ESR_packed_i`, never the summed `ESR`). Reason: whether the Anagram accepts a container is
+    not published, and the pinned core plays only the container's Full submodel. Task D uses the standalone Full file.
+11. **No container size selector in the plugin** this phase (it needs an off-thread `SetSlimmableSize` + swap); A2 Lite
+    playback uses a standalone Lite file. Proposal in the REPORT.
+12. **Resume identity** gains the architecture/layout key in Task C (old lite/feather checkpoints refuse cleanly).
+13. **TONE3000 A2 `size` strings** (pool ranking, ladder size "standard") cannot be verified offline: Task C keeps the
+    current behaviour and the REPORT lists a one-line user check (`sawblade-t3k models <A2 tone>`).
