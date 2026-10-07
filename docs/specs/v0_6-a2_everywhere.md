@@ -143,7 +143,7 @@ validation numbers, and the user's Task D result once run.
     - **Core-only load check:** `tests/tools/nam_load_check` (links only NeuralAmpModelerCore: `nam::get_dsp` +
       `process`, no Sawblade code) loads every exported `.nam`; the `python-export` job exports a tiny A2 and runs it on
       all three files (env `SAWBLADE_NAM_LOAD_CHECK`). Extra metadata keys (`metadata.sawblade`) must not break it.
-19. **Built-in training keeps Sawblade's own seeded signal** (validated, reproducible, no third-party audio). Stated
+19. **(Superseded by 22.)** ~~Built-in training keeps Sawblade's own seeded signal~~ (validated, reproducible, no third-party audio). Stated
     plainly in the REPORT and export notes: "built-in training uses Sawblade's own test signal; the file format is
     standard NAM A2; for a capture trained the standard NAM way, use the reamp pair."
 20. **Reamp-pair export** (new, small): `sawblade-export … --reamp-pair NAM_INPUT.wav [--no-train]` renders the
@@ -159,3 +159,22 @@ validation numbers, and the user's Task D result once run.
 21. **Anagram notes are an optional generic hint**, not part of the file: "load the `.nam` into any NAM A2 block; on the
     Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16+". The REPORT drops "KosmOS 1.17 assumed": standard
     A2 file; on the Anagram, A2 playback needs KosmOS 1.16+.
+22. **User reversed 19 (relayed by the main lead): built-in training uses the official NAM standard input signal by
+    default.** Licence finding: the pinned trainer (neural-amp-modeler 0.13.0, MIT — the licence covers the trainer
+    code) ships no input file; its GUI links the files on Google Drive (`nam/train/gui/__init__.py:267-269`); no terms
+    are stated for the audio. So the file is **user-supplied and never redistributed** (no commit, bundle or
+    auto-download; recorded in `docs/THIRD_PARTY.md`).
+    - Training goes through the pinned trainer's standard API (`nam.train.core.train` with the user's input file and
+      the rendered output wav: its hash recognition, blip latency calibration and validation split); any step that
+      needs the lower-level path is documented.
+    - Every version the pinned trainer recognises is accepted; docs and prompts default to the trainer's current
+      standard (v3.0.0 per `nam/train/_names.py:21` unless the pin says otherwise). The version used is recorded in each
+      export's metadata (`metadata.sawblade.trainingSignal`) and notes.
+    - Sawblade's synthetic signal is the labelled fallback ("trained on Sawblade's test signal, not the standard NAM
+      signal"), used only when chosen explicitly. The plugin asks for the official file on the first export, with a
+      "use Sawblade's test signal instead" option; it never falls back silently. CLI: `--nam-input PATH` (or the
+      Settings value), `--signal sawblade` for the fallback; without either, the CLI exits with a plain message.
+    - CI cannot have the file: CI trains on the fallback and tests the official path with a synthetic stand-in through
+      an injectable recognition table. The official-signal acceptance numbers (held-out ESR / LTAS for A2 Full and Lite
+      vs the Sawblade-signal numbers) are a user-run Mac step next to Task D; the exact command is in the REPORT.
+    - The reamp pair (decision 20) uses the same file, unchanged.
