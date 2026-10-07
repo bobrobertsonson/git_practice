@@ -40,6 +40,7 @@ from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manua
 CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level output exceeds it is "clipping"
 CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-length peak is below this
 OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss
+PEDAL_OCCAM_DB = 0.05     # a single-path combo with a pedal must beat the best pedal-less single (same amp if available) by this
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
 ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio", "preeq")      # --ablate names (v0.4M suspects)
 CAB_SWITCH_DB = 0.01      # a different cab must lower the loss by at least this to replace the stage-2 cab
@@ -244,13 +245,26 @@ def choose(cands: list[Scored]) -> Scored:
     plain = [c for c in ok if not c.combo.boost]
     ok = [c for c in ok if not c.combo.boost
           or not any(p.topology == c.topology and p.loss <= c.loss + OCCAM_DB for p in plain)] or ok
+    # a pedal costs like one extra block: a single-path combo with a pedal must beat the best pedal-less single (with the same
+    # amp when one is among the candidates) by PEDAL_OCCAM_DB, else the pedal is spurious (a drive in front can mimic EQ noise)
+    bare = [p for p in ok if p.topology == "single" and not p.combo.a_pedals]
+
+    def pedal_justified(c):
+        if c.topology != "single" or not c.combo.a_pedals or not bare:
+            return True
+        ref = [p for p in bare if p.combo.a_amp.key == c.combo.a_amp.key] or bare
+        return c.loss < min(p.loss for p in ref) - PEDAL_OCCAM_DB
+    dropped = [c for c in ok if not pedal_justified(c)]
+    ok = [c for c in ok if pedal_justified(c)] or ok
     best = min(ok, key=lambda c: c.loss)
     near = [c for c in ok if c.loss <= best.loss + OCCAM_DB]
     rank = min(TOPOLOGY_RANK[c.topology] for c in near)
     same = [c for c in near if TOPOLOGY_RANK[c.topology] == rank]
     top = min(c.loss for c in same)
     tie = [c for c in same if c.loss <= top + SIZE_TIE_DB]
-    return min(tie, key=lambda c: (c.combo.size_rank()[0], c.combo.size_rank()[1], c.loss))
+    win = min(tie, key=lambda c: (c.combo.size_rank()[0], c.combo.size_rank()[1], c.loss))
+    win.extra["pedalOccamDropped"] = [c.combo.key() for c in dropped]       # recorded in result.json -> pedalOccam
+    return win
 
 
 def parse_ablate(spec) -> tuple[str, ...]:
@@ -647,6 +661,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         result["cabSweep"] = {"ablated": True, "note": "--ablate irsweep: only the stage-1 cab sweep ran"}
     T["cabSweep"] = time.time() - t_cab
     best = choose(refined)
+    result["pedalOccam"] = {"minGainDb": PEDAL_OCCAM_DB, "dropped": best.extra.get("pedalOccamDropped", [])}
     # ---- two-IR blend (v0.4M B2.1): the winner's cab as one combined irMix IR of two of the top IRs --------------------
     t_ir = time.time()
     if "irblend" in ablate:

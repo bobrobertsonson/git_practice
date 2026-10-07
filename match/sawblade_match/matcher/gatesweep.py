@@ -31,9 +31,18 @@ GATE_RELEASES_MS = (20.0, 80.0, 150.0, 250.0)
 GATE_RANGES_DB = (-50.0, -90.0)
 DEFAULT_CELL = (4.0, 40.0, 150.0, -50.0)       # (threshold offset dB, hold ms, release ms, range dB) = space.gate_preset
 LTAS_TOL_DB = 0.05
-TIGHT_TOL = 1e-9
+TIGHT_TOL = 0.05      # normalised tightness term: a cell may be this much worse than the default cell's (noise level of the statistic)
 MIN_IMPROVEMENT = 1e-3           # the floor term must fall by at least this to leave the current cell
 THRESHOLD_MAX_DB = -6.0          # keep the swept threshold inside the schema range
+
+
+def cell_feasible(r: dict, base: dict) -> bool:
+    """Acceptance rule of a gate cell against the default cell ``base``: its floor term is measurable, its LTAS error is at most
+    ``LTAS_TOL_DB`` above the default's and its (normalised) tightness term at most ``TIGHT_TOL`` above the default's."""
+    ok = r["floorTerm"] is not None and r["ltas"] <= base["ltas"] + LTAS_TOL_DB
+    if ok and r["tight"] is not None and base["tight"] is not None:
+        ok = r["tight"] <= base["tight"] + TIGHT_TOL
+    return ok
 
 
 def cell_gate(floor_db: float, offset_db: float, release_ms: float = DEFAULT_CELL[2], hold_ms: float = DEFAULT_CELL[1],
@@ -127,10 +136,7 @@ def gate_sweep(eng: Engine, cand: Scored, space: Space, ex, tgt: L.Target, floor
     base = done[DEFAULT_CELL]
 
     def feasible(r):
-        ok = r["floorTerm"] is not None and r["ltas"] <= base["ltas"] + LTAS_TOL_DB
-        if ok and r["tight"] is not None and base["tight"] is not None:
-            ok = r["tight"] <= base["tight"] + TIGHT_TOL
-        return ok
+        return cell_feasible(r, base)
 
     cur, steps = DEFAULT_CELL, []
     axes = (("thresholdOffsetDb", 0, GATE_OFFSETS_DB), ("holdMs", 1, GATE_HOLDS_MS), ("releaseMs", 2, GATE_RELEASES_MS),

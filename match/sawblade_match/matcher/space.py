@@ -19,10 +19,10 @@ Continuous parameters (physical units; the optimizer works in the normalised box
   above (5-12 kHz) gets a slope choice. Each has a discrete slope parameter (``post.hp_slope`` / ``post.lp_slope`` in [0, 1]:
   < 0.5 = 12 dB/oct, >= 0.5 = 24 dB/oct, emitted as two cascaded biquads with the 4th-order Butterworth Qs 0.541 / 1.307). The
   ``post.hp`` and the slopes are not CMA-ES dimensions (group ``discrete``): ``refine.pick_slopes`` tries ``post.hp`` on a short
-  grid after the last linear block, then 24 dB/oct for each filter. A filter at its range edge (hp 60 Hz, lp 12 kHz) is "off" whatever its slope. They do not
+  grid x slope {12, 24} after the last linear block, then ``post.lp`` around its CMA value x slope, then re-polishes the EQ bands. A filter at its range edge (hp 60 Hz, lp 12 kHz) is "off" whatever its slope. They do not
   count toward the EQ-gain regulariser.
 * tight boost (v0.4M, ``Combo.boost``; single topology only): a modeled ``pedal.ts`` (slot ``boost``) directly in front of the
-  amp, after any pedal: ``boost.drive`` 0-3, ``boost.level`` 6-10, ``boost.tone`` 3-8 (defaults 1 / 8 / 5). The boost renders
+  amp, after any pedal: ``boost.drive`` 0-3, ``boost.tone`` 3-8 (defaults 1 / 5); ``boost.level`` stays at its default 8 (not searched: the amp input gain covers level). The boost renders
   inside the NAM core, so these three belong to the ``gain`` group.
 * NAM input gains +-12 dB for every NAM block (``gain.a.0``, ``gain.a.amp``, ``gain.b.0`` ...).
 
@@ -50,6 +50,7 @@ SLOPE_DEFAULT = 0.4                       # discrete slope parameter: < 0.5 -> 1
 BUTTER4_Q = (0.541196, 1.306563)          # Qs of the two biquads of a 4th-order Butterworth (24 dB/oct) pass filter
 BOOST_PARAMS = (("drive", 0.0, 3.0, 1.0), ("level", 6.0, 10.0, 8.0), ("tone", 3.0, 8.0, 5.0))   # name, lo, hi, default
 IRMIX_RANGE = (0.2, 0.8)                  # mix of the second IR (B2.1)
+BOOST_FIXED = ("level",)                  # boost params that are not searched (the amp input gain covers the level)
 PEDAL_LATENCY = 50                        # samples of every modeled pedal block (docs/PRESET_SCHEMA.md)
 
 
@@ -179,6 +180,8 @@ class Space:
             ps.append(P("cab.mix", *IRMIX_RANGE, 0.5, group="discrete"))
         if boost:
             for name, lo, hi, d in BOOST_PARAMS:
+                if name in BOOST_FIXED:      # redundant with the amp input gain: fixed at its default, not searched
+                    continue
                 ps.append(P(f"boost.{name}", lo, hi, d, group="gain"))
         self.params = ps
         self.names = [p.name for p in ps]

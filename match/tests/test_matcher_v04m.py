@@ -12,6 +12,7 @@ import pytest
 import soundfile as sf
 from scipy import signal
 
+from sawblade_match.matcher import loss as L
 from sawblade_match.matcher.pool import Pool, load_pool
 from sawblade_match.matcher.space import (BUTTER4_Q, Combo, POST_HP_RANGE, POST_LP_RANGE, Space, boost_block,
                                           build_preset, gate_preset, manual_align, post_eq, post_filters_from_eq)
@@ -143,7 +144,7 @@ def test_boost_block_is_schema_valid_and_emulation_equals_full_render():
     pool = fixture_pool()
     combo = Combo((pool.pedals[2],), pool.amps[2], None, None, pool.cabs[1], boost=True)
     sp = Space.for_combo(combo)
-    assert [n for n in sp.names if n.startswith("boost.")] == ["boost.drive", "boost.level", "boost.tone"]
+    assert [n for n in sp.names if n.startswith("boost.")] == ["boost.drive", "boost.tone"]      # boost.level is fixed at 8 (redundant with the amp gain)
     assert all(sp.params[sp.idx[n]].group == "gain" for n in sp.names if n.startswith("boost."))
     assert Space((1, None)).default().get("boost.drive") is None                      # only boost combos have the params
     with pytest.raises(ValueError):
@@ -351,7 +352,7 @@ def test_tight_boost_variant_can_win_on_a_hidden_boosted_chain(tmp_path):
     pool = Pool([], list(full.amps), list(full.cabs))                  # no pedal capture can make the clipping: only the boost
     hidden_combo = Combo((), full.amps[2], None, None, full.cabs[1], boost=True)
     v = Space.for_combo(hidden_combo).default()
-    v.update({"boost.drive": 2.5, "boost.level": 9.0, "boost.tone": 4.0, "post.g1": 1.0})
+    v.update({"boost.drive": 2.5, "boost.level": 8.0, "boost.tone": 4.0, "post.g1": 1.0})      # level is not searched: fixed at 8
     di, ref = _known(tmp_path, pool, hidden_combo, v)
     plan = mkplan(top_k={"blend": 0, "single": 2, "single2": 0}, gens_linear=16, gens_gain=4, gens_final=10,
                   pop_linear=12, pop_gain=6, n_rescore_single=12, n_cab_single=12)
@@ -359,8 +360,8 @@ def test_tight_boost_variant_can_win_on_a_hidden_boosted_chain(tmp_path):
                            write_audio=False, refine_offsets=False), Log())
     tb = res["tightBoost"]
     assert tb["tried"] == 3 and tb["won"] is True and tb["ablated"] is False and tb["refined"] >= 1
-    assert set(tb["params"]) == {"drive", "level", "tone"} and 0.0 <= tb["params"]["drive"] <= 3.0
-    assert 6.0 <= tb["params"]["level"] <= 10.0 and 3.0 <= tb["params"]["tone"] <= 8.0
+    assert set(tb["params"]) == {"drive", "tone"} and 0.0 <= tb["params"]["drive"] <= 3.0      # boost.level stays at its default 8
+    assert 3.0 <= tb["params"]["tone"] <= 8.0
     assert tb["bestBoostLoss"] + OCCAM_DB < tb["bestPlainSingleLoss"]
     assert res["best"]["tightBoost"] is True and res["best"]["topology"] == "single"
     assert any(c["tightBoost"] for c in res["stage1"]["top"]["single"])           # the variants compete in stage 1 ...
@@ -598,12 +599,30 @@ def test_a_fast_bus_comp_in_the_reference_fires_the_studio_detector_and_is_repro
 
 
 def test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept(tmp_path):
-    res = _studio_run(tmp_path, None, post={"post.g0": -8.5, "post.g2": 8.5})      # beyond the +-6 dB post-EQ range
-    st = res["studio"]
-    assert st["eqd"] is True and st["evidence"]["postGainAtRange"] is True and st["compressed"] is False
-    assert st["widenedPostEq"] is True and st["gainVsPlain"] >= ST.MIN_GAIN and st["busCompUsed"] is False
-    assert max(abs(res["best"]["params"][f"post.g{i}"]) for i in range(3)) > 6.0       # a gain outside the old range
-    assert [x["step"] for x in st["stage"]] == ["post EQ +-9 dB"] and st["stage"][0]["kept"] is True
+    """Reference = the chain with post EQ gains of -8.5 / +8.5 dB (beyond the +-6 dB range). The candidate is the same chain
+    with a flat post EQ (an unfitted stage-2 result): both eqd routes fire, and the widened post-EQ stage fits it."""
+    def hid(sp):
+        v = sp.default()
+        v.update({"post.g0": -8.5, "post.g2": 8.5})
+        return v
+    eng, cand, sp, ex, tgt = _stage1_candidate(tmp_path, hid)
+    try:
+        v = dict(sp.default())
+        core_a = eng.core(cand.combo, v, "a", ex.x)
+        y = ex.trim(eng.emulate(cand.combo, v, core_a, None, manual_align()))
+        det = ST.detect(True, tgt, tgt, y, v, None)                                  # route 2: the LTAS residual's shape
+        assert det["eqd"] is True and det["evidence"]["residualRmsDb"] >= ST.RESIDUAL_RMS_DB
+        assert det["evidence"]["residualPolyExplained"] >= ST.POLY_EXPLAINED and det["compressed"] is False
+        assert ST.detect(True, tgt, tgt, y, {**v, "post.g0": -5.8}, None)["evidence"]["postGainAtRange"] is True    # route 1
+        assert ST.detect(False, tgt, tgt, y, v, None)["evidence"]["skipped"]          # not judged on a mix reference
+        cand.extra.update(params=v, info={})
+        rec = ST.studio_stage(eng, cand, sp, ex, tgt, {"compressed": False, "eqd": True}, seed=3, gens=12, pop=12)
+    finally:
+        eng.close()
+    assert rec["widenedPostEq"] is True and rec["gainVsPlain"] >= ST.MIN_GAIN and rec["busCompUsed"] is False
+    assert [x["step"] for x in rec["stage"]] == ["post EQ +-9 dB"] and rec["stage"][0]["kept"] is True
+    v2 = rec["_won"][0]
+    assert max(abs(v2[f"post.g{i}"]) for i in range(3)) > 6.0                         # a gain outside the old range
 
 
 def test_the_plain_chain_does_not_fire_the_studio_detector(tmp_path):
@@ -697,3 +716,93 @@ def test_ablate_preeq_leaves_the_pre_eq_empty_and_the_default_run_reports_it(tmp
     assert ("preEq" in best["paths"]["a"]) == (pe["chosen"]["a"] != "off")
     for c in pe["candidates"]:
         assert c["kept"] == (c["refitLoss"] is not None and c["offLoss"] - c["refitLoss"] >= pe["keepDb"])
+def test_choose_pedal_single_must_beat_the_pedal_less_single_by_the_margin():
+    from sawblade_match.matcher.run import PEDAL_OCCAM_DB
+    pool = fixture_pool()
+    bare = Combo((), pool.amps[0], None, None, pool.cabs[0], boost=True)
+    ped = Combo((pool.pedals[0],), pool.amps[0], None, None, pool.cabs[0], boost=True)
+    other = Combo((pool.pedals[0],), pool.amps[1], None, None, pool.cabs[0], boost=True)
+    mk = lambda c, l: Scored(c, l, 0.0, manual_align(), None, "refined", {})
+    w = choose([mk(bare, 1.0), mk(ped, 1.0 - PEDAL_OCCAM_DB * 0.5)])
+    assert w.combo is bare and w.extra["pedalOccamDropped"] == [ped.key()]                  # not enough: the pedal is spurious
+    w = choose([mk(bare, 1.0), mk(ped, 1.0 - PEDAL_OCCAM_DB * 2)])
+    assert w.combo is ped and w.extra["pedalOccamDropped"] == []                           # clearly better: kept
+    assert choose([mk(other, 1.0)]).combo is other                                          # no pedal-less single to compare with
+    assert choose([mk(bare, 1.0), mk(other, 0.98)]).combo is bare                          # other amp: compared with the best bare
+
+
+def test_gate_cell_acceptance_has_a_noise_level_tightness_tolerance():
+    from sawblade_match.matcher.gatesweep import LTAS_TOL_DB, TIGHT_TOL, cell_feasible
+    base = {"ltas": 1.0, "tight": 0.20, "floorTerm": 0.5}
+    cell = lambda **k: {"ltas": 1.0, "tight": 0.20, "floorTerm": 0.1, **k}
+    assert TIGHT_TOL == 0.05 and LTAS_TOL_DB == 0.05
+    assert cell_feasible(cell(tight=0.24), base)                       # worse by 0.04 normalised: accepted
+    assert not cell_feasible(cell(tight=0.26), base)                   # worse by 0.06: rejected
+    assert cell_feasible(cell(ltas=1.04), base) and not cell_feasible(cell(ltas=1.06), base)       # LTAS rule unchanged
+    assert not cell_feasible(cell(floorTerm=None), base) and cell_feasible(cell(tight=None), base)
+
+
+def test_pick_slopes_joint_grid_polish_and_appended_steps():
+    from sawblade_match.matcher import refine
+    from sawblade_match.matcher.refine import DISCRETE_UP, HP_GRID, MIN_FILTER_GAIN, POST_CMA_STEPS, pick_slopes
+    sp = Space((1, None))
+    g = HP_GRID[3]
+
+    def make_score(target_hp, target_slope, target_lp=None):
+        def score(v):
+            t = abs(np.log(v["post.hp"] / target_hp)) + (0.0 if (v["post.hp_slope"] >= 0.5) == (target_slope >= 0.5) else 0.5)
+            if target_lp is not None:
+                t += abs(np.log(v["post.lp"] / target_lp)) + (0.0 if v["post.lp_slope"] >= 0.5 else 0.3)
+            return L.LossResult(1.0 + t, 0.0, 0.0, None, None, 0.0, 0.0)
+        return score
+    v0 = sp.default()
+    calls = []
+
+    def polish(v):
+        calls.append(dict(v))
+        return v, L.LossResult(0.0, 0.0, 0.0, None, None, 0.0, 0.0)           # a better polish: kept
+    v, r = pick_slopes(sp, v0, make_score(g, DISCRETE_UP), polish)
+    assert v["post.hp"] == g and v["post.hp_slope"] >= 0.5 and len(calls) == 1 and r.total == 0.0   # joint (g, 24) minimum
+    # nothing to gain (the start is already the minimum): polish is never called, the start is returned
+    calls.clear()
+    start = {**v0, "post.hp": g, "post.hp_slope": DISCRETE_UP}
+    v, r = pick_slopes(sp, start, make_score(g, DISCRETE_UP), polish)
+    assert not calls and v["post.hp"] == g and v["post.hp_slope"] == DISCRETE_UP
+    # a gain below MIN_FILTER_GAIN does not count as a change
+    flat = lambda vv: L.LossResult(1.0 - (MIN_FILTER_GAIN / 2 if vv["post.hp"] == g else 0.0), 0.0, 0.0, None, None, 0.0, 0.0)
+    v, r = pick_slopes(sp, v0, flat, polish)
+    assert not calls and v["post.hp"] == v0["post.hp"]
+    # a worse polish is discarded
+    worse = lambda vv: (vv, L.LossResult(99.0, 0.0, 0.0, None, None, 0.0, 0.0))
+    v, r = pick_slopes(sp, v0, make_score(g, DISCRETE_UP), worse)
+    assert v["post.hp"] == g and r.total < 2.0
+    # the low-pass step: frequency around the CMA value x slope
+    lp0 = 8000.0
+    v, r = pick_slopes(sp, {**v0, "post.lp": lp0}, make_score(v0["post.hp"], 0.0, lp0 * 1.12), None)
+    assert v["post.lp"] == pytest.approx(lp0 * 1.12) and v["post.lp_slope"] >= 0.5
+    # an appended step runs after the built-in ones
+    seen = []
+
+    def extra(space, best, r, score):
+        seen.append(best["post.hp"])
+        return {**best, "post.g0": 3.0}, r, False
+    POST_CMA_STEPS.append(extra)
+    try:
+        v, r = pick_slopes(sp, v0, make_score(g, DISCRETE_UP), None)
+    finally:
+        POST_CMA_STEPS.remove(extra)
+    assert seen == [g] and v["post.g0"] == 3.0 and refine.POST_CMA_STEPS[:2] == [refine._hp_step, refine._lp_step]
+
+
+def test_lp_step_skips_duplicate_and_current_candidates():
+    from sawblade_match.matcher.refine import _lp_step
+    sp = Space((1, None))
+    seen = []
+
+    def score(v):
+        seen.append((v["post.lp"], v["post.lp_slope"] >= 0.5))
+        return L.LossResult(1.0, 0.0, 0.0, None, None, 0.0, 0.0)
+    v = {**sp.default(), "post.lp": 12000.0, "post.lp_slope": 0.0}           # at the range top: every x>1 factor clips to it
+    _lp_step(sp, v, score(v), score)
+    seen = seen[1:]
+    assert len(seen) == len(set(seen)) and (12000.0, False) not in seen        # no duplicates, not the current setting
