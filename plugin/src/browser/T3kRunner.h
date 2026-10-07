@@ -27,7 +27,14 @@ struct RunResult {
   int exitCode = -1;
   std::string output;      // merged stdout + stderr (capped)
   std::string launchError;
+  std::string lastErrorObject;  // the last {"error", "code"} line of the output, kept even when keepOutput is off
+  std::string lastLine;   // the tool's last plain output line (stderr text such as "TONE3000_CLIENT_ID is not set"); never JSON, never secret-looking
 };
+
+// The last output line that is not JSON and does not look like a credential ("" if none). Bounded to 300 characters.
+std::string lastErrorLine(const std::string& output);
+// The last line that is a {"error": ...} JSON object ("" if none): the CLI's own error, preferred over the stderr line.
+std::string lastErrorObjectLine(const std::string& output);
 
 class T3kRunner {
  public:

@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <pthread.h>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "AppPaths.h"
@@ -28,6 +29,7 @@
 #include "presets/T3kTool.h"
 #include "settings/LoginFlow.h"
 #include "settings/Settings.h"
+#include "settings/ToolEnv.h"
 #include "settings/ToolRunner.h"
 
 using namespace sawblade::plugin::settings;
@@ -1120,3 +1122,162 @@ TEST_CASE("ToolRunner: cancel and timeout after the child has finished never sig
     CHECK(c->done->outcome == ToolResult::Outcome::NonZeroExit);
   }
 }
+
+// --- v0.3.0.1: one environment for every tool launch (settings/ToolEnv.h) -----------------------------------------
+TEST_CASE("tool environment: client id from Settings, cache dir, unbuffered; never a secret key", "[settings][toolenv]") {
+  TempDir t;
+  {
+    Settings s(t / "s.json", makeEnv(t.dir));  // no id anywhere
+    s.load();
+    const ToolEnvMap env = toolEnvironment(s);
+    CHECK(env.count("TONE3000_CLIENT_ID") == 0);
+    CHECK(env.at("PYTHONUNBUFFERED") == "1");
+    CHECK(env.at("SAWBLADE_CACHE_DIR") == s.effectiveCaptureCacheDir().string());
+  }
+  {
+    Settings s(t / "s2.json", makeEnv(t.dir));
+    s.load();
+    REQUIRE(s.setTone3000ClientId("t3k_pub_abc123").ok);
+    CHECK(toolEnvironment(s).at("TONE3000_CLIENT_ID") == "t3k_pub_abc123");
+    CHECK_FALSE(s.setTone3000ClientId("t3k_cs_nope").ok);
+    CHECK(toolEnvironment(s).at("TONE3000_CLIENT_ID") == "t3k_pub_abc123");  // the refused value changed nothing
+  }
+  {
+    Settings s(t / "s3.json", makeEnv(t.dir, {{"TONE3000_CLIENT_ID", "t3k_cs_secretvalue"}}));  // a secret from the host environment
+    s.load();
+    CHECK(toolEnvironment(s).count("TONE3000_CLIENT_ID") == 0);
+  }
+}
+
+TEST_CASE("tool environment: the command line and the '=' path guard", "[settings][toolenv]") {
+  const ToolEnvMap env{{"A", "1"}, {"TONE3000_CLIENT_ID", "t3k_pub_x"}};
+  CHECK(toolPathProblem("/venv/bin/sawblade-t3k").empty());
+#ifndef _WIN32
+  const auto cmd = toolCommand("/venv/bin/sawblade-t3k", {"whoami", "--json"}, env);
+  REQUIRE(cmd.size() == 8);
+  CHECK(cmd[0] == "/usr/bin/env");
+  CHECK(cmd[1] == "-u");  // a host secret key never reaches the tool
+  CHECK(cmd[2] == "TONE3000_CLIENT_ID");
+  CHECK(cmd[3] == "A=1");
+  CHECK(cmd[4] == "TONE3000_CLIENT_ID=t3k_pub_x");
+  CHECK(cmd[5] == "/venv/bin/sawblade-t3k");
+  CHECK(cmd[7] == "--json");
+  // a host secret key is dropped when no valid id replaces it; a host public id is kept
+  ::setenv("TONE3000_CLIENT_ID", "t3k_cs_hostsecret", 1);
+  for (const auto& e : mergedEnvironment({{"A", "1"}})) CHECK(e.rfind("TONE3000_CLIENT_ID=", 0) != 0);
+  ::setenv("TONE3000_CLIENT_ID", "t3k_pub_host", 1);
+  bool kept = false;
+  for (const auto& e : mergedEnvironment({{"A", "1"}})) kept = kept || e == "TONE3000_CLIENT_ID=t3k_pub_host";
+  CHECK(kept);
+  ::unsetenv("TONE3000_CLIENT_ID");
+  CHECK_THAT(toolPathProblem("/weird=dir/bin/sawblade-t3k"), ContainsSubstring("'='"));
+  // the posix_spawn form: the host environment with the injected values replacing same-named ones
+  ::setenv("TONE3000_CLIENT_ID", "from_host", 1);
+  ::setenv("SAWBLADE_TOOLENV_PROBE", "kept", 1);
+  const auto merged = mergedEnvironment(env);
+  ::unsetenv("TONE3000_CLIENT_ID");
+  ::unsetenv("SAWBLADE_TOOLENV_PROBE");
+  int ids = 0;
+  bool probe = false;
+  for (const auto& e : merged) {
+    if (e.rfind("TONE3000_CLIENT_ID=", 0) == 0) {
+      ++ids;
+      CHECK(e == "TONE3000_CLIENT_ID=t3k_pub_x");
+    }
+    if (e == "SAWBLADE_TOOLENV_PROBE=kept") probe = true;
+  }
+  CHECK(ids == 1);
+  CHECK(probe);
+#endif
+}
+
+TEST_CASE("tool environment: ToolRunner launches with the injected client id and cache dir", "[settings][toolenv][toolrunner]") {
+  TempDir t;
+  const fs::path log = t / "env.txt";
+  const fs::path script = t / "tool.sh";
+  {
+    std::ofstream f(script);
+    f << "#!/bin/sh\necho \"$TONE3000_CLIENT_ID|$SAWBLADE_CACHE_DIR|$PYTHONUNBUFFERED\" > \"" << log.string() << "\"\n";
+  }
+  fs::permissions(script, fs::perms::owner_all);
+  ::unsetenv("TONE3000_CLIENT_ID");
+  Settings s(t / "s.json", makeEnv(t.dir));
+  s.load();
+  REQUIRE(s.setTone3000ClientId("t3k_pub_runner").ok);
+  ToolRunner runner(s);
+  ToolRequest req;
+  req.tool = "sawblade-t3k";
+  req.executable = script;
+  req.callbacksOnMessageThread = false;
+  auto c = runTool(runner, std::move(req));
+  REQUIRE(waitDone(*c, 10000ms));
+  CHECK(c->done->outcome == ToolResult::Outcome::Ok);
+  std::ifstream in(log);
+  std::string line;
+  std::getline(in, line);
+  CHECK(line == "t3k_pub_runner|" + s.effectiveCaptureCacheDir().string() + "|1");
+}
+
+TEST_CASE("tool environment: one credential filter", "[settings][toolenv]") {
+  // the CLI's own messages must survive unchanged
+  for (const char* m : {"TONE3000_CLIENT_ID is not set (your publishable key, t3k_pub_...). See match/README.md",
+                        "TONE3000_CLIENT_ID looks like a SECRET key (t3k_cs_...); use the publishable t3k_pub_ key",
+                        "token refresh failed: HTTP 500",
+                        "error: network failure: ConnectError: [Errno -2] Name or service not known",
+                        "not logged in; run `sawblade-t3k login`",
+                        "cannot read /home/u/presets/linear_identity_loud24.nam: [Errno 2] No such file or directory",
+                        "model 123456 is not one of tone 7890's candidate models",
+                        "Fix: export TONE3000_CLIENT_ID=t3k_pub_..., or set it in the plugin Settings and run login again",
+                        "TONE3000_CLIENT_ID is not set", "error: the pack has no models",
+                        "error: token: invalid_grant"}) {  // a keyword with a short, digit-free value is an error message, not a secret
+    INFO(m);
+    CHECK_FALSE(looksLikeCredential(m));
+    CHECK(safeToolLine(m) == m);
+  }
+  CHECK(looksLikeCredential("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig"));
+  CHECK(looksLikeCredential("key t3k_cs_Ab3dEf6hIj9lMn2pQr5t"));
+  CHECK(looksLikeCredential("Authorization: Bearer abc12345678"));
+  CHECK(looksLikeCredential("refresh_token=abc123456789"));
+  CHECK(looksLikeCredential("code 0123456789abcdefghijklmnopqrstuv"));  // 32+ with letters and digits
+  CHECK(looksLikeCredential("session=0123456789abcdef"));
+  // intended: a 64-hex digest is an opaque 32+ letters-and-digits run, so a "sha256 mismatch" line is not shown
+  CHECK(looksLikeCredential("sha256 mismatch: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
+  CHECK_FALSE(looksLikeCredential("path=/home/user/some/long/path/x"));
+  CHECK(safeToolLine("note  \r") == "note");
+  std::string big;
+  while (big.size() < 400) big += "\xc3\xa9 ";
+  const std::string u = safeToolLine(big);
+  CHECK(u.size() <= 300);
+  CHECK(u.size() >= 298);
+}
+
+#ifndef _WIN32
+// The filter must not recurse per character: very long lines on a small-stack secondary thread (a macOS secondary thread has 512 KB).
+TEST_CASE("tool environment: the credential filter survives huge lines on a small stack", "[settings][toolenv]") {
+  struct Out {
+    bool token = false, bearer = false, spaces = true, again = false;
+  } out;
+  auto work = [](void* p) -> void* {
+    auto* o = static_cast<Out*>(p);
+    const std::string a = "token=" + std::string(1u << 20, 'a');
+    const std::string b = "Bearer " + std::string(1u << 20, 'a');
+    const std::string c = "token" + std::string(65536, ' ') + "x";
+    o->token = looksLikeCredential(a);
+    o->bearer = looksLikeCredential(b);
+    o->spaces = looksLikeCredential(c);
+    o->again = looksLikeCredential(a) && looksLikeCredential(b) && !looksLikeCredential(c);  // deterministic
+    return nullptr;
+  };
+  pthread_attr_t at;
+  pthread_attr_init(&at);
+  pthread_attr_setstacksize(&at, 256 * 1024);
+  pthread_t th;
+  REQUIRE(pthread_create(&th, &at, work, &out) == 0);
+  pthread_join(th, nullptr);
+  pthread_attr_destroy(&at);
+  CHECK(out.token);
+  CHECK(out.bearer);
+  CHECK_FALSE(out.spaces);
+  CHECK(out.again);
+}
+#endif
