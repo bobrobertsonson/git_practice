@@ -448,7 +448,8 @@ TEST_CASE("import ui: a silent or a clipped file says why in the dialog, imports
     ImportDialog* d = rig.dialog();
     REQUIRE(d != nullptr);
     click(*buttonTitled(*d, "IMPORT"));
-    REQUIRE(pumpUntil([&] { return anyLabelContains(*d, word); }));
+    const char* const wanted = word;  // named copy: older Apple clang cannot capture a structured binding in a lambda
+    REQUIRE(pumpUntil([&] { return anyLabelContains(*d, wanted); }));
     CHECK_FALSE(d->importing());
     CHECK(buttonTitled(*d, "IMPORT")->isEnabled());  // usable again
     CHECK(rig.dialog() == d);
