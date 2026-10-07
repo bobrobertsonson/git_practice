@@ -200,6 +200,10 @@ DynamicsSet liveDynamicsOf(const Preset& p);
 // THE resolver: the set the preset's dynamicsMode selects (absent = record). Used by the render path (Chain), the NAM
 // exporter and the plugin.
 DynamicsSet activeDynamics(const Preset& p);
+// A copy of `p` whose record slots (`gate`, `busComp`) hold the active set, with no explicit liveDynamics and origin "user", so any
+// reader (the NAM exporter, the export notes) that looks at `gate` / `busComp` sees exactly the set the rig plays. dynamicsMode is
+// kept (the label "live" / "record" survives for the notes).
+Preset resolveDynamics(const Preset& p);
 inline DynamicsMode effectiveDynamicsMode(const Preset& p) { return p.dynamicsMode.value_or(DynamicsMode::Record); }
 
 // Block types are looked up in the BlockRegistry (unknown type -> PresetError).

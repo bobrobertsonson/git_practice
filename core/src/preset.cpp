@@ -550,6 +550,16 @@ DynamicsSet liveDynamicsOf(const Preset& p) {
   return recordDynamicsOf(p);
 }
 
+Preset resolveDynamics(const Preset& p) {
+  const DynamicsSet d = activeDynamics(p);
+  Preset r = p;
+  r.gate = d.gate;
+  r.busComp = d.busComp;
+  r.liveDynamics.reset();
+  r.origin = PresetOrigin::User;
+  return r;
+}
+
 DynamicsSet activeDynamics(const Preset& p) {
   return effectiveDynamicsMode(p) == DynamicsMode::Live ? liveDynamicsOf(p) : recordDynamicsOf(p);
 }

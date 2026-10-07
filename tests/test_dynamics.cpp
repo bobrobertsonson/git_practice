@@ -359,3 +359,20 @@ TEST_CASE("Chain: a dynamics set change through LiveParams is applied whole, bet
   CHECK(c->liveParams().dynamics == a.dynamics);
   CHECK(guard.count() == 0);
 }
+
+TEST_CASE("resolveDynamics: the record slots hold the active set (what the exporter and the notes read)", "[dynamics][preset]") {
+  json j = mkDyn(4);
+  j["origin"] = "match";
+  Preset p = parse(j);
+  CHECK(resolveDynamics(p).gate == p.gate);  // record mode: unchanged
+  CHECK(resolveDynamics(p).busComp == p.busComp);
+  p.dynamicsMode = DynamicsMode::Live;
+  const Preset r = resolveDynamics(p);
+  CHECK(r.gate == liveDynamicsOf(p).gate);
+  CHECK_FALSE(r.busComp.enabled);
+  CHECK_FALSE(r.liveDynamics.has_value());
+  CHECK(r.origin == PresetOrigin::User);
+  CHECK(r.dynamicsMode == DynamicsMode::Live);  // the label survives
+  CHECK(activeDynamics(r) == activeDynamics(p));  // what a reader of the resolved preset plays is what the rig plays
+  CHECK(resolveDynamics(r) == r);
+}

@@ -155,6 +155,23 @@ py::dict levelMatch(const py::object& preset, const py::object& sampleRateArg, c
   return d;
 }
 
+// Task G: the core's single resolver of a preset's active dynamics set (activeDynamics), for the exporter / notes.
+// Returns {"mode": "live" | "record", "gate": {...}, "busComp": {...}} with the schema's gate / busComp objects.
+py::dict resolveDynamicsPy(const py::object& preset, const py::object& baseDir) {
+  const nlohmann::json j = presetToJson(preset);
+  std::filesystem::path base = std::filesystem::current_path();
+  if (!baseDir.is_none()) base = py::str(py::module_::import("os").attr("fspath")(baseDir)).cast<std::string>();
+  nlohmann::json out;
+  {
+    py::gil_scoped_release nogil;
+    const Preset p = resolveDynamics(parsePreset(j, base));
+    out = {{"mode", effectiveDynamicsMode(p) == DynamicsMode::Live ? "live" : "record"},
+           {"gate", toJson(p).at("gate")},
+           {"busComp", toJson(p).at("busComp")}};
+  }
+  return py::module_::import("json").attr("loads")(out.dump()).cast<py::dict>();
+}
+
 // ---- stems ------------------------------------------------------------------------------------
 StemKind parseKind(const std::string& name) {
   std::string n = name;
@@ -412,6 +429,12 @@ Returns a dict: trimADb, trimBDb (dB, the louder path has 0), lufsA, lufsB, sumL
 measured: a path disabled or silent), makeupDb (list of 5: make-up at blend 0, .25, .5, .75, 1),
 delaySamplesB, invertB (the resolved alignment) and warnings. With a path disabled everything is 0.
 The GIL is released while measuring. Raises PresetError or RenderIOError like render().)doc");
+
+  m.def("resolve_dynamics", &resolveDynamicsPy, py::arg("preset"), py::arg("base_dir") = py::none(),
+        R"doc(The active dynamics set of a preset (core activeDynamics: dynamicsMode selects the record or the live set; the live
+set is the explicit liveDynamics, else derived for origin "match", else the stored gate / busComp).
+
+Returns {"mode": "live" | "record", "gate": {...}, "busComp": {...}} (docs/PRESET_SCHEMA.md objects). Raises PresetError.)doc");
 
   bindStems(m);
 }
