@@ -22,6 +22,11 @@ match/.venv/bin/pytest match          # no network needed
 export TONE3000_CLIENT_ID=t3k_pub_xxxxxxxx
 ```
 
+`TONE3000_CLIENT_ID` is needed only for `login` (it can also come from the plugin Settings, or from the
+`client_id` already in the token file). `login` stores the publishable key in `~/.config/sawblade/t3k_tokens.json`;
+every other command (`whoami`, `models`, `fetch`, `pull`, `resolve`, ...) and token refresh then use that stored
+id, so they work without the env var, e.g. when a DAW is launched from the Dock.
+
 ### Log in (device flow, works headless)
 
 ```
