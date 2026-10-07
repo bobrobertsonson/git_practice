@@ -18,11 +18,15 @@ two hosts in the environment's network settings.
 | Task | What | Commits | Reviewer |
 |---|---|---|---|
 | E | EXPORT NAM panel shows the export notes (+ COPY) | 31be434, 99984be, b5af362, 75e8667, 074db30 | REVISE ×2 → **ACCEPT 75e8667** (074db30: CI wording fix, reviewed with C) |
-| D | Main page: SAW + BODY heads on top, a board under each, cab chip; CAB page | 8ef8baf, ab2decb, 3199715 | **ACCEPT ab2decb** (conditional on CI) |
+| D | Main page: SAW + BODY heads on top, a board under each, cab chip; CAB page | 8ef8baf, ab2decb, 3199715 | **ACCEPT ab2decb** |
 | C | Pedalboard: drag reorder / A↔B / remove, menu, + PEDAL picker, scrolling | 78ed28d, 3199715, f1df430 | **ACCEPT 5bdba4d** (f1df430 reviewed with B) |
 | B | Capture pedals on the board, CAPTURES tab, insert mode, setting selector | f6d425a, f1df430, 9f1ca2f | REVISE → **ACCEPT 9f1ca2f** |
+| CI fixes | test-side fixes for runs 184 / 191, comment fix | 2bdf564, 386fee3, 2916db6 | **ACCEPT 2bdf564, ACCEPT 386fee3** (2916db6 = the comment the 386fee3 review asked for) |
+| base merge | `claude/sawblade-plugin-setup-7k0b8q` 716c9b9 (#808 level-match race fix, Apple clang fix, v0.4A.1 report fixes) | 09e85c6 | **ACCEPT 09e85c6** (clean, nothing of v0.4 lost) |
 
-CI of record: _(filled in below once green)_.
+**CI of record: run 197 on 2916db6, all green** — linux-gcc (ctest 972 + pluginval VST3 level 10), linux-clang
+`-Werror` (ctest), macos-arm64 (ctest, auval, pluginval AU + VST3 level 10), python (pytest + `compute_trims --check`).
+The only later commit edits this report.
 
 CI history (all compile steps green from the first run on; failures were tests):
 - run 175 on 257fb3a (D+E): 3 failures — a hidden CAB page label matched an editor-wide search (test scoped to the
@@ -33,6 +37,15 @@ CI history (all compile steps green from the first run on; failures were tests):
   explicitly) and **a real bug**: a drop computed from tiles shown at drag time was applied to a preset that had
   changed during the drag, swapping two pedals. Drops now resolve by block id (neighbour ids) against the current
   preset and are cancelled (no edit, no undo step) when neither neighbour exists (f1df430).
+- run 184 on 4f9a86a (B): 8 failures, all test-side: a `PopupMenu::MenuItemIterator` built from a temporary menu
+  (dangling → SIGSEGV on Linux); fake cache entries with a made-up `sha256` that `verifyCapture` rightly rejected;
+  the main-page ink fraction 0.117 < 0.12 because a capture pedal is a flat panel by design (now > 0.10; the per-head
+  checks stay). Fixed in 2bdf564.
+- run 191 on 09e85c6 (after the base merge): 1 failure, test-side: the make-up test's fixture
+  (`linear_identity_loud24.nam`) is a plain identity because `normalizeLoudness` is off by default, so the correct
+  make-up is 0 dB; replaced by `linear_05_025.nam` (measured −15.4347 → −18.0514 LUFS, +2.6166 dB, reproduced by the
+  reviewer). Fixed in 386fee3.
+- The base's #808 race (macOS) never failed here; its fix came in with the base merge.
 
 ## Task D — layout
 
@@ -89,7 +102,13 @@ CI history (all compile steps green from the first run on; failures were tests):
 
 ## Screenshots
 
-_(from CI artifact; see below)_
+Rendered by the editor tests on CI (fixture captures, no TONE3000 data) and uploaded as artifacts of **run 197**
+(`v0_4-screenshots-macos-arm64`, `v0_4-screenshots-linux-gcc`; kept until 2027-01-05):
+https://github.com/bobrobertsonson/git_practice/actions/runs/37558258067 → Artifacts. The files for this report are
+`main_single.png`, `main_blend.png` and `cab_page.png` (plus the per-panel screenshots of the other editor tests).
+**They are not committed here**: the artifact storage host (`*.blob.core.windows.net`) is also denied by this
+environment's network policy, so this session could not download them. The tests that write them also assert they
+are not blank and check the layout numerically (both columns, aligned heads, boards below, no overlap at 1280×800).
 
 ## Known limitations
 
@@ -106,6 +125,8 @@ _(from CI artifact; see below)_
    the main page, not the CAB page.
 6. Result-view export notes judge "the run dropped the comp" from the current rig (the plugin has no other record).
 7. All JUCE behaviour was verified on CI (Linux, macOS), not by hand: the checklist below is the first hands-on test.
+8. The integration test's main-page ink threshold (0.10) has ~15 % margin over today's value; a per-tile check would
+   guard an empty board area better (next time the file is touched).
 
 ## Proposals (not done)
 
@@ -115,7 +136,9 @@ _(from CI artifact; see below)_
 4. Art (the user designs it): a dedicated capture-pedal enclosure, a generic face per modeled circuit (today non-circuit
    pedals share the "BODY" render), board/cable art for the two-column layout, a cab-chip icon.
 5. The capture browser returns to the CAB page when opened from it; per-card preselection of the IR target.
-6. Environment: allow `archive.ubuntu.com` / `security.ubuntu.com` so plugin work can be built and run locally.
+6. Environment: allow `archive.ubuntu.com` / `security.ubuntu.com` (local plugin builds) and
+   `*.blob.core.windows.net` (CI artifacts such as screenshots) in the cloud environment's network settings.
+7. Wire the capture-tile setting selector to the tool path set in the capture browser as well as Settings.
 
 ## Hand-test checklist (macOS, Logic)
 
@@ -138,3 +161,5 @@ Update: `scripts/mac_update.sh`. Log in once: Settings → TONE3000 login.
    CAB; COPY and paste into Notes. After a training run, the notes are still there (with the comp if it was dropped).
 7. **Logic specifics.** Two instances of Sawblade: board edits in one never appear in the other. Close/reopen the
    plugin window mid-drag: nothing stuck; undo still works.
+
+PHASE v0.4: ACCEPT 2916db6
