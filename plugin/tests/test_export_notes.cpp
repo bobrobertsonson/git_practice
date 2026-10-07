@@ -247,6 +247,8 @@ TEST_CASE("export report: A2 files block, the primary file, the validation of th
   CHECK(r.otherFiles[0].name == "riff-nocab-full.a2.nam");
   CHECK(r.otherFiles[1].role == "lite");
   CHECK(r.otherFiles[1].name == "riff-nocab-full.a2_lite.nam");
+  CHECK(r.otherFiles[0].verdict.empty());          // the container has no entry of its own
+  CHECK(r.otherFiles[1].verdict == "NOT MET");     // the Lite file's own verdict, whatever the primary says
   CHECK(r.status == "MET");  // validation.full is the one `size` names; validation.lite (NOT MET) is not the verdict
   REQUIRE(r.heldOutEsr);
   CHECK(*r.heldOutEsr == Catch::Approx(0.0123));
@@ -267,7 +269,7 @@ TEST_CASE("export report: A2 files block, the primary file, the validation of th
   CHECK(txt.find("   hold ms: 20.5\n") != std::string::npos);
   CHECK(txt.find("   keyed on: guitar input\n") != std::string::npos);
   CHECK(txt.find("2. Neural Amp [2]  (model)\n") != std::string::npos);
-  CHECK(txt.find("   bypass: off\n") != std::string::npos);
+  CHECK(txt.find("   bypass: no\n") != std::string::npos);
   CHECK(txt.find("3. IR [3]  (cab)\n") != std::string::npos);
   CHECK(txt.find("   Load without loudness normalisation.\n") != std::string::npos);
   CHECK(txt.find("Anagram chain: Gate -> Neural Amp -> IR\n") != std::string::npos);

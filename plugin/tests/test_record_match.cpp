@@ -3189,6 +3189,32 @@ TEST_CASE("runner: --arch and --size for each of the five model choices; the fil
   }
 }
 
+TEST_CASE("runner: an A2 export whose primary file is NOT MET still succeeds, with its files and sidecar", "[match][runner][export][a2]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"exit", 2}});  // exit 2 = acceptance NOT MET: the report is written, validation.full says so
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.arch = "a2";
+  er.size = "full";
+  er.exportsRoot = t.root / "exports";
+  std::string err;
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const JobSnapshot s = runner.snapshot(JobKind::Export);
+  REQUIRE(s.state == JobState::Succeeded);
+  CHECK(s.accepted == "NOT MET");
+  CHECK(s.result.status == "NOT MET");
+  CHECK(fs::exists(s.sidecar));
+  CHECK(s.result.namFile == "seed-nocab-full.a2_full.nam");
+  REQUIRE(s.result.otherFiles.size() == 2);
+  for (const auto& f : s.result.otherFiles) CHECK(fs::exists(s.outDir / f.name));
+  CHECK(s.result.otherFiles[1].role == "lite");
+  CHECK(s.result.otherFiles[1].verdict == "NOT MET");
+}
+
 TEST_CASE("runner: an arch / size pair the exporter refuses fails the job with its message", "[match][runner][export][a2]") {
   using namespace sawblade::plugin;
   FakeTools t;

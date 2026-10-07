@@ -3150,6 +3150,7 @@ TEST_CASE("export panel: A2 Full is the default model type; the result lists the
   CHECK(anyLabelContains(panel, ".a2_full.nam"));  // the primary file
   CHECK(anyLabelContains(panel, ".a2_lite.nam"));  // the others are listed
   CHECK(anyLabelContains(panel, ".a2.nam"));
+  CHECK(anyLabelContains(panel, "A2 Lite: MET"));  // the other size's own verdict sits beside its file
   CHECK(anyLabelContains(panel, "A2 FULL"));       // "trained in ... A2 FULL"
   CHECK(rig.proc.matchSettings().exportWallSeconds("a2", "full") > 0.0);
 
@@ -3311,6 +3312,28 @@ TEST_CASE("export panel: screenshots of the configure, training and result views
   panel.refresh();
   CHECK(anyLabelContains(panel, "NOT MET"));
   savePng(shot(*rig.ed), "export_result_not_met.png");
+}
+
+TEST_CASE("export panel: an A2 Full run whose Lite file is NOT MET shows that verdict in red beside the file", "[editor][export][a2]") {
+  ExportRig rig;
+  rig.loadRig("rig", false);
+  rig.tools.cfgExport({{"progressJson", true}, {"liteAcceptance", "NOT MET"}});  // the primary (Full) is MET
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(panel.settings().arch == "a2");
+  CHECK(panel.settings().size == "full");
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  CHECK(rig.proc.jobs().snapshot(JobKind::Export).accepted == "met");  // the headline is the primary's
+  juce::Label* also = nullptr;
+  for (auto* l : all<juce::Label>(panel))
+    if (l->isVisible() && l->getText().contains("A2 Lite: NOT MET")) also = l;
+  REQUIRE(also != nullptr);
+  CHECK(also->getText().contains(".a2_lite.nam (A2 Lite: NOT MET)"));
+  CHECK(also->findColour(juce::Label::textColourId) == SawbladeLookAndFeel::error());
+  CHECK_FALSE(anyLabelContains(panel, "A2 Full: "));  // the primary has no "also" entry
 }
 
 // ---- quick-then-thorough MATCH (docs/specs/phase6a_1_quick_then_thorough.md) ------------------------------------------------

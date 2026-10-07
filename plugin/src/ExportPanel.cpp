@@ -575,7 +575,13 @@ struct ExportPanel::Impl {
     juce::String src = fromReport ? juce::String("from the export report (sawblade-export)")
                        : done    ? juce::String("(computed by the plugin)")
                                  : juce::String("Follows the export settings above: set these on your pedal chain around the loader.");
-    if (anagramShown) src = "Anagram blocks, from the export report" + (anagramFile.isEmpty() ? juce::String() : "\nAlso written to " + anagramFile);
+    if (anagramShown) {
+      // A long path keeps its start and its file name: the middle is elided so the caption stays within its two lines.
+      juce::String shownPath = anagramFile;
+      constexpr int kMaxPath = 90, kTail = 56;
+      if (shownPath.length() > kMaxPath) shownPath = shownPath.substring(0, kMaxPath - kTail - 3) + "..." + shownPath.substring(shownPath.length() - kTail);
+      src = "Anagram blocks, from the export report" + (shownPath.isEmpty() ? juce::String() : "\nAlso written to " + shownPath);
+    }
     setText(notesSource, src);
     notesGeneric.setVisible(anagramAvailable);
     notesAnagram.setVisible(anagramAvailable);
@@ -780,9 +786,19 @@ struct ExportPanel::Impl {
       setText(outPath, "model   " + juce::String((snap.outDir / r.namFile).string()));
       {
         // The other files of the run (an A2 run writes the container and both standalone models; the primary is shown above).
+        // A standalone size's own verdict goes next to its file ("A2 Lite: NOT MET"): the headline above is the primary file's only.
         juce::String others;
-        for (const auto& f : r.otherFiles) others += (others.isEmpty() ? "" : ", ") + juce::String(f.name);
+        bool anyNotMet = false;
+        for (const auto& f : r.otherFiles) {
+          others += (others.isEmpty() ? "" : ", ") + juce::String(f.name);
+          if (!f.verdict.empty()) {
+            const juce::String sz = f.role == "lite" ? "A2 Lite" : "A2 Full";
+            others += " (" + sz + ": " + juce::String(f.verdict) + ")";
+            anyNotMet = anyNotMet || f.verdict == "NOT MET";
+          }
+        }
         setText(otherFiles, others.isEmpty() ? juce::String() : "also    " + others);
+        setColour(otherFiles, anyNotMet ? L::error() : L::dimText());
       }
       setText(sidecarLabel, snap.sidecar.empty() ? juce::String("sidecar   (not written)") : "sidecar   " + juce::String(snap.sidecar.string()));
       setText(wallLabel, "trained in " + juce::String(r.wallSeconds / 60.0, 1) + " min" + kDot + juce::String(snap.exportMode == "nocab" ? "NO CAB" : "WITH CAB") + kDot +
@@ -905,7 +921,7 @@ struct ExportPanel::Impl {
     notesGeneric.setBounds(rx, ny + 28, 90, 22);
     notesAnagram.setBounds(rx + 96, ny + 28, 90, 22);
     notesBox.setBounds(rx, top, rw, 676 - top);
-    notesSource.setBounds(rx, 680, rw, 32);
+    notesSource.setBounds(rx, 680, rw, 52);  // three lines of 10.5 pt; ends at 732, inside kHeight
   }
 };
 

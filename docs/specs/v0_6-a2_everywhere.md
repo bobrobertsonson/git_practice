@@ -127,7 +127,7 @@ validation numbers, and the user's Task D result once run.
     `{name, value, unit}` is NOT used — an object, the plugin sorts keys). A2 file names follow the plugin preview
     `<stem>-<mode>-<size>.a2_full.nam` / `.a2_lite.nam` / `.a2.nam` only if that matches the existing A1 naming
     pattern in `export/run.py`; otherwise match-engineer keeps the existing pattern and the plugin preview is adjusted
-    (results are read from `files` either way).
+    (results are read from `files` either way). Correction (lead, after review): `loaderOrder` is a string (e.g. "Anagram chain: Gate -> Neural Amp -> IR -> Compressor"), and the profile also carries `device`; exporter and plugin agree.
 17. **CI for the trainer** (Task A review finding): the `python` job installs only `match[dev]`, so nothing that needs
     `neural-amp-modeler` runs in CI. Nam-dependent tests use `pytest.importorskip("nam")`, and a new CI job
     `python-export` installs `match[dev,export]` with `constraints-export.txt` (CPU torch) and runs only the export /

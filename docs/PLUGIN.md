@@ -691,7 +691,10 @@ allocation and lock guards while a fake export job runs and the panel's glue is 
   notice, TRAIN EXPORT, and RESUME when a cancelled run of this rig can continue (epoch N of M, mode, model type).
 - *Training*: stage, progress bar, `epoch N / M`, best ESR, elapsed / ETA, CANCEL.
 - *Result*: MET (green) / NOT MET (red) / NOT JUDGED (amber), held-out ESR and DI LTAS error with their limits, the model
-  path (the primary file) and, for an A2 run, the other files it wrote (container, the other standalone size), the sidecar path, REVEAL (`File::revealToUser` on the `.nam`), OPEN FOLDER, A/B LISTEN (opens
+  path (the primary file; the big verdict above is that file's only) and, for an A2 run, the other files it wrote (container, the
+  other standalone size) in an "also" line. The other standalone size carries its own verdict beside its file, read from
+  `validation.<full|lite>.acceptance.status`, e.g. `also  x.a2_lite.nam (A2 Lite: NOT MET)`; the line is red when any of those is
+  NOT MET, so a missed Lite file is visible even when `--size full` was the primary. The container has no verdict of its own. The sidecar path, REVEAL (`File::revealToUser` on the `.nam`), OPEN FOLDER, A/B LISTEN (opens
   `listen/ab_original_then_export.mp3`, else `.wav`, with the system player; hidden when neither exists; there is no in-plugin
   playback), the licence note.
 
@@ -737,7 +740,7 @@ source line names the run's `<name>.anagram_notes.txt` (the profile's `file`, el
 The exporter defines the keys; the plugin renders them generically and tolerantly: per entry of `stages` (or `blocks`) the block
 (`block` / `anagramBlock` / `name`), the position (`position` / `chainPosition` / `where`), the generic `stage` it comes from, every
 `settings` key / value pair, a `hardware` / `text` / `note` sentence, then `loaderOrder` (or `chain`) and `message`. Settings are listed
-in the key order of the parsed JSON (alphabetical). A report without the profile shows no switch. The plugin makes no claims about
+in the key order of the parsed JSON (alphabetical), and the values read as the exporter's `.anagram_notes.txt` reads them (booleans `yes` / `no`, numbers to at most 3 decimals with trailing zeros trimmed, e.g. `-52`, `20.5`), so the plugin text and the file agree. A long file path in the source line is shortened in the middle (the full path stays in `anagramNotesFile()`). A report without the profile shows no switch. The plugin makes no claims about
 Anagram internals beyond what the exporter's profile says.
 
 **Mode and comp rules.** A rig whose no-cab export is exact (shared cab, `irMix`, or no cab) defaults to NO CAB; per-path cabs

@@ -322,11 +322,11 @@ std::string formatNotesTxt(const json& notes, const std::string& presetName, con
 
 namespace {
 
-// A settings value as one line of hardware text: numbers trimmed ("0.5" not "0.500000"), booleans on / off, lists joined.
+// A settings value as one line of hardware text, as the exporter's .anagram_notes.txt writes it (format_anagram_txt): numbers
+// trimmed to 3 decimals ("0.5", "-52"), booleans yes / no, lists joined.
 std::string profileValue(const json& v) {
   if (v.is_string()) return v.get<std::string>();
-  if (v.is_boolean()) return v.get<bool>() ? "on" : "off";
-  if (v.is_number_integer()) return v.dump();
+  if (v.is_boolean()) return v.get<bool>() ? "yes" : "no";
   if (v.is_number()) return g(v.get<double>(), 3);
   if (v.is_null()) return "-";
   if (v.is_array()) {

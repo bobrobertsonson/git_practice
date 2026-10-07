@@ -353,6 +353,31 @@ std::string exportBaseName(const std::string& namFile) {
 
 std::vector<std::string> exportArchArgs(const std::string& arch, const std::string& size) { return {"--arch", arch, "--size", size}; }
 
+// The acceptance block of one A2 standalone size in an export report: validation.<size> holds it, or an `acceptance` member
+// of that entry. nullptr = none.
+static const json* sizeAcceptance(const json& report, const std::string& size) {
+  auto v = report.find("validation");
+  if (size.empty() || v == report.end() || !v->is_object()) return nullptr;
+  auto e = v->find(size);
+  if (e == v->end() || !e->is_object()) return nullptr;
+  if (auto a = e->find("acceptance"); a != e->end() && a->is_object()) return &*a;
+  return e->contains("status") ? &*e : nullptr;
+}
+
+static std::string normaliseStatus(const std::string& status) {
+  const std::string l = lower(trim(status));
+  return l.rfind("not met", 0) == 0 ? "NOT MET" : l.rfind("met", 0) == 0 ? "MET" : "NOT JUDGED";
+}
+
+// The verdict of the standalone file `role` ("full" / "lite") as "MET" | "NOT MET" | "NOT JUDGED"; "" for any other file.
+static std::string standaloneVerdict(const json& report, const std::string& role) {
+  if (role != "full" && role != "lite") return {};
+  const json* a = sizeAcceptance(report, role);
+  if (a == nullptr) return {};
+  auto it = a->find("status");
+  return it != a->end() && it->is_string() ? normaliseStatus(it->get<std::string>()) : std::string("NOT JUDGED");
+}
+
 ExportResult readExportResult(const fs::path& outDir) {
   ExportResult r;
   if (outDir.empty()) return r;
@@ -371,7 +396,7 @@ ExportResult readExportResult(const fs::path& outDir) {
       for (const char* role : {"container", "full", "lite"})
         if (auto it = fl->find(role); it != fl->end() && it->is_string() && !it->get<std::string>().empty()) {
           const std::string name = fs::path(it->get<std::string>()).filename().string();
-          if (name != r.namFile) r.otherFiles.push_back({role, name});
+          if (name != r.namFile) r.otherFiles.push_back({role, name, standaloneVerdict(j, role)});
         }
     }
     if (auto t = j.find("training"); t != j.end() && t->is_object()) {
@@ -386,27 +411,21 @@ ExportResult readExportResult(const fs::path& outDir) {
     const json* acc = nullptr;
     if (auto v = j.find("validation"); v != j.end() && v->is_object()) {
       if (auto a = v->find("acceptance"); a != v->end() && a->is_object()) acc = &*a;
-      else if (auto e = v->find(r.size); !r.size.empty() && e != v->end() && e->is_object()) {
-        if (auto a = e->find("acceptance"); a != e->end() && a->is_object()) acc = &*a;
-        else if (e->contains("status")) acc = &*e;
-      }
+      else acc = sizeAcceptance(j, r.size);
     }
     if (acc != nullptr) {
-      const json* a = acc;
-      {  // (kept as a block: the lambda below captures `a`)
-        if (auto it = a->find("status"); it != a->end() && it->is_string()) status = it->get<std::string>();
-        if (auto it = a->find("summary"); it != a->end() && it->is_string()) r.summary = it->get<std::string>();
-        auto opt = [&](const char* k, std::optional<double>& dst) {
-          if (auto it = a->find(k); it != a->end() && it->is_number()) dst = it->get<double>();
-        };
-        opt("heldOutEsr", r.heldOutEsr);
-        opt("diLtasDb", r.diLtasDb);
-        opt("esrLimit", r.esrLimit);
-        opt("ltasLimitDb", r.ltasLimitDb);
-      }
+      const json& a = *acc;
+      if (auto it = a.find("status"); it != a.end() && it->is_string()) status = it->get<std::string>();
+      if (auto it = a.find("summary"); it != a.end() && it->is_string()) r.summary = it->get<std::string>();
+      auto opt = [&a](const char* k, std::optional<double>& dst) {
+        if (auto it = a.find(k); it != a.end() && it->is_number()) dst = it->get<double>();
+      };
+      opt("heldOutEsr", r.heldOutEsr);
+      opt("diLtasDb", r.diLtasDb);
+      opt("esrLimit", r.esrLimit);
+      opt("ltasLimitDb", r.ltasLimitDb);
     }
-    const std::string l = lower(trim(status));
-    r.status = l.rfind("not met", 0) == 0 ? "NOT MET" : l.rfind("met", 0) == 0 ? "MET" : "NOT JUDGED";
+    r.status = normaliseStatus(status);
   }
   if (r.namFile.empty() || !fs::exists(outDir / r.namFile, ec)) {
     r.namFile.clear();

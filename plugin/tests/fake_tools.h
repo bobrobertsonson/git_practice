@@ -215,7 +215,7 @@ else:
     acc = {"status": status, "summary": "acceptance %s: held-out ESR %.4f (limit 0.02), DI-excerpt LTAS error %.2f dB (limit 0.5)" % (status, held, ltas),
            "heldOutEsr": held, "diLtasDb": ltas, "esrLimit": 0.02, "ltasLimitDb": 0.5}
     # a1: validation.acceptance. a2 (decision 14): one entry per standalone file, validation.{full,lite}.acceptance.
-    validation = {"acceptance": acc} if arch == "a1" else {"full": {"acceptance": acc}, "lite": {"acceptance": dict(acc, heldOutEsr=held + 0.004)}}
+    validation = {"acceptance": acc} if arch == "a1" else {"full": {"acceptance": acc}, "lite": {"acceptance": dict(acc, status=cfg.get("liteAcceptance", status), heldOutEsr=held + 0.004)}}
     report = {"reportVersion": 1, "tool": "sawblade-export", "mode": mode, "arch": arch, "size": size, "files": files, "nonCommercial": nc,
               "preset": {"path": os.path.abspath(preset_file), "sha256": sha},
               "training": {"namFile": os.path.basename(nam), "epochsDone": epochs, "wallSeconds": cfg.get("trainWall", 100.0)},

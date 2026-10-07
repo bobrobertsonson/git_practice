@@ -119,6 +119,7 @@ struct ExportResult {
   struct ExtraFile {
     std::string role;                   // "container" | "full" | "lite" (as the report names it)
     std::string name;                   // file name inside outDir
+    std::string verdict;                // a standalone file's own acceptance: "MET" | "NOT MET" | "NOT JUDGED" ("" = none: the container, A1)
   };
   std::vector<ExtraFile> otherFiles;    // the report's files other than the primary, in report order (container, full, lite)
   std::filesystem::path listen;         // listen/ab_original_then_export.mp3, else .wav ("" = none)
