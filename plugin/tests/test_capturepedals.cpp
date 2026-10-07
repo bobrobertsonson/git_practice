@@ -422,8 +422,9 @@ TEST_CASE("capture pedals: the SEARCH row opens the capture browser in insert mo
 
 TEST_CASE("capture pedals: a new capture drops in at matched loudness: the make-up lands without an extra undo step", "[editor][capturepedals][levelmatch]") {
   Rig rig;
-  // model 7771 is the identity, 7772 is +24 dB louder
-  writeTone(rig.cache, "777", "pedal", "Loud Pedal", {{"7771", "Loud", "linear_identity_loud24.nam"}, {"7772", "Other", "linear_identity.nam"}});
+  // model 7771 (the one the CAPTURES row adds) is quieter than the identity: 0.5 / 0.25 FIR taps, -2.6 LU on the reference DI (measured).
+  // (linear_identity_loud24.nam would be no test: its metadata loudness makes the NAM block normalise it back to the identity's level.)
+  writeTone(rig.cache, "777", "pedal", "Quiet Pedal", {{"7771", "Quiet", "linear_05_025.nam"}, {"7772", "Other", "linear_identity.nam"}});
   rig.load(rigJson({tsBlock("a1"), namAmp("a2")}, {}, false));
   REQUIRE(rig.proc.levelMatchEnabled());
   auto& pb = rig.board();
@@ -438,11 +439,12 @@ TEST_CASE("capture pedals: a new capture drops in at matched loudness: the make-
   CHECK(rig.proc.undoSteps() == 1);  // the add
   const Preset added = rig.preset();
 
-  // the make-up arrives later (background measurement) and brings the path back to its loudness: well below 0
+  // the make-up arrives later (background measurement) and brings the path back to its loudness: about +2.6 dB for this pedal
   REQUIRE(pumpUntil([&] { return slotMakeupOf(rig.preset(), 0, 1) != 0.0; }));
   const double mk = slotMakeupOf(rig.preset(), 0, 1);
-  CHECK(mk < -6.0);
-  CHECK(mk >= -kMaxSlotMakeupDb);
+  CHECK(mk > 2.0);
+  CHECK(mk < 3.2);
+  CHECK(mk <= kMaxSlotMakeupDb);
   CHECK(rig.proc.undoSteps() == 1);  // still one step: the make-up added none
   rig.settle();
   CHECK(pb.tileCount(0) == 2);
