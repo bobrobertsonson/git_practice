@@ -1,30 +1,66 @@
-# v0.8 — input level calibration (the DI hits the captures at the level their creators used)
+# v0.8 — input level calibration: every capture sees the level its creator used, automatically
 
-Source: user decision 2026-10-07 ("4b: yes"). NAM amp captures are level-sensitive: the same DI 6 dB hotter is a
-different amount of gain. TONE3000 captures carry input-calibration metadata when the creator supplied it (check the
-`.nam` metadata fields in the pinned core/trainer: input level dBu, output level dBu). Owners: dsp-engineer (plugin/
-core), match-engineer (matcher + export use of the calibration), reviewer on every task.
+Source: user decisions 2026-10-07 ("4b: yes"; then "Input level calibration is very important. I shouldn't have to
+adjust when changing amps and pedals. Should all be calculated as loaded."). Priority raised: this phase runs **before
+v0.7** (genre benchmark), because the benchmark's numbers depend on it.
 
-## Task A — device calibration
+Why: NAM captures are level-sensitive. The same DI 6 dB hotter is a different amount of gain, sag and compression, so a
+capture played at the wrong level feels wrong ("doesn't respond naturally"). Captures from different creators were made
+at different levels, so today every amp or pedal swap silently changes the feel unless the user re-trims by hand.
 
-- A one-time SETUP step in Settings: the user picks their interface (free text) and enters its max input level in
-  dBu from the manual (e.g. +10 dBu), or runs a guided measurement (play a known reference — a phone tone generator
-  or the interface's own loopback — at a stated level) when the spec cannot be found. Stored as a plugin setting
-  (not preset state), with the date and method.
-- Where a capture has input-level metadata, the plugin scales its input so 0 dBFS in Sawblade means the same
-  physical level the creator calibrated to; captures without metadata use a documented default and are marked
-  "uncalibrated" in the UI. Gain is applied before the drive (it changes tone, so it is visible and undoable, and
-  reported in the latency/level chip).
+Owners: dsp-engineer (core, plugin), match-engineer (matcher, export, t3k metadata), reviewer on every task.
+Scheduling: Task A (audit) and the core math of Task B may start while v0.4M and v0.6 are open (new files only); plugin,
+preset and matcher integration wait until v0.4M and v0.6 have merged (both touch the same code).
 
-## Task B — matcher, presets, export
+## Principle
 
-- The matcher and `tonerender` take the same calibration (`--input-dbu`), so matches done on the user's DI are
-  scored at the level their rig plays them; presets record the calibration they were matched at.
-- NAM export: the exported model's metadata carries the input calibration so the Anagram (and other loaders that read
-  it) apply the same input level; the export notes state the interface/loader level to set when the loader does not.
+One physical reference, set once: the user's interface. Every gain between stages is then **computed from capture
+metadata when a rig, amp, pedal or capture is loaded or swapped** — never a knob the user must re-set. The user's INPUT
+knob stays as a deliberate offset ("hit it harder"), 0 dB by default, and is preserved across swaps.
+
+## Task A — audit (no behaviour change)
+
+1. From the pinned NeuralAmpModelerCore and trainer: exactly which `.nam` metadata fields carry calibration
+   (`input_level_dbu`, `output_level_dbu` or whatever the pinned versions name them), their meaning (dBu at 0 dBFS in /
+   out), and how the reference NAM plugin uses them ("calibrate input"). Cite file and line.
+2. From the TONE3000 API (match/sawblade_match/t3k) and a sample of the user's cached pool (counts only, no capture files
+   in git): what share of A2/A1 captures carry each field, per gear type (amp, pedal, full rig, IR-less amp).
+3. Every place in core/plugin/match that applies a level to a NAM block today (input gain, pre-EQ, normalizeLoudness,
+   blend trims, level match, the pedal-capture-to-amp hop). Table: where, what, whether it changes drive.
+
+## Task B — the calibrated chain (core)
+
+- **Device calibration (one time, Settings, not preset):** interface max input in dBu (from the manual, e.g. +10 dBu), or
+  a guided measurement when unknown; stored with date and method. Until set: a documented default (+9 dBu, common
+  interface value — confirm in Task A) and an "interface not calibrated" notice.
+- **Per-block input gain, computed on load:** for each NAM block, `gainIn = deviceDbu − captureInputDbu` so 0 dBFS from
+  the interface equals the capture's own 0 dBFS reference in physical terms.
+- **Stage-to-stage hops:** a pedal capture's output feeding an amp capture uses the pedal's `output_level_dbu` and the
+  amp's `input_level_dbu`, so a pedal hits the amp as hard as the real pedal would. Modelled pedal blocks (v0.4/v0.5
+  DSP pedals) declare a nominal output level in dBu.
+- **Missing metadata:** a documented per-gear-type default, the block marked "uncalibrated" (UI + render report), and a
+  fallback estimate if Task A finds a reliable one (e.g. from the capture's own loudness metadata) — never silent.
+- **Output side:** each capture's output is brought back to a common internal reference (existing loudness
+  normalisation), so swapping amps changes tone and feel, not monitoring volume. Level match keeps working on top.
+- All gains are computed off the audio thread at load/swap and handed over with the existing lock-free swap; smoothing on
+  change; zero allocations in `process()`.
+
+## Task C — presets, matcher, export
+
+- Presets store **no absolute input gains**; they store the user's INPUT offset and per-block intent (e.g. a boost's
+  level knob). Absolute gains are recomputed on load from the capture metadata and the device calibration, so a preset
+  plays the same on another interface once that interface is calibrated.
+- Matcher and `tonerender` take the same calibration (`--input-dbu`); the reference DI's own level is part of the match
+  (a NailTheMix DI is not the user's guitar); match reports state the calibration used.
+- NAM export: an exported capture carries the input/output calibration metadata in the standard NAM fields, so any A2
+  loader that honours them plays it at the right level; export notes state the interface/loader level to set when a
+  loader does not.
 
 ## Acceptance
 
-Unit tests for the level math (dBu ↔ dBFS, metadata read, no-metadata default); a render test showing a calibrated
-capture at the creator's level matches the capture's own reference render; UI tests for the SETUP step; CI green;
-REPORT with the user's interface value and a before/after listening note from the user.
+- Unit tests: dBu ↔ dBFS math; per-block gain from metadata; pedal→amp hop; missing-metadata default + flag; swap of an
+  amp with a different `input_level_dbu` changes the computed gain by exactly the difference and needs no user action.
+- Render test: a capture with known calibration, fed the creator's reference level, reproduces its own reference render.
+- Plugin tests: Settings device step; "uncalibrated" flags; INPUT offset preserved across amp/pedal swaps.
+- Full CI green; REPORT `docs/specs/v0_8-input_calibration_REPORT.md` with the Task A tables, the user's interface value,
+  and the user's before/after feel note on two amp swaps without touching INPUT.
