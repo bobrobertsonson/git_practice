@@ -348,20 +348,29 @@ inherit mix processing by default.
   `dynamicsMode: "live" | "record"`. **File-format default when absent: "record"** (old files and goldens render
   bit-identically). The writer emits version 4 when either key is present (v3 otherwise is fine too; follow the schema's
   existing versioning convention: bump to 4, read 1-4).
+- New optional `origin: "match" | "user" | "official"` (v4; absent = "user"). The matcher writes "match".
 - **Derivation rule** (core, single source of truth; applied by the parser when `liveDynamics` is absent):
+  - `origin` != "match" (hand-made, official, old files): `liveDynamics` = the stored `gate` and `busComp` unchanged, so
+    deliberate settings play as set.
+  - `origin` == "match":
   - gate: `enabled` = record gate enabled; mode expander, ratio 2, rangeDb -24, keyHighPassHz 80,
     thresholdMode `floorRelative`, floorOffsetDb +8, holdMs = max(record holdMs, 40), releaseMs = max(record releaseMs,
     120), attack/hysteresis/releaseCurve from the record gate. Record gate absent/disabled -> live gate disabled.
   - busComp: disabled.
-- `dynamicsMode` selects which set the engine runs. NAM export: unchanged (uses the record `gate`/`busComp` per the
-  existing export rules).
+- `dynamicsMode` selects which set the engine runs.
+- **NAM export follows the active set** (lead decision): a "live" rig trains with the live busComp (off for a match), a
+  "record" rig trains the record busComp if it passes the existing export rules; the gate stays excluded as before.
+  Core exposes one resolver (active gate/busComp of a preset) used by the render path, the exporter and the plugin.
+  Export notes state which set was used; the plugin export panel shows "dynamics: live / record" next to the model type.
 
 ### G.2 Gate floor follower (dsp-engineer; core gate)
 - New GateParams: `thresholdMode` absolute (default, bit-identical) | floorRelative, `floorOffsetDb` (default 8).
 - floorRelative: threshold = floorEstimate + floorOffsetDb, re-evaluated per sample (hysteresis applies below it).
 - floorEstimate: RT-safe minimum statistics on the (key-HPF'd) key: 50 ms RMS frames -> running minimum over a 3 s window
   as a fixed ring of 100 ms sub-window minima (std::array, no allocation), counted in samples so it is independent of
-  block size. Clamped to [-96, -40] dBFS; initial value -70 dBFS (until the first window fills: min(initial, running min)).
+  block size. **Only frames with RMS < floorEstimate + 20 dB feed the sub-minima** (playing never feeds the floor).
+  **Upward leak:** when no frame has qualified for 10 s, the estimate rises +1 dB/s (so a genuinely higher floor after a
+  gain/interface change is learned). Clamped to [-96, -40] dBFS; seed -70 dBFS.
 - Rendering is deterministic and block-size independent (existing determinism tests extended to a floorRelative gate).
 
 ### G.3 Plugin (dsp-engineer; plugin/ authorized for this task only)
@@ -376,14 +385,19 @@ inherit mix processing by default.
 - Scoring, listening and all match quality numbers render with `dynamicsMode: "record"` (unchanged numbers).
 - Emitted presets (result.json `preset`, alts, export input) carry `dynamicsMode: "live"` and no explicit `liveDynamics`
   (core derives it).
+- Emitted presets carry `origin: "match"`. The exporter (plan/notes) uses the core active-set resolver; notes state
+  "dynamics: live" or "record".
 - `--listen` writes a third file `render_live.wav` (live set, same section, same loudness match gain as render.wav).
   The validation script lists it in the listen pairs. dynsweep gains the live set.
 
 ### Tests (G)
-- Floor follower: converges to a known noise floor within 3.5 s; follows a -12 dB input change (threshold moves -12 +-1
+- Floor follower: converges to a known noise floor within 3.5 s; 30 s of continuous riffing at -12 dBFS over a -75 dB
+  floor keeps the estimate within 3 dB of -75; a floor step -75 -> -60 dB is learned within ~25 s; follows a -12 dB input change (threshold moves -12 +-1
   dB) with no re-match; zero allocations in process(); block sizes 1/64/512/odd give identical output (float tolerance
   per existing determinism tests).
-- Derivation: an old v3 preset with a gate (hold 10, release 20) and a bus comp -> live gate expander/2/-24/80 Hz,
+- Derivation, both paths: a v4 `origin: "match"` preset with a gate (hold 10, release 20) and a bus comp -> live gate
+  expander/2/-24/80 Hz, hold 40, release 120, floorRelative +8, live busComp off; the same preset with origin absent /
+  "user" (and an old v3 file) -> liveDynamics == stored gate/busComp. Old v3 preset with a gate (hold 10, release 20) and a bus comp -> live gate expander/2/-24/80 Hz,
   hold 40, release 120, floorRelative +8; live busComp off; renders in record mode bit-identical to v3.
 - Toggle: switching sets atomically (no block runs half old / half new; test via the handover object); state round-trip.
 - Schema: v4 round-trip; a v3 reader rejects v4 (existing strictness test pattern).
