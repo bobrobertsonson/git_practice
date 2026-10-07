@@ -78,6 +78,13 @@ def run_block(d: Path) -> list[str]:
              f"ltas {bd.get('ltas')} feel {bd.get('feel')}")
     L.append(f"  feel: tight {ft.get('tight')} fizz {ft.get('fizz')} polish {ft.get('polish')} dropped {ft.get('dropped')}")
     L.append(f"  chain: {b.get('topology')} {({k: (v or {}).get('title') for k, v in (b.get('captures') or {}).items()})}")
+    tp = r.get("topology") or {}
+    if tp:
+        if tp.get("deltaPct") is None:
+            L.append(f"  topology: {tp.get('mode', 'auto')} -- {tp.get('note', 'only one side evaluated')}")
+        else:
+            L.append(f"  topology: best single {tp['bestSingle']:.3f} vs best blend {tp['bestBlend']:.3f}, delta {tp['deltaPct']:+.1f} % "
+                     f"(blend better when positive) -> " + ("determined" if tp.get("determined") else "topology not determined"))
     L.append(f"  boost won: {g('tightBoost', 'won')} | IR pair won: {g('irBlend', 'won')} | IR winner: {g('irPool', 'winner')}")
     L.append(f"  pre-EQ: {g('preEq', 'chosen')} | studio: {({k: g('studio', k) for k in ('compressed', 'eqd', 'busCompUsed')})}")
     preset = _load(d / (b.get("preset") or "best.preset.resolved.json"))

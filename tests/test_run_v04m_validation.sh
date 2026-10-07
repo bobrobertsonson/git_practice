@@ -104,6 +104,15 @@ reject 'L_blend_on_R'
 expect '^\(no held-out transfer'
 [[ "$(grep -n -E '^open ' <<<"$out" | head -n 1)" == *"L_blend_quick/listen"* ]] || { echo "quick listen: blend not first" >&2; fail=1; }
 
+# the forced-blend runs (--topology blend) sit right after their auto runs, with pathcheck and dynsweep
+out="$(bash "$script" "${args[@]}")"
+expect 'sawblade-match --di .*--ref .*/out/refs/L_blend\.wav .*--thorough --topology blend --out .*/out/L_blend_forced$'
+reject 'topology blend --out .*/out/R_blend'
+expect 'pathcheck --result .*/out/L_blend_forced/result\.json .*--json .*/out/L_blend_forced/pathcheck\.json$'
+expect 'dynsweep --result .*/out/L_blend_forced/result\.json .*--json .*/out/L_blend_forced/dynsweep\.json$'
+[[ "$(grep -n -E '^open ' <<<"$out" | sed -n 2p)" == *"L_blend_forced/listen"* ]] || { echo "L_blend_forced is not the 2nd listen line" >&2; fail=1; }
+runs="$(grep -E '^run  ' <<<"$out" | head -n 2 | tr '\n' ' ')"
+[[ $runs == "run  L_blend run  L_blend_forced " ]] || { echo "forced run not right after the auto run: $runs" >&2; fail=1; }
 # polarity: auto by default, --blend-polarity maps to refsum's --polarity (hm2 = track a, body = track b); bad value -> exit 2
 out="$(bash "$script" "${args[@]}")"
 expect 'refsum .*--blend-db 0\\?,0 --polarity auto --json .*/out/refs/L_blend\.json$'
@@ -207,6 +216,11 @@ expect '^done L_blend in '
 gone "$R3/out/L_blend/pathcheck.json"; gone "$R3/out/L_blend_on_R.pathcheck.json"
 kept "$R3/out/R_blend/pathcheck.json"; kept "$R3/out/R_blend/dynsweep.json"
 
+out="$(bash "$script" "${args[@]}" --quick-only)"
+expect 'sawblade-match --di .*--ref .*/out/refs/L_blend\.wav .*--quick --topology blend --out .*/out/L_blend_quick_forced$'
+expect 'pathcheck --result .*/out/L_blend_quick_forced/result\.json .*--json .*/out/L_blend_quick_forced/pathcheck\.json$'
+expect 'dynsweep --result .*/out/L_blend_quick_forced/result\.json'
+[[ "$(grep -n -E '^open ' <<<"$out" | sed -n 2p)" == *"L_blend_quick_forced/listen"* ]] || { echo "quick forced is not the 2nd listen line" >&2; fail=1; }
 # a missing L file: ls of the Bloodbath folder and exit 1
 rm "$T/bb/19 GTR RHY L UBR AMP.wav"
 set +e

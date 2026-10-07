@@ -70,3 +70,18 @@ def test_blend_reference_polarity_choice_is_printed(tmp_path):
     assert ("as recorded -41.2 dB" in txt) or ("as recorded -41.3 dB" in txt)      # -41.25 rounds either way
     assert "b inverted -30.5 dB" in txt and "lag 1.95 ms (not shifted)" in txt
     assert "refs/R_blend: polarity: not recorded" in txt
+
+
+def test_topology_margin_is_printed(tmp_path):
+    d = make_run(tmp_path, "L_blend_quick", GATE, None)
+    r = json.loads((d / "result.json").read_text())
+    r["topology"] = {"bestSingle": 1.05, "bestBlend": 1.0, "deltaPct": 5.0, "determined": False, "mode": "auto"}
+    (d / "result.json").write_text(json.dumps(r))
+    d2 = make_run(tmp_path, "L_blend_quick_forced", GATE, None)
+    r2 = json.loads((d2 / "result.json").read_text())
+    r2["topology"] = {"bestSingle": None, "bestBlend": 1.0, "deltaPct": None, "determined": False, "mode": "blend",
+                      "note": "only one topology was evaluated (--topology forced it)"}
+    (d2 / "result.json").write_text(json.dumps(r2))
+    txt = VS.summary(tmp_path)
+    assert "best single 1.050 vs best blend 1.000, delta +5.0 %" in txt and "topology not determined" in txt
+    assert "topology: blend -- only one topology was evaluated" in txt

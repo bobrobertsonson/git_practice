@@ -39,7 +39,10 @@ from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manua
 
 CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level output exceeds it is "clipping"
 CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-length peak is below this
-OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss
+OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss (single2 vs single / blend, boost vs plain)
+BLEND_OCCAM_DB = 0.25     # a single-path candidate beats the best blend when within this much total loss (blend costs a second chain)
+TOPOLOGY_DETERMINED_PCT = 10.0     # |best single - best blend| must be at least this % of the smaller loss to call the topology determined
+TOPOLOGY_CHOICES = ("auto", "single", "blend")        # --topology; "single" = the single-path topologies (single and single2)
 PEDAL_OCCAM_DB = 0.05     # a single-path combo with a pedal must beat the best pedal-less single (same amp if available) by this
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
 ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio", "preeq")      # --ablate names (v0.4M suspects)
@@ -136,6 +139,7 @@ class Config:
     quick: bool = False
     progress_json: Path | None = None
     timings_pre: dict | None = None      # seconds spent before run_match (reference loading), from the CLI
+    topology: str = "auto"               # --topology: auto | single (single-path topologies) | blend
     ablate: tuple = ()                   # v0.4M suspects switched off (ABLATIONS); echoed in result.json
     trace_tones: tuple = ()              # TONE3000 tone ids to explain in result.json -> trace
     ir_library: object = None            # irlib.IrLibrary (the user's own IRs): screened with the pool cabs, top N swept
@@ -231,15 +235,46 @@ def pick_output_gain(y_peak: float, offset_db: float, level_offset_db: float) ->
     return float(g), bool(clipped)
 
 
-def choose(cands: list[Scored]) -> Scored:
+def allowed_topologies(mode: str) -> tuple[str, ...]:
+    """Topologies a ``--topology`` mode lets through: auto = all, single = the single-path ones, blend = blend."""
+    if mode not in TOPOLOGY_CHOICES:
+        raise ValueError(f"topology must be one of {', '.join(TOPOLOGY_CHOICES)}, got {mode!r}")
+    return {"auto": TOPOLOGIES, "single": ("single", "single2"), "blend": ("blend",)}[mode]
+
+
+def topology_margin(cands: list[Scored]) -> dict:
+    """Result record ``topology``: the best single-path and the best blend loss among ``cands`` (refined candidates), their
+    difference as a percentage of the smaller loss (positive: the blend is better) and ``determined`` = the gap is at least
+    ``TOPOLOGY_DETERMINED_PCT`` %. With only one side present (forced ``--topology``) nothing is determined."""
+    fin = [c for c in cands if np.isfinite(c.loss)]
+    single = [c for c in fin if c.topology != "blend"]
+    blend = [c for c in fin if c.topology == "blend"]
+    bs = min(single, key=lambda c: c.loss) if single else None
+    bb = min(blend, key=lambda c: c.loss) if blend else None
+    rec: dict = {"bestSingle": None if bs is None else float(bs.loss), "bestSingleTopology": None if bs is None else bs.topology,
+                 "bestBlend": None if bb is None else float(bb.loss), "deltaPct": None, "determined": False,
+                 "determinedAtPct": TOPOLOGY_DETERMINED_PCT}
+    if bs is None or bb is None:
+        rec["note"] = "only one topology was evaluated (--topology forced it)"
+        return rec
+    small = max(min(abs(bs.loss), abs(bb.loss)), 1e-9)
+    rec["deltaPct"] = float(100.0 * (bs.loss - bb.loss) / small)
+    rec["determined"] = bool(abs(rec["deltaPct"]) >= TOPOLOGY_DETERMINED_PCT)
+    return rec
+
+
+def choose(cands: list[Scored], topology: str = "auto") -> Scored:
     """Selection (spec 3.3): lowest loss among finite, non-clipping candidates; within OCCAM_DB of it the simplest
     topology (single < single2 < blend); within that topology, within SIZE_TIE_DB of *that topology's best* the lighter
     model set by size category (manifest size / name label, then 10 % byte buckets); equal categories -> lower loss.
     The size window is relative to the best candidate of the chosen topology, not of the whole field, so the result can be
-    at most OCCAM_DB + SIZE_TIE_DB = 0.15 dB above the global best."""
-    cands = [c for c in cands if np.isfinite(c.loss)]
+    at most OCCAM_DB + SIZE_TIE_DB = 0.15 dB above the global best (BLEND_OCCAM_DB + SIZE_TIE_DB = 0.30 dB when a plain
+    single beats a blend: the blend must be better by more than BLEND_OCCAM_DB to win). ``topology`` (--topology) restricts
+    the field to that topology."""
+    allowed = allowed_topologies(topology)
+    cands = [c for c in cands if np.isfinite(c.loss) and c.topology in allowed]
     if not cands:
-        raise ValueError("no candidate with a finite loss")
+        raise ValueError("no candidate with a finite loss" + ("" if topology == "auto" else f" in the {topology} topology"))
     ok = [c for c in cands if not c.extra.get("clipped")] or cands
     # the tight boost costs like one extra block: it must beat the best plain candidate of its topology by > OCCAM_DB
     plain = [c for c in ok if not c.combo.boost]
@@ -257,7 +292,10 @@ def choose(cands: list[Scored]) -> Scored:
     dropped = [c for c in ok if not pedal_justified(c)]
     ok = [c for c in ok if pedal_justified(c)] or ok
     best = min(ok, key=lambda c: c.loss)
-    near = [c for c in ok if c.loss <= best.loss + OCCAM_DB]
+    # a single-path candidate beats the best BLEND when within BLEND_OCCAM_DB (the blend's second chain must earn more than the
+    # 0.1 dB that single2 / boost / pedals have to); every other comparison keeps OCCAM_DB
+    near = [c for c in ok if c.loss <= best.loss + (BLEND_OCCAM_DB if best.topology == "blend" and c.topology == "single"
+                                                    else OCCAM_DB)]
     rank = min(TOPOLOGY_RANK[c.topology] for c in near)
     same = [c for c in near if TOPOLOGY_RANK[c.topology] == rank]
     top = min(c.loss for c in same)
@@ -324,7 +362,8 @@ def run_match(cfg: Config, log=None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     plan = cfg.plan or Plan.from_budget(cfg.budget, cfg.top_k, cfg.prescreen_n, cfg.quick)
     abl = parse_ablate(cfg.ablate)
-    plan = dataclasses.replace(plan, boost=plan.boost and "boost" not in abl, filters=plan.filters and "filters" not in abl,
+    allowed = allowed_topologies(cfg.topology)           # raises ValueError for a bad mode
+    plan = dataclasses.replace(plan, top_k={t: (k if t in allowed else 0) for t, k in plan.top_k.items()}, boost=plan.boost and "boost" not in abl, filters=plan.filters and "filters" not in abl,
                                cab_sweep=plan.cab_sweep and "irsweep" not in abl)
     rng = np.random.default_rng(cfg.seed)
     ref, pool = cfg.ref, cfg.pool
@@ -661,7 +700,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     else:
         result["cabSweep"] = {"ablated": True, "note": "--ablate irsweep: only the stage-1 cab sweep ran"}
     T["cabSweep"] = time.time() - t_cab
-    best = choose(refined)
+    best = choose(refined, cfg.topology)
     result["pedalOccam"] = {"minGainDb": PEDAL_OCCAM_DB, "dropped": best.extra.get("pedalOccamDropped", [])}
     # ---- two-IR blend (v0.4M B2.1): the winner's cab as one combined irMix IR of two of the top IRs --------------------
     t_ir = time.time()
@@ -740,6 +779,11 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             result["topologies"][topo] = {"loss": b.loss, "captures": caps_summary(b.combo), "blend": b.blend,
                                           "tightBoost": bool(b.combo.boost),
                                           "breakdown": b.result.as_dict(), "guardrails": b.extra.get("guardrails")}
+    result["topology"] = {**topology_margin(refined), "mode": cfg.topology, "blendOccamDb": BLEND_OCCAM_DB}
+    tm = result["topology"]
+    log("topology margin: " + (f"best single {tm['bestSingle']:.3f}, best blend {tm['bestBlend']:.3f}, delta {tm['deltaPct']:+.1f} % -> "
+                               + ("determined" if tm["determined"] else "topology not determined")
+                               if tm["deltaPct"] is not None else f"{tm.get('note')}"))
     log("topology bests: " + ", ".join(f"{t} {d['loss']:.3f}" for t, d in result["topologies"].items()))
     log(f"selected: {best.combo.describe()} loss {best.loss:.3f}")
 
@@ -750,7 +794,10 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     sp_best = Space.for_combo(best.combo, plan.filters)
     ref_floor = (reference_floor_db(ref.ltas_sig)
                  if (tgt_full.feel is not None and tgt_full.feel.mode == "soft" and ref.clean) else None)
-    gs = gate_sweep(eng, best, sp_best, ex, tgt_full, floor, ref_floor, ref_clean=bool(ref.clean))
+    gs = gate_sweep(eng, best, sp_best, ex, tgt_full, floor, ref_floor, ref_clean=bool(ref.clean),
+                    full={"di": di48, "ref": ref.matched_sig, "offset": int(ref.offset_samples)})     # H.2: gaps of the full DI
+    if gs.get("gapSource") == "fullDi":
+        log(f"gate sweep: the excerpt has no DI gaps; using {len(gs.get('gapWindows', []))} gap window(s) of the full-length DI")
     result["gateSweep"] = gs
     result["gateDefault"] = gate
     if gs.get("changed"):

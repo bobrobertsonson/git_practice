@@ -31,6 +31,8 @@
 # against $OUT/refs/<side>_blend.wav = HM2 + body) come first; the single-amp runs stay as per-path diagnostics. After the
 # runs: a per-path check of every blend run (pathcheck.json), the held-out transfer of the L blend preset on R
 # (L_blend_on_R.pathcheck.json, same take: offset 0) and a dynamics sweep of every run (dynsweep.json); all non-fatal.
+# Next to L_blend_quick / L_blend the script runs L_blend_quick_forced / L_blend_forced (--topology blend): the blend forced
+# when the auto pick is a single path (result.json "topology" and the summary show the margin between the two).
 # Everything printed is also appended to ~/sawblade-work/v04m_validation.log (each run also to <out>/<run>.log).
 #
 set -euo pipefail
@@ -308,12 +310,14 @@ BLEND_RUNS=()
 if [[ $QUICK_ONLY -eq 1 ]]; then
   step "3 quick runs (left side): blend first, then the single amps"
   blend_run L_blend_quick L --quick
+  blend_run L_blend_quick_forced L --quick --topology blend      # the blend forced: how much better than the auto pick (single?)
   match_run L_hm2_quick "$L_DI" "$L_HM2" --quick
   match_run L_ubr_quick "$L_DI" "$L_UBR" --quick
   RUNS=(L_hm2_quick L_ubr_quick)
 else
   step "3 main runs: left side, blend first (thorough), then quick timing + thorough HM2 and UBR"
   blend_run L_blend L --thorough
+  blend_run L_blend_forced L --thorough --topology blend
   match_run L_hm2_quick "$L_DI" "$L_HM2" --quick
   match_run L_hm2 "$L_DI" "$L_HM2" --thorough
   match_run L_ubr "$L_DI" "$L_UBR" --thorough

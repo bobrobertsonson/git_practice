@@ -480,7 +480,10 @@ def test_choose_prefers_simplest_topology_within_occam_tolerance():
     single2 = Combo((p[0], p[1]), a[0], None, None, pool.cabs[0])
     mk = lambda c, l: Scored(c, l, 0.5, manual_align(), None, "refined", {})
     assert choose([mk(blend, 1.0), mk(single, 1.09)]).combo is single           # 0.09 dB worse -> simpler wins
-    assert choose([mk(blend, 1.0), mk(single, 1.11)]).combo is blend            # beyond 0.1 dB
+    assert choose([mk(blend, 1.0), mk(single, 1.24)]).combo is single           # blend vs single: BLEND_OCCAM_DB = 0.25
+    assert choose([mk(blend, 1.0), mk(single, 1.26)]).combo is blend            # beyond 0.25 dB
+    assert choose([mk(blend, 1.0), mk(single2, 1.11)]).combo is blend           # single2 keeps the 0.1 dB margin
+    assert choose([mk(blend, 1.0), mk(single2, 1.09)]).combo is single2
     assert choose([mk(blend, 1.0), mk(single2, 1.05), mk(single, 1.08)]).combo is single
     assert choose([mk(blend, 1.0), mk(single2, 1.05)]).combo is single2
     assert [c for c in (blend, single, single2)].__len__() == 3

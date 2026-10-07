@@ -876,3 +876,111 @@ def test_refit_without_staging_keeps_feel_in_its_first_block(monkeypatch):
         eng.close()
     assert staged[0] is True and staged[1:1 + n_l1] == [False] * n_l1 and all(staged[1 + n_l1:])
     assert all(unstaged) and len(unstaged) == len(staged)
+
+
+def test_gate_sweep_uses_the_full_di_gaps_when_the_excerpt_has_none(tmp_path):
+    """Task H.2: an excerpt of chugs only (no gap) used to skip the sweep; the full DI has rests, so the sweep runs on them
+    (gapSource fullDi), picks a gate the hard-gated reference prefers, and the gap noise of the full render falls."""
+    pool = fixture_pool()
+    combo = Combo((), pool.amps[2], None, None, pool.cabs[0], boost=True)
+    sp = Space.for_combo(combo)
+    v = sp.default()
+    v.update({"boost.drive": 3.0, "boost.level": 10.0, "gain.a.amp": 12.0})
+    di = _gap_di()
+    floor = gate_envelope_floor_db(di, FS)
+    dip, ref = _known(tmp_path, pool, combo, v, gate=cell_gate(floor, 20.0, 20.0, 2.0, -90.0), di=di)
+    ex = make_excerpt(di, 0.6, window=(0, int(0.6 * FS)))                    # the first chugs: no 120 ms silence in it
+    tgt = build_target(ref, ex)
+    assert tgt.feel is not None and not tgt.feel.plan.gap_ok
+    eng = Engine(gate_preset(floor), 2)
+    cand = Scored(combo, 0.0, 0.0, manual_align(), None, "refined", {"params": v})
+    full = {"di": di, "ref": ref.matched_sig, "offset": 0}
+    try:
+        skipped = gate_sweep(eng, cand, sp, ex, tgt, floor)                  # without the full DI: as before, skipped
+        gs = gate_sweep(eng, cand, sp, ex, tgt, floor, full=full)
+        assert skipped["skipped"] and skipped["gapSource"] == "excerpt"
+        assert gs["skipped"] is None and gs["gapSource"] == "fullDi" and gs["gapWindows"] and gs["changed"]
+        assert gs["picked"]["floorTerm"] < gs["baseline"]["floorTerm"]
+        assert gs["picked"]["feasible"] and gs["picked"]["offsetDb"] > 4.0
+        y0, _ = eng.render({**build_preset(combo, v, gate=gate_preset(floor), align=manual_align())}, di)
+        y1, _ = eng.render({**build_preset(combo, v, gate=gs["gate"], align=manual_align())}, di)
+    finally:
+        eng.close()
+    from sawblade_match.tonecheck.analysis import gap_regions
+    gaps = [(a, b) for a, b in gap_regions(di.astype(np.float64), FS) if b > a]
+    assert gaps
+
+    def gap_noise_db(y):             # output power in the full DI's gaps re its power over the rest
+        m = np.zeros(len(y), bool)
+        for a, b in gaps:
+            m[a:b] = True
+        y = np.asarray(y, np.float64)
+        return 10 * np.log10(np.mean(y[m] ** 2) / np.mean(y[~m] ** 2))
+    assert gap_noise_db(y1) < gap_noise_db(y0) - 3.0                         # gap_noise improves vs the default cell
+
+
+# ---- Task H.3: topology margin, BLEND_OCCAM_DB, --topology ------------------------------------------------------------------
+def test_topology_margin_record_and_determination():
+    from sawblade_match.matcher.run import BLEND_OCCAM_DB, TOPOLOGY_DETERMINED_PCT, topology_margin
+    pool = fixture_pool()
+    p, a = pool.pedals, pool.amps
+    blend = Combo((p[0],), a[0], (), a[1], pool.cabs[0])
+    single = Combo((p[0],), a[0], None, None, pool.cabs[0])
+    single2 = Combo((p[0], p[1]), a[0], None, None, pool.cabs[0])
+    mk = lambda c, l: Scored(c, l, 0.5, manual_align(), None, "refined", {})
+    assert BLEND_OCCAM_DB == 0.25 and TOPOLOGY_DETERMINED_PCT == 10.0
+    r = topology_margin([mk(blend, 1.0), mk(single, 1.05), mk(single2, 1.3)])
+    assert r["bestSingle"] == 1.05 and r["bestBlend"] == 1.0 and r["bestSingleTopology"] == "single"
+    assert r["deltaPct"] == pytest.approx(5.0) and r["determined"] is False             # 5 % of the smaller loss: not determined
+    r = topology_margin([mk(blend, 1.0), mk(single2, 1.12)])
+    assert r["deltaPct"] == pytest.approx(12.0) and r["determined"] is True and r["bestSingleTopology"] == "single2"
+    r = topology_margin([mk(blend, 1.2), mk(single, 1.0)])                              # negative: the single is better
+    assert r["deltaPct"] == pytest.approx(-20.0) and r["determined"] is True
+    r = topology_margin([mk(blend, 1.0)])                                               # forced: one side only
+    assert r["determined"] is False and r["deltaPct"] is None and r["bestSingle"] is None and "forced" in r["note"]
+
+
+def test_choose_honours_the_topology_restriction():
+    pool = fixture_pool()
+    p, a = pool.pedals, pool.amps
+    blend = Combo((p[0],), a[0], (), a[1], pool.cabs[0])
+    single = Combo((p[0],), a[0], None, None, pool.cabs[0])
+    mk = lambda c, l: Scored(c, l, 0.5, manual_align(), None, "refined", {})
+    field = [mk(blend, 1.0), mk(single, 1.5)]
+    assert choose(field, "blend").combo is blend and choose(field, "single").combo is single and choose(field).combo is blend
+    with pytest.raises(ValueError):
+        choose([mk(blend, 1.0)], "single")
+    with pytest.raises(ValueError):
+        choose(field, "sideways")
+
+
+def test_run_topology_forces_the_search_and_records_the_margin(tmp_path):
+    from sawblade_match.matcher.run import Config as Cfg
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool, "blend")
+    x, fs = _loadwav(FIX / "di_riff.wav")
+    d = tmp_path
+    di = d / "di.wav"
+    sf.write(str(di), x, fs, subtype="FLOAT")
+    gate = gate_preset(gate_envelope_floor_db(to48(x, fs), FS))
+    hid, _ = core.render(build_preset(combo, v, gate=gate, align=Engine(gate).probe_align(combo, v)), x, float(fs))
+    sf.write(str(d / "hidden.wav"), hid, fs, subtype="FLOAT")
+    out = {}
+    for mode in ("blend", "single", "auto"):
+        ref = load_reference(d / "hidden.wav", channel="mid", matched="mono", offset_ms=0.0)
+        plan = mkplan(top_k={"blend": 1, "single": 1, "single2": 0})
+        cfg = Config(di=di, ref=ref, pool=pool, out=d / mode, seed=1, excerpt_s=2.0, threads=2, plan=plan, write_audio=False,
+                     refine_offsets=False, topology=mode)
+        out[mode] = run_match(cfg, Log())
+    assert set(out["blend"]["topologies"]) == {"blend"} and out["blend"]["best"]["topology"] == "blend"
+    assert set(out["single"]["topologies"]) == {"single"} and out["single"]["best"]["topology"] == "single"
+    assert set(out["auto"]["topologies"]) == {"single", "blend"}
+    tm = out["auto"]["topology"]
+    assert tm["mode"] == "auto" and tm["blendOccamDb"] == 0.25 and tm["bestSingle"] is not None and tm["bestBlend"] is not None
+    assert isinstance(tm["determined"], bool) and tm["deltaPct"] is not None
+    assert out["blend"]["topology"]["determined"] is False and out["blend"]["topology"]["mode"] == "blend"
+    import argparse
+    from sawblade_match.matcher.cli import build_parser
+    assert build_parser().parse_args(["--di", "x", "--ref", "y"]).topology == "auto"
+    with pytest.raises(ValueError):
+        run_match(Config(di=di, ref=ref, pool=pool, out=d / "bad", plan=plan, topology="sideways"), Log())
