@@ -245,6 +245,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // parts of the rig change. The audio thread applies the target through an atomic; until a trim is known a user load plays at 0.
   // Called by the 10 Hz timer; tests call it directly. Message thread.
   void levelTick();
+  void syncLevelMatchSetting();  // levelMatchOn_ <- Settings (message thread); a toggle retries what could not be measured
   // The rig the trim is measured for: the current preset with the parameter values. The OUTPUT knob is measured at 0 dB and is not
   // in the staleness hash: it is a persistent user offset from the target.
   Preset levelMeasurementPreset() const;
@@ -253,7 +254,10 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::uint64_t levelHashComputes() const noexcept { return hashComputes_; }  // autoTrimHash evaluations by levelTick (tests)
   void setLevelDebounceMs(int ms) noexcept { levelDebounceMs_.store(ms); }
   static constexpr int kLevelDebounceMs = 400;
-  bool levelMatchEnabled() const noexcept { return levelMatchOn_.load(); }
+  // The LEVEL MATCH setting right now. Re-reads the Settings store (levelMatchOn_ is otherwise only refreshed by the 10 Hz
+  // levelTick(), so a caller that acts within 100 ms of a settings change, or of construction, would see a stale default of on).
+  // Message thread only; never call from the audio thread (it reads levelMatchOn_ directly).
+  bool levelMatchEnabled();
   // The capture-swap make-up (core auto_trim.h slotMakeupDb) on the level worker. `done` runs on the worker thread.
   void computeSlotMakeup(Preset before, Preset after, int path, LevelWorker::MakeupDone done);
   LevelWorker& levelWorker() noexcept { return *levelWorker_; }
