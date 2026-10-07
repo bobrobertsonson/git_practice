@@ -598,29 +598,49 @@ def test_a_fast_bus_comp_in_the_reference_fires_the_studio_detector_and_is_repro
     assert res2["best"]["loss"] > res["best"]["loss"]
 
 
+def test_absorbable_residual_is_what_the_post_eq_can_still_take_away():
+    from sawblade_match.matcher import loss as Lm
+    sp = Space((1, None))
+    v = sp.default()
+    fc = np.array(Lm.BAND_CENTRES, float)
+    w = Lm.A_POWER_W / Lm.A_POWER_W.sum()
+    d_in = ST._peak_db(fc, v["post.f1"], 4.0)                    # a smooth bump the post EQ's own mid band can take away
+    d_in = d_in - np.sum(w * d_in)
+    left_in = ST.absorbable(d_in, v)
+    assert np.sqrt(np.sum(w * left_in ** 2)) < 0.3 < np.sqrt(np.sum(w * d_in ** 2))
+    d_out = ST._peak_db(fc, v["post.f1"], 20.0)                  # far beyond +-6 dB: most of it stays
+    d_out = d_out - np.sum(w * d_out)
+    left_out = ST.absorbable(d_out, v)
+    assert 2.0 < np.sqrt(np.sum(w * left_out ** 2)) < np.sqrt(np.sum(w * d_out ** 2))     # the +-6 dB cap leaves most of it
+    assert np.array_equal(ST.absorbable(d_in, {}), d_in)         # no post EQ in the params: nothing is absorbed
+
+
 def test_a_strongly_post_eqd_reference_fires_eqd_and_the_wider_post_eq_is_kept(tmp_path):
-    """Reference = the chain with post EQ gains of -8.5 / +8.5 dB (beyond the +-6 dB range). The candidate is the same chain
-    with a flat post EQ (an unfitted stage-2 result): both eqd routes fire, and the widened post-EQ stage fits it."""
+    """Reference = the chain with post EQ gains of -11 / +11 dB (far beyond the +-6 dB range). The candidate is the same chain
+    with a flat post EQ (an unfitted stage-2 result): the unreachable residual fires eqd, and the +-9 dB stage keeps its wider
+    EQ because it beats an equal-budget re-fit at the normal range, not just the plain result."""
     def hid(sp):
         v = sp.default()
-        v.update({"post.g0": -8.5, "post.g2": 8.5})
+        v.update({"post.g0": -11.0, "post.g2": 11.0})
         return v
     eng, cand, sp, ex, tgt = _stage1_candidate(tmp_path, hid)
     try:
         v = dict(sp.default())
         core_a = eng.core(cand.combo, v, "a", ex.x)
         y = ex.trim(eng.emulate(cand.combo, v, core_a, None, manual_align()))
-        det = ST.detect(True, tgt, tgt, y, v, None)                                  # route 2: the LTAS residual's shape
-        assert det["eqd"] is True and det["evidence"]["residualRmsDb"] >= ST.RESIDUAL_RMS_DB
-        assert det["evidence"]["residualPolyExplained"] >= ST.POLY_EXPLAINED and det["compressed"] is False
-        assert ST.detect(True, tgt, tgt, y, {**v, "post.g0": -5.8}, None)["evidence"]["postGainAtRange"] is True    # route 1
+        det = ST.detect(True, tgt, tgt, y, v, None)
+        ev = det["evidence"]
+        assert det["eqd"] is True and det["compressed"] is False
+        assert ev["residualAfterPostEqRmsDb"] >= ST.RESIDUAL_RMS_DB and ev["residualAfterPostEqPolyExplained"] >= ST.POLY_EXPLAINED
+        assert ev["residualAfterPostEqRmsDb"] < ev["residualRmsDb"]                  # the post EQ takes part of it away
         assert ST.detect(False, tgt, tgt, y, v, None)["evidence"]["skipped"]          # not judged on a mix reference
         cand.extra.update(params=v, info={})
         rec = ST.studio_stage(eng, cand, sp, ex, tgt, {"compressed": False, "eqd": True}, seed=3, gens=12, pop=12)
     finally:
         eng.close()
-    assert rec["widenedPostEq"] is True and rec["gainVsPlain"] >= ST.MIN_GAIN and rec["busCompUsed"] is False
-    assert [x["step"] for x in rec["stage"]] == ["post EQ +-9 dB"] and rec["stage"][0]["kept"] is True
+    st = rec["stage"][0]
+    assert rec["widenedPostEq"] is True and st["kept"] is True and rec["busCompUsed"] is False
+    assert st["normalRefitLoss"] - st["loss"] >= ST.MIN_GAIN and rec["gainVsPlain"] >= ST.MIN_GAIN
     v2 = rec["_won"][0]
     assert max(abs(v2[f"post.g{i}"]) for i in range(3)) > 6.0                         # a gain outside the old range
 
