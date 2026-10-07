@@ -930,6 +930,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result["best"]["fullLengthPeakDbfs"] = best.extra["fullLengthPeakDbfs"]
     result["best"]["fullLengthPeakAfterGuardDbfs"] = best.extra["fullLengthPeakAfterGuardDbfs"]
     result["best"]["clipGuardDb"] = best.extra.get("clipGuardDb", 0.0)
+    result["best"]["liveClipWarning"] = bool(best.extra.get("liveClipWarning"))      # the live render peaks above the guard ceiling
     result["candidatesStage2"] = [_scored_json(c) for c in refined]
     lap("outputs")
     result["listening"] = {}

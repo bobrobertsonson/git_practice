@@ -92,9 +92,19 @@ def test_run_emits_live_presets_scores_in_record_and_writes_render_live(tmp_path
     assert "lufsRenderLive" in lst and "renderLive" in lst["truePeakDb"]
 
 
-def test_clip_guard_and_gain_do_not_depend_on_listen(tmp_path):
+def test_clip_guard_and_gain_do_not_depend_on_listen(tmp_path, monkeypatch):
     """The live render exists only with --listen (write_audio); the emitted gainDb, the guard cut and the level-dependent
-    tonecheck numbers must be identical with and without it. A hot R DI makes the guard act."""
+    tonecheck numbers must be identical with and without it. A hot R DI makes the guard act, and ``Engine.render`` is wrapped
+    so that the live render comes back as the LOUDEST thing in the run (peak 100): code that lets the live peak steer the cut
+    then gives a different cut / gain with --listen."""
+    real_render = Engine.render
+
+    def render(self, preset, x, fs=48000, dynamics="record"):
+        y, rep = real_render(self, preset, x, fs, dynamics=dynamics)
+        if dynamics == "live":
+            y = np.asarray(y) * np.float32(100.0 / max(float(np.max(np.abs(y))), 1e-9))
+        return y, rep
+    monkeypatch.setattr(Engine, "render", render)
     res = {}
     for tag, listen in (("off", False), ("on", True)):
         d = tmp_path / tag
@@ -112,5 +122,9 @@ def test_clip_guard_and_gain_do_not_depend_on_listen(tmp_path):
     assert res["on"]["after"][0]["aWeightedErrorDb"] == res["off"]["after"][0]["aWeightedErrorDb"]
     assert json.loads((tmp_path / "on" / "out" / on["preset"]).read_text())["output"]["gainDb"] == \
         json.loads((tmp_path / "off" / "out" / off["preset"]).read_text())["output"]["gainDb"]
-    assert "live_L" in on["fullLengthPeakDbfs"] and "live_L" not in off["fullLengthPeakDbfs"]      # reported only with --listen
+    # the cut is the one the RECORD peaks (best_L, best_R) call for: -1 dBFS ceiling minus the loudest record peak
+    pk = on["fullLengthPeakDbfs"]
+    assert pk["live_L"] > max(pk["best_L"], pk["best_R"]) + 20          # the live render really is the loudest
+    assert on["clipGuardDb"] == pytest.approx(-1.0 - max(pk["best_L"], pk["best_R"]), abs=1e-6)
+    assert on["liveClipWarning"] is True and off["liveClipWarning"] is False and "live_L" not in off["fullLengthPeakDbfs"]
     assert set(on["fullLengthPeakAfterGuardDbfs"]) >= {"best_L", "best_R", "live_L"}
