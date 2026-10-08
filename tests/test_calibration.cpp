@@ -239,3 +239,15 @@ TEST_CASE("calibration: device range bounds are inclusive", "[calibration]") {
   REQUIRE(DeviceCalibration{kMaxPlausibleDbu}.calibrated());
   REQUIRE(DeviceCalibration{kMinPlausibleDbu}.calibrated());
 }
+
+TEST_CASE("calibration: planBlock is the step planPath iterates", "[calibration]") {
+  std::vector<BlockLevelInfo> p{nam(GearKind::Pedal, 6.0, 10.0), eq(), nam(GearKind::Amp, 12.0, 0.0)};
+  const auto plan = planPath(dev(), p, defaultCalibrationDefaults());
+  double ref = kDev;
+  for (std::size_t i = 0; i < p.size(); ++i) {
+    const BlockGain g = planBlock(ref, p[i], defaultCalibrationDefaults());
+    REQUIRE(g.gainInDb == plan.blocks[i].gainInDb);
+    REQUIRE(g.refAfterDbu == plan.blocks[i].refAfterDbu);
+    ref = g.refAfterDbu;
+  }
+}

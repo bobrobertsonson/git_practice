@@ -205,3 +205,79 @@ auto trim.
   `HasInputLevel` or `GetInputLevel`.
 - The untracked `core/include/sawblade/calibration.h` and `core/src/calibration.cpp` are Task B work in progress by another
   agent. They were not audited.
+
+## I1 — chain wiring
+
+Branch `claude/sawblade-v0_8-input-cal`, core only (plugin, preset schema, `match/` and the export are untouched). Calibration is
+opt-in and off by default: with it off the full ctest (415 existing tests) is unchanged, no golden was regenerated.
+Numbers below come from `tests/test_chain_calibration.cpp` (the two `[report]` test cases print them; run
+`build-i1/tests/sawblade_tests "[report]"`). Build: Release, warnings-as-errors, no warnings.
+
+**Fixture fact the spec got wrong.** `wavenet.nam` and `lstm.nam` carry the same metadata: `input_level_dbu 18.3`, `output_level_dbu
+12.3`. The 6.0 dB in the spec is output-minus-input, not a wavenet-vs-lstm input difference. So a wavenet <-> lstm swap plans a 0 dB change
+(asserted), and the "exactly 6.0 dB" swap and ladder tests use new synthetic fixtures `tests/fixtures/nam/cal_*.nam` (Linear identity
+models with invented dBu, written by `make_cal_fixtures.py`, noted in `NOTICE`).
+
+### Acceptance 8 — SYNTHETIC — redo on the user's L_ubr_quick preset
+
+Stand-in chain: `wavenet.nam` as the front (pedal) stage -> `lstm.nam` as the amp, both capture levels 18.3 in / 12.3 out. No
+normalise, no make-up, so on and off differ only by calibration. Device: the assumed +12 dBu (`deviceAssumed` true), because the
+user's interface is not calibrated yet. These are the NeuralAmpModelerCore example nets, not the user's captures; they are small and
+their output sits near -60 dBFS, so treat the sweep as a wiring check, not as tone information.
+
+| Block | Planned gain, on | Offset re the capture's calibrated drive, off -> on |
+|---|---|---|
+| pedal stage (wavenet) | -6.30 dB (12 - 18.3) | +6.30 -> 0.00 dB |
+| amp (lstm) | -6.00 dB (12.3 - 18.3, the hop) | +6.00 -> 0.00 dB |
+
+"Offset" = the gain the block applies minus the gain that puts the signal exactly at the capture's input level (`refBefore - input_level_dbu`).
+Off, both blocks run 6.3 / 6.0 dB hotter than their captures expect. On, both are at 0.
+
+Amp input level, measured by rendering a 220 Hz sine at -24 dBFS RMS through the pedal stage and applying the amp's input gain:
+
+| | amp input level |
+|---|---|
+| calibration off | -39.24 dBFS |
+| calibration on | -51.39 dBFS |
+| moved | -12.16 dB |
+
+**Calibration moved the amp drive by 12.16 dB, which is >= 3 dB.** (The planned gains sum to -12.30 dB; the pedal stage's own nonlinearity
+accounts for the other 0.14 dB.)
+
+Dynamics sweep, 220 Hz sine, -30 to -12 dBFS RMS in 3 dB steps (18 dB), output RMS in dBFS:
+
+| in (dBFS) | -30 | -27 | -24 | -21 | -18 | -15 | -12 |
+|---|---|---|---|---|---|---|---|
+| off | -59.55 | -58.92 | -57.91 | -56.48 | -54.69 | -52.80 | -51.10 |
+| on | -60.40 | -60.35 | -60.25 | -60.07 | -59.73 | -59.15 | -58.27 |
+
+Least-squares slope (dB out per dB in): **off 0.486, on 0.111**. With calibration the chain runs much further below the level where
+these nets respond, and the "on" curve sits close to the nets' floor near -60 dBFS, so the slope drops. This says the calibrated stand-in
+is driven ~12 dB lower than the uncalibrated one; it does not say which is closer to the user's tone. The matched preset's values were tuned
+without calibration (spec decision 1), which is why the default stays off. Redo on the real chain before drawing any conclusion.
+
+### Acceptance 9 — gate check at a -49.5 dBFS floor
+
+Gaussian noise, -49.5 dBFS RMS, 10 s, seed 17. Gate = the v0.4M Task H record cell as the matcher builds it: `peakFloorDb` (the 92.5th
+percentile of the gate's own peak envelope, `Gate::kEnvAttackMs/ReleaseMs`) = **-42.32 dBFS** for this noise (7.2 dB above its RMS); open =
+peakFloor + 10 = -32.32 dBFS, hysteresis 6 dB (close -38.32 dBFS). Chain: linear identity + calibration (device 18 dBu, planned +6 dB, so
+calibration is audibly on). The open fraction is the share of 10 ms windows after 0.5 s in which the chain passes the noise (window gain,
+with the known calibration gain divided out, above -3 dB).
+
+| | gate open fraction on noise only |
+|---|---|
+| calibration off | 0.0000 |
+| calibration on | 0.0000 |
+
+Identical, as expected: the gate is keyed on the DI after INPUT and before any calibration gain.
+
+### Design as built (for I2-I4)
+
+- `ChainCalibration {enabled, device, defaults}`; `Chain::planCalibration` (any thread, allocates) -> `CalibrationPlan`;
+  `Chain::setCalibration` (plan + apply, not RT-safe); `Chain::publishCalibration` (producer thread; the audio thread takes the plan from a
+  `SwapSlot` at the start of `process()` and ramps over `kLiveRampMs`). `RenderOptions::calibration` carries it for offline renders; the report
+  gains a `calibration` object (always present, `enabled:false` when off).
+- Each NAM block (each gain-ladder rung too) computes its own planned gain from its own metadata with `calibration::planBlock`, so a rung
+  swap uses the rung's levels. The planned gain is added to the block's intent (`inputGainDb`, live or preset).
+- A NAM block that feeds another NAM block in the path drops `normalizeLoudness` and the make-up; `outputGainDb` stays. Only the last NAM
+  block of a path keeps both. Bypassed blocks and disabled paths are not in the plan. `eq` and every `pedal.*` block are `LevelKind::Neutral`.
