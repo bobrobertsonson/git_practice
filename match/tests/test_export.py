@@ -535,7 +535,9 @@ class _FakeTrain:
         p = Path(outdir) / f"{basename}.nam"
         um = {}                                  # the trainer writes UserMetadata flat into the .nam metadata (exportable.py)
         if user_metadata is not None:
-            um = user_metadata.model_dump() if hasattr(user_metadata, "model_dump") else dict(vars(user_metadata))
+            # mode="json" turns the GearType/ToneType enums into their values, as the real exporter's _cast_enums does
+            um = (user_metadata.model_dump(mode="json") if hasattr(user_metadata, "model_dump")
+                  else dict(vars(user_metadata)))
         p.write_text(json.dumps({"architecture": "WaveNet", "weights": [0.0],
                                  "metadata": {**um, "sawblade": dict(other_metadata["sawblade"])}}))
         from sawblade_match.export.train import TrainResult
