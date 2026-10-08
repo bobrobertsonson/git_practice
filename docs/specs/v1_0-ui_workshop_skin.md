@@ -33,6 +33,11 @@ NAM FORGER, WOODSHED, the rig editor, dialogs, notices — gets the same materia
    WOODSHED, rig editor, notices.
 3. The user picks and edits. Only the user-approved set is built.
 
+**User decisions on the mockups (2026-10-08):** TS-style pedal = CHISEL; keep amber LCD readouts plus the orange nixie
+for BLEND; try a stronger wear / sawdust variant; stencil caps on aluminium plates + heavy military face for titles;
+top-bar A/B as two mini footswitches; WOODSHED uses the existing cassette-deck render; legacy-levels hint above the
+preset info panel.
+
 ## Task B — assets (dsp-engineer)
 
 Render scripts under `design/render/` for every new sprite and panel, deterministic, exported through
