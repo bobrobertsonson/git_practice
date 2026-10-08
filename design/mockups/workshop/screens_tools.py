@@ -632,7 +632,85 @@ def _lane_header(cv, rect, name, right, color):
     cv.fill((rect[0], rect[1] + 2, rect[0] + 5, rect[3] - 2), color)
 
 
+def _block_card_v4(cv, rect, title, key, lines, accent, status=None, bypassed=False, lamp_line=None, input_db='0.0', knob_v=0.5):
+    """v4 block card: title strip, two short lines (the first may carry a state lamp + word), one ACTIVE / BYPASSED lamp row with a
+    BYPASS button, the INPUT knob + LCD and three icon buttons.  No duplicated captions."""
+    cd = ws.card(cv, rect, title, accent, bypassed=bypassed, status=None if bypassed else status, key=key)
+    bx0, by0, bx1, by1 = cd['body']
+    wr = (bx0, by0, bx1, by0 + 44)
+    well(cv, wr, 'well', 2)
+    for i, (txt, sty, fg) in enumerate(lines[:2]):
+        yy = wr[1] + 13 + i * 19
+        x = wr[0] + 7
+        if i == 0 and lamp_line:
+            ws.glow_led(cv, wr[0] + 12, yy, True, lamp_line, 3.6)
+            x = wr[0] + 26
+        text(cv, (x, yy), txt, sty, bg=(x - 2, yy - 9, wr[2] - 3, yy + 9), fg=fg)
+    y = by0 + 52
+    ws.state_led(cv, bx0 + 2, y + 12, not bypassed, 'amber' if bypassed else 'green', 'BYPASSED' if bypassed else 'ACTIVE', r=4.0)
+    ws.button(cv, (bx1 - 76, y, bx1, y + 24), 'BYPASS', 'secondary')
+    y += 34
+    ws.knob(cv, bx0 + 18, y + 19, 34, 'pedal', knob_v, accent or 'blade')
+    label_well(cv, (bx0 + 46, y + 7), 'INPUT', 'label_b', h=16, pad=5)
+    ws.lcd(cv, (bx0 + 46, y + 31), input_db, 'dB', digits=4, h=14)
+    y += 46
+    for i, ic in enumerate(('chev_l', 'chev_r', 'close')):
+        r = (bx1 - 3 * 36 + i * 36, y, bx1 - 3 * 36 + i * 36 + 32, y + 22)
+        ws.button(cv, r, '', 'secondary')
+        ws.glyph_icon(cv, ic, (r[0] + r[2]) / 2.0, cy_of(r), 11, 'alert' if ic == 'close' else 'bone')
+    return cd
+
+
+def _screen_08_v4():
+    """v4 (R1, R3, R6): lanes of block cards without duplicated captions, one '+' at the end of each lane, lamp + word for UNCAL /
+    BYPASS, VERMIN in lane A; the build status is one line and the meters live in the top bar."""
+    cv = backdrop('08_rig_editor', 0)
+    top(cv)
+    c = frame(cv, (0, 58, 940, 800), 'RIG EDITOR', 'ov08', right='BLEND · 6 BLOCKS')
+    x0, x1 = c[0], c[2]
+    label_well(cv, (x0, c[1] + 10), 'TOPOLOGY', 'label_b', h=18)
+    ws.rotary_selector(cv, x0 + 150, c[1] + 56, 46, ['SINGLE', 'SINGLE + 2 PEDALS', 'BLEND'], 2, 'blade')
+    tabs = [('CHAIN', 78, True), ('EQ', 54, False), ('BLEND', 66, False), ('CAB', 54, False), ('GATE', 62, False), ('VISE', 62, False)]
+    tx = x0 + 290
+    for nm, w, act in tabs:
+        ws.tab(cv, (tx, c[1] + 4, tx + w, c[1] + 34), nm, act)
+        tx += w + 6
+    ws.dm_display(cv, (x0 + 290, c[1] + 46, x1, c[1] + 78), '✓ built · 6 blocks', h=14, tone='green', pad=8)
+    ly = c[1] + 100
+    cw, ch = 200, 218
+    xs = [x0 + i * (cw + 8) for i in range(4)]
+    plus_x = xs[3] + cw + 8
+    _lane_header(cv, (x0, ly, x1, ly + 26), 'A · BLADE', 'PATH A', 'blade')
+    cy0 = ly + 34
+    _block_card_v4(cv, (xs[0], cy0, xs[0] + cw, cy0 + ch), 'THE SAW MILL', 'v4a',
+                   [('CIRCUIT · BUZZSAW', 'body_strong', 'blade_hi'), ('modelled pedal', 'body_dim', None)], 'blade', status='MODELLED')
+    _block_card_v4(cv, (xs[1], cy0, xs[1] + cw, cy0 + ch), 'VERMIN', 'v4v',
+                   [('rat-style distortion', 'body_strong', None), ('modelled pedal', 'body_dim', None)], 'blade', status='MODELLED',
+                   knob_v=0.7)
+    _block_card_v4(cv, (xs[2], cy0, xs[2] + cw, cy0 + ch), 'SAW HEAD', 'v4b',
+                   [('UNCAL', 'label_b', 'warn'), ('default +9 dBu', 'body_dim', None)], 'blade', lamp_line='amber', input_db='+1.5', knob_v=0.56)
+    _block_card_v4(cv, (xs[3], cy0, xs[3] + cw, cy0 + ch), 'EQ', 'v4c',
+                   [('PRE · 4 bands', 'body_strong', None), ('low cut 80 Hz', 'body_dim', None)], 'blade', status='PRE')
+    ws.empty_slot(cv, (plus_x, cy0, x1, cy0 + ch), '+')
+    ly2 = cy0 + ch + 12
+    _lane_header(cv, (x0, ly2, x1, ly2 + 26), 'B · BODY', 'PATH B', 'body')
+    cy1 = ly2 + 34
+    _block_card_v4(cv, (xs[0], cy1, xs[0] + cw, cy1 + ch), 'CHISEL', 'v4d',
+                   [('modelled pedal', 'body', None), ('passes straight through', 'body_dim', None)], 'body', bypassed=True)
+    _block_card_v4(cv, (xs[1], cy1, xs[1] + cw, cy1 + ch), 'BODY HEAD', 'v4e',
+                   [('✓ calibrated', 'body', 'ok'), ('+12.5 dBu', 'body_dim', None)], 'body', status='ON', input_db='-2.0', knob_v=0.42)
+    ws.empty_slot(cv, (xs[2], cy1, xs[2] + 56, cy1 + ch), '+')
+    ny = cy1 + ch + 12
+    label_well(cv, (x0, ny + 13), 'CAB', 'label_b', h=22, pad=8)
+    strip(cv, (x0 + 56, ny, x1 - 200, ny + 26), '✓ LIVE-COMPATIBLE: the no-cab NAM export is exact', 'body_strong', fg='ok')
+    strip(cv, (x1 - 192, ny, x1, ny + 26), 'SHARED 4x12 · CAB ON', 'label_b', align='c')
+    reveal(cv, [(0, 58, 940, 800)])
+    return cv
+
+
 def screen_08_rig_editor():
+    if ws.is_v4():
+        return _screen_08_v4()
     cv = backdrop('08_rig_editor', 0)
     top(cv)
     c = frame(cv, (0, 58, 940, 800), 'RIG EDITOR', 'ov08', right='BLEND · 5 BLOCKS')

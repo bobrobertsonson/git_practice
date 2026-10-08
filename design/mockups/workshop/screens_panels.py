@@ -81,7 +81,35 @@ def list_row(cv, rect, selected=False):
 # --------------------------------------------------------------------------------------------------------------------
 # 02 top bar
 # --------------------------------------------------------------------------------------------------------------------
+def _screen_02_v4():
+    """v4 (R4, R2): the streamlined bar in its default state and with the UNCAL / OUT OF TRUE lamps folded into the LIVE lamp block."""
+    cv = ws.new_screen('02_top_bar', sawdust_n=500)
+    states = [
+        ('1 · DEFAULT', 'brand, preset scroller ◀ ▶, A / B, RIG / WOODSHED, IN / OUT ladders, MATCH, NAM FORGER, settings, LIVE lamp',
+         ws.TopBarState()),
+        ('2 · UNCAL', 'one lamp + word added to the LIVE lamp block', ws.TopBarState(uncal=True)),
+        ('3 · OUT OF TRUE', 'the same block, red lamp + word', ws.TopBarState(out_of_true=True)),
+        ('4 · BOTH', 'lamps stack, one fact per lamp', ws.TopBarState(uncal=True, out_of_true=True)),
+    ]
+    pitch = 92
+    bars = []
+    for i, (title, note, st) in enumerate(states):
+        y = i * pitch
+        bars.append((y, ws.top_bar(cv, st, y=y)))
+        cy = y + 58 + 6 + 10
+        r = ws.label_well(cv, (20, cy), title, 'label_b', fg='blade_hi', h=20, pad=8)
+        ws.label_well(cv, (r[2] + 6, cy), note, 'body_dim', h=20, pad=8)
+    yz = 4 * pitch + 10
+    xr = int(bars[3][1]['meters'][0] - 8)
+    r1 = zoom2x(cv, (xr, bars[3][0], 1280, bars[3][0] + 58), ((1280 - 2 * (1280 - xr)) / 2.0, yz))
+    c1 = ws.label_well(cv, (20, r1[3] + 14), 'ZOOM 2x · RIGHT · STATE 4', 'label_b', fg='blade_hi', h=20, pad=8)
+    ws.label_well(cv, (c1[2] + 6, r1[3] + 14), 'IN / OUT thin ladders, stacked lamps, settings, MATCH, NAM FORGER (x %d-1280)' % xr, 'body_dim', h=20, pad=8)
+    return cv
+
+
 def screen_02_top_bar():
+    if ws.is_v4():
+        return _screen_02_v4()
     cv = ws.new_screen('02_top_bar', sawdust_n=500)
     ab = {'a': 'GRAVE DIRT · MATCHED v2', 'b': 'THRASH TIGHT · DOWNTUNED TAKE 4' if ws.is_v3() else 'THRASH TIGHT', 'active': 'a'}
     states = [
@@ -130,7 +158,77 @@ def screen_02_top_bar():
 # --------------------------------------------------------------------------------------------------------------------
 # 03 settings: INPUT CALIBRATION
 # --------------------------------------------------------------------------------------------------------------------
+def _screen_03_v4():
+    """v4 (R5, R1, R6): one status strip, a closed device dropdown, the manual dBu field only under Custom (second state inset),
+    INPUT CHANNEL = Auto with a closed Override disclosure, GATE FLOOR moved to GATE."""
+    cv, _bar = rig_backdrop('03_settings_calibration', ws.TopBarState(uncal=True), ws.RIG_RECT, keep_inspector=True)
+    ov = ws.overlay_frame(cv, (10, 68, 930, 794), 'SETTINGS', close=True, done='DONE', name='settings')
+    cx0, cy0, cx1, cy1 = ov['content']
+    sections = ['SETUP CHECKLIST', 'TOOLS', 'TONE3000', 'INPUT CALIBRATION', 'CAPTURES', 'SEPARATION', 'RECORDING',
+                'APPEARANCE', 'ABOUT SAWBLADE…']
+    ly = cy0
+    for sec_ in sections:
+        r = (cx0, ly, cx0 + 196, ly + 30)
+        sel = sec_ == 'INPUT CALIBRATION'
+        list_row(cv, r, sel)
+        ws.text(cv, (r[0] + 12, (r[1] + r[3]) / 2.0), ('▶ ' if sel else '') + sec_, 'button', bg=ws.inset(r, 3), fg='blade_hi' if sel else 'bone_dim')
+        ly += 36
+    body = (cx0 + 210, cy0, cx1, cy1)
+    flat_box(cv, body, 'well', 'steel_bare', 4)
+    bx0, bx1 = body[0] + 22, body[2] - 22
+    y = body[1] + 26
+    ws.text(cv, (bx0, y), 'INPUT CALIBRATION', 'title', bg=body, size=22)
+    y += 30
+    s1 = (bx0, y, bx1, y + 34)
+    flat_box(cv, s1, 'well_raised', 'warn', 3)
+    ws.glow_led(cv, s1[0] + 16, y + 17, True, 'amber', 4.0)
+    ws.dm_display(cv, (s1[0] + 34, s1[1] + 3, s1[2] - 4, s1[3] - 3), 'UNCAL · interface not calibrated · default +9.0 dBu', h=11, tone='amber', pad=5)
+    y += 58
+    ws.text(cv, (bx0, y), 'INTERFACE', 'label_b', bg=body)
+    y += 20
+    ws.dropdown(cv, (bx0, y, bx0 + 400, y + 30), 'Scarlett 4i4 3rd Gen — INST +12.5 dBu')
+    ws.text(cv, (bx0, y + 46), 'Levels are the instrument input\'s max level from the maker\'s spec sheet.', 'body_dim', bg=body)
+    y += 82
+    ws.text(cv, (bx0, y), 'MAX INPUT LEVEL', 'label_b', bg=body)
+    y += 28
+    ws.lcd(cv, (bx0, y), '+12.5', 'dBu', digits=4, h=22)
+    ws.led_meter(cv, (bx0 + 190, y - 16, bx0 + 190 + 210, y + 32), 'IN', -14.0, -8.0, ('-14', 'dBFS', 3), ticks=(-48, -24, 0), n=18)
+    y += 70
+    ws.text(cv, (bx0, y), 'INPUT CHANNEL', 'label_b', bg=body)
+    y += 26
+    ws.dm_display(cv, (bx0, y - 15, bx0 + 90, y + 15), 'Auto', h=14, tone='amber', pad=6)
+    ws.text(cv, (bx0 + 104, y), 'Input: L only', 'body', bg=body)
+    ws.button(cv, (bx0 + 220, y - 14, bx0 + 330, y + 14), '▸ Override', 'secondary')
+    y += 56
+    ws.text(cv, (bx0, y), 'CALIBRATED LEVELS', 'label_b', bg=body)
+    ws.badge(cv, (bx0 + ws.text_width('CALIBRATED LEVELS', 'label_b') + 14, y), 'BETA', h=18)
+    y += 36
+    ws.toggle(cv, bx0 + 56, y, 1, ['OFF', 'ON'], size=30, key='tg_cal')
+    ws.text(cv, (bx0 + 134, y - 6), 'Every capture gets the level its', 'body_dim', bg=body)
+    ws.text(cv, (bx0 + 134, y + 12), 'creator used, computed on load.', 'body_dim', bg=body)
+    y += 38
+    ws.text(cv, (bx0, y), 'GATE FLOOR moved to the GATE details.', 'body_dim', bg=body)
+    # second state: Custom selected, the manual field appears
+    ix0 = bx0 + 440
+    inset_r = (ix0, body[1] + 120, bx1, body[1] + 330)
+    ws.panel(cv, inset_r, 'custom_inset', 0.6, 5, shadow=False)
+    ws.plate(cv, (inset_r[0] + 6, inset_r[1] + 6, inset_r[2] - 6, inset_r[1] + 34), 'CUSTOM', title_style='section_mixed', key='ci')
+    ix, iy = inset_r[0] + 14, inset_r[1] + 54
+    ws.dropdown(cv, (ix, iy, inset_r[2] - 14, iy + 30), 'Custom — enter dBu')
+    iy += 46
+    ws.text_field(cv, (ix, iy, ix + 84, iy + 30), '+12.5', caret=True)
+    ws.button(cv, (ix + 90, iy, ix + 118, iy + 30), '−', 'secondary')
+    ws.button(cv, (ix + 122, iy, ix + 150, iy + 30), '+', 'secondary')
+    ws.lcd(cv, (ix, iy + 58), '+12.5', 'dBu', digits=4, h=18)
+    by = body[3] - 14 - 30
+    ws.button(cv, (bx0, by, bx0 + 100, by + 30), 'APPLY', 'primary')
+    ws.button(cv, (bx0 + 110, by, bx0 + 230, by + 30), 'MEASURE…', 'secondary')
+    return cv
+
+
 def screen_03_settings_calibration():
+    if ws.is_v4():
+        return _screen_03_v4()
     cv, _bar = rig_backdrop('03_settings_calibration', ws.TopBarState(uncal=True), ws.RIG_RECT, keep_inspector=True)
     ov = ws.overlay_frame(cv, (10, 68, 930, 794), 'SETTINGS', close=True, done='DONE', name='settings')
     cx0, cy0, cx1, cy1 = ov['content']

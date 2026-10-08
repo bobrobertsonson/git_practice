@@ -69,7 +69,7 @@ VERMIN_LED = (226.0, 462.0)       # LED and DIST knob centres in that image's pi
 VERMIN_DIST = (86.0, 81.0)
 
 
-def vermin_pedal(cv, x, bottom, w=160):
+def vermin_pedal(cv, x, bottom, w=160, label=True):
     """Screen 01 only: VERMIN (rat-style distortion) from the pinned render, framed like the other pedals, with its path label.
     v3 adds a glowing LED lamp with its word and a hover tooltip (dot-matrix value) on the DIST knob.  Returns the pedal rect."""
     spr = ws.sprite_image(VERMIN_PNG, w, round_px=22)
@@ -77,8 +77,9 @@ def vermin_pedal(cv, x, bottom, w=160):
     y = bottom - h
     k = w / 448.0
     pedal_face(cv, VERMIN_PNG, None, x, y, w, None, None)
-    ws.gaffer_tape(cv, (x - 14, bottom + 12, x + w + 14, bottom + 31), 'BLADE · VERMIN', 'blade_hi')
-    if ws.is_v3():
+    if label:
+        ws.gaffer_tape(cv, (x - 14, bottom + 12, x + w + 14, bottom + 31), 'BLADE · VERMIN', 'blade_hi')
+    if ws.is_v3() and label:
         lx, ly = x + VERMIN_LED[0] * k, y + VERMIN_LED[1] * k
         ws.state_led(cv, lx - 6.5, ly, True, 'red', 'ON', r=4.5)
         kx, ky = x + VERMIN_DIST[0] * k, y + VERMIN_DIST[1] * k
@@ -89,7 +90,110 @@ def vermin_pedal(cv, x, bottom, w=160):
     return (x, y, x + w, bottom)
 
 
-def screen_01_main_rig(vermin=False):
+VERMIN_TAG = 'RAT STENCIL PENDING (v0.9)'          # the v0.9 session draws the rat; until its face lands the current render carries this tag
+
+
+def _path_edge(cv, x, y_bottom, w, path):
+    """R1: one fact, one place: a 3 px path edge plus the path word in a well (BLADE orange / BODY blue)."""
+    col = 'blade' if path == 'BLADE' else 'body'
+    cv.fill((x, y_bottom + 3, x + w, y_bottom + 6), col, 1)
+    ws.label_well(cv, (x, y_bottom + 17), path, 'label_b', h=16, pad=6, fg='blade_hi' if path == 'BLADE' else 'body')
+
+
+def _rig_v4(vermin, cab):
+    """v4: rig + one rail.  No caption chips, no METERS column (IN / OUT are in the top bar, GR is the ring on VISE), one cab drawn
+    large, pedals in two lanes with one '+' at the end of each, the inspector without the circuit selector / ALIGN, MATCH card
+    on demand."""
+    import cabs
+    cv = ws.new_screen('01_main_rig', sawdust_n=0)
+    amp_saw_r = (62, RIG_Y + 8, 392, RIG_Y + 8 + 143.7)
+    amp_body_r = (62, RIG_Y + 196, 392, RIG_Y + 196 + 143.7)
+    cab_r = (446, RIG_Y + 12, 918, RIG_Y + 12 + 336)
+    board_r = (100, 436, 924, 792)
+    dust_clumps = [(220, amp_saw_r[3] + 30, 130, 220), (230, amp_body_r[3] + 30, 140, 220), (680, cab_r[3] + 14, 190, 300),
+                   (180, board_r[1] - 8, 170, 190), (860, board_r[1] - 6, 100, 110), (60, 420, 40, 60)]
+    ws.sawdust(cv, (0, RIG_Y, 940, 800), 380, '01:floor', clumps=dust_clumps,
+               seams=ws.plank_layout(ws.PAGE_H, 'floor')[1:-1], seam_n=40)
+    ws.cable(cv, ws.bezier((190, 486), (110, 452), (16, 330), (62, RIG_Y + 82)), 'blade')
+    ws.cable(cv, ws.bezier((452, 560), (330, 480), (38, 500), (62, RIG_Y + 266)), 'body')
+    amp_head(cv, 'amp_saw.png', amp_saw_r[0], amp_saw_r[1])
+    amp_head(cv, 'amp_body.png', amp_body_r[0], amp_body_r[1])
+    _path_edge(cv, amp_saw_r[0], amp_saw_r[3], amp_saw_r[2] - amp_saw_r[0], 'BLADE')
+    _path_edge(cv, amp_body_r[0], amp_body_r[3], amp_body_r[2] - amp_body_r[0], 'BODY')
+    cabs.DRAW[cab](cv, cab_r)
+
+    ws.panel(cv, board_r, 'pedalboard', 1.8, 10, rivets=True)
+    saw_x, saw_w = 130, 180
+    saw = pedal_face(cv, 'pedal_saw.png', PEDAL_SAW_CROP, saw_x, 470, saw_w, 'THE SAW MILL', (12, 6, 168, 40),
+                     oled_rect=(38, 41, 142, 79), oled_lines=['CIRCUIT', '◀ BUZZSAW ▶'], selected=True)
+    bottom = saw[3]
+    _path_edge(cv, saw_x, bottom, saw_w, 'BLADE')
+    vx, vw = 332, 160
+    vr = vermin_pedal(cv, vx, bottom, vw, label=False)
+    _path_edge(cv, vx, bottom, vw, 'BLADE')
+    tag = ws.label_well(cv, (vx, vr[1] - 14), VERMIN_TAG, 'label_mx_b', h=18, pad=7, fg='warn', border='warn')
+    ws.empty_slot(cv, (512, bottom - 150, 560, bottom), '+')
+    body_x, body_w = 640, 140
+    body_y = bottom - 140 * 384 / 256.0
+    body = pedal_face(cv, 'pedal_body.png', PEDAL_BODY_CROP, body_x, body_y, body_w, 'CHISEL', (8, 5, 132, 29))
+    _path_edge(cv, body_x, bottom, body_w, 'BODY')
+    ws.empty_slot(cv, (806, bottom - 150, 854, bottom), '+')
+    for tr, ang in (((330, 424, 410, 442), -3), ((860, 438, 914, 454), 4)):
+        ws.gaffer_tape(cv, tr, None, angle=ang)
+    ws.label_well(cv, (saw_x - 5, 464), '▶ SELECTED', 'label_b', fg='blade_hi', pad=7, border='blade')
+    ws.top_bar(cv, ws.TopBarState())
+
+    c = ws.inspector(cv)
+    x0, x1 = c[0], c[2]
+    cx = (x0 + x1) / 2.0
+    y = c[1] + 10
+    ws.label_well(cv, (x0, y), 'SELECTED · BLADE PEDAL', 'label', h=18)
+    y += 36
+    ws.label_well(cv, (x0, y), 'THE SAW MILL', 'section', fg='blade', size=18, pad=9, h=30)
+    y += 40
+    ws.label_well(cv, (x0, y), '@coldiron_caps · cc-by · VIA TONE3000', 'body', h=22, pad=8)
+    y += 38
+    ws.button(cv, (x0, y - 14, x0 + 160, y + 14), 'BROWSE CAPTURES', 'secondary')
+    y += 32
+    cv.blend((x0, y, x1, y + 1), 'bench_dark', 0.9)
+    cv.blend((x0, y + 1, x1, y + 2), 'bone', 0.1)
+    y += 18
+    kcy = y + 44
+    ws.knob(cv, x0 + 50, kcy, 84, 'amp', 0.79, 'blade', 'BLEND', ring=True)
+    nx0 = x0 + 112
+    ws.nixie(cv, (nx0, y + 6, x1, y + 56), '79 / 21', 34)
+    ws.label_well(cv, ((nx0 + x1) / 2.0, y + 80), 'BLADE 79 · BODY 21', 'label_b', pad=8, align='c')
+    y = kcy + 44 + 34
+    cv.blend((x0, y, x1, y + 1), 'bench_dark', 0.9)
+    cv.blend((x0, y + 1, x1, y + 2), 'bone', 0.1)
+    y += 12
+    masters = [('GATE', 0.45, ('-33.1', 'dB')), ('POST EQ', 0.55, ('0.0', 'dB')),
+               ('VISE · GR', 0.25, ('2.0', ':1')), ('OUTPUT', 0.5, ('-6.0', 'dB'))]
+    for i, (nm, v, (rv, ru)) in enumerate(masters):
+        col, row = i % 2, i // 2
+        mx = x0 + col * 156
+        my = y + row * 66 + 28
+        ws.knob(cv, mx + 24, my, 46, 'pedal', v, 'warn' if i == 2 else 'blade', ring=True)
+        ws.label_well(cv, (mx + 54, my - 14), nm, 'label_b', h=16, pad=5)
+        ws.lcd(cv, (mx + 54, my + 11), rv, ru, digits=4, h=14)
+    y += 2 * 66 + 10
+    ws.button(cv, (x0, y, x0 + 118, y + 28), 'LEARN GATE', 'secondary')
+    ws.button(cv, (x0 + 128, y, x0 + 238, y + 28), 'DETAILS', 'secondary', icon='info')
+    y += 44
+    pr = (x0 - 6, y, x1 + 6, y + 148)
+    ws.panel(cv, pr, 'matchbox', 0.8, 5, shadow=False)
+    ws.plate(cv, (pr[0] + 6, pr[1] + 6, pr[2] - 6, pr[1] + 38), 'MATCH vs ORIGINAL', title_style='section_mixed')
+    cap = ws.label_well(cv, (pr[0] + 12, pr[1] + 54), 'after a match', 'label_mx', h=16, pad=6)
+    ws.dm_display(cv, (pr[0] + 12, pr[1] + 68, pr[2] - 48, pr[3] - 12), ['6.45 → 1.53 dB', '9/10 rules'], h=14, tone='green', pad=6, align='c', row_gap=1.0)
+    xb = (pr[2] - 40, pr[1] + 74, pr[2] - 12, pr[1] + 100)
+    ws.button(cv, xb, '', 'secondary')
+    ws.glyph_icon(cv, 'close', (xb[0] + xb[2]) / 2.0, (xb[1] + xb[3]) / 2.0, 11, 'bone')
+    return cv
+
+
+def screen_01_main_rig(vermin=False, cab='a'):
+    if ws.is_v4():
+        return _rig_v4(vermin, cab)
     cv = ws.new_screen('01_main_rig', sawdust_n=0)
     # ---- the floor: planks + sawdust, piled against the bottoms of everything that stands on it --------------------
     amp_saw_r = (56, RIG_Y + 6, 386, RIG_Y + 6 + 143.7)
@@ -202,4 +306,7 @@ def screen_01_main_rig(vermin=False):
     return cv
 
 
-SCREENS = {'01_main_rig': lambda: screen_01_main_rig(vermin=True)}
+SCREENS = {'01_main_rig': lambda: screen_01_main_rig(vermin=True),
+           '01_main_rig_cab_a': lambda: screen_01_main_rig(vermin=True, cab='a'),
+           '01_main_rig_cab_b': lambda: screen_01_main_rig(vermin=True, cab='b'),
+           '01_main_rig_cab_c': lambda: screen_01_main_rig(vermin=True, cab='c')}
