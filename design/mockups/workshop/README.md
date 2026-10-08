@@ -15,7 +15,7 @@ All 1280 x 800 design px, rendered by `render_all.py` into `png/`. Screens 02-09
 | `png/00_style_sheet.png` | style sheet | palette with ratios, materials (worn steel, brushed alu, bench wood, sawdust, riveted plate), type, control kit, LCD / nixie, badges, frames |
 | `png/01_main_rig.png` | main rig | BLADE / BODY heads, cab, pedalboard (THE SAW MILL selected, TS-STYLE), inspector with circuit selector, BLEND nixie, GATE / POST EQ / VISE / OUTPUT with LCDs |
 | `png/02_top_bar.png` | top bar | five states (default, A/B slot names, UNCAL chip, OUT OF TRUE chip, WOODSHED open + MATCH 42 %) and two 2x zooms |
-| `png/03_settings_calibration.png` | Settings: INPUT CALIBRATION | UNCAL / CALIBRATED status, 4i4 3rd gen device presets (INST / LINE / Custom / guided), Enter dBu field + LCD, input channel AUTO / L / R / MIX, CALIBRATED LEVELS toggle (BETA), learned gate floor |
+| `png/03_settings_calibration.png` | Settings: INPUT CALIBRATION | UNCAL / CALIBRATED status, Scarlett 4i4 device presets (3rd Gen INST, INST + PAD, 4th Gen INST, Custom, guided; only INST levels are stored), "Input: L only (auto)" caption, Enter dBu field + LCD, input channel AUTO / L / R / MIX, CALIBRATED LEVELS toggle (BETA), learned gate floor |
 | `png/04_preset_browser.png` | preset browser | banks, categories, list (one PARSE ERROR row), info panel with captures + licences + NON-COMMERCIAL, the LEGACY LEVELS hint with USE CALIBRATED LEVELS / KEEP AS SAVED, resolve status |
 | `png/05_match.png` | MATCH | reference song, your DI (takes), auto-refine, REFINED + PREVIEW results, spectrum (solid vs dashed), 9/10 rules |
 | `png/06_nam_forger.png` | NAM FORGER | mode cards, studio-blend card, size, validation DI, VISE drop/keep, output folder, what goes into the model, credits, TRAIN / RESUME, export notes, training strip |
@@ -53,7 +53,7 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 
 | style | fg | bg | ratio | AA needs | px sizes | uses | screens |
 |---|---|---|---|---|---|---|---|
-| body | bone | well | 13.71:1 ok | 4.5 | 13 | 54 | 00 01 03 04 05 06 07 08 09 |
+| body | bone | well | 13.71:1 ok | 4.5 | 13 | 55 | 00 01 03 04 05 06 07 08 09 |
 | body | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 4 | 00 03 06 |
 | body | bone_mute | well | 5.81:1 ok | 4.5 | 13 | 1 | 04 |
 | body | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 2 | 00 04 |
@@ -66,7 +66,7 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | body_strong | bone | well | 13.71:1 ok | 4.5 | 13,14 | 26 | 00 01 02 03 04 05 06 07 08 09 |
 | body_strong | bone | well_raised | 12.43:1 ok | 4.5 | 14 | 3 | 03 04 05 |
 | body_strong | bone_dim | well | 7.67:1 ok | 4.5 | 14 | 1 | 06 |
-| body_strong | ok | well | 11.02:1 ok | 4.5 | 14 | 6 | 06 08 |
+| body_strong | ok | well | 11.02:1 ok | 4.5 | 14 | 7 | 03 06 08 |
 | body_strong | ok | well_raised | 9.99:1 ok | 4.5 | 14 | 1 | 03 |
 | body_strong | warn | well | 10.02:1 ok | 4.5 | 14 | 5 | 06 07 09 |
 | brand | blade | well | 6.23:1 ok | 3.0 | 20,22 | 14 | 00 01 02 03 04 05 06 07 08 09 |
@@ -121,7 +121,7 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 4 | 01 03 07 08 |
 | title | bone | well | 13.71:1 ok | 4.5 | 18,22 | 2 | 03 04 |
 
-1043 strings measured on 10 screens: all pass WCAG 2.x AA
+1045 strings measured on 10 screens: all pass WCAG 2.x AA
 
 ## Open design choices
 
@@ -132,6 +132,6 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 - Backdrop text: the dimmed rig behind an overlay is scenery and is left out of the contrast log; every interactive or
   informative string on the overlay itself is measured.
 - Wording invented for the mockups (notes, error reasons, toast text, file names, creator handles, capture titles) is
-  placeholder and fictional. The 4i4 3rd gen levels (+12.5 dBu INST, +22 dBu LINE) are spec-sheet figures to confirm in v0.8.
-- OUT OF TRUE is drawn as "input running N dB hotter than when you calibrated"; the drift definition belongs to v0.8.
+  placeholder and fictional. The Scarlett 4i4 levels (3rd Gen +12.5 dBu INST, +14 dBu INST + PAD; 4th Gen +12 dBu INST) are the instrument-input spec-sheet figures, to confirm in v0.8; device names are a nominative compatibility reference, no logos.
+- OUT OF TRUE is drawn as "Your playing level is running ~4.5 dB hotter than when this interface was set up — did the interface gain change?" (the real UI says hotter or quieter); the drift definition belongs to v0.8.
 

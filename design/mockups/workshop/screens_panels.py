@@ -156,20 +156,20 @@ def screen_03_settings_calibration():
     y += 40
     s2 = (bx0, y, bx1, y + 30)
     flat_box(cv, s2, 'well_raised', 'ok', 3)
-    ws.text(cv, (s2[0] + 10, y + 15), '✓ CALIBRATED · 4i4 3rd gen · INST · +12.5 dBu · 2026-10-08', 'body_strong',
+    ws.text(cv, (s2[0] + 10, y + 15), '✓ CALIBRATED · Scarlett 4i4 3rd Gen · INST · +12.5 dBu · 2026-10-08', 'body_strong',
             bg=ws.inset(s2, 3), fg='ok')
     ws.text(cv, (s2[2] - 10, y + 15), 'AFTER APPLY', 'label_b', bg=ws.inset(s2, 3), align='r', fg='ok')
     y += 46
     # INTERFACE dropdown, shown open
     ws.text(cv, (bx0, y), 'INTERFACE', 'label_b', bg=body)
     y += 16
-    ws.dropdown(cv, (bx0, y, bx0 + 392, y + 28), '4i4 3rd gen — INST input (+12.5 dBu)')
+    ws.dropdown(cv, (bx0, y, bx0 + 392, y + 28), 'Scarlett 4i4 3rd Gen — INST +12.5 dBu')
     y += 32
-    opts = ['4i4 3rd gen — INST input (+12.5 dBu)', '4i4 3rd gen — LINE input (+22.0 dBu)', 'Custom — enter dBu',
-            'Not sure — measure it (guided)']
+    opts = ['Scarlett 4i4 3rd Gen — INST +12.5 dBu', 'Scarlett 4i4 3rd Gen — INST + PAD +14 dBu',
+            'Scarlett 4i4 4th Gen — INST +12 dBu', 'Custom — enter dBu', 'Not sure — measure it (guided)']
     list_x1 = bx0 + 392
     top_list = y
-    cv.fill((bx0 - 1, top_list - 1, list_x1 + 1, top_list + 4 * 26 + 3), 'steel_bare', 2)
+    cv.fill((bx0 - 1, top_list - 1, list_x1 + 1, top_list + len(opts) * 26 + 3), 'steel_bare', 2)
     for i, o in enumerate(opts):
         r = (bx0, top_list + i * 26, list_x1, top_list + i * 26 + 24)
         sel = i == 0
@@ -179,16 +179,19 @@ def screen_03_settings_calibration():
             ws.text(cv, (r[0] + 12, (r[1] + r[3]) / 2.0), '▶ ' + o, 'body_strong', bg=ws.inset(r, 3))
         else:
             ws.text(cv, (r[0] + 24, (r[1] + r[3]) / 2.0), o, 'body_dim', bg=ws.inset(r, 3))
-    note = (list_x1 + 18, top_list - 32, bx1, top_list + 4 * 26 + 2)
+    note = (list_x1 + 18, top_list - 32, bx1, top_list + len(opts) * 26 + 2)
     ws.text(cv, (note[0], note[1] + 12), 'NOTE', 'label_b', bg=body, fg='warn')
-    lines(cv, note[0], note[1] + 36, ['Values come from the maker\'s', 'spec sheet. Check that the', 'input is set to INST mode.'],
+    lines(cv, note[0], note[1] + 36, ['Levels are the instrument', 'input\'s max level from the', 'maker\'s spec sheet.'],
           body, 'body_dim', 19)
-    y = top_list + 4 * 26 + 18
+    y = top_list + len(opts) * 26 + 14
     # MAX INPUT LEVEL (left) and INPUT CHANNEL (right)
     colr = bx0 + 400
     ws.text(cv, (bx0, y), 'MAX INPUT LEVEL', 'label_b', bg=body)
     ws.text(cv, (bx0 + 124, y), 'Enter dBu', 'body_dim', bg=body)
     ws.text(cv, (colr, y), 'INPUT CHANNEL', 'label_b', bg=body)
+    cs = (colr + 100, y - 11, bx1 - 4, y + 11)
+    ws.well(cv, cs, 'well', 2)
+    ws.text(cv, (cs[0] + 8, y), 'Input: L only (auto)', 'body_strong', bg=cs, fg='ok')
     y += 16
     ws.text_field(cv, (bx0, y, bx0 + 100, y + 30), '+12.5', caret=True)
     ws.button(cv, (bx0 + 106, y, bx0 + 134, y + 30), '−', 'secondary')
@@ -196,20 +199,20 @@ def screen_03_settings_calibration():
     ws.lcd(cv, (bx0 + 190, y + 15), '+12.5', 'dBu', digits=4, h=22)
     ws.text(cv, (bx0, y + 50), 'Loudest level the input takes before it clips.', 'body_dim', bg=body)
     ws.rotary_selector(cv, colr + 118, y + 40, 52, ['AUTO', 'L', 'R', 'MIX'], 0, 'blade')
-    y += 84
+    y += 80
     ws.text(cv, (bx0, y), 'AUTO: uses the channel with signal; MIX sums L+R (−6 dB)', 'body_dim', bg=body)
-    y += 22
+    y += 18
     hsep(cv, bx0, bx1, y)
-    y += 16
+    y += 14
     # CALIBRATED LEVELS toggle + BETA, GATE FLOOR
     ws.text(cv, (bx0, y), 'CALIBRATED LEVELS', 'label_b', bg=body)
     ws.badge(cv, (bx0 + ws.text_width('CALIBRATED LEVELS', 'label_b') + 14, y), 'BETA', h=18)
     ws.text(cv, (colr, y), 'GATE FLOOR', 'label_b', bg=body)
-    y += 38
+    y += 34
     ws.toggle(cv, bx0 + 56, y, 1, ['OFF', 'ON'], size=30, key='tg_cal')
     ws.lcd(cv, (colr, y), '-42.0', 'dBFS', digits=4, h=22)
     ws.text(cv, (colr + 150, y), 'LEARNED', 'label_b', bg=body, fg='ok')
-    y += 38
+    y += 32
     ws.text(cv, (bx0, y), 'Every capture gets the level its creator used, computed on load.', 'body_dim', bg=body)
     ws.text(cv, (colr, y), 'read-only · from LEARN GATE', 'body_dim', bg=body)
     # buttons
@@ -387,8 +390,8 @@ def screen_09_notices():
     flat_box(cv, tw, 'well', 'steel_bare', 3)
     ws.text(cv, (tw[0] + 12, 126), 'OUT OF TRUE', 'body_strong', bg=tw, fg='alert')
     ws.text(cv, (tw[0] + 12 + ws.text_width('OUT OF TRUE', 'body_strong') + 6, 126),
-            '· your input is running 4.5 dB hotter than when you calibrated', 'body', bg=tw)
-    ws.text(cv, (tw[0] + 12, 150), '(interface gain moved?)', 'body_dim', bg=tw)
+            '· Your playing level is running ~4.5 dB hotter than', 'body', bg=tw)
+    ws.text(cv, (tw[0] + 12, 150), 'when this interface was set up — did the interface gain change?', 'body', bg=tw)
     ws.button(cv, (708, 108, 934, 136), 'RE-CALIBRATE', 'primary')
     ws.button(cv, (708, 142, 934, 170), 'IGNORE THIS SESSION', 'secondary')
     # chip form
