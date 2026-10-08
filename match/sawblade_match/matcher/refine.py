@@ -19,6 +19,14 @@ from .engine import _DEFAULT_GATE, Engine
 from .space import Combo, Space
 
 
+# Seed offsets of the match run, per ``cfg.seed * 1000`` (refine_combo uses seed .. seed + 4 internally). Stage-2 refine seeds fill
+# 0..490 (run.REFINE_SEED_SLOTS slots of 10), Occam confirmation fits 600 + 10 j (run.CONFIRM_SEED_BASE), the rest:
+SEED_TRACE = 500          # trace.py relinear
+SEED_SWEEP = 900          # + n: cab sweep n
+SEED_FINAL = 950
+SEED_STUDIO = 970
+SEED_PREEQ = 980          # + n: pre-EQ candidate n
+
 DISCRETE_UP = 1.0       # slope parameter value of the 24 dB/oct alternative (>= 0.5)
 MIX_GRID = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)           # cab.mix tried after CMA-ES
 HP_GRID = tuple(float(f) for f in np.geomspace(60.0, 140.0, 8)[1:])      # post.hp tried after CMA-ES (60 Hz = off)

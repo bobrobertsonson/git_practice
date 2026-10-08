@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import loss as L
-from .refine import relinear
+from .refine import SEED_TRACE, relinear
 from .screen import Scored
 from .space import Combo, Space, manual_align
 
@@ -173,7 +173,7 @@ def _trace_one(tid, eng, pool, scr, pre, ranked, refined, best, ex, tgt, plan, c
             for k in sp0.names:         # the winner's EQ / level / boost parameters; NAM input gains stay neutral
                 if k in best.extra["params"] and (not k.startswith("gain.")):
                     v0[k] = best.extra["params"][k]
-            v, r = relinear(eng, combo, sp0, ex, tgt, manual_align(0, False), v0, seed=seed * 1000 + 500, gens=plan.gens_final,
+            v, r = relinear(eng, combo, sp0, ex, tgt, manual_align(0, False), v0, seed=seed * 1000 + SEED_TRACE, gens=plan.gens_final,
                             pop=plan.pop_linear, patience=plan.patience, tol=plan.plateau_tol, log=lambda *_: None,
                             **({} if gate is None else {"gate": gate}))
             trial.append((r.total, cap, r))

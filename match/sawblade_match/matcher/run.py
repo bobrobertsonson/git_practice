@@ -30,7 +30,7 @@ from . import irscreen
 from .gatesweep import gate_sweep, reference_floor_db, render_gate
 from .irblend import TOP_IRS, pair_search
 from .preeq import PRE_CONFIRM_DB, PRE_REFIT_L1, describe as describe_pre, di_spectrum_numbers, preeq_candidate, setting_params, widening
-from .refine import refine_combo, relinear
+from .refine import SEED_FINAL, SEED_PREEQ, SEED_STUDIO, SEED_SWEEP, refine_combo, relinear
 from .studio import detect as detect_studio, studio_stage
 from .trace import trace_tones
 from .screen import Scored, Screener, TOPOLOGIES
@@ -45,11 +45,14 @@ BLEND_OCCAM_DB = 0.25     # a single-path candidate beats the best blend when wi
 TOPOLOGY_DETERMINED_PCT = 10.0     # |best single - best blend| must be at least this % of the smaller loss to call the topology determined
 TOPOLOGY_CHOICES = ("auto", "single", "blend")        # --topology; "single" = the single-path topologies (single and single2)
 PEDAL_OCCAM_DB = 0.05     # a single-path combo with a pedal must beat the best pedal-less single (same amp if available) by this
-PEDAL_CONFIRM_STARTS = 2  # ... and when it does, its pedal-less partner is fitted this many more times (other seeds) first: one
+OCCAM_CONFIRM_STARTS = 2  # ... and when it does, its pedal-less partner is fitted this many more times (other seeds) first: one
                           # stage-2 fit of a chain varies by ~0.2 dB of loss with the seed (measured, real scipy), more than the margin
-# Seed layout, per ``cfg.seed * 1000`` (refine_combo uses seed .. seed + 4 internally): stage-2 refine 0..490 (REFINE_SEED_SLOTS slots of
-# 10, picked by a hash of the candidate), trace 500, pedal-Occam confirmation 600 + 10 * j (j < PEDAL_CONFIRM_STARTS <= 30), cab sweeps
-# 900 + n, final 950, studio 970, pre-EQ 980 + n.
+PEDAL_CONFIRM_STARTS = OCCAM_CONFIRM_STARTS      # old name
+OCCAM_NOISE_DB = 0.20     # a complex candidate that wins by the margin plus less than this is "contested": its simpler partner is refitted
+                          # first. Stage-2 fits of one chain have sd ~0.11 dB across seeds (pedal known answer: 0.106 / 0.113, 8-9 seeds)
+                          # and the best of three fits is on average 0.11 (at most 0.27) below a single fit: ~2 sd covers it.
+# Seed layout, see refine.py (SEED_*): stage-2 refine 0..490 (REFINE_SEED_SLOTS slots of 10, picked by a hash of the candidate; two
+# candidates may share a slot, which is harmless), confirmation fits CONFIRM_SEED_BASE + 10 j. A test checks that the ranges are disjoint.
 REFINE_SEED_SLOTS = 50
 CONFIRM_SEED_BASE = 600
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
@@ -363,7 +366,7 @@ def choose(cands: list[Scored], topology: str = "auto") -> Scored:
 
 def refine_seed(seed: int, combo: Combo) -> int:
     """Stage-2 seed of a candidate: ``seed`` * 1000 plus a stable hash of its identity (pair key) in one of REFINE_SEED_SLOTS slots of
-    10, so it stays below CONFIRM_SEED_BASE and the +900.. seeds of the later stages. It used to be the position in the refine list, so
+    10, so it stays below SEED_TRACE and the other stages' seeds (checked by a test); two candidates can still share a slot. It used to be the position in the refine list, so
     candidates that tie at stage 1 (a pedal that is almost a gain stage ties its pedal-less partner exactly) swapped seeds whenever
     floating-point noise swapped their order, and the pedal-Occam comparison then moved by the CMA-ES noise across platforms."""
     import zlib
@@ -371,36 +374,74 @@ def refine_seed(seed: int, combo: Combo) -> int:
 
 
 def confirm_seed(seed: int, j: int) -> int:
-    """Seed of the j-th pedal-Occam confirmation fit (0 <= j < PEDAL_CONFIRM_STARTS)."""
+    """Seed of the j-th Occam confirmation fit (0 <= j < PEDAL_CONFIRM_STARTS)."""
     return seed * 1000 + CONFIRM_SEED_BASE + 10 * j
 
 
 def pedal_contested(c: Scored, b: Scored) -> bool:
-    """The pedal variant ``c`` would pass the pedal-Occam rule against its pedal-less partner ``b`` (beats it by PEDAL_OCCAM_DB)."""
+    """The pedal variant ``c`` passes the pedal-Occam rule against its pedal-less partner ``b`` (beats it by PEDAL_OCCAM_DB)."""
     return bool(c.loss < b.loss - PEDAL_OCCAM_DB)
 
 
+def occam_decision(c: Scored, b: Scored) -> str:
+    """Which simpler-vs-complex decision ``c`` (complex) against ``b`` (simpler) is: pedal / single2 / blend."""
+    return "blend" if c.topology == "blend" else "single2" if c.topology == "single2" else "pedal"
+
+
+def occam_margin(c: Scored, b: Scored) -> float:
+    """The loss ``c`` has to win by to be preferred over its simpler partner ``b`` (the margins ``choose`` applies)."""
+    if c.topology == "single":
+        return PEDAL_OCCAM_DB
+    return BLEND_OCCAM_DB if (c.topology == "blend" and b.topology == "single") else OCCAM_DB
+
+
+def occam_contested(c: Scored, b: Scored, noise: float | None = None) -> bool:
+    """``c`` would beat ``b`` by its Occam margin but by less than margin + the noise allowance: the win could be a seed flip, so ``b``
+    is refitted before ``c`` is accepted. A bigger win is robust, a smaller one already loses (a refit can only help ``b``)."""
+    gain, m = b.loss - c.loss, occam_margin(c, b)
+    return bool(m < gain < m + (OCCAM_NOISE_DB if noise is None else noise))
+
+
 def bare_partner(refined: list, c: Scored) -> Scored | None:
-    """The pedal-less single candidate with the same amp (and the same tight-boost flag) as ``c``: the comparator of the pedal-Occam
-    rule in ``choose``. None when ``c`` has no capture pedal or no such partner was refined."""
+    """The pedal-less single candidate with the same amp as ``c``, preferring the same tight-boost flag (``choose`` falls back to the
+    same amp with the other flag, so a boosted pedal variant against a plain bare candidate is confirmed too): the comparator of the
+    pedal-Occam rule in ``choose``. None when ``c`` has no capture pedal or no pedal-less candidate of that amp was refined."""
     if c.topology != "single" or not c.combo.a_pedals:
         return None
-    return next((p for p in refined if p.topology == "single" and not p.combo.a_pedals and p.combo.a_amp.key == c.combo.a_amp.key
-                 and bool(p.combo.boost) == bool(c.combo.boost)), None)
+    same_amp = [p for p in refined if p.topology == "single" and not p.combo.a_pedals and p.combo.a_amp.key == c.combo.a_amp.key]
+    return next((p for p in same_amp if bool(p.combo.boost) == bool(c.combo.boost)), None) or min(same_amp, key=lambda p: p.loss, default=None)
 
 
-def confirm_partner(c: Scored, b: Scored, refit, starts: int = PEDAL_CONFIRM_STARTS) -> tuple[Scored, dict]:
-    """Pedal-Occam confirmation: if the pedal variant ``c`` would pass the rule against ``b``, refit ``b`` ``starts`` more times
-    (``refit(j)`` -> the refitted partner, a Scored) and keep the best fit. Returns (partner to use, record for result.json)."""
-    rec = {"pedal": list(c.combo.key()), "partner": list(b.combo.key()), "pedalLoss": c.loss, "partnerLoss": b.loss, "extraFits": []}
-    if pedal_contested(c, b):
+def simpler_partner(refined: list, c: Scored) -> Scored | None:
+    """The simpler candidate ``c`` is compared with: pedal -> its pedal-less partner (``bare_partner``); single2 -> the best single
+    with the same amp, preferring one that keeps one of its two pedals (removing one block) and the same boost flag; blend -> the
+    best single-path candidate (single or single2). None when there is none."""
+    ok = [x for x in refined if np.isfinite(x.loss)]
+    if c.topology == "single":
+        return bare_partner(ok, c)
+    if c.topology == "single2":
+        pk = {p.key for p in c.combo.a_pedals}
+        same = [x for x in ok if x.topology == "single" and x.combo.a_amp.key == c.combo.a_amp.key]
+        pref = [x for x in same if x.combo.a_pedals and x.combo.a_pedals[0].key in pk and bool(x.combo.boost) == bool(c.combo.boost)]
+        return min(pref or same, key=lambda x: x.loss, default=None)
+    return min([x for x in ok if x.topology in ("single", "single2")], key=lambda x: x.loss, default=None)
+
+
+def confirm_partner(c: Scored, b: Scored, refit, starts: int | None = None) -> tuple[Scored, dict]:
+    """Occam confirmation, shared by the pedal / single2 / blend decisions: if the complex candidate ``c`` is contested against the
+    simpler ``b`` (``occam_contested``), refit ``b`` ``starts`` (OCCAM_CONFIRM_STARTS) more times (``refit(j)`` -> the refitted
+    partner, a Scored) and keep the best fit. Returns (partner to use, record for result.json)."""
+    starts = OCCAM_CONFIRM_STARTS if starts is None else starts
+    rec = {"decision": occam_decision(c, b), "complex": list(c.combo.key()), "partner": list(b.combo.key()), "complexLoss": c.loss,
+           "partnerLoss": b.loss, "marginDb": occam_margin(c, b), "extraFits": []}
+    if occam_contested(c, b):
         for j in range(starts):
             nb = refit(j)
             rec["extraFits"].append(nb.loss)
             if nb.loss < b.loss - 1e-9:
                 b = nb
         rec["partnerLossAfter"] = b.loss
-        rec["pedalStillJustified"] = pedal_contested(c, b)
+        rec["stillJustified"] = bool(b.loss - c.loss > occam_margin(c, b))
     return b, rec
 
 
@@ -698,36 +739,52 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         prog.best(r.ltas)
         prog.update(REFINE_SHARE * n_done / max(n_refine, 1))
         T["stage2PerCombo"].append({"topology": topo, "seconds": round(time.time() - t_combo, 1)})
-    # ---- pedal-Occam confirmation ------------------------------------------------------------------------------------------------
-    # One stage-2 fit of a chain varies by ~0.2 dB of loss with the seed, more than PEDAL_OCCAM_DB, and a pedal that is nearly a gain
-    # stage ties its pedal-less partner at stage 1: the pedal "won" a coin flip on one platform (CI run 280). A pedal variant that
-    # would pass the rule is therefore only accepted once its partner, fitted PEDAL_CONFIRM_STARTS more times with other seeds,
-    # still loses to it by the margin; the best fit of the partner is kept. A pedal the chain needs (5.1 -> 0.5) passes easily.
+    # ---- Occam confirmation (pedal vs none, single2 vs single, blend vs single) --------------------------------------------------
+    # One stage-2 fit of a chain varies by ~0.1 dB (sd; up to ~0.3 range) of loss with the seed, about the size of the Occam margins, and
+    # a simpler chain with the complex one's tie at stage 1 loses a coin flip (CI run 280: a pedal; single2 beating single by 0.12 dB).
+    # A complex candidate that wins by its margin but by less than margin + OCCAM_NOISE_DB is only accepted once its simpler partner,
+    # fitted OCCAM_CONFIRM_STARTS more times with other seeds, still loses; the best fit of the partner is kept. Robust wins (a pedal the
+    # chain needs: 5.1 -> 0.5) cost nothing.
     partners: list[dict] = []
-    for c in [x for x in refined if x.topology == "single" and x.combo.a_pedals]:
-        b = bare_partner(refined, c)
+    snapshot = list(refined)        # every decision is judged on the stage-2 fits as they were, so the records do not depend on order
+    order = sorted([x for x in snapshot if np.isfinite(x.loss) and (x.topology != "single" or x.combo.a_pedals)],
+                   key=lambda x: (TOPOLOGY_RANK[x.topology], x.loss))
+    pairs = [(c, simpler_partner(snapshot, c)) for c in order]
+    fits: dict = {}                 # partner key -> its confirmation fits (Scored), shared by every decision on that partner
+    n_extra = OCCAM_CONFIRM_STARTS * len({b.combo.key() for c, b in pairs if b is not None and occam_contested(c, b)})
+    n_refine += n_extra             # the confirmation fits count in the progress bar and in T["stage2PerCombo"]
+    for c, b in pairs:
         if b is None:
-            partners.append({"pedal": list(c.combo.key()), "partner": None, "pedalLoss": c.loss,
-                             "note": "no pedal-less partner of the same amp and boost flag was refined"})
+            partners.append({"decision": occam_decision(c, c), "complex": list(c.combo.key()), "partner": None,
+                             "complexLoss": c.loss, "note": "no simpler partner was refined"})
             continue
         sp_b = Space.for_combo(b.combo, plan.filters)
         v0b = sp_b.default()
-        if "blend" in v0b:
-            v0b["blend"] = b.blend
 
         def refit(j, b=b, sp_b=sp_b, v0b=v0b):
-            v2, r2, info2 = refine_combo(eng, b.combo, sp_b, ex, tgt, b.align, v0b, seed=confirm_seed(cfg.seed, j),
-                                         gens_linear=plan.gens_linear, pop_linear=plan.pop_linear, gens_gain=plan.gens_gain,
-                                         pop_gain=plan.pop_gain, gens_final=plan.gens_final, patience=plan.patience,
-                                         patience_gain=plan.patience_gain, tol=plan.plateau_tol, gex=gex, gtgt=gtgt,
-                                         short_linear=plan.short_linear, levels=b.levels, log=log)
-            return finish_refined(b.combo, b, v2, r2, info2)
+            nonlocal n_done
+            have = fits.setdefault(b.combo.key(), [])
+            while len(have) <= j:
+                t_fit = time.time()
+                v2, r2, info2 = refine_combo(eng, b.combo, sp_b, ex, tgt, b.align, v0b, seed=confirm_seed(cfg.seed, len(have)),
+                                             gens_linear=plan.gens_linear, pop_linear=plan.pop_linear, gens_gain=plan.gens_gain,
+                                             pop_gain=plan.pop_gain, gens_final=plan.gens_final, patience=plan.patience,
+                                             patience_gain=plan.patience_gain, tol=plan.plateau_tol, gex=gex, gtgt=gtgt,
+                                             short_linear=plan.short_linear, levels=b.levels, log=log)
+                have.append(finish_refined(b.combo, b, v2, r2, info2))
+                n_done += 1
+                prog.update(REFINE_SHARE * n_done / max(n_refine, 1))
+                T["stage2PerCombo"].append({"topology": b.topology, "seconds": round(time.time() - t_fit, 1), "confirm": True})
+            return have[j]
 
-        new_b, rec = confirm_partner(c, b, refit)
+        _, rec = confirm_partner(c, b, refit)
         partners.append(rec)
-        if new_b is not b:
-            refined[next(i for i, x in enumerate(refined) if x is b)] = new_b
-            log(f"pedal-Occam: partner {b.combo.describe()} refitted {b.loss:.3f} -> {new_b.loss:.3f} (pedal variant {c.loss:.3f})")
+    for key, have in fits.items():                 # the partner's best fit replaces its stage-2 record
+        i = next(i for i, x in enumerate(refined) if x.combo.key() == key)
+        best_fit = min(have, key=lambda x: x.loss)
+        if best_fit.loss < refined[i].loss - 1e-9:
+            log(f"occam: partner {refined[i].combo.describe()} refitted {refined[i].loss:.3f} -> {best_fit.loss:.3f}")
+            refined[i] = best_fit
     unrefined = sorted([c for c in unrefined if np.isfinite(c.loss)], key=lambda c: c.loss)
     refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
@@ -752,7 +809,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                 if rec["gainVsOff"] > 0:
                     v0 = {**c.extra["params"], **rec["params"]}
                     v_new, r_new, info_new = refine_combo(
-                        eng, c.combo, sp, ex, tgt, c.align, v0, seed=cfg.seed * 1000 + 980 + len(pre_res["candidates"]),
+                        eng, c.combo, sp, ex, tgt, c.align, v0, seed=cfg.seed * 1000 + SEED_PREEQ + len(pre_res["candidates"]),
                         gens_linear=PRE_REFIT_L1, pop_linear=plan.pop_linear, gens_gain=max(2, plan.gens_gain // 2),
                         pop_gain=plan.pop_gain, gens_final=max(3, plan.gens_final // 2), patience=plan.patience,
                         patience_gain=plan.patience_gain, tol=plan.plateau_tol, gex=gex, gtgt=gtgt,
@@ -813,7 +870,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                 if top["cab"].key != cur["cab"].key and top["result"].total < cur["result"].total - CAB_SWITCH_DB:
                     combo2 = c.combo.with_cab(top["cab"])
                     v2, r2 = relinear(eng, combo2, sp, ex, tgt, c.align, c.extra["params"], levels=c.levels,
-                                      seed=cfg.seed * 1000 + 900 + len(cab_sweeps), gens=plan.gens_final, pop=plan.pop_linear,
+                                      seed=cfg.seed * 1000 + SEED_SWEEP + len(cab_sweeps), gens=plan.gens_final, pop=plan.pop_linear,
                                       patience=plan.patience, tol=plan.plateau_tol, log=log)
                     new = finish_refined(combo2, c, v2, r2, c.extra["info"])
                     refined[next(i for i, x in enumerate(refined) if x is c)] = new
@@ -852,7 +909,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         if missing:                            # internal invariant: the keys come from this candidate's own sweep
             raise RuntimeError(f"two-IR blend: IRs {missing} are not among the captures swept for the winning candidate {pk}")
         irb = pair_search(eng, best, Space.for_combo(best.combo, plan.filters), ex, tgt, [bykey[k] for k in keys],
-                          seed=cfg.seed * 1000 + 950, gens=plan.gens_final, pop=plan.pop_linear, patience=plan.patience,
+                          seed=cfg.seed * 1000 + SEED_FINAL, gens=plan.gens_final, pop=plan.pop_linear, patience=plan.patience,
                           tol=plan.plateau_tol, log=log)
         won_pair = irb.pop("_won", None)
         irb["ablated"] = False
@@ -886,7 +943,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     det = detect_studio(bool(ref.clean), tgt_full, tgt, y_st0, best.extra["params"], ref_sig)
     studio = {**det, "ablated": "studio" in ablate, "busCompUsed": False}
     if (det["compressed"] or det["eqd"]) and "studio" not in ablate:
-        srec = studio_stage(eng, best, sp_st, ex, tgt, det, seed=cfg.seed * 1000 + 970, gens=plan.gens_final, pop=plan.pop_linear,
+        srec = studio_stage(eng, best, sp_st, ex, tgt, det, seed=cfg.seed * 1000 + SEED_STUDIO, gens=plan.gens_final, pop=plan.pop_linear,
                             patience=plan.patience, tol=plan.plateau_tol, log=log)
         won_st = srec.pop("_won", None)
         studio.update(srec)

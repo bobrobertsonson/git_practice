@@ -255,7 +255,7 @@ Before (first known-answer run, `--quick`): HM2 A-weighted 2.72 dB, UBR 3.45 dB;
   `refine_combo`), trace 500, confirmation `CONFIRM_SEED_BASE = 600` + 10 j, cab sweeps 900 + n, final 950, studio 970, pre-EQ
   980 + n; a unit test pins that the ranges do not overlap.
   (b) a pedal variant that would pass the rule is accepted only after its partner (same amp, same boost flag; `choose` now compares
-  against that partner first) was refitted `PEDAL_CONFIRM_STARTS = 2` more times (`confirm_seed(seed, j)`) and still loses by the
+  against that partner first) was refitted `OCCAM_CONFIRM_STARTS = 2` more times (`confirm_seed(seed, j)`) and still loses by the
   margin; the best partner fit is kept (`confirm_partner`). Why (b) on top of (a): (a) removes the order dependence but not the
   noise, and a fit of the same seed can differ across CPUs / libm. From the 8-seed tables, a single bare fit vs a single pedal fit
   lets the pedal win by more than 0.05 in 7 of 72 pairs (~10 %); against the best of three bare fits in 4 of 504 (~1 %). A pedal the
@@ -266,6 +266,40 @@ Before (first known-answer run, `--quick`): HM2 A-weighted 2.72 dB, UBR 3.45 dB;
   and passes with the fix; unit tests with fixed losses (`test_confirm_partner_with_fixed_losses`,
   `test_pedal_occam_uses_the_same_amp_same_boost_bare_partner`, `test_refine_seed_is_stable_per_candidate_not_per_position`) do not
   involve scipy. The CI divergence itself (different CPU, Python 3.11) was not reproduced without forcing the order.
+- **Shared Occam confirmation (pedal, single2, blend):** the same seed noise makes every simpler-vs-complex choice partly a coin flip.
+  `test_single_path_known_answer_is_found_as_single` failed on real scipy at 21a9d03 and dc0fa07 for that reason without any pedal
+  involved: single2 0.2035 vs the single 0.3243 (gap 0.121 against `OCCAM_DB` 0.10). One helper now serves all three decisions
+  (`confirm_partner`, `occam_contested`, `simpler_partner`, `occam_margin` in `run.py`). A complex candidate that beats its simpler
+  partner by its margin but by less than margin + `OCCAM_NOISE_DB` (0.20) is "contested": the partner is refitted
+  `OCCAM_CONFIRM_STARTS` (2; old name `PEDAL_CONFIRM_STARTS` kept) more times with other seeds and its best fit is kept before `choose`
+  decides. A win of margin + noise or more is robust and costs nothing; a smaller win already loses (a refit can only help the
+  partner). Margins: pedal `PEDAL_OCCAM_DB` 0.05, single2 `OCCAM_DB` 0.10, blend vs a single `BLEND_OCCAM_DB` 0.25 (vs a single2: 0.10).
+  Partners: pedal -> the pedal-less single of the same amp, preferring the same boost flag and falling back to the same amp with the
+  other flag exactly like `choose` (a boosted pedal variant against a plain bare candidate is confirmed); single2 -> the best single
+  with the same amp, preferring one that keeps one of its two pedals (the chain with one block removed, the actual Occam comparison)
+  and the same boost flag; blend -> the best single-path candidate (single or single2). Decisions are judged on a snapshot of the
+  stage-2 fits and the refits are cached per partner, so two variants sharing a partner do not repeat the fits and the
+  `pedalOccam.partners` records (decision, complex, partner, margin, losses, extraFits, partnerLossAfter, stillJustified) do not
+  depend on order. Confirmation fits count in the progress bar and in `timings.stage2PerCombo` (`"confirm": true`).
+  `OCCAM_NOISE_DB = 0.20` is about 2 sd of one stage-2 fit (sd 0.06 to 0.11 dB across seeds measured below) and covers the mean 0.11 /
+  maximum 0.27 dB by which the best of three fits is below one fit. Seeds: the stage seeds are named constants (`refine.SEED_TRACE`
+  500, `SEED_SWEEP` 900 + n, `SEED_FINAL` 950, `SEED_STUDIO` 970, `SEED_PREEQ` 980 + n; refine 0..490, confirmation 600 + 10 j),
+  a test checks that the ranges are disjoint under the stated bounds on n.
+  Measured spurious-win rate (real scipy 1.17.1, fixture seeds shifted, 9 fits of each chain; the rate is the share of
+  (complex fit, simpler fit) pairs in which the complex chain wins by more than its margin although it is not truly better, vs the
+  same with the simpler fit replaced by the best of three of its fits):
+
+  | decision | fixture (truth) | one fit vs one fit | vs best of 3 |
+  |---|---|---|---|
+  | pedal vs none | feel known answer (no pedal) | 7 of 72 = 10 % | 4 of 504 = 0.8 % |
+  | single2 vs single | single-path known answer (single) | 12 of 81 = 15 % | 10 of 756 = 1.3 % |
+  | blend vs single | single-path known answer (single) | 0 of 9 runs: the blend is 0.54 to 0.87 dB worse than the best single | n/a (never contested) |
+  | blend vs single | blend known answer (blend) | 0 of 4 runs: the blend is 3.0 dB or more better than the single | n/a (never contested) |
+
+  single fit across 9 seeds: 0.146 to 0.324 (sd 0.061); single2: 0.156 to 0.364 (sd 0.065). The blend decision is covered by the same
+  code but the fixtures never put it inside the contested band, so it adds no refits there. Cost: nothing when no decision is
+  contested; otherwise `OCCAM_CONFIRM_STARTS` fits per distinct partner (about 17 s each on the known-answer fixtures). The feel known-answer run needs 0 extra fits (73 s, as before); the full match suite on real scipy 1.17.1: 798 passed, 7 skipped (demucs not installed, SAWBLADE_TEST_TRAIN / SAWBLADE_TEST_DEMUCS unset), 0 failed.
+  Local verification on real scipy 1.17.1: `test_single_path_known_answer_is_found_as_single` passes (it failed at 21a9d03 and dc0fa07).
 - **Other result.json additions:** every candidate JSON (`best`, `alternatives`, `candidatesStage2`) carries `pairKey` (the candidate's
   identity without its cab); the cab-sweep test matches a candidate to its own sweep with it. Known limitation: the full-DI gate
   sweep indexes the reference with `ref.offset_samples` as refined at the start of the run, not the final per-render offset.
