@@ -25,6 +25,7 @@ add_executable(sawblade_tests
   test_auto_trim.cpp
   test_calibration.cpp
   test_chain_calibration.cpp
+  test_input_cal_i4a.cpp
   test_capture_cache.cpp
   test_stem_set.cpp
   test_stem_player.cpp
