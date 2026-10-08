@@ -117,7 +117,7 @@ bool hasNonlinearBlock(const Preset& p) {
 }
 
 std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache, const std::atomic<bool>* cancel,
-                                                  const ChainCalibration& cal) {
+                                              const ChainCalibration& cal) {
   const auto l = measureReferenceLufs(p, cache, false, cancel, cal);
   if (!l) return std::nullopt;
   AutoTrimResult r;
@@ -141,7 +141,7 @@ bool ensureAutoTrim(Preset& p, CaptureCache* cache, const ChainCalibration& cal)
 }
 
 std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* cache, const std::atomic<bool>* cancel,
-                                          const ChainCalibration& cal) {
+                                      const ChainCalibration& cal) {
   Preset q = withoutTrim(p);
   PathPreset& mine = path == 0 ? q.a : q.b;
   PathPreset& other = path == 0 ? q.b : q.a;
