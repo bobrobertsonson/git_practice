@@ -250,9 +250,9 @@ _K_SHELF = ([1.53512485958697, -2.69169618940638, 1.19839281085285], [1.0, -1.69
 _K_HP = ([1.0, -2.0, 1.0], [1.0, -1.99004745483398, 0.99007225036621])
 
 
-def loudness_range_lu(x: np.ndarray, fs: int = ANALYSIS_RATE) -> float | None:
-    """EBU Tech 3342 LRA: K-weighted 3 s short-term loudness every 0.1 s, -70 LUFS absolute gate,
-    -20 LU relative gate, 95th - 10th percentile. None for signals shorter than 3 s."""
+def loudness_range_detail(x: np.ndarray, fs: int = ANALYSIS_RATE) -> dict | None:
+    """The numbers behind ``loudness_range_lu``: LRA and the gated 10th / 95th percentiles of the 3 s short-term loudness (LUFS).
+    None for signals shorter than 3 s."""
     if fs != ANALYSIS_RATE:
         raise ValueError("K-weighting coefficients are for 48 kHz")
     win = 3 * fs
@@ -266,12 +266,20 @@ def loudness_range_lu(x: np.ndarray, fs: int = ANALYSIS_RATE) -> float | None:
     lufs = -0.691 + 10 * np.log10(np.maximum(ms, 1e-30))
     keep = lufs > -70.0
     if not keep.any():
-        return 0.0
+        return {"lraLu": 0.0, "p10Lufs": None, "p95Lufs": None}
     rel = -0.691 + 10 * np.log10(np.mean(10 ** ((lufs[keep] + 0.691) / 10))) - 20.0
     keep = lufs > max(rel, -70.0)
     if not keep.any():
-        return 0.0
-    return float(np.percentile(lufs[keep], 95) - np.percentile(lufs[keep], 10))
+        return {"lraLu": 0.0, "p10Lufs": None, "p95Lufs": None}
+    p10, p95 = float(np.percentile(lufs[keep], 10)), float(np.percentile(lufs[keep], 95))
+    return {"lraLu": float(np.percentile(lufs[keep], 95) - np.percentile(lufs[keep], 10)), "p10Lufs": p10, "p95Lufs": p95}
+
+
+def loudness_range_lu(x: np.ndarray, fs: int = ANALYSIS_RATE) -> float | None:
+    """EBU Tech 3342 LRA: K-weighted 3 s short-term loudness every 0.1 s, -70 LUFS absolute gate,
+    -20 LU relative gate, 95th - 10th percentile. None for signals shorter than 3 s."""
+    d = loudness_range_detail(x, fs)
+    return None if d is None else d["lraLu"]
 
 
 # --- onsets + low-end tightness --------------------------------------------------------------------

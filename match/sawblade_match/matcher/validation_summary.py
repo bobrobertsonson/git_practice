@@ -62,6 +62,39 @@ def pathcheck_lines(pc: dict) -> list[str]:
     return out
 
 
+def dynamics_lines(rd: dict | None) -> list[str]:
+    """Reference dynamics next to best_L's (and the starter's), one definition for all (refdyn.window_dynamics)."""
+    if not rd:
+        return []
+    if rd.get("error"):
+        return [f"  dynamics: not measured ({rd['error']})"]
+    f = lambda v, fmt: "n/a" if v is None else format(v, fmt)
+    L = [f"  dynamics (crest400 = median 400 ms peak/RMS dB; LRA and short-term p10..p95 LUFS, 3 s; window: {rd.get('window')}):"]
+    for name in ("reference", "best_L", "starter_L"):
+        d = rd.get(name)
+        if d:
+            L.append(f"    {name:<10} crest400 {f(d.get('medianCrest400Db'), '.1f')} dB | crest {f(d.get('crestFactorDb'), '.1f')} dB | "
+                     f"LRA {f(d.get('lraLu'), '.1f')} LU | short-term {f(d.get('shortTermP10Lufs'), '.1f')}..{f(d.get('shortTermP95Lufs'), '.1f')} LUFS "
+                     f"(spread {f(d.get('shortTermSpreadLu'), '.1f')} LU)")
+    return L
+
+
+def gain_lines(ig: dict | None) -> list[str]:
+    """The input gain (dB re unity) each block of each path received, with the modelled pedals' params."""
+    if not ig:
+        return []
+    L = ["  input gain per block (inputGainDb re unity; normalizeLoudness; pedal params):"]
+    for pname, p in ig.items():
+        for b in p.get("blocks", []):
+            g = b.get("inputGainDb")
+            extra = "" if not b.get("params") else " params " + " ".join(f"{k}={v:g}" for k, v in b["params"].items())
+            nl = "" if b.get("normalizeLoudness") is None else f" normalizeLoudness={'on' if b['normalizeLoudness'] else 'off'}"
+            L.append(f"    path {pname.upper()} {b.get('id')} {b.get('type')}/{b.get('slot')}: "
+                     + ("inputGainDb n/a" if g is None else f"inputGainDb {g:+.2f}") + nl + extra
+                     + ("" if not b.get("capture") else f" [{b['capture']}]"))
+    return L
+
+
 def run_block(d: Path) -> list[str]:
     r = _load(d / "result.json")
     if r is None:
@@ -95,6 +128,8 @@ def run_block(d: Path) -> list[str]:
              f"{({k: g('irPool', k) for k in ('total', 'screened', 'prefiltered')})}")
     tc = (r.get("tonecheck") or {}).get("best_L", {})
     L.append(f"  guardrails: {[(x.get('id'), x.get('status')) for x in tc.get('rules', []) if x.get('status') != 'pass']}")
+    L += dynamics_lines(r.get("referenceDynamics"))
+    L += gain_lines(r.get("inputGains"))
     if r.get("trace"):
         L.append(f"  trace: {({k: (v or {}).get('why') for k, v in r['trace'].items()})}")
     pc = _load(d / "pathcheck.json")

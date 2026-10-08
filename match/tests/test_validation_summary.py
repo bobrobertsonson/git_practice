@@ -85,3 +85,35 @@ def test_topology_margin_is_printed(tmp_path):
     txt = VS.summary(tmp_path)
     assert "best single 1.050 vs best blend 1.000, delta +5.0 %" in txt and "topology not determined" in txt
     assert "topology: blend -- only one topology was evaluated" in txt
+
+
+def test_dynamics_and_input_gain_lines(tmp_path):
+    d = make_run(tmp_path, "L_hm2_quick")
+    r = json.loads((d / "result.json").read_text())
+    dyn = lambda c4, c, lra, p10, p95: {"medianCrest400Db": c4, "crestFactorDb": c, "lraLu": lra, "shortTermP10Lufs": p10,
+                                        "shortTermP95Lufs": p95, "shortTermSpreadLu": p95 - p10}
+    r["referenceDynamics"] = {"window": "matched channel, reference samples 0..96000 (DI-aligned)",
+                              "reference": dyn(14.2, 17.0, 3.4, -24.1, -20.7), "best_L": dyn(9.8, 15.7, 0.9, -22.0, -21.1),
+                              "starter_L": dyn(12.0, 16.9, 5.8, -30.0, -24.2)}
+    r["inputGains"] = {"a": {"role": "body", "levelDb": 0.0, "blocks": [
+        {"id": "a1", "type": "pedal.ts", "slot": "boost", "capture": None, "inputGainDb": None, "normalizeLoudness": None,
+         "params": {"drive": 1.35, "level": 8.0, "tone": 4.8}},
+        {"id": "a2", "type": "nam", "slot": "amp", "capture": "57492/1 HM-2 style", "inputGainDb": 2.5, "normalizeLoudness": True}]}}
+    (d / "result.json").write_text(json.dumps(r))
+    lines = VS.summary(tmp_path).splitlines()
+    ref_l = next(ln for ln in lines if ln.strip().startswith("reference "))
+    for want in ("crest400 14.2 dB", "LRA 3.4 LU", "-24.1..-20.7 LUFS", "spread 3.4 LU"):
+        assert want in ref_l, want
+    best_l = next(ln for ln in lines if ln.strip().startswith("best_L "))
+    assert "crest400 9.8 dB" in best_l and "LRA 0.9 LU" in best_l
+    assert any("DI-aligned" in ln for ln in lines)
+    boost = next(ln for ln in lines if "pedal.ts/boost" in ln)
+    assert "drive=1.35" in boost and "level=8" in boost and "inputGainDb n/a" in boost
+    nam = next(ln for ln in lines if "nam/amp" in ln)
+    assert "path A" in nam and "inputGainDb +2.50" in nam and "normalizeLoudness=on" in nam and "57492/1 HM-2 style" in nam
+
+
+def test_old_result_without_the_new_fields_still_prints(tmp_path):
+    make_run(tmp_path, "L_blend")
+    txt = VS.summary(tmp_path)
+    assert "dynamics" not in txt and "input gain per block" not in txt
