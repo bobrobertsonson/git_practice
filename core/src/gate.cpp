@@ -152,8 +152,11 @@ void Gate::reset() {
   updateCoefficients();
 }
 
-void Gate::processKeyed(const float* key, float* io, int numSamples) noexcept {
-  if (!params_.enabled) return;
+void Gate::processKeyed(const float* key, float* io, int numSamples, std::uint8_t* openOut) noexcept {
+  if (!params_.enabled) {
+    if (openOut) std::fill(openOut, openOut + numSamples, std::uint8_t{1});
+    return;
+  }
   const double rangeDb = params_.rangeDb;
   const bool expander = params_.mode == GateMode::Expander;
   const bool floorRel = params_.thresholdMode == GateThresholdMode::FloorRelative;
@@ -189,6 +192,7 @@ void Gate::processKeyed(const float* key, float* io, int numSamples) noexcept {
     } else {
       open_ = false;
     }
+    if (openOut) openOut[i] = open_ ? 1 : 0;
 
     double target = open_ ? 0.0 : rangeDb;
     if (expander && !open_ && env_ < closeLin_) {

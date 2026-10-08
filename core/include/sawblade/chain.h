@@ -14,6 +14,7 @@
 #include "sawblade/calibration.h"
 #include "sawblade/convolver.h"
 #include "sawblade/delay.h"
+#include "sawblade/drift.h"
 #include "sawblade/eq.h"
 #include "sawblade/gain_ladder.h"
 #include "sawblade/gate.h"
@@ -262,6 +263,12 @@ class Chain {
   double gateFloorSeedDb() const noexcept { return gate_.floorSeedDb(); }  // where the follower starts (default -70 dBFS)
   float learnedGateFloorDb() const noexcept { return gateFloorOut_.load(std::memory_order_relaxed); }
 
+  // --- v0.8 I3 input-level drift check ---
+  // Off by default (process() then does exactly what it did before). On: process() feeds the tap with the DI (before INPUT and
+  // before any calibration gain) over the frames where the live gate is open; with the gate off there is no statistic. Any thread.
+  void setDriftTapEnabled(bool on) noexcept { driftTap_.setEnabled(on); }
+  const drift::PeakTap& driftTap() const noexcept { return driftTap_; }
+
   // --- v0.8 input calibration (see ChainCalibration) ---
   // Plans the levels of the built blocks. Allocates; reads only data that is immutable after construction, so any thread.
   CalibrationPlan planCalibration(const ChainCalibration& c) const;
@@ -379,6 +386,8 @@ class Chain {
   Gate gate_;
   std::atomic<float> gateFloorOut_{std::numeric_limits<float>::quiet_NaN()};  // processChunk(): the learned live-gate floor, NaN until learned
   bool gateOn_ = false;
+  drift::PeakTap driftTap_;
+  std::vector<std::uint8_t> openMask_;  // the gate's open flags for the drift tap (sized in prepare)
   std::unique_ptr<Convolver> cabShared_;
   ParametricEq postEq_;
   BusCompressor comp_;

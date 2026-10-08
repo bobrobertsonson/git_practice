@@ -352,6 +352,8 @@ void Chain::prepare(const ProcessSpec& spec) {
   work_.assign(nb, 0.0f);
   bufA_.assign(nb, 0.0f);
   bufB_.assign(nb, 0.0f);
+  openMask_.assign(nb, 0);
+  driftTap_.prepare(spec.sampleRate);
 
   inGain_.prepare(spec);
   gate_.prepare(spec);
@@ -1015,7 +1017,12 @@ void Chain::processChunk(const float* in, float* out, int n) noexcept {
   std::copy(in, in + n, w);
   inGain_.process(w, n);
   if (gateOn_) {
-    gate_.processKeyed(w, w, n);
+    if (driftTap_.enabled()) {
+      gate_.processKeyed(w, w, n, openMask_.data());
+      driftTap_.process(in, openMask_.data(), n);  // the DI, before INPUT; `out` is not written yet, so in may alias it
+    } else {
+      gate_.processKeyed(w, w, n);
+    }
     gateFloorOut_.store(gate_.floorLearned() ? static_cast<float>(gate_.floorEstimateDb()) : std::numeric_limits<float>::quiet_NaN(),
                         std::memory_order_relaxed);
   }

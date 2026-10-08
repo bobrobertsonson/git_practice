@@ -75,7 +75,9 @@ class Gate : public Processor {
 
   // key may alias io (e.g. key = DI before the split). The key sample is read before io is
   // written, per sample.
-  void processKeyed(const float* key, float* io, int numSamples) noexcept;
+  // openOut (optional, v0.8 I3): when non-null, openOut[i] is set to 1 where the gate is open at sample i, else 0. Observation
+  // only: the audio is the same with or without it.
+  void processKeyed(const float* key, float* io, int numSamples, std::uint8_t* openOut = nullptr) noexcept;
 
   // Floor follower constants.
   static constexpr double kFrameMs = 50.0;
