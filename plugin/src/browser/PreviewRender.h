@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "sawblade/capture_cache.h"
+#include "sawblade/chain.h"
 #include "sawblade/preset.h"
 #include "sawblade/wav_io.h"
 
@@ -25,7 +26,9 @@ AudioFile decodeWavMemory(const void* data, std::size_t size);
 // `levelMatched` (v0.3, LEVEL MATCH on): the preview is NOT peak-normalized; it plays at the preset's own auto trim (applied after
 // its output gain), so a candidate sits at the same loudness as the rig it would replace. Only a safety limit applies: a result
 // whose peak would exceed -0.1 dBFS is scaled down as a whole.
+// `calibration` (v0.8 I4b): the input calibration playback would use for this preset (device record, toggle and the preset's mode, resolved by
+// the caller): the preview is then rendered with the same planned gains. Default = off, which is bit-identical to a call without it.
 std::vector<float> renderPreview(const Preset& preset, const AudioFile& riff, double hostRate, CaptureCache* cache, std::string& error,
-                                 bool levelMatched = false);
+                                 bool levelMatched = false, const ChainCalibration& calibration = {});
 
 }  // namespace sawblade::plugin

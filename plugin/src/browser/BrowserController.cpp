@@ -330,6 +330,7 @@ void BrowserController::preview() {
         job.levelMatch.block = ts.front().blockIndex;
       }
     }
+    job.calibration = proc_.calibrationFor(np.calibrationMode);  // v0.8 I4b: the preview plays with what playback plays with
     job.preset = std::move(np);
     const double hr = proc_.status().hostRate;
     job.hostRate = hr > 0.0 ? hr : 48000.0;

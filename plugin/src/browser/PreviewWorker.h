@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "sawblade/capture_cache.h"
+#include "sawblade/chain.h"
 #include "sawblade/preset.h"
 #include "sawblade/wav_io.h"
 
@@ -36,6 +37,9 @@ class PreviewWorker {
   struct Job {
     LevelMatch levelMatch;
     Preset preset;
+    // v0.8 I4b: the calibration playback would use for `preset` (device record, toggle, the preset's mode): the make-up (with the hop rule), the trim
+    // and the render all use it, so the preview shows the planned gain difference playback has. Default = off (bit-identical to before).
+    ChainCalibration calibration;
     double hostRate = 48000.0;
     std::shared_ptr<std::atomic<bool>> alive;  // cleared by the owner on destruction (message thread)
     RenderFn render;                           // empty: renderPreview with the embedded riff

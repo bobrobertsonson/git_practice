@@ -810,6 +810,67 @@ TEST_CASE("browser: the preview is level matched (make-up and trim, no peak norm
   CHECK(want == matched);
 }
 
+// v0.8 I4b: the preview renders with the calibration playback uses (make-up with the hop rule, trim and render), the job carries it.
+TEST_CASE("browser: the preview worker uses the job's calibration for make-up, trim and render; the default job is the old pipeline", "[browser][ui][levelmatch][devicecal]") {
+  SwapRig rig("{}");
+  nlohmann::json cj = levelRigJson();
+  cj["version"] = 5;
+  cj["calibration"] = {{"mode", "calibrated"}};
+  cj["paths"]["b"]["blocks"][0]["model"]["file"] = (kFixtures / "nam" / "cal_amp_hi.nam").string();
+  const Preset cur = parsePreset(cj, kFixtures);
+  cj["paths"]["b"]["blocks"][0]["model"]["file"] = (kFixtures / "nam" / "cal_amp_lo.nam").string();
+  const Preset cand = parsePreset(cj, kFixtures);
+  const AudioFile riff = embeddedPreviewRiff();
+  const ChainCalibration cal = assumedDeviceCalibration();
+  auto run = [&](const ChainCalibration& c) {
+    PreviewWorker w;
+    PreviewWorker::Job job;
+    job.preset = cand;
+    job.calibration = c;
+    job.hostRate = 48000.0;
+    job.levelMatch.on = true;
+    job.levelMatch.before = cur;
+    job.levelMatch.path = 1;
+    job.levelMatch.block = 0;
+    job.alive = std::make_shared<std::atomic<bool>>(true);
+    std::vector<float> got;
+    std::string err;
+    bool done = false;
+    job.onDone = [&](std::vector<float> out, std::string e) {
+      got = std::move(out);
+      err = std::move(e);
+      done = true;
+    };
+    w.submit(std::move(job));
+    REQUIRE(pumpUntil([&] { return done; }, 60000));
+    REQUIRE(err.empty());
+    return got;
+  };
+  const std::vector<float> calibrated = run(cal);
+  const std::vector<float> plain = run(ChainCalibration{});
+
+  // Calibrated: exactly the candidate with its calibrated make-up and trim, rendered with the calibration.
+  const Preset zero = withSlotMakeup(cand, 1, 0, 0.0);
+  const auto mk = slotMakeupDb(cur, zero, 1, nullptr, nullptr, cal, 0);
+  REQUIRE(mk.has_value());
+  Preset expected = withSlotMakeup(cand, 1, 0, *mk);
+  REQUIRE(stampAutoTrim(expected, nullptr, cal));
+  std::string err;
+  const std::vector<float> want = renderPreview(expected, riff, 48000.0, nullptr, err, /*levelMatched=*/true, cal);
+  REQUIRE(err.empty());
+  CHECK(want == calibrated);
+
+  // Off: exactly the pre-I4b pipeline (the existing level-matched test's expectation).
+  const auto mk0 = slotMakeupDb(cur, zero, 1);
+  REQUIRE(mk0.has_value());
+  Preset expected0 = withSlotMakeup(cand, 1, 0, *mk0);
+  REQUIRE(ensureAutoTrim(expected0));
+  CHECK(renderPreview(expected0, riff, 48000.0, nullptr, err, /*levelMatched=*/true) == plain);
+  // The planned gain difference of the amp swap (lo is planned 6 dB below hi) is what the calibrated make-up carries; uncalibrated has none.
+  CHECK(*mk0 == Catch::Approx(0.0).margin(0.01));
+  CHECK(*mk == Catch::Approx(6.0206).margin(0.05));
+}
+
 TEST_CASE("browser: when the make-up cannot be measured the swap still happens with make-up 0 and a short status", "[browser][ui][levelmatch]") {
   SwapRig rig("{}", /*bEnabled=*/false);  // path B is off: nothing to measure on it
   rig.env.set("FAKE_T3K_FETCH", (kFixtures / "nam" / "wavenet.nam").string());

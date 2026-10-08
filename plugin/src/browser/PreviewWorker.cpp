@@ -102,16 +102,21 @@ void PreviewWorker::run() {
         try {
           if (job.levelMatch.path >= 0) {
             const Preset zero = withSlotMakeup(p, job.levelMatch.path, job.levelMatch.block, 0.0);
-            if (const auto mk = slotMakeupDb(job.levelMatch.before, zero, job.levelMatch.path, &cache_))
+            // With calibration on, a block that feeds another NAM block gets make-up 0 (the planned gain carries the hop); off, the call is
+            // the pre-I2 one.
+            if (const auto mk = slotMakeupDb(job.levelMatch.before, zero, job.levelMatch.path, &cache_, nullptr, job.calibration, job.levelMatch.block))
               p = withSlotMakeup(p, job.levelMatch.path, job.levelMatch.block, *mk);
           }
           if (cancelled_.load()) return;
-          ensureAutoTrim(p, &cache_);
+          // A stored trim was measured for one setting only (the stamp's hash does not cover the calibration): with calibration on the candidate
+          // is always measured as the calibrated chain plays it.
+          if (job.calibration.enabled) stampAutoTrim(p, &cache_, job.calibration);
+          else ensureAutoTrim(p, &cache_);
         } catch (const std::exception& e) {
           err = std::string("level match: ") + e.what();
         }
       }
-      if (err.empty()) out = renderPreview(p, riff_, job.hostRate, &cache_, err, job.levelMatch.on);
+      if (err.empty()) out = renderPreview(p, riff_, job.hostRate, &cache_, err, job.levelMatch.on, job.calibration);
     }
     if (cancelled_.load() || !job.alive || !job.alive->load()) continue;
     juce::MessageManager::callAsync([alive = job.alive, cb = std::move(job.onDone), err = std::move(err), out = std::move(out)]() mutable {

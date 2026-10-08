@@ -1,6 +1,8 @@
 // Capture browser: PreviewPlayer on the audio thread (alloc / lock harness), the preview render, the riff
 // asset and its generator, and USE through the processor's normal loader.
 
+#include <catch2/catch_approx.hpp>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -307,4 +309,65 @@ TEST_CASE("browser swap: a load failure surfaces through status().error and keep
   REQUIRE(h.p.waitForLoader());
   CHECK_FALSE(h.p.status().error.empty());
   CHECK(h.p.currentPreset() == before);
+}
+
+// ---- v0.8 I4b: the preview renders with the calibration playback uses -------------------------------------------------------------
+namespace {
+// Path A = one amp capture (linear identity with invented dBu metadata), path B off, no cab; v5 "calibrated".
+Preset ampRig(const char* amp) {
+  const json a = json::array({json{{"id", "a1"}, {"type", "nam"}, {"slot", "amp"}, {"model", {{"file", (kFixtures / "nam" / amp).string()}}}}});
+  const json b = json::array({json{{"id", "b1"}, {"type", "nam"}, {"model", {{"file", (kFixtures / "nam" / "linear_identity.nam").string()}}}}});
+  const json j = {{"schema", "sawblade.preset"}, {"version", 5}, {"name", "amp swap"}, {"calibration", {{"mode", "calibrated"}}},
+                  {"paths", {{"a", {{"blocks", a}}}, {"b", {{"enabled", false}, {"blocks", b}}}}},
+                  {"align", {{"mode", "off"}}}, {"blend", 0.0},
+                  {"cab", {{"mode", "shared"}, {"enabled", false}, {"ir", {{"file", "(none)"}}}}}};
+  return parsePreset(j, kFixtures);
+}
+
+double rmsDbOf(const std::vector<float>& x) {
+  double s = 0.0;
+  for (float v : x) s += static_cast<double>(v) * v;
+  return 10.0 * std::log10(s / static_cast<double>(std::max<std::size_t>(1, x.size())) + 1e-30);
+}
+}  // namespace
+
+TEST_CASE("preview render: with calibration on an amp swap shows the planned gain difference playback has; off it is bit-identical (v0.8 I4b)",
+          "[browser][preview][devicecal]") {
+  AudioFile riff = embeddedPreviewRiff();
+  for (float& v : riff.interleaved) v *= 0.1f;  // headroom: nothing must reach the preview's safety limit
+  const Preset hi = ampRig("cal_amp_hi.nam"), lo = ampRig("cal_amp_lo.nam");  // input levels 12 and 18 dBu: at +12 dBu lo is planned 6 dB below hi
+  ChainCalibration cal;
+  cal.enabled = true;
+  cal.device.dbu = 12.0;
+  std::string err;
+
+  const auto previewHi = renderPreview(hi, riff, 48000.0, nullptr, err, /*levelMatched=*/true, cal);
+  const auto previewLo = renderPreview(lo, riff, 48000.0, nullptr, err, /*levelMatched=*/true, cal);
+  REQUIRE_FALSE(previewHi.empty());
+  REQUIRE_FALSE(previewLo.empty());
+  const double previewDiff = rmsDbOf(previewLo) - rmsDbOf(previewHi);
+  CHECK(previewDiff == Catch::Approx(-6.0206).margin(0.05));
+
+  // Playback: the engine built with the same calibration runs the same riff.
+  const auto played = [&](const Preset& p) {
+    EngineCalibration ec;
+    ec.chain = cal;
+    auto e = Engine::build(p, 48000.0, 512, nullptr, ec);
+    std::vector<float> in = riff.interleaved, out(in.size());
+    for (std::size_t pos = 0; pos < in.size(); pos += 512) {
+      const auto n = static_cast<int>(std::min<std::size_t>(512, in.size() - pos));
+      e->process(in.data() + pos, out.data() + pos, n);
+    }
+    return out;
+  };
+  const double playDiff = rmsDbOf(played(lo)) - rmsDbOf(played(hi));
+  CHECK(playDiff == Catch::Approx(previewDiff).margin(0.05));
+
+  // Off (the default argument, and an explicit off): no planned gain, the very same samples as before I4b.
+  const auto offHi = renderPreview(hi, riff, 48000.0, nullptr, err, true);
+  const auto offLo = renderPreview(lo, riff, 48000.0, nullptr, err, true);
+  CHECK(offHi == renderPreview(hi, riff, 48000.0, nullptr, err, true, ChainCalibration{}));
+  CHECK(offLo == renderPreview(lo, riff, 48000.0, nullptr, err, true, ChainCalibration{}));
+  CHECK(rmsDbOf(offLo) == Catch::Approx(rmsDbOf(offHi)).margin(1e-6));
+  CHECK(offHi != previewHi);  // and calibration really did something
 }

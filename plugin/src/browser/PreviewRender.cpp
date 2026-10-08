@@ -69,7 +69,7 @@ AudioFile decodeWavMemory(const void* data, std::size_t size) {
 AudioFile embeddedPreviewRiff() { return decodeWavMemory(BinaryData::preview_riff_wav, static_cast<std::size_t>(BinaryData::preview_riff_wavSize)); }
 
 std::vector<float> renderPreview(const Preset& preset, const AudioFile& riff, double hostRate, CaptureCache* cache, std::string& error,
-                                 bool levelMatched) {
+                                 bool levelMatched, const ChainCalibration& calibration) {
   try {
     AudioFile in;
     in.channels = 1;
@@ -80,6 +80,7 @@ std::vector<float> renderPreview(const Preset& preset, const AudioFile& riff, do
     if (levelMatched) o.applyAutoTrim = true;
     else o.normalizePeakDbfs = kPreviewNormalizeDbfs;
     o.cache = cache;
+    o.calibration = calibration;
     RenderResult r = renderPreset(preset, in, o);
     if (levelMatched) {
       float peak = 0.0f;
