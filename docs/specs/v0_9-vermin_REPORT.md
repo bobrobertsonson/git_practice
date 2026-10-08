@@ -149,6 +149,14 @@ Renders are not committed, like the other faces. Notes:
 - Renders are pixel-identical between runs, but the PNG bytes differ (a metadata chunk). This was not checked
   against the other face scripts.
 
+**Amendment (user, via the main lead): rat stencil.** The skull motif was replaced by an original spray-painted stencil
+rat as the main graphic (f4ad76f, 4297404; reviewer ACCEPT 4297404). It has stencil bridges on the eye, the ear
+island and the tail segments, a speckled overspray mist, chips and rubs, and one tail drip. It reads as a rat at full
+size and at about 300 px wide. Renders are pixel-identical across runs and use the SHA-verified Black Ops One.
+Follow-ups for v1.0 Task B (reviewer notes): the "DISTORTION" corner label reads smeared because its yellow shadow
+overprints the bone text; it predates the rat change. Also hoist two PIL imports in `pedal_vermin.py` to module
+level.
+
 ## Calibration fitter (Task D)
 
 `PEDALS["rat"]`:
