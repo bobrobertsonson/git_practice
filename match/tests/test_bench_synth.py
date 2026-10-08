@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -222,6 +223,9 @@ def test_blend_known_answer_through_refsum_and_the_path_checks(blend_world):
     got = {k: (v["modelId"] if v else None) for k, v in c["chosen"]["captures"].items()}
     if got == hid and c["chosen"]["irMix"] is None:        # the hidden chain itself was recovered: the per-path answers must be exact too
         assert pc["a"]["aWeightedErrorDb"] <= 0.5 and pc["b"]["aWeightedErrorDb"] <= 0.5 and abs(r["diffDb"]) < 1.0
+    else:
+        warnings.warn(f"strict per-path assertions NOT run: the matcher did not recover the hidden captures (hidden {hid}, found {got}); "
+                      f"path checks A {pc['a']['aWeightedErrorDb']:.2f} dB, B {pc['b']['aWeightedErrorDb']:.2f} dB, ratio diff {r['diffDb']:+.2f} dB")
     print("\nblend known answer (recovered hidden captures: %s):" % (got == hid), "hidden", hid, "found", got, "", {"heldOut": c["heldOut"]["aWeightedErrorDb"], "a": pc["a"]["aWeightedErrorDb"],
                                    "b": pc["b"]["aWeightedErrorDb"], "ratio": r})
     for k in ("a", "b"):                                             # the path-check cases carry the parent's numbers

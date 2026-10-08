@@ -126,14 +126,14 @@ material used for personal evaluation only (`docs/TEST_SOURCES.md`, CLAUDE.md); 
 
 ```
 # 1. check the files (names marked with a dagger are guesses until this says ok)
-sawblade-bench run --root /Users/notsch/Desktop/NailTheMix --check-only --out /tmp/bench
+sawblade-bench run --root <NailTheMix folder> --check-only --out /tmp/bench
 
 # 2. run tier 1 (add --quick for the fast preset, --tier all for tier 2 as well, --cases bloodbath_blend,jinjer for some)
-sawblade-bench run --root /Users/notsch/Desktop/NailTheMix --pool ~/.cache/sawblade/captures/pool_manifest.json \
-    --ir-dir /Users/notsch/Music/Studio_Notsch/_IRs/Guitar_Cabs --quick --seed 0 --out ~/sawblade-work/bench/baseline
+sawblade-bench run --root <NailTheMix folder> --pool <pool_manifest.json> \
+    --ir-dir <your IR folder> --quick --seed 0 --out <work dir>/bench/baseline
 
 # 3. after a matcher change, run again into another folder and compare (exit 1 if any case is worse)
-sawblade-bench compare ~/sawblade-work/bench/baseline/scores.json ~/sawblade-work/bench/candidate/scores.json
+sawblade-bench compare <work dir>/bench/baseline/scores.json <work dir>/bench/candidate/scores.json
 ```
 
 `run` exits 0 when it ran (missing cases are skipped and counted as `n of m` in the last line), 2 on bad arguments or an unreadable
