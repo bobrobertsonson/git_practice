@@ -763,7 +763,10 @@ struct SettingsPanel::Impl : private juce::Timer {
     auto flag = alive;
     calAllDialog->enterModalState(true, juce::ModalCallbackFunction::create([this, flag, yes](int r) {
       if (!flag->load()) return;
-      calAllDialog.reset();
+      // The dialog is destroyed after its own modal callback has returned, never inside it.
+      juce::MessageManager::callAsync([this, flag] {
+        if (flag->load()) calAllDialog.reset();
+      });
       if (r == 1) yes();
     }), false);
   }

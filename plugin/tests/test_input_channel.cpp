@@ -157,7 +157,8 @@ TEST_CASE("stereo input: a mid-stream reversal does not switch before 10 s of pl
   s.src.rGain = 0.0;
   s.go(6.0);
   REQUIRE(s.h.p.stereoInput().decision() == InputChannel::Left);
-  while (std::fmod(static_cast<double>(s.src.n) / kRate, 0.5) > 0.41) s.block(240);  // swap in a gap
+  // Swap in a gap: advance (in 240-sample blocks) until the position within the 0.5 s period is in the silent 0.4..0.5 s part.
+  while (std::fmod(static_cast<double>(s.src.n) / kRate, 0.5) < 0.41) s.block(240);
   s.src.lGain = 0.0;
   s.src.rGain = 1.0;
   const double t0 = s.src.playedS;
@@ -183,7 +184,8 @@ TEST_CASE("stereo input: a mono layout is bit-identical to a plain pass-through"
   const auto x = noise(4096, 9, 0.5f);
   std::vector<float> y;
   h.run(x, y, {256});
-  CHECK(same(y, x));
+  REQUIRE(y.size() == x.size());
+  for (std::size_t i = 0; i < x.size(); ++i) REQUIRE(y[i] == x[i]);  // exact: the mono path is the plain copy it always was
   CHECK(h.p.inputChannelNotice().empty());
   CHECK(h.allocs == 0);
 }

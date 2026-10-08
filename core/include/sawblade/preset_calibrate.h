@@ -9,7 +9,8 @@
 // folder to schema v5 "calibrated", one atomic write per file. JUCE-free; the plugin runs it off the message thread on the user bank and
 // never passes the factory folder.
 //
-// A file is edited minimally: its JSON gets `"version": 5` and `"calibration": {"mode": "calibrated"}` and nothing else, and the result is
+// A file is edited minimally: its JSON gets `"version": 5` and `"calibration": {"mode": "calibrated"}` and nothing else changes in meaning (the
+// file is re-serialised, so its formatting may differ), and the result is
 // only written when it parses to exactly the preset the file held, with the mode changed (so nothing else can change meaning with the
 // version). Files that are already calibrated are not touched (not even rewritten). A failure on one file is reported and does not stop the
 // rest.

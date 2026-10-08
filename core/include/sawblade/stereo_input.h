@@ -18,7 +18,8 @@
 //             the other, it latches the louder channel. "Played" is the drift tap's test (drift.h windowPlayed: a 50 ms window whose peak
 //             is >= 12 dB above the DI's own noise floor, tracked by the same Gate floor follower), and the channel levels are measured
 //             over those played windows only. The latch is applied only at the start of a block whose played state is false (never
-//             mid-note). Once latched it is re-evaluated only on prepare() / requestRestart() (a bus-layout change), or after a
+//             mid-note). Concretely: the pending latch lands at the start of the first block after a finished 50 ms window that was unplayed
+//             (the verdict of the last finished window is the block's played state). Once latched it is re-evaluated only on prepare() / requestRestart() (a bus-layout change), or after a
 //             sustained reversal: the latched channel >= kStereoGapDb below the other for >= kStereoReversalPlayedS of played windows.
 //   Fade      every change of the chosen signal (a latch, a reversal, a forced-mode change from Settings) is cross-faded linearly over
 //             kStereoFadeMs (>= 20 ms), so the output never steps.

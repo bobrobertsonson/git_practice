@@ -149,7 +149,7 @@ TEST_CASE("Stereo input: a reversal switches only after 10 s of played frames, f
   run.go(6.0);
   REQUIRE(run.c.decision() == InputChannel::Left);
   // The guitar moves to R (L silent). Start the count at the next gap so the swap lands between notes.
-  while (std::fmod(static_cast<double>(run.src.n) / kFs, 0.5) > 0.41) run.go(0.01);
+  while (std::fmod(static_cast<double>(run.src.n) / kFs, 0.5) < 0.41) run.go(0.01);
   run.src.lGain = 0.0;
   run.src.rGain = 1.0;
   const double t0 = run.src.playedS;
@@ -177,7 +177,7 @@ TEST_CASE("Stereo input: a shorter reversal does not switch", "[stereo]") {
   run.src.rGain = 0.0;
   run.go(6.0);
   REQUIRE(run.c.decision() == InputChannel::Left);
-  while (std::fmod(static_cast<double>(run.src.n) / kFs, 0.5) > 0.41) run.go(0.01);
+  while (std::fmod(static_cast<double>(run.src.n) / kFs, 0.5) < 0.41) run.go(0.01);
   run.src.lGain = 0.0;
   run.src.rGain = 1.0;
   run.go(8.0);  // ~6.4 s played

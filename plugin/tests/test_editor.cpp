@@ -4832,6 +4832,7 @@ TEST_CASE("level match: the LAT chip area reads LEVEL ... while the trim is meas
 
 TEST_CASE("level match: the Settings panel has a LEVEL MATCH toggle, on by default, stored as a setting", "[editor][levelmatch][settings]") {
   Rig rig;
+  rig.loadInit();  // v0.8 I4b: only a calibrated preset (Init is) plays with the calibration; the factory rig loaded by Rig may be legacy
   rig.ed->setSettingsOpen(true);
   juce::ToggleButton* toggle = nullptr;
   for (auto* b : all<juce::ToggleButton>(*rig.ed))
@@ -5141,6 +5142,9 @@ TEST_CASE("settings: the Calibrated input levels (beta) toggle is off by default
   click(*toggle);
   CHECK(Settings::shared().calibratedInputLevels());
   CHECK(toggle->getToggleState());
+  rig.proc.calibrationTick();  // what the 10 Hz timer does: rebuild with calibration
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.ed->refreshNow();
   // No record yet: the Settings step says so as well.
   CHECK(anyLabelContains(*rig.ed, "Interface not calibrated: assuming +12 dBu"));
   click(*toggle);
@@ -5208,10 +5212,27 @@ nlohmann::json legacyPresetJson(const std::string& name) {
 }
 }  // namespace
 
+TEST_CASE("Init is calibrated: a fresh processor is, and the legacy hint is absent with calibrated input levels on (v0.8 I4b)", "[editor][legacy][i4b]") {
+  CHECK(sawblade::plugin::makeInitPreset().calibrationMode == sawblade::CalibrationMode::Calibrated);
+  Rig rig;
+  CHECK(sawblade::plugin::SawbladeProcessor().currentPreset().calibrationMode == sawblade::CalibrationMode::Calibrated);
+  rig.loadInit();
+  REQUIRE(Settings::shared().setCalibratedInputLevels(true).ok);
+  rig.ed->refreshNow();
+  juce::Button* use = buttonTitled(*rig.ed, "Use calibrated levels");
+  REQUIRE(use != nullptr);
+  CHECK_FALSE(use->isVisible());
+  CHECK_FALSE(rig.proc.legacyLevelsHint());
+}
+
 TEST_CASE("legacy hint: shows for a legacy preset with calibrated input levels on, not for a calibrated one, and one click switches it (undoable, saved)",
           "[editor][legacy][i4b]") {
   Rig rig;
-  rig.loadInit();
+  {  // a preset file an older version wrote (the Init rig is calibrated)
+    std::string err;
+    REQUIRE(rig.proc.loadPresetJson(legacyPresetJson("old").dump(), fs::temp_directory_path(), &err));
+    REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  }
   REQUIRE(rig.proc.currentPreset().calibrationMode == sawblade::CalibrationMode::Legacy);
   juce::Button* use = buttonTitled(*rig.ed, "Use calibrated levels");
   REQUIRE(use != nullptr);
@@ -5312,8 +5333,8 @@ TEST_CASE("settings: Calibrate all user presets asks with the count, converts on
 TEST_CASE("drift notice: shows with Recalibrate and Ignore, Recalibrate opens Settings, Ignore silences it", "[editor][devicecal][drift]") {
   Rig rig;
   auto& st = Settings::shared();
-  REQUIRE(rig.proc.setCalibrationMode(sawblade::CalibrationMode::Calibrated));  // v0.8 I4b: a legacy preset plays without calibration, so no drift tap
-  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.loadInit();  // v0.8 I4b: Init is calibrated (a legacy preset would play without calibration, so no drift tap)
+  REQUIRE(rig.proc.currentPreset().calibrationMode == sawblade::CalibrationMode::Calibrated);
   REQUIRE(st.setDeviceCalibration(sawblade::plugin::settings::recordFromPreset(*sawblade::plugin::settings::findDevicePreset("scarlett-4i4-3g"), "2026-10-08")).ok);
   REQUIRE(st.setDriftBaseline(-20.0).ok);
   REQUIRE(st.setCalibratedInputLevels(true).ok);

@@ -296,7 +296,7 @@ off every render, trim, make-up and gate seed is what it was before I2, bit for 
   In the main view the notice sits after errors and engine warnings: those take precedence there, while the Settings step always shows it.
   A capture whose metadata lacks an input or output level shows a small "UNCAL" badge on its pedal tile and on the amp head's read-out pill (one badge style, `paintBadge`, in the warning colour).
 - **A preset plays with the calibration only when it is "calibrated" (v0.8 I4b).** The chain is calibrated iff the toggle is on **and** the preset's
-  `calibration.mode` is `"calibrated"`; a `"legacy"` preset (every file older than schema v5, and a default-built preset until the I4c flip) plays exactly
+  `calibration.mode` is `"calibrated"`; a `"legacy"` preset (every file older than schema v5, and a v5 file with no `calibration` member; the plugin's Init preset, which a fresh plugin starts with, is `calibrated`) plays exactly
   as before whatever the toggle says (no planned gains, the stock gate seed, no drift tap). The engine build, the 10 Hz rebuild test, the level key and
   the capture-swap make-up all use this one rule (`settings::chainCalibrationForPreset` / `engineCalibrationForPreset`).
 - **Measurements follow the calibration.** With calibration in effect, the trim is measured through the calibrated chain (`computeAutoTrim(..., cal)`) and kept
@@ -318,7 +318,7 @@ off every render, trim, make-up and gate seed is what it was before I2, bit for 
   `calibration.mode` to `calibrated` (`SawbladeProcessor::setCalibrationMode`): a normal edit (one undo/redo step, the engine rebuilds with the new setting, the next save
   writes it; a factory preset can be switched for the session and saving it goes through the existing Save As, factory files are never written). Settings has
   **Calibrate all user presets...** (section "INTERFACE"): it asks "Switch N user presets to calibrated levels? Factory presets are not changed.", then rewrites every legacy
-  file of the user bank as v5 `calibrated` on a background thread (core `calibrateLegacyPresets`: one atomic write per file; only `version` and `calibration` change and the
+  file of the user bank as v5 `calibrated` on a background thread (core `calibrateLegacyPresets`: one atomic write per file; semantically only `version` and `calibration` change: the file is re-serialised and verified by read-back equality, so the
   result must read back as the same preset; a failure is reported by file name and the rest still convert; already calibrated files are not touched). It never touches `presets/`.
 - **Input channel (v0.8 I4b).** A stereo input used to be summed as `0.5 * (L + R)`, so a guitar on one channel arrived 6 dB down. A stereo input layout now goes through
   `StereoInputChooser` (`core/include/sawblade/stereo_input.h`) exactly where that sum was, so the input meter, the DI recorder, the drift tap and the gate key see the chosen

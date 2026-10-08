@@ -118,6 +118,7 @@ void applyParams(Preset& p, const ParamValues& v) {
 Preset makeInitPreset() {
   Preset p;
   p.name = "Init";
+  p.calibrationMode = CalibrationMode::Calibrated;  // v0.8 I4b: new presets are calibrated (files without the member stay legacy)
   p.dynamicsMode = DynamicsMode::Live;  // created in the plugin: live by default (and equal to its own clampedToParams)
   p.cab.enabled = false;
   p.align.mode = AlignMode::Off;
