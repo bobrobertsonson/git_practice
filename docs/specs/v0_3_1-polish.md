@@ -59,6 +59,10 @@ Today the LEVEL MATCH trim follows a rig change through the 10 Hz `levelTick()` 
    tests. A swap-under-load failure can be a real lock-free hand-over race (CLAUDE.md: model/IR swaps are lock-free), so
    treat it as a bug until proven otherwise: capture the assertion, reproduce under TSan and a 200x stress loop, and
    fix the cause. Check whether it also occurs on the v0.8 branch (which has newer plugin code).
+   Evidence (CI run 298, seed 149266621): `test_processor.cpp:355 CHECK(blocks.load() > 100)` got 94; every real-time
+   check in the case passed (0 audio allocs/locks, finite output, engines built). Likely a wall-clock throughput
+   assertion (500 µs sleeps overshoot on macOS), not a race: make the block count a precondition (run until >= N blocks
+   after the last swap) and keep the TSan stress run to rule out a race.
 
 ## Task E — credential filter tightening (`plugin/src/settings/ToolEnv.cpp`)
 
