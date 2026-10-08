@@ -152,8 +152,9 @@ def stepped_sines(n: int) -> tuple[np.ndarray, list[tuple[float, float, slice]]]
 
 def di_excerpt(di_path: Path, n: int, bpm: float = 140.0, start_bar: int = 20) -> np.ndarray:
     """Bar-aligned excerpt (4/4 at ``bpm``: the cover's tempo, from Drums.mid) of the DI, resampled to 48 kHz."""
+    from ..matcher.calibration import pick_di_channel
     x, fs = sf.read(str(di_path), dtype="float64", always_2d=True)
-    x = x[:, 0]
+    x = pick_di_channel(x, "auto")[0].astype(np.float64)
     if fs != FS:
         g = np.gcd(fs, FS)
         x = signal.resample_poly(x, FS // g, fs // g)

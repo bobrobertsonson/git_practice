@@ -18,6 +18,7 @@ from .. import core
 from ..tonecheck.analysis import analyze, gap_regions
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
+from .calibration import CalibrationOptions, pick_di_channel
 from .engine import RATE, Engine, to48
 from .offset import STRONG_MARGIN, STRONG_R1, PlacementError, refine_offset, resolve_offset
 from .pool import Capture, Pool, default_cab, starter_choice
@@ -158,6 +159,8 @@ class Config:
     ir_library: object = None            # irlib.IrLibrary (the user's own IRs): screened with the pool cabs, top N swept
     ir_dirs: tuple = ()                  # [{"path", "source": "cli"|"config"}] the library was scanned from (for irPool.dirs)
     ir_screen_max: int = irscreen.SCREEN_MAX   # above this many IRs the screen prefilters (tags, then k-means)
+    calibration: CalibrationOptions = dataclasses.field(default_factory=CalibrationOptions)   # v0.8 I4a: --calibration / --device-dbu
+    di_channel: str = "auto"             # v0.8 I4a: stereo DI files: auto (louder by whole-file RMS) | L | R | mix; --di-channel
 
 
 class Log:
@@ -516,19 +519,25 @@ def run_match(cfg: Config, log=None) -> dict:
         raise ValueError(f"pool needs amps and cabs, got {pool.counts()}")
     log(f"pool {pool.counts()} seed {cfg.seed} budget {cfg.budget} plan {plan}")
 
-    di_x, di_fs = sf.read(str(cfg.di), dtype="float32")
-    if di_x.ndim > 1:
-        di_x = di_x[:, 0]
+    di_x, di_fs = sf.read(str(cfg.di), dtype="float32", always_2d=True)
+    di_x, di_info = pick_di_channel(di_x, cfg.di_channel)
+    if di_info["fileChannels"] > 1:
+        log(f"stereo DI {Path(cfg.di).name}: channel rule {di_info['rule']} -> {di_info['used']} "
+            f"(RMS L {di_info['rmsDbfsL']:.1f} / R {di_info['rmsDbfsR']:.1f} dBFS)" if di_info["rmsDbfsL"] is not None and di_info["rmsDbfsR"] is not None
+            else f"stereo DI {Path(cfg.di).name}: channel rule {di_info['rule']} -> {di_info['used']}")
+    di_channels = {"di": {"path": str(cfg.di), **di_info}}
+    log(f"calibration {cfg.calibration.mode}" + (f", device {cfg.calibration.effective_dbu:g} dBu"
+        f"{' (assumed)' if cfg.calibration.assumed else ''}" if cfg.calibration.calibrated else ""))
     di48 = to48(di_x, di_fs)
     gfloor = gate_floor(di48, RATE)
     floor = gfloor["peakDb"] if gfloor["peakDb"] is not None else -90.0
     gate = gate_preset(floor)
     log(f"DI floor on the gate's peak envelope {floor:.1f} dBFS (RMS {gfloor['rmsDb']:.1f} dBFS, from the DI's {gfloor['source']}) "
         f"-> gate {gate}")
-    eng = Engine(gate, cfg.threads)
+    eng = Engine(gate, cfg.threads, calibration=cfg.calibration)
     prog = Progress(cfg.progress_json, plan.mode).start() if cfg.progress_json else NullProgress()
     try:
-        res = _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog, gfloor)
+        res = _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog, gfloor, di_channels)
         prog.close("done", res["after"][0]["aWeightedErrorDb"] if res.get("after") else None)
         return res
     except BaseException as e:
@@ -538,7 +547,8 @@ def run_match(cfg: Config, log=None) -> dict:
         eng.close()
 
 
-def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog=None, gfloor=None):
+def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog=None, gfloor=None, di_channels=None):
+    di_channels = {} if di_channels is None else di_channels
     prog = prog or NullProgress()
     cpu0 = time.process_time()
     prog.stage("prepare", "preparing the excerpt and the reference")
@@ -1050,7 +1060,8 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     gain_db = best.extra["outputGainDb"]
     final = build_preset(best.combo, v, gate=gate_final, align=best.align, output_db=gain_db,
                          name="Sawblade match", notes=_notes(cfg, ref, best), levels=best.levels,
-                         bus_comp=best.extra.get("busComp"), emit=True)     # emitted: origin match, dynamicsMode live (Task G)
+                         bus_comp=best.extra.get("busComp"), emit=True,
+                         calibration_mode=cfg.calibration.mode)     # emitted: origin match, dynamicsMode live (Task G)
     result["dynamics"] = {"scoredWith": "record", "emittedMode": "live", "origin": "match"}
     full_jobs = {"best_L": (final, cfg.di)}
     if plan.mode != "quick" or cfg.write_audio:     # quick: no full-length "before" render (the excerpt loss has it)
@@ -1063,13 +1074,23 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
 
     def full_render(item):
         name, (preset, path) = item
-        x, fs = sf.read(str(path), dtype="float32")
-        x = x if x.ndim == 1 else x[:, 0]
+        x, fs = sf.read(str(path), dtype="float32", always_2d=True)
+        x, info = pick_di_channel(x, cfg.di_channel)
+        if name == "best_R":
+            di_channels["diR"] = {"path": str(path), **info}       # the second DI file: same rule, its own whole-file RMS
         y, rep = eng.render(preset, x, fs, dynamics="live" if name == "live_L" else "record")   # all scoring: record set
         return name, y, fs, rep
 
     renders = {n: (y, fs, rep) for n, y, fs, rep in eng.map(full_render, list(full_jobs.items()))}
     lap("fullRenders")
+    result["calibration"] = {**cfg.calibration.record(di_channels),
+                             "levelMatchUncalibrated": bool(eng.level_match_uncalibrated),
+                             "corePlan": renders["best_L"][2].get("calibration")}     # the core's report for the final render
+    if eng.level_match_uncalibrated:
+        log("warning: the level_match binding has no calibration option; blend trims were measured uncalibrated")
+    log(f"calibration {cfg.calibration.mode}: device "
+        + (f"{cfg.calibration.effective_dbu:g} dBu{' (assumed)' if cfg.calibration.assumed else ''}" if cfg.calibration.calibrated else "n/a")
+        + "; DI channel " + ", ".join(f"{k} {v['used']} ({v['rule']})" for k, v in di_channels.items()))
     prog.update(0.5, "measuring the result")
     # The guard acts on the RECORD renders only, exactly as before G.4: the live render exists only with --listen, and the emitted
     # gainDb, the cut and the level-dependent tonecheck numbers must not depend on that. The live peak is reported and warned about.
@@ -1179,7 +1200,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             if s.levels is not None:
                 gdb -= emit_gain_correction_db(s.blend, s.levels)
         preset = build_preset(s.combo, v_alt, gate=gate_final, align=s.align, output_db=gdb, name=f"Sawblade match alt {i}",
-                              levels=s.levels, emit=True)
+                              levels=s.levels, emit=True, calibration_mode=cfg.calibration.mode)
         (out / f"alt{i}.preset.resolved.json").write_text(json.dumps(preset, indent=2) + "\n")
         alts.append({**_scored_json(s), "file": f"alt{i}.preset.resolved.json"})
     result["alternatives"] = alts

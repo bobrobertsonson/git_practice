@@ -327,8 +327,9 @@ def render_preset(preset_path, di_path) -> np.ndarray:
     from ..core import CaptureCache
     from ..export.chain import load_preset, render48
     preset, base = load_preset(preset_path)
+    from ..matcher.calibration import pick_di_channel
     x, fs = sf.read(str(di_path), dtype="float32", always_2d=True)
-    y, _ = render48(preset, np.ascontiguousarray(x[:, 0]), base, CaptureCache(), int(fs))
+    y, _ = render48(preset, pick_di_channel(x, "auto")[0], base, CaptureCache(), int(fs))
     return y.astype(np.float64)
 
 
@@ -340,10 +341,11 @@ def render_model(model_path, ir_path, di_path) -> np.ndarray:
     from ..core import CaptureCache
     from ..export import validate as V
     from ..export.chain import render48
+    from ..matcher.calibration import pick_di_channel
     x, fs = sf.read(str(di_path), dtype="float32", always_2d=True)
     with tempfile.TemporaryDirectory() as td:
         chk = V.export_check_preset(model_path, ir_path, Path(td))
-        y, _ = render48(chk, np.ascontiguousarray(x[:, 0]), td, CaptureCache(), int(fs))
+        y, _ = render48(chk, pick_di_channel(x, "auto")[0], td, CaptureCache(), int(fs))
     return y.astype(np.float64)
 
 

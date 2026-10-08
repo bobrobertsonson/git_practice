@@ -360,10 +360,11 @@ def path_blocks(combo: Combo, v: dict[str, float], path: str) -> list[dict]:
 
 def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align: dict, output_db: float = 0.0,
                  name: str = "Matched tone", notes: str = "", levels=None, bus_comp: dict | None = None,
-                 emit: bool = False) -> dict:
+                 emit: bool = False, calibration_mode: str | None = None) -> dict:
     """Full ``sawblade.preset`` for a combo and physical parameter values (live-compatible shared cab).
 
-    ``emit=True`` is for presets handed to the user (result.json, alternatives, the export input): version 4, ``origin:
+    ``emit=True`` is for presets handed to the user (result.json, alternatives, the export input): version 5 with
+    ``calibration.mode`` = ``calibration_mode`` (the mode the match rendered with; default ``DEFAULT_CALIBRATION``), ``origin:
     "match"`` and ``dynamicsMode: "live"`` with no explicit ``liveDynamics`` (the core derives the live set from the record
     gate / bus comp, which stay as fitted), and the gate threshold rounded to the plugin's 1e-4 dB grid so that loading the
     preset never makes the live set explicit. Every internal render goes through ``Engine.render``, which forces "record"."""
@@ -388,7 +389,12 @@ def build_preset(combo: Combo, v: dict[str, float], *, gate: dict | None, align:
     if bus_comp:        # v0.4M studio processing: a fast bus comp after the post EQ (release <= 150 ms stays trainable)
         p["busComp"] = {"enabled": True, **bus_comp}
     if emit:
-        p["version"] = 4
+        from .calibration import CALIBRATION_MODES, DEFAULT_CALIBRATION
+        mode = calibration_mode or DEFAULT_CALIBRATION
+        if mode not in CALIBRATION_MODES:
+            raise ValueError(f"calibration mode must be one of {CALIBRATION_MODES}, got {mode!r}")
+        p["version"] = 5
+        p["calibration"] = {"mode": mode}
         p["origin"] = "match"
         p["dynamicsMode"] = "live"
         if isinstance(p["gate"].get("thresholdDb"), (int, float)):

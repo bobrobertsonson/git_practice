@@ -47,6 +47,7 @@ from ..tonecheck.cli import compare_to_reference
 from . import feel as FEEL
 from . import loss as L
 from . import refsum as RS
+from .calibration import di_rule_from_run, options_from_run, pick_di_channel
 from .engine import RATE, Engine, to48
 from .loudness import integrated_lufs
 from .offset import refine_offset, resolve_offset
@@ -181,10 +182,11 @@ def _peak_db(y) -> float:
 # ---- the check ----------------------------------------------------------------------------------------------------
 def pathcheck(result_path: str | Path, di_path: str | Path, ref_a: str | Path, ref_b: str | Path,
               ref_blend: str | Path | None = None, blend_db: tuple[float, float] = (0.0, 0.0),
-              offset_ms: float | None = None, engine: Engine | None = None) -> dict:
+              offset_ms: float | None = None, engine: Engine | None = None, di_channel: str | None = None) -> dict:
     result_path = Path(result_path)
     res, preset, pname, x, fs = load_run(result_path, di_path)
-    x = x if x.ndim == 1 else x[:, 0]                     # the run renders the first channel
+    di_channel = di_channel or di_rule_from_run(res)      # default: the run's own rule
+    x, di_info = pick_di_channel(x, di_channel)           # louder channel by whole-file RMS (or explicit): as the run and tonerender
     di48 = to48(x, fs)
     refs: dict[str, Reference] = {}
     try:
@@ -201,7 +203,8 @@ def pathcheck(result_path: str | Path, di_path: str | Path, ref_a: str | Path, r
     live = "a" if state["a"] else ("b" if state["b"] else None)
 
     own = engine is None
-    eng = engine or Engine(None, 1)
+    calib = options_from_run(res, preset)                 # re-render with the calibration the run used
+    eng = engine or Engine(None, 1, calibration=calib)
     try:
         y_full, rep_full = eng.render(preset, x, fs)
         lm = rep_full.get("levelMatch") or {}
@@ -242,7 +245,7 @@ def pathcheck(result_path: str | Path, di_path: str | Path, ref_a: str | Path, r
                  "di": str(di_path), "diRate": fs, "blendDb": list(blend_db),
                  "refs": {"a": str(ref_a), "b": str(ref_b), "blend": None if ref_blend is None else str(ref_blend)},
                  "offset": {"samples48": off, "ms": 1000.0 * off / RATE, "source": src},
-                 "diIsRunDi": bool(same_di),
+                 "diIsRunDi": bool(same_di), "diChannel": di_info, "calibration": calib.record(),
                  "levelMatchTrimsDb": trims, "singlePath": bool(single), "busCompEnabled": bool((preset.get("busComp") or {}).get("enabled")),
                  "randomness": "none (deterministic)"}
     if same_di:                        # the run's number belongs to the run's DI only
@@ -326,6 +329,8 @@ def main(argv=None) -> int:
     ap.add_argument("--ref-blend", default=None, help="the blend reference (refsum output)")
     ap.add_argument("--blend-db", default="0,0", help="A_DB,B_DB faders used for the reference ratio (as refsum)")
     ap.add_argument("--offset-ms", type=float, default=None, help="force the DI offset (default: the run's, or searched)")
+    ap.add_argument("--di-channel", default=None, choices=["auto", "L", "R", "mix"],
+                    help="stereo DI: which channel (default: the rule the run recorded, else auto = the louder by whole-file RMS)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
     try:
@@ -334,7 +339,7 @@ def main(argv=None) -> int:
         print(f"pathcheck: {e}", file=sys.stderr)
         return 2
     try:
-        r = pathcheck(args.result, args.di, args.ref_a, args.ref_b, args.ref_blend, bdb, args.offset_ms)
+        r = pathcheck(args.result, args.di, args.ref_a, args.ref_b, args.ref_blend, bdb, args.offset_ms, di_channel=args.di_channel)
     except PathcheckError as e:
         print(f"pathcheck: {e}", file=sys.stderr)
         return 2

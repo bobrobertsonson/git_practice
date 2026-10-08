@@ -19,6 +19,7 @@ import soundfile as sf
 from ..core import render
 from . import feel as F
 from . import loss as L
+from .calibration import pick_di_channel
 from .engine import Engine, RATE, to48
 from .excerpt import select_excerpt
 from .gatesweep import cell_gate
@@ -232,7 +233,7 @@ def main(argv=None) -> int:
     if not a.di:
         p.error("--di is required")
     x, fs = sf.read(a.di, dtype="float32")
-    x = x if x.ndim == 1 else x[:, 0]
+    x, _ = pick_di_channel(x, "auto")
     s0, s1, _ = select_excerpt(x, fs, a.section_s, stride_s=1.0)
     di = out / "di_section.wav"
     sf.write(str(di), x[s0:s1], fs, subtype="FLOAT")

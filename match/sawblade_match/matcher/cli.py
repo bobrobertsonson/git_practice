@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import irlib, irscreen
+from .calibration import CALIBRATION_MODES, DEFAULT_CALIBRATION, DI_CHANNEL_RULES, CalibrationOptions
 from .pool import load_pool
 from .reference import load_reference
 from .run import ABLATIONS, BLEND_OCCAM_DB, Config, Log, TOPOLOGY_CHOICES, parse_ablate, run_match
@@ -22,6 +23,16 @@ def _section(s: str) -> tuple[float, float]:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sawblade-match", description="Match a DI to a reference with TONE3000 captures")
     p.add_argument("--di", help="DI WAV (left guitar / mono)")
+    p.add_argument("--di-channel", default="auto", choices=list(DI_CHANNEL_RULES),
+                   help="stereo DI files (and --di-r): which channel is the guitar. auto = the louder of channels 1/2 by whole-file "
+                        "RMS (the same rule as tonerender; a tie picks L), L, R, or mix = their mean. The rule used is in result.json")
+    p.add_argument("--calibration", default=DEFAULT_CALIBRATION, choices=list(CALIBRATION_MODES),
+                   help="input calibration: calibrated = every capture is driven at the level its dBu metadata implies for the "
+                        "interface (see --device-dbu); legacy = no calibration (the pre-v0.8 render). Emitted presets (v5) carry "
+                        f"this as calibration.mode (default: {DEFAULT_CALIBRATION})")
+    p.add_argument("--device-dbu", type=float, metavar="DBU",
+                   help="interface level, dBu at 0 dBFS (-60..60); no effect with --calibration legacy. Absent: the assumed "
+                        "+12 dBu, recorded as assumed in result.json")
     p.add_argument("--di-r", help="second DI (right double); rendered through the same preset for the stereo listening file")
     p.add_argument("--ref", help="reference audio (WAV/MP3)")
     p.add_argument("--ref-section", action="append", type=_section, metavar="A:B",
@@ -169,7 +180,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                      write_audio=a.listen and not a.no_audio, quick=a.quick,
                      progress_json=Path(a.progress_json) if a.progress_json else None,
                      timings_pre={"referenceLoad": time.time() - t_load}, ablate=ablate, trace_tones=trace, topology=a.topology,
-                     ir_library=library, ir_screen_max=a.ir_screen_max, ir_dirs=tuple(ir_dirs_info))
+                     ir_library=library, ir_screen_max=a.ir_screen_max, ir_dirs=tuple(ir_dirs_info),
+                     calibration=CalibrationOptions(a.calibration, a.device_dbu), di_channel=a.di_channel)
         run_match(cfg, Log())
         return 0
     except (ValueError, OSError, RuntimeError) as e:

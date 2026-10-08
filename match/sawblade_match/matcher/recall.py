@@ -30,6 +30,7 @@ import numpy as np
 import soundfile as sf
 
 from ..tonecheck.analysis import activity_mask  # noqa: F401
+from .calibration import di_rule_from_run, options_from_run, pick_di_channel
 from .engine import RATE, Engine, to48
 from .pool import default_cab, load_pool
 from .prescreen import prescreen
@@ -68,12 +69,12 @@ def main(argv=None) -> int:
         print(f"old pool: {len(pool.pedals)} pedals, {len(pool.amps)} amps")
     ref = load_reference(a.ref, channel="auto", matched=a.matched)
     di, fs = sf.read(a.di, dtype="float32")
-    di48 = to48(di if di.ndim == 1 else di[:, 0], fs)
+    di48 = to48(pick_di_channel(di, di_rule_from_run(res))[0], fs)         # the run's DI-channel rule
     window = (int(res["excerpt"]["startS"] * RATE), int(res["excerpt"]["endS"] * RATE))
     ex = make_excerpt(di48, window[1] / RATE - window[0] / RATE, window=window, ref=ref)
     off = res.get("offsetRefinement", {}).get("excerptStarterRender", {}).get("offset")
     tgt = build_target(ref, ex, offset_samples=off) if ref.matched_sig is not None else build_target(ref, ex)
-    eng = Engine(res["gate"], a.threads)
+    eng = Engine(res["gate"], a.threads, calibration=options_from_run(res, {}))
     top = {t: lst for t, lst in res["stage1"]["top"].items() if t in ("blend", "single")}
     best = _keys(res["best"]["captures"])
     allcaps = {k for lst in top.values() for e in lst[:30] for k in _keys(e["captures"])}

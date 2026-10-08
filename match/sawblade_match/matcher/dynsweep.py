@@ -25,6 +25,7 @@ from . import feel as FEEL
 from .dynformat import format_table, _f      # noqa: F401  (format_table is re-exported)
 from .engine import RATE, Engine, to48
 from .loudness import integrated_lufs
+from .calibration import di_rule_from_run, options_from_run, pick_di_channel
 from .pathcheck import PathcheckError, load_run
 from .run import _finite_or_none
 
@@ -60,15 +61,15 @@ def slopes(lufs: list[float], offsets=OFFSETS_DB) -> list[float | None]:
     return out
 
 
-def dynsweep(result_path, di_path, engine: Engine | None = None, offsets=OFFSETS_DB) -> dict:
+def dynsweep(result_path, di_path, engine: Engine | None = None, offsets=OFFSETS_DB, di_channel: str | None = None) -> dict:
     res, preset, pname, x, fs = load_run(Path(result_path), di_path)
-    x = x if x.ndim == 1 else x[:, 0]
+    x, _ = pick_di_channel(x, di_channel or di_rule_from_run(res))      # the run's rule (louder channel by default)
     di48 = to48(x, fs)
     di64 = di48.astype(np.float64)
     mask, _, _ = activity_mask(di64, RATE)
     plan = FEEL._Plan(len(di48), mask, detect_onsets(di64, RATE), gap_regions(di64, RATE))
     own = engine is None
-    eng = engine or Engine(None, 1)
+    eng = engine or Engine(None, 1, calibration=options_from_run(res, preset))
     sets: dict = {}
     try:
         for name, p, dyn in (("matched", preset, "record"), ("bypassed", bypassed(preset), "record"), ("live", preset, "live")):

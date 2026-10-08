@@ -10,10 +10,22 @@ import math
 from dataclasses import dataclass
 
 
-def level_match(preset: dict, sample_rate: float, base_dir=None, cache=None) -> dict:
-    """The one call into the C++ binding (tests replace this)."""
+def level_match(preset: dict, sample_rate: float, base_dir=None, cache=None, calibration=None) -> dict:
+    """The one call into the C++ binding (tests replace this).
+
+    ``calibration`` (``calibration.CalibrationOptions``): when calibrated, the trims must be measured on the calibrated chain
+    that the matcher renders. The binding takes ``calibration=`` / ``device_dbu=`` for that (v0.8 I4a follow-up). A binding
+    that does not have them still measures on the uncalibrated chain: the result then carries ``calibrationUnsupported``
+    (and the matcher records it) rather than silently passing the trims off as calibrated."""
     from .. import core as _core      # lazy: the pure helpers below do not need the C++ module
-    return _core.level_match(preset, float(sample_rate), base_dir=base_dir, cache=cache)
+    if calibration is None or not calibration.calibrated:
+        return _core.level_match(preset, float(sample_rate), base_dir=base_dir, cache=cache)
+    try:
+        return _core.level_match(preset, float(sample_rate), base_dir=base_dir, cache=cache, **calibration.render_kwargs())
+    except TypeError:
+        d = dict(_core.level_match(preset, float(sample_rate), base_dir=base_dir, cache=cache))
+        d["calibrationUnsupported"] = True
+        return d
 
 
 @dataclass(frozen=True)

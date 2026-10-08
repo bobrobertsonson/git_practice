@@ -26,6 +26,7 @@ import numpy as np
 from scipy import signal
 
 from .. import core as _core
+from .calibration import CalibrationOptions
 from .levelmatch import Levels, level_match
 from .space import (Combo, block_latency, build_preset, cab_block, chain_blocks, manual_align, path_blocks, path_eq, path_pre_eq,
                     post_eq)
@@ -50,7 +51,12 @@ class Engine:
     the pre-screen already rendered on an excerpt is not rendered again by stage 1, and stage 2 starts from stage-1 cores.
     ``stats`` counts hits/misses/NAM seconds. Disable with ``core_cache_bytes=0``."""
 
-    def __init__(self, gate: dict | None, workers: int = 4, cache=None, core_cache_bytes: int = CORE_CACHE_BYTES):
+    calibration = CalibrationOptions()
+    level_match_uncalibrated = False
+
+    def __init__(self, gate: dict | None, workers: int = 4, cache=None, core_cache_bytes: int = CORE_CACHE_BYTES,
+                 calibration: CalibrationOptions | None = None):
+        self.calibration = calibration or CalibrationOptions()      # every render of this engine uses it (v0.8 I4a)
         self.cache = cache or _core.CaptureCache()
         self.gate = gate
         self.workers = workers
@@ -77,7 +83,7 @@ class Engine:
         if preset.get("dynamicsMode") != dynamics:      # the core reads dynamicsMode from any preset version (1-4)
             preset = {**preset, "dynamicsMode": dynamics}
         x = np.ascontiguousarray(x, dtype=np.float32)
-        y, rep = _core.render(preset, x, fs, cache=self.cache)
+        y, rep = _core.render(preset, x, fs, cache=self.cache, **self.calibration.render_kwargs())
         self.n_renders += 1
         self.render_audio_s += len(x) / fs
         return y, rep
@@ -200,7 +206,10 @@ class Engine:
         if combo.topology != "blend":
             return None
         p = build_preset(combo, {**v, "blend": 0.5}, gate=None, align=align)
-        return Levels.from_core(level_match(p, RATE, cache=self.cache))
+        d = level_match(p, RATE, cache=self.cache, **({"calibration": self.calibration} if self.calibration.calibrated else {}))
+        if d.get("calibrationUnsupported"):
+            self.level_match_uncalibrated = True        # recorded in result.json (calibration.levelMatchUncalibrated)
+        return Levels.from_core(d)
 
     @staticmethod
     def mix(a: np.ndarray, b: np.ndarray, blend: float, align: dict, levels: Levels | None = None) -> np.ndarray:

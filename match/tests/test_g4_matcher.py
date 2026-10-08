@@ -26,7 +26,7 @@ def test_emitted_preset_has_origin_live_mode_and_rounded_threshold():
     combo, sp, v = hidden(pool)
     gate = {**gate_preset(-50.0), "thresholdDb": -46.123456789}
     p = build_preset(combo, v, gate=gate, align=manual_align(0, False), emit=True)
-    assert p["version"] == 4 and p["origin"] == "match" and p["dynamicsMode"] == "live" and "liveDynamics" not in p
+    assert p["version"] == 5 and p["origin"] == "match" and p["dynamicsMode"] == "live" and "liveDynamics" not in p
     assert p["gate"]["thresholdDb"] == -46.1235
     r = core.resolve_dynamics(p)                                  # the core derives the live set
     assert r["mode"] == "live" and r["gate"]["mode"] == "expander" and r["gate"]["thresholdMode"] == "floorRelative"
@@ -66,7 +66,7 @@ def test_run_emits_live_presets_scores_in_record_and_writes_render_live(tmp_path
     assert len(files) >= 2
     for f in files:
         p = json.loads(f.read_text())
-        assert p["origin"] == "match" and p["dynamicsMode"] == "live" and "liveDynamics" not in p and p["version"] == 4
+        assert p["origin"] == "match" and p["dynamicsMode"] == "live" and "liveDynamics" not in p and p["version"] == 5
         thr = p["gate"].get("thresholdDb")
         assert thr is None or thr == round(thr, 4)
     port = json.loads((out / "best.preset.json").read_text())
