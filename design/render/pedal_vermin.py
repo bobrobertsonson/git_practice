@@ -70,61 +70,66 @@ def motif(ctx):
         """a stencil bridge: a strip of unpainted material across painted ink."""
         de.line((*P(*p0), *P(*p1)), fill=0, width=lw(w))
 
-    # ---- body: one hand-cut outline (nose right), smooth spline through control points
-    body = [(41.5, -5.6), (38.5, -1.4), (33.5, 2.4), (28.5, 4.0), (24.0, 5.4), (19.0, 6.8), (12.0, 8.6), (4.0, 9.2), (-4.0, 8.4),
-            (-11.0, 6.2), (-16.2, 2.6), (-18.8, -3.0), (-17.2, -8.6), (-13.0, -11.8), (-5.0, -12.4), (4.0, -13.0), (13.0, -13.2),
-            (21.0, -12.8), (28.0, -11.4), (34.0, -9.8), (38.6, -8.4)]
+    # ---- body: one hand-cut outline (nose right).  Teardrop: high round haunch, back sloping down to the shoulders,
+    # a tapered wedge head (about 28 % of the length) ending in a pointed snout, rump narrowing into the tail root.
+    body = [(45.0, -8.2), (41.6, -5.4), (36.4, -2.2), (31.4, 0.8), (27.0, 3.0), (22.0, 2.6), (16.0, 5.0), (8.0, 7.2), (-1.0, 9.8),
+            (-8.0, 9.2), (-13.6, 5.4), (-17.6, -1.2), (-19.8, -6.0), (-17.4, -9.4), (-12.0, -11.6), (-6.0, -12.4), (2.0, -13.2),
+            (10.0, -13.6), (18.0, -13.4), (24.0, -12.4), (30.0, -11.2), (36.0, -10.4), (41.4, -9.6)]
     de.polygon(pp(_spline(body, closed=True)), fill=255)
-    # round ear (a disc that overlaps the head), set back from the eye
-    ex, ey, er = 22.6, 8.6, 4.3
+    de.ellipse((*P(43.6, -6.9), *P(46.2, -9.5)), fill=255)                          # small nose tip
+    # large round ear, forward on the head just behind the eye
+    ex, ey, er = 28.2, 5.4, 5.2
     de.ellipse((*P(ex - er, ey + er), *P(ex + er, ey - er)), fill=255)
-    # legs and paws: front leg, second front leg (behind), hind foot (long), each with toes
-    de.polygon(pp(_spline([(19.5, -11.5), (21.2, -15.5), (21.8, -17.6), (25.2, -17.9), (28.2, -17.4), (26.6, -16.2), (25.4, -14.6), (25.6, -11.6)], closed=True, n=6)), fill=255)
-    de.polygon(pp(_spline([(27.0, -10.8), (29.2, -14.8), (30.6, -17.2), (33.4, -17.5), (35.2, -16.8), (33.4, -15.6), (32.2, -13.6), (31.6, -10.0)], closed=True, n=6)), fill=255)
-    de.polygon(pp(_spline([(-14.0, -10.2), (-11.5, -14.8), (-11.0, -17.6), (-6.0, -17.9), (-1.0, -17.5), (-3.2, -16.2), (-6.4, -15.4), (-6.4, -11.8)], closed=True, n=6)), fill=255)
-    for (x0, y0) in ((28.0, -17.5), (35.0, -17.0), (-1.4, -17.5)):               # toe cuts
-        for k in (0, 1):
-            bridge((x0 - 1.7 - 1.3 * k, y0 + 0.6), (x0 - 1.5 - 1.3 * k, y0 - 1.0), 0.5)
-    # tail: tapering stroke along a long spline that leaves the rump and curls across the left of the face
-    tail_c = _spline([(-17.6, -1.4), (-24.0, 2.6), (-31.0, 5.4), (-37.0, 2.2), (-39.2, -4.0), (-35.4, -9.4), (-29.6, -9.6), (-26.6, -13.6),
-                      (-29.4, -18.6), (-35.6, -21.6), (-41.4, -19.2), (-43.4, -14.4), (-40.6, -12.0)], n=10)
+    # small front paws under the chest (a pair, the far one shorter), a long hind foot planted flat
+    de.polygon(pp(_spline([(18.6, -12.6), (19.4, -15.8), (19.4, -17.8), (23.4, -17.8), (24.8, -17.0), (23.0, -16.2), (22.0, -15.6), (21.8, -12.4)], closed=True, n=6)), fill=255)
+    de.polygon(pp(_spline([(25.0, -11.8), (25.6, -14.8), (26.0, -17.6), (29.8, -17.6), (31.0, -16.8), (29.4, -16.0), (28.6, -15.0), (28.2, -11.6)], closed=True, n=6)), fill=255)
+    de.polygon(pp(_spline([(-12.6, -11.2), (-13.8, -16.2), (-13.0, -17.9), (2.6, -17.9), (4.4, -17.1), (2.4, -16.0), (-5.4, -15.4), (-7.4, -12.0)], closed=True, n=6)), fill=255)
+    for (x0, x1) in ((3.0, 3.3), (0.8, 1.1), (-1.4, -1.1)):                          # toe cuts on the hind foot
+        bridge((x0, -15.6), (x1, -18.4), 0.5)
+    bridge((22.4, -16.0), (23.0, -18.4), 0.45)
+    bridge((29.0, -15.6), (29.5, -18.2), 0.45)
+    # tail: tapering stroke from the rump root, out along the ground line, up the left side and curled inward
+    tail_c = _spline([(-19.6, -6.2), (-26.0, -8.8), (-33.0, -9.0), (-39.0, -5.4), (-41.4, 0.8), (-38.8, 6.8), (-32.8, 9.4), (-27.0, 7.4),
+                      (-25.4, 2.8), (-28.6, -0.4), (-32.2, 0.8)], n=10)
     tc = np.array(tail_c)
     seg = np.hypot(*np.diff(tc, axis=0).T)
     s_arc = np.concatenate([[0], np.cumsum(seg)])
     tang = np.gradient(tc, axis=0); tang /= np.hypot(tang[:, 0], tang[:, 1])[:, None]
     nrm = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
-    wid = 1.35 * (1.0 - 0.72 * s_arc / s_arc[-1]) + 0.22
+    wid = 1.7 * (1.0 - 0.8 * s_arc / s_arc[-1]) + 0.12
     left = tc + nrm * wid[:, None]; right = tc - nrm * wid[:, None]
     de.polygon(pp([tuple(q) for q in left] + [tuple(q) for q in right[::-1]]), fill=255)
-    for sa in np.arange(7.0, s_arc[-1] - 3.0, 10.5):                              # tail bridges: a cut every ~10 mm
+    for sa in np.arange(2.2, s_arc[-1] - 2.5, 9.5):                               # tail bridges: a cut every ~9.5 mm
         i = int(np.searchsorted(s_arc, sa))
-        a, b = tc[i] + nrm[i] * 2.6, tc[i] - nrm[i] * 2.6
-        bridge(tuple(a), tuple(b), 0.8)
-    # whiskers (thin, fanned off the snout)
+        a, b = tc[i] + nrm[i] * (wid[i] + 0.9), tc[i] - nrm[i] * (wid[i] + 0.9)
+        bridge(tuple(a), tuple(b), 0.85)
+    # whiskers (thin, fanned off the muzzle)
     for (dx_, dy_) in ((8.0, 3.6), (9.0, -0.6), (8.0, -4.6)):
-        de.line([P(37.8, -4.2), P(37.8 + dx_ * 0.55, -4.2 + dy_ * 0.7), P(37.8 + dx_, -4.2 + dy_)], fill=255, width=lw(0.42), joint='curve')
+        de.line([P(42.0, -6.6), P(42.0 + dx_ * 0.55, -6.6 + dy_ * 0.7), P(42.0 + dx_, -6.6 + dy_)], fill=255, width=lw(0.42), joint='curve')
 
     # ---- stencil bridges inside the body (unpainted strips and islands)
-    # ear: the inner ear is an uncut island of the stencil, held by two bridges to the outside
-    de.ellipse((*P(ex - 0.2 - 2.2, ey - 0.3 + 2.5), *P(ex - 0.2 + 2.2, ey - 0.3 - 2.5)), fill=0)
-    bridge((ex - 0.2, ey + 1.6), (ex - 0.6, ey + 5.2))
-    bridge((ex - 0.6, ey - 2.2), (ex - 2.0, ey - 5.0))
-    # eye: unpainted almond with a painted pupil; the almond is held by one bridge running up to the forehead edge
-    gx, gy = 32.4, 0.4
-    de.ellipse((*P(gx - 2.3, gy + 1.7), *P(gx + 2.3, gy - 1.7)), fill=0)
-    de.ellipse((*P(gx - 0.5 - 0.9, gy + 0.1 + 1.0), *P(gx - 0.5 + 0.9, gy + 0.1 - 1.0)), fill=255)
-    bridge((gx - 1.2, gy + 1.2), (gx - 2.2, gy + 3.6))
-    # nostril and mouth line, a cut tooth under the snout
-    de.ellipse((*P(39.0, -3.2), *P(40.4, -4.4)), fill=0)
-    de.line([P(40.8, -6.8), P(36.6, -7.2), P(33.8, -6.4)], fill=0, width=lw(0.5), joint='curve')
+    # ear: the inner ear is an uncut island of the stencil, held by two bridges that leave the ear's top edge
+    de.ellipse((*P(ex - 0.2 - 3.0, ey - 0.2 + 3.3), *P(ex - 0.2 + 3.0, ey - 0.2 - 3.3)), fill=0)
+    for ang in (62.0, 118.0):
+        a = math.radians(ang)
+        bridge((ex - 0.2 + 2.0 * math.cos(a), ey - 0.2 + 2.0 * math.sin(a)), (ex + 6.4 * math.cos(a), ey + 6.4 * math.sin(a)), 1.15)
+    # eye: unpainted almond (about 5.8 mm wide) with a painted pupil, held by one bridge running up to the forehead edge
+    gx, gy = 34.6, -3.6
+    eye = [(gx - 2.9, gy - 0.2), (gx - 1.0, gy + 1.9), (gx + 1.8, gy + 1.6), (gx + 2.9, gy - 0.1), (gx + 0.8, gy - 1.8), (gx - 1.3, gy - 1.6)]
+    de.polygon(pp(_spline(eye, closed=True, n=6)), fill=0)
+    de.ellipse((*P(gx - 0.2 - 1.0, gy + 0.1 + 1.1), *P(gx - 0.2 + 1.0, gy + 0.1 - 1.1)), fill=255)
+    bridge((gx - 1.2, gy + 1.4), (gx - 2.6, gy + 5.0), 1.1)
+    # nostril
+    de.ellipse((*P(43.2, -6.4), *P(44.4, -7.4)), fill=0)
     # shoulder cut-line and haunch cut-line (open arcs that stop short of the outline, so the shape stays one piece)
-    de.line(pp(_spline([(18.4, 6.0), (16.2, 0.8), (17.0, -5.0), (19.6, -9.6)], n=8)), fill=0, width=lw(BRIDGE), joint='curve')
-    de.line(pp(_spline([(-14.6, 3.4), (-9.0, 0.0), (-7.0, -5.6), (-9.4, -10.4)], n=8)), fill=0, width=lw(BRIDGE), joint='curve')
-    # tail root: a cut separates the tail from the rump, with two bridges holding it on
-    de.line(pp(_spline([(-16.4, 2.0), (-19.6, -1.6), (-18.8, -4.6)], n=8)), fill=0, width=lw(0.7), joint='curve')
+    de.line(pp(_spline([(15.0, 4.0), (13.2, -1.6), (14.4, -7.0), (16.6, -11.0)], n=8)), fill=0, width=lw(BRIDGE), joint='curve')
+    de.line(pp(_spline([(-3.0, 8.2), (-9.6, 3.4), (-10.6, -3.2), (-7.4, -9.2)], n=8)), fill=0, width=lw(BRIDGE), joint='curve')
+    # tail root: a cut separates the tail from the rump
+    de.line(pp(_spline([(-17.6, -2.4), (-19.0, -5.6), (-18.0, -8.6)], n=8)), fill=0, width=lw(0.8), joint='curve')
     # spine ridge dashes (bridged line along the back)
-    for x0 in np.arange(-10.0, 12.0, 6.0):
-        de.line(pp(_spline([(x0, 6.8), (x0 + 2.6, 7.4), (x0 + 4.2, 7.2)], n=5)), fill=0, width=lw(0.5), joint='curve')
+    bx = [-8.0, -1.0, 8.0, 16.0, 22.0]; by = [9.2, 9.8, 7.2, 5.0, 2.6]
+    for x0 in (-5.0, 2.0, 9.0):
+        de.line(pp([(x0 + t, float(np.interp(x0 + t, bx, by)) - 1.5) for t in (0.0, 1.8, 3.6)]), fill=0, width=lw(0.5), joint='curve')
 
     # ---- wear: chips and rub-through on the cut ink (same RNG stream, deterministic)
     mask0 = np.asarray(E, dtype=np.float32) / 255.0
@@ -133,6 +138,8 @@ def motif(ctx):
         j = int(rng.integers(0, len(ys_)))
         cx_, cy_ = xs_[j] * 8 + 4, ys_[j] * 8 + 4
         r = rng.uniform(0.25, 1.1) * S_
+        if min(math.hypot(cx_ / S_ - (ex + W / 2), cy_ / S_ - (L / 2 - ey)), math.hypot(cx_ / S_ - (gx + W / 2), cy_ / S_ - (L / 2 - gy))) < 6.5:
+            continue                                                             # keep the ear island and the eye legible
         de.polygon([(cx_ + r * rng.uniform(0.4, 1.3) * math.cos(a), cy_ + r * rng.uniform(0.4, 1.3) * math.sin(a))
                     for a in np.linspace(0, 2 * math.pi, 9, endpoint=False)], fill=0)
     for _ in range(14):                                                           # rub lines
@@ -142,8 +149,8 @@ def motif(ctx):
         a = rng.uniform(0, math.pi)
         ln = rng.uniform(2.0, 7.0) * S_
         de.line((x, y, x + ln * math.cos(a), y - ln * math.sin(a)), fill=0, width=max(1, int(rng.uniform(0.25, 0.5) * S_)))
-    # two drips off the belly and one off the tail curl
-    for (x, y, ln, w) in ((4.0, -12.9, 5.2, 0.8), (-6.0, -12.4, 3.4, 0.6), (-26.6, -14.0, 3.0, 0.55)):
+    # one drip off the tail curl (none under the body: they read as extra legs)
+    for (x, y, ln, w) in ((-30.0, -10.6, 3.6, 0.6),):
         xs0, ys0 = P(x, y)
         de.line((xs0, ys0, xs0, ys0 + ln * S_), fill=255, width=lw(w))
         de.ellipse((xs0 - w * 0.9 * S_, ys0 + ln * S_ - w * 0.5 * S_, xs0 + w * 0.9 * S_, ys0 + ln * S_ + w * 1.4 * S_), fill=255)
@@ -155,6 +162,9 @@ def motif(ctx):
     from PIL import Image as _Im
     dots = np.asarray(_Im.fromarray(dots).filter(ImageFilter.MaxFilter(5)), dtype=np.float32) / 255.0
     mist = dots * (1.0 - solid)
+    yy_, xx_ = np.mgrid[0:solid.shape[0], 0:solid.shape[1]].astype(np.float32)
+    for (ix, iy, ir) in ((ex - 0.2, ey - 0.2, 4.3), (gx, gy, 3.6)):              # keep the ear island and the eye clean
+        mist[np.hypot(xx_ / S_ - (ix + W / 2), yy_ / S_ - (L / 2 - iy)) < ir] = 0.0
     # the yellow second pass: the whole rat again, shifted (sloppy registration)
     shifted = np.roll(np.roll(solid, int(0.9 * S_), axis=1), int(0.7 * S_), axis=0)
     k = 2 * int(0.8 * S_) + 1                                                    # close the cut lines so they stay dark
