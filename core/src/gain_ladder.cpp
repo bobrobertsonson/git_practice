@@ -83,6 +83,7 @@ std::unique_ptr<Processor> buildRungProcessor(const NamBlockParams& block, int r
   cfg.inputGainDb = block.inputGainDb;
   cfg.outputGainDb = block.outputGainDb + block.makeupDb;
   cfg.normalizeLoudness = block.normalizeLoudness;
+  cfg.makeupDb = block.makeupDb;
   try {
     std::unique_ptr<NamBlock> nb = cache ? NamBlock::load(*cache->namModel(c, "ladder." + r.modelId), cfg)
                                          : NamBlock::load(locateCapture(c), cfg);
@@ -99,6 +100,7 @@ LadderBlock::LadderBlock(int rungCount, int activeRung, std::unique_ptr<Processo
   slots_.resize(static_cast<std::size_t>(rungCount_));
   if (activeRung < 0 || activeRung >= rungCount_ || !active) throw std::invalid_argument("LadderBlock: bad active rung");
   latency_ = active->latencySamples();
+  levelInfo_ = active->levelInfo();
   slots_[static_cast<std::size_t>(activeRung)] = std::move(active);
   loaded_.store(1ull << activeRung);
 }
@@ -142,6 +144,14 @@ bool LadderBlock::setLiveGainsDb(double inDb, double outDb, int rampSamples) noe
   return any;
 }
 
+void LadderBlock::setCalibration(const calibration::BlockCalibration& c, int rampSamples) noexcept {
+  haveCal_ = true;
+  cal_ = c;
+  calRamp_ = rampSamples;
+  for (auto& s : slots_)  // every rung plans its gain from its own capture metadata
+    if (s) s->setCalibration(c, rampSamples);
+}
+
 void LadderBlock::setTargetRung(int rung) noexcept {
   if (rung >= 0 && rung < rungCount_) target_.store(rung, std::memory_order_relaxed);
 }
@@ -166,6 +176,7 @@ void LadderBlock::drain() noexcept {
       rejected_.fetch_or(1ull << e.rung, std::memory_order_release);  // dropped; the producer logs it
       continue;
     }
+    if (haveCal_) e.proc->setCalibration(cal_, 1);
     if (haveGains_) e.proc->setLiveGainsDb(gainIn_, gainOut_, 1);
     std::swap(slots_[i], e.proc);
     loaded_.fetch_or(1ull << e.rung, std::memory_order_release);

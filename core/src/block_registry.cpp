@@ -34,6 +34,7 @@ std::unique_ptr<Processor> createNam(const Block& b, const BlockBuildContext& ct
   cfg.inputGainDb = p.inputGainDb;
   cfg.outputGainDb = p.outputGainDb + p.makeupDb;
   cfg.normalizeLoudness = p.normalizeLoudness;
+  cfg.makeupDb = p.makeupDb;
   const auto build = [&](const Capture& cap, const std::string& fp, bool verify) -> std::unique_ptr<NamBlock> {
     if (ctx.cache) return NamBlock::load(*ctx.cache->namModel(cap, fp), cfg);  // bypass: see Chain
     if (verify) verifyCapture(cap, fp);

@@ -15,6 +15,13 @@ class CaptureCache;
 
 // Static, per-type facts. Time-based effects (delay, reverb, modulation, long-release dynamics)
 // are not NAM-trainable; the export phase refuses or bypasses them.
+//
+// Input calibration (v0.8 I1, calibration.h): a block's Processor::levelInfo() says how it takes part in the level plan.
+// `nam` blocks are LevelKind::Nam (their capture's input_level_dbu / output_level_dbu). Every other type, `eq` and all the
+// modelled DSP pedals (`pedal.*`), is LevelKind::Neutral on purpose: a modelled pedal's gain is defined relative to its own
+// input and its LEVEL knob is a deliberate user offset, so it neither converts levels nor moves the reference.
+// LevelKind::NominalOutput (a modelled pedal declaring an absolute output level) exists but no block type uses it yet; a block
+// type that needs it overrides Processor::levelInfo().
 struct BlockTraits {
   bool namTrainable = true;
 };

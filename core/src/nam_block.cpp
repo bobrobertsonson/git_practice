@@ -34,17 +34,29 @@ namespace {
 struct Facts {
   double expectedRate = -1.0;
   std::optional<double> loudness;
+  std::optional<double> inputDbu, outputDbu;
   NamMetadata meta;
 };
 
+calibration::GearKind gearOf(const std::string& gearType) {
+  using calibration::GearKind;
+  if (gearType == "amp" || gearType == "preamp") return GearKind::Amp;
+  if (gearType == "pedal") return GearKind::Pedal;
+  if (gearType == "pedal_amp" || gearType == "amp_cab" || gearType == "amp_pedal_cab") return GearKind::FullRig;
+  return GearKind::Unknown;  // "studio", empty, anything new
+}
+
 // Shared by both load paths: validates the DSP and reads its facts.
-Facts inspect(const nam::DSP* dsp, const nam::dspData& data) {
+Facts inspect(nam::DSP* dsp, const nam::dspData& data) {
   if (!dsp) throw std::runtime_error("model could not be created");
   if (dsp->NumInputChannels() != 1 || dsp->NumOutputChannels() != 1)
     throw std::runtime_error("only mono (1-in/1-out) models are supported");
   Facts f;
   f.expectedRate = dsp->GetExpectedSampleRate();
   if (dsp->HasLoudness()) f.loudness = dsp->GetLoudness();
+  // Always Has* first: Get*Level() returns 0 when the field is absent.
+  if (dsp->HasInputLevel()) f.inputDbu = dsp->GetInputLevel();
+  if (dsp->HasOutputLevel()) f.outputDbu = dsp->GetOutputLevel();
   f.meta.name = metaString(data.metadata, "name");
   f.meta.gearType = metaString(data.metadata, "gear_type");
   f.meta.modeledBy = metaString(data.metadata, "modeled_by");
@@ -61,6 +73,8 @@ std::shared_ptr<const NamModel> NamModel::load(const std::filesystem::path& path
     const Facts f = inspect(dsp.get(), m->data_->data);
     m->expectedRate_ = f.expectedRate;
     m->loudness_ = f.loudness;
+    m->inputDbu_ = f.inputDbu;
+    m->outputDbu_ = f.outputDbu;
     m->meta_ = f.meta;
   } catch (const std::exception& e) {
     throw std::runtime_error("NAM load error (" + path.string() + "): " + e.what());
@@ -74,7 +88,10 @@ std::unique_ptr<NamBlock> NamBlock::load(const NamModel& model, const NamBlockCo
   b->dsp_ = nam::get_dsp(copy);
   b->expectedRate_ = model.expectedRate_;
   b->loudness_ = model.loudness_;
+  b->inputDbu_ = model.inputDbu_;
+  b->outputDbu_ = model.outputDbu_;
   b->meta_ = model.meta_;
+  b->gear_ = gearOf(model.meta_.gearType);
   if (!b->dsp_) throw std::runtime_error("NAM model could not be instantiated");
   b->cfg_ = cfg;
   b->updateGains();
@@ -89,7 +106,10 @@ std::unique_ptr<NamBlock> NamBlock::load(const std::filesystem::path& path, cons
     const Facts f = inspect(b->dsp_.get(), data);
     b->expectedRate_ = f.expectedRate;
     b->loudness_ = f.loudness;
+    b->inputDbu_ = f.inputDbu;
+    b->outputDbu_ = f.outputDbu;
     b->meta_ = f.meta;
+    b->gear_ = gearOf(f.meta.gearType);
   } catch (const std::exception& e) {
     throw std::runtime_error("NAM load error (" + path.string() + "): " + e.what());
   }
@@ -103,12 +123,20 @@ void NamBlock::updateGains() noexcept {
   double outDb = cfg_.outputGainDb;
   if (cfg_.normalizeLoudness && loudness_) outDb += -18.0 - *loudness_;
   outGain_ = static_cast<float>(dbToLin(outDb));
+  intentInDb_ = cfg_.inputGainDb;
+  intentOutDb_ = cfg_.outputGainDb;
 }
 
-bool NamBlock::setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept {
-  if (!std::isfinite(inDb) || !std::isfinite(outDb)) return true;
-  double outTotal = outDb;
-  if (cfg_.normalizeLoudness && loudness_) outTotal += -18.0 - *loudness_;
+calibration::BlockLevelInfo NamBlock::levelInfo() const noexcept {
+  return {calibration::LevelKind::Nam, gear_, inputDbu_, outputDbu_};
+}
+
+// Targets from intent + calibration. With calibration inactive (calInDb_ == 0, calDrop_ false) this is exactly the
+// pre-calibration arithmetic, so every uncalibrated render is bit-identical.
+void NamBlock::applyGains(int rampSamples) noexcept {
+  double outTotal = intentOutDb_;
+  if (calDrop_) outTotal -= cfg_.makeupDb;  // planned hop: the next block's gain carries it
+  else if (cfg_.normalizeLoudness && loudness_) outTotal += -18.0 - *loudness_;
   const auto start = [rampSamples](float& gain, GainRamp& r, float target) {
     if (target == gain && r.remaining <= 0) return;
     if (rampSamples <= 0) {
@@ -121,9 +149,27 @@ bool NamBlock::setLiveGainsDb(double inDb, double outDb, int rampSamples) noexce
     r.step = (target - r.cur) / static_cast<float>(rampSamples);
     r.remaining = rampSamples;
   };
-  start(inGain_, inRamp_, static_cast<float>(dbToLin(inDb)));
+  start(inGain_, inRamp_, static_cast<float>(dbToLin(intentInDb_ + calInDb_)));
   start(outGain_, outRamp_, static_cast<float>(dbToLin(outTotal)));
+}
+
+bool NamBlock::setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept {
+  if (!std::isfinite(inDb) || !std::isfinite(outDb)) return true;
+  intentInDb_ = inDb;
+  intentOutDb_ = outDb;
+  applyGains(rampSamples);
   return true;
+}
+
+void NamBlock::setCalibration(const calibration::BlockCalibration& c, int rampSamples) noexcept {
+  if (c.active) {
+    calInDb_ = calibration::planBlock(c.refBeforeDbu, levelInfo(), c.defaults).gainInDb;
+    calDrop_ = c.feedsNam;
+  } else {
+    calInDb_ = 0.0;
+    calDrop_ = false;
+  }
+  applyGains(rampSamples);
 }
 
 void NamBlock::prepare(const ProcessSpec& spec) {

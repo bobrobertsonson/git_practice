@@ -58,6 +58,9 @@ struct RenderOptions {
   // Off by default, so renders, goldens, the matcher and the NAM export never see it. The caller makes sure the trim is fresh
   // (ensureAutoTrim, auto_trim.h): a stale or missing one is applied as stored (0 when missing).
   bool applyAutoTrim = false;
+  // v0.8 input calibration (chain.h ChainCalibration). Off by default: renders, goldens, the matcher and the NAM export never
+  // see it until a caller opts in. The preset schema carries no calibration yet (I4 decides), so it is a render option.
+  ChainCalibration calibration;
 };
 
 struct SignalStats {
@@ -85,6 +88,7 @@ struct RenderResult {
   ChainInfo info;
   SignalStats input, output;   // output stats are after normalization
   double normalizeGainDb = 0.0;
+  CalibrationPlan calibration;  // the plan in force (enabled false when off); written to the report
   double autoTrimDb = 0.0;      // applied (RenderOptions::applyAutoTrim), else 0
   double prepareSeconds = 0.0;  // chain prepare() incl. NAM prewarm and the alignment probe
   double renderSeconds = 0.0;   // wall time of the process() loop only

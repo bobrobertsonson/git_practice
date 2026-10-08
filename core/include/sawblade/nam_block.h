@@ -20,6 +20,9 @@ struct NamBlockConfig {
   double outputGainDb = 0.0;  // after the model
   // If true and the model carries metadata.loudness, add (-18 - loudness) dB after the model.
   bool normalizeLoudness = false;
+  // The capture-swap make-up already folded into outputGainDb (kept apart so input calibration can drop it for a block that
+  // feeds another NAM block, v0.8 I1). Informational: it never changes the gain computed without calibration.
+  double makeupDb = 0.0;
 };
 
 struct NamMetadata {
@@ -42,6 +45,9 @@ class NamModel {
   double expectedSampleRate() const noexcept { return expectedRate_; }  // <= 0: unknown
   std::optional<double> loudnessDb() const noexcept { return loudness_; }
   const NamMetadata& metadata() const noexcept { return meta_; }
+  // metadata.input_level_dbu / output_level_dbu (nullopt when the .nam does not carry them).
+  std::optional<double> inputLevelDbu() const noexcept { return inputDbu_; }
+  std::optional<double> outputLevelDbu() const noexcept { return outputDbu_; }
 
  private:
   friend class NamBlock;
@@ -50,6 +56,7 @@ class NamModel {
   std::unique_ptr<Data> data_;
   double expectedRate_ = -1.0;
   std::optional<double> loudness_;
+  std::optional<double> inputDbu_, outputDbu_;
   NamMetadata meta_{};
 };
 
@@ -93,15 +100,30 @@ class NamBlock : public Processor {
   // (linear ramps, sample-accurate: independent of the block size). Unchanged gains stay bit-exact.
   bool setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept override;
 
+  // v0.8 input calibration (calibration.h). levelInfo(): kind Nam, gear from metadata.gear_type, the capture's
+  // input_level_dbu / output_level_dbu (read with NAM's Has*Level, so absent stays absent).
+  calibration::BlockLevelInfo levelInfo() const noexcept override;
+  // RT-safe. Active: the input gain is (intent + planned) with planned = refBefore - input_level_dbu (planBlock; neutral
+  // when the capture has none). Intent is the config / setLiveGainsDb input gain; calibration is added to it, never replaces
+  // it. When the block feeds another NAM block the hop is planned: normalizeLoudness and the make-up are not applied
+  // (outputGainDb stays). Inactive restores the plain gains. Ramped like setLiveGainsDb.
+  void setCalibration(const calibration::BlockCalibration& c, int rampSamples) noexcept override;
+
  private:
   NamBlock() = default;
   void updateGains() noexcept;
+  void applyGains(int rampSamples) noexcept;
 
   std::unique_ptr<nam::DSP> dsp_;
   NamBlockConfig cfg_{};
   NamMetadata meta_{};
   double expectedRate_ = -1.0;
   std::optional<double> loudness_;
+  std::optional<double> inputDbu_, outputDbu_;
+  calibration::GearKind gear_ = calibration::GearKind::Unknown;
+  double intentInDb_ = 0.0, intentOutDb_ = 0.0;  // the block's own gains (config, then setLiveGainsDb)
+  double calInDb_ = 0.0;                         // planned calibration gain added to the input
+  bool calDrop_ = false;                         // calibrated hop: no normalizeLoudness, no make-up
   double sampleRate_ = 0.0;
   int maxBlock_ = 0;
   float inGain_ = 1.0f, outGain_ = 1.0f;  // targets (== current when not ramping)

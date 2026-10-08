@@ -9,6 +9,7 @@
 #include "sawblade/amp_controls.h"
 #include "sawblade/block_registry.h"
 #include "sawblade/bus_comp.h"
+#include "sawblade/calibration.h"
 #include "sawblade/convolver.h"
 #include "sawblade/delay.h"
 #include "sawblade/eq.h"
@@ -16,6 +17,7 @@
 #include "sawblade/gate.h"
 #include "sawblade/preset.h"
 #include "sawblade/processor.h"
+#include "sawblade/swap_slot.h"
 
 namespace sawblade {
 
@@ -107,6 +109,42 @@ struct ChainInfo {
     bool noCab = false;
   } exportExactness;
   std::vector<std::string> warnings;
+};
+
+// v0.8 input calibration at the chain level (opt-in: off by default, and off leaves every sample bit-identical). With it on
+// each NAM block's input gain becomes planned + intent: planned = (level arriving at the block) - (the capture's
+// input_level_dbu), the reference starting at the interface's dBu at 0 dBFS (kAssumedDeviceDbu when not calibrated);
+// intent = the block's own inputGainDb (preset / matcher / live), with INPUT and the amp GAIN knob still on top. Between NAM
+// blocks of a path the hop is planned from the metadata alone: a block that feeds another NAM block keeps its outputGainDb
+// but drops normalizeLoudness and the capture-swap make-up; only the last NAM block of a path keeps them. The gate is keyed
+// on the DI before any of this.
+struct ChainCalibration {
+  bool enabled = false;
+  calibration::DeviceCalibration device;
+  calibration::CalibrationDefaults defaults = calibration::defaultCalibrationDefaults();
+};
+
+// One block of a path as the plan sees it (preset block order).
+struct CalibrationBlockPlan {
+  std::string id;
+  bool planned = false;  // a non-bypassed block of an enabled path (only these take part in the plan)
+  calibration::LevelKind kind = calibration::LevelKind::Neutral;
+  calibration::GearKind gear = calibration::GearKind::Unknown;
+  double refBeforeDbu = 0.0;
+  double gainInDb = 0.0;  // planned input gain (a gain-ladder block: its starting rung's)
+  bool feedsNam = false;
+  bool inputMissing = false, outputMissing = false;
+  std::optional<double> captureInputDbu, captureOutputDbu;
+};
+
+struct CalibrationPlan {
+  bool enabled = false;
+  double deviceDbu = calibration::kAssumedDeviceDbu;  // the level planned with
+  bool deviceAssumed = true;                          // kAssumedDeviceDbu was used (device not calibrated)
+  bool anyUncalibrated = false;                       // a planned NAM block lacks input or output metadata
+  std::array<std::vector<CalibrationBlockPlan>, 2> blocks;  // [0] = path A, [1] = path B; one entry per preset block
+  std::uint64_t seq = 0;                              // publishCalibration() order
+  ChainCalibration setting;
 };
 
 // Gain-ladder state of one path's amp block (v0.2 Task B), read from any thread (atomics of the LadderBlock).
@@ -212,6 +250,18 @@ class Chain {
   void setAutoTrimDb(double db) noexcept;
   double autoTrimDb() const noexcept { return autoTrimNowDb_; }
   static constexpr double kAutoTrimRampMs = 250.0;
+  // --- v0.8 input calibration (see ChainCalibration) ---
+  // Plans the levels of the built blocks. Allocates; reads only data that is immutable after construction, so any thread.
+  CalibrationPlan planCalibration(const ChainCalibration& c) const;
+  // Plans and applies at once (a ramp over kLiveRampMs once prepared, immediate before). Not RT-safe and not safe against a
+  // running process(): call before audio starts or serialise with the audio thread. Off (enabled false) restores the plain
+  // gains. calibrationPlan() then returns what was applied.
+  void setCalibration(const ChainCalibration& c);
+  const CalibrationPlan& calibrationPlan() const noexcept { return calPlan_; }
+  // Swap-safe while audio runs: plans on the calling (producer) thread and hands the plan to the audio thread through a
+  // SwapSlot; process() applies it at the start of the next block, smoothed over kLiveRampMs. One producer thread at a time.
+  // Returns the plan that was published (for the UI / report).
+  CalibrationPlan publishCalibration(const ChainCalibration& c);
   // Not RT-safe (call before audio): start with the paths muted, without a ramp.
   void presetMutes(bool a, bool b) noexcept;
 
@@ -302,6 +352,7 @@ class Chain {
   void applyLiveEq(EqRamps& rs, const std::vector<EqBand>& cfg, const LiveEq& oldL,
                    LiveEq& newL) noexcept;
   void resetAll();
+  void applyCalibrationPlan(const CalibrationPlan& plan, int rampSamples) noexcept;
   void applyDynamics(const DynamicsSet& d) noexcept;
 
   Preset preset_;
@@ -323,6 +374,9 @@ class Chain {
   float blendStepA_ = 0.0f, blendStepB_ = 0.0f;
   int blendRamp_ = 0;                          // samples left in the blend ramp
   LiveParams live_;
+  CalibrationPlan calPlan_;                       // what setCalibration() applied
+  SwapSlot<CalibrationPlan> calSlot_;             // publishCalibration() -> process()
+  std::uint64_t calPublished_ = 0, calApplied_ = 0;
   int rampSamples_ = 1;
   EqRamps postRamps_;
   std::array<EqRamps, 2> preRamps_, pathRamps_;

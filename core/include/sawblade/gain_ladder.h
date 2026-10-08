@@ -74,6 +74,12 @@ class LadderBlock : public Processor {
   void process(float* io, int n) noexcept override;
   int latencySamples() const noexcept override { return latency_; }
   bool setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept override;
+  // The level info the Chain plans with is the block's starting rung (immutable, any thread). setCalibration reaches every
+  // loaded rung (and any rung loaded later); each rung computes its own planned gain from its own capture metadata, so a
+  // rung swap changes the drive by the metadata difference (v0.8 I1, decision 4). A downstream NAM block is planned from the
+  // starting rung's output level and does not follow a rung swap (documented limit; an amp ladder is normally the last block).
+  calibration::BlockLevelInfo levelInfo() const noexcept override { return levelInfo_; }
+  void setCalibration(const calibration::BlockCalibration& c, int rampSamples) noexcept override;
 
   // RT-safe. Which rung should sound. If it is not loaded, the block stays where it is and pending() is true.
   void setTargetRung(int rung) noexcept;
@@ -112,6 +118,10 @@ class LadderBlock : public Processor {
   std::vector<float> fadeOld_, fadeNew_;  // equal-power weights, fadeLen_ + 1 entries
   std::vector<float> scratch_;
   int maxBlock_ = 0;
+  calibration::BlockLevelInfo levelInfo_{};
+  bool haveCal_ = false;
+  calibration::BlockCalibration cal_{};
+  int calRamp_ = 1;
   bool haveGains_ = false;
   double gainIn_ = 0.0, gainOut_ = 0.0;
   int gainRamp_ = 1;

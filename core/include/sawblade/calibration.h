@@ -61,12 +61,25 @@ struct BlockGain {
   bool uncalibrated() const noexcept { return inputMissing || outputMissing; }
 };
 
+// What a block needs to apply its own calibration (v0.8 I1). The Chain fills it from planPath(); every Nam block (each
+// gain-ladder rung included) then derives ITS planned gain from its own capture metadata with planBlock(), so a rung swap
+// uses the rung's levels. Plain data: handing it to a block on the audio thread allocates nothing.
+struct BlockCalibration {
+  bool active = false;         // false: the block runs exactly as if calibration were off
+  double refBeforeDbu = 0.0;   // dBu at 0 dBFS of the signal arriving at the block
+  bool feedsNam = false;       // another Nam block follows in the same path: the hop is planned (no normalise / make-up)
+  CalibrationDefaults defaults{};
+};
+
 struct PathPlan {
   std::vector<BlockGain> blocks;
   double refOutDbu = 0.0;
   bool deviceUncalibrated = false;
   bool anyUncalibrated = false;
 };
+
+// One step of planPath(): the block's gain given the reference arriving at it. Pure arithmetic, no allocation.
+BlockGain planBlock(double refBeforeDbu, const BlockLevelInfo& block, const CalibrationDefaults& defaults) noexcept;
 
 // Reference starts at device.dbu, or kAssumedDeviceDbu (with deviceUncalibrated set) when it is absent/out of range,
 // so it is always known. NAM blocks with no usable input are neutral (0 dB) and flagged.

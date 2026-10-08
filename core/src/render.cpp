@@ -160,6 +160,13 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
     throw RenderError(RenderErrorKind::Io, e.what());
   }
 
+  try {
+    if (opts.calibration.enabled) chain->setCalibration(opts.calibration);  // before prepare: the probes see the calibrated chain
+  } catch (const std::exception& e) {
+    throw RenderError(RenderErrorKind::Preset, std::string("input calibration failed: ") + e.what());
+  }
+  r.calibration = opts.calibration.enabled ? chain->calibrationPlan() : chain->planCalibration(opts.calibration);
+
   auto t0 = std::chrono::steady_clock::now();
   try {
     chain->prepare({rate, opts.blockSize});
@@ -237,6 +244,46 @@ void writeRenderedWav(const std::filesystem::path& path, const RenderResult& r) 
   }
 }
 
+namespace {
+
+const char* levelKindName(calibration::LevelKind k) {
+  switch (k) {
+    case calibration::LevelKind::Nam: return "nam";
+    case calibration::LevelKind::Neutral: return "neutral";
+    case calibration::LevelKind::NominalOutput: return "nominalOutput";
+  }
+  return "neutral";
+}
+
+nlohmann::json optionalNumber(const std::optional<double>& v) { return v ? nlohmann::json(*v) : nlohmann::json(nullptr); }
+
+nlohmann::json calibrationJson(const CalibrationPlan& c) {
+  using nlohmann::json;
+  const auto path = [&](std::size_t k) {
+    json a = json::array();
+    for (const auto& b : c.blocks[k]) {
+      if (!b.planned) continue;
+      a.push_back({{"id", b.id},
+                   {"kind", levelKindName(b.kind)},
+                   {"gainInDb", b.gainInDb},
+                   {"refBeforeDbu", b.refBeforeDbu},
+                   {"feedsNam", b.feedsNam},
+                   {"inputMissing", b.inputMissing},
+                   {"outputMissing", b.outputMissing},
+                   {"captureInputDbu", optionalNumber(b.captureInputDbu)},
+                   {"captureOutputDbu", optionalNumber(b.captureOutputDbu)}});
+    }
+    return a;
+  };
+  return {{"enabled", c.enabled},
+          {"deviceDbu", c.deviceDbu},
+          {"deviceAssumed", c.deviceAssumed},
+          {"anyUncalibrated", c.anyUncalibrated},
+          {"paths", {{"a", path(0)}, {"b", path(1)}}}};
+}
+
+}  // namespace
+
 nlohmann::json reportJson(const RenderResult& r) {
   using nlohmann::json;
   const ChainInfo& i = r.info;
@@ -284,6 +331,7 @@ nlohmann::json reportJson(const RenderResult& r) {
       {"output", stats(r.output)},
       {"normalizeGainDb", r.normalizeGainDb},
       {"autoTrimDb", r.autoTrimDb},
+      {"calibration", calibrationJson(r.calibration)},
       {"prepareSeconds", r.prepareSeconds},
       {"renderSeconds", r.renderSeconds},
       {"resampleSeconds", r.resampleSeconds},

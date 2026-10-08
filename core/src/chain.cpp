@@ -908,6 +908,10 @@ void Chain::process(const float* in, float* out, int n) noexcept {
     if (in != out) std::copy(in, in + n, out);
     return;
   }
+  if (const CalibrationPlan* cp = calSlot_.current(); cp != nullptr && cp->seq != calApplied_) {  // lock-free handoff
+    calApplied_ = cp->seq;
+    applyCalibrationPlan(*cp, rampSamples_);
+  }
   while (n > 0) {
     const int len = std::min(n, maxBlock_);
     processChunk(in, out, len);
@@ -915,6 +919,81 @@ void Chain::process(const float* in, float* out, int n) noexcept {
     out += len;
     n -= len;
   }
+}
+
+CalibrationPlan Chain::planCalibration(const ChainCalibration& c) const {
+  CalibrationPlan plan;
+  plan.setting = c;
+  plan.enabled = c.enabled;
+  plan.deviceAssumed = !c.device.calibrated();
+  plan.deviceDbu = plan.deviceAssumed ? calibration::kAssumedDeviceDbu : *c.device.dbu;
+  for (std::size_t k = 0; k < 2; ++k) {
+    const Path& p = path_[k];
+    auto& out = plan.blocks[k];
+    out.resize(p.blocks.size());
+    for (std::size_t i = 0; i < p.blocks.size(); ++i) out[i].id = p.blocks[i].id;
+    if (!c.enabled || !p.enabled) continue;
+    std::vector<std::size_t> idx;  // blocks that take part: bypassed ones pass the signal through untouched
+    std::vector<calibration::BlockLevelInfo> infos;
+    for (std::size_t i = 0; i < p.blocks.size(); ++i) {
+      if (p.blocks[i].bypass) continue;
+      idx.push_back(i);
+      infos.push_back(p.blocks[i].processor->levelInfo());
+    }
+    const calibration::PathPlan pp = calibration::planPath(c.device, infos, c.defaults);
+    double ref = plan.deviceDbu;
+    bool namAfter = false;
+    for (std::size_t j = idx.size(); j-- > 0;) {  // feedsNam: a Nam block follows
+      CalibrationBlockPlan& b = out[idx[j]];
+      b.feedsNam = namAfter && infos[j].kind == calibration::LevelKind::Nam;
+      if (infos[j].kind == calibration::LevelKind::Nam) namAfter = true;
+    }
+    for (std::size_t j = 0; j < idx.size(); ++j) {
+      CalibrationBlockPlan& b = out[idx[j]];
+      b.planned = true;
+      b.kind = infos[j].kind;
+      b.gear = infos[j].gear;
+      b.refBeforeDbu = ref;
+      b.gainInDb = pp.blocks[j].gainInDb;
+      b.inputMissing = pp.blocks[j].inputMissing;
+      b.outputMissing = pp.blocks[j].outputMissing;
+      b.captureInputDbu = infos[j].inputDbu;
+      b.captureOutputDbu = infos[j].outputDbu;
+      ref = pp.blocks[j].refAfterDbu;
+    }
+    plan.anyUncalibrated = plan.anyUncalibrated || pp.anyUncalibrated;
+  }
+  return plan;
+}
+
+// RT-safe: reads the plan, calls the blocks; no allocation.
+void Chain::applyCalibrationPlan(const CalibrationPlan& plan, int rampSamples) noexcept {
+  for (std::size_t k = 0; k < 2; ++k) {
+    auto& blocks = path_[k].blocks;
+    const auto& bp = plan.blocks[k];
+    if (bp.size() != blocks.size()) continue;
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+      calibration::BlockCalibration bc;
+      bc.active = plan.enabled && bp[i].planned;
+      bc.refBeforeDbu = bp[i].refBeforeDbu;
+      bc.feedsNam = bp[i].feedsNam;
+      bc.defaults = plan.setting.defaults;
+      blocks[i].processor->setCalibration(bc, rampSamples);
+    }
+  }
+}
+
+void Chain::setCalibration(const ChainCalibration& c) {
+  calPlan_ = planCalibration(c);
+  applyCalibrationPlan(calPlan_, prepared_ ? rampSamples_ : 0);
+}
+
+CalibrationPlan Chain::publishCalibration(const ChainCalibration& c) {
+  calSlot_.collectGarbage();  // plans the audio thread has replaced
+  CalibrationPlan plan = planCalibration(c);
+  plan.seq = ++calPublished_;
+  calSlot_.publish(std::make_unique<CalibrationPlan>(plan));
+  return plan;
 }
 
 void Chain::processChunk(const float* in, float* out, int n) noexcept {
