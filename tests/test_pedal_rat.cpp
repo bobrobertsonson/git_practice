@@ -184,7 +184,7 @@ namespace {
 
 struct SlewRun {
   double maxSlopeVPerUs, thdDb, rmsOut;
-  std::uint64_t clampSamples;
+  std::uint64_t clampSamples, capHits;
   std::vector<float> y;
 };
 
@@ -198,6 +198,7 @@ SlewRun slewRun(const RatVoicing& v, double fs, double f, double amp) {
   st.process(x.data(), static_cast<int>(x.size()));
   SlewRun r;
   r.clampSamples = st.slewClampCount();
+  r.capHits = st.newtonCapHits();
   r.y.assign(x.end() - static_cast<std::ptrdiff_t>(N), x.end());
   double maxStep = 0.0;
   for (std::size_t i = 1; i < N; ++i) maxStep = std::max(maxStep, std::fabs(static_cast<double>(r.y[i]) - r.y[i - 1]));
@@ -226,6 +227,10 @@ TEST_CASE("pedal.rat: op-amp slew limit at DIST 10 (5 kHz, 1 V)", "[rat][slew]")
   const double relDiff = std::sqrt(d2 / static_cast<double>(s.y.size())) / f.rmsOut;
   std::printf("[rat slew] max |dvo|/T %.4f V/us (model %.2f), clamp on %llu of 32768 samples; THD %.2f dB slew-limited vs %.2f dB slew-free; waveform difference %.1f %% of rms\n",
               s.maxSlopeVPerUs, stock.slewVPerUs, static_cast<unsigned long long>(s.clampSamples), s.thdDb, f.thdDb, 100.0 * relDiff);
+  // Vd is consistent with SR and GBW (Vd = SR / wt), and the implicit Newton solve never hit its iteration cap
+  CHECK(stock.diffPairVd == Catch::Approx(stock.slewVPerUs * 1e6 / (2.0 * kPi * stock.gbwHz)).epsilon(1e-4));
+  CHECK(s.capHits == 0);
+  CHECK(f.capHits == 0);
   // the clamp acts and the maximum slope is the modelled slew rate within 10 %
   CHECK(s.clampSamples > 100);
   CHECK(s.maxSlopeVPerUs <= stock.slewVPerUs * 1.10);
@@ -301,8 +306,9 @@ TEST_CASE("pedal.rat: FILTER corner is monotonic and follows the RC formula", "[
     if (step == 0) {  // -3 dB re 2 kHz
       const double r0 = interp(db, 2000.0);
       c = upperCornerHz([&](double hz) { return interp(db, hz) - r0; }, 2000.0, 0.45 * fs, 1.001);
-    } else {  // -3 dB of the ratio to FILTER 0, from below the corner
-      c = upperCornerHz([&](double hz) { return interp(db, hz) - interp(ref, hz); }, 60.0, 0.45 * fs, 1.001);
+    } else {  // -3 dB of the FILTER stage, from below the corner
+      // ratio to FILTER 0 times the analytic FILTER-0 pole = the FILTER stage alone
+      c = upperCornerHz([&](double hz) { return interp(db, hz) - interp(ref, hz) + 20.0 * std::log10(std::abs(lpf1(v.filterCornerHz(0.0), fs, hz))); }, 60.0, 0.45 * fs, 1.001);
     }
     const double formula = v.filterCornerHz(filter);
     std::printf("[rat filter] FILTER %2d: corner %.1f Hz, RC formula %.1f Hz (%.2f %%)\n", step, c, formula, 100.0 * (c / formula - 1.0));
@@ -546,21 +552,21 @@ TEST_CASE("pedal.rat: aliasing", "[rat][alias]") {
     p.distortion = 10.0;
     p.filter = 0.0;
     p.clip = clip;
-    for (double fund : {1000.0, 2000.0, 5000.0}) {
+    for (double fund : {1000.0, 2000.0, 4700.0, 5000.0}) {
       RatPedal ped(p);
       const double a = aliasDb(ped, 48000.0, fund);
       std::printf("[rat alias] CLIP %-7s DIST 10, %4.0f Hz at -6 dBFS: %.1f dB\n", kRatClipNames[static_cast<int>(clip)], fund, a);
-      if (fund == 5000.0) rat5k = std::max(rat5k, a);
+      if (fund >= 4700.0) rat5k = std::max(rat5k, a);
       else ratLow = std::max(ratLow, a);
     }
   }
-  // Documented limit (see the report): the op-amp stage is a dynamic hard nonlinearity (a 0.3 V/us slew edge into
-  // rails), which ADAA cannot anti-alias, so at 4x the edge of a +-3.8 V square wave of 5 kHz aliases at about
-  // -50 dB; it is measured to fall by ~12 dB per doubling of the stage rate. At 1 and 2 kHz it is below the
-  // other pedals' worst case. This test pins both numbers.
+  // OPEN ITEM (see the report): the spec bar is rat5k <= worstExisting. The op-amp stage is a dynamic nonlinearity
+  // (a 0.3 V/us slew edge into rails) that ADAA cannot anti-alias; with the differential-pair slew the 4.7 / 5 kHz
+  // recipe aliases at about -53 dB at 4x, and needs a ~32x stage rate (-86 dB, stage-alone) to meet the bar, at a CPU
+  // cost above the budget. At 1 and 2 kHz it is far below the other pedals' worst case. This test pins both.
   CHECK(ratLow <= worstExisting);
   CHECK(ratLow <= -80.0);
-  CHECK(rat5k <= -45.0);
+  CHECK(rat5k <= -50.0);  // 4.7 and 5 kHz, both clips
 
   // Sensitivity: without oversampling and ADAA the detector sees the aliasing.
   RatParams p;

@@ -19,7 +19,8 @@ double RatVoicing::distOhms(double dist) const noexcept {
 
 double RatVoicing::filterCornerHz(double filter) const noexcept {
   const double t = std::clamp(filter, 0.0, 10.0) / 10.0;
-  const double rf = filterPotR * (1.0 - (std::pow(filterTaperA, 1.0 - t) - 1.0) / (filterTaperA - 1.0));
+  const double rf = filterPotR * (filterReverseLog ? 1.0 - (std::pow(filterTaperA, 1.0 - t) - 1.0) / (filterTaperA - 1.0)
+                                                   : (std::pow(filterTaperA, t) - 1.0) / (filterTaperA - 1.0));
   return 1.0 / (2.0 * std::numbers::pi * (filterR + rf) * filterC);
 }
 
@@ -49,7 +50,8 @@ void RatOpAmpStage::prepare(double fsOs, const RatVoicing& v) {
   y1_ = g1_ * c1_;
   y2_ = g2_ * c2_;
   slewOn_ = std::isfinite(v.slewVPerUs);
-  eSat_ = slewOn_ ? v.slewVPerUs * 1e6 / (2.0 * std::numbers::pi * v.gbwHz) : 0.0;  // SR / wt
+  vd_ = v.diffPairVd;
+  invVd_ = 1.0 / vd_;
   vRail_ = v.vRail;
   knee_ = v.railKneeFrac * v.vRail;
   kneeSpan_ = v.vRail - knee_;
@@ -61,7 +63,7 @@ void RatOpAmpStage::prepare(double fsOs, const RatVoicing& v) {
 
 void RatOpAmpStage::reset() noexcept {
   vo_ = e_ = ihf_ = ih1_ = ih2_ = 0.0;
-  slewHits_ = railHits_ = 0;
+  slewHits_ = railHits_ = newtonCapHits_ = 0;
 }
 
 void RatOpAmpStage::setRd(double ohms, int rampSamples) noexcept {
@@ -92,13 +94,28 @@ void RatOpAmpStage::process(float* io, int n) noexcept {
     const double vin = io[i];
     const double w2 = w2_.cur;
     const double b = (c1_ * ih1_ + w2 * c2_ * ih2_ - ihf_) * invD_;
-    // Linear (unlimited) trapezoidal solution; accepted when the input stage is not saturated.
+    // Linear (unlimited) trapezoidal solution; exact while the input stage is in its linear range.
     double vo = (vo_ + h_ * (vin - b + e_)) * invK_;
-    const double eLin = vin - (a_ * vo + b);
-    if (slewOn_ && std::fabs(eLin) > eSat_) {
-      // Slew: the integrator input saturates at +-eSat = SR / wt, so |vo - vo'| <= h (|e| + |e'|) <= SR * T.
-      vo = vo_ + h_ * (std::copysign(eSat_, eLin) + e_);
-      ++slewHits_;
+    if (slewOn_) {
+      const double eLin = vin - (a_ * vo + b);
+      if (std::fabs(eLin) > vd_) {
+        ++slewHits_;
+        vo = vo_ + h_ * (std::copysign(vd_, eLin) + e_);  // start from the hard-saturated root (always on the right side)
+      }
+      // Newton on F(x) = x - vo' - h (Vd tanh((vin - a x - b) / Vd) + u'): F is smooth and strictly increasing
+      // (F' = 1 + h a sech^2 >= 1), so Newton from the saturated / linear start converges in 1-3 steps.
+      bool converged = false;
+      for (int it = 0; it < kMaxNewton; ++it) {
+        const double t = std::tanh((vin - (a_ * vo + b)) * invVd_);
+        const double f = vo - vo_ - h_ * (vd_ * t + e_);
+        const double dx = f / (1.0 + h_ * a_ * (1.0 - t * t));
+        vo -= dx;
+        if (std::fabs(dx) < 1e-11) {
+          converged = true;
+          break;
+        }
+      }
+      if (!converged) ++newtonCapHits_;
     }
     const double av = std::fabs(vo);
     if (av > knee_) {
@@ -107,7 +124,7 @@ void RatOpAmpStage::process(float* io, int n) noexcept {
     }
     // Advance the network with the final vo. e_ is the saturated integrator input, so no unclamped state is kept.
     const double vm = a_ * vo + b;
-    e_ = slewOn_ ? std::clamp(vin - vm, -eSat_, eSat_) : vin - vm;
+    e_ = slewOn_ ? vd_ * std::tanh((vin - vm) * invVd_) : vin - vm;
     ihf_ = 2.0 * gf_ * (vo - vm) - ihf_;
     const double i1 = y1_ * vm - c1_ * ih1_;
     ih1_ = 2.0 * g1_ * (vm - r1_ * i1) - ih1_;

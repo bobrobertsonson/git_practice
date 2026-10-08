@@ -23,10 +23,10 @@ constexpr int kHmModelVersionV2 = 2;
 constexpr int kMuffModelVersion = 1;   // pedal.muff
 constexpr int kRatModelVersion = 1;    // pedal.rat
 constexpr double kKnobMin = 0.0, kKnobMax = 10.0, kKnobDefault = 5.0;
-// pedal.rat stock VOLUME: 8 = unity on the shared level map (pedalLevelDb). With the voicing's fixed +6 dB output
-// trim the stock pedal (DIST 5, FILTER 5, silicon) returns the RMS of a -12 dBFS-RMS DI riff within 1 dB
+// pedal.rat stock VOLUME: 5.8 on the shared level map (pedalLevelDb, 8 = unity), plus the voicing's fixed +6 dB output
+// trim (RatVoicing::outputTrimDb); the stock pedal (DIST 5, FILTER 5, silicon) returns the RMS of a -12 dBFS-RMS DI riff within 1 dB
 // (tests/test_pedal_rat.cpp measures and checks it).
-constexpr double kRatStockVolume = 8.0;
+constexpr double kRatStockVolume = 5.8;
 
 enum class HmMode : int { Stock = 0, Custom = 1, Modded = 2 };
 inline constexpr const char* kHmModeNames[3] = {"stock", "custom", "modded"};

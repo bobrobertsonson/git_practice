@@ -26,6 +26,12 @@ struct RatVoicing {
   // LM308-class op-amp: single pole, gain-bandwidth, slew rate, supply rails (9 V supply).
   double gbwHz = 1.0e6;
   double slewVPerUs = 0.3;          // infinity = no slew limit (test seam)
+  // Differential-pair input stage: the integrator input is Vd * tanh(v_diff / Vd), so the output rate is
+  // SR * tanh(wt v_diff / SR) and saturates at exactly SR. Vd = SR / wt = 0.3 V/us / (2 pi 1 MHz) = 47.7 mV, which
+  // is also what a bare bipolar pair gives (2 Vt = 52 mV at 300 K, within 9 %): the small-signal gain wt and the
+  // maximum rate SR then follow from one tail current and one compensation capacitor (I_tail / Cc = SR,
+  // gm / Cc = wt, Vd = I_tail / gm). Ignored when slewVPerUs is infinite.
+  double diffPairVd = 0.0477465;
   double vRail = 3.8, railKneeFrac = 0.75;  // smooth rail: linear below frac * vRail, tanh into vRail above
   // Filters.
   double inHpfHz = 20.0;            // input coupling, base rate
@@ -33,8 +39,13 @@ struct RatVoicing {
   double outHpfHz = 10.0;           // output coupling, base rate
   double outputTrimDb = 6.0;        // fixed output-buffer make-up on the wet path: VOLUME 8 (unity) is stock level
   double tightHz0 = 20.0, tightDecadeDiv = 10.0;  // TIGHT HPF: 20 * 10^(tightness / 10) Hz, as the other pedals
-  // FILTER: fc = 1 / (2 pi (filterR + Rf) filterC), Rf = filterPotR * (1 - (a^(1-t) - 1) / (a - 1)) (reverse log).
+  // FILTER: fc = 1 / (2 pi (filterR + Rf) filterC), t = filter / 10. The taper is a VOICING CHOICE made by feel, not
+  // verified against a schematic, so a later capture fit can revisit it (one switch): audio taper wired so FILTER 0
+  // = brightest (Rf = 0, 32 kHz) and 10 = darkest (100 k, 475 Hz): Rf = filterPotR (a^t - 1) / (a - 1), about
+  // 4.2 kHz at FILTER 5; or reverse log (filterReverseLog = true): Rf = filterPotR (1 - (a^(1-t) - 1) / (a - 1)),
+  // 527 Hz at FILTER 5.
   double filterR = 1.5e3, filterPotR = 100e3, filterC = 3.3e-9, filterTaperA = 81.0;
+  bool filterReverseLog = false;
 
   static const RatVoicing& stock() noexcept;
 
@@ -63,13 +74,14 @@ struct RatVoicing {
 // vo = (vo' + h (vin - b + e')) / (1 + h a). This is the exact trapezoidal solution of the linear circuit.
 //
 // Nonlinear limits, applied to that solution in this order:
-//  1. slew: the integrator input e saturates at +-SR / wt (the op-amp's input stage cannot ask for more than SR),
-//     d(vo)/dt = wt * clamp(e, +-SR / wt). In the trapezoidal step this is a clamp of the output step,
-//     |vo - vo'| <= h (|e| + |e'|) <= 2 h SR / wt = SR * T, reached exactly while the stage slews. The saturated
-//     value is also what the next step's trapezoid averages over (e'), so the carried state is the clamped one and
-//     a slew onset / release is a sub-sample-consistent half step rather than a full or missing step. Where the
-//     linear solution is saturated the step is solved in closed form (the equation is monotone in vo, so the
-//     clamped root is unique);
+//  1. slew: the real LM308 mechanism, a differential-pair input stage. The integrator input is
+//     u(e) = Vd tanh(e / Vd), d(vo)/dt = wt u(e), so the rate is SR tanh(wt e / SR) and approaches SR
+//     asymptotically. In the trapezoidal step |vo - vo'| <= h (|u| + |u'|) < 2 h Vd = SR * T. The saturated u is
+//     what the next step's trapezoid averages over (u'), so the carried state is the limited one. The step is
+//     solved implicitly with the network: F(x) = x - vo' - h (u(vin - a x - b) + u') = 0, smooth and strictly
+//     increasing (F' = 1 + h a sech^2 >= 1), by Newton from the linear solution (or, where |e| > Vd, from the
+//     hard-saturated root vo' + h (+-Vd + u')), at most kMaxNewton steps, no allocation; it converges in 1-3
+//     steps (newtonCapHits() counts the samples that hit the cap, 0 in all tests);
 //  2. rails: a smooth saturation (linear below knee, tanh into +-vRail) of that value.
 // The final vo is the only integrator state, so the stage cannot wind up past a limit; the network states (vm, the
 // capacitor histories, the clamped e') are then advanced with the final vo, so no hidden unclamped state exists.
@@ -85,9 +97,11 @@ class RatOpAmpStage {
   void setLegWeight(double w2, int rampSamples) noexcept;
   void process(float* io, int n) noexcept;
 
-  // Diagnostics since reset(): samples on which the slew saturation acted / the output was in the rail knee region.
+  // Diagnostics since reset(): samples on which the input stage was beyond Vd / the output was in the rail knee region.
   std::uint64_t slewClampCount() const noexcept { return slewHits_; }
   std::uint64_t railCount() const noexcept { return railHits_; }
+  std::uint64_t newtonCapHits() const noexcept { return newtonCapHits_; }
+  static constexpr int kMaxNewton = 8;
 
  private:
   struct Ramp {
@@ -113,14 +127,14 @@ class RatOpAmpStage {
 
   // constants
   double h_ = 0.0, gf_ = 0.0, g1_ = 0.0, g2_ = 0.0, y1_ = 0.0, y2_ = 0.0, c1_ = 1.0, c2_ = 1.0, r1_ = 0.0, r2_ = 0.0;
-  double eSat_ = 0.0, vRail_ = 3.8, knee_ = 2.85, kneeSpan_ = 0.95;
+  double vd_ = 0.05, invVd_ = 20.0, vRail_ = 3.8, knee_ = 2.85, kneeSpan_ = 0.95;
   bool slewOn_ = true;
   // per-sample coefficients (change only while a ramp runs)
   double a_ = 0.0, invD_ = 0.0, invK_ = 1.0;
   Ramp rd_, w2_;
   // state
   double vo_ = 0.0, e_ = 0.0, ihf_ = 0.0, ih1_ = 0.0, ih2_ = 0.0;
-  std::uint64_t slewHits_ = 0, railHits_ = 0;
+  std::uint64_t slewHits_ = 0, railHits_ = 0, newtonCapHits_ = 0;
 };
 
 // "Rat-style distortion" (pedal.rat, display name VERMIN): input HPF (20 Hz) -> TIGHT HPF -> 4x oversampled
@@ -131,7 +145,7 @@ class RatOpAmpStage {
 // `none` keeps a one-sample clean delay in place of the clipper so the latency is the same in every mode. The
 // clean mix is the input after the 20 Hz input HPF, delayed by exactly latencySamples().
 //
-// Stock: DIST 5, FILTER 5, VOLUME kRatStockVolume (8 = unity on the level map, plus RatVoicing::outputTrimDb), TIGHT 0, CLIP silicon, MIX 100, RUETZ off.
+// Stock: DIST 5, FILTER 5, VOLUME kRatStockVolume (5.8 on the level map, 8 = unity, plus RatVoicing::outputTrimDb), TIGHT 0, CLIP silicon, MIX 100, RUETZ off.
 //
 // Live parameters (setLiveParams, same thread as process()): applied at the start of the next process(). DIST,
 // RUETZ ramp inside the op-amp stage and VOLUME / MIX as linear gain ramps over kLiveRampMs; FILTER and TIGHT
