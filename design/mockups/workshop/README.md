@@ -51,7 +51,7 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 
 | style | fg | bg | ratio | AA needs | px sizes | uses | screens |
 |---|---|---|---|---|---|---|---|
-| body | bone | well | 13.71:1 ok | 4.5 | 13 | 52 | 00 01 03 04 05 06 08 09 |
+| body | bone | well | 13.71:1 ok | 4.5 | 13 | 54 | 00 01 03 04 05 06 07 08 09 |
 | body | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 4 | 00 03 06 |
 | body | bone_mute | well | 5.81:1 ok | 4.5 | 13 | 1 | 04 |
 | body | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 2 | 00 04 |
@@ -70,7 +70,7 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | brand | blade | well | 6.23:1 ok | 3.0 | 20,22 | 14 | 00 01 02 03 04 05 06 07 08 09 |
 | brand | ink | alu_well | 10.36:1 ok | 3.0 | 22 | 4 | 05 06 07 08 |
 | button | blade_hi | well_raised | 6.90:1 ok | 4.5 | 13 | 2 | 03 04 |
-| button | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 133 | 00 01 02 03 04 05 06 07 08 09 |
+| button | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 137 | 00 01 02 03 04 05 06 07 08 09 |
 | button | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 12 | 01 03 08 |
 | button | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 1 | 00 |
 | button_ink | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 1 | 00 |
@@ -81,7 +81,7 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 4 | 00 01 09 |
 | label | body | well | 8.18:1 ok | 4.5 | 11 | 3 | 00 01 |
 | label | bone | well | 13.71:1 ok | 4.5 | 11 | 31 | 00 04 |
-| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 105 | 00 01 03 04 05 06 07 08 |
+| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 119 | 00 01 03 04 05 06 07 08 |
 | label | bone_dim | well_raised | 6.96:1 ok | 4.5 | 11 | 1 | 04 |
 | label | bone_mute | well | 5.81:1 ok | 4.5 | 11 | 4 | 00 04 |
 | label | lcd_amber | well | 10.02:1 ok | 4.5 | 11 | 1 | 00 |
@@ -91,7 +91,7 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | label_b | blade | well | 6.23:1 ok | 4.5 | 11 | 2 | 04 |
 | label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 22 | 01 02 06 09 |
 | label_b | body | well | 8.18:1 ok | 4.5 | 11 | 6 | 00 02 04 05 06 |
-| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 109 | 00 01 02 03 04 05 06 07 08 09 |
+| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 121 | 00 01 02 03 04 05 06 07 08 09 |
 | label_b | bone | well_raised | 12.43:1 ok | 4.5 | 11 | 6 | 00 04 08 |
 | label_b | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 1 | 04 |
 | label_b | ok | well | 11.02:1 ok | 4.5 | 11 | 21 | 00 01 02 03 04 05 06 07 08 09 |
@@ -105,21 +105,21 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | label_ink | ink | bone_dim | 8.09:1 ok | 4.5 | 11 | 3 | 00 04 06 |
 | label_ink | ink | lcd_amber | 10.57:1 ok | 4.5 | 11 | 7 | 00 03 08 09 |
 | label_ink | ink | ok | 11.62:1 ok | 4.5 | 11 | 2 | 00 05 |
-| lcd | lcd_amber | glass | 11.04:1 ok | 4.5 | 12,14,16,18,20,22,26 | 38 | 00 01 02 03 05 06 07 08 |
-| lcd_unit | lcd_amber | glass | 11.04:1 ok | 4.5 | 14 | 62 | 00 01 02 03 04 05 06 07 08 09 |
+| lcd | lcd_amber | glass | 11.04:1 ok | 4.5 | 14,16,18,20,22,26 | 48 | 00 01 02 03 05 06 07 08 |
+| lcd_unit | lcd_amber | glass | 11.04:1 ok | 4.5 | 14 | 72 | 00 01 02 03 04 05 06 07 08 09 |
 | mono | blade_hi | well_raised | 6.90:1 ok | 4.5 | 14 | 3 | 05 07 |
-| mono | bone | well | 13.71:1 ok | 4.5 | 13,14 | 28 | 00 01 03 04 05 06 07 09 |
+| mono | bone | well | 13.71:1 ok | 4.5 | 13,14 | 30 | 00 01 03 04 05 06 07 08 09 |
 | mono | bone | well_raised | 12.43:1 ok | 4.5 | 14 | 4 | 00 03 04 06 |
 | mono | lcd_amber | glass | 11.04:1 ok | 4.5 | 14 | 2 | 01 |
-| mono_dim | bone_dim | well | 7.67:1 ok | 4.5 | 13,14 | 29 | 01 03 04 05 06 07 09 |
+| mono_dim | bone_dim | well | 7.67:1 ok | 4.5 | 13,14 | 31 | 01 03 04 05 06 07 08 09 |
 | mono_dim | bone_dim | well_raised | 6.96:1 ok | 4.5 | 14 | 4 | 05 07 |
-| nixie | blade_hi | #3d2413 | 6.13:1 ok | 3.0 | 34 | 3 | 00 01 03 |
-| section | blade | well | 6.23:1 ok | 4.5 | 18 | 2 | 01 03 |
-| section | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 46 | 00 01 03 04 05 06 08 09 |
-| section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 2 | 01 03 |
+| nixie | blade_hi | #3d2413 | 6.13:1 ok | 3.0 | 34 | 5 | 00 01 03 07 08 |
+| section | blade | well | 6.23:1 ok | 4.5 | 18 | 4 | 01 03 07 08 |
+| section | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 48 | 00 01 03 04 05 06 07 08 09 |
+| section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 4 | 01 03 07 08 |
 | title | bone | well | 13.71:1 ok | 4.5 | 18,22 | 2 | 03 04 |
 
-979 strings measured on 10 screens: all pass WCAG 2.x AA
+1043 strings measured on 10 screens: all pass WCAG 2.x AA
 
 ## Open design choices
 

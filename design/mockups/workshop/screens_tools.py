@@ -18,11 +18,16 @@ from workshop_style import text, well, label_well, text_width, inset  # noqa: E4
 # --------------------------------------------------------------------------------------------------------------------
 # shared helpers
 # --------------------------------------------------------------------------------------------------------------------
-def backdrop(name, dim=0.35, area=(0, 58, 1280, 800)):
-    """The rig screen, dimmed.  The canvas is renamed and its (scenery) text log cleared."""
+def backdrop(name, dim=0.35, area=(0, 58, 940, 800), keep_inspector=True):
+    """The rig screen, dimmed inside ``area`` only (the inspector stays undimmed and its text stays in the contrast log;
+    the rest of the rig is scenery behind an overlay and its log is dropped, as in screens_panels.rig_backdrop)."""
     cv = screens_rig.screen_01_main_rig()
     cv.name = name
-    cv.log = []
+    keep = []
+    if keep_inspector:
+        idx = next(i for i, e in enumerate(cv.log) if e['text'] == 'INSPECTOR')
+        keep = cv.log[idx:]
+    cv.log = keep
     if dim:
         ws.darken(cv, area, dim)
     return cv
@@ -148,7 +153,7 @@ def _cand_row(cv, rect, rank, chain, score, selected=False, preview=False):
 
 
 def screen_05_match():
-    cv = backdrop('05_match')
+    cv = backdrop('05_match', 0.35, (0, 58, 1280, 800), False)
     top(cv)
     c = frame(cv, (12, 66, 1268, 792), 'MATCH', 'ov05', right='REFINED READY')
     L0, L1 = c[0], 410
@@ -283,7 +288,7 @@ def _lines_well(cv, rect, items, pad=8, lh=18, top=None):
 
 
 def screen_06_nam_forger():
-    cv = backdrop('06_nam_forger')
+    cv = backdrop('06_nam_forger', 0.35, (0, 58, 1280, 800), False)
     top(cv)
     c = frame(cv, (12, 66, 1268, 792), 'NAM FORGER', 'ov06', right='NO-CAB + IR · LITE')
     x0, x1 = c[0], 850
@@ -344,7 +349,7 @@ def screen_06_nam_forger():
         text(cv, (wr[0] + 6, cy_of(wr)), g, 'body_strong', bg=wr, fg=col)
         text(cv, (wr[0] + 28, cy_of(wr)), s, 'body', bg=wr)
     k = sec(cv, (x0 + 556, y, x1, y + h4), 'CREDITS', 'm06g')
-    cr = [('SAW HEAD · @marrow_amps · cc-by', None), ('BODY HEAD · @swamp_rig · cc-by-nc', 'nc'), ('CAB IR · @bench_tones · cc-by', None)]
+    cr = [('SAW HEAD · @marrow_amps · cc-by-nc', 'nc'), ('BODY HEAD · @swamp_rig · cc-by-sa', None), ('CAB IR · @bench_tones · cc-by', None)]
     yy = k[1]
     for s, nc in cr:
         strip(cv, (k[0], yy, k[2], yy + 22), s, 'body', pad=6)
@@ -524,7 +529,7 @@ def _block_card(cv, rect, title, key, lines, accent, status=None, bypassed=False
     # INPUT knob + LCD
     ws.knob(cv, bx0 + 18, y + 19, 34, 'pedal', knob_v, accent or 'blade')
     label_well(cv, (bx0 + 44, y + 7), 'INPUT', 'label_b', h=16, pad=5)
-    ws.lcd(cv, (bx0 + 44, y + 30), input_db, 'dB', digits=4, h=12)
+    ws.lcd(cv, (bx0 + 44, y + 31), input_db, 'dB', digits=4, h=14)
     y += 46
     # move / remove
     for i, ic in enumerate(('chev_l', 'chev_r')):
@@ -569,7 +574,7 @@ def screen_08_rig_editor():
                 [('CIRCUIT · BUZZSAW', 'body_strong', 'blade_hi'), ('modelled pedal (DSP circuit)', 'body', None),
                  ('sits in front of SAW HEAD', 'body_dim', None)], 'blade', status='MODELLED', input_db='0.0', knob_v=0.5)
     _block_card(cv, (xs[1], cy0, xs[1] + cw, cy0 + ch), 'SAW HEAD', 'k08b',
-                [('@marrow_amps · cc-by · VIA TONE3000', 'body', None), ('no level metadata —', 'body_dim', None),
+                [('@marrow_amps · cc-by-nc · VIA TONE3000', 'body', None), ('no level metadata —', 'body_dim', None),
                  ('default +9 dBu', 'body_dim', None)], 'blade', uncal=True, input_db='+1.5', knob_v=0.56)
     _block_card(cv, (xs[2], cy0, xs[2] + cw, cy0 + ch), 'EQ', 'k08c',
                 [('PRE · 4 bands', 'body_strong', None), ('low cut 80 Hz, bell −3 dB', 'body', None),
@@ -583,7 +588,7 @@ def screen_08_rig_editor():
                 [('modelled pedal (DSP circuit)', 'body', None), ('DRIVE 0.20 · TONE 0.55', 'body_dim', None),
                  ('signal passes straight through', 'body_dim', None)], 'body', bypassed=True, input_db='0.0', knob_v=0.5)
     _block_card(cv, (xs[1], cy1, xs[1] + cw, cy1 + ch), 'BODY HEAD', 'k08e',
-                [('@swamp_rig · cc-by · VIA TONE3000', 'body', None), ('✓ calibrated level', 'body', 'ok'),
+                [('@swamp_rig · cc-by-sa · VIA TONE3000', 'body', None), ('✓ calibrated level', 'body', 'ok'),
                  ('+12.5 dBu from the capture', 'body_dim', None)], 'body', status='ON', input_db='-2.0', knob_v=0.42)
     ws.empty_slot(cv, (xs[2], cy1, xs[2] + 76, cy1 + ch), '+ ADD')
     # ---- CAB notice -----------------------------------------------------------------------------------------------------

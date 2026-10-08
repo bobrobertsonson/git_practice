@@ -120,7 +120,8 @@ _CLAIMED = [('bone', 'well', 13.7), ('bone_dim', 'well', 7.7), ('bone_mute', 'we
             ('blade', 'well', 6.2), ('body', 'well', 8.2), ('lcd_amber', 'glass', 11.0), ('ok', 'well', 11.0),
             ('alert', 'well', 6.4)]
 for _fg, _bg, _want in _CLAIMED:
-    assert contrast(PAL[_fg], PAL[_bg]) >= _want - 0.05, (_fg, _bg, contrast(PAL[_fg], PAL[_bg]), _want)
+    if contrast(PAL[_fg], PAL[_bg]) < _want - 0.05:
+        raise ValueError('palette drift: %s on %s is %.2f, spec says %.1f' % (_fg, _bg, contrast(PAL[_fg], PAL[_bg]), _want))
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -172,24 +173,42 @@ def _ssl_context():
 
 
 def ensure_fonts(font_dir=None):
-    """Fetch (if missing) and SHA-256-verify every font; raise FontError on any failure."""
+    """Fetch (if missing) and SHA-256-verify every font; raise FontError on any failure.  Downloaded bytes are verified
+    BEFORE they enter the cache (one retry on a mismatch), so a bad download never poisons the cache."""
     global _fonts_ready
     if font_dir:
         set_font_dir(font_dir)
-    os.makedirs(_font_dir, exist_ok=True)
+    try:
+        os.makedirs(_font_dir, exist_ok=True)
+    except OSError as e:
+        raise FontError(f'cannot create font dir {_font_dir}: {e}')
     for key, (name, url, sha) in sorted(FONTS.items()):
         path = os.path.join(_font_dir, url.rsplit('/', 1)[1])
         if not os.path.exists(path):
-            try:
-                with urllib.request.urlopen(url, timeout=60, context=_ssl_context()) as r:
-                    data = r.read()
-            except Exception as e:  # network down, proxy, TLS ...
-                raise FontError(f'cannot fetch {name} from {url}: {e}')
+            data = None
+            for _attempt in range(2):
+                try:
+                    with urllib.request.urlopen(url, timeout=60, context=_ssl_context()) as r:
+                        data = r.read()
+                except Exception as e:  # network down, proxy, TLS ...
+                    raise FontError(f'cannot fetch {name} from {url}: {e}')
+                if hashlib.sha256(data).hexdigest() == sha:
+                    break
+                data = None
+            if data is None:
+                raise FontError(f'{name}: downloaded bytes from {url} do not match sha256 {sha} (not cached)')
             tmp = path + '.part'
-            with open(tmp, 'wb') as f:
-                f.write(data)
-            os.replace(tmp, path)
-        got = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+            try:
+                with open(tmp, 'wb') as f:
+                    f.write(data)
+                os.replace(tmp, path)
+            except OSError as e:
+                raise FontError(f'cannot write {path}: {e}')
+        try:
+            with open(path, 'rb') as f:
+                got = hashlib.sha256(f.read()).hexdigest()
+        except OSError as e:
+            raise FontError(f'cannot read {path}: {e}')
         if got != sha:
             raise FontError(f'{name}: {path} sha256 {got} != expected {sha}')
     _fonts_ready = True
@@ -1533,10 +1552,12 @@ def lcd_width(value, unit='', digits=None, h=26):
 
 
 def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None):
-    """7-segment LCD readout: glass well (flat), lcd_amber digits slanted ~6 deg with faint ghost segments for the unlit
+    """7-segment LCD readout (h >= 14, spec rule 4): glass well (flat), lcd_amber digits slanted ~6 deg with faint ghost segments for the unlit
     ones (decoration, not text), the unit in Share Tech Mono to the right inside the same glass.  ``value`` is a string
     ('-33.1', '+12.5', '01:23.4', '142'); ``digits`` = number of digit cells (right-aligned, default = the string's).
     ``xy`` = (x, y_centre).  Returns the glass rect."""
+    if h < 14:
+        raise ValueError('lcd(): readouts must be >= 14 px (spec rule 4), got h=%s' % h)
     toks = []                                  # (char, dot_after)
     for ch in value:
         if ch == '.' and toks:
@@ -1609,7 +1630,7 @@ def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None):
     cv.im.paste(Image.new('RGB', sz, PAL['lcd_amber']), pos, gm)
     cv.im.paste(Image.new('RGB', sz, PAL['lcd_amber']), pos, lm)
     cv.log.append(dict(screen=cv.name, style='lcd', fg='lcd_amber', fg_rgb=PAL['lcd_amber'], bg_rgb=bgc,
-                       px=h, bold=True, text=value, ratio=contrast(PAL['lcd_amber'], bgc)))
+                       px=h, bold=False, text=value, ratio=contrast(PAL['lcd_amber'], bgc)))
     if unit:
         ux = dig_box[2] + 4
         text(cv, (ux, xy[1] + 1), unit, 'lcd_unit', bg=(ux - 1, rect[1] + 3, rect[2] - 4, rect[3] - 3))

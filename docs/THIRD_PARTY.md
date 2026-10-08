@@ -172,11 +172,11 @@ Fetched at render time into `~/.cache/sawblade_fonts` (or `--font-dir`) from `fo
 shipped in the plugin, and no `.ttf` is committed. All SIL Open Font License 1.1.
 
 | Font | File (gstatic) | SHA-256 | Use |
-|------|----------------|---------|-----|
-| Black Ops One | `qWcsB6-ypo7xBdr6Xshe96H3WDw.ttf` | `bd8a70e6...fe59f8` | brand mark, big titles |
-| Allerta Stencil | `HTx0L209KT-LmIE9N7OR6eiycOeF-w.ttf` | `036e8216...91c753` | stencil section names |
-| Barlow Condensed 600 / 700 | `HTxwL3I-JCGChYJ8VI-L6OO_au7B4873_3E.ttf` / `..._au7B46r2_3E.ttf` | `0d85af81...2cd73f` / `7dde307f...c4ed7` | labels, buttons |
-| Barlow 500 / 600 | `7cHqv4kjgoGqM7E3_-gc4A.ttf` / `7cHqv4kjgoGqM7E30-8c4A.ttf` | `91c841fd...5655bc` / `c15439e7...ca69b` | body text |
-| Share Tech Mono | `J7aHnp1uDWRBEqV98dVQztYldFc7pA.ttf` | `5f6b5753...a81d2` | readouts |
+|---|---|---|---|
+| Black Ops One | `qWcsB6-ypo7xBdr6Xshe96H3WDw.ttf` | `bd8a70e63df108745316c6ad277874cbe139bbb90cbcaf705810ecc089fe59f8` | brand mark, big titles |
+| Allerta Stencil | `HTx0L209KT-LmIE9N7OR6eiycOeF-w.ttf` | `036e8216a18f1b06036ac0081feed72bc63562ee70920a8151ca7c441f91c753` | stencil section names |
+| Barlow Condensed 600 / 700 | `HTxwL3I-JCGChYJ8VI-L6OO_au7B4873_3E.ttf` / `HTxwL3I-JCGChYJ8VI-L6OO_au7B46r2_3E.ttf` | `0d85af813fc3ed87db0c6265515689b2eef5cbaf7aab17922528dfc95a2cd73f` / `7dde307fa887fc65ff5830cfada77a7decc5dae8d3c816c9d39ba3f1af1c4ed7` | labels, buttons |
+| Barlow 500 / 600 | `7cHqv4kjgoGqM7E3_-gc4A.ttf` / `7cHqv4kjgoGqM7E30-8c4A.ttf` | `91c841fdfa8e7b94ffedbb983a363947ba6ed720f3bbf0c71d48b618053655bc` / `c15439e7a03af5714282ec1780ff7b0214ec6a7db96300b54928dbcd2569ca0c` | body text |
+| Share Tech Mono | `J7aHnp1uDWRBEqV98dVQztYldFc7pA.ttf` | `5f6b57538a1a35469a038dc3073003cebc4c101ad7b3c219e9555a3b3c0a81d2` | readouts |
 
 The mockup renders composite the project's own Blender renders from `plugin/assets/` (read-only input).

@@ -326,7 +326,7 @@ def screen_04_preset_browser():
     ws.label_well(cv, (ix0, y), 'CAPTURES · 5 · FETCHED FROM TONE3000 BY ID', 'label_b', h=16, pad=6)
     y += 16
     caps = [
-        ('BLADE', 'blade', 'PEDAL', 'Swedish chainsaw pedal', '@bench_tones · cc-by · tone3000.com/tones/20417', None),
+        ('BLADE', 'blade', 'PEDAL', 'Swedish chainsaw pedal', '@coldiron_caps · cc-by · tone3000.com/tones/20417', None),
         ('BLADE', 'blade', 'AMP', 'British-style head, bright cap', '@marrow_amps · cc-by-nc · tone3000.com/tones/31207', 'NON-COMMERCIAL'),
         ('BODY', 'body', 'BOOST', 'Mid-focus overdrive, tight', '@coldiron_caps · cc-by · tone3000.com/tones/18840', None),
         ('BODY', 'body', 'AMP', 'High-gain US head', '@swamp_rig · cc-by-sa · tone3000.com/tones/9915', None),
@@ -418,7 +418,7 @@ def screen_09_notices():
     bx, by = card['body'][0] + 6, card['body'][1] + 18
     ws.badge(cv, (bx, by), 'UNCAL')
     ws.label_well(cv, (bx, by + 28), 'no level metadata — default +9 dBu', 'body_dim', h=22, pad=8)
-    ws.label_well(cv, (bx, by + 54), '@marrow_amps · cc-by · VIA TONE3000', 'body_dim', h=22, pad=8)
+    ws.label_well(cv, (bx, by + 54), '@marrow_amps · cc-by-nc · VIA TONE3000', 'body_dim', h=22, pad=8)
     cap(344, 312, 'UNCAL BADGE · ON AN AMP HEAD LABEL')
     am = screens_rig.amp_head(cv, 'amp_saw.png', 344, 326, w=250)
     lr = ws.label_well(cv, (344, am[3] + 14), 'BLADE · SAW HEAD', 'label', fg='blade_hi', h=24, pad=8)
