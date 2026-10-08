@@ -502,25 +502,25 @@ TEST_CASE("drift check: learns a baseline into the device record, raises on a su
   CHECK(presetToStateJson(w.h.p.currentPreset()).find("driftBaseline") == std::string::npos);
 
   const GainSnapshot before = snapshotOf(w);
-  // +8 dB for 20 s does not raise it, and neither does the return to normal.
-  playTicking(w, 20.0, 8.0, 3);
+  // +6 dB for 20 s does not raise it, and neither does the return to normal.
+  playTicking(w, 20.0, 6.0, 3);
   CHECK_FALSE(w.h.p.driftNotice().active);
   playTicking(w, 70.0, 0.0, 4);
   CHECK_FALSE(w.h.p.driftNotice().active);
-  // +8 dB sustained does.
-  playTicking(w, 75.0, 8.0, 5);
+  // A true +6 dB sustained does, within 60 s of played time.
+  playTicking(w, 60.0, 6.0, 5);
   const auto n = w.h.p.driftNotice();
   REQUIRE(n.active);
   CHECK(n.hotter);
-  CHECK(n.db >= 7);
-  CHECK(n.db <= 9);
+  CHECK(n.db >= 5);
+  CHECK(n.db <= 7);
   CHECK(w.st().deviceCalibration()->driftBaselineDbfs == baseline);  // the baseline did not drift with the signal
   // No gain changed anywhere while it fired.
   CHECK(snapshotOf(w) == before);
   // [Ignore] silences it.
   w.h.p.ignoreDrift();
   CHECK_FALSE(w.h.p.driftNotice().active);
-  playTicking(w, 40.0, 8.0, 6);
+  playTicking(w, 40.0, 6.0, 6);
   CHECK_FALSE(w.h.p.driftNotice().active);
   CHECK(snapshotOf(w) == before);
   CHECK(w.h.allocs == 0);

@@ -14,7 +14,7 @@
 //  - PeakTap (audio thread): the statistic's source. Per 50 ms window of the DI (before INPUT and before any calibration gain), the
 //    peak over the samples where the gate is open, kept only for windows that were at least half open ("played"). Each window's peak
 //    is quantised to 0.25 dB and pushed into a small lock-free ring. process() allocates nothing, locks nothing and does no I/O.
-//  - DriftTracker (message thread, 10 Hz): reads new windows, keeps the rolling p95 of the last ~30 s of played windows, learns the
+//  - DriftTracker (message thread, 10 Hz): reads new windows, keeps the rolling p95 of the last 15 s of played windows, learns the
 //    baseline in the first >= 60 s of played audio, and raises / clears the drift notice. Silence adds no windows, so it neither
 //    counts toward the 30 s nor resets it.
 namespace sawblade::drift {
@@ -57,14 +57,25 @@ class PeakTap {
   std::atomic<std::uint32_t> written_{0};
 };
 
+// The drift check's thresholds (also in docs/PLUGIN.md and the I3 spec). Why 5 dB and a 15 s window: a literal >= 6 dB threshold is a coin
+// flip for a true 6 dB change (the p95 of a few hundred windows is only good to about +-0.5 dB), and a 30 s window made the notice take
+// 40 to 60 s. 5 dB catches a true 6 dB step reliably, and playing dynamics within +-4 dB stay below it.
+constexpr double kDriftThresholdDb = 5.0;   // |rolling p95 - baseline| at or above this ...
+constexpr double kDriftSustainS = 30.0;     // ... for this much played time raises the notice
+constexpr double kDriftRollS = 15.0;        // the rolling p95 window, in played time
+constexpr double kDriftLearnS = 60.0;       // played time needed to learn a baseline
+constexpr double kDriftMinRollS = 10.0;     // no comparison before the rolling window holds this much
+constexpr double kDriftClearBelowDb = 4.0;  // a raised notice clears when the deviation falls below this
+constexpr double kDriftIgnoreClearDb = 3.0; // an ignored level is forgotten when the drift returns within this of the baseline
+// Re-raise after Ignore: >= kDriftThresholdDb from the ignored level, sustained again.
 struct DriftConfig {
-  double thresholdDb = 6.0;     // |rolling p95 - baseline| at or above this ...
-  double sustainS = 30.0;       // ... for this much played time raises the notice
-  double rollS = 30.0;          // the rolling window, in played time
-  double learnS = 60.0;         // played time needed to learn a baseline
-  double minRollS = 10.0;       // no comparison before the rolling window holds this much
-  double clearHystDb = 1.0;     // a raised notice clears when the deviation falls below threshold - this
-  double ignoreClearDb = 3.0;   // an ignored level is forgotten when the drift returns within this of the baseline
+  double thresholdDb = kDriftThresholdDb;
+  double sustainS = kDriftSustainS;
+  double rollS = kDriftRollS;
+  double learnS = kDriftLearnS;
+  double minRollS = kDriftMinRollS;
+  double clearBelowDb = kDriftClearBelowDb;
+  double ignoreClearDb = kDriftIgnoreClearDb;
 };
 
 struct DriftNotice {

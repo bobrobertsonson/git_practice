@@ -173,7 +173,7 @@ class SawbladeEditor::Content : public juce::Component {
     // v0.8 I3: the drift notice's two buttons (existing TextButton style, shown only while the notice is up).
     configure(driftRecal_, "Recalibrate", "Open Settings at the interface step to set the interface level again", false);
     driftRecal_.onClick = [this] { setSettingsOpen(true); };
-    configure(driftIgnore_, "Ignore", "Hide this notice until the level changes by another 6 dB. No gain is changed either way.", false);
+    configure(driftIgnore_, "Ignore", "Hide this notice until the level changes by another 5 dB. No gain is changed either way.", false);
     driftIgnore_.onClick = [this] {
       processor_.ignoreDrift();
       refresh();

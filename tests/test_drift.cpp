@@ -96,12 +96,12 @@ double rollingP95Of(const json& preset, const std::vector<float>& x, int block =
 }
 
 // ---- tracker helpers: windows are 50 ms of played audio ----
-// A "playing style": a fixed cycle of 600 windows (30 s) whose levels spread over 6 dB below the peak level. Because the cycle is as long as
+// A "playing style": a fixed cycle of 300 windows (15 s) whose levels spread over 6 dB below the peak level. Because the cycle is as long as
 // the rolling window, every full rolling window holds the same set of levels, so the p95 is exactly reproducible (a +6 dB gain knob is
 // exactly 24 bins).
 constexpr int kPerS = 20;
 struct Player {
-  std::array<int, 600> off{};
+  std::array<int, 300> off{};
   int idx = 0;
   Player() {
     std::mt19937 g(11);
@@ -110,7 +110,7 @@ struct Player {
   }
   void play(drift::DriftTracker& t, double seconds, double peakDb) {
     const int base = drift::binForDb(peakDb);
-    for (int i = 0; i < static_cast<int>(seconds * kPerS); ++i) t.addWindow(base + off[static_cast<std::size_t>(idx++ % 600)]);
+    for (int i = 0; i < static_cast<int>(seconds * kPerS); ++i) t.addWindow(base + off[static_cast<std::size_t>(idx++ % 300)]);
   }
 };
 drift::DriftTracker learned(Player& p, double levelDb = -20.0) {
@@ -242,11 +242,11 @@ TEST_CASE("Drift I3: a baseline is learned from at least 60 s of played windows 
   CHECK_FALSE(t.takeNewBaseline().has_value());  // once
   t.setBaseline(*b);                             // the settings value coming back is a no-op
   CHECK(t.baselineDb() == b);
-  CHECK(t.rollingS() >= 29.9);
+  CHECK(t.rollingS() >= 14.9);
   CHECK_FALSE(t.notice().active);
 }
 
-TEST_CASE("Drift I3: +6 dB sustained raises the notice, +6 dB for 20 s does not", "[drift][tracker]") {
+TEST_CASE("Drift I3: a true +6 dB and a true -6 dB are both raised within 60 s of played time, +6 dB for 20 s is not", "[drift][tracker]") {
   Player p;
   auto t = learned(p);
   p.play(t, 20.0, -20.0 + 6.0);
@@ -255,43 +255,46 @@ TEST_CASE("Drift I3: +6 dB sustained raises the notice, +6 dB for 20 s does not"
   CHECK_FALSE(t.notice().active);
   CHECK(t.sustainedS() == 0.0);
 
-  // The 30 s rolling p95 reaches +6 only after much of the window is new (here ~10 s), and the shift must then hold for 30 s.
-  Player q;
-  auto u = learned(q);
-  q.play(u, 29.0, -20.0 + 6.0);
-  CHECK_FALSE(u.notice().active);
-  q.play(u, 36.0, -20.0 + 6.0);
-  const auto n = u.notice();
-  CHECK(n.active);
-  CHECK(n.hotter);
-  CHECK(n.db == 6);
-  CHECK(drift::driftNoticeText(n).find("hotter") != std::string::npos);
+  for (const double step : {+6.0, -6.0}) {
+    INFO("step " << step);
+    Player q;
+    auto u = learned(q);
+    double played = 0.0;
+    while (!u.notice().active && played < 120.0) {
+      q.play(u, 0.05, -20.0 + step);
+      played += 0.05;
+    }
+    CHECK(played <= 60.0);  // the bound: well under a minute
+    const auto n = u.notice();
+    REQUIRE(n.active);
+    CHECK(n.hotter == (step > 0));
+    CHECK(n.db >= 5);
+    CHECK(n.db <= 7);
+    CHECK(drift::driftNoticeText(n).find(step > 0 ? "hotter" : "quieter") != std::string::npos);
+  }
 }
 
-TEST_CASE("Drift I3: a bigger step is noticed sooner, and -8 dB says quieter in whole dB", "[drift][tracker]") {
+TEST_CASE("Drift I3: a bigger step is noticed in whole dB", "[drift][tracker]") {
   Player p;
   auto t = learned(p);
-  p.play(t, 40.0, -20.0 + 12.0);  // +12: the rolling p95 crosses within a few seconds, then 30 s sustained
+  p.play(t, 40.0, -20.0 + 12.0);
   CHECK(t.notice().active);
   CHECK(t.notice().db == 12);
-
   Player q;
   auto d = learned(q);
-  q.play(d, 70.0, -20.0 - 8.0);
+  q.play(d, 50.0, -20.0 - 8.0);
   const auto n = d.notice();
   REQUIRE(n.active);
   CHECK_FALSE(n.hotter);
   CHECK(n.db == 8);
-  const std::string s = drift::driftNoticeText(n);
-  CHECK(s.find("quieter") != std::string::npos);
-  CHECK(s.find("~8 dB") != std::string::npos);
+  CHECK(drift::driftNoticeText(n).find("~8 dB") != std::string::npos);
 }
 
 TEST_CASE("Drift I3: playing dynamics within 4 dB over minutes never raise it", "[drift][tracker]") {
   Player p;
   auto t = learned(p);
   bool ever = false;
-  for (int rep = 0; rep < 16; ++rep) {  // alternating loud (+4) and soft (-4) passages of 15 s
+  for (int rep = 0; rep < 24; ++rep) {  // alternating loud (+4) and soft (-4) passages of 15 s (6 minutes)
     for (int i = 0; i < 15 * kPerS; ++i) {
       drift::DriftTracker& tr = t;
       p.play(tr, 1.0 / kPerS, -20.0 + (rep % 2 ? 4.0 : -4.0));
@@ -299,6 +302,25 @@ TEST_CASE("Drift I3: playing dynamics within 4 dB over minutes never raise it", 
     }
   }
   CHECK_FALSE(ever);
+}
+
+TEST_CASE("Drift I3: random playing with passages of +-4 dB (fresh random levels, odd passage lengths) never raises it", "[drift][tracker]") {
+  for (unsigned seed = 1; seed <= 6; ++seed) {
+    Player p;
+    auto t = learned(p);
+    std::mt19937 g(seed);
+    std::uniform_int_distribution<int> off(-24, 0), len(8 * kPerS, 21 * kPerS);
+    bool ever = false;
+    for (int rep = 0; rep < 30; ++rep) {
+      const int base = drift::binForDb(-20.0 + (rep % 2 ? 4.0 : -4.0));
+      for (int i = 0, n = len(g); i < n; ++i) {
+        t.addWindow(base + off(g));
+        ever = ever || t.notice().active;
+      }
+    }
+    INFO("seed " << seed);
+    CHECK_FALSE(ever);
+  }
 }
 
 TEST_CASE("Drift I3: silence neither counts toward the 30 s nor resets it", "[drift][tracker]") {

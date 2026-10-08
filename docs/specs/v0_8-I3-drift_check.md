@@ -18,20 +18,21 @@ every planned NAM drive is wrong by the same amount, and nothing tells the user.
   - Publish a lock-free summary: a fixed-size array snapshot or atomics. Use the same pattern as the I2 floor atomic
     or the existing meter ring, whichever is simplest.
   - No allocation, locks or I/O in `process()`.
-- **Message thread** (`calibrationTick`, 10 Hz): turn the summary into a rolling p95 over the last ~30 s of played
+- **Message thread** (`calibrationTick`, 10 Hz): turn the summary into a rolling p95 over the last 15 s of played
   frames.
 - **Baseline.** Learn it in the first minutes of played audio after a device record is created or changed: at least
   60 s of played frames. Store it in the device record, next to the I2 learned gate floor. Settings only, written
   off the audio thread.
   - A record with no baseline yet learns one.
   - Re-picking a device clears the baseline, as it does the floor.
-- **Trigger.** Raise the drift notice when |rolling p95 − baseline| ≥ 6 dB, sustained for ≥ 30 s of played time.
+- **Trigger.** Raise the drift notice when |rolling p95 − baseline| ≥ 5 dB, sustained for ≥ 30 s of played time; clear it below 4 dB.
+  Why not 6 dB and a 30 s window (lead decision, 2026-10-08): a literal ≥6 dB threshold is a coin flip for a true 6 dB change (p95 ±0.5 dB). A true ±6 dB change must be noticed within 60 s of played time, and dynamics within ±4 dB must never trigger it.
   Silence does not count toward the 30 s and does not reset it.
 - **Notice.** One non-blocking notice: "Your input seems ~N dB hotter|quieter than when you calibrated — did the
   interface gain change? [Recalibrate] [Ignore]".
   - N is rounded to whole dB.
   - [Recalibrate] opens the Settings device step.
-  - [Ignore] silences the notice until the baseline changes or the drift moves another ≥ 6 dB away from the level
+  - [Ignore] silences the notice until the baseline changes or the drift moves another ≥ 5 dB away from the level
     that was ignored.
   - Use the existing notice area and existing button components; the user designs the UI.
 - **Never change any gain automatically.**
@@ -47,9 +48,9 @@ every planned NAM drive is wrong by the same amount, and nothing tells the user.
   - Block-size independent.
   - `process()` allocates nothing.
 - **Plugin (CI):**
-  - +6 dB sustained 30 s raises the notice. +6 dB for 20 s does not.
+  - A true +6 dB and a true −6 dB are each raised within 60 s of played time. +6 dB for 20 s does not. Dynamics within ±4 dB over minutes never raise it.
   - Playing dynamics within ±4 dB over minutes never raise it, for example alternating loud and soft passages.
-  - [Ignore] silences the notice. A further 6 dB shift re-raises it.
+  - [Ignore] silences the notice. A further 5 dB shift re-raises it.
   - [Recalibrate] opens the device step.
   - The baseline is stored in the device record, not in the preset or the plugin state.
   - No gain changes anywhere when the notice fires: an engine-params snapshot before and after must be equal.

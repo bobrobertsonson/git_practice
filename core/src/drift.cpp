@@ -148,7 +148,7 @@ void DriftTracker::evaluate() {
   drift_ = *p - *baseline_;
   if (ignored_ && std::fabs(drift_) < cfg_.ignoreClearDb) ignored_.reset();  // back near the calibrated level: forget the ignore
   const double dev = drift_ - (ignored_ ? *ignored_ : 0.0);
-  const bool beyond = std::fabs(dev) >= (active_ ? cfg_.thresholdDb - cfg_.clearHystDb : cfg_.thresholdDb);
+  const bool beyond = std::fabs(dev) >= (active_ ? cfg_.clearBelowDb : cfg_.thresholdDb);
   if (!beyond) {
     sustain_ = 0;
     active_ = false;
