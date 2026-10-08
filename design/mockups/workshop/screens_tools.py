@@ -635,7 +635,7 @@ def _lane_header(cv, rect, name, right, color):
 def _block_card_v4(cv, rect, title, key, lines, accent, status=None, bypassed=False, lamp_line=None, input_db='0.0', knob_v=0.5):
     """v4 block card: title strip, two short lines (the first may carry a state lamp + word), one ACTIVE / BYPASSED lamp row with a
     BYPASS button, the INPUT knob + LCD and three icon buttons.  No duplicated captions."""
-    cd = ws.card(cv, rect, title, accent, bypassed=bypassed, status=None if bypassed else status, key=key)
+    cd = ws.card(cv, rect, title, accent, bypassed=bypassed, status=status, key=key, bypass_word=False)    # header = type tag only; the lamp carries the state
     bx0, by0, bx1, by1 = cd['body']
     wr = (bx0, by0, bx1, by0 + 44)
     well(cv, wr, 'well', 2)
@@ -688,7 +688,7 @@ def _screen_08_v4():
                    [('rat-style distortion', 'body_strong', None), ('modelled pedal', 'body_dim', None)], 'blade', status='MODELLED',
                    knob_v=0.7)
     _block_card_v4(cv, (xs[2], cy0, xs[2] + cw, cy0 + ch), 'SAW HEAD', 'v4b',
-                   [('UNCAL', 'label_b', 'warn'), ('default +9 dBu', 'body_dim', None)], 'blade', lamp_line='amber', input_db='+1.5', knob_v=0.56)
+                   [('UNCAL', 'label_b', 'warn'), ('default +9 dBu', 'body_dim', None)], 'blade', status='CAPTURE', lamp_line='amber', input_db='+1.5', knob_v=0.56)
     _block_card_v4(cv, (xs[3], cy0, xs[3] + cw, cy0 + ch), 'EQ', 'v4c',
                    [('PRE · 4 bands', 'body_strong', None), ('low cut 80 Hz', 'body_dim', None)], 'blade', status='PRE')
     ws.empty_slot(cv, (plus_x, cy0, x1, cy0 + ch), '+')
@@ -696,9 +696,9 @@ def _screen_08_v4():
     _lane_header(cv, (x0, ly2, x1, ly2 + 26), 'B · BODY', 'PATH B', 'body')
     cy1 = ly2 + 34
     _block_card_v4(cv, (xs[0], cy1, xs[0] + cw, cy1 + ch), 'CHISEL', 'v4d',
-                   [('modelled pedal', 'body', None), ('passes straight through', 'body_dim', None)], 'body', bypassed=True)
+                   [('modelled pedal', 'body', None), ('passes straight through', 'body_dim', None)], 'body', status='MODELLED', bypassed=True)
     _block_card_v4(cv, (xs[1], cy1, xs[1] + cw, cy1 + ch), 'BODY HEAD', 'v4e',
-                   [('✓ calibrated', 'body', 'ok'), ('+12.5 dBu', 'body_dim', None)], 'body', status='ON', input_db='-2.0', knob_v=0.42)
+                   [('✓ calibrated', 'body', 'ok'), ('+12.5 dBu', 'body_dim', None)], 'body', status='CAPTURE', input_db='-2.0', knob_v=0.42)
     ws.empty_slot(cv, (xs[2], cy1, xs[2] + 56, cy1 + ch), '+')
     ny = cy1 + ch + 12
     label_well(cv, (x0, ny + 13), 'CAB', 'label_b', h=22, pad=8)

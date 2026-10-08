@@ -8,6 +8,7 @@ Every cab shows SHARED · LIVE vs PER PATH · STUDIO as two lamps with words (sh
 import math
 import os
 import sys
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.normpath(os.path.join(HERE, '..', '..', 'render')))
@@ -53,14 +54,23 @@ def ply_tex(w, h, key, tone=(184, 148, 100)):
 
 
 def pepper_tex(w, h, key):
-    """Salt-and-pepper grille cloth: black and grey 2 px flecks."""
+    """Salt-and-pepper grille cloth: a fine basket weave, near-black with small silver flecks on the thread grid, low contrast,
+    a slight vertical drape shading."""
     rng = ws._rng('pepper:' + key)
     W, H = int(w * S), int(h * S)
-    cw, ch = W // 2 + 1, H // 2 + 1
-    r = rng.random((ch, cw)).astype(np.float32)
-    a = np.where(r < 0.16, 128.0, np.where(r < 0.30, 70.0, 18.0))
-    a = np.kron(a, np.ones((2, 2), np.float32))[:H, :W]
-    a += ws._noise(rng, H, W, 40, 40)[:H, :W] * 4.0
+    cell = 3                                                    # device px per weave thread
+    yy, xx = np.mgrid[0:H, 0:W]
+    ty, tx = yy // cell, xx // cell
+    over = ((tx // 2 + ty // 2) % 2 == 0)                       # basket weave: 2 x 2 thread blocks alternate warp / weft
+    inner = np.where(over, (xx % cell) / (cell - 1.0), (yy % cell) / (cell - 1.0))
+    thread = 0.5 + 0.5 * np.sin(inner * math.pi)
+    a = 22.0 + 14.0 * thread * np.where(over, 1.0, 0.7)
+    seed = zlib.crc32(('fleck' + key + ws.get_wear()).encode('utf-8'))
+    fl = np.random.default_rng(seed).random((H // cell + 1, W // cell + 1)) < 0.07
+    fl = np.kron(fl, np.ones((cell, cell), bool))[:H, :W]
+    a = a + fl * (34.0 + 22.0 * thread)                         # small silver flecks, one thread long
+    a = a * (1.12 - 0.22 * (yy / float(H)))                     # vertical drape: lighter at the top, darker toward the bottom
+    a = a * (0.97 + 0.06 * ws._noise(rng, H, W, 60, 90)[:H, :W])
     img = np.stack([a, a * 0.99, a * 0.96], axis=-1)
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), 'RGB')
 
@@ -101,8 +111,12 @@ def cab_a(cv, rect, ir_title='closed_4x12_dyn_cap'):
     gr = (x0 + 18, y0 + 18, x1 - 18, y1 - 100)
     cv.fill((gr[0] - 3, gr[1] - 3, gr[2] + 3, gr[3] + 3), (12, 11, 10), 4)
     cv.texture(gr, pepper_tex(int(gr[2] - gr[0]), int(gr[3] - gr[1]), 'a'), 2)
-    cv.blend((gr[0], gr[1], gr[2], gr[1] + 5), 'bench_dark', 0.55)
-    cv.blend((gr[0], gr[1], gr[0] + 4, gr[3]), 'bench_dark', 0.4)
+    for i in range(7):                                   # the cloth runs under the tolex frame: a soft inner shadow on every edge
+        a_ = 0.5 * (1 - i / 7.0)
+        cv.blend((gr[0], gr[1] + i, gr[2], gr[1] + i + 1), 'bench_dark', a_)
+        cv.blend((gr[0], gr[3] - i - 1, gr[2], gr[3] - i), 'bench_dark', a_ * 0.8)
+        cv.blend((gr[0] + i, gr[1], gr[0] + i + 1, gr[3]), 'bench_dark', a_)
+        cv.blend((gr[2] - i - 1, gr[1], gr[2] - i, gr[3]), 'bench_dark', a_)
     _corner_caps(cv, rect)
     ws.dm_display(cv, (x0 + 24, y1 - 90, x1 - 24, y1 - 52), ir_title, h=14, tone='amber', pad=8)
     ws.nameplate(cv, (x0 + 24, y1 - 44, x0 + 108, y1 - 14), 'CAB')

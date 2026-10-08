@@ -265,6 +265,7 @@ mockup drawings (`cabs.py`), our own, no makers' logos.
 
 **01 main rig**
 - R1 -> no caption chips under amps or pedals; each amp and pedal has a 3 px path edge (BLADE orange, BODY blue) plus a `BLADE` / `BODY` word in a well.
+- R1 -> the BLEND nixie `79 / 21` is labelled `BLADE` and `BODY` under its two numbers; the caption that repeated the values is gone.
 - R1 -> the inspector no longer repeats the CIRCUIT selector; it lives on THE SAW MILL's face (`CIRCUIT ◀ BUZZSAW ▶` on its display).
 - R2 -> the METERS column is gone and the cab takes the space; IN / OUT are thin LED ladders in the top bar, GR is the LED ring on `VISE · GR`.
 - R3 -> MATCH vs ORIGINAL is a dismissable card (✕) captioned "after a match"; ALIGN is gone from the inspector, `ⓘ DETAILS` stands for the pop-over (ALIGN, LAT, CPU).
@@ -285,6 +286,7 @@ mockup drawings (`cabs.py`), our own, no makers' logos.
 - R6 -> amber values, green only for the Auto good state; one orange primary (APPLY).
 
 **08 rig editor**
+- R1 -> card headers keep only the type tag (`MODELLED`, `CAPTURE`, `PRE`); the state is the lamp (`ACTIVE` / `BYPASSED`), and the bypass hatch stays.
 - R1 -> no duplicated captions on the cards (credit, level metadata and circuit lines are cut to two short lines); the path is the lane plate plus the orange / blue edge.
 - R3 -> empty slots collapse to one `+` per lane; the status is one line (`✓ built · 6 blocks`), the meters are in the top bar.
 - R6 -> UNCAL and BYPASS stay as lamp + word (amber lamp `UNCAL`, `ACTIVE` / `BYPASSED` lamp with a BYPASS button).
@@ -292,7 +294,7 @@ mockup drawings (`cabs.py`), our own, no makers' logos.
 
 ### Cab directions (01_main_rig_cab_a/_b/_c.png)
 
-- **a, tolex**: worn black tolex with steel corner caps, a salt-and-pepper grille, a riveted steel `CAB` nameplate, the IR title on a small amber LCD strip.
+- **a, tolex**: worn black tolex with steel corner caps, a fine basket-weave salt-and-pepper grille (low-contrast cloth with small silver flecks, a vertical drape shading, edges running under the tolex frame), a riveted steel `CAB` nameplate, the IR title on a small amber LCD strip.
 - **b, plywood**: stripped open-back bare plywood with four visible generic speakers and a stencilled `CAB · 4x12` strip.
 - **c, road case**: aluminium edge extrusions and corner caps, butterfly latches, a perforated grille, a stencilled `CAB · 4x12` panel.
 - All three show SHARED · LIVE (lit green lamp) vs PER PATH · STUDIO (unlit blue lamp) as lamps plus words.
@@ -320,14 +322,14 @@ Lowest ratio of any text: **5.94:1**. The strong set has identical ratios (same 
 | dotmatrix | lcd_green | #244d31 | 7.66:1 ok | 4.5 | 14 | 13 | 01 03 08 |
 | label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 24 | 01 03 08 |
 | label_b | alert | well | 6.38:1 ok | 4.5 | 11 | 2 | 02 |
-| label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 21 | 01 02 |
-| label_b | body | well | 8.18:1 ok | 4.5 | 11 | 8 | 01 |
-| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 91 | 01 02 03 08 |
+| label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 27 | 01 02 03 08 |
+| label_b | body | well | 8.18:1 ok | 4.5 | 11 | 14 | 01 03 08 |
+| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 85 | 01 02 03 08 |
 | label_b | bone | well_raised | 12.43:1 ok | 4.5 | 11 | 1 | 08 |
 | label_b | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 1 | 08 |
 | label_b | ok | well | 11.02:1 ok | 4.5 | 11 | 14 | 01 02 03 08 |
 | label_b | warn | well | 10.02:1 ok | 4.5 | 11 | 4 | 02 03 08 |
-| label_ink | ink | alu_well | 10.36:1 ok | 4.5 | 11 | 8 | 08 |
+| label_ink | ink | alu_well | 10.36:1 ok | 4.5 | 11 | 9 | 08 |
 | label_ink | ink | blade_hi | 8.03:1 ok | 4.5 | 11 | 1 | 03 |
 | label_mx | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 6 | 01 03 08 |
 | label_mx_b | warn | well | 10.02:1 ok | 4.5 | 11 | 4 | 01 |
@@ -342,7 +344,7 @@ Lowest ratio of any text: **5.94:1**. The strong set has identical ratios (same 
 | section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 7 | 01 03 08 |
 | title | bone | well | 13.71:1 ok | 3.0 | 22,24 | 2 | 01 03 |
 
-521 strings measured on 7 screens: all pass WCAG 2.x AA
+528 strings measured on 7 screens: all pass WCAG 2.x AA
 
 ## Notes and open items
 

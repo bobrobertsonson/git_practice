@@ -162,7 +162,10 @@ def _rig_v4(vermin, cab):
     ws.knob(cv, x0 + 50, kcy, 84, 'amp', 0.79, 'blade', 'BLEND', ring=True)
     nx0 = x0 + 112
     ws.nixie(cv, (nx0, y + 6, x1, y + 56), '79 / 21', 34)
-    ws.label_well(cv, ((nx0 + x1) / 2.0, y + 80), 'BLADE 79 · BODY 21', 'label_b', pad=8, align='c')
+    ncx = (nx0 + x1) / 2.0
+    cw_ = ws.text_width('7', 'nixie', size=34)
+    ws.label_well(cv, (ncx - 2.5 * cw_, y + 70), 'BLADE', 'label_b', h=16, pad=6, align='c', fg='blade_hi')
+    ws.label_well(cv, (ncx + 2.5 * cw_, y + 70), 'BODY', 'label_b', h=16, pad=6, align='c', fg='body')
     y = kcy + 44 + 34
     cv.blend((x0, y, x1, y + 1), 'bench_dark', 0.9)
     cv.blend((x0, y + 1, x1, y + 2), 'bone', 0.1)

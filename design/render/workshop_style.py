@@ -1209,7 +1209,7 @@ def nameplate(cv, rect, s, style='section', size=None, fg='ink'):
     return strip
 
 
-def card(cv, rect, title, accent=None, bypassed=False, status=None, key=None):
+def card(cv, rect, title, accent=None, bypassed=False, status=None, key=None, bypass_word=True):
     """Block card: worn steel body with a stamped alu_well title strip (and an optional status word in the strip's right
     corner).  ``bypassed`` lays the diagonal hatch over the body and stamps the word BYPASSED in the strip: draw the
     card's wells / controls AFTER this call.  ``accent`` = path colour token for a left edge bar.  Returns
@@ -1223,7 +1223,7 @@ def card(cv, rect, title, accent=None, bypassed=False, status=None, key=None):
         hatch(cv, (x0 + 3, strip[3] + 3, x1 - 3, y1 - 3), 10, 'steel_bare', 0.38, 2.0)
     well(cv, strip, 'alu_well', 2)
     text(cv, (strip[0] + 7, rect_c(strip)[1]), title, 'section', bg=strip)
-    word = 'BYPASSED' if bypassed else status
+    word = status if (bypassed and not bypass_word) else ('BYPASSED' if bypassed else status)
     if word:
         text(cv, (strip[2] - 7, rect_c(strip)[1]), word, 'label_ink', bg=strip, align='r')
     if accent:
