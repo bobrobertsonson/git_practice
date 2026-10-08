@@ -3,7 +3,7 @@
   "version": 3,
   "name": "Turbo Crust",
   "category": "Hardcore / Crust",
-  "notes": "Use: louder, more open crust and punk. CLIP none leaves only the op-amp rails clipping: more level, less compression, a rawer edge. Into a plexi-style amp (TONE3000 76884) kept clean-ish so the pedal does the work. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Rat-style op-amp distortion model (pedal.rat, VERMIN). Starting hypotheses, not a tuned tone.",
+  "notes": "Use: louder, more open crust and punk. CLIP none leaves only the op-amp rails clipping: more level, less compression, a rawer edge. Into a plexi-style amp (TONE3000 76884) kept clean-ish so the pedal does the work. VOLUME sits very low (0.54) because CLIP none, with only the op-amp rails clipping, is about 20 dB louder than the diode clips. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Rat-style op-amp distortion model (pedal.rat, VERMIN). Starting hypotheses, not a tuned tone.",
   "paths": {
     "a": {
       "role": "saw",
