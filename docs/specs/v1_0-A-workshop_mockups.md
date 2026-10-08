@@ -303,7 +303,7 @@ Legibility rules (same as above, plus):
 - Unlit segments and unlit dot-matrix dots are allowed behind lit text only as a ghost whose contrast against the glass
   is <= 1.25:1, and the logged background for that text is the ghost colour (pessimistic). The flat-background assertion
   is extended to accept exactly {glass, ghost} under display text and nothing else.
-- Dot-matrix text is at least 7 px per character cell height at 1x... in practice >= 14 px tall glyphs for values and
+- Dot-matrix glyphs are >= 14 px tall for values and
   names, >= 11 px for small status lines.
 
 Acceptance as above for all four sets; `--check` and `--contrast` per set; README gets the v3 table (or "identical
