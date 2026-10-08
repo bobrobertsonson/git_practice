@@ -17,7 +17,7 @@ strong). Wear is texture only, so the flat-well rule and contrast checks are the
 | file (all four sets) | screen | shows |
 |---|---|---|
 | `png/ · png_strong/ · png_v3/ · png_v3_strong/00_style_sheet.png` | style sheet | palette with ratios, materials (worn steel, brushed alu, bench wood, sawdust, riveted plate), type, control kit, LCD / nixie, badges, frames |
-| `png/ · png_strong/ · png_v3/ · png_v3_strong/01_main_rig.png` | main rig | BLADE / BODY heads, cab, pedalboard (THE SAW MILL selected, CHISEL), inspector with circuit selector, BLEND nixie, GATE / POST EQ / VISE / OUTPUT with LCDs |
+| `png/ · png_strong/ · png_v3/ · png_v3_strong/01_main_rig.png` | main rig | BLADE / BODY heads, cab, pedalboard (THE SAW MILL selected, CHISEL, VERMIN on the BLADE path; v3 adds its lamp and a hover tooltip), inspector with circuit selector, BLEND nixie, GATE / POST EQ / VISE / OUTPUT with LCDs |
 | `png/ · png_strong/ · png_v3/ · png_v3_strong/02_top_bar.png` | top bar | five states (default, A/B slot names, UNCAL chip, OUT OF TRUE chip, WOODSHED open + MATCH 42 %) and two 2x zooms |
 | `png/ · png_strong/ · png_v3/ · png_v3_strong/03_settings_calibration.png` | Settings: INPUT CALIBRATION | UNCAL / CALIBRATED status, Scarlett 4i4 device presets (3rd Gen INST, INST + PAD, 4th Gen INST, Custom, guided; only INST levels are stored), "Input: L only (auto)" caption, Enter dBu field + LCD, input channel AUTO / L / R / MIX, CALIBRATED LEVELS toggle (BETA), learned gate floor |
 | `png/ · png_strong/ · png_v3/ · png_v3_strong/04_preset_browser.png` | preset browser | banks, categories, list (one PARSE ERROR row), info panel with captures + licences + NON-COMMERCIAL, the LEGACY LEVELS hint with USE CALIBRATED LEVELS / KEEP AS SAVED, resolve status |
@@ -86,7 +86,7 @@ text is 5.27:1 (`bone_mute` on `well_raised`, disabled / tertiary text); primary
 | button | #8f8777 | #151210 | 5.24:1 ok | 4.5 | 13 | 1 | 07 |
 | button | blade_hi | well_raised | 6.90:1 ok | 4.5 | 13 | 2 | 03 04 |
 | button | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 137 | 00 01 02 03 04 05 06 07 08 09 |
-| button | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 12 | 01 03 08 |
+| button | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 11 | 01 03 08 |
 | button | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 1 | 00 |
 | button_ink | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 1 | 00 |
 | button_ink | ink | alert | 6.72:1 ok | 4.5 | 13 | 4 | 00 04 09 |
@@ -94,7 +94,7 @@ text is 5.27:1 (`bone_mute` on `well_raised`, disabled / tertiary text); primary
 | label | #cc6e31 | #151210 | 5.19:1 ok | 4.5 | 11 | 1 | 07 |
 | label | alert | well | 6.38:1 ok | 4.5 | 11 | 1 | 00 |
 | label | blade | well | 6.23:1 ok | 4.5 | 11 | 1 | 00 |
-| label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 4 | 00 01 09 |
+| label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 5 | 00 01 09 |
 | label | body | well | 8.18:1 ok | 4.5 | 11 | 3 | 00 01 |
 | label | bone | well | 13.71:1 ok | 4.5 | 11 | 31 | 00 04 |
 | label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 119 | 00 01 03 04 05 06 07 08 |
@@ -169,15 +169,15 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | button | #8f8777 | #151210 | 5.24:1 ok | 4.5 | 13 | 1 | 07 |
 | button | blade_hi | well_raised | 6.90:1 ok | 4.5 | 13 | 2 | 03 04 |
 | button | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 136 | 00 01 02 03 04 05 06 07 08 09 |
-| button | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 12 | 01 03 08 |
+| button | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 11 | 01 03 08 |
 | button_ink | ink | alert | 6.72:1 ok | 4.5 | 13 | 3 | 00 04 09 |
 | button_ink | ink | blade | 6.57:1 ok | 4.5 | 13 | 23 | 00 01 02 03 04 05 06 07 08 09 |
-| dotmatrix | lcd_amber | #533a17 | 5.94:1 ok | 4.5 | 11,14 | 24 | 00 01 02 03 04 05 06 07 08 09 |
+| dotmatrix | lcd_amber | #533a17 | 5.94:1 ok | 4.5 | 11,14 | 25 | 00 01 02 03 04 05 06 07 08 09 |
 | dotmatrix | lcd_green | #244d31 | 7.66:1 ok | 4.5 | 11,14 | 43 | 00 01 02 03 04 05 06 07 08 09 |
 | label | #cc6e31 | #151210 | 5.19:1 ok | 4.5 | 11 | 1 | 07 |
 | label | alert | well | 6.38:1 ok | 4.5 | 11 | 1 | 00 |
 | label | blade | well | 6.23:1 ok | 4.5 | 11 | 1 | 00 |
-| label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 4 | 00 01 09 |
+| label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 5 | 00 01 09 |
 | label | body | well | 8.18:1 ok | 4.5 | 11 | 3 | 00 01 |
 | label | bone | well | 13.71:1 ok | 4.5 | 11 | 34 | 00 04 |
 | label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 104 | 00 01 02 03 04 05 06 07 08 |
@@ -191,7 +191,7 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | label_b | blade | well | 6.23:1 ok | 4.5 | 11 | 2 | 04 |
 | label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 22 | 01 02 06 09 |
 | label_b | body | well | 8.18:1 ok | 4.5 | 11 | 5 | 02 04 05 06 |
-| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 129 | 00 01 02 03 04 05 06 07 08 09 |
+| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 130 | 00 01 02 03 04 05 06 07 08 09 |
 | label_b | bone | well_raised | 12.43:1 ok | 4.5 | 11 | 6 | 00 04 08 |
 | label_b | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 6 | 00 04 05 08 |
 | label_b | ok | well | 11.02:1 ok | 4.5 | 11 | 14 | 01 02 03 04 05 06 07 08 09 |
@@ -203,7 +203,7 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | label_ink | ink | bone_dim | 8.09:1 ok | 4.5 | 11 | 2 | 04 06 |
 | label_ink | ink | lcd_amber | 10.57:1 ok | 4.5 | 11 | 4 | 08 09 |
 | label_ink | ink | ok | 11.62:1 ok | 4.5 | 11 | 1 | 05 |
-| label_mx | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 1 | 02 |
+| label_mx | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 2 | 01 02 |
 | label_mx_b | bone | well | 13.71:1 ok | 4.5 | 11 | 3 | 05 09 |
 | lcd | #cc8f39 | #2a1e0c | 5.86:1 ok | 4.5 | 14 | 3 | 07 |
 | lcd | lcd_amber | #35250f | 8.29:1 ok | 4.5 | 14,16,18,20,22,26 | 51 | 00 01 03 05 07 08 |
@@ -226,7 +226,7 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 4 | 01 03 07 08 |
 | title | bone | well | 13.71:1 ok | 3.0 | 22 | 1 | 03 |
 
-1088 strings measured on 10 screens: all pass WCAG 2.x AA
+1091 strings measured on 10 screens: all pass WCAG 2.x AA
 
 ### v3 strong
 
@@ -278,3 +278,17 @@ Blender (bpy 4.2.0, Cycles) on 2026-10-08, cropped to the object from the full 1
 Cycles output is not bit-reproducible across machines, so the committed PNG is the pinned input and the mockup render stays
 deterministic from it. The mockup's overlays (nameplate, LCDs, wells) are positioned in that image's pixel coordinates
 (`DECK_NATIVE` and `D()` in `screens_tools.py`), so re-rendering the deck needs the overlay positions re-checked.
+
+## VERMIN face asset (pinned input, screen 01 only)
+
+`assets/vermin_face.png` (448 x 613, 0.4 MB) is the VERMIN pedal (rat-style distortion, v0.9) rendered with Blender (bpy 4.2.0,
+Cycles) on 2026-10-08 from `design/render/pedal_vermin.py` as it exists at commit `4d179b0` (that script is not in this branch; it
+was exported to a scratch directory with `git archive 4d179b0 design/render | tar -x -C <scratch>/v09`). Command, run from
+`<scratch>/v09/design/render`:
+
+    nice python pedal_vermin.py --mode ortho --out <scratch dir> --scale 60 --samples 64
+
+The 660 x 900 frame was cropped to the pedal body (box 32,42 - 628,858) and downsampled to 448 px wide. As with the deck,
+Cycles output is not bit-reproducible across machines, so the committed PNG is the pinned input and the mockup render stays
+deterministic from it. `screens_rig.screen_01_main_rig(vermin=True)` is used by `01_main_rig` only; the backdrops of 03-08 call it
+without VERMIN and are unchanged.

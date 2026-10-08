@@ -39,7 +39,8 @@ def pedal_face(cv, name, crop, x, y, w, plate_text, plate_rect, oled_rect=None, 
     rect = (x, y, x + w, y + h)
     cv.shadow((x + 6, y + 10, x + w - 6, y + h), 10, (0, 10), 14, 0.8)
     cv.sprite(spr, x + w / 2.0, y + h / 2.0)
-    ws.nameplate(cv, (x + plate_rect[0], y + plate_rect[1], x + plate_rect[2], y + plate_rect[3]), plate_text)
+    if plate_text:
+        ws.nameplate(cv, (x + plate_rect[0], y + plate_rect[1], x + plate_rect[2], y + plate_rect[3]), plate_text)
     if oled_rect:
         ws.oled(cv, (x + oled_rect[0], y + oled_rect[1], x + oled_rect[2], y + oled_rect[3]), oled_lines, size=oled_size)
     if selected:
@@ -63,7 +64,32 @@ def meters_panel(cv, rect, key='meters'):
     ws.led_meter(cv, (ix0, y, ix1, y + 68), 'GR', 3.0, 5.5, ('3.0', 'dB', 4), lo=0.0, hi=12.0, ticks=(0, 6, 12), stack=True)
 
 
-def screen_01_main_rig():
+VERMIN_PNG = os.path.join(HERE, 'assets', 'vermin_face.png')      # pinned Blender render (448 x 613), see the README
+VERMIN_LED = (226.0, 462.0)       # LED and DIST knob centres in that image's pixels
+VERMIN_DIST = (86.0, 81.0)
+
+
+def vermin_pedal(cv, x, bottom, w=112):
+    """Screen 01 only: VERMIN (rat-style distortion) from the pinned render, framed like the other pedals, with its path label.
+    v3 adds a glowing LED lamp with its word and a hover tooltip (dot-matrix value) on the DIST knob.  Returns the pedal rect."""
+    spr = ws.sprite_image(VERMIN_PNG, w, round_px=22)
+    h = spr.height / ws.S
+    y = bottom - h
+    k = w / 448.0
+    pedal_face(cv, VERMIN_PNG, None, x, y, w, None, None)
+    ws.gaffer_tape(cv, (x - 14, bottom + 12, x + w + 14, bottom + 31), 'BLADE · VERMIN', 'blade_hi')
+    if ws.is_v3():
+        lx, ly = x + VERMIN_LED[0] * k, y + VERMIN_LED[1] * k
+        ws.state_led(cv, lx - 6.5, ly, True, 'red', 'ON', r=4.5)
+        kx, ky = x + VERMIN_DIST[0] * k, y + VERMIN_DIST[1] * k
+        cap = ws.label_well(cv, (kx - 30, y - 55), 'hover', 'label_mx', h=14, pad=6)
+        tip = (kx - 30, y - 42, kx + 78, y - 10)
+        cv.poly([(kx - 5, y - 10), (kx + 5, y - 10), (kx, y - 3)], 'steel_bare')
+        ws.dm_display(cv, tip, 'DIST 7.0', h=14, tone='amber', pad=5)
+    return (x, y, x + w, bottom)
+
+
+def screen_01_main_rig(vermin=False):
     cv = ws.new_screen('01_main_rig', sawdust_n=0)
     # ---- the floor: planks + sawdust, piled against the bottoms of everything that stands on it --------------------
     amp_saw_r = (56, RIG_Y + 6, 386, RIG_Y + 6 + 143.7)
@@ -85,7 +111,8 @@ def screen_01_main_rig():
     cv.shadow((cab_r[0] + 14, cab_r[1] + 14, cab_r[2] - 14, cab_r[3]), 8, (0, 12), 20, 0.8)
     cv.sprite(ws.sprite_image('cab_4x12.png', 330, crop=CAB_CROP, round_px=8), (cab_r[0] + cab_r[2]) / 2.0, (cab_r[1] + cab_r[3]) / 2.0)
     ws.label_well(cv, (cab_r[0], cab_r[3] + 14), 'CAB · 4x12 · SHARED · DOUBLE-CLICK FOR MIC', 'label', pad=8)
-    ws.label_well(cv, (amp_saw_r[0], amp_saw_r[3] + 14), 'BLADE · THE SAW MILL → SAW HEAD', 'label', fg='blade_hi', pad=8)
+    ws.label_well(cv, (amp_saw_r[0], amp_saw_r[3] + 14), 'BLADE · THE SAW MILL → VERMIN → SAW HEAD' if vermin else 'BLADE · THE SAW MILL → SAW HEAD',
+                  'label', fg='blade_hi', pad=8)
     ws.label_well(cv, (amp_body_r[0], amp_body_r[3] + 14), 'BODY · CHISEL → BODY HEAD', 'label', fg='body', pad=8)
 
     # ---- pedalboard -------------------------------------------------------------------------------------------------
@@ -104,7 +131,10 @@ def screen_01_main_rig():
     ws.label_well(cv, (saw_x - 5, 464), '▶ SELECTED', 'label_b', fg='blade_hi', pad=7, border='blade')
     # empty slots: flat wells, dashed frames
     sy = body[3] - 190
-    ws.empty_slot(cv, (625, sy, 745, body[3]))
+    if vermin:
+        vermin_pedal(cv, 625, body[3], 120)
+    else:
+        ws.empty_slot(cv, (625, sy, 745, body[3]))
     ws.empty_slot(cv, (775, sy, 895, body[3]))
 
     # ---- v3: the meter panel on the floor right of the cab ----------------------------------------------------------------
@@ -172,4 +202,4 @@ def screen_01_main_rig():
     return cv
 
 
-SCREENS = {'01_main_rig': screen_01_main_rig}
+SCREENS = {'01_main_rig': lambda: screen_01_main_rig(vermin=True)}
