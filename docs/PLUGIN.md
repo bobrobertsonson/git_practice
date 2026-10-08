@@ -322,7 +322,7 @@ off every render, trim, make-up and gate seed is what it was before I2, bit for 
     of **played** time (silence adds no windows, so it neither counts nor resets). The notice clears below 4 dB (`kDriftClearBelowDb`). A literal
     6 dB threshold is a coin flip for a true 6 dB change (p95 +-0.5 dB), so 5 dB with a 15 s window catches a true +-6 dB step within 60 s of played
     time while dynamics within +-4 dB never trigger. The baseline needs `kDriftLearnS` = 60 s of played windows; no comparison before `kDriftMinRollS` = 10 s.
-  - *Notice* (the main view's message line, after errors and engine warnings): "Your input seems ~N dB hotter|quieter than when you calibrated -
+  - *Notice* (the main view's message line, after errors and engine warnings): "Your playing level is running ~N dB hotter|quieter than when this interface was set up —
     did the interface gain change?" with the existing text buttons **Recalibrate** (opens Settings) and **Ignore** (silent until the baseline changes or the
     drift moves another 5 dB from the ignored level; it is also forgotten once the level is back within 3 dB of the baseline, `kDriftIgnoreClearDb`).
 

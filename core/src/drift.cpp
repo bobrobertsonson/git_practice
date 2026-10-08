@@ -18,12 +18,14 @@ namespace {
 std::atomic<std::uint64_t> g_nextTapId{1};
 }
 
-PeakTap::PeakTap() : id_(g_nextTapId.fetch_add(1, std::memory_order_relaxed)) {
+void configureFloorFollower(Gate& g) noexcept {
   GateParams p;
   p.enabled = true;
   p.thresholdMode = GateThresholdMode::FloorRelative;
-  floor_.setParams(p);
+  g.setParams(p);
 }
+
+PeakTap::PeakTap() : id_(g_nextTapId.fetch_add(1, std::memory_order_relaxed)) { configureFloorFollower(floor_); }
 
 void PeakTap::prepare(double sampleRate) {
   winLen_ = std::max(1, static_cast<int>(std::llround(kWindowMs * 0.001 * sampleRate)));
@@ -45,8 +47,8 @@ void PeakTap::process(const float* di, int n) noexcept {
     pos_ += len;
     i += len;
     if (pos_ >= winLen_) {
-      const double db = 20.0 * std::log10(std::max(static_cast<double>(peak_), 1e-9));
-      if (db >= floor_.floorEstimateDb() + kPlayedAboveFloorDb) {  // played
+      if (windowPlayed(static_cast<double>(peak_), floor_)) {  // played
+        const double db = 20.0 * std::log10(std::max(static_cast<double>(peak_), 1e-9));
         const std::uint32_t w = written_.load(std::memory_order_relaxed);
         ring_[w % kRing].store(static_cast<std::uint16_t>(binForDb(db)), std::memory_order_relaxed);
         written_.store(w + 1, std::memory_order_release);
@@ -68,8 +70,8 @@ int PeakTap::read(std::uint32_t& cursor, std::uint16_t* out, int maxOut) const n
 }
 
 std::string driftNoticeText(const DriftNotice& n) {
-  return "Your input seems ~" + std::to_string(n.db) + " dB " + (n.hotter ? "hotter" : "quieter") +
-         " than when you calibrated \xe2\x80\x94 did the interface gain change?";
+  return "Your playing level is running ~" + std::to_string(n.db) + " dB " + (n.hotter ? "hotter" : "quieter") +
+         " than when this interface was set up \xe2\x80\x94 did the interface gain change?";
 }
 
 DriftTracker::DriftTracker(const DriftConfig& cfg) : cfg_(cfg) {

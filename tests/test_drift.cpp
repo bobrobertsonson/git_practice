@@ -290,6 +290,19 @@ TEST_CASE("Drift I3: a bigger step is noticed in whole dB", "[drift][tracker]") 
   CHECK(drift::driftNoticeText(n).find("~8 dB") != std::string::npos);
 }
 
+TEST_CASE("Drift I4b: the notice wording is exactly the lead's sentence (em dash U+2014)", "[drift][tracker]") {
+  drift::DriftNotice n;
+  n.active = true;
+  n.db = 7;
+  n.hotter = true;
+  CHECK(drift::driftNoticeText(n) ==
+        "Your playing level is running ~7 dB hotter than when this interface was set up \u2014 did the interface gain change?");
+  n.hotter = false;
+  n.db = 12;
+  CHECK(drift::driftNoticeText(n) ==
+        "Your playing level is running ~12 dB quieter than when this interface was set up \u2014 did the interface gain change?");
+}
+
 TEST_CASE("Drift I3: playing dynamics within 4 dB over minutes never raise it", "[drift][tracker]") {
   Player p;
   auto t = learned(p);

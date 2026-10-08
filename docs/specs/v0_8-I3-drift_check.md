@@ -30,7 +30,7 @@ every planned NAM drive is wrong by the same amount, and nothing tells the user.
 - **Trigger.** Raise the drift notice when |rolling p95 − baseline| ≥ 5 dB, sustained for ≥ 30 s of played time; clear it below 4 dB.
   Why not 6 dB and a 30 s window (lead decision, 2026-10-08): a literal ≥6 dB threshold is a coin flip for a true 6 dB change (p95 ±0.5 dB). A true ±6 dB change must be noticed within 60 s of played time, and dynamics within ±4 dB must never trigger it.
   Silence does not count toward the 30 s and does not reset it.
-- **Notice.** One non-blocking notice: "Your input seems ~N dB hotter|quieter than when you calibrated — did the
+- **Notice.** One non-blocking notice: "Your playing level is running ~N dB hotter|quieter than when this interface was set up — did the
   interface gain change? [Recalibrate] [Ignore]".
   - N is rounded to whole dB.
   - [Recalibrate] opens the Settings device step.

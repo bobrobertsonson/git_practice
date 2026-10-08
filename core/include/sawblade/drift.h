@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -32,6 +33,14 @@ constexpr int kBins = static_cast<int>((kMaxDb - kMinDb) / kBinDb);  // 320; bin
 // statistic, so 12 dB keeps noise out while any real note (tens of dB above the floor) passes.
 constexpr double kPlayedAboveFloorDb = 12.0;
 constexpr int kRing = 512;                                           // windows (25.6 s) between two reads before any are lost
+
+// The played test, in one place (the drift tap and the stereo-DI chooser, stereo_input.h, both use it): a dedicated floor follower
+// that gates nothing, and the verdict on a window's peak.
+void configureFloorFollower(Gate& g) noexcept;
+inline bool windowPlayed(double peakLinear, const Gate& floorFollower) noexcept {
+  const double db = 20.0 * std::log10(peakLinear > 1e-9 ? peakLinear : 1e-9);
+  return db >= floorFollower.floorEstimateDb() + kPlayedAboveFloorDb;
+}
 
 double binCenterDb(int bin) noexcept;
 int binForDb(double db) noexcept;  // clamped to [0, kBins - 1]
@@ -95,7 +104,7 @@ struct DriftNotice {
   int db = 0;          // whole dB, always >= 0
   bool hotter = true;  // true: the input is hotter than at calibration
 };
-// "Your input seems ~N dB hotter|quieter than when you calibrated - did the interface gain change?"
+// "Your playing level is running ~N dB hotter|quieter than when this interface was set up — did the interface gain change?"
 std::string driftNoticeText(const DriftNotice& n);
 
 class DriftTracker {

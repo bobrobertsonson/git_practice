@@ -5172,7 +5172,7 @@ TEST_CASE("drift notice: shows with Recalibrate and Ignore, Recalibrate opens Se
   rig.ed->refreshNow();
   CHECK(recal->isVisible());
   CHECK(ignore->isVisible());
-  CHECK(anyLabelContains(*rig.ed, "hotter than when you calibrated"));
+  CHECK(anyLabelContains(*rig.ed, "hotter than when this interface was set up"));
   CHECK(anyLabelContains(*rig.ed, "did the interface gain change?"));
 
   CHECK_FALSE(rig.ed->settingsOpen());
@@ -5184,5 +5184,5 @@ TEST_CASE("drift notice: shows with Recalibrate and Ignore, Recalibrate opens Se
   CHECK_FALSE(rig.proc.driftNotice().active);
   CHECK_FALSE(recal->isVisible());
   CHECK_FALSE(ignore->isVisible());
-  CHECK_FALSE(anyLabelContains(*rig.ed, "when you calibrated"));
+  CHECK_FALSE(anyLabelContains(*rig.ed, "when this interface was set up"));
 }
