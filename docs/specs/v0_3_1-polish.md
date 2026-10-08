@@ -2,7 +2,7 @@
 
 Source: the user's v0.3 Logic hand test (2026-10-07: "level match works but needs to be more instant", "OUTPUT needs a
 readout or typing in", A/B "how to set each?") plus nits the reviewer left open on v0.3.0.1 and the main-branch CI
-history. Owners: dsp-engineer (plugin, C++ tests, scripts), match-engineer (Task F), reviewer on every task.
+history. Owners: dsp-engineer (plugin, core, C++ tests, scripts), match-engineer (Tasks F, G), reviewer on every task.
 
 **Scheduling:** start only after v0.4M and v0.6 have merged into the working branch. Both touch `plugin/src` and the
 export/level code; starting earlier guarantees merge conflicts. Base the branch on the working branch after those
@@ -63,6 +63,24 @@ Today the LEVEL MATCH trim follows a rig change through the 10 Hz `levelTick()` 
   token file whose JSON root is a list (or a string, number or null) raises `TypeError`. Treat any non-object root, and
   any wrong-typed field, as "no session" with the same message as a missing file.
 - Tests: list, string, number and null roots; `expires_at` as a non-numeric string; all return `None`, none raise.
+
+## Task G — matched presets with local IRs load anywhere on the user's machine (match-engineer + dsp-engineer)
+
+Found 2026-10-08: the user copied a matcher `best.preset.json` into the User bank and it did not load. `portable()`
+(`match/sawblade_match/matcher/run.py:240`) rewrites provider `local` captures to `local-irs/<title>.wav` relative to the
+preset; core `locateCapture()` (`core/src/preset.cpp`) falls back to the capture cache only for TONE3000 captures. So any
+match that picks a user IR is unloadable outside its run folder, and `*.resolved.json` is skipped by the preset scan.
+
+- **Matcher:** when it writes a preset, copy each chosen local IR into `<captureCacheRoot>/local/<sha256[:16]>.wav`
+  (the user's own machine cache; never committed or bundled). The preset keeps `source: {provider: "local", id:
+  <sha16>, title, path: <original absolute path>}` and `sha256`.
+- **Core:** `locateCapture()` falls back, for provider `local`, to `<captureCacheRoot>/local/<source.id>.wav`, then to
+  `source.path`. sha256 is verified as today. One loader serves tonerender, the plugin and the bindings.
+- **`sawblade-t3k resolve`:** repairs older presets by copying a missing local IR into the cache from `source.path` or
+  from the IR index (sha256 lookup); reports any IR it cannot find, never silently.
+- Tests: a local-IR preset copied to another directory loads (core + pybind); sha mismatch is a clear error; the cache
+  file is written once; resolve repairs a pre-fix preset.
+- User check: a matched preset copied into the User bank loads in Logic.
 
 ## Acceptance
 
