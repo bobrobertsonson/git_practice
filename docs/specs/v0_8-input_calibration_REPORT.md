@@ -332,3 +332,33 @@ Everything under `plugin/` was only syntax-checked (`g++ -fsyntax-only -Wall -We
 validation and Settings tests, and the Engine tests (off bit-identical, summary, seed and learned floor with no allocation). CI must prove: all processor-level cases in
 `test_device_calibration_engine.cpp` (rebuild counts, trim keying, hop skip, floor persistence), the SettingsPanel layout and the interface step, the editor / pedalboard /
 browser tests (UNCAL badges, notice label, hop make-up 0), and the effect of the Host harness settings isolation on the other processor tests.
+
+## I3 — drift check
+
+Spec `docs/specs/v0_8-I3-drift_check.md`; code `core/include/sawblade/drift.h` (`PeakTap`, `DriftTracker`), glue in `SawbladeProcessor::calibrationTick()`.
+
+**Retune (lead decision, 2026-10-08).** The first build used the spec's literal numbers (rolling p95 over 30 s, trigger at |drift| >= 6 dB for 30 s). A literal
+>= 6 dB threshold is a coin flip for a true 6 dB change (p95 +-0.5 dB), and a mixed 30 s window needed up to ~30 s to turn over, so the notice came after
+40 to 60 s of played time. Now: rolling p95 over 15 s of played time, trigger at >= 5 dB sustained 30 s, clear below 4 dB; Ignore re-raises at >= 5 dB from
+the ignored level and is forgotten below 3 dB. All named in `drift.h`.
+
+**Measured (tracker model, the unit tests' fixed 15 s playing pattern, 60 s baseline at -20 dB).**
+- A true +6 dB is raised after 32.65 s of played time; a true -6 dB after 43.95 s (the drop is slower: the top 5% of the window must be replaced). Both are
+  inside the 60 s bound the tests assert.
+- Playing dynamics of +-4 dB over minutes never raise it. Worst case |drift| 4.25 dB with random levels and odd passage lengths (6 seeds), 4.00 dB
+  deterministic; 4.50 dB through a real Chain with random note levels (the plugin test's path). That leaves 0.75 dB of margin in the models, 0.5 dB on
+  the real-signal path.
+
+**Gate independence (lead decision).** The first build counted a window as played when the preset's live gate was open, so a preset with no gate gave no
+statistic and a different gate threshold changed the statistic. Now a window is played when its peak is at least `kPlayedAboveFloorDb` = 12 dB above the DI's
+own noise floor, tracked by a dedicated minimum-statistics follower on the DI (`Gate::followFloor`, the live gate's follower without any gating), seeded from
+the I2 learned floor (converted from the post-INPUT key to the DI). Any gate threshold, or no gate, gives identical windows (core test), and switching presets
+raises no notice (plugin test). Caveat: like the gate's own follower, the floor leaks upward after 10 s without a quiet frame (+1 dB/s), so minutes of
+unbroken loud playing with no pause bias the statistic towards the louder windows.
+
+**CI run 294.** Two plugin tests failed (`REQUIRE(baseline.has_value())`). Root cause: the tests, not the product. They played 65 s of notes and gaps and
+expected a 60 s baseline, but only ~64% of that audio is played (42 s), so no baseline was due yet. They also fed only channel 0, so `processBlock` (mean of the
+two inputs) mixed in the previous block's output. Fixed by counting in played time and feeding both channels.
+
+**Unrelated flake, also seen in run 294:** `match/` irlib `test_irlib.py::test_identical_files_analysed_concurrently_are_not_rejected` (exactDuplicates, 14 vs 15).
+Not touched by I3; the main lead has assigned it to v0.4M.
