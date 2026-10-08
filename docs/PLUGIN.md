@@ -264,6 +264,47 @@ Switching presets, captures or A/B must never make you judge "louder = better". 
 - **NAM export** - always the un-trimmed chain: `prepareExportSource` strips `autoTrimDb` / `autoTrimHash` from the preset it writes
   (the make-up is part of the sound and stays).
 
+### Device step and calibrated input levels (v0.8 I2)
+
+Specs: `docs/specs/v0_8-input_calibration.md` (Task B), `docs/specs/v0_8-I1-chain_wiring.md` (the core), `docs/specs/v0_8-I2-device_step.md`.
+Evidence for the figures: `docs/specs/v0_8-input_calibration_REPORT.md` A1b. Calibration is **off by default** (a Settings toggle); with it
+off every render, trim, make-up and gate seed is what it was before I2, bit for bit.
+
+- **The record** lives in the Settings store (`deviceCalibration`, `plugin/src/settings/DeviceCalibration.*`), not in a preset and not in the plugin
+  state: `{dbu, method: preset|manual|measured, model, gainAtMinimum, pad, air, date, liveGateFloorDbfs?}`. A preset therefore plays the same on
+  another interface once that interface is calibrated. Storage writes (the Settings file) happen on the message thread only.
+- **Device step (Settings, "INTERFACE").** It says: "Set your interface's instrument gain to minimum (note PAD/Air). Sawblade supplies all gain."
+  Every published figure holds only at minimum gain. Choices: *Not set*, the presets below, *Enter dBu* (validated to [-60, +60]; a value outside the
+  practical [0, +24] is stored with a warning) and *Measure...*. PAD and Air are noted for typed and measured values (the presets know theirs; the
+  published figures assume Air off).
+- **Presets** (manufacturer figures, "at minimum gain"; REPORT A1b; the user should check them against their own unit's guide):
+
+  | preset | dBu at 0 dBFS | source |
+  |---|---|---|
+  | Focusrite Scarlett 4i4 3rd gen, Inst (the user's interface) | +12.5 | Focusrite Scarlett 4i4 3rd Gen user guide; https://userguides.focusrite.com/hc/en-gb/articles/23031514701842 |
+  | Focusrite Scarlett 4i4 3rd gen, Inst + PAD | +14 | the same user guide: https://fael-downloads-prod.focusrite.com/customer/prod/downloads/Scarlett%204i4%203rd%20Gen%20User%20Guide%20V2.pdf |
+  | Focusrite Scarlett 4i4 4th gen, Inst | +12 | Focusrite Scarlett 4i4 4th Gen user guide; https://fael-downloads-prod.focusrite.com/customer/prod/downloads/scarlett_4i4_4th_gen_user_guide_v2-pdf-en.pdf |
+
+  **The level is never computed from the Focusrite Control 2 gain readout.** At minimum Inst gain the readout already shows 7 dB, so "12 - N" is wrong,
+  and no Focusrite document says the readout is the analogue gain, that a step is exactly 1 dB, or what the maximum input is above minimum gain
+  (REPORT A1b). Use minimum gain, or measure.
+- **Measure** is a stub in I2: it explains the procedure (feed a test tone of known level into the instrument input at minimum gain, raise it until the
+  interface just reaches 0 dBFS, enter that level) and stores the entered value as `measured`. A guided measurement needs a reference signal from the user.
+- **"Calibrated input levels (beta)"** (Settings, default **off**) turns the core's input calibration on for the engine, for the level-match trim and for
+  the capture-swap make-up. Turning it on, or changing the device dBu, rebuilds the engine (cross-faded like any rebuild; `calibrationTick()` at 10 Hz).
+- **Notice.** With the toggle on and no record, the main view and the Settings step say "Interface not calibrated: assuming +12 dBu" (non-blocking).
+  A capture whose metadata lacks an input or output level shows a small "UNCAL" badge on its pedal tile (the capture badge's style, in the warning colour).
+- **Measurements follow the calibration.** With the toggle on, the trim is measured through the calibrated chain (`computeAutoTrim(..., cal)`), kept
+  under its own cache key, and is **not** read from or written into the preset (I4 decides how a preset records it). A capture swap on a block that feeds
+  another NAM block gets no make-up (core `slotMakeup`: `skippedHop`, nothing rendered; the planned gain carries the hop), the last block keeps its
+  make-up. `Pedalboard` and `BrowserController` pass the block index and store nothing for a hop block. The PREVIEW audition still renders uncalibrated.
+- **Live-gate floor seed.** The live gate's floor follower seeds at -70 dBFS and needs about 25 s to learn a loud floor. The audio thread publishes the
+  learned floor through a relaxed atomic float in the chain (`Chain::learnedGateFloorDb()`, NaN until the follower has filled its 3 s window from measured
+  frames; no allocation, no lock). The message thread (`SawbladeProcessor::calibrationTick()`) writes it into the device record at most every 10 s and
+  only for a change of 1 dB or more (`Settings::setLiveGateFloor`; nothing is stored without a record: the record is the key, there is no device name).
+  The next engine is seeded from it on prepare (`Chain::setGateFloorSeedDb`) **only with the toggle on**, so toggle off stays bit-identical. It is never
+  taken from a preset or a matched reference DI (a preset load does not change the seed); with no stored floor the seed is the stock -70 dBFS.
+
 ### Latency accounting (exact, in host samples)
 
 ```
@@ -1066,7 +1107,7 @@ gear button, closed by Esc, the x button or DONE (UI state, never saved). Sectio
 path, Browse, Auto, status light, Test = `sawblade-t3k --help`), TONE3000 (client id with the secret-key refusal shown in
 red, token-file status, Test = `whoami --json`, Log in with the device code box: code in a 40 px mono font, COPY CODE,
 COPY URL, OPEN, CANCEL, countdown, RETRY on failure), Captures (cache folder, count of `*.nam` / `*.wav` counted on a
-background thread, Open folder), Separation, Recording (takes folder), Reamp pair (NAM standard input file), Appearance (theme, UI scale; applies when the
+background thread, Open folder), Separation, Recording (takes folder), Reamp pair (NAM standard input file), Level match, Interface (device step and the "Calibrated input levels (beta)" toggle, v0.8 I2), Appearance (theme, UI scale; applies when the
 window is next opened), and a footer with the settings file path and **About Sawblade...**.
 
 **First run.** `Settings::isFirstRun()` is true when no settings file existed at the instance's first `load()`. The
