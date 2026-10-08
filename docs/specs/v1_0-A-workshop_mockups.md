@@ -273,3 +273,38 @@ LCD, ◀ ▶ move, ✕ remove; `+ ADD` slot. Bottom strip: CAB notice `LIVE-COMP
   trademark text or trade dress.
 - No file under `plugin/` changes. No `.ttf` or third-party audio committed.
 - Reviewer ACCEPT on determinism, reproducibility and the contrast numbers.
+
+## v3 variant — "displays" (user feedback on v2, 2026-10-08)
+
+User: "very cool so far, I think we could lean deeper into LED/LCD screen looks." A third axis next to wear: kit
+parameter `look = v2 | v3` (v2 = everything above, byte-identical). v3 renders the same ten screens in both wear levels
+into `png_v3/` and `png_v3_strong/`; `render_all.py --look v2|v3|all` × `--wear subtle|strong|all`.
+
+v3 pushes the displays; the worn-metal / sawdust frame stays:
+- **Backlit LCD panels** (amber `lcd_amber` and a backlit green `lcd_green`, new token) for preset names, values and
+  status lines: a recessed bezel, a slightly lit glass (flat colour), segment digits for numbers and a **5×7 dot-matrix**
+  face (drawn procedurally by the kit, no font) for alphanumerics. Where v2 shows a value or a status in a plain well, v3
+  shows it in a display where that is natural (not every body sentence: dialog prose and long notes stay plain text).
+- **Top bar:** a dot-matrix scroller for the preset / rig name (drawn as a still frame with the text mid-scroll; the
+  full name must still be readable in the frame, so the "scroll" is shown by a fade/clip at one end only when the name
+  is longer than the window, plus a small ◀▶ scroll marker).
+- **LED ladder meters** for INPUT, OUTPUT and VISE gain reduction (segmented, green → amber → red top, with dB tick
+  labels and a peak-hold segment; each meter labelled IN / OUT / GR and with an LCD value), at least on 01 and 08; also
+  the input meter on 03 (INPUT CALIBRATION, next to the dBu entry).
+- **LED rings** around the key knobs (BLEND, the four master knobs, amp-head knobs are baked art so no ring there):
+  discrete LED dots, lit up to the value, unlit dots faint; replaces the v2 value arc on those knobs.
+- **Glowing indicator LEDs for states**: UNCAL (amber), OUT OF TRUE (red), LEGACY LEVELS (amber), LIVE / STUDIO, REC,
+  BYPASS — every LED has its word next to it and an ON / OFF or state word (no state by colour alone).
+
+Legibility rules (same as above, plus):
+- Display text is drawn through `text()` (or the kit's dot-matrix / segment functions, which log like `lcd()` does) and
+  measured. **Glow never reduces contrast**: glow may only be drawn outside the text box, or its effect is included in the
+  logged background (log the brightest glow-blended background colour under the text, as the nixie does).
+- Unlit segments and unlit dot-matrix dots are allowed behind lit text only as a ghost whose contrast against the glass
+  is <= 1.25:1, and the logged background for that text is the ghost colour (pessimistic). The flat-background assertion
+  is extended to accept exactly {glass, ghost} under display text and nothing else.
+- Dot-matrix text is at least 7 px per character cell height at 1x... in practice >= 14 px tall glyphs for values and
+  names, >= 11 px for small status lines.
+
+Acceptance as above for all four sets; `--check` and `--contrast` per set; README gets the v3 table (or "identical
+ratios" lines where true) and its lowest ratio.
