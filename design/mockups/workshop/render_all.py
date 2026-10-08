@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.normpath(os.path.join(HERE, '..', '..', 'render')))
 
 # fixed, sorted.  Task A step 2 adds screens_bar (02), screens_settings (03, 04), screens_match (05, 06), screens_woodshed (07),
 # screens_editor (08), screens_notices (09).
-SCREEN_MODULES = ['screens_rig']
+SCREEN_MODULES = ['screens_panels', 'screens_rig', 'screens_tools']
 
 PNG_DIR = os.path.join(HERE, 'png')
 
