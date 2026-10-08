@@ -290,15 +290,46 @@ off every render, trim, make-up and gate seed is what it was before I2, bit for 
   (REPORT A1b). Use minimum gain, or measure.
 - **Measure** is a stub in I2: it explains the procedure (feed a test tone of known level into the instrument input at minimum gain, raise it until the
   interface just reaches 0 dBFS, enter that level) and stores the entered value as `measured`. A guided measurement needs a reference signal from the user.
-- **"Calibrated input levels (beta)"** (Settings, default **off**) turns the core's input calibration on for the engine, for the level-match trim and for
-  the capture-swap make-up. Turning it on, or changing the device dBu, rebuilds the engine (cross-faded like any rebuild; `calibrationTick()` at 10 Hz).
+- **"Calibrated input levels (beta)"** (Settings, default **off**) turns the core's input calibration on for the engine, for the level-match trim, for
+  the capture-swap make-up and for the capture browser's preview (for calibrated presets). Turning it on, or changing the device dBu, rebuilds the engine (cross-faded like any rebuild; `calibrationTick()` at 10 Hz).
 - **Notice.** With the toggle on and no record, the main view and the Settings step say "Interface not calibrated: assuming +12 dBu" (non-blocking).
   In the main view the notice sits after errors and engine warnings: those take precedence there, while the Settings step always shows it.
   A capture whose metadata lacks an input or output level shows a small "UNCAL" badge on its pedal tile and on the amp head's read-out pill (one badge style, `paintBadge`, in the warning colour).
-- **Measurements follow the calibration.** With the toggle on, the trim is measured through the calibrated chain (`computeAutoTrim(..., cal)`), kept
-  under its own cache key, and is **not** read from or written into the preset (I4 decides how a preset records it). A capture swap on a block that feeds
+- **A preset plays with the calibration only when it is "calibrated" (v0.8 I4b).** The chain is calibrated iff the toggle is on **and** the preset's
+  `calibration.mode` is `"calibrated"`; a `"legacy"` preset (every file older than schema v5, and a default-built preset until the I4c flip) plays exactly
+  as before whatever the toggle says (no planned gains, the stock gate seed, no drift tap). The engine build, the 10 Hz rebuild test, the level key and
+  the capture-swap make-up all use this one rule (`settings::chainCalibrationForPreset` / `engineCalibrationForPreset`).
+- **Measurements follow the calibration.** With calibration in effect, the trim is measured through the calibrated chain (`computeAutoTrim(..., cal)`) and kept
+  under its own cache key (`|cal:<dBu>` or `|cal:assumed`). A capture swap on a block that feeds
   another NAM block gets no make-up (core `slotMakeup`: `skippedHop`, nothing rendered; the planned gain carries the hop), the last block keeps its
-  make-up. `Pedalboard` and `BrowserController` pass the block index; on a hop the make-up is set to 0 (the old capture's make-up is wiped, because the calibrated chain drops it anyway); adding a pedal stores none. The PREVIEW audition still renders uncalibrated.
+  make-up. `Pedalboard` and `BrowserController` pass the block index; on a hop the make-up is set to 0 (the old capture's make-up is wiped, because the calibrated chain drops it anyway); adding a pedal stores none. The capture browser's PREVIEW renders with the same calibration (see below).
+- **Calibrated trim at play time (v0.8 I4b).** A calibrated preset can carry `output.autoTrimCalDb` / `autoTrimCalHash`, the trim measured with calibration at the
+  assumed +12 dBu reference device (machine independent). At play time, with calibration in effect: if the device is the reference (no record, or a record of
+  exactly +12 dBu) and the hash matches (`autoTrimCalHashFromBase`), the stored value is used **without a re-measure**; a stale hash re-measures, and that
+  reference measurement may be stored as `autoTrimCal`. For any other device level the stored value is not valid (the trim is not linear in the device
+  offset), so the trim is **re-measured on the calibrated chain at the user's device level**, cached per device under the `|cal:` key, and **never written
+  back**: a device-specific value is never stored in a preset. Legacy presets, and calibration off, keep today's `autoTrim` untouched. NAM export and MATCH clear
+  `autoTrimCal` (db and hash) with `autoTrim` before hashing and writing, so a stale or fresh `autoTrimCal` never changes the exported preset or the "same rig" key.
+- **Preview.** The capture browser's PREVIEW (`PreviewWorker`) renders with the same `ChainCalibration` as playback (device record, toggle, the candidate's mode:
+  `SawbladeProcessor::calibrationFor`): the slot make-up with the hop rule, the candidate's trim (always measured with the calibration) and the render itself, so an amp
+  swap shows the planned gain difference playback has. With calibration off the pipeline is the pre-I4b one, sample for sample.
+- **Legacy presets (v0.8 I4b).** With calibrated input levels on, a loaded legacy preset shows a small non-blocking hint on the main view's message line (after errors,
+  warnings and the drift notice): "Legacy levels — this preset was made before calibrated input." with a **Use calibrated levels** button. One click sets the preset's
+  `calibration.mode` to `calibrated` (`SawbladeProcessor::setCalibrationMode`): a normal edit (one undo/redo step, the engine rebuilds with the new setting, the next save
+  writes it; a factory preset can be switched for the session and saving it goes through the existing Save As, factory files are never written). Settings has
+  **Calibrate all user presets...** (section "INTERFACE"): it asks "Switch N user presets to calibrated levels? Factory presets are not changed.", then rewrites every legacy
+  file of the user bank as v5 `calibrated` on a background thread (core `calibrateLegacyPresets`: one atomic write per file; only `version` and `calibration` change and the
+  result must read back as the same preset; a failure is reported by file name and the rest still convert; already calibrated files are not touched). It never touches `presets/`.
+- **Input channel (v0.8 I4b).** A stereo input used to be summed as `0.5 * (L + R)`, so a guitar on one channel arrived 6 dB down. A stereo input layout now goes through
+  `StereoInputChooser` (`core/include/sawblade/stereo_input.h`) exactly where that sum was, so the input meter, the DI recorder, the drift tap and the gate key see the chosen
+  signal; a mono layout is unchanged (bit-identical). Settings, "INTERFACE", **Input channel**: *Auto* (default), *L*, *R*, *Mix* (stored beside the device record as
+  `inputChannel`; never in a preset or the plugin state). *L* / *R* / *Mix* force that channel (Mix is the old sum); a change fades over 30 ms.
+  *Auto* starts as Mix and latches a single channel once there are about 2 s of **played** frames (the drift tap's test: a 50 ms window whose peak is 12 dB above the
+  DI's own noise floor, same floor follower) in which one channel is at least 30 dB below the other, measured over those played windows only. It is applied only at
+  the start of a block whose played state is false (never mid-note) and cross-faded over 30 ms. Once latched it is re-evaluated only on `prepareToPlay`, on a
+  bus-layout change (`processorLayoutsChanged`), or after a sustained reversal (the latched channel at least 30 dB below the other for 10 s of played windows).
+  The decision is an atomic read by the editor: a read-only line "Input: L only (auto)" / "Input: L+R mix (auto)" / "Input: R only (forced)" on the main view's message line
+  (shown only on a stereo input and only when nothing more urgent is shown). Allocation- and lock-free in `process()`.
 - **Live-gate floor seed.** The live gate's floor follower seeds at -70 dBFS and needs about 25 s to learn a loud floor. The audio thread publishes the
   learned floor through a relaxed atomic float in the chain (`Chain::learnedGateFloorDb()`, NaN until the follower has filled its 3 s window from measured
   frames; no allocation, no lock). The message thread (`SawbladeProcessor::calibrationTick()`) writes it into the device record at most every 10 s and
@@ -1128,7 +1159,7 @@ gear button, closed by Esc, the x button or DONE (UI state, never saved). Sectio
 path, Browse, Auto, status light, Test = `sawblade-t3k --help`), TONE3000 (client id with the secret-key refusal shown in
 red, token-file status, Test = `whoami --json`, Log in with the device code box: code in a 40 px mono font, COPY CODE,
 COPY URL, OPEN, CANCEL, countdown, RETRY on failure), Captures (cache folder, count of `*.nam` / `*.wav` counted on a
-background thread, Open folder), Separation, Recording (takes folder), Reamp pair (NAM standard input file), Level match, Interface (device step and the "Calibrated input levels (beta)" toggle, v0.8 I2), Appearance (theme, UI scale; applies when the
+background thread, Open folder), Separation, Recording (takes folder), Reamp pair (NAM standard input file), Level match, Interface (device step, the "Calibrated input levels (beta)" toggle, v0.8 I2, the Input channel setting and Calibrate all user presets..., v0.8 I4b), Appearance (theme, UI scale; applies when the
 window is next opened), and a footer with the settings file path and **About Sawblade...**.
 
 **First run.** `Settings::isFirstRun()` is true when no settings file existed at the instance's first `load()`. The
