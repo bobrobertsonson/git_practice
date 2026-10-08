@@ -5,6 +5,13 @@ in general — worn metal and sawdust is great." These are **mockups for the use
 is built into the plugin. **No change under `plugin/` at all** (v0.8 and v0.3.1 are editing it); `plugin/assets/*` is
 read-only input.
 
+**Update 2026-10-08 (user decisions on the first set):** the TS-style pedal is **CHISEL** (replaces TS-STYLE below);
+readouts stay amber LCD + orange nixie for BLEND; the kit gains `wear = subtle | strong` and both full sets are rendered
+(`png/`, `png_strong/`), with the same flat-well and contrast rules; WOODSHED (07) is built around the cassette-deck
+render of `design/render/playalong_deck.py` (committed as the pinned input `design/mockups/workshop/assets/woodshed_deck.png`);
+lettering, the A/B mini footswitches and the legacy-levels placement are approved. v0.8: OUT OF TRUE sentence and
+INST-only device presets as drawn in 03 / 09.
+
 ## Deliverables
 
 | path | what |
