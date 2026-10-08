@@ -2,7 +2,11 @@
 
 Source: user decision 2026-10-07 ("4a: yes"). Today the matcher's only real known answer is Bloodbath "Zombie Inferno"
 (HM-2 + Überschall). CLAUDE.md requires that Sawblade work for ANY heavy tone; a change that improves Bloodbath can
-silently worsen thrash. Owner: match-engineer; reviewer on every task. The audio stays on the user's Mac (never in git
+silently worsen thrash. Owner: match-engineer; reviewer on every task.
+
+**Scheduling (lead, 2026-10-08):** Tasks A–B (definition, runner, synthetic tests) start now, branched from the v0.4M
+head, in new files (`match/sawblade_match/bench/`, `docs/benchmark/`) so they do not collide with v0.4M or v0.8. Task C
+(the user's baseline run) waits until v0.8 calibration has merged, because the baseline numbers depend on it. The audio stays on the user's Mac (never in git
 or the cloud); this phase builds the harness here with synthetic fixtures and the user runs it.
 
 ## Task A — benchmark definition
