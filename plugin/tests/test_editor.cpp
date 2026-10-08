@@ -5049,3 +5049,101 @@ TEST_CASE("pluginval / auval paths never start a job: a fresh processor with def
     CHECK(jobs.snapshot(JobKind::Match).state == JobState::None);
   }
 }
+
+// =============================================================================================
+// v0.8 I2: the device step in Settings (interface level) and the "Calibrated input levels (beta)" toggle
+// =============================================================================================
+namespace {
+juce::ComboBox* comboTitled(juce::Component& root, const juce::String& title) {
+  for (auto* c : all<juce::ComboBox>(root))
+    if (c->getTitle() == title) return c;
+  return nullptr;
+}
+}  // namespace
+
+TEST_CASE("settings: the interface step says to use minimum gain, offers the presets, validates a typed dBu and stores the record in Settings",
+          "[editor][settings][devicecal]") {
+  Rig rig;
+  rig.ed->setSettingsOpen(true);
+  SettingsPanel& panel = settingsPanelOf(*rig.ed);
+  Settings& st = Settings::shared();
+  CHECK_FALSE(st.deviceCalibration().has_value());
+  CHECK(anyLabelContains(*rig.ed, "Set your interface's instrument gain to minimum (note PAD/Air). Sawblade supplies all gain."));
+  juce::ComboBox* combo = comboTitled(panel, "Interface");
+  juce::TextEditor* field = fieldTitled(panel, "Interface level in dBu");
+  juce::Button* set = buttonTitled(panel, "Set interface level");
+  REQUIRE((combo && field && set));
+  CHECK(combo->getSelectedId() == 1);  // not set
+  CHECK_FALSE(field->isEnabled());
+  CHECK(combo->getNumItems() == 6);  // not set, three presets, Enter dBu, Measure
+
+  // The presets (ids 2..4): the figures at minimum gain.
+  combo->setSelectedId(2, juce::sendNotificationSync);
+  REQUIRE(st.deviceCalibration().has_value());
+  CHECK(st.deviceCalibration()->dbu == 12.5);
+  CHECK(st.deviceCalibration()->method == sawblade::plugin::settings::DeviceMethod::Preset);
+  CHECK_FALSE(st.deviceCalibration()->pad);
+  CHECK(anyLabelContains(*rig.ed, "12.5 dBu at 0 dBFS"));
+  combo->setSelectedId(3, juce::sendNotificationSync);
+  CHECK(st.deviceCalibration()->dbu == 14.0);
+  CHECK(st.deviceCalibration()->pad);
+  combo->setSelectedId(4, juce::sendNotificationSync);
+  CHECK(st.deviceCalibration()->dbu == 12.0);
+  CHECK(anyLabelContains(*rig.ed, "Source: "));
+
+  // Enter dBu (id 5): validated to [-60, +60]; a refused value leaves the record alone.
+  combo->setSelectedId(5, juce::sendNotificationSync);
+  CHECK(field->isEnabled());
+  CHECK(st.deviceCalibration()->dbu == 12.0);  // picking the entry does not change the record until a value is set
+  field->setText("75", false);
+  click(*set);
+  CHECK(st.deviceCalibration()->dbu == 12.0);
+  CHECK(anyLabelContains(*rig.ed, "plausible range"));
+  field->setText("abc", false);
+  click(*set);
+  CHECK(st.deviceCalibration()->dbu == 12.0);
+  CHECK(anyLabelContains(*rig.ed, "Not a number"));
+  field->setText("30", false);  // valid, but outside the practical 0..+24: stored with a warning
+  click(*set);
+  CHECK(st.deviceCalibration()->dbu == 30.0);
+  CHECK(st.deviceCalibration()->method == sawblade::plugin::settings::DeviceMethod::Manual);
+  CHECK(anyLabelContains(*rig.ed, "unusual"));
+  field->setText("12.5", false);
+  click(*set);
+  CHECK(st.deviceCalibration()->dbu == 12.5);
+  CHECK_FALSE(anyLabelContains(*rig.ed, "unusual"));
+
+  // Measure (id 6) is a stub: it explains the procedure and stores the entered value as measured.
+  combo->setSelectedId(6, juce::sendNotificationSync);
+  CHECK(anyLabelContains(*rig.ed, "test tone"));
+  field->setText("13.5", false);
+  click(*set);
+  CHECK(st.deviceCalibration()->dbu == 13.5);
+  CHECK(st.deviceCalibration()->method == sawblade::plugin::settings::DeviceMethod::Measured);
+
+  // Not set removes the record.
+  combo->setSelectedId(1, juce::sendNotificationSync);
+  CHECK_FALSE(st.deviceCalibration().has_value());
+  rig.ed->setSettingsOpen(false);
+}
+
+TEST_CASE("settings: the Calibrated input levels (beta) toggle is off by default and stored as a setting", "[editor][settings][devicecal]") {
+  Rig rig;
+  rig.ed->setSettingsOpen(true);
+  juce::ToggleButton* toggle = nullptr;
+  for (auto* b : all<juce::ToggleButton>(*rig.ed))
+    if (b->getTitle() == "Calibrated input levels (beta)") toggle = b;
+  REQUIRE(toggle != nullptr);
+  CHECK(toggle->getButtonText() == "Calibrated input levels (beta)");
+  CHECK_FALSE(toggle->getToggleState());
+  CHECK_FALSE(Settings::shared().calibratedInputLevels());
+  click(*toggle);
+  CHECK(Settings::shared().calibratedInputLevels());
+  CHECK(toggle->getToggleState());
+  // No record yet: the Settings step says so as well.
+  CHECK(anyLabelContains(*rig.ed, "Interface not calibrated: assuming +12 dBu"));
+  click(*toggle);
+  CHECK_FALSE(Settings::shared().calibratedInputLevels());
+  CHECK_FALSE(anyLabelContains(*rig.ed, "Interface not calibrated"));
+  rig.ed->setSettingsOpen(false);
+}

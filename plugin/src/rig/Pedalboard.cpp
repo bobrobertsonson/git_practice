@@ -137,6 +137,12 @@ void BoardTile::showBypass(bool bypass) {
   repaint();
 }
 
+void BoardTile::setUncalibrated(bool u) {
+  if (u == uncalibrated_) return;
+  uncalibrated_ = u;
+  repaint();
+}
+
 void BoardTile::setSelected(bool s) {
   if (s == selected_) return;
   selected_ = s;
@@ -252,6 +258,7 @@ void BoardTile::paintCapture(juce::Graphics& g) {
   }
   paintKindOutline(g, PedalKind::Capture, b, radius, L::capture());
   paintKindBadge(g, PedalKind::Capture, juce::Rectangle<float>(w * 0.08f, h * 0.045f, w * 0.62f, h * 0.075f));
+  if (uncalibrated_) paintBadge(g, juce::Rectangle<float>(w * 0.72f, h * 0.045f, w * 0.2f, h * 0.075f), "UNCAL", L::warning());
   g.setColour(L::text());
   g.setFont(L::labelFont(std::max(8.0f, h * 0.062f)));
   g.drawFittedText(title_, juce::Rectangle<float>(w * 0.08f, h * 0.14f, w * 0.84f, h * 0.15f).toNearestInt(), juce::Justification::topLeft, 2, 0.7f);
@@ -417,6 +424,7 @@ void Pedalboard::refresh(const Preset& shown) {
     return;
   }
   bool rebuilt = false;
+  const std::vector<std::string> unc = controller_.processor().uncalibratedBlocks();
   for (int path = 0; path < 2; ++path) {
     const PathPreset& pp = path == 0 ? shown.a : shown.b;
     PathView& v = paths_[static_cast<std::size_t>(path)];
@@ -442,6 +450,8 @@ void Pedalboard::refresh(const Preset& shown) {
         if (const auto* nam = dynamic_cast<const NamBlockParams*>(b.params.get())) v.tiles[static_cast<std::size_t>(i)]->showLevel(nam->outputGainDb);
       }
     }
+    for (std::size_t i = 0; i < v.tiles.size() && i < static_cast<std::size_t>(n); ++i)  // v0.8 I2: captures the calibrated chain cannot plan
+      v.tiles[i]->setUncalibrated(std::find(unc.begin(), unc.end(), pp.blocks[i].id) != unc.end());
     const bool full = pathFull(path);
     if (v.add->isEnabled() == full) {  // + PEDAL greys while the path holds its 8 blocks (the amp counts)
       v.add->setEnabled(!full);

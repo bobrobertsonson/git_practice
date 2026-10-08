@@ -397,6 +397,9 @@ class SawbladeEditor::Content : public juce::Component {
     } else if (!st.info.warnings.empty()) {
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText(juce::String(st.info.warnings.front()), juce::dontSendNotification);
+    } else if (st.calibrationAssumed) {  // v0.8 I2: calibrated input levels are on and no interface is set up (non-blocking)
+      message_.setColour(juce::Label::textColourId, L::warning());
+      message_.setText(juce::String(settings::uncalibratedNotice()), juce::dontSendNotification);
     } else {
       message_.setText({}, juce::dontSendNotification);
     }

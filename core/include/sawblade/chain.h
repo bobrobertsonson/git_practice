@@ -259,6 +259,7 @@ class Chain {
   void setGateFloorSeedDb(double db) noexcept { gate_.setFloorSeedDb(db); }
   // The floor the live gate has learned (dBFS), or NaN while it has not filled its 3 s window (or the gate is off / not floor
   // relative). Published by process() through a relaxed atomic float: any thread may read it, nothing is allocated or locked.
+  double gateFloorSeedDb() const noexcept { return gate_.floorSeedDb(); }  // where the follower starts (default -70 dBFS)
   float learnedGateFloorDb() const noexcept { return gateFloorOut_.load(std::memory_order_relaxed); }
 
   // --- v0.8 input calibration (see ChainCalibration) ---

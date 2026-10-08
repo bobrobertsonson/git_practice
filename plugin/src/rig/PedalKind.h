@@ -19,6 +19,9 @@ class HasPedalKind {
 
 // The badge text of a kind ("CAPTURE"; empty for a modeled pedal, which has none).
 juce::String badgeText(PedalKind k);
+// The one badge style (filled rounded label, background-coloured text) in `colour`. paintKindBadge is this with L::capture(); v0.8 I2
+// uses it for the small "UNCAL" mark of a capture whose metadata has no input / output level.
+void paintBadge(juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text, juce::Colour colour);
 // The filled "CAPTURE" badge of a capture (nothing is drawn for a modeled pedal), in `area`.
 void paintKindBadge(juce::Graphics& g, PedalKind k, juce::Rectangle<float> area);
 // The outline of a pedal widget: a capture's is 2 px in the capture colour (L::capture()), a modeled pedal's is `modeledColour` at 1 px.

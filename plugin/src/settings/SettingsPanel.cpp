@@ -161,6 +161,13 @@ struct SettingsPanel::Impl : private juce::Timer {
   // separation, takes, appearance, footer
   juce::Label capSep, sepNote, capTakes, capTheme, capScale, scaleNote, levelNote;
   juce::ToggleButton levelToggle;
+  // v0.8 I2: the device step (interface level) and the "Calibrated input levels (beta)" toggle. Settings only, never in a preset.
+  juce::Label capDevice, deviceNote, deviceStatus, dbuMsg, calNote;
+  juce::ComboBox deviceCombo;
+  juce::TextEditor dbuField;
+  juce::TextButton dbuSet;
+  juce::ToggleButton padToggle, airToggle, calToggle;
+  int pendingDeviceChoice = 0;  // the combo id picked while no record exists (Enter dBu / Measure); 0 = none
   juce::ComboBox sepCombo, themeCombo, scaleCombo;
   juce::TextEditor takesField;
   juce::TextButton takesBrowse, takesDefault, aboutBtn;
@@ -412,6 +419,61 @@ struct SettingsPanel::Impl : private juce::Timer {
     styleLabel(levelNote, L::bodyFont(12.0f), L::dimText());
     levelNote.setText("same loudness for every preset, capture and A/B (-18 LUFS); off = the levels presets always had", juce::dontSendNotification);
     add(levelNote);
+
+    // interface / input levels (v0.8 I2)
+    styleLabel(deviceNote, L::bodyFont(12.0f), L::dimText());
+    deviceNote.setText("Set your interface's instrument gain to minimum (note PAD/Air). Sawblade supplies all gain.", juce::dontSendNotification);
+    add(deviceNote);
+    caption(capDevice, "INTERFACE");
+    styleCombo(deviceCombo, "Interface", "The level your interface's instrument input reads as 0 dBFS, at minimum gain. Stored in the plugin settings, never in a preset.");
+    deviceCombo.addItem("Not set", kComboNone);
+    {
+      int id = kComboFirstPreset;
+      for (const auto& pr : devicePresets()) deviceCombo.addItem(pr.label, id++);
+    }
+    deviceCombo.addItem("Enter dBu", kComboEnter());
+    deviceCombo.addItem("Measure...", kComboMeasure());
+    deviceCombo.onChange = [this] {
+      if (!building) deviceChosen(deviceCombo.getSelectedId());
+    };
+    add(deviceCombo);
+    styleField(dbuField, "Interface level in dBu", "dBu at 0 dBFS, between -60 and +60 (usually 0 to +24)");
+    dbuField.onReturnKey = [this] { commitDbu(); };
+    add(dbuField);
+    styleButton(dbuSet, "Set", "Store this interface level");
+    dbuSet.setTitle("Set interface level");
+    dbuSet.onClick = [this] { commitDbu(); };
+    add(dbuSet);
+    for (juce::ToggleButton* t : {&padToggle, &airToggle, &calToggle}) {
+      t->setColour(juce::ToggleButton::textColourId, L::text());
+      t->setColour(juce::ToggleButton::tickColourId, L::saw());
+      t->setColour(juce::ToggleButton::tickDisabledColourId, L::dimText());
+    }
+    padToggle.setButtonText("PAD");
+    padToggle.setTitle("Interface PAD is on");
+    padToggle.setTooltip("Note whether the interface's PAD is on for a typed or measured value (the presets know it)");
+    add(padToggle);
+    airToggle.setButtonText("Air");
+    airToggle.setTitle("Interface Air is on");
+    airToggle.setTooltip("Note whether the interface's Air mode is on for a typed or measured value (the published figures assume it off)");
+    add(airToggle);
+    styleLabel(deviceStatus, L::bodyFont(12.0f), L::dimText());
+    add(deviceStatus);
+    styleLabel(dbuMsg, L::bodyFont(12.0f), L::dimText());
+    add(dbuMsg);
+    calToggle.setButtonText("Calibrated input levels (beta)");
+    calToggle.setTitle("Calibrated input levels (beta)");
+    calToggle.setTooltip("Play every capture at the level its maker recorded it at, from your interface's level. Off by default. A plugin setting: it is not saved in presets.");
+    calToggle.onClick = [this] {
+      if (!building) {
+        s.setCalibratedInputLevels(calToggle.getToggleState());
+        refresh();
+      }
+    };
+    add(calToggle);
+    styleLabel(calNote, L::bodyFont(12.0f), L::dimText());
+    calNote.setText("beta: off = the levels presets always had", juce::dontSendNotification);
+    add(calNote);
 
     // appearance
     caption(capTheme, "THEME");
@@ -793,6 +855,7 @@ struct SettingsPanel::Impl : private juce::Timer {
     scaleCombo.setSelectedId(idx + 1, juce::dontSendNotification);
     levelToggle.setToggleState(s.levelMatch(), juce::dontSendNotification);
     sawbladeSignalToggle.setToggleState(s.useSawbladeSignal(), juce::dontSendNotification);
+    refreshDevice();
     building = false;
     if (!takesField.hasKeyboardFocus(true)) {
       const juce::String t = ju(s.effectiveTakesDir().string());
@@ -843,6 +906,105 @@ struct SettingsPanel::Impl : private juce::Timer {
     updateCountLabel();
   }
   bool whoamiBtnBusy() const { return !whoamiBtn.isEnabled(); }
+
+  // --- device step (v0.8 I2) ----------------------------------------------------------------------------
+  // Combo ids: 1 = not set, then one per interface preset, then Enter dBu and Measure.
+  static constexpr int kComboNone = 1, kComboFirstPreset = 2;
+  static int kComboEnter() { return kComboFirstPreset + static_cast<int>(devicePresets().size()); }
+  static int kComboMeasure() { return kComboEnter() + 1; }
+
+  void setDbuMessage(const juce::String& text, juce::Colour colour) {
+    dbuMsg.setText(text, juce::dontSendNotification);
+    dbuMsg.setColour(juce::Label::textColourId, colour);
+  }
+
+  void deviceChosen(int id) {
+    pendingDeviceChoice = 0;
+    if (id == kComboNone) {
+      s.setDeviceCalibration(std::nullopt);
+      setDbuMessage({}, L::dimText());
+    } else if (id >= kComboFirstPreset && id < kComboEnter()) {
+      const DevicePreset& pr = devicePresets()[static_cast<std::size_t>(id - kComboFirstPreset)];
+      s.setDeviceCalibration(recordFromPreset(pr, todayDate()));
+      setDbuMessage(juce::String("Source: ") + pr.source, L::dimText());
+    } else if (id == kComboEnter()) {
+      pendingDeviceChoice = id;
+      setDbuMessage("Type the level in dBu that your interface reads as 0 dBFS (instrument input, gain at minimum), then press Set.", L::dimText());
+      if (dbuField.isShowing()) dbuField.grabKeyboardFocus();
+    } else if (id == kComboMeasure()) {
+      // Stub (I2): the guided measurement needs a reference signal from the user. The value is entered here and stored as measured.
+      pendingDeviceChoice = id;
+      setDbuMessage("Measure: with the instrument gain at minimum, feed a test tone of known level (dBu) into the instrument input, raise it until "
+                    "the interface just reaches 0 dBFS, and enter that level in dBu, then press Set. It is stored as a measured value.",
+                    L::dimText());
+      if (dbuField.isShowing()) dbuField.grabKeyboardFocus();
+    }
+    refresh();
+  }
+
+  // Set / Return in the dBu field: parse, validate [-60, +60] (warn outside 0..+24), store with the chosen method.
+  // Never derived from an interface app's gain readout (docs/specs/v0_8-input_calibration_REPORT.md A1b).
+  void commitDbu() {
+    const auto v = parseDbuText(su(dbuField.getText()));
+    if (!v) {
+      setDbuMessage("Not a number: type the level in dBu, for example 12.5", L::error());
+      return;
+    }
+    const DbuCheck c = checkDeviceDbu(*v);
+    if (!c.ok) {
+      setDbuMessage(ju(c.error), L::error());
+      return;
+    }
+    const bool measured = pendingDeviceChoice == kComboMeasure() || (s.deviceCalibration() && s.deviceCalibration()->method == DeviceMethod::Measured);
+    const Result r = s.setDeviceCalibration(
+        recordFromValue(*v, measured ? DeviceMethod::Measured : DeviceMethod::Manual, padToggle.getToggleState(), airToggle.getToggleState(), todayDate()));
+    pendingDeviceChoice = 0;
+    if (!r.ok) setDbuMessage(ju(r.error), L::error());
+    else if (!c.warning.empty()) setDbuMessage(ju(c.warning), L::warning());
+    else setDbuMessage({}, L::dimText());
+    refresh();
+  }
+
+  void refreshDevice() {
+    const auto rec = s.deviceCalibration();
+    int id = kComboNone;
+    juce::String status;
+    if (rec) {
+      id = kComboEnter();
+      if (rec->method == DeviceMethod::Preset) {
+        for (std::size_t i = 0; i < devicePresets().size(); ++i)
+          if (rec->model == devicePresets()[i].label) id = kComboFirstPreset + static_cast<int>(i);
+      } else if (rec->method == DeviceMethod::Measured) {
+        id = kComboMeasure();
+      }
+      char num[32];
+      std::snprintf(num, sizeof num, "%.1f", rec->dbu);
+      std::string t = std::string(num) + " dBu at 0 dBFS  \xc2\xb7  " + deviceMethodName(rec->method);
+      if (rec->pad) t += "  \xc2\xb7  PAD";
+      if (rec->air) t += "  \xc2\xb7  Air";
+      if (!rec->date.empty()) t += "  \xc2\xb7  " + rec->date;
+      status = ju(t);
+      deviceStatus.setColour(juce::Label::textColourId, L::dimText());
+    } else {
+      status = s.calibratedInputLevels() ? ju(uncalibratedNotice()) : juce::String("not set");
+      deviceStatus.setColour(juce::Label::textColourId, s.calibratedInputLevels() ? L::warning() : L::dimText());
+    }
+    deviceStatus.setText(status, juce::dontSendNotification);
+    if (pendingDeviceChoice != 0) id = pendingDeviceChoice;  // Enter dBu / Measure picked: stays until a value is set
+    deviceCombo.setSelectedId(id, juce::dontSendNotification);
+    const bool typed = id == kComboEnter() || id == kComboMeasure();
+    dbuField.setEnabled(typed);
+    dbuSet.setEnabled(typed);
+    padToggle.setEnabled(typed);
+    airToggle.setEnabled(typed);
+    if (!dbuField.hasKeyboardFocus(true)) {
+      const juce::String t = rec ? juce::String(rec->dbu, 1) : juce::String();
+      if (dbuField.getText() != t && (rec || pendingDeviceChoice == 0)) dbuField.setText(t, false);
+    }
+    padToggle.setToggleState(rec && rec->pad, juce::dontSendNotification);
+    airToggle.setToggleState(rec && rec->air, juce::dontSendNotification);
+    calToggle.setToggleState(s.calibratedInputLevels(), juce::dontSendNotification);
+  }
 
   // --- layout ---------------------------------------------------------------------------------------
   void scrollTo(int y) { viewport.setViewPosition(0, std::max(0, y - 8)); }
@@ -998,6 +1160,26 @@ struct SettingsPanel::Impl : private juce::Timer {
     heading("LEVEL MATCH");
     place(levelToggle, m, y, 160, 30);
     place(levelNote, m + 174, y, w - 2 * m - 174, 30);
+    y += 48;
+
+    // --- interface / input levels (v0.8 I2)
+    heading("INTERFACE");
+    place(deviceNote, m, y, w - 2 * m, 20);
+    y += 24;
+    place(capDevice, m, y, 300, 14);
+    y += 16;
+    place(deviceCombo, m, y, 330, 30);
+    place(dbuField, m + 344, y, 90, 30);
+    place(dbuSet, m + 442, y, 60, 30);
+    place(padToggle, m + 516, y, 70, 30);
+    place(airToggle, m + 590, y, 70, 30);
+    y += 36;
+    place(deviceStatus, m, y, w - 2 * m, 20);
+    y += 24;
+    place(dbuMsg, m, y, w - 2 * m, 48);
+    y += 52;
+    place(calToggle, m, y, 260, 30);
+    place(calNote, m + 274, y, w - 2 * m - 274, 30);
     y += 48;
 
     // --- appearance

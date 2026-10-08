@@ -982,6 +982,11 @@ std::string SawbladeProcessor::levelKey(const std::string& baseHash) const {
   return baseHash + buf;
 }
 
+std::vector<std::string> SawbladeProcessor::uncalibratedBlocks() const {
+  std::lock_guard<std::mutex> lk(mutex_);
+  return status_.uncalibratedBlocks;
+}
+
 void SawbladeProcessor::calibrationTick() {
   if (hostRate_ <= 0.0) return;
   auto& st = settings::Settings::shared();

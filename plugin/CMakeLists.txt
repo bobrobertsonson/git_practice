@@ -65,6 +65,7 @@ set(SAWBLADE_PLUGIN_SOURCES
   src/skin/LedIndicator.cpp
   src/skin/RigView.cpp
   src/settings/Settings.cpp
+  src/settings/DeviceCalibration.cpp
   src/settings/ToolRunner.cpp
   src/settings/ToolEnv.cpp
   src/settings/SettingsPanel.cpp
@@ -245,11 +246,13 @@ if(SAWBLADE_BUILD_TESTS)
     tests/test_undo.cpp
     tests/test_export_notes.cpp
     tests/test_dynamics_policy.cpp
+    tests/test_device_calibration.cpp
+    tests/test_device_calibration_engine.cpp
     ${SAWBLADE_PLUGIN_SOURCES})
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/tests/alloc_guard.cpp tests/lock_guard.cpp tests/test_engine.cpp tests/test_processor.cpp tests/test_ladder.cpp tests/test_body_fill.cpp tests/test_playalong.cpp
     tests/test_browser_json.cpp tests/test_browser_preview.cpp tests/test_rig_model.cpp tests/test_rig_controller.cpp tests/test_pedal_face.cpp
-    tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_di_import.cpp tests/test_settings.cpp tests/test_level_match.cpp tests/test_undo.cpp tests/test_export_notes.cpp tests/test_dynamics_policy.cpp
+    tests/test_mic.cpp tests/test_presets.cpp tests/test_record_match.cpp tests/test_di_import.cpp tests/test_settings.cpp tests/test_level_match.cpp tests/test_undo.cpp tests/test_export_notes.cpp tests/test_dynamics_policy.cpp tests/test_device_calibration.cpp tests/test_device_calibration_engine.cpp
     PROPERTIES COMPILE_OPTIONS "$<TARGET_PROPERTY:sawblade_warnings,INTERFACE_COMPILE_OPTIONS>")
   add_dependencies(sawblade_plugin_tests SawbladeBuildInfo)
   target_include_directories(sawblade_plugin_tests PRIVATE src ${SAWBLADE_GENERATED_DIR})

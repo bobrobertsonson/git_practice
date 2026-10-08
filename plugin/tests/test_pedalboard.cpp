@@ -991,3 +991,44 @@ TEST_CASE("pedalboard: dropping on the right half of a tile puts the pedal after
   rig.settle();
   CHECK(ids(rig.preset().a) == Ids{"a2", "a3", "a1", "a4"});
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// v0.8 I2: the "UNCAL" mark of a capture whose metadata has no input / output level, and the main-view notice
+TEST_CASE("pedalboard: with calibrated input levels on, a capture without level metadata carries the UNCAL mark; off, none does", "[editor][pedalboard][devicecal]") {
+  Rig rig;
+  const auto capture = [](const std::string& id, const char* file) {
+    return json{{"id", id}, {"type", "nam"}, {"slot", "pedal"}, {"model", {{"file", (kFx / "nam" / file).string()}}}};
+  };
+  // a1 has no levels (the linear identity fixture); a2 has both (cal_pedal_a: in 6 dBu, out 10 dBu).
+  const json rigJ = rigJson({capture("a1", "linear_identity.nam"), capture("a2", "cal_pedal_a.nam"), namAmp("a3")}, {namAmp("b1")}, true);
+  rig.load(rigJ);  // calibration off
+  auto& pb = rig.board();
+  REQUIRE(pb.tileCount(0) == 2);
+  CHECK_FALSE(pb.tile(0, 0)->uncalibrated());
+  CHECK_FALSE(pb.tile(0, 1)->uncalibrated());
+  CHECK_FALSE(labelContains(*rig.ed, "Interface not calibrated"));
+
+  settings::Settings::shared().setCalibratedInputLevels(true);
+  rig.proc.calibrationTick();  // what the 10 Hz timer does: rebuild with calibration
+  rig.settle();
+  CHECK(rig.proc.status().calibrationOn);
+  CHECK(pb.tile(0, 0)->uncalibrated());
+  CHECK_FALSE(pb.tile(0, 1)->uncalibrated());
+  // No device record: the non-blocking notice is in the main view.
+  rig.ed->refreshNow();
+  CHECK(labelContains(*rig.ed, "Interface not calibrated: assuming +12 dBu"));
+
+  // A device record: the notice goes (the mark stays: it is about the capture's own metadata).
+  settings::Settings::shared().setDeviceCalibration(settings::recordFromPreset(*settings::findDevicePreset("scarlett-4i4-3g"), "2026-10-08"));
+  rig.proc.calibrationTick();
+  rig.settle();
+  rig.ed->refreshNow();
+  CHECK_FALSE(labelContains(*rig.ed, "Interface not calibrated"));
+  CHECK(pb.tile(0, 0)->uncalibrated());
+
+  settings::Settings::shared().setCalibratedInputLevels(false);
+  settings::Settings::shared().setDeviceCalibration(std::nullopt);
+  rig.proc.calibrationTick();
+  rig.settle();
+  CHECK_FALSE(pb.tile(0, 0)->uncalibrated());
+}

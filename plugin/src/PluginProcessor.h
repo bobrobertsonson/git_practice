@@ -283,6 +283,8 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // The calibration the next engine is built with: Settings toggle + device record (message thread or the loader thread; Settings is
   // locked internally). Off unless the toggle is on.
   EngineCalibration currentEngineCalibration() const;
+  // Ids of the capture blocks of the running engine whose metadata lacks an input or output level (calibration on only; else empty).
+  std::vector<std::string> uncalibratedBlocks() const;
   // 10 Hz (timerCallback; tests call it): rebuilds the engine when the toggle or the device dBu changed since the last build, and
   // persists the live gate's learned floor into the device record (throttled; off the audio thread: the audio thread only writes an
   // atomic float in the chain). Message thread.

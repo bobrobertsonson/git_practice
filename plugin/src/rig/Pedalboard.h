@@ -101,6 +101,9 @@ class BoardTile : public juce::Component, public juce::SettableTooltipClient, pu
   void chooseSetting(const std::string& modelId);  // what an item of the menu does
   std::function<void(BoardTile&, const std::string& modelId)> onSetting;
   void setSelected(bool s);
+  // v0.8 I2: the capture's metadata has no input or output level, so the calibrated chain cannot plan it ("UNCAL" badge, capture tiles only).
+  void setUncalibrated(bool u);
+  bool uncalibrated() const noexcept { return uncalibrated_; }
 
   std::function<void(BoardTile&)> onSelect, onDoubleClick, onContextMenu;
   std::function<void(BoardTile&, bool bypass)> onBypass;  // the footswitch was clicked
@@ -129,6 +132,7 @@ class BoardTile : public juce::Component, public juce::SettableTooltipClient, pu
   float mmHeight_;
   juce::Point<float> switchMm_, ledMm_;
   bool selected_ = false;
+  bool uncalibrated_ = false;
   skin::FootswitchButton fs_;
   skin::LedIndicator led_;
   juce::String title_, creator_, licence_;
