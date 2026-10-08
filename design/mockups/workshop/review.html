@@ -40,6 +40,13 @@ figure a.shot:focus-visible{outline:2px solid var(--blade);outline-offset:2px}
 .seg button[aria-pressed="true"]{background:var(--blade);color:var(--ink);border-color:var(--blade)}
 .seg button[aria-pressed="true"]::before{content:"\25B8  "}
 .seg button:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.band{font:400 22px/1.2 var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--fg);border-top:1px solid var(--line);padding-top:18px}
+.trio{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:12px}
+.changes{background:var(--plate);border:1px solid var(--line);border-radius:4px;padding:10px 14px}
+.changes summary{font:700 13px/1.2 var(--label);letter-spacing:.12em;text-transform:uppercase;color:var(--blade);cursor:pointer}
+.changes ul,.cabnotes{margin:8px 0 0;padding-left:1.2em;display:grid;gap:4px;max-width:100ch;color:var(--dim)}
+.rules{margin:0;padding-left:0;list-style:none;display:grid;gap:6px;max-width:90ch}
+code{font-family:ui-monospace,Menlo,monospace;font-size:.92em;color:var(--fg)}
 figure img{display:block;width:100%;height:auto;max-width:100%}
 .tip{font:600 12px/1.3 var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 footer{color:var(--dim);font-size:13px;max-width:80ch}
@@ -55,13 +62,18 @@ footer{color:var(--dim);font-size:13px;max-width:80ch}
 </header>
 
 <section class="decide" aria-labelledby="d">
-  <h2 id="d">New: v3 displays</h2>
-  <ol>
-    <li>Each screen now shows <b>v2</b> on the left and <b>v3 · displays</b> on the right. v3 has backlit amber and green LCD panels with dot-matrix text, a dot-matrix preset name in the top bar, LED ladder meters (IN / OUT / GR), LED rings on BLEND and the master knobs, and glowing state lamps, each with its word.</li>
-    <li>The worn-metal frame is the same in both. Use the switch below to see either look with <b>subtle</b> or <b>strong</b> wear.</li>
-    <li>Display text is measured like everything else, and all four sets pass AA. Glow is never counted in the text's favour.</li>
+  <h2 id="d">v4 · streamline: accept or reject each rule</h2>
+  <p class="lede">Your note on v3 was "simplify and streamline a lot; VERMIN needs a rat stencil; the cab needs a new design". Each rule below is a proposal. Leave a comment such as <b>"R3 no"</b> or <b>"R5 yes, but…"</b>. Every v4 screen lists which rule caused each change.</p>
+  <ol class="rules">
+    <li><b>R1 One fact, one place.</b> No caption chips. The path is shown by a coloured edge and a word, and the inspector doesn't repeat what's on the pedal face.</li>
+    <li><b>R2 Rig + one rail.</b> The meters column is gone, IN / OUT meters sit in the top bar, GR is the ring on VISE, and the cab gets the space.</li>
+    <li><b>R3 Show on demand.</b> MATCH vs ORIGINAL appears only after a match. ALIGN, LAT and CPU go behind DETAILS, and empty slots collapse to one +.</li>
+    <li><b>R4 Lean top bar.</b> Brand, preset, A/B, RIG / WOODSHED, MATCH, NAM FORGER, settings and the LIVE lamp. No other readouts.</li>
+    <li><b>R5 Lean Settings.</b> One status strip. The dBu field appears only for Custom, Input channel shows Auto with an override, and the gate floor moves to GATE.</li>
+    <li><b>R6 Colour discipline.</b> Amber for values, green only for good states, orange for selection and primary actions.</li>
+    <li><b>R7 VERMIN on the rig.</b> The rat-stencil face is coming from the VERMIN work and is marked as pending until then.</li>
+    <li><b>R8 New cab.</b> Three directions below. Pick one.</li>
   </ol>
-  <p class="lede"><b>Your calls:</b> v2 or v3 (or v3 only on some screens), and subtle or strong wear.</p>
   <div class="seg" role="group" aria-label="Wear level">
     <button type="button" id="wear-subtle" aria-pressed="true">Subtle wear</button>
     <button type="button" id="wear-strong" aria-pressed="false">Strong wear</button>
@@ -69,10 +81,29 @@ footer{color:var(--dim);font-size:13px;max-width:80ch}
 </section>
 
 <nav aria-label="Screens">
+  <a href="#v4-01">v4 Rig</a><a href="#cabs">Cabs</a><a href="#v4-02">v4 Top bar</a><a href="#v4-03">v4 Settings</a><a href="#v4-08">v4 Rig editor</a>
   <a href="#s00">Style sheet</a><a href="#s01">Rig</a><a href="#s02">Top bar</a><a href="#s03">Settings</a>
   <a href="#s04">Presets</a><a href="#s05">Match</a><a href="#s06">NAM Forger</a><a href="#s07">Woodshed</a>
   <a href="#s08">Rig editor</a><a href="#s09">Notices</a>
 </nav>
+
+<h2 class="band">v4 · streamlined (left: v3, right: v4)</h2>
+<figure id="v4-01"><figcaption><span class="no">01</span><span class="name">Main rig</span></figcaption>
+<div class="pair"><div class="v"><span class="tip">v3 · before</span><a class="shot" data-look="v3" href="png_v3/01_main_rig.png"><img data-look="v3" src="png_v3/01_main_rig.png" alt="Main rig, v3" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">v4 · streamlined</span><a class="shot" data-look="v4" href="png_v4/01_main_rig.png"><img data-look="v4" src="png_v4/01_main_rig.png" alt="Main rig, v4" width="1280" height="800" loading="lazy"></a></div></div>
+<details class="changes" open><summary>What changed</summary><ul><li>R1 → no caption chips under amps or pedals; each amp and pedal has a 3 px path edge (BLADE orange, BODY blue) plus a <code>BLADE</code> / <code>BODY</code> word in a well.</li><li>R1 → the BLEND nixie <code>79 / 21</code> is labelled <code>BLADE</code> and <code>BODY</code> under its two numbers; the caption that repeated the values is gone.</li><li>R1 → the inspector no longer repeats the CIRCUIT selector; it lives on THE SAW MILL&#x27;s face (<code>CIRCUIT ◀ BUZZSAW ▶</code> on its display).</li><li>R2 → the METERS column is gone and the cab takes the space; IN / OUT are thin LED ladders in the top bar, GR is the LED ring on <code>VISE · GR</code>.</li><li>R3 → MATCH vs ORIGINAL is a dismissable card (✕) captioned &quot;after a match&quot;; ALIGN is gone from the inspector, <code>ⓘ DETAILS</code> stands for the pop-over (ALIGN, LAT, CPU).</li><li>R3 → empty pedal slots collapse to one <code>+</code> at the end of each path&#x27;s row (BLADE row, BODY row).</li><li>R6 → amber for values, green only for good states (LIVE lamp, ✓, the match result), orange for selection and primary actions; no new hues.</li><li>R7 → VERMIN stays on the board in the BLADE row at true scale, tagged <code>RAT STENCIL PENDING (v0.9)</code> (the v0.9 session draws the rat; no rat is drawn here).</li><li>R8 → three cab directions as three variants of this screen, otherwise identical: (a) tolex, (b) plywood, (c) road case.</li></ul></details></figure>
+<figure id="v4-02"><figcaption><span class="no">02</span><span class="name">Top bar</span></figcaption>
+<div class="pair"><div class="v"><span class="tip">v3 · before</span><a class="shot" data-look="v3" href="png_v3/02_top_bar.png"><img data-look="v3" src="png_v3/02_top_bar.png" alt="Top bar, v3" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">v4 · streamlined</span><a class="shot" data-look="v4" href="png_v4/02_top_bar.png"><img data-look="v4" src="png_v4/02_top_bar.png" alt="Top bar, v4" width="1280" height="800" loading="lazy"></a></div></div>
+<details class="changes" open><summary>What changed</summary><ul><li>R4 → only: brand, preset scroller with ◀ ▶, A / B, RIG / WOODSHED, MATCH, NAM FORGER, settings, LIVE lamp (and the IN / OUT ladders).</li><li>R2 → LAT / CPU and every other readout are gone; IN / OUT are thin ladders.</li><li>R6 → UNCAL and OUT OF TRUE are lamps with words folded into the LIVE lamp block (stacked, one fact per lamp); states shown: default, UNCAL, OUT OF TRUE, both, plus one 2x zoom.</li></ul></details></figure>
+<figure id="v4-03"><figcaption><span class="no">03</span><span class="name">Settings · Input calibration</span></figcaption>
+<div class="pair"><div class="v"><span class="tip">v3 · before</span><a class="shot" data-look="v3" href="png_v3/03_settings_calibration.png"><img data-look="v3" src="png_v3/03_settings_calibration.png" alt="Settings · Input calibration, v3" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">v4 · streamlined</span><a class="shot" data-look="v4" href="png_v4/03_settings_calibration.png"><img data-look="v4" src="png_v4/03_settings_calibration.png" alt="Settings · Input calibration, v4" width="1280" height="800" loading="lazy"></a></div></div>
+<details class="changes" open><summary>What changed</summary><ul><li>R5 → one status strip with the current state only (the second CALIBRATED strip is gone).</li><li>R5 → the device dropdown is closed; the manual dBu field appears only under &quot;Custom&quot; (small second-state inset).</li><li>R5 → INPUT CHANNEL shows <code>Auto</code> with a closed <code>▸ Override</code> button; GATE FLOOR is removed with a note that it moved to GATE.</li><li>R6 → amber values, green only for the Auto good state; one orange primary (APPLY).</li></ul></details></figure>
+<figure id="v4-08"><figcaption><span class="no">08</span><span class="name">Rig editor</span></figcaption>
+<div class="pair"><div class="v"><span class="tip">v3 · before</span><a class="shot" data-look="v3" href="png_v3/08_rig_editor.png"><img data-look="v3" src="png_v3/08_rig_editor.png" alt="Rig editor, v3" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">v4 · streamlined</span><a class="shot" data-look="v4" href="png_v4/08_rig_editor.png"><img data-look="v4" src="png_v4/08_rig_editor.png" alt="Rig editor, v4" width="1280" height="800" loading="lazy"></a></div></div>
+<details class="changes" open><summary>What changed</summary><ul><li>R1 → card headers keep only the type tag (<code>MODELLED</code>, <code>CAPTURE</code>, <code>PRE</code>); the state is the lamp (<code>ACTIVE</code> / <code>BYPASSED</code>), and the bypass hatch stays.</li><li>R1 → no duplicated captions on the cards (credit, level metadata and circuit lines are cut to two short lines); the path is the lane plate plus the orange / blue edge.</li><li>R3 → empty slots collapse to one <code>+</code> per lane; the status is one line (<code>✓ built · 6 blocks</code>), the meters are in the top bar.</li><li>R6 → UNCAL and BYPASS stay as lamp + word (amber lamp <code>UNCAL</code>, <code>ACTIVE</code> / <code>BYPASSED</code> lamp with a BYPASS button).</li><li>R7 → the VERMIN card is in lane A.</li></ul></details></figure>
+<figure id="cabs"><figcaption><span class="no">R8</span><span class="name">Cab directions · pick one</span></figcaption><div class="trio"><div class="v"><span class="tip">a · Tolex</span><a class="shot" data-look="v4" href="png_v4/01_main_rig_cab_a.png"><img data-look="v4" src="png_v4/01_main_rig_cab_a.png" alt="Main rig with cab a · Tolex" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">b · Plywood open back</span><a class="shot" data-look="v4" href="png_v4/01_main_rig_cab_b.png"><img data-look="v4" src="png_v4/01_main_rig_cab_b.png" alt="Main rig with cab b · Plywood open back" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">c · Road case</span><a class="shot" data-look="v4" href="png_v4/01_main_rig_cab_c.png"><img data-look="v4" src="png_v4/01_main_rig_cab_c.png" alt="Main rig with cab c · Road case" width="1280" height="800" loading="lazy"></a></div></div><ul class="cabnotes"><li><b>a, tolex</b>: worn black tolex with steel corner caps, a fine basket-weave salt-and-pepper grille (low-contrast cloth with small silver flecks, a vertical drape shading, edges running under the tolex frame), a riveted steel <code>CAB</code> nameplate, the IR title on a small amber LCD strip.</li><li><b>b, plywood</b>: stripped open-back bare plywood with four visible generic speakers and a stencilled <code>CAB · 4x12</code> strip.</li><li><b>c, road case</b>: aluminium edge extrusions and corner caps, butterfly latches, a perforated grille, a stencilled <code>CAB · 4x12</code> panel.</li><li>All three show SHARED · LIVE (lit green lamp) vs PER PATH · STUDIO (unlit blue lamp) as lamps plus words.</li></ul></figure>
+
+<h2 class="band">Earlier rounds · v2 and v3, all screens</h2>
+
 
 <figure id="s00"><figcaption><span class="no">00</span><span class="name">Style sheet</span>
 <p class="what">Palette with measured contrast, materials (worn steel, brushed aluminium, bench wood, sawdust, riveted plate), type, knobs, footswitches, LEDs, toggles, selectors, buttons, LCD and nixie readouts, badges, frames.</p></figcaption>
@@ -120,11 +151,11 @@ under the new nameplates; they get re-rendered with the names you pick. Capture 
 
 <script>
 (function(){
-  var dirs={v2:{subtle:'png/',strong:'png_strong/'},v3:{subtle:'png_v3/',strong:'png_v3_strong/'}};
+  var dirs={v2:{subtle:'png/',strong:'png_strong/'},v3:{subtle:'png_v3/',strong:'png_v3_strong/'},v4:{subtle:'png_v4/',strong:'png_v4_strong/'}};
   function setWear(w){
     document.querySelectorAll('[data-look]').forEach(function(el){
       var look=el.getAttribute('data-look'), attr=el.tagName==='A'?'href':'src';
-      el.setAttribute(attr, el.getAttribute(attr).replace(/^png(_v3)?(_strong)?\//, dirs[look][w]));
+      el.setAttribute(attr, el.getAttribute(attr).replace(/^png(_v[34])?(_strong)?\//, dirs[look][w]));
     });
     document.getElementById('wear-subtle').setAttribute('aria-pressed', w==='subtle');
     document.getElementById('wear-strong').setAttribute('aria-pressed', w==='strong');
