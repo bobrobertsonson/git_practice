@@ -90,7 +90,10 @@ Also in Task B: re-render the pre-existing assets that carry trademark text (fou
 `plugin/assets/amp_saw.png` / `amp_body.png` ("JCM800 2203", "5150III") and the pedal-face labels (STOCKHOLM SYNDROME /
 TIGHTEN, replaced by the `docs/NAMES.md` names); export amps and pedals with real alpha instead of a baked backdrop. Port the SHA-pinned font fetcher from the v1.0
 design branch into `design/render/common.py`; a failed or mismatched font fetch is a hard error (today's fallback
-silently draws wordmarks invisibly).
+silently draws wordmarks invisibly). From the v0.9 rat-stencil review (8e36ae1): fix the VERMIN "DISTORTION" corner
+label (its yellow shadow overprints the bone text) and hoist the two local PIL imports in `pedal_vermin.py` to module
+level. The v4 mockups swap in the rat face (regenerate from `pedal_vermin.py` at 8e36ae1) in the round after the
+user's v4 verdicts.
 
 ## Task C — build (dsp-engineer)
 
