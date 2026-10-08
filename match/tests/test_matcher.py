@@ -807,7 +807,7 @@ def test_refine_seed_is_stable_per_candidate_not_per_position():
     assert R.refine_seed(3, c1) == R.refine_seed(3, c1) and R.refine_seed(3, c1) != R.refine_seed(4, c1)
     assert R.refine_seed(3, c1) % 10 == 0
     # the seed ranges of the stages (each seed s is used as s .. s + 4 by refine_combo) are disjoint; cab sweeps / pre-EQ add n = one per
-    # refined candidate, assumed < 45 / < 16
+    # refined candidate, clamped in run.py to SEED_SWEEP_MAX_N / SEED_PREEQ_MAX_N
     from sawblade_match.matcher import refine as RF
     cab_ = cab
     top_refine = max(R.refine_seed(0, Combo((), x, None, None, cab_)) for x in a)
@@ -816,8 +816,8 @@ def test_refine_seed_is_stable_per_candidate_not_per_position():
     confirm = [R.confirm_seed(3, j) for j in range(R.OCCAM_CONFIRM_STARTS)]
     assert len(set(confirm)) == len(confirm) and min(confirm) >= 3000 + R.CONFIRM_SEED_BASE
     assert max(confirm) + 4 < 3000 + RF.SEED_SWEEP
-    assert RF.SEED_SWEEP + 44 + 4 < RF.SEED_FINAL and RF.SEED_FINAL + 4 < RF.SEED_STUDIO and RF.SEED_STUDIO + 4 < RF.SEED_PREEQ
-    assert RF.SEED_PREEQ + 15 + 4 < 1000
+    assert RF.SEED_SWEEP + RF.SEED_SWEEP_MAX_N + 4 < RF.SEED_FINAL and RF.SEED_FINAL + 4 < RF.SEED_STUDIO and RF.SEED_STUDIO + 4 < RF.SEED_PREEQ
+    assert RF.SEED_PREEQ + RF.SEED_PREEQ_MAX_N + 4 < 1000
 
 
 def _occam_mk():
@@ -946,3 +946,86 @@ def test_occam_confirmation_loop_runs_in_the_match_and_replaces_the_partner(tmp_
         assert replaced == any(f"refitted {r['partnerLoss']:.3f} -> " in l for l in lines)
     n_fits = sum(len(f) for f in (v[0] for v in by_partner.values()))
     assert sum(1 for t in res["timings"]["stage2PerCombo"] if t.get("confirm")) == n_fits
+
+
+def test_l_hm2_quick_decision_is_in_the_contested_band_and_is_confirmed():
+    """The user's L_hm2_quick (real data): blend 1.922 chosen over the single 2.235 (delta 0.313). That is inside the contested band
+    (BLEND_OCCAM_DB 0.25 < 0.313 < 0.25 + OCCAM_NOISE_DB 0.20 = 0.45), so the single is refitted OCCAM_CONFIRM_STARTS times and the
+    blend is kept only if it still beats the best refit by more than 0.25. Deterministic (fixed losses, no scipy)."""
+    from sawblade_match.matcher.run import BLEND_OCCAM_DB, OCCAM_CONFIRM_STARTS, OCCAM_NOISE_DB, occam_contested, occam_margin
+    pool, p, a, cab, mk = _occam_mk()
+    single = mk(Combo((p[0],), a[1], None, None, cab), 2.235)
+    blend = mk(Combo((p[0],), a[1], (p[1],), a[0], cab), 1.922)
+    assert BLEND_OCCAM_DB == 0.25 and OCCAM_NOISE_DB == 0.20 and occam_margin(blend, single) == BLEND_OCCAM_DB
+    assert abs((2.235 - 1.922) - 0.313) < 1e-9 and occam_contested(blend, single)
+    assert choose([blend, single]).combo is blend.combo                  # today's pick, before the confirmation
+    # branch 1: the refits come out at 2.10 and 2.30 -> best 2.10; 2.10 - 1.922 = 0.178 <= 0.25: the single wins
+    b, rec, calls = _run_confirm(blend, single, [2.10, 2.30])
+    assert calls == list(range(OCCAM_CONFIRM_STARTS)) and b.loss == 2.10 and rec["decision"] == "blend"
+    assert rec["extraFits"] == [2.10, 2.30] and rec["stillJustified"] is False
+    assert choose([blend, b]).combo is b.combo
+    # branch 2: the refits come out at 2.25 and 2.20 -> best 2.20; 2.20 - 1.922 = 0.278 > 0.25: the blend survives
+    b, rec, calls = _run_confirm(blend, single, [2.25, 2.20])
+    assert calls == [0, 1] and b.loss == 2.20 and rec["partnerLossAfter"] == 2.20 and rec["stillJustified"] is True
+    assert choose([blend, b]).combo is blend.combo
+    # edge: a refit just under the threshold (2.17: blend ahead by 0.248) does not justify the blend (it needs more than 0.25)
+    b, rec, _ = _run_confirm(blend, single, [2.17, 2.30])
+    assert rec["stillJustified"] is False
+
+
+def test_block_gains_reads_the_emitted_preset():
+    from sawblade_match.matcher.refdyn import block_gains
+    preset = {"paths": {
+        "a": {"role": "body", "levelDb": 0.0, "blocks": [
+            {"id": "a1", "type": "pedal.ts", "slot": "boost", "params": {"drive": 1.35, "level": 8.0, "tone": 4.77}},
+            {"id": "a2", "type": "nam", "slot": "amp", "inputGainDb": 1.3, "normalizeLoudness": True,
+             "model": {"source": {"id": "2", "modelId": "4", "title": "Amp wavenet"}}}]},
+        "b": {"role": "body", "enabled": False, "blocks": []}}}
+    g = block_gains(preset)
+    assert list(g) == ["a"] and g["a"]["blocks"][0]["params"] == {"drive": 1.35, "level": 8.0, "tone": 4.77}
+    assert g["a"]["blocks"][0]["inputGainDb"] is None
+    nam = g["a"]["blocks"][1]
+    assert nam["inputGainDb"] == 1.3 and nam["normalizeLoudness"] is True and nam["capture"] == "2/4 Amp wavenet"
+
+
+def test_reference_dynamics_and_input_gains_in_the_run_result(tmp_path):
+    """run_match on the blend fixture: result.json carries finite reference dynamics (same definition as best_L's tonecheck metrics) and
+    the per-block input gains of the emitted preset."""
+    import math
+    pool, combo, di, ref = _setup_known(tmp_path, "blend")
+    plan = mkplan(top_k={"blend": 1, "single": 0, "single2": 0}, gens_linear=20, gens_gain=4, gens_final=10, pop_linear=12, pop_gain=6)
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=7, excerpt_s=2.0, threads=2, plan=plan,
+                 write_audio=False, refine_offsets=False)
+    res = run_match(cfg, lambda m: None)
+    rd = json.loads((tmp_path / "out" / "result.json").read_text())["referenceDynamics"]
+    assert "error" not in rd and rd["window"]
+    keys = ("crestFactorDb", "medianCrest400Db", "lraLu", "shortTermP10Lufs", "shortTermP95Lufs", "shortTermSpreadLu")
+    for who in ("reference", "best_L"):
+        for k in keys:
+            assert isinstance(rd[who][k], float) and math.isfinite(rd[who][k]), (who, k, rd[who])
+        assert rd[who]["shortTermSpreadLu"] == pytest.approx(rd[who]["lraLu"], abs=1e-9) or rd[who]["shortTermSpreadLu"] >= 0.0
+    # best_L: the same numbers as the tonecheck metrics of the result
+    m = res["tonecheck"]["best_L"]["metrics"]
+    assert rd["best_L"]["lraLu"] == pytest.approx(m["loudnessRangeLU"]["value"], abs=2e-4)  # the report rounds to 4 decimals
+    assert rd["best_L"]["crestFactorDb"] == pytest.approx(m["crestFactorDb"]["value"], abs=2e-4)
+    ig = res["inputGains"]
+    navs = [b for p_ in ig.values() for b in p_["blocks"] if b["type"] == "nam"]
+    assert navs and all(isinstance(b["inputGainDb"], float) and math.isfinite(b["inputGainDb"]) for b in navs)
+    assert all(b["normalizeLoudness"] in (True, False) for b in navs)
+
+
+def test_blend_partner_is_repicked_after_the_single_refits():
+    """The blend decision runs after the single / single2 refits: a refit that makes a different single the best single-path candidate
+    changes the blend's partner (simpler_partner on the updated list). Fixed losses."""
+    from sawblade_match.matcher.run import simpler_partner
+    pool, p, a, cab, mk = _occam_mk()
+    s_a = mk(Combo((p[0],), a[1], None, None, cab), 2.235)           # the best single before the refits
+    s_b = mk(Combo((p[1],), a[1], None, None, cab), 2.300)
+    bl = mk(Combo((p[0],), a[1], (p[1],), a[0], cab), 1.922)
+    assert simpler_partner([s_a, s_b, bl], bl) is s_a
+    s_b_refit = mk(s_b.combo, 2.05)                                     # s_b's confirmation fit is now the best single-path fit
+    current = [min([x, *([s_b_refit] if x is s_b else [])], key=lambda y: y.loss) for x in [s_a, s_b, bl]]
+    assert simpler_partner(current, bl) is s_b_refit
+    b, rec, calls = _run_confirm(bl, s_b_refit, [2.15, 2.20])           # judged against the re-picked partner: ahead by 0.128 < 0.25
+    assert rec["partner"] == list(s_b.combo.key()) and calls == [] and "stillJustified" not in rec     # it already loses: no refit
+    assert choose([bl, s_a, s_b_refit]).combo is s_b_refit.combo      # the single is chosen (the stale partner s_a: 0.313 ahead, contested)

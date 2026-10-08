@@ -30,7 +30,9 @@ from . import irscreen
 from .gatesweep import gate_sweep, reference_floor_db, render_gate
 from .irblend import TOP_IRS, pair_search
 from .preeq import PRE_CONFIRM_DB, PRE_REFIT_L1, describe as describe_pre, di_spectrum_numbers, preeq_candidate, setting_params, widening
-from .refine import SEED_FINAL, SEED_PREEQ, SEED_STUDIO, SEED_SWEEP, refine_combo, relinear
+from .refdyn import block_gains, reference_dynamics
+from .refine import (SEED_FINAL, SEED_PREEQ, SEED_PREEQ_MAX_N, SEED_STUDIO, SEED_SWEEP, SEED_SWEEP_MAX_N,
+                     refine_combo, relinear)
 from .studio import detect as detect_studio, studio_stage
 from .trace import trace_tones
 from .screen import Scored, Screener, TOPOLOGIES
@@ -753,7 +755,12 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     fits: dict = {}                 # partner key -> its confirmation fits (Scored), shared by every decision on that partner
     n_extra = OCCAM_CONFIRM_STARTS * len({b.combo.key() for c, b in pairs if b is not None and occam_contested(c, b)})
     n_refine += n_extra             # the confirmation fits count in the progress bar and in T["stage2PerCombo"]
+    def current() -> list:                          # the stage-2 fits with the best confirmation fit of every partner so far
+        return [min([x, *fits.get(x.combo.key(), [])], key=lambda y: y.loss) for x in snapshot]
+
     for c, b in pairs:
+        if c.topology == "blend":                   # decided last: re-pick its partner after the single / single2 refits
+            b = simpler_partner(current(), c)
         if b is None:
             partners.append({"decision": occam_decision(c, c), "complex": list(c.combo.key()), "partner": None,
                              "complexLoss": c.loss, "note": "no simpler partner was refined"})
@@ -762,7 +769,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         v0b = sp_b.default()
 
         def refit(j, b=b, sp_b=sp_b, v0b=v0b):
-            nonlocal n_done
+            nonlocal n_done, n_refine
             have = fits.setdefault(b.combo.key(), [])
             while len(have) <= j:
                 t_fit = time.time()
@@ -773,6 +780,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                                              short_linear=plan.short_linear, levels=b.levels, log=log)
                 have.append(finish_refined(b.combo, b, v2, r2, info2))
                 n_done += 1
+                n_refine = max(n_refine, n_done)    # a re-picked blend partner can need fits the precount did not see
                 prog.update(REFINE_SHARE * n_done / max(n_refine, 1))
                 T["stage2PerCombo"].append({"topology": b.topology, "seconds": round(time.time() - t_fit, 1), "confirm": True})
             return have[j]
@@ -809,7 +817,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                 if rec["gainVsOff"] > 0:
                     v0 = {**c.extra["params"], **rec["params"]}
                     v_new, r_new, info_new = refine_combo(
-                        eng, c.combo, sp, ex, tgt, c.align, v0, seed=cfg.seed * 1000 + SEED_PREEQ + len(pre_res["candidates"]),
+                        eng, c.combo, sp, ex, tgt, c.align, v0, seed=cfg.seed * 1000 + SEED_PREEQ + min(len(pre_res["candidates"]), SEED_PREEQ_MAX_N),
                         gens_linear=PRE_REFIT_L1, pop_linear=plan.pop_linear, gens_gain=max(2, plan.gens_gain // 2),
                         pop_gain=plan.pop_gain, gens_final=max(3, plan.gens_final // 2), patience=plan.patience,
                         patience_gain=plan.patience_gain, tol=plan.plateau_tol, gex=gex, gtgt=gtgt,
@@ -870,7 +878,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                 if top["cab"].key != cur["cab"].key and top["result"].total < cur["result"].total - CAB_SWITCH_DB:
                     combo2 = c.combo.with_cab(top["cab"])
                     v2, r2 = relinear(eng, combo2, sp, ex, tgt, c.align, c.extra["params"], levels=c.levels,
-                                      seed=cfg.seed * 1000 + SEED_SWEEP + len(cab_sweeps), gens=plan.gens_final, pop=plan.pop_linear,
+                                      seed=cfg.seed * 1000 + SEED_SWEEP + min(len(cab_sweeps), SEED_SWEEP_MAX_N), gens=plan.gens_final, pop=plan.pop_linear,
                                       patience=plan.patience, tol=plan.plateau_tol, log=log)
                     new = finish_refined(combo2, c, v2, r2, c.extra["info"])
                     refined[next(i for i, x in enumerate(refined) if x is c)] = new
@@ -1144,6 +1152,16 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         result.setdefault("offsetRefinement", {})["final"] = fin
 
     lap("finalOffsets")
+    # reporting only: the reference's own dynamics next to the result's (same definition, DI-aligned window) and the input gain each
+    # NAM block received
+    try:
+        fin_l0 = (result.get("offsetRefinement", {}).get("final") or {}).get("L") or {}
+        off_dyn = (int(round(fin_l0["offsetSamples"] * RATE / fin_l0["rate"])) if "offsetSamples" in fin_l0 else ref.offset_samples)
+        result["referenceDynamics"] = reference_dynamics(
+            ref, {n: to48(renders[n][0], renders[n][1]) for n in ("best_L", "starter_L") if n in renders}, off_dyn)
+    except Exception as e:
+        result["referenceDynamics"] = {"error": f"{type(e).__name__}: {e}"}
+    result["inputGains"] = block_gains(final)
     # ---- outputs -------------------------------------------------------------------------------------------------------
     resolved = out / "best.preset.resolved.json"
     resolved.write_text(json.dumps(final, indent=2) + "\n")

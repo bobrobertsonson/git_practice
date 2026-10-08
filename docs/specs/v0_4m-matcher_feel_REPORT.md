@@ -300,9 +300,34 @@ Before (first known-answer run, `--quick`): HM2 A-weighted 2.72 dB, UBR 3.45 dB;
   code but the fixtures never put it inside the contested band, so it adds no refits there. Cost: nothing when no decision is
   contested; otherwise `OCCAM_CONFIRM_STARTS` fits per distinct partner (about 17 s each on the known-answer fixtures). The feel known-answer run needs 0 extra fits (73 s, as before); the full match suite on real scipy 1.17.1: 798 passed, 7 skipped (demucs not installed, SAWBLADE_TEST_TRAIN / SAWBLADE_TEST_DEMUCS unset), 0 failed.
   Local verification on real scipy 1.17.1: `test_single_path_known_answer_is_found_as_single` passes (it failed at 21a9d03 and dc0fa07).
+- **L_hm2_quick is in the contested band (user's real data):** it chose a blend at 1.922 over a single at 2.235, delta 0.313, which is
+  inside `BLEND_OCCAM_DB` 0.25 < delta < 0.25 + `OCCAM_NOISE_DB` 0.20. The next run therefore refits the single
+  `OCCAM_CONFIRM_STARTS` times and keeps the blend only if it still beats the best refit by more than 0.25 (a best refit of 2.10 hands
+  the decision to the single, 2.20 keeps the blend; `test_l_hm2_quick_decision_is_in_the_contested_band_and_is_confirmed`).
+- **Notes (not done):** a blend `_run` integration check of the confirmation loop (needs a blend fixture whose blend sits in the contested
+  band); confirming the boost-vs-plain rule (`choose` drops a boosted candidate unless it beats the plain one of its topology by
+  `OCCAM_DB`) the same way. The blend decision runs after the single / single2 refits and re-picks its partner from the updated
+  fits; the cab-sweep / pre-EQ seed indices are clamped (`SEED_SWEEP_MAX_N` 44, `SEED_PREEQ_MAX_N` 15).
+- **Reference dynamics and block input gains (reporting only):** result.json `referenceDynamics` holds, for the reference
+  (`reference`), `best_L` and `starter_L`, one definition (`refdyn.window_dynamics`): `medianCrest400Db` (median peak/RMS of the active
+  400 ms windows, hop 200 ms: the feel term's window), `crestFactorDb` and `lraLu` (the tonecheck metrics of best_L, same code),
+  and `shortTermP10Lufs` / `shortTermP95Lufs` / `shortTermSpreadLu` (the gated 3 s short-term loudness behind the LRA; the spread is the
+  LRA by definition). The reference window is the DI-aligned stretch of the matched channel as long as the render (final offset),
+  else the whole guitar isolation. Use: best_L LRA 0.7 to 1.1 LU against the starter's 5.8 can now be compared with the recording's
+  own LRA and crest. `inputGains` lists per path and block the emitted `inputGainDb` (dB re unity; 0.0 for a NAM block without
+  the field), `normalizeLoudness` and the modelled pedals' params (boost drive / level / tone). `validation_summary` prints both
+  (`dynamics (...)` and `input gain per block` lines per run); older result.json files print as before.
 - **Other result.json additions:** every candidate JSON (`best`, `alternatives`, `candidatesStage2`) carries `pairKey` (the candidate's
   identity without its cab); the cab-sweep test matches a candidate to its own sweep with it. Known limitation: the full-DI gate
   sweep indexes the reference with `ref.offset_samples` as refined at the start of the run, not the final per-render offset.
+
+## Known issues
+
+- `best.preset.json` from a run whose winner uses a local IR (provider "local") is not loadable outside its run folder. `portable()`
+  rewrites the file to `local-irs/<title>.wav` relative to the preset, and core `locateCapture()` only has a cache fallback for
+  TONE3000 captures. `*.resolved.json` is skipped by the plugin's preset scan. Fix scheduled as v0.3.1 Task G
+  (`docs/specs/v0_3_1-polish.md`): sha-keyed local-IR cache with a core fallback, then `source.path`, and `sawblade-t3k resolve`
+  repairing older presets.
 
 ## User results
 
