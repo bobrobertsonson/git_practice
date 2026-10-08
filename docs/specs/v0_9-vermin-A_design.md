@@ -63,9 +63,10 @@ plus a 0 Ω floor (gain 1 at DIST 0, which is circuit-true).
   input stage, integrator input `Vd·tanh(e/Vd)` with `Vd = SR/ωt` (maximum rate exactly SR), solved
   implicitly by capped Newton. The rail is `y = Vrail·tanh(v/Vrail)` of the integrator state `v`, with
   anti-windup clamping `v` at `railWindupLimit · Vrail` (6). The op-amp stage, coupling HPF and diode
-  clipper run at `stageOversample × 4 fs`, `stageOversample = 2` (RatVoicing constant ∈ {1,2,4,8}),
-  which meets the alias bar at the recipe frequencies (4.7 / 5 kHz, plus 1 / 2 kHz) at RTF ≈ 0.05.
-  Open item for the REPORT: 2.3 kHz aliases at −69 dB at factor 2 (factor 4 meets it at ≈ 2× CPU).
+  clipper run at `stageOversample × 4 fs` (RatVoicing constant ∈ {1,2,4,8}).
+  *Revised again (main lead):* the alias bar is "≤ the worst existing pedal at each tested frequency"
+  (1.1 / 2.3 / 4.7 / 5 kHz). Factor 2 missed it at 1.1 and 2.3 kHz, so the default is
+  `stageOversample = 4` (latency 53, RTF ≈ 0.10–0.13 per instance, accepted by the main lead).
 - Expose the stage as its own class (e.g. `RatOpAmpStage`, header-visible) so Task B can test it
   directly at 4 fs. The implementer documents the discretisation in the header comment.
 

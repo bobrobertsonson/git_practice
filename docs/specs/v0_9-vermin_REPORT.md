@@ -14,6 +14,7 @@ and knob strip render (C).
 |---|---|---|---|
 | A + B | `pedal.rat` core block + 9 acceptance tests (+ extras) | b0e0722, 61d8ca5, 6ebf1d7, c56256f, e4b11ec | REVISE (header comment, n = 0 read, Stage exposure) → **ACCEPT e4b11ec** |
 | C | face script `design/render/pedal_vermin.py`, 6 starter presets, goldens, PEDALS.md | c2ec98a, 8951068, 8cf0145 | **ACCEPT 8951068** (8cf0145 = two notes-text nits from that review) |
+| A (alias rule) | default stageOversample 4: the alias bar holds at 1.1 / 2.3 / 4.7 / 5 kHz; latency 53 | dbed442 | **ACCEPT dbed442** |
 | D | `pedal.rat` in the calibration fitter (PEDALS, KNOWN_TRUTH, PEDAL_ORDER) | 27cd711 | **ACCEPT 27cd711** |
 | lead docs | design note + revisions, Task D wording fix | d59e96a, 077814c, 1e2f373, 7f23833 | — |
 
@@ -38,7 +39,7 @@ macos-arm64 (ctest, auval, pluginval AU + VST3), and python (pytest + `compute_t
    - The rail is `Vrail·tanh(v/Vrail)` of the integrator state, with anti-windup clamping at 6·Vrail.
    - Each sample is solved with capped Newton: at most 8 iterations, averaging 1.3 to 2.
    - The op-amp stage, the coupling HPF and the diode clipper run at `stageOversample × 4 fs`, with
-     `stageOversample = 2`.
+     `stageOversample = 4` (main lead's rule; see the alias section).
    - The first two attempts did not pass:
      - a hard slew clamp at 4x aliased at −50 dB;
      - the tanh slew at 4x reached −53 dB, still short of the bar.
@@ -63,30 +64,48 @@ macos-arm64 (ctest, auval, pluginval AU + VST3), and python (pytest + `compute_t
 | FILTER corner 0 / 5 / 10 (96 kHz) | 32164 / 4195 / 483 Hz (formula 32152 / 4194 / 475); monotonic, steps 1–9 within 0.7 % | ±10 %, monotonic |
 | CLIP peaks (DIST 7, 200 Hz, 0.1 V): none / silicon / led / asym | 4.62 / 0.44 / 1.56 / 0.66 V; asym H2 −54.6 dBc, others exactly 0 | none ≥ +6 dB, led > silicon, asym even harmonics |
 | RUETZ at DIST 10: 100 Hz / 200 Hz / 5 kHz | −5.50 / −2.88 / −0.01 dB (analytic −5.52 / −2.88 / −0.01) | ±0.5 dB |
-| Latency | 52 samples (44.1–192 kHz, every CLIP mode); 50 / 53 / 54 at stageOversample 1 / 4 / 8 | reported == measured |
+| Latency | 53 samples (44.1–192 kHz, every CLIP mode); 50 / 52 / 54 at stageOversample 1 / 2 / 8 | reported == measured |
 | Block-size independence, determinism | bit-identical, blocks 1 / 7 / 64 / 512 / 4096, all stage factors | — |
 | Zero allocations in `process()` | 0, including live-parameter changes every block, all stage factors | 0 |
 | Stock level (DIST 5, FILTER 5, silicon), −12.00 dBFS-RMS DI fixture | −11.51 dBFS RMS | within ±1 dB of input |
 
-**Alias** (existing recipe: DIST 10, FILTER 0, −6 dBFS). The bar is the worst existing pedal, computed in-test:
-`pedal.hm` v3 modded with the asymmetric clip, at **−82.1 dB**.
+**Alias** (existing recipe: DIST / drive at maximum, FILTER 0, −6 dBFS, 48 kHz, same in-test detector). The main
+lead set the bar as "≤ the worst existing pedal at each frequency", not only at the recipe frequencies. The rule: if
+factor 2 is worse than every existing pedal at 2.3 kHz or 1.1 kHz, the default becomes 4, with no HQ toggle. It was,
+so **the shipped default is stageOversample 4**.
 
-| stageOversample | none 5k | none 4.7k | silicon 5k | silicon 4.7k | none 2.3k | silicon 2.3k | RTF / instance |
-|---|---|---|---|---|---|---|---|
-| 1 | −58.0 | −50.4 | −57.4 | −51.0 | −57.5 | −57.6 | 0.027–0.032 |
-| **2 (shipped)** | **−98.8** | **−114.9** | **−98.1** | **−108.5** | −69.8 | −69.1 | **0.051–0.067** |
-| 4 | −129.7 | −140.1 | −129.4 | −134.2 | −92.6 | −92.6 | 0.102–0.130 |
+| pedal | 2.3 kHz | 1.1 kHz | 4.7 kHz | 5 kHz |
+|---|---|---|---|---|
+| hm v2 | −97.7 | −103.8 | −95.0 | −93.8 |
+| hm v3 stock (worst clip) | −96.0 | −109.4 | −81.4 | −85.5 |
+| hm v3 custom (worst clip) | −95.5 | −108.7 | −82.6 | −86.4 |
+| hm v3 modded, asymmetric | −88.4 | −100.5 | −77.1 | −82.1 |
+| ts (drive 10, tone 10) | −99.1 | −106.5 | −92.4 | −91.6 |
+| muff (sustain 10) | −100.5 | −103.8 | −95.4 | −90.6 |
+| **worst existing** | **−88.4** | **−100.5** | **−77.1** | **−82.1** |
+| VERMIN factor 2, none / silicon | −69.8 / −69.1 | −82.5 / −81.6 | −114.9 / −108.5 | −98.8 / −98.1 |
+| **VERMIN factor 4 (shipped), none / silicon** | **−92.6 / −92.6** | **−105.3 / −105.3** | **−140.1 / −134.2** | **−129.7 / −129.4** |
 
-- The test asserts 1, 2, 4.7 and 5 kHz, for CLIP none and silicon.
-- 1 and 2 kHz divide the oversampled rate, so their aliases land on harmonics and those two frequencies add no real
-  coverage. 4.7 kHz was added for that reason.
-- Sensitivity at 4.7 kHz: without oversampling and ADAA the alias is −22.3 dB, and stageOversample 1 misses the bar.
+- The test asserts, per frequency (1.1, 2.3, 4.7 and 5 kHz), that VERMIN with CLIP none and silicon is ≤ the worst
+  existing pedal, computed in the test.
+- 1 and 2 kHz divide the oversampled rate, so their aliases land on harmonics; they keep the 5 kHz bar.
+- The test also pins that factor 2 stays worse than the worst existing pedal at 2.3 kHz (the reason for the default),
+  and that factor 1 misses the bar.
+- Sensitivity at 4.7 kHz: without oversampling and ADAA the alias is −22.3 dB.
+
+**CPU, per instance at 48 kHz, Release, DIST 10:**
+
+| stageOversample | latency | RTF (earlier runs) | RTF (last runs, machine ≈ 1.75× slower) |
+|---|---|---|---|
+| 1 | 50 | 0.027–0.032 | 0.047–0.048 |
+| 2 | 52 | 0.051–0.067 | 0.092–0.094 |
+| **4 (shipped)** | **53** | **≈ 0.10–0.13** (estimated from the stable 3.6× ratio to factor 1) | 0.173–0.176 |
+| 8 | 54 | 0.217–0.255 | 0.346–0.358 |
 
 **Open items:**
-- **Off-recipe aliasing.** At the shipped factor, 2.3 kHz aliases at −69 dB and 1.1 kHz at about −82 dB (marginal).
-  stageOversample 4 meets the bar everywhere at about 2× the CPU. Proposal: an HQ / offline-render setting.
-- **CPU.** RTF is 0.051 to 0.067 per instance at 48 kHz. It varied across runs on the shared container, and is
-  about 2× the other modelled pedals (TS ≈ 0.01).
+- **CPU.** At about 10–13 % of a core per instance, VERMIN is the most expensive modelled pedal (TS ≈ 1 %). The main
+  lead accepted about 0.13 on desktop. Cheaper options not yet taken: a looser Newton tolerance, or batching the tanh
+  divisions; either must keep every alias row above.
 - **Anti-windup.** The clamp at 6·Vrail lengthens recovery after long saturation to about 63 µs. The real device
   takes a few µs. The clamp is one voicing constant.
 
@@ -119,9 +138,12 @@ preset lands at −18 LUFS. Each preset's notes state its use. Render hashes are
 - the VERMIN wordmark and an original rodent-skull motif;
 - no trademark text and no imitation of the original's logo, lettering or trade dress.
 
-Renders are not committed, like the other faces. Two caveats:
-- **The container proxy blocked the Black Ops One font download, so the in-container renders used a stand-in OFL
-  font.** A normal run fetches the real font, so the lettering will differ. The script is unchanged.
+Renders are not committed, like the other faces. Notes:
+- **Font.** The base's `common.py` fetches Black Ops One from raw.githubusercontent.com, unpinned, and the proxy
+  blocks that host; its fallback then draws the wordmark as nothing visible. The final renders used the v1.0 design
+  branch's pin: fonts.gstatic.com, sha256 `bd8a70e63df108745316c6ad277874cbe139bbb90cbcaf705810ecc089fe59f8`. The
+  file was fetched with TLS verification on, matched exactly, and was passed with `--font-dir`. `common.py` was not
+  changed on v0.9, because v1.0 rewrites it.
 - Renders are pixel-identical between runs, but the PNG bytes differ (a metadata chunk). This was not checked
   against the other face scripts.
 
@@ -160,7 +182,8 @@ Known-answer free fit:
 
 - Modelled pedals as matcher candidates: the matcher pool is captures-only today, so this needs a matcher-logic
   change.
-- An HQ setting (stageOversample 4) for offline / NAM-export renders.
+- At the v1.0 merge, port the SHA-pinned font fetcher into `common.py`, and make a failed fetch a hard error instead
+  of a silent invisible wordmark.
 - A capture-based fit of VERMIN, as v0.5 does for the saw and TS. It would revisit the FILTER taper, the
   anti-windup constant and Vrail.
 - Add VERMIN to `board_shot.py` for the board hero scene.
