@@ -292,3 +292,5 @@ The 660 x 900 frame was cropped to the pedal body (box 32,42 - 628,858) and down
 Cycles output is not bit-reproducible across machines, so the committed PNG is the pinned input and the mockup render stays
 deterministic from it. `screens_rig.screen_01_main_rig(vermin=True)` is used by `01_main_rig` only; the backdrops of 03-08 call it
 without VERMIN and are unchanged.
+
+VERMIN is drawn at true scale: 110 x 150 mm at about 1.45 px / mm, between CHISEL (100 mm at 140 px, 1.40) and THE SAW MILL (120 mm at 180 px, 1.50).

@@ -69,7 +69,7 @@ VERMIN_LED = (226.0, 462.0)       # LED and DIST knob centres in that image's pi
 VERMIN_DIST = (86.0, 81.0)
 
 
-def vermin_pedal(cv, x, bottom, w=112):
+def vermin_pedal(cv, x, bottom, w=160):
     """Screen 01 only: VERMIN (rat-style distortion) from the pinned render, framed like the other pedals, with its path label.
     v3 adds a glowing LED lamp with its word and a hover tooltip (dot-matrix value) on the DIST knob.  Returns the pedal rect."""
     spr = ws.sprite_image(VERMIN_PNG, w, round_px=22)
@@ -132,10 +132,10 @@ def screen_01_main_rig(vermin=False):
     # empty slots: flat wells, dashed frames
     sy = body[3] - 190
     if vermin:
-        vermin_pedal(cv, 625, body[3], 120)
+        vermin_pedal(cv, 598, body[3], 160)        # 110 x 150 mm at ~1.45 px / mm, between CHISEL (1.40) and THE SAW MILL (1.50)
     else:
         ws.empty_slot(cv, (625, sy, 745, body[3]))
-    ws.empty_slot(cv, (775, sy, 895, body[3]))
+    ws.empty_slot(cv, (792, sy, 896, body[3]) if vermin else (775, sy, 895, body[3]))
 
     # ---- v3: the meter panel on the floor right of the cab ----------------------------------------------------------------
     if ws.is_v3():
