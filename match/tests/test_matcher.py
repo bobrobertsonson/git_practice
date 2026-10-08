@@ -766,3 +766,89 @@ def test_stage2_first_linear_block_is_ltas_only(tmp_path, monkeypatch):
     assert seen[1:1 + n_l1] == [False] * n_l1               # L1: LTAS-only
     assert len(seen) > 1 + n_l1 and all(seen[1 + n_l1:])    # gain block, L2 and the final score: feel present
     assert res["best"]["breakdown"]["feelTerms"] is not None
+
+
+def test_pedal_occam_uses_the_same_amp_same_boost_bare_partner():
+    """Known-answer fixture shape (CI run 280): hidden chain = boosted amp 2/4 without a capture pedal; a loud linear pedal ties it
+    at stage 1 and differs only by stage-2 noise. The pedal variant must beat its bare partner by PEDAL_OCCAM_DB, never a
+    different amp's bare candidate (whose loss is far worse, which would always 'justify' the pedal)."""
+    from dataclasses import replace
+    from sawblade_match.matcher.run import PEDAL_OCCAM_DB, bare_partner
+    pool = fixture_pool()
+    p, a, cab = pool.pedals, pool.amps, pool.cabs[0]
+    bare = Combo((), a[1], None, None, cab, boost=True)
+    ped = Combo((p[2],), a[1], None, None, cab, boost=True)
+    other = Combo((), a[0], None, None, cab, boost=False)
+    mk = lambda c, l, **ex: Scored(c, l, 0.5, manual_align(), None, "refined", ex)
+    assert PEDAL_OCCAM_DB == 0.05
+    # the shim numbers of the fixture: bare 0.4792, pedal 0.5423, plain other amp 5.1235 -> the bare partner wins
+    assert choose([mk(bare, 0.4792), mk(ped, 0.5423), mk(other, 5.1235)]).combo is bare
+    # the swapped-seed run of the same fixture (bare 0.4497, pedal 0.4529) and a pedal ahead by less than the margin: dropped
+    assert choose([mk(bare, 0.4792), mk(ped, 0.4792 - 0.04), mk(other, 5.1235)]).combo is bare
+    # ... ahead by more than the margin: justified, wins
+    assert choose([mk(bare, 0.4792), mk(ped, 0.4792 - 0.06), mk(other, 5.1235)]).combo is ped
+    # the comparator is the same-amp bare partner, not another amp's (5.12): without a partner nothing can drop the pedal
+    assert choose([mk(ped, 0.45), mk(other, 5.1235)]).combo is ped
+    # a bare partner without the boost is only the fallback comparator of a boosted pedal variant (the boost is needed here: 5.0)
+    plain_bare = Combo((), a[1], None, None, cab, boost=False)
+    assert choose([mk(ped, 0.45), mk(plain_bare, 5.0)]).combo is ped
+    # bare_partner finds the same amp + same boost flag, only for pedal candidates
+    refined = [mk(bare, 0.5), mk(ped, 0.55), mk(other, 5.0), mk(plain_bare, 0.7)]
+    assert bare_partner(refined, refined[1]) is refined[0]
+    assert bare_partner(refined, refined[0]) is None and bare_partner(refined, refined[2]) is None
+    assert bare_partner([refined[1], refined[2]], refined[1]) is None
+
+
+def test_refine_seed_is_stable_per_candidate_not_per_position():
+    from sawblade_match.matcher import run as R
+    pool = fixture_pool()
+    p, a, cab = pool.pedals, pool.amps, pool.cabs[0]
+    c1, c2 = Combo((), a[1], None, None, cab, boost=True), Combo((p[2],), a[1], None, None, cab, boost=True)
+    assert R.refine_seed(3, c1) == R.refine_seed(3, c1) and R.refine_seed(3, c1) != R.refine_seed(4, c1)
+    assert R.refine_seed(3, c1) % 10 == 0
+    # no collision with the other stages' seeds (refine_combo uses seed .. seed + 4): refine < trace (500) < confirm < cab sweeps (900)
+    top_refine = max(R.refine_seed(0, Combo((), x, None, None, cab)) for x in a)
+    assert top_refine + 4 < 500 <= R.CONFIRM_SEED_BASE
+    assert R.REFINE_SEED_SLOTS * 10 <= 500
+    confirm = [R.confirm_seed(3, j) for j in range(R.PEDAL_CONFIRM_STARTS)]
+    assert len(set(confirm)) == len(confirm) and min(confirm) >= 3000 + R.CONFIRM_SEED_BASE
+    assert max(confirm) + 4 < 3000 + 900 and 10 * R.PEDAL_CONFIRM_STARTS <= 900 - R.CONFIRM_SEED_BASE
+
+
+def test_confirm_partner_with_fixed_losses():
+    """Pedal-Occam confirmation, deterministic (fixed losses, no scipy): the partner is refitted only when the pedal variant would pass
+    the rule, the best fit is kept, and the pedal must still beat that best fit by PEDAL_OCCAM_DB."""
+    from sawblade_match.matcher.run import PEDAL_CONFIRM_STARTS, PEDAL_OCCAM_DB, confirm_partner, pedal_contested
+    pool = fixture_pool()
+    p, a, cab = pool.pedals, pool.amps, pool.cabs[0]
+    mk = lambda c, l: Scored(c, l, 0.5, manual_align(), None, "refined", {})
+    bare_c, ped_c = Combo((), a[1], None, None, cab, boost=True), Combo((p[2],), a[1], None, None, cab, boost=True)
+    assert PEDAL_CONFIRM_STARTS >= 2
+
+    def run(bare_loss, ped_loss, extra):
+        calls = []
+
+        def refit(j):
+            calls.append(j)
+            return mk(bare_c, extra[j])
+        b, rec = confirm_partner(mk(ped_c, ped_loss), mk(bare_c, bare_loss), refit)
+        return b, rec, calls
+
+    # CI run 280 shape: the pedal fit got lucky (0.487 vs 0.554, ahead by 0.067 > margin); the partner's other seeds fit 0.40 / 0.52
+    b, rec, calls = run(0.554, 0.487, [0.40, 0.52])
+    assert calls == [0, 1] and b.loss == 0.40 and rec["extraFits"] == [0.40, 0.52]
+    assert rec["partnerLossAfter"] == 0.40 and rec["pedalStillJustified"] is False
+    # the pedal is really needed (5.1 -> 0.5): still justified after the extra fits, the best partner fit is the lowest of the three
+    b, rec, calls = run(5.1, 0.5, [5.0, 5.3])
+    assert b.loss == 5.0 and rec["pedalStillJustified"] is True
+    # the extra fits never make the partner worse
+    b, rec, _ = run(0.45, 0.30, [0.6, 0.7])
+    assert b.loss == 0.45 and rec["partnerLossAfter"] == 0.45 and rec["pedalStillJustified"] is True
+    # not contested (ahead by less than the margin, or behind): no extra fits, no work
+    for ped_loss in (0.554 - PEDAL_OCCAM_DB + 0.01, 0.6):
+        b, rec, calls = run(0.554, ped_loss, [0.1, 0.1])
+        assert calls == [] and b.loss == 0.554 and "pedalStillJustified" not in rec and rec["extraFits"] == []
+    assert pedal_contested(mk(ped_c, 0.554 - PEDAL_OCCAM_DB - 0.01), mk(bare_c, 0.554))
+    assert not pedal_contested(mk(ped_c, 0.554 - PEDAL_OCCAM_DB + 0.01), mk(bare_c, 0.554))
+    # and the decision after the confirmation: choose() takes the (better) refitted partner
+    assert choose([mk(ped_c, 0.487), mk(bare_c, 0.40)]).combo is bare_c
