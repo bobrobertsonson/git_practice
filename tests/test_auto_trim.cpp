@@ -517,3 +517,122 @@ TEST_CASE("Committed presets render bit-identically to cdb4b9a with LEVEL MATCH 
   }
   CHECK(checked >= 30);
 }
+
+// ---- v0.8 I2 Part 1: calibration-aware measurements --------------------------------------------------------------
+namespace {
+ChainCalibration calOn(double dbu = 12.0) {
+  ChainCalibration c;
+  c.enabled = true;
+  c.device.dbu = dbu;
+  return c;
+}
+// Path A = pedal NAM -> amp NAM (both with dBu metadata), path B = identity, blend 0 (only A is heard).
+json hopRig(const char* pedal, const char* amp, double inputDb = 10.0) {
+  json j = twoPaths("linear_identity.nam", "linear_identity.nam", 0.0, inputDb);
+  j["paths"]["a"]["blocks"] = json::array({nam("p1", pedal, "pedal"), nam("a1", amp, "amp")});
+  return j;
+}
+}  // namespace
+
+TEST_CASE("Calibration I2: with calibration off the measurements are bit-identical to the pre-I2 calls", "[autotrim][calibration]") {
+  const Preset p = parse(hopRig("cal_pedal_a.nam", "wavenet.nam"));
+  const Preset q = parse(hopRig("cal_pedal_b.nam", "wavenet.nam"));
+  ChainCalibration offWithDevice = calOn(20.0);
+  offWithDevice.enabled = false;  // a device record alone changes nothing
+  for (const ChainCalibration& off : {ChainCalibration{}, offWithDevice}) {
+    CHECK(measureReferenceLufs(p, nullptr, false, nullptr, off) == measureReferenceLufs(p));
+    CHECK(measureReferenceLufs(p, nullptr, true, nullptr, off) == measureReferenceLufs(p, nullptr, true));
+    CHECK(measurePathLufs(p, 0, nullptr, nullptr, off) == measurePathLufs(p, 0));
+    const auto a = computeAutoTrim(p, nullptr, nullptr, off), b = computeAutoTrim(p);
+    REQUIRE((a && b));
+    CHECK(a->trimDb == b->trimDb);
+    CHECK(a->hash == b->hash);
+    CHECK(slotMakeupDb(p, q, 0, nullptr, nullptr, off, 0) == slotMakeupDb(p, q, 0));
+    const auto m = slotMakeup(p, q, 0, 0, off);
+    REQUIRE(m.has_value());
+    CHECK_FALSE(m->skippedHop);
+    CHECK(m->makeupDb == *slotMakeupDb(p, q, 0));
+    CHECK_FALSE(blockFeedsNam(p, 0, 0, off));
+  }
+}
+
+TEST_CASE("Calibration I2: the auto trim measured with calibration on lands the calibrated chain at -18 LUFS", "[autotrim][calibration]") {
+  const ChainCalibration c = calOn();
+  Preset p = parse(hopRig("cal_pedal_a.nam", "wavenet.nam"));
+  const auto offLufs = measureReferenceLufs(p);
+  const auto onLufs = measureReferenceLufs(p, nullptr, false, nullptr, c);
+  REQUIRE((offLufs && onLufs));
+  CHECK(std::fabs(*offLufs - *onLufs) > 1.0);  // calibration moves the level, so measuring with it is not vacuous
+  REQUIRE(ensureAutoTrim(p, nullptr, c));
+  // Played through the calibrated chain with the trim applied (as the plugin will): -18 LUFS within the usual 0.01.
+  const auto played = measureReferenceLufs(p, nullptr, /*applyTrim=*/true, nullptr, c);
+  REQUIRE(played.has_value());
+  CHECK(*played == Approx(kAutoTrimTargetLufs).margin(0.01));
+  CHECK(p.autoTrim.db == Approx(kAutoTrimTargetLufs - *onLufs).margin(1e-9));
+  // The uncalibrated measurement would have missed.
+  Preset u = p;
+  REQUIRE(stampAutoTrim(u));
+  CHECK(u.autoTrim.db != Approx(p.autoTrim.db).margin(0.5));
+  // The level-match probe inside Chain::prepare sees the same calibration: a render with LEVEL MATCH + calibration still matches.
+  AudioFile in{kFs, 1, referenceDi()};
+  RenderOptions o;
+  o.applyAutoTrim = true;
+  o.calibration = c;
+  CHECK(lufsOfSamples(renderPreset(p, in, o).samples) == Approx(kAutoTrimTargetLufs).margin(0.05));
+}
+
+TEST_CASE("Calibration I2: swapping the last block keeps the monitoring level within 0.5 dB through the real make-up path", "[autotrim][calibration][swap]") {
+  const ChainCalibration c = calOn();
+  for (const char* swapTo : {"lstm.nam", "wavenet.nam"}) {
+    INFO("swap last block to " << swapTo);
+    const Preset before = parse(hopRig("cal_pedal_a.nam", "wavenet.nam"));
+    const Preset after = parse(hopRig("cal_pedal_a.nam", swapTo));
+    const auto m = slotMakeup(before, after, 0, /*blockIndex=*/1, c);
+    REQUIRE(m.has_value());
+    CHECK_FALSE(m->skippedHop);  // the last block of the path keeps its make-up
+    const Preset fixed = withSlotMakeup(after, 0, 1, m->makeupDb);
+    const auto lb = measureReferenceLufs(before, nullptr, false, nullptr, c);
+    const auto lf = measureReferenceLufs(fixed, nullptr, false, nullptr, c);
+    REQUIRE((lb && lf));
+    CHECK(std::fabs(*lf - *lb) < 0.5);
+    if (std::string(swapTo) == "lstm.nam") {
+      const auto lu = measureReferenceLufs(after, nullptr, false, nullptr, c);
+      REQUIRE(lu.has_value());
+      CHECK(std::fabs(*lu - *lb) > 1.0);  // without the make-up the swap does change the level
+      CHECK(std::fabs(m->makeupDb) > 0.5);
+    }
+  }
+}
+
+TEST_CASE("Calibration I2: a make-up on a block that feeds a NAM is skipped, without rendering", "[autotrim][calibration][swap]") {
+  const ChainCalibration c = calOn();
+  const Preset before = parse(hopRig("cal_pedal_a.nam", "wavenet.nam"));
+  const Preset after = parse(hopRig("cal_pedal_b.nam", "wavenet.nam"));
+  CHECK(blockFeedsNam(after, 0, 0, c));
+  CHECK_FALSE(blockFeedsNam(after, 0, 1, c));  // the amp is last
+  CHECK_FALSE(blockFeedsNam(after, 0, 5, c));  // out of range
+  CHECK_FALSE(blockFeedsNam(after, 1, 0, c));  // path B has a single block
+  CHECK_FALSE(blockFeedsNam(after, 2, 0, c));
+  CHECK_FALSE(blockFeedsNam(after, 0, -1, c));
+  const auto m = slotMakeup(before, after, 0, 0, c);
+  REQUIRE(m.has_value());
+  CHECK(m->skippedHop);
+  CHECK(m->makeupDb == 0.0);
+  // It does not even need the path to be measurable: a set cancel flag does not turn the skip into nullopt.
+  std::atomic<bool> cancel{true};
+  const auto sk = slotMakeup(before, after, 0, 0, c, nullptr, &cancel);
+  REQUIRE(sk.has_value());
+  CHECK(sk->skippedHop);
+  // The dB wrapper returns 0 for it.
+  CHECK(slotMakeupDb(before, after, 0, nullptr, nullptr, c, 0) == 0.0);
+  // Without a block index (or with calibration off) nothing is skipped: today's measurement.
+  const auto noIdx = slotMakeup(before, after, 0, -1, c);
+  REQUIRE(noIdx.has_value());
+  CHECK_FALSE(noIdx->skippedHop);
+  const auto off = slotMakeup(before, after, 0, 0, ChainCalibration{});
+  REQUIRE(off.has_value());
+  CHECK_FALSE(off->skippedHop);
+  // A hop into a block with no input metadata is not planned, so it is not skipped.
+  const Preset nometa = parse(hopRig("cal_pedal_b.nam", "cal_amp_nometa.nam"));
+  CHECK_FALSE(blockFeedsNam(nometa, 0, 0, c));
+}

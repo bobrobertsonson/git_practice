@@ -89,7 +89,8 @@ std::string autoTrimHash(const Preset& p) {
 
 bool autoTrimFresh(const Preset& p) { return !p.autoTrim.hash.empty() && p.autoTrim.hash == autoTrimHash(p); }
 
-std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache, bool applyTrim, const std::atomic<bool>* cancel) {
+std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache, bool applyTrim, const std::atomic<bool>* cancel,
+                                           const ChainCalibration& cal) {
   AudioFile in;
   in.sampleRate = kReferenceDiRate;
   in.channels = 1;
@@ -98,6 +99,7 @@ std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache,
   o.cache = cache;
   o.outRate = OutRate::Input;
   o.applyAutoTrim = applyTrim;
+  o.calibration = cal;
   Preset q = applyTrim ? p : withoutTrim(p);
   q.outputGainDb = 0.0;  // the OUTPUT knob is a persistent offset on top of the match: it is measured at 0 dB
   const RenderResult r = renderPreset(q, in, o);
@@ -114,8 +116,9 @@ bool hasNonlinearBlock(const Preset& p) {
   return false;
 }
 
-std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache, const std::atomic<bool>* cancel) {
-  const auto l = measureReferenceLufs(p, cache, false, cancel);
+std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache, const std::atomic<bool>* cancel,
+                                                  const ChainCalibration& cal) {
+  const auto l = measureReferenceLufs(p, cache, false, cancel, cal);
   if (!l) return std::nullopt;
   AutoTrimResult r;
   r.lufs = *l;
@@ -124,20 +127,21 @@ std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cac
   return r;
 }
 
-bool stampAutoTrim(Preset& p, CaptureCache* cache) {
-  const auto r = computeAutoTrim(p, cache);
+bool stampAutoTrim(Preset& p, CaptureCache* cache, const ChainCalibration& cal) {
+  const auto r = computeAutoTrim(p, cache, nullptr, cal);
   if (!r) return false;
   p.autoTrim.db = r->trimDb;
   p.autoTrim.hash = r->hash;
   return true;
 }
 
-bool ensureAutoTrim(Preset& p, CaptureCache* cache) {
+bool ensureAutoTrim(Preset& p, CaptureCache* cache, const ChainCalibration& cal) {
   if (autoTrimFresh(p)) return true;
-  return stampAutoTrim(p, cache);
+  return stampAutoTrim(p, cache, cal);
 }
 
-std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* cache, const std::atomic<bool>* cancel) {
+std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* cache, const std::atomic<bool>* cancel,
+                                          const ChainCalibration& cal) {
   Preset q = withoutTrim(p);
   PathPreset& mine = path == 0 ? q.a : q.b;
   PathPreset& other = path == 0 ? q.b : q.a;
@@ -149,15 +153,39 @@ std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* c
   q.align.mode = AlignMode::Off;
   q.align.delaySamplesB = 0;
   q.align.invertB = false;
-  return measureReferenceLufs(q, cache, false, cancel);
+  return measureReferenceLufs(q, cache, false, cancel, cal);
 }
 
-std::optional<double> slotMakeupDb(const Preset& before, const Preset& after, int path, CaptureCache* cache, const std::atomic<bool>* cancel) {
-  const auto lb = measurePathLufs(before, path, cache, cancel);
+bool blockFeedsNam(const Preset& p, int path, int blockIndex, const ChainCalibration& cal, CaptureCache* cache) {
+  if (!cal.enabled || (path != 0 && path != 1) || blockIndex < 0) return false;
+  constexpr double kPlanRate = 48000.0;  // levelInfo() does not depend on the rate
+  Chain chain(p, loadResources(p, kPlanRate, cache));
+  const CalibrationPlan plan = chain.planCalibration(cal);
+  const auto& blocks = plan.blocks[static_cast<std::size_t>(path)];
+  const auto i = static_cast<std::size_t>(blockIndex);
+  return i < blocks.size() && blocks[i].feedsNam;
+}
+
+std::optional<SlotMakeup> slotMakeup(const Preset& before, const Preset& after, int path, int blockIndex, const ChainCalibration& cal,
+                                     CaptureCache* cache, const std::atomic<bool>* cancel) {
+  SlotMakeup r;
+  if (blockFeedsNam(after, path, blockIndex, cal, cache)) {
+    r.skippedHop = true;
+    return r;
+  }
+  const auto lb = measurePathLufs(before, path, cache, cancel, cal);
   if (cancel != nullptr && cancel->load()) return std::nullopt;
-  const auto la = measurePathLufs(after, path, cache, cancel);
+  const auto la = measurePathLufs(after, path, cache, cancel, cal);
   if (!lb || !la) return std::nullopt;
-  return std::min(kMaxSlotMakeupDb, std::max(-kMaxSlotMakeupDb, *lb - *la));
+  r.makeupDb = std::min(kMaxSlotMakeupDb, std::max(-kMaxSlotMakeupDb, *lb - *la));
+  return r;
+}
+
+std::optional<double> slotMakeupDb(const Preset& before, const Preset& after, int path, CaptureCache* cache, const std::atomic<bool>* cancel,
+                                   const ChainCalibration& cal, int blockIndex) {
+  const auto r = slotMakeup(before, after, path, blockIndex, cal, cache, cancel);
+  if (!r) return std::nullopt;
+  return r->makeupDb;
 }
 
 Preset withSlotMakeup(const Preset& p, int path, int blockIndex, double makeupDb) {

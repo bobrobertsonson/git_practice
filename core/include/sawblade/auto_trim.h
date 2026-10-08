@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "sawblade/capture_cache.h"
+#include "sawblade/chain.h"
 #include "sawblade/preset.h"
 
 // Level-matched auditioning (v0.3 Task B; docs/PRESET_SCHEMA.md "Level matching").
@@ -52,8 +53,11 @@ bool autoTrimFresh(const Preset& p);
 // silent or too quiet to measure. Throws RenderError (missing capture, bad preset). Not real-time safe; takes seconds.
 // With `applyTrim` the preset's own autoTrimDb is applied (RenderOptions::applyAutoTrim): the "after" side of the loudness table.
 // `cancel` (optional, any thread may set it): checked after the render, before the measurement; when set the result is nullopt.
+// `cal` (v0.8 I2): the input calibration the chain plays with. Measurements must use the same setting as the chain that will play
+// the trim (the level-match probe inside Chain::prepare already does: render.cpp sets it before prepare). Default = off, which is
+// bit-identical to a call without it.
 std::optional<double> measureReferenceLufs(const Preset& p, CaptureCache* cache = nullptr, bool applyTrim = false,
-                                           const std::atomic<bool>* cancel = nullptr);
+                                           const std::atomic<bool>* cancel = nullptr, const ChainCalibration& cal = {});
 
 struct AutoTrimResult {
   double trimDb = 0.0;
@@ -61,23 +65,43 @@ struct AutoTrimResult {
   std::string hash;      // autoTrimHash(p)
 };
 // target - measured, with the hash it is valid for. nullopt when the preset is silent.
-std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache = nullptr, const std::atomic<bool>* cancel = nullptr);
+// `cal`: measured as the calibrated chain plays (the stored trim is only valid for that setting; the staleness hash does not cover it,
+// I4 decides how a preset records it).
+std::optional<AutoTrimResult> computeAutoTrim(const Preset& p, CaptureCache* cache = nullptr, const std::atomic<bool>* cancel = nullptr,
+                                              const ChainCalibration& cal = {});
 // computeAutoTrim, written into p.autoTrim (db and hash). False (p unchanged) when silent.
-bool stampAutoTrim(Preset& p, CaptureCache* cache = nullptr);
+bool stampAutoTrim(Preset& p, CaptureCache* cache = nullptr, const ChainCalibration& cal = {});
 // stampAutoTrim only when the preset's trim is missing or stale. True when p now has a fresh trim.
-bool ensureAutoTrim(Preset& p, CaptureCache* cache = nullptr);
+bool ensureAutoTrim(Preset& p, CaptureCache* cache = nullptr, const ChainCalibration& cal = {});
 
 // --- capture-swap make-up -----------------------------------------------------------------------------------------------
 // Loudness on the reference DI of path `path` (0 = a, 1 = b) alone: the other path is disabled and the blend is hard to this
 // path (linear law, level match and alignment off), everything else - the path's blocks and EQ, the shared cab, post EQ, bus
 // comp - as in `p`. nullopt when the path is disabled or silent.
-std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* cache = nullptr, const std::atomic<bool>* cancel = nullptr);
+std::optional<double> measurePathLufs(const Preset& p, int path, CaptureCache* cache = nullptr, const std::atomic<bool>* cancel = nullptr,
+                                      const ChainCalibration& cal = {});
+
+// True when, under `cal`, block `blockIndex` of path `path` of `p` feeds another NAM block (I1 feedsNam): its normalise and make-up
+// are dropped and the next block's planned gain carries the hop. Always false with calibration off or an index out of range.
+// Builds the chain without preparing it (loads the models, no render); not real-time safe.
+bool blockFeedsNam(const Preset& p, int path, int blockIndex, const ChainCalibration& cal, CaptureCache* cache = nullptr);
 
 // The make-up, in dB, for block `blockIndex` of path `path` that keeps the path's loudness unchanged when the preset changes from
 // `before` to `after` (the same preset with another capture in that slot, make-up 0): measurePathLufs(before) -
 // measurePathLufs(after), clamped to +-kMaxSlotMakeupDb. nullopt when either side cannot be measured (the caller then keeps 0).
+//
+// v0.8 I2: with `cal` enabled and `blockIndex` >= 0, a block of `after` that feeds a NAM block gets 0 and `skippedHop` set, without
+// rendering anything (the make-up would be dropped by the calibrated chain anyway). Otherwise (calibration off, last NAM block of
+// the path, blockIndex < 0) the measurements run with `cal`, so the make-up is what the calibrated chain needs.
+struct SlotMakeup {
+  double makeupDb = 0.0;
+  bool skippedHop = false;
+};
+std::optional<SlotMakeup> slotMakeup(const Preset& before, const Preset& after, int path, int blockIndex, const ChainCalibration& cal,
+                                     CaptureCache* cache = nullptr, const std::atomic<bool>* cancel = nullptr);
+// slotMakeup()'s dB value (0 for a skipped hop); with the defaults it is exactly the pre-I2 function.
 std::optional<double> slotMakeupDb(const Preset& before, const Preset& after, int path, CaptureCache* cache = nullptr,
-                                   const std::atomic<bool>* cancel = nullptr);
+                                   const std::atomic<bool>* cancel = nullptr, const ChainCalibration& cal = {}, int blockIndex = -1);
 
 // True when an enabled path has a non-bypassed `nam` or `pedal.*` block: otherwise the trim is 0.
 bool hasNonlinearBlock(const Preset& p);
