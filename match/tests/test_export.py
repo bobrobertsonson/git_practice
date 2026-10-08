@@ -1393,6 +1393,28 @@ def test_post_gain_equals_the_whole_chain_minus_the_pre_terms_over_the_sweep(in_
     assert g == pytest.approx(_full_gain(p) - nam_only - in_gain, abs=1e-3)
 
 
+@pytest.mark.parametrize("in_gain", [0.0, 6.0])
+@pytest.mark.parametrize("lm_on", [False, True])
+@pytest.mark.parametrize("blend", [0.2, 0.5, 0.8])
+@pytest.mark.parametrize("law", ["linear", "constantLoudness"])
+def test_post_gain_audible_b_with_a_disabled_partner_at_an_interior_blend(in_gain, lm_on, blend, law):
+    """v0.8 I4b carried polish: audible path B alone (A disabled) at an INTERIOR blend value, not only at blend 1.0: G_post is still the
+    real chain's 1 kHz gain minus the capture's own gain minus the global input gain, to 1e-3 dB, for both laws and with level match on/off."""
+    from sawblade_match.core import CaptureCache
+    from sawblade_match.export import levels as LV
+    from sawblade_match.export.chain import probe_report, render48
+    p = _two_path(in_gain, lm_on, 1.0, law, partner=True)
+    p["blend"] = blend
+    p["paths"]["a"]["enabled"] = False
+    p["paths"]["b"]["enabled"] = True
+    cache = CaptureCache()
+    probe = probe_report(p, ".", cache)
+    g, why = LV.post_gain_db(p, "b", probe, ".", cache, render48, "b2")
+    assert why is None
+    nam_only = _full_gain(_single_path(0.0))
+    assert g == pytest.approx(_full_gain(p) - nam_only - in_gain, abs=1e-3)
+
+
 # ---- the export wiring (trainer-free) ----
 
 def _single_preset_file(mx, blend=0.0):
