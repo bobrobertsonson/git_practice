@@ -54,6 +54,16 @@ Today the LEVEL MATCH trim follows a rig change through the 10 Hz `levelTick()` 
    cause (render before layout / async image load / first-paint timing) and make the tests wait on the real
    condition, not a sleep. Add a stress run (the two tests x50 on macOS CI or locally) to show it no longer flakes.
 
+5. "plugin:Processor: swap under load — a thread loads presets while the audio thread runs" failed once on macOS
+   (CI run 298, v0.9 branch, docs-only commit 077814c on working-branch base 8f2c4da), alongside D.4's two screenshot
+   tests. A swap-under-load failure can be a real lock-free hand-over race (CLAUDE.md: model/IR swaps are lock-free), so
+   treat it as a bug until proven otherwise: capture the assertion, reproduce under TSan and a 200x stress loop, and
+   fix the cause. Check whether it also occurs on the v0.8 branch (which has newer plugin code).
+   Evidence (CI run 298, seed 149266621): `test_processor.cpp:355 CHECK(blocks.load() > 100)` got 94; every real-time
+   check in the case passed (0 audio allocs/locks, finite output, engines built). Likely a wall-clock throughput
+   assertion (500 µs sleeps overshoot on macOS), not a race: make the block count a precondition (run until >= N blocks
+   after the last swap) and keep the TSan stress run to rule out a race.
+
 ## Task E — credential filter tightening (`plugin/src/settings/ToolEnv.cpp`)
 
 - `looksLikeCredential` misses `KEY=value` pairs whose value is letters only and shorter than 20 characters. For `=`
