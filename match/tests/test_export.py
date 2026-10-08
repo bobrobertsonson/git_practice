@@ -1345,6 +1345,52 @@ def test_post_gain_refuses_what_it_cannot_account_for():
     assert _post_gain(_single_path())[0] is not None
 
 
+def test_post_gain_ignores_the_global_input_gain():
+    base = _post_gain(_single_path(0.0))[0]
+    p = _single_path(0.0)
+    p["input"] = {"gainDb": 6.0}
+    assert _post_gain(p)[0] == pytest.approx(base, abs=1e-6)
+
+
+def _two_path(in_gain, lm_on, blend, law, partner):
+    p = _single_path(0.0)
+    p["input"] = {"gainDb": in_gain}
+    p["blend"], p["blendLaw"] = blend, law
+    ident = lambda i: {"id": i, "type": "nam", "slot": "amp", "model": {"file": str(NAM_DIR / "linear_identity.nam")}}
+    p["paths"]["a"] = {"role": "saw", "blocks": [ident("a2")], "levelDb": 1.0, "enabled": blend >= 1.0 and partner or blend < 1.0}
+    p["paths"]["b"] = {"role": "body", "blocks": [ident("b2")], "levelDb": -3.0, "enabled": blend >= 1.0 or partner}
+    if lm_on:
+        p["levelMatch"] = {"mode": "auto"}
+    return p
+
+
+@pytest.mark.parametrize("in_gain", [0.0, 6.0])
+@pytest.mark.parametrize("lm_on", [False, True])
+@pytest.mark.parametrize("blend", [0.0, 0.3, 0.5, 1.0])
+@pytest.mark.parametrize("law", ["linear", "constantLoudness"])
+@pytest.mark.parametrize("partner", [False, True])
+def test_post_gain_equals_the_whole_chain_minus_the_pre_terms_over_the_sweep(in_gain, lm_on, blend, law, partner):
+    """G_post must equal (the real chain's 1 kHz gain) - (the capture's own gain) - (the global input gain) to 1e-3 dB, for one
+    audible path: input gain, level match on/off (the audible path's trim with an enabled partner), blend end points and
+    interior (a disabled partner), both blend laws."""
+    if partner and blend not in (0.0, 1.0):
+        pytest.skip("two audible paths: a blend, not measurable")
+    if blend >= 1.0 and not partner:
+        pytest.skip("path A is the disabled partner of audible B only with partner=True")
+    from sawblade_match.core import CaptureCache
+    from sawblade_match.export.chain import probe_report
+    p = _two_path(in_gain, lm_on, blend, law, partner)
+    path, last = ("b", "b2") if blend >= 1.0 else ("a", "a2")
+    cache = CaptureCache()
+    probe = probe_report(p, ".", cache)
+    from sawblade_match.export import levels as LV
+    from sawblade_match.export.chain import render48
+    g, why = LV.post_gain_db(p, path, probe, ".", cache, render48, last)
+    assert why is None
+    nam_only = _full_gain(_single_path(0.0))
+    assert g == pytest.approx(_full_gain(p) - nam_only - in_gain, abs=1e-3)
+
+
 # ---- the export wiring (trainer-free) ----
 
 def _single_preset_file(mx, blend=0.0):

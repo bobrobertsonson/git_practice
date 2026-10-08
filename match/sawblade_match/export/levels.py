@@ -9,8 +9,10 @@ gain, post EQ and a cab IR (with-cab mode; core-normalised IR at 1 kHz). The las
 makeupDb, normalizeLoudness) is added from its fields (a bypassed block passes the signal untouched).
 
 Anything that is not linear or not exactly knowable returns ``(None, reason)`` so the caller writes no ``output_level_dbu``.
-The trainer's -18 dBFS output normalisation is not a term: it is applied for learning and undone by the trainer's export hook
-(``train.py`` header: "registers an export hook that undoes it, so the exported .nam has the true level").
+The trainer's -18 dBFS output normalisation is not a term: it is applied for learning and undone on export. Verified in
+neural-amp-modeler 0.13.0: ``nam/data.py`` ``Dataset.handshake`` (~line 602) adds ``_ScaleOutputHook(scale=1/y_scale)``, which
+``ExportableMixin.export`` (``exportable.py:114``) and ``PackedWaveNet.export_container`` (``_packed_wavenet.py:170``) apply.
+The global ``input.gainDb`` is not a term either (it is before every capture, so the model learns it).
 """
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ SINE_HZ = 1000.0
 SINE_PEAK = 0.03           # -30 dBFS peak: far from clipping; the measured chain is linear and time-invariant
 SINE_SECONDS = 5.0         # the longest IR the core loads is 2 s
 # The pinned trainer's NormalizeJointDatasetOutput(-18 dBFS) is undone by its export hook (train.py header, official.py "joint hook").
-# Cannot be re-verified without the trainer installed; if this is ever False, output_level_dbu must not be written.
+# Verified in 0.13.0 (see the module docstring); if a trainer version ever stops doing this, set False: output_level_dbu is then not written.
 TRAINER_EXPORT_UNDOES_OUTPUT_NORMALISATION = True
 
 
@@ -101,12 +103,17 @@ def post_gain_db(tpreset: dict, path: str, probe: dict, base_dir, cache, render,
     lm = probe.get("levelMatch") if isinstance(probe.get("levelMatch"), dict) else {}
     lm_on = lm.get("mode") not in (None, "off")
     law = (probe.get("blend") or {}).get("law")
-    makeup = 0.0
+    makeup = 0.0       # digital terms the probe chain cannot carry itself (it disables the partner path, which zeroes them)
     if both and (lm_on or law == "constantLoudness"):      # the core's rule for when the blend make-up applies
         mk = (probe.get("blend") or {}).get("makeupDb")
         if not (isinstance(mk, list) and len(mk) == 5):
             return None, "the blend make-up is not in the core report"
         makeup = float(mk[0] if blend <= 0.0 else mk[4])   # only the end points are reachable with a single audible path
+    if both and lm_on:            # the audible path's level-match trim (the core zeroes trims once the partner is disabled)
+        t = lm.get("trimADb" if path == "a" else "trimBDb")
+        if t is None:
+            return None, "the level-match trims are not in the core report"
+        makeup += float(t)
     e = copy.deepcopy(tpreset)
     e["gate"] = {"enabled": False}
     if "busComp" in e:
@@ -114,7 +121,10 @@ def post_gain_db(tpreset: dict, path: str, probe: dict, base_dir, cache, render,
     other = "b" if path == "a" else "a"
     e["paths"][other] = {"role": (e["paths"].get(other) or {}).get("role", "body"), "enabled": False, "blocks": []}
     ep = e["paths"][path]
-    ep.pop("preEq", None)
+    if last >= 0:
+        ep.pop("preEq", None)         # before the capture: not a post term (with no capture it is one, and linear)
+    if "input" in e:
+        e["input"] = {**e["input"], "gainDb": 0.0}      # the global input gain is before every capture: the model learns it
     for i, b in enumerate(ep.get("blocks") or []):
         if i <= last:
             b["bypass"] = True
@@ -125,12 +135,7 @@ def post_gain_db(tpreset: dict, path: str, probe: dict, base_dir, cache, render,
         else:
             ac["gain"] = 5.0                      # the drive knob is before the amp: not a post term
             ac.pop("gainStep", None)
-    if lm_on:
-        ta, tb = lm.get("trimADb"), lm.get("trimBDb")
-        if ta is None or tb is None:
-            return None, "the level-match trims are not in the core report"
-        e["levelMatch"] = {"mode": "manual", "trimADb": float(ta), "trimBDb": float(tb)}
-    e["blendLaw"] = "linear"
+    e.pop("levelMatch", None)         # trims are added above; the partner is off, so the core would apply none anyway
     e["align"] = {"mode": "off"}
     t = np.arange(int(SINE_SECONDS * RATE)) / RATE
     x = (SINE_PEAK * np.sin(2 * np.pi * SINE_HZ * t)).astype(np.float32)
