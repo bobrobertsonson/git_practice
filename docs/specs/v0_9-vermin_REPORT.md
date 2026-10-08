@@ -18,9 +18,11 @@ and knob strip render (C).
 | D | `pedal.rat` in the calibration fitter (PEDALS, KNOWN_TRUTH, PEDAL_ORDER) | 27cd711 | **ACCEPT 27cd711** |
 | lead docs | design note + revisions, Task D wording fix | d59e96a, 077814c, 1e2f373, 7f23833 | — |
 
-**CI of record: run 317 on 27cd711 (A–D), all green**: linux-gcc (ctest + pluginval VST3), linux-clang `-Werror`,
-macos-arm64 (ctest, auval, pluginval AU + VST3), and python (pytest + `compute_trims --check`). Run 310 on e4b11ec
-(A + B) was also all green. The only later commit is this report.
+**v0.9 Tasks A–D ACCEPT (lead), Task E pending v0.8 merge.**
+
+**CI of record: run 323 on 76a4e5a (A–D with stageOversample 4), all green**: linux-gcc (ctest + pluginval VST3),
+linux-clang `-Werror`, macos-arm64 (ctest, auval, pluginval AU + VST3), and python (pytest + `compute_trims --check`).
+Earlier runs 310 (e4b11ec) and 317 (27cd711) were also all green. The only later commit is this report line.
 
 ## Lead decisions and deviations (all recorded in the design note's revision lines)
 
@@ -175,7 +177,7 @@ Known-answer free fit:
   - integration:10 and integration:11, the known screenshot flake (v0.3.1 D.4);
   - "swap under load", `test_processor.cpp:355 CHECK(blocks.load() > 100)`, 94 > 100 (now v0.3.1 D.5).
 
-  None repeated in runs 310 or 317.
+  None repeated in runs 310, 317 or 323.
 - **User check after E:** play the six starter presets in Logic and add a feel note here.
 
 ## Proposals (not done)
