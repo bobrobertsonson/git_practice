@@ -38,6 +38,14 @@ void usage(std::ostream& os) {
         "  the input is resampled to it and, by default, the result back to the input rate.\n"
         "  A model that records no rate counts as 48 kHz. With no NAM blocks, auto renders at the input\n"
         "  rate. A number forces that rate in Hz.\n"
+        "--device-dbu X: the interface's level in dBu at 0 dBFS (-60..60) for input calibration. Absent: the assumed +12 dBu,\n"
+        "  and the report says so (calibration.deviceAssumed). Calibration follows the preset's calibration.mode (preset v5: legacy =\n"
+        "  off, bit-identical to before; calibrated = each NAM block's input gain planned from the device level and the captures'\n"
+        "  metadata); a v1-v4 preset is legacy. With --level-match a calibrated preset uses its output.autoTrimCalDb (measured at\n"
+        "  +12 dBu), or a trim measured at --device-dbu when that differs.\n"
+        "--di-channel L|R|mix: which channel of a stereo (multi-channel) DI file is rendered. Default: the louder of the first two\n"
+        "  channels by whole-file RMS (a tie picks L); mix = their mean. Mono files are used as is. The rule used, and the channel\n"
+        "  RMS levels, are in the report (diChannel). Never depends on --block.\n"
         "--level-match: apply the preset's output.autoTrim.db (computed first when missing or stale), the trim that brings the\n"
         "  preset to -18 LUFS on the built-in reference DI; off by default (levels as the preset says; NAM export and the matcher\n"
         "  never see the trim).\n"
@@ -115,6 +123,18 @@ std::string parseArgs(int argc, char** argv, Args& a) {
         if (!parseNumber(v, d) || d < 1000.0 || d > 768000.0) return "--render-rate must be auto or a rate in 1000..768000 Hz";
         a.opts.renderRate = d;
       }
+    } else if (k == "--device-dbu") {
+      if (!value(v)) return "missing value for " + k;
+      double d = 0.0;
+      if (!parseNumber(v, d) || d < sawblade::calibration::kMinPlausibleDbu || d > sawblade::calibration::kMaxPlausibleDbu)
+        return "--device-dbu must be a number in -60..60 (dBu at 0 dBFS)";
+      a.opts.deviceDbu = d;
+    } else if (k == "--di-channel") {
+      if (!value(v)) return "missing value for " + k;
+      if (v == "L") a.opts.diChannel = sawblade::DiChannel::Left;
+      else if (v == "R") a.opts.diChannel = sawblade::DiChannel::Right;
+      else if (v == "mix") a.opts.diChannel = sawblade::DiChannel::Mix;
+      else return "--di-channel must be L, R or mix";
     } else if (k == "--out-rate") {
       if (!value(v)) return "missing value for " + k;
       if (v == "input") a.opts.outRate = sawblade::OutRate::Input;
@@ -385,6 +405,8 @@ int main(int argc, char** argv) {
   }
   try {
     sawblade::RenderResult r;
+    args.opts.calibrationFromPreset = true;  // calibration follows the preset's calibration.mode
+    nlohmann::json trimNote;  // report: where the --level-match trim came from
     if (args.levelMatch) {
       sawblade::RenderOptions o = args.opts;
       o.applyAutoTrim = true;
@@ -396,7 +418,33 @@ int main(int argc, char** argv) {
       } catch (const std::exception& e) {
         throw sawblade::RenderError(sawblade::RenderErrorKind::Io, e.what());
       }
-      if (!sawblade::autoTrimFresh(p) && !sawblade::stampAutoTrim(p, o.cache))
+      bool silent = false;
+      if (p.calibrationMode == sawblade::CalibrationMode::Calibrated) {
+        // Calibrated trim (preset v5). At the assumed device (no --device-dbu, or +12) the stored autoTrimCal is used, measured
+        // when missing or stale; at another device it is re-measured there (not an offset: the level is not linear in the device
+        // level). Either way nothing is written back to the preset.
+        const bool atAssumed = !args.opts.deviceDbu || *args.opts.deviceDbu == sawblade::calibration::kAssumedDeviceDbu;
+        if (atAssumed) {
+          const bool stored = sawblade::autoTrimCalFresh(p);
+          silent = !sawblade::ensureAutoTrimCal(p, o.cache);
+          p.autoTrim = p.autoTrimCal;
+          trimNote = {{"source", stored ? "stored autoTrimCalDb" : "measured at +12 dBu"}, {"deviceDbu", sawblade::calibration::kAssumedDeviceDbu}};
+        } else {
+          sawblade::ChainCalibration cc = sawblade::assumedDeviceCalibration();
+          cc.device.dbu = args.opts.deviceDbu;
+          const auto res = sawblade::computeAutoTrim(p, o.cache, nullptr, cc);
+          silent = !res;
+          if (res) {
+            p.autoTrim.db = res->trimDb;
+            p.autoTrim.hash = res->hash;
+          }
+          trimNote = {{"source", "measured at the given device level"}, {"deviceDbu", *args.opts.deviceDbu}};
+        }
+      } else {
+        silent = !sawblade::autoTrimFresh(p) && !sawblade::stampAutoTrim(p, o.cache);
+        trimNote = {{"source", "legacy autoTrimDb"}};
+      }
+      if (silent)
         std::cerr << "tonerender: warning: --level-match: the reference DI renders silent through this preset; no trim applied\n";
       sawblade::AudioFile in;
       try {
@@ -423,6 +471,7 @@ int main(int argc, char** argv) {
       std::ofstream f(args.report);
       if (!f) throw sawblade::RenderError(sawblade::RenderErrorKind::Io, "cannot write report: " + args.report);
       nlohmann::json rep = sawblade::reportJson(r);
+      if (!trimNote.is_null()) rep["levelMatchTrim"] = trimNote;
       if (!args.backing.empty()) rep["backing"] = backingReport(args, backing);
       f << rep.dump(2) << "\n";
       if (!f) throw sawblade::RenderError(sawblade::RenderErrorKind::Io, "cannot write report: " + args.report);

@@ -15,11 +15,11 @@
 #include "sawblade/gate.h"
 #include "sawblade/preset_reader.h"
 
-// C++ mirror of docs/PRESET_SCHEMA.md, v3 (v1 and v2 files are still read; v3 adds output.autoTrimDb / autoTrimHash and the
-// nam block's makeupDb). Parsing is strict (see PresetError).
+// C++ mirror of docs/PRESET_SCHEMA.md, v5 (v1-v4 files are still read; v3 adds output.autoTrimDb / autoTrimHash and the nam
+// block's makeupDb; v5 adds `calibration.mode` and output.autoTrimCalDb / autoTrimCalHash). Parsing is strict (see PresetError).
 namespace sawblade {
 
-constexpr int kPresetVersion = 4;
+constexpr int kPresetVersion = 5;
 constexpr int kMaxBlocksPerPath = 8;
 // Limits of the level-matching gains (auto_trim.h): output.autoTrimDb and a nam block's makeupDb are clamped / bounded to +-.
 constexpr double kMaxAutoTrimDb = 48.0;
@@ -148,6 +148,12 @@ struct AutoTrimStamp {
   bool operator==(const AutoTrimStamp&) const noexcept { return true; }
 };
 
+// v5 (docs/PRESET_SCHEMA.md "Calibration"): whether the preset plays with input-level calibration (chain.h ChainCalibration).
+// Legacy: calibration off, the preset sounds exactly as before v0.8 (every v1-v4 file loads as Legacy, and so does a v5 file with
+// no `calibration` member). Calibrated: each NAM block's input gain is planned from the device level and the captures' metadata.
+// A default-constructed Preset is Legacy until the v0.8 I4c default flip.
+enum class CalibrationMode { Legacy, Calibrated };
+
 // v4 (docs/PRESET_SCHEMA.md "Live dynamics"): who made the preset. Only "match" presets get the derived live dynamics.
 enum class PresetOrigin { User, Match, Official };
 // Which dynamics set the engine runs: the record set (the preset's `gate` / `busComp`, as fitted to a recording) or the live set.
@@ -187,6 +193,11 @@ struct Preset {
   // outputGainDb, applied only when the player asks for it (RenderOptions::applyAutoTrim, the plugin's LEVEL MATCH); the chain,
   // the NAM export and the matcher never see it.
   AutoTrimStamp autoTrim;
+  // v5: the same trim measured with calibration on at the assumed reference device (kAssumedDeviceDbu), so it is machine
+  // independent; `autoTrimCalHash` is autoTrimCalHash(p). Stored and used only for CalibrationMode::Calibrated presets; the plugin
+  // corrects it to the user's device by a re-measure and never writes a device-specific value back. Like `autoTrim` it is not an edit.
+  AutoTrimStamp autoTrimCal;
+  CalibrationMode calibrationMode = CalibrationMode::Legacy;  // v5 `calibration.mode`
   bool operator==(const Preset&) const = default;
 };
 

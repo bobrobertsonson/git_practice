@@ -356,9 +356,16 @@ the I2 learned floor (converted from the post-INPUT key to the DI). Any gate thr
 raises no notice (plugin test). Caveat: like the gate's own follower, the floor leaks upward after 10 s without a quiet frame (+1 dB/s), so minutes of
 unbroken loud playing with no pause bias the statistic towards the louder windows.
 
-**CI run 294.** Two plugin tests failed (`REQUIRE(baseline.has_value())`). Root cause: the tests, not the product. They played 65 s of notes and gaps and
-expected a 60 s baseline, but only ~64% of that audio is played (42 s), so no baseline was due yet. They also fed only channel 0, so `processBlock` (mean of the
-two inputs) mixed in the previous block's output. Fixed by counting in played time and feeding both channels.
+**CI run 294.** Two plugin tests failed (`REQUIRE(baseline.has_value())`). Root cause: the played-time arithmetic in the tests. They played 65 s of notes
+and gaps and expected a 60 s baseline, but only ~57% to 64% of that audio is played (about 42 s), so no baseline was due yet. Fixed by counting in played
+time (`wall(playedS)`). Feeding both input channels, which the fix also does, was defensive only: `processBlock` takes the mean of the two inputs, so an unset
+channel 1 would mix in the previous block's output, but that was not what failed. Under the current tap the played fraction is 8 of every 14 windows =
+57.1%, so `kMinPlayedPerWall = 0.55` holds by construction.
+
+**Floor clamp (-40 dBFS).** The floor follower (the live gate's and the tap's) clamps its estimate to [-96, -40] dBFS (`Gate::kFloorMinDb`, `kFloorMaxDb`),
+and so does a seed. A DI whose true noise floor is above -40 dBFS therefore has its floor held at -40, and a window counts as played only above -28 dBFS.
+For such a DI the played statistic covers only the loudest playing, and a quieter-than-normal passage can read as unplayed. This is deliberate: a floor
+above -40 dBFS is a broken gain stage, not a guitar, and the tap should not learn it as normal. It is not reported to the user in I3.
 
 **Unrelated flake, also seen in run 294:** `match/` irlib `test_irlib.py::test_identical_files_analysed_concurrently_are_not_rejected` (exactDuplicates, 14 vs 15).
 Not touched by I3; the main lead has assigned it to v0.4M.

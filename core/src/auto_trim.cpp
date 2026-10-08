@@ -39,6 +39,8 @@ void normaliseCaptures(json& j) {
 Preset withoutTrim(Preset p) {
   p.autoTrim.db = 0.0;
   p.autoTrim.hash.clear();
+  p.autoTrimCal.db = 0.0;
+  p.autoTrimCal.hash.clear();
   return p;
 }
 
@@ -79,13 +81,31 @@ std::string autoTrimHash(const Preset& p) {
   // (dynamicsMode, liveDynamics, origin) are not hashed, so a preset whose live and record sets are equal keeps one hash in either
   // mode and every stamp written before preset v4 stays fresh.
   json j = toJson(resolveDynamics(withoutTrim(p)));
-  for (const char* k : {"name", "notes", "category", "version", "schema", "output", "dynamicsMode", "liveDynamics", "origin"})
+  for (const char* k : {"name", "notes", "category", "version", "schema", "output", "dynamicsMode", "liveDynamics", "origin",
+                         "calibration"})
     j.erase(k);  // output.gainDb: the user's offset
   normaliseCaptures(j);
   const std::string text = "sawblade.autotrim." + std::to_string(kAutoTrimVersion) + ".ref." + std::to_string(kReferenceDiVersion) +
                            ".target." + std::to_string(static_cast<int>(kAutoTrimTargetLufs)) + "\n" + j.dump();
   return sha256Hex(text.data(), text.size());
 }
+
+ChainCalibration assumedDeviceCalibration() {
+  ChainCalibration c;
+  c.enabled = true;
+  c.device.dbu = calibration::kAssumedDeviceDbu;
+  return c;
+}
+
+std::string autoTrimCalHash(const Preset& p) {
+  // The legacy hash (the rig's level-affecting content) plus the recipe the calibrated trim was measured with. The preset's own
+  // calibration.mode is not part of it: the calibrated trim is always measured with calibration forced on.
+  const std::string text = "sawblade.autotrim.cal." + std::to_string(kAutoTrimCalVersion) + ".dbu." +
+                           std::to_string(static_cast<int>(calibration::kAssumedDeviceDbu)) + "\n" + autoTrimHash(p);
+  return sha256Hex(text.data(), text.size());
+}
+
+bool autoTrimCalFresh(const Preset& p) { return !p.autoTrimCal.hash.empty() && p.autoTrimCal.hash == autoTrimCalHash(p); }
 
 bool autoTrimFresh(const Preset& p) { return !p.autoTrim.hash.empty() && p.autoTrim.hash == autoTrimHash(p); }
 
@@ -133,6 +153,19 @@ bool stampAutoTrim(Preset& p, CaptureCache* cache, const ChainCalibration& cal) 
   p.autoTrim.db = r->trimDb;
   p.autoTrim.hash = r->hash;
   return true;
+}
+
+bool stampAutoTrimCal(Preset& p, CaptureCache* cache) {
+  const auto r = computeAutoTrim(p, cache, nullptr, assumedDeviceCalibration());
+  if (!r) return false;
+  p.autoTrimCal.db = r->trimDb;
+  p.autoTrimCal.hash = autoTrimCalHash(p);
+  return true;
+}
+
+bool ensureAutoTrimCal(Preset& p, CaptureCache* cache) {
+  if (autoTrimCalFresh(p)) return true;
+  return stampAutoTrimCal(p, cache);
 }
 
 bool ensureAutoTrim(Preset& p, CaptureCache* cache, const ChainCalibration& cal) {

@@ -81,11 +81,27 @@ std::string hzString(double hz) {
   return buf;
 }
 
+double rmsOf(const std::vector<float>& x) {
+  double sum = 0.0;
+  for (float v : x) sum += static_cast<double>(v) * v;
+  return x.empty() ? 0.0 : std::sqrt(sum / static_cast<double>(x.size()));
+}
+
 double secondsSince(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
 
 }  // namespace
+
+const char* diChannelName(DiChannel c) {
+  switch (c) {
+    case DiChannel::Auto: return "auto";
+    case DiChannel::Left: return "L";
+    case DiChannel::Right: return "R";
+    case DiChannel::Mix: return "mix";
+  }
+  return "auto";
+}
 
 RenderResult renderPreset(const Preset& preset, const AudioFile& in, const RenderOptions& opts) {
   if (opts.blockSize < 1 || opts.blockSize > kMaxBlockSize)
@@ -100,13 +116,40 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
   r.blend = preset.blend;
   r.captures = attributions(preset);
 
-  // Mono input (stereo and beyond: first channel, with a warning).
+  // One channel of the DI feeds the chain. Mono: as is. Multi-channel: the first two channels by DiChannel (the louder by whole-file
+  // RMS by default); further channels are dropped. Decided here, on the whole file, so it is block-size independent.
   const auto ch = static_cast<std::size_t>(in.channels);
   const std::size_t frames = in.interleaved.size() / ch;
   std::vector<float> x(frames);
-  for (std::size_t i = 0; i < frames; ++i) x[i] = in.interleaved[i * ch];
-  if (in.channels > 1)
-    r.warnings.push_back("input has " + std::to_string(in.channels) + " channels; using the first (left) channel");
+  r.diChannel.fileChannels = in.channels;
+  if (in.channels == 1) {
+    for (std::size_t i = 0; i < frames; ++i) x[i] = in.interleaved[i];
+  } else {
+    std::vector<float> l(frames), rr(frames);
+    for (std::size_t i = 0; i < frames; ++i) {
+      l[i] = in.interleaved[i * ch];
+      rr[i] = in.interleaved[i * ch + 1];
+    }
+    const double rmsL = rmsOf(l), rmsR = rmsOf(rr);
+    r.diChannel.rule = diChannelName(opts.diChannel);
+    r.diChannel.rmsDbfsL = toDbfs(rmsL);
+    r.diChannel.rmsDbfsR = toDbfs(rmsR);
+    DiChannel use = opts.diChannel;
+    if (use == DiChannel::Auto) use = rmsR > rmsL ? DiChannel::Right : DiChannel::Left;
+    r.diChannel.used = diChannelName(use);
+    if (use == DiChannel::Left) {
+      x = std::move(l);
+    } else if (use == DiChannel::Right) {
+      x = std::move(rr);
+    } else {
+      for (std::size_t i = 0; i < frames; ++i) x[i] = 0.5f * (l[i] + rr[i]);
+    }
+    std::string w = "input has " + std::to_string(in.channels) + " channels; DI channel rule " + r.diChannel.rule + " used " +
+                    r.diChannel.used;
+    if (opts.diChannel == DiChannel::Auto) w += " (louder channel by whole-file RMS)";
+    if (in.channels > 2) w += "; channels beyond the second are dropped";
+    r.warnings.push_back(std::move(w));
+  }
   r.input = measure(x);
 
   // Render rate.
@@ -160,12 +203,22 @@ RenderResult renderPreset(const Preset& preset, const AudioFile& in, const Rende
     throw RenderError(RenderErrorKind::Io, e.what());
   }
 
+  // Effective calibration: the preset's mode when asked to follow it (legacy = off, bit-identical to no calibration), else the
+  // explicit setting; deviceDbu, when given, is the device either way.
+  ChainCalibration cal = opts.calibration;
+  if (opts.calibrationFromPreset) cal.enabled = preset.calibrationMode == CalibrationMode::Calibrated;
+  if (opts.deviceDbu) cal.device.dbu = opts.deviceDbu;
+  r.calibrationMode = cal.enabled ? "calibrated" : "legacy";
+  r.calibrationSource = opts.calibrationFromPreset ? "preset" : "options";
+  if (opts.deviceDbu && !cal.enabled)
+    r.warnings.push_back("a device level was given but input calibration is off (" +
+                         std::string(opts.calibrationFromPreset ? "the preset is legacy" : "not enabled") + "); it has no effect");
   try {
-    if (opts.calibration.enabled) chain->setCalibration(opts.calibration);  // before prepare: the probes see the calibrated chain
+    if (cal.enabled) chain->setCalibration(cal);  // before prepare: the probes see the calibrated chain
   } catch (const std::exception& e) {
     throw RenderError(RenderErrorKind::Preset, std::string("input calibration failed: ") + e.what());
   }
-  r.calibration = opts.calibration.enabled ? chain->calibrationPlan() : chain->planCalibration(opts.calibration);
+  r.calibration = cal.enabled ? chain->calibrationPlan() : chain->planCalibration(cal);
 
   auto t0 = std::chrono::steady_clock::now();
   try {
@@ -257,7 +310,7 @@ const char* levelKindName(calibration::LevelKind k) {
 
 nlohmann::json optionalNumber(const std::optional<double>& v) { return v ? nlohmann::json(*v) : nlohmann::json(nullptr); }
 
-nlohmann::json calibrationJson(const CalibrationPlan& c) {
+nlohmann::json calibrationJson(const CalibrationPlan& c, const std::string& mode, const std::string& source) {
   using nlohmann::json;
   const auto path = [&](std::size_t k) {
     json a = json::array();
@@ -276,6 +329,8 @@ nlohmann::json calibrationJson(const CalibrationPlan& c) {
     return a;
   };
   return {{"enabled", c.enabled},
+          {"mode", mode},
+          {"modeSource", source},
           {"deviceDbu", c.deviceDbu},
           {"deviceAssumed", c.deviceAssumed},
           {"anyUncalibrated", c.anyUncalibrated},
@@ -331,7 +386,12 @@ nlohmann::json reportJson(const RenderResult& r) {
       {"output", stats(r.output)},
       {"normalizeGainDb", r.normalizeGainDb},
       {"autoTrimDb", r.autoTrimDb},
-      {"calibration", calibrationJson(r.calibration)},
+      {"calibration", calibrationJson(r.calibration, r.calibrationMode, r.calibrationSource)},
+      {"diChannel", {{"fileChannels", r.diChannel.fileChannels},
+                     {"rule", r.diChannel.rule},
+                     {"used", r.diChannel.used},
+                     {"rmsDbfsL", r.diChannel.fileChannels > 1 ? dbOrNull(r.diChannel.rmsDbfsL) : json(nullptr)},
+                     {"rmsDbfsR", r.diChannel.fileChannels > 1 ? dbOrNull(r.diChannel.rmsDbfsR) : json(nullptr)}}},
       {"prepareSeconds", r.prepareSeconds},
       {"renderSeconds", r.renderSeconds},
       {"resampleSeconds", r.resampleSeconds},

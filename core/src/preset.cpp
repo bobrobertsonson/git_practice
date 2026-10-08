@@ -422,12 +422,14 @@ nlohmann::json EqBlockParams::toJson() const { return {{"bands", eqListJson(band
 Preset parsePreset(const json& j, const fs::path& baseDir) {
   JsonObject r(j, "");
   Preset p;
+  long long fileVersion = 0;
   if (r.requireString("schema") != "sawblade.preset") throw PresetError("schema", "must be exactly \"sawblade.preset\"");
   {
     const json* v = j.contains("version") ? &j["version"] : nullptr;
     if (!v) throw PresetError("version", "required field is missing");
     if (!v->is_number_integer()) throw PresetError("version", "must be an integer");
-    const auto ver = v->get<long long>();
+    fileVersion = v->get<long long>();
+    const long long ver = fileVersion;
     if (ver > kPresetVersion)
       throw PresetError("version", "unsupported preset version " + std::to_string(ver) + " (this reader supports up to " +
                                        std::to_string(kPresetVersion) + ")");
@@ -482,7 +484,21 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
       p.autoTrim.db = trim;
       p.autoTrim.hash = hash;
     }
+    // v5: the calibrated trim (measured at the assumed +12 dBu device), same rule.
+    const double trimCal = out->number("autoTrimCalDb", 0.0, -kMaxAutoTrimDb, kMaxAutoTrimDb);
+    const std::string hashCal = out->string("autoTrimCalHash", "");
+    if (!hashCal.empty()) {
+      p.autoTrimCal.db = trimCal;
+      p.autoTrimCal.hash = hashCal;
+    }
     out->finish();
+  }
+  // v5: calibration mode. A file older than v5 loads as legacy whatever it says (no writer ever emitted the member before v5);
+  // a v5 file with no member is legacy too.
+  if (auto cal = r.optionalObject("calibration")) {
+    const std::string m = cal->oneOf("mode", "legacy", {"legacy", "calibrated"});
+    if (fileVersion >= 5) p.calibrationMode = m == "calibrated" ? CalibrationMode::Calibrated : CalibrationMode::Legacy;
+    cal->finish();
   }
   // Plugin UI state (docs/PRESET_SCHEMA.md "playAlong"): not tone, so it is accepted and ignored here and
   // never written back. The matcher and the NAM export read presets through this parser.
@@ -508,10 +524,15 @@ nlohmann::json toJson(const Preset& p) {
           {"cab", toJson(p.cab)},
           {"postEq", eqListJson(p.postEq)},
           {"busComp", toJson(p.busComp)},
+          {"calibration", {{"mode", p.calibrationMode == CalibrationMode::Calibrated ? "calibrated" : "legacy"}}},
           {"output", {{"gainDb", p.outputGainDb}}}};
   if (!p.autoTrim.hash.empty()) {
     j["output"]["autoTrimDb"] = p.autoTrim.db;
     j["output"]["autoTrimHash"] = p.autoTrim.hash;
+  }
+  if (!p.autoTrimCal.hash.empty()) {
+    j["output"]["autoTrimCalDb"] = p.autoTrimCal.db;
+    j["output"]["autoTrimCalHash"] = p.autoTrimCal.hash;
   }
   if (!p.category.empty()) j["category"] = p.category;
   if (p.liveDynamics) j["liveDynamics"] = {{"gate", toJson(p.liveDynamics->gate)}, {"busComp", toJson(p.liveDynamics->busComp)}};

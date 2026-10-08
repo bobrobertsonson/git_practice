@@ -257,6 +257,12 @@ class Chain {
   // --- v0.8 I2 live-gate floor seed ---
   // Where the live gate's floor follower starts (default -70 dBFS; see Gate::setFloorSeedDb). Not RT-safe against a running
   // process(): call before audio starts (the plugin does it before the engine is published).
+  //
+  // Key high-pass mismatch (known, harmless): the learned floor behind this seed was measured on the live gate's KEY, which is
+  // high-passed at the gate's keyHighPassHz when that is > 0. The drift tap's follower listens to the raw DI (no key high-pass), so
+  // with a key high-pass set the DI's true floor (hum, rumble below the corner) is a little ABOVE the converted seed. The seed only
+  // decides where the follower starts; its 3 s minimum-statistics window replaces it within seconds, and the played threshold
+  // (floor + kPlayedAboveFloorDb) is only briefly low, so no window is wrongly counted for long. Do not "fix" it by filtering the tap.
   void setGateFloorSeedDb(double db) noexcept {
     gate_.setFloorSeedDb(db);
     driftTap_.setFloorSeedDb(db - preset_.inputGainDb);  // the gate's floor is after INPUT; the tap listens to the DI

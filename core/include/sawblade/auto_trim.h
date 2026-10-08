@@ -49,6 +49,22 @@ std::string autoTrimHash(const Preset& p);
 // The preset carries a trim whose hash matches its current content.
 bool autoTrimFresh(const Preset& p);
 
+// --- v0.8 I4a: the calibrated trim (preset schema v5, output.autoTrimCalDb / autoTrimCalHash) ----------------------------------
+// The same trim, measured with input calibration on at the assumed reference device (kAssumedDeviceDbu, +12 dBu), so the stored
+// number is machine independent. Its hash is autoTrimHash(p) + the recipe (kAutoTrimCalVersion, the assumed device level), so it
+// goes stale with any level-affecting edit, like the legacy one; the preset's calibration.mode is not in either hash. The two
+// stamps are independent: a legacy preset uses autoTrim, a calibrated one autoTrimCal. At play time a user whose device is not
+// +12 dBu re-measures (computeAutoTrim with that device) instead of applying an offset, and never writes that value back.
+constexpr int kAutoTrimCalVersion = 1;
+// ChainCalibration{enabled, device = kAssumedDeviceDbu}: the setting the stored calibrated trim is measured with.
+ChainCalibration assumedDeviceCalibration();
+std::string autoTrimCalHash(const Preset& p);
+bool autoTrimCalFresh(const Preset& p);
+// computeAutoTrim at the assumed device, written into p.autoTrimCal (db + autoTrimCalHash). False (p unchanged) when silent.
+bool stampAutoTrimCal(Preset& p, CaptureCache* cache = nullptr);
+// stampAutoTrimCal only when the calibrated trim is missing or stale. True when p now has a fresh one.
+bool ensureAutoTrimCal(Preset& p, CaptureCache* cache = nullptr);
+
 // Integrated loudness of the reference DI through `p` with output.gainDb at 0 dB (auto trim not applied unless `applyTrim`). nullopt: the render is
 // silent or too quiet to measure. Throws RenderError (missing capture, bad preset). Not real-time safe; takes seconds.
 // With `applyTrim` the preset's own autoTrimDb is applied (RenderOptions::applyAutoTrim): the "after" side of the loudness table.

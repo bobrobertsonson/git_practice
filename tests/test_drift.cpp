@@ -304,6 +304,25 @@ TEST_CASE("Drift I3: playing dynamics within 4 dB over minutes never raise it", 
   CHECK_FALSE(ever);
 }
 
+TEST_CASE("Drift I3: one sustained +4 dB or -4 dB passage of 35 s or more (past the 30 s sustain) raises no notice", "[drift][tracker]") {
+  // The other dynamics tests alternate passages of at most 21 s, so they never hold a deviation across the whole 30 s sustain. A single
+  // long passage does: 4 dB stays below the 5 dB threshold however long it lasts, as the report says.
+  for (const double step : {+4.0, -4.0}) {
+    for (const double seconds : {35.0, 60.0, 180.0}) {
+      INFO("step " << step << " dB for " << seconds << " s");
+      Player p;
+      auto t = learned(p);
+      bool ever = false;
+      for (int i = 0; i < static_cast<int>(seconds * kPerS); ++i) {
+        p.play(t, 1.0 / kPerS, -20.0 + step);
+        ever = ever || t.notice().active;
+      }
+      CHECK_FALSE(ever);
+      CHECK(t.sustainedS() == 0.0);  // it never even started counting towards the 30 s
+    }
+  }
+}
+
 TEST_CASE("Drift I3: random playing with passages of +-4 dB (fresh random levels, odd passage lengths) never raises it", "[drift][tracker]") {
   for (unsigned seed = 1; seed <= 6; ++seed) {
     Player p;

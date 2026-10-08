@@ -430,9 +430,9 @@ json driftRig(std::optional<double> gateDb = -55.0, const std::string& name = "d
   return j;
 }
 
-// The DI is "played" only while the gate is open: with 0.4 s notes every 0.7 s that is about 57% to 64% of the time (windows count when the
-// gate is open for at least half of them). So these tests reckon in played time: wall(playedS) is the audio length that holds AT LEAST
-// that much played time,.
+// A 50 ms window is "played" when its peak is at least 12 dB above the DI's own noise floor (the tap; the preset's gate plays no part).
+// With 0.4 s notes every 0.7 s that is 8 of every 14 windows = 57.1% of the audio, so kMinPlayedPerWall = 0.55 holds by construction.
+// These tests therefore reckon in played time: wall(playedS) is the audio length that holds AT LEAST that much played time.
 constexpr double kMinPlayedPerWall = 0.55;
 double wall(double playedS) { return playedS / kMinPlayedPerWall; }
 

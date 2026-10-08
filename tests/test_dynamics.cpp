@@ -284,13 +284,13 @@ TEST_CASE("Preset v4: round trip, version 5 rejected, v1-3 files read as record"
   CHECK(p.liveDynamics->gate.thresholdMode == GateThresholdMode::FloorRelative);
   CHECK(p.liveDynamics->gate.floorOffsetDb == 6.0);
   const json out = toJson(p);
-  CHECK(out["version"] == 4);
+  CHECK(out["version"] == kPresetVersion);  // the writer emits the current version (5 since v0.8 I4a)
   CHECK(out["dynamicsMode"] == "live");
   CHECK(out["origin"] == "match");
   CHECK(parse(out) == p);
 
-  j["version"] = 5;
-  CHECK_THROWS_AS(parse(j), PresetError);  // a reader that supports up to 4 rejects 5 (and a v3 reader rejects 4 the same way)
+  j["version"] = kPresetVersion + 1;
+  CHECK_THROWS_AS(parse(j), PresetError);  // a reader rejects a version newer than it knows (a v3 reader rejects 4 the same way)
 
   for (int ver : {1, 2, 3}) {
     const Preset q = parse(mkDyn(ver));

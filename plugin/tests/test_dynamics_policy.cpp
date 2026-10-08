@@ -90,7 +90,7 @@ TEST_CASE("Dynamics policy: the mode survives the state round trip", "[dynamics]
   a.p.getStateInformation(s);
   const json j = json::parse(std::string(static_cast<const char*>(s.getData()), s.getSize()));
   CHECK(j["dynamicsMode"] == "record");
-  CHECK(j["version"] == 4);
+  CHECK(j["version"] == kPresetVersion);
   CHECK(j["origin"] == "match");
 
   SawbladeProcessor b;

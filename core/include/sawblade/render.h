@@ -42,6 +42,14 @@ enum class OutRate {
 
 class CaptureCache;  // capture_cache.h
 
+// Which channel of a multi-channel DI file feeds the chain (v0.8 I4a; docs/PRESET_SCHEMA.md "Offline stereo DI"). Offline there is
+// no auto-detection over time: Auto = the louder of the first two channels by whole-file RMS (a tie picks the left channel), so
+// one-sided stereo DIs work; Mix = the mean of channels 0 and 1. Channels beyond the second are dropped with a warning. A mono
+// file is used as is (the rule is then "mono"). The choice is made on the whole file before any block runs, so it cannot depend on
+// the block size.
+enum class DiChannel { Auto, Left, Right, Mix };
+const char* diChannelName(DiChannel c);  // "auto", "L", "R", "mix"
+
 struct RenderOptions {
   int blockSize = 256;                      // processing block size, 1..65536
   // Render rate. none = auto: the rate the preset's NAM models were trained at (all non-bypassed
@@ -59,8 +67,16 @@ struct RenderOptions {
   // (ensureAutoTrim, auto_trim.h): a stale or missing one is applied as stored (0 when missing).
   bool applyAutoTrim = false;
   // v0.8 input calibration (chain.h ChainCalibration). Off by default: renders, goldens, the matcher and the NAM export never
-  // see it until a caller opts in. The preset schema carries no calibration yet (I4 decides), so it is a render option.
+  // see it until a caller opts in. This is the explicit setting (used as is unless calibrationFromPreset).
   ChainCalibration calibration;
+  // v0.8 I4a (schema v5): follow the preset's `calibration.mode`: Calibrated -> calibration on, Legacy -> off (bit-identical to a
+  // render without calibration). `calibration.defaults` is still used. tonerender and the Python binding set it.
+  bool calibrationFromPreset = false;
+  // The interface level (dBu at 0 dBFS) the calibration plans with; none = the assumed kAssumedDeviceDbu, which the report says.
+  // Replaces calibration.device.dbu when set. Ignored while calibration is off (the report still records it).
+  std::optional<double> deviceDbu;
+  // Multi-channel input: see DiChannel. Ignored for a mono file.
+  DiChannel diChannel = DiChannel::Auto;
 };
 
 struct SignalStats {
@@ -89,6 +105,15 @@ struct RenderResult {
   SignalStats input, output;   // output stats are after normalization
   double normalizeGainDb = 0.0;
   CalibrationPlan calibration;  // the plan in force (enabled false when off); written to the report
+  std::string calibrationMode = "legacy";    // "calibrated" | "legacy": what the render ran with
+  std::string calibrationSource = "options";  // "preset" (followed calibration.mode) | "options" (RenderOptions::calibration)
+  // The DI-channel rule that was applied (report "diChannel").
+  struct DiChannelInfo {
+    int fileChannels = 1;
+    std::string rule = "mono";  // requested: "mono" (single channel file) | "auto" | "L" | "R" | "mix"
+    std::string used = "mono";  // what fed the chain: "mono" | "L" | "R" | "mix"
+    double rmsDbfsL = 0.0, rmsDbfsR = 0.0;  // whole-file RMS of the first two channels (stereo only; -inf = silence)
+  } diChannel;
   double autoTrimDb = 0.0;      // applied (RenderOptions::applyAutoTrim), else 0
   double prepareSeconds = 0.0;  // chain prepare() incl. NAM prewarm and the alignment probe
   double renderSeconds = 0.0;   // wall time of the process() loop only
@@ -98,7 +123,7 @@ struct RenderResult {
   std::vector<CaptureAttribution> captures;  // every capture that has `source`
 };
 
-// Renders `in` (mono; extra channels are dropped with a warning) through `preset`. If the render
+// Renders `in` (mono, or a multi-channel file reduced to one channel by RenderOptions::diChannel) through `preset`. If the render
 // rate differs from the input rate the input is resampled (resample.h) before and the result
 // after the chain; equal rates involve no resampling (bit-identical). The output is
 // the same length as the input (at the output rate) and latency-compensated: advanced by Chain::latencySamples() (the
