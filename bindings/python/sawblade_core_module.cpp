@@ -72,7 +72,8 @@ nlohmann::json presetToJson(const py::object& preset) {
 
 py::tuple render(const py::object& preset, const py::array& audioIn, const py::object& sampleRateArg,
                  const py::object& renderRate, const std::string& outRate, const py::object& blockArg,
-                 const py::object& baseDir, CaptureCache* cache) {
+                 const py::object& baseDir, CaptureCache* cache, const py::object& deviceDbu, const std::string& diChannel,
+                 const std::string& calibrationArg) {
   if (py::isinstance<py::bool_>(sampleRateArg) || py::isinstance<py::str>(sampleRateArg) ||
       !(PyNumber_Check(sampleRateArg.ptr())))
     throw py::value_error("sample_rate must be a number (Hz)");
@@ -98,6 +99,24 @@ py::tuple render(const py::object& preset, const py::array& audioIn, const py::o
   else if (outRate == "render") opts.outRate = OutRate::Render;
   else throw py::value_error("out_rate must be \"input\" or \"render\"");
   opts.cache = cache;
+  // v0.8 I4a. calibration: "preset" (default) follows the preset's calibration.mode (v1-v4 files are legacy = off, bit-identical to
+  // before), "legacy" forces it off, "calibrated" forces it on. device_dbu: the interface's dBu at 0 dBFS (None = the assumed +12,
+  // which the report records). di_channel: which channel of a (frames, channels) array is rendered.
+  if (calibrationArg == "preset") opts.calibrationFromPreset = true;
+  else if (calibrationArg == "calibrated") opts.calibration.enabled = true;
+  else if (calibrationArg != "legacy") throw py::value_error("calibration must be \"preset\", \"legacy\" or \"calibrated\"");
+  if (!deviceDbu.is_none()) {
+    if (py::isinstance<py::bool_>(deviceDbu) || !PyNumber_Check(deviceDbu.ptr())) throw py::value_error("device_dbu must be a number (dBu at 0 dBFS) or None");
+    const double d = deviceDbu.cast<double>();
+    if (!(std::isfinite(d) && d >= calibration::kMinPlausibleDbu && d <= calibration::kMaxPlausibleDbu))
+      throw py::value_error("device_dbu must be in -60..60 (dBu at 0 dBFS)");
+    opts.deviceDbu = d;
+  }
+  if (diChannel == "auto") opts.diChannel = DiChannel::Auto;
+  else if (diChannel == "L") opts.diChannel = DiChannel::Left;
+  else if (diChannel == "R") opts.diChannel = DiChannel::Right;
+  else if (diChannel == "mix") opts.diChannel = DiChannel::Mix;
+  else throw py::value_error("di_channel must be \"auto\", \"L\", \"R\" or \"mix\"");
 
   const nlohmann::json j = presetToJson(preset);
   std::filesystem::path base = std::filesystem::current_path();
@@ -423,13 +442,14 @@ PYBIND11_MODULE(sawblade_core, m) {
 
   m.def("render", &render, py::arg("preset"), py::arg("audio"), py::arg("sample_rate"),
         py::arg("render_rate") = py::str("auto"), py::arg("out_rate") = "input", py::arg("block") = 256,
-        py::arg("base_dir") = py::none(), py::arg("cache") = nullptr,
+        py::arg("base_dir") = py::none(), py::arg("cache") = nullptr, py::arg("device_dbu") = py::none(),
+        py::arg("di_channel") = "auto", py::arg("calibration") = "preset",
         R"doc(Render mono audio through a Sawblade preset (same code path as tonerender; bit-identical).
 
 preset       JSON text (str) or a dict following docs/PRESET_SCHEMA.md.
 audio        floating-point array (converted to float32; integer dtypes are rejected), 1-D mono or
-             (frames, channels) (first channel used, with a warning). A (1, N) array is rejected as
-             probably channels-first: pass audio.T.
+             (frames, channels): one channel is rendered, chosen by di_channel (with a warning). A (1, N) array
+             is rejected as probably channels-first: pass audio.T.
 sample_rate  rate of `audio` in Hz (>= 1000).
 render_rate  "auto" (the NAM models' training rate) or a rate in Hz.
 out_rate     "input" (default; same length and rate as the input) or "render".
@@ -437,6 +457,13 @@ block        processing block size, 1..65536 (output does not depend on it).
 base_dir     directory relative capture paths resolve against (default: the current directory).
 cache        optional CaptureCache. Its invalidation is stat-gated (file size + mtime): an edit that keeps
              both unchanged is served stale; cache.clear() forces a reload.
+device_dbu   v0.8 input calibration: the interface level, dBu at 0 dBFS (-60..60). None (default) = the assumed +12 dBu;
+             the report records which (calibration.deviceDbu / deviceAssumed).
+di_channel   "auto" (default: the louder of the first two channels by whole-file RMS, a tie picks L), "L", "R" or "mix"
+             (mean of channels 0 and 1). Ignored for 1-D audio. The rule used is in report["diChannel"].
+calibration  "preset" (default: follow the preset's calibration.mode; presets of version <= 4 are "legacy" = off and render
+             bit-identically to before), "legacy" (force off) or "calibrated" (force on). report["calibration"] has the
+             mode, the device level, whether it was assumed, and the per-block plan.
 
 Returns (samples: float32 ndarray, report: dict). The report is the tonerender --report JSON
 (latencySamples, pathLatency, renderRate, timings, warnings, ...). The GIL is released while

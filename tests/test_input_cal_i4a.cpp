@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <cmath>
 #include <cstdlib>
@@ -18,6 +20,7 @@
 #include <unistd.h>
 
 #include "sawblade/auto_trim.h"
+#include "sawblade/capture_cache.h"
 #include "sawblade/render.h"
 #include "sawblade/wav_io.h"
 #include "test_util.h"
@@ -536,4 +539,107 @@ TEST_CASE("I4a CLI: --level-match on a calibrated preset uses the stored calibra
 
   // Whatever the device, the leveled render lands on the same loudness target: the trim absorbs the 6 dB.
   CHECK(at18["output"]["rmsDbfs"].get<double>() == Approx(stored["output"]["rmsDbfs"].get<double>()).margin(0.5));
+}
+
+// ---- the committed presets, legacy vs calibrated --------------------------------------------------------------------
+namespace {
+
+std::vector<fs::path> factoryPresets() {
+  std::vector<fs::path> v;
+  for (const auto& e : fs::recursive_directory_iterator(SAWBLADE_PRESETS_DIR))
+    if (e.path().extension() == ".json") v.push_back(e.path());
+  std::sort(v.begin(), v.end());
+  return v;
+}
+std::string relToFactory(const fs::path& p) { return fs::relative(p, SAWBLADE_PRESETS_DIR).generic_string(); }
+// Non-bypassed NAM blocks on enabled paths: with none, calibration cannot change a render.
+int namBlockCount(const Preset& p) {
+  int n = 0;
+  for (const PathPreset* pp : {&p.a, &p.b})
+    if (pp->enabled)
+      for (const Block& b : pp->blocks)
+        if (!b.bypass && b.type == "nam") ++n;
+  return n;
+}
+
+}  // namespace
+
+TEST_CASE("I4a committed presets: all load as legacy and render bit-identically with calibration following the preset", "[i4a][presets]") {
+  const fs::path file = GENERATE(from_range(factoryPresets()));
+  INFO(relToFactory(file));
+  const Preset p = loadPresetFile(file);
+  CHECK(p.calibrationMode == CalibrationMode::Legacy);  // restamping them is I4c's job
+  if (const auto missing = missingCaptures(p); !missing.empty())
+    SKIP("skipped: capture not cached (" << missing.front() << ")");
+  const AudioFile di = readWav(fs::path(SAWBLADE_FIXTURES_DIR) / "di_riff.wav");
+  CaptureCache cache;
+  RenderOptions plain;
+  plain.cache = &cache;
+  RenderOptions follow = plain;
+  follow.calibrationFromPreset = true;
+  SAWBLADE_REQUIRE_SAME_SAMPLES(renderPreset(p, di, plain).samples, renderPreset(p, di, follow).samples);
+}
+
+// Hidden: renders every committed preset whose captures are on this machine legacy and calibrated (assumed +12 dBu device) and writes
+// the comparison table (Markdown) to $SAWBLADE_I4A_TABLE_OUT (default: stdout via WARN). Run:
+//   SAWBLADE_I4A_TABLE_OUT=/tmp/table.md build/tests/sawblade_tests "[i4a-table]"
+// Tolerances are the existing ones: golden = the cross-platform level check of the preset golden test (rms and peak on di_riff.wav
+// within 0.01 dB; bit identity on the reference platform), level = the trim acceptance (reference-DI loudness within 0.5 LU).
+TEST_CASE("I4a committed presets: legacy vs calibrated table", "[.][i4a-table]") {
+  const AudioFile di = readWav(fs::path(SAWBLADE_FIXTURES_DIR) / "di_riff.wav");
+  std::string md =
+      "| preset | NAM blocks | planned NAM gains A / B (dB) | uncal. | bit-identical | d rms (dB) | d peak (dB) | d LUFS ref DI | golden 0.01 dB | level 0.5 LU |\n"
+      "|---|---|---|---|---|---|---|---|---|---|\n";
+  std::vector<std::string> skipped;
+  int within = 0, total = 0;
+  const auto fmt = [](double v, const char* f = "%+.2f") {
+    char b[32];
+    std::snprintf(b, sizeof b, f, v);
+    return std::string(b);
+  };
+  for (const fs::path& f : factoryPresets()) {
+    Preset p = loadPresetFile(f);
+    if (const auto missing = missingCaptures(p); !missing.empty()) {
+      skipped.push_back(relToFactory(f) + ": " + std::to_string(namBlockCount(p)) + " NAM block(s); needs " + missing.front());
+      continue;
+    }
+    CaptureCache cache;
+    RenderOptions o;
+    o.cache = &cache;
+    const RenderResult leg = renderPreset(p, di, o);
+    Preset cp = p;
+    cp.calibrationMode = CalibrationMode::Calibrated;
+    RenderOptions oc = o;
+    oc.calibrationFromPreset = true;
+    const RenderResult cal = renderPreset(cp, di, oc);
+    const bool same = leg.samples == cal.samples;
+    const auto l0 = measureReferenceLufs(p, &cache, false);
+    ChainCalibration c12 = assumedDeviceCalibration();
+    c12.device.dbu.reset();  // as tonerender without --device-dbu: assumed
+    const auto l1 = measureReferenceLufs(p, &cache, false, nullptr, c12);
+    std::string gains;
+    for (std::size_t k = 0; k < 2; ++k) {
+      std::string g;
+      for (const auto& b : cal.calibration.blocks[k])
+        if (b.planned && b.kind == calibration::LevelKind::Nam) g += (g.empty() ? "" : ", ") + fmt(b.gainInDb, "%+.1f") + (b.inputMissing ? "?" : "");
+      gains += (k ? " / " : "") + (g.empty() ? std::string("-") : g);
+    }
+    const double dr = cal.output.rmsDbfs - leg.output.rmsDbfs, dp = cal.output.peakDbfs - leg.output.peakDbfs;
+    const double dl = (l0 && l1) ? *l1 - *l0 : 0.0;
+    const bool golden = same || (std::fabs(dr) <= 0.01 && std::fabs(dp) <= 0.01);
+    const bool level = l0 && l1 && std::fabs(dl) <= 0.5;
+    ++total;
+    if (golden && level) ++within;
+    md += "| " + relToFactory(f) + " | " + std::to_string(namBlockCount(p)) + " | " + gains + " | " + (cal.calibration.anyUncalibrated ? "yes" : "no") + " | " + (same ? "yes" : "no") +
+          " | " + fmt(dr) + " | " + fmt(dp) + " | " + ((l0 && l1) ? fmt(dl) : std::string("n/a")) + " | " + (golden ? "within" : "OUTSIDE") +
+          " | " + (level ? "within" : "OUTSIDE") + " |\n";
+  }
+  md += "\nWithin both tolerances: " + std::to_string(within) + " of " + std::to_string(total) + " rendered here.\n";
+  if (!skipped.empty()) {
+    md += "\nSkipped (captures not cached on this machine):\n";
+    for (const auto& s : skipped) md += "- " + s + "\n";
+  }
+  if (const char* out = std::getenv("SAWBLADE_I4A_TABLE_OUT")) std::ofstream(out) << md;
+  else WARN(md);
+  CHECK(total >= 30);
 }

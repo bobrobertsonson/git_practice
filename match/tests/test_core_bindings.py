@@ -105,12 +105,61 @@ def test_dict_preset_and_float64_and_block(di):
     assert rep3["blockSize"] == 37 and np.allclose(y1, y3, atol=1e-5)
 
 
-def test_stereo_uses_first_channel(di):
+def test_stereo_equal_channels_uses_left(di):
     x, sr = di
     x = x[:20000]
     y1, _ = render("golden_shared", x, sr)
-    y2, rep = render("golden_shared", np.stack([x, -x], axis=1), sr)
+    y2, rep = render("golden_shared", np.stack([x, -x], axis=1), sr)  # equal RMS: a tie picks L
     assert np.array_equal(y1, y2) and any("channels" in w for w in rep["warnings"])
+    assert rep["diChannel"]["used"] == "L" and rep["diChannel"]["rule"] == "auto"
+
+
+def test_stereo_di_channel_rule(di):
+    """v0.8 I4a: the louder channel by whole-file RMS is the default; L / R / mix are explicit."""
+    x, sr = di
+    x = x[:20000]
+    st = np.stack([0.1 * x, x], axis=1)
+    mono, _ = render("golden_shared", x, sr)
+    quiet, _ = render("golden_shared", 0.1 * x, sr)
+    y, rep = render("golden_shared", st, sr)
+    assert np.array_equal(y, mono) and rep["diChannel"]["used"] == "R" and rep["diChannel"]["fileChannels"] == 2
+    y, rep = render("golden_shared", st, sr, di_channel="L")
+    assert np.array_equal(y, quiet) and rep["diChannel"]["rule"] == "L"
+    mix, rep = render("golden_shared", st, sr, di_channel="mix")
+    assert rep["diChannel"]["used"] == "mix" and not np.array_equal(mix, mono) and not np.array_equal(mix, quiet)
+    with pytest.raises(ValueError):
+        render("golden_shared", st, sr, di_channel="left")
+
+
+def test_calibration_options_and_report(di):
+    """v0.8 I4a: calibration follows the preset (v<=4 = legacy, bit-identical), device_dbu and the report fields."""
+    x, sr = di
+    x = x[:20000]
+    legacy, rep = render("golden_shared", x, sr)
+    assert rep["calibration"]["mode"] == "legacy" and rep["calibration"]["modeSource"] == "preset"
+    assert not rep["calibration"]["enabled"]
+    forced_off, _ = render("golden_shared", x, sr, calibration="legacy")
+    assert np.array_equal(legacy, forced_off)
+
+    preset = json.loads(preset_text("golden_shared"))
+    preset["version"] = 5
+    preset["calibration"] = {"mode": "calibrated"}
+    y, rep = core.render(preset, x, sr, base_dir=PRESETS)
+    c = rep["calibration"]
+    assert c["mode"] == "calibrated" and c["enabled"] and c["deviceDbu"] == 12.0 and c["deviceAssumed"]
+    assert c["paths"]["a"] and "gainInDb" in c["paths"]["a"][0]
+    y18, rep18 = core.render(preset, x, sr, base_dir=PRESETS, device_dbu=18.0)
+    assert rep18["calibration"]["deviceDbu"] == 18.0 and not rep18["calibration"]["deviceAssumed"]
+    g12 = [b["gainInDb"] for b in c["paths"]["a"]]
+    g18 = [b["gainInDb"] for b in rep18["calibration"]["paths"]["a"]]
+    assert g18[0] == pytest.approx(g12[0] + 6.0)
+    # forcing it on a legacy preset is the same render as the calibrated preset
+    forced_on, _ = render("golden_shared", x, sr, calibration="calibrated")
+    assert np.array_equal(forced_on, y)
+
+    for bad in ({"calibration": "maybe"}, {"device_dbu": 99.0}, {"device_dbu": True}):
+        with pytest.raises(ValueError):
+            render("golden_shared", x, sr, **bad)
 
 
 # ---- capture cache ------------------------------------------------------------------------------
