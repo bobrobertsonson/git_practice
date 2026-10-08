@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <atomic>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -251,6 +253,14 @@ class Chain {
   void setAutoTrimDb(double db) noexcept;
   double autoTrimDb() const noexcept { return autoTrimNowDb_; }
   static constexpr double kAutoTrimRampMs = 250.0;
+  // --- v0.8 I2 live-gate floor seed ---
+  // Where the live gate's floor follower starts (default -70 dBFS; see Gate::setFloorSeedDb). Not RT-safe against a running
+  // process(): call before audio starts (the plugin does it before the engine is published).
+  void setGateFloorSeedDb(double db) noexcept { gate_.setFloorSeedDb(db); }
+  // The floor the live gate has learned (dBFS), or NaN while it has not filled its 3 s window (or the gate is off / not floor
+  // relative). Published by process() through a relaxed atomic float: any thread may read it, nothing is allocated or locked.
+  float learnedGateFloorDb() const noexcept { return gateFloorOut_.load(std::memory_order_relaxed); }
+
   // --- v0.8 input calibration (see ChainCalibration) ---
   // Plans the levels of the built blocks. Allocates; reads only data that is immutable after construction, so any thread.
   CalibrationPlan planCalibration(const ChainCalibration& c) const;
@@ -366,6 +376,7 @@ class Chain {
   bool trimSet_ = false;
   int trimRampSamples_ = 1;
   Gate gate_;
+  std::atomic<float> gateFloorOut_{std::numeric_limits<float>::quiet_NaN()};  // processChunk(): the learned live-gate floor, NaN until learned
   bool gateOn_ = false;
   std::unique_ptr<Convolver> cabShared_;
   ParametricEq postEq_;

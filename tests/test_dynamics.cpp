@@ -409,3 +409,72 @@ TEST_CASE("Auto trim hash follows the rig as it plays: mode labels do not change
   match.dynamicsMode = DynamicsMode::Live;  // the live set differs (comp off): a different rig
   CHECK(autoTrimHash(match) != rec);
 }
+
+// ---- v0.8 I2 Part 3: live-gate floor seed and the learned floor ----------------------------------------------------------
+TEST_CASE("Floor seed: the default is -70 dBFS, a set seed is used on prepare and reset, and it is clamped", "[gate][floor][seed]") {
+  Gate g = makeGate(floorGate());
+  CHECK(g.floorEstimateDb() == Gate::kFloorSeedDb);
+  CHECK(g.floorSeedDb() == Gate::kFloorSeedDb);
+  g.setFloorSeedDb(-45.0);
+  CHECK(g.floorEstimateDb() == -45.0);
+  CHECK(g.openThresholdDb() == -45.0 + 10.0);
+  g.prepare({kFs, 4096});  // prepare() resets the follower: it restarts from the stored seed, not from -70
+  CHECK(g.floorEstimateDb() == -45.0);
+  g.reset();
+  CHECK(g.floorEstimateDb() == -45.0);
+  g.setFloorSeedDb(-10.0);
+  CHECK(g.floorSeedDb() == Gate::kFloorMaxDb);
+  g.setFloorSeedDb(-200.0);
+  CHECK(g.floorSeedDb() == Gate::kFloorMinDb);
+  g.setFloorSeedDb(std::nan(""));  // ignored
+  CHECK(g.floorSeedDb() == Gate::kFloorMinDb);
+}
+
+TEST_CASE("Floor seed: a stored loud floor is learned at once; from the -70 seed it takes the 25 s the parked spec describes", "[gate][floor][seed]") {
+  const double ref = refPeakDb(-47.0);
+  REQUIRE(ref > -45.0);
+  REQUIRE(ref < -35.0);
+  const auto x = riff(-47.0, 4.0, false, 7);
+  Gate def = makeGate(floorGate());
+  feed(def, x, 256);
+  CHECK(def.floorEstimateDb() < ref - 10.0);  // still capped at the -70 seed while the first window fills
+  CHECK_FALSE(def.floorLearned());
+  Gate seeded = makeGate(floorGate());
+  seeded.setFloorSeedDb(ref);
+  feed(seeded, x, 256);
+  CHECK(std::fabs(seeded.floorEstimateDb() - ref) < 3.0);
+  CHECK(seeded.floorLearned());
+  // The default behaviour is unchanged: with no seed set the long run still reaches the floor.
+  feed(def, riff(-47.0, 26.0, false, 8), 256);
+  CHECK(std::fabs(def.floorEstimateDb() - ref) < 3.0);
+}
+
+TEST_CASE("Floor seed: the chain publishes the learned floor through an atomic, and process() allocates nothing", "[gate][floor][seed][chain][alloc]") {
+  json j = mkDyn(4);
+  j["origin"] = "match";
+  j["dynamicsMode"] = "live";
+  const Preset p = parse(j);
+  auto c = std::make_unique<Chain>(p, loadResources(p, kFs));
+  c->setGateFloorSeedDb(-45.0);  // before prepare, as the plugin does
+  c->prepare({kFs, 512});
+  CHECK(std::isnan(c->learnedGateFloorDb()));
+  const double ref = refPeakDb(-47.0);
+  const auto x = riff(-47.0, 4.0, false, 5);
+  std::vector<float> y(x.size());
+  AllocGuard guard;
+  c->process(x.data(), y.data(), static_cast<int>(kFs));  // 1 s: the 3 s window has not filled
+  CHECK(std::isnan(c->learnedGateFloorDb()));
+  for (std::size_t pos = static_cast<std::size_t>(kFs); pos < x.size();) {
+    const auto n = std::min<std::size_t>(512, x.size() - pos);
+    c->process(x.data() + pos, y.data() + pos, static_cast<int>(n));
+    pos += n;
+  }
+  CHECK(guard.count() == 0);
+  REQUIRE(std::isfinite(c->learnedGateFloorDb()));
+  CHECK(std::fabs(static_cast<double>(c->learnedGateFloorDb()) - ref) < 3.0);
+  // A chain whose gate is not floor relative never publishes a learned value.
+  const Preset abs = parse(mkDyn(3));
+  auto d = build(abs);
+  d->process(x.data(), y.data(), static_cast<int>(x.size()));
+  CHECK(std::isnan(d->learnedGateFloorDb()));
+}

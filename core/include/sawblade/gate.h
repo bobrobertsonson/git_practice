@@ -88,6 +88,15 @@ class Gate : public Processor {
 
   // The tracked floor estimate (dBFS) and the open threshold in force (dBFS). Any thread may read after the audio stops.
   double floorEstimateDb() const noexcept { return floorDb_; }
+  // v0.8 I2 Part 3: where the follower starts (reset(), prepare(), entering floorRelative) and the cap it holds until the first 3 s
+  // window has filled. Default kFloorSeedDb (-70 dBFS). Clamped to [kFloorMinDb, kFloorMaxDb]. Restarts the follower: call before
+  // audio runs. A stored floor from the user's device record is the only intended source (never a preset or a reference DI).
+  void setFloorSeedDb(double db) noexcept;
+  double floorSeedDb() const noexcept { return seedDb_; }
+  // True once the follower has a full 3 s window and its estimate is the minimum of frames it measured (not the seed, not the
+  // leak after nothing qualified) (floorRelative only): the estimate is then a learned value,
+  // fit to be stored. Audio thread / owner thread only (plain state); the Chain republishes the value through an atomic.
+  bool floorLearned() const noexcept { return params_.thresholdMode == GateThresholdMode::FloorRelative && learned_; }
   double openThresholdDb() const noexcept { return openDb_; }
 
   bool isOpen() const noexcept { return open_; }
@@ -127,6 +136,8 @@ class Gate : public Processor {
   int frameLen_ = 2400, frameCount_ = 0;
   double frameMax_ = 0.0;
   int sinceQualFrames_ = 0;
+  bool learned_ = false;
+  double seedDb_ = kFloorSeedDb;
   double floorDb_ = kFloorSeedDb;
   double openDb_ = -55.0;
 };

@@ -1014,7 +1014,11 @@ void Chain::processChunk(const float* in, float* out, int n) noexcept {
   float* b = bufB_.data();
   std::copy(in, in + n, w);
   inGain_.process(w, n);
-  if (gateOn_) gate_.processKeyed(w, w, n);
+  if (gateOn_) {
+    gate_.processKeyed(w, w, n);
+    gateFloorOut_.store(gate_.floorLearned() ? static_cast<float>(gate_.floorEstimateDb()) : std::numeric_limits<float>::quiet_NaN(),
+                        std::memory_order_relaxed);
+  }
   std::copy(w, w + n, a);
   std::copy(w, w + n, b);
   renderPath(path_[0], a, n, eqCounter_, true);

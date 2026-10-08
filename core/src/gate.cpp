@@ -65,7 +65,15 @@ void Gate::resetFloor() noexcept {
   ringHead_ = subsDone_ = frameInSub_ = frameCount_ = sinceQualFrames_ = 0;
   subMin_ = kInf;
   frameMax_ = 0.0;
-  floorDb_ = kFloorSeedDb;
+  floorDb_ = seedDb_;
+  learned_ = false;
+}
+
+void Gate::setFloorSeedDb(double db) noexcept {
+  if (!std::isfinite(db)) return;
+  seedDb_ = std::min(kFloorMaxDb, std::max(kFloorMinDb, db));
+  resetFloor();
+  updateCoefficients();
 }
 
 void Gate::setParams(const GateParams& p) noexcept {
@@ -94,8 +102,9 @@ void Gate::floorFrame(double frameMaxEnv) noexcept {
   }
   double m = subMin_;
   for (double v : ring_) m = std::min(m, v);
+  learned_ = m != kInf && subsDone_ >= kSubWindows;
   if (m != kInf) {
-    floorDb_ = subsDone_ < kSubWindows ? std::min(kFloorSeedDb, m) : m;
+    floorDb_ = subsDone_ < kSubWindows ? std::min(seedDb_, m) : m;
   } else if (sinceQualFrames_ * (kFrameMs * 0.001) > kLeakAfterS) {
     floorDb_ += kLeakDbPerS * kFrameMs * 0.001;
   }
