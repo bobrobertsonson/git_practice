@@ -198,6 +198,7 @@ void SawbladeProcessor::timerCallback() {
   ladderTick();
   levelTick();
   calibrationTick();
+  syncInputChannel();
 }
 
 // --- gain ladders -------------------------------------------------------------------------------
@@ -963,6 +964,14 @@ void SawbladeProcessor::computeSlotMakeup(Preset before, Preset after, int path,
   levelWorker_->submitMakeup(std::move(before), std::move(after), path, blockIndex, levelCalibration(), std::move(done));
 }
 
+// --- v0.8 I4b stereo DI -------------------------------------------------------------------------
+void SawbladeProcessor::syncInputChannel() { stereo_.setMode(settings::Settings::shared().inputChannel()); }
+
+std::string SawbladeProcessor::inputChannelNotice() const {
+  if (getTotalNumInputChannels() < 2) return {};
+  return inputChannelText(stereo_.mode(), stereo_.decision());
+}
+
 // --- v0.8 I2 device calibration -----------------------------------------------------------------
 EngineCalibration SawbladeProcessor::currentEngineCalibration() const {
   auto& st = settings::Settings::shared();
@@ -1130,6 +1139,8 @@ void SawbladeProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   }
   fadeLen_ = std::max(1, static_cast<int>(std::lround(kFadeSeconds * sampleRate)));
   preview_.prepare(sampleRate);
+  syncInputChannel();
+  stereo_.prepare(sampleRate);  // re-evaluates a stereo input from scratch (Auto starts as Mix)
   playAlong_.prepare(sampleRate, std::min(samplesPerBlock, kMinChunk), static_cast<int>(std::lround(sampleRate)));  // up to 1 s of rig latency
   recorder_.prepare(sampleRate);  // ring for the DI recorder (>= 2 s), writer thread
   {
@@ -1204,9 +1215,8 @@ void SawbladeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     } else if (numIn == 1) {
       std::memcpy(mono, buffer.getReadPointer(0) + pos, static_cast<std::size_t>(len) * sizeof(float));
     } else {
-      const float* l = buffer.getReadPointer(0) + pos;
-      const float* r = buffer.getReadPointer(1) + pos;
-      for (int i = 0; i < len; ++i) mono[i] = 0.5f * (l[i] + r[i]);
+      // v0.8 I4b: the stereo DI chooser (Auto latches a single channel; Mix is the plain 0.5 * (L + R) it replaces).
+      stereo_.process(buffer.getReadPointer(0) + pos, buffer.getReadPointer(1) + pos, mono, len);
     }
     {
       float peak = 0.0f;

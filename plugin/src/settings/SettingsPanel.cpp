@@ -163,8 +163,8 @@ struct SettingsPanel::Impl : private juce::Timer {
   juce::Label capSep, sepNote, capTakes, capTheme, capScale, scaleNote, levelNote;
   juce::ToggleButton levelToggle;
   // v0.8 I2: the device step (interface level) and the "Calibrated input levels (beta)" toggle. Settings only, never in a preset.
-  juce::Label deviceNote, deviceStatus, dbuMsg, calNote;
-  juce::ComboBox deviceCombo;
+  juce::Label deviceNote, deviceStatus, dbuMsg, calNote, capInputChannel, inputChannelNote;
+  juce::ComboBox deviceCombo, inputChannelCombo;
   juce::TextEditor dbuField;
   juce::TextButton dbuSet;
   juce::ToggleButton padToggle, airToggle, calToggle;
@@ -474,6 +474,24 @@ struct SettingsPanel::Impl : private juce::Timer {
     styleLabel(calNote, L::bodyFont(12.0f), L::dimText());
     calNote.setText("beta: off = the levels presets always had", juce::dontSendNotification);
     add(calNote);
+
+    // v0.8 I4b: which channel of a stereo input is the guitar. Settings only, stored beside the device record, never in a preset.
+    caption(capInputChannel, "INPUT CHANNEL");
+    styleCombo(inputChannelCombo, "Input channel", "Which channel of a stereo input is your guitar. Auto starts as a mix and latches a single channel once the other one stays "
+                                                  "30 dB below it; L, R and Mix force it. A mono input is unaffected. A plugin setting: it is not saved in presets.");
+    inputChannelCombo.addItem("Auto", 1);
+    inputChannelCombo.addItem("L", 2);
+    inputChannelCombo.addItem("R", 3);
+    inputChannelCombo.addItem("Mix", 4);
+    inputChannelCombo.onChange = [this] {
+      if (building) return;
+      s.setInputChannel(static_cast<InputChannelMode>(std::clamp(inputChannelCombo.getSelectedId() - 1, 0, 3)));
+      proc.syncInputChannel();  // do not wait for the timer
+    };
+    add(inputChannelCombo);
+    styleLabel(inputChannelNote, L::bodyFont(12.0f), L::dimText());
+    inputChannelNote.setText("stereo input only: Auto finds the guitar's channel; a mono input is not affected", juce::dontSendNotification);
+    add(inputChannelNote);
 
     // appearance
     caption(capTheme, "THEME");
@@ -1004,6 +1022,7 @@ struct SettingsPanel::Impl : private juce::Timer {
     padToggle.setToggleState(rec && rec->pad, juce::dontSendNotification);
     airToggle.setToggleState(rec && rec->air, juce::dontSendNotification);
     calToggle.setToggleState(s.calibratedInputLevels(), juce::dontSendNotification);
+    inputChannelCombo.setSelectedId(static_cast<int>(s.inputChannel()) + 1, juce::dontSendNotification);  // ids 1..4 = Auto, L, R, Mix
   }
 
   // --- layout ---------------------------------------------------------------------------------------
@@ -1178,6 +1197,11 @@ struct SettingsPanel::Impl : private juce::Timer {
     y += 52;
     place(calToggle, m, y, 260, 30);
     place(calNote, m + 274, y, w - 2 * m - 274, 30);
+    y += 48;
+    place(capInputChannel, m, y, 200, 14);
+    y += 16;
+    place(inputChannelCombo, m, y, 120, 30);
+    place(inputChannelNote, m + 134, y, w - 2 * m - 134, 30);
     y += 48;
 
     // --- appearance

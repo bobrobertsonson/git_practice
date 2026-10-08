@@ -278,7 +278,7 @@ std::string Settings::saveLocked() {
     // we loaded. The file wins for keys we do not own; for our own keys the in-memory document wins (including removal).
     static const char* const kOwned[] = {"version",    "matchVenvDir", "captureCacheDir", "tone3000ClientId", "separationModel",
                                          "takesDir",   "theme",        "uiScale",         "firstRunCompleted", "levelMatch",
-                                         "namInputFile",   "trainingSignalSawblade", "deviceCalibration", "calibratedInputLevels"};
+                                         "namInputFile",   "trainingSignalSawblade", "deviceCalibration", "calibratedInputLevels", "inputChannel"};
     std::ifstream in(file_, std::ios::binary);
     if (in) {
       const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -475,6 +475,12 @@ bool Settings::calibratedInputLevels() const {
   auto it = doc_.find("calibratedInputLevels");
   return it != doc_.end() && it->is_boolean() && it->get<bool>();
 }
+InputChannelMode Settings::inputChannel() const {
+  std::lock_guard<std::mutex> lk(m_);
+  auto it = doc_.find("inputChannel");
+  if (it == doc_.end() || !it->is_string()) return InputChannelMode::Auto;
+  return parseInputChannelMode(it->get<std::string>()).value_or(InputChannelMode::Auto);
+}
 bool Settings::firstRunCompleted() const {
   std::lock_guard<std::mutex> lk(m_);
   auto it = doc_.find("firstRunCompleted");
@@ -596,6 +602,15 @@ Result Settings::setCalibratedInputLevels(bool on) {
     std::lock_guard<std::mutex> lk(m_);
     if (on) doc_["calibratedInputLevels"] = true;
     else doc_.erase("calibratedInputLevels");
+  }
+  return finish({});
+}
+
+Result Settings::setInputChannel(InputChannelMode m) {
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    if (m == InputChannelMode::Auto) doc_.erase("inputChannel");
+    else doc_["inputChannel"] = inputChannelModeName(m);
   }
   return finish({});
 }

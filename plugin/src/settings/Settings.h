@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "sawblade/stereo_input.h"
 #include "settings/DeviceCalibration.h"
 
 // Phase 11 (docs/specs/phase11_settings.md section 1): the plugin's settings store. Nothing here
@@ -118,6 +119,9 @@ class Settings {
   std::optional<DeviceCalibrationRecord> deviceCalibration() const;
   // "Calibrated input levels (beta)": the chain plays with the input calibration. Default false (I4 decides when that flips).
   bool calibratedInputLevels() const;
+  // v0.8 I4b: "Input channel" for a stereo input (docs/PLUGIN.md "Input channel"): Auto (default) | Left | Right | Mix. Settings only, stored
+  // beside the device record and never in a preset; a missing or unknown value reads as Auto. Changed off the audio thread.
+  InputChannelMode inputChannel() const;
 
   Result setMatchVenvDir(std::optional<std::filesystem::path>);
   Result setCaptureCacheDir(std::optional<std::filesystem::path>);
@@ -133,6 +137,7 @@ class Settings {
   // message thread only, never the audio thread.
   Result setDeviceCalibration(std::optional<DeviceCalibrationRecord>);
   Result setCalibratedInputLevels(bool);
+  Result setInputChannel(InputChannelMode);  // Auto removes the key
   // Part 3: stores the live gate's learned floor (dBFS) in the existing record. Not ok (nothing stored) when there is no record or the
   // value is outside the follower's range. Does not notify listeners' UI-visible state beyond the usual settingsChanged().
   Result setLiveGateFloor(double dbfs);

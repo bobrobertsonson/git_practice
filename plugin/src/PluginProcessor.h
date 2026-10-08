@@ -33,11 +33,12 @@
 #include "pedals/CircuitParams.h"
 #include "rig/InputMeter.h"
 #include "settings/DeviceCalibration.h"
+#include "sawblade/stereo_input.h"
 #include "sawblade/swap_slot.h"
 
 namespace sawblade::plugin {
 
-// The plugin's AudioProcessor: mono in (a stereo input is summed to mono), mono or dual-mono
+// The plugin's AudioProcessor: mono in (a stereo input goes through the StereoInputChooser: Auto / L / R / Mix, v0.8 I4b), mono or dual-mono
 // stereo out, wrapping sawblade::Chain through an Engine.
 //
 // Threading model
@@ -90,6 +91,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   void prepareToPlay(double sampleRate, int samplesPerBlock) override;
   void releaseResources() override {}
   bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
+  void processorLayoutsChanged() override { stereo_.requestRestart(); }  // I4b: a new bus layout re-evaluates the stereo input
   void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
   using juce::AudioProcessor::processBlock;
   bool supportsDoublePrecisionProcessing() const override { return false; }
@@ -289,6 +291,13 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // persists the live gate's learned floor into the device record (throttled; off the audio thread: the audio thread only writes an
   // atomic float in the chain). Message thread.
   void calibrationTick();
+  // v0.8 I4b stereo DI (docs/specs/v0_8-I4b-plugin.md section 1). A stereo input layout goes through the chooser (Auto / L / R / Mix, set in
+  // Settings beside the device record) where the plain 0.5 * (L + R) sum used to be; a mono layout never does. The audio thread only reads
+  // atomics; the mode follows Settings through syncInputChannel() (10 Hz timer, and prepareToPlay).
+  void syncInputChannel();
+  const StereoInputChooser& stereoInput() const noexcept { return stereo_; }
+  // The read-only notice line, e.g. "Input: L only (auto)"; "" for a mono input layout. Message thread.
+  std::string inputChannelNotice() const;
   // v0.8 I3 input-level drift check (docs/specs/v0_8-I3-drift_check.md). Runs inside calibrationTick() only with calibrated input levels
   // on AND a device record; otherwise the tracker is cleared and nothing is measured. The baseline is stored in the device record (Settings),
   // never in a preset or the plugin state. Nothing here ever changes a gain. Message thread.
@@ -410,6 +419,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::atomic<int> floorPersistMs_{kFloorPersistIntervalMs};
   std::chrono::steady_clock::time_point floorWrittenAt_{};  // message thread
   drift::DriftTracker driftTracker_;                         // message thread (calibrationTick, the editor)
+  StereoInputChooser stereo_;                                // I4b: audio thread (process), atomics for the rest
   std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed
   bool wantedKeepsMonitor_ = false;
   std::shared_ptr<const Preset> remeasureBase_;    // the preset a pending re-measure started from

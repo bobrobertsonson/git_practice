@@ -5148,6 +5148,51 @@ TEST_CASE("settings: the Calibrated input levels (beta) toggle is off by default
   rig.ed->setSettingsOpen(false);
 }
 
+TEST_CASE("settings: the Input channel setting offers Auto, L, R and Mix and is stored as a setting (v0.8 I4b)", "[editor][settings][inputchannel]") {
+  Rig rig;
+  rig.ed->setSettingsOpen(true);
+  SettingsPanel& panel = settingsPanelOf(*rig.ed);
+  juce::ComboBox* combo = comboTitled(panel, "Input channel");
+  REQUIRE(combo != nullptr);
+  CHECK(combo->getNumItems() == 4);
+  CHECK(combo->getSelectedId() == 1);  // Auto
+  CHECK(Settings::shared().inputChannel() == sawblade::InputChannelMode::Auto);
+  combo->setSelectedId(2, juce::sendNotificationSync);
+  CHECK(Settings::shared().inputChannel() == sawblade::InputChannelMode::Left);
+  CHECK(rig.proc.stereoInput().mode() == sawblade::InputChannelMode::Left);  // no waiting for the timer
+  combo->setSelectedId(3, juce::sendNotificationSync);
+  CHECK(Settings::shared().inputChannel() == sawblade::InputChannelMode::Right);
+  combo->setSelectedId(4, juce::sendNotificationSync);
+  CHECK(Settings::shared().inputChannel() == sawblade::InputChannelMode::Mix);
+  combo->setSelectedId(1, juce::sendNotificationSync);
+  CHECK(Settings::shared().inputChannel() == sawblade::InputChannelMode::Auto);
+  rig.ed->setSettingsOpen(false);
+}
+
+TEST_CASE("input notice: a stereo input shows the decision on the message line, a mono input shows nothing (v0.8 I4b)", "[editor][inputchannel]") {
+  Rig rig;
+  rig.loadInit();
+  rig.ed->refreshNow();
+  CHECK_FALSE(anyLabelContains(*rig.ed, "Input: "));  // mono layout
+  juce::AudioProcessor::BusesLayout stereo;
+  stereo.inputBuses.add(juce::AudioChannelSet::stereo());
+  stereo.outputBuses.add(juce::AudioChannelSet::stereo());
+  REQUIRE(rig.proc.setBusesLayout(stereo));
+  rig.proc.prepareToPlay(48000.0, 512);
+  rig.ed->refreshNow();
+  CHECK(anyLabelContains(*rig.ed, "Input: L+R mix (auto)"));
+  REQUIRE(Settings::shared().setInputChannel(sawblade::InputChannelMode::Left).ok);
+  rig.proc.syncInputChannel();
+  std::vector<float> l(512, 0.1f), r(512, 0.0f);
+  juce::AudioBuffer<float> buf(2, 512);
+  juce::MidiBuffer midi;
+  buf.copyFrom(0, 0, l.data(), 512);
+  buf.copyFrom(1, 0, r.data(), 512);
+  rig.proc.processBlock(buf, midi);  // the forced decision is taken at the start of a block
+  rig.ed->refreshNow();
+  CHECK(anyLabelContains(*rig.ed, "Input: L only (forced)"));
+}
+
 TEST_CASE("drift notice: shows with Recalibrate and Ignore, Recalibrate opens Settings, Ignore silences it", "[editor][devicecal][drift]") {
   Rig rig;
   auto& st = Settings::shared();
