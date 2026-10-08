@@ -25,6 +25,7 @@
 #include "SettingsEnv.h"
 #include "mic/MicPage.h"
 #include "presets/PresetBrowser.h"
+#include "presets/PresetLibrary.h"
 #include "MatchScreen.h"
 #include "PlayAlongPanel.h"
 #include "about/AboutBox.h"
@@ -5191,6 +5192,121 @@ TEST_CASE("input notice: a stereo input shows the decision on the message line, 
   rig.proc.processBlock(buf, midi);  // the forced decision is taken at the start of a block
   rig.ed->refreshNow();
   CHECK(anyLabelContains(*rig.ed, "Input: L only (forced)"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// v0.8 I4b: legacy presets (the hint, the one click, Calibrate all user presets)
+// ---------------------------------------------------------------------------------------------
+namespace {
+// A preset file with no captures (the Init rig) as an older version wrote it: schema v4, no calibration member.
+nlohmann::json legacyPresetJson(const std::string& name) {
+  nlohmann::json j = sawblade::toJson(sawblade::plugin::makeInitPreset());
+  j["version"] = 4;
+  j.erase("calibration");
+  j["name"] = name;
+  return j;
+}
+}  // namespace
+
+TEST_CASE("legacy hint: shows for a legacy preset with calibrated input levels on, not for a calibrated one, and one click switches it (undoable, saved)",
+          "[editor][legacy][i4b]") {
+  Rig rig;
+  rig.loadInit();
+  REQUIRE(rig.proc.currentPreset().calibrationMode == sawblade::CalibrationMode::Legacy);
+  juce::Button* use = buttonTitled(*rig.ed, "Use calibrated levels");
+  REQUIRE(use != nullptr);
+  const juce::String hint = juce::String::fromUTF8("Legacy levels \xe2\x80\x94 this preset was made before calibrated input.");
+
+  // Calibrated input levels off: nothing to say.
+  rig.ed->refreshNow();
+  CHECK_FALSE(use->isVisible());
+  CHECK_FALSE(anyLabelContains(*rig.ed, hint));
+
+  // On: the hint with its one-click button.
+  REQUIRE(Settings::shared().setCalibratedInputLevels(true).ok);
+  rig.ed->refreshNow();
+  CHECK(use->isVisible());
+  CHECK(anyLabelContains(*rig.ed, hint));
+
+  // One click: the preset is calibrated, the hint is gone, one undo step was recorded, a save writes "calibrated".
+  const auto steps = rig.proc.undoSteps();
+  click(*use);
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.ed->refreshNow();
+  CHECK(rig.proc.currentPreset().calibrationMode == sawblade::CalibrationMode::Calibrated);
+  CHECK_FALSE(use->isVisible());
+  CHECK_FALSE(anyLabelContains(*rig.ed, hint));
+  CHECK(rig.proc.undoSteps() == steps + 1);
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_legacy_hint_" + std::to_string(juce::Random::getSystemRandom().nextInt64() & 0xffffff));
+  fs::create_directories(dir);
+  {
+    sawblade::plugin::PresetLibrary lib({dir / "factory", dir / "user"});
+    std::string err;
+    REQUIRE(lib.save(rig.proc.currentPreset(), dir / "user" / "saved.json", &err));
+    CHECK(sawblade::loadPresetFile(dir / "user" / "saved.json").calibrationMode == sawblade::CalibrationMode::Calibrated);
+    CHECK(nlohmann::json::parse(std::ifstream(dir / "user" / "saved.json"))["calibration"]["mode"] == "calibrated");
+  }
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+
+  // Undo puts it back, and the hint with it; redo again.
+  REQUIRE(rig.proc.undo());
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.ed->refreshNow();
+  CHECK(rig.proc.currentPreset().calibrationMode == sawblade::CalibrationMode::Legacy);
+  CHECK(use->isVisible());
+  CHECK(anyLabelContains(*rig.ed, hint));
+  REQUIRE(rig.proc.redo());
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.ed->refreshNow();
+  CHECK(rig.proc.currentPreset().calibrationMode == sawblade::CalibrationMode::Calibrated);
+  CHECK_FALSE(use->isVisible());
+}
+
+TEST_CASE("settings: Calibrate all user presets asks with the count, converts only the user bank off the message thread, and reports", "[editor][settings][legacy][i4b]") {
+  AppDataEnv appData;  // the user bank lives at <appdata>/presets
+  Rig rig;
+  const fs::path userDir = appData.dir / "presets";
+  fs::create_directories(userDir);
+  const auto put = [&](const char* name, const nlohmann::json& j) { std::ofstream(userDir / name) << j.dump(2) << '\n'; };
+  put("one.json", legacyPresetJson("one"));
+  put("two.json", legacyPresetJson("two"));
+  nlohmann::json cal = legacyPresetJson("three");
+  cal["version"] = 5;
+  cal["calibration"] = {{"mode", "calibrated"}};
+  put("three.json", cal);
+  std::ifstream in3(userDir / "three.json");
+  const std::string threeBefore((std::istreambuf_iterator<char>(in3)), std::istreambuf_iterator<char>());
+
+  rig.ed->setSettingsOpen(true);
+  SettingsPanel& panel = settingsPanelOf(*rig.ed);
+  juce::Button* btn = buttonTitled(panel, "Calibrate all user presets");
+  REQUIRE(btn != nullptr);
+
+  // Cancel: the question names the count, nothing is written.
+  std::string question;
+  panel.onConfirmCalibrateAll = [&](const std::string& q, std::function<void()>) { question = q; };
+  click(*btn);
+  CHECK(question == "Switch 2 user presets to calibrated levels? Factory presets are not changed.");
+  CHECK(sawblade::loadPresetFile(userDir / "one.json").calibrationMode == sawblade::CalibrationMode::Legacy);
+
+  // Confirm: rewritten in the background; the message says how many.
+  panel.onConfirmCalibrateAll = [&](const std::string&, std::function<void()> yes) { yes(); };
+  click(*btn);
+  REQUIRE(pumpUntil([&] { return !panel.calibrateAllRunning(); }, 30000));
+  CHECK(anyLabelContains(panel, "Switched 2 presets to calibrated levels."));
+  CHECK(sawblade::loadPresetFile(userDir / "one.json").calibrationMode == sawblade::CalibrationMode::Calibrated);
+  CHECK(sawblade::loadPresetFile(userDir / "two.json").calibrationMode == sawblade::CalibrationMode::Calibrated);
+  std::ifstream in3b(userDir / "three.json");
+  CHECK(std::string((std::istreambuf_iterator<char>(in3b)), std::istreambuf_iterator<char>()) == threeBefore);  // already calibrated: byte-identical
+
+  // Nothing left: it says so and asks nothing.
+  question.clear();
+  panel.onConfirmCalibrateAll = [&](const std::string& q, std::function<void()>) { question = q; };
+  click(*btn);
+  CHECK(question.empty());
+  CHECK(anyLabelContains(panel, "No legacy user presets to switch."));
+  rig.ed->setSettingsOpen(false);
 }
 
 TEST_CASE("drift notice: shows with Recalibrate and Ignore, Recalibrate opens Settings, Ignore silences it", "[editor][devicecal][drift]") {

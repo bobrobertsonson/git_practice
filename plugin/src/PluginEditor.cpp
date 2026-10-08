@@ -180,6 +180,13 @@ class SawbladeEditor::Content : public juce::Component {
     };
     driftRecal_.setVisible(false);
     driftIgnore_.setVisible(false);
+    // v0.8 I4b: the legacy-levels hint's one click (same slot as the drift buttons; they are never up together: drift needs calibration on).
+    configure(legacyUse_, "Use calibrated levels", "Switch this preset to calibrated input levels. You can undo it; saving writes it into the preset.", false);
+    legacyUse_.onClick = [this] {
+      processor_.setCalibrationMode(CalibrationMode::Calibrated);
+      refresh();
+    };
+    legacyUse_.setVisible(false);
 
     // --- inspector
     selKind_.setFont(L::labelFont(11.0f));
@@ -357,6 +364,7 @@ class SawbladeEditor::Content : public juce::Component {
     message_.setBounds(34, kTopBar + 14, 860, 20);
     driftRecal_.setBounds(34 + 860 + 8, kTopBar + 14, 96, 20);
     driftIgnore_.setBounds(34 + 860 + 8 + 96 + 6, kTopBar + 14, 64, 20);
+    legacyUse_.setBounds(34 + 860 + 8, kTopBar + 14, 150, 20);
     rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
     cabScreen_->setBounds(0, kTopBar, rig::CabScreen::kWidth, rig::CabScreen::kHeight);
     micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
@@ -402,6 +410,9 @@ class SawbladeEditor::Content : public juce::Component {
     const bool showDrift = driftNotice.active && !transientShown && !st.loading && st.error.empty() && st.info.warnings.empty();
     driftRecal_.setVisible(showDrift);
     driftIgnore_.setVisible(showDrift);
+    // v0.8 I4b: a legacy preset with calibrated input levels on: a small non-blocking hint with a one-click switch (after errors, warnings and drift).
+    const bool showLegacy = processor_.legacyLevelsHint() && !transientShown && !st.loading && st.error.empty() && st.info.warnings.empty() && !driftNotice.active;
+    legacyUse_.setVisible(showLegacy);
     if (transientShown) {
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText(transient_, juce::dontSendNotification);
@@ -417,6 +428,9 @@ class SawbladeEditor::Content : public juce::Component {
     } else if (driftNotice.active) {  // v0.8 I3: the interface gain seems to have moved since calibration
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText(juce::String::fromUTF8(drift::driftNoticeText(driftNotice).c_str()), juce::dontSendNotification);
+    } else if (showLegacy) {
+      message_.setColour(juce::Label::textColourId, L::warning());
+      message_.setText(juce::String::fromUTF8("Legacy levels \xe2\x80\x94 this preset was made before calibrated input."), juce::dontSendNotification);
     } else if (st.calibrationAssumed) {  // v0.8 I2: calibrated input levels are on and no interface is set up (non-blocking)
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText(juce::String(settings::uncalibratedNotice()), juce::dontSendNotification);
@@ -776,7 +790,7 @@ class SawbladeEditor::Content : public juce::Component {
   AbCompare abCompare_{processor_};
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
-  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, cabButton_, settingsBtn_, driftRecal_, driftIgnore_;
+  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, cabButton_, settingsBtn_, driftRecal_, driftIgnore_, legacyUse_;
   juce::uint32 learnShownUntil_ = 0;
   juce::String transient_;         // the pedalboard's last status message
   juce::uint32 transientUntil_ = 0;

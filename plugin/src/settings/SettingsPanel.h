@@ -34,6 +34,9 @@ class SettingsPanel : public juce::Component {
   std::function<void()> onClosed;  // after close()
   std::function<void(const std::string&)> onLaunchUrl;  // OPEN in the login box; default: the system browser (tests hook it)
   std::function<void()> onAbout;   // the footer's About Sawblade... button
+  // v0.8 I4b: "Calibrate all user presets...": the confirmation question and the action to run on yes. Default (empty): a modal dialog with OK / Cancel.
+  std::function<void(const std::string& question, std::function<void()> yes)> onConfirmCalibrateAll;
+  bool calibrateAllRunning() const;  // the background rewrite is in flight
 
   bool checklistExpanded() const;
   bool loginRunning() const;

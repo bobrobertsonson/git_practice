@@ -41,6 +41,7 @@ add_library(sawblade_core STATIC
   src/bus_comp.cpp
   src/preset_reader.cpp
   src/preset.cpp
+  src/preset_calibrate.cpp
   src/block_registry.cpp
   src/capture_cache.cpp
   src/chain.cpp

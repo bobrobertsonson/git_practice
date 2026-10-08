@@ -42,7 +42,8 @@ add_executable(sawblade_tests
   test_dynamics.cpp
   test_gate_peak_floor.cpp
   test_drift.cpp
-  test_stereo_input.cpp)
+  test_stereo_input.cpp
+  test_preset_calibrate.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)

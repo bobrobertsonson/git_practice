@@ -11,6 +11,8 @@
 
 #include "../SawbladeLookAndFeel.h"
 #include "../about/CaptureList.h"
+#include "../presets/PresetLibrary.h"
+#include "sawblade/preset_calibrate.h"
 #include "LoginFlow.h"
 #include "ToolRunner.h"
 
@@ -165,6 +167,11 @@ struct SettingsPanel::Impl : private juce::Timer {
   // v0.8 I2: the device step (interface level) and the "Calibrated input levels (beta)" toggle. Settings only, never in a preset.
   juce::Label deviceNote, deviceStatus, dbuMsg, calNote, capInputChannel, inputChannelNote;
   juce::ComboBox deviceCombo, inputChannelCombo;
+  // v0.8 I4b: "Calibrate all user presets..." (legacy -> calibrated in bulk, user bank only).
+  juce::TextButton calAllBtn;
+  juce::Label calAllMsg;
+  std::unique_ptr<juce::AlertWindow> calAllDialog;
+  bool calAllRunning = false;
   juce::TextEditor dbuField;
   juce::TextButton dbuSet;
   juce::ToggleButton padToggle, airToggle, calToggle;
@@ -493,6 +500,15 @@ struct SettingsPanel::Impl : private juce::Timer {
     inputChannelNote.setText("stereo input only: Auto finds the guitar's channel; a mono input is not affected", juce::dontSendNotification);
     add(inputChannelNote);
 
+    // v0.8 I4b: the cheap path from legacy presets to calibrated levels, in bulk. The confirmation names the count; the rewrite runs off the message
+    // thread, one atomic write per file; only the user bank is touched, never the factory presets.
+    styleButton(calAllBtn, "Calibrate all user presets...", "Switch every legacy preset in your user bank to calibrated input levels (a preset can also be switched on its own from the hint above the rig). Factory presets are not changed.");
+    calAllBtn.setTitle("Calibrate all user presets");
+    calAllBtn.onClick = [this] { askCalibrateAll(); };
+    add(calAllBtn);
+    styleLabel(calAllMsg, L::bodyFont(12.0f), L::dimText());
+    add(calAllMsg);
+
     // appearance
     caption(capTheme, "THEME");
     styleCombo(themeCombo, "Theme", "more themes later");
@@ -707,6 +723,75 @@ struct SettingsPanel::Impl : private juce::Timer {
           refresh();
         });
     layout();
+  }
+
+  // --- Calibrate all user presets (v0.8 I4b) --------------------------------------------------------
+  // The folder it works on: the user bank, and only that. (The factory folder is refused even if the two were configured to overlap.)
+  static fs::path bulkDir() {
+    const LibraryConfig cfg = defaultLibraryConfig();
+    std::error_code ec;
+    const fs::path user = fs::weakly_canonical(cfg.userDir, ec), factory = fs::weakly_canonical(cfg.factoryDir, ec);
+    if (user.empty() || user == factory) return {};
+    const std::string u = user.generic_string() + "/", f = factory.generic_string() + "/";  // inside the factory folder?
+    if (!factory.empty() && u.rfind(f, 0) == 0) return {};
+    return cfg.userDir;
+  }
+
+  void askCalibrateAll() {
+    if (calAllRunning) return;
+    const fs::path dir = bulkDir();
+    if (dir.empty()) {
+      calAllMsg.setColour(juce::Label::textColourId, L::warning());
+      calAllMsg.setText("No user preset folder.", juce::dontSendNotification);
+      return;
+    }
+    const int n = static_cast<int>(legacyPresetFiles(dir).size());
+    calAllMsg.setColour(juce::Label::textColourId, L::dimText());
+    if (n == 0) {
+      calAllMsg.setText("No legacy user presets to switch.", juce::dontSendNotification);
+      return;
+    }
+    const std::string question = "Switch " + std::to_string(n) + " user preset" + (n == 1 ? "" : "s") + " to calibrated levels? Factory presets are not changed.";
+    auto yes = [this, dir] { runCalibrateAll(dir); };
+    if (owner.onConfirmCalibrateAll) {  // tests answer without a modal dialog
+      owner.onConfirmCalibrateAll(question, yes);
+      return;
+    }
+    calAllDialog = std::make_unique<juce::AlertWindow>("Calibrate all user presets", ju(question), juce::MessageBoxIconType::QuestionIcon);
+    calAllDialog->addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    calAllDialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    auto flag = alive;
+    calAllDialog->enterModalState(true, juce::ModalCallbackFunction::create([this, flag, yes](int r) {
+      if (!flag->load()) return;
+      calAllDialog.reset();
+      if (r == 1) yes();
+    }), false);
+  }
+
+  void runCalibrateAll(const fs::path& dir) {
+    if (calAllRunning) return;
+    calAllRunning = true;
+    calAllBtn.setEnabled(false);
+    calAllMsg.setColour(juce::Label::textColourId, L::dimText());
+    calAllMsg.setText("Switching...", juce::dontSendNotification);
+    auto flag = alive;
+    std::thread([this, dir, flag] {
+      const BulkCalibrateResult r = calibrateLegacyPresets(dir);
+      juce::MessageManager::callAsync([this, flag, r] {
+        if (!flag->load()) return;
+        calAllRunning = false;
+        calAllBtn.setEnabled(true);
+        juce::String text = "Switched " + juce::String(r.converted()) + " preset" + (r.converted() == 1 ? "" : "s") + " to calibrated levels.";
+        bool bad = false;
+        for (const auto& e : r.files)
+          if (e.status == BulkCalibrateStatus::WriteFailed) {
+            text += (bad ? "; " : "  Not switched: ") + ju(e.file.filename().string()) + " (" + ju(e.error) + ")";
+            bad = true;
+          }
+        calAllMsg.setColour(juce::Label::textColourId, bad ? L::warning() : L::dimText());
+        calAllMsg.setText(text, juce::dontSendNotification);
+      });
+    }).detach();
   }
 
   void startCount() {
@@ -1203,6 +1288,9 @@ struct SettingsPanel::Impl : private juce::Timer {
     place(inputChannelCombo, m, y, 120, 30);
     place(inputChannelNote, m + 134, y, w - 2 * m - 134, 30);
     y += 48;
+    place(calAllBtn, m, y, 260, 30);
+    place(calAllMsg, m + 274, y, w - 2 * m - 274, 30);
+    y += 48;
 
     // --- appearance
     heading("APPEARANCE");
@@ -1313,6 +1401,7 @@ void SettingsPanel::close() {
 void SettingsPanel::refresh() { impl_->refresh(); }
 bool SettingsPanel::checklistExpanded() const { return impl_->expanded; }
 int SettingsPanel::checklistLight(int row) const { return row >= 0 && row < 3 ? static_cast<int>(impl_->rowState[static_cast<size_t>(row)]) : 0; }
+bool SettingsPanel::calibrateAllRunning() const { return impl_->calAllRunning; }
 bool SettingsPanel::loginRunning() const { return impl_->loginJob && impl_->loginJob->isRunning(); }
 
 }  // namespace sawblade::plugin::settings
