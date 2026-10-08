@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Render every workshop mockup screen into design/mockups/workshop/png/.
 
-    python3 design/mockups/workshop/render_all.py                 # render both wear sets (png/ subtle, png_strong/ strong), contrast check
+    python3 design/mockups/workshop/render_all.py --look v3 --wear strong   # one set (look v2|v3|all x wear subtle|strong|all)
+    python3 design/mockups/workshop/render_all.py                 # render all four sets (png, png_strong, png_v3, png_v3_strong)
     python3 design/mockups/workshop/render_all.py --wear strong   # only the strong set
     python3 design/mockups/workshop/render_all.py --only 01_main_rig
     python3 design/mockups/workshop/render_all.py --check         # re-render to a temp dir, compare decoded RGBA with png/
@@ -85,16 +86,16 @@ def contrast_table(results):
     return lines, fails
 
 
-def wear_dirs(out, wears):
-    """-> [(wear, directory)].  Default: png/ (subtle) and png_strong/ (strong); with --out DIR the subtle set goes to DIR and
-    the strong set to DIR_strong (a single selected wear goes to DIR)."""
+def set_dirs(out, looks, wears):
+    """-> [(look, wear, directory)].  Default: png/ (v2 subtle), png_strong/, png_v3/, png_v3_strong/ next to this file; with
+    --out DIR the same names are made from DIR (DIR, DIR_strong, DIR_v3, DIR_v3_strong), and a single selected set goes to DIR."""
     res = []
-    for w in wears:
-        if out is None:
-            res.append((w, PNG_DIR if w == 'subtle' else PNG_DIR + '_strong'))
-        else:
-            o = os.path.normpath(out)
-            res.append((w, o if (len(wears) == 1 or w == 'subtle') else o + '_strong'))
+    n = len(looks) * len(wears)
+    for lk in looks:
+        for w in wears:
+            suffix = ('_v3' if lk == 'v3' else '') + ('_strong' if w == 'strong' else '')
+            base = PNG_DIR if out is None else os.path.normpath(out)
+            res.append((lk, w, base if (out is not None and n == 1) else base + suffix))
     return res
 
 
@@ -102,7 +103,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--out', default=None, help='output directory (default png/ for subtle, png_strong/ for strong)')
     ap.add_argument('--font-dir', default=None, help='font cache directory (default ~/.cache/sawblade_fonts)')
-    ap.add_argument('--wear', default='all', choices=['subtle', 'strong', 'all'], help='material wear set (default: both sets)')
+    ap.add_argument('--wear', default='all', choices=['subtle', 'strong', 'all'], help='material wear set (default: both)')
+    ap.add_argument('--look', default='all', choices=['v2', 'v3', 'all'], help='v2 (approved look) or v3 (displays) (default: both)')
     ap.add_argument('--check', action='store_true', help='compare a fresh render with the committed PNGs')
     ap.add_argument('--contrast', action='store_true', help='print the measured contrast table (Markdown)')
     ap.add_argument('--only', action='append', help='render only this screen name (repeatable)')
@@ -120,15 +122,17 @@ def main(argv=None):
         return 77
     reg = load_registry()
     wears = ['subtle', 'strong'] if a.wear == 'all' else [a.wear]
+    looks = ['v2', 'v3'] if a.look == 'all' else [a.look]
     rc = 0
-    for wear, outdir in wear_dirs(a.out, wears):
+    for look, wear, outdir in set_dirs(a.out, looks, wears):
         ws.set_wear(wear)
+        ws.set_look(look)
         results = render_screens(reg, a.only)
         lines, fails = contrast_table(results)
-        tag = f'[{wear}] '
+        tag = f'[{look} {wear}] '
         if a.contrast:
-            if len(wears) > 1:
-                print(f'### wear: {wear}\n')
+            if len(wears) * len(looks) > 1:
+                print(f'### look: {look}, wear: {wear}\n')
             print('\n'.join(lines))
             n = sum(len(v[1]) for v in results.values())
             print(f'\n{n} strings measured on {len(results)} screens: ' + ('all pass WCAG 2.x AA' if not fails else f'{len(fails)} FAIL'))
@@ -164,6 +168,7 @@ def main(argv=None):
             print(f'{tag}CONTRAST FAIL', f)
         rc |= 1 if fails else 0
     ws.set_wear('subtle')
+    ws.set_look('v2')
     return rc
 
 

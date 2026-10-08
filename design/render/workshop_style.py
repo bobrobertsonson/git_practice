@@ -72,6 +72,8 @@ _HEX = {
     'bone': '#e8e1d2', 'bone_dim': '#b3a995', 'bone_mute': '#9c927f', 'ink': '#14110d',
     'blade': '#ff6a1a', 'blade_hi': '#ff8a3d', 'body': '#7fb4ea', 'lcd_amber': '#ffb347',
     'ok': '#7fe08f', 'warn': '#ffb347', 'alert': '#ff6b5a',
+    # v3 displays: backlit green digits and the two slightly lit glass colours (flat)
+    'lcd_green': '#7dffa2', 'glass_amber': '#1c1408', 'glass_green': '#0a1a10',
 }
 PAL = {k: tuple(int(v[i:i + 2], 16) for i in (1, 3, 5)) for k, v in _HEX.items()}
 
@@ -116,9 +118,10 @@ def required_ratio(px, bold):
 
 
 # ratios the spec table claims (checked at import: the palette cannot drift silently)
+_V3_TOKENS = ('lcd_green', 'glass_amber', 'glass_green')
 _CLAIMED = [('bone', 'well', 13.7), ('bone_dim', 'well', 7.7), ('bone_mute', 'well', 5.8), ('ink', 'alu', 9.2),
             ('blade', 'well', 6.2), ('body', 'well', 8.2), ('lcd_amber', 'glass', 11.0), ('ok', 'well', 11.0),
-            ('alert', 'well', 6.4)]
+            ('alert', 'well', 6.4), ('lcd_green', 'glass_green', 11.0), ('lcd_amber', 'glass_amber', 9.5)]
 for _fg, _bg, _want in _CLAIMED:
     if contrast(PAL[_fg], PAL[_bg]) < _want - 0.05:
         raise ValueError('palette drift: %s on %s is %.2f, spec says %.1f' % (_fg, _bg, contrast(PAL[_fg], PAL[_bg]), _want))
@@ -320,6 +323,27 @@ def set_wear(mode):
 
 def get_wear():
     return _WEAR
+
+
+LOOK_MODES = ('v2', 'v3')
+_LOOK = 'v2'
+
+
+def set_look(mode):
+    """Select the look: 'v2' (the approved look, default, byte-identical) or 'v3' (displays: backlit LCD panels, dot-matrix
+    text, LED ladders and rings, glowing state LEDs).  Orthogonal to the wear level."""
+    global _LOOK
+    if mode not in LOOK_MODES:
+        raise ValueError('look must be one of %s, got %r' % (LOOK_MODES, mode))
+    _LOOK = mode
+
+
+def get_look():
+    return _LOOK
+
+
+def is_v3():
+    return _LOOK == 'v3'
 
 
 def _rng(name):
@@ -603,14 +627,20 @@ def text_width(s, style='body', size=None, track=None):
     return w / S
 
 
-def _flat_colour(cv, box, what):
-    """Return the single colour in a device box or raise FlatBackgroundError."""
+def _flat_colour(cv, box, what, allow=None):
+    """Return the single colour in a device box or raise FlatBackgroundError.  ``allow`` = (glass, ghost) RGB tuples: the box
+    may hold exactly those two colours (display text over an unlit ghost matrix); the ghost colour is returned (pessimistic)."""
     x0, y0, x1, y1 = box
     x0, y0 = max(x0, 0), max(y0, 0)
     x1, y1 = min(x1, cv.im.width), min(y1, cv.im.height)
     if x1 <= x0 or y1 <= y0:
         raise FlatBackgroundError(f'{cv.name}: text {what!r} is off the canvas')
     a = np.asarray(cv.im.crop((x0, y0, x1, y1)))
+    if allow is not None:
+        cols = {tuple(int(v) for v in c) for c in np.unique(a.reshape(-1, 3), axis=0)}
+        if not cols <= set(allow):
+            raise FlatBackgroundError(f'{cv.name}: display text {what!r} is not on glass / ghost only: {sorted(cols - set(allow))[:3]}')
+        return tuple(allow[-1])
     first = a[0, 0]
     if not (a == first).all():
         bad = np.argwhere((a != first).any(axis=2))[0]
@@ -1592,11 +1622,12 @@ def lcd_width(value, unit='', digits=None, h=26):
     return w + 4
 
 
-def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None):
+def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None, tone='amber'):
     """7-segment LCD readout (h >= 14, spec rule 4): glass well (flat), lcd_amber digits slanted ~6 deg with faint ghost segments for the unlit
     ones (decoration, not text), the unit in Share Tech Mono to the right inside the same glass.  ``value`` is a string
     ('-33.1', '+12.5', '01:23.4', '142'); ``digits`` = number of digit cells (right-aligned, default = the string's).
-    ``xy`` = (x, y_centre).  Returns the glass rect."""
+    ``xy`` = (x, y_centre).  v3: backlit glass (``tone`` amber | green), ghost segments <= 1.25:1 against the glass, logged bg = ghost.
+    Returns the glass rect."""
     if h < 14:
         raise ValueError('lcd(): readouts must be >= 14 px (spec rule 4), got h=%s' % h)
     toks = []                                  # (char, dot_after)
@@ -1617,11 +1648,15 @@ def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None):
     cv.fill(rect, 'steel_bare', 3)
     cv.fill(inset(rect, 1), 'bench_dark', 3)
     glass = inset(rect, 2)
-    cv.fill(glass, 'glass', 2)
+    v3 = _LOOK == 'v3'
+    lit_tok = TONES[tone]['lit'] if v3 else 'lcd_amber'
+    cv.fill(glass, TONES[tone]['glass'] if v3 else 'glass', 2)
     # the digit area must be flat before ghosts are drawn
     dx0 = x + 6
     dig_box = (dx0, rect[1] + 3, dx0 + n * pitch + h * 0.15, rect[3] - 3)
     bgc = _flat_colour(cv, _dev(dig_box), 'lcd ' + value)
+    if v3:
+        bgc = GHOST[tone]                      # pessimistic: the digits sit on the ghost segments
     ghost, lit = Image.new('L', (int((dig_box[2] - dig_box[0] + 2) * S * 4), int((dig_box[3] - dig_box[1] + 2) * S * 4)), 0), None
     gm = ghost
     lm = Image.new('L', gm.size, 0)
@@ -1665,16 +1700,16 @@ def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None):
             ld.ellipse(((ox + cell * pitch + cw + t * 0.3) * k, (top + h - dig_box[1] + 1 - t * 0.9) * k,
                         (ox + cell * pitch + cw + t * 1.1) * k, (top + h - dig_box[1] + 1 - t * 0.1) * k), fill=255)
     sz = (int((dig_box[2] - dig_box[0] + 2) * S), int((dig_box[3] - dig_box[1] + 2) * S))
-    gm = gm.resize(sz, Image.BOX).point(lambda v: int(v * 0.11))
+    gm = gm.resize(sz, Image.BOX).point(lambda v: int(v * (GHOST_A[tone] if v3 else 0.11)))
     lm = lm.resize(sz, Image.BOX)
     pos = (int(round((dig_box[0] - 1) * S)), int(round((dig_box[1] - 1) * S)))
-    cv.im.paste(Image.new('RGB', sz, PAL['lcd_amber']), pos, gm)
-    cv.im.paste(Image.new('RGB', sz, PAL['lcd_amber']), pos, lm)
-    cv.log.append(dict(screen=cv.name, style='lcd', fg='lcd_amber', fg_rgb=PAL['lcd_amber'], bg_rgb=bgc,
-                       px=h, bold=False, text=value, ratio=contrast(PAL['lcd_amber'], bgc), ink=dig_box))
+    cv.im.paste(Image.new('RGB', sz, PAL[lit_tok]), pos, gm)
+    cv.im.paste(Image.new('RGB', sz, PAL[lit_tok]), pos, lm)
+    cv.log.append(dict(screen=cv.name, style='lcd', fg=lit_tok, fg_rgb=PAL[lit_tok], bg_rgb=bgc,
+                       px=h, bold=False, text=value, ratio=contrast(PAL[lit_tok], bgc), ink=dig_box))
     if unit:
         ux = dig_box[2] + 4
-        text(cv, (ux, xy[1] + 1), unit, 'lcd_unit', bg=(ux - 1, rect[1] + 3, rect[2] - 4, rect[3] - 3))
+        text(cv, (ux, xy[1] + 1), unit, 'lcd_unit', bg=(ux - 1, rect[1] + 3, rect[2] - 4, rect[3] - 3), fg=lit_tok if v3 else None)
     return rect
 
 
@@ -1692,7 +1727,7 @@ def nixie(cv, rect, s, size=40, caption_text=None):
 # --------------------------------------------------------------------------------------------------------------------
 # knob, footswitch, LED, toggle, rotary selector
 # --------------------------------------------------------------------------------------------------------------------
-def knob(cv, cx, cy, size, kind='pedal', value=0.5, path='blade', label=None, readout=None, track=True):
+def knob(cv, cx, cy, size, kind='pedal', value=0.5, path='blade', label=None, readout=None, track=True, ring=False):
     """Knob from the Blender filmstrip (frame = round(value * 127)) with a drop shadow, a value arc in the path colour
     (``path`` = colour token; the arc is drawn here as the sidecar says) on a faint track, a label well under it and an
     optional LCD readout ``readout=(value_str, unit)`` under the label.  ``size`` = sprite width in logical px.  Returns
@@ -1700,7 +1735,9 @@ def knob(cv, cx, cy, size, kind='pedal', value=0.5, path='blade', label=None, re
     spr = _knob_sprite(kind, value, size)
     cv.shadow((cx - size * 0.42, cy - size * 0.4, cx + size * 0.42, cy + size * 0.4), 99, (size * 0.03, size * 0.07),
               size * 0.18, 0.7, 'ellipse')
-    if track:
+    if track and ring and _LOOK == 'v3':
+        led_ring(cv, cx, cy, (62.0 if kind == 'amp' else 52.48) / 64.0 * size / 2.0 + size * 0.04, value, path)
+    elif track:
         ring = (62.0 if kind == 'amp' else 52.48) / 64.0 * size / 2.0
         wdt = max(1.8, size * 0.04)
         cv.arc(cx, cy, ring, 135, 405, wdt, 'bench_dark', 0.8)
@@ -1901,6 +1938,8 @@ def top_bar(cv, state=None, y=0, width=PAGE_W):
     ``y``.  ``state`` = TopBarState (or a dict of its fields).  Returns a dict of element rects: brand, preset, ab_a, ab_b,
     rig, woodshed, gear, status, mode, match, forger, chip_uncal, chip_oot, rail."""
     st = state if isinstance(state, TopBarState) else TopBarState(**(state or {}))
+    if _LOOK == 'v3':
+        return top_bar_v3(cv, st, y, width)
     rail = (0, y, width, y + BAR_H)
     cv.shadow(rail, 0, (0, 4), 8, 0.7)
     cv.texture(rail, alu_tex(width, BAR_H, 'topbar'))
@@ -2016,6 +2055,408 @@ def top_bar(cv, state=None, y=0, width=PAGE_W):
 
 
 # --------------------------------------------------------------------------------------------------------------------
+# v3 displays: backlit LCD panels, 5x7 dot-matrix text, LED ladders and rings, glowing state LEDs
+# --------------------------------------------------------------------------------------------------------------------
+TONES = {'amber': dict(lit='lcd_amber', glass='glass_amber'), 'green': dict(lit='lcd_green', glass='glass_green')}
+
+
+def _ghost_alpha(tone):
+    """Largest blend of the lit colour into the glass that keeps the ghost <= 1.24:1 against the glass."""
+    g, l = rgb(TONES[tone]['glass']), rgb(TONES[tone]['lit'])
+    best = 0.0
+    for i in range(1, 80):
+        a = i / 400.0
+        c = tuple(int(round(g[k] + (l[k] - g[k]) * a)) for k in range(3))
+        if contrast(c, g) <= 1.24:
+            best = a
+        else:
+            break
+    return best
+
+
+GHOST_A = {t: _ghost_alpha(t) for t in TONES}
+GHOST = {t: tuple(int(round(rgb(TONES[t]['glass'])[k] + (rgb(TONES[t]['lit'])[k] - rgb(TONES[t]['glass'])[k]) * GHOST_A[t]))
+                  for k in range(3)) for t in TONES}
+for _t in TONES:                                   # the spec's limit, checked at import
+    if contrast(GHOST[_t], TONES[_t]['glass']) > 1.25:
+        raise ValueError('ghost for %s is %.3f:1 against its glass' % (_t, contrast(GHOST[_t], TONES[_t]['glass'])))
+
+_DM = {
+    'A': ".###. #...# #...# ##### #...# #...# #...#", 'B': "####. #...# #...# ####. #...# #...# ####.",
+    'C': ".###. #...# #.... #.... #.... #...# .###.", 'D': "####. #...# #...# #...# #...# #...# ####.",
+    'E': "##### #.... #.... ####. #.... #.... #####", 'F': "##### #.... #.... ####. #.... #.... #....",
+    'G': ".###. #...# #.... #.### #...# #...# .####", 'H': "#...# #...# #...# ##### #...# #...# #...#",
+    'I': ".###. ..#.. ..#.. ..#.. ..#.. ..#.. .###.", 'J': "..### ...#. ...#. ...#. ...#. #..#. .##..",
+    'K': "#...# #..#. #.#.. ##... #.#.. #..#. #...#", 'L': "#.... #.... #.... #.... #.... #.... #####",
+    'M': "#...# ##.## #.#.# #.#.# #...# #...# #...#", 'N': "#...# ##..# #.#.# #..## #...# #...# #...#",
+    'O': ".###. #...# #...# #...# #...# #...# .###.", 'P': "####. #...# #...# ####. #.... #.... #....",
+    'Q': ".###. #...# #...# #...# #.#.# #..#. .##.#", 'R': "####. #...# #...# ####. #.#.. #..#. #...#",
+    'S': ".#### #.... #.... .###. ....# ....# ####.", 'T': "##### ..#.. ..#.. ..#.. ..#.. ..#.. ..#..",
+    'U': "#...# #...# #...# #...# #...# #...# .###.", 'V': "#...# #...# #...# #...# #...# .#.#. ..#..",
+    'W': "#...# #...# #...# #.#.# #.#.# ##.## #...#", 'X': "#...# #...# .#.#. ..#.. .#.#. #...# #...#",
+    'Y': "#...# #...# .#.#. ..#.. ..#.. ..#.. ..#..", 'Z': "##### ....# ...#. ..#.. .#... #.... #####",
+    '0': ".###. #...# #..## #.#.# ##..# #...# .###.", '1': "..#.. .##.. ..#.. ..#.. ..#.. ..#.. .###.",
+    '2': ".###. #...# ....# ...#. ..#.. .#... #####", '3': "##### ...#. ..#.. ...#. ....# #...# .###.",
+    '4': "...#. ..##. .#.#. #..#. ##### ...#. ...#.", '5': "##### #.... ####. ....# ....# #...# .###.",
+    '6': "..##. .#... #.... ####. #...# #...# .###.", '7': "##### ....# ...#. ..#.. .#... .#... .#...",
+    '8': ".###. #...# #...# .###. #...# #...# .###.", '9': ".###. #...# #...# .#### ....# ...#. .##..",
+    ' ': "..... ..... ..... ..... ..... ..... .....", '.': "..... ..... ..... ..... ..... ..... ..#..",
+    ',': "..... ..... ..... ..... ..... ..#.. .#...", ':': "..... ..#.. ..... ..... ..... ..#.. .....",
+    '-': "..... ..... ..... .###. ..... ..... .....", '+': "..... ..#.. ..#.. ##### ..#.. ..#.. .....",
+    '/': "....# ....# ...#. ..#.. .#... #.... #....", '%': "##..# ##..# ...#. ..#.. .#... #..## #..##",
+    '·': "..... ..... ..... ..#.. ..... ..... .....", '—': "..... ..... ..... ##### ..... ..... .....",
+    '~': "..... ..... .##.# #.##. ..... ..... .....", '(': "...#. ..#.. .#... .#... .#... ..#.. ...#.",
+    ')': ".#... ..#.. ...#. ...#. ...#. ..#.. .#...", '_': "..... ..... ..... ..... ..... ..... #####",
+    '=': "..... ..... ##### ..... ##### ..... .....", '!': "..#.. ..#.. ..#.. ..#.. ..#.. ..... ..#..",
+    '?': ".###. #...# ....# ...#. ..#.. ..... ..#..", '#': ".#.#. ##### .#.#. .#.#. ##### .#.#. .....",
+    '▶': ".#... .##.. .###. .#### .###. .##.. .#...", '◀': "...#. ..##. .###. ####. .###. ..##. ...#.",
+    '▲': "..#.. ..#.. .###. .###. ##### ##### .....", '✓': "..... ....# ....# ...#. #.#.. .#... .....",
+    '×': "..... #...# .#.#. ..#.. .#.#. #...# .....", '→': "..... ..#.. ...#. ##### ...#. ..#.. .....",
+    'Ø': ".###. #..## #.#.# #.#.# ##..# #..## .###.", '║': ".#.#. .#.#. .#.#. .#.#. .#.#. .#.#. .#.#.",
+    '…': "..... ..... ..... ..... ..... ..... #.#.#", '>': "#.... .#... ..#.. ...#. ..#.. .#... #....",
+    '<': "....# ...#. ..#.. .#... ..#.. ...#. ....#", "'": "..#.. ..#.. ..... ..... ..... ..... .....",
+    '|': "..#.. ..#.. ..#.. ..#.. ..#.. ..#.. ..#..", '@': ".###. #...# #.### #.#.# #.### #.... .###.",
+}
+DM_GLYPHS = {k: v.split() for k, v in _DM.items()}
+for _k, _v in DM_GLYPHS.items():
+    if len(_v) != 7 or any(len(r) != 5 for r in _v):
+        raise ValueError('dot-matrix glyph %r is not 5x7' % _k)
+_DM_ALIAS = {'−': '-', '–': '-', '▸': '▶', '✗': '×', 'é': 'E'}
+
+
+def dm_glyph(ch):
+    ch = _DM_ALIAS.get(ch, ch.upper())
+    return DM_GLYPHS.get(ch, DM_GLYPHS['?'])
+
+
+def dm_width(s, h=14):
+    """Width in logical px of a dot-matrix string (6 dot pitches per character, the last gap included)."""
+    return len(s) * 6 * h / 7.0
+
+
+def _housing(cv, rect, glass_tok):
+    cv.shadow(rect, 3, (0, 2), 4, 0.5)
+    cv.fill(rect, 'steel_bare', 3)
+    cv.fill(inset(rect, 1), 'bench_dark', 3)
+    cv.fill(inset(rect, 2), glass_tok, 2)
+    cv.blend((rect[0] + 3, rect[1] + 2, rect[2] - 3, rect[1] + 3), 'bench_dark', 0.6)       # recessed: shadow under the top lip
+
+
+def dm_display(cv, rect, lines, h=14, tone='amber', align='l', pad=6, row_gap=None, clip_marker=True):
+    """Backlit dot-matrix display: recessed bezel, flat lit glass, a ghost (unlit) 5x7 matrix over the whole inner area and the
+    text as lit dots with a faint bloom.  ``lines`` = str or list of str (one row each, glyph height ``h`` px; values and
+    names >= 14, status lines >= 11).  A line longer than the window is clipped and ends in a ▶ scroll marker.  ``align`` l / c / r
+    by whole cells.  The ghost is <= 1.25:1 against the glass; every line is logged with the ghost / bloom colour as its
+    background (pessimistic).  Returns the glass rect."""
+    if isinstance(lines, str):
+        lines = [lines]
+    if h < 11:
+        raise ValueError('dot-matrix text must be >= 11 px tall, got %s' % h)
+    t = TONES[tone]
+    glass, lit, ghost = rgb(t['glass']), rgb(t['lit']), GHOST[tone]
+    _housing(cv, rect, t['glass'])
+    gl = inset(rect, 2)
+    pitch = h / 7.0
+    adv = 6 * pitch
+    gx0, gx1 = gl[0] + pad, gl[2] - pad
+    cols = max(1, int((gx1 - gx0 + pitch) // adv))
+    gx = gx0 + ((gx1 - gx0) - (cols * adv - pitch)) / 2.0
+    row_pitch = (row_gap if row_gap is not None else 2.2) * pitch + 7 * pitch
+    nrows = len(lines)
+    rows_fit = max(1, int(((gl[3] - gl[1]) - 4 + (row_pitch - 7 * pitch)) // row_pitch))
+    nrows_draw = min(nrows, rows_fit)
+    gy = (gl[1] + gl[3]) / 2.0 - ((rows_fit - 1) * row_pitch + 7 * pitch) / 2.0
+    # flat check before anything is drawn on the glass
+    _flat_colour(cv, _dev((gl[0] + 1, gl[1] + 1, gl[2] - 1, gl[3] - 1)), 'display', allow=(glass, ghost))
+    k = 4
+    x0d, y0d = int(round(gl[0] * S)), int(round(gl[1] * S))
+    wd, hd = int(round((gl[2] - gl[0]) * S)), int(round((gl[3] - gl[1]) * S))
+    ghost_m = Image.new('L', (wd, hd), 0)
+    gd = ImageDraw.Draw(ghost_m)
+    lit_m = Image.new('L', (wd * k, hd * k), 0)
+    ld = ImageDraw.Draw(lit_m)
+    dr = pitch * 0.45
+    ink_rows = []
+    for r in range(rows_fit):
+        for c in range(cols):
+            for j in range(7):
+                for i in range(5):
+                    cx = (gx + c * adv + (i + 0.5) * pitch - gl[0]) * S
+                    cy = (gy + r * row_pitch + (j + 0.5) * pitch - gl[1]) * S
+                    rr = dr * S * 0.78
+                    gd.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), fill=255)
+    for r, line in enumerate(lines[:nrows_draw]):
+        txt = line
+        if len(txt) > cols:
+            txt = txt[:cols - 1] + ('▶' if clip_marker else '')
+        off = {'l': 0, 'c': (cols - len(txt)) // 2, 'r': cols - len(txt)}[align]
+        for ci, ch in enumerate(txt):
+            g = dm_glyph(ch)
+            for j in range(7):
+                for i in range(5):
+                    if g[j][i] == '#':
+                        cx = (gx + (ci + off) * adv + (i + 0.5) * pitch - gl[0]) * S * k
+                        cy = (gy + r * row_pitch + (j + 0.5) * pitch - gl[1]) * S * k
+                        rr = dr * S * k
+                        ld.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), fill=255)
+        ink_rows.append((txt, (gx + off * adv, gy + r * row_pitch, gx + (off + len(txt)) * adv - pitch, gy + r * row_pitch + 7 * pitch)))
+    # unlit matrix: exact ghost colour, no anti-aliasing (the flat colours are {glass, ghost})
+    cv.im.paste(Image.new('RGB', (wd, hd), ghost), (x0d, y0d), ghost_m.point(lambda v: 255 if v > 127 else 0))
+    lit_s = lit_m.resize((wd, hd), Image.BOX)
+    bloom = lit_s.filter(ImageFilter.GaussianBlur(pitch * S * 0.9)).point(lambda v: int(min(255, v * 0.9) * BLOOM))
+    cv.im.paste(Image.new('RGB', (wd, hd), lit), (x0d, y0d), bloom)
+    cv.im.paste(Image.new('RGB', (wd, hd), lit), (x0d, y0d), lit_s)
+    eff = tuple(int(round(ghost[q] * (1 - BLOOM) + lit[q] * BLOOM)) for q in range(3))
+    for txt, ink in ink_rows:
+        cv.log.append(dict(screen=cv.name, style='dotmatrix', fg=t['lit'], fg_rgb=lit, bg_rgb=eff, px=h, bold=False, text=txt,
+                           ratio=contrast(lit, eff), ink=ink))
+    return rect
+
+
+BLOOM = 0.15
+
+
+def led_ring(cv, cx, cy, r, value, path='blade', n=19):
+    """LED ring around a knob: ``n`` dots on the 270 degree sweep, lit up to ``value`` in the path colour (with a small glow),
+    unlit dots faint on a dark seat.  Replaces the v2 value arc."""
+    lit_n = int(round(max(0.0, min(1.0, value)) * (n - 1))) + (1 if value > 0.005 else 0)
+    for i in range(n):
+        a = math.radians(135 + 270.0 * i / (n - 1))
+        x, y = cx + r * math.cos(a), cy + r * math.sin(a)
+        cv.ellipse(x, y, 1.9, color='bench_dark', alpha=0.95)
+        if i < lit_n:
+            cv.ellipse(x, y, 3.2, color=path, alpha=0.20)
+            cv.ellipse(x, y, 1.6, color=path)
+            cv.ellipse(x - 0.3, y - 0.4, 0.55, color=(255, 255, 255), alpha=0.7)
+        else:
+            cv.ellipse(x, y, 1.3, color=path, alpha=0.22)
+
+
+_HUE = {'amber': 'warn', 'red': 'alert', 'green': 'ok', 'orange': 'blade', 'blue': 'body'}
+
+
+def glow_led(cv, x, y, on, hue='amber', r=5.5):
+    """Round LED lamp at (x, y): dark bezel, domed lens, specular, and when ON a soft glow.  The glow is drawn first and the
+    caller puts the flat word well over / beside it (never text over the glow).  Returns the lamp rect."""
+    col = _HUE.get(hue, hue)
+    if on:
+        for k, a in ((3.0, 0.07), (2.3, 0.11), (1.7, 0.18)):
+            cv.ellipse(x, y, r * k, color=col, alpha=a)
+    cv.ellipse(x + 0.4, y + 0.9, r + 1.6, color='bench_dark', alpha=0.6)
+    cv.ellipse(x, y, r + 1.5, color=(70, 66, 60))
+    cv.ellipse(x, y, r + 0.4, color=(24, 22, 19))
+    if on:
+        cv.ellipse(x, y, r, color=col)
+        cv.ellipse(x, y, r * 0.62, color=(255, 255, 255), alpha=0.28)
+    else:
+        base = rgb(col)
+        cv.ellipse(x, y, r, color=tuple(int(v * 0.22 + 14) for v in base))
+    cv.ellipse(x - r * 0.3, y - r * 0.38, r * 0.3, color=(255, 255, 255), alpha=0.75 if on else 0.35)
+    return (x - r, y - r, x + r, y + r)
+
+
+def state_led(cv, x, y, on, hue, word, style='label_b', r=5.5, pad=5):
+    """Glowing state lamp followed by its word in a flat well (state is never colour alone).  ``x`` = left edge of the lamp.
+    Returns the full rect (lamp + word)."""
+    glow_led(cv, x + r + 2, y, on, hue, r)
+    wr = label_well(cv, (x + 2 * r + 10, y), word, style, h=16, pad=pad, fg=None if on else 'bone_dim')
+    return (x, y - 9, wr[2], y + 9)
+
+
+def led_bar(cv, rect, frac, n=24, hue='orange'):
+    """Segmented LED progress bar on flat glass (no text on it): lit segments in the colour, unlit faint."""
+    x0, y0, x1, y1 = rect
+    cv.shadow(rect, 3, (0, 2), 4, 0.5)
+    cv.fill(rect, 'steel_bare', 3)
+    cv.fill(inset(rect, 1), 'bench_dark', 3)
+    cv.fill(inset(rect, 2), 'glass', 2)
+    iw = (x1 - x0) - 10
+    sw = iw / n
+    col = _HUE.get(hue, hue)
+    for i in range(n):
+        sx = x0 + 5 + i * sw
+        seg = (sx + 0.7, y0 + 5, sx + sw - 0.7, y1 - 5)
+        if (i + 0.5) / n <= frac:
+            cv.fill(seg, col, 1)
+            cv.blend((seg[0], seg[1], seg[2], seg[1] + 1.2), (255, 255, 255), 0.35)
+        else:
+            cv.fill(seg, tuple(int(v * 0.16 + 6) for v in rgb(col)), 1)
+    return rect
+
+
+def led_meter(cv, rect, label, value, peak, vtext, lo=-48.0, hi=0.0, ticks=(-48, -24, -12, 0), kind='level', n=24, stack=False):
+    """LED ladder meter: IN / OUT / GR label, a segmented ladder (green -> amber -> red at the top, unlit segments faint, the
+    peak-hold segment drawn taller with a marker), dB tick labels under it and an LCD value ``vtext`` = (value, unit[, digits]).
+    ``stack`` puts label + LCD on a row above a full-width ladder (narrow panels); else label | ladder | LCD in one row.
+    Returns the rect used."""
+    x0, y0, x1, y1 = rect
+    digits = vtext[2] if len(vtext) > 2 else None
+    if stack:
+        cy = y0 + 10
+        lr = label_well(cv, (x0, cy), label, 'label_b', h=18, pad=6)
+        lcd(cv, (x1, cy), vtext[0], vtext[1], digits=digits, h=14, align='r')
+        pr = (x0, y0 + 24, x1, y1)
+    else:
+        cy = y0 + 13
+        lr = label_well(cv, (x0, cy), label, 'label_b', h=18, pad=6)
+        vw = lcd_width(vtext[0], vtext[1], digits=digits, h=14)
+        pr = (lr[2] + 4, y0, x1 - vw - 4, y1)
+        lcd(cv, (x1, cy + 1), vtext[0], vtext[1], digits=digits, h=14, align='r')
+    px0, px1 = pr[0], pr[2]
+    cv.shadow(pr, 3, (0, 2), 4, 0.5)
+    cv.fill(pr, 'steel_bare', 3)
+    cv.fill(inset(pr, 1), 'bench_dark', 3)
+    cv.fill(inset(pr, 2), 'glass', 2)
+    iw = (px1 - px0) - 12
+    sw = iw / n
+    seg_h = 13
+    sy0 = pr[1] + 6
+    span = float(hi - lo)
+
+    def colour(f):
+        return 'ok' if f < 0.62 else ('warn' if f < 0.86 else 'alert')
+    pk_i = min(n - 1, max(0, int(round((peak - lo) / span * n)) - 1)) if peak is not None else -1
+    for i in range(n):
+        f = (i + 0.5) / n
+        lit = (lo + f * span) <= value
+        c = colour(f)
+        sx = px0 + 6 + i * sw
+        seg = (sx + 0.6, sy0, sx + sw - 0.6, sy0 + seg_h)
+        if i == pk_i:
+            seg = (seg[0], seg[1] - 2, seg[2], seg[3] + 2)
+            cv.fill(seg, c, 1)
+            cv.blend((seg[0], seg[1], seg[2], seg[1] + 1.4), (255, 255, 255), 0.55)
+        elif lit:
+            cv.fill(seg, c, 1)
+            cv.blend((seg[0], seg[1], seg[2], seg[1] + 1.2), (255, 255, 255), 0.30)
+        else:
+            cv.fill(seg, tuple(int(v * 0.16 + 6) for v in rgb(c)), 1)
+    ty0 = sy0 + seg_h + 9
+    for tv in ticks:
+        tx = px0 + 6 + (tv - lo) / span * iw
+        cv.fill((tx - 0.5, sy0 + seg_h + 3, tx + 0.5, sy0 + seg_h + 6), 'bone_dim')
+        tc = min(max(tx, px0 + 17), px1 - 17)
+        text(cv, (tc, (ty0 + pr[3] - 3) / 2.0), '%d' % tv, 'mono_dim', bg=(tc - 11, ty0, tc + 11, pr[3] - 3), size=11, align='c')
+    return (x0, y0, x1, y1)
+
+
+def top_bar_v3(cv, st, y=0, width=PAGE_W):
+    """The 58 px top bar in the displays look: preset / rig name on a dot-matrix scroller, glowing state lamps with their words,
+    a green LAT / CPU display.  Same keys as top_bar()."""
+    rail = (0, y, width, y + BAR_H)
+    cv.shadow(rail, 0, (0, 4), 8, 0.7)
+    cv.texture(rail, alu_tex(width, BAR_H, 'topbar'))
+    cv.blend((0, y + BAR_H - 1, width, y + BAR_H), 'bench_dark', 0.9)
+    for (rx, ry) in ((9, y + 9), (9, y + BAR_H - 10), (width - 9, y + 9), (width - 9, y + BAR_H - 10)):
+        rivet(cv, rx, ry, 2.6)
+    cy = y + BAR_H / 2.0
+    out = {'rail': rail}
+    x = 22
+    bw = text_width('SAWBLADE', 'brand', size=17) + 14
+    out['brand'] = brand = (x, cy - 16, x + bw, cy + 16)
+    well(cv, brand, 'well', 3)
+    text(cv, None, 'SAWBLADE', 'brand', bg=brand, size=17)
+    x = brand[2] + 8
+    b0 = (x, cy - 14, x + 16, cy + 14)
+    button(cv, b0, '', 'secondary')
+    glyph_icon(cv, 'chev_l', (b0[0] + b0[2]) / 2.0, cy, 9, 'bone')
+    x = b0[2] + 3
+    pw = 280
+    pr = (x, cy - 22, x + pw, cy + 22)
+    if st.ab:
+        a_act = st.ab.get('active', 'a') == 'a'
+        dm_display(cv, pr, ['A ▶ ' + st.ab['a'] if a_act else 'A · ' + st.ab['a'], 'B ▶ ' + st.ab['b'] if not a_act else 'B · ' + st.ab['b']],
+                   h=14, tone='amber', row_gap=1.4, pad=4)
+    else:
+        dm_display(cv, pr, st.preset, h=14, tone='amber', pad=5)
+    out['preset'] = pr
+    x = pr[2] + 3
+    b1 = (x, cy - 14, x + 16, cy + 14)
+    button(cv, b1, '', 'secondary')
+    glyph_icon(cv, 'chev_r', (b1[0] + b1[2]) / 2.0, cy, 9, 'bone')
+    x = b1[2] + 4
+    for i, (k, nm) in enumerate((('ab_a', 'A'), ('ab_b', 'B'))):
+        active = st.ab is not None and st.ab.get('active', 'a') == ('a' if nm == 'A' else 'b')
+        fx = x + 19 + i * 40
+        if st.ab is None:
+            footswitch(cv, fx, cy - 7, 28, False, None, None)
+            lr = label_well(cv, (fx, cy + 17), nm, 'label_b', h=13, pad=6, align='c')
+        else:
+            footswitch(cv, fx, cy - 7, 28, active)
+            lr = label_well(cv, (fx, cy + 17), nm + (' ACTIVE' if active else ''), 'label_b', h=13, pad=3, align='c')
+        out[k] = (fx - 14, cy - 21, fx + 14, lr[3])
+    x += 84
+    rw = text_width('RIG', 'button') + 16
+    out['rig'] = r = (x, cy - 17, x + rw, cy + 17)
+    button(cv, r, 'RIG', 'secondary', 'pressed' if st.rig_active and not st.woodshed_open else 'normal')
+    x = r[2] + 4
+    ww = text_width('WOODSHED', 'button') + 16
+    out['woodshed'] = r = (x, cy - 17, x + ww, cy + 17)
+    button(cv, r, 'WOODSHED', 'secondary', 'pressed' if st.woodshed_open else 'normal')
+    x = r[2] + 4
+    out['gear'] = r = (x, cy - 17, x + 28, cy + 17)
+    button(cv, r, '', 'secondary')
+    glyph_icon(cv, 'gear', (r[0] + r[2]) / 2.0, cy, 14, 'bone')
+    left_end = r[2]
+    # ---- right side, right to left ------------------------------------------------------------------------------------
+    x = width - 22
+    fw = text_width('NAM FORGER', 'button_ink') + 18
+    out['forger'] = r = (x - fw, cy - 17, x, cy + 17)
+    button(cv, r, 'NAM FORGER', 'primary')
+    x = r[0] - 5
+    if st.match_pct is not None:
+        mw = 112
+        out['match'] = r = (x - mw, cy - 17, x, cy + 17)
+        button(cv, r, '', 'secondary', 'pressed')
+        text(cv, (r[0] + 10, cy + 1), 'MATCH', 'button', bg=(r[0] + 4, r[1] + 6, r[0] + 58, r[3] - 3))
+        lcd(cv, (r[2] - 5, cy + 1), '%d' % st.match_pct, '%', digits=2, h=14, align='r', tone='green')
+    else:
+        mw = text_width('MATCH', 'button') + 18
+        out['match'] = r = (x - mw, cy - 17, x, cy + 17)
+        button(cv, r, 'MATCH', 'secondary')
+    x = r[0] - 8
+    # LIVE / STUDIO: lamp + word
+    word = st.mode
+    mw = 27 + text_width(word, 'label_b') + 10
+    mr = (x - mw, cy - 12, x, cy + 12)
+    well(cv, mr, 'well', 3, border='ok' if st.mode == 'LIVE' else 'body')
+    glow_led(cv, mr[0] + 11, cy, True, 'green' if st.mode == 'LIVE' else 'blue', 4.0)
+    text(cv, (mr[0] + 27, cy), word, 'label_b', bg=(mr[0] + 25, mr[1] + 3, mr[2] - 3, mr[3] - 3), fg='ok' if st.mode == 'LIVE' else 'body')
+    out['mode'] = mr
+    x = mr[0] - 8
+    sr = (x - 118, cy - 22, x, cy + 22)
+    dm_display(cv, sr, ['LAT %d SMP' % st.lat, 'CPU %d %%' % st.cpu], h=11, tone='green', pad=4, row_gap=1.8)
+    out['status'] = sr
+    x = sr[0] - 8
+    # ---- state lamps (UNCAL / OUT OF TRUE) in one backlit block in the room between the clusters -------------------------
+    both = st.uncal and st.out_of_true
+    rows = []
+    if both:
+        rows = [('amber', 'UNCAL', 'label_b', 'warn'), ('red', 'OUT OF TRUE', 'label_b', 'alert')]
+    elif st.uncal:
+        rows = [('amber', 'UNCAL', 'label_b', 'warn'), (None, 'NOT CALIBRATED', 'label', 'bone_dim')]
+    elif st.out_of_true:
+        rows = [('red', 'OUT OF TRUE', 'label_b', 'alert'), (None, '+%.1f DB HOTTER' % st.out_of_true_db, 'label', 'bone_dim')]
+    if rows:
+        bwid = max(text_width(t, sty) for (_h, t, sty, _f) in rows) + 40
+        br = (x - bwid, cy - 24, x, cy + 24)
+        well(cv, br, 'well', 3, border=('alert' if (st.out_of_true) else 'warn'))
+        for i, (hue, t, sty, fgc) in enumerate(rows):
+            ry = cy - 12 + i * 24
+            if hue:
+                glow_led(cv, br[0] + 11, ry, True, hue, 4.0)
+            text(cv, (br[0] + 27, ry), t, sty, bg=(br[0] + 25, ry - 9, br[2] - 3, ry + 9), fg=fgc)
+        if st.out_of_true:
+            out['chip_oot'] = br
+        if st.uncal:
+            out['chip_uncal'] = br
+        x = br[0] - 6
+    if rows and x < left_end + 4:
+        raise AssertionError(f'v3 top bar lamps collide with the left cluster (x={x:.0f}, left_end={left_end:.0f})')
+    return out
+
+
+# --------------------------------------------------------------------------------------------------------------------
 # style sheet (00)
 # --------------------------------------------------------------------------------------------------------------------
 def _section(cv, rect, title):
@@ -2032,12 +2473,14 @@ _TEXT_ON = {   # token -> (background token) used for the swatch ratio column
 
 def render_style_sheet():
     """The 1280 x 800 style sheet (00_style_sheet)."""
+    if _LOOK == 'v3':
+        return render_style_sheet_v3()
     cv = new_screen('00_style_sheet', 700)
     top = plate(cv, (12, 10, 1268, 50), 'SAWBLADE · WORKSHOP STYLE', right='1280 x 800 · 2x render · Pillow + numpy')
     # ---- column A: palette, materials, type ------------------------------------------------------------------
     ax0, ax1 = 12, 436
     pal = _section(cv, (ax0, 60, ax1, 372), 'PALETTE')
-    names = list(PAL.keys())
+    names = [k for k in PAL if k not in _V3_TOKENS]
     colw = (pal[2] - pal[0]) / 2.0
     for i, nme in enumerate(names):
         col, row = divmod(i, 12)
@@ -2180,6 +2623,103 @@ def render_style_sheet():
     rotary_selector(cv, pr[0] + 290, pr[1] + 70, 54, ['MUTE', 'GHOST', 'FULL'], 1, 'body')
     toggle(cv, pr[0] + 100, pr[1] + 170, 1, ['OFF', 'ON'], 40, key='tg4')
     label_well(cv, (pr[0] + 168, pr[1] + 170), 'CALIBRATED LEVELS', 'label')
+    return cv
+
+
+def render_style_sheet_v3():
+    """The 1280 x 800 v3 style sheet (00_style_sheet in the displays look): palette with the display tokens and the display kit."""
+    cv = new_screen('00_style_sheet', 700)
+    plate(cv, (12, 10, 1268, 50), 'SAWBLADE · WORKSHOP STYLE · V3 DISPLAYS', right='backlit LCD · dot-matrix · LED ladders / rings / lamps')
+    # ---- column A: palette, dot-matrix font ------------------------------------------------------------------------------
+    ax0, ax1 = 12, 436
+    pal = _section(cv, (ax0, 60, ax1, 392), 'PALETTE')
+    names = list(PAL.keys())
+    colw = (pal[2] - pal[0]) / 2.0
+    for i, nme in enumerate(names):
+        col, row = divmod(i, 13)
+        x0 = pal[0] + col * colw
+        y0 = pal[1] + row * 21.4
+        sw = (x0, y0 + 1, x0 + 22, y0 + 18)
+        cv.fill(sw, PAL[nme], 2)
+        cv.outline(sw, 'bench_dark', 1, 2)
+        lab = (x0 + 26, y0 + 1, x0 + colw - 4, y0 + 19)
+        well(cv, lab, 'well', 2)
+        text(cv, (lab[0] + 5, rect_c(lab)[1]), '%s  %s' % (nme, _HEX[nme]), 'label', bg=lab, size=11, fg='bone')
+        if nme in _TEXT_ON:
+            text(cv, (lab[2] - 4, rect_c(lab)[1]), '%.1f:1' % contrast(PAL[nme], PAL[_TEXT_ON[nme]]), 'label', bg=lab, size=11,
+                 fg=nme if _TEXT_ON[nme] != 'alu_well' else 'bone_dim', align='r')
+        elif nme in ('lcd_green',):
+            text(cv, (lab[2] - 4, rect_c(lab)[1]), '%.1f:1' % contrast(PAL[nme], PAL['glass_green']), 'label', bg=lab, size=11, fg='bone_dim', align='r')
+    dmk = _section(cv, (ax0, 402, ax1, 790), 'DOT-MATRIX 5 x 7 · GHOST DOTS')
+    dm_display(cv, (dmk[0], dmk[1], dmk[2], dmk[1] + 86), ['ABCDEFGHIJKLM', 'NOPQRSTUVWXYZ', '0123456789 .:-+/%'], h=14, tone='amber', pad=8, row_gap=0.8)
+    dm_display(cv, (dmk[0], dmk[1] + 94, dmk[2], dmk[1] + 152), ['LAT 92 SMP · CPU 18 %', 'EPOCH 41 / 100 · ETA 18 MIN'], h=11, tone='green', pad=8, row_gap=1.6)
+    gr = '%.2f' % contrast(GHOST['amber'], TONES['amber']['glass'])
+    gg = '%.2f' % contrast(GHOST['green'], TONES['green']['glass'])
+    label_well(cv, (dmk[0], dmk[1] + 170), 'GHOST VS GLASS · AMBER %s:1 · GREEN %s:1 (<= 1.25)' % (gr, gg), 'label_b', h=20)
+    strip_y = dmk[1] + 196
+    lit = contrast(rgb(TONES['amber']['lit']), tuple(int(round(GHOST['amber'][q] * (1 - BLOOM) + rgb(TONES['amber']['lit'])[q] * BLOOM)) for q in range(3)))
+    label_well(cv, (dmk[0], strip_y), 'LIT TEXT VS GHOST + BLOOM (logged) · AMBER %.1f:1' % lit, 'label_b', h=20)
+    dm_display(cv, (dmk[0], strip_y + 18, dmk[2], strip_y + 56), 'A VERY LONG PRESET NAME THAT SCROLLS', h=14, tone='amber', pad=8)
+    label_well(cv, (dmk[0], strip_y + 72), 'SCROLLER: CLIPPED ▶ MARKER WHEN LONGER THAN THE WINDOW', 'label', h=18)
+    # ---- column B: segment LCDs, ladders, rings ------------------------------------------------------------------------------
+    bx0, bx1 = 446, 858
+    dsp = _section(cv, (bx0, 60, bx1, 232), 'BACKLIT LCD · SEGMENTS')
+    y = dsp[1] + 14
+    lcd(cv, (dsp[0], y), '-33.1', 'dB', 5, 26)
+    lcd(cv, (dsp[0] + 168, y), '2.0', ':1', 4, 26, tone='green')
+    lcd(cv, (dsp[0] + 296, y), '+120', 'ms', 4, 26)
+    y += 42
+    lcd(cv, (dsp[0], y), '01:23.4', '/ 04:12.0', 6, 22)
+    nixie(cv, (dsp[0] + 214, y - 18, dsp[2], y + 22), '79 / 21', 34)
+    y += 40
+    label_well(cv, (dsp[0], y), 'AMBER AND GREEN GLASS ARE FLAT COLOURS', 'label', h=18)
+    mtr = _section(cv, (bx0, 242, bx1, 462), 'LED LADDERS · IN / OUT / GR')
+    y = mtr[1] + 2
+    led_meter(cv, (mtr[0], y, mtr[2], y + 48), 'IN', -17.0, -9.0, ('-17', 'dB', 3), n=30, ticks=(-48, -24, -12, -6, 0))
+    led_meter(cv, (mtr[0], y + 56, mtr[2], y + 104), 'OUT', -4.0, -2.0, ('-4', 'dB', 3), n=30, ticks=(-48, -24, -12, -6, 0))
+    led_meter(cv, (mtr[0], y + 112, mtr[2], y + 160), 'GR', 6.0, 8.0, ('6.0', 'dB', 4), lo=0.0, hi=12.0, ticks=(0, 3, 6, 9, 12), n=30)
+    rng = _section(cv, (bx0, 472, bx1, 790), 'LED RINGS · STATE LAMPS')
+    for i, v in enumerate((0.0, 0.35, 0.7, 1.0)):
+        knob(cv, rng[0] + 48 + i * 98, rng[1] + 40, 48, 'pedal', v, 'blade' if i % 2 == 0 else 'body', 'RING %d' % int(v * 100), ring=True)
+    lamps = (('amber', 'UNCAL', True), ('red', 'OUT OF TRUE', True), ('green', 'LIVE', True), ('orange', 'REC · ON', True),
+             ('amber', 'LEGACY LEVELS · OFF', False), ('blue', 'STUDIO', True), ('red', 'BYPASSED · OFF', False), ('green', 'ACTIVE', True))
+    for i, (hue, word, on) in enumerate(lamps):
+        state_led(cv, rng[0] + (i % 2) * 190, rng[1] + 104 + (i // 2) * 28, on, hue, word, r=4.0)
+    y = rng[1] + 226
+    led_bar(cv, (rng[0], y, rng[0] + 250, y + 22), 0.41, n=26, hue='orange')
+    label_well(cv, (rng[0] + 262, y + 11), 'LED BAR', 'label', h=18)
+    # ---- column C: the top bar, buttons -----------------------------------------------------------------------------------------
+    cx0, cx1 = 868, 1268
+    tb = _section(cv, (cx0, 60, cx1, 250), 'TOP BAR · DISPLAYS')
+    dm_display(cv, (tb[0], tb[1] + 2, tb[2], tb[1] + 46), 'BARBARIC · MATCHED V2', h=14, tone='amber', pad=8)
+    label_well(cv, (tb[0], tb[1] + 62), 'PRESET NAME · FITS THE WINDOW, NO SCROLL', 'label', h=18)
+    dm_display(cv, (tb[0], tb[1] + 78, tb[2] - 122, tb[1] + 124), ['A ▶ GRAVE DIRT · MATCHED V2', 'B · THRASH TIGHT'], h=14, tone='amber', pad=8, row_gap=1.4)
+    dm_display(cv, (tb[2] - 114, tb[1] + 78, tb[2], tb[1] + 124), ['LAT 92 SMP', 'CPU 18 %'], h=11, tone='green', pad=4, row_gap=1.8)
+    label_well(cv, (tb[0], tb[1] + 140), 'A / B SLOTS AND LAT / CPU · LONG NAMES CLIP WITH ▶', 'label', h=18)
+    kb = _section(cv, (cx0, 260, cx1, 790), 'BUTTONS · FIELDS · FRAMES')
+    by = kb[1] + 2
+    button(cv, (kb[0], by, kb[0] + 110, by + 30), 'PRIMARY', 'primary')
+    button(cv, (kb[0] + 120, by, kb[0] + 230, by + 30), 'SECONDARY', 'secondary')
+    button(cv, (kb[0] + 240, by, kb[0] + 340, by + 30), 'DANGER', 'danger')
+    by += 42
+    text_field(cv, (kb[0], by, kb[0] + 150, by + 28), '+12.5', 'mono', caret=True)
+    dropdown(cv, (kb[0] + 160, by, kb[2], by + 28), 'Scarlett 4i4 3rd Gen — INST', 'body')
+    by += 42
+    tab(cv, (kb[0], by, kb[0] + 70, by + 26), 'CHAIN', True)
+    tab(cv, (kb[0] + 76, by, kb[0] + 130, by + 26), 'EQ', False)
+    toggle(cv, kb[0] + 210, by + 14, 1, ['OFF', 'ON'], 28, key='tg_v3')
+    by += 48
+    plate(cv, (kb[0], by, kb[2], by + 34), 'RIVETED PLATE · HEADER', right='alu')
+    by += 46
+    c1 = card(cv, (kb[0], by, kb[0] + 186, by + 118), 'SAW HEAD', 'blade', status='ON')
+    state_led(cv, c1['body'][0] + 4, c1['body'][1] + 16, True, 'green', 'ACTIVE', r=4.0)
+    c2 = card(cv, (kb[0] + 198, by, kb[2], by + 118), 'CHISEL', 'body', bypassed=True)
+    state_led(cv, c2['body'][0] + 4, c2['body'][1] + 16, False, 'amber', 'BYPASSED', r=4.0)
+    by += 132
+    pr = (kb[0], by, kb[2], kb[3] - 2)
+    panel(cv, pr, 'sheet_panel3', 1.5, 6, rivets=True)
+    rotary_selector(cv, pr[0] + 84, pr[1] + 66, 52, ['AUTO', 'L', 'R', 'MIX'], 0, 'blade')
+    rotary_selector(cv, pr[0] + 290, pr[1] + 66, 52, ['MUTE', 'GHOST', 'FULL'], 1, 'body')
     return cv
 
 
