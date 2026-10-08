@@ -64,8 +64,10 @@ them in the manifest later. Deterministic.
 ### A.3 Case list
 
 From the phase spec's lead decision table, verbatim: Tier 1 `bloodbath_blend` (**primary**, `kind: blend`, DI 17, tracks
-18 HM2 = role a, 19 UBR = role b, `counts: true`), `bloodbath_hm2` / `bloodbath_ubr` (`kind: pathcheck`, parent
-`bloodbath_blend`, path a / b, `counts: false`), `bloodbath_mz`, `immortal_disfig`, `veil_of_maya`, `sylosis_57`,
+18 HM2 = role a, 19 UBR = role b, `counts: true`), `bloodbath_blend_forced` (main lead, 2026-10-08: same files as `bloodbath_blend`,
+`topology: blend`, `counts: false`; gives a per-path answer every run whatever auto picks, as v0.4M's validation script),
+`bloodbath_hm2` / `bloodbath_ubr` (`kind: pathcheck`, parent `bloodbath_blend_forced`, path a / b, `counts: false`; the
+auto case still reports its own path checks when it picks a blend), `bloodbath_mz`, `immortal_disfig`, `veil_of_maya`, `sylosis_57`,
 `sylosis_reamp`, `haunted`, `jinjer` (`kind: single`, reference `channel: "left"` for the Jinjer stem). Transfer (R side)
 where the spec lists it: Bloodbath 20 DI / 21 HM2 / 22 UBR (blend of 21+22), Immortal Disfigurement 21/23, Veil of Maya
 26/28, Sylosis 30 → 33 (for `sylosis_57`) and 30 → 44 (for `sylosis_reamp`), Jinjer 25 → 23 right channel. Tier 2: every
@@ -184,7 +186,8 @@ tests together ≤ 4 min on the `python` job.
    computed and finite (report their values; assert ≤ 0.5 dB only if the recovered captures equal the hidden ones).
 3. **Held-out isolation:** the matcher only receives the cropped fit files (spy on `run_match`'s `Config`: DI/ref
    durations = the fit section; no sample of the held-out window inside them).
-4. **Determinism:** two runs, same seed → `scores.json` equal except timings.
+4. **Determinism:** the same case run twice, same seed → `scores.json` equal except timings (main lead: so the 0.30 dB
+   threshold only ever sees real code changes; v0.4M seeds are fixed per candidate, so a rerun must be bit-identical).
 5. **compare:** hand-built score files: a 0.31 dB A-wt worsening and an 11 ms `t12` worsening are flagged (exit 1), a
    0.29 dB one is not; better/same/not-compared counts; `--threshold` override; schema mismatch → exit 2.
 6. **Preflight / CLI:** `--check-only` with a missing file exits 2 and names it; a missing case is skipped with
