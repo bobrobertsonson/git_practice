@@ -265,9 +265,8 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     for w in probe.get("warnings", []):
         plan.warnings.append(f"core: {w}")
     pre_levels = P.reference_levels(tpreset, probe)           # v0.8 I4a: analog level reference of the training render (or why none)
-    log(("calibrated training render: " + f"input {pre_levels['inputLevelDbu']:+g} dBu"
-         + ("" if pre_levels["outputLevelDbu"] is None else f", output {pre_levels['outputLevelDbu']:+g} dBu")
-         + (" (device level assumed)" if pre_levels["deviceAssumed"] else "")) if pre_levels["calibrated"]
+    log(f"calibrated training render: input {pre_levels['inputLevelDbu']:+g} dBu"
+        + (" (device level assumed)" if pre_levels["deviceAssumed"] else "") if pre_levels["calibrated"]
         else "training render not calibrated: no input_level_dbu / output_level_dbu in the model")
 
     pname = file_stem(name, preset)
@@ -385,7 +384,10 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     report["ir"] = ir_info
     _check_stop(prog, outdir)
 
-    ref_levels = P.reference_levels(tpreset, probe, float(tinfo.get("levelReducedDb") or 0.0))
+    ref_levels = _levels(tpreset, probe, base, cache, float(tinfo.get("levelReducedDb") or 0.0))
+    if ref_levels["calibrated"]:
+        log("  output_level_dbu: " + (f"{ref_levels['outputLevelDbu']:+.2f} dBu" if ref_levels["outputLevelDbu"] is not None
+                                      else "not written (see the export notes)"))
     report["calibration"] = ref_levels
     ref_for_io = {"inputRmsDbfs": sinfo["train"]["rmsDbfs"], "inputPeakDbfs": sinfo["train"]["peakDbfs"],
                   "outputRmsDbfs": tinfo["levels"]["trainOutRmsDbfs"], "outputPeakDbfs": tinfo["levels"]["trainOutPeakDbfs"],
@@ -520,6 +522,13 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     return report
 
 
+def _levels(tpreset: dict, probe: dict, base, cache, level_reduced_db: float) -> dict:
+    """``plan.reference_levels`` with the post-capture digital gain measured by the core (``levels.post_gain_db``)."""
+    from . import levels as LV
+    return P.reference_levels(tpreset, probe, level_reduced_db,
+                              post=lambda k, last: LV.post_gain_db(tpreset, k, probe, base, cache, render48, last))
+
+
 def _write_reamp(preset, tpreset, plan, base, cache, reamp_pair, info, outdir, stem, mode, notes_src, ir_path, lic, log,
                  prog, probe=None) -> dict:
     """Render the standard input through the training chain and write the pair + ``<stem>.reamp_notes.txt``."""
@@ -528,7 +537,7 @@ def _write_reamp(preset, tpreset, plan, base, cache, reamp_pair, info, outdir, s
         pair = RP.render_pair(tpreset, base, cache, reamp_pair, info, outdir, stem, render48)
     src = notes_src or preset
     notes = N.build_export_notes(src, plan, None, Path(ir_path).name if ir_path else None)
-    cal = P.reference_levels(tpreset, probe or {}, float(pair.get("levelReducedDb") or 0.0))
+    cal = _levels(tpreset, probe or {}, base, cache, float(pair.get("levelReducedDb") or 0.0))
     pair["calibration"] = cal
     txt = outdir / f"{stem}.reamp_notes.txt"
     txt.write_text(RP.format_notes(src.get("name"), mode, pair, notes, lic, P.nc_captures(preset),

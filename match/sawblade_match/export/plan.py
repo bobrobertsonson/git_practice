@@ -245,35 +245,63 @@ def _audible_paths(preset: dict) -> list[str]:
     return out
 
 
-def _path_out_ref(plan_blocks: list[dict], device_dbu: float) -> tuple[float, bool]:
-    """(dBu at 0 dBFS after the path's last planned block, known?) from the core report's per-block plan. A block that sets
-    the reference is a NAM capture or a modelled pedal with a declared output: ``captureOutputDbu``. When that block lacks
-    the output level the reference is not known (the core carried the previous one), so it is not guessed."""
-    ref, known = float(device_dbu), True
+def _path_blocks(cal: dict, k: str) -> list[dict]:
+    p = (cal.get("paths") or {}).get(k)
+    return p.get("blocks", []) if isinstance(p, dict) else (p or [])
+
+
+def _core_ref_out(cal: dict, k: str) -> float | None:
+    """The core report's own ``refOutDbu`` of path ``k`` when it has one (``calibration.refOutDbu.<k>`` or
+    ``calibration.paths.<k>.refOutDbu``); None for a core that does not report it."""
+    for v in ((cal.get("refOutDbu") or {}).get(k) if isinstance(cal.get("refOutDbu"), dict) else None,
+              (cal.get("paths") or {}).get(k, {}).get("refOutDbu") if isinstance((cal.get("paths") or {}).get(k), dict) else None):
+        if isinstance(v, (int, float)):
+            return float(v)
+    return None
+
+
+def _path_out_ref(plan_blocks: list[dict], device_dbu: float) -> tuple[float, bool, str | None]:
+    """(dBu at 0 dBFS after the path's last planned block, known?, id of the last level-defining block) walked from the core
+    report's per-block plan. A block that sets the reference is a NAM capture or a modelled pedal with a declared output:
+    ``captureOutputDbu``. When that block lacks the output level the reference is not known (the core carried the previous
+    one), so it is not guessed."""
+    ref, known, last = float(device_dbu), True, None
     for b in plan_blocks:
         if b.get("kind") in ("nam", "nominalOutput"):
+            last = b.get("id")
             if b.get("captureOutputDbu") is not None:
                 ref, known = float(b["captureOutputDbu"]), True
             else:
                 known = False
-    return ref, known
+    return ref, known, last
 
 
-def reference_levels(preset: dict, render_report: dict, level_reduced_db: float = 0.0) -> dict:
+def reference_levels(preset: dict, render_report: dict, level_reduced_db: float = 0.0, post=None) -> dict:
     """The NAM trainer's ``input_level_dbu`` / ``output_level_dbu`` (REPORT A1: dBu RMS of a 1 kHz sine at 0 dBFS peak, the
     level that corresponds to 0 dBFS at the model's input / output) for the training render.
 
     Written ONLY when that render was calibrated (``render_report["calibration"]``, the core report of the training chain):
-    ``input_level_dbu`` = ``calibration.deviceDbu`` (the DI's 0 dBFS in that render); ``output_level_dbu`` = the output
-    reference of the chain, the planned ``refOutDbu`` of the last block of the audible path(s) (a blend whose paths end at
-    different references has no single value), plus ``level_reduced_db`` when the reamp output had to be scaled down for
-    24-bit. An uncalibrated render gets no dBu fields (never a guess) and ``notes`` says so; an assumed device level says which
-    interface / loader level to set. Returns ``{"calibrated", "mode", "deviceDbu", "deviceAssumed", "inputLevelDbu",
-    "outputLevelDbu", "notes"}``."""
+    ``input_level_dbu`` = ``calibration.deviceDbu`` (the DI's 0 dBFS in that render). An uncalibrated render gets no dBu fields
+    (never a guess) and ``notes`` says so; an assumed device level says which interface / loader level to set.
+
+    ``output_level_dbu`` is written only when it is exact::
+
+        output_level_dbu = refOutDbu  -  G_post  +  level_reduced_db
+
+    ``refOutDbu`` = the output reference of the audible path (the core report's ``refOutDbu`` when present, else the walk over
+    the planned blocks' ``captureOutputDbu``). ``G_post`` = every digital gain after it, measured at 1 kHz (``post(path, last_id)
+    -> (dB | None, missing term)``, see ``levels.post_gain_db``): +6 dB of output gain means a model whose 0 dBFS is 6 dB LOWER
+    in analog terms, because the same analog level now lands 6 dB higher in the file. ``level_reduced_db`` is the reamp output's
+    24-bit scale-down (the file is quieter, so its 0 dBFS is that much higher). The trainer's -18 dBFS output normalisation is
+    not a term: its export hook undoes it. Not written (input only, the missing term named in ``notes``) for: a blend of two
+    audible paths (the sum's level depends on the signals' correlation), an unknown output reference, or any term ``post``
+    cannot account for. Returns ``{"calibrated", "mode", "deviceDbu", "deviceAssumed", "inputLevelDbu", "outputLevelDbu",
+    "postGainDb", "outputReferenceDbu", "notes"}``."""
+    from .levels import TRAINER_EXPORT_UNDOES_OUTPUT_NORMALISATION
     cal = render_report.get("calibration") if isinstance(render_report, dict) else None
     mode = (cal or {}).get("mode")
     out = {"calibrated": False, "mode": mode, "deviceDbu": None, "deviceAssumed": None, "inputLevelDbu": None,
-           "outputLevelDbu": None, "notes": []}
+           "outputLevelDbu": None, "postGainDb": None, "outputReferenceDbu": None, "notes": []}
     if not cal or mode != "calibrated" or cal.get("deviceDbu") is None:
         why = ("the core report has no calibration record" if not cal else
                f"the training render was not calibrated (calibration mode {mode})")
@@ -284,23 +312,36 @@ def reference_levels(preset: dict, render_report: dict, level_reduced_db: float 
     dev = float(cal["deviceDbu"])
     out.update(calibrated=True, deviceDbu=dev, deviceAssumed=bool(cal.get("deviceAssumed")), inputLevelDbu=dev)
     notes = out["notes"]
-    refs = []
-    for k in _audible_paths(preset):
-        r, known = _path_out_ref((cal.get("paths") or {}).get(k) or [], dev)
-        refs.append((k, r, known))
-    if not refs:
+    aud = _audible_paths(preset)
+    if not aud:
         notes.append("output_level_dbu is NOT written: no audible path in the chain.")
-    elif not all(known for _, _, known in refs):
-        miss = ", ".join(k.upper() for k, _, known in refs if not known)
-        notes.append(f"output_level_dbu is NOT written: the last capture of path {miss} has no output level (dBu) metadata, so "
-                     "the chain's output reference is unknown.")
-    elif max(r for _, r, _ in refs) - min(r for _, r, _ in refs) > 1e-9:
-        notes.append("output_level_dbu is NOT written: the blended paths end at different output references ("
-                     + ", ".join(f"{k.upper()} {r:+.1f} dBu" for k, r, _ in refs) + "), so there is no single value.")
+    elif len(aud) > 1:
+        notes.append("output_level_dbu is NOT written: two paths are blended, and the level of their sum depends on how the two "
+                     "path signals correlate, so no single analog level belongs to the model's 0 dBFS (missing term: blend sum).")
+    elif not TRAINER_EXPORT_UNDOES_OUTPUT_NORMALISATION:
+        notes.append("output_level_dbu is NOT written: the trainer's -18 dBFS output normalisation is not undone on export "
+                     "(missing term: output normalisation).")
     else:
-        out["outputLevelDbu"] = refs[0][1] + float(level_reduced_db)
-        if level_reduced_db:
-            notes.append(f"output_level_dbu includes +{level_reduced_db:.2f} dB because the reamp output was scaled down to fit 24-bit.")
+        k = aud[0]
+        ref, known, last_id = _path_out_ref(_path_blocks(cal, k), dev)
+        core_ref = _core_ref_out(cal, k)
+        if core_ref is not None:
+            ref = core_ref
+        if not known:
+            notes.append(f"output_level_dbu is NOT written: the last capture of path {k.upper()} has no output level (dBu) "
+                         "metadata, so the chain's output reference is unknown (missing term: capture output level).")
+        else:
+            g, why = post(k, last_id) if post is not None else (None, "the post-capture digital gain was not measured")
+            if g is None:
+                notes.append(f"output_level_dbu is NOT written: {why} (missing term: digital gain after the last capture).")
+            else:
+                out["postGainDb"], out["outputReferenceDbu"] = g, ref
+                out["outputLevelDbu"] = ref - g + float(level_reduced_db)
+                notes.append(f"output_level_dbu = {ref:+.2f} dBu (output reference) - {g:+.2f} dB (digital gain after it at 1 kHz: "
+                             "path/trim/output gain, EQ, cab IR if in the model)"
+                             + (f" + {level_reduced_db:.2f} dB (reamp output scaled down for 24-bit)" if level_reduced_db else "")
+                             + ". The trainer's -18 dBFS output normalisation is undone by its export hook, so the model keeps the "
+                               "chain's level and is not a term.")
     if cal.get("anyUncalibrated"):
         notes.append("some captures in the chain lack input or output dBu metadata; those blocks were driven neutrally (0 dB) in "
                      "the training render.")

@@ -684,8 +684,7 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   `levels` (RMS/peak of the training input/output) are in the report and the `.nam`; `input_level_dbu`/`output_level_dbu` (the trainer's
   metadata, dBu RMS of a 1 kHz sine at 0 dBFS peak) are written **only when the training render was calibrated** (preset
   `calibration.mode` `calibrated`): input = the render's `calibration.deviceDbu` (+12 dBu when assumed, and the notes say which
-  level to set on a loader that ignores the fields), output = the chain's output reference (the last capture's `output_level_dbu`;
-  not written when a capture lacks it or a blend's paths end at different references). An uncalibrated render writes no dBu
+  level to set on a loader that ignores the fields), output = the output reference of the single audible path (the last capture's `output_level_dbu`, or the core's `refOutDbu`) minus every digital gain after it, measured with a 1 kHz sine through the training chain (`export/levels.py`: path level, trims, output gain, EQ, cab IR in with-cab mode, the last capture's out gain / make-up / loudness normalisation), plus the 24-bit scale-down of the reamp output. +6 dB output gain therefore lowers it by 6 dB. The trainer's -18 dBFS output normalisation is undone by its export hook, so it is not a term. Input only (note names the missing term) for: a blend of two audible paths, a capture without output dBu, a bus comp, a non-linear block after the last capture, a gain ladder. An uncalibrated render writes no dBu
   fields and the export notes / report say so.
 * **Matcher calibration** (v0.8 I4a): `--calibration calibrated` renders every capture at the level its dBu metadata implies for the
   interface (`--device-dbu`, default the assumed +12 dBu, recorded as assumed); emitted presets are v5 with `calibration.mode` set to

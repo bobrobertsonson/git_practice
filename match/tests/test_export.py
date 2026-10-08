@@ -1182,56 +1182,213 @@ def test_mock_notes_preset_must_be_an_object(mx):
 
 # ---------------------------------------------------------------- v0.8 I4a: input_level_dbu / output_level_dbu
 
-def _cal_probe(device=12.0, assumed=True, a_out=-3.0, b_out=-3.0, mode="calibrated", any_uncal=False):
-    blk = lambda out: [{"id": "amp", "kind": "nam", "captureInputDbu": 5.0, "captureOutputDbu": out,
-                        "inputMissing": False, "outputMissing": out is None}]
-    return {"warnings": [], "calibration": {"enabled": mode == "calibrated", "mode": mode, "deviceDbu": device,
-                                            "deviceAssumed": assumed, "anyUncalibrated": any_uncal,
-                                            "paths": {"a": blk(a_out), "b": blk(b_out)}}}
+REPO_ROOT = Path(__file__).resolve().parents[2]
+NAM_DIR = REPO_ROOT / "tests" / "fixtures" / "nam"
+IR_A = REPO_ROOT / "tests" / "fixtures" / "ir" / "ir_a.wav"
+
+
+def _cal_probe(device=12.0, assumed=True, a_out=-3.0, b_out=-3.0, mode="calibrated", any_uncal=False, last="a2", ref_out=None):
+    blk = lambda out, i: [{"id": i, "kind": "nam", "captureInputDbu": 5.0, "captureOutputDbu": out,
+                           "inputMissing": False, "outputMissing": out is None}]
+    cal = {"enabled": mode == "calibrated", "mode": mode, "deviceDbu": device, "deviceAssumed": assumed,
+           "anyUncalibrated": any_uncal, "paths": {"a": blk(a_out, last), "b": blk(b_out, "b2")}}
+    if ref_out is not None:
+        cal["refOutDbu"] = ref_out
+    return {"warnings": [], "calibration": cal}
+
+
+def _post(g):
+    return lambda k, last: (g, None)
 
 
 def _nam_md(rep, out):
     return json.loads((Path(out) / rep["files"]["primary"]).read_text())["metadata"]
 
 
-def test_reference_levels_rule_unit():
-    pre = {"blend": 0.4, "paths": {"a": {"blocks": [1]}, "b": {"blocks": [1]}}}
-    r = P.reference_levels(pre, _cal_probe(device=9.0, assumed=False, a_out=-3.0, b_out=-3.0))
+SINGLE = {"blend": 0.0, "paths": {"a": {"blocks": [{"id": "a2"}]}, "b": {"enabled": False, "blocks": []}}}
+BLEND = {"blend": 0.4, "paths": {"a": {"blocks": [{"id": "a2"}]}, "b": {"blocks": [{"id": "b2"}]}}}
+
+
+def test_reference_levels_output_is_ref_minus_post_gain_plus_scaledown():
+    r = P.reference_levels(SINGLE, _cal_probe(device=9.0, assumed=False, a_out=-3.0), post=_post(0.0))
     assert r["calibrated"] and r["inputLevelDbu"] == 9.0 and r["outputLevelDbu"] == -3.0 and r["deviceAssumed"] is False
     assert not any("assumed" in n for n in r["notes"])
-    r = P.reference_levels(pre, _cal_probe(a_out=-3.0, b_out=2.0))                  # the blend's paths disagree: no single value
-    assert r["inputLevelDbu"] == 12.0 and r["outputLevelDbu"] is None and any("different output references" in n for n in r["notes"])
-    r = P.reference_levels({**pre, "blend": 0.0}, _cal_probe(a_out=-3.0, b_out=2.0))        # B is silent at blend 0: only A counts
-    assert r["outputLevelDbu"] == -3.0
-    r = P.reference_levels({**pre, "paths": {"a": {"blocks": [1]}, "b": {"enabled": False, "blocks": []}}},
-                           _cal_probe(a_out=None, b_out=2.0))
-    assert r["outputLevelDbu"] is None and any("no output level" in n for n in r["notes"])
-    r = P.reference_levels(pre, _cal_probe(), 2.5)                                    # reamp output scaled down 2.5 dB
-    assert r["outputLevelDbu"] == pytest.approx(-0.5)
-    for probe in (_cal_probe(mode="legacy"), {"warnings": []}):                       # uncalibrated / no record: no fields, a note
-        r = P.reference_levels(pre, probe)
+    # SIGN: +6 dB of digital gain after the reference means the same analog level lands 6 dB higher in the file, so the file's
+    # 0 dBFS is 6 dB LOWER in analog terms
+    r6 = P.reference_levels(SINGLE, _cal_probe(a_out=-3.0), post=_post(6.0))
+    assert r6["outputLevelDbu"] == pytest.approx(-9.0) and r6["postGainDb"] == 6.0
+    # the reamp output scaled down by 2.5 dB: the file is quieter, its 0 dBFS is 2.5 dB higher
+    rr = P.reference_levels(SINGLE, _cal_probe(a_out=-3.0), 2.5, post=_post(0.0))
+    assert rr["outputLevelDbu"] == pytest.approx(-0.5)
+    assert any("undone by its export hook" in n for n in r6["notes"])             # the normalisation is not a term, and says why
+
+
+def test_reference_levels_prefers_the_cores_refoutdbu_and_falls_back_to_the_walk():
+    walk = P.reference_levels(SINGLE, _cal_probe(a_out=-3.0), post=_post(0.0))
+    assert walk["outputReferenceDbu"] == -3.0
+    core = P.reference_levels(SINGLE, _cal_probe(a_out=-3.0, ref_out={"a": 7.5, "b": 0.0}), post=_post(0.0))
+    assert core["outputReferenceDbu"] == 7.5 and core["outputLevelDbu"] == 7.5
+    nested = _cal_probe(a_out=-3.0)
+    nested["calibration"]["paths"]["a"] = {"blocks": nested["calibration"]["paths"]["a"], "refOutDbu": 4.0}
+    assert P.reference_levels(SINGLE, nested, post=_post(0.0))["outputLevelDbu"] == 4.0
+
+
+def test_reference_levels_writes_input_only_when_a_term_is_missing():
+    ok = P.reference_levels(SINGLE, _cal_probe(), post=_post(0.0))
+    assert ok["outputLevelDbu"] is not None
+    cases = {
+        "blend": (BLEND, _cal_probe(), _post(0.0), "blend sum"),
+        "unmeasured": (SINGLE, _cal_probe(), None, "digital gain after the last capture"),
+        "refused": (SINGLE, _cal_probe(), lambda k, last: (None, "the bus compressor is on"), "bus compressor"),
+        "no output metadata": (SINGLE, _cal_probe(a_out=None), _post(0.0), "capture output level"),
+    }
+    for name, (pre, probe, post, term) in cases.items():
+        r = P.reference_levels(pre, probe, post=post)
+        assert r["inputLevelDbu"] == 12.0 and r["outputLevelDbu"] is None, name
+        assert term in " ".join(r["notes"]) and "NOT written" in " ".join(r["notes"]), name
+
+
+def test_reference_levels_normalisation_not_undone_means_no_output(monkeypatch):
+    from sawblade_match.export import levels as LV
+    monkeypatch.setattr(LV, "TRAINER_EXPORT_UNDOES_OUTPUT_NORMALISATION", False)
+    r = P.reference_levels(SINGLE, _cal_probe(), post=_post(0.0))
+    assert r["inputLevelDbu"] == 12.0 and r["outputLevelDbu"] is None and "output normalisation" in " ".join(r["notes"])
+
+
+def test_reference_levels_uncalibrated_renders_have_no_fields():
+    for probe in (_cal_probe(mode="legacy"), {"warnings": []}):
+        r = P.reference_levels(SINGLE, probe, post=_post(0.0))
         assert not r["calibrated"] and r["inputLevelDbu"] is None and r["outputLevelDbu"] is None
         assert r["notes"] and "NOT written" in r["notes"][0]
 
 
+# ---- the post-capture gain is measured by the real core ----
+
+def _single_path(out_gain=0.0, nam_extra=None, path_extra=None, cab=False, nam="linear_identity.nam"):
+    blk = {"id": "a2", "type": "nam", "slot": "amp", "model": {"file": str(NAM_DIR / nam)}, **(nam_extra or {})}
+    p = {"schema": "sawblade.preset", "version": 1, "name": "t", "gate": {"enabled": False}, "blend": 0.0,
+         "paths": {"a": {"role": "body", "blocks": [blk], **(path_extra or {})}, "b": {"role": "body", "enabled": False, "blocks": []}},
+         "align": {"mode": "off"}, "postEq": [], "output": {"gainDb": out_gain}}
+    p["cab"] = {"mode": "shared", "ir": {"file": str(IR_A)}, "enabled": bool(cab)}
+    return p
+
+
+def _post_gain(preset, probe=None):
+    from sawblade_match.core import CaptureCache
+    from sawblade_match.export import levels as LV
+    from sawblade_match.export.chain import render48
+    return LV.post_gain_db(preset, "a", probe or {}, ".", CaptureCache(), render48, "a2")
+
+
+def _full_gain(preset):
+    from sawblade_match.core import CaptureCache
+    from sawblade_match.export import levels as LV
+    from sawblade_match.export.chain import render48
+    t = np.arange(int(5 * 48000)) / 48000
+    y, _ = render48(preset, (0.03 * np.sin(2 * np.pi * 1000 * t)).astype(np.float32), ".", CaptureCache())
+    return LV.lockin_gain_db(y)
+
+
+def test_post_gain_output_gain_sign_and_value():
+    g0, why = _post_gain(_single_path(0.0))
+    g6, _ = _post_gain(_single_path(6.0))
+    assert why is None and g0 == pytest.approx(0.0, abs=0.01) and g6 == pytest.approx(6.0, abs=0.01)
+    pre = _single_path(6.0)
+    lo = P.reference_levels(pre, _cal_probe(a_out=-3.0), post=lambda k, last: _post_gain(pre))
+    hi = P.reference_levels(_single_path(0.0), _cal_probe(a_out=-3.0), post=lambda k, last: _post_gain(_single_path(0.0)))
+    assert hi["outputLevelDbu"] - lo["outputLevelDbu"] == pytest.approx(6.0, abs=0.01)     # +6 dB output gain: 6 dB LOWER
+
+
+def test_post_gain_matches_the_whole_chain_minus_the_capture():
+    nam_only = _full_gain(_single_path(0.0))                      # the capture's own gain (and nothing else)
+    for kw in ({"out_gain": -4.5}, {"path_extra": {"levelDb": 2.5}}, {"nam_extra": {"outputGainDb": 3.0, "makeupDb": 1.0}},
+               {"path_extra": {"eq": [{"type": "peak", "freq": 1000.0, "gainDb": 5.0, "q": 1.0}]}}):
+        p = _single_path(**kw)
+        g, why = _post_gain(p)
+        assert why is None
+        assert g == pytest.approx(_full_gain(p) - nam_only, abs=0.02), kw
+
+
+def test_post_gain_includes_the_cab_ir_at_1khz_only_when_the_cab_is_in_the_model():
+    nam_only = _full_gain(_single_path(0.0))
+    with_cab, nocab = _single_path(cab=True), _single_path(cab=False)
+    g, why = _post_gain(with_cab)
+    assert why is None and g == pytest.approx(_full_gain(with_cab) - nam_only, abs=0.02)
+    assert abs(g) > 0.05                                             # the IR really has a gain at 1 kHz
+    assert _post_gain(nocab)[0] == pytest.approx(0.0, abs=0.01)      # nocab training chain: the IR is the loader's, not a term
+
+
+def test_post_gain_normalize_loudness_uses_the_models_loudness(tmp_path):
+    nam = json.loads((NAM_DIR / "linear_identity.nam").read_text())
+    nam["metadata"]["loudness"] = -22.0
+    f = tmp_path / "loud.nam"
+    f.write_text(json.dumps(nam))
+    plain = _single_path()
+    p = _single_path(nam_extra={"normalizeLoudness": True, "model": {"file": str(f)}})
+    plain["paths"]["a"]["blocks"][0]["model"] = {"file": str(f)}
+    g, why = _post_gain(p)
+    assert why is None and g == pytest.approx(4.0, abs=0.01)         # -18 - (-22)
+    assert g == pytest.approx(_full_gain(p) - _full_gain(plain), abs=0.02)
+
+
+def test_post_gain_refuses_what_it_cannot_account_for():
+    comp = _single_path()
+    comp["busComp"] = {"enabled": True, "thresholdDb": -20.0, "ratio": 4.0, "kneeDb": 6.0, "attackMs": 10.0, "releaseMs": 100.0,
+                       "makeupDb": 0.0}
+    assert _post_gain(comp)[0] is None and "bus compressor" in _post_gain(comp)[1]
+    after = _single_path()
+    after["paths"]["a"]["blocks"].append({"id": "a3", "type": "pedal.ts", "modelVersion": 1, "params": {}})
+    assert _post_gain(after)[0] is None and "not linear" in _post_gain(after)[1]
+    ladder = _single_path()
+    ladder["paths"]["a"]["blocks"][0]["model"]["ladder"] = {"rungs": []}
+    assert "ladder" in _post_gain(ladder)[1]
+    assert _post_gain(_single_path())[0] is not None
+
+
+# ---- the export wiring (trainer-free) ----
+
+def _single_preset_file(mx, blend=0.0):
+    f = mx.tmp / "preset.json"
+    p = json.loads(f.read_text())
+    p["blend"] = blend
+    p["paths"]["b"]["enabled"] = False
+    f.write_text(json.dumps(p))
+
+
+def _stub_post(monkeypatch, gain):
+    from sawblade_match.export import levels as LV
+    seen = []
+
+    def post(tpreset, path, probe, base, cache, render, last_id):
+        seen.append((path, last_id))
+        return gain, None
+    monkeypatch.setattr(LV, "post_gain_db", post)
+    return seen
+
+
 def test_mock_calibrated_export_writes_the_dbu_fields_into_the_nam(mx, monkeypatch):
+    _single_preset_file(mx)
+    seen = _stub_post(monkeypatch, 2.0)
     monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe())
     out = mx.tmp / "cal"
     rep = mx.go(out=str(out))
     md = _nam_md(rep, out)
-    assert md["input_level_dbu"] == 12.0 and md["output_level_dbu"] == -3.0           # round-trips into the .nam metadata
-    assert md["sawblade"]["levels"]["inputLevelDbu"] == 12.0 and md["sawblade"]["levels"]["outputLevelDbu"] == -3.0
+    assert seen and seen[0] == ("a", "a2")
+    assert md["input_level_dbu"] == 12.0 and md["output_level_dbu"] == pytest.approx(-5.0)      # -3 - 2
+    assert md["sawblade"]["levels"]["inputLevelDbu"] == 12.0 and md["sawblade"]["levels"]["outputLevelDbu"] == pytest.approx(-5.0)
     assert md["sawblade"]["levels"]["deviceAssumed"] is True
     c = rep["calibration"]
-    assert c["calibrated"] and c["deviceDbu"] == 12.0 and c["deviceAssumed"] is True
+    assert c["calibrated"] and c["deviceDbu"] == 12.0 and c["deviceAssumed"] is True and c["postGainDb"] == 2.0
     txt = (out / rep["exportNotes"]["file"]).read_text()
-    assert "input_level_dbu  : +12 dBu" in txt and "output_level_dbu : -3 dBu" in txt
+    assert "input_level_dbu  : +12 dBu" in txt and "output_level_dbu : -5 dBu" in txt
     assert "assumed" in txt and "+12 dBu" in txt                                        # says which level to set on a loader
     assert rep["exportNotes"]["calibration"]["inputLevelDbu"] == 12.0
 
 
 def test_mock_calibrated_export_with_a_given_device_level_does_not_say_assumed(mx, monkeypatch):
-    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe(device=9.0, assumed=False, a_out=1.5, b_out=1.5))
+    _single_preset_file(mx)
+    _stub_post(monkeypatch, 0.0)
+    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe(device=9.0, assumed=False, a_out=1.5))
     out = mx.tmp / "cal9"
     rep = mx.go(out=str(out))
     md = _nam_md(rep, out)
@@ -1255,13 +1412,26 @@ def test_mock_uncalibrated_export_writes_no_dbu_fields_and_says_so(mx, monkeypat
     assert "NOT written" in txt and "output_level_dbu :" not in txt
 
 
-def test_mock_calibrated_blend_with_different_path_outputs_writes_input_only(mx, monkeypatch):
-    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe(a_out=-3.0, b_out=4.0))
-    out = mx.tmp / "mixed"
+def test_mock_calibrated_blend_writes_input_only_and_names_the_term(mx, monkeypatch):
+    _stub_post(monkeypatch, 0.0)
+    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe())
+    out = mx.tmp / "blend"
+    rep = mx.go(out=str(out))                                  # the fixture preset blends A and B (0.55)
+    md = _nam_md(rep, out)
+    assert md["input_level_dbu"] == 12.0 and md.get("output_level_dbu") is None
+    assert "blend sum" in " ".join(rep["calibration"]["notes"])
+
+
+def test_mock_missing_post_gain_term_writes_input_only(mx, monkeypatch):
+    from sawblade_match.export import levels as LV
+    _single_preset_file(mx)
+    monkeypatch.setattr(LV, "post_gain_db", lambda *a, **k: (None, "block 'x' (pedal.ts) follows the last capture and is not linear"))
+    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe())
+    out = mx.tmp / "missing"
     rep = mx.go(out=str(out))
     md = _nam_md(rep, out)
     assert md["input_level_dbu"] == 12.0 and md.get("output_level_dbu") is None
-    assert "different output references" in " ".join(rep["calibration"]["notes"])
+    assert "not linear" in " ".join(rep["calibration"]["notes"]) and "missing term" in " ".join(rep["calibration"]["notes"])
 
 
 def test_dbu_field_names_match_the_pinned_trainer_metadata():
