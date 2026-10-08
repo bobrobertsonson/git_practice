@@ -428,12 +428,19 @@ json driftRig() {
   return j;
 }
 
-// Plays `seconds` of the DI through the processor in 0.1 s blocks and runs the 10 Hz tick after each, like the plugin timer does.
+// The DI is "played" only while the gate is open: with 0.4 s notes every 0.7 s that is about 57% to 64% of the time (windows count when the
+// gate is open for at least half of them). So these tests reckon in played time: wall(playedS) is the audio length that holds AT LEAST
+// that much played time,.
+constexpr double kMinPlayedPerWall = 0.55;
+double wall(double playedS) { return playedS / kMinPlayedPerWall; }
+
+// Plays `seconds` of the DI through the processor in 0.1 s blocks and runs the 10 Hz tick after each, like the plugin timer does. The DI goes
+// on BOTH channels: processBlock takes the mean of the two inputs, and an unset channel 1 would hold the previous block's output.
 void playTicking(World& w, double seconds, double gainDb, unsigned seed) {
   const auto x = playedDi(seconds, gainDb, seed);
-  std::vector<float> y(4800);
+  std::vector<float> y(4800), y2(4800);
   for (std::size_t pos = 0; pos + 4800 <= x.size(); pos += 4800) {
-    w.h.process(x.data() + pos, y.data(), 4800);
+    w.h.process(x.data() + pos, y.data(), 4800, x.data() + pos, y2.data());
     w.h.p.calibrationTick();
   }
 }
@@ -466,7 +473,7 @@ World& driftWorld(World& w, bool calibrated = true) {
 TEST_CASE("drift check: with calibration off nothing runs: no statistic, no baseline, no notice", "[devicecal][drift][plugin]") {
   World w;
   driftWorld(w, /*calibrated=*/false);
-  playTicking(w, 70.0, 0.0, 1);
+  playTicking(w, wall(70.0), 0.0, 1);
   CHECK(w.h.p.driftTracker().learning());
   CHECK(w.h.p.driftTracker().learnedS() == 0.0);
   CHECK_FALSE(w.h.p.driftNotice().active);
@@ -479,18 +486,19 @@ TEST_CASE("drift check: no device record means no statistic either", "[devicecal
   REQUIRE(w.st().setCalibratedInputLevels(true).ok);
   w.h.load(writeJson(w.tmp.dir, "drift", driftRig()));
   w.tick();
-  playTicking(w, 70.0, 0.0, 1);
+  playTicking(w, wall(70.0), 0.0, 1);
   CHECK(w.h.p.driftTracker().learnedS() == 0.0);
   CHECK_FALSE(w.h.p.driftNotice().active);
 }
 
-TEST_CASE("drift check: learns a baseline into the device record, raises on a sustained step, never touches a gain", "[devicecal][drift][plugin]") {
+TEST_CASE("drift check: learns a baseline into the device record, raises on a sustained +6 dB, never touches a gain", "[devicecal][drift][plugin]") {
   World w;
   driftWorld(w);
-  // The first >= 60 s of played audio set the baseline, stored in the device record only.
+  // The first >= 60 s of PLAYED audio set the baseline, stored in the device record only. 50 s of audio holds at most 33 s of played time.
   playTicking(w, 50.0, 0.0, 1);
+  CHECK(w.h.p.driftTracker().learnedS() > 10.0);  // windows do arrive from the live engine
   CHECK_FALSE(w.st().deviceCalibration()->driftBaselineDbfs.has_value());
-  playTicking(w, 15.0, 0.0, 2);
+  playTicking(w, wall(70.0) - 50.0, 0.0, 2);
   const auto baseline = w.st().deviceCalibration()->driftBaselineDbfs;
   REQUIRE(baseline.has_value());
   CHECK(*baseline > -31.0);
@@ -502,13 +510,13 @@ TEST_CASE("drift check: learns a baseline into the device record, raises on a su
   CHECK(presetToStateJson(w.h.p.currentPreset()).find("driftBaseline") == std::string::npos);
 
   const GainSnapshot before = snapshotOf(w);
-  // +6 dB for 20 s does not raise it, and neither does the return to normal.
-  playTicking(w, 20.0, 6.0, 3);
+  // +6 dB for 20 s of played time does not raise it, and neither does the return to normal.
+  playTicking(w, 20.0 / kMinPlayedPerWall, 6.0, 3);  // 36 s of audio: 20 to 24 s played, short of the 30 s sustain
   CHECK_FALSE(w.h.p.driftNotice().active);
-  playTicking(w, 70.0, 0.0, 4);
+  playTicking(w, wall(40.0), 0.0, 4);
   CHECK_FALSE(w.h.p.driftNotice().active);
   // A true +6 dB sustained does, within 60 s of played time.
-  playTicking(w, 60.0, 6.0, 5);
+  playTicking(w, wall(60.0), 6.0, 5);
   const auto n = w.h.p.driftNotice();
   REQUIRE(n.active);
   CHECK(n.hotter);
@@ -520,7 +528,7 @@ TEST_CASE("drift check: learns a baseline into the device record, raises on a su
   // [Ignore] silences it.
   w.h.p.ignoreDrift();
   CHECK_FALSE(w.h.p.driftNotice().active);
-  playTicking(w, 40.0, 6.0, 6);
+  playTicking(w, wall(40.0), 6.0, 6);
   CHECK_FALSE(w.h.p.driftNotice().active);
   CHECK(snapshotOf(w) == before);
   CHECK(w.h.allocs == 0);
@@ -534,21 +542,40 @@ TEST_CASE("drift check: learns a baseline into the device record, raises on a su
   CHECK_FALSE(w.h.p.driftNotice().active);
 }
 
+TEST_CASE("drift check: a true -6 dB is raised too, as quieter, and changes no gain", "[devicecal][drift][plugin]") {
+  World w;
+  driftWorld(w);
+  playTicking(w, wall(70.0), 0.0, 1);
+  REQUIRE(w.st().deviceCalibration()->driftBaselineDbfs.has_value());
+  const GainSnapshot before = snapshotOf(w);
+  playTicking(w, wall(60.0), -6.0, 2);
+  const auto n = w.h.p.driftNotice();
+  REQUIRE(n.active);
+  CHECK_FALSE(n.hotter);
+  CHECK(n.db >= 5);
+  CHECK(n.db <= 7);
+  CHECK(drift::driftNoticeText(n).find("quieter") != std::string::npos);
+  CHECK(snapshotOf(w) == before);
+}
+
 TEST_CASE("drift check: playing dynamics within +-4 dB over minutes never raise it", "[devicecal][drift][plugin]") {
   World w;
   driftWorld(w);
-  playTicking(w, 66.0, 0.0, 1);
+  playTicking(w, wall(70.0), 0.0, 1);
   REQUIRE(w.st().deviceCalibration()->driftBaselineDbfs.has_value());
   bool ever = false;
-  for (int rep = 0; rep < 12; ++rep) {  // alternating loud (+3 dB) and soft (-3 dB) passages of 15 s: 3 minutes
-    const double g = rep % 2 ? 3.0 : -3.0;
+  double worst = 0.0;
+  for (int rep = 0; rep < 16; ++rep) {  // alternating loud (+4 dB) and soft (-4 dB) passages of 15 s: 4 minutes
+    const double g = rep % 2 ? 4.0 : -4.0;
     const auto x = playedDi(15.0, g, static_cast<unsigned>(10 + rep));
-    std::vector<float> y(4800);
+    std::vector<float> y(4800), y2(4800);
     for (std::size_t pos = 0; pos + 4800 <= x.size(); pos += 4800) {
-      w.h.process(x.data() + pos, y.data(), 4800);
+      w.h.process(x.data() + pos, y.data(), 4800, x.data() + pos, y2.data());
       w.h.p.calibrationTick();
       ever = ever || w.h.p.driftNotice().active;
+      worst = std::max(worst, std::fabs(w.h.p.driftTracker().driftDb()));
     }
   }
+  INFO("largest |drift| " << worst << " dB");
   CHECK_FALSE(ever);
 }

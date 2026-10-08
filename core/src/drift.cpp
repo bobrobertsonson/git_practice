@@ -52,7 +52,8 @@ void PeakTap::process(const float* di, const std::uint8_t* open, int n) noexcept
 int PeakTap::read(std::uint32_t& cursor, std::uint16_t* out, int maxOut) const noexcept {
   const std::uint32_t w = written_.load(std::memory_order_acquire);
   if (cursor > w) cursor = 0;  // the tap was prepared again
-  if (w - cursor > static_cast<std::uint32_t>(kRing)) cursor = w - kRing;
+  // Lapped: the oldest slot is the one the producer writes next, so it may be torn; resume one window later.
+  if (w - cursor >= static_cast<std::uint32_t>(kRing)) cursor = w - kRing + 1;
   int n = 0;
   while (cursor != w && n < maxOut) out[n++] = ring_[cursor++ % kRing].load(std::memory_order_relaxed);
   return n;

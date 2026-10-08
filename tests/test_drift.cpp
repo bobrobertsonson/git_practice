@@ -222,7 +222,7 @@ TEST_CASE("Drift I3: windows overwritten before they are read are skipped, not r
   for (int i = 0; i < drift::kRing + 100; ++i) tap.process(di.data(), open.data(), 50);
   std::uint32_t cur = 0;
   std::vector<std::uint16_t> out(2000);
-  CHECK(tap.read(cur, out.data(), 2000) == drift::kRing);
+  CHECK(tap.read(cur, out.data(), 2000) == drift::kRing - 1);  // the slot being overwritten next is not read
   CHECK(tap.read(cur, out.data(), 2000) == 0);
 }
 
@@ -346,7 +346,7 @@ TEST_CASE("Drift I3: silence neither counts toward the 30 s nor resets it", "[dr
   CHECK(t.notice().active);
 }
 
-TEST_CASE("Drift I3: Ignore silences it until the drift moves another 6 dB", "[drift][tracker]") {
+TEST_CASE("Drift I3: Ignore silences it until the drift moves another 5 dB", "[drift][tracker]") {
   Player p;
   auto t = learned(p);
   p.play(t, 70.0, -12.0);  // +8
@@ -362,6 +362,21 @@ TEST_CASE("Drift I3: Ignore silences it until the drift moves another 6 dB", "[d
   CHECK(t.notice().active);
   CHECK(t.notice().hotter);
   CHECK(t.notice().db == 15);
+}
+
+TEST_CASE("Drift I3: after Ignore a move of 5.5 dB from the ignored level re-raises, 4.5 dB does not", "[drift][tracker]") {
+  Player p;
+  auto t = learned(p);
+  p.play(t, 70.0, -12.0);  // +8
+  REQUIRE(t.notice().active);
+  t.ignore();
+  p.play(t, 90.0, -12.0 + 4.5);
+  CHECK_FALSE(t.notice().active);
+  p.play(t, 90.0, -12.0 + 5.5);
+  CHECK(t.notice().active);
+  CHECK(t.notice().hotter);
+  CHECK(t.notice().db >= 13);
+  CHECK(t.notice().db <= 14);
 }
 
 TEST_CASE("Drift I3: Ignore is forgotten when the level returns, and a changed baseline restarts everything", "[drift][tracker]") {
