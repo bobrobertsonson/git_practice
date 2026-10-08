@@ -2994,6 +2994,51 @@ TEST_CASE("export glue: RESUME is offered for a cancelled run of the same rig an
   CHECK_FALSE(findResumableExport(h.p).available);  // finished: nothing left to resume
 }
 
+TEST_CASE("export glue: a stored autoTrimCal never reaches the exported preset, the notes preset or the same-rig key (v0.8 I4b)", "[export][glue][i4b]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  Host h(kFs, 256);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  h.p.jobs().setJobsDir(t.jobs);
+  h.load(writeSourcedRig(t.root, "live", false, true));
+  ExportSettings s;
+  s.outputFolder = (t.root / "exports").string();
+  s.size = "lite";
+  std::string err;
+
+  const ExportPlan plain = planExport(h.p, s);
+  REQUIRE(plain.dropComp);
+  REQUIRE_FALSE(plain.sourceSha256.empty());
+  ExportRequest ra;
+  REQUIRE(buildExportRequest(h.p, s, plain, ra, &err));
+  const std::string trainedA = readText(ra.preset), notesA = readText(ra.notesPreset);
+  const ExportSource keyA = prepareExportSource(h.p, /*dropComp=*/false, /*write=*/false);
+  REQUIRE(keyA.ok);
+
+  // The live rig now carries a calibrated trim (as the level tick writes one at the reference device).
+  Preset stamped = h.p.currentPreset();
+  stamped.autoTrimCal.db = -4.25;
+  stamped.autoTrimCal.hash = "0123abcd";
+  h.p.loadPreset(stamped);
+  REQUIRE(h.p.waitForLoader());
+  REQUIRE(h.p.currentPreset().autoTrimCal.hash == "0123abcd");
+
+  const ExportPlan with = planExport(h.p, s);
+  CHECK(with.sourceSha256 == plain.sourceSha256);  // the "same rig" key (RESUME, match source) is unchanged
+  CHECK(prepareExportSource(h.p, false, false).sha256 == keyA.sha256);
+  ExportRequest rb;
+  REQUIRE(buildExportRequest(h.p, s, with, rb, &err));
+  CHECK(rb.preset == ra.preset);
+  CHECK(rb.notesPreset == ra.notesPreset);
+  CHECK(readText(rb.preset) == trainedA);
+  CHECK(readText(rb.notesPreset) == notesA);
+  for (const std::string* text : {&trainedA, &notesA}) {
+    CHECK(text->find("autoTrimCal") == std::string::npos);
+    CHECK(text->find("0123abcd") == std::string::npos);
+  }
+  CHECK(h.p.currentPreset().autoTrimCal.db == -4.25);  // the live rig is untouched
+}
+
 TEST_CASE("export glue: a dropped bus comp is still listed - --notes-preset carries the original rig, also on resume", "[export][glue][notes]") {
   using namespace sawblade::plugin;
   FakeTools t;

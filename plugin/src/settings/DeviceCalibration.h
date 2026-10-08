@@ -89,6 +89,11 @@ ChainCalibration chainCalibrationFor(bool calibratedInputLevels, const std::opti
 // before this feature) and only from the device record: never from a preset or a matched reference DI.
 EngineCalibration engineCalibrationFor(bool calibratedInputLevels, const std::optional<DeviceCalibrationRecord>& record);
 
+// v0.8 I4b (lead decision 1): a preset plays with input calibration only when its calibration.mode is "calibrated"; a "legacy" preset plays
+// exactly as it did before v0.8 (no planned gains, the stock gate seed, no drift tap) whatever the toggle says. Everything off = default-built.
+ChainCalibration chainCalibrationForPreset(const ChainCalibration& base, CalibrationMode mode);
+EngineCalibration engineCalibrationForPreset(const EngineCalibration& base, CalibrationMode mode);
+
 // "Interface not calibrated: assuming +12 dBu" (the notice shown while calibrated input levels are on and no record exists).
 std::string uncalibratedNotice();
 

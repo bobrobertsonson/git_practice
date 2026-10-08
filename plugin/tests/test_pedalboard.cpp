@@ -105,6 +105,12 @@ json rigJson(const std::vector<json>& a, const std::vector<json>& b, bool bOn) {
           {"blend", bOn ? 0.5 : 0.0},
           {"cab", sharedCab()}};
 }
+// v0.8 I4b: a preset plays with input calibration only when it is "calibrated" (a legacy one ignores the toggle).
+json calibrated(json j) {
+  j["version"] = 5;
+  j["calibration"] = {{"mode", "calibrated"}};
+  return j;
+}
 // SAW: chainsaw a1, overdrive a2 (bypassed), EQ a3, amp a4.  BODY: overdrive b1, amp b2.
 json standard() { return rigJson({hmBlock("a1"), tsBlock("a2", 2, true), eqBlock("a3"), namAmp("a4")}, {tsBlock("b1", 4), namAmp("b2")}, true); }
 
@@ -1000,7 +1006,7 @@ TEST_CASE("pedalboard: with calibrated input levels on, a capture without level 
     return json{{"id", id}, {"type", "nam"}, {"slot", "pedal"}, {"model", {{"file", (kFx / "nam" / file).string()}}}};
   };
   // a1 has no levels (the linear identity fixture); a2 has both (cal_pedal_a: in 6 dBu, out 10 dBu).
-  const json rigJ = rigJson({capture("a1", "linear_identity.nam"), capture("a2", "cal_pedal_a.nam"), namAmp("a3")}, {namAmp("b1")}, true);
+  const json rigJ = calibrated(rigJson({capture("a1", "linear_identity.nam"), capture("a2", "cal_pedal_a.nam"), namAmp("a3")}, {namAmp("b1")}, true));
   rig.load(rigJ);  // calibration off
   auto& pb = rig.board();
   REQUIRE(pb.tileCount(0) == 2);
@@ -1047,7 +1053,7 @@ TEST_CASE("pedalboard: with calibrated input levels on, a pedal that feeds the a
   // The amp carries input_level_dbu, so the hop into it is planned (spec decision 3a: an amp without it would not be).
   const json calAmp = {{"id", "a2"}, {"type", "nam"}, {"slot", "amp"}, {"model", {{"file", (kFx / "nam" / "cal_amp_hi.nam").string()}}}};
   settings::Settings::shared().setCalibratedInputLevels(true);
-  rig.load(rigJson({capture("a1", "cal_pedal_a.nam", 5.0), calAmp}, {namAmp("b1")}, true));
+  rig.load(calibrated(rigJson({capture("a1", "cal_pedal_a.nam", 5.0), calAmp}, {namAmp("b1")}, true)));
   rig.proc.calibrationTick();
   rig.settle();
   const auto makeupOf = [&](int path, std::size_t i) {
@@ -1075,7 +1081,7 @@ TEST_CASE("pedalboard: with calibrated input levels on, a pedal that feeds the a
   for (std::size_t i = 0; i < 2; ++i) CHECK(makeupOf(0, i) == 0.0);
 
   // 3a at the plugin level: an amp WITHOUT input metadata means the hop is not planned, so the swapped pedal keeps its normal make-up.
-  rig.load(rigJson({capture("a1", "cal_pedal_a.nam", 5.0), namAmp("a2")}, {namAmp("b1")}, true));
+  rig.load(calibrated(rigJson({capture("a1", "cal_pedal_a.nam", 5.0), namAmp("a2")}, {namAmp("b1")}, true)));
   rig.proc.calibrationTick();
   rig.settle();
   REQUIRE(makeupOf(0, 0) == 5.0);

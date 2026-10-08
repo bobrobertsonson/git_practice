@@ -284,7 +284,19 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // --- v0.8 I2 device calibration ---------------------------------------------------------------------------------
   // The calibration the next engine is built with: Settings toggle + device record (message thread or the loader thread; Settings is
   // locked internally). Off unless the toggle is on.
-  EngineCalibration currentEngineCalibration() const;
+  EngineCalibration currentEngineCalibration() const;  // the Settings part (toggle, device record); a legacy preset ignores it (engineCalibrationForPreset)
+  // The calibration mode of the preset that is playing, or of the one being loaded. Message thread.
+  CalibrationMode presetCalibrationMode() const;
+  // v0.8 I4b legacy presets (docs/specs/v0_8-I4b-plugin.md section 4). True while "Calibrated input levels" is on and the preset in use is "legacy":
+  // the editor then shows "Legacy levels - this preset was made before calibrated input." with a one-click "Use calibrated levels".
+  bool legacyLevelsHint() const;
+  // The input calibration a preset of this mode plays with right now (device record, toggle, mode): the capture browser's previews use it so they
+  // show the same planned gains as playback. Off for a legacy preset or with the toggle off.
+  ChainCalibration calibrationFor(CalibrationMode m) const { return levelCalibration(m); }
+  // The one click: sets the current preset's calibration.mode. A normal edit: one undo step (EditHistory), the engine is rebuilt with the new
+  // setting, and the mode is part of the state, so the next save writes it (a factory preset still goes through Save As: factory files are never
+  // written). False (nothing done) when the preset is already in that mode. Message thread.
+  bool setCalibrationMode(CalibrationMode m);
   // Ids of the capture blocks of the running engine whose metadata lacks an input or output level (calibration on only; else empty).
   std::vector<std::string> uncalibratedBlocks() const;
   // 10 Hz (timerCallback; tests call it): rebuilds the engine when the toggle or the device dBu changed since the last build, and
@@ -361,8 +373,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
 
  private:
   // The key of the trim cache: autoTrimHash alone with calibration off (so everything is as before I2), plus the calibration when on.
-  std::string levelKey(const std::string& baseHash) const;
-  ChainCalibration levelCalibration() const;  // off unless the toggle is on
+  std::string levelKey(const std::string& baseHash, CalibrationMode mode) const;
+  // What a preset of this mode plays with (v0.8 I4b): off unless the toggle is on AND the preset is "calibrated".
+  ChainCalibration levelCalibration(CalibrationMode mode) const;
   void syncLevelMatchSetting();  // levelMatchOn_ <- Settings (message thread); a toggle retries what could not be measured
   Preset presetWithParams() const;
   ParamValues readParams() const noexcept;

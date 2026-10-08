@@ -179,6 +179,14 @@ EngineCalibration engineCalibrationFor(bool calibratedInputLevels, const std::op
   return e;
 }
 
+ChainCalibration chainCalibrationForPreset(const ChainCalibration& base, CalibrationMode mode) {
+  return mode == CalibrationMode::Calibrated ? base : ChainCalibration{};
+}
+
+EngineCalibration engineCalibrationForPreset(const EngineCalibration& base, CalibrationMode mode) {
+  return mode == CalibrationMode::Calibrated ? base : EngineCalibration{};
+}
+
 std::string uncalibratedNotice() { return "Interface not calibrated: assuming +12 dBu"; }
 
 }  // namespace sawblade::plugin::settings

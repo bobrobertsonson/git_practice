@@ -684,3 +684,20 @@ TEST_CASE("I4a CLI: --level-match re-measures a stale calibrated stamp, and appl
     CHECK(r["levelMatchTrim"]["source"] == "none (reference DI renders silent)");
   }
 }
+
+// ---- v0.8 I4b: helpers the plugin's level tick uses ---------------------------------------------------------------------------
+TEST_CASE("I4b: autoTrimCalHashFromBase matches autoTrimCalHash; the reference device test", "[i4b][autotrim]") {
+  const Preset p = parse(mkPreset("calibrated"));
+  CHECK(autoTrimCalHashFromBase(autoTrimHash(p)) == autoTrimCalHash(p));
+  CHECK(autoTrimCalHash(p) != autoTrimHash(p));
+
+  ChainCalibration cal;
+  CHECK_FALSE(isReferenceCalibration(cal));  // calibration off
+  cal.enabled = true;
+  CHECK(isReferenceCalibration(cal));  // no device record: the assumed +12 dBu
+  cal.device.dbu = 12.0;
+  CHECK(isReferenceCalibration(cal));
+  cal.device.dbu = 12.5;
+  CHECK_FALSE(isReferenceCalibration(cal));
+  CHECK(isReferenceCalibration(assumedDeviceCalibration()));
+}

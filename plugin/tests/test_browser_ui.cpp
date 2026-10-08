@@ -1079,6 +1079,8 @@ TEST_CASE("browser: USE on a pedal that feeds an amp with calibrated input level
   };
   nlohmann::json rj = levelRigJson();
   rj["paths"]["b"]["blocks"] = nlohmann::json::array({namBlock("b0", "cal_pedal_a.nam", "pedal", 5.0), namBlock("b1", "cal_amp_hi.nam", "amp", 0.0)});
+  rj["version"] = 5;  // v0.8 I4b: only a "calibrated" preset plays with the calibration
+  rj["calibration"] = {{"mode", "calibrated"}};
   rig.proc.loadPreset(parsePreset(rj, kFixtures));
   REQUIRE(rig.proc.waitForLoader());
   settings::Settings::shared().setCalibratedInputLevels(true);

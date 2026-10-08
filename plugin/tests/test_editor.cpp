@@ -5196,6 +5196,8 @@ TEST_CASE("input notice: a stereo input shows the decision on the message line, 
 TEST_CASE("drift notice: shows with Recalibrate and Ignore, Recalibrate opens Settings, Ignore silences it", "[editor][devicecal][drift]") {
   Rig rig;
   auto& st = Settings::shared();
+  REQUIRE(rig.proc.setCalibrationMode(sawblade::CalibrationMode::Calibrated));  // v0.8 I4b: a legacy preset plays without calibration, so no drift tap
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
   REQUIRE(st.setDeviceCalibration(sawblade::plugin::settings::recordFromPreset(*sawblade::plugin::settings::findDevicePreset("scarlett-4i4-3g"), "2026-10-08")).ok);
   REQUIRE(st.setDriftBaseline(-20.0).ok);
   REQUIRE(st.setCalibratedInputLevels(true).ok);

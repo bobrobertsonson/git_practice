@@ -127,7 +127,7 @@ ExportPlan planExport(SawbladeProcessor& p, const ExportSettings& s) {
 
 namespace {
 // The ORIGINAL rig for the export notes (sawblade-export --notes-preset): the current preset serialised exactly as the export
-// source is (prepareExportSource: auto trim cleared), but with the bus comp left on, so it differs from the trained preset only
+// source is (prepareExportSource: auto trim and calibrated auto trim cleared), but with the bus comp left on, so it differs from the trained preset only
 // in busComp.enabled. Named by the trained source's hash: the same rig is the same file, and a resume reuses the very file the
 // run started with (sawblade-export refuses a resume whose notes preset changed). `reuse`: keep an existing file as it is (resume).
 bool prepareNotesPreset(SawbladeProcessor& p, const std::string& trainedSha256, bool reuse, fs::path& file, std::string* error) {
@@ -138,6 +138,8 @@ bool prepareNotesPreset(SawbladeProcessor& p, const std::string& trainedSha256, 
   Preset original = resolveDynamics(p.currentPreset());
   original.autoTrim.db = 0.0;
   original.autoTrim.hash.clear();
+  original.autoTrimCal.db = 0.0;  // v0.8 I4b: the calibrated trim neither (see prepareExportSource)
+  original.autoTrimCal.hash.clear();
   const std::string text = presetToStateJson(original);
   fs::create_directories(dir, ec);
   bool same = false;

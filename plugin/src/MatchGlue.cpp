@@ -161,6 +161,10 @@ ExportSource prepareExportSource(SawbladeProcessor& p, bool dropComp, bool write
   // carries it. A slot's capture-swap make-up is part of the sound and stays.
   current.autoTrim.db = 0.0;
   current.autoTrim.hash.clear();
+  // v0.8 I4b: the calibrated trim (output.autoTrimCalDb / autoTrimCalHash) is the same kind of stamp: the trained chain never carries a trim, and
+  // a stale or freshly measured autoTrimCal must not change the "same rig" key.
+  current.autoTrimCal.db = 0.0;
+  current.autoTrimCal.hash.clear();
   // The file is named by the hash of its bytes: the same rig always gives the same file (and the same "same rig" key
   // for RESUME); a changed rig gives another one.
   const std::string text = presetToStateJson(current);

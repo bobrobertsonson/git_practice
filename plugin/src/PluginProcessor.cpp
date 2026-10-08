@@ -737,7 +737,8 @@ void SawbladeProcessor::submit(bool fallbackToInit) {
   r.hostRate = hostRate_;
   r.maxBlock = maxBlock_;
   r.fallbackToInit = fallbackToInit;
-  r.calibration = currentEngineCalibration();  // v0.8 I2: from the Settings store only, never from a preset
+  // v0.8 I2: the device level and the toggle come from the Settings store only, never from a preset. I4b: a legacy preset plays without it.
+  r.calibration = settings::engineCalibrationForPreset(currentEngineCalibration(), r.preset.calibrationMode);
   const EngineCalibration cal = r.calibration;
   const std::uint64_t id = loader_->submit(std::move(r));
   std::lock_guard<std::mutex> lk(mutex_);
@@ -835,10 +836,16 @@ void SawbladeProcessor::rememberTrim(const std::string& hash, double db) {
 // preset's trim does not carry over. A stored trim that is fresh for this preset applies at once; otherwise 0 until measured.
 void SawbladeProcessor::levelOnLoad(const Preset& p) {
   const std::string base = autoTrimHash(p);
-  const std::string hash = levelKey(base);
+  const ChainCalibration cal = levelCalibration(p.calibrationMode);
+  const std::string hash = levelKey(base, p.calibrationMode);
   std::lock_guard<std::mutex> lk(levelMutex_);
-  // A stored trim was measured without calibration: it applies only to the uncalibrated chain (hash == base).
-  if (hash == base && !p.autoTrim.hash.empty() && p.autoTrim.hash == hash) rememberTrim(hash, p.autoTrim.db);
+  // A stored trim applies only to the setting it was measured with: the legacy one to the uncalibrated chain, the calibrated one (I4b) to
+  // calibration at the reference device (+12 dBu). Any other device level re-measures.
+  if (!cal.enabled) {
+    if (!p.autoTrim.hash.empty() && p.autoTrim.hash == base) rememberTrim(hash, p.autoTrim.db);
+  } else if (isReferenceCalibration(cal) && !p.autoTrimCal.hash.empty() && p.autoTrimCal.hash == autoTrimCalHashFromBase(base)) {
+    rememberTrim(hash, p.autoTrimCal.db);
+  }
   double known = 0.0;
   bool have = false;
   for (const auto& k : knownTrims_)
@@ -888,13 +895,17 @@ void SawbladeProcessor::levelTick() {
   // The hash of the measurement preset, recomputed only when the preset or a parameter changed (this runs at 10 Hz).
   const ParamValues pv = readParams();
   std::uint64_t rev;
-  std::string storedHash;
-  double storedDb;
+  std::string storedHash, storedCalHash;
+  double storedDb, storedCalDb;
+  CalibrationMode mode;
   {
     std::lock_guard<std::mutex> lk(mutex_);
     rev = presetRev_;
     storedHash = preset_.autoTrim.hash;
     storedDb = preset_.autoTrim.db;
+    storedCalHash = preset_.autoTrimCal.hash;
+    storedCalDb = preset_.autoTrimCal.db;
+    mode = preset_.calibrationMode;
   }
   if (!hashCached_ || hashRev_ != rev || hashParams_ != pv) {
     hashValue_ = autoTrimHash(levelMeasurementPreset());
@@ -904,13 +915,20 @@ void SawbladeProcessor::levelTick() {
     hashCached_ = true;
   }
   const std::string baseHash = hashValue_;
-  const std::string hash = levelKey(baseHash);
-  const bool calibrated = hash != baseHash;  // a calibrated trim is neither read from nor written into the preset (I4 decides its schema)
-  const ChainCalibration levelCal = calibrated ? levelCalibration() : ChainCalibration{};
+  // v0.8 I4b: the setting the chain plays with: the toggle AND the preset's calibration.mode. Calibration off (or a legacy preset) is
+  // today's logic: the stored autoTrim, keyed by the bare hash. Calibration on is keyed by the device level (|cal:), and a calibrated
+  // preset's stored autoTrimCal (measured at the reference device) is used where it is valid: at +12 dBu with a matching hash.
+  const ChainCalibration levelCal = levelCalibration(mode);
+  const bool calibrated = levelCal.enabled;
+  const std::string hash = levelKey(baseHash, mode);
+  const bool atReference = isReferenceCalibration(levelCal);
+  const std::string calHash = atReference ? autoTrimCalHashFromBase(baseHash) : std::string();
   std::optional<double> writeBack;
+  std::optional<double> writeBackCal;
   {
     std::lock_guard<std::mutex> lk(levelMutex_);
     if (!calibrated && !storedHash.empty() && storedHash == hash) rememberTrim(hash, storedDb);  // fresh in the preset itself
+    if (atReference && !storedCalHash.empty() && storedCalHash == calHash) rememberTrim(hash, storedCalDb);
     if (levelWantedHash_ != hash) {
       levelWantedHash_ = hash;
       levelChangedAt_ = std::chrono::steady_clock::now();
@@ -920,6 +938,8 @@ void SawbladeProcessor::levelTick() {
       trimTargetDb_.store(it->second);
       levelPending_ = levelFailed_ = false;
       if (!calibrated && storedHash != hash) writeBack = it->second;
+      // Only a measurement at the assumed reference device may be stored as autoTrimCal; a value measured for the user's own device never is.
+      if (atReference && storedCalHash != calHash) writeBackCal = it->second;
     } else if (failedTrims_.count(hash) != 0) {
       levelPending_ = false;
       levelFailed_ = true;
@@ -933,10 +953,16 @@ void SawbladeProcessor::levelTick() {
       }
     }
   }
-  if (writeBack) {  // so the saved state and the A / B slots carry the measured trim
+  if (writeBack || writeBackCal) {  // so the saved state and the A / B slots carry the measured trim
     std::lock_guard<std::mutex> lk(mutex_);
-    preset_.autoTrim.db = *writeBack;
-    preset_.autoTrim.hash = hash;
+    if (writeBack) {
+      preset_.autoTrim.db = *writeBack;
+      preset_.autoTrim.hash = hash;
+    }
+    if (writeBackCal) {
+      preset_.autoTrimCal.db = *writeBackCal;
+      preset_.autoTrimCal.hash = calHash;
+    }
   }
 }
 
@@ -961,7 +987,8 @@ void SawbladeProcessor::computeSlotMakeup(Preset before, Preset after, int path,
 }
 
 void SawbladeProcessor::computeSlotMakeup(Preset before, Preset after, int path, int blockIndex, LevelWorker::MakeupDone done) {
-  levelWorker_->submitMakeup(std::move(before), std::move(after), path, blockIndex, levelCalibration(), std::move(done));
+  const ChainCalibration cal = levelCalibration(after.calibrationMode);  // the swapped rig plays with its own preset's mode
+  levelWorker_->submitMakeup(std::move(before), std::move(after), path, blockIndex, cal, std::move(done));
 }
 
 // --- v0.8 I4b stereo DI -------------------------------------------------------------------------
@@ -972,24 +999,43 @@ std::string SawbladeProcessor::inputChannelNotice() const {
   return inputChannelText(stereo_.mode(), stereo_.decision());
 }
 
+bool SawbladeProcessor::legacyLevelsHint() const {
+  return settings::Settings::shared().calibratedInputLevels() && presetCalibrationMode() == CalibrationMode::Legacy;
+}
+
+bool SawbladeProcessor::setCalibrationMode(CalibrationMode m) {
+  Preset p = editBasePreset();
+  if (p.calibrationMode == m) return false;
+  p.calibrationMode = m;
+  const Status st = status();
+  // The rig is the same one: the running trim stays until the new mode's trim is known (a provisional value, as for a capture swap).
+  loadPresetUndoable(std::move(p), HistoryKind::Edit, /*keepMonitor=*/true, st.levelMatchOn ? std::optional<double>(st.trimDb) : std::nullopt);
+  return true;
+}
+
 // --- v0.8 I2 device calibration -----------------------------------------------------------------
 EngineCalibration SawbladeProcessor::currentEngineCalibration() const {
   auto& st = settings::Settings::shared();
   return settings::engineCalibrationFor(st.calibratedInputLevels(), st.deviceCalibration());
 }
 
-ChainCalibration SawbladeProcessor::levelCalibration() const {
+ChainCalibration SawbladeProcessor::levelCalibration(CalibrationMode mode) const {
   auto& st = settings::Settings::shared();
-  return settings::chainCalibrationFor(st.calibratedInputLevels(), st.deviceCalibration());
+  return settings::chainCalibrationForPreset(settings::chainCalibrationFor(st.calibratedInputLevels(), st.deviceCalibration()), mode);
 }
 
-std::string SawbladeProcessor::levelKey(const std::string& baseHash) const {
-  const ChainCalibration c = levelCalibration();
+std::string SawbladeProcessor::levelKey(const std::string& baseHash, CalibrationMode mode) const {
+  const ChainCalibration c = levelCalibration(mode);
   if (!c.enabled) return baseHash;
   char buf[48];
   if (c.device.dbu) std::snprintf(buf, sizeof buf, "|cal:%.3f", *c.device.dbu);
   else std::snprintf(buf, sizeof buf, "|cal:assumed");
   return baseHash + buf;
+}
+
+CalibrationMode SawbladeProcessor::presetCalibrationMode() const {
+  std::lock_guard<std::mutex> lk(mutex_);
+  return wanted_ ? wanted_->calibrationMode : preset_.calibrationMode;
 }
 
 std::vector<std::string> SawbladeProcessor::uncalibratedBlocks() const {
@@ -1001,10 +1047,13 @@ void SawbladeProcessor::calibrationTick() {
   if (hostRate_ <= 0.0) return;
   auto& st = settings::Settings::shared();
   const auto record = st.deviceCalibration();
-  const EngineCalibration want = settings::engineCalibrationFor(st.calibratedInputLevels(), record);
   bool rebuild;
+  EngineCalibration want;
   {
     std::lock_guard<std::mutex> lk(mutex_);
+    // v0.8 I4b: a legacy preset plays without calibration whatever the toggle says (the mode is part of what is loaded or being loaded).
+    want = settings::engineCalibrationForPreset(settings::engineCalibrationFor(st.calibratedInputLevels(), record),
+                                                wanted_ ? wanted_->calibrationMode : preset_.calibrationMode);
     rebuild = want.chain.enabled != calSubmittedEnabled_ || (want.chain.enabled && want.chain.device.dbu != calSubmittedDbu_);
   }
   if (rebuild) {

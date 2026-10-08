@@ -97,12 +97,18 @@ ChainCalibration assumedDeviceCalibration() {
   return c;
 }
 
-std::string autoTrimCalHash(const Preset& p) {
+std::string autoTrimCalHashFromBase(const std::string& autoTrimHashOfPreset) {
   // The legacy hash (the rig's level-affecting content) plus the recipe the calibrated trim was measured with. The preset's own
   // calibration.mode is not part of it: the calibrated trim is always measured with calibration forced on.
   const std::string text = "sawblade.autotrim.cal." + std::to_string(kAutoTrimCalVersion) + ".dbu." +
-                           std::to_string(static_cast<int>(calibration::kAssumedDeviceDbu)) + "\n" + autoTrimHash(p);
+                           std::to_string(static_cast<int>(calibration::kAssumedDeviceDbu)) + "\n" + autoTrimHashOfPreset;
   return sha256Hex(text.data(), text.size());
+}
+
+std::string autoTrimCalHash(const Preset& p) { return autoTrimCalHashFromBase(autoTrimHash(p)); }
+
+bool isReferenceCalibration(const ChainCalibration& cal) noexcept {
+  return cal.enabled && (!cal.device.dbu || *cal.device.dbu == calibration::kAssumedDeviceDbu);
 }
 
 bool autoTrimCalFresh(const Preset& p) { return !p.autoTrimCal.hash.empty() && p.autoTrimCal.hash == autoTrimCalHash(p); }

@@ -45,10 +45,12 @@ json nb(const std::string& id, const char* file, const char* slot = "amp") {
 
 // Path A = `a`; path B = the linear identity; blend 0.5, the impulse cab. `liveGate`: a match-origin preset whose live gate is floor
 // relative (the live dynamics policy), with a stored gate that differs from preset to preset by `gateDb`.
-json calRig(const std::vector<json>& a, const std::string& name = "cal", bool liveGate = false, double gateDb = -50.0, double inputDb = 10.0) {
+// v0.8 I4b: a preset plays with calibration only when its calibration.mode is "calibrated" (`mode`; "legacy" = never).
+json calRig(const std::vector<json>& a, const std::string& name = "cal", bool liveGate = false, double gateDb = -50.0, double inputDb = 10.0,
+            const char* mode = "calibrated") {
   json blocks = json::array();
   for (const auto& b : a) blocks.push_back(b);
-  json j = {{"schema", "sawblade.preset"}, {"version", liveGate ? 4 : 3}, {"name", name},
+  json j = {{"schema", "sawblade.preset"}, {"version", 5}, {"name", name}, {"calibration", {{"mode", mode}}},
             {"input", {{"gainDb", inputDb}}},
             {"paths", {{"a", {{"blocks", blocks}}}, {"b", {{"blocks", json::array({nb("b1", "linear_identity.nam")})}}}}},
             {"align", {{"mode", "off"}}},
@@ -295,6 +297,174 @@ TEST_CASE("device calibration: a swap of a block that feeds another NAM gets no 
   CHECK(*last.makeupDb == Approx(*slotMakeupDb(ampBefore, ampAfter, 0, nullptr, nullptr, c, 1)).margin(1e-9));
   CHECK_FALSE(makeupOf(w.h.p, before, after, 0, -1).skippedHop);
   CHECK_FALSE(makeupOf(w.h.p, before, after, 0, -2).skippedHop);
+}
+
+// ---- v0.8 I4b: the calibrated trim at play time ----------------------------------------------------------------------------------
+namespace {
+json trimRig() { return calRig({nb("p1", "cal_pedal_a.nam", "pedal"), nb("a1", "cal_amp_hi.nam")}); }
+// `j` stamped with a calibrated trim (output.autoTrimCalDb / autoTrimCalHash); `hash` empty = the hash that is fresh for `j`.
+json stampedCal(json j, double db, std::string hash = {}) {
+  if (hash.empty()) hash = autoTrimCalHash(parse(j));
+  j["output"] = {{"autoTrimCalDb", db}, {"autoTrimCalHash", hash}};
+  return j;
+}
+double calTrimAt(const json& j, std::optional<double> deviceDbu) {
+  ChainCalibration c;
+  c.enabled = true;
+  c.device.dbu = deviceDbu;
+  const auto r = computeAutoTrim(parse(j), nullptr, nullptr, c);
+  REQUIRE(r.has_value());
+  return r->trimDb;
+}
+// A stored value no measurement would give: 3 dB away from the real reference measurement, towards zero.
+double fakeTrim() {
+  const double ref = calTrimAt(trimRig(), std::nullopt);
+  return ref > 0.0 ? ref - 3.0 : ref + 3.0;
+}
+}  // namespace
+
+TEST_CASE("calibrated trim: a matching autoTrimCal hash is used at the reference device without a re-measure", "[devicecal][plugin][levelmatch][i4b]") {
+  World w;
+  REQUIRE(w.st().setCalibratedInputLevels(true).ok);  // no device record: the assumed +12 dBu, which is the reference the stamp is measured at
+  const double fake = fakeTrim();
+  const json j = stampedCal(trimRig(), fake);
+  w.h.load(writeJson(w.tmp.dir, "p", j));
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.status().calibrationOn);
+  CHECK(w.h.p.status().trimDb == Approx(fake).margin(1e-9));
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 0);
+  CHECK(std::fabs(calTrimAt(j, std::nullopt) - fake) > 0.5);  // so the check above is not vacuous
+  // A device record at exactly +12 dBu is the same reference.
+  settings::DeviceCalibrationRecord r12 = recordOf("scarlett-4i4-4g");
+  REQUIRE(r12.dbu == 12.0);
+  REQUIRE(w.st().setDeviceCalibration(r12).ok);
+  w.tick();
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.status().trimDb == Approx(fake).margin(1e-9));
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 0);
+  // The preset still carries exactly the stamp it was loaded with; no legacy trim was measured for it.
+  const Preset now = w.h.p.currentPreset();
+  CHECK(now.autoTrimCal.db == fake);
+  CHECK(now.autoTrimCal.hash == autoTrimCalHash(parse(j)));
+  CHECK(now.autoTrim.hash.empty());
+}
+
+TEST_CASE("calibrated trim: a stale autoTrimCal hash re-measures at the reference and stores the reference measurement", "[devicecal][plugin][levelmatch][i4b]") {
+  World w;
+  REQUIRE(w.st().setCalibratedInputLevels(true).ok);
+  const json j = stampedCal(trimRig(), fakeTrim(), "stale");
+  w.h.load(writeJson(w.tmp.dir, "p", j));
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 1);
+  const double measured = calTrimAt(j, std::nullopt);
+  CHECK(w.h.p.status().trimDb == Approx(measured).margin(0.01));
+  w.h.p.levelTick();  // the write-back
+  const Preset now = w.h.p.currentPreset();
+  CHECK(now.autoTrimCal.hash == autoTrimCalHash(parse(j)));  // fresh now: measured at the assumed +12 dBu, so it may be stored
+  CHECK(now.autoTrimCal.db == Approx(measured).margin(0.01));
+  CHECK(now.autoTrim.hash.empty());                          // the legacy stamp is not involved
+}
+
+TEST_CASE("calibrated trim: another device level re-measures, caches per device, and never writes into the preset", "[devicecal][plugin][levelmatch][i4b]") {
+  World w;
+  REQUIRE(w.st().setCalibratedInputLevels(true).ok);
+  const double fake = fakeTrim();
+  const json j = stampedCal(trimRig(), fake);
+  w.h.load(writeJson(w.tmp.dir, "p", j));
+  const Preset loaded = w.h.p.currentPreset();
+
+  REQUIRE(w.st().setDeviceCalibration(recordOf("scarlett-4i4-3g")).ok);  // +12.5 dBu
+  w.tick();
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 1);
+  const double at125 = w.h.p.status().trimDb;
+  CHECK(at125 == Approx(calTrimAt(j, 12.5)).margin(0.01));
+  CHECK(std::fabs(at125 - fake) > 0.5);  // not the stored reference value
+
+  REQUIRE(w.st().setDeviceCalibration(recordOf("scarlett-4i4-3g-pad")).ok);  // +14 dBu
+  w.tick();
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 2);
+  const double at14 = w.h.p.status().trimDb;
+  CHECK(at14 == Approx(calTrimAt(j, 14.0)).margin(0.01));
+  CHECK(std::fabs(at14 - at125) > 0.5);  // a different device gives a different value
+
+  REQUIRE(w.st().setDeviceCalibration(recordOf("scarlett-4i4-3g")).ok);  // back: from the per-device cache, no new render
+  w.tick();
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  CHECK(w.h.p.levelWorker().trimJobsRun() == 2);
+  CHECK(w.h.p.status().trimDb == Approx(at125).margin(1e-9));
+
+  // The preset never changed: no device-specific value was written back.
+  const Preset now = w.h.p.currentPreset();
+  CHECK(now.autoTrimCal.db == loaded.autoTrimCal.db);
+  CHECK(now.autoTrimCal.hash == loaded.autoTrimCal.hash);
+  CHECK(now.autoTrim.hash.empty());
+}
+
+TEST_CASE("calibrated trim: a legacy preset, or calibration off, keeps today's autoTrim", "[devicecal][plugin][levelmatch][i4b]") {
+  World w;
+  REQUIRE(w.st().setCalibratedInputLevels(true).ok);
+  const json legacy = calRig({nb("p1", "cal_pedal_a.nam", "pedal"), nb("a1", "cal_amp_hi.nam")}, "leg", false, -50.0, 10.0, "legacy");
+  w.h.load(writeJson(w.tmp.dir, "leg", legacy));
+  CHECK_FALSE(w.h.p.status().calibrationOn);  // a legacy preset plays without calibration whatever the toggle says
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  ChainCalibration off;
+  CHECK(w.h.p.status().trimDb == Approx(computeAutoTrim(parse(legacy), nullptr, nullptr, off)->trimDb).margin(0.01));
+  w.h.p.levelTick();
+  const Preset stored = w.h.p.currentPreset();
+  CHECK_FALSE(stored.autoTrim.hash.empty());   // the legacy stamp is written back, as before I2
+  CHECK(stored.autoTrimCal.hash.empty());      // the calibrated one is not involved
+
+  // A calibrated preset with the toggle off: the same legacy logic.
+  REQUIRE(w.st().setCalibratedInputLevels(false).ok);
+  const json cal = calRig({nb("p1", "cal_pedal_a.nam", "pedal"), nb("a1", "cal_amp_hi.nam")}, "cal2");
+  w.h.load(writeJson(w.tmp.dir, "cal2", cal));
+  CHECK_FALSE(w.h.p.status().calibrationOn);
+  w.h.p.levelTick();
+  REQUIRE(w.h.p.waitForLevelWork());
+  w.h.p.levelTick();
+  CHECK_FALSE(w.h.p.currentPreset().autoTrim.hash.empty());
+  CHECK(w.h.p.currentPreset().autoTrimCal.hash.empty());
+}
+
+TEST_CASE("calibrated trim: the one-click mode switch rebuilds with the calibration and is one undo step", "[devicecal][plugin][i4b]") {
+  World w;
+  REQUIRE(w.st().setCalibratedInputLevels(true).ok);
+  w.h.load(writeJson(w.tmp.dir, "leg", calRig({nb("a1", "cal_amp_hi.nam")}, "leg", false, -50.0, 10.0, "legacy")));
+  CHECK_FALSE(w.h.p.status().calibrationOn);
+  CHECK(w.h.p.legacyLevelsHint());
+  const auto steps = w.h.p.undoSteps();
+  REQUIRE(w.h.p.setCalibrationMode(CalibrationMode::Calibrated));
+  REQUIRE(w.h.p.waitForLoader());
+  CHECK(w.h.p.status().calibrationOn);
+  CHECK(w.h.p.currentPreset().calibrationMode == CalibrationMode::Calibrated);
+  CHECK(toJson(w.h.p.currentPreset())["calibration"]["mode"] == "calibrated");  // what a save writes
+  CHECK_FALSE(w.h.p.legacyLevelsHint());
+  CHECK(w.h.p.undoSteps() == steps + 1);
+  CHECK_FALSE(w.h.p.setCalibrationMode(CalibrationMode::Calibrated));  // already there: nothing happens, no second step
+  CHECK(w.h.p.undoSteps() == steps + 1);
+  REQUIRE(w.h.p.undo());
+  REQUIRE(w.h.p.waitForLoader());
+  CHECK(w.h.p.currentPreset().calibrationMode == CalibrationMode::Legacy);
+  CHECK_FALSE(w.h.p.status().calibrationOn);
+  CHECK(w.h.p.legacyLevelsHint());
+  REQUIRE(w.h.p.redo());
+  REQUIRE(w.h.p.waitForLoader());
+  CHECK(w.h.p.currentPreset().calibrationMode == CalibrationMode::Calibrated);
+  CHECK(w.h.p.status().calibrationOn);
+  // The hint is only about calibration being on: with the toggle off there is nothing to say.
+  REQUIRE(w.h.p.undo());
+  REQUIRE(w.h.p.waitForLoader());
+  REQUIRE(w.st().setCalibratedInputLevels(false).ok);
+  CHECK_FALSE(w.h.p.legacyLevelsHint());
 }
 
 // ---- the live gate floor --------------------------------------------------------------------------------------------------------

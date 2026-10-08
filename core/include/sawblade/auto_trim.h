@@ -59,7 +59,14 @@ constexpr int kAutoTrimCalVersion = 1;
 // ChainCalibration{enabled, device = kAssumedDeviceDbu}: the setting the stored calibrated trim is measured with.
 ChainCalibration assumedDeviceCalibration();
 std::string autoTrimCalHash(const Preset& p);
+// autoTrimCalHash from an already computed autoTrimHash(p), so a caller that holds the legacy hash (the plugin's 10 Hz level tick) does
+// not serialise the preset again: autoTrimCalHash(p) == autoTrimCalHashFromBase(autoTrimHash(p)).
+std::string autoTrimCalHashFromBase(const std::string& autoTrimHashOfPreset);
 bool autoTrimCalFresh(const Preset& p);
+// True when `cal` plans exactly like the reference the stored calibrated trim is measured at: calibration on and the device level
+// absent (assumed +12 dBu) or equal to kAssumedDeviceDbu. Only then is a stored autoTrimCal valid as it is; any other device level
+// re-measures (the trim is not linear in the device offset).
+bool isReferenceCalibration(const ChainCalibration& cal) noexcept;
 // computeAutoTrim at the assumed device, written into p.autoTrimCal (db + autoTrimCalHash). False (p unchanged) when silent.
 bool stampAutoTrimCal(Preset& p, CaptureCache* cache = nullptr);
 // stampAutoTrimCal only when the calibrated trim is missing or stale. True when p now has a fresh one.
