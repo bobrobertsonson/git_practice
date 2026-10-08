@@ -76,6 +76,21 @@ Phase 7c adds ten modded / one-knob presets and four calibrated CHAINSAW presets
 (`presets/modeled/chainsaw/` holds 7b's fifteen (model version 2, untouched); `presets/modeled/hmx/`, `eye/` and `hm_v3/` are 7c's, kept in
 their own folders because a test asserts exactly fifteen files in `chainsaw/`.)
 
+## VERMIN bank (`modeled/vermin/`)
+
+Six starting presets for the rat-style distortion model (`pedal.rat`, VERMIN; `docs/PEDALS.md`). Same rules as the chainsaw bank: path a =
+the pedal, path b disabled, shared identity cab, no TONE3000 captures, amp suggestions by tone id in `notes`, `volume` set so the fixture
+render peaks at about -3 dBFS, trims from `scripts/compute_trims.py`.
+
+| File | Name | Notes |
+|---|---|---|
+| `vermin/crust_grinder.json` | Crust Grinder | DIST 8, FILTER 4; plexi-style amp 76884 |
+| `vermin/doom_filter_down.json` | Doom Filter Down | FILTER 8, asymmetric clip; low-gain amp 86089 |
+| `vermin/thrash_boost.json` | Thrash Boost | DIST 2.5, TIGHT 3, into a high-gain amp 70977 / 88689 |
+| `vermin/turbo_crust.json` | Turbo Crust | CLIP none (op-amp rails only) |
+| `vermin/tight_hardcore.json` | Tight Hardcore | RUETZ on, TIGHT 4 |
+| `vermin/grind_wall.json` | Grind Wall | DIST 10, LED clip, RUETZ on |
+
 ## Classic presets and their TONE3000 captures (not committed)
 
 The four Classic presets (`chainsaw_body`, `studio_split`, `swedeath_saw`, `tight_body`) reference

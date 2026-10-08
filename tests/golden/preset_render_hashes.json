@@ -194,6 +194,42 @@
       "frames": 192000,
       "rmsDbfs": -12.2603,
       "peakDbfs": -5.1945
+    },
+    "modeled/vermin/crust_grinder.json": {
+      "sha256": "cbd8a8aa33f0af8605412aef5771e041c86e2ea19e44ea041fb49146e0dbfc4c",
+      "frames": 192000,
+      "rmsDbfs": -5.7082,
+      "peakDbfs": -2.9944
+    },
+    "modeled/vermin/doom_filter_down.json": {
+      "sha256": "b6685431473fd813d69827a1282cef0634bc73c3f8b084176679d12d9c110701",
+      "frames": 192000,
+      "rmsDbfs": -10.8118,
+      "peakDbfs": -3.0011
+    },
+    "modeled/vermin/grind_wall.json": {
+      "sha256": "2c39980f248cf5efda3d3e6f1b31437c278c76913bc45b86286a0ac4e879d6a9",
+      "frames": 192000,
+      "rmsDbfs": -5.7754,
+      "peakDbfs": -3.0042
+    },
+    "modeled/vermin/thrash_boost.json": {
+      "sha256": "9d2466a24e7ab02d6ea945e54c190d425692910baecba798826164eee1fb78a6",
+      "frames": 192000,
+      "rmsDbfs": -8.459,
+      "peakDbfs": -3.009
+    },
+    "modeled/vermin/tight_hardcore.json": {
+      "sha256": "53ad8a5c6d344f51f13cd4d3a997e41ee150df40ecae3248ae885a970273958e",
+      "frames": 192000,
+      "rmsDbfs": -5.4789,
+      "peakDbfs": -3.0095
+    },
+    "modeled/vermin/turbo_crust.json": {
+      "sha256": "b64ba97556869bfbc5430442cd863df383f470d1ff6de523478eb0f2b582c959",
+      "frames": 192000,
+      "rmsDbfs": -9.1555,
+      "peakDbfs": -2.9986
     }
   }
 }

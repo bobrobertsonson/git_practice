@@ -1,0 +1,47 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Doom Filter Down",
+  "category": "Doom / Sludge / Fuzz",
+  "notes": "Use: doom and sludge riffs. Medium gain with FILTER nearly closed for a dark, thick, woolly wall; asymmetric clip adds even harmonics and a looser feel; the full low end stays (RUETZ off). Into a low-gain British amp (TONE3000 86089), dark cab. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Rat-style op-amp distortion model (pedal.rat, VERMIN). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.rat",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "distortion": 6.5,
+            "filter": 8,
+            "volume": 6.03,
+            "tightness": 0,
+            "mix": 100,
+            "clip": "asymmetric",
+            "ruetz": false
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -8.086,
+    "autoTrimHash": "9d73a3ce277d4a5b48117d993f184d97e65fb76926e847b0d74880152bb4c3f4"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Tight Hardcore",
+  "category": "Hardcore / Crust",
+  "notes": "Use: fast hardcore and metallic hardcore with chugs. RUETZ removes the low-frequency gain leg and TIGHT 4 cuts the sub, so the low end stays clear at high gain. Into a cranked British amp (TONE3000 86089), V30-style cab (45023). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Rat-style op-amp distortion model (pedal.rat, VERMIN). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.rat",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "distortion": 8,
+            "filter": 3,
+            "volume": 7.66,
+            "tightness": 4,
+            "mix": 100,
+            "clip": "silicon",
+            "ruetz": true
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -14.242,
+    "autoTrimHash": "1587d06579c160a630481ae84de9455e5882ded604369620e90260a868ec263e"
+  }
+}

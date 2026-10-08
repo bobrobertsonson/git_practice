@@ -1,0 +1,47 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Turbo Crust",
+  "category": "Hardcore / Crust",
+  "notes": "Use: louder, more open crust and punk. CLIP none leaves only the op-amp rails clipping: more level, less compression, a rawer edge. Into a plexi-style amp (TONE3000 76884) kept clean-ish so the pedal does the work. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Rat-style op-amp distortion model (pedal.rat, VERMIN). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.rat",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "distortion": 7,
+            "filter": 4,
+            "volume": 0.54,
+            "tightness": 1,
+            "mix": 100,
+            "clip": "none",
+            "ruetz": false
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -10.214,
+    "autoTrimHash": "1bfe41bb1e0d9d14442cf1162f4b80346df70d32f75719264c147f9052f07c35"
+  }
+}

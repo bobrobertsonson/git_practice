@@ -1,0 +1,47 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Crust Grinder",
+  "category": "Hardcore / Crust",
+  "notes": "Use: classic crust and d-beat rhythm guitar. High gain, mid-dark filter, silicon clip, a little tightness so palm mutes stay clear. Pair with a plexi-style amp turned up (TONE3000 76884) and a V30-style cab (45023). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Rat-style op-amp distortion model (pedal.rat, VERMIN). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.rat",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "distortion": 8,
+            "filter": 4,
+            "volume": 7.65,
+            "tightness": 1,
+            "mix": 100,
+            "clip": "silicon",
+            "ruetz": false
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -13.902,
+    "autoTrimHash": "e682fac869962fa7685c4ace4a635f6aa1c6eaacb2f9255518c2da9a1ec01231"
+  }
+}

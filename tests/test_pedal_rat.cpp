@@ -903,3 +903,54 @@ TEST_CASE("pedal.rat: CPU cost per instance (informational)", "[rat][perf]") {
     REQUIRE(std::isfinite(in.back()));
   }
 }
+
+// ---- v0.9 Task C: the starter presets ---------------------------------------------------------------------------
+TEST_CASE("presets/modeled/vermin: six pedal.rat presets, generic names, safe peak, round-trip", "[rat][presets]") {
+  const char* banned[] = {"rat", "proco", "pro co", "boss", "ibanez", "dunlop", "mxr", "turbo rat", "you dirty", "entombed", "gatecreeper",
+                          "nails", "nasum", "disfear", "wolfbrigade", "terrorizer", "bolt thrower", "electric wizard", "conan"};
+  const char* wanted[] = {"Crust Grinder", "Doom Filter Down", "Thrash Boost", "Turbo Crust", "Tight Hardcore", "Grind Wall"};
+  std::vector<std::string> names;
+  bool sawNone = false, sawRuetzTight = false;
+  for (const auto& e : fs::directory_iterator(fs::path(SAWBLADE_PRESETS_DIR) / "modeled" / "vermin")) {
+    if (e.path().extension() != ".json") continue;
+    INFO(e.path().string());
+    const Preset p = loadPresetFile(e.path());
+    names.push_back(p.name);
+    std::string lname = p.name;
+    std::transform(lname.begin(), lname.end(), lname.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const char* w : banned) {
+      // "rat" is a banned name only as a word of its own (the names contain "grinder", "crust", ...)
+      if (std::string(w) == "rat") {
+        CHECK((" " + lname + " ").find(" rat ") == std::string::npos);
+      } else {
+        CHECK(lname.find(w) == std::string::npos);
+      }
+    }
+    CHECK(p.notes.find("Use:") != std::string::npos);  // each states its intended use
+    REQUIRE(p.a.blocks.size() == 1);
+    CHECK(p.a.blocks[0].type == "pedal.rat");
+    const RatParams& r = ratOf(p);
+    sawNone = sawNone || r.clip == RatClip::None;
+    sawRuetzTight = sawRuetzTight || (r.ruetz && r.tightness > 0.0);
+    RenderResult res;
+    REQUIRE_NOTHROW(res = renderFile(e.path(), kFixtures / "di_riff.wav"));
+    double peak = 0.0;
+    for (float s : res.samples) {
+      REQUIRE(std::isfinite(s));
+      peak = std::max(peak, static_cast<double>(std::fabs(s)));
+    }
+    const double db = 20.0 * std::log10(peak);
+    std::printf("[preset] vermin/%s: peak %.2f dBFS, latency %d\n", e.path().filename().string().c_str(), db, res.info.latencySamples);
+    CHECK(db >= -6.0);
+    CHECK(db <= -0.5);
+    CHECK(res.info.latencySamples == 52);
+    CHECK(res.captures.empty());
+    CHECK(parsePreset(toJson(p), e.path().parent_path()) == p);
+  }
+  std::sort(names.begin(), names.end());
+  std::vector<std::string> want(std::begin(wanted), std::end(wanted));
+  std::sort(want.begin(), want.end());
+  CHECK(names == want);
+  CHECK(sawNone);
+  CHECK(sawRuetzTight);
+}

@@ -1,0 +1,47 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Grind Wall",
+  "category": "Grind",
+  "notes": "Use: grindcore and powerviolence wall of noise. DIST maxed with LED clip for a harder, louder squash, RUETZ on and TIGHT 2 so blast-beat low end does not smear, FILTER fairly open for bite. High-gain amp (TONE3000 88689), V30-style cab (45023). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Rat-style op-amp distortion model (pedal.rat, VERMIN). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.rat",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "distortion": 10,
+            "filter": 3,
+            "volume": 3.79,
+            "tightness": 2,
+            "mix": 100,
+            "clip": "led",
+            "ruetz": true
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -13.233,
+    "autoTrimHash": "9020876e726ede0670fef69e501aa5c2aae2daf011393240aaeeabdd20876741"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Thrash Boost",
+  "category": "Death metal",
+  "notes": "Use: low-DIST tightener in front of a high-gain amp for thrash and modern death metal. DIST low so the pedal pushes the amp rather than distorting on its own, TIGHT 3 trims the flab, FILTER open for pick attack. Into a high-gain amp (TONE3000 70977 or 88689), V30-style cab (45023). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Rat-style op-amp distortion model (pedal.rat, VERMIN). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "body",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.rat",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "distortion": 2.5,
+            "filter": 2.5,
+            "volume": 7.6,
+            "tightness": 3,
+            "mix": 100,
+            "clip": "silicon",
+            "ruetz": false
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -12.346,
+    "autoTrimHash": "9b205bc6e45db12dce0887ccf77edecf05fd67792ab661d8abfdf89494554864"
+  }
+}
