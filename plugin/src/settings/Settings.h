@@ -11,6 +11,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "settings/DeviceCalibration.h"
+
 // Phase 11 (docs/specs/phase11_settings.md section 1): the plugin's settings store. Nothing here
 // touches the audio thread. JUCE-free apart from the special-location lookups in Env::system().
 namespace sawblade::plugin::settings {
@@ -111,6 +113,11 @@ class Settings {
   // v0.3 level matching: apply each preset's auto trim (docs/PRESET_SCHEMA.md "Level matching"). A plugin setting, never part of the
   // preset. Default true.
   bool levelMatch() const;
+  // v0.8 I2: the device calibration record (docs/PLUGIN.md "Device step"). Settings only: never part of a preset or of the plugin state.
+  // nullopt = the user has not calibrated; a malformed stored record reads as none.
+  std::optional<DeviceCalibrationRecord> deviceCalibration() const;
+  // "Calibrated input levels (beta)": the chain plays with the input calibration. Default false (I4 decides when that flips).
+  bool calibratedInputLevels() const;
 
   Result setMatchVenvDir(std::optional<std::filesystem::path>);
   Result setCaptureCacheDir(std::optional<std::filesystem::path>);
@@ -122,6 +129,13 @@ class Settings {
   Result setTheme(std::string);
   Result setUiScale(double);
   Result setLevelMatch(bool);
+  // Validates the dBu (checkDeviceDbu) and stores the record; nullopt removes it (and with it the learned gate floor). Writes the file:
+  // message thread only, never the audio thread.
+  Result setDeviceCalibration(std::optional<DeviceCalibrationRecord>);
+  Result setCalibratedInputLevels(bool);
+  // Part 3: stores the live gate's learned floor (dBFS) in the existing record. Not ok (nothing stored) when there is no record or the
+  // value is outside the follower's range. Does not notify listeners' UI-visible state beyond the usual settingsChanged().
+  Result setLiveGateFloor(double dbfs);
 
   std::filesystem::path tokenFile() const;
   // <effective venv>/bin/<tool>, "" when there is no venv.

@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "EngineCalibration.h"
 #include "PresetMapping.h"
 #include "pedals/CircuitParams.h"
 #include "sawblade/chain.h"
@@ -57,7 +58,10 @@ class Engine {
   // message naming the offending JSON path or file) if the preset cannot be loaded or prepared.
   // With a `cache`, models and IRs are taken from / added to it (the loader keeps one for its whole
   // life, so structural edits do not re-read files); without, a private cache is used.
-  static std::unique_ptr<Engine> build(const Preset& preset, double hostRate, int maxBlock, CaptureCache* cache = nullptr);
+  // `calibration` (v0.8 I2): the input calibration and the live-gate floor seed the chain is built with; the default builds the engine
+  // that was built before I2 (bit-identical). The seed is used only with calibration enabled.
+  static std::unique_ptr<Engine> build(const Preset& preset, double hostRate, int maxBlock, CaptureCache* cache = nullptr,
+                                       const EngineCalibration& calibration = {});
 
   ~Engine();
   Engine(const Engine&) = delete;
@@ -100,6 +104,16 @@ class Engine {
   const EngineLatency& latency() const noexcept { return latency_; }
   int latencySamples() const noexcept { return latency_.total; }
   const ChainInfo& chainInfo() const noexcept { return info_; }
+  // v0.8 I2: what the calibration plan made of this engine's blocks (empty / enabled false when calibration is off). Fixed at build.
+  struct CalibrationSummary {
+    bool enabled = false;
+    bool deviceAssumed = false;   // +12 dBu was assumed (no device record)
+    bool anyUncalibrated = false;
+    std::vector<std::string> uncalibratedBlocks;  // ids of planned blocks whose capture lacks input or output level metadata
+  };
+  const CalibrationSummary& calibrationSummary() const noexcept { return calSummary_; }
+  // The live gate's learned floor (dBFS), NaN until learned. Any thread (relaxed atomic written by process()).
+  float learnedGateFloorDb() const noexcept { return chain_->learnedGateFloorDb(); }
   const std::string& presetName() const noexcept { return name_; }
 
   // --- gain ladders (v0.2 Task B) -------------------------------------------------------------------
@@ -119,6 +133,7 @@ class Engine {
 
  private:
   Engine() = default;
+  void applyCalibration(const EngineCalibration& c);
 
   Preset preset_;           // clamped; set at build
   ProcessSpec spec_{};      // what the chain was prepared with (rung models are prepared the same way)
@@ -129,6 +144,7 @@ class Engine {
   int hostMax_ = 0;
   std::unique_ptr<Chain> chain_;
   ChainInfo info_;
+  CalibrationSummary calSummary_;
   std::string name_;
   EngineLatency latency_;
   LiveParams baseline_;

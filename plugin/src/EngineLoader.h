@@ -40,6 +40,8 @@ class EngineLoader {
     Preset preset;
     double hostRate = 48000.0;
     int maxBlock = 512;
+    // v0.8 I2: the input calibration (and live-gate floor seed) the engine is built with; default = off, the pre-I2 engine.
+    EngineCalibration calibration;
     // If the build fails, publish a pass-through engine at this rate instead of keeping the
     // previous engine (used when the host rate changed: the old engine would be at the wrong rate).
     bool fallbackToInit = false;
@@ -64,6 +66,7 @@ class EngineLoader {
     double hostRate = 0.0, modelRate = 0.0;
     int maxBlock = 0;
     ChainInfo info;
+    Engine::CalibrationSummary calibration;  // of the published engine (v0.8 I2)
     std::string presetName;
     std::shared_ptr<const Preset> wanted;
     std::weak_ptr<Engine> engine;  // the published engine (empty if none): for non-audio-thread readers (ladder state)

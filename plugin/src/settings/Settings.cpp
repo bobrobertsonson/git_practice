@@ -278,7 +278,7 @@ std::string Settings::saveLocked() {
     // we loaded. The file wins for keys we do not own; for our own keys the in-memory document wins (including removal).
     static const char* const kOwned[] = {"version",    "matchVenvDir", "captureCacheDir", "tone3000ClientId", "separationModel",
                                          "takesDir",   "theme",        "uiScale",         "firstRunCompleted", "levelMatch",
-                                         "namInputFile",   "trainingSignalSawblade"};
+                                         "namInputFile",   "trainingSignalSawblade", "deviceCalibration", "calibratedInputLevels"};
     std::ifstream in(file_, std::ios::binary);
     if (in) {
       const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -464,6 +464,17 @@ bool Settings::levelMatch() const {
   auto it = doc_.find("levelMatch");
   return it == doc_.end() || !it->is_boolean() || it->get<bool>();
 }
+std::optional<DeviceCalibrationRecord> Settings::deviceCalibration() const {
+  std::lock_guard<std::mutex> lk(m_);
+  auto it = doc_.find("deviceCalibration");
+  if (it == doc_.end()) return std::nullopt;
+  return recordFromJson(*it);
+}
+bool Settings::calibratedInputLevels() const {
+  std::lock_guard<std::mutex> lk(m_);
+  auto it = doc_.find("calibratedInputLevels");
+  return it != doc_.end() && it->is_boolean() && it->get<bool>();
+}
 bool Settings::firstRunCompleted() const {
   std::lock_guard<std::mutex> lk(m_);
   auto it = doc_.find("firstRunCompleted");
@@ -559,6 +570,45 @@ Result Settings::setLevelMatch(bool on) {
   {
     std::lock_guard<std::mutex> lk(m_);
     doc_["levelMatch"] = on;
+  }
+  return finish({});
+}
+
+Result Settings::setDeviceCalibration(std::optional<DeviceCalibrationRecord> r) {
+  if (r) {
+    const DbuCheck c = checkDeviceDbu(r->dbu);
+    if (!c.ok) return {false, "interface level: " + c.error, ""};
+    if (r->liveGateFloorDbfs && !(*r->liveGateFloorDbfs >= Gate::kFloorMinDb && *r->liveGateFloorDbfs <= Gate::kFloorMaxDb)) r->liveGateFloorDbfs.reset();
+  }
+  Result res;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    if (r) doc_["deviceCalibration"] = recordToJson(*r);
+    else doc_.erase("deviceCalibration");
+  }
+  if (r) res.warning = checkDeviceDbu(r->dbu).warning;
+  return finish(res);
+}
+
+Result Settings::setCalibratedInputLevels(bool on) {
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    if (on) doc_["calibratedInputLevels"] = true;
+    else doc_.erase("calibratedInputLevels");
+  }
+  return finish({});
+}
+
+Result Settings::setLiveGateFloor(double dbfs) {
+  if (!(dbfs >= Gate::kFloorMinDb && dbfs <= Gate::kFloorMaxDb)) return {false, "gate floor outside the follower's range", ""};
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    auto it = doc_.find("deviceCalibration");
+    std::optional<DeviceCalibrationRecord> rec;
+    if (it != doc_.end()) rec = recordFromJson(*it);
+    if (!rec) return {false, "no device calibration record: the learned gate floor is keyed on it", ""};
+    rec->liveGateFloorDbfs = dbfs;
+    doc_["deviceCalibration"] = recordToJson(*rec);
   }
   return finish({});
 }

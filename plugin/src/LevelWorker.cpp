@@ -21,18 +21,22 @@ LevelWorker::~LevelWorker() {
   if (thread_.joinable()) thread_.join();
 }
 
-void LevelWorker::submitTrim(Preset p, std::string hash, TrimDone done) {
+void LevelWorker::submitTrim(Preset p, std::string hash, TrimDone done, ChainCalibration cal) {
   {
     std::lock_guard<std::mutex> lk(m_);
-    trim_ = TrimJob{std::move(p), std::move(hash), std::move(done)};
+    trim_ = TrimJob{std::move(p), std::move(hash), std::move(done), std::move(cal)};
   }
   cv_.notify_all();
 }
 
 void LevelWorker::submitMakeup(Preset before, Preset after, int path, MakeupDone done) {
+  submitMakeup(std::move(before), std::move(after), path, -1, ChainCalibration{}, std::move(done));
+}
+
+void LevelWorker::submitMakeup(Preset before, Preset after, int path, int blockIndex, ChainCalibration cal, MakeupDone done) {
   {
     std::lock_guard<std::mutex> lk(m_);
-    makeups_.push_back(MakeupJob{std::move(before), std::move(after), path, std::move(done)});
+    makeups_.push_back(MakeupJob{std::move(before), std::move(after), path, blockIndex, std::move(cal), std::move(done)});
   }
   cv_.notify_all();
 }
@@ -76,8 +80,12 @@ void LevelWorker::run() {
     if (makeup) {
       MakeupResult r;
       try {
-        r.makeupDb = slotMakeupDb(makeup->before, makeup->after, makeup->path, &cache_, &cancel_);
-        if (!r.makeupDb) r.error = "the slot's path is silent or disabled";
+        if (const auto m = slotMakeup(makeup->before, makeup->after, makeup->path, makeup->blockIndex, makeup->cal, &cache_, &cancel_)) {
+          r.makeupDb = m->makeupDb;
+          r.skippedHop = m->skippedHop;
+        } else {
+          r.error = "the slot's path is silent or disabled";
+        }
       } catch (const std::exception& e) {
         r.error = e.what();
       }
@@ -86,10 +94,10 @@ void LevelWorker::run() {
       TrimResult r;
       r.hash = trim->hash;
       try {
-        if (const auto t = computeAutoTrim(trim->preset, &cache_, &cancel_)) {
+        if (const auto t = computeAutoTrim(trim->preset, &cache_, &cancel_, trim->cal)) {
           r.trimDb = t->trimDb;
           r.lufs = t->lufs;
-          r.hash = t->hash;
+          if (!trim->cal.enabled) r.hash = t->hash;  // calibrated: the caller's key (it includes the calibration) stays
         } else {
           r.error = "the reference DI renders silent through this preset";
         }

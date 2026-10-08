@@ -20,7 +20,8 @@ std::string hz(double v) {
 
 Engine::~Engine() = default;
 
-std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int maxBlock, CaptureCache* sharedCache) {
+std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int maxBlock, CaptureCache* sharedCache,
+                                    const EngineCalibration& calibration) {
   if (!(hostRate >= 8000.0 && hostRate <= 768000.0)) throw std::runtime_error("unsupported host sample rate " + hz(hostRate));
   std::unique_ptr<Engine> e(new Engine());
   e->hostRate_ = hostRate;
@@ -57,6 +58,7 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
   if (!e->resampling_) {
     e->chain_ = std::make_unique<Chain>(clamped, std::move(res));
     e->spec_ = {modelRate, e->hostMax_};
+    e->applyCalibration(calibration);  // before prepare: the level-match probe sees the calibrated chain
     e->chain_->prepare(e->spec_);
     e->latency_.chainModelSamples = e->chain_->latencySamples();
     e->latency_.total = e->latency_.chainModelSamples;
@@ -68,6 +70,7 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
     const int modelMax = e->down_.maxOutputFor(e->hostMax_);
     e->chain_ = std::make_unique<Chain>(clamped, std::move(res));
     e->spec_ = {modelRate, modelMax};
+    e->applyCalibration(calibration);
     e->chain_->prepare(e->spec_);
     const int C = e->chain_->latencySamples();
     e->up_.prepare(modelRate, hostRate, r2, modelMax);
@@ -87,6 +90,20 @@ std::unique_ptr<Engine> Engine::build(const Preset& preset, double hostRate, int
   e->info_ = e->chain_->info();
   e->refreshRungs(&cache);  // cached rung models are loaded before the engine is published
   return e;
+}
+
+// Before prepare(), off the audio thread. Off (the default) touches nothing: the chain is the one that was built before I2.
+void Engine::applyCalibration(const EngineCalibration& c) {
+  if (!c.chain.enabled) return;
+  chain_->setCalibration(c.chain);
+  if (c.gateFloorSeedDb) chain_->setGateFloorSeedDb(*c.gateFloorSeedDb);
+  const CalibrationPlan& plan = chain_->calibrationPlan();
+  calSummary_.enabled = plan.enabled;
+  calSummary_.deviceAssumed = plan.deviceAssumed;
+  calSummary_.anyUncalibrated = plan.anyUncalibrated;
+  for (const auto& path : plan.blocks)
+    for (const auto& b : path)
+      if (b.planned && b.kind == calibration::LevelKind::Nam && (b.inputMissing || b.outputMissing)) calSummary_.uncalibratedBlocks.push_back(b.id);
 }
 
 std::vector<std::string> Engine::ladderMessages() const {

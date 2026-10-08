@@ -196,6 +196,7 @@ void SawbladeProcessor::timerCallback() {
   if (circuitDirty_.exchange(false)) circuitChanged();
   ladderTick();
   levelTick();
+  calibrationTick();
 }
 
 // --- gain ladders -------------------------------------------------------------------------------
@@ -734,9 +735,13 @@ void SawbladeProcessor::submit(bool fallbackToInit) {
   r.hostRate = hostRate_;
   r.maxBlock = maxBlock_;
   r.fallbackToInit = fallbackToInit;
+  r.calibration = currentEngineCalibration();  // v0.8 I2: from the Settings store only, never from a preset
+  const EngineCalibration cal = r.calibration;
   const std::uint64_t id = loader_->submit(std::move(r));
   std::lock_guard<std::mutex> lk(mutex_);
   lastSubmitted_ = id;
+  calSubmittedEnabled_ = cal.chain.enabled;
+  calSubmittedDbu_ = cal.chain.device.dbu;
 }
 
 void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader thread
@@ -784,6 +789,9 @@ void SawbladeProcessor::onOutcome(const EngineLoader::Outcome& o) {  // loader t
     status_.liveCompatible = o.info.liveCompatible;
     status_.resampling = std::fabs(o.modelRate - o.hostRate) > 1e-6;
     status_.info = o.info;
+    status_.calibrationOn = o.calibration.enabled;
+    status_.calibrationAssumed = o.calibration.enabled && o.calibration.deviceAssumed;
+    status_.uncalibratedBlocks = o.calibration.uncalibratedBlocks;
     status_.generation = o.id;
     if (o.built) status_.presetName = o.presetName;
     publishLive();  // a fresh engine always gets a snapshot of its own generation (mutes survive rebuilds)
@@ -824,9 +832,11 @@ void SawbladeProcessor::rememberTrim(const std::string& hash, double db) {
 // A user load or state restore is being committed (loader thread, or the caller's thread before the first prepare): the previous
 // preset's trim does not carry over. A stored trim that is fresh for this preset applies at once; otherwise 0 until measured.
 void SawbladeProcessor::levelOnLoad(const Preset& p) {
-  const std::string hash = autoTrimHash(p);
+  const std::string base = autoTrimHash(p);
+  const std::string hash = levelKey(base);
   std::lock_guard<std::mutex> lk(levelMutex_);
-  if (!p.autoTrim.hash.empty() && p.autoTrim.hash == hash) rememberTrim(hash, p.autoTrim.db);
+  // A stored trim was measured without calibration: it applies only to the uncalibrated chain (hash == base).
+  if (hash == base && !p.autoTrim.hash.empty() && p.autoTrim.hash == hash) rememberTrim(hash, p.autoTrim.db);
   double known = 0.0;
   bool have = false;
   for (const auto& k : knownTrims_)
@@ -891,11 +901,14 @@ void SawbladeProcessor::levelTick() {
     hashParams_ = pv;
     hashCached_ = true;
   }
-  const std::string hash = hashValue_;
+  const std::string baseHash = hashValue_;
+  const std::string hash = levelKey(baseHash);
+  const bool calibrated = hash != baseHash;  // a calibrated trim is neither read from nor written into the preset (I4 decides its schema)
+  const ChainCalibration levelCal = calibrated ? levelCalibration() : ChainCalibration{};
   std::optional<double> writeBack;
   {
     std::lock_guard<std::mutex> lk(levelMutex_);
-    if (!storedHash.empty() && storedHash == hash) rememberTrim(hash, storedDb);  // fresh in the preset itself
+    if (!calibrated && !storedHash.empty() && storedHash == hash) rememberTrim(hash, storedDb);  // fresh in the preset itself
     if (levelWantedHash_ != hash) {
       levelWantedHash_ = hash;
       levelChangedAt_ = std::chrono::steady_clock::now();
@@ -904,7 +917,7 @@ void SawbladeProcessor::levelTick() {
     if (it != knownTrims_.end()) {
       trimTargetDb_.store(it->second);
       levelPending_ = levelFailed_ = false;
-      if (storedHash != hash) writeBack = it->second;
+      if (!calibrated && storedHash != hash) writeBack = it->second;
     } else if (failedTrims_.count(hash) != 0) {
       levelPending_ = false;
       levelFailed_ = true;
@@ -914,7 +927,7 @@ void SawbladeProcessor::levelTick() {
       const auto waited = std::chrono::steady_clock::now() - levelChangedAt_;
       if (levelPendingHash_ != hash && waited >= std::chrono::milliseconds(levelDebounceMs_.load())) {
         levelPendingHash_ = hash;
-        levelWorker_->submitTrim(levelMeasurementPreset(), hash, [this](const LevelWorker::TrimResult& r) { onTrimResult(r); });
+        levelWorker_->submitTrim(levelMeasurementPreset(), hash, [this](const LevelWorker::TrimResult& r) { onTrimResult(r); }, levelCal);
       }
     }
   }
@@ -942,7 +955,63 @@ bool SawbladeProcessor::waitForLevelWork(std::chrono::milliseconds timeout) {
 }
 
 void SawbladeProcessor::computeSlotMakeup(Preset before, Preset after, int path, LevelWorker::MakeupDone done) {
-  levelWorker_->submitMakeup(std::move(before), std::move(after), path, std::move(done));
+  computeSlotMakeup(std::move(before), std::move(after), path, -1, std::move(done));
+}
+
+void SawbladeProcessor::computeSlotMakeup(Preset before, Preset after, int path, int blockIndex, LevelWorker::MakeupDone done) {
+  levelWorker_->submitMakeup(std::move(before), std::move(after), path, blockIndex, levelCalibration(), std::move(done));
+}
+
+// --- v0.8 I2 device calibration -----------------------------------------------------------------
+EngineCalibration SawbladeProcessor::currentEngineCalibration() const {
+  auto& st = settings::Settings::shared();
+  return settings::engineCalibrationFor(st.calibratedInputLevels(), st.deviceCalibration());
+}
+
+ChainCalibration SawbladeProcessor::levelCalibration() const {
+  auto& st = settings::Settings::shared();
+  return settings::chainCalibrationFor(st.calibratedInputLevels(), st.deviceCalibration());
+}
+
+std::string SawbladeProcessor::levelKey(const std::string& baseHash) const {
+  const ChainCalibration c = levelCalibration();
+  if (!c.enabled) return baseHash;
+  char buf[48];
+  if (c.device.dbu) std::snprintf(buf, sizeof buf, "|cal:%.3f", *c.device.dbu);
+  else std::snprintf(buf, sizeof buf, "|cal:assumed");
+  return baseHash + buf;
+}
+
+void SawbladeProcessor::calibrationTick() {
+  if (hostRate_ <= 0.0) return;
+  auto& st = settings::Settings::shared();
+  const auto record = st.deviceCalibration();
+  const EngineCalibration want = settings::engineCalibrationFor(st.calibratedInputLevels(), record);
+  bool rebuild;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    rebuild = want.chain.enabled != calSubmittedEnabled_ || (want.chain.enabled && want.chain.device.dbu != calSubmittedDbu_);
+  }
+  if (rebuild) {
+    submit(/*fallbackToInit=*/false);  // the new engine is cross-faded in like any other rebuild
+    return;
+  }
+  // Part 3: persist the live gate's learned floor into the device record. The audio thread only stores an atomic float in the chain;
+  // this runs on the message thread and writes the settings file at most every floorPersistMs_ and for a change of >= 1 dB.
+  if (!record) return;
+  std::shared_ptr<Engine> e;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    e = published_.lock();
+  }
+  if (!e) return;
+  const float learned = e->learnedGateFloorDb();
+  if (!std::isfinite(learned)) return;
+  if (record->liveGateFloorDbfs && std::fabs(*record->liveGateFloorDbfs - static_cast<double>(learned)) < kFloorPersistStepDb) return;
+  const auto now = std::chrono::steady_clock::now();
+  if (floorWrittenAt_ != std::chrono::steady_clock::time_point{} && now - floorWrittenAt_ < std::chrono::milliseconds(floorPersistMs_.load())) return;
+  floorWrittenAt_ = now;
+  st.setLiveGateFloor(static_cast<double>(learned));
 }
 
 // --- rig editor hooks ---------------------------------------------------------------------------

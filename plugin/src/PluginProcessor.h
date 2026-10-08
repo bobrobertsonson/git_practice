@@ -32,6 +32,7 @@
 #include "browser/PreviewPlayer.h"
 #include "pedals/CircuitParams.h"
 #include "rig/InputMeter.h"
+#include "settings/DeviceCalibration.h"
 #include "sawblade/swap_slot.h"
 
 namespace sawblade::plugin {
@@ -75,6 +76,10 @@ class SawbladeProcessor : public juce::AudioProcessor,
     bool levelPending = false;
     bool levelFailed = false;  // the rig could not be measured (silent, a capture missing): no trim
     double trimDb = 0.0;
+    // v0.8 I2 (input calibration, Settings "Calibrated input levels (beta)"), as the running engine was built.
+    bool calibrationOn = false;
+    bool calibrationAssumed = false;                 // on, and no device record: +12 dBu is assumed (the "not calibrated" notice)
+    std::vector<std::string> uncalibratedBlocks;     // ids of capture blocks whose metadata lacks an input or output level
   };
 
   SawbladeProcessor();
@@ -270,6 +275,21 @@ class SawbladeProcessor : public juce::AudioProcessor,
   bool levelMatchEnabled();
   // The capture-swap make-up (core auto_trim.h slotMakeupDb) on the level worker. `done` runs on the worker thread.
   void computeSlotMakeup(Preset before, Preset after, int path, LevelWorker::MakeupDone done);
+  // v0.8 I2: the same with the swapped block's index in the path (preset order). With calibrated input levels on, a block that feeds
+  // another NAM gets no make-up (result.skippedHop, makeupDb 0, nothing rendered) and the measurement uses the calibrated chain.
+  void computeSlotMakeup(Preset before, Preset after, int path, int blockIndex, LevelWorker::MakeupDone done);
+
+  // --- v0.8 I2 device calibration ---------------------------------------------------------------------------------
+  // The calibration the next engine is built with: Settings toggle + device record (message thread or the loader thread; Settings is
+  // locked internally). Off unless the toggle is on.
+  EngineCalibration currentEngineCalibration() const;
+  // 10 Hz (timerCallback; tests call it): rebuilds the engine when the toggle or the device dBu changed since the last build, and
+  // persists the live gate's learned floor into the device record (throttled; off the audio thread: the audio thread only writes an
+  // atomic float in the chain). Message thread.
+  void calibrationTick();
+  void setFloorPersistIntervalMs(int ms) noexcept { floorPersistMs_.store(ms); }
+  static constexpr int kFloorPersistIntervalMs = 10000;  // at most one settings write per this many ms
+  static constexpr double kFloorPersistStepDb = 1.0;     // and only for a change of at least this
   LevelWorker& levelWorker() noexcept { return *levelWorker_; }
 
   // --- gain ladders (v0.2 Task B; docs/PRESET_SCHEMA.md "Gain ladder") ---------------------------------------
@@ -322,6 +342,9 @@ class SawbladeProcessor : public juce::AudioProcessor,
   bool circuitEditPending() const noexcept { return circuitDirty_.load(); }
 
  private:
+  // The key of the trim cache: autoTrimHash alone with calibration off (so everything is as before I2), plus the calibration when on.
+  std::string levelKey(const std::string& baseHash) const;
+  ChainCalibration levelCalibration() const;  // off unless the toggle is on
   void syncLevelMatchSetting();  // levelMatchOn_ <- Settings (message thread); a toggle retries what could not be measured
   Preset presetWithParams() const;
   ParamValues readParams() const noexcept;
@@ -372,6 +395,11 @@ class SawbladeProcessor : public juce::AudioProcessor,
   Preset preset_;
   Status status_;
   std::uint64_t lastSubmitted_ = 0;
+  // v0.8 I2 (mutex_): the calibration of the last submitted engine request. The learned gate floor is not part of it.
+  bool calSubmittedEnabled_ = false;
+  std::optional<double> calSubmittedDbu_;
+  std::atomic<int> floorPersistMs_{kFloorPersistIntervalMs};
+  std::chrono::steady_clock::time_point floorWrittenAt_{};  // message thread
   std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed
   bool wantedKeepsMonitor_ = false;
   std::shared_ptr<const Preset> remeasureBase_;    // the preset a pending re-measure started from

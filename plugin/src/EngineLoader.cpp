@@ -66,7 +66,7 @@ void EngineLoader::run() {
     out.wanted = req.wanted;
     std::unique_ptr<Engine> engine;
     try {
-      engine = Engine::build(req.preset, req.hostRate, req.maxBlock, &cache_);
+      engine = Engine::build(req.preset, req.hostRate, req.maxBlock, &cache_, req.calibration);
       out.built = true;
     } catch (const std::exception& e) {
       out.error = e.what();
@@ -94,6 +94,7 @@ void EngineLoader::run() {
       out.latencySamples = engine->latencySamples();
       out.modelRate = engine->modelRate();
       out.info = engine->chainInfo();
+      out.calibration = engine->calibrationSummary();
       out.presetName = engine->presetName();
       engine->setGeneration(id);
       if (out.built && req.configure) req.configure(*engine);

@@ -20,6 +20,7 @@
 #include <thread>
 
 #include "sawblade/capture_cache.h"
+#include "sawblade/chain.h"
 #include "sawblade/preset.h"
 
 namespace sawblade::plugin {
@@ -34,6 +35,9 @@ class LevelWorker {
   };
   struct MakeupResult {
     std::optional<double> makeupDb;
+    // v0.8 I2: the swapped block feeds another NAM block and calibration is on: its make-up is dropped by the chain, so none is
+    // computed (makeupDb is 0, no render ran) and callers must not store one.
+    bool skippedHop = false;
     std::string error;
   };
   using TrimDone = std::function<void(const TrimResult&)>;
@@ -45,9 +49,14 @@ class LevelWorker {
   LevelWorker& operator=(const LevelWorker&) = delete;
 
   // The auto trim of `p` (its measurement preset: see SawbladeProcessor::levelMeasurementPreset). `hash` is echoed.
-  void submitTrim(Preset p, std::string hash, TrimDone done);
+  // `cal` (v0.8 I2): measured as the calibrated chain plays (default off = the pre-I2 measurement). With it on the echoed `hash` is kept
+  // as given (the caller keys it on the calibration as well).
+  void submitTrim(Preset p, std::string hash, TrimDone done, ChainCalibration cal = {});
   // The make-up for block `block` of path `path` (0 = a, 1 = b) when `before` becomes `after` (core auto_trim.h slotMakeupDb).
   void submitMakeup(Preset before, Preset after, int path, MakeupDone done);
+  // v0.8 I2: `blockIndex` is the swapped block's index in the path (preset order, -1 = unknown); under `cal` a block that feeds a NAM
+  // is skipped (core slotMakeup), and the measurements run with the calibration.
+  void submitMakeup(Preset before, Preset after, int path, int blockIndex, ChainCalibration cal, MakeupDone done);
 
   // Nothing queued and nothing running.
   bool idle() const;
@@ -60,10 +69,13 @@ class LevelWorker {
     Preset preset;
     std::string hash;
     TrimDone done;
+    ChainCalibration cal;
   };
   struct MakeupJob {
     Preset before, after;
     int path = 0;
+    int blockIndex = -1;
+    ChainCalibration cal;
     MakeupDone done;
   };
   void run();

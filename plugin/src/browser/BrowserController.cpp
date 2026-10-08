@@ -283,7 +283,8 @@ void BrowserController::use(int targetIndex) {
     st_.busy = true;
     setStatus("LEVEL MATCHING... (" + loadedTitle_ + ")");
     changed();
-    proc_.computeSlotMakeup(cur, after, path, [this, alive = alive_, seq, target, f, path](const LevelWorker::MakeupResult& r) {
+    // v0.8 I2: with calibrated input levels on, a slot that feeds another NAM block stores no make-up (skippedHop: makeupDb is 0).
+    proc_.computeSlotMakeup(cur, after, path, target.blockIndex, [this, alive = alive_, seq, target, f, path](const LevelWorker::MakeupResult& r) {
       juce::MessageManager::callAsync([this, alive, seq, target, f, path, mk = r.makeupDb] {
         if (!alive->load() || seq != useSeq_) return;
         // Edits made while the level was measured are kept: the swap is applied to the rig as it is now.

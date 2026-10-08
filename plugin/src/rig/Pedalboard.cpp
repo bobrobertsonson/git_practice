@@ -686,8 +686,16 @@ bool Pedalboard::addCapturePedal(int path, const Capture& capture) {
   // the background measurement is done and adds none: it goes into the rig and into every stored snapshot that has the block.
   const Preset after = proc.editBasePreset();
   say("LEVEL MATCHING...");
-  proc.computeSlotMakeup(before, after, path, [this, alive = alive_, newId](const LevelWorker::MakeupResult& r) {
-    juce::MessageManager::callAsync([this, alive, newId, mk = r.makeupDb] {
+  // The new block's index in its path (preset order): with calibrated input levels on, a pedal that feeds another NAM block gets no
+  // make-up (v0.8 I2: the planned gain carries the hop), so nothing is measured and nothing is stored.
+  int newIndex = -1;
+  {
+    const PathPreset& ap = path == 0 ? after.a : after.b;
+    for (std::size_t i = 0; i < ap.blocks.size(); ++i)
+      if (ap.blocks[i].id == newId) newIndex = static_cast<int>(i);
+  }
+  proc.computeSlotMakeup(before, after, path, newIndex, [this, alive = alive_, newId](const LevelWorker::MakeupResult& r) {
+    juce::MessageManager::callAsync([this, alive, newId, mk = r.skippedHop ? std::optional<double>() : r.makeupDb] {
       if (!alive->load()) return;
       say(juce::String());
       if (!mk) return;
@@ -738,8 +746,9 @@ bool Pedalboard::swapPedalCapture(int path, const std::string& id, const Capture
   Preset swapped = cur;
   replace(swapped, 0.0);
   say("LEVEL MATCHING...");
-  proc.computeSlotMakeup(cur, swapped, path, [this, alive = alive_, seq, replace](const LevelWorker::MakeupResult& r) {
-    juce::MessageManager::callAsync([this, alive, seq, replace, mk = r.makeupDb] {
+  proc.computeSlotMakeup(cur, swapped, path, idx, [this, alive = alive_, seq, replace](const LevelWorker::MakeupResult& r) {
+    // A hop block (calibrated input levels on, feeds another NAM) stores no make-up: the new capture carries 0, not the old one's.
+    juce::MessageManager::callAsync([this, alive, seq, replace, mk = r.skippedHop ? std::optional<double>(0.0) : r.makeupDb] {
       if (!alive->load() || seq != swapSeq_) return;
       say(juce::String());
       controller_.edit([replace, mk](Preset& p) { replace(p, mk ? mk : std::optional<double>()); });
