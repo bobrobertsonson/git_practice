@@ -308,3 +308,46 @@ Legibility rules (same as above, plus):
 
 Acceptance as above for all four sets; `--check` and `--contrast` per set; README gets the v3 table (or "identical
 ratios" lines where true) and its lowest ratio.
+
+## v4 round — streamline (user feedback on v3, 2026-10-08)
+
+Brief: `docs/specs/v1_0-ui_workshop_skin.md` "v4 round — streamline" (rules 1–8), "VERMIN rat stencil", "Cab
+redesign". Kit parameter `look` gains `v4` (built on v3: LCDs, ladders, rings, lamps, worn metal). v2 and v3 output stay
+byte-identical. v4 renders **01, 02, 03, 08** first, both wear levels, into `png_v4/` and `png_v4_strong/`.
+
+Per screen, how each rule shows (every rule must be visibly checkable, so the page can list "what changed"):
+- **01 main rig:**
+  - **R1:** no caption chips under amps / pedals. Each amp and pedal gets a path edge (BLADE orange / BODY blue, 3 px)
+    plus a small path word in a well (`BLADE` / `BODY`). The inspector drops the CIRCUIT selector; it lives on THE SAW
+    MILL face as a small selector overlay labelled CIRCUIT · BUZZSAW.
+  - **R2:** the METERS column is gone and the cab takes the space. IN / OUT are thin LED ladders in the top bar; GR is
+    the LED ring on VISE.
+  - **R3:** MATCH vs ORIGINAL is drawn as a dismissable card (✕) with the caption "after a match". ALIGN is gone from
+    the inspector, and an `ⓘ DETAILS` button stands for the pop-over. Empty pedal slots collapse to one `+` at the end
+    of each path's row.
+  - **R6:** amber for values, green only for good states (LIVE lamp, ✓), orange for selection and primary.
+  - **R7:** VERMIN on the board in the BLADE row, at true scale.
+  - **R8:** three cab directions, rendered as three variants of this screen (`01_main_rig_cab_a/_b/_c.png`), identical
+    except for the cab:
+    - (a) worn black tolex, steel corners, salt-and-pepper grille, riveted steel `CAB` nameplate, IR title on a small
+      LCD strip;
+    - (b) stripped open-back bare plywood, stencilled lettering, visible generic speakers;
+    - (c) road-case armour: steel edges, latches, stencilled flight-case lettering.
+
+    Each cab shows SHARED (LIVE) vs PER PATH (STUDIO) readably, as a lamp plus a word on the cab. Procedural
+    Pillow/numpy cab drawings are fine (mockup level). No real makers' logos or trade dress. `01_main_rig.png` itself
+    = cab (a).
+- **02 top bar (R4, R2):** brand, preset scroller with ◀ ▶, A / B, RIG / WOODSHED, IN / OUT thin ladders, MATCH, NAM
+  FORGER, settings, LIVE lamp. No LAT / CPU and no other readouts. Show the default state plus the UNCAL / OUT OF TRUE
+  states (as a lamp + word folded into the LIVE lamp area) and one 2x zoom.
+- **03 Settings (R5):** one status strip, current state only. The device dropdown is closed. The manual dBu field
+  appears only under "Custom": show a small second state inset with Custom selected and the field visible. INPUT
+  CHANNEL shows `Auto` with a `▸ Override` disclosure (closed). GATE FLOOR is removed (a note says it moved to GATE).
+- **08 rig editor (R1, R3, R6):** no duplicated captions. Empty slots collapse to one `+` per lane. UNCAL / BYPASS
+  stay as lamp + word. The VERMIN card is in lane A.
+
+VERMIN face: the v0.9 session is adding the rat stencil. Until its face lands, use the current VERMIN render under a
+clearly marked placeholder tag `RAT STENCIL PENDING (v0.9)`; never draw a rat ourselves.
+
+Checks as before for all sets (determinism, `--check`, AA contrast, overpaint). The README gets a v4 section and a
+per-screen "what changed (rule → change)" list, which the review page reuses.
