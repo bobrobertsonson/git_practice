@@ -35,6 +35,11 @@ nlohmann::json buildExportNotesFromJson(const nlohmann::json& preset, const std:
 // True when `notes` is an object of the version this port implements with a stages array: safe to show and copy.
 bool exportNotesUsable(const nlohmann::json& notes);
 
+// v0.8 I4b: the analog-level lines of notes.py (reamp.calibration_lines) for `notes.calibration` (the matcher's plan.reference_levels block: the
+// device level and whether it was assumed, input_level_dbu / output_level_dbu written or why not (naming the missing term), and the "set your
+// interface to X dBu" sentence for loaders that ignore the fields). Empty when the notes have none. Tolerant of foreign JSON; never throws.
+std::string calibrationLinesTxt(const nlohmann::json& calibration);
+
 // The text of <name>.export_notes.txt (also what COPY puts on the clipboard). Tolerant of foreign JSON (a report written
 // by a newer tool): missing or mistyped members are skipped, it never throws. An empty licenceNote = the disclaimer.
 std::string formatNotesTxt(const nlohmann::json& notes, const std::string& presetName = {}, const std::string& licenceNote = {});

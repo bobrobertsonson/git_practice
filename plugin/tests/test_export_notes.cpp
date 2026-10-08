@@ -90,6 +90,42 @@ TEST_CASE("export notes: the preset JSON port equals the Python output (settings
   }
 }
 
+// v0.8 I4b: the analog-level lines. The notes JSON (with its `calibration` block) and the text come from the matcher's Python
+// (generate_calibration.py there); the same notes must give the same text here and in pytest (match/tests/test_export_notes_parity.py).
+TEST_CASE("export notes: the calibration lines equal the matcher's (device level / assumed, dBu written or why not, the interface sentence)", "[export-notes][i4b]") {
+  for (const char* name : {"calibrated_assumed", "calibrated_given", "calibrated_blend_input_only", "calibrated_unmeasured", "calibrated_off"}) {
+    INFO(name);
+    const json notes = readJson(kDir / (std::string(name) + ".notes.json"));
+    const std::string want = readText(kDir / (std::string(name) + ".export_notes.txt"));
+    CHECK(formatNotesTxt(notes, "Notes parity: nocab") == want);
+    CHECK(exportNotesUsable(notes));
+  }
+  // What the lines say (so a regeneration that lost them fails here, not only in the comparison).
+  const std::string assumed = formatNotesTxt(readJson(kDir / "calibrated_assumed.notes.json"), "x");
+  CHECK(assumed.find("input_level_dbu  : +12 dBu") != std::string::npos);
+  CHECK(assumed.find("output_level_dbu : -9 dBu") != std::string::npos);
+  CHECK(assumed.find("The interface level was assumed (+12 dBu at 0 dBFS), not given.") != std::string::npos);
+  CHECK(assumed.find("set its input calibration level to +12 dBu") != std::string::npos);
+  const std::string given = formatNotesTxt(readJson(kDir / "calibrated_given.notes.json"), "x");
+  CHECK(given.find("input_level_dbu  : +9.5 dBu") != std::string::npos);
+  CHECK(given.find("was assumed") == std::string::npos);
+  const std::string blend = formatNotesTxt(readJson(kDir / "calibrated_blend_input_only.notes.json"), "x");
+  CHECK(blend.find("output_level_dbu : left empty") != std::string::npos);
+  CHECK(blend.find("missing term: blend sum") != std::string::npos);
+  const std::string off = formatNotesTxt(readJson(kDir / "calibrated_off.notes.json"), "x");
+  CHECK(off.find("Levels: input_level_dbu / output_level_dbu are NOT written") != std::string::npos);
+  CHECK(off.find("input_level_dbu  :") == std::string::npos);
+  // Notes without a calibration block are unchanged (no stray blank lines), and foreign values never throw.
+  const json plain = readJson(kDir / "nocab.notes.json");
+  CHECK(formatNotesTxt(plain, "Notes parity: nocab") == readText(kDir / "nocab.export_notes.txt"));
+  CHECK(calibrationLinesTxt(json()).empty());
+  CHECK(calibrationLinesTxt(json::object()).empty());
+  CHECK_NOTHROW(calibrationLinesTxt(json{{"calibrated", true}, {"inputLevelDbu", "x"}, {"notes", json::array({1, "ok", nullptr})}}));
+  CHECK(calibrationLinesTxt(json{{"calibrated", true}, {"inputLevelDbu", 12}, {"notes", json::array({"a", "b"})}}) ==
+        "Levels (dBu at 0 dBFS, a 1 kHz sine's RMS; the NAM trainer's input_level_dbu / output_level_dbu):\n  input_level_dbu  : +12 dBu\n"
+        "  output_level_dbu : left empty\n  a\n  b");
+}
+
 TEST_CASE("export notes: a parsed Preset gives the same notes as its JSON", "[export-notes]") {
   for (const Case& c : kCases) {
     INFO(c.name);

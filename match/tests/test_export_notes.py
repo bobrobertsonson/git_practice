@@ -362,3 +362,47 @@ def test_anagram_profile_from_a_notes_preset_lists_the_dropped_comp(tmp_path):
     notes, _ = N.write_export_notes(orig, plan, nam, tmp_path / "r-nocab.ir.wav", None, stem="r-nocab-full")
     blocks = [s["block"] for s in notes["deviceProfiles"]["anagram"]["stages"]]
     assert blocks == ["Gate", "Neural Amp", "IR", "Compressor"]
+
+
+# ---------------------------------------------------------------- v0.8 I4b: the plugin's formatNotesTxt prints the same calibration lines
+
+import importlib.util  # noqa: E402
+
+import pytest  # noqa: E402
+
+FIXTURES = REPO / "plugin" / "tests" / "fixtures" / "export_notes"
+CAL_CASES = ["calibrated_assumed", "calibrated_given", "calibrated_blend_input_only", "calibrated_unmeasured", "calibrated_off"]
+
+
+def _generator():
+    spec = importlib.util.spec_from_file_location("generate_calibration", FIXTURES / "generate_calibration.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("name", CAL_CASES)
+def test_calibration_fixtures_are_what_the_matcher_writes_now(name):
+    """The committed notes JSON + text (read by plugin/tests/test_export_notes.cpp, which requires the C++ formatNotesTxt to give the
+    same text from the same notes) are what the Python gives today: if the matcher's wording changes, this fails until the fixtures are
+    regenerated (generate_calibration.py) and the C++ port follows."""
+    notes_json, txt = _generator().render_case(name)
+    assert (FIXTURES / f"{name}.notes.json").read_text() == notes_json
+    assert (FIXTURES / f"{name}.export_notes.txt").read_text(encoding="utf-8") == txt
+    # and the text really is format_notes_txt of the committed notes
+    notes = json.loads((FIXTURES / f"{name}.notes.json").read_text())
+    assert N.format_notes_txt(notes, "Notes parity: nocab") == txt
+
+
+def test_calibration_lines_say_device_level_dbu_fields_and_the_interface_sentence():
+    t = {n: (FIXTURES / f"{n}.export_notes.txt").read_text(encoding="utf-8") for n in CAL_CASES}
+    a = t["calibrated_assumed"]
+    assert "input_level_dbu  : +12 dBu" in a and "output_level_dbu : -9 dBu" in a
+    assert "The interface level was assumed (+12 dBu at 0 dBFS), not given." in a and "set its input calibration level to +12 dBu" in a
+    g = t["calibrated_given"]
+    assert "input_level_dbu  : +9.5 dBu" in g and "was assumed" not in g
+    b = t["calibrated_blend_input_only"]
+    assert "output_level_dbu : left empty" in b and "missing term: blend sum" in b
+    assert "digital gain after the last capture" in t["calibrated_unmeasured"]
+    assert t["calibrated_off"].count("Levels: input_level_dbu / output_level_dbu are NOT written") == 1
+    assert "input_level_dbu  :" not in t["calibrated_off"]

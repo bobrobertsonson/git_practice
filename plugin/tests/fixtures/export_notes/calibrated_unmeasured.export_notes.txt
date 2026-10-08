@@ -1,0 +1,25 @@
+Sawblade export notes - Notes parity: nocab (nocab export)
+
+Stages of the preset that are NOT in the trained model, in signal order:
+
+1. gate [before NAM]
+   Gate FIRST in the chain, keyed on the guitar (DI) before any pedal: open at -50 dB, close at -56 dB (hysteresis 6 dB), attack 0.5 ms, hold 20 ms, release 60 ms, range -90 dB.
+
+2. cab [after NAM]
+   Load the cab IR V30 Mesa 4x12 (file impulse.wav; by @OutmodedElectronics; t3k; tone3000 id 21). Easiest: load the exported nocab.ir.wav instead; it already holds this cab (and the post EQ) as one IR, mono 48 kHz 32-bit float, loaded WITHOUT loudness normalisation.
+
+3. postEq [after NAM]
+   Post EQ after the cab: high-pass 80 Hz, 12 dB/oct (Q 0.707); peak 3000 Hz, +2.5 dB, Q 1.2. Already folded into the exported IR (nocab.ir.wav); add it again only if you do not use that IR.
+
+4. busComp [after NAM]
+   Bus compressor LAST (after the cab / post EQ): threshold -10 dB re the chain's pre-headroom level = -12 dB re 0 dBFS at the exported output, ratio 4:1, attack 1 ms, release 80 ms, knee 3 dB, make-up +1.5 dB, peak detector (the output gain of -2.0 dB is already inside the model).
+
+Loader order: gate -> NAM (nocab-standard.nam) -> cab IR + post EQ (nocab.ir.wav) -> bus comp
+
+Levels (dBu at 0 dBFS, a 1 kHz sine's RMS; the NAM trainer's input_level_dbu / output_level_dbu):
+  input_level_dbu  : +12 dBu
+  output_level_dbu : left empty
+  output_level_dbu is NOT written: the post-capture digital gain was not measured (missing term: digital gain after the last capture).
+  The interface level was assumed (+12 dBu at 0 dBFS), not given. On a loader or plugin that does not read input_level_dbu / output_level_dbu set its input calibration level to +12 dBu, and its output calibration to match your interface; if your interface's real level differs from +12 dBu the model is driven by the difference.
+
+Derived from TONE3000 captures; for personal use only. dB figures are digital (dBFS), so match levels by ear / meter on the device.

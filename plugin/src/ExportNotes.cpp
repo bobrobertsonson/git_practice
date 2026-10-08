@@ -306,6 +306,32 @@ bool exportNotesUsable(const json& notes) {
   return v.is_number_integer() && v.get<long long>() == kExportNotesVersion && get(notes, "stages").is_array() && get(notes, "loaderOrder").is_string();
 }
 
+std::string calibrationLinesTxt(const json& cal) {
+  if (!cal.is_object() || cal.empty()) return {};
+  const auto strings = [&](const char* key) {  // " ".join(cal.get("notes", []))
+    std::string out;
+    const json v = get(cal, key);
+    if (v.is_array())
+      for (const json& n : v)
+        if (n.is_string()) out += (out.empty() ? "" : " ") + n.get<std::string>();
+    return out;
+  };
+  const json calibrated = get(cal, "calibrated");
+  if (!truthy(calibrated)) return "Levels: " + strings("notes");
+  // reamp.calibration_lines: f"{v:+g} dBu", None -> "left empty"
+  const auto level = [&](const char* key) {
+    const json v = get(cal, key);
+    return v.is_number() ? fixed(v.get<double>(), "%+g") + " dBu" : std::string("left empty");
+  };
+  std::string t = "Levels (dBu at 0 dBFS, a 1 kHz sine's RMS; the NAM trainer's input_level_dbu / output_level_dbu):\n  input_level_dbu  : " +
+                  level("inputLevelDbu") + "\n  output_level_dbu : " + level("outputLevelDbu");
+  const json notes = get(cal, "notes");
+  if (notes.is_array())
+    for (const json& n : notes)
+      if (n.is_string()) t += "\n  " + n.get<std::string>();
+  return t;
+}
+
 std::string formatNotesTxt(const json& notes, const std::string& presetName, const std::string& licenceNote) {
   const json mode = get(notes, "mode");
   std::string t = "Sawblade export notes" + (presetName.empty() ? std::string() : " - " + presetName) + " (" + pyStr(mode) + " export)\n\n" +
@@ -319,10 +345,12 @@ std::string formatNotesTxt(const json& notes, const std::string& presetName, con
       t += std::to_string(i) + ". " + strOf(st, "stage") + " [" + strOf(st, "position") + "]\n   " + strOf(st, "hardware") + "\n\n";
     }
   }
-  // The exporter's training sentence (exportNotes.trainingNote) sits between the loader order and the licence line.
+  // The exporter's training sentence (exportNotes.trainingNote) sits between the loader order and the licence line; the analog level lines
+  // (exportNotes.calibration, v0.8 I4a) between those two, as in notes.py.
   const json tn = get(notes, "trainingNote");
   if (tn.is_string() && !tn.get<std::string>().empty()) t += strOf(notes, "loaderOrder") + "\n\n" + tn.get<std::string>() + "\n\n";
   else t += strOf(notes, "loaderOrder") + "\n\n";
+  if (const std::string cal = calibrationLinesTxt(get(notes, "calibration")); !cal.empty()) t += cal + "\n\n";
   t += (licenceNote.empty() ? std::string(kExportNotesDisclaimer) : licenceNote) + "\n";
   return t;
 }
