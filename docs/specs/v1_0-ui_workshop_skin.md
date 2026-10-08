@@ -45,7 +45,9 @@ Render scripts under `design/render/` for every new sprite and panel, determinis
 
 Also in Task B: re-render the pre-existing assets that carry trademark text (found by Task A): the amp OLED panels in
 `plugin/assets/amp_saw.png` / `amp_body.png` ("JCM800 2203", "5150III") and the pedal-face labels (STOCKHOLM SYNDROME /
-TIGHTEN, replaced by the `docs/NAMES.md` names); export amps and pedals with real alpha instead of a baked backdrop.
+TIGHTEN, replaced by the `docs/NAMES.md` names); export amps and pedals with real alpha instead of a baked backdrop. Port the SHA-pinned font fetcher from the v1.0
+design branch into `design/render/common.py`; a failed or mismatched font fetch is a hard error (today's fallback
+silently draws wordmarks invisibly).
 
 ## Task C — build (dsp-engineer)
 
