@@ -929,6 +929,7 @@ CalibrationPlan Chain::planCalibration(const ChainCalibration& c) const {
   plan.enabled = c.enabled;
   plan.deviceAssumed = !c.device.calibrated();
   plan.deviceDbu = plan.deviceAssumed ? calibration::kAssumedDeviceDbu : *c.device.dbu;
+  plan.refOutDbu = {plan.deviceDbu, plan.deviceDbu};
   for (std::size_t k = 0; k < 2; ++k) {
     const Path& p = path_[k];
     auto& out = plan.blocks[k];
@@ -965,6 +966,7 @@ CalibrationPlan Chain::planCalibration(const ChainCalibration& c) const {
       b.captureOutputDbu = infos[j].outputDbu;
       ref = pp.blocks[j].refAfterDbu;
     }
+    plan.refOutDbu[k] = pp.refOutDbu;
     plan.anyUncalibrated = plan.anyUncalibrated || pp.anyUncalibrated;
   }
   return plan;

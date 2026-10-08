@@ -69,13 +69,13 @@ integrated_loudness_lufs = getattr(_core, "integrated_loudness_lufs", None)
 __all__ = ["render", "CaptureCache", "PresetError", "RenderIOError", "StemSet", "StemPlayer", "load_stems", "stem_set_from_arrays", "integrated_loudness_lufs", "level_match", "resolve_dynamics", "peak_floor_db"]
 
 
-def level_match(preset, sample_rate, base_dir=None, cache=None) -> dict:
+def level_match(preset, sample_rate, base_dir=None, cache=None, device_dbu=None, calibration="preset") -> dict:
     """Phase 10.1 level-match probe (``trimADb, trimBDb, lufsA, lufsB, sumLufs, makeupDb[5], delaySamplesB,
-    invertB``); no audio is rendered. Same argument conventions as ``render``."""
+    invertB``, ``calibrated``); no audio is rendered. Same argument conventions as ``render`` (``device_dbu``, ``calibration``)."""
     fn = getattr(_core, "level_match", None)
     if fn is None:
         raise ImportError("sawblade_core has no level_match (built before phase 10.1); rebuild the extension")
-    return fn(preset, sample_rate, base_dir=base_dir, cache=cache)
+    return fn(preset, sample_rate, base_dir=base_dir, cache=cache, device_dbu=device_dbu, calibration=calibration)
 
 
 def peak_floor_db(x, fs, key_hpf_hz: float = 0.0, mask=None):

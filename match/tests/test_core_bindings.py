@@ -372,3 +372,51 @@ def test_clear_during_inflight_renders(di):
 def test_numpy_scalars_accepted(di):
     x, sr = di
     core.render(preset_text("golden_shared"), x[:2000], np.int64(sr), base_dir=PRESETS, block=np.int64(64))
+
+
+def _blend_preset(version=5, mode=None):
+    nam = REPO / "tests" / "fixtures" / "nam"
+    blk = lambda i, f: {"id": i, "type": "nam", "model": {"file": str(nam / f)}}  # noqa: E731
+    p = {"schema": "sawblade.preset", "version": version, "name": "lm",
+         "paths": {"a": {"blocks": [blk("a1", "cal_pedal_a.nam")]}, "b": {"blocks": [blk("b1", "linear_identity.nam")]}},
+         "align": {"mode": "off"}, "blend": 0.5, "blendLaw": "constantLoudness",
+         "cab": {"mode": "shared", "enabled": False, "ir": {"file": "(none)"}}}
+    if mode:
+        p["calibration"] = {"mode": mode}
+    return p
+
+
+def test_level_match_is_calibration_aware():
+    """v0.8 I4a: the probe measures on the calibrated chain (pedal A is planned +6 dB at the assumed +12 dBu), so the matcher's
+    trims are the ones its calibrated renders need, and the wrapper no longer reports calibrationUnsupported."""
+    from sawblade_match.matcher import calibration as CAL, levelmatch as LM
+    p = _blend_preset()
+    leg = core.level_match(p, 48000, calibration="legacy")
+    cal = core.level_match(p, 48000, calibration="calibrated")
+    assert leg["calibrated"] is False and cal["calibrated"] is True
+    # A is 6 dB hotter calibrated, so its trim relative to B drops by about 6 dB
+    assert (leg["trimADb"] - leg["trimBDb"]) - (cal["trimADb"] - cal["trimBDb"]) == pytest.approx(6.0, abs=0.3)
+    # "preset" follows calibration.mode; a v4 preset (no member) is legacy
+    assert core.level_match(_blend_preset(4), 48000)["trimADb"] == leg["trimADb"]
+    assert core.level_match(_blend_preset(5, "calibrated"), 48000)["trimADb"] == cal["trimADb"]
+    # device level changes it again
+    hot = core.level_match(p, 48000, calibration="calibrated", device_dbu=18.0)
+    assert (cal["trimADb"] - cal["trimBDb"]) - (hot["trimADb"] - hot["trimBDb"]) == pytest.approx(6.0, abs=0.3)
+    for bad in ({"calibration": "maybe"}, {"device_dbu": 99.0}):
+        with pytest.raises(ValueError):
+            core.level_match(p, 48000, **bad)
+    # the matcher wrapper: no TypeError fallback with this binding
+    d = LM.level_match(p, 48000, calibration=CAL.CalibrationOptions("calibrated"))
+    assert "calibrationUnsupported" not in d and d["calibrated"] is True
+    assert d["trimADb"] == cal["trimADb"]
+    assert "calibrationUnsupported" not in LM.level_match(p, 48000, calibration=CAL.CalibrationOptions("calibrated", 18.0))
+
+
+def test_report_has_ref_out_dbu_beside_the_path_lists(di):
+    x, sr = di
+    p = _blend_preset(5, "calibrated")
+    _, rep = core.render(p, x[:12000], sr, base_dir=PRESETS)
+    c = rep["calibration"]
+    assert isinstance(c["paths"]["a"], list)             # unchanged for existing readers
+    assert c["refOutDbu"]["a"] == pytest.approx(10.0)    # cal_pedal_a leaves at its output_level_dbu
+    assert c["refOutDbu"]["b"] == pytest.approx(12.0)    # linear_identity: no metadata, the reference is unchanged

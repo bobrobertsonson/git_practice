@@ -144,21 +144,39 @@ py::tuple render(const py::object& preset, const py::array& audioIn, const py::o
 // The probe measures trims whatever the preset's levelMatch.mode, but the trims "in effect" are 0 for
 // `off`; the matcher asks for the measurement, so the mode is forced to `auto` here.
 py::dict levelMatch(const py::object& preset, const py::object& sampleRateArg, const py::object& baseDir,
-                    CaptureCache* cache) {
+                    CaptureCache* cache, const py::object& deviceDbu, const std::string& calibrationArg) {
   if (py::isinstance<py::bool_>(sampleRateArg) || py::isinstance<py::str>(sampleRateArg) ||
       !(PyNumber_Check(sampleRateArg.ptr())))
     throw py::value_error("sample_rate must be a number (Hz)");
   const double sampleRate = sampleRateArg.cast<double>();
   if (!(std::isfinite(sampleRate) && sampleRate >= 1000.0)) throw py::value_error("sample_rate must be a rate in Hz, >= 1000");
+  // v0.8 I4a: the probe runs on the same calibrated chain the matcher renders (see render()): "preset" follows the preset's
+  // calibration.mode (default), "legacy" forces it off, "calibrated" forces it on at device_dbu (None = the assumed +12 dBu).
+  if (calibrationArg != "preset" && calibrationArg != "legacy" && calibrationArg != "calibrated")
+    throw py::value_error("calibration must be \"preset\", \"legacy\" or \"calibrated\"");
+  std::optional<double> dev;
+  if (!deviceDbu.is_none()) {
+    if (py::isinstance<py::bool_>(deviceDbu) || !PyNumber_Check(deviceDbu.ptr())) throw py::value_error("device_dbu must be a number (dBu at 0 dBFS) or None");
+    const double d = deviceDbu.cast<double>();
+    if (!(std::isfinite(d) && d >= calibration::kMinPlausibleDbu && d <= calibration::kMaxPlausibleDbu))
+      throw py::value_error("device_dbu must be in -60..60 (dBu at 0 dBFS)");
+    dev = d;
+  }
   const nlohmann::json j = presetToJson(preset);
   std::filesystem::path base = std::filesystem::current_path();
   if (!baseDir.is_none()) base = py::str(py::module_::import("os").attr("fspath")(baseDir)).cast<std::string>();
   ChainInfo info;
+  bool calOn = false;
   {
     py::gil_scoped_release nogil;
     Preset p = parsePreset(j, base);
     p.levelMatch.mode = LevelMatchMode::Auto;
     Chain chain(p, loadResources(p, sampleRate, cache));
+    ChainCalibration cal;
+    cal.enabled = calibrationArg == "calibrated" || (calibrationArg == "preset" && p.calibrationMode == CalibrationMode::Calibrated);
+    cal.device.dbu = dev;
+    calOn = cal.enabled;
+    if (cal.enabled) chain.setCalibration(cal);  // before prepare(): the probes see the calibrated chain
     chain.prepare({sampleRate, 512});
     info = chain.info();
   }
@@ -173,6 +191,7 @@ py::dict levelMatch(const py::object& preset, const py::object& sampleRateArg, c
   d["delaySamplesB"] = info.align.delaySamplesB;
   d["invertB"] = info.align.invertB;
   d["warnings"] = info.warnings;
+  d["calibrated"] = calOn;  // whether the probe ran on a calibrated chain
   return d;
 }
 
@@ -471,16 +490,19 @@ rendering. Raises PresetError (ValueError) or RenderIOError (OSError); both have
 
   m.def("level_match", &levelMatch, py::arg("preset"), py::arg("sample_rate"), py::arg("base_dir") = py::none(),
         py::arg("cache") = nullptr,
+        py::arg("device_dbu") = py::none(), py::arg("calibration") = "preset",
         R"doc(Run the phase 10.1 level-match probe on a preset (builds the chain, prepare(), no audio rendered).
 
 preset       JSON text (str) or a dict following docs/PRESET_SCHEMA.md; levelMatch.mode is forced to
              "auto" so the measured trims are returned whatever the preset says.
 sample_rate  chain rate in Hz (use the NAM models' training rate, as render_rate="auto" does).
 base_dir, cache  as in render().
+device_dbu, calibration  as in render() (v0.8 I4a): the chain is calibrated before prepare(), so trims and make-up are
+             measured on the chain the matcher renders. "preset" (default) follows the preset's calibration.mode.
 
 Returns a dict: trimADb, trimBDb (dB, the louder path has 0), lufsA, lufsB, sumLufs (None when not
 measured: a path disabled or silent), makeupDb (list of 5: make-up at blend 0, .25, .5, .75, 1),
-delaySamplesB, invertB (the resolved alignment) and warnings. With a path disabled everything is 0.
+delaySamplesB, invertB (the resolved alignment), warnings and calibrated (bool: the probe ran calibrated). With a path disabled everything is 0.
 The GIL is released while measuring. Raises PresetError or RenderIOError like render().)doc");
 
   m.def("resolve_dynamics", &resolveDynamicsPy, py::arg("preset"), py::arg("base_dir") = py::none(),

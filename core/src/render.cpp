@@ -333,6 +333,7 @@ nlohmann::json calibrationJson(const CalibrationPlan& c, const std::string& mode
           {"modeSource", source},
           {"deviceDbu", c.deviceDbu},
           {"deviceAssumed", c.deviceAssumed},
+          {"refOutDbu", {{"a", c.refOutDbu[0]}, {"b", c.refOutDbu[1]}}},  // beside paths.a/b (which stay lists)
           {"anyUncalibrated", c.anyUncalibrated},
           {"paths", {{"a", path(0)}, {"b", path(1)}}}};
 }

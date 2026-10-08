@@ -145,6 +145,9 @@ struct CalibrationPlan {
   double deviceDbu = calibration::kAssumedDeviceDbu;  // the level planned with
   bool deviceAssumed = true;                          // kAssumedDeviceDbu was used (device not calibrated)
   bool anyUncalibrated = false;                       // a planned NAM block lacks input or output metadata
+  // dBu at 0 dBFS of the signal leaving each path's planned blocks (planPath's refOutDbu); the device level when the path is
+  // off, disabled or has no planned block.
+  std::array<double, 2> refOutDbu{calibration::kAssumedDeviceDbu, calibration::kAssumedDeviceDbu};
   std::array<std::vector<CalibrationBlockPlan>, 2> blocks;  // [0] = path A, [1] = path B; one entry per preset block
   std::uint64_t seq = 0;                              // publishCalibration() order
   ChainCalibration setting;

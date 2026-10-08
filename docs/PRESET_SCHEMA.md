@@ -665,7 +665,8 @@ so output is independent of the block size. A mono file is used as is. The repor
 
 `calibration.mode` (`"calibrated"` | `"legacy"`), `calibration.modeSource` (`"preset"` | `"options"`), `calibration.deviceDbu`,
 `calibration.deviceAssumed`, the per-block plan (`calibration.paths.a|b[]`: `gainInDb`, `refBeforeDbu`, `feedsNam`, `inputMissing`,
-`outputMissing`, `captureInputDbu`, `captureOutputDbu`), top-level `diChannel`, and with `--level-match` `levelMatchTrim`.
+`outputMissing`, `captureInputDbu`, `captureOutputDbu`; the two path members stay lists), `calibration.refOutDbu` (`{a, b}`: dBu at 0 dBFS of the signal leaving each
+path's planned blocks, planPath's output reference; the device level for a disabled path), top-level `diChannel`, and with `--level-match` `levelMatchTrim`.
 
 ## Play-along (`playAlong`, plugin UI state, not tone)
 

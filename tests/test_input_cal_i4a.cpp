@@ -293,6 +293,10 @@ TEST_CASE("I4a render: deviceDbu changes the planned gains exactly and the repor
     // The amp hop: pedal.outputDbu - amp.inputDbu, independent of the device.
     CHECK(c["paths"]["a"][1]["gainInDb"].get<double>() == Approx(10.0 - 12.0).margin(1e-9));
     CHECK(c["paths"]["a"][0]["refBeforeDbu"].get<double>() == Approx(dev));
+    // refOutDbu sits beside the path lists (which stay lists): path A ends on the amp's output level; B is disabled -> the device.
+    CHECK(c["paths"]["a"].is_array());
+    CHECK(c["refOutDbu"]["a"].get<double>() == Approx(0.0));
+    CHECK(c["refOutDbu"]["b"].get<double>() == Approx(dev));
   }
 
   // A device level on a legacy preset is recorded, changes nothing and says so.
