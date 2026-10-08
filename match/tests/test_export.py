@@ -533,8 +533,11 @@ class _FakeTrain:
             return TrainResult(nam_path=None, epochs_done=2, best_epoch=2, best_val_esr=0.5, wall_s=1.0,
                                stopped_by="interrupt", params=1, receptive_field=1, history=[], config={})
         p = Path(outdir) / f"{basename}.nam"
+        um = {}                                  # the trainer writes UserMetadata flat into the .nam metadata (exportable.py)
+        if user_metadata is not None:
+            um = user_metadata.model_dump() if hasattr(user_metadata, "model_dump") else dict(vars(user_metadata))
         p.write_text(json.dumps({"architecture": "WaveNet", "weights": [0.0],
-                                 "metadata": {"sawblade": dict(other_metadata["sawblade"])}}))
+                                 "metadata": {**um, "sawblade": dict(other_metadata["sawblade"])}}))
         from sawblade_match.export.train import TrainResult
         if self.late_stop:                       # SIGINT the trainer never consumed (e.g. during its final epoch)
             STOP.request_stop()
@@ -1175,3 +1178,96 @@ def test_mock_notes_preset_must_be_an_object(mx):
     with pytest.raises(P.ExportRefused, match="not a preset object"):
         mx.go(out=str(mx.tmp / "o"), notes_preset=str(f))
     assert not mx.fake.calls
+
+
+# ---------------------------------------------------------------- v0.8 I4a: input_level_dbu / output_level_dbu
+
+def _cal_probe(device=12.0, assumed=True, a_out=-3.0, b_out=-3.0, mode="calibrated", any_uncal=False):
+    blk = lambda out: [{"id": "amp", "kind": "nam", "captureInputDbu": 5.0, "captureOutputDbu": out,
+                        "inputMissing": False, "outputMissing": out is None}]
+    return {"warnings": [], "calibration": {"enabled": mode == "calibrated", "mode": mode, "deviceDbu": device,
+                                            "deviceAssumed": assumed, "anyUncalibrated": any_uncal,
+                                            "paths": {"a": blk(a_out), "b": blk(b_out)}}}
+
+
+def _nam_md(rep, out):
+    return json.loads((Path(out) / rep["files"]["primary"]).read_text())["metadata"]
+
+
+def test_reference_levels_rule_unit():
+    pre = {"blend": 0.4, "paths": {"a": {"blocks": [1]}, "b": {"blocks": [1]}}}
+    r = P.reference_levels(pre, _cal_probe(device=9.0, assumed=False, a_out=-3.0, b_out=-3.0))
+    assert r["calibrated"] and r["inputLevelDbu"] == 9.0 and r["outputLevelDbu"] == -3.0 and r["deviceAssumed"] is False
+    assert not any("assumed" in n for n in r["notes"])
+    r = P.reference_levels(pre, _cal_probe(a_out=-3.0, b_out=2.0))                  # the blend's paths disagree: no single value
+    assert r["inputLevelDbu"] == 12.0 and r["outputLevelDbu"] is None and any("different output references" in n for n in r["notes"])
+    r = P.reference_levels({**pre, "blend": 0.0}, _cal_probe(a_out=-3.0, b_out=2.0))        # B is silent at blend 0: only A counts
+    assert r["outputLevelDbu"] == -3.0
+    r = P.reference_levels({**pre, "paths": {"a": {"blocks": [1]}, "b": {"enabled": False, "blocks": []}}},
+                           _cal_probe(a_out=None, b_out=2.0))
+    assert r["outputLevelDbu"] is None and any("no output level" in n for n in r["notes"])
+    r = P.reference_levels(pre, _cal_probe(), 2.5)                                    # reamp output scaled down 2.5 dB
+    assert r["outputLevelDbu"] == pytest.approx(-0.5)
+    for probe in (_cal_probe(mode="legacy"), {"warnings": []}):                       # uncalibrated / no record: no fields, a note
+        r = P.reference_levels(pre, probe)
+        assert not r["calibrated"] and r["inputLevelDbu"] is None and r["outputLevelDbu"] is None
+        assert r["notes"] and "NOT written" in r["notes"][0]
+
+
+def test_mock_calibrated_export_writes_the_dbu_fields_into_the_nam(mx, monkeypatch):
+    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe())
+    out = mx.tmp / "cal"
+    rep = mx.go(out=str(out))
+    md = _nam_md(rep, out)
+    assert md["input_level_dbu"] == 12.0 and md["output_level_dbu"] == -3.0           # round-trips into the .nam metadata
+    assert md["sawblade"]["levels"]["inputLevelDbu"] == 12.0 and md["sawblade"]["levels"]["outputLevelDbu"] == -3.0
+    assert md["sawblade"]["levels"]["deviceAssumed"] is True
+    c = rep["calibration"]
+    assert c["calibrated"] and c["deviceDbu"] == 12.0 and c["deviceAssumed"] is True
+    txt = (out / rep["exportNotes"]["file"]).read_text()
+    assert "input_level_dbu  : +12 dBu" in txt and "output_level_dbu : -3 dBu" in txt
+    assert "assumed" in txt and "+12 dBu" in txt                                        # says which level to set on a loader
+    assert rep["exportNotes"]["calibration"]["inputLevelDbu"] == 12.0
+
+
+def test_mock_calibrated_export_with_a_given_device_level_does_not_say_assumed(mx, monkeypatch):
+    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe(device=9.0, assumed=False, a_out=1.5, b_out=1.5))
+    out = mx.tmp / "cal9"
+    rep = mx.go(out=str(out))
+    md = _nam_md(rep, out)
+    assert md["input_level_dbu"] == 9.0 and md["output_level_dbu"] == 1.5
+    assert rep["calibration"]["deviceAssumed"] is False
+    assert "assumed" not in (out / rep["exportNotes"]["file"]).read_text().split("Levels (dBu")[1]
+
+
+@pytest.mark.parametrize("probe", [{"warnings": []}, _cal_probe(mode="legacy")], ids=["no-record", "legacy"])
+def test_mock_uncalibrated_export_writes_no_dbu_fields_and_says_so(mx, monkeypatch, probe):
+    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: probe)
+    out = mx.tmp / "uncal"
+    rep = mx.go(out=str(out))
+    md = _nam_md(rep, out)
+    assert md.get("input_level_dbu") is None and md.get("output_level_dbu") is None
+    lv = md["sawblade"]["levels"]
+    assert lv["inputLevelDbu"] is None and lv["outputLevelDbu"] is None and lv["calibrated"] is False
+    assert "NOT written" in lv["note"]
+    assert rep["calibration"]["calibrated"] is False
+    txt = (out / rep["exportNotes"]["file"]).read_text()
+    assert "NOT written" in txt and "output_level_dbu :" not in txt
+
+
+def test_mock_calibrated_blend_with_different_path_outputs_writes_input_only(mx, monkeypatch):
+    monkeypatch.setattr(mx.RUN, "probe_report", lambda *a, **k: _cal_probe(a_out=-3.0, b_out=4.0))
+    out = mx.tmp / "mixed"
+    rep = mx.go(out=str(out))
+    md = _nam_md(rep, out)
+    assert md["input_level_dbu"] == 12.0 and md.get("output_level_dbu") is None
+    assert "different output references" in " ".join(rep["calibration"]["notes"])
+
+
+def test_dbu_field_names_match_the_pinned_trainer_metadata():
+    """The names match nam.models.metadata.UserMetadata (neural-amp-modeler 0.13.0, REPORT A1) when the trainer is installed."""
+    md = pytest.importorskip("nam.models.metadata", reason="neural-amp-modeler not installed")
+    u = md.UserMetadata(input_level_dbu=12.0, output_level_dbu=-3.0)
+    d = u.model_dump()
+    assert d["input_level_dbu"] == 12.0 and d["output_level_dbu"] == -3.0
+    assert md.UserMetadata().model_dump()["input_level_dbu"] is None

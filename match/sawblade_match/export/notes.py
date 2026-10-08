@@ -245,6 +245,9 @@ def format_notes_txt(notes: dict, preset_name: str | None = None, licence_note: 
     L.append(notes["loaderOrder"])
     if training_note:
         L += ["", training_note]
+    if notes.get("calibration"):
+        from .reamp import calibration_lines
+        L += [""] + calibration_lines(notes["calibration"])
     L += ["", licence_note or DISCLAIMER]
     return "\n".join(L) + "\n"
 
@@ -380,13 +383,15 @@ def format_anagram_txt(profile: dict, preset_name: str | None = None, licence_no
 def write_export_notes(preset: dict, plan, nam_path, ir_path=None, licence_note: str | None = None,
                        stem: str | None = None, model_label: str | None = None,
                        training_note: str | None = None, training_signal: str | None = None,
-                       a2: bool = True) -> tuple[dict, Path]:
+                       a2: bool = True, calibration: dict | None = None) -> tuple[dict, Path]:
     """Build the notes for the export at ``nam_path`` and write ``<stem>.export_notes.txt`` (generic) and
     ``<stem>.anagram_notes.txt`` (Anagram device profile) next to it; ``stem`` defaults to the .nam's stem (A1)."""
     from . import plan as P
     nam_path = Path(nam_path)
     stem = stem or nam_path.stem
     notes = build_export_notes(preset, plan, nam_path.name, Path(ir_path).name if ir_path else None)
+    if calibration is not None:          # v0.8 I4a: the analog level reference of the training render, or why there is none
+        notes["calibration"] = calibration
     txt = nam_path.with_name(stem + ".export_notes.txt")
     txt.write_text(format_notes_txt(notes, preset.get("name"), licence_note, training_note), encoding="utf-8")
     notes["file"] = txt.name

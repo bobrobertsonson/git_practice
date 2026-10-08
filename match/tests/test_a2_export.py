@@ -524,6 +524,47 @@ def test_reamp_pair_only_renders_the_exportable_chain(monkeypatch, tmp_path):
     assert not list(out.glob("*.nam"))                                                   # no training happened
 
 
+def _reamp_only_report(monkeypatch, tmp_path, tag, edit=None):
+    from sawblade_match.export.run import run_export
+    (tmp_path / tag).mkdir()
+    pj = _fixture_preset(tmp_path / tag)
+    if edit:
+        p = json.loads(pj.read_text())
+        edit(p)
+        pj.write_text(json.dumps(p))
+    src = _standin_input(tmp_path / tag / "nam_input.wav", seconds=30)
+    _register_standin(monkeypatch, src)
+    out = tmp_path / tag / "out"
+    rep = run_export(pj, mode="nocab", arch="a2", size="full", out=out, reamp_pair=src, no_train=True, log=lambda *_: None)
+    return rep, out, (out / rep["reamp"]["files"]["notes"]).read_text(encoding="utf-8")
+
+
+def test_reamp_pair_of_a_legacy_preset_has_no_dbu_levels_and_says_so(monkeypatch, tmp_path):
+    rep, out, txt = _reamp_only_report(monkeypatch, tmp_path, "legacy")
+    c = rep["calibration"]
+    assert c["calibrated"] is False and c["inputLevelDbu"] is None and c["outputLevelDbu"] is None
+    assert rep["reamp"]["calibration"] == c
+    assert "NOT written" in txt and "input_level_dbu  :" not in txt
+
+
+def _core_has_calibration() -> bool:
+    from sawblade_match import core
+    return "calibration" in (core.render.__doc__ or "")
+
+
+@pytest.mark.skipif(not _core_has_calibration(), reason="sawblade_core without calibration options")
+def test_reamp_pair_of_a_calibrated_preset_names_the_trainer_levels(monkeypatch, tmp_path):
+    def cal(p):
+        p["version"] = 5
+        p["calibration"] = {"mode": "calibrated"}
+    rep, out, txt = _reamp_only_report(monkeypatch, tmp_path, "cal", cal)
+    c = rep["calibration"]
+    assert c["calibrated"] and c["deviceDbu"] == 12.0 and c["deviceAssumed"] is True and c["inputLevelDbu"] == 12.0
+    assert c["outputLevelDbu"] is None or isinstance(c["outputLevelDbu"], float)
+    assert "input_level_dbu  : +12 dBu" in txt and "Reamp send level" in txt and "assumed" in txt
+    assert "input_level_dbu" in json.dumps(rep["reamp"]["calibration"])
+
+
 def test_reamp_pair_refuses_an_unknown_input_before_any_work(tmp_path):
     from sawblade_match.export.plan import ExportRefused
     from sawblade_match.export.run import run_export

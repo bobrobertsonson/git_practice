@@ -347,6 +347,7 @@ sawblade-match --di Guitar_L.wav [--di-r Guitar_R.wav] --ref REF.mp3 --pool ~/.c
                [--quick | --thorough] [--progress-json PATH] [--listen]
                [--ablate feel,boost,filters,irsweep,irblend,studio] [--trace-tones ID[,ID...]]
                [--ir-dir DIR ...] [--ir-screen-max 6000]
+               [--calibration legacy|calibrated] [--device-dbu DBU] [--di-channel auto|L|R|mix]
 sawblade-match --ir-dirs-add DIR | --ir-dirs-list          # the persistent list ~/.config/sawblade/ir_dirs.json
 python -m sawblade_match.matcher.irlib --scan DIR [--scan DIR ...] [--json OUT]    # index + sanity report, run once
 python -m sawblade_match.matcher.known_answer --pool ... --di Guitar_L.wav --out DIR [--seed 1] [--topology blend|single|single2]
@@ -680,8 +681,16 @@ complete epoch stays, `progress.json` gets `"interrupted": true`), validation an
   normalisation are exactly the chain's, and the latency is already trimmed. Trailing samples below -120 dB (re. peak) are cut. The
   output gain is *not* in the IR: it is a scalar before the cab and is part of the model's target level. **Load the IR without
   loudness/peak normalisation** (mono WAV, 48 kHz, 32-bit float; a loader that normalises or resamples changes the level/tone).
-  `levels` (RMS/peak of the training input/output) are in the report and the `.nam`; `input_level_dbu`/`output_level_dbu` are left
-  empty (digital chain, no analog reference).
+  `levels` (RMS/peak of the training input/output) are in the report and the `.nam`; `input_level_dbu`/`output_level_dbu` (the trainer's
+  metadata, dBu RMS of a 1 kHz sine at 0 dBFS peak) are written **only when the training render was calibrated** (preset
+  `calibration.mode` `calibrated`): input = the render's `calibration.deviceDbu` (+12 dBu when assumed, and the notes say which
+  level to set on a loader that ignores the fields), output = the chain's output reference (the last capture's `output_level_dbu`;
+  not written when a capture lacks it or a blend's paths end at different references). An uncalibrated render writes no dBu
+  fields and the export notes / report say so.
+* **Matcher calibration** (v0.8 I4a): `--calibration calibrated` renders every capture at the level its dBu metadata implies for the
+  interface (`--device-dbu`, default the assumed +12 dBu, recorded as assumed); emitted presets are v5 with `calibration.mode` set to
+  what the match used; `result.json` has a `calibration` block. The default is `matcher/calibration.py: DEFAULT_CALIBRATION` (still
+  `legacy` until I4c). A stereo DI file (and `--di-r`) uses the louder channel by whole-file RMS (the core's rule) or `--di-channel`.
 * **Training signal** (`export/signal.py`, `SIGNAL_VERSION 1`, seeded by `--signal-seed`, sha256 recorded). 48 kHz mono, 187.7 s train +
   32 s held-out validation, no gates/reverb/delay/compression: 1 s silence; pink-noise level steps (-48..-12 dBFS RMS, 40 Hz-10 kHz);
   white-noise steps (-45..-12); log sweeps up/down 30 Hz-12 kHz at -24/-12/-3 dBFS peak; then 135 s of synthetic chord-like plucks

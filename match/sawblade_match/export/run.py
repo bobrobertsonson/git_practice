@@ -264,6 +264,11 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
         raise P.ExportRefused("; ".join(bad), bad)
     for w in probe.get("warnings", []):
         plan.warnings.append(f"core: {w}")
+    pre_levels = P.reference_levels(tpreset, probe)           # v0.8 I4a: analog level reference of the training render (or why none)
+    log(("calibrated training render: " + f"input {pre_levels['inputLevelDbu']:+g} dBu"
+         + ("" if pre_levels["outputLevelDbu"] is None else f", output {pre_levels['outputLevelDbu']:+g} dBu")
+         + (" (device level assumed)" if pre_levels["deviceAssumed"] else "")) if pre_levels["calibrated"]
+        else "training render not calibrated: no input_level_dbu / output_level_dbu in the model")
 
     pname = file_stem(name, preset)
     dtag = f"a2-{size}" if a2 else size                      # output directory tag
@@ -380,10 +385,14 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     report["ir"] = ir_info
     _check_stop(prog, outdir)
 
+    ref_levels = P.reference_levels(tpreset, probe, float(tinfo.get("levelReducedDb") or 0.0))
+    report["calibration"] = ref_levels
     ref_for_io = {"inputRmsDbfs": sinfo["train"]["rmsDbfs"], "inputPeakDbfs": sinfo["train"]["peakDbfs"],
                   "outputRmsDbfs": tinfo["levels"]["trainOutRmsDbfs"], "outputPeakDbfs": tinfo["levels"]["trainOutPeakDbfs"],
-                  "inputLevelDbu": None, "outputLevelDbu": None,
-                  "note": "digital chain without an analog reference: input_level_dbu / output_level_dbu are left empty"}
+                  "inputLevelDbu": ref_levels["inputLevelDbu"], "outputLevelDbu": ref_levels["outputLevelDbu"],
+                  "calibrated": ref_levels["calibrated"], "deviceDbu": ref_levels["deviceDbu"],
+                  "deviceAssumed": ref_levels["deviceAssumed"],
+                  "note": " ".join(ref_levels["notes"]) or "input_level_dbu / output_level_dbu are the calibrated training render's"}
     ir_file = ir_info and ir_info.get("file")
     sawblade_meta = P.sawblade_block(preset, plan, size, seed, signal_seed, sinfo["trainSha256"], ref_for_io, ir_file,
                                      arch="a2" if a2 else None, training_signal=tsig)
@@ -392,7 +401,9 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     from nam.models.metadata import GearType, ToneType, UserMetadata
     um = UserMetadata(name=f"{preset.get('name', 'Sawblade')} ({mode}, {'A2' if a2 else size})", modeled_by="Sawblade",
                       gear_type=GearType(P.gear_type(plan, preset)), gear_make="Sawblade",
-                      gear_model=str(preset.get("name", "")), tone_type=ToneType.HI_GAIN)
+                      gear_model=str(preset.get("name", "")), tone_type=ToneType.HI_GAIN,
+                      **{k: v for k, v in (("input_level_dbu", ref_levels["inputLevelDbu"]),
+                                           ("output_level_dbu", ref_levels["outputLevelDbu"])) if v is not None})
     prog.update("train", message="training")
     tres = T.train_nam(tr, yt, va, yv, cfg, outdir, scratch, user_metadata=um,
                        other_metadata={"sawblade": sawblade_meta}, log=log, basename=stem,
@@ -477,11 +488,12 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     if a2:
         report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, paths["primary"], ir_path, lic,
                                                                  stem=stem, model_label="A2 container",
-                                                                 training_note=N.training_sentence(tsig), training_signal=tsig, a2=True)
+                                                                 training_note=N.training_sentence(tsig), training_signal=tsig, a2=True,
+                                                                 calibration=ref_levels)
     else:
         report["exportNotes"], notes_path = N.write_export_notes(notes_src or preset, plan, tres.nam_path, ir_path, lic,
                                                                  training_note=N.training_sentence(tsig, a2=False),
-                                                                 training_signal=tsig, a2=False)
+                                                                 training_signal=tsig, a2=False, calibration=ref_levels)
     # notes come from the ORIGINAL rig when the caller trained a derived preset (the plugin turns the bus comp off before a
     # no-cab "drop" export; the comp still has to be listed so it can be added on hardware)
     if notes_src is not None:
@@ -490,7 +502,7 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
     log(f"export notes: {notes_path}")
     if reamp_pair:
         report["reamp"] = _write_reamp(preset, tpreset, plan, base, cache, reamp_pair, reamp_info, outdir, stem, mode, notes_src,
-                                       ir_path, lic, log, prog)
+                                       ir_path, lic, log, prog, probe)
         report["files"]["reampPair"] = report["reamp"]["files"]
     report["totalWallSeconds"] = round(time.time() - t_all, 1)
     (outdir / "export_report.json").write_text(json.dumps(report, indent=2, default=float))
@@ -509,16 +521,18 @@ def _run_export(prog: PG.Progress, preset_path, mode: str = "nocab", size: str |
 
 
 def _write_reamp(preset, tpreset, plan, base, cache, reamp_pair, info, outdir, stem, mode, notes_src, ir_path, lic, log,
-                 prog) -> dict:
+                 prog, probe=None) -> dict:
     """Render the standard input through the training chain and write the pair + ``<stem>.reamp_notes.txt``."""
     log(f"reamp pair: rendering {info['samples'] / RATE:.0f} s of the standard input through the {mode} chain ...")
     with (prog.heartbeat("render") if prog.state["stage"] == "render" else contextlib.nullcontext()):
         pair = RP.render_pair(tpreset, base, cache, reamp_pair, info, outdir, stem, render48)
     src = notes_src or preset
     notes = N.build_export_notes(src, plan, None, Path(ir_path).name if ir_path else None)
+    cal = P.reference_levels(tpreset, probe or {}, float(pair.get("levelReducedDb") or 0.0))
+    pair["calibration"] = cal
     txt = outdir / f"{stem}.reamp_notes.txt"
     txt.write_text(RP.format_notes(src.get("name"), mode, pair, notes, lic, P.nc_captures(preset),
-                                   Path(ir_path).name if ir_path else None), encoding="utf-8")
+                                   Path(ir_path).name if ir_path else None, cal), encoding="utf-8")
     pair["notes"] = txt.name
     pair["nonCommercial"] = bool(P.nc_captures(preset))
     pair["usage"] = "personal use only; never upload or share (derived from TONE3000 captures)"
@@ -550,7 +564,8 @@ def _reamp_only(prog, preset, base, preset_path, plan, tpreset, probe, cache, mo
                     "plan": plan.to_json(), "coreBuild": _core_id(), "levelMatch": P.level_match_info(probe), "ir": ir_info,
                     "attribution": P.attribution(preset), "licenceNote": lic, "nonCommercial": bool(P.nc_captures(preset))}
     report["reamp"] = _write_reamp(preset, tpreset, plan, base, cache, reamp_pair, info, outdir, stem, mode, notes_src, ir_path,
-                                   lic, log, prog)
+                                   lic, log, prog, probe)
+    report["calibration"] = report["reamp"]["calibration"]
     report["files"] = {"reampPair": report["reamp"]["files"]}
     if notes_src is not None:
         report["notesPreset"] = {"path": str(Path(notes_preset).resolve()), "sha256": P.preset_hash(notes_src)}

@@ -232,6 +232,86 @@ def level_match_lines(render_report: dict) -> list[str]:
     return out
 
 
+def _audible_paths(preset: dict) -> list[str]:
+    """Paths whose signal reaches the output: enabled, and with a non-zero blend weight."""
+    b = float(preset.get("blend", 0.0) or 0.0)
+    out = []
+    for k in ("a", "b"):
+        if (preset.get("paths", {}).get(k) or {}).get("enabled", True) is False:
+            continue
+        if (k == "a" and b >= 1.0) or (k == "b" and b <= 0.0):
+            continue
+        out.append(k)
+    return out
+
+
+def _path_out_ref(plan_blocks: list[dict], device_dbu: float) -> tuple[float, bool]:
+    """(dBu at 0 dBFS after the path's last planned block, known?) from the core report's per-block plan. A block that sets
+    the reference is a NAM capture or a modelled pedal with a declared output: ``captureOutputDbu``. When that block lacks
+    the output level the reference is not known (the core carried the previous one), so it is not guessed."""
+    ref, known = float(device_dbu), True
+    for b in plan_blocks:
+        if b.get("kind") in ("nam", "nominalOutput"):
+            if b.get("captureOutputDbu") is not None:
+                ref, known = float(b["captureOutputDbu"]), True
+            else:
+                known = False
+    return ref, known
+
+
+def reference_levels(preset: dict, render_report: dict, level_reduced_db: float = 0.0) -> dict:
+    """The NAM trainer's ``input_level_dbu`` / ``output_level_dbu`` (REPORT A1: dBu RMS of a 1 kHz sine at 0 dBFS peak, the
+    level that corresponds to 0 dBFS at the model's input / output) for the training render.
+
+    Written ONLY when that render was calibrated (``render_report["calibration"]``, the core report of the training chain):
+    ``input_level_dbu`` = ``calibration.deviceDbu`` (the DI's 0 dBFS in that render); ``output_level_dbu`` = the output
+    reference of the chain, the planned ``refOutDbu`` of the last block of the audible path(s) (a blend whose paths end at
+    different references has no single value), plus ``level_reduced_db`` when the reamp output had to be scaled down for
+    24-bit. An uncalibrated render gets no dBu fields (never a guess) and ``notes`` says so; an assumed device level says which
+    interface / loader level to set. Returns ``{"calibrated", "mode", "deviceDbu", "deviceAssumed", "inputLevelDbu",
+    "outputLevelDbu", "notes"}``."""
+    cal = render_report.get("calibration") if isinstance(render_report, dict) else None
+    mode = (cal or {}).get("mode")
+    out = {"calibrated": False, "mode": mode, "deviceDbu": None, "deviceAssumed": None, "inputLevelDbu": None,
+           "outputLevelDbu": None, "notes": []}
+    if not cal or mode != "calibrated" or cal.get("deviceDbu") is None:
+        why = ("the core report has no calibration record" if not cal else
+               f"the training render was not calibrated (calibration mode {mode})")
+        out["notes"].append(f"input_level_dbu / output_level_dbu are NOT written: {why}. The model has no analog level "
+                            "reference, so set the loader's input and output levels by ear / meter. Re-match or export a preset "
+                            "with calibration.mode \"calibrated\" to get them.")
+        return out
+    dev = float(cal["deviceDbu"])
+    out.update(calibrated=True, deviceDbu=dev, deviceAssumed=bool(cal.get("deviceAssumed")), inputLevelDbu=dev)
+    notes = out["notes"]
+    refs = []
+    for k in _audible_paths(preset):
+        r, known = _path_out_ref((cal.get("paths") or {}).get(k) or [], dev)
+        refs.append((k, r, known))
+    if not refs:
+        notes.append("output_level_dbu is NOT written: no audible path in the chain.")
+    elif not all(known for _, _, known in refs):
+        miss = ", ".join(k.upper() for k, _, known in refs if not known)
+        notes.append(f"output_level_dbu is NOT written: the last capture of path {miss} has no output level (dBu) metadata, so "
+                     "the chain's output reference is unknown.")
+    elif max(r for _, r, _ in refs) - min(r for _, r, _ in refs) > 1e-9:
+        notes.append("output_level_dbu is NOT written: the blended paths end at different output references ("
+                     + ", ".join(f"{k.upper()} {r:+.1f} dBu" for k, r, _ in refs) + "), so there is no single value.")
+    else:
+        out["outputLevelDbu"] = refs[0][1] + float(level_reduced_db)
+        if level_reduced_db:
+            notes.append(f"output_level_dbu includes +{level_reduced_db:.2f} dB because the reamp output was scaled down to fit 24-bit.")
+    if cal.get("anyUncalibrated"):
+        notes.append("some captures in the chain lack input or output dBu metadata; those blocks were driven neutrally (0 dB) in "
+                     "the training render.")
+    if out["deviceAssumed"]:
+        notes.append(f"The interface level was assumed (+{dev:g} dBu at 0 dBFS), not given. On a loader or plugin that does not "
+                     f"read input_level_dbu / output_level_dbu set its input calibration level to {dev:+g} dBu, and its output "
+                     f"calibration to match your interface; if your interface's real level differs from {dev:+g} dBu the "
+                     "model is driven by the difference.")
+    return out
+
+
 def core_trainability_problems(report: dict) -> list[str]:
     """Render-report warnings that mean the C++ registry flags a block / the bus comp as not NAM-trainable."""
     return [w for w in report.get("warnings", []) if "not NAM-trainable" in w]

@@ -55,7 +55,7 @@ def render_pair(preset: dict, base_dir, cache, in_path, info: dict, out_dir: Pat
 
 
 def format_notes(preset_name: str | None, mode: str, pair: dict, notes: dict, licence_note: str, nonc: list[str],
-                 ir_name: str | None) -> str:
+                 ir_name: str | None, calibration: dict | None = None) -> str:
     """Text of ``<stem>.reamp_notes.txt``."""
     L = [f"Sawblade reamp pair{f' - {preset_name}' if preset_name else ''} ({mode} export)", "",
          f"Input : {pair['input']}  (the NAM standard input file you supplied, copied unchanged)",
@@ -68,6 +68,8 @@ def format_notes(preset_name: str | None, mode: str, pair: dict, notes: dict, li
     if pair.get("levelReducedDb"):
         L += ["", f"The output was too loud for 24-bit and was reduced by {pair['levelReducedDb']:.2f} dB; "
                   "raise the trained model's output level by that amount."]
+    if calibration is not None:
+        L += [""] + calibration_lines(calibration, trainer_gui=True)
     if mode == "nocab" and ir_name:
         L += ["", f"Cab IR + post EQ for the no-cab model: {ir_name} (load it WITHOUT loudness normalisation)."]
     L += ["", "Stages of the preset that are NOT in the pair, in signal order:", ""]
@@ -81,3 +83,16 @@ def format_notes(preset_name: str | None, mode: str, pair: dict, notes: dict, li
         L += ["NON-COMMERCIAL: it contains non-commercially licensed captures: " + "; ".join(nonc) + "."]
     L += ["", licence_note]
     return "\n".join(L) + "\n"
+
+
+def calibration_lines(cal: dict, trainer_gui: bool = False) -> list[str]:
+    """Text lines for the analog level reference of the training render (``plan.reference_levels``). ``trainer_gui``: the pair is
+    trained by hand, so name the trainer's fields ("Reamp send level (dBu)" / "Reamp return level (dBu)")."""
+    f = lambda v: "left empty" if v is None else f"{v:+g} dBu"
+    if not cal.get("calibrated"):
+        return ["Levels: " + " ".join(cal.get("notes", []))]
+    L = ["Levels (dBu at 0 dBFS, a 1 kHz sine's RMS; the NAM trainer's input_level_dbu / output_level_dbu):",
+         f"  input_level_dbu  : {f(cal.get('inputLevelDbu'))}" + (f"   (trainer GUI: Reamp send level)" if trainer_gui else ""),
+         f"  output_level_dbu : {f(cal.get('outputLevelDbu'))}" + (f"   (trainer GUI: Reamp return level)" if trainer_gui else "")]
+    L += ["  " + n for n in cal.get("notes", [])]
+    return L
