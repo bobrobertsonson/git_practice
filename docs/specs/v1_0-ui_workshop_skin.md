@@ -23,7 +23,8 @@ NAM FORGER, WOODSHED, the rig editor, dialogs, notices — gets the same materia
   OUT OF TRUE, legacy preset) is readable without colour alone.
 - **Names:** all display names from `docs/NAMES.md`.
 
-## Task A — design (lead + user)
+## Task A — design (lead + user) — DONE: branch `claude/sawblade-v1_0-ui-design` 13fb3b3, review page https://claude.ai/artifact/SPkazo41kcKHRVMaJNoVqo
+
 
 1. A style sheet: palette, materials, type, control kit, panel frames — rendered with the existing deterministic
    render pipeline so it is reproducible.
@@ -36,6 +37,10 @@ NAM FORGER, WOODSHED, the rig editor, dialogs, notices — gets the same materia
 
 Render scripts under `design/render/` for every new sprite and panel, deterministic, exported through
 `export_ui_assets.py`; asset size budget stated; 1× and 2× scales.
+
+Also in Task B: re-render the pre-existing assets that carry trademark text (found by Task A): the amp OLED panels in
+`plugin/assets/amp_saw.png` / `amp_body.png` ("JCM800 2203", "5150III") and the pedal-face labels (STOCKHOLM SYNDROME /
+TIGHTEN, replaced by the `docs/NAMES.md` names); export amps and pedals with real alpha instead of a baked backdrop.
 
 ## Task C — build (dsp-engineer)
 
