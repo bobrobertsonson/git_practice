@@ -329,25 +329,59 @@ def test_train_config_defaults_and_architectures():
     assert 0.8 <= c.lr_gamma <= 0.994 and abs(c.lr_gamma ** c.epochs - 0.05) < 1e-6      # anneals to 5 %
     assert T.TrainConfig(size="standard", epochs=1000).resolved().lr_gamma == 0.994      # the trainer's own recipe
     assert T.TrainConfig(size="feather", lr_gamma=0.9).resolved().lr_gamma == 0.9
-    for size, (c1, h1, c2) in T.SIZES.items():
+    for size, p in T.SIZES.items():
         a, b = T.wavenet_config(size)["layers_configs"]
-        assert (a["channels"], a["head"]["out_channels"], b["channels"], b["input_size"]) == (c1, h1, c2, c1)
-        assert h1 == c2 and b["head"]["out_channels"] == 1                              # array-1 head feeds array 2
+        assert (a["channels"], a["head"]["out_channels"], b["channels"], b["input_size"]) == (
+            p["channels1"], p["head1"], p["channels2"], p["channels1"])
+        assert p["head1"] == p["channels2"] and b["head"]["out_channels"] == 1          # array-1 head feeds array 2
     assert T.TrainConfig().size == "standard"                                           # default size
+
+
+_A1_D_1_512 = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+_A1_D_1_64 = [1, 2, 4, 8, 16, 32, 64]
+_A1_D2 = [128, 256, 512, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+# Literal layer layouts of neural-amp-modeler 0.12.3 nam/train/core.py get_wavenet_config:845-955 (0.13.0 dropped them).
+_A1_EXPECT = {"standard": ((16, 8, _A1_D_1_512), (8, _A1_D_1_512), 13801),
+              "lite": ((12, 6, _A1_D_1_64), (6, _A1_D2), 6553),
+              "feather": ((8, 4, _A1_D_1_64), (4, _A1_D2), 3025)}
+
+
+def test_a1_sizes_layout_matches_nams_official_presets():
+    """Pure layout check against literal 0.12.3 values; needs no ``nam`` (runs in the [dev]-only CI job)."""
+    from sawblade_match.export import train as T
+    assert set(T.SIZES) == set(_A1_EXPECT)
+    for size, ((c1, h1, da), (c2, db), _n) in _A1_EXPECT.items():
+        cfg = T.wavenet_config(size)
+        a, b = cfg["layers_configs"]
+        assert (a["channels"], a["head"]["out_channels"], a["dilations"], a["head"]["bias"]) == (c1, h1, da, False)
+        assert (b["channels"], b["dilations"], b["head"]["out_channels"], b["head"]["bias"]) == (c2, db, 1, True)
+        assert a["kernel_size"] == b["kernel_size"] == 3 and a["activation"] == b["activation"] == "Tanh"
+        assert cfg["head_scale"] == 0.02 and not a["gated"] and not b["gated"]
+
+
+def test_a1_sizes_param_counts_and_receptive_field_vs_pinned_wavenet():
+    """Parameter counts (13801 / 6553 / 3025) and the 4093-sample receptive field measured with the pinned 0.13.0 WaveNet."""
+    from sawblade_match.export import train as T
+    _need_nam(T)                 # skips without neural-amp-modeler; stubs tkinter on headless machines (importorskip alone would skip there)
+    from nam.models.wavenet import WaveNet
+    for size, (_a, _b, n_params) in _A1_EXPECT.items():
+        net = WaveNet.init_from_config(T.wavenet_config(size))
+        assert net.receptive_field == 4093
+        assert sum(p.numel() for p in net.parameters()) == n_params
 
 
 # ---------------------------------------------------------------- CLI
 
 def test_cli_refuses_studio_nocab_before_any_work(capsys, tmp_path):
     from sawblade_match.export.cli import main
-    rc = main([str(PRESETS / "golden_perpath.json"), "--mode", "nocab", "--out", str(tmp_path / "o")])
+    rc = main([str(PRESETS / "golden_perpath.json"), "--mode", "nocab", "--out", str(tmp_path / "o"), "--signal", "sawblade"])
     err = capsys.readouterr().err
     assert rc == 1 and "only the with-cab export is exact for studio blends" in err
 
 
 def test_cli_refuses_comp_nocab(capsys, tmp_path):
     from sawblade_match.export.cli import main
-    rc = main([str(PRESETS / "golden_shared.json"), "--out", str(tmp_path / "o")])
+    rc = main([str(PRESETS / "golden_shared.json"), "--out", str(tmp_path / "o"), "--signal", "sawblade"])
     assert rc == 1 and "bus compressor" in capsys.readouterr().err
 
 
@@ -413,7 +447,7 @@ def test_end_to_end_nocab_export_on_fixture_preset(tmp_path):
     assert nam["metadata"]["training"]["validation_esr"] == rep["training"]["validationEsr"]
     assert nam["metadata"]["sawblade"]["validation"]["heldOutEsr"] == rep["validation"]["heldOut"]["esr"]
     assert rep["validation"]["acceptance"]["status"] == "not judged (non-standard size)"
-    assert rep["training"]["config"]["device"] and "approximations" in rep["training"]["config"]["sizesNote"]
+    assert rep["training"]["config"]["device"] and "official A1 presets" in rep["training"]["config"]["sizesNote"]
     assert "personal use only" in rep["licenceNote"]
 
 
@@ -561,7 +595,7 @@ def _unfinished(mocked, name, **over):
     (c / R.LAST).write_bytes(b"x")
     rc = mocked.fake_cfg
     prog = {"presetSha256": PL.preset_hash(mocked.preset), "signalSha256": "t" * 64, "validSha256": "v" * 64,
-            "mode": "nocab", "size": "feather", "epoch": 2, "complete": False,
+            "mode": "nocab", "size": "feather", "arch": "a1", "layout": "a1-official-0.12.3", "epoch": 2, "complete": False,
             "config": {"seed": 0, "batchSize": 16, "epochs": rc.epochs, "lrGamma": rc.lr_gamma}}
     prog.update(over)
     R.write_progress(c, prog)
@@ -597,6 +631,24 @@ def test_mock_resume_dir_continues_in_that_dir(mx):
     assert (d / "export_report.json").is_file()
 
 
+def test_mock_resume_refuses_pre_v06_lite_feather_and_cross_arch(mx):
+    """v0.6: an old lite/feather checkpoint (no arch / layout keys: the old layer split) and an A2 checkpoint must not resume an
+    official-layout A1 run; an old *standard* checkpoint (layout unchanged) still resumes."""
+    from sawblade_match.export import resume as R
+    d = _unfinished(mx, "old-feather")
+    prog = R.read_progress(R.ckpt_dir(d))
+    for k in ("arch", "layout"):
+        prog.pop(k)
+    R.write_progress(R.ckpt_dir(d), prog)
+    with pytest.raises(P.ExportRefused, match="old lite/feather layer split"):
+        mx.go(resume=str(d))
+    d2 = _unfinished(mx, "a2-run", arch="a2", layout="a2-packed-channels_3+channels_8")
+    with pytest.raises(P.ExportRefused, match="architecture differs"):
+        mx.go(resume=str(d2))
+    old_std = {"size": "standard", "mode": "nocab", "presetSha256": "x"}
+    assert R.legacy_identity(old_std)["layout"] == "a1-official-0.12.3" and R.legacy_identity(old_std)["arch"] == "a1"
+
+
 def test_mock_resume_refuses_sha_size_mode_mismatch_and_missing(mx):
     from sawblade_match.export.cli import main
     n = len(mx.fake.calls)
@@ -626,7 +678,7 @@ def test_mock_cli_refusal_exit_code_and_resume_flag(mx, capsys, monkeypatch):
     from sawblade_match.export import cli
     d = _unfinished(mx, "run-a", mode="withcab")
     pj = mx.tmp / "preset.json"
-    rc = cli.main([str(pj), "--size", "feather", "--resume", str(d), "--no-validate"])
+    rc = cli.main([str(pj), "--arch", "a1", "--size", "feather", "--resume", str(d), "--no-validate", "--signal", "sawblade"])
     assert rc == 1 and "mode differs" in capsys.readouterr().err
     assert cli.build_parser().parse_args([str(pj), "--resume", "auto"]).resume == "auto"
 
@@ -714,7 +766,7 @@ def _shared_with(base: dict, ir: dict) -> dict:
 
 def _cli(mx, *extra):
     from sawblade_match.export import cli
-    return cli.main([str(mx.tmp / "preset.json"), "--size", "feather", "--exports-root", str(mx.tmp / "exports"), *extra])
+    return cli.main([str(mx.tmp / "preset.json"), "--arch", "a1", "--size", "feather", "--exports-root", str(mx.tmp / "exports"), *extra, "--signal", "sawblade"])
 
 
 def _fake_validation(mx, monkeypatch, esr_value=0.5):
@@ -1032,3 +1084,94 @@ def test_render_stage_writes_heartbeats_while_the_target_render_runs(mx, monkeyp
     assert fr == sorted(fr) and fr[-1] > fr[0] and fr[-1] < 0.10
     allfr = [s["fraction"] for s in seen]
     assert allfr == sorted(allfr) and allfr[-1] == 1.0
+
+
+# ---- --notes-preset (the plugin trains a copy with the bus comp off; the notes come from the original rig) ----
+
+COMP_ON = {"enabled": True, "thresholdDb": -18.0, "ratio": 4.0, "kneeDb": 3.0, "attackMs": 5.0, "releaseMs": 80.0,
+           "makeupDb": 2.5}
+
+
+def _orig_file(mx, **over):
+    o = copy.deepcopy(mx.preset)
+    o["busComp"] = dict(COMP_ON)
+    o.update(over)
+    f = mx.tmp / "orig.json"
+    f.write_text(json.dumps(o))
+    return f, o
+
+
+def test_mock_notes_preset_lists_the_dropped_comp(mx):
+    f, orig = _orig_file(mx, name="renamed rig")                  # a non-tone key may differ
+    out = mx.tmp / "o1"
+    rep = mx.go(out=str(out), notes_preset=str(f))
+    assert "busComp" in [s["stage"] for s in rep["exportNotes"]["stages"]]
+    comp = [s for s in rep["exportNotes"]["stages"] if s["stage"] == "busComp"][0]
+    assert comp["settings"]["thresholdDb"] == -18 and comp["settings"]["makeupDb"] == 2.5
+    assert rep["notesPreset"]["sha256"] == P.preset_hash(orig) and rep["notesPreset"]["path"] == str(f.resolve())
+    assert rep["notesOnly"][0]["what"] == "busComp" and rep["notesOnly"][0]["original"]["ratio"] == 4.0
+    assert any("bus comp dropped from the model" in w for w in rep["plan"]["warnings"])
+    txt = next(out.glob("*.export_notes.txt")).read_text()
+    assert "busComp" in txt and "ratio 4:1" in txt
+    assert mx.fake.calls[-1]["identity"]["presetSha256"] == P.preset_hash(mx.preset)      # training input unchanged
+
+
+def test_mock_no_notes_preset_has_no_notes_keys(mx):
+    rep = mx.go(out=str(mx.tmp / "o1"))
+    assert "notesPreset" not in rep and "notesOnly" not in rep
+    assert "notesPresetSha256" not in mx.fake.calls[-1]["identity"]
+    assert "busComp" not in [s["stage"] for s in rep["exportNotes"]["stages"]]
+    assert rep["exportNotes"]["trainingSignal"].startswith("sawblade-synthetic v")          # A1 gets the training sentence too
+    assert "Trained on Sawblade's test signal" in rep["exportNotes"]["trainingNote"] and "A2" not in rep["exportNotes"]["trainingNote"]
+    prof = rep["exportNotes"]["deviceProfiles"]["anagram"]
+    assert "A2" not in prof["message"] and "A1 model" in prof["stages"][0 if prof["stages"][0]["stage"] == "model" else 1]["hardware"]
+
+
+def test_mock_notes_preset_refusals_before_training(mx):
+    n = len(mx.fake.calls)
+    with pytest.raises(P.ExportRefused, match="cannot read"):
+        mx.go(out=str(mx.tmp / "o"), notes_preset=str(mx.tmp / "nowhere.json"))
+    f, _ = _orig_file(mx, blend=0.9)                              # differs beyond the bus comp
+    with pytest.raises(P.ExportRefused, match="beyond the bus comp"):
+        mx.go(out=str(mx.tmp / "o"), notes_preset=str(f))
+    f, _ = _orig_file(mx)
+    with pytest.raises(P.ExportRefused, match="only for no-cab"):
+        mx.go(out=str(mx.tmp / "o"), mode="withcab", notes_preset=str(f))
+    assert len(mx.fake.calls) == n
+
+
+def test_mock_cli_notes_preset_missing_path_and_withcab(mx, capsys):
+    from sawblade_match.export import cli
+    pj = mx.tmp / "preset.json"
+    assert cli.main([str(pj), "--notes-preset", str(mx.tmp / "nowhere.json"), "--no-validate", "--signal", "sawblade"]) == 1
+    assert "no such file" in capsys.readouterr().err
+    f, _ = _orig_file(mx)
+    assert cli.main([str(pj), "--mode", "withcab", "--notes-preset", str(f), "--no-validate", "--signal", "sawblade"]) == 1
+    assert "only for no-cab" in capsys.readouterr().err
+    assert not mx.fake.calls
+
+
+def test_mock_resume_needs_the_same_notes_preset(mx):
+    f, orig = _orig_file(mx)
+    sha = P.preset_hash(orig)
+    d = _unfinished(mx, "run-n", notesPresetSha256=sha)
+    with pytest.raises(P.ExportRefused, match="pass the same --notes-preset"):
+        mx.go(resume=str(d))                                      # flag missing
+    d2 = _unfinished(mx, "run-m", notesPresetSha256="0" * 64)
+    with pytest.raises(P.ExportRefused, match="pass the same --notes-preset"):
+        mx.go(resume=str(d2), notes_preset=str(f))                # another notes preset than the run's
+    assert not mx.fake.calls
+    rep = mx.go(resume=str(d), notes_preset=str(f))
+    assert mx.fake.calls[-1]["resume"] is True and rep["notesPreset"]["sha256"] == sha
+    assert mx.fake.calls[-1]["identity"]["notesPresetSha256"] == sha
+    d3 = _unfinished(mx, "run-p")                                 # a run without a notes preset refuses one given now
+    with pytest.raises(P.ExportRefused, match="notes preset differs"):
+        mx.go(resume=str(d3), notes_preset=str(f))
+
+
+def test_mock_notes_preset_must_be_an_object(mx):
+    f = mx.tmp / "list.json"
+    f.write_text("[1, 2]")
+    with pytest.raises(P.ExportRefused, match="not a preset object"):
+        mx.go(out=str(mx.tmp / "o"), notes_preset=str(f))
+    assert not mx.fake.calls

@@ -18,7 +18,8 @@ LIVE_CAB_MODES = frozenset({"shared", "irMix"})
 # Block types the Python side knows to be NAM-trainable.  The C++ registry is authoritative (its
 # ``namTrainable`` trait shows up as a "not NAM-trainable" render warning, see ``core_trainability_problems``);
 # a type that is neither here nor accepted by the core is refused.
-TRAINABLE_TYPES = frozenset({"nam", "eq"})
+# every block type the core registry declares NAM-trainable (docs/PRESET_SCHEMA.md block table): captures, EQ and the modeled pedals
+TRAINABLE_TYPES = frozenset({"nam", "eq", "pedal.hm", "pedal.muff", "pedal.ts", "pedal.hmx", "pedal.eye"})
 MAX_TRAINABLE_RELEASE_MS = 150.0   # core kBusCompMaxTrainableReleaseMs
 
 STUDIO_MESSAGE = "studio blend (per-path cab IRs): only the with-cab export is exact for studio blends"
@@ -145,6 +146,42 @@ def make_plan(preset: dict, mode: str, allow_inexact: bool = False) -> Plan:
     return plan
 
 
+NON_TONE_KEYS = ("name", "notes", "export", "playAlong", "category")
+
+
+def _tone_hash(preset: dict, drop_comp: bool) -> str:
+    q = {k: v for k, v in preset.items() if k not in NON_TONE_KEYS and not (drop_comp and k == "busComp")}
+    if isinstance(q.get("output"), dict):      # the plugin clears the derived auto trim from the exported preset
+        q["output"] = {k: v for k, v in q["output"].items() if k not in ("autoTrimDb", "autoTrimHash")}
+    return preset_hash(q)
+
+
+def notes_preset_problems(trained: dict, notes: dict, mode: str = "nocab") -> list[str]:
+    """Why ``notes`` (the preset the export notes are written from) cannot stand in for ``trained`` (the preset that is
+    trained). They may differ only in the bus comp (a no-cab "drop" export trains a copy with the comp off) and in
+    non-tone keys (name, notes, export, playAlong, category). Empty list = consistent."""
+    out = []
+    if mode != "nocab":
+        out.append("--notes-preset is only for no-cab exports (it lists a bus comp dropped from the model)")
+    if _tone_hash(trained, True) != _tone_hash(notes, True):
+        out.append("the notes preset differs from the trained preset beyond the bus comp (and name/notes/export/"
+                   "playAlong/category): it must be the same rig")
+    elif (trained.get("busComp") or {}).get("enabled") and \
+            json.dumps(trained.get("busComp"), sort_keys=True) != json.dumps(notes.get("busComp"), sort_keys=True):
+        out.append("the trained preset keeps its bus comp but the notes preset has different bus comp settings")
+    return out
+
+
+def notes_only(trained: dict, notes: dict) -> list[dict]:
+    """Stages listed in the export notes that the trained model does not contain only because the caller switched them
+    off in the trained copy (today: the bus comp). Does not change validation or the reference."""
+    nc, tc = notes.get("busComp") or {}, trained.get("busComp") or {}
+    if nc.get("enabled") and not tc.get("enabled"):
+        return [{"what": "busComp", "why": "switched off in the trained preset; listed in the export notes with its settings",
+                 "original": dict(nc)}]
+    return []
+
+
 def level_match_info(render_report: dict) -> dict | None:
     """Trims and make-up the core measured (phase 10.1 render report: ``levelMatch`` and ``blend.makeupDb``); None for
     older reports without them."""
@@ -244,12 +281,46 @@ def attribution(preset: dict) -> list[dict]:
 
 def gear_type(plan: Plan, preset: dict) -> str:
     """NAM GearType enum value for the metadata."""
+    if drive_only(preset, plan):
+        return "pedal"
     return "amp_pedal_cab" if plan.mode == "withcab" else "pedal_amp"
 
 
+def drive_only(preset: dict, plan: "Plan | dict") -> bool:
+    """True when the exported model is a drive / boost stage and not an amp: a no-cab export whose enabled chain has
+    at least one non-EQ block and EVERY such block is explicitly a pedal or boost (``slot`` "pedal" / "boost", or a modeled
+    pedal type ``pedal.*``); an unlabelled NAM block, an ``amp`` / ``fx`` slot or any other type makes it an amp.  A with-cab export
+    contains the cab, so it is always amp-like.  Used to pick Neural Pedal over Neural Amp in the Anagram notes."""
+    if (plan["mode"] if isinstance(plan, dict) else plan.mode) != "nocab":
+        return False
+    seen = False
+    for _key, path, blk in _blocks(preset):
+        if blk.get("bypass") or not path.get("enabled", True):
+            continue
+        if blk.get("type") == "eq":
+            continue
+        seen = True
+        explicit = blk.get("slot") in ("pedal", "boost") or str(blk.get("type", "")).startswith("pedal.")
+        if not explicit:                 # positive rule: an unlabelled NAM block (or any other slot) counts as an amp
+            return False
+    return seen
+
+
 def sawblade_block(preset: dict, plan: Plan, size: str, seed: int, signal_seed: int, signal_sha256: str,
-                   levels: dict, ir_file: str | None) -> dict:
-    """The ``metadata.sawblade`` block written into the ``.nam``: provenance, mode, attribution and the licence note."""
+                   levels: dict, ir_file: str | None, arch: str | None = None,
+                   training_signal: str | None = None) -> dict:
+    """The ``metadata.sawblade`` block written into the ``.nam``: provenance, mode, attribution and the licence note.
+    ``arch`` (a2 exports only) is appended as the last key; A1 blocks are unchanged."""
+    blk = _sawblade_block(preset, plan, size, seed, signal_seed, signal_sha256, levels, ir_file)
+    if arch is not None:
+        blk["arch"] = arch
+    if training_signal is not None:
+        blk["trainingSignal"] = training_signal      # "nam-standard v3.0.0" | "sawblade-synthetic v<N>"
+    return blk
+
+
+def _sawblade_block(preset: dict, plan: Plan, size: str, seed: int, signal_seed: int, signal_sha256: str,
+                    levels: dict, ir_file: str | None) -> dict:
     return {"exporter": "sawblade-export",
             "preset": {"name": preset.get("name"), "sha256": preset_hash(preset)},
             "exportMode": plan.mode, "exact": plan.exact, "size": size,

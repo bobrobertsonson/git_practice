@@ -39,4 +39,23 @@ bool exportNotesUsable(const nlohmann::json& notes);
 // by a newer tool): missing or mistyped members are skipped, it never throws. An empty licenceNote = the disclaimer.
 std::string formatNotesTxt(const nlohmann::json& notes, const std::string& presetName = {}, const std::string& licenceNote = {});
 
+// ---- device profiles (v0.6 Task C, docs/specs/v0_6-a2_everywhere.md decision 14) ----------------------------------------------
+// The report's `exportNotes.deviceProfiles.anagram` maps each stage to a block of the device (a Neural Amp / Neural Pedal block
+// for the model, the IR block for the cab, the compressor, the gate ...), where it goes in the chain and its settings in
+// hardware terms. The exact keys belong to the exporter (match/); this side reads them DEFENSIVELY and renders them generically:
+// per stage the block, the position and every settings key / value pair, plus any `hardware` / `text` sentence.
+//   profile.stages | profile.blocks : array of objects; each: block (or anagramBlock / name), position (or chainPosition /
+//     where), stage (the generic stage it comes from), settings (object of key / value, or array of {key,value}), hardware
+//     (or text / note): string; profile.loaderOrder (or chain): string; profile.message: string; profile.file (or notesFile):
+//     the `<name>.anagram_notes.txt` name.
+// The profile object of `notes`, or null when there is none (or it is not an object).
+nlohmann::json anagramProfileOf(const nlohmann::json& notes);
+// The file name the profile names for its text file ("" = it names none).
+std::string anagramNotesFileName(const nlohmann::json& profile);
+// The text of the Anagram view of the notes box (also what COPY copies). Never throws; foreign / missing members are skipped.
+// `trainingNote` = exportNotes.trainingNote (the exporter's training sentence; "" = none), placed before the licence line like the
+// Python text.
+std::string formatAnagramNotesTxt(const nlohmann::json& profile, const std::string& presetName = {}, const std::string& licenceNote = {},
+                                  const std::string& trainingNote = {});
+
 }  // namespace sawblade::plugin

@@ -4,12 +4,16 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <random>
 #include <string>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
 #include "ExportNotes.h"
+#include "ExportSettings.h"
+#include "JobRunner.h"
 #include "sawblade/preset.h"
 
 using nlohmann::json;
@@ -152,4 +156,262 @@ TEST_CASE("export notes: foreign or damaged notes never throw and are not 'usabl
   CHECK(t.find("Own use only.") != std::string::npos);
   CHECK(t.find("Derived from TONE3000") == std::string::npos);
   CHECK(t.rfind("Sawblade export notes - My rig (nocab export)\n", 0) == 0);
+}
+
+// ---- v0.6 Task C: model type (arch + size) settings, the A2 report, the Anagram profile ----------------------------------------
+
+TEST_CASE("export settings: A2 Full by default; arch + size round trip; the pre-A2 size values migrate to A1", "[export][settings][a2]") {
+  const ExportSettings def;
+  CHECK(def.arch == "a2");
+  CHECK(def.size == "full");
+  CHECK(def.isDefault());
+
+  // The five choices round trip; only the non-default ones are state worth saving (isDefault drives that).
+  const std::pair<const char*, const char*> choices[] = {{"a2", "full"}, {"a2", "lite"}, {"a1", "feather"}, {"a1", "lite"}, {"a1", "standard"}};
+  for (const auto& c : choices) {
+    INFO(c.first << "/" << c.second);
+    ExportSettings s;
+    s.arch = c.first;
+    s.size = c.second;
+    const ExportSettings back = exportSettingsFromJson(exportSettingsToJson(s));
+    CHECK(back == s);
+    CHECK(exportSizeValid(c.first, c.second));
+  }
+  CHECK(exportSettingsToJson(ExportSettings{})["arch"] == "a2");
+
+  // Migration: a saved object without `arch` is from before A2 and its size was an A1 size: the user keeps what they had.
+  for (const char* old : {"feather", "lite", "standard"}) {
+    const ExportSettings m = exportSettingsFromJson(json{{"mode", "withcab"}, {"size", old}, {"diSource", "builtin"}});
+    CHECK(m.arch == "a1");
+    CHECK(m.size == old);
+    CHECK(m.mode == "withcab");
+    CHECK(m.diSource == "builtin");
+  }
+  // An unknown old size: still pre-A2, so A1 and its default size.
+  const ExportSettings huge = exportSettingsFromJson(json{{"size", "huge"}});
+  CHECK(huge.arch == "a1");
+  CHECK(huge.size == "standard");
+  // Nothing saved: the new default.
+  CHECK(exportSettingsFromJson(json::object()).isDefault());
+  CHECK(exportSettingsFromJson(json(5)).isDefault());
+  // A size that does not belong to the architecture falls back to that architecture's default; unknown arch keeps the default.
+  CHECK(exportSettingsFromJson(json{{"arch", "a2"}, {"size", "standard"}}).size == "full");
+  const ExportSettings a1full = exportSettingsFromJson(json{{"arch", "a1"}, {"size", "full"}});
+  CHECK(a1full.arch == "a1");
+  CHECK(a1full.size == "standard");
+  const ExportSettings badArch = exportSettingsFromJson(json{{"arch", "a3"}, {"size", "lite"}});
+  CHECK(badArch.arch == "a2");
+  CHECK(badArch.size == "lite");
+  CHECK(exportSettingsFromJson(json{{"arch", 3}, {"size", "lite"}}).arch == "a1");  // wrong-typed arch counts as absent: pre-A2
+  CHECK(exportHistoryKey("a2", "full") == "a2.full");
+  CHECK(defaultExportSize("a1") == "standard");
+  CHECK(defaultExportSize("a2") == "full");
+}
+
+TEST_CASE("export wall-time history is kept per arch + size; the pre-A2 keys are A1's", "[export][settings][a2]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_hist_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  const fs::path f = dir / "settings.xml";
+  {
+    // What an older build wrote: `exportWallSeconds.<size>` with no architecture.
+    std::ofstream(f) << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\n<PROPERTIES>\n  <VALUE name=\"exportWallSeconds.standard\" val=\"1500.0\"/>\n"
+                        "  <VALUE name=\"exportWallSeconds.lite\" val=\"540.0\"/>\n</PROPERTIES>\n";
+  }
+  MatchSettings s(f);
+  CHECK(s.exportWallSeconds("a1", "standard") == Catch::Approx(1500.0));
+  CHECK(s.exportWallSeconds("a1", "lite") == Catch::Approx(540.0));
+  CHECK(s.exportWallSeconds("a1", "feather") == 0.0);
+  CHECK(s.exportWallSeconds("a2", "lite") == 0.0);  // the old A1 lite time is not A2 Lite's
+  CHECK(s.exportWallSeconds("a2", "full") == 0.0);
+  s.setExportWallSeconds("a2", "lite", 300.0);
+  CHECK(s.exportWallSeconds("a2", "lite") == Catch::Approx(300.0));
+  CHECK(s.exportWallSeconds("a1", "lite") == Catch::Approx(540.0));  // untouched
+  s.setExportWallSeconds("a1", "lite", 600.0);                        // the new key wins over the legacy one
+  CHECK(s.exportWallSeconds("a1", "lite") == Catch::Approx(600.0));
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("export report: the container is the primary file, the standalone files are extras with their verdicts (decision 18)", "[export][report][a2]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_c_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  for (const char* n : {"riff-nocab-full.a2.nam", "riff-nocab-full.a2_full.nam", "riff-nocab-full.a2_lite.nam"}) std::ofstream(dir / n) << "{}";
+  const json acc = {{"acceptance", {{"status", "met"}, {"heldOutEsr", 0.01}}}};
+  const json lite = {{"acceptance", {{"status", "not met"}}}};
+  const json rep = {{"arch", "a2"}, {"size", "full"},
+                    {"files", {{"primary", "riff-nocab-full.a2.nam"}, {"container", "riff-nocab-full.a2.nam"}, {"full", "riff-nocab-full.a2_full.nam"}, {"lite", "riff-nocab-full.a2_lite.nam"}}},
+                    {"validation", {{"full", acc}, {"lite", lite}}}};
+  std::ofstream(dir / "export_report.json") << rep.dump();
+  const ExportResult r = readExportResult(dir);
+  CHECK(r.namFile == "riff-nocab-full.a2.nam");
+  REQUIRE(r.otherFiles.size() == 2);
+  CHECK(r.otherFiles[0].role == "full");
+  CHECK(r.otherFiles[0].verdict == "MET");
+  CHECK(r.otherFiles[1].role == "lite");
+  CHECK(r.otherFiles[1].verdict == "NOT MET");
+  CHECK(r.status == "MET");  // the headline is still validation.<size>
+  CHECK(exportBaseName(r.namFile) == "riff-nocab-full");
+  CHECK(r.reampInput.empty());
+  CHECK(r.reampOutput.empty());
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("export report: the training signal is read from the report, metadata or training, as a string or an object", "[export][report][signal]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_s_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  auto read = [&](const json& rep) {
+    std::ofstream(dir / "export_report.json") << rep.dump();
+    return readExportResult(dir).trainingSignal;
+  };
+  CHECK(read(json{{"trainingSignal", "NAM standard input v3.0.0"}}) == "NAM standard input v3.0.0");
+  CHECK(read(json{{"trainingSignal", {{"label", "NAM v3.0.0"}, {"version", "3.0.0"}}}}) == "NAM v3.0.0");
+  CHECK(read(json{{"trainingSignal", {{"version", "3.0.0"}}}}) == "3.0.0");
+  CHECK(read(json{{"trainingSignal", {{"id", "nam-v3.0.0"}, {"kind", "nam-standard"}, {"version", "v3.0.0"}, {"label", "NAM standard v3.0.0"}, {"fallback", false}}}}) == "NAM standard v3.0.0");
+  CHECK(read(json{{"metadata", {{"trainingSignal", "from metadata"}}}}) == "from metadata");
+  CHECK(read(json{{"training", {{"trainingSignal", "from training"}}}}) == "from training");
+  CHECK(read(json{{"trainingSignal", 42}}).empty());  // wrong type: not reported, no crash
+  CHECK(read(json::object()).empty());
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("export report: a reamp-pair-only report has the pair and no model; a pair beside a model is read too", "[export][report][reamp]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_p_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  const json pair = {{"input", "/some/where/riff.reamp_input.wav"}, {"output", "riff.reamp_output.wav"}, {"notes", "riff.reamp_notes.txt"}};  // `notes` is tolerated
+  std::ofstream(dir / "export_report.json") << json{{"files", {{"reampPair", pair}}}}.dump();
+  ExportResult r = readExportResult(dir);
+  REQUIRE(r.haveReport);
+  CHECK(r.namFile.empty());
+  CHECK(r.reampInput == "riff.reamp_input.wav");  // file names only
+  CHECK(r.reampOutput == "riff.reamp_output.wav");
+  CHECK(r.otherFiles.empty());
+  // a wrong-typed pair is ignored
+  std::ofstream(dir / "export_report.json") << json{{"files", {{"reampPair", "oops"}}}}.dump();
+  r = readExportResult(dir);
+  CHECK(r.reampOutput.empty());
+  std::ofstream(dir / "export_report.json") << json{{"files", {{"primary", "m.a2.nam"}, {"reampPair", pair}}}}.dump();
+  std::ofstream(dir / "m.a2.nam") << "{}";
+  r = readExportResult(dir);
+  CHECK(r.namFile == "m.a2.nam");
+  CHECK(r.reampOutput == "riff.reamp_output.wav");
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("export report: A2 files block, the primary file, the validation of the chosen size, the Anagram profile", "[export][report][a2]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  for (const char* n : {"riff-nocab-full.a2_full.nam", "riff-nocab-full.a2.nam", "riff-nocab-full.a2_lite.nam"}) std::ofstream(dir / n) << "{}";
+  fs::copy_file(kDir / "report_a2_anagram.json", dir / "export_report.json");
+  const ExportResult r = readExportResult(dir);
+  REQUIRE(r.haveReport);
+  CHECK(r.arch == "a2");
+  CHECK(r.size == "full");
+  CHECK(r.namFile == "riff-nocab-full.a2_full.nam");  // the primary file, whatever else is in the folder
+  REQUIRE(r.otherFiles.size() == 2);
+  CHECK(r.otherFiles[0].role == "container");
+  CHECK(r.otherFiles[0].name == "riff-nocab-full.a2.nam");
+  CHECK(r.otherFiles[1].role == "lite");
+  CHECK(r.otherFiles[1].name == "riff-nocab-full.a2_lite.nam");
+  CHECK(r.otherFiles[0].verdict.empty());          // the container has no entry of its own
+  CHECK(r.otherFiles[1].verdict == "NOT MET");     // the Lite file's own verdict, whatever the primary says
+  CHECK(r.status == "MET");  // validation.full is the one `size` names; validation.lite (NOT MET) is not the verdict
+  REQUIRE(r.heldOutEsr);
+  CHECK(*r.heldOutEsr == Catch::Approx(0.0123));
+  CHECK(exportBaseName(r.namFile) == "riff-nocab-full");
+  CHECK(exportBaseName("x.a2.nam") == "x");
+  CHECK(exportBaseName("x.a2_lite.nam") == "x");
+  CHECK(exportBaseName("x-standard.nam") == "x-standard");
+
+  const json notes = json::parse(r.exportNotesJson);
+  CHECK(exportNotesUsable(notes));  // the generic profile is untouched
+  const json profile = anagramProfileOf(notes);
+  REQUIRE(profile.is_object());
+  CHECK(anagramNotesFileName(profile) == "riff-nocab-full.anagram_notes.txt");
+  const std::string txt = formatAnagramNotesTxt(profile, "My riff", "Own use only.");
+  CHECK(txt.rfind("Sawblade export notes for the Anagram - My riff\n", 0) == 0);
+  CHECK(txt.find("1. Gate [1 (first in the chain)]  (gate)\n") != std::string::npos);
+  CHECK(txt.find("   threshold: -52\n") != std::string::npos);
+  CHECK(txt.find("   hold ms: 20.5\n") != std::string::npos);
+  CHECK(txt.find("   keyed on: guitar input\n") != std::string::npos);
+  CHECK(txt.find("2. Neural Amp [2]  (model)\n") != std::string::npos);
+  CHECK(txt.find("   bypass: no\n") != std::string::npos);
+  CHECK(txt.find("3. IR [3]  (cab)\n") != std::string::npos);
+  CHECK(txt.find("   Load without loudness normalisation.\n") != std::string::npos);
+  CHECK(txt.find("Anagram chain: Gate -> Neural Amp -> IR\n") != std::string::npos);
+  CHECK(txt.find("(KosmOS 1.16 or later), in signal order:\n") != std::string::npos);  // same header as the Python text
+  CHECK(txt.find("Own use only.") != std::string::npos);
+  CHECK(txt.find("model: riff-nocab-full.a2.nam\n") != std::string::npos);
+  // exportNotes.trainingNote: after the loader order, before the licence line (as the Python text); the panel passes it in
+  const std::string tn = notes["trainingNote"].get<std::string>();
+  CHECK(tn == "Trained on the NAM standard input v3.0.0.");
+  const std::string withTn = formatAnagramNotesTxt(profile, "My riff", "Own use only.", tn);
+  CHECK(withTn.find("Anagram chain: Gate -> Neural Amp -> IR\n\n" + tn + "\n\nOwn use only.\n") != std::string::npos);
+  CHECK(txt.find(tn) == std::string::npos);  // none given: nothing added
+  const std::string generic = formatNotesTxt(notes, "My riff", "Own use only.");
+  CHECK(generic.find("Loader order: gate -> NAM model -> cab IR\n\n" + tn + "\n\nOwn use only.\n") != std::string::npos);
+  json noTn = notes;
+  noTn["trainingNote"] = 5;  // wrong type: ignored
+  CHECK(formatNotesTxt(noTn, "My riff", "Own use only.").find("cab IR\n\nOwn use only.\n") != std::string::npos);
+  // The profile's `message` is data: neither the Python txt nor the plugin's prints it when there are stages (it is the empty-profile text).
+  CHECK(profile["message"] == "Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later.");
+  CHECK(txt.find("Load the .nam into any NAM A2 block") == std::string::npos);
+  CHECK(txt.find("Load riff-nocab-full.a2.nam (A2 container) into any NAM A2 block;") != std::string::npos);
+  CHECK(txt.find("Up to three NAM blocks (Neural Amp / Neural Pedal / Neural Loader) can run at once.") != std::string::npos);
+  // The generic text of the same notes is the v0.4M text, with no Anagram block names in it.
+  CHECK(formatNotesTxt(notes).find("Neural Amp") == std::string::npos);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("anagram notes: an A1 profile's header has no KosmOS version; A2 keeps it (same as the Python text)", "[export][report][a1]") {
+  const json rep = readJson(kDir / "report_a1_anagram.json");
+  const json notes = rep["exportNotes"];
+  const json profile = anagramProfileOf(notes);
+  REQUIRE(profile.is_object());
+  CHECK(profile["message"] == "Load the .nam into any NAM block (A1 model); on the Anagram that is a Neural Amp (or Neural Pedal) block.");
+  const std::string txt = formatAnagramNotesTxt(profile, "My riff", "Own use only.");
+  CHECK(txt.find("Blocks to set on the device, in signal order:\n") != std::string::npos);
+  CHECK(txt.find("KosmOS") == std::string::npos);
+  CHECK(txt.find("model: riff-nocab-standard.nam\n") != std::string::npos);
+  CHECK(txt.find("Load riff-nocab-standard.nam into any NAM block (A1 model);") != std::string::npos);
+  const json a2 = anagramProfileOf(readJson(kDir / "report_a2_anagram.json")["exportNotes"]);
+  CHECK(formatAnagramNotesTxt(a2).find("Blocks to set on the device (KosmOS 1.16 or later), in signal order:\n") != std::string::npos);
+}
+
+TEST_CASE("export report: A1 without deviceProfiles keeps the single-file contract", "[export][report][a2]") {
+  const fs::path dir = fs::temp_directory_path() / ("sawblade_export_report1_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  std::ofstream(dir / "riff-nocab-standard.nam") << "{}";
+  fs::copy_file(kDir / "report_a1_generic.json", dir / "export_report.json");
+  const ExportResult r = readExportResult(dir);
+  CHECK(r.arch == "a1");
+  CHECK(r.namFile == "riff-nocab-standard.nam");
+  CHECK(r.otherFiles.empty());
+  CHECK(r.status == "MET");
+  const json notes = json::parse(r.exportNotesJson);
+  CHECK(exportNotesUsable(notes));
+  CHECK(anagramProfileOf(notes).is_null());
+  // A report from before v0.6 has no arch / size / files at all: the .nam is found by looking, as before.
+  json old = json::parse(readText(dir / "export_report.json"));
+  for (const char* k : {"arch", "size", "files"}) old.erase(k);
+  std::ofstream(dir / "export_report.json") << old.dump();
+  const ExportResult o = readExportResult(dir);
+  CHECK(o.arch.empty());
+  CHECK(o.namFile == "riff-nocab-standard.nam");
+  CHECK(o.otherFiles.empty());
+  CHECK(o.status == "MET");
+
+  // Tolerance: a profile of the wrong type, or odd members, never throws and never produces a profile / stray text.
+  CHECK(anagramProfileOf(json{{"deviceProfiles", 3}}).is_null());
+  CHECK(anagramProfileOf(json{{"deviceProfiles", {{"anagram", "x"}}}}).is_null());
+  CHECK(anagramProfileOf(json(7)).is_null());
+  const std::string odd = formatAnagramNotesTxt(json{{"blocks", json::array({json{{"block", "Compressor"}, {"settings", json::array({json{{"key", "ratio"}, {"value", 2.5}}, "free text"})}}, 5})}});
+  CHECK(odd.find("1. Compressor\n   ratio: 2.5\n   free text\n") != std::string::npos);
+  CHECK(odd.find("2. (block)\n") != std::string::npos);
+  CHECK(formatAnagramNotesTxt(json::object()).find("Nothing to add") != std::string::npos);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
 }

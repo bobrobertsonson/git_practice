@@ -681,16 +681,20 @@ editor closing; the audio thread never touches the panel, the runner or the side
 allocation and lock guards while a fake export job runs and the panel's glue is polled on another thread).
 
 **Panel.** Three views, driven by the export job's snapshot:
-- *Configure*: the two mode cards of the mockup (NO-CAB + IR, WITH CAB) plus the STUDIO BLEND information card, SIZE
-  (FEATHER / LITE / STANDARD, each with "last run: N min" or "no run yet" from `MatchSettings` `exportWallSeconds.<size>`),
+- *Configure*: the two mode cards of the mockup (NO-CAB + IR, WITH CAB) plus the STUDIO BLEND information card, MODEL TYPE
+  (v0.6: A2 FULL (default) / A2 LITE / A1; A1 shows its FEATHER / LITE / STANDARD sub-choice; "last run: N min" or "no run yet"
+  for the chosen type, from `MatchSettings` `exportWallSeconds.<arch>.<size>`; see "Model type" below),
   VALIDATION DI (LAST TAKE = the newest take, shown by name, else BUILT-IN SIGNAL), BUS COMP (only when the comp is on),
   OUTPUT FOLDER (default `<app data>/exports`, CHOOSE...), the rig summary (blocks per path, cab mode), "what goes into the
   model" (gate left out, the comp line depends on the comp and its release, time effects none), the credits (title - creator
   (licence) per capture; a NON-COMMERCIAL badge if any capture is `cc-by-nc*`; the file stem then gets `-nc`), the personal-use
-  notice, TRAIN EXPORT, and RESUME when a cancelled run of this rig can continue (epoch N of M, mode, size).
+  notice, TRAIN EXPORT, and RESUME when a cancelled run of this rig can continue (epoch N of M, mode, model type).
 - *Training*: stage, progress bar, `epoch N / M`, best ESR, elapsed / ETA, CANCEL.
 - *Result*: MET (green) / NOT MET (red) / NOT JUDGED (amber), held-out ESR and DI LTAS error with their limits, the model
-  path, the sidecar path, REVEAL (`File::revealToUser` on the `.nam`), OPEN FOLDER, A/B LISTEN (opens
+  path (the primary file; the big verdict above is that file's only) and, for an A2 run, the other files it wrote (container, the
+  other standalone size) in an "also" line. The other standalone size carries its own verdict beside its file, read from
+  `validation.<full|lite>.acceptance.status`, e.g. `also  x.a2_lite.nam (A2 Lite: NOT MET)`; the line is red when any of those is
+  NOT MET, so a missed Lite file is visible even when `--size full` was the primary. The container has no verdict of its own. The sidecar path, REVEAL (`File::revealToUser` on the `.nam`), OPEN FOLDER, A/B LISTEN (opens
   `listen/ab_original_then_export.mp3`, else `.wav`, with the system player; hidden when neither exists; there is no in-plugin
   playback), the licence note.
 
@@ -710,6 +714,59 @@ test seam (default `juce::SystemClipboard`).
 running that Python (`generate.py` there has the command) and `plugin/tests/test_export_notes.cpp` requires the C++ output to
 equal them (numbers within 1e-9, strings and the txt exact). If v0.4M changes the format before or after it merges, regenerate the
 fixtures and follow in the port; a report whose `version` differs is not shown (the plugin's notes are).
+*Notes-preset contract:* for a no-cab DROP COMP export (and its resume) the plugin writes the original rig, comp on, to
+`<jobs>/inputs/<hash16>.notes_preset.json` and passes it as `--notes-preset`, so the report's notes still list the comp; the
+exporter refuses a resume without the same file (`match/README.md`, export section).
+
+**Model type (v0.6 Task C).** `ExportSettings` holds `arch` (`a2` | `a1`) and `size` (a2: `full` | `lite`; a1: `feather` | `lite` |
+`standard`). The buttons, in plain terms: *A2 FULL* = best quality, for loaders that play A2 models (such as the Anagram), the
+default; *A2 LITE* = lowest CPU, also for A2 loaders; *A1* = the older model type for loaders that do not play A2, with its
+FEATHER / LITE / STANDARD sub-choice. The tooltips say which are judged against the acceptance limits (A2 Full and Lite are, as is
+A1 Standard; A1 Feather and Lite are not). Switching between A2 LITE and A1 keeps `lite` (both have it); any other size falls back
+to the new type's default (a2 full, a1 standard). The choice is passed as `--arch <a2|a1> --size <size>` (always both).
+*Migration:* a saved `export` object without `arch` is from before A2: it becomes `arch: "a1"` with its saved `size`, so an
+existing user keeps what they had (an unknown old size becomes A1 Standard). Only a new install, or a state that saved no export
+settings (they were all defaults, and the old default was A1 Standard), starts on A2 Full. The wall-time history is kept per
+`exportWallSeconds.<arch>.<size>`; an A1 lookup falls back to the pre-A2 key `exportWallSeconds.<size>` (always an A1 size), A2
+lookups never do. Ladder fetch is unchanged and still passes `--size standard` (spec decision 13).
+An A2 run writes three files (`<name>.a2.nam` container, `<name>.a2_full.nam`, `<name>.a2_lite.nam`). Since decision 18 the
+**container is primary**: it is the standard NAM A2 file, usable on any A2 loader, and the report's `files.primary` names it. The
+panel shows it as "the model to load" (mode cards, the will-write text, the result's `model` line) and REVEAL selects it. The
+standalone Full and Lite files are extras, listed after it ("also ...") each with its own verdict (`validation.full` /
+`validation.lite`, e.g. "A2 Lite: NOT MET"); the headline verdict is still the one of the size `size` names (`validation.<size>`,
+else `validation.acceptance`). Progress JSON may carry `arch`; reports, progress and `files` are read defensively (an older
+exporter without them behaves as before: A1, one `.nam`; a report whose `primary` is a standalone file reads the same way).
+
+**Training signal (v0.6 decision 22).** Models are trained on the NAM project's standard input file (v3_0_0.wav / input.wav, from
+the NAM trainer's "Download input file" button), which the user supplies: the plugin never bundles or downloads it. It is the
+same Settings field as the reamp pair's (`namInputFile`). Every model export with a usable path passes `--nam-input <path>` (unless the Settings toggle for Sawblade's signal is on: the latest explicit choice wins, so the toggle beats a stored path and choosing a file via CHOOSE FILE / Browse turns the toggle off)
+(a resume does not: it continues with the signal it started with). With no path, TRAIN EXPORT starts nothing and the panel asks:
+CHOOSE FILE... (stores the path and starts the export) or USE SAWBLADE'S TEST SIGNAL INSTEAD (passes `--signal sawblade`; remembered as
+`trainingSignalSawblade` in the settings file, revocable with the Settings checkbox or by setting a path; the model is labelled as
+not trained on the standard NAM signal); NOT NOW starts nothing. A stored path whose file is missing counts as no path, and the prompt says so.
+There is never a silent fallback. The checklist names the signal in use and a TRAINING SIGNAL... button reopens the prompt. The result
+view shows "training signal" from the report (`trainingSignal`, else `metadata.trainingSignal` / `training.trainingSignal`; a string,
+or an object read by its `label` / `name` / `description` / `version`), nothing if the report has none.
+
+**EXPORT REAMP PAIR (v0.6 decision 20).** The standard NAM workflow trains from a reamped capture. The export panel's EXPORT
+REAMP PAIR button renders the official NAM standard input file (supplied by the user, never bundled) through the rig's
+exportable chain and writes `<name>.reamp_input.wav` + `<name>.reamp_output.wav` (no model is trained). The input file is the
+Settings field **NAM STANDARD INPUT FILE (EXPORT REAMP PAIR)** (`namInputFile` in the settings file, with Browse and Clear; absent
+by default, so older settings files need no migration). With no path, or a path whose file is missing, the button is disabled
+and the message beside it says to set the file in Settings. The runner passes `--reamp-pair <file> --no-train` and, for such a
+run, leaves out `--device`, `--require-accept` and `--di`. The result view shows REAMP PAIR, the two files and the notes
+(personal use only; non-commercial when a cc-by-nc capture is involved; never upload or share them: they are derived from
+TONE3000 captures). `files.reampPair{input, output}` is read from the report (names only); a pair-only run records no training
+wall time. The pair can also come beside a trained model (the report then has both).
+
+**Anagram notes (v0.6 Task C).** When the finished run's `exportNotes.deviceProfiles.anagram` is an object, a GENERIC / ANAGRAM
+switch appears above the notes box. ANAGRAM shows the profile (`formatAnagramNotesTxt`, JUCE-free) and COPY copies what is shown; the
+source line names the run's `<name>.anagram_notes.txt` (the profile's `file`, else `<base>.anagram_notes.txt` next to the model).
+The exporter defines the keys; the plugin renders them generically and tolerantly: per entry of `stages` (or `blocks`) the block
+(`block` / `anagramBlock` / `name`), the position (`position` / `chainPosition` / `where`), the generic `stage` it comes from, every
+`settings` key / value pair, a `hardware` / `text` / `note` sentence, then `loaderOrder` (or `chain`) and `message`. Settings are listed
+in the key order of the parsed JSON (alphabetical), and the values read as the exporter's `.anagram_notes.txt` reads them (booleans `yes` / `no`, numbers to at most 3 decimals with trailing zeros trimmed, e.g. `-52`, `20.5`), so the plugin text and the file agree. A long file path in the source line is shortened in the middle (the full path stays in `anagramNotesFile()`). A report without the profile shows no switch. The plugin makes no claims about
+Anagram internals beyond what the exporter's profile says.
 
 **Mode and comp rules.** A rig whose no-cab export is exact (shared cab, `irMix`, or no cab) defaults to NO CAB; per-path cabs
 (studio blend) default to WITH CAB and the NO CAB card is disabled. A mode saved in the state is honoured only while it is exact
@@ -718,7 +775,7 @@ for the loaded rig. Comp on, NO CAB: DROP COMP (default, exact: the exported pre
 and the error is reported). Comp on, WITH CAB: trained into the model if the release is <= 150 ms, else the panel shows the
 refusal note (the exporter refuses). The gate is always left out by the exporter.
 
-**Runner contract (`JobRunner::startExport`).** `sawblade-export <preset> --mode m --size s --device auto --require-accept
+**Runner contract (`JobRunner::startExport`).** `sawblade-export <preset> --mode m --arch a --size s --device auto --require-accept
 [--di <take wav> | --di builtin] [--allow-inexact] (--exports-root <root> | --resume <dir>) --progress-json <job>/progress.json`
 (`--progress-json` only if `--help` lists it, probed once per executable like MATCH; without it the 4.1 checkpoint
 `progress.json` is the fallback, and the run folder is found by scanning the exports root for the newest folder created after the
@@ -731,14 +788,16 @@ Progress keys parsed into `JobProgress`: `stage` (plan / signal / render / train
 - *Exit codes*: 0 with a result = `Succeeded`; 2 with `export_report.json` = `Succeeded`, `accepted = "NOT MET"`; 1 or no result =
   `Failed` with the exporter's `error:` / `refused:` line.
 - *Result*: `export_report.json` -> `validation.acceptance.{status,summary,heldOutEsr,diLtasDb,esrLimit,ltasLimitDb}`,
-  `training.namFile`, `nonCommercial`, `totalWallSeconds` (else `training.wallSeconds`, written to `exportWallSeconds.<size>`).
+  `training.namFile`, `nonCommercial`, `totalWallSeconds` (else `training.wallSeconds`, written to `exportWallSeconds.<arch>.<size>`).
+  v0.6 adds `arch`, `size`, `files {primary, container?, full?, lite?}` and, for A2, `validation.{full,lite}` (one entry per
+  standalone file, each the acceptance block or holding one under `acceptance`); `files.primary` wins over `training.namFile`.
 
 **job.json** (export jobs, besides the match fields): `sourcePreset`, `sourceSha256` (sha256 of the resolved preset file's
-bytes: the "same rig" key), `exportsRoot`, `allowInexact`, `diBuiltin`, `outDir` (written as soon as it is known), and on
+bytes: the "same rig" key), `exportsRoot`, `allowInexact`, `diBuiltin`, `exportArch` (absent = `a1`: a job written before A2), `exportMode`, `exportSize`, `outDir` (written as soon as it is known), and on
 finish `accepted` (`"met"` / `"NOT MET"` / `"not judged"`), `resumable`, `sidecar`.
 
 **Sidecar.** On `Succeeded` (met or not) the monitor thread copies the resolved preset file that was exported to
-`<outDir>/<nam stem>.sawblade.json`, byte for byte. The preset written for an export is named by the hash of its bytes
+`<outDir>/<base>.sawblade.json`, byte for byte (`base` = the primary file's stem without an A2 suffix `.a2` / `.a2_full` / `.a2_lite`). The preset written for an export is named by the hash of its bytes
 (`<jobs>/inputs/<sha16>.preset.json`), so the same rig is always the same file and key.
 
 **RESUME.** Offered when the newest export job is `Cancelled`, `outDir/checkpoint/progress.json` exists without `complete`, and
@@ -951,6 +1010,8 @@ overwrites it):
 | `tone3000ClientId` | the publishable key (`t3k_pub_...`). A value containing `t3k_cs_` (any case) is refused by `setTone3000ClientId`, never stored, written or logged; `load()` also drops one found in a file. Anything not starting with `t3k_pub_` is accepted with a warning. Effective value: stored, else the `TONE3000_CLIENT_ID` environment variable (never a `t3k_cs_` value). |
 | `separationModel` | `htdemucs_6s` (default), `htdemucs`, `htdemucs_ft` |
 | `takesDir` | absent = the platform default above |
+| `trainingSignalSawblade` | `true` = the user chose Sawblade's test signal for training; absent / anything else = not chosen (the export panel asks). |
+| `namInputFile` | the NAM standard input `.wav` for EXPORT REAMP PAIR; absent = not set (the action is disabled). A wrong-typed value reads as not set. |
 | `theme` | only `"dark"` exists |
 | `uiScale` | 0.5 to 2.0 (clamped), initial editor size = 1280 x 800 x `uiScale` |
 | `firstRunCompleted` | set by DONE / closing the panel on a first run |
@@ -1005,7 +1066,7 @@ gear button, closed by Esc, the x button or DONE (UI state, never saved). Sectio
 path, Browse, Auto, status light, Test = `sawblade-t3k --help`), TONE3000 (client id with the secret-key refusal shown in
 red, token-file status, Test = `whoami --json`, Log in with the device code box: code in a 40 px mono font, COPY CODE,
 COPY URL, OPEN, CANCEL, countdown, RETRY on failure), Captures (cache folder, count of `*.nam` / `*.wav` counted on a
-background thread, Open folder), Separation, Recording (takes folder), Appearance (theme, UI scale; applies when the
+background thread, Open folder), Separation, Recording (takes folder), Reamp pair (NAM standard input file), Appearance (theme, UI scale; applies when the
 window is next opened), and a footer with the settings file path and **About Sawblade...**.
 
 **First run.** `Settings::isFirstRun()` is true when no settings file existed at the instance's first `load()`. The

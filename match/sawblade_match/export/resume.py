@@ -17,7 +17,9 @@ BEST = "best.ckpt"
 PROGRESS = "progress.json"
 # What must match for a run to be resumed (spec: preset sha, signal sha, size, mode) plus the training settings that
 # change the learning trajectory (resuming with another seed / lr schedule would silently not be the same run).
-IDENTITY_KEYS = ("presetSha256", "signalSha256", "validSha256", "mode", "size")
+# ``arch`` / ``layout`` (v0.6): an A1 and an A2 run with the same size string must not resume each other, and an A1
+# lite / feather checkpoint written before v0.6 has the old (non-official) layer split, which no longer loads.
+IDENTITY_KEYS = ("presetSha256", "signalSha256", "validSha256", "mode", "size", "arch", "layout")
 CONFIG_KEYS = ("seed", "batchSize", "epochs", "lrGamma")
 
 
@@ -53,14 +55,35 @@ def read_progress(cdir) -> dict | None:
         return None
 
 
+LEGACY_LAYOUT = "a1-pre-v0.6 (old lite/feather layer split)"
+
+
+def legacy_identity(progress: dict) -> dict:
+    """Identity of a stored run; checkpoints written before v0.6 have no ``arch`` / ``layout``: they are A1, and only
+    ``standard`` already had the official layout (lite / feather used a 10 + 10 dilation split)."""
+    out = dict(progress)
+    out.setdefault("arch", "a1")
+    out.setdefault("layout", "a1-official-0.12.3" if progress.get("size") == "standard" else LEGACY_LAYOUT)
+    return out
+
+
 def mismatches(progress: dict, identity: dict, config: dict | None = None) -> list[str]:
     """Human-readable differences between a stored run and the requested one (empty = compatible)."""
     out = []
     names = {"presetSha256": "preset sha256", "signalSha256": "training-signal sha256", "validSha256": "validation-signal sha256",
-             "mode": "mode", "size": "size"}
+             "mode": "mode", "size": "size", "arch": "architecture", "layout": "network layout"}
+    stored = legacy_identity(progress)
     for k in IDENTITY_KEYS:
-        if k in identity and progress.get(k) != identity[k]:
-            out.append(f"{names[k]} differs (checkpoint {progress.get(k)!r}, requested {identity[k]!r})")
+        if k in identity and stored.get(k) != identity[k]:
+            msg = f"{names[k]} differs (checkpoint {stored.get(k)!r}, requested {identity[k]!r})"
+            if k == "layout" and stored.get(k) == LEGACY_LAYOUT:
+                msg += ": written before v0.6 with the old lite/feather layer split, which no longer loads; start a new run"
+            out.append(msg)
+    # a run that trained with a notes preset must be resumed with the same one (and vice versa): the notes are built at the end
+    if progress.get("notesPresetSha256") != identity.get("notesPresetSha256"):
+        out.append("notes preset differs (checkpoint " + ("none" if progress.get("notesPresetSha256") is None else "sha256 " +
+                   progress["notesPresetSha256"][:12]) + ", requested " + ("none" if identity.get("notesPresetSha256") is None
+                   else "sha256 " + identity["notesPresetSha256"][:12]) + "): pass the same --notes-preset on resume")
     for k, v in (config or {}).items():
         stored = (progress.get("config") or {}).get(k)
         if stored is None:

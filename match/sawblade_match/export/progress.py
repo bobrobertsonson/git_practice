@@ -76,8 +76,11 @@ class Progress:
 
     def update(self, stage: str | None = None, fraction: float | None = None, *, eta: int | None = None,
                epoch: int | None = None, epochs: int | None = None, best_esr: float | None = None,
-               message: str | None = None, out_dir=None, resumable: bool | None = None, force: bool = False) -> None:
+               message: str | None = None, out_dir=None, resumable: bool | None = None, force: bool = False,
+               arch: str | None = None) -> None:
         with self._lock:
+            if arch is not None:
+                self.state["arch"] = arch               # v0.6: "a2" | "a1" (the key is absent until it is known)
             self._update(stage, fraction, eta, epoch, epochs, best_esr, message, out_dir, resumable, force)
 
     @contextlib.contextmanager

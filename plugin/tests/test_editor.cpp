@@ -2611,6 +2611,8 @@ struct ExportRig : MatchRig {
     ExportSettings s = proc.exportSettings();
     s.outputFolder = exportsDir.string();
     proc.setExportSettings(s);
+    // The tests that train go through TRAIN EXPORT: Sawblade's signal is an explicit choice here (the prompt tests revoke it).
+    settings::Settings::shared().setUseSawbladeSignal(true);
   }
   void loadRig(const std::string& name, bool perPath, bool comp = false, double releaseMs = 80.0, const std::string& license = "cc-by",
                const nlohmann::json& extra = nlohmann::json::object()) {
@@ -2752,7 +2754,7 @@ TEST_CASE("export panel: credits list every capture with its licence; a non-comm
   panel.refresh();
   CHECK(anyLabelContains(panel, "HM-2w CHAINSAW - @ebheron (cc-by-nc-sa)"));
   CHECK(anyLabelContains(panel, "NON-COMMERCIAL"));
-  CHECK(anyLabelContains(panel, "nc-nocab-standard.nam"));  // the file name gets the -nc suffix
+  CHECK(anyLabelContains(panel, "nc-nocab-full.a2.nam"));  // the file name gets the -nc suffix (A2 Full is the default)
 }
 
 TEST_CASE("export panel: sizes show the last run time; DI follows the takes; the settings survive a state round trip", "[editor][export][state]") {
@@ -2761,7 +2763,7 @@ TEST_CASE("export panel: sizes show the last run time; DI follows the takes; the
   rig.openPanel();
   ExportPanel& panel = rig.exportPanel();
   CHECK(anyLabelContains(panel, "no run yet"));
-  rig.proc.matchSettings().setExportWallSeconds("lite", 12.0 * 60.0);
+  rig.proc.matchSettings().setExportWallSeconds("a2", "full", 12.0 * 60.0);  // the default model type: A2 Full
   panel.refresh();
   CHECK(anyLabelContains(panel, "last run: 12 min"));
   // No take: the built-in signal, LAST TAKE is disabled.
@@ -2786,6 +2788,12 @@ TEST_CASE("export panel: sizes show the last run time; DI follows the takes; the
   rig.proc.getStateInformation(block);
   CHECK_FALSE(nlohmann::json::parse(block.toString().toStdString()).contains("export"));
 
+  // A2 Full is the default; A1 shows its FEATHER / LITE / STANDARD sub-choice.
+  CHECK(rig.exportButton("A2 FULL")->getToggleState());
+  CHECK_FALSE(rig.visible("FEATHER"));
+  click(*rig.exportButton("A1"));
+  CHECK(rig.visible("FEATHER"));
+  CHECK(rig.exportButton("STANDARD")->getToggleState());  // A1 starts on its default size
   click(*rig.exportButton("FEATHER"));
   click(*rig.exportButton("BUILT-IN SIGNAL"));
   click(*rig.exportButton("WITH CAB"));
@@ -2797,6 +2805,7 @@ TEST_CASE("export panel: sizes show the last run time; DI follows the takes; the
   const auto j = nlohmann::json::parse(block.toString().toStdString());
   REQUIRE(j.contains("export"));
   CHECK(j["export"]["mode"] == "withcab");
+  CHECK(j["export"]["arch"] == "a1");
   CHECK(j["export"]["size"] == "feather");
   CHECK(j["export"]["diSource"] == "builtin");
   CHECK(j["export"]["compChoice"] == "keep");
@@ -2824,6 +2833,7 @@ TEST_CASE("export panel: sizes show the last run time; DI follows the takes; the
   bad["export"] = {{"size", "huge"}, {"mode", "sideways"}, {"diSource", "builtin"}};
   const std::string text2 = bad.dump();
   other.proc.setStateInformation(text2.data(), static_cast<int>(text2.size()));
+  CHECK(other.proc.exportSettings().arch == "a1");  // no arch saved = from before A2: an A1 size, and an unknown one is A1's default
   CHECK(other.proc.exportSettings().size == "standard");
   CHECK(other.proc.exportSettings().mode.empty());
   CHECK(other.proc.exportSettings().diSource == "builtin");
@@ -2837,6 +2847,7 @@ TEST_CASE("export panel: training, cancel, RESUME, the result and its buttons", 
   ExportPanel& panel = rig.exportPanel();
   CHECK(rig.exportButton("TRAIN EXPORT")->isEnabled());
   CHECK_FALSE(rig.visible("RESUME"));
+  click(*rig.exportButton("A1"));  // A1 Standard: the A1 size the acceptance limits judge
   click(*rig.exportButton("STANDARD"));
   click(*rig.exportButton("TRAIN EXPORT"));
   REQUIRE(waitUntilTrue([&] { return rig.proc.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
@@ -2859,7 +2870,7 @@ TEST_CASE("export panel: training, cancel, RESUME, the result and its buttons", 
   CHECK(anyLabelContains(panel, "Cancelled"));
   REQUIRE(rig.visible("RESUME"));
   CHECK(rig.exportButton("RESUME")->getButtonText().contains("epoch 3 of 10"));
-  CHECK(rig.exportButton("RESUME")->getButtonText().contains("STANDARD"));
+  CHECK(rig.exportButton("RESUME")->getButtonText().contains("A1 STANDARD"));
   CHECK(nlohmann::json::parse(readFileText(run / "signals.json")) == nlohmann::json::array({"SIGINT"}));
 
   // A different rig has no RESUME for this run.
@@ -2883,7 +2894,7 @@ TEST_CASE("export panel: training, cancel, RESUME, the result and its buttons", 
   CHECK(anyLabelContains(panel, "NOT MET"));
   CHECK(anyLabelContains(panel, "held-out ESR   0.0345   (limit 0.020)"));
   CHECK(anyLabelContains(panel, "DI LTAS error  0.92 dB (limit 0.50 dB)"));
-  CHECK(anyLabelContains(panel, "-nocab-standard.nam"));  // the resumed run keeps its own mode and size
+  CHECK(anyLabelContains(panel, "-nocab-standard.nam"));  // the resumed run keeps its own mode, arch and size
   CHECK(anyLabelContains(panel, ".sawblade.json"));
   CHECK(anyLabelContains(panel, "for your own use"));
   fs::path revealed, opened, played;
@@ -2905,7 +2916,7 @@ TEST_CASE("export panel: training, cancel, RESUME, the result and its buttons", 
   const auto snap = rig.proc.jobs().snapshot(JobKind::Export);
   CHECK(snap.accepted == "NOT MET");
   CHECK(fs::exists(snap.sidecar));
-  CHECK(rig.proc.matchSettings().exportWallSeconds("standard") > 0.0);
+  CHECK(rig.proc.matchSettings().exportWallSeconds("a1", "standard") > 0.0);
 
   // MET (exit 0) in the green, the A/B button hidden when there is no listening file.
   rig.tools.cfgExport({{"progressJson", true}});
@@ -3082,6 +3093,113 @@ TEST_CASE("export panel: after training the report's exportNotes are shown verba
   }
 }
 
+TEST_CASE("export panel: A2 Full is the default model type; the result lists the files; an Anagram profile in the report adds a Generic / Anagram switch", "[editor][export][notes][a2]") {
+  using nlohmann::json;
+  ExportRig rig;
+  rig.loadRig("notes", false, false, 80.0, "cc-by", gateAndFastComp());
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  juce::String copied;
+  panel.copyToClipboard = [&](const juce::String& t) { copied = t; };
+
+  // The model type row: A2 FULL (default), A2 LITE, A1; the A1 sizes show only under A1; a size is kept across A2 LITE <-> A1.
+  CHECK(panel.settings().arch == "a2");
+  CHECK(panel.settings().size == "full");
+  CHECK(rig.exportButton("A2 FULL")->getToggleState());
+  CHECK_FALSE(rig.exportButton("A2 LITE")->getToggleState());
+  CHECK_FALSE(rig.exportButton("A1")->getToggleState());
+  for (const char* t : {"FEATHER", "LITE", "STANDARD"}) {
+    INFO(t);
+    CHECK_FALSE(rig.visible(t));
+  }
+  CHECK(rig.exportButton("A2 FULL")->getTooltip().containsIgnoreCase("Anagram"));
+  CHECK(rig.exportButton("A2 LITE")->getTooltip().containsIgnoreCase("CPU"));
+  CHECK(rig.exportButton("A1")->getTooltip().containsIgnoreCase("older"));
+  click(*rig.exportButton("A2 LITE"));
+  CHECK(panel.settings().arch == "a2");
+  CHECK(panel.settings().size == "lite");
+  click(*rig.exportButton("A1"));
+  CHECK(panel.settings().arch == "a1");
+  CHECK(panel.settings().size == "lite");  // lite exists in both
+  CHECK(rig.visible("FEATHER"));
+  CHECK(rig.exportButton("LITE")->getToggleState());
+  click(*rig.exportButton("FEATHER"));
+  click(*rig.exportButton("A2 FULL"));
+  CHECK(panel.settings().arch == "a2");
+  CHECK(panel.settings().size == "full");
+  CHECK_FALSE(rig.visible("FEATHER"));
+  CHECK(anyLabelContains(panel, "Model type: A2 Full"));
+
+  // A2 Full run with an Anagram profile in its report.
+  const json fake = {{"version", 1}, {"mode", "nocab"},
+                     {"stages", json::array({json{{"stage", "gate"}, {"position", "before NAM"}, {"inModel", false}, {"settings", json::object()}, {"hardware", "FAKE GATE FROM THE REPORT."}},
+                                             json{{"stage", "busComp"}, {"position", "after NAM"}, {"inModel", false}, {"settings", json::object()}, {"hardware", "FAKE COMP FROM THE REPORT."}}})},
+                     {"loaderOrder", "Loader order: gate -> NAM (report.nam) -> bus comp"}};
+  const json anagram = {{"file", "notes-nocab-full.anagram_notes.txt"},
+                        {"stages", json::array({json{{"stage", "gate"}, {"block", "Gate"}, {"position", "first in the chain"}, {"settings", {{"threshold", -52.0}, {"release ms", 60}}}},
+                                                json{{"stage", "model"}, {"block", "Neural Amp"}, {"position", "after the gate"}, {"settings", {{"model", "notes.a2_full.nam"}}}}})},
+                        {"loaderOrder", "Anagram chain: Gate -> Neural Amp"}};
+  rig.tools.cfgExport({{"progressJson", true}, {"exportNotes", fake}, {"anagramProfile", anagram}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  const auto snap = rig.proc.jobs().snapshot(JobKind::Export);
+  CHECK(snap.exportArch == "a2");
+  CHECK(snap.state == JobState::Succeeded);
+  CHECK(snap.result.namFile.find(".a2.nam") != std::string::npos);  // the container is the primary file (decision 18)
+  CHECK(snap.accepted == "met");
+  CHECK(anyLabelContains(panel, "model   "));
+  CHECK(anyLabelContains(panel, ".a2.nam"));       // the primary file: the container
+  CHECK(anyLabelContains(panel, ".a2_full.nam"));  // the standalone Full and Lite are listed as extras
+  CHECK(anyLabelContains(panel, ".a2_lite.nam"));
+  CHECK(anyLabelContains(panel, "A2 Lite: MET"));  // the other size's own verdict sits beside its file
+  CHECK(anyLabelContains(panel, "A2 FULL"));       // "trained in ... A2 FULL"
+  CHECK(rig.proc.matchSettings().exportWallSeconds("a2", "full") > 0.0);
+
+  REQUIRE(panel.notesFromReport());
+  REQUIRE(panel.anagramNotesAvailable());
+  CHECK_FALSE(panel.anagramNotesShown());
+  CHECK(rig.visible("GENERIC"));
+  CHECK(rig.visible("ANAGRAM"));
+  CHECK(rig.exportButton("GENERIC")->getToggleState());
+  const juce::String generic = panel.notesText();
+  CHECK(generic.contains("1. gate [before NAM]\n   FAKE GATE FROM THE REPORT.\n"));
+  CHECK_FALSE(generic.contains("Neural Amp"));
+  click(*rig.exportButton("ANAGRAM"));
+  CHECK(panel.anagramNotesShown());
+  CHECK(rig.exportButton("ANAGRAM")->getToggleState());
+  const juce::String shown = panel.notesText();
+  CHECK(shown.contains("1. Gate [first in the chain]"));
+  CHECK(shown.contains("   release ms: 60\n"));
+  CHECK(shown.contains("   threshold: -52\n"));
+  CHECK(shown.contains("2. Neural Amp [after the gate]"));
+  CHECK(shown.contains("Anagram chain: Gate -> Neural Amp"));
+  CHECK_FALSE(shown.contains("FAKE GATE FROM THE REPORT."));
+  CHECK(all<juce::TextEditor>(panel).at(0)->getText().trimEnd() == shown.trimEnd());
+  const fs::path run = snap.outDir;
+  CHECK(panel.anagramNotesFile() == juce::String((run / "notes-nocab-full.anagram_notes.txt").string()));
+  CHECK(anyLabelContains(panel, "anagram_notes.txt"));  // the path is offered
+  click(*rig.exportButton("COPY"));
+  CHECK(copied == shown);
+  click(*rig.exportButton("GENERIC"));
+  CHECK_FALSE(panel.anagramNotesShown());
+  CHECK(panel.notesText() == generic);
+
+  // A run whose report has no Anagram profile: no switch, and a stale ANAGRAM choice falls back to the generic notes.
+  rig.tools.cfgExport({{"progressJson", true}, {"exportNotes", fake}});
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  CHECK(panel.notesFromReport());
+  CHECK_FALSE(panel.anagramNotesAvailable());
+  CHECK_FALSE(rig.visible("GENERIC"));
+  CHECK_FALSE(rig.visible("ANAGRAM"));
+  CHECK(panel.anagramNotesFile().isEmpty());
+  CHECK_FALSE(panel.notesText().contains("Neural Amp"));
+}
+
 TEST_CASE("export panel: a dropped comp stays in the notes after training even when the report (built from the comp-less preset) lacks it", "[editor][export][notes]") {
   using nlohmann::json;
   ExportRig rig;
@@ -3158,8 +3276,8 @@ TEST_CASE("export panel: screenshots of the configure, training and result views
   REQUIRE(rec.waitIdle());
   std::string err;
   REQUIRE(rec.renameTake(rec.currentTakeName(), "verse riff", &err));
-  rig.proc.matchSettings().setExportWallSeconds("standard", 25.0 * 60.0);
-  rig.proc.matchSettings().setExportWallSeconds("lite", 9.0 * 60.0);
+  rig.proc.matchSettings().setExportWallSeconds("a2", "full", 25.0 * 60.0);
+  rig.proc.matchSettings().setExportWallSeconds("a2", "lite", 9.0 * 60.0);
   rig.tools.cfgExport({{"progressJson", true}, {"gates", nlohmann::json::array({"g1", "g2"})}, {"listen", "wav"}, {"nonCommercial", true}});
   rig.openPanel();
   ExportPanel& panel = rig.exportPanel();
@@ -3197,6 +3315,202 @@ TEST_CASE("export panel: screenshots of the configure, training and result views
   panel.refresh();
   CHECK(anyLabelContains(panel, "NOT MET"));
   savePng(shot(*rig.ed), "export_result_not_met.png");
+}
+
+TEST_CASE("export panel: an A2 Full run whose Lite file is NOT MET shows that verdict in red beside the file", "[editor][export][a2]") {
+  ExportRig rig;
+  rig.loadRig("rig", false);
+  rig.tools.cfgExport({{"progressJson", true}, {"liteAcceptance", "NOT MET"}});  // the primary (Full) is MET
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(panel.settings().arch == "a2");
+  CHECK(panel.settings().size == "full");
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  CHECK(rig.proc.jobs().snapshot(JobKind::Export).accepted == "met");  // the headline is the primary's
+  juce::Label* also = nullptr;
+  for (auto* l : all<juce::Label>(panel))
+    if (l->isVisible() && l->getText().contains("A2 Lite: NOT MET")) also = l;
+  REQUIRE(also != nullptr);
+  CHECK(also->getText().contains(".a2_lite.nam (A2 Lite: NOT MET)"));
+  CHECK(also->findColour(juce::Label::textColourId) == SawbladeLookAndFeel::error());
+  CHECK(anyLabelContains(panel, "A2 Full: MET"));  // the standalone Full is an extra with its own verdict (the container is primary)
+}
+
+TEST_CASE("export panel: EXPORT REAMP PAIR needs the NAM standard input file from Settings, runs --reamp-pair --no-train and lists the pair", "[editor][export][reamp]") {
+  ExportRig rig;
+  rig.tools.cfgExport({{"progressJson", true}});  // the fake exporter needs its cfg file (no cfg: it exits 1 at start)
+  rig.loadRig("pair", false);
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  auto* btn = rig.exportButton("EXPORT REAMP PAIR");
+  REQUIRE(btn != nullptr);
+  CHECK(btn->isVisible());
+  CHECK(rig.exportButton("TRAIN EXPORT")->isEnabled());
+  // No path in Settings: the action is off and a plain hint says what to do.
+  CHECK_FALSE(btn->isEnabled());
+  CHECK(anyLabelContains(panel, "set the NAM standard input file in Settings"));
+  // A path to a file that is not there: still off, the hint names it.
+  const fs::path wav = rig.tmp.dir / "nam_input.wav";
+  REQUIRE(settings::Settings::shared().setNamInputFile(wav).ok);
+  panel.refresh();
+  CHECK_FALSE(btn->isEnabled());
+  CHECK(anyLabelContains(panel, "was not found"));
+  // The file exists: the action is on and the hint is gone.
+  sawblade::writeWavFloat32(wav, 48000.0, std::vector<float>(480, 0.1f));
+  panel.refresh();
+  CHECK(btn->isEnabled());
+  CHECK_FALSE(anyLabelContains(panel, "set the NAM standard input file in Settings"));
+  click(*btn);
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  REQUIRE(panel.view() == ExportPanel::View::Result);
+  const auto snap = rig.proc.jobs().snapshot(JobKind::Export);
+  REQUIRE(snap.state == JobState::Succeeded);
+  CHECK(snap.reampPair);
+  CHECK(snap.result.namFile.empty());  // nothing was trained
+  CHECK(snap.result.reampInput.find(".reamp_input.wav") != std::string::npos);
+  CHECK(snap.result.reampOutput.find(".reamp_output.wav") != std::string::npos);
+  CHECK(fs::exists(snap.outDir / snap.result.reampInput));
+  CHECK(fs::exists(snap.outDir / snap.result.reampOutput));
+  const auto argv = nlohmann::json::parse(readFileText(snap.outDir / "argv.json"))["argv"];
+  const std::vector<std::string> args = argv.get<std::vector<std::string>>();
+  const auto at = std::find(args.begin(), args.end(), "--reamp-pair");
+  REQUIRE(at != args.end());
+  CHECK(*(at + 1) == wav.string());
+  CHECK(std::find(args.begin(), args.end(), "--no-train") != args.end());
+  CHECK(std::find(args.begin(), args.end(), "--require-accept") == args.end());
+  CHECK(anyLabelContains(panel, "REAMP PAIR"));
+  CHECK(anyLabelContains(panel, ".reamp_input.wav"));
+  CHECK(anyLabelContains(panel, ".reamp_output.wav"));
+  CHECK(anyLabelContains(panel, "never upload or share"));
+  CHECK(anyLabelContains(panel, "own use only"));
+  CHECK(anyLabelContains(panel, "nothing trained"));
+}
+
+namespace {
+std::vector<std::string> exportArgv(const fs::path& outDir) {
+  return nlohmann::json::parse(readFileText(outDir / "argv.json"))["argv"].get<std::vector<std::string>>();
+}
+}  // namespace
+
+TEST_CASE("export panel: with no NAM input file and no choice, TRAIN EXPORT asks and starts nothing; Sawblade's signal is an explicit, remembered choice", "[editor][export][signal]") {
+  ExportRig rig;
+  auto& st = settings::Settings::shared();
+  st.setUseSawbladeSignal(false);  // the rig starts with the choice made; this is a fresh user
+  rig.loadRig("sig", false);
+  rig.tools.cfgExport({{"progressJson", true}, {"requireSignal", true}});
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(anyLabelContains(panel, "Training signal: not set"));
+  CHECK_FALSE(rig.visible("USE SAWBLADE'S TEST SIGNAL INSTEAD"));
+
+  click(*rig.exportButton("TRAIN EXPORT"));
+  CHECK(rig.proc.jobs().snapshot(JobKind::Export).state == JobState::None);  // nothing started
+  CHECK(panel.view() == ExportPanel::View::Configure);
+  CHECK(rig.visible("USE SAWBLADE'S TEST SIGNAL INSTEAD"));
+  CHECK(rig.visible("CHOOSE FILE..."));
+  CHECK(anyLabelContains(panel, "Download input file"));
+  CHECK(anyLabelContains(panel, "v3_0_0.wav"));
+  CHECK_FALSE(st.useSawbladeSignal());
+
+  click(*rig.exportButton("NOT NOW"));  // dismissing starts nothing and chooses nothing
+  CHECK_FALSE(rig.visible("CHOOSE FILE..."));
+  CHECK(rig.proc.jobs().snapshot(JobKind::Export).state == JobState::None);
+  CHECK_FALSE(st.useSawbladeSignal());
+
+  click(*rig.exportButton("TRAIN EXPORT"));
+  click(*rig.exportButton("USE SAWBLADE'S TEST SIGNAL INSTEAD"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  CHECK(st.useSawbladeSignal());  // remembered
+  const auto snap = rig.proc.jobs().snapshot(JobKind::Export);
+  REQUIRE(snap.state == JobState::Succeeded);
+  const auto args = exportArgv(snap.outDir);
+  const auto sig = std::find(args.begin(), args.end(), "--signal");
+  REQUIRE(sig != args.end());
+  CHECK(*(sig + 1) == "sawblade");
+  CHECK(std::find(args.begin(), args.end(), "--nam-input") == args.end());
+  CHECK(snap.result.trainingSignal.find("Sawblade test signal") != std::string::npos);
+  CHECK(anyLabelContains(panel, "training signal   Sawblade test signal"));
+
+  // Remembered: the next export does not ask. Revoking brings the prompt back.
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  CHECK_FALSE(rig.visible("CHOOSE FILE..."));
+  st.setUseSawbladeSignal(false);
+  panel.refresh();
+  click(*rig.exportButton("TRAIN EXPORT"));
+  CHECK(rig.visible("CHOOSE FILE..."));
+}
+
+TEST_CASE("export panel: a NAM standard input file in Settings is passed as --nam-input on every model export, and the report's signal is shown", "[editor][export][signal]") {
+  ExportRig rig;
+  auto& st = settings::Settings::shared();
+  st.setUseSawbladeSignal(false);
+  const fs::path wav = rig.tmp.dir / "v3_0_0.wav";
+  sawblade::writeWavFloat32(wav, 48000.0, std::vector<float>(480, 0.1f));
+  REQUIRE(st.setNamInputFile(wav).ok);
+  rig.loadRig("sig", false);
+  rig.tools.cfgExport({{"progressJson", true}, {"requireSignal", true}});
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(anyLabelContains(panel, "Training signal: NAM standard input file (v3_0_0.wav)"));
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  panel.refresh();
+  CHECK_FALSE(rig.visible("CHOOSE FILE..."));  // no prompt
+  const auto snap = rig.proc.jobs().snapshot(JobKind::Export);
+  REQUIRE(snap.state == JobState::Succeeded);
+  const auto args = exportArgv(snap.outDir);
+  const auto at = std::find(args.begin(), args.end(), "--nam-input");
+  REQUIRE(at != args.end());
+  CHECK(*(at + 1) == wav.string());
+  CHECK(std::find(args.begin(), args.end(), "--signal") == args.end());
+  CHECK(anyLabelContains(panel, "training signal   NAM standard input v3.0.0"));  // the report's object label
+  // The latest explicit choice wins: the toggle beats a stored path ...
+  st.setUseSawbladeSignal(true);
+  panel.refresh();
+  CHECK(anyLabelContains(panel, "Training signal: Sawblade's test signal"));
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  {
+    const auto a2 = exportArgv(rig.proc.jobs().snapshot(JobKind::Export).outDir);
+    const auto sg = std::find(a2.begin(), a2.end(), "--signal");
+    REQUIRE(sg != a2.end());
+    CHECK(*(sg + 1) == "sawblade");
+    CHECK(std::find(a2.begin(), a2.end(), "--nam-input") == a2.end());
+  }
+  // ... and choosing a file (a stored path set after the toggle) turns it off, so the file is used again.
+  st.setNamInputFile(wav);
+  st.setUseSawbladeSignal(false);  // what Browse / CHOOSE FILE do
+  panel.refresh();
+  click(*rig.exportButton("TRAIN EXPORT"));
+  REQUIRE(rig.proc.jobs().waitFinished(JobKind::Export, 15000ms));
+  {
+    const auto a3 = exportArgv(rig.proc.jobs().snapshot(JobKind::Export).outDir);
+    CHECK(std::find(a3.begin(), a3.end(), "--nam-input") != a3.end());
+    CHECK(std::find(a3.begin(), a3.end(), "--signal") == a3.end());
+  }
+  // A set path that has vanished is not used: the prompt says so and nothing starts.
+  fs::remove(wav);
+  panel.refresh();
+  click(*rig.exportButton("TRAIN EXPORT"));
+  CHECK(rig.visible("CHOOSE FILE..."));
+  CHECK(anyLabelContains(panel, "was not found"));
+}
+
+TEST_CASE("export panel: an A2 export names the container as the file to load and lists the standalone files as extras", "[editor][export][a2]") {
+  ExportRig rig;
+  rig.loadRig("rig", false);
+  rig.openPanel();
+  ExportPanel& panel = rig.exportPanel();
+  CHECK(anyLabelContains(panel, "rig-nocab-full.a2.nam"));  // the mode card and the "will write" text
+  CHECK(anyLabelContains(panel, "(the model to load)"));
+  CHECK(anyLabelContains(panel, "standalone extras"));
+  CHECK_FALSE(anyLabelContains(panel, "a2_full.nam (the model to load)"));
 }
 
 // ---- quick-then-thorough MATCH (docs/specs/phase6a_1_quick_then_thorough.md) ------------------------------------------------

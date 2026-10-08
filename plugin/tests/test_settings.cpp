@@ -300,6 +300,63 @@ TEST_CASE("settings: match venv auto-detect order", "[settings][detect]") {
   }
 }
 
+TEST_CASE("settings: the NAM standard input file persists, clears, ignores a wrong-typed value and survives other keys", "[settings][reamp]") {
+  TempDir t;
+  const fs::path file = t / "s.json";
+  {
+    // an older settings file has no such key: unset (the migration is "nothing")
+    touch(file, R"({"version":1,"takesDir":"/takes/old","future":{"x":1}})");
+    Settings s(file, makeEnv(t.dir));
+    REQUIRE(s.load().empty());
+    CHECK_FALSE(s.namInputFile().has_value());
+    CHECK(s.takesDir() == fs::path("/takes/old"));
+    CHECK(s.setNamInputFile("/nam/v3_0_0.wav").ok);
+    CHECK(s.namInputFile() == fs::path("/nam/v3_0_0.wav"));
+  }
+  {
+    Settings s(file, makeEnv(t.dir));
+    REQUIRE(s.load().empty());
+    CHECK(s.namInputFile() == fs::path("/nam/v3_0_0.wav"));
+    CHECK(s.takesDir() == fs::path("/takes/old"));
+    CHECK(s.setTakesDir("/takes/new").ok);  // saving another key keeps this one
+  }
+  {
+    Settings s(file, makeEnv(t.dir));
+    REQUIRE(s.load().empty());
+    CHECK(s.namInputFile() == fs::path("/nam/v3_0_0.wav"));
+    CHECK(s.setNamInputFile(std::nullopt).ok);
+    CHECK_FALSE(s.namInputFile().has_value());
+  }
+  const auto j = nlohmann::json::parse(slurp(file));
+  CHECK_FALSE(j.contains("namInputFile"));
+  CHECK(j["future"]["x"] == 1);
+  touch(file, R"({"version":1,"namInputFile":42})");  // wrong type: unset, no crash
+  Settings s(file, makeEnv(t.dir));
+  s.load();
+  CHECK_FALSE(s.namInputFile().has_value());
+}
+
+TEST_CASE("settings: Sawblade's test signal is an explicit, revocable choice (default off)", "[settings][reamp]") {
+  TempDir t;
+  const fs::path file = t / "s.json";
+  {
+    Settings s(file, makeEnv(t.dir));
+    REQUIRE(s.load().empty());
+    CHECK_FALSE(s.useSawbladeSignal());
+    CHECK(s.setUseSawbladeSignal(true).ok);
+  }
+  {
+    Settings s(file, makeEnv(t.dir));
+    REQUIRE(s.load().empty());
+    CHECK(s.useSawbladeSignal());
+    CHECK(s.setUseSawbladeSignal(false).ok);
+  }
+  Settings s(file, makeEnv(t.dir));
+  REQUIRE(s.load().empty());
+  CHECK_FALSE(s.useSawbladeSignal());
+  CHECK_FALSE(nlohmann::json::parse(slurp(file)).contains("trainingSignalSawblade"));
+}
+
 // --- 5 ------------------------------------------------------------------------------------------
 TEST_CASE("settings: cache dir precedence and takes dir per platform", "[settings]") {
   TempDir t;

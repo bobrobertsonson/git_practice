@@ -1,0 +1,109 @@
+{
+  "generator": "tests/fixtures/a2/generate.py",
+  "input": {
+    "content": "0.4 s seeded Gaussian noise (sigma 0.1) + 0.6 s log sine sweep 50 Hz-16 kHz (peak 0.316)",
+    "file": "input.wav",
+    "peak": 0.4325760006904602,
+    "rmsDbfs": -14.725518086790943,
+    "samples": 48000,
+    "sha256": "cd885e57b2247ac9822bbf9a6cff44f0ca1deccaf9bd648a02d993eba2142b31"
+  },
+  "models": {
+    "a1_standard": {
+      "algorithmicLatencySamples": 0,
+      "architecture": "WaveNet",
+      "file": "a1_standard.nam",
+      "input": "input.wav",
+      "metadataGain": 0.9198286915397484,
+      "metadataLoudnessDb": -37.6059684753418,
+      "notes": "A1 WaveNet standard (NAM official preset: 16/8 channels, 10+10 dilations 1..512, kernel 3, Tanh); unlike many old A1 captures this file carries a top-level sample_rate (48000), as every 0.13.0 export does",
+      "parameters": 13801,
+      "receptiveFieldSamples": 4093,
+      "reference": "ref_a1_standard.wav",
+      "referencePeak": 0.03498551622033119,
+      "referenceRmsDbfs": -37.32090637770188,
+      "sampleRate": 48000.0,
+      "sha256": "02cd4f46383e7174551ac0fcc3209c543df2137727de99f46edbcc1503eb38cc",
+      "version": "0.7.0"
+    },
+    "a2_container": {
+      "algorithmicLatencySamples": 0,
+      "architecture": "SlimmableContainer",
+      "defaultSubmodel": "a2_full",
+      "file": "a2_container.nam",
+      "input": "input.wav",
+      "metadataGain": 0.9159177644249658,
+      "metadataLoudnessDb": -26.834396362304688,
+      "metadataLoudnessNote": "container loudness/gain = the highest-quality (Full) submodel's (PackedWaveNet._sync_container_metadata_to_highest_quality_submodel)",
+      "notes": "packed-trainer export (PackedWaveNet.export_container): architecture SlimmableContainer, submodels [{max_value 0.5, A2 Lite}, {max_value 1.0, A2 Full}]; a player that never calls SetSlimmableSize plays the last (Full) submodel, so ref_a2_full.wav is its reference; for Lite use ref_a2_lite.wav",
+      "parameters": 22783,
+      "receptiveFieldSamples": 6347,
+      "reference": "ref_a2_full.wav",
+      "referenceForSubmodel": {
+        "0.5": "ref_a2_lite.wav",
+        "1.0": "ref_a2_full.wav"
+      },
+      "referencePeak": 0.05945524573326111,
+      "referenceRmsDbfs": -26.820297557638135,
+      "sampleRate": 48000.0,
+      "sha256": "8e95e8e57989f259a25bdba8262fc012d5fb14d286e7f0a31d6485a013d25a92",
+      "submodels": [
+        {
+          "architecture": "WaveNet",
+          "channels": 3,
+          "max_value": 0.5
+        },
+        {
+          "architecture": "WaveNet",
+          "channels": 8,
+          "max_value": 1.0
+        }
+      ],
+      "version": "0.7.0"
+    },
+    "a2_full": {
+      "algorithmicLatencySamples": 0,
+      "architecture": "WaveNet",
+      "file": "a2_full.nam",
+      "input": "input.wav",
+      "metadataGain": 0.9159177644249658,
+      "metadataLoudnessDb": -26.834396362304688,
+      "notes": "A2 Full (8 channels) as a standalone WaveNet file (PackedWaveNet.extract_submodel(i).export), 23 layers, LeakyReLU, head kernel 16",
+      "packedForwardMaxAbsDiff": 0.0,
+      "parameters": 12145,
+      "receptiveFieldSamples": 6347,
+      "reference": "ref_a2_full.wav",
+      "referencePeak": 0.05945524573326111,
+      "referenceRmsDbfs": -26.820297557638135,
+      "sampleRate": 48000.0,
+      "sha256": "4aea0d9754d5e3b829863a73e0d4f66b01a170a52f84a80ca17a72e6f8b3422c",
+      "version": "0.7.0"
+    },
+    "a2_lite": {
+      "algorithmicLatencySamples": 0,
+      "architecture": "WaveNet",
+      "file": "a2_lite.nam",
+      "input": "input.wav",
+      "metadataGain": 0.9356106700918553,
+      "metadataLoudnessDb": -31.304866790771484,
+      "notes": "A2 Lite (3 channels) as a standalone WaveNet file (PackedWaveNet.extract_submodel(i).export), 23 layers, LeakyReLU, head kernel 16",
+      "packedForwardMaxAbsDiff": 0.0,
+      "parameters": 1870,
+      "receptiveFieldSamples": 6347,
+      "reference": "ref_a2_lite.wav",
+      "referencePeak": 0.041521232575178146,
+      "referenceRmsDbfs": -31.331583875776854,
+      "sampleRate": 48000.0,
+      "sha256": "b706d6f88ab7823c1c7aa4bed018dff0e3f99f7b039ce9dc7b65f07ff3beaf6a",
+      "version": "0.7.0"
+    }
+  },
+  "neuralAmpModeler": "0.13.0",
+  "sampleRate": 48000,
+  "seeds": {
+    "a1": 20261009,
+    "a2": 20261008,
+    "input": 20261007
+  },
+  "torch": "2.5.1"
+}

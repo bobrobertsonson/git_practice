@@ -180,7 +180,7 @@ Block types:
 
 | `type` | Purpose | Type-specific fields | NAM-trainable | Latency |
 |---|---|---|---|---|
-| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below | yes | the model's |
+| `nam` | NAM capture (pedal, boost, amp) | see NamBlock below | yes | 0 (`NamBlock` reports 0 for every model; NAM models are causal and the trainer aligns the capture, so no delay is reported; the model's receptive field is prewarm cost, not latency) |
 | `eq`  | Extra parametric EQ anywhere in the chain | `"bands": [ EqBand, ... ]` | yes | 0 |
 | `pedal.hm` | Modeled "Swedish chainsaw distortion" (HM-2 topology), the CHAINSAW circuit | `modelVersion` (1, 2 or 3), `params`; see PedalHm below | yes | 50 samples (at any rate) |
 | `pedal.muff` | Modeled "big fuzz" (Big-Muff-family topology), the BIG FUZZ circuit | `modelVersion` (1), `params`; see PedalMuff below | yes | 50 samples (at any rate) |
@@ -210,6 +210,15 @@ carry no TONE3000 license or creator. UI names are generic descriptors (no trade
   "model": Capture
 }
 ```
+**A2 (and A1) models.** A `.nam` file does not declare "A2". An A2 model is either a standalone 23-layer `WaveNet` or a
+`SlimmableContainer` holding several of them; Sawblade's names are **A2 Full** (the 8-channel network) and **A2 Lite** (the
+3-channel network). All of A1, A2 Full, A2 Lite and the container load through the same `nam` block with the same fields
+and the same latency (0). A container plays its **largest (Full) submodel**: there is no size selector this phase, so
+use a standalone Lite file for A2 Lite. The core's A2 fast path (`NAM_ENABLE_A2_FAST`) is taken automatically by standalone
+files of exactly the A2 shape (8 or 3 channels); other shapes still play, just slower. The receptive field (prewarm
+at `prepare()` / `reset()`) is 6347 samples for A2 and 4093 for A1 standard. Tested against the trainer's own forward pass in
+`tests/test_a2_playback.cpp`; measured cost in `tests/a2_bench.cpp`.
+
 `makeupDb` is written by the plugin when the capture in a slot is replaced (capture browser: preview and USE), so that the
 path's loudness on the reference DI stays unchanged (see Level matching). It is kept apart from `outputGainDb`, which is the
 user's knob. It is part of the preset's sound: the chain, `tonerender`, the matcher and the NAM export all apply it.
@@ -488,7 +497,7 @@ prints them. The render report (`tonerender --report`) carries:
 ```jsonc
 "cab": { "mode": "shared",  "ir": Capture, "enabled": true }                 // live-compatible
 "cab": { "mode": "perPath", "irA": Capture, "irB": Capture, "enabled": true } // studio blend
-"cab": { "mode": "irMix", "irA": Capture, "irB": Capture, "mix": 0.5, "enabled": true } // two mics, one cab
+"cab": { "mode": "irMix", "irA": Capture, "irB": Capture, "mix": 0.5, "offsetSamplesB": 0, "invertB": false, "enabled": true } // two mics, one cab
 ```
 - `shared`: the blended signal is convolved with one IR. **Live-compatible**: a no-cab NAM
   export (`blend` of the two paths before the cab) plus that IR (convolved with post EQ) is
@@ -501,7 +510,17 @@ prints them. The render report (`tonerender --report`) carries:
   zero-padded; the sum is **not** re-normalised. `mix` is in [0, 1] (default 0.5; out of range is
   a preset error), `irA` and `irB` are both required, and the strict-key rules hold: `ir` is
   rejected in `irMix` mode and `mix` in the other modes. One convolver runs on `h` at the same
-  place in the chain and with the same latency as `shared`. It is still one combined IR, so
+  place in the chain and with the same latency as `shared`.
+  Optional alignment of the second IR, **`irMix` only** (rejected as unknown keys in the other
+  modes): `offsetSamplesB` (int, -256..256, default 0; out of range or non-integer is a preset
+  error) and `invertB` (bool, default false). They are applied to `hB` before the sum:
+  `h[i] = (1 - mix) * hA[i] + mix * s * hB[i - offsetSamplesB]` with `s = -1` when `invertB`
+  and `hB[j] = 0` outside the IR. Positive offset = `hB` delayed (shifted right, zero-padded at
+  the front); negative = `hB` advanced (its first |k| samples dropped, zero-padded at the end).
+  `h` keeps the length rule `max(len hA, len hB)` using the original lengths, so a delayed `hB`
+  loses its last k samples and the IR never exceeds the 2.0 s cap. The combined IR is built at
+  load (off the audio thread); latency is unchanged. The writer omits both keys at their
+  defaults, so existing presets round-trip byte-identically. It is still one combined IR, so
   the no-cab export is exact (**live-compatible**).
 - IR files: mono WAV (stereo → left channel used, with a warning), any rate (resampled at
   load), truncated to 2.0 s max, normalized so the IR's L2 norm equals 1 unless
@@ -600,12 +619,73 @@ and ignored by the core parser, never part of the tone or of a resolved preset. 
 "export": {
   "mode": "",                // "" = follow the rig (shared cab: "nocab", per-path cabs: "withcab") | "nocab" | "withcab";
                              // a saved mode applies only while it is exact for the loaded rig
-  "size": "standard",        // "feather" | "lite" | "standard"
+  "arch": "a2",              // "a2" (default; A2-capable loaders such as the Anagram) | "a1" (older loaders). Absent = a state from
+                             // before v0.6: its `size` was an A1 size, so it reads as arch "a1" with that size (migration)
+  "size": "full",            // a2: "full" | "lite"; a1: "feather" | "lite" | "standard"; one that does not fit the arch = its default
   "diSource": "take",        // "take" (newest take, else the built-in signal) | "builtin"
   "compChoice": "drop",      // no-cab export of a rig with the bus comp on: "drop" (exact) | "keep" (inexact, --allow-inexact)
   "outputFolder": ""         // "" = <app data>/exports
 }
 ```
+
+## Export notes and device profiles (`export_report.json` -> `exportNotes`; written by `sawblade-export`, not part of a preset)
+
+Every export writes `<stem>.export_notes.txt` next to the model and an `exportNotes` object into `export_report.json`
+(`<stem>` = `<name>-<mode>-<size>`; A1: also the `.nam`'s stem). `NOTES_VERSION` is 1 and the **generic block is unchanged since
+v0.4M**: `{"version", "mode", "file", "stages": [{"stage": "gate"|"cab"|"postEq"|"busComp", "position": "before NAM"|"after NAM",
+"inModel": false, "settings": {...}, "hardware": "<line>"}], "loaderOrder": "<line>", "message"?, "inModel"?}`: every enabled stage
+that is NOT in the trained model, in signal order.
+
+v0.6 adds `exportNotes.deviceProfiles` (an object keyed by device; today only `anagram`) and a second text file
+`<stem>.anagram_notes.txt`. The `anagram` profile maps the same stages onto the Darkglass Anagram's **published block list**
+(Neural Amp / Neural Pedal / Neural Loader, IR, Compressor, Gate, EQ; up to three NAM blocks; KosmOS 1.16 or later). Nothing is claimed about the
+device's internals, control scales or firmware: values are Sawblade's own (digital dBFS, ms, Hz) and the text says to match levels
+by ear or meter. Keys (read by the plugin, `plugin/src/ExportNotes.cpp` `anagramProfileOf`):
+
+```jsonc
+"deviceProfiles": { "anagram": {
+  "device": "Anagram",
+  "file": "<stem>.anagram_notes.txt",
+  "message": "Load the .nam into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later.",
+  "loaderOrder": "Anagram chain: Gate -> Neural Amp -> IR -> Compressor",      // one string
+  "stages": [                                                                  // signal order = chain order
+    { "stage": "gate",    "block": "Gate",       "position": "1 (first in the chain)",
+      "settings": { "mode": "gate", "threshold dB": -55, "close threshold dB": -61, "attack ms": 0.5, "hold ms": 20,
+                    "release ms": 60, "range dB": -90, "keyed on": "guitar input (the signal before any pedal or amp)" },
+      "hardware": "Put the gate FIRST in the chain, before every NAM block, so it hears the guitar. ..." },
+    { "stage": "model",   "block": "Neural Amp",  "position": "2",
+      "settings": { "model": "<stem>.a2.nam", "bypass": false }, "hardware": "Load <file> (A2 container) into any NAM A2 block; on the Anagram that is a Neural Amp (or Neural Pedal) block, KosmOS 1.16 or later. It is a local file for your own use: do not upload it to TONE3000. ..." },
+    { "stage": "cab",     "block": "IR",          "position": "3",
+      "settings": { "file": "<name>-nocab.ir.wav", "normalise": false, "contains": "cab and post EQ" },
+      "hardware": "Load the IR WITHOUT loudness normalisation. ..." },
+    { "stage": "busComp", "block": "Compressor",  "position": "4 (last in the chain)",
+      "settings": { "threshold dBFS": -21, "ratio": 4, "attack ms": 5, "release ms": 80, "knee dB": 3, "make-up dB": 2.5,
+                    "detector": "peak" },
+      "hardware": "Put the compressor LAST, after the IR. ..." } ] } }
+```
+
+Mapping rules: the trained model is a **Neural Amp** block, or a **Neural Pedal** block for a *drive-only* export (no-cab export
+whose enabled non-EQ blocks are all explicitly pedals or boosts: `slot` "pedal"/"boost" or a `pedal.*` type; an unlabelled NAM block counts as an amp; a with-cab export is always a Neural Amp); the model is a local file loaded into the block, for the user's own use (the text says not to upload it to TONE3000, because models trained from TONE3000 captures need the creators' permission to share).
+`settings.model` is the primary file (A2: the standard NAM A2 container `<stem>.a2.nam`; the standalone `.a2_full.nam` / `.a2_lite.nam` extras are
+the fallback if a loader refuses a container, which is unverified). The Anagram text is a generic hint (any NAM A2 block; Neural Amp or Neural Pedal,
+KosmOS 1.16 or later), not a statement about the device's file handling. The gate (if enabled) is the first block, before the model. The no-cab export's cab
+becomes an **IR** block right after the model; the exported IR already holds the post EQ, so the post EQ gets its own **EQ** block
+(`settings` = `band N`: description) only when it is not folded into the IR. The bus compressor (no-cab export with `--allow-inexact`)
+is a **Compressor** block last, `threshold dBFS` = the threshold at the exported output level. `position` is the 1-based chain
+index, with "(first in the chain)" / "(last in the chain)" on the ends of a chain of two or more blocks. A with-cab export lists the gate (if enabled)
+and the model block; the cab, post EQ and bus comp are inside the model, so nothing else. A with-cab export whose chain has no gate lists the
+model block only.
+
+### Training signal and reamp pair (export report, v0.6)
+
+`export_report.json` top level: `trainingSignal` = `{"id", "kind", "version", "label", "fallback"}`: `id` is `"nam-standard v3.0.0"` (the NAM
+project's standard input file, user-supplied) or `"sawblade-synthetic v1"` (the labelled fallback, `fallback: true`); the same `id` string
+is `metadata.sawblade.trainingSignal` in every `.nam` and `exportNotes.trainingSignal`, and the notes carry a sentence derived from it.
+`signal` describes the input (`kind`, `version`, `match`, the validation slice); `validationSplit` (official path) says how the acceptance
+numbers are measured. `files` = `{primary (A2: the container), container?, <size>, <other size>, reampPair?: {input, output, notes}}`
+(file names relative to the output directory). `reamp` (with `--reamp-pair`) = the pair's details (input version / match / md5, `levelReducedDb`,
+latency). With `--no-train`, `trained: false` and only `files.reampPair`, `reamp`, `ir`, `plan` are present (no `training`, no `validation`).
+The NAM standard input file is never stored in the report, only its name, md5 and version.
 
 ## Derived properties (not stored; reported by tonerender / plugin)
 

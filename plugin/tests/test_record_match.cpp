@@ -881,6 +881,7 @@ TEST_CASE("runner: an exporter without --progress-json is followed through its c
   er.preset = t.presetSrc;
   er.mode = "withcab";
   er.size = "lite";
+  er.arch = "a1";
   er.di = t.di;
   std::string err;
   REQUIRE(runner.startExport(er, &err));
@@ -933,6 +934,7 @@ TEST_CASE("runner: export progress (--progress-json) carries epoch, best ESR, ET
   er.preset = t.presetSrc;
   er.mode = "nocab";
   er.size = "standard";
+  er.arch = "a1";
   er.diBuiltin = true;
   er.allowInexact = true;
   er.exportsRoot = t.root / "my exports";
@@ -989,8 +991,8 @@ TEST_CASE("runner: export progress (--progress-json) carries epoch, best ESR, ET
   CHECK(fin["outDir"] == s.outDir.string());
   CHECK(fin["exitCode"] == 0);
   // The wall time of the run is kept per size for the panel's "last run".
-  CHECK(t.settings.exportWallSeconds("standard") == Catch::Approx(150.0));
-  CHECK(t.settings.exportWallSeconds("lite") == 0.0);
+  CHECK(t.settings.exportWallSeconds("a1", "standard") == Catch::Approx(150.0));
+  CHECK(t.settings.exportWallSeconds("a1", "lite") == 0.0);
 }
 
 TEST_CASE("runner: cancelling an export sends SIGINT and leaves the checkpoint; the same rig can resume", "[match][runner][export][cancel]") {
@@ -1002,6 +1004,7 @@ TEST_CASE("runner: cancelling an export sends SIGINT and leaves the checkpoint; 
   er.preset = t.presetSrc;
   er.mode = "withcab";
   er.size = "lite";
+  er.arch = "a1";
   er.exportsRoot = t.root / "exports";
   REQUIRE(runner.startExport(er));
   REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.epoch == 3; }));
@@ -1051,6 +1054,7 @@ TEST_CASE("runner: cancelling an export sends SIGINT and leaves the checkpoint; 
   rr.preset = t.presetSrc;
   rr.mode = "withcab";
   rr.size = "lite";
+  rr.arch = "a1";
   rr.resumeDir = run;
   rr.exportsRoot = t.root / "exports";
   REQUIRE(runner.startExport(rr));
@@ -1089,6 +1093,7 @@ TEST_CASE("runner: exit 2 with a report is a finished export that is NOT MET; th
   er.preset = t.presetSrc;
   er.mode = "nocab";
   er.size = "standard";
+  er.arch = "a1";
   er.exportsRoot = t.root / "exports";
   REQUIRE(runner.startExport(er));
   REQUIRE(runner.waitFinished(JobKind::Export));
@@ -1112,7 +1117,7 @@ TEST_CASE("runner: exit 2 with a report is a finished export that is NOT MET; th
   CHECK(fs::exists(s.outDir / s.result.namFile));
   CHECK(readJson(s.dir / "job.json")["accepted"] == "NOT MET");
   CHECK(readJson(s.dir / "job.json")["exitCode"] == 2);
-  CHECK(t.settings.exportWallSeconds("standard") == Catch::Approx(150.0));  // a NOT MET run still counts for "last run"
+  CHECK(t.settings.exportWallSeconds("a1", "standard") == Catch::Approx(150.0));  // a NOT MET run still counts for "last run"
   // The model's metadata carries the Sawblade block.
   const json nam = readJson(s.outDir / s.result.namFile);
   CHECK(nam["metadata"]["sawblade"]["exporter"] == "sawblade-export");
@@ -1128,6 +1133,7 @@ TEST_CASE("runner: exit 0 is MET; a non-standard size is not judged; the A/B fil
   er.preset = t.presetSrc;
   er.mode = "nocab";
   er.size = "standard";
+  er.arch = "a1";
   er.exportsRoot = t.root / "exports";
   REQUIRE(runner.startExport(er));
   REQUIRE(runner.waitFinished(JobKind::Export));
@@ -1147,13 +1153,14 @@ TEST_CASE("runner: exit 0 is MET; a non-standard size is not judged; the A/B fil
   CHECK(readExportResult(s.outDir).listen.empty());
 
   er.size = "feather";
+  er.arch = "a1";
   REQUIRE(runner.startExport(er));
   REQUIRE(runner.waitFinished(JobKind::Export));
   s = runner.snapshot(JobKind::Export);
   CHECK(s.state == JobState::Succeeded);
   CHECK(s.accepted == "not judged");
   CHECK(s.result.status == "NOT JUDGED");
-  CHECK(t.settings.exportWallSeconds("feather") == Catch::Approx(150.0));
+  CHECK(t.settings.exportWallSeconds("a1", "feather") == Catch::Approx(150.0));
 }
 
 TEST_CASE("runner: the sidecar is the resolved preset, byte for byte, next to the model", "[match][runner][export][sidecar]") {
@@ -1165,6 +1172,7 @@ TEST_CASE("runner: the sidecar is the resolved preset, byte for byte, next to th
   er.preset = t.presetSrc;
   er.mode = "nocab";
   er.size = "standard";
+  er.arch = "a1";
   er.exportsRoot = t.root / "exports";
   REQUIRE(runner.startExport(er));
   REQUIRE(runner.waitFinished(JobKind::Export));
@@ -2861,7 +2869,8 @@ TEST_CASE("export glue: the request is built from the settings; the same rig is 
   std::string err;
   REQUIRE(buildExportRequest(h.p, s, plan, r, &err));
   CHECK(r.mode == "nocab");
-  CHECK(r.size == "standard");
+  CHECK(r.arch == "a2");  // v0.6: a new install exports A2 Full
+  CHECK(r.size == "full");
   CHECK(r.diBuiltin);
   CHECK_FALSE(r.di);
   CHECK(r.exportsRoot == tmp.dir / "exports");
@@ -2950,6 +2959,7 @@ TEST_CASE("export glue: RESUME is offered for a cancelled run of the same rig an
   CHECK(o.epoch == 3);
   CHECK(o.epochs == 10);
   CHECK(o.mode == "nocab");
+  CHECK(o.arch == "a2");
   CHECK(o.size == "lite");
 
   // Another rig: no offer. Back to the first one (written again, same bytes): offered again.
@@ -2972,6 +2982,7 @@ TEST_CASE("export glue: RESUME is offered for a cancelled run of the same rig an
   REQUIRE(buildResumeRequest(h.p, o, rr, &err));
   CHECK(rr.resumeDir == run);
   CHECK(rr.mode == "nocab");
+  CHECK(rr.arch == "a2");
   CHECK(rr.size == "lite");
   CHECK(rr.preset == r.preset);  // the very same file as the cancelled run
   REQUIRE(h.p.jobs().startExport(rr, &err));
@@ -2981,6 +2992,83 @@ TEST_CASE("export glue: RESUME is offered for a cancelled run of the same rig an
   CHECK(s2.outDir == run);
   CHECK(after(argvOf(run), "--resume") == run.string());
   CHECK_FALSE(findResumableExport(h.p).available);  // finished: nothing left to resume
+}
+
+TEST_CASE("export glue: a dropped bus comp is still listed - --notes-preset carries the original rig, also on resume", "[export][glue][notes]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  Host h(kFs, 256);
+  h.p.matchSettings().setFile(t.root / "settings.xml");
+  h.p.jobs().setJobsDir(t.jobs);
+  h.load(writeSourcedRig(t.root, "live", false, true));  // shared cab, comp on (release 80 ms)
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1"})}});
+  ExportSettings s;
+  s.outputFolder = (t.root / "exports").string();
+  s.size = "lite";
+
+  // DROP COMP (the default): the trained preset has the comp off, the notes preset is the original with it on.
+  const ExportPlan plan = planExport(h.p, s);
+  REQUIRE(plan.dropComp);
+  ExportRequest r;
+  std::string err;
+  REQUIRE(buildExportRequest(h.p, s, plan, r, &err));
+  REQUIRE_FALSE(r.notesPreset.empty());
+  REQUIRE(fs::is_regular_file(r.notesPreset));
+  CHECK(r.notesPreset != r.preset);
+  const json trained = readJson(r.preset);
+  const json notes = readJson(r.notesPreset);
+  CHECK(trained["busComp"]["enabled"] == false);
+  CHECK(notes["busComp"]["enabled"] == true);
+  CHECK(notes["busComp"]["releaseMs"] == 80.0);  // the original settings, not defaults
+  json withoutComp = notes;
+  withoutComp["busComp"]["enabled"] = false;
+  CHECK(withoutComp == trained);  // the only difference from what is trained
+  // Deterministic: the same rig is the same file.
+  ExportRequest r2;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), r2, &err));
+  CHECK(r2.notesPreset == r.notesPreset);
+  CHECK(h.p.currentPreset().busComp.enabled);  // the live rig is untouched
+
+  // The flag reaches sawblade-export.
+  REQUIRE(h.p.jobs().startExport(r, &err));
+  REQUIRE(waitUntil([&] { return h.p.jobs().snapshot(JobKind::Export).progress.epoch == 3; }));
+  const fs::path run = h.p.jobs().snapshot(JobKind::Export).outDir;
+  CHECK(after(argvOf(run), "--notes-preset") == r.notesPreset.string());
+  h.p.jobs().cancel(JobKind::Export);
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Export));
+
+  // RESUME: the file saved at the first export, byte for byte.
+  const std::string saved = readText(r.notesPreset);
+  const ResumeOffer o = findResumableExport(h.p);
+  REQUIRE(o.available);
+  t.cfgExport({{"progressJson", true}});
+  ExportRequest rr;
+  REQUIRE(buildResumeRequest(h.p, o, rr, &err));
+  CHECK(rr.notesPreset == r.notesPreset);
+  CHECK(readText(rr.notesPreset) == saved);
+  // If the saved file is gone it is rewritten from the rig (which hashes to the run's key): the same bytes.
+  fs::remove(r.notesPreset);
+  ExportRequest rr2;
+  REQUIRE(buildResumeRequest(h.p, o, rr2, &err));
+  CHECK(rr2.notesPreset == r.notesPreset);
+  CHECK(readText(rr2.notesPreset) == saved);
+  REQUIRE(h.p.jobs().startExport(rr2, &err));
+  REQUIRE(h.p.jobs().waitFinished(JobKind::Export));
+  CHECK(after(argvOf(run), "--notes-preset") == r.notesPreset.string());
+  CHECK(after(argvOf(run), "--resume") == run.string());
+
+  // KEEP COMP and WITH CAB: no notes preset, no flag.
+  s.compChoice = "keep";
+  ExportRequest keep;
+  REQUIRE(buildExportRequest(h.p, s, planExport(h.p, s), keep, &err));
+  CHECK(keep.notesPreset.empty());
+  s.compChoice = "drop";
+  s.mode = "withcab";
+  const ExportPlan wcPlan = planExport(h.p, s);
+  CHECK_FALSE(wcPlan.dropComp);
+  ExportRequest wc;
+  REQUIRE(buildExportRequest(h.p, s, wcPlan, wc, &err));
+  CHECK(wc.notesPreset.empty());
 }
 
 TEST_CASE("export: no allocations or locks on the audio thread while an export runs and the panel's glue is polled", "[export][rt]") {
@@ -3008,7 +3096,7 @@ TEST_CASE("export: no allocations or locks on the audio thread while an export r
       (void)findResumableExport(h.p);
       (void)h.p.jobs().snapshot(JobKind::Export);
       (void)h.p.jobs().checkTools(JobKind::Export);
-      (void)h.p.matchSettings().exportWallSeconds("standard");
+      (void)h.p.matchSettings().exportWallSeconds("a1", "standard");
       (void)h.p.exportSettings();
       (void)plan;
       ++polls;
@@ -3046,4 +3134,277 @@ TEST_CASE("export: no allocations or locks on the audio thread while an export r
   CHECK(h.allocs == 0);
   CHECK(h.locks == 0);
   CHECK_FALSE(h.nonFinite);
+}
+
+// ---- v0.6 Task C: the model type (arch + size) reaches sawblade-export ---------------------------------------------------------
+
+TEST_CASE("runner: --arch and --size for each of the five model choices; the files, the validation and the wall time follow", "[match][runner][export][a2]") {
+  using namespace sawblade::plugin;
+  struct Choice {
+    const char *arch, *size;
+  };
+  const Choice choices[] = {{"a2", "full"}, {"a2", "lite"}, {"a1", "feather"}, {"a1", "lite"}, {"a1", "standard"}};
+  for (const Choice& c : choices) {
+    INFO(c.arch << "/" << c.size);
+    FakeTools t;
+    t.cfgExport({{"progressJson", true}});
+    JobRunner runner(t.settings, t.jobs);
+    ExportRequest er;
+    er.preset = t.presetSrc;
+    er.mode = "nocab";
+    er.arch = c.arch;
+    er.size = c.size;
+    er.exportsRoot = t.root / "exports";
+    std::string err;
+    REQUIRE(runner.startExport(er, &err));
+    REQUIRE(runner.waitFinished(JobKind::Export));
+    const JobSnapshot s = runner.snapshot(JobKind::Export);
+    REQUIRE(s.state == JobState::Succeeded);
+    const auto argv = argvOf(s.outDir);
+    CHECK(after(argv, "--arch") == c.arch);
+    CHECK(after(argv, "--size") == c.size);
+    CHECK(after(argv, "--mode") == "nocab");
+    CHECK(s.exportArch == c.arch);
+    CHECK(s.exportSize == c.size);
+    CHECK(readJson(s.dir / "job.json")["exportArch"] == c.arch);
+
+    // The progress JSON carries `arch`; the runner tolerates it (and its absence: the older tests have none).
+    CHECK(s.result.arch == c.arch);
+    CHECK(s.result.size == c.size);
+    const bool a2 = std::string(c.arch) == "a2";
+    // decision 18: the A2 primary file is the container
+    const std::string primary = a2 ? std::string("seed-nocab-") + c.size + ".a2.nam" : std::string("seed-nocab-") + c.size + ".nam";
+    CHECK(s.result.namFile == primary);
+    CHECK(fs::exists(s.outDir / primary));
+    CHECK(s.result.otherFiles.size() == (a2 ? 2u : 0u));
+    for (const auto& f : s.result.otherFiles) CHECK(fs::exists(s.outDir / f.name));
+    // Acceptance: A1 judges only standard; A2 judges the primary file's entry (validation.<size>).
+    CHECK(s.accepted == (a2 || std::string(c.size) == "standard" ? "met" : "not judged"));
+    // The sidecar sits next to the models as <base>.sawblade.json, without the A2 file-name suffix.
+    CHECK(s.sidecar == s.outDir / (std::string("seed-nocab-") + c.size + ".sawblade.json"));
+    // The wall time is kept under arch + size: only that key moved.
+    for (const Choice& o : choices) {
+      const bool same = std::string(o.arch) == c.arch && std::string(o.size) == c.size;
+      CHECK((t.settings.exportWallSeconds(o.arch, o.size) > 0.0) == same);
+    }
+  }
+}
+
+TEST_CASE("runner: an A2 export whose primary file is NOT MET still succeeds, with its files and sidecar", "[match][runner][export][a2]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"exit", 2}});  // exit 2 = acceptance NOT MET: the report is written, validation.full says so
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.arch = "a2";
+  er.size = "full";
+  er.exportsRoot = t.root / "exports";
+  std::string err;
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const JobSnapshot s = runner.snapshot(JobKind::Export);
+  REQUIRE(s.state == JobState::Succeeded);
+  CHECK(s.accepted == "NOT MET");
+  CHECK(s.result.status == "NOT MET");
+  CHECK(fs::exists(s.sidecar));
+  CHECK(s.result.namFile == "seed-nocab-full.a2.nam");  // the container is primary (decision 18)
+  REQUIRE(s.result.otherFiles.size() == 2);
+  CHECK(s.result.otherFiles[0].role == "full");
+  CHECK(s.result.otherFiles[0].verdict == "NOT MET");
+  for (const auto& f : s.result.otherFiles) CHECK(fs::exists(s.outDir / f.name));
+  CHECK(s.result.otherFiles[1].role == "lite");
+  CHECK(s.result.otherFiles[1].verdict == "NOT MET");
+}
+
+TEST_CASE("runner: a reamp-pair export passes --reamp-pair <file> --no-train and no training flags, and reads the pair from the report", "[match][runner][export][reamp]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.arch = "a2";
+  er.size = "full";
+  er.exportsRoot = t.root / "exports";
+  er.di = t.di;          // a validation DI is not passed for a pair-only run
+  er.diBuiltin = false;
+  std::string err;
+
+  er.reampInput = t.root / "missing_input.wav";  // a file that is not there is refused before anything starts
+  CHECK_FALSE(runner.startExport(er, &err));
+  CHECK(err.find("NAM standard input file was not found") != std::string::npos);
+
+  er.reampInput = t.root / "nam_input.wav";
+  sawblade::writeWavFloat32(er.reampInput, 48000.0, std::vector<float>(480, 0.1f));
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const JobSnapshot s = runner.snapshot(JobKind::Export);
+  REQUIRE(s.state == JobState::Succeeded);
+  const auto argv = argvOf(s.outDir);
+  CHECK(after(argv, "--reamp-pair") == er.reampInput.string());
+  CHECK(has(argv, "--no-train"));
+  CHECK(after(argv, "--arch") == "a2");
+  CHECK_FALSE(has(argv, "--require-accept"));
+  CHECK_FALSE(has(argv, "--di"));
+  CHECK_FALSE(has(argv, "--device"));
+  CHECK(s.reampPair);
+  CHECK(readJson(s.dir / "job.json")["reampPair"] == true);
+  CHECK(s.result.namFile.empty());
+  CHECK(s.result.reampInput == "seed-nocab-full.reamp_input.wav");
+  CHECK(s.result.reampOutput == "seed-nocab-full.reamp_output.wav");
+  CHECK(fs::exists(s.outDir / s.result.reampInput));
+  CHECK(fs::exists(s.outDir / s.result.reampOutput));
+  CHECK(s.accepted == "not judged");
+  CHECK(t.settings.exportWallSeconds("a2", "full") == 0.0);  // nothing was trained: no wall time recorded
+
+  // A normal export after it passes neither flag.
+  er.reampInput.clear();
+  er.di.reset();
+  er.diBuiltin = true;
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const auto argv2 = argvOf(runner.snapshot(JobKind::Export).outDir);
+  CHECK_FALSE(has(argv2, "--reamp-pair"));
+  CHECK_FALSE(has(argv2, "--no-train"));
+  CHECK(has(argv2, "--require-accept"));
+  CHECK_FALSE(runner.snapshot(JobKind::Export).reampPair);
+}
+
+TEST_CASE("runner: --nam-input <file> or --signal sawblade for model training; neither on a resume; a missing file is refused", "[match][runner][export][signal]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.exportsRoot = t.root / "exports";
+  std::string err;
+  er.namInput = t.root / "v3_0_0.wav";
+  CHECK_FALSE(runner.startExport(er, &err));
+  CHECK(err.find("NAM standard input file was not found") != std::string::npos);
+  sawblade::writeWavFloat32(er.namInput, 48000.0, std::vector<float>(480, 0.1f));
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  auto s = runner.snapshot(JobKind::Export);
+  auto argv = argvOf(s.outDir);
+  CHECK(after(argv, "--nam-input") == er.namInput.string());
+  CHECK_FALSE(has(argv, "--signal"));
+  CHECK(s.result.trainingSignal == "NAM standard input v3.0.0 (fake)");  // the report's object, read by its label
+
+  er.namInput.clear();
+  er.sawbladeSignal = true;
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  s = runner.snapshot(JobKind::Export);
+  argv = argvOf(s.outDir);
+  CHECK(after(argv, "--signal") == "sawblade");
+  CHECK_FALSE(has(argv, "--nam-input"));
+  CHECK(s.result.trainingSignal == "Sawblade test signal (not the standard NAM signal)");
+
+  er.sawbladeSignal = false;  // neither: the runner adds nothing (the panel never gets here; the exporter would say so)
+  REQUIRE(runner.startExport(er, &err));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  argv = argvOf(runner.snapshot(JobKind::Export).outDir);
+  CHECK_FALSE(has(argv, "--signal"));
+  CHECK_FALSE(has(argv, "--nam-input"));
+}
+
+TEST_CASE("runner: a resume passes no signal flag (even if the request names one) and succeeds under requireSignal", "[match][runner][export][signal]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"requireSignal", true}, {"gates", json::array({"g1"})}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.mode = "nocab";
+  er.exportsRoot = t.root / "exports";
+  er.namInput = t.root / "v3_0_0.wav";
+  sawblade::writeWavFloat32(er.namInput, 48000.0, std::vector<float>(480, 0.1f));
+  REQUIRE(runner.startExport(er));
+  REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.epoch == 3; }));
+  const fs::path run = runner.snapshot(JobKind::Export).outDir;
+  runner.cancel(JobKind::Export);
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  REQUIRE(runner.snapshot(JobKind::Export).state == JobState::Cancelled);
+
+  t.cfgExport({{"progressJson", true}, {"requireSignal", true}});
+  ExportRequest rr;
+  rr.preset = t.presetSrc;
+  rr.mode = "nocab";
+  rr.resumeDir = run;
+  rr.exportsRoot = t.root / "exports";
+  rr.sawbladeSignal = true;  // the runner passes no signal flag on a resume, whatever the request says (the run keeps its own)
+  REQUIRE(runner.startExport(rr));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  auto s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Succeeded);  // the runner drops the flag on a resume
+  CHECK_FALSE(has(argvOf(run), "--signal"));
+  CHECK_FALSE(has(argvOf(run), "--nam-input"));
+  CHECK(has(argvOf(run), "--resume"));
+}
+
+TEST_CASE("runner: an arch / size pair the exporter refuses fails the job with its message", "[match][runner][export][a2]") {
+  using namespace sawblade::plugin;
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}});
+  JobRunner runner(t.settings, t.jobs);
+  ExportRequest er;
+  er.preset = t.presetSrc;
+  er.arch = "a2";
+  er.size = "standard";  // an A1 size under A2
+  er.exportsRoot = t.root / "exports";
+  REQUIRE(runner.startExport(er));
+  REQUIRE(runner.waitFinished(JobKind::Export));
+  const JobSnapshot s = runner.snapshot(JobKind::Export);
+  CHECK(s.state == JobState::Failed);
+  CHECK(s.exitCode == 64);
+  CHECK(s.message.find("--size standard is not valid for --arch a2") != std::string::npos);
+}
+
+TEST_CASE("runner: progress JSON with an arch field parses; a job.json written before A2 reads as A1", "[match][runner][export][a2]") {
+  using namespace sawblade::plugin;
+  JobProgress p;
+  REQUIRE(parseProgressJson(R"({"stage":"train","fraction":0.4,"epoch":3,"epochs":10,"arch":"a2","bestEsr":0.01,"outDir":"/x","unknownNewField":[1,2]})", p));
+  CHECK(p.arch == "a2");
+  CHECK(p.epoch == 3);
+  JobProgress q;
+  REQUIRE(parseProgressJson(R"({"stage":"train","fraction":0.4,"epoch":3,"epochs":10})", q));
+  CHECK(q.arch.empty());
+  JobProgress r;
+  REQUIRE(parseProgressJson(R"({"stage":"train","arch":7})", r));  // wrong-typed: ignored
+  CHECK(r.arch.empty());
+
+  // A cancelled A2 run is resumed with its own arch; an old job.json (no exportArch) resumes as A1.
+  FakeTools t;
+  t.cfgExport({{"progressJson", true}, {"gates", json::array({"g1"})}});
+  fs::path run;
+  {
+    JobRunner runner(t.settings, t.jobs);
+    ExportRequest er;
+    er.preset = t.presetSrc;
+    er.arch = "a2";
+    er.size = "lite";
+    er.exportsRoot = t.root / "exports";
+    REQUIRE(runner.startExport(er));
+    REQUIRE(waitUntil([&] { return runner.snapshot(JobKind::Export).progress.epoch == 3; }));
+    CHECK(runner.snapshot(JobKind::Export).progress.arch == "a2");
+    run = runner.snapshot(JobKind::Export).outDir;
+    runner.cancel(JobKind::Export);
+    REQUIRE(runner.waitFinished(JobKind::Export));
+  }
+  JobRunner again(t.settings, t.jobs);
+  again.attachExisting();
+  JobSnapshot a = again.snapshot(JobKind::Export);
+  CHECK(a.exportArch == "a2");
+  CHECK(a.exportSize == "lite");
+  json jj = readJson(a.dir / "job.json");
+  jj.erase("exportArch");
+  std::ofstream(a.dir / "job.json") << jj.dump(2);
+  JobRunner older(t.settings, t.jobs);
+  older.attachExisting();
+  CHECK(older.snapshot(JobKind::Export).exportArch == "a1");
 }

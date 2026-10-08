@@ -165,7 +165,7 @@ ChainResources loadResources(const Preset& p, double sr, CaptureCache* cache) {
   } else if (p.cab.mode == CabMode::IrMix) {
     const auto a = loadCabIr(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings, cache);
     const auto b = loadCabIr(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings, cache);
-    res.cabShared = makeConvolver(mixIrs(a->samples, b->samples, p.cab.mix));
+    res.cabShared = makeConvolver(mixIrs(a->samples, b->samples, p.cab.mix, p.cab.offsetSamplesB, p.cab.invertB));
   } else {
     res.cabA = loadCab(p.cab.irA, "cab.irA", sr, p.cab.normalize, res.warnings, cache);
     res.cabB = loadCab(p.cab.irB, "cab.irB", sr, p.cab.normalize, res.warnings, cache);

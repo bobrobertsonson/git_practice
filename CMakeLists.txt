@@ -57,6 +57,14 @@ include(cmake/Dependencies.cmake)
 add_subdirectory(core)
 add_subdirectory(cli)
 
+# Stock-NAM-core load check (links only nam_core). Built with the tests, or alone for the python-export CI job.
+option(SAWBLADE_BUILD_NAM_LOAD_CHECK "Build tests/tools/nam_load_check without the rest of the tests" OFF)
+if(SAWBLADE_BUILD_TESTS OR SAWBLADE_BUILD_NAM_LOAD_CHECK)
+  add_executable(nam_load_check tests/tools/nam_load_check.cpp)
+  # WHOLE_ARCHIVE: the core registers its architectures from static initialisers in the library.
+  target_link_libraries(nam_load_check PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" sawblade_warnings)
+endif()
+
 if(SAWBLADE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)

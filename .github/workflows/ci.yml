@@ -64,6 +64,11 @@ jobs:
           SAWBLADE_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: ctest --test-dir build --output-on-failure
 
+      - name: A2 CPU benchmark table
+        run: |
+          ctest --test-dir build -R '^a2_bench$' -V | tee a2_bench.log
+          { echo '### A2 CPU benchmark (${{ github.job }})'; echo '```'; sed -n '/^[0-9]*: A2 CPU benchmark/,/Rig real-time check/p' a2_bench.log | sed 's/^[0-9]*: //'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -137,6 +142,11 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: A2 CPU benchmark table
+        run: |
+          ctest --test-dir build -R '^a2_bench$' -V | tee a2_bench.log
+          { echo '### A2 CPU benchmark (${{ github.job }})'; echo '```'; sed -n '/^[0-9]*: A2 CPU benchmark/,/Rig real-time check/p' a2_bench.log | sed 's/^[0-9]*: //'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: ccache stats
         if: always()
         run: ccache -s
@@ -181,6 +191,11 @@ jobs:
         env:
           SAWBLADE_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: ctest --test-dir build --output-on-failure
+
+      - name: A2 CPU benchmark table
+        run: |
+          ctest --test-dir build -R '^a2_bench$' -V | tee a2_bench.log
+          { echo '### A2 CPU benchmark (${{ github.job }})'; echo '```'; sed -n '/^[0-9]*: A2 CPU benchmark/,/Rig real-time check/p' a2_bench.log | sed 's/^[0-9]*: //'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload screenshots
         if: always()
@@ -285,6 +300,77 @@ jobs:
       # Committed level-match trims are fresh (no captures needed: presets that need TONE3000 captures are skipped). ~10 s.
       - name: compute_trims --check
         run: match/.venv/bin/python scripts/compute_trims.py --check --tonerender build/cli/tonerender
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
+
+  # The main `python` job installs only match[dev] (no trainer).  This job installs match[dev,export] with the pinned
+  # trainer (neural-amp-modeler 0.13.0, CPU torch) and runs only what needs it: export / A2 tests, the A1 preset pins and
+  # the A2 fixture generator check.  nam-dependent tests use pytest.importorskip("nam"), so they run here and skip there.
+  python-export:
+    name: python-export
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            match/pyproject.toml
+            match/constraints-export.txt
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build ccache
+
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .deps
+          key: deps-${{ runner.os }}-python-export-${{ hashFiles('cmake/Dependencies.cmake') }}
+
+      - name: Cache ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-python-export-${{ github.run_id }}
+          restore-keys: ccache-${{ runner.os }}-python-export-
+
+      # CPU-only torch (torch 2.5.1 is pinned by constraints-export.txt; the CPU index avoids the multi-GB CUDA wheels).
+      - name: Install Python package with the trainer
+        run: |
+          python -m venv match/.venv
+          match/.venv/bin/pip install -e 'match[dev,export]' -c match/constraints-export.txt \
+            --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DSAWBLADE_BUILD_PYTHON=ON -DSAWBLADE_BUILD_TESTS=OFF \
+            -DSAWBLADE_BUILD_NAM_LOAD_CHECK=ON \
+            -DPython_EXECUTABLE=$PWD/match/.venv/bin/python \
+            -DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build --parallel   # includes nam_load_check (links only NeuralAmpModelerCore)
+
+      - name: A2 fixtures are reproducible
+        run: match/.venv/bin/python tests/fixtures/a2/generate.py --check
+
+      - name: pytest (export / A2 only)
+        env:
+          SAWBLADE_CORE_DIR: ${{ github.workspace }}/build/python
+          SAWBLADE_TONERENDER: ${{ github.workspace }}/build/cli/tonerender
+          SAWBLADE_NAM_LOAD_CHECK: ${{ github.workspace }}/build/nam_load_check
+          SAWBLADE_TEST_TRAIN: "1"          # real 1-2 epoch trainings (tiny budget): A1 smoke + resume, A2 end to end
+        run: match/.venv/bin/pytest match/tests/test_export*.py match/tests/test_a2_*.py match/tests/test_calibrate_device_null.py -rs
 
       - name: ccache stats
         if: always()

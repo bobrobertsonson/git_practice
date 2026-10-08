@@ -125,12 +125,15 @@ struct LevelMatch {
 constexpr double kMaxLevelTrimDb = 18.0;
 enum class BlendLaw { Linear, ConstantLoudness };
 
+constexpr int kMaxIrOffsetSamples = 256;
 enum class CabMode { Shared, PerPath, IrMix };
 struct CabPreset {
   CabMode mode = CabMode::Shared;
   Capture ir;          // shared
   Capture irA, irB;    // perPath and irMix
   double mix = 0.5;    // irMix only: h = (1 - mix) * irA + mix * irB, in [0, 1]
+  int offsetSamplesB = 0;   // irMix only, [-kMaxIrOffsetSamples, +kMaxIrOffsetSamples]: hB shifted right (+) / advanced (-)
+  bool invertB = false;     // irMix only: hB is negated before the sum
   bool enabled = true;
   bool normalize = true;
   bool operator==(const CabPreset&) const = default;

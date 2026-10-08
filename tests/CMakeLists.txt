@@ -35,7 +35,8 @@ add_executable(sawblade_tests
   test_category_cache.cpp
   test_separation_support.cpp
   test_pedals_saw.cpp
-  test_pedals_v3.cpp)
+  test_pedals_v3.cpp
+  test_a2_playback.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)
@@ -59,6 +60,13 @@ if(SAWBLADE_BASH)
   add_test(NAME mac_update_dry_run
     COMMAND ${SAWBLADE_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/test_mac_update.sh
             ${PROJECT_SOURCE_DIR}/scripts/mac_update.sh)
+endif()
+
+# Dry-run check of scripts/run_v04m_validation.sh (fake inputs; nothing runs).
+if(SAWBLADE_BASH)
+  add_test(NAME run_v04m_validation_dry_run
+    COMMAND ${SAWBLADE_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/test_run_v04m_validation.sh
+            ${PROJECT_SOURCE_DIR}/scripts/run_v04m_validation.sh)
 endif()
 
 # Build stamp (v0.1.3 task C): the BuildInfo.h generator follows HEAD without a reconfigure, is a no-op on an
@@ -93,3 +101,25 @@ if(SAWBLADE_WITH_SEPARATOR)
   sawblade_ort_build_rpath(sawblade_separator_tests)
   catch_discover_tests(sawblade_separator_tests TEST_PREFIX "separator: ")
 endif()
+
+# v0.6 Task B: CPU benchmark of A1 / A2 playback and the two-A2-Full rig. Prints a table; fails only if the rig is not
+# real-time (RTF < 0.5, optimised builds only). Plain executable (no Catch2): the table is the output.
+add_executable(a2_bench a2_bench.cpp)
+target_link_libraries(a2_bench PRIVATE sawblade_core sawblade_warnings
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)
+target_compile_definitions(a2_bench PRIVATE SAWBLADE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_test(NAME a2_bench COMMAND a2_bench)
+set_tests_properties(a2_bench PROPERTIES LABELS "bench" TIMEOUT 300 RUN_SERIAL TRUE)
+
+# v0.6 decision 18: every A2/A1 fixture loads and plays in a stock NAM core (nam_load_check links only nam_core).
+add_test(NAME nam_load_check_fixtures
+  COMMAND nam_load_check
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a2_full.nam
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a2_lite.nam
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a2_container.nam
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/a2/a1_standard.nam)
+
+# A file that is not a NAM model must fail the check (WILL_FAIL): written at configure time into the build dir.
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/garbage.nam "this is not a NAM file\n")
+add_test(NAME nam_load_check_rejects_garbage COMMAND nam_load_check ${CMAKE_CURRENT_BINARY_DIR}/garbage.nam)
+set_tests_properties(nam_load_check_rejects_garbage PROPERTIES WILL_FAIL TRUE)

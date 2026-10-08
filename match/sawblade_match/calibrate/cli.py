@@ -227,6 +227,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args and args[0] == "pedal-accuracy":   # v0.4a: accuracy report from the per-pedal fits JSON files
         from . import pedal_accuracy
         return pedal_accuracy.main(args[1:])
+    if args and args[0] == "device-null":   # v0.6 Task D: hardware loader (Anagram) vs the plugin render
+        from . import device_null
+        return device_null.main(args[1:])
     a = build_parser().parse_args(argv)
     try:
         return run(a)

@@ -1,0 +1,140 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Rig bench: two A2 Full amps + modeled pedals",
+  "notes": "CPU benchmark rig (tests/a2_bench.cpp): the plugin's two-path graph with two A2 Full amps (synthetic fixture weights, same file in both paths) and modeled pedals, gate, path EQs, shared cab IR (path replaced at run time by a generated IR), post EQ, bus comp. Not a tone.",
+  "gate": {
+    "enabled": true,
+    "thresholdDb": -55.0,
+    "hysteresisDb": 6.0,
+    "attackMs": 0.5,
+    "holdMs": 20.0,
+    "releaseMs": 60.0,
+    "rangeDb": -90.0
+  },
+  "paths": {
+    "a": {
+      "role": "saw",
+      "preEq": [
+        {
+          "type": "highPass",
+          "freq": 90,
+          "q": 0.707
+        }
+      ],
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "level": 2,
+            "low": 10,
+            "high": 10,
+            "distortion": 10
+          }
+        },
+        {
+          "id": "a2",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "a2_full.nam"
+          },
+          "normalizeLoudness": true
+        }
+      ],
+      "eq": [
+        {
+          "type": "peak",
+          "freq": 120,
+          "gainDb": -3.0,
+          "q": 1.0
+        }
+      ]
+    },
+    "b": {
+      "role": "body",
+      "preEq": [
+        {
+          "type": "highPass",
+          "freq": 70,
+          "q": 0.707
+        }
+      ],
+      "blocks": [
+        {
+          "id": "b1",
+          "type": "pedal.ts",
+          "slot": "boost",
+          "modelVersion": 1,
+          "params": {
+            "drive": 0,
+            "tone": 5,
+            "level": 8
+          }
+        },
+        {
+          "id": "b2",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "a2_full.nam"
+          },
+          "normalizeLoudness": true
+        }
+      ],
+      "eq": [
+        {
+          "type": "peak",
+          "freq": 1600,
+          "gainDb": -1.6,
+          "q": 1.0
+        }
+      ]
+    }
+  },
+  "align": {
+    "mode": "auto",
+    "maxLagMs": 5.0
+  },
+  "blend": 0.6,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "rig_cab_ir.wav"
+    },
+    "enabled": true
+  },
+  "postEq": [
+    {
+      "type": "highPass",
+      "freq": 75,
+      "q": 0.707
+    },
+    {
+      "type": "peak",
+      "freq": 1300,
+      "gainDb": 1.5,
+      "q": 1.0
+    },
+    {
+      "type": "lowPass",
+      "freq": 9000,
+      "q": 0.707
+    }
+  ],
+  "busComp": {
+    "enabled": true,
+    "thresholdDb": -14.0,
+    "ratio": 2.0,
+    "kneeDb": 6.0,
+    "attackMs": 15.0,
+    "releaseMs": 80.0,
+    "makeupDb": 1.0
+  },
+  "output": {
+    "gainDb": -3.0
+  }
+}
