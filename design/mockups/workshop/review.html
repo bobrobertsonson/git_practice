@@ -32,6 +32,8 @@ figcaption{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}
 .what{color:var(--dim);flex-basis:100%;max-width:90ch;margin:0}
 figure a.shot{display:block;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#000}
 figure a.shot:focus-visible{outline:2px solid var(--blade);outline-offset:2px}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:12px}
+.v{display:grid;gap:6px;min-width:0}
 figure img{display:block;width:100%;height:auto;max-width:100%}
 .tip{font:600 12px/1.3 var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 footer{color:var(--dim);font-size:13px;max-width:80ch}
@@ -42,21 +44,20 @@ footer{color:var(--dim);font-size:13px;max-width:80ch}
   <span class="plate">Sawblade · Workshop look</span>
   <p class="lede">Ten mockups of the whole plugin in the <b>worn metal and sawdust</b> look, for you to pick from and mark up.
   Every screen is 1280 × 800, rendered from scripts in the repo, so any change is a re-render. All text passes WCAG AA
-  (lowest 5.3:1, body text 13.7:1). No texture sits behind text, and every state has a word or shape as well as a colour.
+  in both wear levels (lowest 5.3:1, body text 13.7:1). No texture sits behind text, and every state has a word or shape as well as a colour.
   Tap a screen to open it full size. Comment on anything.</p>
 </header>
 
 <section class="decide" aria-labelledby="d">
-  <h2 id="d">Your calls</h2>
+  <h2 id="d">What changed from your notes</h2>
   <ol>
-    <li><b>TS-style pedal name:</b> it shows as TS-STYLE until you choose (TUBESQUELER or a generic name).</li>
-    <li><b>Readout style:</b> amber 7-segment LCDs for values and an orange nixie-style display for BLEND. Keep both, or one style everywhere?</li>
-    <li><b>Wear level:</b> panel edges have chipped paint, rust specks and sawdust on the bench. Keep it, or go heavier or lighter?</li>
-    <li><b>Section lettering:</b> stencil caps stamped into aluminium plates, with Black Ops One for big titles (MATCH, NAM FORGER, WOODSHED). Keep or swap?</li>
-    <li><b>Top bar:</b> a brushed-aluminium rail with A/B as two small footswitches. Is that right, or would you rather have plain buttons?</li>
-    <li><b>WOODSHED:</b> a steel panel docked over the bottom of the rig. Or should it be its own screen, or the cassette-deck render?</li>
-    <li><b>Preset browser legacy hint:</b> it shows above the info panel with USE CALIBRATED LEVELS / KEEP AS SAVED. Is that placement right?</li>
+    <li>The TS-style pedal is now <b>CHISEL</b> everywhere.</li>
+    <li>Every screen comes in two wear levels: <b>subtle</b> on the left and <b>strong</b> on the right, with heavier chips, rust, scratches and sawdust. Text sits on clean wells in both, and both pass AA.</li>
+    <li><b>WOODSHED</b> is built around the cassette-deck render. Controls the deck doesn't have sit on a steel side panel.</li>
+    <li>Settings shows the Scarlett 4i4 instrument presets (3rd Gen INST and INST + PAD, 4th Gen INST) and the auto input-channel decision. OUT OF TRUE uses the new sentence.</li>
+    <li>Readouts, lettering, the A/B footswitches and the legacy-levels hint stay as they were.</li>
   </ol>
+  <p class="lede"><b>Your call:</b> subtle or strong, for the whole plugin or per screen.</p>
 </section>
 
 <nav aria-label="Screens">
@@ -67,44 +68,44 @@ footer{color:var(--dim);font-size:13px;max-width:80ch}
 
 <figure id="s00"><figcaption><span class="no">00</span><span class="name">Style sheet</span>
 <p class="what">Palette with measured contrast, materials (worn steel, brushed aluminium, bench wood, sawdust, riveted plate), type, knobs, footswitches, LEDs, toggles, selectors, buttons, LCD and nixie readouts, badges, frames.</p></figcaption>
-<a class="shot" href="png/00_style_sheet.png"><img src="png/00_style_sheet.png" alt="Style sheet: palette, materials, type and control kit" width="1280" height="800"></a></figure>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/00_style_sheet.png"><img src="png/00_style_sheet.png" alt="Style sheet: palette, materials, type and control kit, subtle wear" width="1280" height="800"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/00_style_sheet.png"><img src="png_strong/00_style_sheet.png" alt="Style sheet: palette, materials, type and control kit, strong wear" width="1280" height="800"></a></div></div></figure>
 
 <figure id="s01"><figcaption><span class="no">01</span><span class="name">Main rig</span>
-<p class="what">BLADE and BODY amp heads, the cab and the pedalboard with THE SAW MILL (selected) and TS-STYLE. The inspector has the circuit selector (BUZZSAW / TAR PIT / SERRATED / HATCHET), the BLEND readout and GATE, POST EQ, VISE and OUTPUT with value readouts.</p></figcaption>
-<a class="shot" href="png/01_main_rig.png"><img src="png/01_main_rig.png" alt="Main rig screen" width="1280" height="800" loading="lazy"></a></figure>
+<p class="what">BLADE and BODY amp heads, the cab and the pedalboard with THE SAW MILL (selected) and CHISEL. The inspector has the circuit selector (BUZZSAW / TAR PIT / SERRATED / HATCHET), the BLEND readout and GATE, POST EQ, VISE and OUTPUT with value readouts.</p></figcaption>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/01_main_rig.png"><img src="png/01_main_rig.png" alt="Main rig screen, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/01_main_rig.png"><img src="png_strong/01_main_rig.png" alt="Main rig screen, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
 <figure id="s02"><figcaption><span class="no">02</span><span class="name">Top bar</span>
 <p class="what">Five states: default, A/B with slot names, uncalibrated chip, OUT OF TRUE chip, and WOODSHED open with MATCH running. Two 2× zooms below.</p></figcaption>
-<a class="shot" href="png/02_top_bar.png"><img src="png/02_top_bar.png" alt="Top bar states and zooms" width="1280" height="800" loading="lazy"></a></figure>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/02_top_bar.png"><img src="png/02_top_bar.png" alt="Top bar states and zooms, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/02_top_bar.png"><img src="png_strong/02_top_bar.png" alt="Top bar states and zooms, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
 <figure id="s03"><figcaption><span class="no">03</span><span class="name">Settings · Input calibration</span>
-<p class="what">Before and after status, the 4i4 3rd gen device presets, the dBu entry with readout, input channel AUTO / L / R / MIX, the CALIBRATED LEVELS beta toggle and the learned gate floor.</p></figcaption>
-<a class="shot" href="png/03_settings_calibration.png"><img src="png/03_settings_calibration.png" alt="Settings, input calibration section" width="1280" height="800" loading="lazy"></a></figure>
+<p class="what">Before and after status, the Scarlett 4i4 instrument presets, the auto input-channel caption, the dBu entry with readout, input channel AUTO / L / R / MIX, the CALIBRATED LEVELS beta toggle and the learned gate floor.</p></figcaption>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/03_settings_calibration.png"><img src="png/03_settings_calibration.png" alt="Settings, input calibration section, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/03_settings_calibration.png"><img src="png_strong/03_settings_calibration.png" alt="Settings, input calibration section, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
 <figure id="s04"><figcaption><span class="no">04</span><span class="name">Preset browser</span>
 <p class="what">Banks, categories and the preset list. The info panel shows each capture's creator and licence. A legacy preset is selected, showing the LEGACY LEVELS hint with USE CALIBRATED LEVELS.</p></figcaption>
-<a class="shot" href="png/04_preset_browser.png"><img src="png/04_preset_browser.png" alt="Preset browser with legacy levels hint" width="1280" height="800" loading="lazy"></a></figure>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/04_preset_browser.png"><img src="png/04_preset_browser.png" alt="Preset browser with legacy levels hint, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/04_preset_browser.png"><img src="png_strong/04_preset_browser.png" alt="Preset browser with legacy levels hint, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
 <figure id="s05"><figcaption><span class="no">05</span><span class="name">Match</span>
 <p class="what">Reference song, your DI takes, auto-refine, refined and preview results with audition and apply, and the spectrum (reference solid, match dashed).</p></figcaption>
-<a class="shot" href="png/05_match.png"><img src="png/05_match.png" alt="Match screen with results" width="1280" height="800" loading="lazy"></a></figure>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/05_match.png"><img src="png/05_match.png" alt="Match screen with results, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/05_match.png"><img src="png_strong/05_match.png" alt="Match screen with results, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
 <figure id="s06"><figcaption><span class="no">06</span><span class="name">NAM Forger</span>
 <p class="what">Export modes, size, validation DI, the VISE choice, what goes into the model, credits with the non-commercial badge, train and resume, export notes, and the training strip.</p></figcaption>
-<a class="shot" href="png/06_nam_forger.png"><img src="png/06_nam_forger.png" alt="NAM Forger export screen" width="1280" height="800" loading="lazy"></a></figure>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/06_nam_forger.png"><img src="png/06_nam_forger.png" alt="NAM Forger export screen, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/06_nam_forger.png"><img src="png_strong/06_nam_forger.png" alt="NAM Forger export screen, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
 <figure id="s07"><figcaption><span class="no">07</span><span class="name">Woodshed</span>
-<p class="what">The play-along panel docked over the rig: transport, position, loop A/B, count-in, guitar stem MUTE / GHOST / FULL, backing level, offset, sync to host and the record band.</p></figcaption>
-<a class="shot" href="png/07_woodshed.png"><img src="png/07_woodshed.png" alt="Woodshed play-along panel over the rig" width="1280" height="800" loading="lazy"></a></figure>
+<p class="what">The cassette deck is the play-along panel: counter, loop A/B, count-in, backing fader and guitar stem MUTE / GHOST on its own controls. Song, takes, offset, sync to host and the record band sit on a steel side panel.</p></figcaption>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/07_woodshed.png"><img src="png/07_woodshed.png" alt="Woodshed play-along panel over the rig, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/07_woodshed.png"><img src="png_strong/07_woodshed.png" alt="Woodshed play-along panel over the rig, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
 <figure id="s08"><figcaption><span class="no">08</span><span class="name">Rig editor</span>
-<p class="what">Topology selector, tabs, and the BLADE and BODY lanes of block cards. The SAW HEAD capture card carries an UNCAL badge and TS-STYLE is shown bypassed.</p></figcaption>
-<a class="shot" href="png/08_rig_editor.png"><img src="png/08_rig_editor.png" alt="Rig editor chain tab" width="1280" height="800" loading="lazy"></a></figure>
+<p class="what">Topology selector, tabs, and the BLADE and BODY lanes of block cards. The SAW HEAD capture card carries an UNCAL badge and CHISEL is shown bypassed.</p></figcaption>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/08_rig_editor.png"><img src="png/08_rig_editor.png" alt="Rig editor chain tab, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/08_rig_editor.png"><img src="png_strong/08_rig_editor.png" alt="Rig editor chain tab, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
 <figure id="s09"><figcaption><span class="no">09</span><span class="name">Notices</span>
 <p class="what">OUT OF TRUE and uncalibrated banners and chips, the UNCAL badge in three places, confirm and error dialogs, and a toast.</p></figcaption>
-<a class="shot" href="png/09_notices.png"><img src="png/09_notices.png" alt="Notices: banners, badges, dialogs, toast" width="1280" height="800" loading="lazy"></a></figure>
+<div class="pair"><div class="v"><span class="tip">Subtle</span><a class="shot" href="png/09_notices.png"><img src="png/09_notices.png" alt="Notices: banners, badges, dialogs, toast, subtle wear" width="1280" height="800" loading="lazy"></a></div><div class="v"><span class="tip">Strong</span><a class="shot" href="png_strong/09_notices.png"><img src="png_strong/09_notices.png" alt="Notices: banners, badges, dialogs, toast, strong wear" width="1280" height="800" loading="lazy"></a></div></div></figure>
 
-<footer>Mockups for reference only: nothing is built until you approve a set. Amp and pedal faces still show their old baked names
+<footer>Mockups for reference only: nothing is built until you approve a set. Amp, pedal and deck renders still show their old baked names
 under the new nameplates; they get re-rendered with the names you pick. Capture titles, creators and file names are made up.</footer>
 </div>
