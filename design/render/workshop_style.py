@@ -302,7 +302,29 @@ def _dev(r):
     return tuple(int(round(v * S)) for v in r)
 
 
+WEAR_MODES = ('subtle', 'strong')
+_WEAR = 'subtle'
+
+
+def set_wear(mode):
+    """Select the material wear: 'subtle' (the approved look, default) or 'strong' (heavier chips, rust, scratches,
+    grime, more sawdust, scuffed aluminium).  Texture only: wells stay flat.  Strong uses its own seeds (name + ':strong')
+    so both sets are stable; caches are dropped when the mode changes."""
+    global _WEAR
+    if mode not in WEAR_MODES:
+        raise ValueError('wear must be one of %s, got %r' % (WEAR_MODES, mode))
+    if mode != _WEAR:
+        _WEAR = mode
+        _tex_cache.clear()
+
+
+def get_wear():
+    return _WEAR
+
+
 def _rng(name):
+    if _WEAR == 'strong':
+        name = name + ':strong'
     return np.random.default_rng(zlib.crc32(name.encode('utf-8')))
 
 
@@ -806,15 +828,18 @@ def steel_tex(w, h, key='steel', wear=1.0):
     if ck in _tex_cache:
         return _tex_cache[ck]
     rng = _rng('steel:' + key)
+    strong = _WEAR == 'strong'
+    if strong:
+        wear = wear * 1.8
     W, H = int(round(w * S)), int(round(h * S))
     base = np.array(PAL['steel'], np.float32)
-    lum = 1.0 + 0.055 * _fbm(rng, H, W, [160 * S // 2, 40 * S // 2, 9], [0.7, 0.5, 0.35])
+    lum = 1.0 + (0.095 if strong else 0.055) * _fbm(rng, H, W, [160 * S // 2, 40 * S // 2, 9], [0.7, 0.5, 0.35])
     lum += 0.012 * rng.standard_normal((H, W)).astype(np.float32)
     img = base[None, None, :] * lum[..., None]
     # scratches: thin, slightly lighter, in angle clusters
-    scr = _lines_mask(rng, W, H, int(w * h / 1800 * wear) + 4, 70 * S, 0, 0.25, 60, 1, 5)
+    scr = _lines_mask(rng, W, H, int(w * h / (700 if strong else 1800) * wear) + 4, 70 * S, 0, 0.25, 60, 1, 5)
     scr = np.asarray(scr.filter(ImageFilter.GaussianBlur(0.45))).astype(np.float32) / 255.0
-    img += scr[..., None] * 52.0
+    img += scr[..., None] * (95.0 if strong else 52.0)
     # edge wear
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     dist = np.minimum(np.minimum(xx, W - 1 - xx), np.minimum(yy, H - 1 - yy)) / S
@@ -828,7 +853,7 @@ def steel_tex(w, h, key='steel', wear=1.0):
     nz = (nz - nz.mean()) / nz.std()
     prox = np.exp(-dist / 3.0) * 1.5 + np.exp(-dist / 10.0) * 0.5 + np.exp(-dcorner / 22.0) * 0.9
     field = 0.5 * nz + 0.9 * prox * wear
-    chip = (field > 1.5).astype(np.float32)
+    chip = (field > (1.0 if strong else 1.5)).astype(np.float32)
     ch_im = Image.fromarray((chip * 255).astype(np.uint8), 'L')
     alpha = np.asarray(ch_im.filter(ImageFilter.GaussianBlur(0.6))).astype(np.float32) / 255.0
     rim = np.asarray(ch_im.filter(ImageFilter.GaussianBlur(1.6))).astype(np.float32) / 255.0
@@ -838,10 +863,16 @@ def steel_tex(w, h, key='steel', wear=1.0):
     # paint wear halo: the paint thins before it chips (slightly lighter / browner just inside the edge)
     halo = np.clip((field - 1.25) / 0.35, 0, 1) * (1 - chip)
     img = img * (1 - 0.35 * halo[..., None]) + np.array(PAL['rust'], np.float32)[None, None, :] * 0.35 * halo[..., None]
-    rust = (chip > 0) & (nz > 1.0) & (n1 > 0.2)
+    rust = (chip > 0) & (nz > (0.2 if strong else 1.0)) & (n1 > (-0.4 if strong else 0.2))
     r_im = Image.fromarray((rust * 255).astype(np.uint8), 'L').filter(ImageFilter.GaussianBlur(0.7))
     ra = np.asarray(r_im).astype(np.float32)[..., None] / 255.0 * 0.85
     img = img * (1 - ra) + np.array(PAL['rust'], np.float32)[None, None, :] * ra
+    if strong:                                  # rust bloom around the chips and grime pooled at the edges
+        bloom = np.asarray(Image.fromarray((chip * 255).astype(np.uint8), 'L').filter(ImageFilter.GaussianBlur(5.0 * S))).astype(np.float32) / 255.0
+        bloom = np.clip(bloom * 2.2, 0, 1) * (0.55 + 0.45 * np.clip(n2, -1, 1))
+        img = img * (1 - 0.5 * bloom[..., None]) + np.array(PAL['rust'], np.float32)[None, None, :] * 0.5 * bloom[..., None]
+        grime = np.clip(np.exp(-dist / 14.0) * (0.6 + 0.4 * np.clip(n3, -1, 1)), 0, 1)
+        img = img * (1 - 0.35 * grime[..., None])
     out = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), 'RGB')
     _tex_cache[ck] = out
     return out
@@ -853,6 +884,7 @@ def alu_tex(w, h, key='alu'):
     if ck in _tex_cache:
         return _tex_cache[ck]
     rng = _rng('alu:' + key)
+    strong = _WEAR == 'strong'
     W, H = int(round(w * S)), int(round(h * S))
     base = np.array(PAL['alu'], np.float32)
     s1 = np.asarray(Image.fromarray(rng.standard_normal((H, W // 50 + 3)).astype(np.float32), 'F')
@@ -864,16 +896,18 @@ def alu_tex(w, h, key='alu'):
     # scuffs: short bright arcs
     m = Image.new('L', (W, H), 0)
     d = ImageDraw.Draw(m)
-    for _ in range(int(w * h / 5200) + 2):
+    for _ in range(int(w * h / (1700 if strong else 5200)) + 2):
         cx, cy = rng.uniform(0, W), rng.uniform(0, H)
         r = rng.uniform(8, 44) * S
         a0 = rng.uniform(0, 360)
         d.arc((cx - r, cy - r, cx + r, cy + r), a0, a0 + rng.uniform(14, 60), fill=int(rng.uniform(50, 120)), width=1)
     scuff = np.asarray(m.filter(ImageFilter.GaussianBlur(0.5))).astype(np.float32) / 255.0
-    img += scuff[..., None] * 38.0
+    img += scuff[..., None] * (62.0 if strong else 38.0)
     # a few dark scratches
-    dk = _lines_mask(rng, W, H, int(w * h / 14000) + 1, 40 * S, 0, 0.4, 80, 1, 3)
-    img -= (np.asarray(dk.filter(ImageFilter.GaussianBlur(0.5))).astype(np.float32) / 255.0)[..., None] * 26.0
+    dk = _lines_mask(rng, W, H, int(w * h / (3600 if strong else 14000)) + 1, 40 * S, 0, 0.4, 80, 1, 3)
+    img -= (np.asarray(dk.filter(ImageFilter.GaussianBlur(0.5))).astype(np.float32) / 255.0)[..., None] * (52.0 if strong else 26.0)
+    if strong:                                  # grime: dark smears across the brushing
+        img *= (1.0 - 0.10 * np.clip(_noise(rng, H, W, 36 * S, 9 * S), -1, 1.5))[..., None]
     # darker edge band, bevel highlight / shadow
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     dist = np.minimum(np.minimum(xx, W - 1 - xx), np.minimum(yy, H - 1 - yy)) / S
@@ -884,7 +918,7 @@ def alu_tex(w, h, key='alu'):
     # nicks along the edges
     nk = Image.new('L', (W, H), 0)
     nd = ImageDraw.Draw(nk)
-    for _ in range(int((w + h) / 40) + 2):
+    for _ in range(int((w + h) / (16 if strong else 40)) + 2):
         side = int(rng.integers(0, 4))
         t = rng.uniform(0.05, 0.95)
         if side == 0:
@@ -963,7 +997,7 @@ def wood_tex(w, h, key='floor'):
     # saw-cut marks: clusters of short parallel strokes, very faint
     m = Image.new('L', (W, H), 0)
     d = ImageDraw.Draw(m)
-    for _ in range(int(w * h / 90000) + 3):
+    for _ in range(int(w * h / (30000 if _WEAR == 'strong' else 90000)) + 3):
         cx, cy = rng.uniform(0, W), rng.uniform(0, H)
         a = rng.uniform(-0.35, 0.35) + math.pi / 2
         ln = rng.uniform(26, 60) * S
@@ -971,8 +1005,10 @@ def wood_tex(w, h, key='floor'):
             ox = cx + i * 3.2 * S
             d.line((ox, cy, ox + ln * math.cos(a), cy + ln * math.sin(a)), fill=int(rng.uniform(40, 90)), width=1)
     cut = np.asarray(m.filter(ImageFilter.GaussianBlur(0.6))).astype(np.float32) / 255.0
-    out *= (1 - 0.22 * cut)[..., None]
+    out *= (1 - (0.40 if _WEAR == 'strong' else 0.22) * cut)[..., None]
     out += cut[..., None] * 3.0
+    if _WEAR == 'strong':                       # darker, dirtier boards
+        out *= (0.88 + 0.10 * np.clip(_noise(rng, H, W, 90 * S, 30 * S), -1.2, 1.2))[..., None]
     arr = np.clip(out, 0, 255).astype(np.uint8)
     img = Image.fromarray(arr, 'RGB')
     _tex_cache[ck] = img
@@ -984,6 +1020,10 @@ def sawdust(cv, rect, n, key, clumps=(), avoid=(), seams=None, seam_n=60, size_s
     and along ``seams`` (list of logical y) with ``seam_n`` particles per seam.  Particles inside any ``avoid`` rect
     are skipped, so call it BEFORE drawing wells / controls, or pass their rects.  Texture only: never under text."""
     rng = _rng('sawdust:' + key)
+    if _WEAR == 'strong':                      # heavier drifts: more particles everywhere, fatter clumps, bigger specks
+        n, seam_n = n * 3.5, seam_n * 2.6
+        clumps = [(cx, cy, r * 1.5, cnt * 3.6) for (cx, cy, r, cnt) in clumps]
+        size_scale, alpha_scale = size_scale * 1.25, min(1.0, alpha_scale * 1.15)
     x0, y0, x1, y1 = rect
     pts = [(rng.uniform(x0, x1), rng.uniform(y0, y1)) for _ in range(int(n))]
     for (cx, cy, r, cnt) in clumps:
@@ -2124,12 +2164,12 @@ def render_style_sheet():
     plate(cv, (fr[0], y, fr[2], y + 34), 'RIVETED PLATE · HEADER', right='alu')
     y += 46
     nameplate(cv, (fr[0], y, fr[0] + 150, y + 28), 'THE SAW MILL')
-    nameplate(cv, (fr[0] + 160, y, fr[0] + 270, y + 28), 'TS-STYLE')
+    nameplate(cv, (fr[0] + 160, y, fr[0] + 270, y + 28), 'CHISEL')
     y += 42
     c1 = card(cv, (fr[0], y, fr[0] + 186, y + 112), 'SAW HEAD', 'blade', status='ON')
     well(cv, (c1['body'][0], c1['body'][1], c1['body'][2], c1['body'][1] + 20), 'well')
     text(cv, None, '@marrow_amps · cc-by', 'label', bg=(c1['body'][0], c1['body'][1], c1['body'][2], c1['body'][1] + 20))
-    c2 = card(cv, (fr[0] + 198, y, fr[2], y + 112), 'TS-STYLE', 'body', bypassed=True)
+    c2 = card(cv, (fr[0] + 198, y, fr[2], y + 112), 'CHISEL', 'body', bypassed=True)
     well(cv, (c2['body'][0], c2['body'][1], c2['body'][2], c2['body'][1] + 20), 'well')
     text(cv, None, 'BYPASSED · hatch', 'label', bg=(c2['body'][0], c2['body'][1], c2['body'][2], c2['body'][1] + 20))
     y += 126

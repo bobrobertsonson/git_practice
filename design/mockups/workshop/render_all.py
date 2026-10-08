@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Render every workshop mockup screen into design/mockups/workshop/png/.
 
-    python3 design/mockups/workshop/render_all.py                 # render all registered screens, run the contrast check
+    python3 design/mockups/workshop/render_all.py                 # render both wear sets (png/ subtle, png_strong/ strong), contrast check
+    python3 design/mockups/workshop/render_all.py --wear strong   # only the strong set
     python3 design/mockups/workshop/render_all.py --only 01_main_rig
     python3 design/mockups/workshop/render_all.py --check         # re-render to a temp dir, compare decoded RGBA with png/
     python3 design/mockups/workshop/render_all.py --contrast      # print the measured contrast table (Markdown), no files
@@ -84,10 +85,24 @@ def contrast_table(results):
     return lines, fails
 
 
+def wear_dirs(out, wears):
+    """-> [(wear, directory)].  Default: png/ (subtle) and png_strong/ (strong); with --out DIR the subtle set goes to DIR and
+    the strong set to DIR_strong (a single selected wear goes to DIR)."""
+    res = []
+    for w in wears:
+        if out is None:
+            res.append((w, PNG_DIR if w == 'subtle' else PNG_DIR + '_strong'))
+        else:
+            o = os.path.normpath(out)
+            res.append((w, o if (len(wears) == 1 or w == 'subtle') else o + '_strong'))
+    return res
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--out', default=PNG_DIR, help='output directory (default design/mockups/workshop/png)')
+    ap.add_argument('--out', default=None, help='output directory (default png/ for subtle, png_strong/ for strong)')
     ap.add_argument('--font-dir', default=None, help='font cache directory (default ~/.cache/sawblade_fonts)')
+    ap.add_argument('--wear', default='all', choices=['subtle', 'strong', 'all'], help='material wear set (default: both sets)')
     ap.add_argument('--check', action='store_true', help='compare a fresh render with the committed PNGs')
     ap.add_argument('--contrast', action='store_true', help='print the measured contrast table (Markdown)')
     ap.add_argument('--only', action='append', help='render only this screen name (repeatable)')
@@ -104,42 +119,52 @@ def main(argv=None):
         print(f'render_all.py: SKIP, {e}', file=sys.stderr)
         return 77
     reg = load_registry()
-    results = render_screens(reg, a.only)
-    lines, fails = contrast_table(results)
-    if a.contrast:
-        print('\n'.join(lines))
-        n = sum(len(v[1]) for v in results.values())
-        print(f'\n{n} strings measured on {len(results)} screens: ' + ('all pass WCAG 2.x AA' if not fails else f'{len(fails)} FAIL'))
-        for f in fails:
-            print('FAIL', f)
-        return 1 if fails else 0
-    if a.check:
-        bad = 0
-        committed = os.path.normpath(a.out)
+    wears = ['subtle', 'strong'] if a.wear == 'all' else [a.wear]
+    rc = 0
+    for wear, outdir in wear_dirs(a.out, wears):
+        ws.set_wear(wear)
+        results = render_screens(reg, a.only)
+        lines, fails = contrast_table(results)
+        tag = f'[{wear}] '
+        if a.contrast:
+            if len(wears) > 1:
+                print(f'### wear: {wear}\n')
+            print('\n'.join(lines))
+            n = sum(len(v[1]) for v in results.values())
+            print(f'\n{n} strings measured on {len(results)} screens: ' + ('all pass WCAG 2.x AA' if not fails else f'{len(fails)} FAIL'))
+            for f in fails:
+                print('FAIL', f)
+            rc |= 1 if fails else 0
+            continue
+        if a.check:
+            bad = 0
+            for name, (img, _log) in results.items():
+                path = os.path.join(outdir, name + '.png')
+                if not os.path.exists(path):
+                    print(f'{tag}MISSING {path}')
+                    bad += 1
+                    continue
+                old = np.asarray(Image.open(path).convert('RGBA'))
+                new = np.asarray(img.convert('RGBA'))
+                if old.shape != new.shape or not np.array_equal(old, new):
+                    print(f'{tag}DIFFERS {name}')
+                    bad += 1
+            bad += len(fails)
+            for f in fails:
+                print(f'{tag}CONTRAST FAIL', f)
+            print(f'{tag}workshop mockups: ' + (f'all {len(results)} PNGs match a fresh render' if bad == 0 else f'{bad} problem(s)'))
+            rc |= 1 if bad else 0
+            continue
+        os.makedirs(outdir, exist_ok=True)
         for name, (img, _log) in results.items():
-            path = os.path.join(committed, name + '.png')
-            if not os.path.exists(path):
-                print(f'MISSING {path}')
-                bad += 1
-                continue
-            old = np.asarray(Image.open(path).convert('RGBA'))
-            new = np.asarray(img.convert('RGBA'))
-            if old.shape != new.shape or not np.array_equal(old, new):
-                print(f'DIFFERS {name}')
-                bad += 1
-        bad += len(fails)
+            path = os.path.join(outdir, name + '.png')
+            ws.save_png(img, path)
+            print('%s%-24s %dx%d  %7.1f KB' % (tag, name, img.width, img.height, os.path.getsize(path) / 1024.0))
         for f in fails:
-            print('CONTRAST FAIL', f)
-        print('workshop mockups: ' + (f'all {len(results)} PNGs match a fresh render' if bad == 0 else f'{bad} problem(s)'))
-        return 0 if bad == 0 else 1
-    os.makedirs(a.out, exist_ok=True)
-    for name, (img, _log) in results.items():
-        path = os.path.join(a.out, name + '.png')
-        ws.save_png(img, path)
-        print('%-20s %dx%d  %7.1f KB' % (name, img.width, img.height, os.path.getsize(path) / 1024.0))
-    for f in fails:
-        print('CONTRAST FAIL', f)
-    return 1 if fails else 0
+            print(f'{tag}CONTRAST FAIL', f)
+        rc |= 1 if fails else 0
+    ws.set_wear('subtle')
+    return rc
 
 
 if __name__ == '__main__':

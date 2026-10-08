@@ -72,7 +72,7 @@ def screen_01_main_rig():
     cv.sprite(ws.sprite_image('cab_4x12.png', 330, crop=CAB_CROP, round_px=8), (cab_r[0] + cab_r[2]) / 2.0, (cab_r[1] + cab_r[3]) / 2.0)
     ws.label_well(cv, (cab_r[0], cab_r[3] + 14), 'CAB · 4x12 · SHARED · DOUBLE-CLICK FOR MIC', 'label', pad=8)
     ws.label_well(cv, (amp_saw_r[0], amp_saw_r[3] + 14), 'BLADE · THE SAW MILL → SAW HEAD', 'label', fg='blade_hi', pad=8)
-    ws.label_well(cv, (amp_body_r[0], amp_body_r[3] + 14), 'BODY · TS-STYLE → BODY HEAD', 'label', fg='body', pad=8)
+    ws.label_well(cv, (amp_body_r[0], amp_body_r[3] + 14), 'BODY · CHISEL → BODY HEAD', 'label', fg='body', pad=8)
 
     # ---- pedalboard -------------------------------------------------------------------------------------------------
     ws.panel(cv, board_r, 'pedalboard', 1.8, 10, rivets=True)
@@ -81,10 +81,10 @@ def screen_01_main_rig():
     saw = pedal_face(cv, 'pedal_saw.png', PEDAL_SAW_CROP, saw_x, 470, saw_w, 'THE SAW MILL', (12, 6, 168, 40),
                      oled_rect=(38, 41, 142, 79), oled_lines=['BUZZSAW', 'A2 \u00b7 48k'], selected=True)
     body_y = saw[3] - 140 * 384 / 256.0
-    body = pedal_face(cv, 'pedal_body.png', PEDAL_BODY_CROP, body_x, body_y, body_w, 'TS-STYLE', (8, 5, 132, 29))
+    body = pedal_face(cv, 'pedal_body.png', PEDAL_BODY_CROP, body_x, body_y, body_w, 'CHISEL', (8, 5, 132, 29))
     # tape strips under the pedals carry the path labels; one more holds the cable
     ws.gaffer_tape(cv, (saw_x - 14, saw[3] + 12, saw_x + saw_w + 14, saw[3] + 31), 'BLADE · THE SAW MILL', 'blade_hi')
-    ws.gaffer_tape(cv, (body_x - 20, body[3] + 12, body_x + body_w + 20, body[3] + 31), 'BODY · TS-STYLE', 'body')
+    ws.gaffer_tape(cv, (body_x - 20, body[3] + 12, body_x + body_w + 20, body[3] + 31), 'BODY · CHISEL', 'body')
     for tr, ang in (((330, 424, 410, 442), -3), ((860, 438, 914, 454), 4), ((106, 746, 156, 762), -5), ((590, 758, 668, 775), 2)):
         ws.gaffer_tape(cv, tr, None, angle=ang)       # decoration: holds the cables / patch leads down
     ws.label_well(cv, (saw_x - 5, 464), '▶ SELECTED', 'label_b', fg='blade_hi', pad=7, border='blade')
