@@ -7,7 +7,7 @@ Review page (all screens, for comments): https://claude.ai/artifact/SPkazo41kcKH
 
 ## Screens
 
-All 1280 x 800 design px, rendered by `render_all.py` in four sets (two looks x two wear levels, same file names in each):
+All 1280 x 800 design px, rendered by `render_all.py` in four sets (v4 adds two more, below) (two looks x two wear levels, same file names in each):
 `png/` (v2, subtle wear, the approved look), `png_strong/` (v2, strong wear: more and larger edge chips with bare steel and rust
 bloom, deeper scratches, grime, scuffed aluminium, denser sawdust), `png_v3/` (v3 displays, subtle) and `png_v3_strong/` (v3,
 strong). Wear is texture only, so the flat-well rule and contrast checks are the same for both levels; v3 is described under
@@ -253,6 +253,96 @@ is untouched. v3 keeps the worn metal, sawdust and rivets and turns the readouts
 - **Legibility**: glow is never under text (the word wells sit beside or over the glow, and the flat check still runs); display text
   is logged on the ghost / bloom colour; the flat check accepts exactly {glass, ghost} under display text. The v3 style sheet (00)
   shows the display kit.
+
+## v4 streamline (user feedback on v3: "simplify and streamline a lot")
+
+`look = v4` is built on v3 (LCDs, ladders, rings, lamps, worn metal; v2 and v3 PNGs are unchanged) and cuts what was duplicated.
+It renders 01, 02, 03 and 08 in `png_v4/` and `png_v4_strong/`, plus the three cab directions of 01 as `01_main_rig_cab_a/_b/_c.png`
+(`01_main_rig.png` = cab a). Rules R1-R8 are the brief's (`docs/specs/v1_0-ui_workshop_skin.md`, "v4 round"). Cabs are procedural
+mockup drawings (`cabs.py`), our own, no makers' logos.
+
+### What changed (rule -> change)
+
+**01 main rig**
+- R1 -> no caption chips under amps or pedals; each amp and pedal has a 3 px path edge (BLADE orange, BODY blue) plus a `BLADE` / `BODY` word in a well.
+- R1 -> the inspector no longer repeats the CIRCUIT selector; it lives on THE SAW MILL's face (`CIRCUIT ◀ BUZZSAW ▶` on its display).
+- R2 -> the METERS column is gone and the cab takes the space; IN / OUT are thin LED ladders in the top bar, GR is the LED ring on `VISE · GR`.
+- R3 -> MATCH vs ORIGINAL is a dismissable card (✕) captioned "after a match"; ALIGN is gone from the inspector, `ⓘ DETAILS` stands for the pop-over (ALIGN, LAT, CPU).
+- R3 -> empty pedal slots collapse to one `+` at the end of each path's row (BLADE row, BODY row).
+- R6 -> amber for values, green only for good states (LIVE lamp, ✓, the match result), orange for selection and primary actions; no new hues.
+- R7 -> VERMIN stays on the board in the BLADE row at true scale, tagged `RAT STENCIL PENDING (v0.9)` (the v0.9 session draws the rat; no rat is drawn here).
+- R8 -> three cab directions as three variants of this screen, otherwise identical: (a) tolex, (b) plywood, (c) road case.
+
+**02 top bar**
+- R4 -> only: brand, preset scroller with ◀ ▶, A / B, RIG / WOODSHED, MATCH, NAM FORGER, settings, LIVE lamp (and the IN / OUT ladders).
+- R2 -> LAT / CPU and every other readout are gone; IN / OUT are thin ladders.
+- R6 -> UNCAL and OUT OF TRUE are lamps with words folded into the LIVE lamp block (stacked, one fact per lamp); states shown: default, UNCAL, OUT OF TRUE, both, plus one 2x zoom.
+
+**03 settings**
+- R5 -> one status strip with the current state only (the second CALIBRATED strip is gone).
+- R5 -> the device dropdown is closed; the manual dBu field appears only under "Custom" (small second-state inset).
+- R5 -> INPUT CHANNEL shows `Auto` with a closed `▸ Override` button; GATE FLOOR is removed with a note that it moved to GATE.
+- R6 -> amber values, green only for the Auto good state; one orange primary (APPLY).
+
+**08 rig editor**
+- R1 -> no duplicated captions on the cards (credit, level metadata and circuit lines are cut to two short lines); the path is the lane plate plus the orange / blue edge.
+- R3 -> empty slots collapse to one `+` per lane; the status is one line (`✓ built · 6 blocks`), the meters are in the top bar.
+- R6 -> UNCAL and BYPASS stay as lamp + word (amber lamp `UNCAL`, `ACTIVE` / `BYPASSED` lamp with a BYPASS button).
+- R7 -> the VERMIN card is in lane A.
+
+### Cab directions (01_main_rig_cab_a/_b/_c.png)
+
+- **a, tolex**: worn black tolex with steel corner caps, a salt-and-pepper grille, a riveted steel `CAB` nameplate, the IR title on a small amber LCD strip.
+- **b, plywood**: stripped open-back bare plywood with four visible generic speakers and a stencilled `CAB · 4x12` strip.
+- **c, road case**: aluminium edge extrusions and corner caps, butterfly latches, a perforated grille, a stencilled `CAB · 4x12` panel.
+- All three show SHARED · LIVE (lit green lamp) vs PER PATH · STUDIO (unlit blue lamp) as lamps plus words.
+
+### v4 contrast (`--contrast --look v4`)
+
+Lowest ratio of any text: **5.94:1**. The strong set has identical ratios (same layouts), verified by `--contrast --look v4 --wear strong`.
+
+| style | fg | bg | ratio | AA needs | px sizes | uses | screens |
+|---|---|---|---|---|---|---|---|
+| body | bone | well | 13.71:1 ok | 4.5 | 13 | 8 | 01 03 08 |
+| body | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 2 | 03 |
+| body | ok | well | 11.02:1 ok | 4.5 | 13 | 1 | 08 |
+| body_dim | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 15 | 02 03 08 |
+| body_strong | blade_hi | well | 7.61:1 ok | 4.5 | 14 | 1 | 08 |
+| body_strong | bone | well | 13.71:1 ok | 4.5 | 14 | 2 | 08 |
+| body_strong | ok | well | 11.02:1 ok | 4.5 | 14 | 1 | 08 |
+| brand | blade | well | 6.23:1 ok | 4.5 | 17 | 10 | 01 02 03 08 |
+| brand | ink | alu_well | 10.36:1 ok | 3.0 | 22 | 1 | 08 |
+| button | blade_hi | well_raised | 6.90:1 ok | 4.5 | 13 | 1 | 03 |
+| button | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 112 | 01 02 03 08 |
+| button | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 18 | 01 03 08 |
+| button_ink | ink | blade | 6.57:1 ok | 4.5 | 13 | 12 | 01 02 03 08 |
+| dotmatrix | lcd_amber | #533a17 | 5.94:1 ok | 4.5 | 11,14 | 14 | 01 02 03 08 |
+| dotmatrix | lcd_green | #244d31 | 7.66:1 ok | 4.5 | 14 | 13 | 01 03 08 |
+| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 24 | 01 03 08 |
+| label_b | alert | well | 6.38:1 ok | 4.5 | 11 | 2 | 02 |
+| label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 21 | 01 02 |
+| label_b | body | well | 8.18:1 ok | 4.5 | 11 | 8 | 01 |
+| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 91 | 01 02 03 08 |
+| label_b | bone | well_raised | 12.43:1 ok | 4.5 | 11 | 1 | 08 |
+| label_b | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 1 | 08 |
+| label_b | ok | well | 11.02:1 ok | 4.5 | 11 | 14 | 01 02 03 08 |
+| label_b | warn | well | 10.02:1 ok | 4.5 | 11 | 4 | 02 03 08 |
+| label_ink | ink | alu_well | 10.36:1 ok | 4.5 | 11 | 8 | 08 |
+| label_ink | ink | blade_hi | 8.03:1 ok | 4.5 | 11 | 1 | 03 |
+| label_mx | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 6 | 01 03 08 |
+| label_mx_b | warn | well | 10.02:1 ok | 4.5 | 11 | 4 | 01 |
+| lcd | lcd_amber | #35250f | 8.29:1 ok | 4.5 | 14,18,22 | 33 | 01 03 08 |
+| lcd_unit | lcd_amber | glass_amber | 10.23:1 ok | 4.5 | 14 | 33 | 01 03 08 |
+| mono | bone | well_raised | 12.43:1 ok | 4.5 | 14 | 1 | 03 |
+| mono | lcd_amber | glass | 11.04:1 ok | 4.5 | 14 | 8 | 01 |
+| mono_dim | bone_dim | glass | 8.45:1 ok | 4.5 | 11 | 3 | 03 |
+| nixie | blade_hi | #3d2413 | 6.13:1 ok | 3.0 | 34 | 6 | 01 03 08 |
+| section | blade | well | 6.23:1 ok | 4.5 | 18 | 6 | 01 03 08 |
+| section | ink | alu_well | 10.36:1 ok | 4.5 | 13,19 | 26 | 01 03 08 |
+| section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 7 | 01 03 08 |
+| title | bone | well | 13.71:1 ok | 3.0 | 22,24 | 2 | 01 03 |
+
+521 strings measured on 7 screens: all pass WCAG 2.x AA
 
 ## Notes and open items
 
