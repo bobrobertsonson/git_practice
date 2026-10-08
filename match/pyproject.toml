@@ -51,6 +51,7 @@ sawblade-calibrate = "sawblade_match.calibrate.cli:main"
 sawblade-match = "sawblade_match.matcher.cli:main"
 sawblade-export = "sawblade_match.export.cli:main"
 sawblade-models = "sawblade_match.models.cli:main"
+sawblade-bench = "sawblade_match.bench.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["sawblade_match*"]

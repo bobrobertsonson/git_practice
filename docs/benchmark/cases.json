@@ -1,0 +1,663 @@
+{
+  "schema": "sawblade.bench.cases",
+  "version": 1,
+  "rootHint": "/Users/notsch/Desktop/NailTheMix",
+  "defaults": {
+    "diChannel": "left",
+    "offsetMs": 0.0,
+    "topology": "auto",
+    "heldOutMaxS": 30.0
+  },
+  "cases": [
+    {
+      "id": "bloodbath_blend",
+      "tier": 1,
+      "kind": "blend",
+      "style": "HM-2 death metal, two-amp blend",
+      "session": "NailtheMix_March2023_Bloodbath_44k24b",
+      "di": {
+        "path": "NailtheMix_March2023_Bloodbath_44k24b/17 GTR RHY L DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "tracks": [
+          {
+            "path": "NailtheMix_March2023_Bloodbath_44k24b/18 GTR RHY L HM2 AMP.wav",
+            "role": "a",
+            "gainDb": 0.0
+          },
+          {
+            "path": "NailtheMix_March2023_Bloodbath_44k24b/19 GTR RHY L UBR AMP.wav",
+            "role": "b",
+            "gainDb": 0.0
+          }
+        ],
+        "polarity": "auto"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [
+        {
+          "di": {
+            "path": "NailtheMix_March2023_Bloodbath_44k24b/20 GTR RHY R DI.wav",
+            "channel": "left"
+          },
+          "reference": {
+            "tracks": [
+              {
+                "path": "NailtheMix_March2023_Bloodbath_44k24b/21 GTR RHY R HM2 AMP.wav",
+                "role": "a",
+                "gainDb": 0.0
+              },
+              {
+                "path": "NailtheMix_March2023_Bloodbath_44k24b/22 GTR RHY R UBR AMP.wav",
+                "role": "b",
+                "gainDb": 0.0
+              }
+            ],
+            "polarity": "auto"
+          }
+        }
+      ],
+      "topology": "auto",
+      "counts": true,
+      "confirmed": true,
+      "notes": "Primary case. Reference = HM2 amp track + UBR amp track summed (unity faders, polarity auto). Topology is auto: the matcher may pick a single path; its own path checks are reported when it picks a blend."
+    },
+    {
+      "id": "bloodbath_blend_forced",
+      "tier": 1,
+      "kind": "blend",
+      "style": "HM-2 death metal, two-amp blend (blend forced)",
+      "session": "NailtheMix_March2023_Bloodbath_44k24b",
+      "di": {
+        "path": "NailtheMix_March2023_Bloodbath_44k24b/17 GTR RHY L DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "tracks": [
+          {
+            "path": "NailtheMix_March2023_Bloodbath_44k24b/18 GTR RHY L HM2 AMP.wav",
+            "role": "a",
+            "gainDb": 0.0
+          },
+          {
+            "path": "NailtheMix_March2023_Bloodbath_44k24b/19 GTR RHY L UBR AMP.wav",
+            "role": "b",
+            "gainDb": 0.0
+          }
+        ],
+        "polarity": "auto"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [
+        {
+          "di": {
+            "path": "NailtheMix_March2023_Bloodbath_44k24b/20 GTR RHY R DI.wav",
+            "channel": "left"
+          },
+          "reference": {
+            "tracks": [
+              {
+                "path": "NailtheMix_March2023_Bloodbath_44k24b/21 GTR RHY R HM2 AMP.wav",
+                "role": "a",
+                "gainDb": 0.0
+              },
+              {
+                "path": "NailtheMix_March2023_Bloodbath_44k24b/22 GTR RHY R UBR AMP.wav",
+                "role": "b",
+                "gainDb": 0.0
+              }
+            ],
+            "polarity": "auto"
+          }
+        }
+      ],
+      "topology": "blend",
+      "counts": false,
+      "confirmed": true,
+      "notes": "Same files as bloodbath_blend with the topology forced to blend, so the per-path answer exists on every run whatever auto picks (as v0.4M's validation script). Parent of the two path checks; not counted."
+    },
+    {
+      "id": "bloodbath_hm2",
+      "tier": 1,
+      "kind": "pathcheck",
+      "style": "HM-2 death metal, saw path alone",
+      "session": "NailtheMix_March2023_Bloodbath_44k24b",
+      "reference": {
+        "parent": "bloodbath_blend_forced",
+        "path": "a"
+      },
+      "counts": false,
+      "confirmed": true,
+      "notes": "The forced blend's path A alone vs the isolated HM2 amp track (18)."
+    },
+    {
+      "id": "bloodbath_ubr",
+      "tier": 1,
+      "kind": "pathcheck",
+      "style": "death metal, body path alone (non-HM-2)",
+      "session": "NailtheMix_March2023_Bloodbath_44k24b",
+      "reference": {
+        "parent": "bloodbath_blend_forced",
+        "path": "b"
+      },
+      "counts": false,
+      "confirmed": true,
+      "notes": "The forced blend's path B alone vs the isolated UBR amp track (19)."
+    },
+    {
+      "id": "bloodbath_mz",
+      "tier": 1,
+      "kind": "single",
+      "style": "death metal, third amp (non-HM-2)",
+      "session": "NailtheMix_March2023_Bloodbath_44k24b",
+      "di": {
+        "path": "NailtheMix_March2023_Bloodbath_44k24b/23 GTR RHY C DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "NailtheMix_March2023_Bloodbath_44k24b/24 GTR RHY C MZ AMP.wav",
+        "channel": "left"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": true,
+      "confirmed": false,
+      "notes": "File names 23/24 are taken from the phase spec table, not from a listing of the folder."
+    },
+    {
+      "id": "immortal_disfig",
+      "tier": 1,
+      "kind": "single",
+      "style": "deathcore / slam",
+      "session": "Immortal Disfigurement",
+      "di": {
+        "path": "Immortal Disfigurement/20 GTR DI L.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Immortal Disfigurement/22 GTR REAMP L.wav",
+        "channel": "left"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [
+        {
+          "di": {
+            "path": "Immortal Disfigurement/21 GTR DI R.wav",
+            "channel": "left"
+          },
+          "reference": {
+            "path": "Immortal Disfigurement/23 GTR REAMP R.wav",
+            "channel": "left"
+          }
+        }
+      ],
+      "topology": "auto",
+      "counts": true,
+      "confirmed": false,
+      "notes": "Session folder and R-side names inferred."
+    },
+    {
+      "id": "veil_of_maya",
+      "tier": 1,
+      "kind": "single",
+      "style": "djent / metalcore",
+      "session": "Veil of Maya",
+      "di": {
+        "path": "Veil of Maya/25 GTR L DI_1.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Veil of Maya/27 GTR L_1.wav",
+        "channel": "left"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [
+        {
+          "di": {
+            "path": "Veil of Maya/26 GTR R DI_1.wav",
+            "channel": "left"
+          },
+          "reference": {
+            "path": "Veil of Maya/28 GTR R_1.wav",
+            "channel": "left"
+          }
+        }
+      ],
+      "topology": "auto",
+      "counts": true,
+      "confirmed": false,
+      "notes": "Session folder and R-side names inferred."
+    },
+    {
+      "id": "sylosis_57",
+      "tier": 1,
+      "kind": "single",
+      "style": "thrash (mic'd amp)",
+      "session": "Sylosis",
+      "di": {
+        "path": "Sylosis/27 GUITAR DI A left main.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Sylosis/31 SCOTT 57 A left main.wav",
+        "channel": "left"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [
+        {
+          "di": {
+            "path": "Sylosis/30 GUITAR DI A right main.wav",
+            "channel": "left"
+          },
+          "reference": {
+            "path": "Sylosis/33 SCOTT 57 A right main.wav",
+            "channel": "left"
+          }
+        }
+      ],
+      "topology": "auto",
+      "counts": true,
+      "confirmed": false,
+      "notes": "Session folder and R-side names inferred. Check with the user whether 31 and 43 are alternatives or a blend on the record."
+    },
+    {
+      "id": "sylosis_reamp",
+      "tier": 1,
+      "kind": "single",
+      "style": "thrash (second engineer's reamp)",
+      "session": "Sylosis",
+      "di": {
+        "path": "Sylosis/27 GUITAR DI A left main.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Sylosis/43 JOSH REAMP A Left main 1.wav",
+        "channel": "left"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [
+        {
+          "di": {
+            "path": "Sylosis/30 GUITAR DI A right main.wav",
+            "channel": "left"
+          },
+          "reference": {
+            "path": "Sylosis/44 JOSH REAMP A Right main 1.wav",
+            "channel": "left"
+          }
+        }
+      ],
+      "topology": "auto",
+      "counts": true,
+      "confirmed": false,
+      "notes": "Session folder and R-side names inferred."
+    },
+    {
+      "id": "haunted",
+      "tier": 1,
+      "kind": "single",
+      "style": "Swedish thrash",
+      "session": "The Haunted",
+      "di": {
+        "path": "The Haunted/25-GT 1 DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "The Haunted/26-GT 1.wav",
+        "channel": "left"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": true,
+      "confirmed": false,
+      "notes": "Session folder inferred."
+    },
+    {
+      "id": "jinjer",
+      "tier": 1,
+      "kind": "single",
+      "style": "groove / prog metalcore",
+      "session": "Jinjer",
+      "di": {
+        "path": "Jinjer/24 Gtr Rtm L DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Jinjer/23 Gtr Rtm STEM.wav",
+        "channel": "left"
+      },
+      "offsetMs": 0.0,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [
+        {
+          "di": {
+            "path": "Jinjer/25 Gtr Rtm R DI.wav",
+            "channel": "left"
+          },
+          "reference": {
+            "path": "Jinjer/23 Gtr Rtm STEM.wav",
+            "channel": "right"
+          }
+        }
+      ],
+      "topology": "auto",
+      "counts": true,
+      "confirmed": false,
+      "notes": "Reference is a stem (may include processing): a weaker known answer. Left channel for the L take, right channel for the R transfer."
+    },
+    {
+      "id": "atg_gt1",
+      "tier": 2,
+      "kind": "single",
+      "style": "melodic death metal (Swedish)",
+      "session": "At the Gates",
+      "di": {
+        "path": "Cognizance/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "At the Gates/21-GT 1.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Cognizance session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "atg_gt1_hm",
+      "tier": 2,
+      "kind": "single",
+      "style": "HM-2 variant, melodic death metal",
+      "session": "At the Gates",
+      "di": {
+        "path": "Cognizance/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "At the Gates/22-GT 1 HM.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Cognizance session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "knocked_loose",
+      "tier": 2,
+      "kind": "single",
+      "style": "metallic hardcore",
+      "session": "Knocked Loose",
+      "di": {
+        "path": "Reflections/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Knocked Loose/064 RHY L.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Reflections session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "gojira",
+      "tier": 2,
+      "kind": "single",
+      "style": "groove / progressive death metal",
+      "session": "Gojira",
+      "di": {
+        "path": "Cognizance/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Gojira/18 Gtr 1 Mic.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Cognizance session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "meshuggah",
+      "tier": 2,
+      "kind": "single",
+      "style": "djent (extended-range)",
+      "session": "Meshuggah",
+      "di": {
+        "path": "Reflections/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Meshuggah/15. RHYTHMGUITAR L.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Reflections session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "allagaeon",
+      "tier": 2,
+      "kind": "single",
+      "style": "technical melodic death metal",
+      "session": "Allagaeon",
+      "di": {
+        "path": "Reflections/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Allagaeon/16 Rhy Gtr 1.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Reflections session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "opeth",
+      "tier": 2,
+      "kind": "single",
+      "style": "progressive death metal",
+      "session": "Opeth",
+      "di": {
+        "path": "Trees on Mars/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Opeth/26 Rhythm 1 Left.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Trees on Mars session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "daath",
+      "tier": 2,
+      "kind": "single",
+      "style": "technical death metal",
+      "session": "Daath",
+      "di": {
+        "path": "Cognizance/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Daath/G RHY 1 L_01.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Cognizance session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "slamadeus",
+      "tier": 2,
+      "kind": "single",
+      "style": "slam / brutal death metal",
+      "session": "Slamadeus",
+      "di": {
+        "path": "Cognizance/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Slamadeus/Guitar Left.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Cognizance session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "face_yourself",
+      "tier": 2,
+      "kind": "single",
+      "style": "metalcore",
+      "session": "Face Yourself",
+      "di": {
+        "path": "Reflections/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Face Yourself/07_rhy_01 L.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Reflections session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "vesta",
+      "tier": 2,
+      "kind": "single",
+      "style": "modern progressive metal",
+      "session": "Vesta",
+      "di": {
+        "path": "Trees on Mars/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Vesta/09 GTR - RHY a.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Trees on Mars session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    },
+    {
+      "id": "nothing_more",
+      "tier": 2,
+      "kind": "single",
+      "style": "clean-ish rhythm control (less saturated)",
+      "session": "Nothing More",
+      "di": {
+        "path": "Trees on Mars/GTR DI.wav",
+        "channel": "left"
+      },
+      "reference": {
+        "path": "Nothing More/16 RTM Gtr 1.wav",
+        "channel": "left"
+      },
+      "offsetMs": null,
+      "fit": null,
+      "heldOut": null,
+      "transfer": [],
+      "topology": "auto",
+      "counts": false,
+      "confirmed": false,
+      "notes": "Tier 2: reference only. Stand-in DI: Trees on Mars session (file name unknown: confirm with --check-only). fit/heldOut are in reference seconds (null = automatic). Session folder and file names inferred."
+    }
+  ],
+  "gaps": [
+    {
+      "style": "black metal",
+      "note": "no source yet; ask the user for a multitrack"
+    },
+    {
+      "style": "doom / sludge / stoner (fuzz)",
+      "note": "no source yet; ask the user for a multitrack"
+    },
+    {
+      "style": "crust / hardcore",
+      "note": "no tier 1 source yet (Knocked Loose is tier 2, reference only)"
+    },
+    {
+      "style": "clean-ish rhythm control",
+      "note": "no DI pair: Nothing More is tier 2 only"
+    }
+  ]
+}
