@@ -603,9 +603,8 @@ def _block_card(cv, rect, title, key, lines, accent, status=None, bypassed=False
     y = by0 + (60 if v3 else 64)
     # BYPASS toggle row
     if ws.is_v3():
-        ws.state_led(cv, bx0 + 2, y + 14, not bypassed, 'amber' if bypassed else 'green', 'BYPASSED' if bypassed else 'ACTIVE', r=4.0)
-        ws.toggle(cv, bx0 + 176, y + 14, 1 if bypassed else 0, ['OFF', 'ON'], 26, key='tgb' + key)
-        label_well(cv, (bx0 + 96, y + 14), 'BYPASS', 'label', h=16, pad=5)
+        ws.state_led(cv, bx0 + 2, y + 14, not bypassed, 'amber' if bypassed else 'green', 'OFF' if bypassed else 'ON', r=4.0)
+        ws.toggle(cv, bx0 + 156, y + 14, 1 if bypassed else 0, ['ACTIVE', 'BYPASS'], 26, key='tgb' + key)
     else:
         label_well(cv, (bx0, y + 14), 'BYPASS', 'label_b', h=18, pad=5)
         ws.toggle(cv, bx0 + 108, y + 14, 1 if bypassed else 0, ['OFF', 'ON'], 26, key='tgb' + key)

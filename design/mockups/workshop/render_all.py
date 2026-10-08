@@ -45,6 +45,9 @@ def load_registry():
     return dict(sorted(reg.items()))
 
 
+OVERPAINT = []          # (screen, string, delta, box): strings painted over after they were drawn (a failure)
+
+
 def render_screens(reg, only=None):
     """-> {name: (PIL image 1x, log list)}"""
     out = {}
@@ -53,6 +56,8 @@ def render_screens(reg, only=None):
             continue
         cv = fn()
         out[name] = (cv.finish(), cv.log)
+        for text_, delta, box in cv.overpaint:
+            OVERPAINT.append((name, text_, delta, box))
     return out
 
 
@@ -127,7 +132,12 @@ def main(argv=None):
     for look, wear, outdir in set_dirs(a.out, looks, wears):
         ws.set_wear(wear)
         ws.set_look(look)
+        del OVERPAINT[:]
         results = render_screens(reg, a.only)
+        for o in OVERPAINT:
+            print(f'[{look} {wear}] OVERPAINT FAIL {o[0]}: {o[1]!r} changed by {o[2]}/255 at {o[3]}')
+        if OVERPAINT:
+            rc |= 1
         lines, fails = contrast_table(results)
         tag = f'[{look} {wear}] '
         if a.contrast:

@@ -56,7 +56,7 @@ mismatching font is exit 77, never a fallback. Table in `docs/THIRD_PARTY.md`.
 
 AA needs 4.5:1 (3:1 for large text). Backdrop strings that stay visible behind an overlay are measured with their colours scaled by
 the dimming. Wear is texture only, so the strong sets have identical ratios to the subtle ones (same layouts), verified by running
-`--contrast` on each set (all four exit 0).
+`--contrast` on each set (all four exit 0). Every run also fails (exit 1) if any logged string's pixels change by more than 12/255 after it was drawn (the overpaint check); dropped backdrop scenery is exempt; all four sets are clean.
 
 ### v2 subtle
 
@@ -180,7 +180,7 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 4 | 00 01 09 |
 | label | body | well | 8.18:1 ok | 4.5 | 11 | 3 | 00 01 |
 | label | bone | well | 13.71:1 ok | 4.5 | 11 | 34 | 00 04 |
-| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 109 | 00 01 02 03 04 05 06 07 08 |
+| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 104 | 00 01 02 03 04 05 06 07 08 |
 | label | bone_dim | well_raised | 6.96:1 ok | 4.5 | 11 | 1 | 04 |
 | label | bone_mute | well | 5.81:1 ok | 4.5 | 11 | 2 | 00 04 |
 | label | lcd_amber | well | 10.02:1 ok | 4.5 | 11 | 1 | 00 |
@@ -226,7 +226,7 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 4 | 01 03 07 08 |
 | title | bone | well | 13.71:1 ok | 3.0 | 22 | 1 | 03 |
 
-1093 strings measured on 10 screens: all pass WCAG 2.x AA
+1088 strings measured on 10 screens: all pass WCAG 2.x AA
 
 ### v3 strong
 

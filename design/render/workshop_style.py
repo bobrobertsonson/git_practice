@@ -366,10 +366,35 @@ class Canvas:
         self.im = Image.new('RGB', (w * S, h * S), rgb(fill))
         self.d = ImageDraw.Draw(self.im)
         self.log = []
+        self.snaps = []                  # (log entry, device box, pixels) taken when each logged string is drawn
+        self.overpaint = []              # filled by finish(): strings whose pixels changed after they were drawn
 
     # -- output --------------------------------------------------------------------------------------------------
+    def snap(self, entry, rect):
+        """Remember the pixels under a logged string's ink box (logical rect) right after it is drawn."""
+        x0, y0, x1, y1 = _dev(rect)
+        x0, y0 = max(x0 - 1, 0), max(y0 - 1, 0)
+        x1, y1 = min(x1 + 1, self.im.width), min(y1 + 1, self.im.height)
+        if x1 > x0 and y1 > y0:
+            self.snaps.append((entry, (x0, y0, x1, y1), np.asarray(self.im.crop((x0, y0, x1, y1))).copy()))
+
+    def check_overpaint(self, limit=12):
+        """Strings still in the log whose pixels changed by more than ``limit``/255 after they were drawn (something was painted
+        over them).  Strings dropped from the log (dimmed backdrop scenery) are exempt.  -> [(text, max delta, logical rect)]"""
+        live = {id(e) for e in self.log}
+        bad = []
+        for entry, box, arr in self.snaps:
+            if id(entry) not in live:
+                continue
+            now = np.asarray(self.im.crop(box)).astype(np.int16)
+            d = int(np.abs(now - arr.astype(np.int16)).max())
+            if d > limit:
+                bad.append((entry['text'], d, tuple(round(v / S, 1) for v in box)))
+        return bad
+
     def finish(self):
-        """Downsample to the 1x page (LANCZOS), RGB."""
+        """Downsample to the 1x page (LANCZOS), RGB.  Also runs the overpaint check (``self.overpaint``)."""
+        self.overpaint = self.check_overpaint()
         return self.im.resize((self.w, self.h), Image.LANCZOS)
 
     def crop2x(self, rect):
@@ -710,9 +735,12 @@ def text(cv, xy, s, style='body', bg=None, fg=None, size=None, track=None, align
         cv.im.paste(Image.new('RGB', lay.size, col), (gb[0], gb[1]), lay)
         eff_bg = tuple(int(round(bgc[i] * (1 - glow) + col[i] * glow)) for i in range(3))
     _paint_items(cv.im, items, ox, base, dev_px, col, cap)
-    cv.log.append(dict(screen=cv.name, style=style, fg=fgname, fg_rgb=col, bg_rgb=eff_bg, px=px,
-                       bold=bool(st.get('bold')), text=s, ratio=contrast(col, eff_bg),
-                       ink=(ink[0] / S, ink[1] / S, ink[2] / S, ink[3] / S)))
+    entry = dict(screen=cv.name, style=style, fg=fgname, fg_rgb=col, bg_rgb=eff_bg, px=px,
+                 bold=bool(st.get('bold')), text=s, ratio=contrast(col, eff_bg),
+                 ink=(ink[0] / S, ink[1] / S, ink[2] / S, ink[3] / S))
+    cv.log.append(entry)
+    if s.strip():                                  # an empty label (icon-only button) has nothing to protect
+        cv.snap(entry, entry['ink'])
     return (ink[0] / S, ink[1] / S, ink[2] / S, ink[3] / S)
 
 
@@ -1707,8 +1735,10 @@ def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None, tone='ambe
     pos = (int(round((dig_box[0] - 1) * S)), int(round((dig_box[1] - 1) * S)))
     cv.im.paste(Image.new('RGB', sz, PAL[lit_tok]), pos, gm)
     cv.im.paste(Image.new('RGB', sz, PAL[lit_tok]), pos, lm)
-    cv.log.append(dict(screen=cv.name, style='lcd', fg=lit_tok, fg_rgb=PAL[lit_tok], bg_rgb=bgc,
-                       px=h, bold=False, text=value, ratio=contrast(PAL[lit_tok], bgc), ink=dig_box))
+    entry = dict(screen=cv.name, style='lcd', fg=lit_tok, fg_rgb=PAL[lit_tok], bg_rgb=bgc,
+                 px=h, bold=False, text=value, ratio=contrast(PAL[lit_tok], bgc), ink=dig_box)
+    cv.log.append(entry)
+    cv.snap(entry, dig_box)
     if unit:
         ux = dig_box[2] + 4
         text(cv, (ux, xy[1] + 1), unit, 'lcd_unit', bg=(ux - 1, rect[1] + 3, rect[2] - 4, rect[3] - 3), fg=lit_tok if v3 else None)
@@ -2162,10 +2192,11 @@ def _housing(cv, rect, glass_tok):
     cv.blend((rect[0] + 3, rect[1] + 2, rect[2] - 3, rect[1] + 3), 'bench_dark', 0.6)       # recessed: shadow under the top lip
 
 
-def dm_display(cv, rect, lines, h=14, tone='amber', align='l', pad=6, row_gap=None, clip_marker=True):
+def dm_display(cv, rect, lines, h=14, tone='amber', align='l', pad=6, row_gap=None, clip_marker=True, scroll=None):
     """Backlit dot-matrix display: recessed bezel, flat lit glass, a ghost (unlit) 5x7 matrix over the whole inner area and the
     text as lit dots with a faint bloom.  ``lines`` = str or list of str (one row each, glyph height ``h`` px; values and
-    names >= 14, status lines >= 11).  A line longer than the window is clipped and ends in a ▶ scroll marker.  ``align`` l / c / r
+    names >= 14, status lines >= 11).  A line longer than the window is shown mid-scroll (``scroll`` = first visible character,
+    default 1) between ◀ and ▶ scroll markers; a line that fits is never clipped.  ``align`` l / c / r
     by whole cells.  The ghost is <= 1.25:1 against the glass; every line is logged with the ghost / bloom colour as its
     background (pessimistic).  Returns the glass rect."""
     if isinstance(lines, str):
@@ -2208,7 +2239,8 @@ def dm_display(cv, rect, lines, h=14, tone='amber', align='l', pad=6, row_gap=No
     for r, line in enumerate(lines[:nrows_draw]):
         txt = line
         if len(txt) > cols:
-            txt = txt[:cols - 1] + ('▶' if clip_marker else '')
+            st0 = 1 if scroll is None else scroll
+            txt = '◀' + txt[st0:st0 + cols - 2] + '▶'
         off = {'l': 0, 'c': (cols - len(txt)) // 2, 'r': cols - len(txt)}[align]
         for ci, ch in enumerate(txt):
             g = dm_glyph(ch)
@@ -2228,8 +2260,10 @@ def dm_display(cv, rect, lines, h=14, tone='amber', align='l', pad=6, row_gap=No
     cv.im.paste(Image.new('RGB', (wd, hd), lit), (x0d, y0d), lit_s)
     eff = tuple(int(round(ghost[q] * (1 - BLOOM) + lit[q] * BLOOM)) for q in range(3))
     for txt, ink in ink_rows:
-        cv.log.append(dict(screen=cv.name, style='dotmatrix', fg=t['lit'], fg_rgb=lit, bg_rgb=eff, px=h, bold=False, text=txt,
-                           ratio=contrast(lit, eff), ink=ink))
+        entry = dict(screen=cv.name, style='dotmatrix', fg=t['lit'], fg_rgb=lit, bg_rgb=eff, px=h, bold=False, text=txt,
+                     ratio=contrast(lit, eff), ink=ink)
+        cv.log.append(entry)
+        cv.snap(entry, ink)
     return rect
 
 
@@ -2381,7 +2415,7 @@ def top_bar_v3(cv, st, y=0, width=PAGE_W):
     button(cv, b0, '', 'secondary')
     glyph_icon(cv, 'chev_l', (b0[0] + b0[2]) / 2.0, cy, 9, 'bone')
     x = b0[2] + 3
-    pw = 280
+    pw = 340 if st.ab else 292                 # the A / B state shows 'A ▶ GRAVE DIRT · MATCHED v2' in full
     pr = (x, cy - 22, x + pw, cy + 22)
     if st.ab:
         a_act = st.ab.get('active', 'a') == 'a'
@@ -2444,8 +2478,8 @@ def top_bar_v3(cv, st, y=0, width=PAGE_W):
     text(cv, (mr[0] + 27, cy), word, 'label_b', bg=(mr[0] + 25, mr[1] + 3, mr[2] - 3, mr[3] - 3), fg='ok' if st.mode == 'LIVE' else 'body')
     out['mode'] = mr
     x = mr[0] - 8
-    sr = (x - 118, cy - 22, x, cy + 22)
-    dm_display(cv, sr, ['LAT %d smp' % st.lat, 'CPU %d %%' % st.cpu], h=11, tone='green', pad=4, row_gap=1.8)
+    sr = (x - 134, cy - 22, x, cy + 22)
+    dm_display(cv, sr, ['LAT %d smp' % st.lat, 'CPU %d %%' % st.cpu], h=14, tone='green', pad=4, row_gap=1.0)
     out['status'] = sr
     x = sr[0] - 8
     # ---- state lamps (UNCAL / OUT OF TRUE) in one backlit block in the room between the clusters -------------------------

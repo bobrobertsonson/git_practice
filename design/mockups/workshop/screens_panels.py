@@ -83,7 +83,7 @@ def list_row(cv, rect, selected=False):
 # --------------------------------------------------------------------------------------------------------------------
 def screen_02_top_bar():
     cv = ws.new_screen('02_top_bar', sawdust_n=500)
-    ab = {'a': 'GRAVE DIRT · MATCHED v2', 'b': 'THRASH TIGHT', 'active': 'a'}
+    ab = {'a': 'GRAVE DIRT · MATCHED v2', 'b': 'THRASH TIGHT · DOWNTUNED TAKE 4' if ws.is_v3() else 'THRASH TIGHT', 'active': 'a'}
     states = [
         ('1 · DEFAULT', 'plain bar: preset selector, A / B, RIG, WOODSHED, settings, LAT / CPU, LIVE, MATCH, NAM FORGER',
          ws.TopBarState()),
@@ -107,15 +107,23 @@ def screen_02_top_bar():
     yz = 5 * pitch + 6
     yl = bars[1][0]
     yr = bars[4][0]
-    r1 = zoom2x(cv, (0, yl, 581, yl + 58), ((1280 - 1162) / 2.0, yz))
+    if ws.is_v3():
+        rg = bars[1][1]['rig']
+        xr = int(rg[2] + 8) if rg[2] + 8 <= 640 else int(rg[0] - 6)          # whole RIG button, or stop before it
+        gx0 = int(bars[4][1]['gear'][0] - 3)
+        note_l = 'brand, preset selector with A / B slot names (the B name clips between ◀ ▶), A / B footswitches (x 0-%d)' % xr
+        note_r = 'gear, LAT / CPU display, STUDIO lamp, MATCH 42 %%, NAM FORGER (x %d-1280)' % gx0
+    else:
+        xr, gx0 = 581, 665
+        note_l = 'brand, preset selector with A / B slot names, A / B footswitches, RIG (x 0-581)'
+        note_r = 'gear, LAT / CPU glass, STUDIO chip, MATCH 42 %, NAM FORGER (x 665-1280)'
+    r1 = zoom2x(cv, (0, yl, xr, yl + 58), ((1280 - 2 * xr) / 2.0, yz))
     c1 = ws.label_well(cv, (20, r1[3] + 14), 'ZOOM 2x · LEFT · STATE 2', 'label_b', fg='blade_hi', h=20, pad=8)
-    ws.label_well(cv, (c1[2] + 6, r1[3] + 14),
-                  'brand, preset selector with A / B slot names, A / B footswitches, RIG (x 0-581)', 'body_dim', h=20, pad=8)
+    ws.label_well(cv, (c1[2] + 6, r1[3] + 14), note_l, 'body_dim', h=20, pad=8)
     yz2 = r1[3] + 30
-    r2 = zoom2x(cv, (665, yr, 1280, yr + 58), ((1280 - 1230) / 2.0, yz2))
+    r2 = zoom2x(cv, (gx0, yr, 1280, yr + 58), ((1280 - 2 * (1280 - gx0)) / 2.0, yz2))
     c2 = ws.label_well(cv, (20, r2[3] + 14), 'ZOOM 2x · RIGHT · STATE 5', 'label_b', fg='blade_hi', h=20, pad=8)
-    ws.label_well(cv, (c2[2] + 6, r2[3] + 14),
-                  'gear, LAT / CPU glass, STUDIO chip, MATCH 42 %, NAM FORGER (x 665-1280)', 'body_dim', h=20, pad=8)
+    ws.label_well(cv, (c2[2] + 6, r2[3] + 14), note_r, 'body_dim', h=20, pad=8)
     return cv
 
 
@@ -511,7 +519,7 @@ def screen_09_notices():
     tb = (t[0] + 8, t[1] + 8, t[2] - 8, t[3] - 8)
     flat_box(cv, tb, 'well', 'ok', 3)
     if ws.is_v3():
-        ws.dm_display(cv, (tb[0] + 2, tb[1] + 2, tb[2] - 2, tb[3] - 2), ['Preset saved:', 'GRAVE DIRT · MATCHED v3'], h=11, tone='green', row_gap=1.6, pad=6)
+        ws.dm_display(cv, (tb[0] + 2, tb[1] + 2, tb[2] - 2, tb[3] - 2), ['Preset saved:', 'GRAVE DIRT · MATCHED v3'], h=14, tone='green', row_gap=1.6, pad=6)
     else:
         ws.glyph_icon(cv, 'check', tb[0] + 18, (tb[1] + tb[3]) / 2.0, 14, 'ok')
         ws.text(cv, (tb[0] + 34, (tb[1] + tb[3]) / 2.0), 'Preset saved: GRAVE DIRT · MATCHED v3', 'body', bg=tb)
