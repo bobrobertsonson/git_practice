@@ -216,7 +216,7 @@ def screen_05_match():
     y += 32
     label_well(cv, (k[0], y + 10), 'REFINED · full-song score, lower is closer', 'label_b', h=20, fg='ok')
     y += 26
-    rows = [('#1', 'BUZZSAW → SAW HEAD ║ TS-STYLE → BODY HEAD · 4x12', '1.53'),
+    rows = [('#1', 'BUZZSAW → SAW HEAD ║ CHISEL → BODY HEAD · 4x12', '1.53'),
             ('#2', 'TAR PIT → SAW HEAD ║ BODY HEAD · 4x12', '1.71'),
             ('#3', 'SERRATED → SAW HEAD · single path · 2x12', '2.08')]
     for i, (rk, ch, sc) in enumerate(rows):
@@ -331,7 +331,7 @@ def screen_06_nam_forger():
     # ---- rig summary / what goes into the model / credits ----------------------------------------------------------
     h4 = 220
     k = sec(cv, (x0, y, x0 + 220, y + h4), 'RIG', 'm06e')
-    rows = [('BLADE', 'THE SAW MILL → SAW HEAD', 'blade_hi'), ('BODY', 'TS-STYLE → BODY HEAD', 'body'),
+    rows = [('BLADE', 'THE SAW MILL → SAW HEAD', 'blade_hi'), ('BODY', 'CHISEL → BODY HEAD', 'body'),
             ('BLEND · ALIGN', '79 / 21 · −17 smp · Ø NORMAL', None), ('CAB', 'SHARED 4x12 · one mic', None)]
     yy = k[1]
     for lab, val, col in rows:
@@ -340,7 +340,7 @@ def screen_06_nam_forger():
         yy += 42
     k = sec(cv, (x0 + 228, y, x0 + 548, y + h4), 'WHAT GOES INTO THE MODEL', 'm06f')
     items = [('✗', 'GATE — left out', 'warn'), ('✓', 'BLADE · THE SAW MILL + SAW HEAD', 'ok'),
-             ('✓', 'BODY · TS-STYLE + BODY HEAD', 'ok'), ('✓', 'BLEND + ALIGN', 'ok'), ('✗', 'CAB IR — loads after the model', 'warn'),
+             ('✓', 'BODY · CHISEL + BODY HEAD', 'ok'), ('✓', 'BLEND + ALIGN', 'ok'), ('✗', 'CAB IR — loads after the model', 'warn'),
              ('✗', 'POST EQ — loads after the cab', 'warn'), ('✓', 'VISE — release 80 ms, trainable', 'ok'),
              ('✗', 'DELAY · REVERB · MODULATION — none in rig', 'bone_dim')]
     well(cv, (k[0], k[1], k[2], k[1] + len(items) * 20 + 6), 'well', 2)
@@ -408,106 +408,121 @@ def screen_06_nam_forger():
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# 07 WOODSHED
+# 07 WOODSHED: built around the cassette-deck render (assets/woodshed_deck.png, see the README for how it was made)
 # --------------------------------------------------------------------------------------------------------------------
-def _title_plate(cv, rect, title, key):
-    ws.plate(cv, rect, None, key=key)
-    st = (rect[0] + 22, rect[1] + 5, rect[2] - 22, rect[3] - 5)
-    well(cv, st, 'alu_well', 2)
-    text(cv, (st[0] + 10, cy_of(st)), title, 'brand', bg=st, fg='ink')
-    return st
+DECK_PNG = os.path.join(HERE, 'assets', 'woodshed_deck.png')
+DECK_NATIVE = (26, 54)           # source px of the crop's top-left inside the full render (all D() coordinates are in crop px + this)
+_deck_cache = {}
 
 
-def _sawtooth(cv, y_base, x0, x1, h=14, pitch=26):
-    """A row of saw teeth standing on y_base (decoration): dark steel with a lit leading edge."""
-    x = x0
-    while x < x1:
-        pts = [(x, y_base + 1), (x + pitch * 0.9, y_base - h), (x + pitch * 0.9, y_base + 1)]
-        cv.poly(pts, 'steel')
-        cv.line([(x + 0.5, y_base), (x + pitch * 0.9, y_base - h)], 'steel_bare', 1.1, 0.65, False)
-        x += pitch
+def _deck_sprite(width):
+    if width not in _deck_cache:
+        from PIL import Image
+        im = Image.open(DECK_PNG).convert('RGBA')
+        sp = ws._scale_rgba(im, int(round(width * ws.S)))
+        sp.putalpha(ws._rr_mask(sp.width, sp.height, 7 * ws.S))
+        _deck_cache[width] = sp
+    return _deck_cache[width]
 
 
 def screen_07_woodshed():
-    cv = backdrop('07_woodshed', 0.22)
+    cv = backdrop('07_woodshed', 0.3)
     top(cv, woodshed_open=True)
-    DY = 470
-    ws.sawdust(cv, (0, DY - 34, 940, DY), 90, '07:dust', clumps=[(330, DY - 5, 150, 160), (700, DY - 4, 110, 110)])
-    cv.shadow((0, DY - 14, 1280, DY), 0, (0, -4), 10, 0.5)
-    _sawtooth(cv, DY, 0, 1280)
-    ws.panel(cv, (0, DY, 1280, 800), 'dock07', 1.4, 0, shadow=False)
-    cv.blend((0, DY, 1280, DY + 1), 'bone', 0.25)
-    # ---- row A: title, pickers, song --------------------------------------------------------------------------------
-    ya = DY + 12
-    _title_plate(cv, (14, ya, 240, ya + 38), 'WOODSHED', 'p07')
-    btn(cv, 256, ya + 4, 124, 30, 'SONG FILE…')
-    btn(cv, 388, ya + 4, 150, 30, 'STEMS FOLDER…')
-    strip(cv, (548, ya + 5, 800, ya + 33), 'Cinder Pit — reference mix.flac', 'body_strong')
-    strip(cv, (806, ya + 5, 1034, ya + 33), '✓ separated · 4 stems · 04:12', 'body', fg='ok')
-    strip(cv, (1042, ya + 5, 1266, ya + 33), 'drop a song or stems folder here', 'body_dim')
-    # ---- row B: transport + seek ------------------------------------------------------------------------------------
-    yb = DY + 74
-    ws.footswitch(cv, 44, yb, 44, True, None, 'PLAYING')
-    ws.footswitch(cv, 134, yb, 44, False, 'PAUSE')
-    ws.lcd(cv, (196, yb), '01:23.4', '/ 04:12.0', digits=7, h=22)
-    sx0, sx1 = 470, 1130
-    slider_rect = (sx0, yb - 10, sx1, yb + 10)
-    frac_a, frac_b, frac_p = 42.0 / 252.0, 118.5 / 252.0, 83.4 / 252.0
-    ws.slider(cv, slider_rect, frac_p, [(frac_a, 'A'), (frac_b, 'B')], key='seek07')
-    cv.fill((sx0 + (sx1 - sx0) * frac_a, yb + 14, sx0 + (sx1 - sx0) * frac_b, yb + 16), 'blade')
-    for fr, nm, tm in ((frac_a, 'A', '00:42.0'), (frac_b, 'B', '01:58.5')):
-        mx = sx0 + (sx1 - sx0) * fr
-        label_well(cv, (mx, yb - 22), nm, 'label_b', h=16, pad=6, align='c')
-        label_well(cv, (mx, yb + 28), nm + ' ' + tm, 'mono_dim', h=18, pad=6, align='c', size=13)
-    ws.chip(cv, (1264, yb), 'LOOP ON', 'ok', glyph='check', h=24, align='r')
-    # ---- row C: controls ---------------------------------------------------------------------------------------------
-    rule(cv, 14, 1266, DY + 108)
-    yc = DY + 170
-    label_well(cv, (22, yc - 36), 'COUNT-IN', 'label_b', h=18)
-    ws.toggle(cv, 72, yc, 1, ['OFF', 'ON'], 30, key='tg07a')
-    label_well(cv, (160, yc - 36), 'TEMPO', 'label_b', h=18)
-    ws.lcd(cv, (160, yc), '142', 'BPM', digits=3, h=20)
-    label_well(cv, (306, yc - 36), 'GUITAR STEM', 'label_b', h=18)
-    ws.rotary_selector(cv, 440, yc + 4, 44, ['MUTE', 'GHOST', 'FULL'], 1, 'body')
-    label_well(cv, (580, yc - 36), 'KEEP KEYS', 'label_b', h=18)
-    ws.toggle(cv, 618, yc, 1, ['OFF', 'ON'], 30, key='tg07b')
-    label_well(cv, (730, yc - 36), 'BACKING', 'label_b', h=18)
-    ws.knob(cv, 752, yc + 2, 44, 'pedal', 0.62, 'body')
-    ws.lcd(cv, (788, yc), '-3.5', 'dB', digits=4, h=20)
-    label_well(cv, (936, yc - 36), 'OFFSET', 'label_b', h=18)
-    ws.lcd(cv, (936, yc), '+120', 'ms', digits=4, h=20)
-    label_well(cv, (1086, yc - 36), 'SYNC TO HOST', 'label_b', h=18)
-    ws.toggle(cv, 1122, yc, 0, ['OFF', 'ON'], 30, key='tg07c')
-    strip(cv, (1086, yc + 20, 1266, yc + 40), 'plugin only · OFF = free-run', 'body_dim', pad=6)
-    # ---- row D: record band -------------------------------------------------------------------------------------------
-    rule(cv, 14, 1266, DY + 214)
-    yd = DY + 262
-    ws.footswitch(cv, 40, yd - 6, 38, True, 'REC')
-    ws.led(cv, 92, yd - 6, True, 22, 'alert')
-    ws.lcd(cv, (150, yd - 6), '00:47.3', '', digits=7, h=20)
-    label_well(cv, (322, yd - 34), 'TAKES · NEWEST FIRST', 'label_b', h=16)
-    takes = [('take_2026-10-08_2114', '01:48', 'at 00:12.0', '0 overruns', 'USED FOR MATCH', True),
-             ('take_2026-10-08_2102', '02:31', 'at 00:00.0', '0 overruns', '', False),
-             ('take_2026-10-07_2250', '00:52', 'at 01:04.5', '1 overrun', '', False)]
-    tx0, tx1 = 322, 940
-    for i, (nm, ln, at, ov, tag, sel) in enumerate(takes):
-        r = (tx0, yd - 26 + i * 24, tx1, yd - 26 + i * 24 + 22)
+    W = 640
+    k = W / 1210.0
+    sp = _deck_sprite(W)
+    H = sp.height / ws.S
+    dx, dy = 12, 800 - 12 - H
+
+    def D(px, py):
+        """deck-render source px -> logical page px"""
+        return (dx + (px - DECK_NATIVE[0]) * k, dy + (py - DECK_NATIVE[1]) * k)
+
+    def DR(x0, y0, x1, y1):
+        a, b = D(x0, y0)
+        c, d = D(x1, y1)
+        return (a, b, c, d)
+
+    # ---- bench: sawdust drifts around the deck, deck + side panel -----------------------------------------------
+    px0 = dx + W + 10
+    ws.sawdust(cv, (0, dy - 40, 940, 800), 150, '07:dust',
+               clumps=[(dx + 120, dy - 2, 120, 150), (dx + 420, dy - 2, 130, 140), (px0 - 5, dy + 200, 20, 80), (px0 + 120, dy - 4, 110, 120)])
+    cv.shadow((dx + 6, dy + 8, dx + W - 6, dy + H), 8, (0, 12), 20, 0.85)
+    cv.sprite(sp, dx + W / 2.0, dy + H / 2.0)
+    # nameplate over the baked PLAY-ALONG lettering
+    ws.nameplate(cv, DR(150, 76, 430, 122), 'WOODSHED')
+    # position counter on the OLED: the glass replaces the baked "PLAY 03:12" lines
+    ws.lcd(cv, D(150, 167), '01:23.4', '/ 04:12.0', digits=7, h=18)
+    # BACKING readout over the baked legend
+    bx, by = D(92, 238)
+    lr = label_well(cv, (bx, by), 'BACKING', 'label_b', h=16, pad=5)
+    ws.lcd(cv, (lr[2] + 5, by), '-3.5', 'dB', digits=4, h=14)
+    # GUITAR STEM: GHOST selected (replaces the baked legend)
+    gr = DR(258, 276, 396, 340)
+    well(cv, gr, 'well', 2)
+    r1 = (gr[0], gr[1], gr[2], (gr[1] + gr[3]) / 2.0)
+    r2 = (gr[0], (gr[1] + gr[3]) / 2.0, gr[2], gr[3])
+    text(cv, None, 'GUITAR STEM', 'label', bg=r1)
+    text(cv, None, '▶ GHOST', 'label_b', bg=(r2[0] + 4, r2[1] + 2, r2[2] - 4, r2[3] - 4), fg='blade_hi')
+    # COUNT-IN is ON (the baked slide switch); tempo readout
+    ws.lcd(cv, D(404, 486), '142', 'BPM', digits=3, h=14)
+    # loop A / B times and state under the two loop keys
+    lw = DR(140, 664, 560, 706)
+    well(cv, lw, 'well', 2)
+    text(cv, None, 'A 00:42.0  ·  B 01:58.5', 'mono', bg=lw, size=13)
+    ws.chip(cv, D(585, 640), 'LOOP ON', 'ok', glyph='check', h=22)
+    # PLAY is pressed: say so on the key
+    pw = DR(640, 826, 790, 862)
+    well(cv, pw, 'well', 2)
+    text(cv, None, 'PLAYING', 'label_b', bg=pw)
+
+    # ---- side panel: the controls the deck lacks -----------------------------------------------------------------
+    sp0, sp1 = px0, 932
+    sy0 = dy
+    ws.panel(cv, (sp0, sy0, sp1, 788), 'side07', 1.5, 8, rivets=True)
+    ws.plate(cv, (sp0 + 8, sy0 + 8, sp1 - 8, sy0 + 38), 'WOODSHED · SONG + TAKES', title_style='section', key='pl07')
+    x0, x1 = sp0 + 14, sp1 - 14
+    y = sy0 + 48
+    btn(cv, x0, y, 112, 28, 'SONG FILE…')
+    btn(cv, x0 + 120, y, x1 - x0 - 120, 28, 'STEMS FOLDER…')
+    y += 34
+    strip(cv, (x0, y, x1, y + 24), 'Cinder Pit — reference mix.flac', 'body_strong')
+    y += 28
+    strip(cv, (x0, y, x1, y + 22), '✓ separated · 4 stems · 04:12', 'body', fg='ok')
+    y += 30
+    rule(cv, x0, x1, y)
+    y += 8
+    label_well(cv, (x0, y + 8), 'KEEP KEYS', 'label_b', h=16, pad=5)
+    label_well(cv, (x0 + 130, y + 8), 'OFFSET', 'label_b', h=16, pad=5)
+    ws.toggle(cv, x0 + 56, y + 38, 1, ['OFF', 'ON'], 26, key='tg07a')
+    ws.lcd(cv, (x0 + 130, y + 38), '+120', 'ms', digits=4, h=14)
+    y += 62
+    label_well(cv, (x0, y + 14), 'SYNC TO HOST', 'label_b', h=16, pad=5)
+    ws.toggle(cv, x0 + 176, y + 14, 0, ['OFF', 'ON'], 26, key='tg07b')
+    y += 38
+    rule(cv, x0, x1, y)
+    y += 12
+    ws.footswitch(cv, x0 + 16, y + 18, 34, True)
+    label_well(cv, (x0 + 42, y + 18), 'REC', 'label_b', h=16, pad=5)
+    ws.led(cv, x0 + 100, y + 18, True, 20, 'alert')
+    ws.lcd(cv, (x1, y + 18), '00:47.3', '', digits=7, h=14, align='r')
+    y += 46
+    label_well(cv, (x0, y + 8), 'TAKES · ▶ = USED FOR MATCH', 'label_b', h=16, pad=5)
+    y += 20
+    takes = [('2026-10-08_2114', '01:48', True), ('2026-10-08_2102', '02:31', False), ('2026-10-07_2250', '00:52', False)]
+    for i, (nm, ln, sel) in enumerate(takes):
+        r = (x0, y + i * 24, x1, y + i * 24 + 22)
         well(cv, r, 'well_raised' if sel else 'well', 2)
         if sel:
             cv.fill((r[0], r[1] + 2, r[0] + 4, r[3] - 2), 'blade')
-        cy = cy_of(r)
-        text(cv, (r[0] + 10, cy), ('▶ ' if sel else '   ') + nm, 'mono', bg=(r[0] + 6, r[1] + 2, r[0] + 214, r[3] - 2),
-             fg='blade_hi' if sel else 'bone')
-        text(cv, (r[0] + 224, cy), ln, 'mono_dim', bg=(r[0] + 220, r[1] + 2, r[0] + 276, r[3] - 2))
-        text(cv, (r[0] + 286, cy), at, 'mono_dim', bg=(r[0] + 282, r[1] + 2, r[0] + 390, r[3] - 2))
-        text(cv, (r[0] + 398, cy), ov, 'mono_dim' if ov.startswith('0') else 'body_strong', bg=(r[0] + 394, r[1] + 2, r[0] + 486, r[3] - 2),
-             fg=None if ov.startswith('0') else 'warn')
-        if tag:
-            text(cv, (r[2] - 8, cy), '✓ ' + tag, 'label_b', bg=(r[0] + 490, r[1] + 2, r[2] - 4, r[3] - 2), fg='ok', align='r')
-    btn(cv, 954, yd - 20, 134, 34, 'USE FOR MATCH')
-    btn(cv, 1096, yd - 20, 66, 34, 'MATCH')
-    btn(cv, 1170, yd - 20, 96, 34, 'NAM FORGER', 'primary')
-    strip(cv, (954, yd + 20, 1266, yd + 42), 'recording the clean DI as you play', 'body_dim', pad=6)
+        text(cv, (r[0] + 10, cy_of(r)), ('▶ ' if sel else '   ') + nm, 'mono', bg=(r[0] + 6, r[1] + 2, r[0] + 176, r[3] - 2),
+             fg='blade_hi' if sel else 'bone', size=13)
+        text(cv, (r[2] - 8, cy_of(r)), ln, 'mono_dim', bg=(r[0] + 180, r[1] + 2, r[2] - 3, r[3] - 2), size=13, align='r')
+    y += 3 * 24 + 6
+    btn(cv, x0, y, 128, 28, 'USE FOR MATCH')
+    btn(cv, x0 + 136, y, x1 - x0 - 136, 28, 'MATCH')
+    y += 34
+    btn(cv, x0, y, x1 - x0, 30, 'NAM FORGER', 'primary')
     return cv
 
 
@@ -584,7 +599,7 @@ def screen_08_rig_editor():
     ly2 = cy0 + ch + 10
     _lane_header(cv, (x0, ly2, x1, ly2 + 26), 'B · BODY', 'PATH B · 2 OF 8 BLOCKS', 'body')
     cy1 = ly2 + 32
-    _block_card(cv, (xs[0], cy1, xs[0] + cw, cy1 + ch), 'TS-STYLE', 'k08d',
+    _block_card(cv, (xs[0], cy1, xs[0] + cw, cy1 + ch), 'CHISEL', 'k08d',
                 [('modelled pedal (DSP circuit)', 'body', None), ('DRIVE 0.20 · TONE 0.55', 'body_dim', None),
                  ('signal passes straight through', 'body_dim', None)], 'body', bypassed=True, input_db='0.0', knob_v=0.5)
     _block_card(cv, (xs[1], cy1, xs[1] + cw, cy1 + ch), 'BODY HEAD', 'k08e',

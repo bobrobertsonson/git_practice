@@ -180,3 +180,4 @@ shipped in the plugin, and no `.ttf` is committed. All SIL Open Font License 1.1
 | Share Tech Mono | `J7aHnp1uDWRBEqV98dVQztYldFc7pA.ttf` | `5f6b57538a1a35469a038dc3073003cebc4c101ad7b3c219e9555a3b3c0a81d2` | readouts |
 
 The mockup renders composite the project's own Blender renders from `plugin/assets/` (read-only input).
+The WOODSHED mockup also composites `design/mockups/workshop/assets/woodshed_deck.png`, a render of our own `design/render/playalong_deck.py` made with Blender via the `bpy` 4.2.0 wheel (GPL-3.0, design-time only, never linked or shipped; the committed PNG is the pinned input, see the mockups README).
