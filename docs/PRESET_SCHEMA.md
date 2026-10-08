@@ -1,4 +1,4 @@
-# Preset schema — `sawblade.preset` v3
+# Preset schema — `sawblade.preset` v4
 
 A preset is one JSON document. Plugin state **is** the preset; `tonerender` renders exactly
 what the plugin will play. All unknown keys are rejected (strict parsing) so typos fail loudly.
@@ -14,6 +14,10 @@ optional and absent until measured, so v1 and v2 files are valid v3 files: the r
 bit-identically to before (the trim is only applied when a player asks for it). The writer emits `"version": 3`; a v3 file with
 the new keys is rejected by a v2 reader (strict parsing), which is why the version moved.
 
+v4 (v0.4M, Task G) adds the live dynamics policy: optional `liveDynamics`, `dynamicsMode` and `origin` (see Live dynamics) and the
+gate's `thresholdMode` / `floorOffsetDb`. All are optional and absent in older files, which read and render bit-identically
+(`dynamicsMode` absent = `"record"`). The writer emits `"version": 4`, 1-4 are read; a v3 reader rejects v4 (strict parsing).
+
 ## Conventions
 
 - Gains in dB, frequencies in Hz, times in ms, `q` is dimensionless.
@@ -27,7 +31,7 @@ the new keys is rejected by a v2 reader (strict parsing), which is why the versi
 ```jsonc
 {
   "schema": "sawblade.preset",        // required, exact string
-  "version": 3,                        // required, integer; 1, 2 and 3 are read, 3 is written
+  "version": 4,                        // required, integer; 1-4 are read, 4 is written
   "name": "Gatecreeper-ish v1",        // required
   "notes": "",                         // optional free text
   "category": "Death metal",           // optional UI metadata (see Category); not tone, ignored by the chain
@@ -41,6 +45,9 @@ the new keys is rejected by a v2 reader (strict parsing), which is why the versi
   "cab":    { ... },                   // required; see Cab
   "postEq": [ EqBand, ... ],           // optional, default []
   "busComp":{ ... },                   // optional; see Bus compressor
+  "liveDynamics": { "gate": {...}, "busComp": {...} },  // v4, optional; see Live dynamics
+  "dynamicsMode": "record",            // v4, optional: "record" | "live"; absent = "record"
+  "origin": "user",                    // v4, optional: "user" | "match" | "official"; absent = "user"
   "output": { "gainDb": 0.0,           // optional
               "autoTrimDb": 0.0, "autoTrimHash": "" },  // v3, optional: see Level matching
   "playAlong": { ... },                // optional; plugin UI state, see Play-along (not tone)
@@ -63,7 +70,9 @@ the new keys is rejected by a v2 reader (strict parsing), which is why the versi
   "mode": "gate",         // "gate" | "expander" (phase 3.5)
   "ratio": 4.0,           // expander only: downward ratio below the close threshold, 1.5-10
   "keyHighPassHz": 0,     // 0 = off, else 40-400; 12 dB/oct high-pass on the key signal only
-  "releaseCurve": "one-pole"  // "one-pole" | "linear-db" (constant dB/ms: |rangeDb| over releaseMs)
+  "releaseCurve": "one-pole", // "one-pole" | "linear-db" (constant dB/ms: |rangeDb| over releaseMs)
+  "thresholdMode": "absolute", // v4: "absolute" | "floorRelative" (written only when floorRelative)
+  "floorOffsetDb": 10.0         // v4, floorRelative only: open threshold = floor estimate + this (0-40)
 }
 ```
 Defaults are the values shown, with `enabled: false` if the object is omitted.
@@ -75,6 +84,32 @@ dB ramp (slope `-rangeDb/releaseMs` dB per ms) toward the target. Defaults repro
 exactly. Out-of-range values, or `keyHighPassHz` in (0, 40), are preset errors (exit 3).
 Envelope detector: peak follower with 0.1 ms attack and 10 ms release (fixed in v1).
 Gate is never part of any NAM export.
+
+**Floor follower (`thresholdMode: "floorRelative"`).** `thresholdDb` is then unused; the open threshold is
+`floorEstimate + floorOffsetDb`, re-evaluated as the estimate moves (hysteresis applies below it). The estimate is minimum
+statistics on the key (after `keyHighPassHz`): the gate's own peak envelope (0.1 ms attack / 10 ms release), per 50 ms frame its maximum; only frames below `estimate + 20 dB` feed the sub-window
+minima (playing never feeds the floor); the estimate is the minimum over a 3 s window held as a fixed ring of 30 sub-window
+minima of 100 ms, counted in samples (independent of block size, no allocation). When no frame has qualified for 10 s the
+estimate leaks up at +1 dB/s. Clamped to [-96, -40] dBFS, seed -70 dBFS (until the first window has filled the estimate is
+min(seed, running minimum)). The same detector defines the matcher's DI floor, `peakFloorDb` (92.5th percentile of that envelope over the DI gap samples; pybind `sawblade_core.peak_floor_db`); the default record gate cell is open = peakFloor + 10 dB, hysteresis 6 dB.
+
+## Live dynamics (v4)
+
+A rig played live must not inherit mix processing by default. The top-level `gate` and `busComp` are the **record set** (what the
+matcher fits to the recording; unchanged meaning). `liveDynamics` is the **live set**, same object schemas. `dynamicsMode`
+(`"record"` | `"live"`, absent = `"record"`) selects which set the engine runs, and the NAM export trains.
+
+`origin` says who made the preset: `"match"` (written by the matcher), `"official"` (shipped presets) or `"user"` (default; hand
+made, old files). When `liveDynamics` is absent the live set is **derived** (core `liveDynamicsOf`, the single source of truth):
+- `origin` is not `"match"`: the live set is the stored `gate` / `busComp`, unchanged (deliberate settings play as set).
+- `origin` is `"match"`: gate `enabled` = the record gate's; mode expander, ratio 4, rangeDb -40, keyHighPassHz 80,
+  thresholdMode floorRelative, floorOffsetDb +10 (close = floor + 4), holdMs = max(record, 40), releaseMs = max(record, 120), attackMs /
+  hysteresisDb / releaseCurve from the record gate (record gate absent or disabled: live gate disabled); busComp disabled.
+
+`activeDynamics(preset)` resolves the set `dynamicsMode` selects; it is what the render path, the NAM exporter and the plugin use.
+The NAM export follows it: a `"live"` rig trains with the live busComp (off for a match preset), a `"record"` rig trains the
+record busComp if it passes the export rules; the gate stays excluded either way. The export notes state which set was used.
+The plugin sets `"live"` on presets that have no `dynamicsMode` when it loads or creates them.
 
 ## Path
 

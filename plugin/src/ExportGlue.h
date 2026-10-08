@@ -33,6 +33,7 @@ struct RigSummary {
   bool cabEnabled = true;
   bool noCabExact = true;                 // shared / irMix cab (one convolver) or no cab: the no-cab export is exact
   bool compOn = false;
+  std::string dynamics = "record";        // "live" | "record": which dynamics set the export follows (activeDynamics)
   double compReleaseMs = 0.0;
   bool compTrainable = true;              // release <= kBusCompMaxTrainableReleaseMs
   std::vector<LicenceLine> licences;

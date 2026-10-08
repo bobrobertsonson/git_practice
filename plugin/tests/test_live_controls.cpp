@@ -474,11 +474,11 @@ std::vector<Reader> readersFor(rig::RigEditorPanel::Tab tab, const Preset& p) {
   if (tab == Tab::Gate) {
     for (rig::GateField f : {rig::GateField::Hysteresis, rig::GateField::Attack, rig::GateField::Hold, rig::GateField::Release, rig::GateField::Range,
                              rig::GateField::Ratio, rig::GateField::KeyHpf})
-      r.push_back([f](const Preset& q) { return rig::gateField(q.gate, f); });
+      r.push_back([f](const Preset& q) { return rig::gateField(activeDynamics(q).gate, f); });
   } else if (tab == Tab::Comp) {
     for (rig::CompField f : {rig::CompField::Threshold, rig::CompField::Ratio, rig::CompField::Knee, rig::CompField::Attack, rig::CompField::Release,
                              rig::CompField::Makeup})
-      r.push_back([f](const Preset& q) { return rig::compField(q.busComp, f); });
+      r.push_back([f](const Preset& q) { return rig::compField(activeDynamics(q).busComp, f); });
   } else if (tab == Tab::Chain) {
     for (int path = 0; path < 2; ++path)
       for (const Block& b : (path == 0 ? p.a : p.b).blocks)
@@ -614,7 +614,7 @@ TEST_CASE("rig knobs: while a structural knob is dragged the model follows on a 
   auto knobs = shownPresetKnobs(*w.panel);
   REQUIRE(knobs.size() == 6);
   rig::PresetKnob& pk = *knobs[5];  // MAKEUP -24..48
-  const Reader makeup = [](const Preset& p) { return rig::compField(p.busComp, rig::CompField::Makeup); };
+  const Reader makeup = [](const Preset& p) { return rig::compField(activeDynamics(p).busComp, rig::CompField::Makeup); };
   skin::FilmstripKnob& k = pk.knob();
   const double m0 = w.applied(makeup);
   Hand hand(k);
@@ -653,7 +653,7 @@ TEST_CASE("rig knobs: a PresetKnob drags like a main-page knob (shift = fine, do
   CHECK(k.getValue() == -90.0);  // the knob's default
   w.panel->controller().flushTimerForTests();  // the debounce / throttle timer, fired explicitly (no wall-clock wait)
   w.settle();
-  CHECK(w.model([](const Preset& p) { return rig::gateField(p.gate, rig::GateField::Range); }) == -90.0);
+  CHECK(w.model([](const Preset& p) { return rig::gateField(activeDynamics(p).gate, rig::GateField::Range); }) == -90.0);
   const double before = k.getValue();
   juce::MouseWheelDetails wd{};
   wd.deltaY = 0.2f;
@@ -664,7 +664,7 @@ TEST_CASE("rig knobs: a PresetKnob drags like a main-page knob (shift = fine, do
   CHECK(k.getValue() > before);
   w.panel->controller().flushTimerForTests();  // the debounce / throttle timer, fired explicitly (no wall-clock wait)
   w.settle();
-  CHECK(std::abs(w.model([](const Preset& p) { return rig::gateField(p.gate, rig::GateField::Range); }) - k.getValue()) < 1e-6);
+  CHECK(std::abs(w.model([](const Preset& p) { return rig::gateField(activeDynamics(p).gate, rig::GateField::Range); }) - k.getValue()) < 1e-6);
 }
 
 TEST_CASE("rig knobs: a continuous drag applies on a throttle (not only when the hand pauses), mouse-up leaves nothing pending",
@@ -676,7 +676,7 @@ TEST_CASE("rig knobs: a continuous drag applies on a throttle (not only when the
   auto knobs = shownPresetKnobs(*w.panel);
   REQUIRE(knobs.size() == 6);
   skin::FilmstripKnob& k = knobs[5]->knob();  // MAKEUP
-  const Reader makeup = [](const Preset& p) { return rig::compField(p.busComp, rig::CompField::Makeup); };
+  const Reader makeup = [](const Preset& p) { return rig::compField(activeDynamics(p).busComp, rig::CompField::Makeup); };
   const double m0 = w.applied(makeup);
   auto& ctl = w.panel->controller();
   const int starts0 = ctl.timerStartsForTests();
@@ -716,7 +716,7 @@ TEST_CASE("rig knobs: KEY HPF shows the model's value (OFF / 40 Hz) the moment t
   auto knobs = shownPresetKnobs(*w.panel);
   REQUIRE(knobs.size() == 7);
   skin::FilmstripKnob& k = knobs[6]->knob();  // KEY HPF 0..400 Hz
-  const Reader hpf = [](const Preset& p) { return rig::gateField(p.gate, rig::GateField::KeyHpf); };
+  const Reader hpf = [](const Preset& p) { return rig::gateField(activeDynamics(p).gate, rig::GateField::KeyHpf); };
   struct Case {
     double releaseHz, modelHz;
   };
@@ -803,7 +803,7 @@ TEST_CASE("rig knobs: KEY HPF does not stick in its OFF / 40 Hz dead zone under 
   auto knobs = shownPresetKnobs(*w.panel);
   REQUIRE(knobs.size() == 7);
   skin::FilmstripKnob& k = knobs[6]->knob();
-  const Reader hpf = [](const Preset& p) { return rig::gateField(p.gate, rig::GateField::KeyHpf); };
+  const Reader hpf = [](const Preset& p) { return rig::gateField(activeDynamics(p).gate, rig::GateField::KeyHpf); };
   auto wheel = [&](float dy) {
     juce::MouseWheelDetails wd{};
     wd.deltaY = dy;
@@ -847,7 +847,7 @@ TEST_CASE("rig knobs: a real double-click sequence (down x2, double-click, up) r
   REQUIRE(knobs.size() == 7);
   rig::PresetKnob& pk = *knobs[4];  // RANGE -120..0 dB, default -90
   skin::FilmstripKnob& k = pk.knob();
-  const Reader range = [](const Preset& p) { return rig::gateField(p.gate, rig::GateField::Range); };
+  const Reader range = [](const Preset& p) { return rig::gateField(activeDynamics(p).gate, rig::GateField::Range); };
   int begin = 0, end = 0;
   pk.onGestureBegin = [&] { ++begin; };
   pk.onGestureEnd = [&] { ++end; };

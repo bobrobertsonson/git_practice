@@ -259,24 +259,26 @@ def test_gate_sweep_picks_a_higher_threshold_when_the_reference_gaps_are_cleaner
     gs, floor = _gate_case(tmp_path, lambda f: cell_gate(f, 20.0, 20.0, 2.0, -90.0))      # a reference gated hard and fast
     assert gs["skipped"] is None and gs["mode"] == "paired" and gs["renders"] == len(gs["grid"]) <= 20
     assert [st["axis"] for st in gs["steps"]] == ["thresholdOffsetDb", "holdMs", "releaseMs", "rangeDb"]
-    assert gs["changed"] and gs["picked"]["offsetDb"] > 4.0
+    assert gs["changed"] and gs["picked"]["offsetDb"] > 10.0
     assert gs["gate"]["holdMs"] == gs["picked"]["holdMs"] and gs["gate"]["rangeDb"] == gs["picked"]["rangeDb"]
     assert gs["picked"]["thresholdDb"] == gs["gate"]["thresholdDb"]
     assert gs["picked"]["thresholdDb"] > gs["baseline"]["thresholdDb"] and gs["gate"]["thresholdDb"] == gs["picked"]["thresholdDb"]
     assert gs["picked"]["floorTerm"] < gs["baseline"]["floorTerm"]
     assert gs["picked"]["feasible"] and gs["picked"]["ltas"] <= gs["baseline"]["ltas"] + gs["ltasToleranceDb"]
     assert (gs["baseline"]["offsetDb"], gs["baseline"]["holdMs"], gs["baseline"]["releaseMs"],
-            gs["baseline"]["rangeDb"]) == (4.0, 40.0, 150.0, -50.0)
+            gs["baseline"]["rangeDb"]) == (10.0, 40.0, 150.0, -50.0)
     assert gs["baseline"]["thresholdDb"] == pytest.approx(gate_preset(floor)["thresholdDb"])
-    # the gate gets cleaner with the threshold: the output's floor falls (more negative) from +4 to +20 dB at 150 ms
+    # the gate gets cleaner with the threshold: the output's floor falls (more negative) from +10 (default) to +20 dB at 150 ms
     by = {(r["offsetDb"], r["holdMs"], r["releaseMs"], r["rangeDb"]): r for r in gs["grid"]}
-    assert by[(20.0, 40.0, 150.0, -50.0)]["floorDbOut"] < by[(4.0, 40.0, 150.0, -50.0)]["floorDbOut"] - 3.0
+    thr_axis = [by[(o, 40.0, 150.0, -50.0)]["floorDbOut"] for o in sorted(GATE_OFFSETS_DB)]          # grid monotonicity:
+    assert all(a > b for a, b in zip(thr_axis, thr_axis[1:])) and thr_axis[0] - thr_axis[-1] > 1.0    # a higher threshold, a cleaner gap
+    assert by[(10.0, 40.0, 150.0, -50.0)] is gs["baseline"] and gs["picked"]["floorDbOut"] < gs["baseline"]["floorDbOut"] - 1.0
     assert {r["offsetDb"] for r in gs["grid"] if r["holdMs"] == 40.0 and r["releaseMs"] == 150.0 and r["rangeDb"] == -50.0} \
         == set(GATE_OFFSETS_DB)
 
 
 def test_gate_sweep_keeps_the_default_when_the_reference_has_the_default_gate(tmp_path):
-    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 4.0))
+    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 10.0))
     assert gs["skipped"] is None and not gs["changed"]
     assert gs["picked"] is gs["baseline"] and gs["baseline"]["floorTerm"] == pytest.approx(0.0, abs=1e-6)
     assert gs["gate"] == gate_preset(gs["diNoiseFloorDb"])             # untouched
@@ -301,9 +303,9 @@ def test_gate_sweep_descends_threshold_then_hold_then_release_then_range(monkeyp
     sp = types.SimpleNamespace(eq_gains=lambda v: None)
     gs = gate_sweep(eng, types.SimpleNamespace(extra={"params": {}}), sp, None, types.SimpleNamespace(feel=ft), -60.0)
     assert [st["axis"] for st in gs["steps"]] == ["thresholdOffsetDb", "holdMs", "releaseMs", "rangeDb"]
-    assert gs["picked"]["holdMs"] == 2.0 and gs["picked"]["rangeDb"] == -90.0 and gs["picked"]["offsetDb"] == 4.0
+    assert gs["picked"]["holdMs"] == 2.0 and gs["picked"]["rangeDb"] == -90.0 and gs["picked"]["offsetDb"] == 10.0
     assert gs["picked"]["releaseMs"] == 150.0 and gs["changed"] and gs["renders"] == len(gs["grid"]) <= 20
-    assert gs["gate"]["holdMs"] == 2.0 and gs["gate"]["rangeDb"] == -90.0 and gs["gate"]["thresholdDb"] == -56.0
+    assert gs["gate"]["holdMs"] == 2.0 and gs["gate"]["rangeDb"] == -90.0 and gs["gate"]["thresholdDb"] == -50.0
     # an acceptance guard: when the LTAS error rises by more than 0.05 dB the cell is not feasible and the default stays
     monkeypatch.setattr(G.L, "evaluate", lambda y, tgt, eq: types.SimpleNamespace(
         total=1.0, ltas=1.0 + (0.0 if (y[0], y[1]) == (40.0, -50.0) else 0.5), feel_terms={"tight": 0.1}))
@@ -327,7 +329,7 @@ def test_gate_sweep_honours_the_feel_floor_switch_and_the_clean_reference_rule()
 
 
 def test_a_matched_mono_reference_is_clean_so_the_gate_sweep_runs_paired(tmp_path):
-    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 4.0))
+    gs, _ = _gate_case(tmp_path, lambda f: cell_gate(f, 10.0))
     assert gs["mode"] == "paired" and gs["skipped"] is None and gs["floorRefSource"].startswith("matched")
 
 
@@ -343,7 +345,7 @@ def test_gate_sweep_is_skipped_without_gaps(tmp_path):
         gs = gate_sweep(eng, Scored(combo, 0.0, 0.0, manual_align(), None, "refined", {"params": v}), sp, ex, tgt, -60.0)
     finally:
         eng.close()
-    assert gs["skipped"] and not gs["changed"] and gs["gate"] == gate_preset(-60.0, {"thresholdDb": -56.0, "releaseMs": 150.0})
+    assert gs["skipped"] and not gs["changed"] and gs["gate"] == gate_preset(-60.0, {"thresholdDb": -50.0, "releaseMs": 150.0})
 
 
 # ---- the search: boost, filters, cab sweep, ablation, trace ------------------------------------------------------------------
@@ -423,12 +425,16 @@ def test_cab_sweep_covers_every_pool_cab_and_lists_every_ir_loss():
             assert c["newCab"] == c["best"]["cab"] and c["lossAfterRelinear"] <= c["lossBeforeRelinear"] + 1e-9
     # whatever the winner's cab is, no refined candidate ends with a cab that is worse than another cab of the sweep
     for cand in res["candidatesStage2"]:
-        sw = next((c for c in cs["candidates"] if c["topology"] == cand["topology"] and c["boost"] == cand["tightBoost"]), None)
+        sw = next((c for c in cs["candidates"] if c["pairKey"] == cand["pairKey"]), None)        # THIS candidate's own sweep
         if sw and cand["loss"] is not None:
-            assert cand["loss"] <= sw["best"]["loss"] + 1e-6 or sw["changed"]
+            slack = 0.05 if res["gateSweep"].get("changed") else 0.0          # the gate sweep (after the cab sweep) may cost <= its LTAS tolerance
+            assert cand["loss"] <= sw["best"]["loss"] + 1e-6 + slack or sw["changed"]
     assert res["ablate"] == [] and res["plan"]["boost"] is True and res["plan"]["filters"] is True
     assert "post.hp" in res["best"]["params"] and res["postFilters"]["searched"] is True
-    assert res["gateFinal"]["thresholdDb"] >= res["gateDefault"]["thresholdDb"] - 1e-9 and "gateSweep" in res
+    # the swept threshold stays on the grid {6 ... 28} dB re the peak floor; the default cell (10) is a member, 6 the lowest
+    assert res["gateFinal"]["thresholdDb"] >= res["gateDefault"]["thresholdDb"] - 4.0 - 1e-9 and "gateSweep" in res
+    assert res["gateFloor"]["peakDb"] is not None and "rmsDb" in res["gateFloor"]
+    assert res["gateDefault"]["thresholdDb"] == pytest.approx(res["gateFloor"]["peakDb"] + 10.0, abs=0.01)
 
 
 def test_trace_tones_reports_a_fixture_tone():
@@ -876,3 +882,111 @@ def test_refit_without_staging_keeps_feel_in_its_first_block(monkeypatch):
         eng.close()
     assert staged[0] is True and staged[1:1 + n_l1] == [False] * n_l1 and all(staged[1 + n_l1:])
     assert all(unstaged) and len(unstaged) == len(staged)
+
+
+def test_gate_sweep_uses_the_full_di_gaps_when_the_excerpt_has_none(tmp_path):
+    """Task H.2: an excerpt of chugs only (no gap) used to skip the sweep; the full DI has rests, so the sweep runs on them
+    (gapSource fullDi), picks a gate the hard-gated reference prefers, and the gap noise of the full render falls."""
+    pool = fixture_pool()
+    combo = Combo((), pool.amps[2], None, None, pool.cabs[0], boost=True)
+    sp = Space.for_combo(combo)
+    v = sp.default()
+    v.update({"boost.drive": 3.0, "boost.level": 10.0, "gain.a.amp": 12.0})
+    di = _gap_di()
+    floor = gate_envelope_floor_db(di, FS)
+    dip, ref = _known(tmp_path, pool, combo, v, gate=cell_gate(floor, 20.0, 20.0, 2.0, -90.0), di=di)
+    ex = make_excerpt(di, 0.6, window=(0, int(0.6 * FS)))                    # the first chugs: no 120 ms silence in it
+    tgt = build_target(ref, ex)
+    assert tgt.feel is not None and not tgt.feel.plan.gap_ok
+    eng = Engine(gate_preset(floor), 2)
+    cand = Scored(combo, 0.0, 0.0, manual_align(), None, "refined", {"params": v})
+    full = {"di": di, "ref": ref.matched_sig, "offset": 0}
+    try:
+        skipped = gate_sweep(eng, cand, sp, ex, tgt, floor)                  # without the full DI: as before, skipped
+        gs = gate_sweep(eng, cand, sp, ex, tgt, floor, full=full)
+        assert skipped["skipped"] and skipped["gapSource"] == "excerpt"
+        assert gs["skipped"] is None and gs["gapSource"] == "fullDi" and gs["gapWindows"] and gs["changed"]
+        assert gs["picked"]["floorTerm"] < gs["baseline"]["floorTerm"]
+        assert gs["picked"]["feasible"] and gs["picked"]["offsetDb"] > 10.0
+        y0, _ = eng.render({**build_preset(combo, v, gate=gate_preset(floor), align=manual_align())}, di)
+        y1, _ = eng.render({**build_preset(combo, v, gate=gs["gate"], align=manual_align())}, di)
+    finally:
+        eng.close()
+    from sawblade_match.tonecheck.analysis import gap_regions
+    gaps = [(a, b) for a, b in gap_regions(di.astype(np.float64), FS) if b > a]
+    assert gaps
+
+    def gap_noise_db(y):             # output power in the full DI's gaps re its power over the rest
+        m = np.zeros(len(y), bool)
+        for a, b in gaps:
+            m[a:b] = True
+        y = np.asarray(y, np.float64)
+        return 10 * np.log10(np.mean(y[m] ** 2) / np.mean(y[~m] ** 2))
+    assert gap_noise_db(y1) < gap_noise_db(y0) - 1.0                         # gap_noise improves vs the default cell
+
+
+# ---- Task H.3: topology margin, BLEND_OCCAM_DB, --topology ------------------------------------------------------------------
+def test_topology_margin_record_and_determination():
+    from sawblade_match.matcher.run import BLEND_OCCAM_DB, TOPOLOGY_DETERMINED_PCT, topology_margin
+    pool = fixture_pool()
+    p, a = pool.pedals, pool.amps
+    blend = Combo((p[0],), a[0], (), a[1], pool.cabs[0])
+    single = Combo((p[0],), a[0], None, None, pool.cabs[0])
+    single2 = Combo((p[0], p[1]), a[0], None, None, pool.cabs[0])
+    mk = lambda c, l: Scored(c, l, 0.5, manual_align(), None, "refined", {})
+    assert BLEND_OCCAM_DB == 0.25 and TOPOLOGY_DETERMINED_PCT == 10.0
+    r = topology_margin([mk(blend, 1.0), mk(single, 1.05), mk(single2, 1.3)])
+    assert r["bestSingle"] == 1.05 and r["bestBlend"] == 1.0 and r["bestSingleTopology"] == "single"
+    assert r["deltaPct"] == pytest.approx(5.0) and r["determined"] is False             # 5 % of the smaller loss: not determined
+    r = topology_margin([mk(blend, 1.0), mk(single2, 1.12)])
+    assert r["deltaPct"] == pytest.approx(12.0) and r["determined"] is True and r["bestSingleTopology"] == "single2"
+    r = topology_margin([mk(blend, 1.2), mk(single, 1.0)])                              # negative: the single is better
+    assert r["deltaPct"] == pytest.approx(-20.0) and r["determined"] is True
+    r = topology_margin([mk(blend, 1.0)])                                               # forced: one side only
+    assert r["determined"] is False and r["deltaPct"] is None and r["bestSingle"] is None and "forced" in r["note"]
+
+
+def test_choose_honours_the_topology_restriction():
+    pool = fixture_pool()
+    p, a = pool.pedals, pool.amps
+    blend = Combo((p[0],), a[0], (), a[1], pool.cabs[0])
+    single = Combo((p[0],), a[0], None, None, pool.cabs[0])
+    mk = lambda c, l: Scored(c, l, 0.5, manual_align(), None, "refined", {})
+    field = [mk(blend, 1.0), mk(single, 1.5)]
+    assert choose(field, "blend").combo is blend and choose(field, "single").combo is single and choose(field).combo is blend
+    with pytest.raises(ValueError):
+        choose([mk(blend, 1.0)], "single")
+    with pytest.raises(ValueError):
+        choose(field, "sideways")
+
+
+def test_run_topology_forces_the_search_and_records_the_margin(tmp_path):
+    from sawblade_match.matcher.run import Config as Cfg
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool, "blend")
+    x, fs = _loadwav(FIX / "di_riff.wav")
+    d = tmp_path
+    di = d / "di.wav"
+    sf.write(str(di), x, fs, subtype="FLOAT")
+    gate = gate_preset(gate_envelope_floor_db(to48(x, fs), FS))
+    hid, _ = core.render(build_preset(combo, v, gate=gate, align=Engine(gate).probe_align(combo, v)), x, float(fs))
+    sf.write(str(d / "hidden.wav"), hid, fs, subtype="FLOAT")
+    out = {}
+    for mode in ("blend", "single", "auto"):
+        ref = load_reference(d / "hidden.wav", channel="mid", matched="mono", offset_ms=0.0)
+        plan = mkplan(top_k={"blend": 1, "single": 1, "single2": 0})
+        cfg = Config(di=di, ref=ref, pool=pool, out=d / mode, seed=1, excerpt_s=2.0, threads=2, plan=plan, write_audio=False,
+                     refine_offsets=False, topology=mode)
+        out[mode] = run_match(cfg, Log())
+    assert set(out["blend"]["topologies"]) == {"blend"} and out["blend"]["best"]["topology"] == "blend"
+    assert set(out["single"]["topologies"]) == {"single"} and out["single"]["best"]["topology"] == "single"
+    assert set(out["auto"]["topologies"]) == {"single", "blend"}
+    tm = out["auto"]["topology"]
+    assert tm["mode"] == "auto" and tm["blendOccamDb"] == 0.25 and tm["bestSingle"] is not None and tm["bestBlend"] is not None
+    assert isinstance(tm["determined"], bool) and tm["deltaPct"] is not None
+    assert out["blend"]["topology"]["determined"] is False and out["blend"]["topology"]["mode"] == "blend"
+    import argparse
+    from sawblade_match.matcher.cli import build_parser
+    assert build_parser().parse_args(["--di", "x", "--ref", "y"]).topology == "auto"
+    with pytest.raises(ValueError):
+        run_match(Config(di=di, ref=ref, pool=pool, out=d / "bad", plan=plan, topology="sideways"), Log())

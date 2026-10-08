@@ -249,13 +249,13 @@ TEST_CASE("RigController: debounced edits are coalesced, latest wins", "[rig][co
   c.editDebounced([](Preset& p) { setGateField(p, GateField::Release, 80.0); });
   c.editDebounced([](Preset& p) { setGateField(p, GateField::Release, 120.0); });
   CHECK(c.hasPending());
-  CHECK(c.view().gate.releaseMs == 120.0);  // the display shows the pending value immediately
-  CHECK(h.p.currentPreset().gate.releaseMs != 120.0);
+  CHECK(activeDynamics(c.view()).gate.releaseMs == 120.0);  // the display shows the pending value immediately
+  CHECK(activeDynamics(h.p.currentPreset()).gate.releaseMs != 120.0);
   c.flushPending();
   waitLoaded(h);
   CHECK_FALSE(c.hasPending());
   CHECK(h.p.engineBuilds() == builds + 1);
-  CHECK(h.p.currentPreset().gate.releaseMs == 120.0);
+  CHECK(activeDynamics(h.p.currentPreset()).gate.releaseMs == 120.0);
 }
 
 TEST_CASE("RigController: live EQ and block-gain edits need no rebuild and match a loaded preset", "[rig][controller][live]") {

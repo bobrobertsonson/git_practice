@@ -134,10 +134,9 @@ def _trace_one(tid, eng, pool, scr, pre, ranked, refined, best, ex, tgt, plan, c
     rec["pair"] = _pair(scr, allcaps)
     keys = {c.key for c in allcaps}
     if rec["gear"] == "cab":
-        sw = next((s for s in cab_sweeps if s["topology"] == best.topology and bool(s["boost"]) == bool(best.combo.boost)),
-                  cab_sweeps[0] if cab_sweeps else None)
+        sw = next((s for s in cab_sweeps if tuple(s.get("pairKey", ())) == best.combo.pair_key()), None)     # the winner's own sweep
         if sw is None:
-            rec["note"] = "cab sweep did not run (--ablate irsweep or no refined candidate)"
+            rec["note"] = "cab sweep did not run for the winning candidate (--ablate irsweep, or it was not among the swept ones)"
         else:
             rec["cabSweep"] = [{"cab": i["cab"], "loss": i["loss"], "rank": 1 + n, "of": sw["nCabs"]}
                                for n, i in enumerate(sw["irs"]) if i["cab"] in keys]

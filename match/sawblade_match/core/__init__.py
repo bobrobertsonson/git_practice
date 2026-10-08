@@ -66,7 +66,7 @@ load_stems = getattr(_core, "load_stems", None)
 stem_set_from_arrays = getattr(_core, "stem_set_from_arrays", None)
 integrated_loudness_lufs = getattr(_core, "integrated_loudness_lufs", None)
 
-__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError", "StemSet", "StemPlayer", "load_stems", "stem_set_from_arrays", "integrated_loudness_lufs", "level_match"]
+__all__ = ["render", "CaptureCache", "PresetError", "RenderIOError", "StemSet", "StemPlayer", "load_stems", "stem_set_from_arrays", "integrated_loudness_lufs", "level_match", "resolve_dynamics", "peak_floor_db"]
 
 
 def level_match(preset, sample_rate, base_dir=None, cache=None) -> dict:
@@ -76,3 +76,22 @@ def level_match(preset, sample_rate, base_dir=None, cache=None) -> dict:
     if fn is None:
         raise ImportError("sawblade_core has no level_match (built before phase 10.1); rebuild the extension")
     return fn(preset, sample_rate, base_dir=base_dir, cache=cache)
+
+
+def peak_floor_db(x, fs, key_hpf_hz: float = 0.0, mask=None):
+    """The DI floor on the gate's own detector (Task H.1; core ``peakFloorDb``): the 92.5th percentile of the peak envelope (0.1 ms
+    attack / 10 ms release, after a key high-pass when ``key_hpf_hz`` > 0) over the samples where ``mask`` is non-zero (all when
+    None), in dBFS; None when the mask selects nothing."""
+    fn = getattr(_core, "peak_floor_db", None)
+    if fn is None:
+        raise ImportError("sawblade_core has no peak_floor_db (built before Task H.1); rebuild the extension")
+    return fn(x, fs, key_hpf_hz=key_hpf_hz, mask=mask)
+
+
+def resolve_dynamics(preset, base_dir=None) -> dict:
+    """The active dynamics set of a preset (Task G; core ``activeDynamics``): ``{"mode": "live" | "record", "gate": {...},
+    "busComp": {...}}``. The one resolver the exporter and the matcher use."""
+    fn = getattr(_core, "resolve_dynamics", None)
+    if fn is None:
+        raise ImportError("sawblade_core has no resolve_dynamics (built before Task G); rebuild the extension")
+    return fn(preset, base_dir=base_dir)

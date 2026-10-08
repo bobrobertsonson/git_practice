@@ -182,6 +182,11 @@ def build_export_notes(preset: dict, plan, nam_name: str | None = None, ir_name:
     """``exportNotes`` for ``preset`` exported under ``plan`` (a ``Plan`` or its JSON). ``nam_name`` / ``ir_name`` are
     the exported file names, used in the loader-order line."""
     pj = _plan_dict(plan)
+    if "dynamicsMode" in preset:       # notes list the ACTIVE set (as the C++ notes do); a flattened preset (mode "record" with the
+        from .plan import flatten_dynamics    # active objects as its record set) resolves to itself, so this is idempotent
+        preset, label = flatten_dynamics(preset)
+        if "dynamics" not in pj:
+            pj = {**pj, "dynamics": label}
     nocab = pj.get("mode") == "nocab"
     bypassed = {b.get("what") for b in pj.get("bypassed", [])}
     stages: list[dict] = []
@@ -221,6 +226,8 @@ def build_export_notes(preset: dict, plan, nam_name: str | None = None, ir_name:
     inside = _pre_eq_info(preset)
     if inside:
         notes["inModel"] = inside
+    if pj.get("dynamics") in ("live", "record"):       # same rule as the C++ ExportNotes: only when the preset has dynamicsMode
+        notes["dynamics"] = pj["dynamics"]
     return notes
 
 

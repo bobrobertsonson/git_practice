@@ -632,7 +632,7 @@ struct ExportPanel::Impl {
             if (f.size() > 7 && f.compare(f.size() - 7, 7, ".ir.wav") == 0) ir = f;
           }
       }
-      notes = buildExportNotes(proc.currentPreset(), mode, drop, nam, ir);
+      notes = buildExportNotes(proc.currentPreset(), mode, drop, nam, ir);  // (resolves the active dynamics set itself)
     }
     notesFromReport = fromReport;
     // The Anagram profile (v0.6): only the report carries it. The switch shows when it is there; a profile that goes away
@@ -797,7 +797,7 @@ struct ExportPanel::Impl {
     {
       const double sec = proc.matchSettings().exportWallSeconds(cur.arch, cur.size);
       const juce::String name = modelName(cur.arch, cur.size);
-      check("i", L::warning(), "Model type: " + name + kDot + (sec > 0.0 ? "last run " + juce::String(static_cast<int>(std::lround(sec / 60.0))) + " min on this machine" : juce::String("no run yet on this machine")));
+      check("i", L::warning(), "Model type: " + name + kDot + "dynamics: " + juce::String(rig.dynamics) + kDot + (sec > 0.0 ? "last run " + juce::String(static_cast<int>(std::lround(sec / 60.0))) + " min on this machine" : juce::String("no run yet on this machine")));
     }
     for (; row < 6; ++row) {
       setText(checkMark[row], {});

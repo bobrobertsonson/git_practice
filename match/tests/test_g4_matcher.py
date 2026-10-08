@@ -1,0 +1,130 @@
+"""v0.4M Task G.4: the matcher scores with the RECORD dynamics set and emits presets that play LIVE
+(origin "match", dynamicsMode "live", no explicit liveDynamics). Needs the sawblade_core built after Task G."""
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pytest
+import soundfile as sf
+
+from sawblade_match.matcher.space import build_preset, gate_preset, manual_align
+
+core = pytest.importorskip("sawblade_match.core", reason="sawblade_core not built")
+if not hasattr(core, "resolve_dynamics") or getattr(core, "_core", None) is None or not hasattr(core._core, "resolve_dynamics"):
+    pytest.skip("sawblade_core built before Task G (no resolve_dynamics)", allow_module_level=True)
+from sawblade_match.matcher.engine import Engine                      # noqa: E402
+from sawblade_match.matcher.run import Config, Log, run_match         # noqa: E402
+from test_matcher import _setup_known, fixture_pool, hidden, mkplan   # noqa: E402
+
+COMP = {"enabled": True, "thresholdDb": -40.0, "ratio": 4.0, "kneeDb": 6.0, "attackMs": 10.0, "releaseMs": 100.0,
+        "makeupDb": 0.0}
+
+
+def test_emitted_preset_has_origin_live_mode_and_rounded_threshold():
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool)
+    gate = {**gate_preset(-50.0), "thresholdDb": -46.123456789}
+    p = build_preset(combo, v, gate=gate, align=manual_align(0, False), emit=True)
+    assert p["version"] == 4 and p["origin"] == "match" and p["dynamicsMode"] == "live" and "liveDynamics" not in p
+    assert p["gate"]["thresholdDb"] == -46.1235
+    r = core.resolve_dynamics(p)                                  # the core derives the live set
+    assert r["mode"] == "live" and r["gate"]["mode"] == "expander" and r["gate"]["thresholdMode"] == "floorRelative"
+    assert r["busComp"]["enabled"] is False
+    q = build_preset(combo, v, gate=gate, align=manual_align(0, False))      # internal presets are unchanged
+    assert "origin" not in q and "dynamicsMode" not in q and q["version"] == 1 and q["gate"]["thresholdDb"] == -46.123456789
+
+
+def test_engine_render_forces_record_and_live_is_explicit(tmp_path):
+    pool = fixture_pool()
+    combo, sp, v = hidden(pool)
+    gate = gate_preset(-50.0)
+    p = build_preset(combo, v, gate=gate, align=manual_align(0, False), bus_comp=COMP, emit=True)
+    x = (np.random.default_rng(1).normal(size=48000) * 0.1).astype(np.float32)
+    old = {k: val for k, val in p.items() if k not in ("origin", "dynamicsMode")}      # the pre-G form (record by default)
+    eng = Engine(None, 1)
+    try:
+        y_emitted, _ = eng.render(p, x, 48000)
+        y_old, _ = core.render(old, x, 48000.0)
+        y_live, _ = eng.render(p, x, 48000, dynamics="live")
+        with pytest.raises(ValueError):
+            eng.render(p, x, 48000, dynamics="bogus")
+    finally:
+        eng.close()
+    assert np.array_equal(np.asarray(y_emitted), np.asarray(y_old))          # scoring renders never see the live set
+    assert not np.allclose(np.asarray(y_emitted), np.asarray(y_live))        # the live set (comp off) really differs
+
+
+def test_run_emits_live_presets_scores_in_record_and_writes_render_live(tmp_path):
+    pool, combo, di, ref = _setup_known(tmp_path, "blend")
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=1, excerpt_s=2.0, threads=2, plan=mkplan(),
+                 write_audio=True, refine_offsets=False)
+    res = run_match(cfg, Log())
+    out = tmp_path / "out"
+    assert res["dynamics"] == {"scoredWith": "record", "emittedMode": "live", "origin": "match"}
+    files = [out / res["best"]["preset"]] + sorted(out.glob("alt*.preset.resolved.json"))
+    assert len(files) >= 2
+    for f in files:
+        p = json.loads(f.read_text())
+        assert p["origin"] == "match" and p["dynamicsMode"] == "live" and "liveDynamics" not in p and p["version"] == 4
+        thr = p["gate"].get("thresholdDb")
+        assert thr is None or thr == round(thr, 4)
+    port = json.loads((out / "best.preset.json").read_text())
+    assert port["origin"] == "match" and port["dynamicsMode"] == "live"
+    # scoring unchanged: the emitted preset renders (record forced) bit-identically to the same preset without the G keys
+    best = json.loads(files[0].read_text())
+    x, fs = sf.read(str(di), dtype="float32")
+    eng = Engine(None, 1)
+    try:
+        y1, _ = eng.render(best, x, fs)
+    finally:
+        eng.close()
+    y0, _ = core.render({k: v for k, v in best.items() if k not in ("origin", "dynamicsMode")}, x, float(fs))
+    assert np.array_equal(np.asarray(y1), np.asarray(y0))
+    # listening: render_live.wav next to render.wav, same section, same gain
+    lst = res["listening"]
+    d = out / "listen"
+    assert (d / "render_live.wav").exists() and lst["files"]["renderLive"].endswith("render_live.wav")
+    a, ra = sf.read(str(d / "render.wav"), dtype="float32")
+    b, rb = sf.read(str(d / "render_live.wav"), dtype="float32")
+    assert ra == rb and len(a) == len(b)
+    assert set(res["best"]["fullLengthPeakDbfs"]) == {"best_L", "live_L"}          # the live render feeds the clip guard too
+    assert "lufsRenderLive" in lst and "renderLive" in lst["truePeakDb"]
+
+
+def test_clip_guard_and_gain_do_not_depend_on_listen(tmp_path, monkeypatch):
+    """The live render exists only with --listen (write_audio); the emitted gainDb, the guard cut and the level-dependent
+    tonecheck numbers must be identical with and without it. A hot R DI makes the guard act, and ``Engine.render`` is wrapped
+    so that the live render comes back as the LOUDEST thing in the run (peak 100): code that lets the live peak steer the cut
+    then gives a different cut / gain with --listen."""
+    real_render = Engine.render
+
+    def render(self, preset, x, fs=48000, dynamics="record"):
+        y, rep = real_render(self, preset, x, fs, dynamics=dynamics)
+        if dynamics == "live":
+            y = np.asarray(y) * np.float32(100.0 / max(float(np.max(np.abs(y))), 1e-9))
+        return y, rep
+    monkeypatch.setattr(Engine, "render", render)
+    res = {}
+    for tag, listen in (("off", False), ("on", True)):
+        d = tmp_path / tag
+        d.mkdir()
+        pool, combo, di, ref = _setup_known(d, "single")
+        x, fs = sf.read(str(di), dtype="float32")
+        di_r = d / "di_r.wav"
+        sf.write(str(di_r), x * 20.0, fs, subtype="FLOAT")
+        cfg = Config(di=di, ref=ref, pool=pool, out=d / "out", seed=1, excerpt_s=2.0, threads=2, di_r=di_r,
+                     plan=mkplan(top_k={"blend": 0, "single": 1, "single2": 0}), write_audio=listen, refine_offsets=False)
+        res[tag] = run_match(cfg, Log())
+    off, on = res["off"]["best"], res["on"]["best"]
+    assert off["clipGuardDb"] < -0.1                                    # the guard acted (so the comparison means something)
+    assert on["clipGuardDb"] == off["clipGuardDb"] and on["outputGainDb"] == off["outputGainDb"]
+    assert res["on"]["after"][0]["aWeightedErrorDb"] == res["off"]["after"][0]["aWeightedErrorDb"]
+    assert json.loads((tmp_path / "on" / "out" / on["preset"]).read_text())["output"]["gainDb"] == \
+        json.loads((tmp_path / "off" / "out" / off["preset"]).read_text())["output"]["gainDb"]
+    # the cut is the one the RECORD peaks (best_L, best_R) call for: -1 dBFS ceiling minus the loudest record peak
+    pk = on["fullLengthPeakDbfs"]
+    assert pk["live_L"] > max(pk["best_L"], pk["best_R"]) + 20          # the live render really is the loudest
+    assert on["clipGuardDb"] == pytest.approx(-1.0 - max(pk["best_L"], pk["best_R"]), abs=1e-6)
+    assert on["liveClipWarning"] is True and off["liveClipWarning"] is False and "live_L" not in off["fullLengthPeakDbfs"]
+    assert set(on["fullLengthPeakAfterGuardDbfs"]) >= {"best_L", "best_R", "live_L"}

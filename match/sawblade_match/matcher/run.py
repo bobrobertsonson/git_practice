@@ -14,7 +14,8 @@ import numpy as np
 import soundfile as sf
 
 from ..tonecheck.cli import check_audio, format_table
-from ..tonecheck.analysis import analyze
+from .. import core
+from ..tonecheck.analysis import analyze, gap_regions
 from ..tonecheck.rules import evaluate_rules, load_targets
 from . import loss as L
 from .engine import RATE, Engine, to48
@@ -39,8 +40,18 @@ from .space import TOPOLOGY_RANK, Combo, Space, build_preset, gate_preset, manua
 
 CLIP_PEAK = 1.0           # linear full scale; a candidate whose matched-level output exceeds it is "clipping"
 CLIP_GUARD_DBFS = -1.0    # the final output gain is lowered until the full-length peak is below this
-OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss
+OCCAM_DB = 0.1            # prefer the simplest topology within this much total loss (single2 vs single / blend, boost vs plain)
+BLEND_OCCAM_DB = 0.25     # a single-path candidate beats the best blend when within this much total loss (blend costs a second chain)
+TOPOLOGY_DETERMINED_PCT = 10.0     # |best single - best blend| must be at least this % of the smaller loss to call the topology determined
+TOPOLOGY_CHOICES = ("auto", "single", "blend")        # --topology; "single" = the single-path topologies (single and single2)
 PEDAL_OCCAM_DB = 0.05     # a single-path combo with a pedal must beat the best pedal-less single (same amp if available) by this
+PEDAL_CONFIRM_STARTS = 2  # ... and when it does, its pedal-less partner is fitted this many more times (other seeds) first: one
+                          # stage-2 fit of a chain varies by ~0.2 dB of loss with the seed (measured, real scipy), more than the margin
+# Seed layout, per ``cfg.seed * 1000`` (refine_combo uses seed .. seed + 4 internally): stage-2 refine 0..490 (REFINE_SEED_SLOTS slots of
+# 10, picked by a hash of the candidate), trace 500, pedal-Occam confirmation 600 + 10 * j (j < PEDAL_CONFIRM_STARTS <= 30), cab sweeps
+# 900 + n, final 950, studio 970, pre-EQ 980 + n.
+REFINE_SEED_SLOTS = 50
+CONFIRM_SEED_BASE = 600
 SIZE_TIE_DB = 0.05        # prefer the lighter model set (size category) within this much total loss
 ABLATIONS = ("feel", "boost", "filters", "irsweep", "irblend", "studio", "preeq")      # --ablate names (v0.4M suspects)
 CAB_SWITCH_DB = 0.01      # a different cab must lower the loss by at least this to replace the stage-2 cab
@@ -136,6 +147,7 @@ class Config:
     quick: bool = False
     progress_json: Path | None = None
     timings_pre: dict | None = None      # seconds spent before run_match (reference loading), from the CLI
+    topology: str = "auto"               # --topology: auto | single (single-path topologies) | blend
     ablate: tuple = ()                   # v0.4M suspects switched off (ABLATIONS); echoed in result.json
     trace_tones: tuple = ()              # TONE3000 tone ids to explain in result.json -> trace
     ir_library: object = None            # irlib.IrLibrary (the user's own IRs): screened with the pool cabs, top N swept
@@ -153,21 +165,68 @@ class Log:
         print(line, flush=True)
 
 
+def _stationary_noise(x: np.ndarray, mask: np.ndarray, fs: int, frame_s: float = 0.010, within_db: float = 6.0) -> np.ndarray:
+    """Within ``mask`` (the DI's gap regions) keep the 10 ms frames whose RMS is within ``within_db`` of the 10th percentile of the
+    gap frames' RMS: the stationary noise floor. ``gap_regions`` only needs 10 ms RMS under -50 dBFS, so the tails of decaying
+    notes (ring-out) land in the mask too, and their peaks would inflate the floor the gate is set from. The mask is returned
+    unchanged when fewer than 100 ms of frames would remain."""
+    n = int(round(frame_s * fs))
+    nf = len(x) // n
+    if nf < 5:
+        return mask
+    fm = mask[: nf * n].reshape(nf, n).all(axis=1)
+    rms = np.sqrt(np.mean(x[: nf * n].reshape(nf, n) ** 2, axis=1))
+    if not fm.any():
+        return mask
+    db = 20 * np.log10(np.maximum(rms, 1e-10))
+    keep = fm & (db <= np.percentile(db[fm], 10) + within_db)
+    if int(keep.sum()) * n < 0.1 * fs:
+        return mask
+    out = np.zeros(len(x), bool)
+    out[: nf * n] = np.repeat(keep, n)
+    return out
+
+
+def gate_floor(x: np.ndarray, fs: int) -> dict:
+    """The DI floor for the gate (Task H.1), recorded in result.json as ``gateFloor``.
+
+    ``peakDb``: the core's ``peak_floor_db`` (92.5th percentile of the gate's own peak envelope, 0.1 ms attack / 10 ms release)
+    over the DI's gap regions (reduced to their stationary-noise frames: those within 6 dB of the gaps' 10th-percentile 10 ms RMS, so
+    ring-out tails do not inflate it): this is what the gate compares its threshold with, and what ``space.gate_preset`` /
+    ``gatesweep.cell_gate`` are relative to. ``rmsDb``: the plain RMS level of the same samples (the number the old "floor + 4 dB"
+    rule used, ~10 dB below the peak floor for noise). The samples are the DI's real-silence gaps (``gap_regions``); a DI without
+    any (a noise bed under the playing) falls back to its quietest 20 % of 20 ms frames, and a steady signal (frame levels within
+    3 dB) to the whole signal (``source`` says which)."""
+    x64 = np.asarray(x, dtype=np.float64)
+    mask = np.zeros(len(x64), bool)
+    for a, b in gap_regions(x64, fs):
+        mask[a:b] = True
+    source = "gaps"
+    if int(mask.sum()) >= 0.1 * fs:
+        mask = _stationary_noise(x64, mask, fs)          # decaying note tails also sit below -50 dBFS: keep the stationary floor only
+    if int(mask.sum()) < 0.1 * fs:             # no real silence (a steady noise bed): the quietest 20 % of the 20 ms frames
+        n = int(round(0.020 * fs))
+        nf = len(x64) // n
+        if nf >= 5:
+            rms = np.sqrt(np.mean(x64[: nf * n].reshape(nf, n) ** 2, axis=1))
+            db = 20 * np.log10(np.maximum(rms, 1e-10))
+            if np.percentile(db, 95) - np.percentile(db, 5) >= 3.0:        # something plays over the bed
+                quiet = rms <= np.percentile(rms, 20)
+                mask = np.zeros(len(x64), bool)
+                mask[: nf * n] = np.repeat(quiet, n)
+                source = "quietest 20 % of frames"
+    if int(mask.sum()) < 0.1 * fs:
+        mask = np.ones(len(x64), bool)
+        source = "whole DI"
+    peak = core.peak_floor_db(np.asarray(x, dtype=np.float32), float(fs), 0.0, mask.astype(np.uint8))
+    rms = 10.0 * np.log10(max(float(np.mean(x64[mask] ** 2)), 1e-20))
+    return {"peakDb": None if peak is None else float(peak), "rmsDb": float(rms), "source": source, "samples": int(mask.sum())}
+
+
 def gate_envelope_floor_db(x: np.ndarray, fs: int) -> float:
-    """DI noise floor as the gate sees it: 5th percentile of the mean level (dB) of 20 ms frames of the gate's peak
-    envelope detector (peak follower, 0.1 ms attack / 10 ms release; docs/PRESET_SCHEMA.md). Analysis only."""
-    a_c = float(np.exp(-1.0 / (0.0001 * fs)))
-    r_c = float(np.exp(-1.0 / (0.010 * fs)))
-    ax = np.abs(np.asarray(x, dtype=np.float64))
-    env = np.empty_like(ax)
-    e = 0.0
-    for i, v in enumerate(ax.tolist()):
-        e = a_c * e + (1 - a_c) * v if v > e else r_c * e + (1 - r_c) * v
-        env[i] = e
-    n = int(round(0.020 * fs))
-    nf = len(env) // n
-    lvl = 20 * np.log10(np.maximum(env[: nf * n].reshape(nf, n).mean(axis=1), 1e-10))
-    return float(np.percentile(lvl, 5))
+    """The DI floor the gate is set from: ``gate_floor(...)["peakDb"]`` (dBFS)."""
+    f = gate_floor(x, fs)["peakDb"]
+    return float(f) if f is not None else -90.0
 
 
 def _sha(p) -> str:
@@ -231,15 +290,46 @@ def pick_output_gain(y_peak: float, offset_db: float, level_offset_db: float) ->
     return float(g), bool(clipped)
 
 
-def choose(cands: list[Scored]) -> Scored:
+def allowed_topologies(mode: str) -> tuple[str, ...]:
+    """Topologies a ``--topology`` mode lets through: auto = all, single = the single-path ones, blend = blend."""
+    if mode not in TOPOLOGY_CHOICES:
+        raise ValueError(f"topology must be one of {', '.join(TOPOLOGY_CHOICES)}, got {mode!r}")
+    return {"auto": TOPOLOGIES, "single": ("single", "single2"), "blend": ("blend",)}[mode]
+
+
+def topology_margin(cands: list[Scored]) -> dict:
+    """Result record ``topology``: the best single-path and the best blend loss among ``cands`` (refined candidates), their
+    difference as a percentage of the smaller loss (positive: the blend is better) and ``determined`` = the gap is at least
+    ``TOPOLOGY_DETERMINED_PCT`` %. With only one side present (forced ``--topology``) nothing is determined."""
+    fin = [c for c in cands if np.isfinite(c.loss)]
+    single = [c for c in fin if c.topology != "blend"]
+    blend = [c for c in fin if c.topology == "blend"]
+    bs = min(single, key=lambda c: c.loss) if single else None
+    bb = min(blend, key=lambda c: c.loss) if blend else None
+    rec: dict = {"bestSingle": None if bs is None else float(bs.loss), "bestSingleTopology": None if bs is None else bs.topology,
+                 "bestBlend": None if bb is None else float(bb.loss), "deltaPct": None, "determined": False,
+                 "determinedAtPct": TOPOLOGY_DETERMINED_PCT}
+    if bs is None or bb is None:
+        rec["note"] = "only one topology was evaluated (--topology forced it)"
+        return rec
+    small = max(min(abs(bs.loss), abs(bb.loss)), 1e-9)
+    rec["deltaPct"] = float(100.0 * (bs.loss - bb.loss) / small)
+    rec["determined"] = bool(abs(rec["deltaPct"]) >= TOPOLOGY_DETERMINED_PCT)
+    return rec
+
+
+def choose(cands: list[Scored], topology: str = "auto") -> Scored:
     """Selection (spec 3.3): lowest loss among finite, non-clipping candidates; within OCCAM_DB of it the simplest
     topology (single < single2 < blend); within that topology, within SIZE_TIE_DB of *that topology's best* the lighter
     model set by size category (manifest size / name label, then 10 % byte buckets); equal categories -> lower loss.
     The size window is relative to the best candidate of the chosen topology, not of the whole field, so the result can be
-    at most OCCAM_DB + SIZE_TIE_DB = 0.15 dB above the global best."""
-    cands = [c for c in cands if np.isfinite(c.loss)]
+    at most OCCAM_DB + SIZE_TIE_DB = 0.15 dB above the global best (BLEND_OCCAM_DB + SIZE_TIE_DB = 0.30 dB when a plain
+    single beats a blend: the blend must be better by more than BLEND_OCCAM_DB to win). ``topology`` (--topology) restricts
+    the field to that topology."""
+    allowed = allowed_topologies(topology)
+    cands = [c for c in cands if np.isfinite(c.loss) and c.topology in allowed]
     if not cands:
-        raise ValueError("no candidate with a finite loss")
+        raise ValueError("no candidate with a finite loss" + ("" if topology == "auto" else f" in the {topology} topology"))
     ok = [c for c in cands if not c.extra.get("clipped")] or cands
     # the tight boost costs like one extra block: it must beat the best plain candidate of its topology by > OCCAM_DB
     plain = [c for c in ok if not c.combo.boost]
@@ -252,12 +342,16 @@ def choose(cands: list[Scored]) -> Scored:
     def pedal_justified(c):
         if c.topology != "single" or not c.combo.a_pedals or not bare:
             return True
-        ref = [p for p in bare if p.combo.a_amp.key == c.combo.a_amp.key] or bare
+        same = [p for p in bare if p.combo.a_amp.key == c.combo.a_amp.key and bool(p.combo.boost) == bool(c.combo.boost)]
+        ref = same or [p for p in bare if p.combo.a_amp.key == c.combo.a_amp.key] or bare
         return c.loss < min(p.loss for p in ref) - PEDAL_OCCAM_DB
     dropped = [c for c in ok if not pedal_justified(c)]
     ok = [c for c in ok if pedal_justified(c)] or ok
     best = min(ok, key=lambda c: c.loss)
-    near = [c for c in ok if c.loss <= best.loss + OCCAM_DB]
+    # a single-path candidate beats the best BLEND when within BLEND_OCCAM_DB (the blend's second chain must earn more than the
+    # 0.1 dB that single2 / boost / pedals have to); every other comparison keeps OCCAM_DB
+    near = [c for c in ok if c.loss <= best.loss + (BLEND_OCCAM_DB if best.topology == "blend" and c.topology == "single"
+                                                    else OCCAM_DB)]
     rank = min(TOPOLOGY_RANK[c.topology] for c in near)
     same = [c for c in near if TOPOLOGY_RANK[c.topology] == rank]
     top = min(c.loss for c in same)
@@ -265,6 +359,49 @@ def choose(cands: list[Scored]) -> Scored:
     win = min(tie, key=lambda c: (c.combo.size_rank()[0], c.combo.size_rank()[1], c.loss))
     win.extra["pedalOccamDropped"] = [c.combo.key() for c in dropped]       # recorded in result.json -> pedalOccam
     return win
+
+
+def refine_seed(seed: int, combo: Combo) -> int:
+    """Stage-2 seed of a candidate: ``seed`` * 1000 plus a stable hash of its identity (pair key) in one of REFINE_SEED_SLOTS slots of
+    10, so it stays below CONFIRM_SEED_BASE and the +900.. seeds of the later stages. It used to be the position in the refine list, so
+    candidates that tie at stage 1 (a pedal that is almost a gain stage ties its pedal-less partner exactly) swapped seeds whenever
+    floating-point noise swapped their order, and the pedal-Occam comparison then moved by the CMA-ES noise across platforms."""
+    import zlib
+    return seed * 1000 + (zlib.crc32("|".join(combo.pair_key()).encode()) % REFINE_SEED_SLOTS) * 10
+
+
+def confirm_seed(seed: int, j: int) -> int:
+    """Seed of the j-th pedal-Occam confirmation fit (0 <= j < PEDAL_CONFIRM_STARTS)."""
+    return seed * 1000 + CONFIRM_SEED_BASE + 10 * j
+
+
+def pedal_contested(c: Scored, b: Scored) -> bool:
+    """The pedal variant ``c`` would pass the pedal-Occam rule against its pedal-less partner ``b`` (beats it by PEDAL_OCCAM_DB)."""
+    return bool(c.loss < b.loss - PEDAL_OCCAM_DB)
+
+
+def bare_partner(refined: list, c: Scored) -> Scored | None:
+    """The pedal-less single candidate with the same amp (and the same tight-boost flag) as ``c``: the comparator of the pedal-Occam
+    rule in ``choose``. None when ``c`` has no capture pedal or no such partner was refined."""
+    if c.topology != "single" or not c.combo.a_pedals:
+        return None
+    return next((p for p in refined if p.topology == "single" and not p.combo.a_pedals and p.combo.a_amp.key == c.combo.a_amp.key
+                 and bool(p.combo.boost) == bool(c.combo.boost)), None)
+
+
+def confirm_partner(c: Scored, b: Scored, refit, starts: int = PEDAL_CONFIRM_STARTS) -> tuple[Scored, dict]:
+    """Pedal-Occam confirmation: if the pedal variant ``c`` would pass the rule against ``b``, refit ``b`` ``starts`` more times
+    (``refit(j)`` -> the refitted partner, a Scored) and keep the best fit. Returns (partner to use, record for result.json)."""
+    rec = {"pedal": list(c.combo.key()), "partner": list(b.combo.key()), "pedalLoss": c.loss, "partnerLoss": b.loss, "extraFits": []}
+    if pedal_contested(c, b):
+        for j in range(starts):
+            nb = refit(j)
+            rec["extraFits"].append(nb.loss)
+            if nb.loss < b.loss - 1e-9:
+                b = nb
+        rec["partnerLossAfter"] = b.loss
+        rec["pedalStillJustified"] = pedal_contested(c, b)
+    return b, rec
 
 
 def parse_ablate(spec) -> tuple[str, ...]:
@@ -324,7 +461,8 @@ def run_match(cfg: Config, log=None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     plan = cfg.plan or Plan.from_budget(cfg.budget, cfg.top_k, cfg.prescreen_n, cfg.quick)
     abl = parse_ablate(cfg.ablate)
-    plan = dataclasses.replace(plan, boost=plan.boost and "boost" not in abl, filters=plan.filters and "filters" not in abl,
+    allowed = allowed_topologies(cfg.topology)           # raises ValueError for a bad mode
+    plan = dataclasses.replace(plan, top_k={t: (k if t in allowed else 0) for t, k in plan.top_k.items()}, boost=plan.boost and "boost" not in abl, filters=plan.filters and "filters" not in abl,
                                cab_sweep=plan.cab_sweep and "irsweep" not in abl)
     rng = np.random.default_rng(cfg.seed)
     ref, pool = cfg.ref, cfg.pool
@@ -339,13 +477,15 @@ def run_match(cfg: Config, log=None) -> dict:
     if di_x.ndim > 1:
         di_x = di_x[:, 0]
     di48 = to48(di_x, di_fs)
-    floor = gate_envelope_floor_db(di48, RATE)
+    gfloor = gate_floor(di48, RATE)
+    floor = gfloor["peakDb"] if gfloor["peakDb"] is not None else -90.0
     gate = gate_preset(floor)
-    log(f"DI floor on the gate's peak envelope {floor:.1f} dBFS -> gate {gate}")
+    log(f"DI floor on the gate's peak envelope {floor:.1f} dBFS (RMS {gfloor['rmsDb']:.1f} dBFS, from the DI's {gfloor['source']}) "
+        f"-> gate {gate}")
     eng = Engine(gate, cfg.threads)
     prog = Progress(cfg.progress_json, plan.mode).start() if cfg.progress_json else NullProgress()
     try:
-        res = _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog)
+        res = _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog, gfloor)
         prog.close("done", res["after"][0]["aWeightedErrorDb"] if res.get("after") else None)
         return res
     except BaseException as e:
@@ -355,7 +495,7 @@ def run_match(cfg: Config, log=None) -> dict:
         eng.close()
 
 
-def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog=None):
+def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, out, t_start, prog=None, gfloor=None):
     prog = prog or NullProgress()
     cpu0 = time.process_time()
     prog.stage("prepare", "preparing the excerpt and the reference")
@@ -547,7 +687,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         v0 = sp.default()
         if "blend" in v0:
             v0["blend"] = s.blend
-        v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=cfg.seed * 1000 + len(refined) * 10,
+        v, r, info = refine_combo(eng, s.combo, sp, ex, tgt, s.align, v0, seed=refine_seed(cfg.seed, s.combo),
                                   gens_linear=plan.gens_linear, pop_linear=plan.pop_linear,
                                   gens_gain=plan.gens_gain, pop_gain=plan.pop_gain, gens_final=plan.gens_final,
                                   patience=plan.patience, patience_gain=plan.patience_gain, tol=plan.plateau_tol,
@@ -558,6 +698,36 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         prog.best(r.ltas)
         prog.update(REFINE_SHARE * n_done / max(n_refine, 1))
         T["stage2PerCombo"].append({"topology": topo, "seconds": round(time.time() - t_combo, 1)})
+    # ---- pedal-Occam confirmation ------------------------------------------------------------------------------------------------
+    # One stage-2 fit of a chain varies by ~0.2 dB of loss with the seed, more than PEDAL_OCCAM_DB, and a pedal that is nearly a gain
+    # stage ties its pedal-less partner at stage 1: the pedal "won" a coin flip on one platform (CI run 280). A pedal variant that
+    # would pass the rule is therefore only accepted once its partner, fitted PEDAL_CONFIRM_STARTS more times with other seeds,
+    # still loses to it by the margin; the best fit of the partner is kept. A pedal the chain needs (5.1 -> 0.5) passes easily.
+    partners: list[dict] = []
+    for c in [x for x in refined if x.topology == "single" and x.combo.a_pedals]:
+        b = bare_partner(refined, c)
+        if b is None:
+            partners.append({"pedal": list(c.combo.key()), "partner": None, "pedalLoss": c.loss,
+                             "note": "no pedal-less partner of the same amp and boost flag was refined"})
+            continue
+        sp_b = Space.for_combo(b.combo, plan.filters)
+        v0b = sp_b.default()
+        if "blend" in v0b:
+            v0b["blend"] = b.blend
+
+        def refit(j, b=b, sp_b=sp_b, v0b=v0b):
+            v2, r2, info2 = refine_combo(eng, b.combo, sp_b, ex, tgt, b.align, v0b, seed=confirm_seed(cfg.seed, j),
+                                         gens_linear=plan.gens_linear, pop_linear=plan.pop_linear, gens_gain=plan.gens_gain,
+                                         pop_gain=plan.pop_gain, gens_final=plan.gens_final, patience=plan.patience,
+                                         patience_gain=plan.patience_gain, tol=plan.plateau_tol, gex=gex, gtgt=gtgt,
+                                         short_linear=plan.short_linear, levels=b.levels, log=log)
+            return finish_refined(b.combo, b, v2, r2, info2)
+
+        new_b, rec = confirm_partner(c, b, refit)
+        partners.append(rec)
+        if new_b is not b:
+            refined[next(i for i, x in enumerate(refined) if x is b)] = new_b
+            log(f"pedal-Occam: partner {b.combo.describe()} refitted {b.loss:.3f} -> {new_b.loss:.3f} (pedal variant {c.loss:.3f})")
     unrefined = sorted([c for c in unrefined if np.isfinite(c.loss)], key=lambda c: c.loss)
     refined = [c for c in refined if np.isfinite(c.loss)]
     refined.sort(key=lambda c: c.loss)
@@ -634,6 +804,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                     caps = pool.cabs
                 rows = cab_sweep(eng, c, caps, sp, ex, tgt)
                 summ = sweep_summary(c, rows)
+                summ["pairKey"] = list(c.combo.pair_key())      # identity of the swept candidate (the cab is what the sweep changes)
                 if screen_rec is not None:
                     full = sorted(rows, key=lambda r: r["result"].total)
                     summ["screen"] = {**screen_rec, "fullTop6": [r["cab"].key for r in full[:irscreen.TOP_PAIR]]}
@@ -650,7 +821,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
                                 lossAfterRelinear=r2.total)
                     log(f"cab sweep {topo}: {cur['cab'].title}:{cur['cab'].name} -> {top['cab'].title}:{top['cab'].name} "
                         f"(loss {cur['result'].total:.3f} -> {top['result'].total:.3f}, relinear {r2.total:.3f})")
-                sw_caps[(c.topology, bool(c.combo.boost))] = {x.key: x for x in caps}
+                sw_caps[c.combo.pair_key()] = {x.key: x for x in caps}      # per CANDIDATE: each one screens its own top IRs
                 cab_sweeps.append(summ)
                 prog.update(REFINE_SHARE + 0.03 * len(cab_sweeps) / n_sw)
         refined.sort(key=lambda c: c.loss)
@@ -660,24 +831,33 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     else:
         result["cabSweep"] = {"ablated": True, "note": "--ablate irsweep: only the stage-1 cab sweep ran"}
     T["cabSweep"] = time.time() - t_cab
-    best = choose(refined)
-    result["pedalOccam"] = {"minGainDb": PEDAL_OCCAM_DB, "dropped": best.extra.get("pedalOccamDropped", [])}
+    best = choose(refined, cfg.topology)
+    result["pedalOccam"] = {"minGainDb": PEDAL_OCCAM_DB, "dropped": best.extra.get("pedalOccamDropped", []),
+                            "partners": partners}
     # ---- two-IR blend (v0.4M B2.1): the winner's cab as one combined irMix IR of two of the top IRs --------------------
     t_ir = time.time()
     if "irblend" in ablate:
         result["irBlend"] = {"ablated": True, "tried": 0, "won": False}
     else:
-        sw = next((x for x in cab_sweeps if x["topology"] == best.topology and x["boost"] == bool(best.combo.boost)), None)
-        bykey = {**{c.key: c for c in pool.cabs}, **(sw_caps.get((best.topology, bool(best.combo.boost))) or {})}
+        # the winner's OWN sweep and capture set: matched by candidate identity (pair key), never by topology / boost (several
+        # candidates of one topology are swept and each screens a different top-N of the IR bank)
+        pk = best.combo.pair_key()
+        sw = next((x for x in cab_sweeps if tuple(x["pairKey"]) == pk), None)
+        bykey = {**{c.key: c for c in pool.cabs}, **(sw_caps.get(pk) or {})}
         if sw and sw.get("screen"):            # B3's analytic screen: its full-render top 6 feed the pair search
             keys = list(sw["screen"]["fullTop6"])
         else:
             keys = [i["cab"] for i in sw["irs"]][:TOP_IRS] if sw else [c.key for c in pool.cabs][:TOP_IRS]
+        missing = [k for k in keys if k not in bykey]
+        if missing:                            # internal invariant: the keys come from this candidate's own sweep
+            raise RuntimeError(f"two-IR blend: IRs {missing} are not among the captures swept for the winning candidate {pk}")
         irb = pair_search(eng, best, Space.for_combo(best.combo, plan.filters), ex, tgt, [bykey[k] for k in keys],
                           seed=cfg.seed * 1000 + 950, gens=plan.gens_final, pop=plan.pop_linear, patience=plan.patience,
                           tol=plan.plateau_tol, log=log)
         won_pair = irb.pop("_won", None)
         irb["ablated"] = False
+        irb["candidatePairKey"] = list(pk)
+        irb["sweepFound"] = sw is not None
         if won_pair is not None:
             combo2, v2, r2 = won_pair
             new = finish_refined(combo2, best, v2, r2, best.extra["info"])
@@ -731,6 +911,11 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             result["topologies"][topo] = {"loss": b.loss, "captures": caps_summary(b.combo), "blend": b.blend,
                                           "tightBoost": bool(b.combo.boost),
                                           "breakdown": b.result.as_dict(), "guardrails": b.extra.get("guardrails")}
+    result["topology"] = {**topology_margin(refined), "mode": cfg.topology, "blendOccamDb": BLEND_OCCAM_DB}
+    tm = result["topology"]
+    log("topology margin: " + (f"best single {tm['bestSingle']:.3f}, best blend {tm['bestBlend']:.3f}, delta {tm['deltaPct']:+.1f} % -> "
+                               + ("determined" if tm["determined"] else "topology not determined")
+                               if tm["deltaPct"] is not None else f"{tm.get('note')}"))
     log("topology bests: " + ", ".join(f"{t} {d['loss']:.3f}" for t, d in result["topologies"].items()))
     log(f"selected: {best.combo.describe()} loss {best.loss:.3f}")
 
@@ -741,9 +926,16 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     sp_best = Space.for_combo(best.combo, plan.filters)
     ref_floor = (reference_floor_db(ref.ltas_sig)
                  if (tgt_full.feel is not None and tgt_full.feel.mode == "soft" and ref.clean) else None)
-    gs = gate_sweep(eng, best, sp_best, ex, tgt_full, floor, ref_floor, ref_clean=bool(ref.clean))
+    gs = gate_sweep(eng, best, sp_best, ex, tgt_full, floor, ref_floor, ref_clean=bool(ref.clean),
+                    full={"di": di48, "ref": ref.matched_sig, "offset": int(ref.offset_samples)})     # H.2: gaps of the full DI
+    if gs.get("gapSource") == "fullDi":
+        log(f"gate sweep: the excerpt has no DI gaps; using {len(gs.get('gapWindows', []))} gap window(s) of the full-length DI")
     result["gateSweep"] = gs
     result["gateDefault"] = gate
+    result["gateFloor"] = {"rmsDb": None if gfloor is None else gfloor["rmsDb"], "peakDb": floor,
+                           **({} if gfloor is None else {"source": gfloor["source"]}),
+                           "definition": "peakDb = 92.5th percentile of the gate's own peak envelope over the DI gaps (core peak_floor_db); "
+                                         "default gate opens at peakDb + 10 dB, closes at + 4"}
     if gs.get("changed"):
         gate_final = gs["gate"]
         y = render_gate(eng, best, ex, gate_final)
@@ -758,7 +950,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             f"{base_row['releaseMs']:.0f} -> {pick['releaseMs']:.0f} ms (floor term {base_row['floorTerm']:.3f} -> "
             f"{pick['floorTerm']:.3f}, ltas {base_row['ltas']:.2f} -> {pick['ltas']:.2f} dB)")
     else:
-        log("gate sweep: " + (f"skipped ({gs['skipped']})" if gs.get("skipped") else "the default gate (floor + 4 dB, 150 ms) stays"))
+        log("gate sweep: " + (f"skipped ({gs['skipped']})" if gs.get("skipped") else "the default gate (peak floor + 10 dB, 150 ms) stays"))
     result["gateFinal"] = gate_final
     prog.update(REFINE_SHARE + 0.04)
     T["gateSweep"] = time.time() - t_gate
@@ -793,10 +985,13 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     gain_db = best.extra["outputGainDb"]
     final = build_preset(best.combo, v, gate=gate_final, align=best.align, output_db=gain_db,
                          name="Sawblade match", notes=_notes(cfg, ref, best), levels=best.levels,
-                         bus_comp=best.extra.get("busComp"))
+                         bus_comp=best.extra.get("busComp"), emit=True)     # emitted: origin match, dynamicsMode live (Task G)
+    result["dynamics"] = {"scoredWith": "record", "emittedMode": "live", "origin": "match"}
     full_jobs = {"best_L": (final, cfg.di)}
     if plan.mode != "quick" or cfg.write_audio:     # quick: no full-length "before" render (the excerpt loss has it)
         full_jobs["starter_L"] = (starter_p, cfg.di)
+    if cfg.write_audio:             # listening: the live dynamics set (what a rig plays) next to render.wav (record set)
+        full_jobs["live_L"] = (final, cfg.di)
     if cfg.di_r is not None:       # always: the clip guard (peak = max of L/R) and the R offset refinement need it
         full_jobs["best_R"] = (final, cfg.di_r)
     log(f"stage3: full-length renders {list(full_jobs)}")
@@ -805,15 +1000,20 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
         name, (preset, path) = item
         x, fs = sf.read(str(path), dtype="float32")
         x = x if x.ndim == 1 else x[:, 0]
-        y, rep = eng.render(preset, x, fs)
+        y, rep = eng.render(preset, x, fs, dynamics="live" if name == "live_L" else "record")   # all scoring: record set
         return name, y, fs, rep
 
     renders = {n: (y, fs, rep) for n, y, fs, rep in eng.map(full_render, list(full_jobs.items()))}
     lap("fullRenders")
     prog.update(0.5, "measuring the result")
+    # The guard acts on the RECORD renders only, exactly as before G.4: the live render exists only with --listen, and the emitted
+    # gainDb, the cut and the level-dependent tonecheck numbers must not depend on that. The live peak is reported and warned about.
     peaks = {n: float(np.max(np.abs(renders[n][0]))) for n in renders if n.startswith("best")}
     peak = max(peaks.values())
-    best.extra["fullLengthPeakDbfs"] = {n: float(20 * np.log10(max(p, 1e-12))) for n, p in peaks.items()}
+    live_peak = float(np.max(np.abs(renders["live_L"][0]))) if "live_L" in renders else None
+    db = lambda p_: float(20 * np.log10(max(p_, 1e-12)))
+    best.extra["fullLengthPeakDbfs"] = {**{n: db(p_) for n, p_ in peaks.items()}, **({} if live_peak is None else {"live_L": db(live_peak)})}
+    cut = 0.0
     if peak >= 10 ** (CLIP_GUARD_DBFS / 20):
         cut = 20 * np.log10(10 ** (CLIP_GUARD_DBFS / 20) / peak)
         gain_db += cut
@@ -823,8 +1023,16 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             renders[n] = ((y * 10 ** (cut / 20)).astype(np.float32), fs, rep)
         log(f"clip guard: full-length peak (max of L/R) {20 * np.log10(peak):.1f} dBFS -> output gain lowered by {-cut:.1f} dB")
         best.extra["clipGuardDb"] = float(cut)
+    if live_peak is not None:                  # same gain as the record render (the preset's gain), reported, never steering it
+        y, fs, rep = renders["live_L"]
+        renders["live_L"] = ((y * 10 ** (cut / 20)).astype(np.float32), fs, rep)
+        live_after = live_peak * 10 ** (cut / 20)
+        if live_after >= 10 ** (CLIP_GUARD_DBFS / 20):
+            log(f"warning: the live-dynamics render peaks at {db(live_after):.1f} dBFS (above the {CLIP_GUARD_DBFS:g} dBFS guard ceiling; "
+                "the record set's compression holds the scored renders lower). The output gain is NOT changed for it.")
+            best.extra["liveClipWarning"] = True
     best.extra["fullLengthPeakAfterGuardDbfs"] = {n: float(20 * np.log10(max(float(np.max(np.abs(renders[n][0]))), 1e-12)))
-                                                  for n in peaks}
+                                                  for n in list(peaks) + (["live_L"] if live_peak is not None else [])}
     result["clipped"] = bool(max(float(np.max(np.abs(renders[n][0]))) for n in peaks) >= 1.0)
 
     targets = profile
@@ -896,7 +1104,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
             if s.levels is not None:
                 gdb -= emit_gain_correction_db(s.blend, s.levels)
         preset = build_preset(s.combo, v_alt, gate=gate_final, align=s.align, output_db=gdb, name=f"Sawblade match alt {i}",
-                              levels=s.levels)
+                              levels=s.levels, emit=True)
         (out / f"alt{i}.preset.resolved.json").write_text(json.dumps(preset, indent=2) + "\n")
         alts.append({**_scored_json(s), "file": f"alt{i}.preset.resolved.json"})
     result["alternatives"] = alts
@@ -905,6 +1113,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     result["best"]["fullLengthPeakDbfs"] = best.extra["fullLengthPeakDbfs"]
     result["best"]["fullLengthPeakAfterGuardDbfs"] = best.extra["fullLengthPeakAfterGuardDbfs"]
     result["best"]["clipGuardDb"] = best.extra.get("clipGuardDb", 0.0)
+    result["best"]["liveClipWarning"] = bool(best.extra.get("liveClipWarning"))      # the live render peaks above the guard ceiling
     result["candidatesStage2"] = [_scored_json(c) for c in refined]
     lap("outputs")
     result["listening"] = {}
@@ -952,7 +1161,7 @@ def _guardrails(y: np.ndarray, profile: dict) -> dict:
 def _scored_json(s: Scored) -> dict:
     d = {"stage": s.stage, "topology": s.topology, "loss": s.loss, "blend": s.blend, "align": s.align,
          "levelMatch": s.levels and s.levels.preset_block(),
-         "tightBoost": bool(s.combo.boost), "irMix": None if s.combo.cab_b is None else
+         "pairKey": list(s.combo.pair_key()), "tightBoost": bool(s.combo.boost), "irMix": None if s.combo.cab_b is None else
          {"irB": s.combo.cab_b.key, "offsetSamplesB": s.combo.cab_offset, "invertB": s.combo.cab_invert},
          "captures": caps_summary(s.combo), "modelBytes": s.combo.model_bytes(),
          "sizeRank": {"category": s.combo.size_rank()[0], "byteBucket": s.combo.size_rank()[1]}}
@@ -1033,6 +1242,10 @@ def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None,
             gain_db, l_ref, l_raw = match_gain_db(ref_seg, sec, RATE)
             sf.write(str(d / "ref.wav"), ref_seg.astype(np.float32), RATE, subtype="FLOAT")
             sf.write(str(d / "render.wav"), (sec * 10 ** (gain_db / 20)).astype(np.float32), RATE, subtype="FLOAT")
+            live48 = to48(renders["live_L"][0], renders["live_L"][1]) if "live_L" in renders else None
+            if live48 is not None:      # the live dynamics set: same section, the SAME gain as render.wav (not re-matched)
+                live_sec = live48[a:b] * 10 ** (gain_db / 20)
+                sf.write(str(d / "render_live.wav"), live_sec.astype(np.float32), RATE, subtype="FLOAT")
             tp = {"ref": true_peak_db(ref_seg), "render": true_peak_db(sec * 10 ** (gain_db / 20))}
             info.update({"loudnessMatched": True, "section": [a / RATE, b / RATE], "lufsRef": l_ref, "lufsRenderRaw": l_raw,
                          "gainDb": gain_db, "offsetMs": 1000.0 * offset / RATE if matched else None,
@@ -1040,6 +1253,10 @@ def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None,
                          "files": {"ref": str(d / "ref.wav"), "render": str(d / "render.wav")}})
             if not matched:
                 info["refSection"] = [ra / RATE, rb / RATE]
+            if live48 is not None:
+                info["files"]["renderLive"] = str(d / "render_live.wav")
+                info["truePeakDb"]["renderLive"] = true_peak_db(live_sec)
+                info["lufsRenderLive"] = match_gain_db(ref_seg, live48[a:b], RATE)[2]
             if st48 is not None:
                 gb, _, l_bef = match_gain_db(ref_seg, st48[a:b], RATE)
                 bef = st48[a:b] * 10 ** (gb / 20)
@@ -1054,7 +1271,7 @@ def _listening(out: Path, renders: dict, cfg, log, ref: Reference | None = None,
                 log("loudness matching skipped: the listening section is silent or shorter than 400 ms; gain 0 dB")
         except Exception as e:      # listening must never abort the run
             gain_db = 0.0
-            for f in ("ref.wav", "render.wav", "before.wav"):
+            for f in ("ref.wav", "render.wav", "render_live.wav", "before.wav"):
                 (d / f).unlink(missing_ok=True)
             info = {"loudnessMatched": False, "listenError": f"{type(e).__name__}: {e}"}
             log(f"warning: listening section files skipped ({info['listenError']}); full-length files at 0 dB")

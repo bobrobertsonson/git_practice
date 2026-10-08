@@ -20,7 +20,7 @@ bool operator==(const GateParams& a, const GateParams& b) {
   return a.enabled == b.enabled && a.thresholdDb == b.thresholdDb && a.hysteresisDb == b.hysteresisDb &&
          a.attackMs == b.attackMs && a.holdMs == b.holdMs && a.releaseMs == b.releaseMs && a.rangeDb == b.rangeDb &&
          a.mode == b.mode && a.ratio == b.ratio && a.keyHighPassHz == b.keyHighPassHz &&
-         a.releaseCurve == b.releaseCurve;
+         a.releaseCurve == b.releaseCurve && a.thresholdMode == b.thresholdMode && a.floorOffsetDb == b.floorOffsetDb;
 }
 bool operator==(const EqBand& a, const EqBand& b) {
   return a.type == b.type && a.freq == b.freq && a.gainDb == b.gainDb && a.q == b.q && a.enabled == b.enabled;
@@ -89,10 +89,9 @@ json eqListJson(const std::vector<EqBand>& v) {
   return a;
 }
 
-GateParams parseGate(JsonObject& root) {
+GateParams parseGateObject(std::optional<JsonObject> o) {
   GateParams g;
   g.enabled = false;  // omitted object -> disabled
-  auto o = root.optionalObject("gate");
   if (!o) return g;
   g.enabled = o->boolean("enabled", true);
   g.thresholdDb = o->number("thresholdDb", g.thresholdDb, -120.0, 0.0);
@@ -109,21 +108,30 @@ GateParams parseGate(JsonObject& root) {
   g.releaseCurve =
       o->oneOf("releaseCurve", "one-pole", {"one-pole", "linear-db"}) == "linear-db" ? GateReleaseCurve::LinearDb
                                                                                       : GateReleaseCurve::OnePole;
+  g.thresholdMode = o->oneOf("thresholdMode", "absolute", {"absolute", "floorRelative"}) == "floorRelative"
+                        ? GateThresholdMode::FloorRelative
+                        : GateThresholdMode::Absolute;
+  g.floorOffsetDb = o->number("floorOffsetDb", g.floorOffsetDb, 0.0, 40.0);
   o->finish();
   return g;
 }
 
 json toJson(const GateParams& g) {
-  return {{"enabled", g.enabled}, {"thresholdDb", g.thresholdDb}, {"hysteresisDb", g.hysteresisDb},
+  json j = {{"enabled", g.enabled}, {"thresholdDb", g.thresholdDb}, {"hysteresisDb", g.hysteresisDb},
           {"attackMs", g.attackMs}, {"holdMs", g.holdMs}, {"releaseMs", g.releaseMs}, {"rangeDb", g.rangeDb},
           {"mode", g.mode == GateMode::Expander ? "expander" : "gate"}, {"ratio", g.ratio},
           {"keyHighPassHz", g.keyHighPassHz},
           {"releaseCurve", g.releaseCurve == GateReleaseCurve::LinearDb ? "linear-db" : "one-pole"}};
+  // Only written when set, so every earlier preset serialises exactly as before.
+  if (g.thresholdMode == GateThresholdMode::FloorRelative) {
+    j["thresholdMode"] = "floorRelative";
+    j["floorOffsetDb"] = g.floorOffsetDb;
+  }
+  return j;
 }
 
-BusCompParams parseBusComp(JsonObject& root) {
+BusCompParams parseBusCompObject(std::optional<JsonObject> o) {
   BusCompParams c;
-  auto o = root.optionalObject("busComp");
   if (!o) return c;
   c.enabled = o->boolean("enabled", c.enabled);
   c.thresholdDb = o->number("thresholdDb", c.thresholdDb, -80.0, 0.0);
@@ -135,6 +143,9 @@ BusCompParams parseBusComp(JsonObject& root) {
   o->finish();
   return c;
 }
+
+GateParams parseGate(JsonObject& root) { return parseGateObject(root.optionalObject("gate")); }
+BusCompParams parseBusComp(JsonObject& root) { return parseBusCompObject(root.optionalObject("busComp")); }
 
 json toJson(const BusCompParams& c) {
   return {{"enabled", c.enabled}, {"thresholdDb", c.thresholdDb}, {"ratio", c.ratio}, {"kneeDb", c.kneeDb},
@@ -448,6 +459,20 @@ Preset parsePreset(const json& j, const fs::path& baseDir) {
   p.cab = parseCab(r, baseDir);
   p.postEq = parseEqBandList(r, "postEq");
   p.busComp = parseBusComp(r);
+  // v4 (read leniently whatever the file's version, like ampControls): the live dynamics policy.
+  if (auto ld = r.optionalObject("liveDynamics")) {
+    DynamicsSet d;
+    d.gate = parseGateObject(ld->optionalObject("gate"));
+    d.busComp = parseBusCompObject(ld->optionalObject("busComp"));
+    ld->finish();
+    p.liveDynamics = d;
+  }
+  if (r.has("dynamicsMode"))
+    p.dynamicsMode = r.oneOf("dynamicsMode", "record", {"record", "live"}) == "live" ? DynamicsMode::Live : DynamicsMode::Record;
+  {
+    const std::string o = r.oneOf("origin", "user", {"user", "match", "official"});
+    p.origin = o == "match" ? PresetOrigin::Match : o == "official" ? PresetOrigin::Official : PresetOrigin::User;
+  }
   if (auto out = r.optionalObject("output")) {
     p.outputGainDb = out->number("gainDb", 0.0, kGainLo, kGainHi);
     // v3: a trim without its hash cannot be checked, so it is read as "not measured".
@@ -489,7 +514,54 @@ nlohmann::json toJson(const Preset& p) {
     j["output"]["autoTrimHash"] = p.autoTrim.hash;
   }
   if (!p.category.empty()) j["category"] = p.category;
+  if (p.liveDynamics) j["liveDynamics"] = {{"gate", toJson(p.liveDynamics->gate)}, {"busComp", toJson(p.liveDynamics->busComp)}};
+  if (p.dynamicsMode) j["dynamicsMode"] = *p.dynamicsMode == DynamicsMode::Live ? "live" : "record";
+  if (p.origin != PresetOrigin::User) j["origin"] = p.origin == PresetOrigin::Match ? "match" : "official";
   return j;
+}
+
+DynamicsSet recordDynamicsOf(const Preset& p) {
+  DynamicsSet d;
+  d.gate = p.gate;
+  d.busComp = p.busComp;
+  return d;
+}
+
+DynamicsSet deriveLiveDynamics(const DynamicsSet& record) {
+  DynamicsSet d;  // gate disabled, comp off
+  if (!record.gate.enabled) return d;
+  GateParams g = record.gate;  // attack, hysteresis, releaseCurve from the record gate
+  g.enabled = true;
+  g.mode = GateMode::Expander;
+  g.ratio = 4.0;
+  g.rangeDb = -40.0;
+  g.keyHighPassHz = 80.0;
+  g.thresholdMode = GateThresholdMode::FloorRelative;
+  g.floorOffsetDb = 10.0;
+  g.holdMs = std::max(record.gate.holdMs, 40.0);
+  g.releaseMs = std::max(record.gate.releaseMs, 120.0);
+  d.gate = g;
+  return d;
+}
+
+DynamicsSet liveDynamicsOf(const Preset& p) {
+  if (p.liveDynamics) return *p.liveDynamics;
+  if (p.origin == PresetOrigin::Match) return deriveLiveDynamics(recordDynamicsOf(p));
+  return recordDynamicsOf(p);
+}
+
+Preset resolveDynamics(const Preset& p) {
+  const DynamicsSet d = activeDynamics(p);
+  Preset r = p;
+  r.gate = d.gate;
+  r.busComp = d.busComp;
+  r.liveDynamics.reset();
+  r.origin = PresetOrigin::User;
+  return r;
+}
+
+DynamicsSet activeDynamics(const Preset& p) {
+  return effectiveDynamicsMode(p) == DynamicsMode::Live ? liveDynamicsOf(p) : recordDynamicsOf(p);
 }
 
 namespace {

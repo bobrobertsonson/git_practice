@@ -138,7 +138,10 @@ struct LiveBlock {
 struct LiveParams {
   double inputGainDb = 0.0;
   double outputGainDb = 0.0;
-  double gateThresholdDb = -55.0;  // only audible when the preset's gate is enabled
+  double gateThresholdDb = -55.0;  // only audible when the active gate is enabled and absolute
+  // The active dynamics set (gate + bus comp, preset v4). Applied as one object, between blocks: a change of mode (record <->
+  // live) never leaves a block with half of each. Moves the gate threshold immediately like gateThresholdDb.
+  DynamicsSet dynamics{};
   double blend = 0.5;              // 0 = path A only, 1 = path B only
   BlendLaw blendLaw = BlendLaw::Linear;  // live: switching never rebuilds the chain
   double levelDbA = 0.0;
@@ -299,6 +302,7 @@ class Chain {
   void applyLiveEq(EqRamps& rs, const std::vector<EqBand>& cfg, const LiveEq& oldL,
                    LiveEq& newL) noexcept;
   void resetAll();
+  void applyDynamics(const DynamicsSet& d) noexcept;
 
   Preset preset_;
   ChainResources res_;

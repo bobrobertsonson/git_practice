@@ -1,9 +1,8 @@
 # v0.4M — matcher matches the feel: report
 
 Spec: `docs/specs/v0_4m-matcher_feel.md` (Tasks A–E, B2–B4). Lead-pinned definitions: `docs/specs/v0_4m-tasks.md`.
-Branch: `claude/sawblade-v0_4m-matcher-feel` (base `claude/sawblade-plugin-setup-7k0b8q` at 4d580a2 — v0.4 B–E — merged in). CI (GitHub Actions) is the validation of record; the local container could
-not install scipy/pytest (pypi blocked), so engineers also ran the render tests against a local core build with a scipy
-shim — those numbers are labelled "shim" below and are indicative only.
+Branch: `claude/sawblade-v0_4m-matcher-feel` (base `claude/sawblade-plugin-setup-7k0b8q` at 4d580a2 — v0.4 B–E — merged in). CI (GitHub Actions) is the validation of record. Local verification on real scipy 1.17.1 (numpy 2.4.6, `match/.venv`, core built with
+that Python); numbers labelled "shim" below were taken earlier against a scipy stand-in (pypi was blocked) and are indicative only.
 
 Status: **Tasks A–C, B2.1–B2.4, B3, B4, D.1 and E accepted by the reviewer and merged. CI of record: run 226 on
 0d16fdb — all jobs green (python, linux-gcc + pluginval, linux-clang -Werror, macOS arm64 + auval + pluginval AU/VST3).**
@@ -216,6 +215,60 @@ thresholds.
 
 Before (first known-answer run, `--quick`): HM2 A-weighted 2.72 dB, UBR 3.45 dB; `gap_noise` −10.8 / −11.0 (fail),
 `fizz_texture` fail on both; chosen IR "V30 3 SM58 6" both times; neither Überschall capture won UBR.
+
+## Task H (matcher side)
+
+- **Gate floor (H.1):** the gate is set from the core's `peak_floor_db` (92.5th percentile of the gate's own peak envelope) over the
+  DI's gap regions, reduced to their stationary-noise frames (10 ms RMS within 6 dB of the gaps' 10th percentile: `gap_regions`
+  only needs 10 ms RMS under -50 dBFS, so decaying ring-out tails land in the mask and inflated the floor: on the synthetic gap DI
+  with true noise at -70 dBFS RMS the floor was -51.7 dBFS, now -62.72 against -62.8 for the noise alone). Without real gaps (the
+  user's -49.5 dBFS RMS bed never stays under -50 dBFS for 120 ms) it falls back to the quietest 20 % of 20 ms frames when
+  something plays over the bed, and to the whole DI for a steady signal. result.json `gateFloor: {rmsDb, peakDb, source}`.
+  Default cell: open = peakFloor + 10 dB, hysteresis 6 (close = + 4); sweep grid {6, 8, 10, 12, 16, 20, 24, 28} dB re peakFloor.
+  For a -49.5 dBFS RMS floor: old open -45.50 / close -51.50 dBFS, new open -32.27 / close -38.27 (peak floor -42.27); noise alone
+  (white, pink) stays closed > 95 % after 0.5 s; a decaying note is not attenuated while it is > 12 dB above the floor (the
+  attenuation starts about 3.1 dB above the floor on the record gate, 2.8 dB on the live gate).
+  Live set (core, ratio 4 / range -40, open = floor + 10): noise alone is attenuated by a median of about -10.8 to -11.1 dB at
+  -70, -65 and -49.5 dBFS floors (an expander, not a closed gate). Sustain loss of a note whose envelope sits 4 / 2 / 0 dB above the
+  floor: new ratio 4 / -40 gives 0.0 / 5.1 / 11.1 dB, the old ratio 2 / -24 gave 0.0 / 1.7 / 3.7 dB.
+  Core, follower: it qualifies only frames below the estimate + 20 dB and starts at -70 dBFS, so it learns a -49.5 dBFS RMS floor
+  (peak statistic about -42 dBFS) only after about 25 s (the 10 s leak, +1 dB/s). A per-device seed is parked for v0.8: a VST3/AU
+  host gives no device identity.
+  The D.1 feel known-answer case keeps its hidden gate at peak floor + 16 dB (the default is + 10).
+- **Full-DI gate sweep (H.2):** with < 100 ms of gaps in the excerpt the sweep takes up to 6 gap windows (longest, each <= 1 s,
+  0.5 s pre-roll) from the full DI and the reference floor at the same windows; `gateSweep.gapSource: "excerpt" | "fullDi"`.
+- **Topology margin (H.3):** `BLEND_OCCAM_DB = 0.25` (a single beats the best blend when within 0.25 dB; single2 and the boost keep
+  0.10). result.json `topology: {bestSingle, bestBlend, deltaPct, determined}` (determined = |delta| >= 10 % of the smaller
+  loss; `BLEND_OCCAM_DB = 0.25` is the named constant); `--topology single|blend|auto` (single = single and single2). The script adds `L_blend_quick_forced` / `L_blend_forced`.
+- **Pedal-Occam noise (CI run 280):** the D.1 feel known-answer test (`test_known_answer_feel.py:78`, capture identity) failed on CI only:
+  the matcher kept a loud-linear pedal (3/6) in front of the right amp (2/4). That pedal is almost a pure gain stage: it ties its
+  pedal-less partner exactly at stage 1 (screen loss 2.041 for both), so stage 2 compares two fits of near-equivalent chains, and
+  one stage-2 fit varies by ~0.2 dB of loss with the seed, far more than `PEDAL_OCCAM_DB` (0.05). Measured on real scipy 1.17.1, same
+  case, 8 seeds each (stage-2 loss): bare partner 0.319 / 0.566 / 0.516 / 0.556 / 0.532 / 0.437 / 0.299 / 0.401; pedal variant
+  0.565 / 0.623 / 0.635 / 0.515 / 0.817 / 0.519 / 0.519 / 0.430. Before, the refine seed was the position in the refine list
+  (`seed * 1000 + 10 * position`), so when platform float noise swapped the two tied candidates their seeds swapped. Reproduced on
+  21a9d03 by swapping the two (`work[0], work[1]`): pedal 0.487 vs bare 0.554 -> the pedal passes the margin, the test fails at
+  line 78 with the amp right and `pedal == 3/6`. With the original order the same code passes (4/4 locally), which is why it was
+  invisible off CI. Fix, two parts:
+  (a) `refine_seed(seed, combo)` = `seed * 1000 + 10 * (crc32(pair_key) % REFINE_SEED_SLOTS)`, `REFINE_SEED_SLOTS = 50`, so a
+  candidate's fit no longer depends on the order of the refine list. Seed layout per `seed * 1000`: refine 0..490 (+4 inside
+  `refine_combo`), trace 500, confirmation `CONFIRM_SEED_BASE = 600` + 10 j, cab sweeps 900 + n, final 950, studio 970, pre-EQ
+  980 + n; a unit test pins that the ranges do not overlap.
+  (b) a pedal variant that would pass the rule is accepted only after its partner (same amp, same boost flag; `choose` now compares
+  against that partner first) was refitted `PEDAL_CONFIRM_STARTS = 2` more times (`confirm_seed(seed, j)`) and still loses by the
+  margin; the best partner fit is kept (`confirm_partner`). Why (b) on top of (a): (a) removes the order dependence but not the
+  noise, and a fit of the same seed can differ across CPUs / libm. From the 8-seed tables, a single bare fit vs a single pedal fit
+  lets the pedal win by more than 0.05 in 7 of 72 pairs (~10 %); against the best of three bare fits in 4 of 504 (~1 %). A pedal the
+  chain needs (5.1 -> 0.5) passes easily. Cost: nothing when the pedal does not pass the rule (the case on the stable seeds: pedal
+  0.6395 vs bare 0.6426); when it does, 2 extra stage-2 fits of the partner, measured with the margin forced open: known-answer run
+  69 s -> 103 s (+34 s, ~17 s per fit). `pedalOccam.partners` in result.json records pedal / partner losses, the extra fits and
+  whether the pedal is still justified. Local verification on real scipy 1.17.1: the test fails on 21a9d03 with the swapped order
+  and passes with the fix; unit tests with fixed losses (`test_confirm_partner_with_fixed_losses`,
+  `test_pedal_occam_uses_the_same_amp_same_boost_bare_partner`, `test_refine_seed_is_stable_per_candidate_not_per_position`) do not
+  involve scipy. The CI divergence itself (different CPU, Python 3.11) was not reproduced without forcing the order.
+- **Other result.json additions:** every candidate JSON (`best`, `alternatives`, `candidatesStage2`) carries `pairKey` (the candidate's
+  identity without its cab); the cab-sweep test matches a candidate to its own sweep with it. Known limitation: the full-DI gate
+  sweep indexes the reference with `ref.offset_samples` as refined at the start of the run, not the final per-render offset.
 
 ## User results
 

@@ -62,7 +62,7 @@ ParamValues paramsFromPreset(const Preset& p) {
   ParamValues v{};
   v[kInputGain] = clampTo(kInputGain, p.inputGainDb);
   v[kOutputGain] = clampTo(kOutputGain, p.outputGainDb);
-  v[kGateThreshold] = clampTo(kGateThreshold, p.gate.thresholdDb);
+  v[kGateThreshold] = clampTo(kGateThreshold, activeDynamics(p).gate.thresholdDb);  // the parameter belongs to the active set
   v[kBlend] = clampTo(kBlend, p.blend);
   v[kLevelA] = clampTo(kLevelA, p.a.levelDb);
   v[kLevelB] = clampTo(kLevelB, p.b.levelDb);
@@ -84,7 +84,16 @@ ParamValues paramsFromPreset(const Preset& p) {
 void applyParams(Preset& p, const ParamValues& v) {
   p.inputGainDb = v[kInputGain];
   p.outputGainDb = v[kOutputGain];
-  p.gate.thresholdDb = v[kGateThreshold];
+  if (effectiveDynamicsMode(p) == DynamicsMode::Live) {
+    // The parameter belongs to the live set. A derived live set is made explicit only when the value really differs, and the
+    // record gate (what the matcher fitted) is left alone.
+    if (p.liveDynamics || v[kGateThreshold] != activeDynamics(p).gate.thresholdDb) {
+      if (!p.liveDynamics) p.liveDynamics = liveDynamicsOf(p);
+      p.liveDynamics->gate.thresholdDb = v[kGateThreshold];
+    }
+  } else {
+    p.gate.thresholdDb = v[kGateThreshold];
+  }
   p.blend = v[kBlend];
   p.a.levelDb = v[kLevelA];
   p.b.levelDb = v[kLevelB];
@@ -109,6 +118,7 @@ void applyParams(Preset& p, const ParamValues& v) {
 Preset makeInitPreset() {
   Preset p;
   p.name = "Init";
+  p.dynamicsMode = DynamicsMode::Live;  // created in the plugin: live by default (and equal to its own clampedToParams)
   p.cab.enabled = false;
   p.align.mode = AlignMode::Off;
   p.cab.ir.file = kNoCaptureFile;  // the schema requires a file even when the cab is disabled; it is never loaded
@@ -117,6 +127,9 @@ Preset makeInitPreset() {
 }
 
 Preset clampedToParams(Preset p) {
+  // Live dynamics policy: a preset that has no dynamicsMode plays its LIVE set in the plugin (the plugin state is the preset, so
+  // the mode is then written). Files and goldens outside the plugin keep the file-format default, "record".
+  if (!p.dynamicsMode) p.dynamicsMode = DynamicsMode::Live;
   applyParams(p, paramsFromPreset(p));
   return p;
 }

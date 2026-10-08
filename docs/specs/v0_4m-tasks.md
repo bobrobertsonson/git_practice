@@ -261,3 +261,188 @@ The Task B boost variant and post-cab HP/LP are always in the search (quick and 
 - Tests: the grid recovers a hidden HPF 110 Hz + mid +6 dB pre-EQ on a fixture chain (exact grid point); grid size <= 12
   (plus widening options) and deterministic; `--ablate preeq` leaves `preEq` empty; widening fires on a synthetic dark DI
   and not on the fixture DI; export notes list the pre-EQ as in-model.
+
+## Task F: blend reference and per-path check in the validation script (user correction, 2026-10-07)
+
+Why: the album guitar is a blend of two same-take amp tracks per side (HM2 path + body amp). Matching HM2 (18) and UBR
+(19) separately never tests the product's main case. Single-amp runs stay as per-path diagnostics.
+
+### F.1 `sawblade_match.matcher.refsum` (match-engineer)
+`python -m sawblade_match.matcher.refsum --a <hm2.wav> --b <body.wav> --out <blend.wav> [--blend-db A_DB,B_DB] [--json r.json]`
+- Reads both tracks (any channel count; reduce to mono as the matcher does for `--matched mono`), requires equal sample
+  rates (exit 2 otherwise), truncates to the shorter length, sums `a*10^(A_DB/20) + b*10^(B_DB/20)` (default 0,0 =
+  unity faders) and writes **float32** WAV (no clipping, no normalisation; peak reported).
+- Alignment check, report only (never shifts, never flips: the mic/amp phase is part of the record): lag of max |xcorr|
+  of the two tracks within +-50 ms (on the loudest 30 s), its sign (polarity), and the normalised correlation.
+  |lag| > 2 ms or negative peak -> a `WARNING:` line; the sum is still written.
+- JSON: `{gainsDb, lagMs, polarity, corr, peakDb, lufsA, lufsB, refRatioDb}` where
+  **refRatioDb = LUFS(a*gA) - LUFS(b*gB)** (BS.1770, `loudness.integrated_lufs`). Note: at unity faders the reference
+  ratio is the two tracks' loudness difference, not 0 dB.
+- Output paths are under the run's `$OUT`; nothing is written into the repo.
+
+### F.2 `sawblade_match.matcher.pathcheck` (match-engineer)
+`python -m sawblade_match.matcher.pathcheck --result <run>/result.json --di <di.wav> --ref-a <hm2.wav> --ref-b <body.wav>
+ [--ref-blend <blend.wav>] [--blend-db A_DB,B_DB] [--json out.json]`
+- Takes the winning preset from result.json and renders the DI over the full length three ways with the core engine:
+  full preset; path B `enabled: false` (A alone); path A `enabled: false` (B alone). Everything else unchanged (cab mode,
+  post EQ, bus comp, alignment). Gate as in the preset.
+- Uses the run's stored DI offset / alignment so the renders line up with the references as in the run (read from
+  result.json; if absent, the same offset search the matcher uses).
+- Per render, the same metrics the run reports for `after`: A-weighted LTAS error dB (`loss.ltas_error`, level offset
+  removed) and the feel terms (tight / fizz / polish values and the raw feel measures). Pairs: A alone vs ref-a, B alone
+  vs ref-b, full vs ref-blend (if given). Also the **swapped** pairing (A vs ref-b, B vs ref-a) for both LTAS errors, so
+  a role swap is visible; primary is A<->HM2 (18), B<->body (19).
+- **Blend ratio**: chosenRatioDb = LUFS(A alone) - LUFS(B alone) on the renders, vs refRatioDb (as F.1, with --blend-db);
+  report both and the difference.
+- Single-path result (one path disabled or level <= -60 dB in the winner) -> report `"singlePath": true`, which path,
+  and the full-vs-blend metrics only; not an error.
+- Prints a short human block and writes the JSON. Exit 0 unless inputs are unreadable.
+- Held-out transfer: the same tool pointed at the L_blend result with the R DI and R refs scores the L preset on R
+  without re-fitting (no extra code; the script calls it).
+
+### F.3 Script changes (`scripts/run_v04m_validation.sh`)
+- New option `--blend-db HM2_DB,BODY_DB` (default `0,0`), validated as two numbers; passed to refsum and pathcheck.
+- After the IR scan, build `$OUT/refs/L_blend.wav` (and `R_blend.wav` when R_OK) with refsum (+ `.json`), resumable
+  (skip if both exist unless --force).
+- `--quick-only`: runs `L_hm2_quick`, `L_ubr_quick`, then **`L_blend_quick`** (DI 17 vs L_blend).
+- Full: adds **`L_blend` (thorough)** first in step 3; step 5 adds **`R_blend` (thorough)** when R_OK. Ablations stay on
+  HM2 quick (unchanged).
+- New step "per-path check": pathcheck on every finished blend run (`L_blend_quick` / `L_blend`, `R_blend`) against
+  its side's 18/19 (21/22) and blend ref; plus the held-out transfer `L_blend` preset on R (when both exist), output
+  `$OUT/<run>/pathcheck.json` and `$OUT/L_blend_on_R.pathcheck.json`. A pathcheck failure is reported, non-fatal.
+- Summary printer and listen list: blend runs first, then single-amp runs; summary also prints each pathcheck's
+  per-path LTAS errors, swapped errors, chosen vs reference ratio, singlePath.
+- Dry run (`--dry-run`) prints the refsum / blend / pathcheck commands; the existing dry-run test covers them.
+- Summary printer (`sawblade_match.matcher.validation_summary`): for every run, the matched gate and bus comp in full, one
+  line each, read from the winning preset (`best.preset`, not just `gateFinal`): gate `enabled, mode, thresholdDb,
+  hysteresisDb, attackMs, holdMs, releaseMs, rangeDb, ratio (expander only), keyHighPassHz, releaseCurve` plus the DI noise
+  floor the threshold was set from (`diNoiseFloorDb`, when recorded); busComp `enabled, thresholdDb, ratio, kneeDb, attackMs,
+  releaseMs`, or `busComp: off` when absent. Unit-tested on a fixture result.json (`match/tests/test_validation_summary.py`).
+
+### Tests
+- refsum: two synthetic tracks (a, b = a delayed 0 samples, different spectra) -> output == a*gA + b*gB to 1e-6, float32,
+  lagMs 0, refRatioDb matches LUFS difference to 0.05 dB; a 5 ms delayed b -> WARNING and lagMs ~5; a polarity-flipped b
+  -> polarity -1; mismatched sample rates -> exit 2; --blend-db applied.
+- pathcheck: a two-path fixture preset (blend) rendered from a fixture DI; refs = the same preset rendered with each path
+  alone -> per-path A-weighted errors < 0.1 dB, swapped errors larger, chosen ratio == ref ratio within 0.1 dB; a
+  single-path fixture -> singlePath true. Synthetic audio only, generated in the test, nothing committed.
+- Script: the dry-run test asserts the blend refs, `L_blend_quick` under --quick-only, `L_blend`/`R_blend` in full,
+  pathcheck lines and `--blend-db` parsing (bad value -> exit 2).
+
+### F.4 Dynamics sweep (lead decision 2026-10-07; match-engineer)
+`python -m sawblade_match.matcher.dynsweep --result <run>/result.json --di <di.wav> [--json out.json]`
+- Renders the winning preset over the full DI at input offsets -12, -6, 0, +6 dB (DI scaled before the chain), twice:
+  dynamics as matched (the record set, see Task G) and with gate and bus comp both disabled. 8 renders.
+- Per render: integrated LUFS, median 400 ms crest factor (feel.py's crest windows), inter-note floor (feel ``floor_db``
+  at the DI gaps). Per adjacent step: slope = dLUFS_out / dB_in. Table matched vs bypassed, plus max |slope difference|.
+- When Task G lands, a third set: live dynamics.
+- Script: run on every finished run (blend and single-amp), `$OUT/<run>/dynsweep.json`; non-fatal. The summary prints
+  the table, matched-vs-bypassed first.
+- Test: on a fixture preset with gate + bus comp the bypassed slopes are ~monotone and smooth; a fixture with a
+  high-threshold gate shows a slope knee at the low step; a 4:1 comp flattens the matched slope vs bypassed.
+
+## Task G: live dynamics policy (lead decision 2026-10-07)
+
+Principle: the matcher may copy the record's gating and bus compression to score the match; a rig played live must not
+inherit mix processing by default.
+
+### G.1 Preset (dsp-engineer; preset version 4, PRESET_SCHEMA updated)
+- The existing `gate` and `busComp` objects are the **record set** (fitted by the matcher; unchanged meaning, so the matcher,
+  the exporter and every golden keep working).
+- New optional `liveDynamics: { "gate": {...}, "busComp": {...} }` (same object schemas) and
+  `dynamicsMode: "live" | "record"`. **File-format default when absent: "record"** (old files and goldens render
+  bit-identically). The writer emits version 4 when either key is present (v3 otherwise is fine too; follow the schema's
+  existing versioning convention: bump to 4, read 1-4).
+- New optional `origin: "match" | "user" | "official"` (v4; absent = "user"). The matcher writes "match".
+- **Derivation rule** (core, single source of truth; applied by the parser when `liveDynamics` is absent):
+  - `origin` != "match" (hand-made, official, old files): `liveDynamics` = the stored `gate` and `busComp` unchanged, so
+    deliberate settings play as set.
+  - `origin` == "match":
+  - gate: `enabled` = record gate enabled; mode expander, ratio 4, rangeDb -40, keyHighPassHz 80,
+    thresholdMode `floorRelative`, floorOffsetDb +10 (close = floor + 4), holdMs = max(record holdMs, 40), releaseMs = max(record releaseMs,
+    120), attack/hysteresis/releaseCurve from the record gate. Record gate absent/disabled -> live gate disabled.
+  - busComp: disabled.
+- `dynamicsMode` selects which set the engine runs.
+- Export notes always carry `"dynamics": "live" | "record"` when the preset has a `dynamicsMode` key (absent key: no
+  line, so the existing parity fixtures stay byte-identical).
+- **NAM export follows the active set** (lead decision): a "live" rig trains with the live busComp (off for a match), a
+  "record" rig trains the record busComp if it passes the existing export rules; the gate stays excluded as before.
+  Core exposes one resolver (active gate/busComp of a preset) used by the render path, the exporter and the plugin.
+  Export notes state which set was used; the plugin export panel shows "dynamics: live / record" next to the model type.
+
+### G.2 Gate floor follower (dsp-engineer; core gate)
+- New GateParams: `thresholdMode` absolute (default, bit-identical) | floorRelative, `floorOffsetDb` (default 10 (H.1); was 8).
+- floorRelative: threshold = floorEstimate + floorOffsetDb, re-evaluated per sample (hysteresis applies below it).
+- floorEstimate: RT-safe minimum statistics on the (key-HPF'd) key: 50 ms RMS frames -> running minimum over a 3 s window
+  as a fixed ring of 100 ms sub-window minima (std::array, no allocation), counted in samples so it is independent of
+  block size. **Only frames with RMS < floorEstimate + 20 dB feed the sub-minima** (playing never feeds the floor).
+  **Upward leak:** when no frame has qualified for 10 s, the estimate rises +1 dB/s (so a genuinely higher floor after a
+  gain/interface change is learned). Clamped to [-96, -40] dBFS; seed -70 dBFS.
+- Rendering is deterministic and block-size independent (existing determinism tests extended to a floorRelative gate).
+
+### G.3 Plugin (dsp-engineer; plugin/ authorized for this task only)
+- Presets loaded/created in the plugin with no `dynamicsMode` get `"live"` (the plugin state is the preset, so it is then
+  written). The matcher's emitted presets carry `dynamicsMode: "live"` (G.4).
+- A plain **RECORD DYNAMICS** toggle (on = record) in Settings or the existing rig/CAB page, not a new main-UI element.
+  Report flags it "needs a UI home" (the user designs the main UI).
+- The switch is atomic: the whole dynamics set (gate + busComp params) is built off the audio thread and handed over
+  lock-free as one object, applied between blocks. Gate/comp UI controls (if any) edit the active set.
+
+### G.4 Matcher (match-engineer, after F and G.1)
+- Scoring, listening and all match quality numbers render with `dynamicsMode: "record"` (unchanged numbers).
+- Emitted presets (result.json `preset`, alts, export input) carry `dynamicsMode: "live"` and no explicit `liveDynamics`
+  (core derives it).
+- Emitted presets carry `origin: "match"`. The exporter (plan/notes) uses the core active-set resolver; notes state
+  "dynamics: live" or "record".
+- `--listen` writes a third file `render_live.wav` (live set, same section, same loudness match gain as render.wav).
+  The validation script lists it in the listen pairs. dynsweep gains the live set.
+
+### Tests (G)
+- Floor follower: converges to a known noise floor within 3.5 s; 30 s of continuous riffing at -12 dBFS over a -75 dB
+  floor keeps the estimate within 3 dB of -75; a floor step -75 -> -60 dB is learned within ~25 s; follows a -12 dB input change (threshold moves -12 +-1
+  dB) with no re-match; zero allocations in process(); block sizes 1/64/512/odd give identical output (float tolerance
+  per existing determinism tests).
+- Derivation, both paths: a v4 `origin: "match"` preset with a gate (hold 10, release 20) and a bus comp -> live gate
+  expander/4/-40/80 Hz, hold 40, release 120, floorRelative +10, live busComp off; the same preset with origin absent /
+  "user" (and an old v3 file) -> liveDynamics == stored gate/busComp. A v3 file renders in record mode bit-identically to before.
+- Toggle: switching sets atomically (no block runs half old / half new; test via the handover object); state round-trip.
+- Schema: v4 round-trip; a v3 reader rejects v4 (existing strictness test pattern).
+
+## Task H: gate floor on the gate's own detector, full-DI gate sweep, topology margin (lead decision 2026-10-07)
+
+Why: open = DI floor (RMS) + 4 dB with hysteresis 6 dB closes at floor - 2 dB, but the gate's envelope is a peak
+follower (0.1 / 10 ms) and noise peaks sit ~10 dB above its RMS: the gate opens on noise and never closes (user's L DI:
+open -45.55, close -51.55, floor -49.5 dBFS RMS; gap_noise -13 dB vs -60 target). The live gate (Task G) compares a
+50 ms-RMS minimum floor with the same peak detector, so it has the same flaw. No feel claim is made for this task unless
+a test shows one (dynsweep showed matched = bypassed = live).
+
+### H.1 Peak-detector floor (core: dsp-engineer; match: match-engineer)
+- **Definition (single, shared):** `peakFloorDb` = the 92.5th percentile of the gate's own peak envelope (0.1 ms attack /
+  10 ms release, `Gate::kEnvAttackMs/kEnvReleaseMs`, after the key HPF when one is set) over the DI gap regions.
+  Core exposes it (C++ function + pybind `peak_floor_db(x, fs, key_hpf_hz=0, mask=None)`), the matcher uses it.
+- **Matcher:** the DI floor used for the gate (space.gate_preset, gatesweep cell_gate) is the peak floor. Default cell:
+  open = peakFloor + 10 dB, hysteresis 6 dB (close = peakFloor + 4). The sweep's offsets are re peakFloor; grid
+  {6, 8, 10, 12, 16, 20, 24, 28} dB, default cell 10 is a member. Recorded in result.json: `gateFloor: {rmsDb, peakDb}`.
+- **Live follower (core gate floorRelative):** the per-frame statistic becomes the 50 ms frame's peak-envelope maximum
+  (not RMS); the qualification rule (< estimate + 20 dB), 3 s window, 10 s leak, clamps and seed are unchanged.
+  Live floorOffsetDb default 8 -> 10 (close = floor + 4). The derivation rule in G.1 uses 10. PRESET_SCHEMA updated.
+  Existing G follower tests are re-based on the new statistic (same scenarios, thresholds re the peak floor).
+- **Tests (record gate via the matcher default cell, and live gate):**
+  - DI noise alone (white/pink at a set RMS): gate closed (gain <= range + 1 dB) > 95 % of the time after 0.5 s.
+  - Decay tail: a synthetic plucked note decaying exponentially from -12 dBFS peak into the noise floor: report the level
+    (re the floor) where attenuation starts; attenuation <= 1 dB while the note's envelope is > 12 dB above the peak floor.
+  - Report (test output / REPORT) old vs new open/close for a noise floor of -49.5 dBFS RMS.
+
+### H.2 Gate sweep on the full DI (match-engineer)
+When the excerpt has < 100 ms of DI gaps, the gate sweep takes its gap regions (and, for a matched pair, the reference
+floor at those regions) from the full-length DI/ref pair; renders cover those gap windows (with enough pre-roll for the
+chain's state). Recorded: `gateSweep.gapSource: "excerpt" | "fullDi"`. Test: a fixture whose excerpt has no gaps but the
+full DI does -> the sweep runs (not skipped) and gap_noise improves vs the default cell.
+
+### H.3 Topology margin and --topology (match-engineer)
+- result.json `topology: {bestSingle, bestBlend, deltaPct, determined}`; `determined = |delta| >= 10 %` of the smaller
+  loss; the summary prints it and "topology not determined" when false.
+- Named constant `BLEND_OCCAM_DB = 0.25` (was the shared 0.10 for blend vs single); single2 unchanged. REPORT states it.
+- `--topology single|blend|auto` (default auto): restricts stage-1/2 candidates and `choose` to that topology.
+- Script: adds `L_blend_quick_forced` (`--topology blend`) in quick mode and `L_blend_forced` in full, next to auto; both
+  get pathcheck + dynsweep; summary lists them right after their auto runs.

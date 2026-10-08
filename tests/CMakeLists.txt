@@ -36,7 +36,9 @@ add_executable(sawblade_tests
   test_separation_support.cpp
   test_pedals_saw.cpp
   test_pedals_v3.cpp
-  test_a2_playback.cpp)
+  test_a2_playback.cpp
+  test_dynamics.cpp
+  test_gate_peak_floor.cpp)
 target_link_libraries(sawblade_tests PRIVATE
   sawblade_core sawblade_warnings Catch2::Catch2WithMain
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>" pffft_lib sawblade_json)

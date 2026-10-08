@@ -94,6 +94,7 @@ std::optional<fs::path> PresetAudition::stillCurrent(const fs::path& file) const
   key.mtime = fs::last_write_time(file, ec);
   key.builds = proc_.engineBuilds();
   key.presetName = st.presetName;
+  key.mode = proc_.dynamicsMode();
   for (int i = 0; i < kNumParams; ++i) key.params.push_back(proc_.parameters().getRawParameterValue(paramSpec(i).id)->load());
   if (cacheKey_ && *cacheKey_ == key) return cacheResult_ ? std::optional<fs::path>(file) : std::nullopt;
   bool same = false;

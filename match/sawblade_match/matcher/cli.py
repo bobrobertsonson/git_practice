@@ -11,7 +11,7 @@ from typing import Sequence
 from . import irlib, irscreen
 from .pool import load_pool
 from .reference import load_reference
-from .run import ABLATIONS, Config, Log, parse_ablate, run_match
+from .run import ABLATIONS, BLEND_OCCAM_DB, Config, Log, TOPOLOGY_CHOICES, parse_ablate, run_match
 
 
 def _section(s: str) -> tuple[float, float]:
@@ -68,6 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "second) for the plugin's progress bar")
     p.add_argument("--listen", action="store_true",
                    help="also render the listening files (full-length R render, stereo WAV/MP3); off by default")
+    p.add_argument("--topology", choices=TOPOLOGY_CHOICES, default="auto",
+                   help="restrict the search to the single-path topologies (single) or to the blend; auto (default) searches all "
+                        "and applies the topology margin (a single beats a blend within %.2f dB)" % BLEND_OCCAM_DB)
     p.add_argument("--ablate", metavar="LIST", default="",
                    help="v0.4M on/off pairs: comma list of suspects to switch OFF (" + ", ".join(ABLATIONS) + "): feel = no feel "
                         "term in the loss; boost = no tight-boost variants; filters = no post-cab hp / low-pass slope; irsweep = only the "
@@ -165,7 +168,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                      targets=Path(a.targets) if a.targets else None, window_s=a.excerpt_window,
                      write_audio=a.listen and not a.no_audio, quick=a.quick,
                      progress_json=Path(a.progress_json) if a.progress_json else None,
-                     timings_pre={"referenceLoad": time.time() - t_load}, ablate=ablate, trace_tones=trace,
+                     timings_pre={"referenceLoad": time.time() - t_load}, ablate=ablate, trace_tones=trace, topology=a.topology,
                      ir_library=library, ir_screen_max=a.ir_screen_max, ir_dirs=tuple(ir_dirs_info))
         run_match(cfg, Log())
         return 0

@@ -67,7 +67,15 @@ class Engine:
     def close(self):
         self.pool.shutdown(wait=True)
 
-    def render(self, preset: dict, x: np.ndarray, fs: float = RATE) -> tuple[np.ndarray, dict]:
+    def render(self, preset: dict, x: np.ndarray, fs: float = RATE, dynamics: str = "record") -> tuple[np.ndarray, dict]:
+        """Render through the core. Every internal render (scoring, refinement, sweeps, listening of the matched tone, checks)
+        runs the RECORD dynamics set: ``dynamicsMode`` is forced to "record" whatever the preset says, so emitted presets
+        (``dynamicsMode: "live"``) never change a number. ``dynamics="live"`` is for the live-set renders only (listening
+        file, dynsweep)."""
+        if dynamics not in ("record", "live"):
+            raise ValueError(f"dynamics must be 'record' or 'live', got {dynamics!r}")
+        if preset.get("dynamicsMode") != dynamics:      # the core reads dynamicsMode from any preset version (1-4)
+            preset = {**preset, "dynamicsMode": dynamics}
         x = np.ascontiguousarray(x, dtype=np.float32)
         y, rep = _core.render(preset, x, fs, cache=self.cache)
         self.n_renders += 1
