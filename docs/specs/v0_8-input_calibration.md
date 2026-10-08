@@ -42,6 +42,11 @@ knob stays as a deliberate offset ("hit it harder"), 0 dB by default, and is pre
   fallback estimate if Task A finds a reliable one (e.g. from the capture's own loudness metadata) — never silent.
 - **Output side:** each capture's output is brought back to a common internal reference (existing loudness
   normalisation), so swapping amps changes tone and feel, not monitoring volume. Level match keeps working on top.
+- **Live gate floor seed (parked from v0.4M Task H, 2026-10-07):** the live gate's floor follower seeds at −70 dBFS
+  and needs ~25 s to learn a loud floor (e.g. a −42 dBFS peak floor). Store the learned floor with the device
+  calibration and seed from it on prepare. A VST3/AU plugin cannot identify the host's input device, so the key is the
+  device calibration record itself, not a device name. Never seed from a preset or a matched reference DI (wrong-high
+  seeds cut quiet playing). Write it off the audio thread only.
 - All gains are computed off the audio thread at load/swap and handed over with the existing lock-free swap; smoothing on
   change; zero allocations in `process()`.
 
