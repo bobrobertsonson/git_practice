@@ -164,3 +164,19 @@ weights and get the same treatment.
 
 The stem cache (`<data dir>/stems/`) holds the user's own separated songs as 32-bit float WAV; it is never committed.
 Test audio for the separator tests is generated at test time (the mp3 fixture with the system `ffmpeg`, skipped when absent).
+
+## Design-time fonts (workshop mockups, `design/render/workshop_style.py`)
+
+Fetched at render time into `~/.cache/sawblade_fonts` (or `--font-dir`) from `fonts.gstatic.com`, each verified by SHA-256 in
+`FONTS` in `workshop_style.py` (a missing or mismatching font is a hard error, exit 77). Design-time only: nothing here is
+shipped in the plugin, and no `.ttf` is committed. All SIL Open Font License 1.1.
+
+| Font | File (gstatic) | SHA-256 | Use |
+|------|----------------|---------|-----|
+| Black Ops One | `qWcsB6-ypo7xBdr6Xshe96H3WDw.ttf` | `bd8a70e6...fe59f8` | brand mark, big titles |
+| Allerta Stencil | `HTx0L209KT-LmIE9N7OR6eiycOeF-w.ttf` | `036e8216...91c753` | stencil section names |
+| Barlow Condensed 600 / 700 | `HTxwL3I-JCGChYJ8VI-L6OO_au7B4873_3E.ttf` / `..._au7B46r2_3E.ttf` | `0d85af81...2cd73f` / `7dde307f...c4ed7` | labels, buttons |
+| Barlow 500 / 600 | `7cHqv4kjgoGqM7E3_-gc4A.ttf` / `7cHqv4kjgoGqM7E30-8c4A.ttf` | `91c841fd...5655bc` / `c15439e7...ca69b` | body text |
+| Share Tech Mono | `J7aHnp1uDWRBEqV98dVQztYldFc7pA.ttf` | `5f6b5753...a81d2` | readouts |
+
+The mockup renders composite the project's own Blender renders from `plugin/assets/` (read-only input).
