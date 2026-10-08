@@ -23,8 +23,8 @@ spec disagree, ask the lead.
 ## Signal chain (base rate fs, oversampled rate 4 fs)
 
 1. **Input HPF** 20 Hz, first order (base rate).
-2. **TIGHT**: first-order HPF, `tight` 0..10 → 20..250 Hz log-spaced; off (0) = bypassed. Same
-   semantics and mapping as the TIGHT on the other pedals (reuse their mapping function if one exists).
+2. **TIGHT**: first-order HPF on the shared mapping `20·10^(t/10)` Hz (20..200 Hz, as the other pedals;
+   revised from 20..250 Hz for shared semantics); off (0) = bypassed.
 3. Upsample ×4.
 4. **Op-amp gain stage** (below): GBW + slew + rails, at 4 fs.
 5. **Diode clipper** (CLIP), `AdaaClipper` at 4 fs.
@@ -74,9 +74,12 @@ first-order HPF at 1/(2π·1k·4.7µ) ≈ 34 Hz)
 
 ## FILTER, VOLUME, MIX
 
-- FILTER: `fc = 1/(2π (1.5 kΩ + Rf) · 3.3 nF)`, `Rf` = 100 kΩ **reverse-log** pot:
-  `Rf = 100 kΩ · (1 − (a^(1−t) − 1)/(a − 1))`, `t = filter/10`, `a = 81`. FILTER 0 → 32.2 kHz
-  (clamped to 0.45 fs), FILTER 10 → 470 Hz. First-order LPF.
+- FILTER: `fc = 1/(2π (1.5 kΩ + Rf) · 3.3 nF)`, `Rf` = 100 kΩ **audio-taper** pot:
+  `Rf = 100 kΩ · (a^t − 1)/(a − 1)`, `t = filter/10`, `a = 81`. FILTER 0 → 32.2 kHz
+  (clamped to 0.45 fs), FILTER 5 → ≈ 4.2 kHz, FILTER 10 → 475 Hz. First-order LPF.
+  *Revised 2026-10-08 (main lead):* the taper is a voicing choice made by feel (the literal reverse-log
+  put noon at 527 Hz), not verified against a schematic; it is one named `RatVoicing` constant so a
+  capture fit can revisit it.
 - VOLUME 0..10 through `pedalLevelDb`. "Stock = VOLUME at unity": pick the stock VOLUME so that the
   stock pedal (DIST 5, FILTER 5, silicon) on a −12 dBFS-RMS DI riff (an existing test fixture) comes
   out at the same RMS as the input ± 1 dB; state the value in the header and PRESET_SCHEMA.
