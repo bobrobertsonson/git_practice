@@ -1,0 +1,110 @@
+<title>Sawblade Workshop Mockups</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&family=Barlow+Condensed:wght@600;700&family=Barlow:wght@500;600&display=swap">
+<style>
+/* Layout: one column of full-width screen plates, a decisions list up top; dark workshop look only (matches the mockups). */
+:root{
+  --bg:#0f0c09; --plate:#1a1714; --raised:#24201b; --line:#3a332b;
+  --fg:#e8e1d2; --dim:#b3a995; --blade:#ff8a3d; --alu:#c4c0b6; --ink:#14110d;
+  --display:'Allerta Stencil','Barlow Condensed',system-ui,sans-serif;
+  --label:'Barlow Condensed','Arial Narrow',system-ui,sans-serif;
+  --body:'Barlow',system-ui,-apple-system,sans-serif;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font:500 15px/1.5 var(--body);margin:0}
+.wrap{max-width:1320px;margin:0 auto;padding-inline:16px;padding-block:20px 48px;display:grid;gap:28px}
+header{display:grid;gap:8px}
+.plate{background:var(--alu);color:var(--ink);font-family:var(--display);letter-spacing:.08em;text-transform:uppercase;
+  padding:8px 14px;border-radius:3px;display:inline-block;justify-self:start;font-size:clamp(18px,3vw,26px)}
+.lede{max-width:68ch;color:var(--dim);margin:0}
+.lede b{color:var(--fg)}
+h2{font:700 13px/1.2 var(--label);letter-spacing:.14em;text-transform:uppercase;color:var(--blade);margin:0}
+.decide{background:var(--plate);border:1px solid var(--line);border-radius:4px;padding:16px 18px;display:grid;gap:10px}
+.decide ol{margin:0;padding-left:1.3em;display:grid;gap:6px;max-width:80ch}
+.decide li::marker{color:var(--blade);font-family:var(--label);font-weight:700}
+nav{display:flex;flex-wrap:wrap;gap:6px}
+nav a{font:600 13px/1 var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--fg);text-decoration:none;
+  background:var(--raised);border:1px solid var(--line);border-radius:3px;padding:8px 10px}
+nav a:hover,nav a:focus-visible{border-color:var(--blade);outline:none}
+figure{margin:0;display:grid;gap:10px;scroll-margin-top:12px}
+figcaption{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}
+.no{font:700 13px/1 var(--label);letter-spacing:.12em;color:var(--ink);background:var(--blade);padding:4px 7px;border-radius:2px}
+.name{font:400 20px/1.2 var(--display);letter-spacing:.06em;text-transform:uppercase}
+.what{color:var(--dim);flex-basis:100%;max-width:90ch;margin:0}
+figure a.shot{display:block;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#000}
+figure a.shot:focus-visible{outline:2px solid var(--blade);outline-offset:2px}
+figure img{display:block;width:100%;height:auto;max-width:100%}
+.tip{font:600 12px/1.3 var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+footer{color:var(--dim);font-size:13px;max-width:80ch}
+</style>
+
+<div class="wrap">
+<header>
+  <span class="plate">Sawblade · Workshop look</span>
+  <p class="lede">Ten mockups of the whole plugin in the <b>worn metal and sawdust</b> look, for you to pick from and mark up.
+  Every screen is 1280 × 800, rendered from scripts in the repo, so any change is a re-render. All text passes WCAG AA
+  (lowest 5.3:1, body text 13.7:1). No texture sits behind text, and every state has a word or shape as well as a colour.
+  Tap a screen to open it full size. Comment on anything.</p>
+</header>
+
+<section class="decide" aria-labelledby="d">
+  <h2 id="d">Your calls</h2>
+  <ol>
+    <li><b>TS-style pedal name:</b> it shows as TS-STYLE until you choose (TUBESQUELER or a generic name).</li>
+    <li><b>Readout style:</b> amber 7-segment LCDs for values and an orange nixie-style display for BLEND. Keep both, or one style everywhere?</li>
+    <li><b>Wear level:</b> panel edges have chipped paint, rust specks and sawdust on the bench. Keep it, or go heavier or lighter?</li>
+    <li><b>Section lettering:</b> stencil caps stamped into aluminium plates, with Black Ops One for big titles (MATCH, NAM FORGER, WOODSHED). Keep or swap?</li>
+    <li><b>Top bar:</b> a brushed-aluminium rail with A/B as two small footswitches. Is that right, or would you rather have plain buttons?</li>
+    <li><b>WOODSHED:</b> a steel panel docked over the bottom of the rig. Or should it be its own screen, or the cassette-deck render?</li>
+    <li><b>Preset browser legacy hint:</b> it shows above the info panel with USE CALIBRATED LEVELS / KEEP AS SAVED. Is that placement right?</li>
+  </ol>
+</section>
+
+<nav aria-label="Screens">
+  <a href="#s00">Style sheet</a><a href="#s01">Rig</a><a href="#s02">Top bar</a><a href="#s03">Settings</a>
+  <a href="#s04">Presets</a><a href="#s05">Match</a><a href="#s06">NAM Forger</a><a href="#s07">Woodshed</a>
+  <a href="#s08">Rig editor</a><a href="#s09">Notices</a>
+</nav>
+
+<figure id="s00"><figcaption><span class="no">00</span><span class="name">Style sheet</span>
+<p class="what">Palette with measured contrast, materials (worn steel, brushed aluminium, bench wood, sawdust, riveted plate), type, knobs, footswitches, LEDs, toggles, selectors, buttons, LCD and nixie readouts, badges, frames.</p></figcaption>
+<a class="shot" href="png/00_style_sheet.png"><img src="png/00_style_sheet.png" alt="Style sheet: palette, materials, type and control kit" width="1280" height="800"></a></figure>
+
+<figure id="s01"><figcaption><span class="no">01</span><span class="name">Main rig</span>
+<p class="what">BLADE and BODY amp heads, the cab and the pedalboard with THE SAW MILL (selected) and TS-STYLE. The inspector has the circuit selector (BUZZSAW / TAR PIT / SERRATED / HATCHET), the BLEND readout and GATE, POST EQ, VISE and OUTPUT with value readouts.</p></figcaption>
+<a class="shot" href="png/01_main_rig.png"><img src="png/01_main_rig.png" alt="Main rig screen" width="1280" height="800" loading="lazy"></a></figure>
+
+<figure id="s02"><figcaption><span class="no">02</span><span class="name">Top bar</span>
+<p class="what">Five states: default, A/B with slot names, uncalibrated chip, OUT OF TRUE chip, and WOODSHED open with MATCH running. Two 2× zooms below.</p></figcaption>
+<a class="shot" href="png/02_top_bar.png"><img src="png/02_top_bar.png" alt="Top bar states and zooms" width="1280" height="800" loading="lazy"></a></figure>
+
+<figure id="s03"><figcaption><span class="no">03</span><span class="name">Settings · Input calibration</span>
+<p class="what">Before and after status, the 4i4 3rd gen device presets, the dBu entry with readout, input channel AUTO / L / R / MIX, the CALIBRATED LEVELS beta toggle and the learned gate floor.</p></figcaption>
+<a class="shot" href="png/03_settings_calibration.png"><img src="png/03_settings_calibration.png" alt="Settings, input calibration section" width="1280" height="800" loading="lazy"></a></figure>
+
+<figure id="s04"><figcaption><span class="no">04</span><span class="name">Preset browser</span>
+<p class="what">Banks, categories and the preset list. The info panel shows each capture's creator and licence. A legacy preset is selected, showing the LEGACY LEVELS hint with USE CALIBRATED LEVELS.</p></figcaption>
+<a class="shot" href="png/04_preset_browser.png"><img src="png/04_preset_browser.png" alt="Preset browser with legacy levels hint" width="1280" height="800" loading="lazy"></a></figure>
+
+<figure id="s05"><figcaption><span class="no">05</span><span class="name">Match</span>
+<p class="what">Reference song, your DI takes, auto-refine, refined and preview results with audition and apply, and the spectrum (reference solid, match dashed).</p></figcaption>
+<a class="shot" href="png/05_match.png"><img src="png/05_match.png" alt="Match screen with results" width="1280" height="800" loading="lazy"></a></figure>
+
+<figure id="s06"><figcaption><span class="no">06</span><span class="name">NAM Forger</span>
+<p class="what">Export modes, size, validation DI, the VISE choice, what goes into the model, credits with the non-commercial badge, train and resume, export notes, and the training strip.</p></figcaption>
+<a class="shot" href="png/06_nam_forger.png"><img src="png/06_nam_forger.png" alt="NAM Forger export screen" width="1280" height="800" loading="lazy"></a></figure>
+
+<figure id="s07"><figcaption><span class="no">07</span><span class="name">Woodshed</span>
+<p class="what">The play-along panel docked over the rig: transport, position, loop A/B, count-in, guitar stem MUTE / GHOST / FULL, backing level, offset, sync to host and the record band.</p></figcaption>
+<a class="shot" href="png/07_woodshed.png"><img src="png/07_woodshed.png" alt="Woodshed play-along panel over the rig" width="1280" height="800" loading="lazy"></a></figure>
+
+<figure id="s08"><figcaption><span class="no">08</span><span class="name">Rig editor</span>
+<p class="what">Topology selector, tabs, and the BLADE and BODY lanes of block cards. The SAW HEAD capture card carries an UNCAL badge and TS-STYLE is shown bypassed.</p></figcaption>
+<a class="shot" href="png/08_rig_editor.png"><img src="png/08_rig_editor.png" alt="Rig editor chain tab" width="1280" height="800" loading="lazy"></a></figure>
+
+<figure id="s09"><figcaption><span class="no">09</span><span class="name">Notices</span>
+<p class="what">OUT OF TRUE and uncalibrated banners and chips, the UNCAL badge in three places, confirm and error dialogs, and a toast.</p></figcaption>
+<a class="shot" href="png/09_notices.png"><img src="png/09_notices.png" alt="Notices: banners, badges, dialogs, toast" width="1280" height="800" loading="lazy"></a></figure>
+
+<footer>Mockups for reference only: nothing is built until you approve a set. Amp and pedal faces still show their old baked names
+under the new nameplates; they get re-rendered with the names you pick. Capture titles, creators and file names are made up.</footer>
+</div>
