@@ -369,3 +369,91 @@ above -40 dBFS is a broken gain stage, not a guitar, and the tap should not lear
 
 **Unrelated flake, also seen in run 294:** `match/` irlib `test_irlib.py::test_identical_files_analysed_concurrently_are_not_rejected` (exactDuplicates, 14 vs 15).
 Not touched by I3; the main lead has assigned it to v0.4M.
+
+## I4
+
+Spec `docs/specs/v0_8-I4-default_on.md`. This is I4a (core and offline); the plugin (I4b) and the default flip (I4c) are not built.
+
+### What I4a adds
+- Preset schema v5: `calibration.mode` (`legacy` | `calibrated`), `output.autoTrimCalDb` / `autoTrimCalHash` (measured at the assumed +12 dBu device,
+  `auto_trim.h`: `stampAutoTrimCal`, `ensureAutoTrimCal`, `autoTrimCalFresh`). Every file older than v5, and a v5 file with no member, loads as `legacy`.
+  `autoTrimHash` ignores `calibration`, so every committed trim stamp stays fresh. See `docs/PRESET_SCHEMA.md` "Input calibration".
+- `RenderOptions`: `calibrationFromPreset`, `deviceDbu`, `diChannel`. `tonerender --device-dbu X` and `--di-channel L|R|mix`; calibration follows the preset's mode,
+  legacy is the bit-identical calibration-off render. The report records `calibration.mode/modeSource/deviceDbu/deviceAssumed/paths` and `diChannel`.
+- Python: `core.render(..., device_dbu=None, di_channel="auto", calibration="preset")`.
+
+### Committed presets, legacy vs calibrated (assumed +12 dBu)
+
+Produced by the hidden test `[i4a-table]`:
+`SAWBLADE_I4A_TABLE_OUT=table.md build/tests/sawblade_tests "[i4a-table]"`. For each committed preset whose captures are on the machine it renders
+`tests/fixtures/di_riff.wav` legacy and calibrated, and measures the untrimmed loudness of the reference DI both ways. Tolerances are the existing ones:
+golden = rms and peak within 0.01 dB (the cross-platform check of the preset golden test; bit identity on the reference platform); level = reference-DI
+loudness within 0.5 LU (the trim acceptance).
+
+**Result: this table is not decisive.** The 32 presets that render in this container are all modelled-DSP presets with no `nam` block (`modeled/**`), so
+calibration cannot change them and all 32 are bit-identical. The 13 presets that carry real TONE3000 captures (`chainsaw_body`, `studio_split`,
+`swedeath_saw`, `tight_body`, `matched/*`, `styles/*`) need captures that are not cached here, and there is no network access to TONE3000 from the container, so
+**their legacy-vs-calibrated numbers are not measured**. They must be run on a machine with the capture cache (the user's) before I4c restamps anything.
+No preset was restamped.
+
+| preset | NAM blocks | planned NAM gains A / B (dB) | uncal. | bit-identical | d rms (dB) | d peak (dB) | d LUFS ref DI | golden 0.01 dB | level 0.5 LU |
+|---|---|---|---|---|---|---|---|---|---|
+| modeled/chainsaw/bass_chainsaw.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/blend_partner.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/classic_buzzsaw.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/clean_mix_texture.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/custom_wall.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/dbeat_crust.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/death_n_roll.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/early_raw_demo.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/grind.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/modded_nasty.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/modern_tight_swedish.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/pickle_chainsaw.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/pickle_doom_saw.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/pickle_into_saw.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/chainsaw/powerviolence_hardcore.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/eye/one_knob_crust.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/eye/one_knob_max.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/eye/one_knob_tight.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hm_chainsaw.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hm_v3/gothenburg_half_mids.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hm_v3/grind_buzz.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hm_v3/stockholm_custom.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hm_v3/sunlight_all_tens.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hmx/arizona_mids.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hmx/berlin_saw_high.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hmx/berlin_saw_low.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hmx/berlin_saw_mid.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hmx/boosted_blend.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hmx/decoupled_crust.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/hmx/four_band_doom.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/saw_body_blend_demo.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+| modeled/ts_boost.json | 0 | - / - | no | yes | +0.00 | +0.00 | +0.00 | within | within |
+
+Within both tolerances: 32 of 32 rendered here.
+
+Skipped (captures not cached on this machine):
+- chainsaw_body.json: 3 NAM block(s); needs paths.a.blocks[0].model: captures/58569_496942.nam
+- matched/barbaric_v4.json: 2 NAM block(s); needs paths.a.blocks[0].model: captures/58569_496942.nam
+- matched/bolt_thrower_v1.json: 4 NAM block(s); needs paths.a.blocks[0].model: captures/36748_381592.nam
+- matched/nails_v1.json: 2 NAM block(s); needs paths.a.blocks[0].model: captures/67423_512650.nam
+- studio_split.json: 3 NAM block(s); needs paths.a.blocks[0].model: captures/58569_496942.nam
+- styles/black_metal_raw.json: 2 NAM block(s); needs paths.a.blocks[0].model: captures/67423_512650.nam
+- styles/chainsaw_hardcore_nails.json: 2 NAM block(s); needs paths.a.blocks[0].model: captures/58569_496942.nam
+- styles/fuzz_doom_electric_wizard.json: 2 NAM block(s); needs paths.a.blocks[0].model: captures/68162_543174.nam
+- styles/grind_terrorizer.json: 2 NAM block(s); needs paths.a.blocks[0].model: captures/67423_512654.nam
+- styles/sludge_crowbar.json: 1 NAM block(s); needs paths.a.blocks[0].model: captures/45026_382709.nam
+- styles/uk_death_bolt_thrower.json: 2 NAM block(s); needs paths.a.blocks[0].model: captures/78883_684960.nam
+- swedeath_saw.json: 3 NAM block(s); needs paths.a.blocks[0].model: captures/58569_496942.nam
+- tight_body.json: 3 NAM block(s); needs paths.a.blocks[0].model: captures/58569_496942.nam
+
+### Decisions (implementer)
+1. A default-constructed `Preset` is `legacy` until I4c, so every test-built preset and the goldens are unaffected. A v5 file without the `calibration` member is
+   `legacy` too (the writer always emits it).
+2. A `calibration` member in a file older than v5 is accepted and ignored (legacy), so no hand-edited old file can switch calibration on silently.
+3. `RenderOptions::applyAutoTrim` still applies `preset.autoTrim.db`. `tonerender --level-match` puts the right trim there for a calibrated preset (stored
+   `autoTrimCalDb` at the assumed device, otherwise a trim measured at `--device-dbu`), so the plugin's I2 callers are unchanged.
+4. `--di-channel` default changes what a stereo file renders: it used to be the first channel. A tie still picks L. `matcher/pathcheck.py:187` assumes the first
+   channel; the matcher should pass `di_channel` or use the report's `diChannel.used`.
+5. `deviceDbu` given with a legacy preset is recorded in the report, has no effect and adds a warning.
