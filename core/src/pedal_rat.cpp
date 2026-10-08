@@ -85,6 +85,7 @@ void RatOpAmpStage::updateCoeffs() noexcept {
 }
 
 void RatOpAmpStage::process(float* io, int n) noexcept {
+  if (n <= 0) return;
   for (int i = 0; i < n; ++i) {
     if (rd_.left > 0 || w2_.left > 0) {
       if (rd_.left > 0) rd_.advance();
@@ -279,6 +280,7 @@ void RatPedal::reset() {
 }
 
 void RatPedal::process(float* io, int n) noexcept {
+  if (n <= 0) return;  // before anything is touched: a zero-length block is a no-op
   if (dirty_) retarget(false);
   const bool flat = cfg_.flatFilters;
   if (!flat) inHpf_.process(io, n);

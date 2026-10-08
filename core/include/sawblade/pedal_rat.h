@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -28,12 +29,13 @@ struct RatVoicing {
   // Extra oversampling of the op-amp stage and the diode clipper only, on top of the pedal's 4x (1, 2, 4 or 8): they
   // run at 4 * stageOversample * fs. The stage is a dynamic nonlinearity (slew edge, rails) that ADAA cannot
   // anti-alias. Measured in the pedal (DIST 10, FILTER 0, -6 dBFS, 48 kHz, silicon; worst existing pedal -82.1 dB):
-  //   factor   latency   5 kHz     4.7 kHz   2.3 kHz   1.1 kHz   RTF (best of 5)
-  //   1        50        -57 dB    -51 dB    -58 dB    -69 dB    0.026
-  //   2        52        -98 dB    -109 dB   -69 dB    -82 dB    0.051
-  //   4        53        -129 dB   -134 dB   -93 dB    -105 dB   0.106
-  //   8        54        -129 dB   -134 dB   -93 dB    -105 dB   0.236
-  // 2 is the smallest factor that clears the bar at the recipe frequencies within an RTF of 0.06; it does not at
+  //   factor   latency   5 kHz     4.7 kHz   2.3 kHz   1.1 kHz   RTF (best of 5, range of runs)
+  //   1        50        -57 dB    -51 dB    -58 dB    -69 dB    0.027-0.032
+  //   2        52        -98 dB    -109 dB   -69 dB    -82 dB    0.051-0.067
+  //   4        53        -129 dB   -134 dB   -93 dB    -105 dB   0.102-0.130
+  //   8        54        -129 dB   -134 dB   -93 dB    -105 dB   0.217-0.255
+  // (RTF varies run to run on a shared machine; 2 sits at about 0.06 on a loaded one.)
+  // 2 is the smallest factor that clears the bar at the recipe frequencies at about an RTF of 0.06; it does not at
   // 2.3 kHz (a stage that sits saturated for a long time), which needs 4 at twice the CPU.
   int stageOversample = 2;
   double gbwHz = 1.0e6;
@@ -111,23 +113,22 @@ inline double ratFastTanh(double x) noexcept {
 // Y)), and the integrator vo = vo' + h (e + e') with h = wt T / 2, e = vin - vm gives the linear solution
 // vo = (vo' + h (vin - b + e')) / (1 + h a). This is the exact trapezoidal solution of the linear circuit.
 //
-// Nonlinear limits, both solved in the same implicit step. The state is the output y itself:
+// Nonlinear limits, both solved in the same implicit step. The integrator state is v; the stage output is
+// y = Vrail tanh(v / Vrail) (a smooth rail that the feedback network sees):
 //  1. slew: the real LM308 mechanism, a differential-pair input stage. The integrator input is
-//     u(e) = Vd tanh(e / Vd), dy/dt = wt u(e), so the rate is SR tanh(wt e / SR) and approaches SR asymptotically.
-//     In the trapezoidal step |dy| <= h (|u| + |u'|) < 2 h Vd = SR * T;
-//  2. rails: where u pushes the output further out (u y > 0) the rate is multiplied by 1 - (y / Vrail)^2, so y
-//     approaches +-Vrail exponentially (time constant Vrail / 2 SR = 6 us) and never passes it; where u pulls it back
-//     the rate is the full one. The state is the bounded output, so there is no integrator to wind up and the stage
-//     leaves a rail the moment the input reverses (anti-windup by construction). The product is continuous (u = 0 at
-//     the switch), smooth in y, and a stage parked at a rail does not drift: the level reached does not depend on the
-//     sample rate or on SR. (A saturation re-applied to the state each sample, or a clamped windup state, were both
-//     tried: the first leaks and makes the peak depend on the rate, the second's kink dominated the aliasing.)
-// The carried state is r' = u M (the limited rate), which the next trapezoid averages over. The step is solved
-// implicitly with the network: F(y) = y - y' - h (r(y) + r') = 0, r = u(vin - a y - b) M(y, u), smooth and strictly
-// increasing (dr/dy <= 0, so F' >= 1), by Newton from the linear solution (or, where |e| > Vd, from the
-// hard-saturated root y' + h (+-Vd + r')), at most kMaxNewton steps, stopping when the step is below 100 uV (remaining error ~1e-6 V, below the alias floor); no
-// allocation; it converges in 1-3 steps (newtonCapHits() counts the samples that hit the cap, 0 in all tests).
-// The network states (vm, the capacitor histories) are then advanced with the final y.
+//     u(e) = Vd tanh(e / Vd), dv/dt = wt u(e), so the rate is SR tanh(wt e / SR) and approaches SR asymptotically.
+//     In the trapezoidal step |dv| <= h (|u| + |u'|) < 2 h Vd = SR * T. The carried state is the limited input u'
+//     (not the raw error), which the next trapezoid averages over, so no unlimited state is hidden;
+//  2. anti-windup: v is clamped to +-railWindupLimit * Vrail (6), so the integrator cannot wind up past the rail.
+//     Why 6: the clamp is a slope kink of relative size sech^2(limit) that aliases when it engages; 6 makes it
+//     negligible, at the cost of a longer recovery from a long saturation (see RatVoicing).
+// The step is solved implicitly with the network by Newton on F(v) = v - v' - h (u(e) + u'), e = vin - a y(v) - b:
+// smooth and strictly increasing (F' = 1 + h a u'(e) y'(v) >= 1), started from the linear solution or, where
+// |e| > Vd, from the hard-saturated root v' + h (+-Vd + u'), at most kMaxNewton = 8 steps, stopping when the step is
+// below 1e-4 V (remaining error ~1e-6 V, under the alias floor). The final y and u come from the last evaluation plus a
+// first-order correction (no further tanh). No allocation; it converges in 1-3 steps (newtonCapHits() counts the
+// samples that hit the cap, 0 in all tests). The network states (vm, the capacitor histories) are then advanced with
+// the final y.
 //
 // DIST (Rd) and the weight of the R2/C2 leg (RUETZ: 1 = in circuit, 0 = removed; in between it is a number of such
 // legs in parallel, which keeps a live toggle click-free) change per sample along a linear ramp.

@@ -143,6 +143,7 @@ void OversamplerNx::reset() noexcept {
 }
 
 void OversamplerNx::upsample(const float* in, int n, float* out) noexcept {
+  if (n <= 0) return;
   const float* src = in;
   int cnt = n;
   for (int i = 0; i < levels_; ++i) {
@@ -154,6 +155,7 @@ void OversamplerNx::upsample(const float* in, int n, float* out) noexcept {
 }
 
 void OversamplerNx::downsample(const float* in, int n, float* out) noexcept {
+  if (n <= 0) return;
   const float* src = in;
   int cnt = n * factor_ / 2;  // output count of the first down stage
   for (int i = levels_ - 1; i >= 0; --i) {

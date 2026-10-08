@@ -30,6 +30,8 @@ namespace sawblade {
 // Threading: prepare() allocates; reset(), upsample() and downsample() are real-time safe.
 // Block-size independent: the output for a sample stream does not depend on how it is chunked
 // (bit-identical).
+class OversamplerNx;
+
 class Oversampler4x {
  public:
   static constexpr int kStage1Taps = 87;  // 4m+3
@@ -61,7 +63,8 @@ class Oversampler4x {
 
   int maxBlock() const noexcept { return maxBlock_; }
 
- // One 2x polyphase half-band stage (shared with OversamplerNx).
+ private:
+  friend class OversamplerNx;  // shares the half-band stage design and kernels
   struct Stage {
     int taps = 0, m = 0, k = 0;     // taps = 4m+3, k = 2m+2 coefficients of the even branch
     std::vector<float> even;        // up: 2*h[2i]; down: h[2i]   (i < k)
@@ -70,8 +73,6 @@ class Oversampler4x {
   static void design(Stage& s, int taps, bool up);
   static void upStage(Stage& s, const float* in, int n, float* out, float* work) noexcept;
   static void downStage(Stage& s, const float* in, int n, float* out, float* work) noexcept;
-
- private:
 
   int maxBlock_ = 0;
   Stage up1_, up2_, down2_, down1_;

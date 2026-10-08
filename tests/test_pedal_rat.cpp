@@ -817,7 +817,7 @@ TEST_CASE("pedal.rat: stock output level on the -12 dBFS-RMS riff, and the contr
   run(pd, x, 512);
   double err = 0.0;
   for (std::size_t i = 2400; i < 4800; ++i) err = std::max(err, std::fabs(static_cast<double>(x[i]) - x0[i - static_cast<std::size_t>(pd.latencySamples())]));
-  CHECK(err < 0.01);  // dry[n - 50] through the 20 Hz input high-pass only
+  CHECK(err < 0.01);  // dry[n - latency] (52) through the 20 Hz input high-pass only
 }
 
 TEST_CASE("pedal.rat: live parameters settle to the static build and keep the build values untouched", "[rat][live]") {
@@ -857,6 +857,30 @@ TEST_CASE("pedal.rat: live parameters settle to the static build and keep the bu
   run(a, ya, 512);
   run(b, yb, 512);
   SAWBLADE_REQUIRE_SAME_SAMPLES(ya, yb);
+}
+
+TEST_CASE("pedal.rat: a zero-length block is a no-op", "[rat][zero]") {
+  for (int factor : {1, 2}) {
+    RatVoicing v;
+    v.stageOversample = factor;
+    RatParams p;
+    p.distortion = 9.0;
+    p.mix = 60.0;
+    RatPedal a(p, {}, &v), b(p, {}, &v);
+    a.prepare({48000.0, 512});
+    b.prepare({48000.0, 512});
+    auto xa = noise(3000, 81, 0.4f), xb = xa;
+    a.process(xa.data(), 500);
+    b.process(xb.data(), 500);
+    float dummy = 0.0f;
+    a.process(&dummy, 0);   // must not touch anything
+    a.process(&dummy, -3);
+    for (std::size_t pos = 500; pos < xa.size(); pos += 500) {
+      a.process(xa.data() + pos, 500);
+      b.process(xb.data() + pos, 500);
+    }
+    SAWBLADE_REQUIRE_SAME_SAMPLES(xb, xa);
+  }
 }
 
 TEST_CASE("pedal.rat: CPU cost per instance (informational)", "[rat][perf]") {
