@@ -74,6 +74,7 @@ class LadderBlock : public Processor {
   void process(float* io, int n) noexcept override;
   int latencySamples() const noexcept override { return latency_; }
   bool setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept override;
+  bool setLiveGainsDb(double inDb, double outDb, double makeupDb, int rampSamples) noexcept override;
   // The level info the Chain plans with is the block's starting rung (immutable, any thread). setCalibration reaches every
   // loaded rung (and any rung loaded later); each rung computes its own planned gain from its own capture metadata, so a
   // rung swap changes the drive by the metadata difference (v0.8 I1, decision 4). A downstream NAM block is planned from the
@@ -123,7 +124,7 @@ class LadderBlock : public Processor {
   calibration::BlockCalibration cal_{};
   int calRamp_ = 1;
   bool haveGains_ = false;
-  double gainIn_ = 0.0, gainOut_ = 0.0;
+  double gainIn_ = 0.0, gainOut_ = 0.0, gainMakeup_ = 0.0;
   int gainRamp_ = 1;
   std::uint64_t seenSeq_ = 0;
   std::atomic<std::uint64_t> consumedSeq_{0};

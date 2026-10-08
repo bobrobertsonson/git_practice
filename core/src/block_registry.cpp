@@ -32,7 +32,7 @@ std::unique_ptr<Processor> createNam(const Block& b, const BlockBuildContext& ct
   const std::string filePath = ctx.jsonPath + ".model.file";
   NamBlockConfig cfg;
   cfg.inputGainDb = p.inputGainDb;
-  cfg.outputGainDb = p.outputGainDb + p.makeupDb;
+  cfg.outputGainDb = p.outputGainDb;
   cfg.normalizeLoudness = p.normalizeLoudness;
   cfg.makeupDb = p.makeupDb;
   const auto build = [&](const Capture& cap, const std::string& fp, bool verify) -> std::unique_ptr<NamBlock> {

@@ -22,6 +22,12 @@ class Processor {
   // RT-safe. Live input / output gain (dB) ramped linearly over `rampSamples`. Returns false when
   // the block has no such gains (the default).
   virtual bool setLiveGainsDb(double /*inDb*/, double /*outDb*/, int /*rampSamples*/) noexcept { return false; }
+  // Same with the capture-swap make-up carried apart from the output gain (the block adds them in the order outputGain +
+  // makeup, so an uncalibrated block is unchanged). Input calibration needs them apart: it drops the CURRENT make-up on a
+  // block that feeds another NAM block. Default: folds the make-up into the output gain.
+  virtual bool setLiveGainsDb(double inDb, double outDb, double makeupDb, int rampSamples) noexcept {
+    return setLiveGainsDb(inDb, outDb + makeupDb, rampSamples);
+  }
   // v0.8 input calibration. What the block contributes to the level plan: Neutral (no level conversion) by default; a
   // capture reports its metadata (Nam). Immutable after construction, any thread.
   virtual calibration::BlockLevelInfo levelInfo() const noexcept { return {}; }

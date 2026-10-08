@@ -21,6 +21,8 @@ Plugin, preset schema, matcher and export are I2–I4. Do not touch them.
 
    `outputGainDb` (row 5) stays as an intent offset. Only the **last** NAM block of a path keeps `normalizeLoudness`
    and swap make-up, so swapping an amp changes tone and feel but not monitoring level (output side).
+   3a. A hop into a block without usable input metadata (no `input_level_dbu` and no gear default) is not planned: the upstream
+   block keeps its normalise and make-up (neutral = today's behaviour).
 4. **Gain ladder (row 9):** each rung is its own capture, with its own planned gain from its own metadata. A rung swap
    uses the rung's levels.
 5. **Modelled DSP pedals (row 11)** are `LevelKind::Neutral`. They model gain relative to their input, and their LEVEL

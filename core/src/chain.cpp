@@ -241,7 +241,7 @@ LiveParams LiveParams::fromPreset(const Preset& p) {
     fill(l.pathEq[k], pp[k]->eq);
     for (std::size_t i = 0; i < pp[k]->blocks.size() && i < l.blocks[k].size(); ++i)
       if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp[k]->blocks[i].params.get()))
-        l.blocks[k][i] = {nam->inputGainDb, nam->outputGainDb + nam->makeupDb};
+        l.blocks[k][i] = {nam->inputGainDb, nam->outputGainDb, nam->makeupDb};
     l.amp[k] = pp[k]->ampControls.knobs();
   }
   return l;
@@ -859,7 +859,8 @@ void Chain::setLiveParams(const LiveParams& in) noexcept {
       const LiveBlock& ob = live_.blocks[k][i];
       if (!std::isfinite(nb.inputGainDb)) nb.inputGainDb = ob.inputGainDb;
       if (!std::isfinite(nb.outputGainDb)) nb.outputGainDb = ob.outputGainDb;
-      if (nb != ob) blocks[i].processor->setLiveGainsDb(nb.inputGainDb, nb.outputGainDb, rampSamples_);
+      if (!std::isfinite(nb.makeupDb)) nb.makeupDb = ob.makeupDb;
+      if (nb != ob) blocks[i].processor->setLiveGainsDb(nb.inputGainDb, nb.outputGainDb, nb.makeupDb, rampSamples_);
     }
   }
   live_ = p;
@@ -942,11 +943,13 @@ CalibrationPlan Chain::planCalibration(const ChainCalibration& c) const {
     }
     const calibration::PathPlan pp = calibration::planPath(c.device, infos, c.defaults);
     double ref = plan.deviceDbu;
+    // feedsNam: a Nam block with a usable input level follows. A hop into a block without one is not planned (neutral = today's
+    // behaviour), so the upstream block keeps its normalise and make-up.
     bool namAfter = false;
-    for (std::size_t j = idx.size(); j-- > 0;) {  // feedsNam: a Nam block follows
+    for (std::size_t j = idx.size(); j-- > 0;) {
       CalibrationBlockPlan& b = out[idx[j]];
       b.feedsNam = namAfter && infos[j].kind == calibration::LevelKind::Nam;
-      if (infos[j].kind == calibration::LevelKind::Nam) namAfter = true;
+      if (infos[j].kind == calibration::LevelKind::Nam && !pp.blocks[j].inputUnknown) namAfter = true;
     }
     for (std::size_t j = 0; j < idx.size(); ++j) {
       CalibrationBlockPlan& b = out[idx[j]];

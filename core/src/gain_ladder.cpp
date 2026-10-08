@@ -81,7 +81,7 @@ std::unique_ptr<Processor> buildRungProcessor(const NamBlockParams& block, int r
   if (!locateRungFile(block.model, r)) return fail("rung " + r.modelId + " is not in the capture cache");
   NamBlockConfig cfg;
   cfg.inputGainDb = block.inputGainDb;
-  cfg.outputGainDb = block.outputGainDb + block.makeupDb;
+  cfg.outputGainDb = block.outputGainDb;
   cfg.normalizeLoudness = block.normalizeLoudness;
   cfg.makeupDb = block.makeupDb;
   try {
@@ -134,13 +134,18 @@ void LadderBlock::reset() {
 }
 
 bool LadderBlock::setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept {
+  return setLiveGainsDb(inDb, outDb, 0.0, rampSamples);
+}
+
+bool LadderBlock::setLiveGainsDb(double inDb, double outDb, double makeupDb, int rampSamples) noexcept {
   haveGains_ = true;
   gainIn_ = inDb;
   gainOut_ = outDb;
+  gainMakeup_ = makeupDb;
   gainRamp_ = rampSamples;
   bool any = false;
   for (auto& s : slots_)
-    if (s) any = s->setLiveGainsDb(inDb, outDb, rampSamples) || any;
+    if (s) any = s->setLiveGainsDb(inDb, outDb, makeupDb, rampSamples) || any;
   return any;
 }
 
@@ -177,7 +182,7 @@ void LadderBlock::drain() noexcept {
       continue;
     }
     if (haveCal_) e.proc->setCalibration(cal_, 1);
-    if (haveGains_) e.proc->setLiveGainsDb(gainIn_, gainOut_, 1);
+    if (haveGains_) e.proc->setLiveGainsDb(gainIn_, gainOut_, gainMakeup_, 1);
     std::swap(slots_[i], e.proc);
     loaded_.fetch_or(1ull << e.rung, std::memory_order_release);
   }

@@ -168,6 +168,7 @@ using LiveEq = std::array<LiveEqBand, ParametricEq::kMaxBands>;
 
 struct LiveBlock {
   double inputGainDb = 0.0, outputGainDb = 0.0;
+  double makeupDb = 0.0;  // the capture-swap make-up, apart from outputGainDb (input calibration drops it on a hop)
   bool operator==(const LiveBlock&) const = default;
 };
 
@@ -260,6 +261,8 @@ class Chain {
   const CalibrationPlan& calibrationPlan() const noexcept { return calPlan_; }
   // Swap-safe while audio runs: plans on the calling (producer) thread and hands the plan to the audio thread through a
   // SwapSlot; process() applies it at the start of the next block, smoothed over kLiveRampMs. One producer thread at a time.
+  // A plan published mid-stream takes effect at the start of the next process() call, so the sample it starts on depends on the
+  // host's block size (inherent to a lock-free hand-over; the ramp itself is sample-accurate).
   // Returns the plan that was published (for the UI / report).
   CalibrationPlan publishCalibration(const ChainCalibration& c);
   // Not RT-safe (call before audio): start with the paths muted, without a ramp.

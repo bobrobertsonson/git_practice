@@ -58,6 +58,7 @@ struct BlockGain {
   double refAfterDbu = 0.0;
   bool inputMissing = false;   // NAM / NominalOutput side metadata absent (default or neutral used)
   bool outputMissing = false;
+  bool inputUnknown = false;   // no usable input level at all (metadata and gear default both absent): gain is the neutral 0
   bool uncalibrated() const noexcept { return inputMissing || outputMissing; }
 };
 

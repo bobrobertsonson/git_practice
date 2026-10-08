@@ -43,6 +43,7 @@ BlockGain planBlock(double ref, const BlockLevelInfo& b, const CalibrationDefaul
     g.outputMissing = !out;
     if (!in) in = finiteOnly(gd.inputDbu);
     if (!out) out = finiteOnly(gd.outputDbu);
+    g.inputUnknown = !in;
     if (in) g.gainInDb = ref - *in;  // else no input known: neutral, gain 0
     if (out) ref = *out;
   } else if (b.kind == LevelKind::NominalOutput) {

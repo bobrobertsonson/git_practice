@@ -120,11 +120,12 @@ std::unique_ptr<NamBlock> NamBlock::load(const std::filesystem::path& path, cons
 
 void NamBlock::updateGains() noexcept {
   inGain_ = static_cast<float>(dbToLin(cfg_.inputGainDb));
-  double outDb = cfg_.outputGainDb;
+  double outDb = cfg_.outputGainDb + cfg_.makeupDb;
   if (cfg_.normalizeLoudness && loudness_) outDb += -18.0 - *loudness_;
   outGain_ = static_cast<float>(dbToLin(outDb));
   intentInDb_ = cfg_.inputGainDb;
   intentOutDb_ = cfg_.outputGainDb;
+  makeupDb_ = cfg_.makeupDb;
 }
 
 calibration::BlockLevelInfo NamBlock::levelInfo() const noexcept {
@@ -135,8 +136,10 @@ calibration::BlockLevelInfo NamBlock::levelInfo() const noexcept {
 // pre-calibration arithmetic, so every uncalibrated render is bit-identical.
 void NamBlock::applyGains(int rampSamples) noexcept {
   double outTotal = intentOutDb_;
-  if (calDrop_) outTotal -= cfg_.makeupDb;  // planned hop: the next block's gain carries it
-  else if (cfg_.normalizeLoudness && loudness_) outTotal += -18.0 - *loudness_;
+  if (!calDrop_) {  // a planned hop drops the make-up and the normalisation: the next block's gain carries the hop
+    outTotal += makeupDb_;
+    if (cfg_.normalizeLoudness && loudness_) outTotal += -18.0 - *loudness_;
+  }
   const auto start = [rampSamples](float& gain, GainRamp& r, float target) {
     if (target == gain && r.remaining <= 0) return;
     if (rampSamples <= 0) {
@@ -154,9 +157,14 @@ void NamBlock::applyGains(int rampSamples) noexcept {
 }
 
 bool NamBlock::setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept {
-  if (!std::isfinite(inDb) || !std::isfinite(outDb)) return true;
+  return setLiveGainsDb(inDb, outDb, 0.0, rampSamples);
+}
+
+bool NamBlock::setLiveGainsDb(double inDb, double outDb, double makeupDb, int rampSamples) noexcept {
+  if (!std::isfinite(inDb) || !std::isfinite(outDb) || !std::isfinite(makeupDb)) return true;
   intentInDb_ = inDb;
   intentOutDb_ = outDb;
+  makeupDb_ = makeupDb;
   applyGains(rampSamples);
   return true;
 }

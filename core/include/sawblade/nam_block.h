@@ -20,9 +20,9 @@ struct NamBlockConfig {
   double outputGainDb = 0.0;  // after the model
   // If true and the model carries metadata.loudness, add (-18 - loudness) dB after the model.
   bool normalizeLoudness = false;
-  // The capture-swap make-up already folded into outputGainDb (kept apart so input calibration can drop it for a block that
-  // feeds another NAM block, v0.8 I1). Informational: it never changes the gain computed without calibration.
-  double makeupDb = 0.0;
+  // The capture-swap make-up, kept apart from outputGainDb so input calibration can drop it for a block that feeds another
+  // NAM block (v0.8 I1). Without calibration the gain is outputGainDb + makeupDb (+ loudness normalisation).
+  double makeupDb = 0.0;  // added to outputGainDb after the model (outputGainDb + makeupDb)
 };
 
 struct NamMetadata {
@@ -98,7 +98,9 @@ class NamBlock : public Processor {
   // RT-safe. Ramps the input gain and the output gain (the loudness normalisation offset stays
   // folded into the output gain, as in the config) to the given dB values over `rampSamples`
   // (linear ramps, sample-accurate: independent of the block size). Unchanged gains stay bit-exact.
+  // The 3-argument form takes an output gain that already includes any make-up (the make-up is then 0).
   bool setLiveGainsDb(double inDb, double outDb, int rampSamples) noexcept override;
+  bool setLiveGainsDb(double inDb, double outDb, double makeupDb, int rampSamples) noexcept override;
 
   // v0.8 input calibration (calibration.h). levelInfo(): kind Nam, gear from metadata.gear_type, the capture's
   // input_level_dbu / output_level_dbu (read with NAM's Has*Level, so absent stays absent).
@@ -121,7 +123,7 @@ class NamBlock : public Processor {
   std::optional<double> loudness_;
   std::optional<double> inputDbu_, outputDbu_;
   calibration::GearKind gear_ = calibration::GearKind::Unknown;
-  double intentInDb_ = 0.0, intentOutDb_ = 0.0;  // the block's own gains (config, then setLiveGainsDb)
+  double intentInDb_ = 0.0, intentOutDb_ = 0.0, makeupDb_ = 0.0;  // the block's own gains (config, then setLiveGainsDb)
   double calInDb_ = 0.0;                         // planned calibration gain added to the input
   bool calDrop_ = false;                         // calibrated hop: no normalizeLoudness, no make-up
   double sampleRate_ = 0.0;

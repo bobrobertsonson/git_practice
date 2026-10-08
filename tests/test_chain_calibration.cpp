@@ -219,7 +219,7 @@ TEST_CASE("Calibration I1: wavenet <-> lstm swap: planned gain unchanged (same m
 
 TEST_CASE("Calibration I1: the gain is applied once: hops drop normalise and make-up, only the last block keeps them", "[calibration][chain]") {
   // linear_identity_loud24.nam: loudness -24 dB -> normalizeLoudness adds +6 dB. No calibration metadata (neutral, flagged).
-  const json hop = mk({blk("a1", "linear_identity_loud24.nam", 0.0, 1.0, true, 5.0), blk("a2", "linear_identity.nam")});
+  const json hop = mk({blk("a1", "linear_identity_loud24.nam", 0.0, 1.0, true, 5.0), blk("a2", "cal_amp_hi.nam")});
   // Off: today's behaviour, the pedal's output gain + make-up + normalise all count: 1 + 5 + 6.
   CHECK(gainOf(hop) == Approx(12.0).margin(1e-3));
   // On (device 12): the first block feeds a NAM: outputGainDb (1) stays, normalise (+6) and make-up (+5) are not applied.
@@ -228,7 +228,7 @@ TEST_CASE("Calibration I1: the gain is applied once: hops drop normalise and mak
   auto ch = build(hop, &c);
   CHECK(ch->calibrationPlan().blocks[0][0].feedsNam);
   CHECK_FALSE(ch->calibrationPlan().blocks[0][1].feedsNam);
-  // The last block keeps both: 1 + 5 + 6 (it has no metadata: planned 0).
+  // The last block keeps both: 1 + 5 + 6 (no metadata: planned 0).
   const json last = mk({blk("a1", "linear_identity_loud24.nam", 0.0, 1.0, true, 5.0)});
   CHECK(gainOf(last, &c) == Approx(12.0).margin(1e-3));
   // Bypassed blocks do not take part: a bypassed NAM after the first leaves it as the last active NAM block.
@@ -266,6 +266,46 @@ TEST_CASE("Calibration I1: pedal->amp hop = pedal.outputDbu - amp.inputDbu; a pe
   auto on = build(mk({blk("p1", "cal_pedal_a.nam"), blk("a1", "wavenet.nam")}), &c);
   auto manual = build(mk({blk("p1", "cal_pedal_a.nam", 6.0), blk("a1", "wavenet.nam", 10.0 - 18.3)}));
   CHECK(maxAbsDiff(run(*on, x, 64), run(*manual, x, 64)) < 1e-5);
+}
+
+TEST_CASE("Calibration I1: a live make-up edit on a hop block leaves the amp's input gain unchanged", "[calibration][chain]") {
+  const ChainCalibration c = cal(12.0);
+  const json j = mk({blk("p1", "cal_pedal_a.nam", 1.0, 2.0, false, 3.0), blk("a1", "cal_amp_hi.nam", 0.5)});
+  auto on = build(j, &c);
+  const double g0 = measuredGainDb(*on);
+  CHECK(g0 == Approx(6.0 + 1.0 + 2.0 - 2.0 + 0.5).margin(1e-3));  // make-up (3) not applied on the hop
+  LiveParams lp = on->liveParams();
+  CHECK(lp.blocks[0][0].makeupDb == 3.0);
+  lp.blocks[0][0].makeupDb = 9.0;  // the user/plugin edits the make-up live
+  on->setLiveParams(lp);
+  (void)measuredGainDb(*on);
+  CHECK(measuredGainDb(*on) == Approx(g0).margin(1e-3));
+  // Control, calibration off: the same edit does move the gain, by exactly the make-up difference.
+  auto off = build(j);
+  const double h0 = measuredGainDb(*off);
+  lp = off->liveParams();
+  lp.blocks[0][0].makeupDb = 9.0;
+  off->setLiveParams(lp);
+  (void)measuredGainDb(*off);
+  CHECK(measuredGainDb(*off) - h0 == Approx(6.0).margin(1e-3));
+  // The last block keeps a live make-up with calibration on.
+  auto last = build(mk({blk("a1", "cal_amp_hi.nam", 0.0, 0.0, false, 3.0)}), &c);
+  const double l0 = measuredGainDb(*last);
+  lp = last->liveParams();
+  lp.blocks[0][0].makeupDb = 7.0;
+  last->setLiveParams(lp);
+  (void)measuredGainDb(*last);
+  CHECK(measuredGainDb(*last) - l0 == Approx(4.0).margin(1e-3));
+}
+
+TEST_CASE("Calibration I1: a hop into a block without input metadata keeps normalise and make-up", "[calibration][chain]") {
+  const ChainCalibration c = cal(12.0);
+  const json j = mk({blk("a1", "linear_identity_loud24.nam", 0.0, 1.0, true, 5.0), blk("a2", "cal_amp_nometa.nam")});
+  CHECK(gainOf(j) == Approx(12.0).margin(1e-3));      // off: 1 + 5 + 6
+  CHECK(gainOf(j, &c) == Approx(12.0).margin(1e-3));  // on: the same, the hop cannot be planned
+  auto ch = build(j, &c);
+  CHECK_FALSE(ch->calibrationPlan().blocks[0][0].feedsNam);
+  CHECK(ch->calibrationPlan().blocks[0][1].inputMissing);
 }
 
 // ---- 5. missing metadata ----------------------------------------------------------------------------------------
@@ -562,8 +602,14 @@ TEST_CASE("Calibration I1 SYNTHETIC - redo on the user's L_ubr_quick preset: ped
   for (double v : sOn.outDb) std::printf(" %.2f", v);
   std::printf("\n  slope (dB out per dB in), least squares over 18 dB: off %.3f, on %.3f\n", sOff.slope, sOn.slope);
   std::printf("  amp drive moved by %.2f dB: %s\n", std::fabs(driveMove), std::fabs(driveMove) >= 3.0 ? ">= 3 dB" : "less than 3 dB");
-  CHECK(std::isfinite(sOff.slope));
-  CHECK(std::isfinite(sOn.slope));
+  // The numbers in the REPORT (docs/specs/v0_8-input_calibration_REPORT.md, I1): pinned so it cannot drift from the code.
+  CHECK(gPedal == Approx(-6.30).margin(1e-9));
+  CHECK(gAmp == Approx(-6.00).margin(1e-9));
+  CHECK(driveMove == Approx(-12.16).margin(0.02));
+  CHECK(std::fabs(driveMove) >= 3.0);
+  CHECK(sOff.slope == Approx(0.486).margin(0.005));
+  CHECK(sOn.slope == Approx(0.111).margin(0.005));
+  CHECK(sOff.slope > sOn.slope);
 }
 
 // ---- 9. gate -----------------------------------------------------------------------------------------------------
@@ -592,18 +638,50 @@ double openFraction(const std::vector<float>& x, const std::vector<float>& y, do
 TEST_CASE("Calibration I1: calibration does not open the gate on a -49.5 dBFS DI noise floor", "[calibration][gate][report]") {
   const auto x = gaussianNoise(-49.5, 10 * 48000, 17);
   const double floorDb = peakFloorDb(x, kFs);  // v0.4M Task H.1: the 92.5th percentile of the gate's own peak envelope
+  const json gate = {{"enabled", true}, {"thresholdDb", floorDb + 10.0}, {"hysteresisDb", 6.0}};  // the matcher's default record cell
   json j = mk({blk("a1", "cal_amp_hi.nam")});
-  j["gate"] = {{"enabled", true}, {"thresholdDb", floorDb + 10.0}, {"hysteresisDb", 6.0}};  // the matcher's default record cell
-  const ChainCalibration c = cal(18.0);  // planned +6 dB: calibration is audibly on
+  j["gate"] = gate;
+  // Device 24 dBu with cal_amp_hi (input 12 dBu): planned +12 dB. A gate keyed AFTER that gain would see a peak floor near
+  // -30 dBFS, above the open threshold (floor + 10 = about -32 dBFS), and open.
+  const ChainCalibration c = cal(24.0);
   auto off = build(j);
   auto on = build(j, &c);
+  CHECK(on->calibrationPlan().blocks[0][0].gainInDb == Approx(12.0));
   const auto yOff = run(*off, x), yOn = run(*on, x);
-  const double fOff = openFraction(x, yOff, 1.0), fOn = openFraction(x, yOn, std::pow(10.0, 6.0 / 20.0));
+  const double lin12 = std::pow(10.0, 12.0 / 20.0);
+  const double fOff = openFraction(x, yOff, 1.0), fOn = openFraction(x, yOn, lin12);
+  // Control: the same +12 dB as INPUT, which sits before the gate, does open it.
+  json jc = mk({blk("a1", "cal_amp_hi.nam")}, 12.0);
+  jc["gate"] = gate;
+  auto ctl = build(jc);
+  const double fCtl = openFraction(x, run(*ctl, x), lin12);
   std::printf("\nI1 gate check: noise -49.5 dBFS RMS (Gaussian, 10 s), peakFloor %.2f dBFS, open %.2f / close %.2f dBFS\n", floorDb,
               floorDb + 10.0, floorDb + 4.0);
-  std::printf("  gate open fraction on noise-only (after 0.5 s): calibration off %.4f, on %.4f\n", fOff, fOn);
+  std::printf("  gate open fraction on noise-only (after 0.5 s): calibration off %.4f, calibration on (+12 dB planned) %.4f, control INPUT +12 dB (before the gate) %.4f\n",
+              fOff, fOn, fCtl);
+  CHECK(floorDb == Approx(-42.3).margin(0.5));
   CHECK(fOn == fOff);  // the gate is keyed on the DI before any calibration gain
-  CHECK(fOn < 0.05);
-  // Calibration is on: the pass-through gain of an open stretch would be +6 dB.
-  CHECK(on->calibrationPlan().blocks[0][0].gainInDb == Approx(6.0));
+  CHECK(fOff < 0.05);
+  CHECK(fCtl > 0.5);  // discriminating: a gain before the gate would have opened it
+}
+
+TEST_CASE("Calibration I1: a downstream NAM block does not follow a rung swap of a ladder upstream", "[calibration][ladder]") {
+  const CacheDir cache;
+  cache.put("m1", "cal_pedal_a.nam");  // output 10 dBu
+  cache.put("m2", "cal_pedal_b.nam");  // output 4 dBu
+  json j = ladderPreset();
+  j["paths"]["a"]["blocks"][0]["model"]["file"] = (kNam / "cal_pedal_a.nam").string();
+  j["paths"]["a"]["blocks"].push_back(blk("a2", "cal_amp_hi.nam"));
+  const Preset p = parsePreset(j, kPresets);
+  const ChainCalibration c = cal(12.0);
+  auto ch = build(j, &c);
+  const double before = measuredGainDb(*ch);
+  CHECK(ch->calibrationPlan().blocks[0][1].refBeforeDbu == 10.0);
+  publishRung(*ch, p, 1);
+  LiveParams lp = ch->liveParams();
+  lp.amp[0].gain = 10.0;
+  ch->setLiveParams(lp);
+  (void)measuredGainDb(*ch);
+  REQUIRE(ch->ladderState(0).active == 1);
+  CHECK(measuredGainDb(*ch) == Approx(before).margin(1e-3));  // documented limit: the amp stays planned from the starting rung's 10 dBu
 }
