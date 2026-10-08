@@ -267,7 +267,7 @@ mockup drawings (`cabs.py`), our own, no makers' logos.
 - R1 -> no caption chips under amps or pedals; each amp and pedal has a 3 px path edge (BLADE orange, BODY blue) plus a `BLADE` / `BODY` word in a well.
 - R1 -> the BLEND nixie `79 / 21` is labelled `BLADE` and `BODY` under its two numbers; the caption that repeated the values is gone.
 - R1 -> the inspector no longer repeats the CIRCUIT selector; it lives on THE SAW MILL's face (`CIRCUIT ◀ BUZZSAW ▶` on its display).
-- R2 -> the METERS column is gone and the cab takes the space; IN / OUT are thin LED ladders in the top bar, GR is the LED ring on `VISE · GR`.
+- R2 -> the METERS column is gone and the cab takes the space; IN / OUT are thin LED ladders in the top bar (labels and level only, no value readout: the value is in DETAILS), GR is the LED ring on `VISE · GR`.
 - R3 -> MATCH vs ORIGINAL is a dismissable card (✕) captioned "after a match"; ALIGN is gone from the inspector, `ⓘ DETAILS` stands for the pop-over (ALIGN, LAT, CPU).
 - R3 -> empty pedal slots collapse to one `+` at the end of each path's row (BLADE row, BODY row).
 - R6 -> amber for values, green only for good states (LIVE lamp, ✓, the match result), orange for selection and primary actions; no new hues.
@@ -283,7 +283,7 @@ mockup drawings (`cabs.py`), our own, no makers' logos.
 - R5 -> one status strip with the current state only (the second CALIBRATED strip is gone).
 - R5 -> the device dropdown is closed; the manual dBu field appears only under "Custom" (small second-state inset).
 - R5 -> INPUT CHANNEL shows `Auto` with a closed `▸ Override` button; GATE FLOOR is removed with a note that it moved to GATE.
-- R6 -> amber values, green only for the Auto good state; one orange primary (APPLY).
+- R6 -> amber values (including `Auto`), green only for the LIVE lamp; one orange primary (APPLY).
 
 **08 rig editor**
 - R1 -> card headers keep only the type tag (`MODELLED`, `CAPTURE`, `PRE`); the state is the lamp (`ACTIVE` / `BYPASSED`), and the bypass hatch stays.
