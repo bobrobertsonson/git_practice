@@ -18,32 +18,40 @@ namespace {
 std::atomic<std::uint64_t> g_nextTapId{1};
 }
 
-PeakTap::PeakTap() noexcept : id_(g_nextTapId.fetch_add(1, std::memory_order_relaxed)) {}
+PeakTap::PeakTap() : id_(g_nextTapId.fetch_add(1, std::memory_order_relaxed)) {
+  GateParams p;
+  p.enabled = true;
+  p.thresholdMode = GateThresholdMode::FloorRelative;
+  floor_.setParams(p);
+}
 
-void PeakTap::prepare(double sampleRate) noexcept {
+void PeakTap::prepare(double sampleRate) {
   winLen_ = std::max(1, static_cast<int>(std::llround(kWindowMs * 0.001 * sampleRate)));
   pos_ = 0;
-  openCount_ = 0;
   peak_ = 0.0f;
+  floor_.prepare({sampleRate, winLen_});
   written_.store(0, std::memory_order_relaxed);
 }
 
-void PeakTap::process(const float* di, const std::uint8_t* open, int n) noexcept {
+void PeakTap::process(const float* di, int n) noexcept {
   if (!enabled_.load(std::memory_order_relaxed)) return;
-  for (int i = 0; i < n; ++i) {
-    if (open[i]) {
-      ++openCount_;
-      peak_ = std::max(peak_, std::fabs(di[i]));
-    }
-    if (++pos_ >= winLen_) {
-      if (openCount_ * 2 >= winLen_) {  // played: the gate was open for at least half of the window
-        const double db = 20.0 * std::log10(std::max(static_cast<double>(peak_), 1e-9));
+  int i = 0;
+  while (i < n) {
+    const int len = std::min(n - i, winLen_ - pos_);
+    float pk = peak_;
+    for (int k = 0; k < len; ++k) pk = std::max(pk, std::fabs(di[i + k]));
+    peak_ = pk;
+    floor_.followFloor(di + i, len);
+    pos_ += len;
+    i += len;
+    if (pos_ >= winLen_) {
+      const double db = 20.0 * std::log10(std::max(static_cast<double>(peak_), 1e-9));
+      if (db >= floor_.floorEstimateDb() + kPlayedAboveFloorDb) {  // played
         const std::uint32_t w = written_.load(std::memory_order_relaxed);
         ring_[w % kRing].store(static_cast<std::uint16_t>(binForDb(db)), std::memory_order_relaxed);
         written_.store(w + 1, std::memory_order_release);
       }
       pos_ = 0;
-      openCount_ = 0;
       peak_ = 0.0f;
     }
   }

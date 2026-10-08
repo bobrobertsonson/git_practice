@@ -152,11 +152,29 @@ void Gate::reset() {
   updateCoefficients();
 }
 
-void Gate::processKeyed(const float* key, float* io, int numSamples, std::uint8_t* openOut) noexcept {
-  if (!params_.enabled) {
-    if (openOut) std::fill(openOut, openOut + numSamples, std::uint8_t{1});
-    return;
+void Gate::followFloor(const float* key, int numSamples) noexcept {
+  if (params_.thresholdMode != GateThresholdMode::FloorRelative) return;
+  for (int i = 0; i < numSamples; ++i) {
+    double k = static_cast<double>(key[i]);
+    if (keyHp_) {
+      const double y = kb0_ * k + kz1_;
+      kz1_ = kb1_ * k - ka1_ * y + kz2_;
+      kz2_ = kb2_ * k - ka2_ * y;
+      k = y;
+    }
+    const double x = std::fabs(k);
+    env_ = x > env_ ? x + envAtk_ * (env_ - x) : x + envRel_ * (env_ - x);
+    frameMax_ = std::max(frameMax_, env_);
+    if (++frameCount_ >= frameLen_) {
+      floorFrame(frameMax_);
+      frameMax_ = 0.0;
+      frameCount_ = 0;
+    }
   }
+}
+
+void Gate::processKeyed(const float* key, float* io, int numSamples) noexcept {
+  if (!params_.enabled) return;
   const double rangeDb = params_.rangeDb;
   const bool expander = params_.mode == GateMode::Expander;
   const bool floorRel = params_.thresholdMode == GateThresholdMode::FloorRelative;
@@ -192,7 +210,6 @@ void Gate::processKeyed(const float* key, float* io, int numSamples, std::uint8_
     } else {
       open_ = false;
     }
-    if (openOut) openOut[i] = open_ ? 1 : 0;
 
     double target = open_ ? 0.0 : rangeDb;
     if (expander && !open_ && env_ < closeLin_) {

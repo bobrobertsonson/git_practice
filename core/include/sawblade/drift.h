@@ -6,14 +6,18 @@
 #include <optional>
 #include <string>
 
+#include "sawblade/gate.h"
+
 // v0.8 I3: input-level drift check (docs/specs/v0_8-I3-drift_check.md). A device calibration only holds at the interface gain it was
 // made at; if that knob moves, every planned NAM drive is off by the same amount. This unit measures the player's input level and
 // says so. It never changes a gain.
 //
 // Two halves, both JUCE-free:
-//  - PeakTap (audio thread): the statistic's source. Per 50 ms window of the DI (before INPUT and before any calibration gain), the
-//    peak over the samples where the gate is open, kept only for windows that were at least half open ("played"). Each window's peak
-//    is quantised to 0.25 dB and pushed into a small lock-free ring. process() allocates nothing, locks nothing and does no I/O.
+//  - PeakTap (audio thread): the statistic's source. Per 50 ms window of the DI (before INPUT and before any calibration gain) it takes
+//    the peak, and keeps the window only if it was "played": the peak is at least kPlayedAboveFloorDb above the DI's own noise floor,
+//    tracked by a dedicated floor follower (Gate::followFloor, minimum statistics, seedable from the I2 learned floor). This does not
+//    depend on the preset or its gate, so presets with the gate off, or any gate threshold, give the same statistic. The peak is quantised
+//    to 0.25 dB and pushed into a lock-free ring. process() allocates nothing, locks nothing and does no I/O.
 //  - DriftTracker (message thread, 10 Hz): reads new windows, keeps the rolling p95 of the last 15 s of played windows, learns the
 //    baseline in the first >= 60 s of played audio, and raises / clears the drift notice. Silence adds no windows, so it neither
 //    counts toward the 30 s nor resets it.
@@ -23,6 +27,10 @@ constexpr double kWindowMs = 50.0;
 constexpr double kBinDb = 0.25;
 constexpr double kMinDb = -80.0, kMaxDb = 0.0;
 constexpr int kBins = static_cast<int>((kMaxDb - kMinDb) / kBinDb);  // 320; bin b covers [kMinDb + b*kBinDb, +kBinDb)
+// A window is played when its peak is at least this far above the DI's noise floor. 12 dB: the live gate opens at floor + 10 dB (the
+// floor-relative offset of the live dynamics policy), and the peak of a noise-only window sits a few dB above the follower's minimum
+// statistic, so 12 dB keeps noise out while any real note (tens of dB above the floor) passes.
+constexpr double kPlayedAboveFloorDb = 12.0;
 constexpr int kRing = 512;                                           // windows (25.6 s) between two reads before any are lost
 
 double binCenterDb(int bin) noexcept;
@@ -30,16 +38,19 @@ int binForDb(double db) noexcept;  // clamped to [0, kBins - 1]
 
 class PeakTap {
  public:
-  PeakTap() noexcept;
-  // Off the audio thread, before audio runs. Clears the ring.
-  void prepare(double sampleRate) noexcept;
+  PeakTap();
+  // Off the audio thread, before audio runs. Clears the ring and restarts the floor follower (from the seed).
+  void prepare(double sampleRate);
+  // Where the DI's floor follower starts (default -70 dBFS; the I2 learned floor, converted to the DI, when there is one). Before prepare().
+  void setFloorSeedDb(double db) noexcept { floor_.setFloorSeedDb(db); }
+  double floorEstimateDb() const noexcept { return floor_.floorEstimateDb(); }  // audio thread / after the audio stops
   // Any thread. Off (the default): process() does nothing and costs one relaxed load.
   void setEnabled(bool on) noexcept { enabled_.store(on, std::memory_order_relaxed); }
   bool enabled() const noexcept { return enabled_.load(std::memory_order_relaxed); }
 
-  // Audio thread. `di` is the unprocessed input, `open[i]` non-zero where the gate is open at sample i. Window boundaries are counted
-  // in samples, so the result does not depend on the block size.
-  void process(const float* di, const std::uint8_t* open, int n) noexcept;
+  // Audio thread. `di` is the unprocessed input. Window boundaries are counted in samples and the floor follower is fed up to each
+  // boundary, so the result does not depend on the block size.
+  void process(const float* di, int n) noexcept;
 
   // Consumer side (one reader). `cursor` is the count of windows already read from this tap; reads the new ones into out (at most
   // maxOut, oldest first), advances the cursor and returns how many. Windows overwritten before they were read are skipped.
@@ -51,7 +62,8 @@ class PeakTap {
   std::uint64_t id_;
   std::atomic<bool> enabled_{false};
   int winLen_ = 2400;
-  int pos_ = 0, openCount_ = 0;  // audio thread only
+  Gate floor_;                   // dedicated: follows the DI's noise floor, gates nothing
+  int pos_ = 0;                  // audio thread only
   float peak_ = 0.0f;
   std::array<std::atomic<std::uint16_t>, kRing> ring_{};
   std::atomic<std::uint32_t> written_{0};

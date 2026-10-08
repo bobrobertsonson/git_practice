@@ -309,9 +309,12 @@ off every render, trim, make-up and gate seed is what it was before I2, bit for 
   if the knob moves, every planned NAM drive is off by the same amount. With the toggle on **and** a device record (otherwise nothing runs: no
   statistic, no stored baseline) the plugin watches the played input level and says so. It never changes a gain.
   - *Statistic* (`core/include/sawblade/drift.h`, `drift::PeakTap`, audio thread): the peak of the **DI** (before INPUT and before any calibration gain)
-    per 50 ms window, kept only for windows where the live gate was open for at least half of it ("played"; with the gate off there is no statistic),
-    quantised to 0.25 dB and pushed into a lock-free ring (512 windows). No allocation, lock or I/O in `process()`; the tap is off (and the chain
-    bit-identical) unless the engine is built with calibration on and a record.
+    per 50 ms window, kept only for **played** windows: those whose peak is at least `kPlayedAboveFloorDb` = 12 dB above the DI's own noise floor.
+    That floor comes from a dedicated floor follower on the DI (`Gate::followFloor`, the live gate's minimum-statistics follower, seeded from the
+    I2 learned gate floor converted to the DI when there is one). It does not depend on the preset or its gate: any gate threshold, or no gate,
+    gives the same windows. 12 dB because the live gate opens at floor + 10 dB and a noise-only window peaks a few dB above the follower's minimum,
+    while any real note is tens of dB above it. Windows are quantised to 0.25 dB and pushed into a lock-free ring (512 windows). No allocation, lock
+    or I/O in `process()`; the tap is off (and the chain bit-identical) unless the engine is built with calibration on and a record.
   - *Tracker* (`drift::DriftTracker`, message thread, `calibrationTick()` at 10 Hz): rolling p95 over the last 15 s of played windows (`kDriftRollS`); the **baseline**
     is the p95 of the first 60 s of played windows after a record is made, stored in the device record as `driftBaselineDbfs` (Settings only, never in a
     preset or the plugin state; `Settings::setDriftBaseline`). Re-picking the device or removing the record clears it (a new record has none).
@@ -319,7 +322,6 @@ off every render, trim, make-up and gate seed is what it was before I2, bit for 
     of **played** time (silence adds no windows, so it neither counts nor resets). The notice clears below 4 dB (`kDriftClearBelowDb`). A literal
     6 dB threshold is a coin flip for a true 6 dB change (p95 +-0.5 dB), so 5 dB with a 15 s window catches a true +-6 dB step within 60 s of played
     time while dynamics within +-4 dB never trigger. The baseline needs `kDriftLearnS` = 60 s of played windows; no comparison before `kDriftMinRollS` = 10 s.
-    With the live gate off there is no statistic, so the drift check is silent.
   - *Notice* (the main view's message line, after errors and engine warnings): "Your input seems ~N dB hotter|quieter than when you calibrated -
     did the interface gain change?" with the existing text buttons **Recalibrate** (opens Settings) and **Ignore** (silent until the baseline changes or the
     drift moves another 5 dB from the ignored level; it is also forgotten once the level is back within 3 dB of the baseline, `kDriftIgnoreClearDb`).

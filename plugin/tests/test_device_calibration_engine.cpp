@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -422,9 +423,10 @@ std::vector<float> playedDi(double seconds, double gainDb, unsigned seed) {
   return x;
 }
 
-json driftRig() {
-  json j = calRig({nb("a1", "linear_identity.nam")}, "drift", false, -50.0, /*inputDb=*/0.0);
-  j["gate"] = {{"enabled", true}, {"thresholdDb", -55.0}, {"hysteresisDb", 6.0}};
+// `gateDb` nullopt: no gate in the preset.
+json driftRig(std::optional<double> gateDb = -55.0, const std::string& name = "drift") {
+  json j = calRig({nb("a1", "linear_identity.nam")}, name, false, -50.0, /*inputDb=*/0.0);
+  if (gateDb) j["gate"] = {{"enabled", true}, {"thresholdDb", *gateDb}, {"hysteresisDb", 6.0}};
   return j;
 }
 
@@ -521,7 +523,7 @@ TEST_CASE("drift check: learns a baseline into the device record, raises on a su
   REQUIRE(n.active);
   CHECK(n.hotter);
   CHECK(n.db >= 5);
-  CHECK(n.db <= 7);
+  CHECK(n.db <= 8);
   CHECK(w.st().deviceCalibration()->driftBaselineDbfs == baseline);  // the baseline did not drift with the signal
   // No gain changed anywhere while it fired.
   CHECK(snapshotOf(w) == before);
@@ -553,7 +555,7 @@ TEST_CASE("drift check: a true -6 dB is raised too, as quieter, and changes no g
   REQUIRE(n.active);
   CHECK_FALSE(n.hotter);
   CHECK(n.db >= 5);
-  CHECK(n.db <= 7);
+  CHECK(n.db <= 8);
   CHECK(drift::driftNoticeText(n).find("quieter") != std::string::npos);
   CHECK(snapshotOf(w) == before);
 }
@@ -578,4 +580,33 @@ TEST_CASE("drift check: playing dynamics within +-4 dB over minutes never raise 
   }
   INFO("largest |drift| " << worst << " dB");
   CHECK_FALSE(ever);
+}
+
+TEST_CASE("drift check: switching presets with different gate thresholds, or no gate, raises no notice and keeps the p95 within 0.5 dB", "[devicecal][drift][plugin]") {
+  World w;
+  driftWorld(w);
+  playTicking(w, wall(70.0), 0.0, 1);  // the baseline, on the first preset (gate -55)
+  REQUIRE(w.st().deviceCalibration()->driftBaselineDbfs.has_value());
+  bool ever = false;
+  // The same input (same seed and length, so the last 15 s the tracker sees are identical) through four presets.
+  const auto phase = [&](const char* name, std::optional<double> gateDb) {
+    w.h.load(writeJson(w.tmp.dir, name, driftRig(gateDb, name)));
+    w.tick();
+    const auto x = playedDi(wall(40.0), 0.0, 9);
+    std::vector<float> y(4800), y2(4800);
+    for (std::size_t pos = 0; pos + 4800 <= x.size(); pos += 4800) {
+      w.h.process(x.data() + pos, y.data(), 4800, x.data() + pos, y2.data());
+      w.h.p.calibrationTick();
+      ever = ever || w.h.p.driftNotice().active;
+    }
+    const auto p95 = w.h.p.driftTracker().rollingP95Db();
+    REQUIRE(p95.has_value());
+    return *p95;
+  };
+  const double ref = phase("g55", -55.0);
+  CHECK(std::fabs(phase("g25", -25.0) - ref) <= 0.5);  // a gate that closes on most of the playing
+  CHECK(std::fabs(phase("gOff", std::nullopt) - ref) <= 0.5);
+  CHECK(std::fabs(phase("g45", -45.0) - ref) <= 0.5);
+  CHECK_FALSE(ever);
+  CHECK(w.h.p.driftTracker().baselineDb() == w.st().deviceCalibration()->driftBaselineDbfs);
 }

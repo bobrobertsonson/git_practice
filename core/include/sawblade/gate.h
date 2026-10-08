@@ -75,9 +75,11 @@ class Gate : public Processor {
 
   // key may alias io (e.g. key = DI before the split). The key sample is read before io is
   // written, per sample.
-  // openOut (optional, v0.8 I3): when non-null, openOut[i] is set to 1 where the gate is open at sample i, else 0. Observation
-  // only: the audio is the same with or without it.
-  void processKeyed(const float* key, float* io, int numSamples, std::uint8_t* openOut = nullptr) noexcept;
+  void processKeyed(const float* key, float* io, int numSamples) noexcept;
+
+  // v0.8 I3: runs only the envelope and the floor follower on `key` (floorRelative mode), with no gain and no output. For a
+  // dedicated instance that tracks the noise floor of a signal without gating anything (the drift check's tap). RT-safe.
+  void followFloor(const float* key, int numSamples) noexcept;
 
   // Floor follower constants.
   static constexpr double kFrameMs = 50.0;

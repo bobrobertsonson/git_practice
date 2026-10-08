@@ -10,10 +10,12 @@ every planned NAM drive is wrong by the same amount, and nothing tells the user.
 
 ## Behaviour
 
-- **Statistic.** The p95 of short-term input peaks over *played* frames only, where played means the gate is open.
+- **Statistic.** The p95 of short-term input peaks over *played* windows only. Played means the window's peak is at least 12 dB (`kPlayedAboveFloorDb`) above the DI's own
+  noise floor (a dedicated floor follower on the DI, seeded from the I2 learned floor when there is one). It does not depend on the
+  preset or its gate (lead decision, 2026-10-08): any gate threshold, or no gate, gives the same statistic.
   Measure it on the DI, before INPUT and before any calibration gain, so neither the user's INPUT offset nor the
   calibration moves it.
-  - Audio thread: per block, while the gate is open, accumulate peaks over 50 ms windows into a small fixed-size
+  - Audio thread: per block, accumulate the peak of each 50 ms window (played ones only) into a small fixed-size
     histogram (for example 0.5 dB bins from −80 to 0 dBFS).
   - Publish a lock-free summary: a fixed-size array snapshot or atomics. Use the same pattern as the I2 floor atomic
     or the existing meter ring, whichever is simplest.
@@ -43,8 +45,7 @@ every planned NAM drive is wrong by the same amount, and nothing tells the user.
 
 - **Core / statistic (local):**
   - A synthetic DI at +0, +6 and −6 dB relative to the baseline yields a p95 shift within ±0.5 dB of the true offset.
-  - Frames with the gate closed are excluded. A loud noise burst while the gate is closed must not move the
-    statistic.
+  - Windows at the noise floor are not played; the statistic is the same for presets with different gate thresholds or no gate.
   - Block-size independent.
   - `process()` allocates nothing.
 - **Plugin (CI):**

@@ -257,7 +257,10 @@ class Chain {
   // --- v0.8 I2 live-gate floor seed ---
   // Where the live gate's floor follower starts (default -70 dBFS; see Gate::setFloorSeedDb). Not RT-safe against a running
   // process(): call before audio starts (the plugin does it before the engine is published).
-  void setGateFloorSeedDb(double db) noexcept { gate_.setFloorSeedDb(db); }
+  void setGateFloorSeedDb(double db) noexcept {
+    gate_.setFloorSeedDb(db);
+    driftTap_.setFloorSeedDb(db - preset_.inputGainDb);  // the gate's floor is after INPUT; the tap listens to the DI
+  }
   // The floor the live gate has learned (dBFS), or NaN while it has not filled its 3 s window (or the gate is off / not floor
   // relative). Published by process() through a relaxed atomic float: any thread may read it, nothing is allocated or locked.
   double gateFloorSeedDb() const noexcept { return gate_.floorSeedDb(); }  // where the follower starts (default -70 dBFS)
@@ -265,7 +268,8 @@ class Chain {
 
   // --- v0.8 I3 input-level drift check ---
   // Off by default (process() then does exactly what it did before). On: process() feeds the tap with the DI (before INPUT and
-  // before any calibration gain) over the frames where the live gate is open; with the gate off there is no statistic. Any thread.
+  // before any calibration gain). Which frames count as played does not depend on the preset or its gate: the tap tracks the DI's own
+  // noise floor (drift.h). Any thread.
   void setDriftTapEnabled(bool on) noexcept { driftTap_.setEnabled(on); }
   const drift::PeakTap& driftTap() const noexcept { return driftTap_; }
 
@@ -387,7 +391,6 @@ class Chain {
   std::atomic<float> gateFloorOut_{std::numeric_limits<float>::quiet_NaN()};  // processChunk(): the learned live-gate floor, NaN until learned
   bool gateOn_ = false;
   drift::PeakTap driftTap_;
-  std::vector<std::uint8_t> openMask_;  // the gate's open flags for the drift tap (sized in prepare)
   std::unique_ptr<Convolver> cabShared_;
   ParametricEq postEq_;
   BusCompressor comp_;

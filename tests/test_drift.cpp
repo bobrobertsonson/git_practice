@@ -141,42 +141,43 @@ TEST_CASE("Drift I3: the statistic is the DI, so the user's INPUT gain does not 
   CHECK(std::fabs(a - b) <= 0.25);
 }
 
-TEST_CASE("Drift I3: frames with the gate closed are excluded", "[drift][chain]") {
-  // PeakTap level: a loud burst in a closed region adds no window and does not move the p95.
-  const auto x = playing(20.0, 0.0);
-  std::vector<std::uint8_t> open(x.size());
-  for (std::size_t i = 0; i < x.size(); ++i) open[i] = std::fabs(x[i]) > 0.003f ? 1 : 0;  // a stand-in gate: notes open, floor closed
-  auto loud = x;
-  for (std::size_t i = 0; i < loud.size(); ++i)  // 1 s of -3 dBFS noise at 5.0 s .. 6.0 s, where the stand-in gate is closed
-    if (i >= static_cast<std::size_t>(5.0 * kFs) && i < static_cast<std::size_t>(6.0 * kFs)) {
-      loud[i] = 0.7f * ((i % 2) ? 1.0f : -1.0f);
-      open[i] = 0;
-    }
-  drift::PeakTap a, b;
-  a.prepare(kFs);
-  b.prepare(kFs);
-  a.setEnabled(true);
-  b.setEnabled(true);
-  a.process(x.data(), open.data(), static_cast<int>(x.size()));
-  // the same notes but with the burst present in the DI; the burst region is closed, but zero the quiet-floor bins the same way
-  std::vector<std::uint8_t> open2 = open;
-  b.process(loud.data(), open2.data(), static_cast<int>(loud.size()));
-  const auto wa = windowsOf(a), wb = windowsOf(b);
-  REQUIRE(!wa.empty());
-  // the burst removed whole closed windows only; the windows around it are untouched, so the maximum bin is the same
-  CHECK(*std::max_element(wa.begin(), wa.end()) == *std::max_element(wb.begin(), wb.end()));
-  CHECK(*std::max_element(wb.begin(), wb.end()) < drift::binForDb(-10.0));
-
-  // Chain level: with the gate held closed by a very low INPUT the key never opens it, so a loud DI makes no window at all.
-  auto ch = build(mkPreset(-60.0), true);
-  run(*ch, playing(10.0, 0.0), 256);
-  CHECK(ch->driftTap().written() == 0u);
+TEST_CASE("Drift I3: the statistic does not depend on the preset's gate: any threshold, or no gate, gives the same windows", "[drift][chain]") {
+  const auto x = playing(30.0, 0.0);
+  const auto windows = [&](const json& preset) {
+    auto ch = build(preset, true);
+    run(*ch, x, 256);
+    return windowsOf(ch->driftTap());
+  };
+  json gated = mkPreset();
+  const auto ref = windows(gated);
+  REQUIRE(ref.size() > 100);
+  CHECK(windows(mkPreset(0.0, /*gate=*/false)) == ref);  // gate off
+  gated["gate"]["thresholdDb"] = -35.0;
+  CHECK(windows(gated) == ref);
+  gated["gate"]["thresholdDb"] = -20.0;  // closed for nearly every note: the output is gated away, the DI statistic is not
+  CHECK(windows(gated) == ref);
 }
 
-TEST_CASE("Drift I3: no statistic when the gate is off, and none when the tap is off", "[drift][chain]") {
-  auto noGate = build(mkPreset(0.0, false), true);
-  run(*noGate, playing(5.0, 0.0), 256);
-  CHECK(noGate->driftTap().written() == 0u);
+TEST_CASE("Drift I3: noise-floor windows and silence are not played; a loud burst in the gaps is", "[drift][chain]") {
+  // Noise only (-75 dBFS peak), then silence: nothing is played, whatever the gate does.
+  auto x = noise(static_cast<std::size_t>(20.0 * kFs), 5, static_cast<float>(std::pow(10.0, -75.0 / 20.0)));
+  x.resize(x.size() + static_cast<std::size_t>(10.0 * kFs), 0.0f);
+  for (bool gate : {true, false}) {
+    auto ch = build(mkPreset(0.0, gate), true);
+    run(*ch, x, 256);
+    CHECK(ch->driftTap().written() <= 1u);  // at most the very first window, before the floor follower has seen a frame
+  }
+  // A 0.5 s burst well above that floor is played (about 10 windows), with the gate off as well.
+  auto y = noise(static_cast<std::size_t>(20.0 * kFs), 5, static_cast<float>(std::pow(10.0, -75.0 / 20.0)));
+  for (std::size_t i = static_cast<std::size_t>(10.0 * kFs); i < static_cast<std::size_t>(10.5 * kFs); ++i) y[i] = 0.1f * ((i / 40) % 2 ? 1.0f : -1.0f);
+  auto ch = build(mkPreset(0.0, false), true);
+  run(*ch, y, 256);
+  const auto w = windowsOf(ch->driftTap());
+  CHECK(w.size() >= 9);
+  CHECK(w.size() <= 11);
+}
+
+TEST_CASE("Drift I3: the tap is off by default: no windows", "[drift][chain]") {
   auto off = build(mkPreset(), false);
   run(*off, playing(5.0, 0.0), 256);
   CHECK(off->driftTap().written() == 0u);
@@ -218,8 +219,7 @@ TEST_CASE("Drift I3: windows overwritten before they are read are skipped, not r
   tap.prepare(1000.0);  // 50-sample windows
   tap.setEnabled(true);
   std::vector<float> di(50, 0.1f);
-  std::vector<std::uint8_t> open(50, 1);
-  for (int i = 0; i < drift::kRing + 100; ++i) tap.process(di.data(), open.data(), 50);
+  for (int i = 0; i < drift::kRing + 100; ++i) tap.process(di.data(), 50);
   std::uint32_t cur = 0;
   std::vector<std::uint16_t> out(2000);
   CHECK(tap.read(cur, out.data(), 2000) == drift::kRing - 1);  // the slot being overwritten next is not read
@@ -324,13 +324,12 @@ TEST_CASE("Drift I3: random playing with passages of +-4 dB (fresh random levels
 }
 
 TEST_CASE("Drift I3: silence neither counts toward the 30 s nor resets it", "[drift][tracker]") {
-  // Silence makes no windows at all (the tap only counts played frames), so the tracker's clock is played time.
+  // Silence makes no windows at all (the tap only counts played windows), so the tracker's clock is played time.
   drift::PeakTap tap;
   tap.prepare(kFs);
   tap.setEnabled(true);
   std::vector<float> z(48000, 0.0f);
-  std::vector<std::uint8_t> closed(48000, 0);
-  for (int i = 0; i < 30; ++i) tap.process(z.data(), closed.data(), 48000);
+  for (int i = 0; i < 30; ++i) tap.process(z.data(), 48000);
   CHECK(tap.written() == 0u);
 
   Player p;
@@ -406,9 +405,8 @@ TEST_CASE("Drift I3: a tracker follows a new tap from its start", "[drift][track
     t->setEnabled(true);
   }
   std::vector<float> di(50, 0.1f);
-  std::vector<std::uint8_t> open(50, 1);
-  for (int i = 0; i < 20; ++i) a.process(di.data(), open.data(), 50);
-  for (int i = 0; i < 7; ++i) b.process(di.data(), open.data(), 50);
+  for (int i = 0; i < 20; ++i) a.process(di.data(), 50);
+  for (int i = 0; i < 7; ++i) b.process(di.data(), 50);
   drift::DriftTracker t;
   CHECK(t.consume(a) == 20);
   CHECK(t.consume(a) == 0);
