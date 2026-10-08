@@ -679,7 +679,8 @@ def text(cv, xy, s, style='body', bg=None, fg=None, size=None, track=None, align
         eff_bg = tuple(int(round(bgc[i] * (1 - glow) + col[i] * glow)) for i in range(3))
     _paint_items(cv.im, items, ox, base, dev_px, col, cap)
     cv.log.append(dict(screen=cv.name, style=style, fg=fgname, fg_rgb=col, bg_rgb=eff_bg, px=px,
-                       bold=bool(st.get('bold')), text=s, ratio=contrast(col, eff_bg)))
+                       bold=bool(st.get('bold')), text=s, ratio=contrast(col, eff_bg),
+                       ink=(ink[0] / S, ink[1] / S, ink[2] / S, ink[3] / S)))
     return (ink[0] / S, ink[1] / S, ink[2] / S, ink[3] / S)
 
 
@@ -1670,7 +1671,7 @@ def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None):
     cv.im.paste(Image.new('RGB', sz, PAL['lcd_amber']), pos, gm)
     cv.im.paste(Image.new('RGB', sz, PAL['lcd_amber']), pos, lm)
     cv.log.append(dict(screen=cv.name, style='lcd', fg='lcd_amber', fg_rgb=PAL['lcd_amber'], bg_rgb=bgc,
-                       px=h, bold=False, text=value, ratio=contrast(PAL['lcd_amber'], bgc)))
+                       px=h, bold=False, text=value, ratio=contrast(PAL['lcd_amber'], bgc), ink=dig_box))
     if unit:
         ux = dig_box[2] + 4
         text(cv, (ux, xy[1] + 1), unit, 'lcd_unit', bg=(ux - 1, rect[1] + 3, rect[2] - 4, rect[3] - 3))

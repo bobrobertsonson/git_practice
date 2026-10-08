@@ -18,19 +18,43 @@ from workshop_style import text, well, label_well, text_width, inset  # noqa: E4
 # --------------------------------------------------------------------------------------------------------------------
 # shared helpers
 # --------------------------------------------------------------------------------------------------------------------
-def backdrop(name, dim=0.35, area=(0, 58, 940, 800), keep_inspector=True):
-    """The rig screen, dimmed inside ``area`` only (the inspector stays undimmed and its text stays in the contrast log;
-    the rest of the rig is scenery behind an overlay and its log is dropped, as in screens_panels.rig_backdrop)."""
+def backdrop(name, dim=0.35, area=(0, 58, 940, 800)):
+    """The rig screen, dimmed inside ``area`` (the rest, e.g. the inspector, stays as it is).  Every string the rig drew is kept
+    as a *candidate* in ``cv.scenery`` with its ink rectangle; call ``reveal(cv, covers)`` at the end of the screen with the
+    rectangles the overlay / panels cover, and whatever stays visible is added to the contrast log with its colours scaled by
+    the dimming, so ``--contrast`` measures what is shown.  (The old top bar is redrawn by the screen, so its strings are skipped.)"""
     cv = screens_rig.screen_01_main_rig()
     cv.name = name
-    keep = []
-    if keep_inspector:
-        idx = next(i for i, e in enumerate(cv.log) if e['text'] == 'INSPECTOR')
-        keep = cv.log[idx:]
-    cv.log = keep
+    cv.scenery = [e for e in cv.log if e.get('ink') and e['ink'][3] > ws.BAR_H]
+    cv.scenery_dim = (dim, area)
+    cv.log = []
     if dim:
         ws.darken(cv, area, dim)
     return cv
+
+
+def _covered(ink, covers):
+    x0, y0, x1, y1 = ink
+    pts = [(x0 + (x1 - x0) * i / 4.0, y0 + (y1 - y0) * j / 2.0) for i in range(5) for j in range(3)]
+    return all(any(c[0] <= px <= c[2] and c[1] <= py <= c[3] for c in covers) for px, py in pts)
+
+
+def reveal(cv, covers):
+    """Add the rig strings not hidden behind ``covers`` to the contrast log (scaled by the backdrop dimming where dimmed)."""
+    dim, area = cv.scenery_dim
+    for e in cv.scenery:
+        if _covered(e['ink'], covers):
+            continue
+        e = dict(e)
+        ix = e['ink']
+        cx, cy = (ix[0] + ix[2]) / 2.0, (ix[1] + ix[3]) / 2.0
+        if dim and area[0] <= cx <= area[2] and area[1] <= cy <= area[3]:
+            f = 1.0 - dim
+            e['fg_rgb'] = tuple(int(round(v * f)) for v in e['fg_rgb'])
+            e['bg_rgb'] = tuple(int(round(v * f)) for v in e['bg_rgb'])
+            e['fg'] = e['fg_rgb']
+            e['ratio'] = ws.contrast(e['fg_rgb'], e['bg_rgb'])
+        cv.log.append(e)
 
 
 def frame(cv, rect, title, key, right=None, close=True):
@@ -153,7 +177,7 @@ def _cand_row(cv, rect, rank, chain, score, selected=False, preview=False):
 
 
 def screen_05_match():
-    cv = backdrop('05_match', 0.35, (0, 58, 1280, 800), False)
+    cv = backdrop('05_match', 0.35, (0, 58, 1280, 800))
     top(cv)
     c = frame(cv, (12, 66, 1268, 792), 'MATCH', 'ov05', right='REFINED READY')
     L0, L1 = c[0], 410
@@ -272,6 +296,7 @@ def screen_05_match():
     text(cv, (lg2[0] + 56, ly + 40), 'MATCH · dashed', 'label_b', bg=(lg2[0] + 52, lg2[1] + 2, lg2[2] - 2, lg2[3] - 2))
     ws.lcd(cv, (lx, ly + 76), '9', '/ 10 rules', digits=2, h=20)
     strip(cv, (lx, ly + 100, k[2], ly + 124), '6.45 → 1.53 dB', 'mono', pad=8)
+    reveal(cv, [(12, 66, 1268, 792)])
     return cv
 
 
@@ -288,7 +313,7 @@ def _lines_well(cv, rect, items, pad=8, lh=18, top=None):
 
 
 def screen_06_nam_forger():
-    cv = backdrop('06_nam_forger', 0.35, (0, 58, 1280, 800), False)
+    cv = backdrop('06_nam_forger', 0.35, (0, 58, 1280, 800))
     top(cv)
     c = frame(cv, (12, 66, 1268, 792), 'NAM FORGER', 'ov06', right='NO-CAB + IR · LITE')
     x0, x1 = c[0], 850
@@ -404,6 +429,7 @@ def screen_06_nam_forger():
     ws.lcd(cv, (r[0] + 720, cyy), '0.0123', '', digits=5, h=16)
     label_well(cv, (r[0] + 830, cyy), 'ETA 18 min', 'mono', h=22, pad=7)
     btn(cv, r[2] - 118, ty + 7, 106, r[3] - ty - 14, 'CANCEL')
+    reveal(cv, [(12, 66, 1268, 792)])
     return cv
 
 
@@ -426,7 +452,7 @@ def _deck_sprite(width):
 
 
 def screen_07_woodshed():
-    cv = backdrop('07_woodshed', 0.3)
+    cv = backdrop('07_woodshed', 0.2)
     top(cv, woodshed_open=True)
     W = 640
     k = W / 1210.0
@@ -457,13 +483,25 @@ def screen_07_woodshed():
     bx, by = D(92, 238)
     lr = label_well(cv, (bx, by), 'BACKING', 'label_b', h=16, pad=5)
     ws.lcd(cv, (lr[2] + 5, by), '-3.5', 'dB', digits=4, h=14)
-    # GUITAR STEM: GHOST selected (replaces the baked legend)
-    gr = DR(258, 276, 396, 340)
+    # GUITAR STEM: the baked "GUITAR STEM / GHOST" and "MUTE" legends are covered by kit wells showing all three positions
+    gr = DR(258, 274, 396, 330)
     well(cv, gr, 'well', 2)
-    r1 = (gr[0], gr[1], gr[2], (gr[1] + gr[3]) / 2.0)
-    r2 = (gr[0], (gr[1] + gr[3]) / 2.0, gr[2], gr[3])
-    text(cv, None, 'GUITAR STEM', 'label', bg=r1)
-    text(cv, None, '▶ GHOST', 'label_b', bg=(r2[0] + 4, r2[1] + 2, r2[2] - 4, r2[3] - 4), fg='blade_hi')
+    text(cv, None, 'GUITAR STEM', 'label', bg=gr)
+    opt_y = D(0, 436)[1]
+    cxm = D(326, 0)[0]
+    opts = ['MUTE', 'GHOST', 'FULL']
+    ws_ = [text_width(o, 'label_b' if o == 'GHOST' else 'label') + 12 + (12 if o == 'GHOST' else 0) for o in opts]
+    xx = cxm - (sum(ws_) + 8) / 2.0
+    for o, w_ in zip(opts, ws_):
+        r_ = (xx, opt_y - 8, xx + w_, opt_y + 8)
+        if o == 'GHOST':
+            cv.fill(r_, 'blade', 3)
+            well(cv, inset(r_, 1), 'well', 2, stamped=False)
+            text(cv, (r_[0] + 5, opt_y), '▶ ' + o, 'label_b', bg=inset(r_, 2))
+        else:
+            well(cv, r_, 'well', 2)
+            text(cv, None, o, 'label', bg=r_)
+        xx += w_ + 4
     # COUNT-IN is ON (the baked slide switch); tempo readout
     ws.lcd(cv, D(404, 486), '142', 'BPM', digits=3, h=14)
     # loop A / B times and state under the two loop keys
@@ -523,6 +561,7 @@ def screen_07_woodshed():
     btn(cv, x0 + 136, y, x1 - x0 - 136, 28, 'MATCH')
     y += 34
     btn(cv, x0, y, x1 - x0, 30, 'NAM FORGER', 'primary')
+    reveal(cv, [(dx, dy, dx + W, dy + H), (sp0, sy0, sp1, 788)])
     return cv
 
 
@@ -612,6 +651,7 @@ def screen_08_rig_editor():
     strip(cv, (x0 + 52, ny, x1 - 232, ny + 24), '✓ LIVE-COMPATIBLE: the no-cab NAM export is exact', 'body_strong', fg='ok')
     strip(cv, (x1 - 224, ny, x1, ny + 24), 'SHARED 4x12 · CAB ON', 'label_b', align='c')
     strip(cv, (x0 + 52, ny + 28, x1, ny + 50), 'Per-path IRs would make it a studio blend: only the with-cab export is exact.', 'body_dim')
+    reveal(cv, [(0, 58, 940, 800)])
     return cv
 
 

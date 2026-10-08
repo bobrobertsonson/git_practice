@@ -52,12 +52,10 @@ mismatching font is exit 77, never a fallback. Table in `docs/THIRD_PARTY.md`.
 
 ## Measured contrast (`--contrast --wear subtle|strong`)
 
-AA needs 4.5:1 (3:1 for large text). Texture never sits under text, so both sets have the same text pairs.
+AA needs 4.5:1 (3:1 for large text). Backdrop strings that stay visible behind an overlay are measured with their colours scaled by the dimming. Lowest ratio of any text in any screen: **5.19:1** (the dimmed BLADE label behind the WOODSHED panel); lowest of the primary UI text is 5.27:1 (`bone_mute` on `well_raised`, disabled / tertiary text); primary body text is 13.71:1.
 
 ### subtle
 
-Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`, disabled / tertiary text); primary body text is 13.71:1.
-
 | style | fg | bg | ratio | AA needs | px sizes | uses | screens |
 |---|---|---|---|---|---|---|---|
 | body | bone | well | 13.71:1 ok | 4.5 | 13 | 55 | 00 01 03 04 05 06 07 08 09 |
@@ -78,6 +76,7 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | body_strong | warn | well | 10.02:1 ok | 4.5 | 14 | 4 | 06 09 |
 | brand | blade | well | 6.23:1 ok | 3.0 | 20,22 | 14 | 00 01 02 03 04 05 06 07 08 09 |
 | brand | ink | alu_well | 10.36:1 ok | 3.0 | 22 | 3 | 05 06 08 |
+| button | #8f8777 | #151210 | 5.24:1 ok | 4.5 | 13 | 1 | 07 |
 | button | blade_hi | well_raised | 6.90:1 ok | 4.5 | 13 | 2 | 03 04 |
 | button | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 137 | 00 01 02 03 04 05 06 07 08 09 |
 | button | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 12 | 01 03 08 |
@@ -85,12 +84,13 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | button_ink | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 1 | 00 |
 | button_ink | ink | alert | 6.72:1 ok | 4.5 | 13 | 4 | 00 04 09 |
 | button_ink | ink | blade | 6.57:1 ok | 4.5 | 13 | 24 | 00 01 02 03 04 05 06 07 08 09 |
+| label | #cc6e31 | #151210 | 5.19:1 ok | 4.5 | 11 | 1 | 07 |
 | label | alert | well | 6.38:1 ok | 4.5 | 11 | 1 | 00 |
 | label | blade | well | 6.23:1 ok | 4.5 | 11 | 1 | 00 |
 | label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 4 | 00 01 09 |
 | label | body | well | 8.18:1 ok | 4.5 | 11 | 3 | 00 01 |
 | label | bone | well | 13.71:1 ok | 4.5 | 11 | 31 | 00 04 |
-| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 117 | 00 01 03 04 05 06 07 08 |
+| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 119 | 00 01 03 04 05 06 07 08 |
 | label | bone_dim | well_raised | 6.96:1 ok | 4.5 | 11 | 1 | 04 |
 | label | bone_mute | well | 5.81:1 ok | 4.5 | 11 | 4 | 00 04 |
 | label | lcd_amber | well | 10.02:1 ok | 4.5 | 11 | 1 | 00 |
@@ -98,9 +98,9 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | label | warn | well | 10.02:1 ok | 4.5 | 11 | 1 | 00 |
 | label_b | alert | well | 6.38:1 ok | 4.5 | 11 | 4 | 02 04 09 |
 | label_b | blade | well | 6.23:1 ok | 4.5 | 11 | 2 | 04 |
-| label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 23 | 01 02 06 07 09 |
+| label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 22 | 01 02 06 09 |
 | label_b | body | well | 8.18:1 ok | 4.5 | 11 | 6 | 00 02 04 05 06 |
-| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 113 | 00 01 02 03 04 05 06 07 08 09 |
+| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 114 | 00 01 02 03 04 05 06 07 08 09 |
 | label_b | bone | well_raised | 12.43:1 ok | 4.5 | 11 | 6 | 00 04 08 |
 | label_b | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 1 | 04 |
 | label_b | ok | well | 11.02:1 ok | 4.5 | 11 | 21 | 00 01 02 03 04 05 06 07 08 09 |
@@ -128,92 +128,22 @@ Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`
 | section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 4 | 01 03 07 08 |
 | title | bone | well | 13.71:1 ok | 4.5 | 18,22 | 2 | 03 04 |
 
-1026 strings measured on 10 screens: all pass WCAG 2.x AA
+1030 strings measured on 10 screens: all pass WCAG 2.x AA
 
 ### strong
 
-Lowest ratio of any text in any screen: **5.27:1** (`bone_mute` on `well_raised`, disabled / tertiary text); primary body text is 13.71:1.
-
-| style | fg | bg | ratio | AA needs | px sizes | uses | screens |
-|---|---|---|---|---|---|---|---|
-| body | bone | well | 13.71:1 ok | 4.5 | 13 | 55 | 00 01 03 04 05 06 07 08 09 |
-| body | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 4 | 00 03 06 |
-| body | bone_mute | well | 5.81:1 ok | 4.5 | 13 | 1 | 04 |
-| body | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 2 | 00 04 |
-| body | ok | well | 11.02:1 ok | 4.5 | 13 | 4 | 05 07 08 |
-| body | warn | well | 10.02:1 ok | 4.5 | 13 | 1 | 04 |
-| body_dim | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 75 | 00 02 03 04 05 06 08 09 |
-| body_dim | bone_dim | well_raised | 6.96:1 ok | 4.5 | 13 | 1 | 04 |
-| body_strong | alert | well | 6.38:1 ok | 4.5 | 14 | 1 | 09 |
-| body_strong | blade_hi | well | 7.61:1 ok | 4.5 | 14 | 1 | 08 |
-| body_strong | bone | well | 13.71:1 ok | 4.5 | 13,14 | 26 | 00 01 02 03 04 05 06 07 08 09 |
-| body_strong | bone | well_raised | 12.43:1 ok | 4.5 | 14 | 3 | 03 04 05 |
-| body_strong | bone_dim | well | 7.67:1 ok | 4.5 | 14 | 1 | 06 |
-| body_strong | ok | well | 11.02:1 ok | 4.5 | 14 | 7 | 03 06 08 |
-| body_strong | ok | well_raised | 9.99:1 ok | 4.5 | 14 | 1 | 03 |
-| body_strong | warn | well | 10.02:1 ok | 4.5 | 14 | 4 | 06 09 |
-| brand | blade | well | 6.23:1 ok | 3.0 | 20,22 | 14 | 00 01 02 03 04 05 06 07 08 09 |
-| brand | ink | alu_well | 10.36:1 ok | 3.0 | 22 | 3 | 05 06 08 |
-| button | blade_hi | well_raised | 6.90:1 ok | 4.5 | 13 | 2 | 03 04 |
-| button | bone | well_raised | 12.43:1 ok | 4.5 | 13 | 137 | 00 01 02 03 04 05 06 07 08 09 |
-| button | bone_dim | well | 7.67:1 ok | 4.5 | 13 | 12 | 01 03 08 |
-| button | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 1 | 00 |
-| button_ink | bone_mute | well_raised | 5.27:1 ok | 4.5 | 13 | 1 | 00 |
-| button_ink | ink | alert | 6.72:1 ok | 4.5 | 13 | 4 | 00 04 09 |
-| button_ink | ink | blade | 6.57:1 ok | 4.5 | 13 | 24 | 00 01 02 03 04 05 06 07 08 09 |
-| label | alert | well | 6.38:1 ok | 4.5 | 11 | 1 | 00 |
-| label | blade | well | 6.23:1 ok | 4.5 | 11 | 1 | 00 |
-| label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 4 | 00 01 09 |
-| label | body | well | 8.18:1 ok | 4.5 | 11 | 3 | 00 01 |
-| label | bone | well | 13.71:1 ok | 4.5 | 11 | 31 | 00 04 |
-| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 117 | 00 01 03 04 05 06 07 08 |
-| label | bone_dim | well_raised | 6.96:1 ok | 4.5 | 11 | 1 | 04 |
-| label | bone_mute | well | 5.81:1 ok | 4.5 | 11 | 4 | 00 04 |
-| label | lcd_amber | well | 10.02:1 ok | 4.5 | 11 | 1 | 00 |
-| label | ok | well | 11.02:1 ok | 4.5 | 11 | 1 | 00 |
-| label | warn | well | 10.02:1 ok | 4.5 | 11 | 1 | 00 |
-| label_b | alert | well | 6.38:1 ok | 4.5 | 11 | 4 | 02 04 09 |
-| label_b | blade | well | 6.23:1 ok | 4.5 | 11 | 2 | 04 |
-| label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 23 | 01 02 06 07 09 |
-| label_b | body | well | 8.18:1 ok | 4.5 | 11 | 6 | 00 02 04 05 06 |
-| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 113 | 00 01 02 03 04 05 06 07 08 09 |
-| label_b | bone | well_raised | 12.43:1 ok | 4.5 | 11 | 6 | 00 04 08 |
-| label_b | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 1 | 04 |
-| label_b | ok | well | 11.02:1 ok | 4.5 | 11 | 21 | 00 01 02 03 04 05 06 07 08 09 |
-| label_b | ok | well_raised | 9.99:1 ok | 4.5 | 11 | 2 | 03 05 |
-| label_b | warn | well | 10.02:1 ok | 4.5 | 11 | 7 | 00 02 03 05 09 |
-| label_b | warn | well_raised | 9.09:1 ok | 4.5 | 11 | 1 | 03 |
-| label_ink | ink | alert | 6.72:1 ok | 4.5 | 11 | 1 | 00 |
-| label_ink | ink | alu_well | 10.36:1 ok | 4.5 | 11 | 19 | 00 04 05 06 08 09 |
-| label_ink | ink | blade_hi | 8.03:1 ok | 4.5 | 11 | 2 | 00 03 |
-| label_ink | ink | body | 8.62:1 ok | 4.5 | 11 | 3 | 00 05 |
-| label_ink | ink | bone_dim | 8.09:1 ok | 4.5 | 11 | 3 | 00 04 06 |
-| label_ink | ink | lcd_amber | 10.57:1 ok | 4.5 | 11 | 7 | 00 03 08 09 |
-| label_ink | ink | ok | 11.62:1 ok | 4.5 | 11 | 2 | 00 05 |
-| lcd | lcd_amber | glass | 11.04:1 ok | 4.5 | 14,16,18,20,22,26 | 48 | 00 01 02 03 05 06 07 08 |
-| lcd_unit | lcd_amber | glass | 11.04:1 ok | 4.5 | 14 | 72 | 00 01 02 03 04 05 06 07 08 09 |
-| mono | blade_hi | well_raised | 6.90:1 ok | 4.5 | 13,14 | 3 | 05 07 |
-| mono | bone | well | 13.71:1 ok | 4.5 | 13,14 | 31 | 00 01 03 04 05 06 07 08 09 |
-| mono | bone | well_raised | 12.43:1 ok | 4.5 | 14 | 4 | 00 03 04 06 |
-| mono | lcd_amber | glass | 11.04:1 ok | 4.5 | 14 | 2 | 01 |
-| mono_dim | bone_dim | well | 7.67:1 ok | 4.5 | 13,14 | 26 | 01 03 04 05 06 07 08 09 |
-| mono_dim | bone_dim | well_raised | 6.96:1 ok | 4.5 | 13,14 | 2 | 05 07 |
-| nixie | blade_hi | #3d2413 | 6.13:1 ok | 3.0 | 34 | 5 | 00 01 03 07 08 |
-| section | blade | well | 6.23:1 ok | 4.5 | 18 | 4 | 01 03 07 08 |
-| section | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 50 | 00 01 03 04 05 06 07 08 09 |
-| section_mixed | ink | alu_well | 10.36:1 ok | 4.5 | 13 | 4 | 01 03 07 08 |
-| title | bone | well | 13.71:1 ok | 4.5 | 18,22 | 2 | 03 04 |
-
-1026 strings measured on 10 screens: all pass WCAG 2.x AA
+strong set: identical ratios (same layouts), verified by `--contrast --wear strong`, lowest 5.19:1.
 
 ## Notes and open items
 
 - Task B re-renders the Blender faces with the new names: the amp OLEDs name a real amp model, the pedal faces say
   STOCKHOLM SYNDROME / TIGHTEN, and the cassette deck's baked "PLAY-ALONG DECK" lettering is covered by a WOODSHED
-  nameplate. The mockups crop the backdrops and cover titles with riveted nameplates and OLEDs with flat wells.
+  nameplate. The deck render also has baked micro-lettering (REW, FF, STOP, PLAY / PAUSE, LOOP A / B, COUNT-IN, 4 STEM, about
+  5 px) that cannot be restyled; Task B re-renders the deck without lettering so the UI draws those labels. In the mockup the
+  GHOST / MUTE legends are covered by kit wells showing MUTE / GHOST / FULL with GHOST marked. The mockups crop the backdrops and cover titles with riveted nameplates and OLEDs with flat wells.
 - The cab render is shown at its fixed 4x12 size; the right 170 px of the rig area is left as floor.
-- Backdrop text: the dimmed rig behind an overlay is scenery and is left out of the contrast log (the inspector, where it is
-  visible, stays undimmed and measured); every interactive or informative string on the overlay itself is measured.
+- Backdrop text: every string the rig drew that stays visible behind an overlay or panel (the inspector, the BLADE label above
+  the WOODSHED deck) is measured in the contrast log, dimmed colours included; only strings fully covered are left out.
 - Wording invented for the mockups (notes, error reasons, toast text, file names, creator handles, capture titles) is
   placeholder and fictional. The Scarlett 4i4 levels (3rd Gen +12.5 dBu INST, +14 dBu INST + PAD; 4th Gen +12 dBu INST) are the instrument-input spec-sheet figures, to confirm in v0.8; device names are a nominative compatibility reference, no logos.
 - OUT OF TRUE is drawn as "Your playing level is running ~4.5 dB hotter than when this interface was set up — did the interface gain change?" (the real UI says hotter or quieter); the drift definition belongs to v0.8.
