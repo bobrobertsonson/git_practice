@@ -48,6 +48,12 @@ Today the LEVEL MATCH trim follows a rig change through the 10 Hz `levelTick()` 
    whose only use is near line 1271. Move the include beside that code (or into a small helper that owns the
    thread-attribute setup), guarded for platforms where pthreads are not the threading API.
 
+4. macOS screenshot-test flake (CI run 290 on the v0.7 branch, attempt 1): plugin tests "pedal face and the CIRCUIT
+   switch" and "pedal drawer" failed with `nonBackgroundFraction` 0.0 (a blank render), then passed on rerun. Same
+   family as the integration-step-10 race fixed in 8205a3f (bounds read before the face was placed). Find the root
+   cause (render before layout / async image load / first-paint timing) and make the tests wait on the real
+   condition, not a sleep. Add a stress run (the two tests x50 on macOS CI or locally) to show it no longer flakes.
+
 ## Task E — credential filter tightening (`plugin/src/settings/ToolEnv.cpp`)
 
 - `looksLikeCredential` misses `KEY=value` pairs whose value is letters only and shorter than 20 characters. For `=`
