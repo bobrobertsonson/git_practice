@@ -1,4 +1,4 @@
-# Preset schema — `sawblade.preset` v4
+# Preset schema — `sawblade.preset` v5
 
 A preset is one JSON document. Plugin state **is** the preset; `tonerender` renders exactly
 what the plugin will play. All unknown keys are rejected (strict parsing) so typos fail loudly.
@@ -18,6 +18,11 @@ v4 (v0.4M, Task G) adds the live dynamics policy: optional `liveDynamics`, `dyna
 gate's `thresholdMode` / `floorOffsetDb`. All are optional and absent in older files, which read and render bit-identically
 (`dynamicsMode` absent = `"record"`). The writer emits `"version": 4`, 1-4 are read; a v3 reader rejects v4 (strict parsing).
 
+v5 (v0.8 I4a) adds `calibration: {"mode": "calibrated" | "legacy"}` and `output.autoTrimCalDb` / `output.autoTrimCalHash` (see
+Input calibration). The reader accepts 1-5 and the writer emits `"version": 5`, always with an explicit `calibration` member. **Every
+file older than v5 loads as `"legacy"`** (calibration off) and renders bit-identically to before; so does a v5 file without the
+member. A v4 reader rejects v5 (strict parsing).
+
 ## Conventions
 
 - Gains in dB, frequencies in Hz, times in ms, `q` is dimensionless.
@@ -31,7 +36,7 @@ gate's `thresholdMode` / `floorOffsetDb`. All are optional and absent in older f
 ```jsonc
 {
   "schema": "sawblade.preset",        // required, exact string
-  "version": 4,                        // required, integer; 1-4 are read, 4 is written
+  "version": 5,                        // required, integer; 1-5 are read, 5 is written
   "name": "Gatecreeper-ish v1",        // required
   "notes": "",                         // optional free text
   "category": "Death metal",           // optional UI metadata (see Category); not tone, ignored by the chain
@@ -48,8 +53,10 @@ gate's `thresholdMode` / `floorOffsetDb`. All are optional and absent in older f
   "liveDynamics": { "gate": {...}, "busComp": {...} },  // v4, optional; see Live dynamics
   "dynamicsMode": "record",            // v4, optional: "record" | "live"; absent = "record"
   "origin": "user",                    // v4, optional: "user" | "match" | "official"; absent = "user"
+  "calibration": { "mode": "legacy" }, // v5, optional: "legacy" | "calibrated"; absent (and every file older than v5) = "legacy"; see Input calibration
   "output": { "gainDb": 0.0,           // optional
-              "autoTrimDb": 0.0, "autoTrimHash": "" },  // v3, optional: see Level matching
+              "autoTrimDb": 0.0, "autoTrimHash": "",          // v3, optional: see Level matching
+              "autoTrimCalDb": 0.0, "autoTrimCalHash": "" },  // v5, optional: the calibrated trim, see Input calibration
   "playAlong": { ... },                // optional; plugin UI state, see Play-along (not tone)
   "instance": "<uuid>",                // optional; plugin state only (not tone, never in preset files): the id owning this instance's match / export job folders
   "export": { ... }                    // optional; plugin UI state of the export panel (not tone): mode, size, diSource, compChoice, outputFolder
@@ -620,6 +627,45 @@ Goal: switching presets, captures or A/B never makes you judge "louder = better"
   0.5 LU. The capture browser shows "LEVEL MATCHING..." while it is computed (the old capture keeps playing); if it cannot be
   measured the swap still happens with make-up 0 and the status says so.
 - **A/B** — each side plays at its own trim, so an A/B pair is within 0.5 LU of each other (both at -18 LUFS).
+
+## Input calibration (v5: `calibration.mode`, `output.autoTrimCalDb`, `output.autoTrimCalHash`)
+
+Specs: `docs/specs/v0_8-input_calibration.md`, `v0_8-I1-chain_wiring.md`, `v0_8-I4-default_on.md`. Code: `core/include/sawblade/calibration.h`,
+`chain.h` (`ChainCalibration`), `auto_trim.h`, `render.h`.
+
+- **`calibration.mode`** — `"legacy"` (calibration off: the preset sounds exactly as it did before v0.8) or `"calibrated"` (each NAM
+  block's input gain is planned from the interface level and the captures' `input_level_dbu` / `output_level_dbu`, on top of the
+  block's own `inputGainDb`; see the I1 spec). Anything else, or any other key in the object, is rejected. `renderPreset` /
+  `tonerender` follow it (`RenderOptions::calibrationFromPreset`); legacy is the bit-identical, calibration-off render. New presets and
+  new matches write `"calibrated"` (from I4c); a default-constructed `Preset` is `"legacy"` until that flip.
+- **No device level in the preset.** The interface level (dBu at 0 dBFS) is per machine, so a preset never stores it, and old presets
+  are not baked with absolute gains. It comes from the plugin's device record, `tonerender --device-dbu X`, or the matcher's option;
+  when none is given the assumed **+12 dBu** (`calibration::kAssumedDeviceDbu`) is used and the render report says so
+  (`calibration.deviceAssumed`).
+- **`output.autoTrimCalDb` / `autoTrimCalHash`** — the level-match trim (see Level matching) measured with calibration **on at the
+  assumed +12 dBu device**, so the stored number is machine independent. It is stored and used for `"calibrated"` presets; a legacy
+  preset keeps using `autoTrimDb`. The two stamps are independent. `autoTrimCalHash` is the sha256 of `autoTrimHash` plus the
+  recipe (`kAutoTrimCalVersion`, the assumed device level), so it goes stale with any level-affecting edit exactly like the legacy hash;
+  `calibration.mode`, labels and OUTPUT are in neither. A trim without its hash is read as not measured. At play time a user whose
+  device is not +12 dBu **re-measures** (`computeAutoTrim` with that device): the output level is not linear in the device offset, so a
+  correction by the difference would be wrong. That value is cached per device and never written back to the preset.
+  `tonerender --level-match` on a calibrated preset applies the stored `autoTrimCalDb` (measuring it when missing or stale) at the
+  assumed device, or a trim measured at `--device-dbu` when that differs; the report's `levelMatchTrim.source` says which.
+- **Legacy hash unchanged.** `autoTrimHash` excludes `calibration`, so every stamp written before v5 stays fresh.
+
+### Offline stereo DI (`tonerender`, the Python `render`)
+
+No auto-detection offline. A multi-channel DI file feeds the chain one channel: by default the **louder of the first two channels
+by whole-file RMS** (a tie picks L); `--di-channel L|R|mix` (`RenderOptions::diChannel`) overrides it; `mix` is the mean of
+channels 0 and 1. Channels beyond the second are dropped with a warning. The choice is made on the whole file before any block runs,
+so output is independent of the block size. A mono file is used as is. The report's `diChannel` records `fileChannels`, `rule`
+(`mono`, `auto`, `L`, `R`, `mix`), `used` and the channel RMS in dBFS (`null` for silence or mono).
+
+### Render report additions (additive, no schema break)
+
+`calibration.mode` (`"calibrated"` | `"legacy"`), `calibration.modeSource` (`"preset"` | `"options"`), `calibration.deviceDbu`,
+`calibration.deviceAssumed`, the per-block plan (`calibration.paths.a|b[]`: `gainInDb`, `refBeforeDbu`, `feedsNam`, `inputMissing`,
+`outputMissing`, `captureInputDbu`, `captureOutputDbu`), top-level `diChannel`, and with `--level-match` `levelMatchTrim`.
 
 ## Play-along (`playAlong`, plugin UI state, not tone)
 
