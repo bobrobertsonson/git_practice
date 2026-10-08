@@ -30,14 +30,14 @@ struct RatVoicing {
   // run at 4 * stageOversample * fs. The stage is a dynamic nonlinearity (slew edge, rails) that ADAA cannot
   // anti-alias. Measured in the pedal (DIST 10, FILTER 0, -6 dBFS, 48 kHz, silicon; worst existing pedal -82.1 dB):
   //   factor   latency   5 kHz     4.7 kHz   2.3 kHz   1.1 kHz   RTF (best of 5, range of runs)
-  //   1        50        -57 dB    -51 dB    -58 dB    -69 dB    0.027-0.032
-  //   2        52        -98 dB    -109 dB   -69 dB    -82 dB    0.051-0.067
-  //   4        53        -129 dB   -134 dB   -93 dB    -105 dB   0.102-0.130
-  //   8        54        -129 dB   -134 dB   -93 dB    -105 dB   0.217-0.255
-  // (RTF varies run to run on a shared machine; 2 sits at about 0.06 on a loaded one.)
-  // 2 is the smallest factor that clears the bar at the recipe frequencies at about an RTF of 0.06; it does not at
-  // 2.3 kHz (a stage that sits saturated for a long time), which needs 4 at twice the CPU.
-  int stageOversample = 2;
+  //   1        50        -57 dB    -51 dB    -58 dB    -69 dB    0.027-0.048
+  //   2        52        -98 dB    -109 dB   -69 dB    -82 dB    0.051-0.094
+  //   4        53        -129 dB   -134 dB   -93 dB    -105 dB   0.102-0.176
+  //   8        54        -129 dB   -134 dB   -93 dB    -105 dB   0.217-0.358
+  // Versus the other pedals at the same frequency (worst: pedal.hm v3 modded, asymmetric): 2.3 kHz -88.4 dB, 1.1 kHz
+  // -100.5 dB; factor 2 is worse than every existing pedal there (-69 / -82 dB), factor 4 is below all of them
+  // (-93 / -105 dB), so 4 is the default (main lead's rule). RTF varies with the load of a shared machine (the upper ends were measured on a loaded one; the ratio to factor 1 is steady: 2 = 2.0x, 4 = 3.7-3.9x, 8 = 7.4x).
+  int stageOversample = 4;
   double gbwHz = 1.0e6;
   double slewVPerUs = 0.3;          // infinity = no slew limit (test seam)
   // Differential-pair input stage: the integrator input is Vd * tanh(v_diff / Vd), so the output rate is
@@ -186,7 +186,7 @@ class RatOpAmpStage {
 // [op-amp gain stage (GBW, slew, rails) -> 34 Hz coupling HPF -> diode clipper (CLIP)] -> FILTER (RC low-pass) ->
 // 10 Hz output HPF -> VOLUME and clean MIX. Static (live knobs aside), nonlinear, time-invariant: NAM-trainable.
 // Latency: the oversampler round trip, the stage-domain half-band chain (stageOversample > 1) and the ADAA2 sample,
-// padded to a whole number of base-rate samples = 52 at the default stageOversample 2 (50 / 53 / 54 for 1 / 4 / 8)
+// padded to a whole number of base-rate samples = 53 at the default stageOversample 4 (50 / 52 / 54 for 1 / 2 / 8)
 // (the IIR filters' and the op-amp stage's group delay is not counted, as for the other modelled pedals). CLIP
 // `none` keeps a one-sample clean delay in place of the clipper so the latency is the same in every mode. The
 // clean mix is the input after the 20 Hz input HPF, delayed by exactly latencySamples().

@@ -196,40 +196,40 @@
       "peakDbfs": -5.1945
     },
     "modeled/vermin/crust_grinder.json": {
-      "sha256": "cbd8a8aa33f0af8605412aef5771e041c86e2ea19e44ea041fb49146e0dbfc4c",
+      "sha256": "546c29b777c7fb78c2dfdd064593b3e561a4e770677c018bfaec54e1be7d6d57",
       "frames": 192000,
       "rmsDbfs": -5.7082,
-      "peakDbfs": -2.9944
+      "peakDbfs": -2.994
     },
     "modeled/vermin/doom_filter_down.json": {
-      "sha256": "b6685431473fd813d69827a1282cef0634bc73c3f8b084176679d12d9c110701",
+      "sha256": "46a4382dc81ce53e5929c8046c87c315c2b3c79481f846fd30b9277b73e5523c",
       "frames": 192000,
-      "rmsDbfs": -10.8118,
-      "peakDbfs": -3.0011
+      "rmsDbfs": -10.8131,
+      "peakDbfs": -3.0012
     },
     "modeled/vermin/grind_wall.json": {
-      "sha256": "2c39980f248cf5efda3d3e6f1b31437c278c76913bc45b86286a0ac4e879d6a9",
+      "sha256": "496f3fdc7943a5862be38be48f3747bd35aa54ca8ec5bd43d6df6ab961866512",
       "frames": 192000,
-      "rmsDbfs": -5.7754,
-      "peakDbfs": -3.0042
+      "rmsDbfs": -5.7752,
+      "peakDbfs": -3.0027
     },
     "modeled/vermin/thrash_boost.json": {
-      "sha256": "9d2466a24e7ab02d6ea945e54c190d425692910baecba798826164eee1fb78a6",
+      "sha256": "4c98f1a12495c88815e0251c09c0c5ea1763d7ec6913d4c219cb36fae58dbdee",
       "frames": 192000,
-      "rmsDbfs": -8.459,
-      "peakDbfs": -3.009
+      "rmsDbfs": -8.458,
+      "peakDbfs": -3.0067
     },
     "modeled/vermin/tight_hardcore.json": {
-      "sha256": "53ad8a5c6d344f51f13cd4d3a997e41ee150df40ecae3248ae885a970273958e",
+      "sha256": "ef7837f4972801b99f2c4eee85666bf99bc646692287646eaa90e6c504f58881",
       "frames": 192000,
-      "rmsDbfs": -5.4789,
-      "peakDbfs": -3.0095
+      "rmsDbfs": -5.4787,
+      "peakDbfs": -3.0114
     },
     "modeled/vermin/turbo_crust.json": {
-      "sha256": "b64ba97556869bfbc5430442cd863df383f470d1ff6de523478eb0f2b582c959",
+      "sha256": "87b6d30444a2fc76c42bfe69370fa637e29329bad1b191afcf098ed743b4731c",
       "frames": 192000,
-      "rmsDbfs": -9.1555,
-      "peakDbfs": -2.9986
+      "rmsDbfs": -9.1557,
+      "peakDbfs": -3.0009
     }
   }
 }

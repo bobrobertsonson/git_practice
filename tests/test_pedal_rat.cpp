@@ -529,8 +529,8 @@ TEST_CASE("pedal.rat: latencySamples() equals the measured delay in every CLIP m
     }
     ++fi;
   }
-  CHECK(RatPedal(RatParams{}).latencySamples() == 52);  // default stageOversample 2
-  std::printf("[rat latency] stageOversample 1 / 2 / 4 / 8: 50 / 52 / 53 / 54 samples at 44.1 / 48 / 96 / 192 kHz, every CLIP mode (default 2 = 52)\n");
+  CHECK(RatPedal(RatParams{}).latencySamples() == 53);  // default stageOversample 4
+  std::printf("[rat latency] stageOversample 1 / 2 / 4 / 8: 50 / 52 / 53 / 54 samples at 44.1 / 48 / 96 / 192 kHz, every CLIP mode (default 4 = 53)\n");
 }
 
 TEST_CASE("pedal.rat: ratFastTanh is within 1e-10 of std::tanh", "[rat][tanh]") {
@@ -545,59 +545,62 @@ TEST_CASE("pedal.rat: ratFastTanh is within 1e-10 of std::tanh", "[rat][tanh]") 
 // ---- 8. aliasing ---------------------------------------------------------------------------------------------
 namespace {
 
-double worstExistingAliasDb() {
+// The other modelled pedals at their worst case (DIST / drive / sustain 10, as their own alias tests), by the same
+// detector, at the given fundamental.
+double worstExistingAliasDb(double fund = 5000.0) {
   double worst = -1000.0;
   HmParams h = HmParams::v2();
   h.distortion = 10;
   h.low = h.high = 5;
   HmPedal hm2(h);
-  worst = std::max(worst, aliasDb(hm2));
+  worst = std::max(worst, aliasDb(hm2, 48000.0, fund));
   for (int c = 0; c < kNumClipTypes; ++c) {
     HmParams m;  // v3
     m.distortion = 10;
     m.mode = HmMode::Modded;
     m.clip = static_cast<ClipType>(c);
     HmPedal hm3(m);
-    worst = std::max(worst, aliasDb(hm3));
+    worst = std::max(worst, aliasDb(hm3, 48000.0, fund));
   }
   TsParams t;
   t.drive = 10;
   t.tone = 10;
   TsPedal ts(t);
-  worst = std::max(worst, aliasDb(ts));
+  worst = std::max(worst, aliasDb(ts, 48000.0, fund));
   MuffParams mu;
   mu.sustain = 10;
   MuffPedal muff(mu);
-  return std::max(worst, aliasDb(muff));
+  return std::max(worst, aliasDb(muff, 48000.0, fund));
 }
 
 }  // namespace
 
-TEST_CASE("pedal.rat: aliasing is below the worst existing pedal", "[rat][alias]") {
-  const double worstExisting = worstExistingAliasDb();
-  std::printf("[rat alias] worst existing modelled pedal (pedal.hm v2 / v3 modded, pedal.ts, pedal.muff at their maximum): %.1f dB\n", worstExisting);
-  // pedal.rat (stageOversample 2: the op-amp stage and the clipper run at 8 fs) at DIST 10, FILTER 0, -6 dBFS.
-  // 5 kHz is the other pedals' recipe; 4.7 kHz does not divide the oversampled rate; 1 / 2 kHz are the fundamentals
-  // that matter for a guitar into this pedal.
-  double worstRat = -1000.0;
-  for (RatClip clip : {RatClip::None, RatClip::Silicon}) {
-    RatParams p;
-    p.distortion = 10.0;
-    p.filter = 0.0;
-    p.clip = clip;
-    // 1 and 2 kHz divide the oversampled rate, so their aliases land on harmonics and the detector cannot see them;
-    // 1.1 and 2.3 kHz are printed for information (a long-saturated stage aliases more there, see the report).
-    for (double fund : {1000.0, 2000.0, 4700.0, 5000.0, 1100.0, 2300.0}) {
+TEST_CASE("pedal.rat: aliasing is below the worst existing pedal at every fundamental", "[rat][alias]") {
+  // pedal.rat (default stageOversample 4: the op-amp stage and the clipper run at 16 fs) at DIST 10, FILTER 0,
+  // -6 dBFS, against the worst existing pedal at the SAME fundamental. 5 kHz is the other pedals' recipe; 4.7 kHz does
+  // not divide the oversampled rate; 2.3 and 1.1 kHz are the fundamentals where a long-saturated stage aliases most.
+  // (1 and 2 kHz divide the oversampled rate, so their aliases land on harmonics and the detector cannot see them;
+  // they stay as the original checks.)
+  const double worstExisting5k = worstExistingAliasDb(5000.0);
+  for (double fund : {1000.0, 2000.0, 1100.0, 2300.0, 4700.0, 5000.0}) {
+    // 1 and 2 kHz keep the original bar (the worst existing pedal at the 5 kHz recipe); the others are compared at their own frequency.
+    const double worstExisting = (fund == 1000.0 || fund == 2000.0) ? worstExisting5k : worstExistingAliasDb(fund);
+    for (RatClip clip : {RatClip::None, RatClip::Silicon}) {
+      RatParams p;
+      p.distortion = 10.0;
+      p.filter = 0.0;
+      p.clip = clip;
       RatPedal ped(p);
       const double a = aliasDb(ped, 48000.0, fund);
-      std::printf("[rat alias] CLIP %-7s DIST 10, %4.0f Hz at -6 dBFS: %.1f dB\n", kRatClipNames[static_cast<int>(clip)], fund, a);
-      if (fund != 1100.0 && fund != 2300.0) worstRat = std::max(worstRat, a);
+      std::printf("[rat alias] %4.0f Hz CLIP %-7s DIST 10: %.1f dB (worst existing pedal %.1f dB)\n", fund, kRatClipNames[static_cast<int>(clip)], a, worstExisting);
+      INFO(fund << " Hz " << kRatClipNames[static_cast<int>(clip)]);
+      CHECK(a <= worstExisting);
     }
   }
-  CHECK(worstRat <= worstExisting);
+  const double worstExisting = worstExisting5k;
 
-  // Sensitivity: without oversampling and ADAA the detector sees the aliasing; so does the pedal with only the
-  // stage-local oversampling removed (stageOversample 1, 4.7 kHz).
+  // Sensitivity: without oversampling and ADAA the detector sees the aliasing; so does the pedal with the
+  // stage-local oversampling removed or halved.
   RatParams p;
   p.distortion = 10.0;
   p.filter = 0.0;
@@ -618,11 +621,17 @@ TEST_CASE("pedal.rat: aliasing is below the worst existing pedal", "[rat][alias]
   const double s1 = aliasDb(stage1, 48000.0, 4700.0);
   std::printf("[rat alias] 4.7 kHz, silicon: stageOversample 1 %.1f dB\n", s1);
   CHECK(s1 > worstExisting);  // the stage-local oversampling is what meets the bar
+  RatVoicing v2;
+  v2.stageOversample = 2;
+  RatPedal stage2(p, {}, &v2);
+  const double s2 = aliasDb(stage2, 48000.0, 2300.0);
+  const double worst23 = worstExistingAliasDb(2300.0);
+  std::printf("[rat alias] 2.3 kHz, silicon: stageOversample 2 %.1f dB vs worst existing %.1f dB\n", s2, worst23);
+  CHECK(s2 > worst23);  // factor 2 is not enough (why the default is 4)
 }
 
 TEST_CASE("pedal.rat: alias and CPU per stageOversample factor (table)", "[rat][.table]") {
-  const double worstExisting = worstExistingAliasDb();
-  std::printf("[rat table] worst existing %.1f dB; DIST 10, FILTER 0, -6 dBFS, 48 kHz\n", worstExisting);
+  std::printf("[rat table] worst existing: 5k %.1f, 4.7k %.1f, 2.3k %.1f, 1.1k %.1f dB; DIST 10, FILTER 0, -6 dBFS, 48 kHz\n", worstExistingAliasDb(5000.0), worstExistingAliasDb(4700.0), worstExistingAliasDb(2300.0), worstExistingAliasDb(1100.0));
   for (int factor : {1, 2, 4, 8}) {
     RatVoicing v;
     v.stageOversample = factor;
@@ -778,7 +787,7 @@ TEST_CASE("pedal.rat: renders through tonerender and matches the library render"
   for (std::size_t i = 0; i < lib.samples.size(); ++i) maxDiff = std::max(maxDiff, std::fabs(static_cast<double>(out.interleaved[i]) - lib.samples[i]));
   CHECK(maxDiff <= 1e-6);
   CHECK(lib.output.rmsDbfs > -60.0);
-  CHECK(lib.info.latencySamples == 52);
+  CHECK(lib.info.latencySamples == 53);
   std::error_code ec;
   fs::remove_all(t, ec);
 }
@@ -817,7 +826,7 @@ TEST_CASE("pedal.rat: stock output level on the -12 dBFS-RMS riff, and the contr
   run(pd, x, 512);
   double err = 0.0;
   for (std::size_t i = 2400; i < 4800; ++i) err = std::max(err, std::fabs(static_cast<double>(x[i]) - x0[i - static_cast<std::size_t>(pd.latencySamples())]));
-  CHECK(err < 0.01);  // dry[n - latency] (52) through the 20 Hz input high-pass only
+  CHECK(err < 0.01);  // dry[n - latency] (53) through the 20 Hz input high-pass only
 }
 
 TEST_CASE("pedal.rat: live parameters settle to the static build and keep the build values untouched", "[rat][live]") {
@@ -943,7 +952,7 @@ TEST_CASE("presets/modeled/vermin: six pedal.rat presets, generic names, safe pe
     std::printf("[preset] vermin/%s: peak %.2f dBFS, latency %d\n", e.path().filename().string().c_str(), db, res.info.latencySamples);
     CHECK(db >= -6.0);
     CHECK(db <= -0.5);
-    CHECK(res.info.latencySamples == 52);
+    CHECK(res.info.latencySamples == 53);
     CHECK(res.captures.empty());
     CHECK(parsePreset(toJson(p), e.path().parent_path()) == p);
   }
