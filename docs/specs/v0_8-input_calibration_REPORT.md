@@ -241,8 +241,9 @@ Amp input level, measured by rendering a 220 Hz sine at -24 dBFS RMS through the
 | calibration on | -51.39 dBFS |
 | moved | -12.16 dB |
 
-**Calibration moved the amp drive by 12.16 dB, which is >= 3 dB.** (The planned gains sum to -12.30 dB; the pedal stage's own nonlinearity
-accounts for the other 0.14 dB.)
+In this SYNTHETIC stand-in (assumed +12 dBu device, example nets with 18.3 dBu input), the amp drive moved by 12.16 dB (>= 3 dB). This is
+fixed by the fixtures' metadata and is not evidence about the user's chain; redo on the real preset. (The planned gains sum to -12.30 dB; the
+pedal stage's own nonlinearity accounts for the other 0.14 dB.)
 
 Dynamics sweep, 220 Hz sine, -30 to -12 dBFS RMS in 3 dB steps (18 dB), output RMS in dBFS:
 
@@ -251,25 +252,28 @@ Dynamics sweep, 220 Hz sine, -30 to -12 dBFS RMS in 3 dB steps (18 dB), output R
 | off | -59.55 | -58.92 | -57.91 | -56.48 | -54.69 | -52.80 | -51.10 |
 | on | -60.40 | -60.35 | -60.25 | -60.07 | -59.73 | -59.15 | -58.27 |
 
-Least-squares slope (dB out per dB in): **off 0.486, on 0.111**. With calibration the chain runs much further below the level where
-these nets respond, and the "on" curve sits close to the nets' floor near -60 dBFS, so the slope drops. This says the calibrated stand-in
-is driven ~12 dB lower than the uncalibrated one; it does not say which is closer to the user's tone. The matched preset's values were tuned
-without calibration (spec decision 1), which is why the default stays off. Redo on the real chain before drawing any conclusion.
+Least-squares slope (dB out per dB in): off 0.486, on 0.111. In this SYNTHETIC stand-in (assumed +12 dBu device, example nets with 18.3 dBu
+input) these figures are fixed by the fixtures' metadata and are not evidence about the user's chain; redo on the real preset. With
+calibration the stand-in runs ~12 dB lower, close to the nets' floor near -60 dBFS, which is why the slope drops. The matched preset's values were
+tuned without calibration (spec decision 1), which is why the default stays off. The tests assert these numbers, so this section cannot drift from
+the code.
 
 ### Acceptance 9 — gate check at a -49.5 dBFS floor
 
 Gaussian noise, -49.5 dBFS RMS, 10 s, seed 17. Gate = the v0.4M Task H record cell as the matcher builds it: `peakFloorDb` (the 92.5th
-percentile of the gate's own peak envelope, `Gate::kEnvAttackMs/ReleaseMs`) = **-42.32 dBFS** for this noise (7.2 dB above its RMS); open =
-peakFloor + 10 = -32.32 dBFS, hysteresis 6 dB (close -38.32 dBFS). Chain: linear identity + calibration (device 18 dBu, planned +6 dB, so
-calibration is audibly on). The open fraction is the share of 10 ms windows after 0.5 s in which the chain passes the noise (window gain,
-with the known calibration gain divided out, above -3 dB).
+percentile of the gate's own peak envelope) = -42.32 dBFS for this noise; open = peakFloor + 10 = -32.32 dBFS, hysteresis 6 dB (close -38.32).
+Chain: linear identity `cal_amp_hi` (input 12 dBu) with device 24 dBu, so calibration plans +12 dB. A gate keyed after that gain would see a floor
+near -30 dBFS, above the open threshold. The open fraction is the share of 10 ms windows after 0.5 s in which the chain passes the noise (window
+gain, with the known gain divided out, above -3 dB).
 
 | | gate open fraction on noise only |
 |---|---|
 | calibration off | 0.0000 |
-| calibration on | 0.0000 |
+| calibration on (+12 dB planned) | 0.0000 |
+| control: INPUT +12 dB (before the gate), calibration off | 1.0000 |
 
-Identical, as expected: the gate is keyed on the DI after INPUT and before any calibration gain.
+The control shows the test can fail: the same +12 dB placed before the gate opens it on every window. Calibration, applied after the gate's key,
+does not.
 
 ### Design as built (for I2-I4)
 
@@ -281,3 +285,20 @@ Identical, as expected: the gate is keyed on the DI after INPUT and before any c
   swap uses the rung's levels. The planned gain is added to the block's intent (`inputGainDb`, live or preset).
 - A NAM block that feeds another NAM block in the path drops `normalizeLoudness` and the make-up; `outputGainDb` stays. Only the last NAM
   block of a path keeps both. Bypassed blocks and disabled paths are not in the plan. `eq` and every `pedal.*` block are `LevelKind::Neutral`.
+
+### Decisions made during review
+
+- **Make-up and live edits.** `LiveBlock` now carries `makeupDb` apart from `outputGainDb`, and `Processor::setLiveGainsDb(in, out, makeup, ramp)`
+  has a 4-argument form (the 3-argument one stays; it means "output includes any make-up"). A calibrated hop block drops the CURRENT make-up, so a
+  live make-up edit leaves the amp's input gain unchanged (tested). With calibration off the sum is outputGain + makeup + normalise in the same
+  order as before: all goldens and live tests unchanged. `LiveParams::fromPreset` now stores the make-up in `makeupDb` instead of in
+  `outputGainDb`; the plugin does not touch `LiveBlock`.
+- **A hop into a block with no usable input metadata (no `input_level_dbu`, no gear default) is not planned.** The upstream block keeps its
+  normalise and make-up: today's behaviour, from the "missing = neutral" rule (spec decision 3a). Such a hop is flagged by the downstream block's
+  `inputMissing` in the report. Tested with a hop into `cal_amp_nometa`.
+- **Ladder limit.** A downstream NAM block is planned from the ladder block's STARTING rung's output level and does not follow a rung swap (the
+  ladder's own input gain does). Pinned by a test: ladder of two pedals with different output levels, the amp after it keeps its gain across the swap.
+- **Mid-stream plan publish.** A plan published while audio runs applies at the start of the next `process()` call, so the sample it starts on
+  depends on the host block size. The ramp itself is sample-accurate.
+- **Comparing hashes across branches.** After the v0.4M merge, `preset_hash` in `match/export/run.py` is computed over the flattened preset for presets
+  with `dynamicsMode`, so hashes from before and after the merge are not comparable.
