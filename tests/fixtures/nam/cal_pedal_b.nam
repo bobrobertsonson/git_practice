@@ -1,0 +1,1 @@
+{"version":"0.5.4","architecture":"Linear","config":{"receptive_field":4,"bias":false},"weights":[1.0,0.0,0.0,0.0],"sample_rate":48000,"metadata":{"name":"cal_pedal_b","gear_type":"pedal","modeled_by":"sawblade-tests","input_level_dbu":6.0,"output_level_dbu":4.0}}

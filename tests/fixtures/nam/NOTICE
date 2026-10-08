@@ -5,3 +5,8 @@ NeuralAmpModelerCore (https://github.com/sdatkinson/NeuralAmpModelerCore, commit
 
 linear_*.nam are hand-written Linear-architecture fixtures for Sawblade's tests (same
 format; MIT, like the rest of this directory's NAM-derived material).
+
+cal_*.nam are synthetic Linear-architecture fixtures (identity weights) with invented input_level_dbu / output_level_dbu /
+gear_type metadata, written by make_cal_fixtures.py in this directory (python3 make_cal_fixtures.py [--check]) for the v0.8
+calibration tests. No TONE3000 data, no third-party audio. The only other fixtures here with calibration metadata are the two NeuralAmpModelerCore examples, wavenet.nam and lstm.nam
+(both input_level_dbu 18.3 and output_level_dbu 12.3).
