@@ -19,7 +19,7 @@ import soundfile as sf
 from ..core import render
 from . import feel as F
 from . import loss as L
-from .calibration import pick_di_channel
+from .calibration import CALIBRATION_MODES, DEFAULT_CALIBRATION, CalibrationOptions, pick_di_channel
 from .engine import Engine, RATE, to48
 from .excerpt import select_excerpt
 from .gatesweep import cell_gate
@@ -86,7 +86,7 @@ def gap_di(seconds: float = 8.0, seed: int = 3, floor_db: float = -70.0) -> np.n
     return x.astype(np.float32)
 
 
-def feel_hidden(pool, di48: np.ndarray, seed: int = 1):
+def feel_hidden(pool, di48: np.ndarray, seed: int = 1, calibration: CalibrationOptions | None = None):
     """Hidden chain of D.1, reachable by construction: every discrete parameter sits on the matcher's own grid (post.hp on
     ``refine.HP_GRID`` at 24 dB/oct, the post low-pass at 24 dB/oct, the gate on a cell of the gate sweep grid), continuous
     ones are inside their ranges. [tight boost] -> amp -> cab. Returns (combo, values, preset, gate)."""
@@ -99,7 +99,7 @@ def feel_hidden(pool, di48: np.ndarray, seed: int = 1):
               "post.hp": HP_GRID[2], "post.hp_slope": DISCRETE_UP, "post.lp": 7500.0, "post.lp_slope": DISCRETE_UP})
     # gate cell: threshold = DI peak floor + 16 dB (the default is + 10), hold 10 ms, release 80 ms, range -50 dB (all on the sweep grids, not the default)
     gate = cell_gate(gate_envelope_floor_db(di48, RATE), 16.0, release_ms=80.0, hold_ms=10.0, range_db=-50.0)
-    return combo, v, build_preset(combo, v, gate=gate, align=Engine(gate).probe_align(combo, v), name="hidden feel case"), gate
+    return combo, v, build_preset(combo, v, gate=gate, align=Engine(gate, calibration=calibration).probe_align(combo, v), name="hidden feel case"), gate
 
 
 @contextlib.contextmanager
@@ -139,7 +139,7 @@ def feel_deltas(found: np.ndarray, ft: "F.FeelTarget") -> dict:
 
 
 def feel_case(pool, out: Path, *, di48: np.ndarray | None = None, seed: int = 1, plan: Plan | None = None, ablate=(),
-              weights=None, threads: int = 2, excerpt_s: float = 4.0, log=None) -> dict:
+              weights=None, threads: int = 2, excerpt_s: float = 4.0, log=None, calibration: CalibrationOptions | None = None) -> dict:
     """Run the D.1 synthetic known answer once and return the row: A-weighted error, the feel deltas of the found render vs the
     hidden render on the whole section, the tolerances and which of them pass, the chosen chain.
     TODO(D.1 later): hidden irMix pair (offsetSamplesB / invertB, B2.1), fast bus comp (studio detector, B2.3), pre-EQ (B4)."""
@@ -148,17 +148,19 @@ def feel_case(pool, out: Path, *, di48: np.ndarray | None = None, seed: int = 1,
     di48 = gap_di() if di48 is None else di48
     di = out / "di.wav"
     sf.write(str(di), di48, RATE, subtype="FLOAT")
-    combo, v, preset, gate = feel_hidden(pool, di48, seed)
-    hidden, _ = render(preset, di48, float(RATE))
+    cal = calibration or CalibrationOptions()          # hidden and found presets render in the same mode
+    combo, v, preset, gate = feel_hidden(pool, di48, seed, cal)
+    hidden, _ = render(preset, di48, float(RATE), **cal.render_kwargs())
     ref_wav = out / "hidden_render.wav"
     sf.write(str(ref_wav), hidden, RATE, subtype="FLOAT")
     (out / "hidden.preset.resolved.json").write_text(json.dumps(preset, indent=2))
     ref = load_reference(ref_wav, channel="mid", matched="mono", offset_ms=0.0)
     cfg = Config(di=di, ref=ref, pool=pool, out=out / "match", seed=seed, excerpt_s=excerpt_s, threads=threads, plan=plan,
-                 write_audio=False, refine_offsets=False, ablate=tuple(ablate))
+                 write_audio=False, refine_offsets=False, ablate=tuple(ablate), calibration=cal)
     with feel_weights(weights):
         res = run_match(cfg, log or Log())
-    found, _ = render(json.loads((out / "match" / "best.preset.resolved.json").read_text()), di48, float(RATE))
+    found, _ = render(json.loads((out / "match" / "best.preset.resolved.json").read_text()), di48, float(RATE),
+                      **cal.render_kwargs())
     ex = make_excerpt(di48, len(di48) / RATE, window=(0, len(di48)))
     tgt = build_target(ref, ex)
     ft = tgt.feel
@@ -183,7 +185,7 @@ def feel_case(pool, out: Path, *, di48: np.ndarray | None = None, seed: int = 1,
 
 
 def feel_report(pool, out: Path, *, seed: int = 1, plan: Plan | None = None, threads: int = 2, di48=None,
-                weight_sets: dict | None = None, log=None) -> dict:
+                weight_sets: dict | None = None, log=None, calibration: CalibrationOptions | None = None) -> dict:
     """Report helper (not a test): the same case with each suspect off (--ablate feel / boost / filters / irsweep), with feel
     weights 0, and with each of ``weight_sets``; writes ``feel_report.json`` (one row per variant) and returns it."""
     out = Path(out)
@@ -195,7 +197,8 @@ def feel_report(pool, out: Path, *, seed: int = 1, plan: Plan | None = None, thr
         variants[f"weights {name}"] = dict(weights=w)
     table = {}
     for i, (name, kw) in enumerate(variants.items()):
-        table[name] = feel_case(pool, out / f"v{i}", di48=di48, seed=seed, plan=plan, threads=threads, log=log or (lambda m: None), **kw)
+        table[name] = feel_case(pool, out / f"v{i}", di48=di48, seed=seed, plan=plan, threads=threads, log=log or (lambda m: None),
+                               calibration=calibration, **kw)
     out.mkdir(parents=True, exist_ok=True)
     (out / "feel_report.json").write_text(json.dumps(table, indent=2, default=float))
     return table
@@ -211,6 +214,8 @@ def main(argv=None) -> int:
     p.add_argument("--budget", type=float, default=1.0)
     p.add_argument("--threads", type=int, default=4)
     p.add_argument("--topology", choices=["single", "single2", "blend"], default="blend")
+    p.add_argument("--calibration", default=DEFAULT_CALIBRATION, choices=list(CALIBRATION_MODES), help="as sawblade-match")
+    p.add_argument("--device-dbu", type=float, metavar="DBU", help="as sawblade-match")
     p.add_argument("--feel-case", action="store_true",
                    help="D.1: hidden chain with tight boost + 24 dB/oct post filters + gate on a synthetic gappy DI "
                         "(--di is not used); prints the feel deltas against the tolerances")
@@ -219,13 +224,14 @@ def main(argv=None) -> int:
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     log = Log()
+    cal = CalibrationOptions(a.calibration, a.device_dbu)
     pool = load_pool(a.pool)
     if a.feel_case:
         if a.feel_report:
-            table = feel_report(pool, out, seed=a.seed, threads=a.threads, log=log)
+            table = feel_report(pool, out, seed=a.seed, threads=a.threads, log=log, calibration=cal)
             print(json.dumps({k: {m: r.get(m) for m in ("aWeightedErrorDb", "pass")} for k, r in table.items()}, indent=2))
             return 0
-        row = feel_case(pool, out, seed=a.seed, threads=a.threads, log=log)
+        row = feel_case(pool, out, seed=a.seed, threads=a.threads, log=log, calibration=cal)
         (out / "feel_case.json").write_text(json.dumps(row, indent=2, default=float))
         print(json.dumps({k: row[k] for k in ("aWeightedErrorDb", "t12Ms", "sustainDb", "hfRatioDb", "hfFlat", "fluxDb",
                                               "floorDb", "passes", "pass")}, indent=2))
@@ -238,7 +244,7 @@ def main(argv=None) -> int:
     di = out / "di_section.wav"
     sf.write(str(di), x[s0:s1], fs, subtype="FLOAT")
     gate = gate_preset(gate_envelope_floor_db(to48(x[s0:s1], fs), RATE))
-    eng = Engine(gate, a.threads)
+    eng = Engine(gate, a.threads, calibration=cal)
     combo, v, preset, align = hidden_preset(pool, a.seed, gate, eng, a.topology)
     log(f"hidden: {json.dumps(caps_summary(combo))[:600]}")
     y, _ = eng.render(preset, x[s0:s1], fs)
@@ -248,7 +254,7 @@ def main(argv=None) -> int:
     (out / "hidden.preset.resolved.json").write_text(json.dumps(preset, indent=2))
     ref = load_reference(ref_path, channel="mid", matched="mono", offset_ms=0.0)
     cfg = Config(di=di, ref=ref, pool=pool, out=out / "match", budget=a.budget, seed=a.seed, threads=a.threads,
-                 write_audio=False, refine_offsets=False)
+                 write_audio=False, refine_offsets=False, calibration=cal)
     res = run_match(cfg, log)
     err = res["after"][0]["aWeightedErrorDb"]
     found = res["best"]["captures"]

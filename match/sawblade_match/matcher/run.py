@@ -1084,10 +1084,7 @@ def _run(cfg, plan, rng, ref, pool, di48, di_x, di_fs, gate, floor, eng, log, ou
     renders = {n: (y, fs, rep) for n, y, fs, rep in eng.map(full_render, list(full_jobs.items()))}
     lap("fullRenders")
     result["calibration"] = {**cfg.calibration.record(di_channels),
-                             "levelMatchUncalibrated": bool(eng.level_match_uncalibrated),
                              "corePlan": renders["best_L"][2].get("calibration")}     # the core's report for the final render
-    if eng.level_match_uncalibrated:
-        log("warning: the level_match binding has no calibration option; blend trims were measured uncalibrated")
     log(f"calibration {cfg.calibration.mode}: device "
         + (f"{cfg.calibration.effective_dbu:g} dBu{' (assumed)' if cfg.calibration.assumed else ''}" if cfg.calibration.calibrated else "n/a")
         + "; DI channel " + ", ".join(f"{k} {v['used']} ({v['rule']})" for k, v in di_channels.items()))

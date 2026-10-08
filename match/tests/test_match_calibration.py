@@ -161,24 +161,18 @@ def test_engine_calibrated_render_reports_the_device_level():
 
 
 @needs_core
-def test_level_match_wrapper_flags_a_binding_without_calibration(monkeypatch):
+def test_level_match_wrapper_passes_the_calibration_explicitly(monkeypatch):
     from sawblade_match.matcher import levelmatch as LM
     calls = []
 
-    def old_binding(preset, sr, base_dir=None, cache=None):
-        calls.append("old")
-        return {"trimADb": 0.0, "trimBDb": 1.0, "makeupDb": [0.0] * 5}
-
-    monkeypatch.setattr(_core, "level_match", old_binding)
-    assert "calibrationUnsupported" not in LM.level_match({}, 48000, calibration=CAL.CalibrationOptions())
-    assert LM.level_match({}, 48000, calibration=CAL.CalibrationOptions("calibrated"))["calibrationUnsupported"] is True
-
-    def new_binding(preset, sr, base_dir=None, cache=None, calibration="preset", device_dbu=None):
+    def binding(preset, sr, base_dir=None, cache=None, calibration="preset", device_dbu=None):
         calls.append((calibration, device_dbu))
         return {"trimADb": 0.0, "trimBDb": 1.0, "makeupDb": [0.0] * 5}
-    monkeypatch.setattr(_core, "level_match", new_binding)
-    r = LM.level_match({}, 48000, calibration=CAL.CalibrationOptions("calibrated", 9.0))
-    assert "calibrationUnsupported" not in r and calls[-1] == ("calibrated", 9.0)
+    monkeypatch.setattr(_core, "level_match", binding)
+    LM.level_match({}, 48000, calibration=CAL.CalibrationOptions())                 # legacy is explicit, not left to the preset
+    LM.level_match({}, 48000, calibration=CAL.CalibrationOptions("calibrated", 9.0))
+    LM.level_match({}, 48000)
+    assert calls == [("legacy", None), ("calibrated", 9.0), ("preset", None)]
 
 
 def _run(tmp_path, tag, di_data, **cfg_kw):
@@ -204,7 +198,6 @@ def test_run_records_calibrated_mode_device_and_stereo_rule(tmp_path):
     assert rec["diChannel"]["di"]["used"] == "R" and rec["diChannel"]["di"]["rule"] == "auto"
     assert rec["diChannel"]["di"]["rmsDbfsR"] > rec["diChannel"]["di"]["rmsDbfsL"] + 20
     assert rec["corePlan"]["mode"] == "calibrated" and rec["corePlan"]["deviceDbu"] == 9.0
-    assert rec["levelMatchUncalibrated"] is False
     on_disk = json.loads((out / "result.json").read_text())
     assert on_disk["calibration"]["mode"] == "calibrated"
     files = [out / res["best"]["preset"]] + sorted(out.glob("alt*.preset.resolved.json"))

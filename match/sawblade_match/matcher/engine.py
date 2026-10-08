@@ -52,7 +52,6 @@ class Engine:
     ``stats`` counts hits/misses/NAM seconds. Disable with ``core_cache_bytes=0``."""
 
     calibration = CalibrationOptions()
-    level_match_uncalibrated = False
 
     def __init__(self, gate: dict | None, workers: int = 4, cache=None, core_cache_bytes: int = CORE_CACHE_BYTES,
                  calibration: CalibrationOptions | None = None):
@@ -206,10 +205,7 @@ class Engine:
         if combo.topology != "blend":
             return None
         p = build_preset(combo, {**v, "blend": 0.5}, gate=None, align=align)
-        d = level_match(p, RATE, cache=self.cache, **({"calibration": self.calibration} if self.calibration.calibrated else {}))
-        if d.get("calibrationUnsupported"):
-            self.level_match_uncalibrated = True        # recorded in result.json (calibration.levelMatchUncalibrated)
-        return Levels.from_core(d)
+        return Levels.from_core(level_match(p, RATE, cache=self.cache, calibration=self.calibration))
 
     @staticmethod
     def mix(a: np.ndarray, b: np.ndarray, blend: float, align: dict, levels: Levels | None = None) -> np.ndarray:

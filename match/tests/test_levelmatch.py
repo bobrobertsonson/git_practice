@@ -103,8 +103,8 @@ def _blend_combo() -> Combo:
 def test_probe_levels_calls_core_at_blend_half_with_resolved_align(monkeypatch):
     seen = {}
 
-    def fake(preset, sample_rate, base_dir=None, cache=None):
-        seen.update(preset=preset, rate=sample_rate)
+    def fake(preset, sample_rate, base_dir=None, cache=None, calibration=None):
+        seen.update(preset=preset, rate=sample_rate, calibration=calibration)
         return {"trimADb": 0.0, "trimBDb": 6.0, "lufsA": -20.0, "lufsB": -26.0, "sumLufs": -18.0,
                 "makeupDb": [0.0, 0.2, 0.4, 0.2, 0.0], "delaySamplesB": 3, "invertB": True}
 
@@ -117,6 +117,7 @@ def test_probe_levels_calls_core_at_blend_half_with_resolved_align(monkeypatch):
     lv = eng.probe_levels(combo, v, manual_align(3, True))
     assert lv == Levels(0.0, 6.0, (0.0, 0.2, 0.4, 0.2, 0.0))
     assert seen["preset"]["blend"] == 0.5 and seen["preset"]["align"] == manual_align(3, True) and seen["rate"] == 48000
+    assert seen["calibration"] is eng.calibration and not seen["calibration"].calibrated      # legacy is passed explicitly
     assert "levelMatch" not in seen["preset"]                      # the probe preset is the plain linear candidate
     single = Combo((), combo.a_amp, None, None, combo.cab)
     assert eng.probe_levels(single, Space.for_combo(single).default(), manual_align()) is None
