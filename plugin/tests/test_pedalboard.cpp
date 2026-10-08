@@ -1044,8 +1044,10 @@ TEST_CASE("pedalboard: with calibrated input levels on, a pedal that feeds the a
     if (makeup != 0.0) b["makeupDb"] = makeup;
     return b;
   };
+  // The amp carries input_level_dbu, so the hop into it is planned (spec decision 3a: an amp without it would not be).
+  const json calAmp = {{"id", "a2"}, {"type", "nam"}, {"slot", "amp"}, {"model", {{"file", (kFx / "nam" / "cal_amp_hi.nam").string()}}}};
   settings::Settings::shared().setCalibratedInputLevels(true);
-  rig.load(rigJson({capture("a1", "cal_pedal_a.nam", 5.0), namAmp("a2")}, {namAmp("b1")}, true));
+  rig.load(rigJson({capture("a1", "cal_pedal_a.nam", 5.0), calAmp}, {namAmp("b1")}, true));
   rig.proc.calibrationTick();
   rig.settle();
   const auto makeupOf = [&](int path, std::size_t i) {
@@ -1071,5 +1073,17 @@ TEST_CASE("pedalboard: with calibrated input levels on, a pedal that feeds the a
   const Preset p = rig.preset();
   REQUIRE(p.a.blocks.size() == 3);
   for (std::size_t i = 0; i < 2; ++i) CHECK(makeupOf(0, i) == 0.0);
+
+  // 3a at the plugin level: an amp WITHOUT input metadata means the hop is not planned, so the swapped pedal keeps its normal make-up.
+  rig.load(rigJson({capture("a1", "cal_pedal_a.nam", 5.0), namAmp("a2")}, {namAmp("b1")}, true));
+  rig.proc.calibrationTick();
+  rig.settle();
+  REQUIRE(makeupOf(0, 0) == 5.0);
+  REQUIRE(rig.board().swapPedalCapture(0, "a1", next));
+  const auto end2 = std::chrono::steady_clock::now() + kLoad;
+  while (makeupOf(0, 0) == 5.0 && std::chrono::steady_clock::now() < end2) pump(40);
+  rig.settle();
+  CHECK(makeupOf(0, 0) != 0.0);
+  CHECK(makeupOf(0, 0) != 5.0);
   settings::Settings::shared().setCalibratedInputLevels(false);
 }
