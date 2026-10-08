@@ -59,8 +59,13 @@ Calibration (v0.8): declare the pedal's nominal output level in dBu like the oth
 
 ## Task D — matcher pool (match-engineer, small)
 
-Register `pedal.rat` as a modelled-pedal candidate in the matcher's pedal pool (as `pedal.ts` is), with a coarse
-parameter grid for the prescreen. No change to matcher logic.
+Register `pedal.rat` in the calibration fitter, as `pedal.ts` is: add `"rat"` to `pedal_fit.PEDALS` (searched knobs
+`distortion`, `filter`; level key `volume`), `KNOWN_TRUTH` and `pedal_accuracy.PEDAL_ORDER`, with its known-answer
+test. No change to fitter or matcher logic.
+
+*Corrected 2026-10-08 (main lead):* the original wording said "the matcher's pedal pool (as `pedal.ts` is), with a
+coarse parameter grid for the prescreen". On the base, the matcher pool holds TONE3000 captures only and `pedal.ts`
+lives in the calibration fitter. Modelled pedals as matcher candidates is a proposal in the REPORT, not v0.9 scope.
 
 ## Task E — plugin (after v0.8 merges)
 
