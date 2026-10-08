@@ -3,6 +3,8 @@
 Procedural mockups of the "worn metal and sawdust" skin. Spec: `docs/specs/v1_0-A-workshop_mockups.md`. These are
 mockups for the user to choose from and edit; nothing here is built into the plugin and nothing under `plugin/` changes.
 
+Review page (all screens, for comments): https://claude.ai/artifact/SPkazo41kcKHRVMaJNoVqo (source: `review.html`).
+
 ## Screens
 
 All 1280 x 800 design px, rendered by `render_all.py` into `png/`. Screens 02-09 come from `screens_panels.py`
