@@ -180,7 +180,7 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | label | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 4 | 00 01 09 |
 | label | body | well | 8.18:1 ok | 4.5 | 11 | 3 | 00 01 |
 | label | bone | well | 13.71:1 ok | 4.5 | 11 | 34 | 00 04 |
-| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 110 | 00 01 02 03 04 05 06 07 08 |
+| label | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 109 | 00 01 02 03 04 05 06 07 08 |
 | label | bone_dim | well_raised | 6.96:1 ok | 4.5 | 11 | 1 | 04 |
 | label | bone_mute | well | 5.81:1 ok | 4.5 | 11 | 2 | 00 04 |
 | label | lcd_amber | well | 10.02:1 ok | 4.5 | 11 | 1 | 00 |
@@ -191,7 +191,7 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | label_b | blade | well | 6.23:1 ok | 4.5 | 11 | 2 | 04 |
 | label_b | blade_hi | well | 7.61:1 ok | 4.5 | 11 | 22 | 01 02 06 09 |
 | label_b | body | well | 8.18:1 ok | 4.5 | 11 | 5 | 02 04 05 06 |
-| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 132 | 00 01 02 03 04 05 06 07 08 09 |
+| label_b | bone | well | 13.71:1 ok | 4.5 | 11 | 129 | 00 01 02 03 04 05 06 07 08 09 |
 | label_b | bone | well_raised | 12.43:1 ok | 4.5 | 11 | 6 | 00 04 08 |
 | label_b | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 6 | 00 04 05 08 |
 | label_b | ok | well | 11.02:1 ok | 4.5 | 11 | 14 | 01 02 03 04 05 06 07 08 09 |
@@ -203,6 +203,8 @@ rows with a hex background below). Ghost vs glass is <= 1.25:1 (amber 1.23:1, gr
 | label_ink | ink | bone_dim | 8.09:1 ok | 4.5 | 11 | 2 | 04 06 |
 | label_ink | ink | lcd_amber | 10.57:1 ok | 4.5 | 11 | 4 | 08 09 |
 | label_ink | ink | ok | 11.62:1 ok | 4.5 | 11 | 1 | 05 |
+| label_mx | bone_dim | well | 7.67:1 ok | 4.5 | 11 | 1 | 02 |
+| label_mx_b | bone | well | 13.71:1 ok | 4.5 | 11 | 3 | 05 09 |
 | lcd | #cc8f39 | #2a1e0c | 5.86:1 ok | 4.5 | 14 | 3 | 07 |
 | lcd | lcd_amber | #35250f | 8.29:1 ok | 4.5 | 14,16,18,20,22,26 | 51 | 00 01 03 05 07 08 |
 | lcd | lcd_green | #142e1d | 11.61:1 ok | 4.5 | 14,16,26 | 4 | 00 02 05 06 |
@@ -238,7 +240,7 @@ is untouched. v3 keeps the worn metal, sawdust and rivets and turns the readouts
 - **Backlit LCD panels**: amber (`lcd_amber` on the slightly lit `glass_amber`) and a new backlit green (`lcd_green` on `glass_green`),
   recessed bezel, flat glass colour, ghost (unlit) segments / dots at <= 1.25:1 against the glass. The 7-segment `lcd()` readouts use
   them everywhere (best score and the training ESR in green).
-- **Dot-matrix text** (`dm_display`): a procedural 5 x 7 face (no font) over a ghost matrix, with a faint bloom; values and names >= 14 px,
+- **Dot-matrix text** (`dm_display`): a procedural 5 x 7 face (no font) with lower case (descenders use one extra row), so units and names read as given (`dB`, `smp`, `v2`), over a ghost matrix, with a faint bloom; values and names >= 14 px,
   small status lines >= 11 px. Used for preset names (04 info panel, top bar), status lines (03 UNCAL / CALIBRATED, 04 resolve
   status, 06 epoch / ETA, 08 build status), LAT / CPU, the 01 match readout and the 09 toast. Prose stays plain text.
 - **Top bar**: the preset / rig name is an amber dot-matrix scroller (a longer name is clipped and ends in a ▶ marker; the default

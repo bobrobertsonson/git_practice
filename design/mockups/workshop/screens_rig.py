@@ -165,7 +165,7 @@ def screen_01_main_rig():
     pl = ws.plate(cv, (pr[0] + 6, pr[1] + 6, pr[2] - 6, pr[1] + 38), 'MATCH vs ORIGINAL', title_style='section_mixed')
     vw = (pr[0] + 12, pr[1] + 46, pr[2] - 12, pr[3] - 8)
     if ws.is_v3():
-        ws.dm_display(cv, vw, '6.45 → 1.53 DB · 9/10', h=14, tone='green', align='c')
+        ws.dm_display(cv, vw, '6.45 → 1.53 dB · 9/10', h=14, tone='green', align='c')
     else:
         ws.well(cv, vw, 'well', 3)
         ws.text(cv, None, '6.45 → 1.53 dB · 9/10 rules', 'mono', bg=vw)

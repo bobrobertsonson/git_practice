@@ -147,29 +147,29 @@ def screen_03_settings_calibration():
     ws.text(cv, (bx0, y), 'INPUT CALIBRATION', 'title', bg=body, size=22)
     y += 34
     # status strips: not calibrated now, calibrated after APPLY
-    s1 = (bx0, y, bx1, y + (38 if ws.is_v3() else 34))
+    s1 = (bx0, y, bx1, y + (42 if ws.is_v3() else 34))
     flat_box(cv, s1, 'well_raised', 'warn', 3)
     if ws.is_v3():
         ws.glow_led(cv, s1[0] + 16, (s1[1] + s1[3]) / 2.0, True, 'amber', 4.0)
         ws.dm_display(cv, (s1[0] + 34, s1[1] + 2, s1[2] - 4, s1[3] - 2),
-                      ['UNCAL · INTERFACE NOT CALIBRATED', 'CAPTURES PLAY AT THE +9.0 DBU DEFAULT · NOW'], h=11, tone='amber', row_gap=2.0, pad=5)
+                      ['UNCAL · interface not calibrated', 'captures play at the +9.0 dBu default · NOW'], h=11, tone='amber', row_gap=1.5, pad=5)
     else:
         b = ws.badge(cv, (s1[0] + 10, y + 17), 'UNCAL')
         ws.text(cv, (b[2] + 10, y + 17), '— interface not calibrated: captures play at the +9.0 dBu default', 'body',
                 bg=ws.inset(s1, 3))
         ws.text(cv, (s1[2] - 10, y + 17), 'NOW', 'label_b', bg=ws.inset(s1, 3), align='r', fg='warn')
-    y += 44 if ws.is_v3() else 40
-    s2 = (bx0, y, bx1, y + (38 if ws.is_v3() else 30))
+    y += 48 if ws.is_v3() else 40
+    s2 = (bx0, y, bx1, y + (42 if ws.is_v3() else 30))
     flat_box(cv, s2, 'well_raised', 'ok', 3)
     if ws.is_v3():
         ws.glow_led(cv, s2[0] + 16, (s2[1] + s2[3]) / 2.0, True, 'green', 4.0)
         ws.dm_display(cv, (s2[0] + 34, s2[1] + 2, s2[2] - 4, s2[3] - 2),
-                      ['CALIBRATED · SCARLETT 4I4 3RD GEN · INST · +12.5 DBU', '2026-10-08 · AFTER APPLY'], h=11, tone='green', row_gap=2.0, pad=5)
+                      ['CALIBRATED · Scarlett 4i4 3rd Gen · INST · +12.5 dBu', '2026-10-08 · AFTER APPLY'], h=11, tone='green', row_gap=1.5, pad=5)
     else:
         ws.text(cv, (s2[0] + 10, y + 15), '✓ CALIBRATED · Scarlett 4i4 3rd Gen · INST · +12.5 dBu · 2026-10-08', 'body_strong',
                 bg=ws.inset(s2, 3), fg='ok')
         ws.text(cv, (s2[2] - 10, y + 15), 'AFTER APPLY', 'label_b', bg=ws.inset(s2, 3), align='r', fg='ok')
-    y += 50 if ws.is_v3() else 46
+    y += 56 if ws.is_v3() else 46
     # INTERFACE dropdown, shown open
     ws.text(cv, (bx0, y), 'INTERFACE', 'label_b', bg=body)
     y += 16
@@ -338,7 +338,7 @@ def screen_04_preset_browser():
     ws.button(cv, (hb[0] + 224, y0 + 66, hb[0] + 360, y0 + 96), 'KEEP AS SAVED', 'secondary')
     y = y0 + 142
     if ws.is_v3():
-        nr = ws.dm_display(cv, (ix0, y - 18, ix0 + 318, y + 18), 'GRAVE DIRT · MATCHED V2', h=14, tone='amber', pad=6)
+        nr = ws.dm_display(cv, (ix0, y - 18, ix0 + 318, y + 18), 'GRAVE DIRT · MATCHED v2', h=14, tone='amber', pad=6)
     else:
         nr = ws.label_well(cv, (ix0, y), 'GRAVE DIRT · MATCHED v2', 'title', fg='bone', size=18, h=32, pad=10)
     y += 30
@@ -383,7 +383,7 @@ def screen_04_preset_browser():
         bx += w + 8
     sr = (bx + 14, foot_y - 1, x1 - 118, foot_y + 31)
     if ws.is_v3():
-        ws.dm_display(cv, (sr[0], sr[1], sr[2] - 190, sr[3]), 'RESOLVING 2/5: SWEDISH CHAINSAW PEDAL', h=11, tone='green', pad=5)
+        ws.dm_display(cv, (sr[0], sr[1], sr[2] - 190, sr[3]), 'Resolving 2/5: Swedish chainsaw pedal', h=11, tone='green', pad=5)
         ws.led_bar(cv, (sr[2] - 182, foot_y + 2, sr[2], foot_y + 28), 0.4, n=16)
     else:
         cv.fill(sr, 'steel_bare', 3)
@@ -432,7 +432,7 @@ def screen_09_notices():
     rp = (984, 94, 1260, 140)
     rail_piece(cv, rp, 'noticeA')
     if ws.is_v3():
-        ws.state_led(cv, rp[0] + 14, 117, True, 'red', 'OUT OF TRUE · +4.5 dB', r=4.0)
+        ws.state_led(cv, rp[0] + 14, 117, True, 'red', 'OUT OF TRUE · +4.5 dB', r=4.0, style='label_mx_b')
         ws.label_well(cv, (984, 160), 'glowing lamp + word + dB offset', 'body_dim', h=20, pad=8)
     else:
         ws.chip(cv, (rp[0] + 14, 117), 'OUT OF TRUE · +4.5 dB', 'alert', glyph='skew', h=24)
@@ -455,7 +455,7 @@ def screen_09_notices():
     rp2 = (984, 220, 1260, 266)
     rail_piece(cv, rp2, 'noticeB')
     if ws.is_v3():
-        ws.state_led(cv, rp2[0] + 12, 243, True, 'amber', 'UNCAL · INTERFACE NOT CALIBRATED', r=4.0)
+        ws.state_led(cv, rp2[0] + 12, 243, True, 'amber', 'UNCAL · interface not calibrated', r=4.0, style='label_mx_b')
     else:
         ws.chip(cv, (rp2[0] + 12, 243), 'UNCAL · interface not calibrated', 'warn', glyph='warn', h=24)
     # ---- UNCAL badge placements -------------------------------------------------------------------------------------------
@@ -511,7 +511,7 @@ def screen_09_notices():
     tb = (t[0] + 8, t[1] + 8, t[2] - 8, t[3] - 8)
     flat_box(cv, tb, 'well', 'ok', 3)
     if ws.is_v3():
-        ws.dm_display(cv, (tb[0] + 2, tb[1] + 2, tb[2] - 2, tb[3] - 2), ['PRESET SAVED:', 'GRAVE DIRT · MATCHED V3'], h=11, tone='green', row_gap=1.6, pad=6)
+        ws.dm_display(cv, (tb[0] + 2, tb[1] + 2, tb[2] - 2, tb[3] - 2), ['Preset saved:', 'GRAVE DIRT · MATCHED v3'], h=11, tone='green', row_gap=1.6, pad=6)
     else:
         ws.glyph_icon(cv, 'check', tb[0] + 18, (tb[1] + tb[3]) / 2.0, 14, 'ok')
         ws.text(cv, (tb[0] + 34, (tb[1] + tb[3]) / 2.0), 'Preset saved: GRAVE DIRT · MATCHED v3', 'body', bg=tb)

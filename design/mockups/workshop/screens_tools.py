@@ -234,7 +234,7 @@ def screen_05_match():
     btn(cv, L0, by, L1 - L0, 40, 'START MATCH', 'primary')
     if ws.is_v3():
         ws.led_bar(cv, (L0, by + 48, L1 - 150, by + 70), 1.0, n=22, hue='green')
-        ws.state_led(cv, L1 - 142, by + 59, True, 'green', 'DONE · 1 M 12 S', r=4.0)
+        ws.state_led(cv, L1 - 142, by + 59, True, 'green', 'DONE · 1 m 12 s', r=4.0, style='label_mx_b')
     else:
         ws.progress(cv, (L0, by + 50, L1 - 150, by + 66), 1.0, 'ok')
         label_well(cv, (L1 - 142, by + 58), '✓ DONE · 1 m 12 s', 'label_b', h=20, fg='ok')
@@ -303,7 +303,7 @@ def screen_05_match():
     text(cv, (lg2[0] + 56, ly + 40), 'MATCH · dashed', 'label_b', bg=(lg2[0] + 52, lg2[1] + 2, lg2[2] - 2, lg2[3] - 2))
     ws.lcd(cv, (lx, ly + 76), '9', '/ 10 rules', digits=2, h=20)
     if ws.is_v3():
-        ws.dm_display(cv, (lx, ly + 96, k[2], ly + 128), '6.45 → 1.53 DB', h=14, tone='green', pad=6)
+        ws.dm_display(cv, (lx, ly + 96, k[2], ly + 128), '6.45 → 1.53 dB', h=14, tone='green', pad=6)
     else:
         strip(cv, (lx, ly + 100, k[2], ly + 124), '6.45 → 1.53 dB', 'mono', pad=8)
     reveal(cv, [(12, 66, 1268, 792)])
@@ -435,10 +435,10 @@ def screen_06_nam_forger():
     if ws.is_v3():
         ws.state_led(cv, r[0] + 14, cyy, True, 'orange', 'TRAINING · LITE', r=4.0)
         ws.led_bar(cv, (r[0] + 170, cyy - 12, r[0] + 480, cyy + 12), 0.41, n=30, hue='orange')
-        ws.dm_display(cv, (r[0] + 492, cyy - 16, r[0] + 686, cyy + 16), 'EPOCH 41 / 100', h=14, tone='green', pad=6)
+        ws.dm_display(cv, (r[0] + 492, cyy - 16, r[0] + 686, cyy + 16), 'epoch 41 / 100', h=14, tone='green', pad=6)
         label_well(cv, (r[0] + 700, cyy), 'BEST ESR', 'label_b', h=22)
         ws.lcd(cv, (r[0] + 782, cyy), '0.0123', '', digits=5, h=16, tone='green')
-        ws.dm_display(cv, (r[0] + 880, cyy - 16, r[0] + 1030, cyy + 16), 'ETA 18 MIN', h=14, tone='green', pad=6)
+        ws.dm_display(cv, (r[0] + 880, cyy - 16, r[0] + 1030, cyy + 16), 'ETA 18 min', h=14, tone='green', pad=6)
     else:
         label_well(cv, (r[0] + 12, cyy), 'TRAINING · LITE', 'label_b', h=22)
         ws.progress(cv, (r[0] + 160, cyy - 9, r[0] + 480, cyy + 9), 0.41)
@@ -647,7 +647,7 @@ def screen_08_rig_editor():
         ws.tab(cv, (tx, c[1] + 4, tx + w, c[1] + 34), nm, act)
         tx += w + 6
     if ws.is_v3():
-        ws.dm_display(cv, (x0 + 290, c[1] + 38, x1, c[1] + 68), '✓ BUILT · 5 BLOCKS · LATENCY 92 SMP · ALIGN −17 SMP', h=11, tone='green', pad=6)
+        ws.dm_display(cv, (x0 + 290, c[1] + 38, x1, c[1] + 68), '✓ built · 5 blocks · latency 92 smp · ALIGN −17 smp', h=11, tone='green', pad=6)
         mx0 = x0 + 290
         mw = (x1 - mx0 - 16) / 3.0
         for i, (lab, val, pk, vt, lo, hi, tk) in enumerate([('IN', -17.0, -9.0, ('-17', 'dB', 3), -48.0, 0.0, (-48, -24, 0)),

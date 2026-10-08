@@ -249,6 +249,8 @@ STYLES = {
     'label':    dict(font='barlowc600', size=11, track=0.12, fg='bone_dim', caps=True),
     'label_b':  dict(font='barlowc700', size=11, track=0.12, fg='bone', caps=True, bold=True),
     'label_ink': dict(font='barlowc700', size=11, track=0.12, fg='ink', caps=True, bold=True),
+    'label_mx': dict(font='barlowc600', size=11, track=0.06, fg='bone_dim'),            # v3: unit case kept (dB, smp)
+    'label_mx_b': dict(font='barlowc700', size=11, track=0.06, fg='bone', bold=True),
     'button':   dict(font='barlowc700', size=13, track=0.12, fg='bone', caps=True, bold=True),
     'button_ink': dict(font='barlowc700', size=13, track=0.12, fg='ink', caps=True, bold=True),
     'body':     dict(font='barlow500', size=13, track=0.0, fg='bone'),
@@ -2117,16 +2119,34 @@ _DM = {
     '<': "....# ...#. ..#.. .#... ..#.. ...#. ....#", "'": "..#.. ..#.. ..... ..... ..... ..... .....",
     '|': "..#.. ..#.. ..#.. ..#.. ..#.. ..#.. ..#..", '@': ".###. #...# #.### #.#.# #.### #.... .###.",
 }
-DM_GLYPHS = {k: v.split() for k, v in _DM.items()}
+_DM_LOWER = {
+    'a': "..... ..... .###. ....# .#### #...# .#### .....", 'b': "#.... #.... #.##. ##..# #...# ##..# #.##. .....",
+    'c': "..... ..... .###. #...# #.... #...# .###. .....", 'd': "....# ....# .##.# #..## #...# #..## .##.# .....",
+    'e': "..... ..... .###. #...# ##### #.... .###. .....", 'f': "..##. .#..# .#... ###.. .#... .#... .#... .....",
+    'g': "..... ..... .#### #...# #...# .#### ....# .###.", 'h': "#.... #.... #.##. ##..# #...# #...# #...# .....",
+    'i': "..#.. ..... .##.. ..#.. ..#.. ..#.. .###. .....", 'j': "...#. ..... ..##. ...#. ...#. ...#. #..#. .##..",
+    'k': "#.... #.... #..#. #.#.. ##... #.#.. #..#. .....", 'l': ".##.. ..#.. ..#.. ..#.. ..#.. ..#.. .###. .....",
+    'm': "..... ..... ##.#. #.#.# #.#.# #.#.# #.#.# .....", 'n': "..... ..... #.##. ##..# #...# #...# #...# .....",
+    'o': "..... ..... .###. #...# #...# #...# .###. .....", 'p': "..... ..... #.##. ##..# #...# ####. #.... #....",
+    'q': "..... ..... .##.# #..## #...# .#### ....# ....#", 'r': "..... ..... #.##. ##..# #.... #.... #.... .....",
+    's': "..... ..... .#### #.... .###. ....# ####. .....", 't': ".#... .#... ###.. .#... .#... .#..# ..##. .....",
+    'u': "..... ..... #...# #...# #...# #..## .##.# .....", 'v': "..... ..... #...# #...# #...# .#.#. ..#.. .....",
+    'w': "..... ..... #...# #...# #.#.# #.#.# .#.#. .....", 'x': "..... ..... #...# .#.#. ..#.. .#.#. #...# .....",
+    'y': "..... ..... #...# #...# #...# .#### ....# .###.", 'z': "..... ..... ##### ...#. ..#.. .#... ##### .....",
+}
+DM_GLYPHS = {k: v.split() + ['.....'] for k, v in _DM.items()}
+DM_GLYPHS.update({k: v.split() for k, v in _DM_LOWER.items()})
 for _k, _v in DM_GLYPHS.items():
-    if len(_v) != 7 or any(len(r) != 5 for r in _v):
-        raise ValueError('dot-matrix glyph %r is not 5x7' % _k)
-_DM_ALIAS = {'−': '-', '–': '-', '▸': '▶', '✗': '×', 'é': 'E'}
+    if len(_v) != 8 or any(len(r) != 5 for r in _v):
+        raise ValueError('dot-matrix glyph %r is not 5 wide x 8 rows (7 + a descender row)' % _k)
+_DM_ALIAS = {'−': '-', '–': '-', '▸': '▶', '✗': '×', 'é': 'e'}
 
 
 def dm_glyph(ch):
-    ch = _DM_ALIAS.get(ch, ch.upper())
-    return DM_GLYPHS.get(ch, DM_GLYPHS['?'])
+    ch = _DM_ALIAS.get(ch, ch)
+    if ch in DM_GLYPHS:
+        return DM_GLYPHS[ch]
+    return DM_GLYPHS.get(ch.upper(), DM_GLYPHS['?'])
 
 
 def dm_width(s, h=14):
@@ -2161,11 +2181,11 @@ def dm_display(cv, rect, lines, h=14, tone='amber', align='l', pad=6, row_gap=No
     gx0, gx1 = gl[0] + pad, gl[2] - pad
     cols = max(1, int((gx1 - gx0 + pitch) // adv))
     gx = gx0 + ((gx1 - gx0) - (cols * adv - pitch)) / 2.0
-    row_pitch = (row_gap if row_gap is not None else 2.2) * pitch + 7 * pitch
+    row_pitch = (row_gap if row_gap is not None else 2.2) * pitch + 8 * pitch          # 7 cap rows + the descender row + the gap
     nrows = len(lines)
-    rows_fit = max(1, int(((gl[3] - gl[1]) - 4 + (row_pitch - 7 * pitch)) // row_pitch))
+    rows_fit = max(1, int(((gl[3] - gl[1]) - 4 - 8 * pitch) // row_pitch) + 1)
     nrows_draw = min(nrows, rows_fit)
-    gy = (gl[1] + gl[3]) / 2.0 - ((rows_fit - 1) * row_pitch + 7 * pitch) / 2.0
+    gy = (gl[1] + gl[3]) / 2.0 - ((rows_fit - 1) * row_pitch + 7.5 * pitch) / 2.0
     # flat check before anything is drawn on the glass
     _flat_colour(cv, _dev((gl[0] + 1, gl[1] + 1, gl[2] - 1, gl[3] - 1)), 'display', allow=(glass, ghost))
     k = 4
@@ -2179,7 +2199,7 @@ def dm_display(cv, rect, lines, h=14, tone='amber', align='l', pad=6, row_gap=No
     ink_rows = []
     for r in range(rows_fit):
         for c in range(cols):
-            for j in range(7):
+            for j in range(8):
                 for i in range(5):
                     cx = (gx + c * adv + (i + 0.5) * pitch - gl[0]) * S
                     cy = (gy + r * row_pitch + (j + 0.5) * pitch - gl[1]) * S
@@ -2192,14 +2212,14 @@ def dm_display(cv, rect, lines, h=14, tone='amber', align='l', pad=6, row_gap=No
         off = {'l': 0, 'c': (cols - len(txt)) // 2, 'r': cols - len(txt)}[align]
         for ci, ch in enumerate(txt):
             g = dm_glyph(ch)
-            for j in range(7):
+            for j in range(8):
                 for i in range(5):
                     if g[j][i] == '#':
                         cx = (gx + (ci + off) * adv + (i + 0.5) * pitch - gl[0]) * S * k
                         cy = (gy + r * row_pitch + (j + 0.5) * pitch - gl[1]) * S * k
                         rr = dr * S * k
                         ld.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), fill=255)
-        ink_rows.append((txt, (gx + off * adv, gy + r * row_pitch, gx + (off + len(txt)) * adv - pitch, gy + r * row_pitch + 7 * pitch)))
+        ink_rows.append((txt, (gx + off * adv, gy + r * row_pitch, gx + (off + len(txt)) * adv - pitch, gy + r * row_pitch + 8 * pitch)))
     # unlit matrix: exact ghost colour, no anti-aliasing (the flat colours are {glass, ghost})
     cv.im.paste(Image.new('RGB', (wd, hd), ghost), (x0d, y0d), ghost_m.point(lambda v: 255 if v > 127 else 0))
     lit_s = lit_m.resize((wd, hd), Image.BOX)
@@ -2425,7 +2445,7 @@ def top_bar_v3(cv, st, y=0, width=PAGE_W):
     out['mode'] = mr
     x = mr[0] - 8
     sr = (x - 118, cy - 22, x, cy + 22)
-    dm_display(cv, sr, ['LAT %d SMP' % st.lat, 'CPU %d %%' % st.cpu], h=11, tone='green', pad=4, row_gap=1.8)
+    dm_display(cv, sr, ['LAT %d smp' % st.lat, 'CPU %d %%' % st.cpu], h=11, tone='green', pad=4, row_gap=1.8)
     out['status'] = sr
     x = sr[0] - 8
     # ---- state lamps (UNCAL / OUT OF TRUE) in one backlit block in the room between the clusters -------------------------
@@ -2436,7 +2456,7 @@ def top_bar_v3(cv, st, y=0, width=PAGE_W):
     elif st.uncal:
         rows = [('amber', 'UNCAL', 'label_b', 'warn'), (None, 'NOT CALIBRATED', 'label', 'bone_dim')]
     elif st.out_of_true:
-        rows = [('red', 'OUT OF TRUE', 'label_b', 'alert'), (None, '+%.1f DB HOTTER' % st.out_of_true_db, 'label', 'bone_dim')]
+        rows = [('red', 'OUT OF TRUE', 'label_b', 'alert'), (None, '+%.1f dB hotter' % st.out_of_true_db, 'label_mx', 'bone_dim')]
     if rows:
         bwid = max(text_width(t, sty) for (_h, t, sty, _f) in rows) + 40
         br = (x - bwid, cy - 24, x, cy + 24)
@@ -2651,15 +2671,15 @@ def render_style_sheet_v3():
         elif nme in ('lcd_green',):
             text(cv, (lab[2] - 4, rect_c(lab)[1]), '%.1f:1' % contrast(PAL[nme], PAL['glass_green']), 'label', bg=lab, size=11, fg='bone_dim', align='r')
     dmk = _section(cv, (ax0, 402, ax1, 790), 'DOT-MATRIX 5 x 7 · GHOST DOTS')
-    dm_display(cv, (dmk[0], dmk[1], dmk[2], dmk[1] + 86), ['ABCDEFGHIJKLM', 'NOPQRSTUVWXYZ', '0123456789 .:-+/%'], h=14, tone='amber', pad=8, row_gap=0.8)
-    dm_display(cv, (dmk[0], dmk[1] + 94, dmk[2], dmk[1] + 152), ['LAT 92 SMP · CPU 18 %', 'EPOCH 41 / 100 · ETA 18 MIN'], h=11, tone='green', pad=8, row_gap=1.6)
+    dm_display(cv, (dmk[0], dmk[1], dmk[2], dmk[1] + 86), ['ABCDEFGHIJKLM nopqrstuvwxyz', 'abcdefghijklm NOPQRSTUVWXYZ', '0123456789 .:-+/% dB smp ms Hz dBu'], h=14, tone='amber', pad=8, row_gap=0.8)
+    dm_display(cv, (dmk[0], dmk[1] + 94, dmk[2], dmk[1] + 152), ['LAT 92 smp · CPU 18 %', 'epoch 41 / 100 · ETA 18 min'], h=11, tone='green', pad=8, row_gap=1.6)
     gr = '%.2f' % contrast(GHOST['amber'], TONES['amber']['glass'])
     gg = '%.2f' % contrast(GHOST['green'], TONES['green']['glass'])
     label_well(cv, (dmk[0], dmk[1] + 170), 'GHOST VS GLASS · AMBER %s:1 · GREEN %s:1 (<= 1.25)' % (gr, gg), 'label_b', h=20)
     strip_y = dmk[1] + 196
     lit = contrast(rgb(TONES['amber']['lit']), tuple(int(round(GHOST['amber'][q] * (1 - BLOOM) + rgb(TONES['amber']['lit'])[q] * BLOOM)) for q in range(3)))
     label_well(cv, (dmk[0], strip_y), 'LIT TEXT VS GHOST + BLOOM (logged) · AMBER %.1f:1' % lit, 'label_b', h=20)
-    dm_display(cv, (dmk[0], strip_y + 18, dmk[2], strip_y + 56), 'A VERY LONG PRESET NAME THAT SCROLLS', h=14, tone='amber', pad=8)
+    dm_display(cv, (dmk[0], strip_y + 18, dmk[2], strip_y + 56), 'A very long preset name that scrolls', h=14, tone='amber', pad=8)
     label_well(cv, (dmk[0], strip_y + 72), 'SCROLLER: CLIPPED ▶ MARKER WHEN LONGER THAN THE WINDOW', 'label', h=18)
     # ---- column B: segment LCDs, ladders, rings ------------------------------------------------------------------------------
     bx0, bx1 = 446, 858
@@ -2691,10 +2711,10 @@ def render_style_sheet_v3():
     # ---- column C: the top bar, buttons -----------------------------------------------------------------------------------------
     cx0, cx1 = 868, 1268
     tb = _section(cv, (cx0, 60, cx1, 250), 'TOP BAR · DISPLAYS')
-    dm_display(cv, (tb[0], tb[1] + 2, tb[2], tb[1] + 46), 'BARBARIC · MATCHED V2', h=14, tone='amber', pad=8)
+    dm_display(cv, (tb[0], tb[1] + 2, tb[2], tb[1] + 46), 'BARBARIC · MATCHED v2', h=14, tone='amber', pad=8)
     label_well(cv, (tb[0], tb[1] + 62), 'PRESET NAME · FITS THE WINDOW, NO SCROLL', 'label', h=18)
-    dm_display(cv, (tb[0], tb[1] + 78, tb[2] - 122, tb[1] + 124), ['A ▶ GRAVE DIRT · MATCHED V2', 'B · THRASH TIGHT'], h=14, tone='amber', pad=8, row_gap=1.4)
-    dm_display(cv, (tb[2] - 114, tb[1] + 78, tb[2], tb[1] + 124), ['LAT 92 SMP', 'CPU 18 %'], h=11, tone='green', pad=4, row_gap=1.8)
+    dm_display(cv, (tb[0], tb[1] + 78, tb[2] - 122, tb[1] + 124), ['A ▶ GRAVE DIRT · MATCHED v2', 'B · THRASH TIGHT'], h=14, tone='amber', pad=8, row_gap=1.4)
+    dm_display(cv, (tb[2] - 114, tb[1] + 78, tb[2], tb[1] + 124), ['LAT 92 smp', 'CPU 18 %'], h=11, tone='green', pad=4, row_gap=1.8)
     label_well(cv, (tb[0], tb[1] + 140), 'A / B SLOTS AND LAT / CPU · LONG NAMES CLIP WITH ▶', 'label', h=18)
     kb = _section(cv, (cx0, 260, cx1, 790), 'BUTTONS · FIELDS · FRAMES')
     by = kb[1] + 2
