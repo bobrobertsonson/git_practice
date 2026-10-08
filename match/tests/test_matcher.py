@@ -806,49 +806,143 @@ def test_refine_seed_is_stable_per_candidate_not_per_position():
     c1, c2 = Combo((), a[1], None, None, cab, boost=True), Combo((p[2],), a[1], None, None, cab, boost=True)
     assert R.refine_seed(3, c1) == R.refine_seed(3, c1) and R.refine_seed(3, c1) != R.refine_seed(4, c1)
     assert R.refine_seed(3, c1) % 10 == 0
-    # no collision with the other stages' seeds (refine_combo uses seed .. seed + 4): refine < trace (500) < confirm < cab sweeps (900)
-    top_refine = max(R.refine_seed(0, Combo((), x, None, None, cab)) for x in a)
-    assert top_refine + 4 < 500 <= R.CONFIRM_SEED_BASE
-    assert R.REFINE_SEED_SLOTS * 10 <= 500
-    confirm = [R.confirm_seed(3, j) for j in range(R.PEDAL_CONFIRM_STARTS)]
+    # the seed ranges of the stages (each seed s is used as s .. s + 4 by refine_combo) are disjoint; cab sweeps / pre-EQ add n = one per
+    # refined candidate, assumed < 45 / < 16
+    from sawblade_match.matcher import refine as RF
+    cab_ = cab
+    top_refine = max(R.refine_seed(0, Combo((), x, None, None, cab_)) for x in a)
+    assert R.REFINE_SEED_SLOTS * 10 <= RF.SEED_TRACE and top_refine + 4 < RF.SEED_TRACE
+    assert RF.SEED_TRACE + 4 < R.CONFIRM_SEED_BASE
+    confirm = [R.confirm_seed(3, j) for j in range(R.OCCAM_CONFIRM_STARTS)]
     assert len(set(confirm)) == len(confirm) and min(confirm) >= 3000 + R.CONFIRM_SEED_BASE
-    assert max(confirm) + 4 < 3000 + 900 and 10 * R.PEDAL_CONFIRM_STARTS <= 900 - R.CONFIRM_SEED_BASE
+    assert max(confirm) + 4 < 3000 + RF.SEED_SWEEP
+    assert RF.SEED_SWEEP + 44 + 4 < RF.SEED_FINAL and RF.SEED_FINAL + 4 < RF.SEED_STUDIO and RF.SEED_STUDIO + 4 < RF.SEED_PREEQ
+    assert RF.SEED_PREEQ + 15 + 4 < 1000
 
 
-def test_confirm_partner_with_fixed_losses():
-    """Pedal-Occam confirmation, deterministic (fixed losses, no scipy): the partner is refitted only when the pedal variant would pass
-    the rule, the best fit is kept, and the pedal must still beat that best fit by PEDAL_OCCAM_DB."""
-    from sawblade_match.matcher.run import PEDAL_CONFIRM_STARTS, PEDAL_OCCAM_DB, confirm_partner, pedal_contested
+def _occam_mk():
     pool = fixture_pool()
     p, a, cab = pool.pedals, pool.amps, pool.cabs[0]
     mk = lambda c, l: Scored(c, l, 0.5, manual_align(), None, "refined", {})
+    return pool, p, a, cab, mk
+
+
+def _run_confirm(c, b, extra):
+    from sawblade_match.matcher.run import confirm_partner
+    calls = []
+
+    def refit(j):
+        calls.append(j)
+        return Scored(b.combo, extra[j], b.blend, b.align, None, "refined", {})
+    nb, rec = confirm_partner(c, b, refit)
+    return nb, rec, calls
+
+
+def test_occam_constants_and_aliases():
+    from sawblade_match.matcher import run as R
+    assert R.PEDAL_CONFIRM_STARTS == R.OCCAM_CONFIRM_STARTS >= 2 and R.OCCAM_NOISE_DB == 0.20
+
+
+def test_confirm_pedal_decision_with_fixed_losses():
+    """Pedal vs its pedal-less partner (margin PEDAL_OCCAM_DB = 0.05), deterministic."""
+    from sawblade_match.matcher.run import PEDAL_OCCAM_DB, occam_contested
+    pool, p, a, cab, mk = _occam_mk()
     bare_c, ped_c = Combo((), a[1], None, None, cab, boost=True), Combo((p[2],), a[1], None, None, cab, boost=True)
-    assert PEDAL_CONFIRM_STARTS >= 2
-
-    def run(bare_loss, ped_loss, extra):
-        calls = []
-
-        def refit(j):
-            calls.append(j)
-            return mk(bare_c, extra[j])
-        b, rec = confirm_partner(mk(ped_c, ped_loss), mk(bare_c, bare_loss), refit)
-        return b, rec, calls
-
-    # CI run 280 shape: the pedal fit got lucky (0.487 vs 0.554, ahead by 0.067 > margin); the partner's other seeds fit 0.40 / 0.52
-    b, rec, calls = run(0.554, 0.487, [0.40, 0.52])
-    assert calls == [0, 1] and b.loss == 0.40 and rec["extraFits"] == [0.40, 0.52]
-    assert rec["partnerLossAfter"] == 0.40 and rec["pedalStillJustified"] is False
-    # the pedal is really needed (5.1 -> 0.5): still justified after the extra fits, the best partner fit is the lowest of the three
-    b, rec, calls = run(5.1, 0.5, [5.0, 5.3])
-    assert b.loss == 5.0 and rec["pedalStillJustified"] is True
-    # the extra fits never make the partner worse
-    b, rec, _ = run(0.45, 0.30, [0.6, 0.7])
-    assert b.loss == 0.45 and rec["partnerLossAfter"] == 0.45 and rec["pedalStillJustified"] is True
-    # not contested (ahead by less than the margin, or behind): no extra fits, no work
+    # CI run 280 shape: the pedal fit got lucky (0.487 vs 0.554, ahead by 0.067); the partner's other seeds fit 0.40 / 0.52
+    b, rec, calls = _run_confirm(mk(ped_c, 0.487), mk(bare_c, 0.554), [0.40, 0.52])
+    assert calls == [0, 1] and b.loss == 0.40 and rec["extraFits"] == [0.40, 0.52] and rec["decision"] == "pedal"
+    assert rec["partnerLossAfter"] == 0.40 and rec["stillJustified"] is False and rec["marginDb"] == PEDAL_OCCAM_DB
+    # the extra fits never make the partner worse; the pedal wins by 0.15 < margin + noise: contested, still justified
+    b, rec, _ = _run_confirm(mk(ped_c, 0.30), mk(bare_c, 0.45), [0.6, 0.7])
+    assert b.loss == 0.45 and rec["stillJustified"] is True
+    # a pedal the chain needs (5.1 -> 0.5) wins by far more than margin + noise: no refit at all
+    b, rec, calls = _run_confirm(mk(ped_c, 0.5), mk(bare_c, 5.1), [0.1, 0.1])
+    assert calls == [] and b.loss == 5.1 and "stillJustified" not in rec
+    # ahead by less than the margin, or behind: it already loses, no refit
     for ped_loss in (0.554 - PEDAL_OCCAM_DB + 0.01, 0.6):
-        b, rec, calls = run(0.554, ped_loss, [0.1, 0.1])
-        assert calls == [] and b.loss == 0.554 and "pedalStillJustified" not in rec and rec["extraFits"] == []
-    assert pedal_contested(mk(ped_c, 0.554 - PEDAL_OCCAM_DB - 0.01), mk(bare_c, 0.554))
-    assert not pedal_contested(mk(ped_c, 0.554 - PEDAL_OCCAM_DB + 0.01), mk(bare_c, 0.554))
-    # and the decision after the confirmation: choose() takes the (better) refitted partner
+        b, rec, calls = _run_confirm(mk(ped_c, ped_loss), mk(bare_c, 0.554), [0.1, 0.1])
+        assert calls == [] and b.loss == 0.554
+    assert occam_contested(mk(ped_c, 0.554 - 0.06), mk(bare_c, 0.554)) and not occam_contested(mk(ped_c, 0.554 - 0.04), mk(bare_c, 0.554))
     assert choose([mk(ped_c, 0.487), mk(bare_c, 0.40)]).combo is bare_c
+
+
+def test_confirm_single2_decision_with_fixed_losses():
+    """single2 vs its single (margin OCCAM_DB = 0.10); the partner is the best single with the same amp, preferring a kept pedal."""
+    from sawblade_match.matcher.run import OCCAM_DB, simpler_partner
+    pool, p, a, cab, mk = _occam_mk()
+    s1 = mk(Combo((p[0],), a[1], None, None, cab), 0.324)           # the test fixture: single 0.324 vs single2 0.204
+    s1_other_pedal = mk(Combo((p[1],), a[1], None, None, cab), 0.30)
+    s1_other_amp = mk(Combo((p[0],), a[0], None, None, cab), 0.10)
+    s2 = mk(Combo((p[0], p[2]), a[1], None, None, cab), 0.204)
+    refined = [s1_other_amp, s1_other_pedal, s1, s2]
+    assert simpler_partner(refined, s2) is s1                      # keeps one of its pedals, over a lower-loss single with another pedal
+    assert simpler_partner([s1_other_amp, s1_other_pedal, s2], s2) is s1_other_pedal      # else any single with the same amp
+    assert simpler_partner([s1_other_amp, s2], s2) is None
+    b, rec, calls = _run_confirm(s2, s1, [0.25, 0.33])
+    assert calls == [0, 1] and b.loss == 0.25 and rec["decision"] == "single2" and rec["marginDb"] == OCCAM_DB
+    assert rec["stillJustified"] is False and choose([s2, b]).combo is b.combo      # 0.204 vs 0.25: within OCCAM_DB, the single wins
+    b, rec, _ = _run_confirm(s2, s1, [0.31, 0.33])
+    assert b.loss == 0.31 and rec["stillJustified"] is True and choose([s2, b]).combo is s2.combo
+    b, rec, calls = _run_confirm(mk(s2.combo, 0.01), s1, [0.0, 0.0])      # wins by 0.314 >= margin + noise: robust
+    assert calls == []
+
+
+def test_confirm_blend_decision_with_fixed_losses():
+    """blend vs the best single-path candidate (margin BLEND_OCCAM_DB = 0.25 against a single, OCCAM_DB against a single2)."""
+    from sawblade_match.matcher.run import BLEND_OCCAM_DB, OCCAM_DB, simpler_partner
+    pool, p, a, cab, mk = _occam_mk()
+    s1 = mk(Combo((p[0],), a[1], None, None, cab), 0.60)
+    s2 = mk(Combo((p[0], p[2]), a[1], None, None, cab), 0.70)
+    bl = mk(Combo((p[0],), a[1], (p[1],), a[0], cab), 0.20)
+    assert simpler_partner([s2, s1, bl], bl) is s1 and simpler_partner([s2, bl], bl) is s2 and simpler_partner([bl], bl) is None
+    b, rec, calls = _run_confirm(bl, s1, [0.50, 0.40])       # blend wins by 0.40 (margin 0.25, + noise 0.20): contested
+    assert calls == [0, 1] and b.loss == 0.40 and rec["decision"] == "blend" and rec["marginDb"] == BLEND_OCCAM_DB
+    assert rec["stillJustified"] is False and choose([bl, b]).combo is b.combo       # 0.20 vs 0.40: gap 0.20 < 0.25 -> the single wins
+    b, rec, _ = _run_confirm(bl, s1, [0.55, 0.58])
+    assert rec["stillJustified"] is True and choose([bl, b]).combo is bl.combo       # 0.35 ahead: the blend stays
+    b, rec, calls = _run_confirm(bl, s2, [0.6, 0.6])                                 # against a single2 the margin is OCCAM_DB
+    assert rec["marginDb"] == OCCAM_DB and calls == []                              # 0.50 ahead >= 0.10 + 0.20: robust
+
+
+def test_bare_partner_falls_back_to_the_other_boost_flag_like_choose():
+    """A boosted pedal variant whose only same-amp bare candidate is plain: choose() compares with it, so it is confirmed against it."""
+    from sawblade_match.matcher.run import bare_partner, simpler_partner
+    pool, p, a, cab, mk = _occam_mk()
+    ped = mk(Combo((p[2],), a[1], None, None, cab, boost=True), 0.45)
+    plain_bare = mk(Combo((), a[1], None, None, cab, boost=False), 0.50)
+    boost_bare = mk(Combo((), a[1], None, None, cab, boost=True), 0.52)
+    other_amp = mk(Combo((), a[0], None, None, cab, boost=True), 0.40)
+    assert bare_partner([plain_bare, other_amp], ped) is plain_bare and simpler_partner([plain_bare, other_amp], ped) is plain_bare
+    assert bare_partner([plain_bare, boost_bare, other_amp], ped) is boost_bare          # the same flag wins when present
+    assert bare_partner([other_amp], ped) is None
+
+
+def test_occam_confirmation_loop_runs_in_the_match_and_replaces_the_partner(tmp_path, monkeypatch):
+    """Integration: the real _run confirmation loop (the refit closure, the shared cache, progress / timing) on the single-path
+    fixture, with the margins opened (0 dB) and the noise allowance huge so every complex candidate is contested."""
+    from sawblade_match.matcher import run as R
+    for name in ("PEDAL_OCCAM_DB", "OCCAM_DB", "BLEND_OCCAM_DB"):
+        monkeypatch.setattr(R, name, 0.0)
+    monkeypatch.setattr(R, "OCCAM_NOISE_DB", 1000.0)
+    pool, combo, di, ref = _setup_known(tmp_path, "single")
+    plan = mkplan(top_k={"blend": 0, "single": 2, "single2": 1}, gens_linear=12, gens_gain=4, gens_final=8, pop_linear=12, pop_gain=6,
+                  n2_pedals=3, n2_amps=3, n_rescore_single=12, n_cab_single=12)
+    cfg = Config(di=di, ref=ref, pool=pool, out=tmp_path / "out", seed=5, excerpt_s=2.0, threads=2, plan=plan,
+                 write_audio=False, refine_offsets=False)
+    lines = []
+    res = run_match(cfg, lines.append)
+    recs = [r for r in res["pedalOccam"]["partners"] if r.get("partner")]
+    assert recs, res["pedalOccam"]
+    s2 = [r for r in recs if r["decision"] == "single2"]
+    assert s2 and all(len(r["extraFits"]) == R.OCCAM_CONFIRM_STARTS for r in recs)
+    # the fits of one partner are shared by the decisions that use it: identical records, no repeated refits
+    by_partner = {}
+    for r in recs:
+        by_partner.setdefault(tuple(r["partner"]), []).append(r["extraFits"])
+    assert all(all(f == fits[0] for f in fits) for fits in by_partner.values())
+    for r in recs:
+        replaced = min(r["extraFits"]) < r["partnerLoss"] - 1e-9
+        assert (r["partnerLossAfter"] < r["partnerLoss"]) == replaced
+        assert replaced == any(f"refitted {r['partnerLoss']:.3f} -> " in l for l in lines)
+    n_fits = sum(len(f) for f in (v[0] for v in by_partner.values()))
+    assert sum(1 for t in res["timings"]["stage2PerCombo"] if t.get("confirm")) == n_fits
