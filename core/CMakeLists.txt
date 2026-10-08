@@ -32,6 +32,7 @@ add_library(sawblade_core STATIC
   src/auto_trim.cpp
   src/calibration.cpp
   src/drift.cpp
+  src/stereo_input.cpp
   src/stem_set.cpp
   src/stem_player.cpp
   src/sha256.cpp
