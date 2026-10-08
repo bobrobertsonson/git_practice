@@ -59,6 +59,13 @@ plus a 0 Ω floor (gain 1 at DIST 0, which is circuit-true).
 - Rails: `|vo| ≤ Vrail = 3.8 V` (9 V supply, LM308 swing), as a smooth saturation near the rail with
   integrator anti-windup (the integrator does not keep integrating past the rail). In CLIP `none` this
   is the only clipping.
+- *Revised 2026-10-08 (lead, after alias rounds 2–3):* the slew limit is the LM308's differential-pair
+  input stage, integrator input `Vd·tanh(e/Vd)` with `Vd = SR/ωt` (maximum rate exactly SR), solved
+  implicitly by capped Newton. The rail is `y = Vrail·tanh(v/Vrail)` of the integrator state `v`, with
+  anti-windup clamping `v` at `railWindupLimit · Vrail` (6). The op-amp stage, coupling HPF and diode
+  clipper run at `stageOversample × 4 fs`, `stageOversample = 2` (RatVoicing constant ∈ {1,2,4,8}),
+  which meets the alias bar at the recipe frequencies (4.7 / 5 kHz, plus 1 / 2 kHz) at RTF ≈ 0.05.
+  Open item for the REPORT: 2.3 kHz aliases at −69 dB at factor 2 (factor 4 meets it at ≈ 2× CPU).
 - Expose the stage as its own class (e.g. `RatOpAmpStage`, header-visible) so Task B can test it
   directly at 4 fs. The implementer documents the discretisation in the header comment.
 
