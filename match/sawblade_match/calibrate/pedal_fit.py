@@ -18,7 +18,7 @@ v0.4a (docs/specs/v0_4a-pedal_accuracy.md) changes, 7.1 behaviour stays reachabl
     fundamental); the 7.1 term (floor -70 dB) is still reported as ``harm_rms_db_legacy``; even/odd parts are reported;
   * every render is aligned to the probe by cross-correlating the sweep segment (lag recorded), so a reference with
     latency does not move the stepped-sine slots;
-  * ``--pedal {hm,hmx,eye,muff,ts}``: the param space of each block comes from ``PEDALS``; ``level`` is solved in
+  * ``--pedal {hm,hmx,eye,muff,ts,rat}``: the param space of each block comes from ``PEDALS``; ``level`` is solved in
     closed form only where ``PedalSpec.level_pure_gain`` (proved by ``test_level_is_a_pure_output_gain[<pedal>]``),
     otherwise it is searched like the other knobs.
 
@@ -246,6 +246,9 @@ PEDALS = {
     # all three only lets the optimiser wander along that ridge; sustain carries the drive, crunch stays at 5.
     "muff": PedalSpec("muff", "pedal.muff", ("sustain", "tone", "scoop", "voice"), "volume", True, 1, (1,)),
     "ts": PedalSpec("ts", "pedal.ts", ("drive", "tone"), "level", True, 1, (1,)),
+    # rat: VOLUME is applied after the clipper and FILTER (wet path only; ``mix`` stays 100), so it is a pure output
+    # gain (test_level_is_a_pure_output_gain[rat]). clip / ruetz / tightness stay at the block defaults.
+    "rat": PedalSpec("rat", "pedal.rat", ("distortion", "filter"), "volume", True, 1, (1,)),
 }
 
 
@@ -943,6 +946,7 @@ KNOWN_TRUTH = {
     "eye": ((7.0,), 6.5),
     "muff": ((7.0, 4.0, 6.0, 6.0), 6.5),
     "ts": ((7.0, 3.0), 6.5),
+    "rat": ((6.5, 3.0), 6.5),
 }
 KNOWN_LAYOUT = ProbeLayout(sweep_s=1.0, steps_s=3.2, di_s=4.0)   # short probe: tests and --known-answers
 KNOWN_DI = REPO / "tests" / "fixtures" / "di_riff.wav"
@@ -1051,7 +1055,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "refused: their harmonic term and records are not comparable)")
     p.add_argument("--known-answers", action="store_true",
                    help="do not read captures: render the pedal(s) at known params as the capture, fit, and write "
-                        "known_answers.json (all five pedals unless --pedal is given)")
+                        "known_answers.json (all pedals unless --pedal is given)")
     return p
 
 

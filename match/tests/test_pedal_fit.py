@@ -40,7 +40,8 @@ LOOSE_KNOB_TOL: dict[str, dict[str, float]] = {"hm": {"distortion": 1.0}, "hmx":
 # for the V-shaped cost to be walked to its vertex: the long small-step refine stage is what makes it robust
 # (measured over 3 seeds: hmx at 2/10/14/12 has LTAS 0.25 and presence 1.3 units off on one of them, at 2/10/10/30 every
 # knob is within 0.4 on all of them).
-BUDGET = {"hm": (2, 8, 10, 16), "hmx": (2, 10, 10, 30), "eye": (2, 6, 6, 8), "muff": (2, 10, 10, 30), "ts": (2, 8, 8, 12)}
+BUDGET = {"hm": (2, 8, 10, 16), "hmx": (2, 10, 10, 30), "eye": (2, 6, 6, 8), "muff": (2, 10, 10, 30), "ts": (2, 8, 8, 12),
+          "rat": (2, 8, 8, 12)}
 # Margins at these budgets (3 seeds, worst case; thresholds in test_known_answer_fit): hm LTAS 0.024 / harm 0.098 /
 # dyn 0.029, distortion 0.33 off; ts and eye <= 0.004 on every term; hmx LTAS 0.088 / harm 0.221 / dyn 0.026; muff
 # LTAS 0.051 / harm 0.046 / dyn 0.093.

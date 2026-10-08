@@ -16,7 +16,7 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parents[3]
 DEFAULT_OUT = REPO / "docs" / "reports" / "v0_4" / "accuracy.md"
-PEDAL_ORDER = ("hm", "hmx", "eye", "muff", "ts")
+PEDAL_ORDER = ("hm", "hmx", "eye", "muff", "ts", "rat")
 TARGET_LTAS_DB = 2.0          # v0.4 target: constrained LTAS shape error on labelled captures
 TARGET_LTAS_FRACTION = 0.75   # ... on at least this fraction of them
 TARGET_HARM_SPREAD_X = 2.0    # ... and constrained harmonic error within this multiple of the capture spread
