@@ -12,6 +12,7 @@
 //    1 (phase 7: may set only the four stock knobs, maps onto the v2 defaults). Versions 1 and 2 render
 //    bit-identically to before version 3 existed; a block built from HmParams{} is version 3.
 //  * pedal.muff: modelVersion 1.
+//  * pedal.rat: modelVersion 1.
 // Any other modelVersion is a PresetError, so a later re-fit can bump it without silently changing
 // old presets.
 namespace sawblade {
@@ -20,7 +21,12 @@ constexpr int kPedalModelVersion = 1;  // pedal.ts
 constexpr int kHmModelVersion = 3;     // pedal.hm: current (1 and 2 are still read)
 constexpr int kHmModelVersionV2 = 2;
 constexpr int kMuffModelVersion = 1;   // pedal.muff
+constexpr int kRatModelVersion = 1;    // pedal.rat
 constexpr double kKnobMin = 0.0, kKnobMax = 10.0, kKnobDefault = 5.0;
+// pedal.rat stock VOLUME: 8 = unity on the shared level map (pedalLevelDb). With the voicing's fixed +6 dB output
+// trim the stock pedal (DIST 5, FILTER 5, silicon) returns the RMS of a -12 dBFS-RMS DI riff within 1 dB
+// (tests/test_pedal_rat.cpp measures and checks it).
+constexpr double kRatStockVolume = 8.0;
 
 enum class HmMode : int { Stock = 0, Custom = 1, Modded = 2 };
 inline constexpr const char* kHmModeNames[3] = {"stock", "custom", "modded"};
@@ -62,6 +68,20 @@ struct TsParams {
   bool operator==(const TsParams&) const = default;
 };
 
+// pedal.rat clipper set. Its own enum: the shared ClipType has no `none`, and `asymmetric` here is a 1+2 diode string.
+enum class RatClip : int { Silicon = 0, Led = 1, None = 2, Asymmetric = 3 };
+constexpr int kNumRatClips = 4;
+inline constexpr const char* kRatClipNames[kNumRatClips] = {"silicon", "led", "none", "asymmetric"};
+
+// Rat-style distortion (pedal.rat, display name VERMIN).
+struct RatParams {
+  double distortion = kKnobDefault, filter = kKnobDefault, volume = kRatStockVolume;
+  double tightness = 0.0, mix = 100.0;
+  RatClip clip = RatClip::Silicon;
+  bool ruetz = false;
+  bool operator==(const RatParams&) const = default;
+};
+
 struct HmBlockParams : BlockParams {
   HmParams p;
   bool equals(const BlockParams& other) const override;
@@ -70,6 +90,12 @@ struct HmBlockParams : BlockParams {
 
 struct MuffBlockParams : BlockParams {
   MuffParams p;
+  bool equals(const BlockParams& other) const override;
+  nlohmann::json toJson() const override;
+};
+
+struct RatBlockParams : BlockParams {
+  RatParams p;
   bool equals(const BlockParams& other) const override;
   nlohmann::json toJson() const override;
 };
@@ -83,6 +109,7 @@ struct TsBlockParams : BlockParams {
 // Registry parse hooks (type-specific members of the block object; the caller calls finish()).
 std::shared_ptr<const BlockParams> parseHmBlock(JsonObject& o, const std::filesystem::path&);
 std::shared_ptr<const BlockParams> parseMuffBlock(JsonObject& o, const std::filesystem::path&);
+std::shared_ptr<const BlockParams> parseRatBlock(JsonObject& o, const std::filesystem::path&);
 std::shared_ptr<const BlockParams> parseTsBlock(JsonObject& o, const std::filesystem::path&);
 
 // 0..10 knob -> level in dB: 3*level - 24 (0 dB at 8).
@@ -99,9 +126,12 @@ enum MuffLive : int {
   kMuffClip, kMuffClip2, kMuffStackRatio, kMuffRolloffHz, kMuffGain2Db, kMuffBias, kMuffNumLive
 };
 
+enum RatLive : int { kRatDistortion, kRatFilter, kRatVolume, kRatTightness, kRatMix, kRatClip, kRatRuetz, kRatNumLive };
+
 // Descriptors in enum order (key = the JSON key; ranges and defaults are the preset schema's).
 std::vector<LiveParamDesc> hmLiveParamDescs();
 std::vector<LiveParamDesc> muffLiveParamDescs();
+std::vector<LiveParamDesc> ratLiveParamDescs();
 
 // Pure converters. RT-safe, never throw: a missing (index >= count) or non-finite entry takes the
 // default, everything is clamped into its range, enum indexes are rounded.
@@ -109,5 +139,7 @@ HmParams hmParamsFromLive(const float* values, int count) noexcept;
 void hmLiveFromParams(const HmParams& p, float* values /* kHmNumLive */) noexcept;
 MuffParams muffParamsFromLive(const float* values, int count) noexcept;
 void muffLiveFromParams(const MuffParams& p, float* values /* kMuffNumLive */) noexcept;
+RatParams ratParamsFromLive(const float* values, int count) noexcept;
+void ratLiveFromParams(const RatParams& p, float* values /* kRatNumLive */) noexcept;
 
 }  // namespace sawblade

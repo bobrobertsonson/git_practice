@@ -54,6 +54,16 @@ constexpr Spec kMuffSpec[kMuffNumLive] = {
     {"bias", "Bias", 0, 10, 0},
 };
 
+constexpr Spec kRatSpec[kRatNumLive] = {
+    {"distortion", "Dist", 0, 10, 5},
+    {"filter", "Filter", 0, 10, 5},
+    {"volume", "Volume", 0, 10, kRatStockVolume},
+    {"tightness", "Tight", 0, 10, 0},
+    {"mix", "Mix", 0, 100, 100},
+    {"clip", "Clip", 0, 3, 0},
+    {"ruetz", "Ruetz", 0, 1, 0},
+};
+
 std::vector<std::string> clipChoices() { return {kClipNames, kClipNames + kNumClipTypes}; }
 std::vector<std::string> clip2Choices() { return {kClip2Names, kClip2Names + kNumClipTypes + 1}; }
 std::vector<std::string> modeChoices() { return {kHmModeNames, kHmModeNames + 3}; }
@@ -105,6 +115,17 @@ std::vector<LiveParamDesc> hmLiveParamDescs() {
     if (i == kHmClip) c = clipChoices();
     if (i == kHmClip2) c = clip2Choices();
     d.push_back(desc(kHmSpec[i], std::move(c)));
+  }
+  return d;
+}
+
+std::vector<LiveParamDesc> ratLiveParamDescs() {
+  std::vector<LiveParamDesc> d;
+  for (int i = 0; i < kRatNumLive; ++i) {
+    std::vector<std::string> c;
+    if (i == kRatClip) c = {kRatClipNames, kRatClipNames + kNumRatClips};
+    if (i == kRatRuetz) c = {"off", "on"};
+    d.push_back(desc(kRatSpec[i], std::move(c)));
   }
   return d;
 }
@@ -206,6 +227,30 @@ void muffLiveFromParams(const MuffParams& p, float* v) noexcept {
   v[kMuffBias] = f(p.bias);
 }
 
+RatParams ratParamsFromLive(const float* v, int n) noexcept {
+  const auto L = [&](int i) { return live(v, n, i, kRatSpec[i]); };
+  RatParams p;
+  p.distortion = L(kRatDistortion);
+  p.filter = L(kRatFilter);
+  p.volume = L(kRatVolume);
+  p.tightness = L(kRatTightness);
+  p.mix = L(kRatMix);
+  p.clip = static_cast<RatClip>(liveEnum(v, n, kRatClip, kRatSpec[kRatClip]));
+  p.ruetz = liveEnum(v, n, kRatRuetz, kRatSpec[kRatRuetz]) != 0;
+  return p;
+}
+
+void ratLiveFromParams(const RatParams& p, float* v) noexcept {
+  const auto f = [](double x) { return static_cast<float>(x); };
+  v[kRatDistortion] = f(p.distortion);
+  v[kRatFilter] = f(p.filter);
+  v[kRatVolume] = f(p.volume);
+  v[kRatTightness] = f(p.tightness);
+  v[kRatMix] = f(p.mix);
+  v[kRatClip] = static_cast<float>(static_cast<int>(p.clip));
+  v[kRatRuetz] = p.ruetz ? 1.0f : 0.0f;
+}
+
 std::shared_ptr<const BlockParams> parseHmBlock(JsonObject& o, const std::filesystem::path&) {
   auto b = std::make_shared<HmBlockParams>();
   const int version = parseModelVersion(o, kHmModelVersion, 1);
@@ -268,6 +313,25 @@ std::shared_ptr<const BlockParams> parseMuffBlock(JsonObject& o, const std::file
   return b;
 }
 
+std::shared_ptr<const BlockParams> parseRatBlock(JsonObject& o, const std::filesystem::path&) {
+  auto b = std::make_shared<RatBlockParams>();
+  parseModelVersion(o, kRatModelVersion, 1);
+  if (auto po = o.optionalObject("params")) {
+    RatParams& p = b->p;
+    p.distortion = num(*po, kRatSpec[kRatDistortion]);
+    p.filter = num(*po, kRatSpec[kRatFilter]);
+    p.volume = num(*po, kRatSpec[kRatVolume]);
+    p.tightness = num(*po, kRatSpec[kRatTightness]);
+    p.mix = num(*po, kRatSpec[kRatMix]);
+    const std::string clip = po->oneOf("clip", "silicon", {"silicon", "led", "none", "asymmetric"});
+    for (int i = 0; i < kNumRatClips; ++i)
+      if (clip == kRatClipNames[i]) p.clip = static_cast<RatClip>(i);
+    p.ruetz = po->boolean("ruetz", false);
+    po->finish();
+  }
+  return b;
+}
+
 std::shared_ptr<const BlockParams> parseTsBlock(JsonObject& o, const std::filesystem::path&) {
   auto b = std::make_shared<TsBlockParams>();
   parseModelVersion(o, kPedalModelVersion, 1);
@@ -315,6 +379,22 @@ nlohmann::json MuffBlockParams::toJson() const {
                       {"stackRatio", p.stackRatio}, {"rolloffHz", p.rolloffHz},
                       {"gain2Db", p.gain2Db}, {"bias", p.bias}};
   return {{"modelVersion", kMuffModelVersion}, {"params", j}};
+}
+
+bool RatBlockParams::equals(const BlockParams& other) const {
+  const auto* o = dynamic_cast<const RatBlockParams*>(&other);
+  return o && p == o->p;
+}
+nlohmann::json RatBlockParams::toJson() const {
+  return {{"modelVersion", kRatModelVersion},
+          {"params",
+           {{"distortion", p.distortion},
+            {"filter", p.filter},
+            {"volume", p.volume},
+            {"tightness", p.tightness},
+            {"mix", p.mix},
+            {"clip", kRatClipNames[static_cast<int>(p.clip)]},
+            {"ruetz", p.ruetz}}}};
 }
 
 bool TsBlockParams::equals(const BlockParams& other) const {

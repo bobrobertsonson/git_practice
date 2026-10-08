@@ -10,6 +10,7 @@
 #include "sawblade/pedal_hm.h"
 #include "sawblade/pedal_hmx.h"
 #include "sawblade/pedal_muff.h"
+#include "sawblade/pedal_rat.h"
 #include "sawblade/pedal_ts.h"
 
 namespace sawblade {
@@ -91,6 +92,10 @@ std::unique_ptr<Processor> createMuff(const Block& b, const BlockBuildContext&) 
   return std::make_unique<MuffPedal>(static_cast<const MuffBlockParams&>(*b.params).p);
 }
 
+std::unique_ptr<Processor> createRat(const Block& b, const BlockBuildContext&) {
+  return std::make_unique<RatPedal>(static_cast<const RatBlockParams&>(*b.params).p);
+}
+
 std::unique_ptr<Processor> createTs(const Block& b, const BlockBuildContext&) {
   return std::make_unique<TsPedal>(static_cast<const TsBlockParams&>(*b.params).p);
 }
@@ -103,6 +108,7 @@ BlockRegistry::BlockRegistry() {
   // Modeled pedals: static, nonlinear, time-invariant, so NAM-trainable.
   types_["pedal.hm"] = BlockType{{/*namTrainable=*/true}, parseHmBlock, createHm, hmLiveParamDescs()};
   types_["pedal.muff"] = BlockType{{/*namTrainable=*/true}, parseMuffBlock, createMuff, muffLiveParamDescs()};
+  types_["pedal.rat"] = BlockType{{/*namTrainable=*/true}, parseRatBlock, createRat, ratLiveParamDescs()};
   types_["pedal.ts"] = BlockType{{/*namTrainable=*/true}, parseTsBlock, createTs, {}};
   types_["pedal.hmx"] = BlockType{{/*namTrainable=*/true}, parseHmxBlock, createHmx, hmxLiveParamDescs()};
   types_["pedal.eye"] = BlockType{{/*namTrainable=*/true}, parseEyeBlock, createEye, eyeLiveParamDescs()};

@@ -15,6 +15,7 @@ add_library(sawblade_core STATIC
   src/pedal_hm.cpp
   src/pedal_muff.cpp
   src/pedal_ts.cpp
+  src/pedal_rat.cpp
   src/pedal_saw_params.cpp
   src/pedal_hmx.cpp
   src/pedal_eye.cpp
