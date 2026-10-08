@@ -22,6 +22,11 @@ Parent: `docs/specs/v0_8-input_calibration.md` (Task C).
      still within the existing golden/level tolerances. Otherwise they stay `"legacy"` and are listed in the REPORT
      for the user to re-match.
    - `docs/PRESET_SCHEMA.md` documents v5. The reader still reads v1–v4.
+   - Cheap paths to calibrated levels (main lead, 2026-10-08):
+     - The legacy hint has a one-click "Use calibrated levels". It flips that preset to `"calibrated"`, can be undone,
+       and is written on save.
+     - Settings gets "Calibrate all user presets", with a confirmation showing the count. It does the same in bulk and
+       never touches factory presets.
 2. **Calibrated trim in the preset.**
    - Store `output.autoTrimCalDb` and `output.autoTrimCalHash` alongside the existing trim. They are measured with
      calibration at the assumed +12 dBu reference device, so they are machine-independent.
@@ -47,14 +52,19 @@ Parent: `docs/specs/v0_8-input_calibration.md` (Task C).
    - Offline (tonerender, matcher): no auto-detection. A stereo DI file uses the louder channel by whole-file RMS
      (the default), or an explicit `--di-channel L|R|mix`. The rule is recorded in the report, and output is
      bit-identical regardless of block size.
-5. **Export.**
+5. **Export.** (main lead: the dBu written must be the calibration that was in effect during the reamp/training render.
+   If the render was uncalibrated, write no dBu fields, rather than a guess, and say so in the export notes.)
    - The exported `.nam` writes `input_level_dbu` and `output_level_dbu`, in the NAM trainer's metadata fields
      (REPORT A1), computed from the device level used for the export render and the chain's output reference.
    - When the device level was assumed, the export notes say so, and say which interface level to set on a loader
      that does not honour the fields.
 6. **Anagram device preset.** Search once more for a citable maximum input level, from the Darkglass manual or spec
    sheet. If none is found, add no preset; the user enters a value or measures. Never guess.
-7. **Default flip (I4c, last).**
+7. **Default flip (I4c, last).** The flip is its own final commit, so it can be reverted alone.
+   - Acceptance gate: green CI is not enough. The user A/Bs calibrated input levels ON vs OFF on two amp swaps without
+     touching INPUT. Their feel note and the real L_ubr_quick drive numbers go in the REPORT.
+   - The REPORT states that the matcher default changes match results: the v0.7 baseline (Task C) must run after the
+     flip, and the earlier v0.4M validation numbers are pre-calibration and not comparable.
    - `calibratedInputLevels` defaults ON for new installs. Existing installs keep an explicit OFF only if the user set
      it; an untouched default becomes ON.
    - tonerender and the matcher default to calibrated.
