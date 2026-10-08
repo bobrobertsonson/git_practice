@@ -444,6 +444,11 @@ int main(int argc, char** argv) {
         silent = !sawblade::autoTrimFresh(p) && !sawblade::stampAutoTrim(p, o.cache);
         trimNote = {{"source", "legacy autoTrimDb"}};
       }
+      if (silent) {  // never apply a stale stored trim when the reference cannot be measured
+        p.autoTrim.db = 0.0;
+        p.autoTrim.hash.clear();
+        trimNote = {{"source", "none (reference DI renders silent)"}};
+      }
       if (silent)
         std::cerr << "tonerender: warning: --level-match: the reference DI renders silent through this preset; no trim applied\n";
       sawblade::AudioFile in;

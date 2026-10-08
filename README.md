@@ -80,7 +80,9 @@ tonerender --preset P.json --in DI.wav --out OUT.wav [--block N=256] [--report R
            [--render-rate auto|HZ] [--out-rate input|render]
 ```
 
-- Input: mono WAV (16/24/32-bit PCM or float; stereo uses the left channel, with a warning).
+- Input: mono WAV (16/24/32-bit PCM or float; a stereo file renders one channel: the louder of the first two by
+  whole-file RMS, L on a tie, or `--di-channel L|R|mix`; the rule used is recorded in the report's `diChannel`. Input
+  calibration follows the preset's `calibration.mode`; `--device-dbu X` sets the interface level, default the assumed +12 dBu).
   `--render-rate auto` (default) renders at the NAM models' training rate (usually 48 kHz; all
   non-bypassed NAM blocks must agree, else exit 3 naming them; with none, the input rate). The
   input is resampled to it with a Kaiser-windowed sinc (passband flat within 0.05 dB to 20 kHz at

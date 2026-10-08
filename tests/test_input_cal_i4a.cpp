@@ -643,3 +643,40 @@ TEST_CASE("I4a committed presets: legacy vs calibrated table", "[.][i4a-table]")
   else WARN(md);
   CHECK(total >= 30);
 }
+
+TEST_CASE("I4a CLI: --level-match re-measures a stale calibrated stamp, and applies no trim when the reference renders silent", "[i4a][cli][autotrim]") {
+  TempDir t;
+  Preset p = parse(mkPreset("calibrated"));
+  REQUIRE(stampAutoTrimCal(p));
+  const double fresh = p.autoTrimCal.db;
+  p.autoTrimCal.db = fresh + 5.0;  // a wrong value under a hash that no longer matches
+  p.autoTrimCal.hash = "stale";
+  writeText(t / "stale.json", toJson(p).dump(2));
+  json quietJ = toJson(parse(mkPreset("calibrated")));
+  quietJ["input"] = {{"gainDb", -60.0}};  // the reference DI falls below the -70 LUFS gate
+  Preset quiet = parse(quietJ);
+  quiet.autoTrim.db = 7.0;
+  quiet.autoTrim.hash = "stale";
+  quiet.autoTrimCal.db = 7.0;
+  quiet.autoTrimCal.hash = "stale";
+  writeText(t / "quiet.json", toJson(quiet).dump(2));
+  Preset quietLegacy = quiet;
+  quietLegacy.calibrationMode = CalibrationMode::Legacy;
+  writeText(t / "quiet_legacy.json", toJson(quietLegacy).dump(2));
+  writeWavFloat32(t / "di.wav", kFs, noise(24000, 5, 0.1f));
+  const auto run = [&](const std::string& preset, const std::string& tag) {
+    REQUIRE(runCli("--preset " + q(t / preset) + " --in " + q(t / "di.wav") + " --out " + q(t / (tag + ".wav")) + " --report " +
+                       q(t / (tag + ".json")) + " --render-rate 48000 --level-match",
+                   t / (tag + ".err")) == 0);
+    return json::parse(slurp(t / (tag + ".json")));
+  };
+  const json s = run("stale.json", "stale");
+  CHECK(s["levelMatchTrim"]["source"] == "measured at +12 dBu");
+  CHECK(s["autoTrimDb"].get<double>() == Approx(fresh));
+  for (const char* f : {"quiet.json", "quiet_legacy.json"}) {
+    INFO(f);
+    const json r = run(f, std::string("q_") + f);
+    CHECK(r["autoTrimDb"].get<double>() == 0.0);
+    CHECK(r["levelMatchTrim"]["source"] == "none (reference DI renders silent)");
+  }
+}
