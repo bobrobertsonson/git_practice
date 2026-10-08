@@ -327,7 +327,7 @@ def get_wear():
     return _WEAR
 
 
-LOOK_MODES = ('v2', 'v3')
+LOOK_MODES = ('v2', 'v3', 'v4')
 _LOOK = 'v2'
 
 
@@ -345,7 +345,11 @@ def get_look():
 
 
 def is_v3():
-    return _LOOK == 'v3'
+    return _LOOK in ('v3', 'v4')            # v4 is built on v3: every v3 display / lamp / ladder behaviour applies
+
+
+def is_v4():
+    return _LOOK == 'v4'
 
 
 def _rng(name):
@@ -1413,6 +1417,10 @@ def glyph_icon(cv, name, cx, cy, size, color='ink', hole='well_raised'):
         cv.line([(cx - h * 0.7, cy), (cx - h * 0.15, cy + h * 0.6), (cx + h * 0.8, cy - h * 0.6)], color, 2.0)
     elif name == 'diamond':
         cv.poly([(cx, cy - h), (cx + h * 0.8, cy), (cx, cy + h), (cx - h * 0.8, cy)], color)
+    elif name == 'info':      # circled i
+        cv.ellipse(cx, cy, h * 0.9, color=color, width=1.6)
+        cv.fill((cx - 0.8, cy - h * 0.1, cx + 0.8, cy + h * 0.5), color)
+        cv.ellipse(cx, cy - h * 0.38, 1.0, color=color)
     elif name == 'eye':
         cv.ellipse(cx, cy, h, h * 0.55, color=color, width=1.6)
         cv.ellipse(cx, cy, h * 0.3, color=color)
@@ -1678,7 +1686,7 @@ def lcd(cv, xy, value, unit='', digits=None, h=26, align='l', w=None, tone='ambe
     cv.fill(rect, 'steel_bare', 3)
     cv.fill(inset(rect, 1), 'bench_dark', 3)
     glass = inset(rect, 2)
-    v3 = _LOOK == 'v3'
+    v3 = _LOOK in ('v3', 'v4')
     lit_tok = TONES[tone]['lit'] if v3 else 'lcd_amber'
     cv.fill(glass, TONES[tone]['glass'] if v3 else 'glass', 2)
     # the digit area must be flat before ghosts are drawn
@@ -1767,7 +1775,7 @@ def knob(cv, cx, cy, size, kind='pedal', value=0.5, path='blade', label=None, re
     spr = _knob_sprite(kind, value, size)
     cv.shadow((cx - size * 0.42, cy - size * 0.4, cx + size * 0.42, cy + size * 0.4), 99, (size * 0.03, size * 0.07),
               size * 0.18, 0.7, 'ellipse')
-    if track and ring and _LOOK == 'v3':
+    if track and ring and _LOOK in ('v3', 'v4'):
         led_ring(cv, cx, cy, (62.0 if kind == 'amp' else 52.48) / 64.0 * size / 2.0 + size * 0.04, value, path)
     elif track:
         ring = (62.0 if kind == 'amp' else 52.48) / 64.0 * size / 2.0
@@ -1970,6 +1978,8 @@ def top_bar(cv, state=None, y=0, width=PAGE_W):
     ``y``.  ``state`` = TopBarState (or a dict of its fields).  Returns a dict of element rects: brand, preset, ab_a, ab_b,
     rig, woodshed, gear, status, mode, match, forger, chip_uncal, chip_oot, rail."""
     st = state if isinstance(state, TopBarState) else TopBarState(**(state or {}))
+    if _LOOK == 'v4':
+        return top_bar_v4(cv, st, y, width)
     if _LOOK == 'v3':
         return top_bar_v3(cv, st, y, width)
     rail = (0, y, width, y + BAR_H)
@@ -2394,6 +2404,136 @@ def led_meter(cv, rect, label, value, peak, vtext, lo=-48.0, hi=0.0, ticks=(-48,
     return (x0, y0, x1, y1)
 
 
+def led_thin(cv, rect, label, value, peak, n=16, lo=-48.0, hi=0.0):
+    """Thin LED ladder (v4 top bar): label word + one row of small segments (green -> amber -> red, faint unlit, a taller
+    peak-hold segment).  No ticks and no LCD: the full ladders live in the details."""
+    x0, y0, x1, y1 = rect
+    lr = label_well(cv, (x0, (y0 + y1) / 2.0), label, 'label_b', h=14, pad=4)
+    px0 = lr[2] + 4
+    span = float(hi - lo)
+    sw = (x1 - px0) / n
+    cy = (y0 + y1) / 2.0
+    pk = min(n - 1, max(0, int(round((peak - lo) / span * n)) - 1))
+    for i in range(n):
+        f = (i + 0.5) / n
+        c = 'ok' if f < 0.62 else ('warn' if f < 0.86 else 'alert')
+        seg = (px0 + i * sw + 0.5, cy - 3.5, px0 + (i + 1) * sw - 0.5, cy + 3.5)
+        if i == pk:
+            seg = (seg[0], seg[1] - 2, seg[2], seg[3] + 2)
+            cv.fill(seg, c, 1)
+        elif lo + f * span <= value:
+            cv.fill(seg, c, 1)
+        else:
+            cv.fill(seg, tuple(int(v * 0.16 + 6) for v in rgb(c)), 1)
+    return rect
+
+
+def top_bar_v4(cv, st, y=0, width=PAGE_W):
+    """v4 top bar: brand, preset scroller with arrows, A / B, RIG / WOODSHED, thin IN / OUT ladders, MATCH, NAM FORGER, settings,
+    LIVE lamp (UNCAL / OUT OF TRUE fold into the lamp block).  No LAT / CPU or other readouts."""
+    rail = (0, y, width, y + BAR_H)
+    cv.shadow(rail, 0, (0, 4), 8, 0.7)
+    cv.texture(rail, alu_tex(width, BAR_H, 'topbar'))
+    cv.blend((0, y + BAR_H - 1, width, y + BAR_H), 'bench_dark', 0.9)
+    for (rx, ry) in ((9, y + 9), (9, y + BAR_H - 10), (width - 9, y + 9), (width - 9, y + BAR_H - 10)):
+        rivet(cv, rx, ry, 2.6)
+    cy = y + BAR_H / 2.0
+    out = {'rail': rail}
+    x = 22
+    bw = text_width('SAWBLADE', 'brand', size=17) + 14
+    out['brand'] = brand = (x, cy - 16, x + bw, cy + 16)
+    well(cv, brand, 'well', 3)
+    text(cv, None, 'SAWBLADE', 'brand', bg=brand, size=17)
+    x = brand[2] + 8
+    b0 = (x, cy - 14, x + 16, cy + 14)
+    button(cv, b0, '', 'secondary')
+    glyph_icon(cv, 'chev_l', (b0[0] + b0[2]) / 2.0, cy, 9, 'bone')
+    x = b0[2] + 3
+    pw = 340 if st.ab else 292
+    pr = (x, cy - 22, x + pw, cy + 22)
+    if st.ab:
+        a_act = st.ab.get('active', 'a') == 'a'
+        dm_display(cv, pr, ['A ▶ ' + st.ab['a'] if a_act else 'A · ' + st.ab['a'], 'B ▶ ' + st.ab['b'] if not a_act else 'B · ' + st.ab['b']],
+                   h=14, tone='amber', row_gap=1.4, pad=4)
+    else:
+        dm_display(cv, pr, st.preset, h=14, tone='amber', pad=5)
+    out['preset'] = pr
+    x = pr[2] + 3
+    b1 = (x, cy - 14, x + 16, cy + 14)
+    button(cv, b1, '', 'secondary')
+    glyph_icon(cv, 'chev_r', (b1[0] + b1[2]) / 2.0, cy, 9, 'bone')
+    x = b1[2] + 4
+    for i, (k, nm) in enumerate((('ab_a', 'A'), ('ab_b', 'B'))):
+        active = st.ab is not None and st.ab.get('active', 'a') == ('a' if nm == 'A' else 'b')
+        fx = x + 19 + i * 40
+        if st.ab is None:
+            footswitch(cv, fx, cy - 7, 28, False, None, None)
+            lr = label_well(cv, (fx, cy + 17), nm, 'label_b', h=13, pad=6, align='c')
+        else:
+            footswitch(cv, fx, cy - 7, 28, active)
+            lr = label_well(cv, (fx, cy + 17), nm + (' ACTIVE' if active else ''), 'label_b', h=13, pad=3, align='c')
+        out[k] = (fx - 14, cy - 21, fx + 14, lr[3])
+    x += 84
+    rw = text_width('RIG', 'button') + 16
+    out['rig'] = r = (x, cy - 17, x + rw, cy + 17)
+    button(cv, r, 'RIG', 'secondary', 'pressed' if st.rig_active and not st.woodshed_open else 'normal')
+    x = r[2] + 4
+    ww = text_width('WOODSHED', 'button') + 16
+    out['woodshed'] = r = (x, cy - 17, x + ww, cy + 17)
+    button(cv, r, 'WOODSHED', 'secondary', 'pressed' if st.woodshed_open else 'normal')
+    left_end = r[2]
+    # ---- right side, right to left ------------------------------------------------------------------------------------
+    x = width - 22
+    fw = text_width('NAM FORGER', 'button_ink') + 18
+    out['forger'] = r = (x - fw, cy - 17, x, cy + 17)
+    button(cv, r, 'NAM FORGER', 'primary')
+    x = r[0] - 5
+    if st.match_pct is not None:
+        mw = 112
+        out['match'] = r = (x - mw, cy - 17, x, cy + 17)
+        button(cv, r, '', 'secondary', 'pressed')
+        text(cv, (r[0] + 10, cy + 1), 'MATCH', 'button', bg=(r[0] + 4, r[1] + 6, r[0] + 58, r[3] - 3))
+        lcd(cv, (r[2] - 5, cy + 1), '%d' % st.match_pct, '%', digits=2, h=14, align='r', tone='green')
+    else:
+        mw = text_width('MATCH', 'button') + 18
+        out['match'] = r = (x - mw, cy - 17, x, cy + 17)
+        button(cv, r, 'MATCH', 'secondary')
+    x = r[0] - 5
+    out['gear'] = r = (x - 28, cy - 17, x, cy + 17)
+    button(cv, r, '', 'secondary')
+    glyph_icon(cv, 'gear', (r[0] + r[2]) / 2.0, cy, 14, 'bone')
+    x = r[0] - 8
+    # LIVE lamp block: one lamp per fact (mode; UNCAL; OUT OF TRUE), stacked when more than one
+    rows = [('green' if st.mode == 'LIVE' else 'blue', st.mode, 'ok' if st.mode == 'LIVE' else 'body')]
+    if st.uncal:
+        rows.append(('amber', 'UNCAL', 'warn'))
+    if st.out_of_true:
+        rows.append(('red', 'OUT OF TRUE', 'alert'))
+    n = len(rows)
+    bwid = text_width('OUT OF TRUE', 'label_b') + 40                  # fixed width: the ladders do not move between states
+    rh = 20 if n == 1 else (17 if n == 2 else 15)
+    bh = n * rh + 6
+    br = (x - bwid, cy - bh / 2.0, x, cy + bh / 2.0)
+    well(cv, br, 'well', 3, border=('alert' if st.out_of_true else 'warn' if st.uncal else ('ok' if st.mode == 'LIVE' else 'body')))
+    for i, (hue, t, fgc) in enumerate(rows):
+        ry = br[1] + 3 + rh * (i + 0.5)
+        glow_led(cv, br[0] + 11, ry, True, hue, 4.0 if n < 3 else 3.2)
+        text(cv, (br[0] + 27, ry), t, 'label_b', bg=(br[0] + 25, ry - rh / 2.0 + 1, br[2] - 3, ry + rh / 2.0 - 1), fg=fgc)
+    out['mode'] = br
+    out['chip_uncal'] = out['chip_oot'] = br
+    x = br[0] - 10
+    # thin IN / OUT ladders, right-aligned in the room between the clusters
+    lw = 112
+    mr = (x - lw, cy - 24, x, cy + 24)
+    well(cv, mr, 'well', 3)
+    led_thin(cv, (mr[0] + 5, cy - 19, mr[2] - 5, cy - 3), 'IN', -17.0, -9.0)
+    led_thin(cv, (mr[0] + 5, cy + 3, mr[2] - 5, cy + 19), 'OUT', -11.0, -6.0)
+    out['meters'] = mr
+    if mr[0] < left_end + 6:
+        raise AssertionError(f'v4 top bar ladders collide with the left cluster (x={mr[0]:.0f}, left_end={left_end:.0f})')
+    return out
+
+
 def top_bar_v3(cv, st, y=0, width=PAGE_W):
     """The 58 px top bar in the displays look: preset / rig name on a dot-matrix scroller, glowing state lamps with their words,
     a green LAT / CPU display.  Same keys as top_bar()."""
@@ -2527,7 +2667,7 @@ _TEXT_ON = {   # token -> (background token) used for the swatch ratio column
 
 def render_style_sheet():
     """The 1280 x 800 style sheet (00_style_sheet)."""
-    if _LOOK == 'v3':
+    if _LOOK in ('v3', 'v4'):
         return render_style_sheet_v3()
     cv = new_screen('00_style_sheet', 700)
     top = plate(cv, (12, 10, 1268, 50), 'SAWBLADE · WORKSHOP STYLE', right='1280 x 800 · 2x render · Pillow + numpy')

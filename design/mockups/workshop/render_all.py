@@ -48,6 +48,18 @@ def load_registry():
 OVERPAINT = []          # (screen, string, delta, box): strings painted over after they were drawn (a failure)
 
 
+# v4 renders only these screens (plus the three cab directions of 01); v2 / v3 render the ten screens and skip the cab variants
+V4_SCREENS = ('01_main_rig', '01_main_rig_cab_a', '01_main_rig_cab_b', '01_main_rig_cab_c', '02_top_bar', '03_settings_calibration',
+              '08_rig_editor')
+CAB_VARIANTS = ('01_main_rig_cab_a', '01_main_rig_cab_b', '01_main_rig_cab_c')
+
+
+def screens_for(reg, look):
+    if look == 'v4':
+        return {k: v for k, v in reg.items() if k in V4_SCREENS}
+    return {k: v for k, v in reg.items() if k not in CAB_VARIANTS}
+
+
 def render_screens(reg, only=None):
     """-> {name: (PIL image 1x, log list)}"""
     out = {}
@@ -98,7 +110,7 @@ def set_dirs(out, looks, wears):
     n = len(looks) * len(wears)
     for lk in looks:
         for w in wears:
-            suffix = ('_v3' if lk == 'v3' else '') + ('_strong' if w == 'strong' else '')
+            suffix = ('_' + lk if lk in ('v3', 'v4') else '') + ('_strong' if w == 'strong' else '')
             base = PNG_DIR if out is None else os.path.normpath(out)
             res.append((lk, w, base if (out is not None and n == 1) else base + suffix))
     return res
@@ -109,7 +121,7 @@ def main(argv=None):
     ap.add_argument('--out', default=None, help='output directory (default png/ for subtle, png_strong/ for strong)')
     ap.add_argument('--font-dir', default=None, help='font cache directory (default ~/.cache/sawblade_fonts)')
     ap.add_argument('--wear', default='all', choices=['subtle', 'strong', 'all'], help='material wear set (default: both)')
-    ap.add_argument('--look', default='all', choices=['v2', 'v3', 'all'], help='v2 (approved look) or v3 (displays) (default: both)')
+    ap.add_argument('--look', default='all', choices=['v2', 'v3', 'v4', 'all'], help='v2 (approved look), v3 (displays) or v4 (streamlined) (default: all)')
     ap.add_argument('--check', action='store_true', help='compare a fresh render with the committed PNGs')
     ap.add_argument('--contrast', action='store_true', help='print the measured contrast table (Markdown)')
     ap.add_argument('--only', action='append', help='render only this screen name (repeatable)')
@@ -127,13 +139,13 @@ def main(argv=None):
         return 77
     reg = load_registry()
     wears = ['subtle', 'strong'] if a.wear == 'all' else [a.wear]
-    looks = ['v2', 'v3'] if a.look == 'all' else [a.look]
+    looks = ['v2', 'v3', 'v4'] if a.look == 'all' else [a.look]
     rc = 0
     for look, wear, outdir in set_dirs(a.out, looks, wears):
         ws.set_wear(wear)
         ws.set_look(look)
         del OVERPAINT[:]
-        results = render_screens(reg, a.only)
+        results = render_screens(screens_for(reg, look), a.only)
         for o in OVERPAINT:
             print(f'[{look} {wear}] OVERPAINT FAIL {o[0]}: {o[1]!r} changed by {o[2]}/255 at {o[3]}')
         if OVERPAINT:
