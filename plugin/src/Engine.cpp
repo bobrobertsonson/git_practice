@@ -97,6 +97,7 @@ void Engine::applyCalibration(const EngineCalibration& c) {
   if (!c.chain.enabled) return;
   chain_->setCalibration(c.chain);
   if (c.gateFloorSeedDb) chain_->setGateFloorSeedDb(*c.gateFloorSeedDb);
+  chain_->setDriftTapEnabled(c.driftCheck);
   const CalibrationPlan& plan = chain_->calibrationPlan();
   calSummary_.enabled = plan.enabled;
   calSummary_.deviceAssumed = plan.deviceAssumed;

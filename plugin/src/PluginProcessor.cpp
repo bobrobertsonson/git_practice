@@ -1002,14 +1002,21 @@ void SawbladeProcessor::calibrationTick() {
     submit(/*fallbackToInit=*/false);  // the new engine is cross-faded in like any other rebuild
     return;
   }
-  // Part 3: persist the live gate's learned floor into the device record. The audio thread only stores an atomic float in the chain;
-  // this runs on the message thread and writes the settings file at most every floorPersistMs_ and for a change of >= 1 dB.
-  if (!record) return;
   std::shared_ptr<Engine> e;
   {
     std::lock_guard<std::mutex> lk(mutex_);
     e = published_.lock();
   }
+  // I3: the drift check. Off (and cleared) unless calibration is on and a device record exists.
+  if (!want.chain.enabled || !record) driftTracker_.reset();
+  else if (e) {
+    driftTracker_.setBaseline(record->driftBaselineDbfs);  // a changed / cleared baseline (record made or re-picked) restarts the tracker
+    driftTracker_.consume(e->driftTap());
+    if (const auto learnedBaseline = driftTracker_.takeNewBaseline()) st.setDriftBaseline(*learnedBaseline);  // settings write, message thread
+  }
+  // Part 3: persist the live gate's learned floor into the device record. The audio thread only stores an atomic float in the chain;
+  // this runs on the message thread and writes the settings file at most every floorPersistMs_ and for a change of >= 1 dB.
+  if (!record) return;
   if (!e) return;
   const float learned = e->learnedGateFloorDb();
   if (!std::isfinite(learned)) return;

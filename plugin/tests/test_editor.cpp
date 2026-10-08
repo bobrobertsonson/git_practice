@@ -5147,3 +5147,42 @@ TEST_CASE("settings: the Calibrated input levels (beta) toggle is off by default
   CHECK_FALSE(anyLabelContains(*rig.ed, "Interface not calibrated"));
   rig.ed->setSettingsOpen(false);
 }
+
+TEST_CASE("drift notice: shows with Recalibrate and Ignore, Recalibrate opens Settings, Ignore silences it", "[editor][devicecal][drift]") {
+  Rig rig;
+  auto& st = Settings::shared();
+  REQUIRE(st.setDeviceCalibration(sawblade::plugin::settings::recordFromPreset(*sawblade::plugin::settings::findDevicePreset("scarlett-4i4-3g"), "2026-10-08")).ok);
+  REQUIRE(st.setDriftBaseline(-20.0).ok);
+  REQUIRE(st.setCalibratedInputLevels(true).ok);
+  rig.proc.calibrationTick();  // rebuilds with calibration; the tracker takes the stored baseline
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.proc.calibrationTick();
+  rig.ed->refreshNow();
+  juce::Button* recal = buttonTitled(*rig.ed, "Recalibrate");
+  juce::Button* ignore = buttonTitled(*rig.ed, "Ignore");
+  REQUIRE((recal != nullptr && ignore != nullptr));
+  CHECK_FALSE(recal->isVisible());  // nothing to say yet
+  CHECK_FALSE(ignore->isVisible());
+
+  // 70 s of played windows 8 dB hotter than the baseline (driven straight into the tracker; the timer is not pumped here).
+  auto& tr = rig.proc.driftTracker();
+  tr.setBaseline(-20.0);  // what the stored record says (no-op if the tick already took it)
+  for (int i = 0; i < 70 * 20; ++i) tr.addWindow(sawblade::drift::binForDb(-12.0 - 0.25 * (i % 24)));
+  REQUIRE(rig.proc.driftNotice().active);
+  rig.ed->refreshNow();
+  CHECK(recal->isVisible());
+  CHECK(ignore->isVisible());
+  CHECK(anyLabelContains(*rig.ed, "hotter than when you calibrated"));
+  CHECK(anyLabelContains(*rig.ed, "did the interface gain change?"));
+
+  CHECK_FALSE(rig.ed->settingsOpen());
+  click(*recal);
+  CHECK(rig.ed->settingsOpen());
+  rig.ed->setSettingsOpen(false);
+
+  click(*ignore);
+  CHECK_FALSE(rig.proc.driftNotice().active);
+  CHECK_FALSE(recal->isVisible());
+  CHECK_FALSE(ignore->isVisible());
+  CHECK_FALSE(anyLabelContains(*rig.ed, "when you calibrated"));
+}

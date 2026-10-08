@@ -9,6 +9,7 @@
 
 #include "EngineCalibration.h"
 #include "sawblade/chain.h"
+#include "sawblade/drift.h"
 
 // v0.8 I2 Part 2: the device calibration record. It lives in the Settings store (the plugin's app settings), NEVER in a preset or in
 // the plugin state, and it is only ever written off the audio thread. JUCE-free.
@@ -34,6 +35,7 @@ struct DeviceCalibrationRecord {
   bool air = false;
   std::string date;                  // YYYY-MM-DD the record was made
   std::optional<double> liveGateFloorDbfs;  // Part 3: the live gate's learned noise floor, seeds the follower on prepare
+  std::optional<double> driftBaselineDbfs;  // I3: the p95 of the played DI peaks in the first minutes after the record was made (the drift check's reference)
   bool operator==(const DeviceCalibrationRecord&) const = default;
 };
 

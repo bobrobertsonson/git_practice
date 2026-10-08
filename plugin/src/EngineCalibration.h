@@ -11,6 +11,7 @@ namespace sawblade::plugin {
 struct EngineCalibration {
   ChainCalibration chain;                   // enabled only with the "Calibrated input levels (beta)" toggle
   std::optional<double> gateFloorSeedDb;    // the device record's learned live-gate floor; used only when chain.enabled
+  bool driftCheck = false;                  // I3: the chain measures the played input level (drift::PeakTap); only with chain.enabled
 };
 
 }  // namespace sawblade::plugin

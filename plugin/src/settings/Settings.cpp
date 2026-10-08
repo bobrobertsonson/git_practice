@@ -579,6 +579,7 @@ Result Settings::setDeviceCalibration(std::optional<DeviceCalibrationRecord> r) 
     const DbuCheck c = checkDeviceDbu(r->dbu);
     if (!c.ok) return {false, "interface level: " + c.error, ""};
     if (r->liveGateFloorDbfs && !(*r->liveGateFloorDbfs >= Gate::kFloorMinDb && *r->liveGateFloorDbfs <= Gate::kFloorMaxDb)) r->liveGateFloorDbfs.reset();
+    if (r->driftBaselineDbfs && !(*r->driftBaselineDbfs >= drift::kMinDb && *r->driftBaselineDbfs <= drift::kMaxDb)) r->driftBaselineDbfs.reset();
   }
   Result res;
   {
@@ -608,6 +609,20 @@ Result Settings::setLiveGateFloor(double dbfs) {
     if (it != doc_.end()) rec = recordFromJson(*it);
     if (!rec) return {false, "no device calibration record: the learned gate floor is keyed on it", ""};
     rec->liveGateFloorDbfs = dbfs;
+    doc_["deviceCalibration"] = recordToJson(*rec);
+  }
+  return finish({});
+}
+
+Result Settings::setDriftBaseline(std::optional<double> dbfs) {
+  if (dbfs && !(*dbfs >= drift::kMinDb && *dbfs <= drift::kMaxDb)) return {false, "drift baseline outside [-80, 0] dBFS", ""};
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    auto it = doc_.find("deviceCalibration");
+    std::optional<DeviceCalibrationRecord> rec;
+    if (it != doc_.end()) rec = recordFromJson(*it);
+    if (!rec) return {false, "no device calibration record: the drift baseline is keyed on it", ""};
+    rec->driftBaselineDbfs = dbfs;
     doc_["deviceCalibration"] = recordToJson(*rec);
   }
   return finish({});

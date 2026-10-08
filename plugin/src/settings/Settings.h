@@ -136,6 +136,9 @@ class Settings {
   // Part 3: stores the live gate's learned floor (dBFS) in the existing record. Not ok (nothing stored) when there is no record or the
   // value is outside the follower's range. Does not notify listeners' UI-visible state beyond the usual settingsChanged().
   Result setLiveGateFloor(double dbfs);
+  // I3: stores the drift check's baseline (p95 of played DI peaks, dBFS) in the existing record, or clears it (nullopt). Not ok when there is no record or
+  // the value is outside [-80, 0]. Off the audio thread only.
+  Result setDriftBaseline(std::optional<double> dbfs);
 
   std::filesystem::path tokenFile() const;
   // <effective venv>/bin/<tool>, "" when there is no venv.

@@ -170,6 +170,16 @@ class SawbladeEditor::Content : public juce::Component {
     message_.setFont(L::bodyFont(12.0f));
     message_.setInterceptsMouseClicks(false, false);
     addAndMakeVisible(message_);
+    // v0.8 I3: the drift notice's two buttons (existing TextButton style, shown only while the notice is up).
+    configure(driftRecal_, "Recalibrate", "Open Settings at the interface step to set the interface level again", false);
+    driftRecal_.onClick = [this] { setSettingsOpen(true); };
+    configure(driftIgnore_, "Ignore", "Hide this notice until the level changes by another 6 dB. No gain is changed either way.", false);
+    driftIgnore_.onClick = [this] {
+      processor_.ignoreDrift();
+      refresh();
+    };
+    driftRecal_.setVisible(false);
+    driftIgnore_.setVisible(false);
 
     // --- inspector
     selKind_.setFont(L::labelFont(11.0f));
@@ -345,6 +355,8 @@ class SawbladeEditor::Content : public juce::Component {
     exportPanel_->setBounds(0, kTopBar, ExportPanel::kWidth, kDesignHeight - kTopBar);
     settingsPanel_->setBounds(0, kTopBar, settings::SettingsPanel::kWidth, settings::SettingsPanel::kHeight);
     message_.setBounds(34, kTopBar + 14, 860, 20);
+    driftRecal_.setBounds(34 + 860 + 8, kTopBar + 14, 96, 20);
+    driftIgnore_.setBounds(34 + 860 + 8 + 96 + 6, kTopBar + 14, 64, 20);
     rigPanel_->setBounds(0, kTopBar, rig::RigEditorPanel::kWidth, rig::RigEditorPanel::kHeight);
     cabScreen_->setBounds(0, kTopBar, rig::CabScreen::kWidth, rig::CabScreen::kHeight);
     micPage_->setBounds(0, kTopBar, MicPage::kWidth, MicPage::kHeight);
@@ -385,7 +397,12 @@ class SawbladeEditor::Content : public juce::Component {
     modeChip_.setColour(juce::Label::textColourId, st.liveCompatible ? L::live() : L::studio());
     modeChip_.setColour(juce::Label::outlineColourId, st.liveCompatible ? L::liveBorder() : L::studio().withAlpha(0.45f));
 
-    if (transient_.isNotEmpty() && static_cast<juce::int32>(transientUntil_ - juce::Time::getMillisecondCounter()) > 0) {
+    const drift::DriftNotice driftNotice = processor_.driftNotice();
+    const bool transientShown = transient_.isNotEmpty() && static_cast<juce::int32>(transientUntil_ - juce::Time::getMillisecondCounter()) > 0;
+    const bool showDrift = driftNotice.active && !transientShown && !st.loading && st.error.empty() && st.info.warnings.empty();
+    driftRecal_.setVisible(showDrift);
+    driftIgnore_.setVisible(showDrift);
+    if (transientShown) {
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText(transient_, juce::dontSendNotification);
     } else if (st.loading) {
@@ -397,6 +414,9 @@ class SawbladeEditor::Content : public juce::Component {
     } else if (!st.info.warnings.empty()) {
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText(juce::String(st.info.warnings.front()), juce::dontSendNotification);
+    } else if (driftNotice.active) {  // v0.8 I3: the interface gain seems to have moved since calibration
+      message_.setColour(juce::Label::textColourId, L::warning());
+      message_.setText(juce::String::fromUTF8(drift::driftNoticeText(driftNotice).c_str()), juce::dontSendNotification);
     } else if (st.calibrationAssumed) {  // v0.8 I2: calibrated input levels are on and no interface is set up (non-blocking)
       message_.setColour(juce::Label::textColourId, L::warning());
       message_.setText(juce::String(settings::uncalibratedNotice()), juce::dontSendNotification);
@@ -753,7 +773,7 @@ class SawbladeEditor::Content : public juce::Component {
   AbCompare abCompare_{processor_};
   juce::Label wordmark_, latChip_, modeChip_, message_;
   juce::Label selKind_, selName_, blendLabel_, blendRead_, thr_, matchTitle_, matchValue_;
-  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, cabButton_, settingsBtn_;
+  juce::TextButton prev_, next_, ab_, match_, export_, presetButton_, browse_, learn_, playAlong_, rigButton_, cabButton_, settingsBtn_, driftRecal_, driftIgnore_;
   juce::uint32 learnShownUntil_ = 0;
   juce::String transient_;         // the pedalboard's last status message
   juce::uint32 transientUntil_ = 0;

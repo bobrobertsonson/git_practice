@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -397,4 +398,157 @@ TEST_CASE("gate floor: learned on the audio thread, persisted by the message thr
   CHECK(w.st().deviceCalibration()->liveGateFloorDbfs == Approx(*learned + 0.5).margin(1e-9));
   // Nothing about it is in the preset.
   CHECK(presetToStateJson(w.h.p.currentPreset()).find("liveGateFloor") == std::string::npos);
+}
+
+// ---- v0.8 I3: the input-level drift check ---------------------------------------------------------------------------------------
+namespace {
+
+// A played DI: 0.4 s notes (300 Hz, peak between -30 and -18 dBFS) every 0.7 s with -75 dBFS noise between; `gainDb` is the interface knob.
+std::vector<float> playedDi(double seconds, double gainDb, unsigned seed) {
+  const auto n = static_cast<std::size_t>(seconds * kRate);
+  std::vector<float> x = noise(n, seed + 100, static_cast<float>(std::pow(10.0, -75.0 / 20.0)));
+  std::mt19937 g(seed);
+  std::uniform_real_distribution<double> lvl(-30.0, -18.0);
+  const auto noteLen = static_cast<std::size_t>(0.4 * kRate), period = static_cast<std::size_t>(0.7 * kRate), ramp = static_cast<std::size_t>(0.005 * kRate);
+  for (std::size_t s = 0; s + noteLen <= n; s += period) {
+    const double amp = std::pow(10.0, lvl(g) / 20.0);
+    for (std::size_t i = 0; i < noteLen; ++i) {
+      const double env = std::min({1.0, static_cast<double>(i) / static_cast<double>(ramp), static_cast<double>(noteLen - i) / static_cast<double>(ramp)});
+      x[s + i] = static_cast<float>(amp * env * std::sin(2.0 * 3.14159265358979323846 * 300.0 * static_cast<double>(i) / kRate));
+    }
+  }
+  const auto k = static_cast<float>(std::pow(10.0, gainDb / 20.0));
+  for (auto& v : x) v *= k;
+  return x;
+}
+
+json driftRig() {
+  json j = calRig({nb("a1", "linear_identity.nam")}, "drift", false, -50.0, /*inputDb=*/0.0);
+  j["gate"] = {{"enabled", true}, {"thresholdDb", -55.0}, {"hysteresisDb", 6.0}};
+  return j;
+}
+
+// Plays `seconds` of the DI through the processor in 0.1 s blocks and runs the 10 Hz tick after each, like the plugin timer does.
+void playTicking(World& w, double seconds, double gainDb, unsigned seed) {
+  const auto x = playedDi(seconds, gainDb, seed);
+  std::vector<float> y(4800);
+  for (std::size_t pos = 0; pos + 4800 <= x.size(); pos += 4800) {
+    w.h.process(x.data() + pos, y.data(), 4800);
+    w.h.p.calibrationTick();
+  }
+}
+
+// Everything that sets a gain: the host parameters, the preset state and the level-match trim.
+struct GainSnapshot {
+  std::vector<float> params;
+  std::string preset;
+  double trimDb = 0.0;
+  bool operator==(const GainSnapshot&) const = default;
+};
+GainSnapshot snapshotOf(World& w) {
+  GainSnapshot s;
+  for (auto* prm : w.h.p.getParameters()) s.params.push_back(prm->getValue());
+  s.preset = presetToStateJson(w.h.p.currentPreset());
+  s.trimDb = w.h.p.status().trimDb;
+  return s;
+}
+
+World& driftWorld(World& w, bool calibrated = true) {
+  REQUIRE(w.st().setDeviceCalibration(recordOf("scarlett-4i4-3g")).ok);
+  if (calibrated) REQUIRE(w.st().setCalibratedInputLevels(true).ok);
+  w.h.load(writeJson(w.tmp.dir, "drift", driftRig()));
+  w.tick();  // rebuild with the calibration
+  return w;
+}
+
+}  // namespace
+
+TEST_CASE("drift check: with calibration off nothing runs: no statistic, no baseline, no notice", "[devicecal][drift][plugin]") {
+  World w;
+  driftWorld(w, /*calibrated=*/false);
+  playTicking(w, 70.0, 0.0, 1);
+  CHECK(w.h.p.driftTracker().learning());
+  CHECK(w.h.p.driftTracker().learnedS() == 0.0);
+  CHECK_FALSE(w.h.p.driftNotice().active);
+  CHECK_FALSE(w.st().deviceCalibration()->driftBaselineDbfs.has_value());
+  CHECK(w.h.allocs == 0);
+}
+
+TEST_CASE("drift check: no device record means no statistic either", "[devicecal][drift][plugin]") {
+  World w;
+  REQUIRE(w.st().setCalibratedInputLevels(true).ok);
+  w.h.load(writeJson(w.tmp.dir, "drift", driftRig()));
+  w.tick();
+  playTicking(w, 70.0, 0.0, 1);
+  CHECK(w.h.p.driftTracker().learnedS() == 0.0);
+  CHECK_FALSE(w.h.p.driftNotice().active);
+}
+
+TEST_CASE("drift check: learns a baseline into the device record, raises on a sustained step, never touches a gain", "[devicecal][drift][plugin]") {
+  World w;
+  driftWorld(w);
+  // The first >= 60 s of played audio set the baseline, stored in the device record only.
+  playTicking(w, 50.0, 0.0, 1);
+  CHECK_FALSE(w.st().deviceCalibration()->driftBaselineDbfs.has_value());
+  playTicking(w, 15.0, 0.0, 2);
+  const auto baseline = w.st().deviceCalibration()->driftBaselineDbfs;
+  REQUIRE(baseline.has_value());
+  CHECK(*baseline > -31.0);
+  CHECK(*baseline < -17.0);
+  CHECK_FALSE(w.h.p.driftNotice().active);
+  juce::MemoryBlock mb;
+  w.h.p.getStateInformation(mb);
+  CHECK(mb.toString().toStdString().find("driftBaseline") == std::string::npos);
+  CHECK(presetToStateJson(w.h.p.currentPreset()).find("driftBaseline") == std::string::npos);
+
+  const GainSnapshot before = snapshotOf(w);
+  // +8 dB for 20 s does not raise it, and neither does the return to normal.
+  playTicking(w, 20.0, 8.0, 3);
+  CHECK_FALSE(w.h.p.driftNotice().active);
+  playTicking(w, 70.0, 0.0, 4);
+  CHECK_FALSE(w.h.p.driftNotice().active);
+  // +8 dB sustained does.
+  playTicking(w, 75.0, 8.0, 5);
+  const auto n = w.h.p.driftNotice();
+  REQUIRE(n.active);
+  CHECK(n.hotter);
+  CHECK(n.db >= 7);
+  CHECK(n.db <= 9);
+  CHECK(w.st().deviceCalibration()->driftBaselineDbfs == baseline);  // the baseline did not drift with the signal
+  // No gain changed anywhere while it fired.
+  CHECK(snapshotOf(w) == before);
+  // [Ignore] silences it.
+  w.h.p.ignoreDrift();
+  CHECK_FALSE(w.h.p.driftNotice().active);
+  playTicking(w, 40.0, 8.0, 6);
+  CHECK_FALSE(w.h.p.driftNotice().active);
+  CHECK(snapshotOf(w) == before);
+  CHECK(w.h.allocs == 0);
+  CHECK(w.h.locks == 0);
+
+  // Re-picking the device clears the baseline (and so the tracker learns again).
+  REQUIRE(w.st().setDeviceCalibration(recordOf("scarlett-4i4-3g")).ok);
+  w.h.p.calibrationTick();
+  CHECK_FALSE(w.st().deviceCalibration()->driftBaselineDbfs.has_value());
+  CHECK(w.h.p.driftTracker().learning());
+  CHECK_FALSE(w.h.p.driftNotice().active);
+}
+
+TEST_CASE("drift check: playing dynamics within +-4 dB over minutes never raise it", "[devicecal][drift][plugin]") {
+  World w;
+  driftWorld(w);
+  playTicking(w, 66.0, 0.0, 1);
+  REQUIRE(w.st().deviceCalibration()->driftBaselineDbfs.has_value());
+  bool ever = false;
+  for (int rep = 0; rep < 12; ++rep) {  // alternating loud (+3 dB) and soft (-3 dB) passages of 15 s: 3 minutes
+    const double g = rep % 2 ? 3.0 : -3.0;
+    const auto x = playedDi(15.0, g, static_cast<unsigned>(10 + rep));
+    std::vector<float> y(4800);
+    for (std::size_t pos = 0; pos + 4800 <= x.size(); pos += 4800) {
+      w.h.process(x.data() + pos, y.data(), 4800);
+      w.h.p.calibrationTick();
+      ever = ever || w.h.p.driftNotice().active;
+    }
+  }
+  CHECK_FALSE(ever);
 }

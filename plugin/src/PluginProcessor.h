@@ -289,6 +289,13 @@ class SawbladeProcessor : public juce::AudioProcessor,
   // persists the live gate's learned floor into the device record (throttled; off the audio thread: the audio thread only writes an
   // atomic float in the chain). Message thread.
   void calibrationTick();
+  // v0.8 I3 input-level drift check (docs/specs/v0_8-I3-drift_check.md). Runs inside calibrationTick() only with calibrated input levels
+  // on AND a device record; otherwise the tracker is cleared and nothing is measured. The baseline is stored in the device record (Settings),
+  // never in a preset or the plugin state. Nothing here ever changes a gain. Message thread.
+  drift::DriftNotice driftNotice() const { return driftTracker_.notice(); }
+  void ignoreDrift() { driftTracker_.ignore(); }  // [Ignore]
+  drift::DriftTracker& driftTracker() noexcept { return driftTracker_; }  // message thread; the tests drive it directly
+  const drift::DriftTracker& driftTracker() const noexcept { return driftTracker_; }
   void setFloorPersistIntervalMs(int ms) noexcept { floorPersistMs_.store(ms); }
   static constexpr int kFloorPersistIntervalMs = 10000;  // at most one settings write per this many ms
   static constexpr double kFloorPersistStepDb = 1.0;     // and only for a change of at least this
@@ -402,6 +409,7 @@ class SawbladeProcessor : public juce::AudioProcessor,
   std::optional<double> calSubmittedDbu_;
   std::atomic<int> floorPersistMs_{kFloorPersistIntervalMs};
   std::chrono::steady_clock::time_point floorWrittenAt_{};  // message thread
+  drift::DriftTracker driftTracker_;                         // message thread (calibrationTick, the editor)
   std::shared_ptr<const Preset> wanted_;  // latest user-requested preset not yet committed
   bool wantedKeepsMonitor_ = false;
   std::shared_ptr<const Preset> remeasureBase_;    // the preset a pending re-measure started from

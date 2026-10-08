@@ -116,6 +116,7 @@ nlohmann::json recordToJson(const DeviceCalibrationRecord& r) {
   nlohmann::json j = {{"dbu", r.dbu}, {"method", deviceMethodName(r.method)}, {"model", r.model}, {"gainAtMinimum", r.gainAtMinimum},
                       {"pad", r.pad}, {"air", r.air}, {"date", r.date}};
   if (r.liveGateFloorDbfs) j["liveGateFloorDbfs"] = *r.liveGateFloorDbfs;
+  if (r.driftBaselineDbfs) j["driftBaselineDbfs"] = *r.driftBaselineDbfs;
   return j;
 }
 
@@ -146,6 +147,7 @@ std::optional<DeviceCalibrationRecord> recordFromJson(const nlohmann::json& j) {
   r.air = flag("air", false);
   r.date = text("date");
   if (const auto f = num("liveGateFloorDbfs"); f && *f >= Gate::kFloorMinDb && *f <= Gate::kFloorMaxDb) r.liveGateFloorDbfs = *f;
+  if (const auto d = num("driftBaselineDbfs"); d && *d >= drift::kMinDb && *d <= drift::kMaxDb) r.driftBaselineDbfs = *d;
   return r;
 }
 
@@ -173,6 +175,7 @@ EngineCalibration engineCalibrationFor(bool calibratedInputLevels, const std::op
   EngineCalibration e;
   e.chain = chainCalibrationFor(calibratedInputLevels, record);
   if (calibratedInputLevels && record) e.gateFloorSeedDb = record->liveGateFloorDbfs;
+  e.driftCheck = calibratedInputLevels && record.has_value();  // I3: the drift statistic runs only with calibration on and a record
   return e;
 }
 

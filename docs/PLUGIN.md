@@ -305,6 +305,22 @@ off every render, trim, make-up and gate seed is what it was before I2, bit for 
   only for a change of 1 dB or more (`Settings::setLiveGateFloor`; nothing is stored without a record: the record is the key, there is no device name).
   The next engine is seeded from it on prepare (`Chain::setGateFloorSeedDb`) **only with the toggle on**, so toggle off stays bit-identical. It is never
   taken from a preset or a matched reference DI (a preset load does not change the seed); with no stored floor the seed is the stock -70 dBFS.
+- **Input-level drift check (v0.8 I3, `docs/specs/v0_8-I3-drift_check.md`).** A device calibration only holds at the interface gain it was made at;
+  if the knob moves, every planned NAM drive is off by the same amount. With the toggle on **and** a device record (otherwise nothing runs: no
+  statistic, no stored baseline) the plugin watches the played input level and says so. It never changes a gain.
+  - *Statistic* (`core/include/sawblade/drift.h`, `drift::PeakTap`, audio thread): the peak of the **DI** (before INPUT and before any calibration gain)
+    per 50 ms window, kept only for windows where the live gate was open for at least half of it ("played"; with the gate off there is no statistic),
+    quantised to 0.25 dB and pushed into a lock-free ring (512 windows). No allocation, lock or I/O in `process()`; the tap is off (and the chain
+    bit-identical) unless the engine is built with calibration on and a record.
+  - *Tracker* (`drift::DriftTracker`, message thread, `calibrationTick()` at 10 Hz): rolling p95 over the last 30 s of played windows; the **baseline**
+    is the p95 of the first 60 s of played windows after a record is made, stored in the device record as `driftBaselineDbfs` (Settings only, never in a
+    preset or the plugin state; `Settings::setDriftBaseline`). Re-picking the device or removing the record clears it (a new record has none).
+  - *Trigger*: |rolling p95 - baseline| >= 6 dB for >= 30 s of **played** time (silence adds no windows, so it neither counts nor resets). The rolling
+    p95 needs part of its 30 s window to turn over before it crosses, so the notice follows a step by about 30 s plus that lag (longer for a step that
+    only just reaches 6 dB, and for a drop than for a rise: the top 5% of the window must be replaced). The notice clears again 1 dB below the threshold.
+  - *Notice* (the main view's message line, after errors and engine warnings): "Your input seems ~N dB hotter|quieter than when you calibrated -
+    did the interface gain change?" with the existing text buttons **Recalibrate** (opens Settings) and **Ignore** (silent until the baseline changes or the
+    drift moves another 6 dB from the ignored level; it is also forgotten once the level is back within 3 dB of the baseline).
 
 ### Latency accounting (exact, in host samples)
 

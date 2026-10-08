@@ -115,6 +115,8 @@ class Engine {
   // The live gate's learned floor (dBFS), NaN until learned. Any thread (relaxed atomic written by process()).
   double gateFloorSeedDb() const noexcept { return chain_->gateFloorSeedDb(); }  // -70 unless built with a seed and calibration on
   float learnedGateFloorDb() const noexcept { return chain_->learnedGateFloorDb(); }
+  // v0.8 I3: the played-input-level windows (empty unless built with EngineCalibration::driftCheck). Any thread (lock-free ring).
+  const drift::PeakTap& driftTap() const noexcept { return chain_->driftTap(); }
   const std::string& presetName() const noexcept { return name_; }
 
   // --- gain ladders (v0.2 Task B) -------------------------------------------------------------------

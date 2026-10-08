@@ -240,3 +240,66 @@ TEST_CASE("device calibration: the engine settings come from the toggle and the 
   CHECK_FALSE(engineCalibrationFor(true, rec).gateFloorSeedDb.has_value());  // nothing learned yet: today's -70 seed
   CHECK(uncalibratedNotice() == "Interface not calibrated: assuming +12 dBu");
 }
+
+// ---- v0.8 I3: the drift baseline ---------------------------------------------------------------------------------------------------
+TEST_CASE("drift baseline: stored in the device record, keyed on it, and cleared by a new record", "[devicecal][settings][drift]") {
+  Tmp t;
+  const fs::path file = t.dir / "settings.json";
+  Settings s(file);
+  REQUIRE(s.load().empty());
+  CHECK_FALSE(s.setDriftBaseline(-20.0).ok);  // no record, no key
+  REQUIRE(s.setDeviceCalibration(recordFromPreset(*findDevicePreset("scarlett-4i4-3g"), "2026-10-08")).ok);
+  REQUIRE(s.setLiveGateFloor(-45.0).ok);
+  CHECK_FALSE(s.deviceCalibration()->driftBaselineDbfs.has_value());  // a record with no baseline yet learns one
+  CHECK(s.setDriftBaseline(-21.5).ok);
+  CHECK(s.deviceCalibration()->driftBaselineDbfs == -21.5);
+  CHECK(s.deviceCalibration()->liveGateFloorDbfs == -45.0);  // the rest of the record is kept
+  CHECK(s.deviceCalibration()->dbu == 12.5);
+  // The learned gate floor is written later: it must not drop the baseline.
+  REQUIRE(s.setLiveGateFloor(-46.0).ok);
+  CHECK(s.deviceCalibration()->driftBaselineDbfs == -21.5);
+  // Out of [-80, 0] or not a number: refused, the stored value stays.
+  CHECK_FALSE(s.setDriftBaseline(1.0).ok);
+  CHECK_FALSE(s.setDriftBaseline(-81.0).ok);
+  CHECK_FALSE(s.setDriftBaseline(std::nan("")).ok);
+  CHECK(s.deviceCalibration()->driftBaselineDbfs == -21.5);
+  {
+    Settings again(file);  // survives a reload
+    REQUIRE(again.load().empty());
+    CHECK(again.deviceCalibration()->driftBaselineDbfs == -21.5);
+  }
+  CHECK(s.setDriftBaseline(std::nullopt).ok);  // cleared
+  CHECK_FALSE(s.deviceCalibration()->driftBaselineDbfs.has_value());
+  // Re-picking a device (a new record) clears the baseline, as it does the floor; so does removing the record.
+  REQUIRE(s.setDriftBaseline(-20.0).ok);
+  REQUIRE(s.setDeviceCalibration(recordFromPreset(*findDevicePreset("scarlett-4i4-3g"), "2026-10-09")).ok);
+  CHECK_FALSE(s.deviceCalibration()->driftBaselineDbfs.has_value());
+  REQUIRE(s.setDriftBaseline(-20.0).ok);
+  REQUIRE(s.setDeviceCalibration(std::nullopt).ok);
+  CHECK_FALSE(s.setDriftBaseline(-20.0).ok);
+  // A record handed in with an out-of-range baseline is stored without it.
+  DeviceCalibrationRecord bad = recordFromValue(12.0, DeviceMethod::Manual, false, false, "2026-10-09");
+  bad.driftBaselineDbfs = -120.0;
+  REQUIRE(s.setDeviceCalibration(bad).ok);
+  CHECK_FALSE(s.deviceCalibration()->driftBaselineDbfs.has_value());
+}
+
+TEST_CASE("drift baseline: the record JSON round-trips it and drops an out-of-range one", "[devicecal][drift]") {
+  DeviceCalibrationRecord r = recordFromValue(12.0, DeviceMethod::Manual, false, false, "2026-10-09");
+  r.driftBaselineDbfs = -18.25;
+  const auto back = recordFromJson(recordToJson(r));
+  REQUIRE(back.has_value());
+  CHECK(*back == r);
+  json j = recordToJson(r);
+  j["driftBaselineDbfs"] = 3.0;
+  CHECK_FALSE(recordFromJson(j)->driftBaselineDbfs.has_value());
+  CHECK_FALSE(recordToJson(recordFromValue(12.0, DeviceMethod::Manual, false, false, "x")).contains("driftBaselineDbfs"));
+}
+
+TEST_CASE("drift check: the engine measures only with calibrated input levels on AND a device record", "[devicecal][drift]") {
+  const auto rec = recordFromPreset(*findDevicePreset("scarlett-4i4-3g"), "2026-10-08");
+  CHECK_FALSE(engineCalibrationFor(false, rec).driftCheck);
+  CHECK_FALSE(engineCalibrationFor(false, std::nullopt).driftCheck);
+  CHECK_FALSE(engineCalibrationFor(true, std::nullopt).driftCheck);
+  CHECK(engineCalibrationFor(true, rec).driftCheck);
+}
