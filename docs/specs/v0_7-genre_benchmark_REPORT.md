@@ -6,6 +6,19 @@ green: python, linux-gcc + pluginval, linux-clang -Werror, macOS arm64 + auval +
 
 Status: **Tasks A and B are accepted by the reviewer. Task C (the user's baseline run) waits for v0.8 calibration.**
 
+## Known matcher limitation, measured by the benchmark: blend paths are not identifiable from the sum
+
+**On the synthetic blend, the matcher fits the summed reference to 0.29 dB A-weighted, but path A alone is 6.1 dB off,
+path B alone is 3.2 dB off, and the A/B ratio is 7.9 dB off.** It found a different amp pair that sums to the same tone.
+A blend fitted only to the summed reference is therefore not identifiable per path.
+
+- The forced-blend path checks (`bloodbath_blend_forced` → `bloodbath_hm2` / `bloodbath_ubr`) are what expose this, and the
+  main lead confirmed the case design on 2026-10-08. The benchmark is not changed because of it.
+- The harness itself is correct: the oracle test scores the hidden chain at < 0.05 dB on the sum, on both paths and on the
+  ratio.
+- Expect the same limitation on real Bloodbath audio. Fixing it is matcher work for a later phase (see Proposals); it is
+  not a benchmark defect.
+
 ## What exists
 
 - `docs/benchmark/cases.json`: the manifest (schema `sawblade.bench.cases` v1). It holds relative paths only, no audio.
@@ -115,6 +128,9 @@ The DI is the fixture riff, looped to 13 s. The fit section is 0–6 s and the h
 ## Open (non-blocking)
 
 1. **CI margin:** the new tests have about 1.5× headroom (160 s against 240 s). The python job's total is 34 of 45 min.
+   The bench fixtures are already module-scoped, so there is no change under 10 lines that would save time. Follow-up if CI
+   creeps toward the timeout: cache the rendered synthetic stems across test modules (a session-scoped fixture), or shrink
+   the blend plan.
 2. **Offset rule on real audio:** `final_offset` has only been checked on synthetic data.
    - In the first real `scores.json`, check `offset.refinementSource` and `refinementSamples48`.
    - Look especially at Jinjer (a stem) and the reamp cases.
