@@ -61,7 +61,7 @@ class Oversampler4x {
 
   int maxBlock() const noexcept { return maxBlock_; }
 
- private:
+ // One 2x polyphase half-band stage (shared with OversamplerNx).
   struct Stage {
     int taps = 0, m = 0, k = 0;     // taps = 4m+3, k = 2m+2 coefficients of the even branch
     std::vector<float> even;        // up: 2*h[2i]; down: h[2i]   (i < k)
@@ -71,9 +71,41 @@ class Oversampler4x {
   static void upStage(Stage& s, const float* in, int n, float* out, float* work) noexcept;
   static void downStage(Stage& s, const float* in, int n, float* out, float* work) noexcept;
 
+ private:
+
   int maxBlock_ = 0;
   Stage up1_, up2_, down2_, down1_;
   std::vector<float> mid_, work_;
+};
+
+// Extra 2x / 4x / 8x oversampling that runs on top of an already oversampled signal (pedal.rat's op-amp stage),
+// a cascade of 1..3 of the same polyphase half-band stages (kTaps = 19 each, >= 110 dB stopband; the signal to
+// protect is below 0.11 of the incoming rate, so the transition band is wide). Linear phase: the round trip delay
+// is an exact integer number of samples at the highest rate, roundTripLatencyHi() (2 * kDelay * (2^L - 1) where
+// L = log2(factor)). Block-size independent (bit-identical). prepare() allocates; the rest is real-time safe.
+class OversamplerNx {
+ public:
+  static constexpr int kTaps = 19;
+  static constexpr int kDelay = (kTaps - 1) / 2;
+  void prepare(int factor, int maxIn);  // factor in {2, 4, 8}; maxIn = largest n passed to up/downsample
+  void reset() noexcept;
+  int factor() const noexcept { return factor_; }
+  // Round-trip delay in samples of the highest rate (factor * incoming rate).
+  static constexpr int roundTripLatencyHi(int factor) {
+    int total = 0, rate = 1;
+    for (int f = factor; f > 1; f >>= 1) {
+      rate <<= 1;  // output rate of this up stage, relative to the incoming one
+      total += 2 * kDelay * (factor / rate);  // up + down, expressed at the highest rate
+    }
+    return total;
+  }
+  void upsample(const float* in, int n, float* outNF) noexcept;       // n -> n * factor (in, out must not overlap)
+  void downsample(const float* inNF, int n, float* out) noexcept;     // n * factor -> n
+
+ private:
+  int factor_ = 1, levels_ = 0;
+  std::vector<Oversampler4x::Stage> up_, down_;
+  std::vector<float> a_, b_, work_;
 };
 
 }  // namespace sawblade

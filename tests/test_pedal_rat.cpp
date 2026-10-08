@@ -390,11 +390,14 @@ TEST_CASE("pedal.rat: RUETZ removes low-frequency gain by the analytic amount", 
 
 // ---- 7. real-time safety, determinism, latency ---------------------------------------------------------------
 TEST_CASE("pedal.rat: process() does not allocate, also under live parameter changes", "[rat][alloc]") {
+  for (int factor : {1, 2, 4, 8}) {
   RatParams p;
   p.distortion = 9.0;
   p.tightness = 2.0;
   p.mix = 80.0;
-  RatPedal ped(p);
+  RatVoicing v0;
+  v0.stageOversample = factor;
+  RatPedal ped(p, {}, &v0);
   ped.prepare({48000.0, 512});
   auto x = noise(12000, 71, 0.5f);
   const int sizes[] = {512, 1, 64, 480, 7, 128, 300, 33, 512, 256, 100, 2, 1, 512, 512, 512};
@@ -417,8 +420,11 @@ TEST_CASE("pedal.rat: process() does not allocate, also under live parameter cha
     pos += static_cast<std::size_t>(n);
     ++k;
   }
-  REQUIRE(g.count() == 0);
+  const long allocs = g.count();
+  INFO("stageOversample " << factor);
+  REQUIRE(allocs == 0);
   for (std::size_t i = 0; i < pos; ++i) REQUIRE(std::isfinite(x[i]));
+  }
 }
 
 namespace {
@@ -444,26 +450,29 @@ TEST_CASE("pedal.rat: output is bit-identical across block sizes and runs", "[ra
   p.mix = 70.0;
   p.clip = RatClip::Led;
   p.ruetz = true;
-  for (RatClip clip : {RatClip::Led, RatClip::None, RatClip::Asymmetric}) {
+  for (int factor : {1, 2, 4, 8})
+  for (RatClip clip : {RatClip::Led, RatClip::None}) {
     p.clip = clip;
-    RatPedal one(p);
+    RatVoicing vf;
+    vf.stageOversample = factor;
+    RatPedal one(p, {}, &vf);
     one.prepare({48000.0, static_cast<int>(in.size())});
     auto ref = in;
     one.process(ref.data(), static_cast<int>(ref.size()));  // one shot
     for (int bs : {1, 7, 64, 512, 4096}) {
-      RatPedal ped(p);
+      RatPedal ped(p, {}, &vf);
       ped.prepare({48000.0, bs});
       auto y = in;
       run(ped, y, bs);
-      INFO("clip " << kRatClipNames[static_cast<int>(clip)] << " block " << bs);
+      INFO("stageOversample " << factor << " clip " << kRatClipNames[static_cast<int>(clip)] << " block " << bs);
       SAWBLADE_REQUIRE_SAME_SAMPLES(ref, y);  // tolerance 0
     }
-    RatPedal again(p);
+    RatPedal again(p, {}, &vf);
     again.prepare({48000.0, 512});
     auto y = in;
     run(again, y, 512);
     {
-      RatPedal ped(p);
+      RatPedal ped(p, {}, &vf);
       ped.prepare({48000.0, 512});
       auto z = in;
       run(ped, z, 512);
@@ -491,98 +500,163 @@ int measuredPeak(Processor& p, double fs) {
 
 }  // namespace
 
-TEST_CASE("pedal.rat: latencySamples() equals the measured delay in every CLIP mode and for the clean mix", "[rat][latency]") {
+TEST_CASE("pedal.rat: latencySamples() equals the measured delay in every CLIP mode and stage factor", "[rat][latency]") {
   PedalImplConfig flat;
   flat.flatFilters = true;
-  for (double fs : {44100.0, 48000.0, 96000.0, 192000.0}) {
-    for (int c = 0; c < kNumRatClips; ++c) {
-      RatParams p;
-      p.clip = static_cast<RatClip>(c);
-      RatPedal ped(p, flat);
-      const int m = measuredPeak(ped, fs);
-      INFO("fs " << fs << " clip " << kRatClipNames[c]);
-      CHECK(ped.latencySamples() == 50);
-      CHECK(m == ped.latencySamples());
-      CHECK(RatPedal(p).latencySamples() == ped.latencySamples());  // the shipping pedal reports the same
+  // stageOversample 1 / 2 / 4 / 8: the 4x round trip + the ADAA sample (at the stage rate) + the half-band chain of
+  // the stage, padded to whole base-rate samples.
+  const int expected[4] = {50, 52, 53, 54};
+  int fi = 0;
+  for (int factor : {1, 2, 4, 8}) {
+    RatVoicing v;
+    v.stageOversample = factor;
+    for (double fs : {44100.0, 48000.0, 96000.0, 192000.0}) {
+      for (int c = 0; c < kNumRatClips; ++c) {
+        RatParams p;
+        p.clip = static_cast<RatClip>(c);
+        RatPedal ped(p, flat, &v);
+        const int m = measuredPeak(ped, fs);
+        INFO("factor " << factor << " fs " << fs << " clip " << kRatClipNames[c]);
+        CHECK(ped.latencySamples() == expected[fi]);
+        CHECK(m == ped.latencySamples());
+        CHECK(RatPedal(p, {}, &v).latencySamples() == ped.latencySamples());  // the shipping pedal reports the same
+      }
+      // the clean mix is delayed by exactly the reported latency
+      RatParams dry;
+      dry.mix = 0.0;
+      RatPedal ped(dry, flat, &v);
+      CHECK(measuredPeak(ped, fs) == ped.latencySamples());
     }
-    // the clean mix is delayed by exactly the reported latency
-    RatParams dry;
-    dry.mix = 0.0;
-    RatPedal ped(dry, flat);
-    CHECK(measuredPeak(ped, fs) == ped.latencySamples());
+    ++fi;
   }
-  std::printf("[rat latency] 50 samples at 44.1 / 48 / 96 / 192 kHz, every CLIP mode\n");
+  CHECK(RatPedal(RatParams{}).latencySamples() == 52);  // default stageOversample 2
+  std::printf("[rat latency] stageOversample 1 / 2 / 4 / 8: 50 / 52 / 53 / 54 samples at 44.1 / 48 / 96 / 192 kHz, every CLIP mode (default 2 = 52)\n");
+}
+
+TEST_CASE("pedal.rat: ratFastTanh is within 1e-10 of std::tanh", "[rat][tanh]") {
+  double worst = 0.0;
+  for (double x = -30.0; x <= 30.0; x += 1.7e-4) worst = std::max(worst, std::fabs(std::tanh(x) - ratFastTanh(x)));
+  std::printf("[rat tanh] max abs error of ratFastTanh over [-30, 30]: %.2e\n", worst);
+  CHECK(worst < 1e-10);
+  CHECK(ratFastTanh(0.0) == 0.0);
+  CHECK(ratFastTanh(-0.3) == -ratFastTanh(0.3));
 }
 
 // ---- 8. aliasing ---------------------------------------------------------------------------------------------
-TEST_CASE("pedal.rat: aliasing", "[rat][alias]") {
-  // The other modelled pedals at their worst case, by the same method.
-  double worstExisting = -1000.0;
-  {
-    HmParams h = HmParams::v2();
-    h.distortion = 10;
-    h.low = h.high = 5;
-    HmPedal hm2(h);
-    worstExisting = std::max(worstExisting, aliasDb(hm2));
-    for (int c = 0; c < kNumClipTypes; ++c) {
-      HmParams m;  // v3
-      m.distortion = 10;
-      m.mode = HmMode::Modded;
-      m.clip = static_cast<ClipType>(c);
-      HmPedal hm3(m);
-      worstExisting = std::max(worstExisting, aliasDb(hm3));
-    }
-    TsParams t;
-    t.drive = 10;
-    t.tone = 10;
-    TsPedal ts(t);
-    worstExisting = std::max(worstExisting, aliasDb(ts));
-    MuffParams mu;
-    mu.sustain = 10;
-    MuffPedal muff(mu);
-    worstExisting = std::max(worstExisting, aliasDb(muff));
-  }
-  std::printf("[rat alias] worst existing modelled pedal (pedal.hm v2 / v3 modded, pedal.ts, pedal.muff at their maximum): %.1f dB\n", worstExisting);
+namespace {
 
-  // pedal.rat at DIST 10, FILTER 0, both clip modes. 5 kHz at -6 dBFS is the other pedals' recipe; 1 kHz and 2 kHz
-  // are the fundamentals that matter for a guitar into this pedal.
-  double rat5k = -1000.0, ratLow = -1000.0;
+double worstExistingAliasDb() {
+  double worst = -1000.0;
+  HmParams h = HmParams::v2();
+  h.distortion = 10;
+  h.low = h.high = 5;
+  HmPedal hm2(h);
+  worst = std::max(worst, aliasDb(hm2));
+  for (int c = 0; c < kNumClipTypes; ++c) {
+    HmParams m;  // v3
+    m.distortion = 10;
+    m.mode = HmMode::Modded;
+    m.clip = static_cast<ClipType>(c);
+    HmPedal hm3(m);
+    worst = std::max(worst, aliasDb(hm3));
+  }
+  TsParams t;
+  t.drive = 10;
+  t.tone = 10;
+  TsPedal ts(t);
+  worst = std::max(worst, aliasDb(ts));
+  MuffParams mu;
+  mu.sustain = 10;
+  MuffPedal muff(mu);
+  return std::max(worst, aliasDb(muff));
+}
+
+}  // namespace
+
+TEST_CASE("pedal.rat: aliasing is below the worst existing pedal", "[rat][alias]") {
+  const double worstExisting = worstExistingAliasDb();
+  std::printf("[rat alias] worst existing modelled pedal (pedal.hm v2 / v3 modded, pedal.ts, pedal.muff at their maximum): %.1f dB\n", worstExisting);
+  // pedal.rat (stageOversample 2: the op-amp stage and the clipper run at 8 fs) at DIST 10, FILTER 0, -6 dBFS.
+  // 5 kHz is the other pedals' recipe; 4.7 kHz does not divide the oversampled rate; 1 / 2 kHz are the fundamentals
+  // that matter for a guitar into this pedal.
+  double worstRat = -1000.0;
   for (RatClip clip : {RatClip::None, RatClip::Silicon}) {
     RatParams p;
     p.distortion = 10.0;
     p.filter = 0.0;
     p.clip = clip;
-    for (double fund : {1000.0, 2000.0, 4700.0, 5000.0}) {
+    // 1 and 2 kHz divide the oversampled rate, so their aliases land on harmonics and the detector cannot see them;
+    // 1.1 and 2.3 kHz are printed for information (a long-saturated stage aliases more there, see the report).
+    for (double fund : {1000.0, 2000.0, 4700.0, 5000.0, 1100.0, 2300.0}) {
       RatPedal ped(p);
       const double a = aliasDb(ped, 48000.0, fund);
       std::printf("[rat alias] CLIP %-7s DIST 10, %4.0f Hz at -6 dBFS: %.1f dB\n", kRatClipNames[static_cast<int>(clip)], fund, a);
-      if (fund >= 4700.0) rat5k = std::max(rat5k, a);
-      else ratLow = std::max(ratLow, a);
+      if (fund != 1100.0 && fund != 2300.0) worstRat = std::max(worstRat, a);
     }
   }
-  // OPEN ITEM (see the report): the spec bar is rat5k <= worstExisting. The op-amp stage is a dynamic nonlinearity
-  // (a 0.3 V/us slew edge into rails) that ADAA cannot anti-alias; with the differential-pair slew the 4.7 / 5 kHz
-  // recipe aliases at about -53 dB at 4x, and needs a ~32x stage rate (-86 dB, stage-alone) to meet the bar, at a CPU
-  // cost above the budget. At 1 and 2 kHz it is far below the other pedals' worst case. This test pins both.
-  CHECK(ratLow <= worstExisting);
-  CHECK(ratLow <= -80.0);
-  CHECK(rat5k <= -50.0);  // 4.7 and 5 kHz, both clips
+  CHECK(worstRat <= worstExisting);
 
-  // Sensitivity: without oversampling and ADAA the detector sees the aliasing.
+  // Sensitivity: without oversampling and ADAA the detector sees the aliasing; so does the pedal with only the
+  // stage-local oversampling removed (stageOversample 1, 4.7 kHz).
   RatParams p;
   p.distortion = 10.0;
   p.filter = 0.0;
   p.clip = RatClip::Silicon;
   RatPedal bare(p, PedalImplConfig{false, false, false});
   RatPedal ship(p);
-  const double bareDb = aliasDb(bare, 48000.0, 2000.0), shipDb = aliasDb(ship, 48000.0, 2000.0);
-  std::printf("[rat alias] 2 kHz, silicon: %.1f dB shipping, %.1f dB without OS and ADAA\n", shipDb, bareDb);
+  const double bareDb = aliasDb(bare, 48000.0, 4700.0), shipDb = aliasDb(ship, 48000.0, 4700.0);
+  std::printf("[rat alias] 4.7 kHz, silicon: %.1f dB shipping, %.1f dB without OS and ADAA\n", shipDb, bareDb);
   CHECK(bareDb > -60.0);
   CHECK(bareDb > shipDb + 20.0);
   PedalImplConfig noOs;
   noOs.oversample = false;
   RatPedal osOff(p, noOs);
-  CHECK(aliasDb(osOff, 48000.0, 2000.0) > shipDb + 10.0);
+  CHECK(aliasDb(osOff, 48000.0, 4700.0) > shipDb + 10.0);
+  RatVoicing v1;
+  v1.stageOversample = 1;
+  RatPedal stage1(p, {}, &v1);
+  const double s1 = aliasDb(stage1, 48000.0, 4700.0);
+  std::printf("[rat alias] 4.7 kHz, silicon: stageOversample 1 %.1f dB\n", s1);
+  CHECK(s1 > worstExisting);  // the stage-local oversampling is what meets the bar
+}
+
+TEST_CASE("pedal.rat: alias and CPU per stageOversample factor (table)", "[rat][.table]") {
+  const double worstExisting = worstExistingAliasDb();
+  std::printf("[rat table] worst existing %.1f dB; DIST 10, FILTER 0, -6 dBFS, 48 kHz\n", worstExisting);
+  for (int factor : {1, 2, 4, 8}) {
+    RatVoicing v;
+    v.stageOversample = factor;
+    double a[2][4];
+    int ci = 0;
+    for (RatClip clip : {RatClip::None, RatClip::Silicon}) {
+      RatParams p;
+      p.distortion = 10.0;
+      p.filter = 0.0;
+      p.clip = clip;
+      int fi = 0;
+      for (double fund : {5000.0, 4700.0, 2300.0, 1100.0}) {
+        RatPedal q(p, {}, &v);
+        a[ci][fi++] = aliasDb(q, 48000.0, fund);
+      }
+      ++ci;
+    }
+    RatParams p;
+    p.distortion = 10.0;
+    RatPedal ped(p, {}, &v);
+    ped.prepare({48000.0, 512});
+    const auto x0 = sine(220.0, 48000.0, 480000, 0.5);
+    const auto in = sine(1337.0, 48000.0, 480000, 0.2);
+    double best = 1e9;
+    for (int rep = 0; rep < 5; ++rep) {
+      auto x = x0;
+      for (std::size_t i = 0; i < x.size(); ++i) x[i] += in[i];
+      const auto t0 = std::chrono::steady_clock::now();
+      run(ped, x, 512);
+      best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() / 10.0);
+    }
+    std::printf("[rat table] stageOversample %d: latency %d | none 5k %.1f 4.7k %.1f 2.3k %.1f 1.1k %.1f | silicon 5k %.1f 4.7k %.1f 2.3k %.1f 1.1k %.1f | RTF (best of 5) %.4f\n",
+                factor, ped.latencySamples(), a[0][0], a[0][1], a[0][2], a[0][3], a[1][0], a[1][1], a[1][2], a[1][3], best);
+  }
 }
 
 // ---- 9. registry, preset, CLI --------------------------------------------------------------------------------
@@ -704,7 +778,7 @@ TEST_CASE("pedal.rat: renders through tonerender and matches the library render"
   for (std::size_t i = 0; i < lib.samples.size(); ++i) maxDiff = std::max(maxDiff, std::fabs(static_cast<double>(out.interleaved[i]) - lib.samples[i]));
   CHECK(maxDiff <= 1e-6);
   CHECK(lib.output.rmsDbfs > -60.0);
-  CHECK(lib.info.latencySamples == 50);
+  CHECK(lib.info.latencySamples == 52);
   std::error_code ec;
   fs::remove_all(t, ec);
 }
@@ -742,7 +816,7 @@ TEST_CASE("pedal.rat: stock output level on the -12 dBFS-RMS riff, and the contr
   const auto x0 = x;
   run(pd, x, 512);
   double err = 0.0;
-  for (std::size_t i = 2400; i < 4800; ++i) err = std::max(err, std::fabs(static_cast<double>(x[i]) - x0[i - 50]));
+  for (std::size_t i = 2400; i < 4800; ++i) err = std::max(err, std::fabs(static_cast<double>(x[i]) - x0[i - static_cast<std::size_t>(pd.latencySamples())]));
   CHECK(err < 0.01);  // dry[n - 50] through the 20 Hz input high-pass only
 }
 

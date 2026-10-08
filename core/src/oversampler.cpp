@@ -122,4 +122,46 @@ void Oversampler4x::downsample(const float* in4n, int n, float* out) noexcept {
   downStage(down1_, mid_.data(), n, out, work_.data());
 }
 
+void OversamplerNx::prepare(int factor, int maxIn) {
+  if ((factor != 2 && factor != 4 && factor != 8) || maxIn < 1) throw std::invalid_argument("OversamplerNx::prepare: factor 2, 4 or 8");
+  factor_ = factor;
+  levels_ = factor == 2 ? 1 : factor == 4 ? 2 : 3;
+  up_.assign(static_cast<std::size_t>(levels_), {});
+  down_.assign(static_cast<std::size_t>(levels_), {});
+  for (int i = 0; i < levels_; ++i) {
+    Oversampler4x::design(up_[static_cast<std::size_t>(i)], kTaps, true);
+    Oversampler4x::design(down_[static_cast<std::size_t>(i)], kTaps, false);
+  }
+  a_.assign(static_cast<std::size_t>(maxIn * factor), 0.0f);
+  b_.assign(static_cast<std::size_t>(maxIn * factor), 0.0f);
+  work_.assign(static_cast<std::size_t>(kTaps + maxIn * factor + 8), 0.0f);
+}
+
+void OversamplerNx::reset() noexcept {
+  for (auto* v : {&up_, &down_})
+    for (auto& s : *v) std::fill(s.hist.begin(), s.hist.end(), 0.0f);
+}
+
+void OversamplerNx::upsample(const float* in, int n, float* out) noexcept {
+  const float* src = in;
+  int cnt = n;
+  for (int i = 0; i < levels_; ++i) {
+    float* dst = i == levels_ - 1 ? out : (i % 2 == 0 ? a_.data() : b_.data());
+    Oversampler4x::upStage(up_[static_cast<std::size_t>(i)], src, cnt, dst, work_.data());
+    src = dst;
+    cnt *= 2;
+  }
+}
+
+void OversamplerNx::downsample(const float* in, int n, float* out) noexcept {
+  const float* src = in;
+  int cnt = n * factor_ / 2;  // output count of the first down stage
+  for (int i = levels_ - 1; i >= 0; --i) {
+    float* dst = i == 0 ? out : (i % 2 == 0 ? a_.data() : b_.data());
+    Oversampler4x::downStage(down_[static_cast<std::size_t>(i)], src, cnt, dst, work_.data());
+    src = dst;
+    cnt /= 2;
+  }
+}
+
 }  // namespace sawblade

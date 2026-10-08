@@ -53,8 +53,8 @@ void RatOpAmpStage::prepare(double fsOs, const RatVoicing& v) {
   vd_ = v.diffPairVd;
   invVd_ = 1.0 / vd_;
   vRail_ = v.vRail;
-  knee_ = v.railKneeFrac * v.vRail;
-  kneeSpan_ = v.vRail - knee_;
+  invRail_ = 1.0 / v.vRail;
+  vMax_ = v.railWindupLimit * v.vRail;
   rd_.set(v.distOhms(5.0), 0);
   w2_.set(1.0, 0);
   updateCoeffs();
@@ -62,8 +62,8 @@ void RatOpAmpStage::prepare(double fsOs, const RatVoicing& v) {
 }
 
 void RatOpAmpStage::reset() noexcept {
-  vo_ = e_ = ihf_ = ih1_ = ih2_ = 0.0;
-  slewHits_ = railHits_ = newtonCapHits_ = 0;
+  v_ = e_ = ihf_ = ih1_ = ih2_ = 0.0;
+  slewHits_ = railHits_ = newtonCapHits_ = newtonIters_ = 0;
 }
 
 void RatOpAmpStage::setRd(double ohms, int rampSamples) noexcept {
@@ -94,44 +94,63 @@ void RatOpAmpStage::process(float* io, int n) noexcept {
     const double vin = io[i];
     const double w2 = w2_.cur;
     const double b = (c1_ * ih1_ + w2 * c2_ * ih2_ - ihf_) * invD_;
-    // Linear (unlimited) trapezoidal solution; exact while the input stage is in its linear range.
-    double vo = (vo_ + h_ * (vin - b + e_)) * invK_;
+    // Starting point: the linear trapezoidal solution, or where the input stage is saturated the hard-saturated root.
+    double v = (v_ + h_ * (vin - b + e_)) * invK_;
     if (slewOn_) {
-      const double eLin = vin - (a_ * vo + b);
+      const double eLin = vin - (a_ * v + b);
       if (std::fabs(eLin) > vd_) {
         ++slewHits_;
-        vo = vo_ + h_ * (std::copysign(vd_, eLin) + e_);  // start from the hard-saturated root (always on the right side)
+        v = v_ + h_ * (std::copysign(vd_, eLin) + e_);
       }
-      // Newton on F(x) = x - vo' - h (Vd tanh((vin - a x - b) / Vd) + u'): F is smooth and strictly increasing
-      // (F' = 1 + h a sech^2 >= 1), so Newton from the saturated / linear start converges in 1-3 steps.
-      bool converged = false;
-      for (int it = 0; it < kMaxNewton; ++it) {
-        const double t = std::tanh((vin - (a_ * vo + b)) * invVd_);
-        const double f = vo - vo_ - h_ * (vd_ * t + e_);
-        const double dx = f / (1.0 + h_ * a_ * (1.0 - t * t));
-        vo -= dx;
-        if (std::fabs(dx) < 1e-11) {
-          converged = true;
-          break;
-        }
+    }
+    // Newton on F(v) = v - v' - h (u(e) + u'), e = vin - a y(v) - b, y(v) = Vrail tanh(v / Vrail), u(e) = Vd tanh(e / Vd)
+    // (u = e without slew): F is smooth and strictly increasing (F' = 1 + h a u'(e) y'(v) >= 1).
+    bool converged = false;
+    double ty = 0.0, yOld = 0.0, eOld = 0.0, uOld = 0.0, duOld = 1.0, dx = 0.0;
+    for (int it = 0; it < kMaxNewton; ++it) {
+      ty = ratFastTanh(v * invRail_);
+      yOld = vRail_ * ty;
+      eOld = vin - (a_ * yOld + b);
+      uOld = eOld;
+      duOld = 1.0;
+      if (slewOn_) {
+        const double t = ratFastTanh(eOld * invVd_);
+        uOld = vd_ * t;
+        duOld = 1.0 - t * t;
       }
-      if (!converged) ++newtonCapHits_;
+      dx = (v - v_ - h_ * (uOld + e_)) / (1.0 + h_ * a_ * duOld * (1.0 - ty * ty));
+      v -= dx;
+      ++newtonIters_;
+      if (std::fabs(dx) < 1e-4) {
+        converged = true;
+        break;
+      }
     }
-    const double av = std::fabs(vo);
-    if (av > knee_) {
-      ++railHits_;
-      vo = std::copysign(knee_ + kneeSpan_ * std::tanh((av - knee_) / kneeSpan_), vo);
+    if (!converged) ++newtonCapHits_;
+    // Output and limited input at the final v from the last evaluation plus its first-order correction (the step dx is
+    // below 10 uV, so the error is O(dx^2 / Vd) ~ 1e-9 V): no further tanh needed.
+    double y = yOld - (1.0 - ty * ty) * dx;
+    double uNew = 0.0;
+    if (std::fabs(v) > vMax_) {  // anti-windup: the integrator state cannot run past vMax (rare): evaluate exactly
+      v = std::clamp(v, -vMax_, vMax_);
+      y = vRail_ * ratFastTanh(v * invRail_);
+      const double e = vin - (a_ * y + b);
+      uNew = slewOn_ ? vd_ * ratFastTanh(e * invVd_) : e;
+    } else {
+      const double e = vin - (a_ * y + b);
+      uNew = slewOn_ ? uOld + duOld * (e - eOld) : e;
     }
-    // Advance the network with the final vo. e_ is the saturated integrator input, so no unclamped state is kept.
-    const double vm = a_ * vo + b;
-    e_ = slewOn_ ? vd_ * std::tanh((vin - vm) * invVd_) : vin - vm;
-    ihf_ = 2.0 * gf_ * (vo - vm) - ihf_;
+    if (std::fabs(y) > 0.5 * vRail_) ++railHits_;
+    // Advance the network with the final output y. e_ is the saturated integrator input, so no unclamped state is kept.
+    const double vm = a_ * y + b;
+    e_ = uNew;
+    ihf_ = 2.0 * gf_ * (y - vm) - ihf_;
     const double i1 = y1_ * vm - c1_ * ih1_;
     ih1_ = 2.0 * g1_ * (vm - r1_ * i1) - ih1_;
     const double i2 = y2_ * vm - c2_ * ih2_;
     ih2_ = 2.0 * g2_ * (vm - r2_ * i2) - ih2_;
-    vo_ = vo;
-    io[i] = static_cast<float>(vo);
+    v_ = v;
+    io[i] = static_cast<float>(y);
   }
 }
 
@@ -141,8 +160,16 @@ RatPedal::RatPedal(const RatParams& p, PedalImplConfig cfg, const RatVoicing* vo
     : v_(voicing ? *voicing : RatVoicing::stock()), target_(p), applied_(p), cfg_(cfg) {
   ratLiveFromParams(p, liveTarget_.data());
   const int nAdaa = cfg_.adaa ? AdaaClipper::kLatency : 0;
+  stageOs_ = cfg_.oversample ? v_.stageOversample : 1;
+  if (stageOs_ != 1 && stageOs_ != 2 && stageOs_ != 4 && stageOs_ != 8)
+    throw std::invalid_argument("pedal.rat: stageOversample must be 1, 2, 4 or 8");
+  if (stageOs_ > 1) {  // stage domain: round trip + the ADAA sample, at the stage rate, padded to whole 4 fs samples
+    const int hi = OversamplerNx::roundTripLatencyHi(stageOs_) + nAdaa;
+    hiPadSamples_ = (stageOs_ - hi % stageOs_) % stageOs_;
+    extra4_ = (hi + hiPadSamples_) / stageOs_;
+  }
   if (cfg_.oversample) {
-    const int osTotal = Oversampler4x::roundTripLatencyOs() + nAdaa;
+    const int osTotal = Oversampler4x::roundTripLatencyOs() + (stageOs_ > 1 ? extra4_ : nAdaa);
     pad_ = osPadding(osTotal);
     latency_ = (osTotal + pad_) / 4;
   } else {
@@ -204,12 +231,13 @@ void RatPedal::prepare(const ProcessSpec& spec) {
   fs_ = spec.sampleRate;
   fsOs_ = cfg_.oversample ? 4.0 * fs_ : fs_;
   rampBase_ = rampSamplesFor(fs_);
-  rampOs_ = rampSamplesFor(fsOs_);
+  rampOs_ = rampSamplesFor(fsOs_ * stageOs_);
 
   inHpf_.setHighPass(v_.inHpfHz, fs_);
-  coupling_.setHighPass(std::min(v_.couplingHz(), 0.45 * fsOs_), fsOs_);
+  const double fsDom = fsOs_ * stageOs_;  // rate of the op-amp stage and the clipper
+  coupling_.setHighPass(std::min(v_.couplingHz(), 0.45 * fsDom), fsDom);
   outHpf_.setHighPass(v_.outHpfHz, fs_);
-  stage_.prepare(fsOs_, v_);
+  stage_.prepare(fsOs_ * stageOs_, v_);
   clip_.setAdaa(cfg_.adaa);
   tightOn_ = false;
   clipNone_ = false;
@@ -219,6 +247,11 @@ void RatPedal::prepare(const ProcessSpec& spec) {
   if (cfg_.oversample) {
     os_.prepare(spec.maxBlockSize);
     osBuf_.assign(static_cast<std::size_t>(4 * spec.maxBlockSize), 0.0f);
+    if (stageOs_ > 1) {
+      osx_.prepare(stageOs_, 4 * spec.maxBlockSize);
+      hiBuf_.assign(static_cast<std::size_t>(4 * stageOs_ * spec.maxBlockSize), 0.0f);
+      hiPad_.set(hiPadSamples_);
+    }
   } else {
     osBuf_.clear();
   }
@@ -236,7 +269,13 @@ void RatPedal::reset() {
   zPrev_ = 0.0f;
   padDelay_.reset();
   dryDelay_.reset();
-  if (cfg_.oversample) os_.reset();
+  if (cfg_.oversample) {
+    os_.reset();
+    if (stageOs_ > 1) {
+      osx_.reset();
+      hiPad_.reset();
+    }
+  }
 }
 
 void RatPedal::process(float* io, int n) noexcept {
@@ -252,22 +291,33 @@ void RatPedal::process(float* io, int n) noexcept {
     m = 4 * n;
     os_.upsample(io, n, x);
   }
+  float* d = x;  // the stage domain: 4 fs, or stageOs_ * 4 fs for the op-amp stage and the clipper
+  int md = m;
+  if (stageOs_ > 1) {
+    d = hiBuf_.data();
+    md = m * stageOs_;
+    osx_.upsample(x, m, d);
+  }
   if (!flat) {
-    stage_.process(x, m);
-    coupling_.process(x, m);
+    stage_.process(d, md);
+    coupling_.process(d, md);
   }
   if (clipNone_) {
     if (cfg_.adaa) {  // stands in for the clipper's ADAA sample: same latency in every CLIP mode
-      for (int i = 0; i < m; ++i) {
-        const float in = x[i];
-        x[i] = zPrev_;
+      for (int i = 0; i < md; ++i) {
+        const float in = d[i];
+        d[i] = zPrev_;
         zPrev_ = in;
       }
     }
   } else {
-    const float last = x[m - 1];
-    clip_.process(x, m);
+    const float last = d[md - 1];
+    clip_.process(d, md);
     zPrev_ = last;
+  }
+  if (stageOs_ > 1) {
+    hiPad_.process(d, md);
+    osx_.downsample(d, m, x);
   }
   padDelay_.process(x, m);
   if (cfg_.oversample) os_.downsample(x, n, io);

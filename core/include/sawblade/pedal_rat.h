@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -24,6 +25,17 @@ struct RatVoicing {
   double distTaperA = 81.0;         // Rd = rDistMax * (a^t - 1) / (a - 1), t = dist / 10 (~10 % at mid travel)
   double rdMin = 0.01;              // numerical floor of Rd at DIST 0 (gain 1.0002 instead of exactly 1)
   // LM308-class op-amp: single pole, gain-bandwidth, slew rate, supply rails (9 V supply).
+  // Extra oversampling of the op-amp stage and the diode clipper only, on top of the pedal's 4x (1, 2, 4 or 8): they
+  // run at 4 * stageOversample * fs. The stage is a dynamic nonlinearity (slew edge, rails) that ADAA cannot
+  // anti-alias. Measured in the pedal (DIST 10, FILTER 0, -6 dBFS, 48 kHz, silicon; worst existing pedal -82.1 dB):
+  //   factor   latency   5 kHz     4.7 kHz   2.3 kHz   1.1 kHz   RTF (best of 5)
+  //   1        50        -57 dB    -51 dB    -58 dB    -69 dB    0.026
+  //   2        52        -98 dB    -109 dB   -69 dB    -82 dB    0.051
+  //   4        53        -129 dB   -134 dB   -93 dB    -105 dB   0.106
+  //   8        54        -129 dB   -134 dB   -93 dB    -105 dB   0.236
+  // 2 is the smallest factor that clears the bar at the recipe frequencies within an RTF of 0.06; it does not at
+  // 2.3 kHz (a stage that sits saturated for a long time), which needs 4 at twice the CPU.
+  int stageOversample = 2;
   double gbwHz = 1.0e6;
   double slewVPerUs = 0.3;          // infinity = no slew limit (test seam)
   // Differential-pair input stage: the integrator input is Vd * tanh(v_diff / Vd), so the output rate is
@@ -32,7 +44,12 @@ struct RatVoicing {
   // maximum rate SR then follow from one tail current and one compensation capacitor (I_tail / Cc = SR,
   // gm / Cc = wt, Vd = I_tail / gm). Ignored when slewVPerUs is infinite.
   double diffPairVd = 0.0477465;
-  double vRail = 3.8, railKneeFrac = 0.75;  // smooth rail: linear below frac * vRail, tanh into vRail above
+  double vRail = 3.8;               // supply rail (9 V supply, LM308 swing): the output is vRail * tanh(v / vRail)
+  // Anti-windup: the integrator state v is clamped to +-railWindupLimit * vRail. The clamp is a slope kink of relative
+  // size sech^2(limit), which aliases (-49 dB at 2.5-3.5, none seen from 6); the price of a large limit is a longer
+  // recovery from a long saturation (up to (limit - 1) * vRail / SR = 63 us here, a few us in the real device),
+  // which shifts the saturated edges in time without changing their shape. A voicing choice.
+  double railWindupLimit = 6.0;
   // Filters.
   double inHpfHz = 20.0;            // input coupling, base rate
   double couplingR = 1.0e3, couplingC = 4.7e-6;  // after the op-amp: 1 k + 4.7 uF = 33.9 Hz first-order HPF
@@ -56,9 +73,30 @@ struct RatVoicing {
   ClipShapeSpec clipShape(RatClip c) const noexcept;  // None: unused (clipper bypassed)
 };
 
+// tanh to < 1e-10 absolute error (tests/test_pedal_rat.cpp checks the maximum against std::tanh over [-30, 30]):
+// an odd Taylor series below 0.25, above it 1 - 2 / (1 + e^(2|x|)) with e^y by range reduction and a degree-11 polynomial; ~3x faster than libm's tanh,
+// which dominates the op-amp stage's cost (4 to 5 tanh per sample). Deterministic, no allocation.
+inline double ratFastTanh(double x) noexcept {
+  const double ax = std::fabs(x);
+  if (ax < 0.25) {  // odd Taylor series to x^11: abs error < 1e-10 here (and much smaller below)
+    const double x2 = x * x;
+    return x * (1.0 + x2 * (-1.0 / 3.0 + x2 * (2.0 / 15.0 + x2 * (-17.0 / 315.0 + x2 * (62.0 / 2835.0 + x2 * (-1382.0 / 155925.0))))));
+  }
+  if (ax > 20.0) return std::copysign(1.0, x);
+  const double y = -2.0 * ax;
+  const int k = static_cast<int>(y * 1.4426950408889634 - 0.5);  // y <= 0: round to nearest
+  const double r = y - static_cast<double>(k) * 0.6931471805599453;
+  const double r2 = r * r, r4 = r2 * r2, r8 = r4 * r4;  // Estrin: short dependency chain
+  const double p = ((1.0 + r) + (1.0 / 2.0 + r * (1.0 / 6.0)) * r2) +
+                   ((1.0 / 24.0 + r * (1.0 / 120.0)) + (1.0 / 720.0 + r * (1.0 / 5040.0)) * r2) * r4 +
+                   ((1.0 / 40320.0 + r * (1.0 / 362880.0)) + (1.0 / 3628800.0 + r * (1.0 / 39916800.0)) * r2) * r8;
+  const double e = p * std::bit_cast<double>(static_cast<std::int64_t>(k + 1023) << 52);  // p * 2^k, k >= -58
+  return std::copysign((1.0 - e) / (1.0 + e), x);
+}
+
 // The op-amp gain stage of the pedal.rat model, at the (oversampled) rate it runs at.
 //
-// Continuous model. vo is the op-amp output and the integrator state, d(vo)/dt = wt * (vin - vm) with wt =
+// Continuous model. vo is the op-amp output (the integrator state; the rails below make the output a saturated function of it), d(vo)/dt = wt * (vin - vm) with wt =
 // 2 pi GBW (open loop A(s) = wt / s), vm the inverting-input node, vm = vo - vcf. Network (nothing flows into the
 // op-amp input): the feedback current through Rd || Cf equals the current into the two ground legs,
 //   (vo - vm) / Rd + Cf d(vo - vm)/dt = sum_k ik,   ik = (vm - vck) / Rk,   Ck d(vck)/dt = ik.
@@ -73,18 +111,23 @@ struct RatVoicing {
 // Y)), and the integrator vo = vo' + h (e + e') with h = wt T / 2, e = vin - vm gives the linear solution
 // vo = (vo' + h (vin - b + e')) / (1 + h a). This is the exact trapezoidal solution of the linear circuit.
 //
-// Nonlinear limits, applied to that solution in this order:
+// Nonlinear limits, both solved in the same implicit step. The state is the output y itself:
 //  1. slew: the real LM308 mechanism, a differential-pair input stage. The integrator input is
-//     u(e) = Vd tanh(e / Vd), d(vo)/dt = wt u(e), so the rate is SR tanh(wt e / SR) and approaches SR
-//     asymptotically. In the trapezoidal step |vo - vo'| <= h (|u| + |u'|) < 2 h Vd = SR * T. The saturated u is
-//     what the next step's trapezoid averages over (u'), so the carried state is the limited one. The step is
-//     solved implicitly with the network: F(x) = x - vo' - h (u(vin - a x - b) + u') = 0, smooth and strictly
-//     increasing (F' = 1 + h a sech^2 >= 1), by Newton from the linear solution (or, where |e| > Vd, from the
-//     hard-saturated root vo' + h (+-Vd + u')), at most kMaxNewton steps, no allocation; it converges in 1-3
-//     steps (newtonCapHits() counts the samples that hit the cap, 0 in all tests);
-//  2. rails: a smooth saturation (linear below knee, tanh into +-vRail) of that value.
-// The final vo is the only integrator state, so the stage cannot wind up past a limit; the network states (vm, the
-// capacitor histories, the clamped e') are then advanced with the final vo, so no hidden unclamped state exists.
+//     u(e) = Vd tanh(e / Vd), dy/dt = wt u(e), so the rate is SR tanh(wt e / SR) and approaches SR asymptotically.
+//     In the trapezoidal step |dy| <= h (|u| + |u'|) < 2 h Vd = SR * T;
+//  2. rails: where u pushes the output further out (u y > 0) the rate is multiplied by 1 - (y / Vrail)^2, so y
+//     approaches +-Vrail exponentially (time constant Vrail / 2 SR = 6 us) and never passes it; where u pulls it back
+//     the rate is the full one. The state is the bounded output, so there is no integrator to wind up and the stage
+//     leaves a rail the moment the input reverses (anti-windup by construction). The product is continuous (u = 0 at
+//     the switch), smooth in y, and a stage parked at a rail does not drift: the level reached does not depend on the
+//     sample rate or on SR. (A saturation re-applied to the state each sample, or a clamped windup state, were both
+//     tried: the first leaks and makes the peak depend on the rate, the second's kink dominated the aliasing.)
+// The carried state is r' = u M (the limited rate), which the next trapezoid averages over. The step is solved
+// implicitly with the network: F(y) = y - y' - h (r(y) + r') = 0, r = u(vin - a y - b) M(y, u), smooth and strictly
+// increasing (dr/dy <= 0, so F' >= 1), by Newton from the linear solution (or, where |e| > Vd, from the
+// hard-saturated root y' + h (+-Vd + r')), at most kMaxNewton steps, stopping when the step is below 100 uV (remaining error ~1e-6 V, below the alias floor); no
+// allocation; it converges in 1-3 steps (newtonCapHits() counts the samples that hit the cap, 0 in all tests).
+// The network states (vm, the capacitor histories) are then advanced with the final y.
 //
 // DIST (Rd) and the weight of the R2/C2 leg (RUETZ: 1 = in circuit, 0 = removed; in between it is a number of such
 // legs in parallel, which keeps a live toggle click-free) change per sample along a linear ramp.
@@ -97,10 +140,11 @@ class RatOpAmpStage {
   void setLegWeight(double w2, int rampSamples) noexcept;
   void process(float* io, int n) noexcept;
 
-  // Diagnostics since reset(): samples on which the input stage was beyond Vd / the output was in the rail knee region.
+  // Diagnostics since reset(): samples on which the input stage was beyond Vd / the output was beyond half the rail.
   std::uint64_t slewClampCount() const noexcept { return slewHits_; }
   std::uint64_t railCount() const noexcept { return railHits_; }
   std::uint64_t newtonCapHits() const noexcept { return newtonCapHits_; }
+  std::uint64_t newtonIterations() const noexcept { return newtonIters_; }
   static constexpr int kMaxNewton = 8;
 
  private:
@@ -127,20 +171,21 @@ class RatOpAmpStage {
 
   // constants
   double h_ = 0.0, gf_ = 0.0, g1_ = 0.0, g2_ = 0.0, y1_ = 0.0, y2_ = 0.0, c1_ = 1.0, c2_ = 1.0, r1_ = 0.0, r2_ = 0.0;
-  double vd_ = 0.05, invVd_ = 20.0, vRail_ = 3.8, knee_ = 2.85, kneeSpan_ = 0.95;
+  double vd_ = 0.05, invVd_ = 20.0, vRail_ = 3.8, invRail_ = 0.26, vMax_ = 22.8;
   bool slewOn_ = true;
   // per-sample coefficients (change only while a ramp runs)
   double a_ = 0.0, invD_ = 0.0, invK_ = 1.0;
   Ramp rd_, w2_;
   // state
-  double vo_ = 0.0, e_ = 0.0, ihf_ = 0.0, ih1_ = 0.0, ih2_ = 0.0;
-  std::uint64_t slewHits_ = 0, railHits_ = 0, newtonCapHits_ = 0;
+  double v_ = 0.0, e_ = 0.0, ihf_ = 0.0, ih1_ = 0.0, ih2_ = 0.0;
+  std::uint64_t slewHits_ = 0, railHits_ = 0, newtonCapHits_ = 0, newtonIters_ = 0;
 };
 
 // "Rat-style distortion" (pedal.rat, display name VERMIN): input HPF (20 Hz) -> TIGHT HPF -> 4x oversampled
 // [op-amp gain stage (GBW, slew, rails) -> 34 Hz coupling HPF -> diode clipper (CLIP)] -> FILTER (RC low-pass) ->
 // 10 Hz output HPF -> VOLUME and clean MIX. Static (live knobs aside), nonlinear, time-invariant: NAM-trainable.
-// Latency: the oversampler round trip plus the ADAA2 sample, padded to a whole number of base-rate samples = 50
+// Latency: the oversampler round trip, the stage-domain half-band chain (stageOversample > 1) and the ADAA2 sample,
+// padded to a whole number of base-rate samples = 52 at the default stageOversample 2 (50 / 53 / 54 for 1 / 4 / 8)
 // (the IIR filters' and the op-amp stage's group delay is not counted, as for the other modelled pedals). CLIP
 // `none` keeps a one-sample clean delay in place of the clipper so the latency is the same in every mode. The
 // clean mix is the input after the 20 Hz input HPF, delayed by exactly latencySamples().
@@ -181,7 +226,10 @@ class RatPedal : public Processor {
   ShortDelay padDelay_;
   DryDelay dryDelay_;
   Oversampler4x os_;
-  std::vector<float> osBuf_;
+  std::vector<float> osBuf_, hiBuf_;
+  OversamplerNx osx_;
+  ShortDelay hiPad_;  // pads the stage round trip to a whole number of 4 fs samples
+  int stageOs_ = 1, hiPadSamples_ = 0, extra4_ = 0;
 };
 
 }  // namespace sawblade

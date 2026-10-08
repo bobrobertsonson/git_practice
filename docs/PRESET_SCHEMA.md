@@ -187,7 +187,7 @@ Block types:
 | `pedal.ts` | Modeled "green overdrive" (Tube-Screamer topology) | `modelVersion`, `params`; see PedalTs below | yes | 50 samples (at any rate) |
 | `pedal.hmx` | Modeled "modded chainsaw distortion" (modded HM-2 class) | `modelVersion`, `params`; see PedalHmx below | yes | 50 samples (at any rate) |
 | `pedal.eye` | Modeled "one-knob chainsaw" | `modelVersion`, `params`; see PedalEye below | yes | 50 samples (at any rate) |
-| `pedal.rat` | Modeled "op-amp hard-clip distortion" (rat-style topology), display name VERMIN | `modelVersion` (1), `params`; see PedalRat below | yes | 50 samples (at any rate) |
+| `pedal.rat` | Modeled "op-amp hard-clip distortion" (rat-style topology), display name VERMIN | `modelVersion` (1), `params`; see PedalRat below | yes | 52 samples (at any rate) |
 
 Unknown `type` values are a parse error. New block types (further modeled pedal recreations)
 are added to the registry without changing this schema's shape: they use `"params": { ... }`
@@ -295,7 +295,7 @@ Alias floor (D 10, 5 kHz tone): below -80 dB at 48 and 96 kHz for every clip and
 Modeled rat-style op-amp hard-clipping distortion (DSP, no capture). Display name **VERMIN**; generic UI name
 "op-amp distortion". Built from published circuit analysis (docs/specs/v0_9-vermin-A_design.md): input HPF ->
 non-inverting op-amp gain stage (gain `1 + Zf/Zg`, two shelving corners at 60 Hz and 1.5 kHz, up to ~67 dB, with
-the op-amp's gain-bandwidth, differential-pair slew limit (0.3 V/us) and supply rails modelled, not a fixed low-pass) -> hard clipper -> FILTER
+the op-amp's gain-bandwidth, differential-pair slew limit (0.3 V/us) and smooth supply rails modelled, not a fixed low-pass) -> hard clipper -> FILTER
 (RC low-pass) -> VOLUME. Typical `slot`: `"pedal"`.
 
 ```jsonc
@@ -309,13 +309,13 @@ the op-amp's gain-bandwidth, differential-pair slew limit (0.3 V/us) and supply 
 | `filter` | 0-10 | 5 | RC low-pass after the clipper, `fc = 1 / (2 pi (1.5k + Rf) 3.3 nF)`, `Rf = 100k * (81^(f/10) - 1) / 80` (audio taper, a voicing choice made by feel): 32 kHz (clamped to 0.45 fs) at 0, ~4.2 kHz at 5, 475 Hz at 10 |
 | `volume` | 0-10 | 5.8 | output level, `3*volume - 24` dB (8 = unity) plus a fixed +6 dB output make-up, so the stock pedal returns the RMS of a -12 dBFS-RMS DI riff within 1 dB; wet path only |
 | `tightness` | 0-10 | 0 | pre-gain high-pass `20 * 10^(tightness/10)` Hz (20-200 Hz), as the other pedals; 0 = off; the dry signal is tapped before it |
-| `mix` | 0-100 (%) | 100 | wet proportion; `out = (1-m)*dry[n-50] + m*level*wet`, dry = the input after the 20 Hz input high-pass |
+| `mix` | 0-100 (%) | 100 | wet proportion; `out = (1-m)*dry[n-52] + m*level*wet`, dry = the input after the 20 Hz input high-pass |
 | `clip` | `silicon` \| `led` \| `none` \| `asymmetric` | `silicon` | clipper to ground after a 1 k / 4.7 uF coupling: 1N914 pair, red LED pair, none (op-amp rails only), one diode against two |
 | `ruetz` | bool | false | the well-known mod that removes the 560 ohm / 4.7 uF leg of the gain network (tighter low end) |
 
 Stock: DIST 5, FILTER 5, VOLUME 5.8, TIGHT 0, CLIP silicon, MIX 100, RUETZ off. Missing keys take the stock value;
-out-of-range values are a PresetError. Latency **50 samples at every sample rate** (oversampler round trip plus one
-ADAA2 sample; `clip: none` keeps an equal clean delay), NAM-trainable. Live parameters (all seven, in table order;
+out-of-range values are a PresetError. Latency **52 samples at every sample rate** (oversampler round trip, the op-amp stage's local 2x half-band chain
+and one ADAA2 sample; `clip: none` keeps an equal clean delay), NAM-trainable. Live parameters (all seven, in table order;
 `clip` a choice index, `ruetz` off / on) are ramped over 20 ms except CLIP, which switches at once.
 
 ### PedalHmx (`type: "pedal.hmx"`) and PedalEye (`type: "pedal.eye"`)
