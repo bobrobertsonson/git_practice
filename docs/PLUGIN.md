@@ -293,11 +293,12 @@ off every render, trim, make-up and gate seed is what it was before I2, bit for 
 - **"Calibrated input levels (beta)"** (Settings, default **off**) turns the core's input calibration on for the engine, for the level-match trim and for
   the capture-swap make-up. Turning it on, or changing the device dBu, rebuilds the engine (cross-faded like any rebuild; `calibrationTick()` at 10 Hz).
 - **Notice.** With the toggle on and no record, the main view and the Settings step say "Interface not calibrated: assuming +12 dBu" (non-blocking).
-  A capture whose metadata lacks an input or output level shows a small "UNCAL" badge on its pedal tile (the capture badge's style, in the warning colour).
+  In the main view the notice sits after errors and engine warnings: those take precedence there, while the Settings step always shows it.
+  A capture whose metadata lacks an input or output level shows a small "UNCAL" badge on its pedal tile and on the amp head's read-out pill (one badge style, `paintBadge`, in the warning colour).
 - **Measurements follow the calibration.** With the toggle on, the trim is measured through the calibrated chain (`computeAutoTrim(..., cal)`), kept
   under its own cache key, and is **not** read from or written into the preset (I4 decides how a preset records it). A capture swap on a block that feeds
   another NAM block gets no make-up (core `slotMakeup`: `skippedHop`, nothing rendered; the planned gain carries the hop), the last block keeps its
-  make-up. `Pedalboard` and `BrowserController` pass the block index and store nothing for a hop block. The PREVIEW audition still renders uncalibrated.
+  make-up. `Pedalboard` and `BrowserController` pass the block index; on a hop the make-up is set to 0 (the old capture's make-up is wiped, because the calibrated chain drops it anyway); adding a pedal stores none. The PREVIEW audition still renders uncalibrated.
 - **Live-gate floor seed.** The live gate's floor follower seeds at -70 dBFS and needs about 25 s to learn a loud floor. The audio thread publishes the
   learned floor through a relaxed atomic float in the chain (`Chain::learnedGateFloorDb()`, NaN until the follower has filled its 3 s window from measured
   frames; no allocation, no lock). The message thread (`SawbladeProcessor::calibrationTick()`) writes it into the device record at most every 10 s and

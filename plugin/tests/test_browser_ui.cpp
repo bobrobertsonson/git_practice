@@ -1068,3 +1068,38 @@ TEST_CASE("browser: no ladder lookup when network tools are disabled, or for ped
   }
   CHECK(ladderCalls() == 0);
 }
+
+// v0.8 I2: with calibrated input levels on, USE on a slot that feeds an amp stores make-up 0 (the old capture's make-up is wiped).
+TEST_CASE("browser: USE on a pedal that feeds an amp with calibrated input levels stores make-up 0, wiping the old one", "[browser][ui][levelmatch][devicecal]") {
+  SwapRig rig("{}");
+  const auto namBlock = [](const std::string& id, const char* file, const char* slot, double makeup) {
+    nlohmann::json b = {{"id", id}, {"type", "nam"}, {"slot", slot}, {"model", {{"file", (kFixtures / "nam" / file).string()}}}};
+    if (makeup != 0.0) b["makeupDb"] = makeup;
+    return b;
+  };
+  nlohmann::json rj = levelRigJson();
+  rj["paths"]["b"]["blocks"] = nlohmann::json::array({namBlock("b0", "cal_pedal_a.nam", "pedal", 5.0), namBlock("b1", "cal_amp_hi.nam", "amp", 0.0)});
+  rig.proc.loadPreset(parsePreset(rj, kFixtures));
+  REQUIRE(rig.proc.waitForLoader());
+  settings::Settings::shared().setCalibratedInputLevels(true);
+  rig.proc.calibrationTick();
+  REQUIRE(rig.proc.waitForLoader());
+  REQUIRE(static_cast<const NamBlockParams&>(*rig.proc.currentPreset().b.blocks[0].params).makeupDb == 5.0);
+  rig.env.set("FAKE_T3K_FETCH", (kFixtures / "nam" / "linear_05_025.nam").string());  // another level: an unskipped make-up would not be 0
+  CaptureBrowser b(rig.proc, *rig.settings, Slot::BodyPedal);
+  auto& ctl = b.controller();
+  REQUIRE(pumpUntil([&] { return !ctl.state().records.empty() && !ctl.state().loading; }));
+  ctl.select(102);
+  REQUIRE(pumpUntil([&] { return ctl.state().models.size() == 2; }));
+  ctl.use(0);
+  REQUIRE(pumpUntil([&] { return ctl.state().status.rfind("Using", 0) == 0 || ctl.state().statusIsError; }, 60000));
+  CHECK_FALSE(ctl.state().statusIsError);
+  REQUIRE(rig.proc.waitForLoader());
+  const Preset after = rig.proc.currentPreset();
+  const auto& nb = static_cast<const NamBlockParams&>(*after.b.blocks[0].params);
+  REQUIRE(nb.model.source.has_value());
+  CHECK(nb.model.source->id == "102");
+  CHECK(nb.makeupDb == 0.0);  // hop block: the planned gain carries it, the old 5 dB is gone
+  CHECK(ctl.state().status.find("could not be measured") == std::string::npos);
+  settings::Settings::shared().setCalibratedInputLevels(false);
+}

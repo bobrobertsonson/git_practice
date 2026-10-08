@@ -285,7 +285,7 @@ void BrowserController::use(int targetIndex) {
     changed();
     // v0.8 I2: with calibrated input levels on, a slot that feeds another NAM block stores no make-up (skippedHop: makeupDb is 0).
     proc_.computeSlotMakeup(cur, after, path, target.blockIndex, [this, alive = alive_, seq, target, f, path](const LevelWorker::MakeupResult& r) {
-      juce::MessageManager::callAsync([this, alive, seq, target, f, path, mk = r.makeupDb] {
+      juce::MessageManager::callAsync([this, alive, seq, target, f, path, mk = r.makeupDb, hop = r.skippedHop] {
         if (!alive->load() || seq != useSeq_) return;
         // Edits made while the level was measured are kept: the swap is applied to the rig as it is now.
         const Preset now = proc_.currentPreset();
@@ -297,6 +297,10 @@ void BrowserController::use(int targetIndex) {
         if (t2 == nullptr) return fail("the slot is no longer in the rig");
         auto swapped = withCapture(now, *t2, f, e2);
         if (!swapped) return fail(e2);
+        if (hop) {  // calibrated chain: the planned gain carries this hop, so the slot's make-up is 0 (the old capture's is wiped)
+          levelNote_.clear();
+          return loadSwapped(withSlotMakeup(*swapped, path, t2->blockIndex, 0.0));
+        }
         levelNote_ = mk ? "" : " (no level match: could not be measured)";
         loadSwapped(mk ? withSlotMakeup(*swapped, path, t2->blockIndex, *mk) : std::move(*swapped));
       });

@@ -1,6 +1,9 @@
 #include "rig/AmpHead.h"
 
+#include <algorithm>
+
 #include "SawbladeLookAndFeel.h"
+#include "rig/PedalKind.h"
 #include "rig/RigModel.h"
 
 namespace sawblade::plugin::rig {
@@ -88,7 +91,7 @@ void AmpHead::refresh() {
 void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo& ladder, const FillStatus& fill) {
   const PathPreset& pp = path_ == 0 ? preset.a : preset.b;
   juce::String text, tag;
-  bool on = true, reason = false;
+  bool on = true, reason = false, uncal = false;
   if (path_ == 1 && !pp.enabled) {
     text = pp.blocks.empty() ? bodyOffText() : bodyOffWithBlocksText();
     on = false;
@@ -110,6 +113,10 @@ void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo&
     reason = true;
   } else {
     text = gainReadout(knob(kAmpGain).getValue(), ladder);
+    {
+      const auto unc = proc_.uncalibratedBlocks();
+      uncal = std::find(unc.begin(), unc.end(), pp.blocks[static_cast<std::size_t>(ampIndex(pp))].id) != unc.end();
+    }
     // The steps tag: from the preset as shown (so it follows an undo / redo and a ladder that just arrived), and what this session has checked.
     if (const auto* nam = dynamic_cast<const NamBlockParams*>(pp.blocks[static_cast<std::size_t>(ampIndex(pp))].params.get())) {
       if (nam->model.ladder.size() >= 2) tag = stepsText(static_cast<int>(nam->model.ladder.size()));
@@ -120,7 +127,8 @@ void AmpHead::refresh(const Preset& preset, const SawbladeProcessor::LadderInfo&
     enabled_ = on;
     for (auto& k : knobs_) k->setEnabled(on);
   }
-  if (text != readout_ || reason != reason_ || tag != stepsTag_) {
+  if (text != readout_ || reason != reason_ || tag != stepsTag_ || uncal != uncal_) {
+    uncal_ = uncal;
     readout_ = text;
     stepsTag_ = tag;
     reason_ = reason;
@@ -145,6 +153,12 @@ void AmpHead::paint(juce::Graphics& g) {
   g.setColour((reason_ ? L::warning() : L::text()).withAlpha(0.95f));
   g.setFont(L::monoFont(11.0f));
   auto textArea = pill.toNearestInt().reduced(6, 0);
+  if (uncal_) {  // v0.8 I2: the same badge style as a capture tile's, at the left end of the pill
+    const auto badge = textArea.removeFromLeft(46);
+    paintBadge(g, juce::Rectangle<float>(static_cast<float>(badge.getX()), pill.getCentreY() - 6.0f, 42.0f, 12.0f), "UNCAL", L::warning());
+    g.setColour((reason_ ? L::warning() : L::text()).withAlpha(0.95f));
+    g.setFont(L::monoFont(11.0f));
+  }
   if (stepsTag_.isNotEmpty()) {  // the tag takes the right end of the pill; the read-out keeps the rest
     const auto tagArea = textArea.removeFromRight(52);
     g.setColour(L::dimText());

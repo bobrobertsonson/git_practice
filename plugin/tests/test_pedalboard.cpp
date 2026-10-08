@@ -1006,6 +1006,7 @@ TEST_CASE("pedalboard: with calibrated input levels on, a capture without level 
   REQUIRE(pb.tileCount(0) == 2);
   CHECK_FALSE(pb.tile(0, 0)->uncalibrated());
   CHECK_FALSE(pb.tile(0, 1)->uncalibrated());
+  CHECK_FALSE(rig.ed->ampHead(0).uncalibrated());
   CHECK_FALSE(labelContains(*rig.ed, "Interface not calibrated"));
 
   settings::Settings::shared().setCalibratedInputLevels(true);
@@ -1014,6 +1015,7 @@ TEST_CASE("pedalboard: with calibrated input levels on, a capture without level 
   CHECK(rig.proc.status().calibrationOn);
   CHECK(pb.tile(0, 0)->uncalibrated());
   CHECK_FALSE(pb.tile(0, 1)->uncalibrated());
+  CHECK(rig.ed->ampHead(0).uncalibrated());  // the SAW amp (linear identity fixture) has no levels either
   // No device record: the non-blocking notice is in the main view.
   rig.ed->refreshNow();
   CHECK(labelContains(*rig.ed, "Interface not calibrated: assuming +12 dBu"));
@@ -1031,4 +1033,43 @@ TEST_CASE("pedalboard: with calibrated input levels on, a capture without level 
   rig.proc.calibrationTick();
   rig.settle();
   CHECK_FALSE(pb.tile(0, 0)->uncalibrated());
+  CHECK_FALSE(rig.ed->ampHead(0).uncalibrated());
+}
+
+// v0.8 I2: swapping a pedal that feeds an amp, with calibrated input levels on, stores make-up 0 (the old one is wiped); adding one stores none.
+TEST_CASE("pedalboard: with calibrated input levels on, a pedal that feeds the amp gets make-up 0 on a swap and none on an add", "[editor][pedalboard][devicecal][levelmatch]") {
+  Rig rig;
+  const auto capture = [](const std::string& id, const char* file, double makeup) {
+    json b = {{"id", id}, {"type", "nam"}, {"slot", "pedal"}, {"model", {{"file", (kFx / "nam" / file).string()}}}};
+    if (makeup != 0.0) b["makeupDb"] = makeup;
+    return b;
+  };
+  settings::Settings::shared().setCalibratedInputLevels(true);
+  rig.load(rigJson({capture("a1", "cal_pedal_a.nam", 5.0), namAmp("a2")}, {namAmp("b1")}, true));
+  rig.proc.calibrationTick();
+  rig.settle();
+  const auto makeupOf = [&](int path, std::size_t i) {
+    const Preset p = rig.preset();
+    return static_cast<const NamBlockParams&>(*(path == 0 ? p.a : p.b).blocks[i].params).makeupDb;
+  };
+  REQUIRE(makeupOf(0, 0) == 5.0);
+  Capture next;
+  next.file = (kFx / "nam" / "linear_05_025.nam").string();
+  next.resolvedPath = next.file;
+  REQUIRE(rig.board().swapPedalCapture(0, "a1", next));
+  const auto end = std::chrono::steady_clock::now() + kLoad;
+  while (makeupOf(0, 0) == 5.0 && std::chrono::steady_clock::now() < end) pump(40);
+  rig.settle();
+  CHECK(makeupOf(0, 0) == 0.0);
+  // Adding a pedal in front of the amp: nothing is stored for it.
+  Capture added;
+  added.file = (kFx / "nam" / "linear_05_025.nam").string();
+  added.resolvedPath = added.file;
+  REQUIRE(rig.board().addCapturePedal(0, added));
+  pump(1500);
+  rig.settle();
+  const Preset p = rig.preset();
+  REQUIRE(p.a.blocks.size() == 3);
+  for (std::size_t i = 0; i < 2; ++i) CHECK(makeupOf(0, i) == 0.0);
+  settings::Settings::shared().setCalibratedInputLevels(false);
 }

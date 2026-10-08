@@ -7,6 +7,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "PluginProcessor.h"
+#include "SettingsEnv.h"
 #include "alloc_guard.h"
 #include "latency_stub.h"
 #include "lock_guard.h"
@@ -67,7 +69,16 @@ struct TempDir {
 }
 
 // Drives a processor like a host: mono in (channel 0), stereo out.
+// v0.8 I2: the processor reads Settings::shared() (calibration toggle, device record, LEVEL MATCH) when it is prepared and on every
+// load. A Host therefore isolates the settings (its own temp file) unless the test already did (SAWBLADE_SETTINGS_FILE is set, e.g. by
+// a SettingsEnv or a ScopedVar declared before the Host), so no test ever reads the developer's real settings file.
+inline std::unique_ptr<SettingsEnv> isolateSettingsUnlessSet() {
+  if (const char* f = std::getenv("SAWBLADE_SETTINGS_FILE"); f != nullptr && *f != '\0') return nullptr;
+  return std::make_unique<SettingsEnv>("{}");
+}
+
 struct Host {
+  std::unique_ptr<SettingsEnv> ownSettings = isolateSettingsUnlessSet();  // first: the processor below reads the settings
   SawbladeProcessor p;
   juce::AudioBuffer<float> storage{2, 8192};
   juce::MidiBuffer midi;

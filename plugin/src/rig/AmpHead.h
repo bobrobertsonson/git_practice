@@ -48,6 +48,8 @@ class AmpHead : public juce::Component {
   const juce::String& readout() const noexcept { return readout_; }
   // The steps tag now shown ("" = none): see stepsText().
   const juce::String& stepsTag() const noexcept { return stepsTag_; }
+  // v0.8 I2: the path's amp capture has no input / output level metadata and calibrated input levels are on ("UNCAL" badge in the pill).
+  bool uncalibrated() const noexcept { return uncal_; }
   // steps: n >= 2 -> "STEPS n"; 0 -> "STEPS -" (em dash); anything else (unknown) -> "".
   static juce::String stepsText(int steps);
   // The one line for a path with a working amp: GAIN `gain` with the ladder's state.
@@ -71,7 +73,7 @@ class AmpHead : public juce::Component {
   int path_;
   std::array<std::unique_ptr<skin::FilmstripKnob>, kAmpKnobCount> knobs_;
   juce::String readout_, stepsTag_;
-  bool enabled_ = true, reason_ = false;
+  bool enabled_ = true, reason_ = false, uncal_ = false;
 };
 
 }  // namespace sawblade::plugin::rig

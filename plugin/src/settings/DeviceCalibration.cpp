@@ -1,11 +1,11 @@
 #include "settings/DeviceCalibration.h"
 
 #include <cctype>
-#include <charconv>
+#include <locale>
+#include <sstream>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
-#include <system_error>
 
 namespace sawblade::plugin::settings {
 
@@ -79,9 +79,13 @@ std::optional<double> parseDbuText(std::string_view text) {
   }
   if (!t.empty() && t.front() == '+') t.erase(t.begin());
   if (t.empty()) return std::nullopt;
+  // istringstream with the classic locale: locale-independent, and available for floating point on every libc++/libstdc++
+  // (std::from_chars(double) is not on older libc++).
+  std::istringstream in(t);
+  in.imbue(std::locale::classic());
   double v = 0.0;
-  const auto r = std::from_chars(t.data(), t.data() + t.size(), v);
-  if (r.ec != std::errc() || r.ptr != t.data() + t.size() || !std::isfinite(v)) return std::nullopt;
+  in >> v;
+  if (in.fail() || !in.eof() || !std::isfinite(v)) return std::nullopt;
   return v;
 }
 
@@ -153,7 +157,7 @@ std::string todayDate() {
 #else
   localtime_r(&t, &tm);
 #endif
-  char buf[16];
+  char buf[48];
   std::snprintf(buf, sizeof buf, "%04d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
   return buf;
 }

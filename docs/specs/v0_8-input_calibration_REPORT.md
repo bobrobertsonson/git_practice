@@ -302,3 +302,33 @@ does not.
   depends on the host block size. The ramp itself is sample-accurate.
 - **Comparing hashes across branches.** After the v0.4M merge, `preset_hash` in `match/export/run.py` is computed over the flattened preset for presets
   with `dynamicsMode`, so hashes from before and after the merge are not comparable.
+
+## I2 — device step
+
+Branch `claude/sawblade-v0_8-input-cal`. Core: calibration-aware auto trim / path measurement / swap make-up (`skippedHop`), live-gate floor seed and learned-floor atomic.
+Plugin: device record in Settings, "Calibrated input levels (beta)" toggle (default off), UNCAL badges, uncalibrated notice, hop make-up 0, floor persistence.
+See `docs/PLUGIN.md` "Device step and calibrated input levels".
+
+### Proposed guided Measure (not built in I2)
+1. The app plays a 1 kHz sine of known digital level through its own output; the user loops the interface output into the instrument input at minimum gain.
+2. The app reads the captured RMS in dBFS and, with the user-entered dBu of the source (from a meter or a known-level tone generator), derives the dBu at 0 dBFS.
+3. Repeat at two levels and check the slope is 1 dB per dB, to catch input DSP and any gain-readout trap.
+4. Store `method: measured`.
+It needs a reference signal of known dBu from the user, which is why I2 only has the stub.
+
+### Decisions (implementer)
+1. The gate floor seed is used only with the toggle on (toggle off stays bit-identical); the learned floor is persisted whenever a record exists.
+2. The "not calibrated" notice shows only with the toggle on and no record (the +12 dBu assumption is only true then).
+3. No existing audio-to-UI channel fits a single value (InputMeter is a ring of peaks): a relaxed `atomic<float>` in the chain, read on the message thread via `published_`.
+4. With calibration on, the trim cache key gets a `|cal:<dBu>` suffix; the stored trim is not read from the preset and the calibrated trim is not written back (I4 decides the schema).
+5. On a hop block the make-up is set to 0 for the new capture (the old one is wiped); adding a pedal stores none.
+6. `Settings::shared()` is now touched in `submit()` and `levelOnLoad`; the test Host harness isolates the settings file unless a test already did.
+7. UNCAL badge on capture pedal tiles and on the amp head pill (same `paintBadge` style); no tooltip yet.
+8. The PREVIEW audition still renders uncalibrated (out of the I2 list).
+9. Choosing a new device entry clears the learned floor (the record is the key); re-choosing the same preset also clears it.
+
+### Unverified until CI
+Everything under `plugin/` was only syntax-checked (`g++ -fsyntax-only -Wall -Wextra -Wpedantic -Werror`) here; no X11 build. Run locally in scratch binaries: the record, presets,
+validation and Settings tests, and the Engine tests (off bit-identical, summary, seed and learned floor with no allocation). CI must prove: all processor-level cases in
+`test_device_calibration_engine.cpp` (rebuild counts, trim keying, hop skip, floor persistence), the SettingsPanel layout and the interface step, the editor / pedalboard /
+browser tests (UNCAL badges, notice label, hop make-up 0), and the effect of the Host harness settings isolation on the other processor tests.

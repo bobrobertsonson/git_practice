@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -162,7 +163,7 @@ struct SettingsPanel::Impl : private juce::Timer {
   juce::Label capSep, sepNote, capTakes, capTheme, capScale, scaleNote, levelNote;
   juce::ToggleButton levelToggle;
   // v0.8 I2: the device step (interface level) and the "Calibrated input levels (beta)" toggle. Settings only, never in a preset.
-  juce::Label capDevice, deviceNote, deviceStatus, dbuMsg, calNote;
+  juce::Label deviceNote, deviceStatus, dbuMsg, calNote;
   juce::ComboBox deviceCombo;
   juce::TextEditor dbuField;
   juce::TextButton dbuSet;
@@ -424,7 +425,6 @@ struct SettingsPanel::Impl : private juce::Timer {
     styleLabel(deviceNote, L::bodyFont(12.0f), L::dimText());
     deviceNote.setText("Set your interface's instrument gain to minimum (note PAD/Air). Sawblade supplies all gain.", juce::dontSendNotification);
     add(deviceNote);
-    caption(capDevice, "INTERFACE");
     styleCombo(deviceCombo, "Interface", "The level your interface's instrument input reads as 0 dBFS, at minimum gain. Stored in the plugin settings, never in a preset.");
     deviceCombo.addItem("Not set", kComboNone);
     {
@@ -1166,8 +1166,6 @@ struct SettingsPanel::Impl : private juce::Timer {
     heading("INTERFACE");
     place(deviceNote, m, y, w - 2 * m, 20);
     y += 24;
-    place(capDevice, m, y, 300, 14);
-    y += 16;
     place(deviceCombo, m, y, 330, 30);
     place(dbuField, m + 344, y, 90, 30);
     place(dbuSet, m + 442, y, 60, 30);
