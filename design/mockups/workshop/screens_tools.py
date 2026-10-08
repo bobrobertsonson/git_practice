@@ -170,7 +170,7 @@ def _cand_row(cv, rect, rank, chain, score, selected=False, preview=False):
              fg='blade_hi' if selected else 'bone')
         cx = x0 + 70
     text(cv, (cx, c), chain, 'body_strong', bg=(cx - 4, y0 + 3, cx + 392, y1 - 3))
-    ws.lcd(cv, (x1 - 266, c), score, 'dB', digits=4, h=16)
+    ws.lcd(cv, (x1 - 266, c), score, 'dB', digits=4, h=16, tone='green' if selected else 'amber')
     btn(cv, x1 - 186, y0 + 6, 110, rect[3] - rect[1] - 12, 'AUDITIONING' if selected else 'AUDITION', 'secondary',
         'pressed' if selected else 'normal')
     btn(cv, x1 - 70, y0 + 6, 62, rect[3] - rect[1] - 12, 'APPLY', 'secondary')
@@ -197,7 +197,10 @@ def screen_05_match():
     y = k[1]
     ws.footswitch(cv, k[0] + 24, y + 22, 40, False, 'REC')
     ws.footswitch(cv, k[0] + 92, y + 22, 40, False, 'STOP')
-    ws.led(cv, k[0] + 152, y + 20, False, 20, 'alert')
+    if ws.is_v3():
+        ws.state_led(cv, k[0] + 138, y + 20, False, 'red', 'REC OFF', r=4.0)
+    else:
+        ws.led(cv, k[0] + 152, y + 20, False, 20, 'alert')
     ws.lcd(cv, (k[2] - 4, y + 22), '00:00.0', '', digits=7, h=18, align='r')
     y += 66
     label_well(cv, (k[0], y + 8), 'TAKES · NEWEST FIRST', 'label', h=18)
@@ -229,8 +232,12 @@ def screen_05_match():
     # ---- START ------------------------------------------------------------------------------------------------------
     by = ty + 108
     btn(cv, L0, by, L1 - L0, 40, 'START MATCH', 'primary')
-    ws.progress(cv, (L0, by + 50, L1 - 150, by + 66), 1.0, 'ok')
-    label_well(cv, (L1 - 142, by + 58), '✓ DONE · 1 m 12 s', 'label_b', h=20, fg='ok')
+    if ws.is_v3():
+        ws.led_bar(cv, (L0, by + 48, L1 - 150, by + 70), 1.0, n=22, hue='green')
+        ws.state_led(cv, L1 - 142, by + 59, True, 'green', 'DONE · 1 M 12 S', r=4.0)
+    else:
+        ws.progress(cv, (L0, by + 50, L1 - 150, by + 66), 1.0, 'ok')
+        label_well(cv, (L1 - 142, by + 58), '✓ DONE · 1 m 12 s', 'label_b', h=20, fg='ok')
 
     # ---- RESULTS ----------------------------------------------------------------------------------------------------
     k = sec(cv, (R0, c[1], R1, c[1] + 440), 'RESULTS', 'm05d')
@@ -295,7 +302,10 @@ def screen_05_match():
     _dashed(cv, [(lg2[0] + 10, ly + 40), (lg2[0] + 46, ly + 40)], 'blade_hi', 2.2, 7, 4)
     text(cv, (lg2[0] + 56, ly + 40), 'MATCH · dashed', 'label_b', bg=(lg2[0] + 52, lg2[1] + 2, lg2[2] - 2, lg2[3] - 2))
     ws.lcd(cv, (lx, ly + 76), '9', '/ 10 rules', digits=2, h=20)
-    strip(cv, (lx, ly + 100, k[2], ly + 124), '6.45 → 1.53 dB', 'mono', pad=8)
+    if ws.is_v3():
+        ws.dm_display(cv, (lx, ly + 96, k[2], ly + 128), '6.45 → 1.53 DB', h=14, tone='green', pad=6)
+    else:
+        strip(cv, (lx, ly + 100, k[2], ly + 124), '6.45 → 1.53 dB', 'mono', pad=8)
     reveal(cv, [(12, 66, 1268, 792)])
     return cv
 
@@ -422,12 +432,20 @@ def screen_06_nam_forger():
     r = (c[0], ty, c[2], c[3])
     ws.panel(cv, r, 'm06t', 0.7, 5)
     cyy = cy_of(r)
-    label_well(cv, (r[0] + 12, cyy), 'TRAINING · LITE', 'label_b', h=22)
-    ws.progress(cv, (r[0] + 160, cyy - 9, r[0] + 480, cyy + 9), 0.41)
-    label_well(cv, (r[0] + 490, cyy), 'epoch 41 / 100', 'mono', h=22, pad=7)
-    label_well(cv, (r[0] + 628, cyy), 'BEST ESR', 'label_b', h=22)
-    ws.lcd(cv, (r[0] + 720, cyy), '0.0123', '', digits=5, h=16)
-    label_well(cv, (r[0] + 830, cyy), 'ETA 18 min', 'mono', h=22, pad=7)
+    if ws.is_v3():
+        ws.state_led(cv, r[0] + 14, cyy, True, 'orange', 'TRAINING · LITE', r=4.0)
+        ws.led_bar(cv, (r[0] + 170, cyy - 12, r[0] + 480, cyy + 12), 0.41, n=30, hue='orange')
+        ws.dm_display(cv, (r[0] + 492, cyy - 16, r[0] + 686, cyy + 16), 'EPOCH 41 / 100', h=14, tone='green', pad=6)
+        label_well(cv, (r[0] + 700, cyy), 'BEST ESR', 'label_b', h=22)
+        ws.lcd(cv, (r[0] + 782, cyy), '0.0123', '', digits=5, h=16, tone='green')
+        ws.dm_display(cv, (r[0] + 880, cyy - 16, r[0] + 1030, cyy + 16), 'ETA 18 MIN', h=14, tone='green', pad=6)
+    else:
+        label_well(cv, (r[0] + 12, cyy), 'TRAINING · LITE', 'label_b', h=22)
+        ws.progress(cv, (r[0] + 160, cyy - 9, r[0] + 480, cyy + 9), 0.41)
+        label_well(cv, (r[0] + 490, cyy), 'epoch 41 / 100', 'mono', h=22, pad=7)
+        label_well(cv, (r[0] + 628, cyy), 'BEST ESR', 'label_b', h=22)
+        ws.lcd(cv, (r[0] + 720, cyy), '0.0123', '', digits=5, h=16)
+        label_well(cv, (r[0] + 830, cyy), 'ETA 18 min', 'mono', h=22, pad=7)
     btn(cv, r[2] - 118, ty + 7, 106, r[3] - ty - 14, 'CANCEL')
     reveal(cv, [(12, 66, 1268, 792)])
     return cv
@@ -508,7 +526,10 @@ def screen_07_woodshed():
     lw = DR(140, 664, 560, 706)
     well(cv, lw, 'well', 2)
     text(cv, None, 'A 00:42.0  ·  B 01:58.5', 'mono', bg=lw, size=13)
-    ws.chip(cv, D(585, 640), 'LOOP ON', 'ok', glyph='check', h=22)
+    if ws.is_v3():
+        ws.state_led(cv, D(585, 640)[0] - 6, D(585, 640)[1], True, 'green', 'LOOP ON', r=4.0)
+    else:
+        ws.chip(cv, D(585, 640), 'LOOP ON', 'ok', glyph='check', h=22)
     # PLAY is pressed: say so on the key
     pw = DR(640, 826, 790, 862)
     well(cv, pw, 'well', 2)
@@ -542,7 +563,10 @@ def screen_07_woodshed():
     y += 12
     ws.footswitch(cv, x0 + 16, y + 18, 34, True)
     label_well(cv, (x0 + 42, y + 18), 'REC', 'label_b', h=16, pad=5)
-    ws.led(cv, x0 + 100, y + 18, True, 20, 'alert')
+    if ws.is_v3():
+        ws.state_led(cv, x0 + 82, y + 18, True, 'red', 'ON', r=4.0)
+    else:
+        ws.led(cv, x0 + 100, y + 18, True, 20, 'alert')
     ws.lcd(cv, (x1, y + 18), '00:47.3', '', digits=7, h=14, align='r')
     y += 46
     label_well(cv, (x0, y + 8), 'TAKES · ▶ = USED FOR MATCH', 'label_b', h=16, pad=5)
@@ -574,17 +598,23 @@ def _block_card(cv, rect, title, key, lines, accent, status=None, bypassed=False
     bx0, by0, bx1, by1 = cd['body']
     if uncal:
         ws.badge(cv, (cd['title'][2] - 4, cy_of(cd['title'])), 'UNCAL', h=16, align='r')
-    _lines_well(cv, (bx0, by0, bx1, by0 + 58), lines, lh=17, pad=7)
-    y = by0 + 64
+    v3 = ws.is_v3()
+    _lines_well(cv, (bx0, by0, bx1, by0 + (54 if v3 else 58)), lines, lh=16 if v3 else 17, pad=7)
+    y = by0 + (60 if v3 else 64)
     # BYPASS toggle row
-    label_well(cv, (bx0, y + 14), 'BYPASS', 'label_b', h=18, pad=5)
-    ws.toggle(cv, bx0 + 108, y + 14, 1 if bypassed else 0, ['OFF', 'ON'], 26, key='tgb' + key)
-    y += 34
+    if ws.is_v3():
+        ws.state_led(cv, bx0 + 2, y + 14, not bypassed, 'amber' if bypassed else 'green', 'BYPASSED' if bypassed else 'ACTIVE', r=4.0)
+        ws.toggle(cv, bx0 + 176, y + 14, 1 if bypassed else 0, ['OFF', 'ON'], 26, key='tgb' + key)
+        label_well(cv, (bx0 + 96, y + 14), 'BYPASS', 'label', h=16, pad=5)
+    else:
+        label_well(cv, (bx0, y + 14), 'BYPASS', 'label_b', h=18, pad=5)
+        ws.toggle(cv, bx0 + 108, y + 14, 1 if bypassed else 0, ['OFF', 'ON'], 26, key='tgb' + key)
+    y += 32 if v3 else 34
     # INPUT knob + LCD
     ws.knob(cv, bx0 + 18, y + 19, 34, 'pedal', knob_v, accent or 'blade')
     label_well(cv, (bx0 + 44, y + 7), 'INPUT', 'label_b', h=16, pad=5)
     ws.lcd(cv, (bx0 + 44, y + 31), input_db, 'dB', digits=4, h=14)
-    y += 46
+    y += 44 if v3 else 46
     # move / remove
     for i, ic in enumerate(('chev_l', 'chev_r')):
         r = (bx0 + i * 40, y, bx0 + i * 40 + 34, y + 22)
@@ -616,14 +646,24 @@ def screen_08_rig_editor():
     for nm, w, act in tabs:
         ws.tab(cv, (tx, c[1] + 4, tx + w, c[1] + 34), nm, act)
         tx += w + 6
-    strip(cv, (x0 + 290, c[1] + 44, x1, c[1] + 68), '✓ built · 5 blocks · latency 92 smp · ALIGN −17 smp', 'body', fg='ok')
-    strip(cv, (x0 + 290, c[1] + 72, x1, c[1] + 94), 'chain order is signal order; a pedal sits in front of its path amp', 'body_dim')
-    ly = c[1] + 100
-    cw, ch = 268, 214
+    if ws.is_v3():
+        ws.dm_display(cv, (x0 + 290, c[1] + 38, x1, c[1] + 68), '✓ BUILT · 5 BLOCKS · LATENCY 92 SMP · ALIGN −17 SMP', h=11, tone='green', pad=6)
+        mx0 = x0 + 290
+        mw = (x1 - mx0 - 16) / 3.0
+        for i, (lab, val, pk, vt, lo, hi, tk) in enumerate([('IN', -17.0, -9.0, ('-17', 'dB', 3), -48.0, 0.0, (-48, -24, 0)),
+                                                             ('OUT', -11.0, -6.0, ('-11', 'dB', 3), -48.0, 0.0, (-48, -24, 0)),
+                                                             ('GR', 3.0, 5.5, ('3.0', 'dB', 4), 0.0, 12.0, (0, 6, 12))]):
+            ws.led_meter(cv, (mx0 + i * (mw + 8), c[1] + 76, mx0 + i * (mw + 8) + mw, c[1] + 124), lab, val, pk, vt, lo=lo, hi=hi,
+                         ticks=tk, n=14)
+    else:
+        strip(cv, (x0 + 290, c[1] + 44, x1, c[1] + 68), '✓ built · 5 blocks · latency 92 smp · ALIGN −17 smp', 'body', fg='ok')
+        strip(cv, (x0 + 290, c[1] + 72, x1, c[1] + 94), 'chain order is signal order; a pedal sits in front of its path amp', 'body_dim')
+    ly = c[1] + (128 if ws.is_v3() else 100)
+    cw, ch = 268, (206 if ws.is_v3() else 214)
     xs = [x0 + i * (cw + 8) for i in range(4)]
     # ---- lane A -------------------------------------------------------------------------------------------------------
     _lane_header(cv, (x0, ly, x1, ly + 26), 'A · BLADE', 'PATH A · 3 OF 8 BLOCKS', 'blade')
-    cy0 = ly + 32
+    cy0 = ly + (30 if ws.is_v3() else 32)
     _block_card(cv, (xs[0], cy0, xs[0] + cw, cy0 + ch), 'THE SAW MILL', 'k08a',
                 [('CIRCUIT · BUZZSAW', 'body_strong', 'blade_hi'), ('modelled pedal (DSP circuit)', 'body', None),
                  ('sits in front of SAW HEAD', 'body_dim', None)], 'blade', status='MODELLED', input_db='0.0', knob_v=0.5)
@@ -635,9 +675,9 @@ def screen_08_rig_editor():
                  ('at 400 Hz, high cut 8 kHz', 'body_dim', None)], 'blade', status='PRE', input_db='0.0', knob_v=0.5)
     ws.empty_slot(cv, (xs[3], cy0, x1, cy0 + ch), '+ ADD')
     # ---- lane B -------------------------------------------------------------------------------------------------------
-    ly2 = cy0 + ch + 10
+    ly2 = cy0 + ch + (6 if ws.is_v3() else 10)
     _lane_header(cv, (x0, ly2, x1, ly2 + 26), 'B · BODY', 'PATH B · 2 OF 8 BLOCKS', 'body')
-    cy1 = ly2 + 32
+    cy1 = ly2 + (30 if ws.is_v3() else 32)
     _block_card(cv, (xs[0], cy1, xs[0] + cw, cy1 + ch), 'CHISEL', 'k08d',
                 [('modelled pedal (DSP circuit)', 'body', None), ('DRIVE 0.20 · TONE 0.55', 'body_dim', None),
                  ('signal passes straight through', 'body_dim', None)], 'body', bypassed=True, input_db='0.0', knob_v=0.5)

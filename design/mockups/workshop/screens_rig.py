@@ -49,6 +49,20 @@ def pedal_face(cv, name, crop, x, y, w, plate_text, plate_rect, oled_rect=None, 
     return rect
 
 
+def meters_panel(cv, rect, key='meters'):
+    """v3: IN / OUT / VISE gain-reduction LED ladders in a worn-steel panel (ladders are 24 segments, peak hold, dB ticks, LCD value)."""
+    ws.panel(cv, rect, key, 0.9, 6, rivets=False)
+    x0, y0, x1, y1 = rect
+    ws.plate(cv, (x0 + 6, y0 + 6, x1 - 6, y0 + 34), 'METERS', key=key + ':p')
+    ix0, ix1 = x0 + 12, x1 - 12
+    y = y0 + 40
+    ws.led_meter(cv, (ix0, y, ix1, y + 68), 'IN', -17.0, -9.0, ('-17', 'dB', 3), stack=True)
+    y += 71
+    ws.led_meter(cv, (ix0, y, ix1, y + 68), 'OUT', -11.0, -6.0, ('-11', 'dB', 3), stack=True)
+    y += 71
+    ws.led_meter(cv, (ix0, y, ix1, y + 68), 'GR', 3.0, 5.5, ('3.0', 'dB', 4), lo=0.0, hi=12.0, ticks=(0, 6, 12), stack=True)
+
+
 def screen_01_main_rig():
     cv = ws.new_screen('01_main_rig', sawdust_n=0)
     # ---- the floor: planks + sawdust, piled against the bottoms of everything that stands on it --------------------
@@ -93,6 +107,10 @@ def screen_01_main_rig():
     ws.empty_slot(cv, (625, sy, 745, body[3]))
     ws.empty_slot(cv, (775, sy, 895, body[3]))
 
+    # ---- v3: the meter panel on the floor right of the cab ----------------------------------------------------------------
+    if ws.is_v3():
+        meters_panel(cv, (776, RIG_Y + 8, 934, RIG_Y + 264))
+
     # ---- top bar -----------------------------------------------------------------------------------------------------
     ws.top_bar(cv, ws.TopBarState())
 
@@ -117,7 +135,7 @@ def screen_01_main_rig():
     # BLEND
     y += 14
     kcy = y + 42
-    ws.knob(cv, x0 + 48, kcy, 84, 'amp', 0.79, 'blade', 'BLEND')
+    ws.knob(cv, x0 + 48, kcy, 84, 'amp', 0.79, 'blade', 'BLEND', ring=True)
     nx0 = x0 + 108
     ws.nixie(cv, (nx0, y + 2, x1, y + 52), '79 / 21', 34)
     ws.label_well(cv, ((nx0 + x1) / 2.0, y + 74), 'BLADE 79 · BODY 21', 'label_b', pad=8, align='c')
@@ -135,7 +153,7 @@ def screen_01_main_rig():
         col, row = i % 2, i // 2
         mx = x0 + col * 156
         my = y + row * 62 + 28
-        ws.knob(cv, mx + 24, my, 46, 'pedal', v, 'blade')
+        ws.knob(cv, mx + 24, my, 46, 'pedal', v, 'blade', ring=True)
         ws.label_well(cv, (mx + 54, my - 14), nm, 'label_b', h=16, pad=5)
         ws.lcd(cv, (mx + 54, my + 11), rv, ru, digits=4, h=14)
     y += 2 * 62 + 6
@@ -146,8 +164,11 @@ def screen_01_main_rig():
     ws.panel(cv, pr, 'matchbox', 0.8, 5, shadow=False)
     pl = ws.plate(cv, (pr[0] + 6, pr[1] + 6, pr[2] - 6, pr[1] + 38), 'MATCH vs ORIGINAL', title_style='section_mixed')
     vw = (pr[0] + 12, pr[1] + 46, pr[2] - 12, pr[3] - 8)
-    ws.well(cv, vw, 'well', 3)
-    ws.text(cv, None, '6.45 → 1.53 dB · 9/10 rules', 'mono', bg=vw)
+    if ws.is_v3():
+        ws.dm_display(cv, vw, '6.45 → 1.53 DB · 9/10', h=14, tone='green', align='c')
+    else:
+        ws.well(cv, vw, 'well', 3)
+        ws.text(cv, None, '6.45 → 1.53 dB · 9/10 rules', 'mono', bg=vw)
     return cv
 
 

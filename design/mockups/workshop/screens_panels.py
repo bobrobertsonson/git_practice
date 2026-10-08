@@ -89,9 +89,9 @@ def screen_02_top_bar():
          ws.TopBarState()),
         ('2 · A / B SLOTS', 'slot names in the selector; the active slot has a pressed footswitch and the word ACTIVE',
          ws.TopBarState(ab=ab)),
-        ('3 · UNCAL', 'interface not calibrated: chip with warning glyph and the words',
+        ('3 · UNCAL', ('interface not calibrated: glowing lamp with the words' if ws.is_v3() else 'interface not calibrated: chip with warning glyph and the words'),
          ws.TopBarState(uncal=True)),
-        ('4 · OUT OF TRUE', 'input drifted since calibration: chip with the skewed-level glyph and the dB offset',
+        ('4 · OUT OF TRUE', ('input drifted since calibration: glowing lamp with the words and the dB offset' if ws.is_v3() else 'input drifted since calibration: chip with the skewed-level glyph and the dB offset'),
          ws.TopBarState(out_of_true=True)),
         ('5 · WOODSHED OPEN + MATCH RUNNING', 'WOODSHED pressed (RIG released), MATCH shows 42 %, STUDIO chip',
          ws.TopBarState(woodshed_open=True, match_pct=42, mode='STUDIO')),
@@ -147,19 +147,29 @@ def screen_03_settings_calibration():
     ws.text(cv, (bx0, y), 'INPUT CALIBRATION', 'title', bg=body, size=22)
     y += 34
     # status strips: not calibrated now, calibrated after APPLY
-    s1 = (bx0, y, bx1, y + 34)
+    s1 = (bx0, y, bx1, y + (38 if ws.is_v3() else 34))
     flat_box(cv, s1, 'well_raised', 'warn', 3)
-    b = ws.badge(cv, (s1[0] + 10, y + 17), 'UNCAL')
-    ws.text(cv, (b[2] + 10, y + 17), '— interface not calibrated: captures play at the +9.0 dBu default', 'body',
-            bg=ws.inset(s1, 3))
-    ws.text(cv, (s1[2] - 10, y + 17), 'NOW', 'label_b', bg=ws.inset(s1, 3), align='r', fg='warn')
-    y += 40
-    s2 = (bx0, y, bx1, y + 30)
+    if ws.is_v3():
+        ws.glow_led(cv, s1[0] + 16, (s1[1] + s1[3]) / 2.0, True, 'amber', 4.0)
+        ws.dm_display(cv, (s1[0] + 34, s1[1] + 2, s1[2] - 4, s1[3] - 2),
+                      ['UNCAL · INTERFACE NOT CALIBRATED', 'CAPTURES PLAY AT THE +9.0 DBU DEFAULT · NOW'], h=11, tone='amber', row_gap=2.0, pad=5)
+    else:
+        b = ws.badge(cv, (s1[0] + 10, y + 17), 'UNCAL')
+        ws.text(cv, (b[2] + 10, y + 17), '— interface not calibrated: captures play at the +9.0 dBu default', 'body',
+                bg=ws.inset(s1, 3))
+        ws.text(cv, (s1[2] - 10, y + 17), 'NOW', 'label_b', bg=ws.inset(s1, 3), align='r', fg='warn')
+    y += 44 if ws.is_v3() else 40
+    s2 = (bx0, y, bx1, y + (38 if ws.is_v3() else 30))
     flat_box(cv, s2, 'well_raised', 'ok', 3)
-    ws.text(cv, (s2[0] + 10, y + 15), '✓ CALIBRATED · Scarlett 4i4 3rd Gen · INST · +12.5 dBu · 2026-10-08', 'body_strong',
-            bg=ws.inset(s2, 3), fg='ok')
-    ws.text(cv, (s2[2] - 10, y + 15), 'AFTER APPLY', 'label_b', bg=ws.inset(s2, 3), align='r', fg='ok')
-    y += 46
+    if ws.is_v3():
+        ws.glow_led(cv, s2[0] + 16, (s2[1] + s2[3]) / 2.0, True, 'green', 4.0)
+        ws.dm_display(cv, (s2[0] + 34, s2[1] + 2, s2[2] - 4, s2[3] - 2),
+                      ['CALIBRATED · SCARLETT 4I4 3RD GEN · INST · +12.5 DBU', '2026-10-08 · AFTER APPLY'], h=11, tone='green', row_gap=2.0, pad=5)
+    else:
+        ws.text(cv, (s2[0] + 10, y + 15), '✓ CALIBRATED · Scarlett 4i4 3rd Gen · INST · +12.5 dBu · 2026-10-08', 'body_strong',
+                bg=ws.inset(s2, 3), fg='ok')
+        ws.text(cv, (s2[2] - 10, y + 15), 'AFTER APPLY', 'label_b', bg=ws.inset(s2, 3), align='r', fg='ok')
+    y += 50 if ws.is_v3() else 46
     # INTERFACE dropdown, shown open
     ws.text(cv, (bx0, y), 'INTERFACE', 'label_b', bg=body)
     y += 16
@@ -197,26 +207,35 @@ def screen_03_settings_calibration():
     ws.button(cv, (bx0 + 106, y, bx0 + 134, y + 30), '−', 'secondary')
     ws.button(cv, (bx0 + 138, y, bx0 + 166, y + 30), '+', 'secondary')
     ws.lcd(cv, (bx0 + 190, y + 15), '+12.5', 'dBu', digits=4, h=22)
-    ws.text(cv, (bx0, y + 50), 'Loudest level the input takes before it clips.', 'body_dim', bg=body)
+    if ws.is_v3():
+        ws.led_meter(cv, (bx0, y + 38, bx0 + 340, y + 82), 'IN', -14.0, -8.0, ('-14', 'dBFS', 3), ticks=(-48, -24, -12, 0), n=22)
+    else:
+        ws.text(cv, (bx0, y + 50), 'Loudest level the input takes before it clips.', 'body_dim', bg=body)
     ws.rotary_selector(cv, colr + 118, y + 40, 52, ['AUTO', 'L', 'R', 'MIX'], 0, 'blade')
-    y += 80
+    y += 96 if ws.is_v3() else 80
     ws.text(cv, (bx0, y), 'AUTO: uses the channel with signal; MIX sums L+R (−6 dB)', 'body_dim', bg=body)
-    y += 18
+    y += 12 if ws.is_v3() else 18
     hsep(cv, bx0, bx1, y)
-    y += 14
+    y += 12 if ws.is_v3() else 14
     # CALIBRATED LEVELS toggle + BETA, GATE FLOOR
     ws.text(cv, (bx0, y), 'CALIBRATED LEVELS', 'label_b', bg=body)
     ws.badge(cv, (bx0 + ws.text_width('CALIBRATED LEVELS', 'label_b') + 14, y), 'BETA', h=18)
     ws.text(cv, (colr, y), 'GATE FLOOR', 'label_b', bg=body)
-    y += 34
+    y += 28 if ws.is_v3() else 34
     ws.toggle(cv, bx0 + 56, y, 1, ['OFF', 'ON'], size=30, key='tg_cal')
     ws.lcd(cv, (colr, y), '-42.0', 'dBFS', digits=4, h=22)
     ws.text(cv, (colr + 150, y), 'LEARNED', 'label_b', bg=body, fg='ok')
-    y += 32
-    ws.text(cv, (bx0, y), 'Every capture gets the level its creator used, computed on load.', 'body_dim', bg=body)
-    ws.text(cv, (colr, y), 'read-only · from LEARN GATE', 'body_dim', bg=body)
+    if ws.is_v3():
+        ws.text(cv, (bx0 + 134, y - 6), 'Every capture gets the level its', 'body_dim', bg=body)
+        ws.text(cv, (bx0 + 134, y + 11), 'creator used, computed on load.', 'body_dim', bg=body)
+        y += 32
+        ws.text(cv, (colr, y - 2), 'read-only · from LEARN GATE', 'body_dim', bg=body)
+    else:
+        y += 32
+        ws.text(cv, (bx0, y), 'Every capture gets the level its creator used, computed on load.', 'body_dim', bg=body)
+        ws.text(cv, (colr, y), 'read-only · from LEARN GATE', 'body_dim', bg=body)
     # buttons
-    by = body[3] - 20 - 30
+    by = body[3] - (14 if ws.is_v3() else 20) - 30
     ws.button(cv, (bx0, by, bx0 + 100, by + 30), 'APPLY', 'primary')
     ws.button(cv, (bx0 + 110, by, bx0 + 240, by + 30), 'MEASURE…', 'secondary')
     ws.text(cv, (bx0 + 254, by + 15), 'guided: play the reference tone, read the level', 'body_dim', bg=body)
@@ -309,13 +328,19 @@ def screen_04_preset_browser():
     ws.plate(cv, hint, None, 'alu')
     hb = (ix0 + 8, y0 + 8, ix1 - 8, y0 + 110)
     flat_box(cv, hb, 'well', 'steel_bare', 3)
-    bd = ws.badge(cv, (hb[0] + 12, y0 + 26), 'LEGACY LEVELS')
+    if ws.is_v3():
+        bd = ws.state_led(cv, hb[0] + 12, y0 + 26, True, 'amber', 'LEGACY LEVELS', r=4.0)
+    else:
+        bd = ws.badge(cv, (hb[0] + 12, y0 + 26), 'LEGACY LEVELS')
     ws.text(cv, (bd[2] + 10, y0 + 26), '· saved before input calibration.', 'body', bg=hb)
     ws.text(cv, (hb[0] + 12, y0 + 49), 'It plays with the input gains it was saved with.', 'body', bg=hb)
     ws.button(cv, (hb[0] + 12, y0 + 66, hb[0] + 214, y0 + 96), 'USE CALIBRATED LEVELS', 'primary')
     ws.button(cv, (hb[0] + 224, y0 + 66, hb[0] + 360, y0 + 96), 'KEEP AS SAVED', 'secondary')
     y = y0 + 142
-    nr = ws.label_well(cv, (ix0, y), 'GRAVE DIRT · MATCHED v2', 'title', fg='bone', size=18, h=32, pad=10)
+    if ws.is_v3():
+        nr = ws.dm_display(cv, (ix0, y - 18, ix0 + 318, y + 18), 'GRAVE DIRT · MATCHED V2', h=14, tone='amber', pad=6)
+    else:
+        nr = ws.label_well(cv, (ix0, y), 'GRAVE DIRT · MATCHED v2', 'title', fg='bone', size=18, h=32, pad=10)
     y += 30
     r = ws.label_well(cv, (ix0, y), 'CATEGORY · DEATH', 'label_b', h=20, pad=8)
     r = ws.label_well(cv, (r[2] + 6, y), 'BANK · USER', 'label_b', h=20, pad=8)
@@ -357,11 +382,15 @@ def screen_04_preset_browser():
         ws.button(cv, (bx, foot_y, bx + w, foot_y + 30), nm, kind)
         bx += w + 8
     sr = (bx + 14, foot_y - 1, x1 - 118, foot_y + 31)
-    cv.fill(sr, 'steel_bare', 3)
-    cv.fill(ws.inset(sr, 1), 'bench_dark', 3)
-    cv.fill(ws.inset(sr, 2), 'glass', 2)
-    ws.text(cv, (sr[0] + 12, foot_y + 15), 'Resolving 2/5: Swedish chainsaw pedal', 'lcd_unit', bg=ws.inset(sr, 3))
-    ws.progress(cv, (sr[2] - 170, foot_y + 8, sr[2] - 10, foot_y + 24), 0.4)
+    if ws.is_v3():
+        ws.dm_display(cv, (sr[0], sr[1], sr[2] - 190, sr[3]), 'RESOLVING 2/5: SWEDISH CHAINSAW PEDAL', h=11, tone='green', pad=5)
+        ws.led_bar(cv, (sr[2] - 182, foot_y + 2, sr[2], foot_y + 28), 0.4, n=16)
+    else:
+        cv.fill(sr, 'steel_bare', 3)
+        cv.fill(ws.inset(sr, 1), 'bench_dark', 3)
+        cv.fill(ws.inset(sr, 2), 'glass', 2)
+        ws.text(cv, (sr[0] + 12, foot_y + 15), 'Resolving 2/5: Swedish chainsaw pedal', 'lcd_unit', bg=ws.inset(sr, 3))
+        ws.progress(cv, (sr[2] - 170, foot_y + 8, sr[2] - 10, foot_y + 24), 0.4)
     ws.button(cv, (x1 - 104, foot_y, x1, foot_y + 30), 'CANCEL', 'secondary')
     return cv
 
@@ -388,8 +417,12 @@ def screen_09_notices():
     ws.glyph_icon(cv, 'skew', 59, 138, 30, 'alert')
     tw = (92, 108, 690, 168)
     flat_box(cv, tw, 'well', 'steel_bare', 3)
-    ws.text(cv, (tw[0] + 12, 126), 'OUT OF TRUE', 'body_strong', bg=tw, fg='alert')
-    ws.text(cv, (tw[0] + 12 + ws.text_width('OUT OF TRUE', 'body_strong') + 6, 126),
+    lx = 12
+    if ws.is_v3():
+        ws.glow_led(cv, tw[0] + 14, 126, True, 'red', 4.0)
+        lx = 32
+    ws.text(cv, (tw[0] + lx, 126), 'OUT OF TRUE', 'body_strong', bg=tw, fg='alert')
+    ws.text(cv, (tw[0] + lx + ws.text_width('OUT OF TRUE', 'body_strong') + 6, 126),
             '· Your playing level is running ~4.5 dB hotter than', 'body', bg=tw)
     ws.text(cv, (tw[0] + 12, 150), 'when this interface was set up — did the interface gain change?', 'body', bg=tw)
     ws.button(cv, (708, 108, 934, 136), 'RE-CALIBRATE', 'primary')
@@ -398,8 +431,12 @@ def screen_09_notices():
     cap(984, 78, 'COMPACT CHIP · TOP BAR')
     rp = (984, 94, 1260, 140)
     rail_piece(cv, rp, 'noticeA')
-    ws.chip(cv, (rp[0] + 14, 117), 'OUT OF TRUE · +4.5 dB', 'alert', glyph='skew', h=24)
-    ws.label_well(cv, (984, 160), 'word + skew glyph + dB offset', 'body_dim', h=20, pad=8)
+    if ws.is_v3():
+        ws.state_led(cv, rp[0] + 14, 117, True, 'red', 'OUT OF TRUE · +4.5 dB', r=4.0)
+        ws.label_well(cv, (984, 160), 'glowing lamp + word + dB offset', 'body_dim', h=20, pad=8)
+    else:
+        ws.chip(cv, (rp[0] + 14, 117), 'OUT OF TRUE · +4.5 dB', 'alert', glyph='skew', h=24)
+        ws.label_well(cv, (984, 160), 'word + skew glyph + dB offset', 'body_dim', h=20, pad=8)
     # ---- UNCAL banner ---------------------------------------------------------------------------------------------------------
     cap(20, 204, 'UNCALIBRATED · BANNER')
     b2 = (20, 220, 960, 286)
@@ -407,14 +444,20 @@ def screen_09_notices():
     cv.outline(b2, 'warn', 2, 6)
     tw2 = (36, 232, 700, 274)
     flat_box(cv, tw2, 'well', 'steel_bare', 3)
-    bd = ws.badge(cv, (tw2[0] + 12, 253), 'UNCAL')
+    if ws.is_v3():
+        bd = ws.state_led(cv, tw2[0] + 12, 253, True, 'amber', 'UNCAL', r=4.0)
+    else:
+        bd = ws.badge(cv, (tw2[0] + 12, 253), 'UNCAL')
     ws.text(cv, (bd[2] + 10, 244), '· interface not calibrated — captures play at the +9.0 dBu default.', 'body', bg=tw2)
     ws.text(cv, (bd[2] + 10, 263), 'Levels are a guess until you calibrate.', 'body_dim', bg=tw2)
     ws.button(cv, (718, 233, 940, 273), 'CALIBRATE IN SETTINGS', 'secondary')
     cap(984, 204, 'COMPACT CHIP · TOP BAR')
     rp2 = (984, 220, 1260, 266)
     rail_piece(cv, rp2, 'noticeB')
-    ws.chip(cv, (rp2[0] + 12, 243), 'UNCAL · interface not calibrated', 'warn', glyph='warn', h=24)
+    if ws.is_v3():
+        ws.state_led(cv, rp2[0] + 12, 243, True, 'amber', 'UNCAL · INTERFACE NOT CALIBRATED', r=4.0)
+    else:
+        ws.chip(cv, (rp2[0] + 12, 243), 'UNCAL · interface not calibrated', 'warn', glyph='warn', h=24)
     # ---- UNCAL badge placements -------------------------------------------------------------------------------------------
     cap(20, 312, 'UNCAL BADGE · ON A BLOCK CARD')
     card = ws.card(cv, (20, 326, 320, 440), 'SAW HEAD', accent='blade', status='CAPTURE')
@@ -463,13 +506,16 @@ def screen_09_notices():
     ws.button(cv, (c[2] - 218, by + 6, c[2] - 112, by + 36), 'LOCATE…', 'secondary')
     ws.button(cv, (c[2] - 100, by + 6, c[2], by + 36), 'CLOSE', 'primary')
     cap(908, 484, 'TOAST')
-    t = (908, 504, 1260, 552)
+    t = (908, 504, 1260, 552 + (22 if ws.is_v3() else 0))
     ws.panel(cv, t, 'toast', 0.9, 6, rivets=False)
     tb = (t[0] + 8, t[1] + 8, t[2] - 8, t[3] - 8)
     flat_box(cv, tb, 'well', 'ok', 3)
-    ws.glyph_icon(cv, 'check', tb[0] + 18, (tb[1] + tb[3]) / 2.0, 14, 'ok')
-    ws.text(cv, (tb[0] + 34, (tb[1] + tb[3]) / 2.0), 'Preset saved: GRAVE DIRT · MATCHED v3', 'body', bg=tb)
-    ws.label_well(cv, (908, 574), 'slides in bottom-right, fades after 4 s', 'body_dim', h=20, pad=8)
+    if ws.is_v3():
+        ws.dm_display(cv, (tb[0] + 2, tb[1] + 2, tb[2] - 2, tb[3] - 2), ['PRESET SAVED:', 'GRAVE DIRT · MATCHED V3'], h=11, tone='green', row_gap=1.6, pad=6)
+    else:
+        ws.glyph_icon(cv, 'check', tb[0] + 18, (tb[1] + tb[3]) / 2.0, 14, 'ok')
+        ws.text(cv, (tb[0] + 34, (tb[1] + tb[3]) / 2.0), 'Preset saved: GRAVE DIRT · MATCHED v3', 'body', bg=tb)
+    ws.label_well(cv, (908, 574 + (22 if ws.is_v3() else 0)), 'slides in bottom-right, fades after 4 s', 'body_dim', h=20, pad=8)
     return cv
 
 
