@@ -369,5 +369,5 @@ TEST_CASE("preview render: with calibration on an amp swap shows the planned gai
   CHECK(offHi == renderPreview(hi, riff, 48000.0, nullptr, err, true, ChainCalibration{}));
   CHECK(offLo == renderPreview(lo, riff, 48000.0, nullptr, err, true, ChainCalibration{}));
   CHECK(rmsDbOf(offLo) == Catch::Approx(rmsDbOf(offHi)).margin(1e-6));
-  CHECK(offHi != previewHi);  // and calibration really did something
+  CHECK(offLo != previewLo);  // and calibration really did something (hi plans 0 dB at +12 dBu, so only lo differs)
 }

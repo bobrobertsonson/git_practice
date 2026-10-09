@@ -5149,6 +5149,9 @@ TEST_CASE("settings: the Calibrated input levels (beta) toggle is off by default
   CHECK(anyLabelContains(*rig.ed, "Interface not calibrated: assuming +12 dBu"));
   click(*toggle);
   CHECK_FALSE(Settings::shared().calibratedInputLevels());
+  rig.proc.calibrationTick();  // the engine drops the calibration, so the notice state clears
+  REQUIRE(rig.proc.waitForLoader(std::chrono::milliseconds(60000)));
+  rig.ed->refreshNow();
   CHECK_FALSE(anyLabelContains(*rig.ed, "Interface not calibrated"));
   rig.ed->setSettingsOpen(false);
 }
