@@ -81,6 +81,23 @@ small LCD strip; (b) a stripped open-back / bare plywood cab with stencilled let
 road-case-armoured cab (steel edges, latches, stencilled flight-case lettering). Shared vs per-path IR (LIVE / STUDIO)
 must stay readable on the cab. No trademark logos or trade dress copied from real cabinet makers.
 
+### Art direction round (user, 2026-10-10) — concept sketches before any render
+
+User: "fix the cab art as well as the vermin art. The idea of a wolf for the cab is cool but the execution didn't
+work. A stencil style wolf would be cool. Show me before a render is done. For vermin it should be a rat like this"
+(reference image shown to the lead; not committed — third-party art).
+
+- **VERMIN:** supersedes the spray-stencil rat (8e36ae1). Target: an **original** rat in an old woodcut / engraving
+  style — dense parallel hatching and cross-hatching for form, fine fur strokes, bold black outline; full body,
+  snarling with teeth bared, claws out, long tail curling up and back; several long iron nails / spikes driven through
+  its body (heads visible, points exiting). Bone ink on dark enamel. Not a trace or close copy of the reference: our
+  own pose, composition and line work.
+- **CAB:** keep the wolf idea, new execution as a **stencil**: bold spray-stencil wolf (head or howling bust),
+  stencil bridges, overspray and drips, worn into the grille / tolex; replaces the current cartoon wolf and moon.
+- **Process:** flat 2-D concept sketches first (2–3 per item), shown to the user on a small review page. No Blender,
+  no mockup re-render, no production asset until the user picks. Then the production render (pedal face, cab) and the
+  mockup swap in one round.
+
 ## Task B — assets (dsp-engineer)
 
 Render scripts under `design/render/` for every new sprite and panel, deterministic, exported through
