@@ -87,11 +87,9 @@ User: "fix the cab art as well as the vermin art. The idea of a wolf for the cab
 work. A stencil style wolf would be cool. Show me before a render is done. For vermin it should be a rat like this"
 (reference image shown to the lead; not committed — third-party art).
 
-- **VERMIN:** supersedes the spray-stencil rat (8e36ae1). Target: an **original** rat in an old woodcut / engraving
-  style — dense parallel hatching and cross-hatching for form, fine fur strokes, bold black outline; full body,
-  snarling with teeth bared, claws out, long tail curling up and back; several long iron nails / spikes driven through
-  its body (heads visible, points exiting). Bone ink on dark enamel. Not a trace or close copy of the reference: our
-  own pose, composition and line work.
+- **VERMIN:** supersedes the spray-stencil rat (8e36ae1). Concept (user: "just a conceptual idea of a rat with nails
+  through it"): an original snarling rat with long iron nails driven through its body. Style open; sketches span V1
+  spray stencil (matches the cab wolf), V2 woodcut / engraving hatching, V3 bold flat silhouette / screen-print.
 - **CAB:** keep the wolf idea, new execution as a **stencil**: bold spray-stencil wolf (head or howling bust),
   stencil bridges, overspray and drips, worn into the grille / tolex; replaces the current cartoon wolf and moon.
 - **Process:** flat 2-D concept sketches first (2–3 per item), shown to the user on a small review page. No Blender,
