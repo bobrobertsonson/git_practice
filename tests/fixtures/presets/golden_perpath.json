@@ -1,0 +1,27 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Golden per-path cabs (studio blend)",
+  "notes": "Golden-render preset: per-path IRs ir_a (48 kHz) and ir_b (44.1 kHz, resampled), manual alignment. Only in-repo fixtures.",
+  "input": { "gainDb": 3.0 },
+  "gate": { "enabled": true, "thresholdDb": -50.0 },
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [ { "id": "a1", "type": "nam", "slot": "amp", "model": { "file": "../nam/lstm.nam" }, "normalizeLoudness": true } ],
+      "levelDb": -2.0
+    },
+    "b": {
+      "role": "body",
+      "blocks": [
+        { "id": "b1", "type": "eq", "bands": [ { "type": "lowShelf", "freq": 150, "gainDb": 3.0, "q": 0.707 } ] },
+        { "id": "b2", "type": "nam", "slot": "amp", "model": { "file": "../nam/wavenet.nam" }, "normalizeLoudness": true }
+      ]
+    }
+  },
+  "align": { "mode": "manual", "delaySamplesB": 12, "invertB": false },
+  "blend": 0.5,
+  "cab": { "mode": "perPath", "irA": { "file": "../ir/ir_a.wav" }, "irB": { "file": "../ir/ir_b.wav" } },
+  "postEq": [ { "type": "highShelf", "freq": 6000, "gainDb": -3.0, "q": 0.707 } ],
+  "output": { "gainDb": -3.0 }
+}

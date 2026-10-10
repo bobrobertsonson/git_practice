@@ -1,0 +1,105 @@
+#pragma once
+
+// Message-thread glue between the recorder, the play-along, the job runner and the audition: what MATCH and
+// EXPORT NAM start from. Kept out of the UI so it is testable.
+
+#include <filesystem>
+#include <optional>
+#include <string>
+
+#include <nlohmann/json_fwd.hpp>
+
+#include "JobRunner.h"
+#include "TakeRecorder.h"
+#include "sawblade/preset.h"
+
+namespace sawblade::plugin {
+
+class SawbladeProcessor;
+
+std::optional<TakeInfo> selectedTake(SawbladeProcessor& p);  // the take chosen with "Use for MATCH" (if it still exists)
+
+// REC / STOP, the one place both the take band and the MATCH screen drive the recorder from: Idle -> start a take (the
+// loaded song's folder goes in the sidecar), anything else -> stop. REC needs nothing else: not a loaded song, not the host
+// transport (a take without a song just has no position in it; the matcher then searches for it). The Finalizing state
+// ignores the button (the UI disables it).
+void toggleRecording(SawbladeProcessor& p);
+// Why REC would do nothing right now ("" = it is available): the previous take is still being saved.
+std::string recordUnavailableReason(SawbladeProcessor& p);
+// The recorder's one-word state for both views: READY / ARMED / "REC mm:ss.t" / SAVING.
+std::string recordStateText(SawbladeProcessor& p);
+
+// Where a take came from, for the take lists (the band and the MATCH screen's picker): "IMPORTED" for a file brought in by IMPORT DI...,
+// else where in the song it starts ("@ 12.3 s") or "no song" when no backing was running.
+std::string takeOriginText(const TakeInfo& t);
+
+struct MatchPlan {
+  bool ok = false;
+  std::string message;                 // why MATCH cannot start / a caution
+  MatchRequest request;
+  ReferenceChoice reference;
+  std::optional<TakeInfo> take;
+  std::string offsetNote;              // how the DI is placed in the song, for the screen
+};
+// reference = the loaded song's guitar stem (else other, else the mix / first file), DI = the selected take,
+// offset = the take's stem sample index at its first sample (only if it was recorded against this song).
+MatchPlan planMatch(SawbladeProcessor& p);
+// The loaded song's name: the folder name, or the song file's stem (never the separation cache directory). "" = none.
+std::string activeSongName(SawbladeProcessor& p);
+
+// Why a preset cannot be exported as written: a capture (NAM model, or the cab IR when the cab is on) with no file path.
+// "" = fine.
+std::string exportBlockedReason(const Preset& p);
+
+struct ExportSource {
+  bool ok = false;
+  std::string message;
+  std::filesystem::path file;          // resolved preset JSON handed to sawblade-export
+  std::string sha256;                  // of the file's bytes: the "same rig" key
+  std::string description;
+};
+// The auditioned / applied candidate's resolved preset if that is what is loaded, else the current preset
+// written to <jobs>/inputs/<sha256 prefix>.preset.json (so the export is exactly what is playing, parameter changes
+// included, and the same rig is always the same file). `dropComp`: the bus comp is switched off in what is written
+// (a no-cab export cannot contain it; sawblade-export refuses a no-cab export of a rig with the comp on otherwise).
+// `write` false: nothing is written (the key and the path the file would have).
+ExportSource prepareExportSource(SawbladeProcessor& p, bool dropComp = false, bool write = true);
+
+// ---- two-pass MATCH (docs/specs/phase6a_1_quick_then_thorough.md) ----------------------------------------------------
+
+// Pure: are two preset JSONs the same chain? Used for auto-promote (an applied quick candidate that is the same chain
+// as the thorough best only changes its badge; nothing is loaded). Same chain means:
+//  - the same structure: the same keys, the same arrays of the same length (paths, blocks in order and their types and
+//    slots, EQ bands, cab mode), the same flags and strings;
+//  - the same captures in the same slots: a capture compares by its TONE3000 source (provider, id, modelId) when both
+//    have one, else by file name (the directory is ignored);
+//  - every dB-valued parameter (any number whose key ends in "Db": level, gain, input / output gain, EQ gain,
+//    threshold ...) within kSameChainDbTolerance;
+//  - every other number equal within a small tolerance: `blend` within kSameChainBlendTolerance (absolute), the rest
+//    (frequencies, q, times, ratios, align samples) within a relative kSameChainRelTolerance.
+// Names, notes and block ids, and the plugin-only "playAlong" object, are ignored. Anything else that differs is a
+// different chain: the function errs on the side of "different", which only costs a badge.
+constexpr double kSameChainDbTolerance = 0.5;
+constexpr double kSameChainBlendTolerance = 0.01;
+constexpr double kSameChainRelTolerance = 1e-3;
+bool sameChain(const nlohmann::json& a, const nlohmann::json& b);
+bool sameChainFiles(const std::filesystem::path& a, const std::filesystem::path& b);  // false if either cannot be read
+
+// USE FOR MATCH: remembers the take and, if it is another take than before, cancels a running refinement (its result
+// would belong to the old take).
+void chooseTakeForMatch(SawbladeProcessor& p, const std::string& name);
+
+// Rename / delete of a take go through here: if it is the take selected for MATCH, a running or pending refinement is
+// cancelled first and the selection follows (the new name / none).
+bool renameTakeForMatch(SawbladeProcessor& p, const std::string& oldName, const std::string& newName, std::string* error = nullptr);
+bool deleteTakeForMatch(SawbladeProcessor& p, const std::string& name);
+
+// Loads the thorough pass's best candidate through the normal audition path and applies it (APPLY REFINED BEST).
+// False (and *error) if there is no refined result or it cannot be loaded.
+bool applyRefinedBest(SawbladeProcessor& p, std::string* error = nullptr);
+
+// Is the applied preset a quick candidate that is the same chain as the refined best? (Cheap enough for the UI timer:
+// the answer is remembered per pair of files.)
+bool appliedQuickIsRefinedBest(SawbladeProcessor& p, const JobSnapshot& quick, const JobSnapshot& refine);
+
+}  // namespace sawblade::plugin

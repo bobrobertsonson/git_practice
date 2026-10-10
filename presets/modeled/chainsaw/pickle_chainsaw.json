@@ -1,0 +1,54 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Big Fuzz Chainsaw",
+  "category": "Doom / Sludge / Fuzz",
+  "notes": "A scooped, saturated fuzz chainsaw with no HM-2 in it: Swedish-style buzz from a Big-Muff-family fuzz. Into a cranked British-style amp (JCM800, tone 86089) with a V30 cab (45023). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.muff",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "volume": 6,
+            "sustain": 10,
+            "tone": 4,
+            "scoop": 8,
+            "crunch": 7,
+            "voice": 6,
+            "tightness": 3,
+            "mix": 100,
+            "clip": "silicon",
+            "clip2": "follow",
+            "stackRatio": 4.4,
+            "rolloffHz": 6000,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -2.531,
+    "autoTrimHash": "dcf8a88b071dc18752cc2f9b9206448ce8298ddd4a9999785779e27793e12a44"
+  }
+}

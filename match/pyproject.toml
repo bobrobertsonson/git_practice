@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sawblade-match"
+version = "0.1.0"
+description = "Sawblade matching engine: TONE3000 client, capture cache, quality filter"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx==0.28.1",
+  "numpy==2.4.6",
+  "scipy==1.17.1",
+  "soundfile==0.14.0",
+  "matplotlib==3.11.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "respx==0.23.1",
+]
+# Method 1 of sawblade-calibrate (stem separation). Weights are fetched at first use from dl.fbaipublicfiles.com.
+separation = [
+  "demucs==4.0.1",
+  "torch==2.5.1",
+  "torchaudio==2.5.1",
+]
+
+# Separation models for the C++ ModelStore (phase 5.1b): `sawblade-models fetch` exports the ONNX core and verifies it
+# with onnxruntime. Install with: pip install -e 'match[models]' -c match/constraints-separation.txt
+models = [
+  "demucs==4.0.1",
+  "torch==2.5.1",
+  "torchaudio==2.5.1",
+  "onnx==1.23.1",
+  "onnxruntime==1.30.0",
+]
+
+# NAM export (phase 4): the NAM trainer. torch is shared with the separation extra (2.5.1, CPU is enough).
+# Install with: pip install -e 'match[export]' -c match/constraints-export.txt
+export = [
+  "neural-amp-modeler==0.13.0",
+  "torch==2.5.1",
+]
+
+[project.scripts]
+sawblade-t3k = "sawblade_match.t3k.cli:main"
+sawblade-tonecheck = "sawblade_match.tonecheck.cli:main"
+sawblade-calibrate = "sawblade_match.calibrate.cli:main"
+sawblade-match = "sawblade_match.matcher.cli:main"
+sawblade-export = "sawblade_match.export.cli:main"
+sawblade-models = "sawblade_match.models.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sawblade_match*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

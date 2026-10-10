@@ -1,0 +1,31 @@
+{
+  "name": "knob_amp",
+  "file": "knob_amp.png",
+  "frame_width": 128,
+  "frame_height": 128,
+  "frames": 128,
+  "layout": "vertical",
+  "sheet_width": 128,
+  "sheet_height": 16384,
+  "pivot_px": [
+    64.0,
+    64.0
+  ],
+  "mm_per_px": 0.5,
+  "frame_mm": 64.0,
+  "view": "front-on orthographic (amp panel)",
+  "background": "transparent (straight RGBA)",
+  "baked_shadow": false,
+  "supersample": 2,
+  "samples": 16,
+  "blender": "bpy 4.2.0 / Cycles CPU",
+  "type": "rotary",
+  "angle_min_deg": -135.0,
+  "angle_max_deg": 135.0,
+  "angle_zero": "pointer up (12 o'clock)",
+  "direction": "clockwise positive",
+  "frame_for_value": "frame = round(value * (frames - 1)); frame 0 = -135 deg, last frame = +135 deg",
+  "ring_baked": false,
+  "ring_radius_px": 62.0,
+  "ring_note": "value arc is not baked in (draw it in the UI); radius given for alignment"
+}

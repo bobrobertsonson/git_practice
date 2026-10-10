@@ -1,0 +1,83 @@
+{
+  "loaderOrder": "Loader order: gate -> NAM model -> cab IR -> post EQ -> bus comp",
+  "mode": "nocab",
+  "stages": [
+    {
+      "hardware": "Gate FIRST in the chain, keyed on the guitar (DI) before any pedal: open at -50 dB, close at -56 dB (hysteresis 6 dB), attack 0.5 ms, hold 20 ms, release 60 ms, range -90 dB.",
+      "inModel": false,
+      "position": "before NAM",
+      "settings": {
+        "attackMs": 0.5,
+        "closeThresholdDb": -56.0,
+        "holdMs": 20.0,
+        "hysteresisDb": 6.0,
+        "keyedOn": "DI (guitar signal before any pedal/amp)",
+        "mode": "gate",
+        "rangeDb": -90.0,
+        "releaseCurve": "one-pole",
+        "releaseMs": 60.0,
+        "thresholdDb": -50.0
+      },
+      "stage": "gate"
+    },
+    {
+      "hardware": "Load the cab IR V30 Mesa 4x12 (file impulse.wav; by @OutmodedElectronics; t3k; tone3000 id 21).",
+      "inModel": false,
+      "position": "after NAM",
+      "settings": {
+        "cabMode": "shared",
+        "ir": {
+          "creator": "@OutmodedElectronics",
+          "file": "impulse.wav",
+          "license": "t3k",
+          "provider": "tone3000",
+          "title": "V30 Mesa 4x12",
+          "toneId": "21"
+        },
+        "normalize": true
+      },
+      "stage": "cab"
+    },
+    {
+      "hardware": "Post EQ after the cab: high-pass 80 Hz, 12 dB/oct (Q 0.707); peak 3000 Hz, +2.5 dB, Q 1.2. Already folded into the exported IR (the .ir.wav); add it again only if you do not use that IR.",
+      "inModel": false,
+      "position": "after NAM",
+      "settings": {
+        "bands": [
+          {
+            "freqHz": 80.0,
+            "q": 0.7071,
+            "slopeDbPerOct": 12,
+            "type": "highPass"
+          },
+          {
+            "freqHz": 3000.0,
+            "gainDb": 2.5,
+            "q": 1.2,
+            "type": "peak"
+          }
+        ],
+        "foldedIntoExportedIr": true
+      },
+      "stage": "postEq"
+    },
+    {
+      "hardware": "Bus compressor LAST (after the cab / post EQ): threshold -10 dB re the chain's pre-headroom level = -12 dB re 0 dBFS at the exported output, ratio 4:1, attack 1 ms, release 80 ms, knee 3 dB, make-up +1.5 dB, peak detector (the output gain of -2.0 dB is already inside the model).",
+      "inModel": false,
+      "position": "after NAM",
+      "settings": {
+        "attackMs": 1.0,
+        "detector": "peak, feed-forward, soft knee",
+        "kneeDb": 3.0,
+        "makeupDb": 1.5,
+        "ratio": 4.0,
+        "releaseMs": 80.0,
+        "thresholdDb": -10.0,
+        "thresholdDbFsOut": -12.0,
+        "thresholdReference": "pre-headroom chain level (the 6 dB sum headroom is not counted)"
+      },
+      "stage": "busComp"
+    }
+  ],
+  "version": 1
+}

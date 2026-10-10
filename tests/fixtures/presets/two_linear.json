@@ -1,0 +1,12 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Two linear paths (A identity, B -1 at tap 23)",
+  "paths": {
+    "a": { "role": "saw",  "blocks": [ { "id": "a1", "type": "nam", "model": { "file": "../nam/linear_identity.nam" } } ] },
+    "b": { "role": "body", "blocks": [ { "id": "b1", "type": "nam", "model": { "file": "../nam/linear_neg1_at_23.nam" } } ] }
+  },
+  "align": { "mode": "auto" },
+  "blend": 0.5,
+  "cab": { "mode": "shared", "ir": { "file": "../ir/impulse.wav" } }
+}

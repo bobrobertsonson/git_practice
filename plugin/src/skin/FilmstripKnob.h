@@ -1,0 +1,68 @@
+#pragma once
+
+#include <memory>
+
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+
+#include "SkinAssets.h"
+
+namespace sawblade::plugin::skin {
+
+// A rotary slider drawn from a filmstrip. Bound to one APVTS parameter through a SliderAttachment (or, for
+// the rig editor's preset-only controls, unbound: it just holds a value in [lo, hi]).
+// Vertical drag (full range over 250 px, shift = x0.1), double-click resets to the parameter
+// default, the mouse wheel works. Draws a code-made drop shadow and value arc around the sprite.
+class FilmstripKnob : public juce::Slider {
+ public:
+  enum class Kind { Amp, Pedal };
+
+  FilmstripKnob(juce::AudioProcessorValueTreeState& apvts, const juce::String& paramId, const juce::String& displayName,
+                Kind kind, juce::Colour arcColour);
+  // Unbound: no parameter, no attachment. Same look and drag behaviour; the value text is
+  // "<value to `decimals`> <unit>". `skewMidpoint` (> lo and < hi) makes the response logarithmic-ish
+  // (Slider::setSkewFactorFromMidPoint).
+  struct Range {
+    double lo = 0.0, hi = 1.0, def = 0.0;
+    int decimals = 1;
+    juce::String unit;
+    double skewMidpoint = 0.0;
+  };
+  FilmstripKnob(const juce::String& displayName, Kind kind, juce::Colour arcColour, const Range& range);
+  ~FilmstripKnob() override;
+
+  // Frame shown for a normalised value: round(v * (frames - 1)), v clamped to 0..1.
+  static int frameForProportion(double v, int frames);
+
+  const juce::String& paramId() const noexcept { return paramId_; }
+  double proportion() { return valueToProportionOfLength(getValue()); }
+  int currentFrame();
+
+  void paint(juce::Graphics&) override;
+  void mouseDown(const juce::MouseEvent&) override;
+  void mouseDrag(const juce::MouseEvent&) override;
+  void mouseUp(const juce::MouseEvent&) override;
+  // True from mouse down to the end of mouse up: tells a real drag from the Slider's wheel / double-click edits, which also send
+  // drag start / end notifications.
+  bool mouseHeld() const noexcept { return mouseHeld_; }
+  juce::String getTextFromValue(double v) override;
+
+  static constexpr int kPixelsForFullRange = 250;
+  static constexpr double kFineFactor = 0.1;
+
+ private:
+  const Filmstrip& strip() const;
+
+  juce::AudioProcessorValueTreeState* apvts_ = nullptr;  // null: unbound
+  Range range_;
+  juce::String paramId_;
+  Kind kind_;
+  juce::Colour arc_;
+  float lastY_ = 0.0f;
+  bool mouseHeld_ = false;
+  std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment_;
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FilmstripKnob)
+};
+
+}  // namespace sawblade::plugin::skin

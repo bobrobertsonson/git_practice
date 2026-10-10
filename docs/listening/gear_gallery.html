@@ -1,0 +1,103 @@
+<title>Sawblade Gear Gallery</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&family=Barlow+Condensed:wght@500;600;700&family=Share+Tech+Mono&display=swap">
+<style>
+/* Layout: a gear catalogue. One row per piece (hero shot + flat view), then the free-DI sources as a reference list */
+:root{
+  --bg:#0d0c0a; --panel:#171512; --line:#2c2823; --fg:#ece5d6; --muted:#a59c8b; --saw:#ff6a1a; --link:#ffb27a;
+  --display:'Allerta Stencil','Arial Narrow',sans-serif;
+  --body:'Barlow Condensed','Arial Narrow',system-ui,sans-serif;
+  --mono:'Share Tech Mono',ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.4}
+.wrap{max-width:1100px;margin:0 auto;padding-inline:16px;padding-block:28px 56px;display:flex;flex-direction:column;gap:36px}
+h1{font-family:var(--display);font-weight:400;font-size:36px;letter-spacing:.06em;color:var(--saw);margin:0;transform:rotate(-1deg)}
+h2{font-family:var(--display);font-weight:400;font-size:22px;letter-spacing:.06em;margin:0}
+h3{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0;font-weight:700}
+p{margin:0;max-width:68ch}
+.muted{color:var(--muted)}
+a{color:var(--link)}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.links a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--line);border-radius:4px;background:var(--panel);text-decoration:none;font-weight:700;letter-spacing:.08em}
+.piece{display:flex;flex-direction:column;gap:10px}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden;display:flex;flex-direction:column}
+figure img{display:block;width:100%;height:auto}
+figcaption{font-family:var(--mono);font-size:12px;color:var(--muted);padding:8px 10px}
+.tag{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:15px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:var(--panel)}
+tr:last-child td{border-bottom:0}
+.note{background:var(--panel);border-left:3px solid var(--saw);padding:10px 14px}
+</style>
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <h1>SAWBLADE · GEAR GALLERY</h1>
+    <p class="muted">Every visual so far. All of it is rendered procedurally in Blender (no downloaded models or textures), with Swedish crust stencil art. The plugin UI is built from these renders.</p>
+    <div class="links">
+      <a href="https://claude.ai/artifact/3AWaoJG1T88RmmUYGT6Rba">UI design canvas (all screens)</a>
+      <a href="https://claude.ai/artifact/1tCQq91iETDyc7BS69rFkJ">Listening room + status</a>
+      <a href="https://claude.ai/artifact/RUKy1Sr5769k6gaZB1hoDp">Play-along panel screenshots</a>
+      <a href="https://claude.ai/artifact/EWGeaaNoF6gUzeRDuCSx6L">Plugin skin screenshots</a>
+      <a href="#dis">Free DI sources ↓</a>
+    </div>
+  </header>
+
+  <section class="piece"><h2>THE PLUGIN · first real build</h2><span class="tag">JUCE plugin UI built from the renders: animated knobs, footswitches, LEDs, resizable · screenshot of the actual app</span>
+    <div class="shots"><figure><img src="img/plugin_skin.jpg" alt="Screenshot of the Sawblade plugin: two amp heads, the wolf cab, the pedalboard and the control panel"><figcaption>Sawblade plugin, 1280x800</figcaption></figure></div></section>
+
+  <section class="piece"><h2>THE BOARD</h2><span class="tag">new · everything together on a road-worn board</span>
+    <div class="shots"><figure><img src="img/board_hero.jpg" alt="Pedalboard with the PLAY ALONG deck, TIGHTEN, STOCKHOLM SYNDROME and BOG BURIAL pedals"><figcaption>board shot, 2400x1200</figcaption></figure></div></section>
+
+  <section class="piece"><h2>BOG BURIAL</h2><span class="tag">new · fuzz for doom and sludge (Big Muff type: volume, tone, sustain) · melting skull over a swamp · toxic green + rust · other name ideas: MIRE HYMN, RUST DIRGE</span>
+    <div class="shots"><figure><img src="img/fuzz_hero.jpg" alt="BOG BURIAL fuzz pedal, three-quarter view"><figcaption>hero 3/4</figcaption></figure><figure><img src="img/fuzz_ortho.jpg" alt="BOG BURIAL fuzz pedal, top view"><figcaption>top view (UI)</figcaption></figure></div></section>
+
+  <section class="piece"><h2>PLAY ALONG deck</h2><span class="tag">new · the play-along transport as a battered 4-track cassette deck: loop A/B, count-in, backing fader, guitar-stem mute/ghost switch</span>
+    <div class="shots"><figure><img src="img/deck_hero.jpg" alt="PLAY ALONG cassette-deck transport, three-quarter view"><figcaption>hero 3/4</figcaption></figure><figure><img src="img/deck_ortho.jpg" alt="PLAY ALONG deck, top view"><figcaption>top view (UI)</figcaption></figure></div></section>
+
+  <section class="piece"><h2>STOCKHOLM SYNDROME</h2><span class="tag">chainsaw pedal (HM-2 type) · saw blade motif · orange + bone</span>
+    <div class="shots"><figure><img src="img/stockholm_hero.jpg" alt="STOCKHOLM SYNDROME pedal, three-quarter view"><figcaption>hero 3/4</figcaption></figure><figure><img src="img/stockholm_top.jpg" alt="STOCKHOLM SYNDROME pedal, top view"><figcaption>top view (UI)</figcaption></figure></div></section>
+
+  <section class="piece"><h2>TIGHTEN</h2><span class="tag">boost pedal · vise jaws + barbed wire · steel blue + bone · name not final</span>
+    <div class="shots"><figure><img src="img/tighten_hero.jpg" alt="TIGHTEN pedal, three-quarter view"><figcaption>hero 3/4</figcaption></figure><figure><img src="img/tighten_top.jpg" alt="TIGHTEN pedal, top view"><figcaption>top view (UI)</figcaption></figure></div></section>
+
+  <section class="piece"><h2>SAW · amp head</h2><span class="tag">jawbone teeth + cogs · rust orange + bone · name not final</span>
+    <div class="shots"><figure><img src="img/saw_hero.jpg" alt="SAW amp head, three-quarter view"><figcaption>hero 3/4</figcaption></figure><figure><img src="img/saw_front.jpg" alt="SAW amp head, front panel"><figcaption>front panel (UI)</figcaption></figure></div></section>
+
+  <section class="piece"><h2>BODY · amp head</h2><span class="tag">anvil + hammer + chains · blood red + bone · name not final</span>
+    <div class="shots"><figure><img src="img/body_hero.jpg" alt="BODY amp head, three-quarter view"><figcaption>hero 3/4</figcaption></figure><figure><img src="img/body_front.jpg" alt="BODY amp head, front panel"><figcaption>front panel (UI)</figcaption></figure></div></section>
+
+  <section class="piece"><h2>4x12 CAB</h2><span class="tag">howling wolf + crescent moon · bone + toxic green · grille off = mic placement screen</span>
+    <div class="shots"><figure><img src="img/cab412_hero.jpg" alt="4x12 cab, three-quarter view"><figcaption>hero 3/4</figcaption></figure><figure><img src="img/cab412_front.jpg" alt="4x12 cab front, grille on"><figcaption>front, grille on</figcaption></figure><figure><img src="img/cab412_open.jpg" alt="4x12 cab with grille removed, four speakers and a mic"><figcaption>grille off, mic</figcaption></figure></div></section>
+
+  <section class="piece"><h2>2x12 CAB</h2><span class="tag">second cab for split rigs · crossed bones + crust spikes · bone + bruise purple · placeholder art</span>
+    <div class="shots"><figure><img src="img/cab212_hero.jpg" alt="2x12 cab, three-quarter view"><figcaption>hero 3/4</figcaption></figure><figure><img src="img/cab212_front.jpg" alt="2x12 cab front, grille on"><figcaption>front, grille on</figcaption></figure><figure><img src="img/cab212_open.jpg" alt="2x12 cab with grille removed, two speakers and a mic"><figcaption>grille off, mic</figcaption></figure></div></section>
+
+  <section class="piece"><h2>UI CONTROLS</h2><span class="tag">knob animations (128 positions each), footswitch up/down, LEDs off/on</span>
+    <div class="shots"><figure><img src="img/controls.jpg" alt="Pedal and amp knobs at five positions, footswitches and LEDs"><figcaption>contact sheet</figcaption></figure></div></section>
+
+  <section id="dis" style="display:flex;flex-direction:column;gap:12px">
+    <h2>FREE DI TRACKS &amp; MULTITRACKS</h2>
+    <p class="note">These are licensed for personal and educational mixing practice. Sawblade is personal and non-commercial, so private testing fits. Never redistribute the audio. Check each page for whether it really includes guitar DIs.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Source</th><th>Artist / song</th><th>Style</th><th>What's in it</th></tr></thead>
+      <tbody>
+        <tr><td><a href="https://discussion.cambridge-mt.com/printthread.php?tid=6038">Cambridge-MT</a></td><td>Hollow Ground, "Ill Fate"</td><td>death metal</td><td>multitrack; forum says guitar DIs included</td></tr>
+        <tr><td><a href="https://discussion.cambridge-mt.com/showthread.php?tid=18258">Cambridge-MT</a></td><td>Decypher, "Unseen"</td><td>melodic death</td><td>multitrack</td></tr>
+        <tr><td><a href="https://discussion.cambridge-mt.com/showthread.php?tid=50943">Cambridge-MT</a></td><td>Cnoc An Tursa, "Bannockburn"</td><td>black / folk metal</td><td>multitrack; DI guitar and bass reported</td></tr>
+        <tr><td><a href="https://discussion.cambridge-mt.com/showthread.php?tid=32595">Cambridge-MT</a></td><td>Dark Ride, 5 songs</td><td>heavy metal</td><td>multitracks (DI per song to check)</td></tr>
+        <tr><td><a href="https://cambridge-mt.com/ms/mtk/">Cambridge-MT library</a></td><td>Death Of A Romantic "The Well"; The Black Crown "Flames"</td><td>metalcore; prog (baritone 7)</td><td>multitracks</td></tr>
+        <tr><td><a href="https://eolstudios.com/2026/03/free-metal-multitracks-for-mixing-death-metal-metalcore/">EOL Studios</a></td><td>"Anxiety" (2026)</td><td>death metal / metalcore</td><td>free multitracks (DI not confirmed)</td></tr>
+        <tr><td><a href="https://eolstudios.com/2022/10/free-metal-multitracks-for-mixing/">EOL Studios</a></td><td>The Overcoming Project (Mike Heller of Fear Factory on drums)</td><td>groove / melodic metal</td><td>free multitracks (DI not confirmed)</td></tr>
+        <tr><td><a href="https://alwineaudio.com/free-modern-metal-multitracks">Alwine Audio</a></td><td>producer sessions</td><td>modern metal / djent</td><td>DI + Kemper guitars and bass, MIDI drums</td></tr>
+        <tr><td><a href="https://nin.wiki/Multitracks">Nine Inch Nails</a></td><td><em>The Slip</em>, <em>Ghosts</em></td><td>industrial</td><td>official multitracks (processed guitars, not DI), CC BY-NC-SA</td></tr>
+        <tr><td><a href="https://ultimatemetal.com/threads/free-multitracks-dis-download-list.1514051/">Ultimate Metal forum</a></td><td>community list</td><td>various</td><td>big list of free multitracks and DIs</td></tr>
+        <tr><td>Omega Station (you have it)</td><td>Gatecreeper, "Barbaric Pleasures" cover</td><td>Swedish death / HM-2</td><td>L/R guitar DIs, bass DI, drum MIDI, cover mix</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Paid, worth knowing</h3>
+    <p class="muted"><a href="https://www.nailthemix.com/sessions">Nail The Mix</a> ($1 first month, then $19.99/month): the band's raw tracks plus the released song to compare against. Sessions include Bloodbath "Zombie Inferno" (Swedish buzzsaw), Converge "I Can Tell You About Pain" (Kurt Ballou), Decapitated, At The Gates, Dyscarnate and Amon Amarth. Check for guitar DIs in each session's downloads.</p>
+  </section>
+</div>

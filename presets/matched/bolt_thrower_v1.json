@@ -1,0 +1,214 @@
+{
+ "schema": "sawblade.preset",
+ "version": 1,
+ "name": "UK Death Fuzz Blend (match v1)",
+ "category": "Death metal",
+ "notes": "Sawblade match, matched against Bolt Thrower – Anti-Tank. Matched by sawblade-match seed 1 against bolt_thrower__anti_tank.mp3 (stem:bolt_thrower__anti_tank.de56a42f844a.htdemucs.other.wav). Captures are referenced by TONE3000 ids; exported/derived models are for the user's own use only.",
+ "gate": {
+  "enabled": true,
+  "thresholdDb": -86.0,
+  "hysteresisDb": 6.0,
+  "attackMs": 0.5,
+  "holdMs": 40.0,
+  "releaseMs": 150.0,
+  "rangeDb": -50.0
+ },
+ "paths": {
+  "a": {
+   "role": "saw",
+   "blocks": [
+    {
+     "id": "a1",
+     "type": "nam",
+     "slot": "pedal",
+     "model": {
+      "file": "captures/36748_381592.nam",
+      "source": {
+       "provider": "tone3000",
+       "id": "36748",
+       "modelId": "381592",
+       "url": "https://www.tone3000.com/tones/earthquaker-hizumitas-complete-pack-36748",
+       "title": "Earthquaker Hizumitas Complete Pack",
+       "creator": "hangingpuppetaudio",
+       "license": "t3k"
+      }
+     },
+     "inputGainDb": -3.1755084099233475
+    },
+    {
+     "id": "a2",
+     "type": "nam",
+     "slot": "amp",
+     "model": {
+      "file": "captures/93752_785386.nam",
+      "source": {
+       "provider": "tone3000",
+       "id": "93752",
+       "modelId": "785386",
+       "url": "https://www.tone3000.com/tones/1986-jcm-800-2204--93752",
+       "title": "1986 JCM 800 2204 ",
+       "creator": "tonecast",
+       "license": "t3k"
+      }
+     },
+     "inputGainDb": 0.19996390429863276,
+     "normalizeLoudness": true
+    }
+   ],
+   "eq": [
+    {
+     "type": "highPass",
+     "freq": 56.43074010869563,
+     "q": 0.707
+    },
+    {
+     "type": "peak",
+     "freq": 142.44030752127475,
+     "gainDb": -7.606879529150352,
+     "q": 1.0
+    },
+    {
+     "type": "peak",
+     "freq": 955.5180662321325,
+     "gainDb": 6.808623664538436,
+     "q": 1.0
+    },
+    {
+     "type": "peak",
+     "freq": 2644.089890229086,
+     "gainDb": -9.0,
+     "q": 1.0
+    },
+    {
+     "type": "lowPass",
+     "freq": 9108.08827351871,
+     "q": 0.707
+    }
+   ],
+   "levelDb": -3.5952996127026484
+  },
+  "b": {
+   "role": "body",
+   "blocks": [
+    {
+     "id": "b1",
+     "type": "nam",
+     "slot": "pedal",
+     "model": {
+      "file": "captures/36748_381599.nam",
+      "source": {
+       "provider": "tone3000",
+       "id": "36748",
+       "modelId": "381599",
+       "url": "https://www.tone3000.com/tones/earthquaker-hizumitas-complete-pack-36748",
+       "title": "Earthquaker Hizumitas Complete Pack",
+       "creator": "hangingpuppetaudio",
+       "license": "t3k"
+      }
+     },
+     "inputGainDb": -3.7529046792830556
+    },
+    {
+     "id": "b2",
+     "type": "nam",
+     "slot": "amp",
+     "model": {
+      "file": "captures/93752_785274.nam",
+      "source": {
+       "provider": "tone3000",
+       "id": "93752",
+       "modelId": "785274",
+       "url": "https://www.tone3000.com/tones/1986-jcm-800-2204--93752",
+       "title": "1986 JCM 800 2204 ",
+       "creator": "tonecast",
+       "license": "t3k"
+      }
+     },
+     "inputGainDb": -12.0,
+     "normalizeLoudness": true
+    }
+   ],
+   "eq": [
+    {
+     "type": "highPass",
+     "freq": 51.302911732509266,
+     "q": 0.707
+    },
+    {
+     "type": "peak",
+     "freq": 152.694846921732,
+     "gainDb": 2.0738216869943056,
+     "q": 1.0
+    },
+    {
+     "type": "peak",
+     "freq": 1150.5260729959423,
+     "gainDb": -9.0,
+     "q": 1.0
+    },
+    {
+     "type": "peak",
+     "freq": 2554.25756828607,
+     "gainDb": 6.173649735767624,
+     "q": 1.0
+    },
+    {
+     "type": "lowPass",
+     "freq": 11541.391060177675,
+     "q": 0.707
+    }
+   ],
+   "levelDb": 0.7441494402011806
+  }
+ },
+ "align": {
+  "mode": "manual",
+  "delaySamplesB": 14,
+  "invertB": false
+ },
+ "blend": 0.46616790922292173,
+ "cab": {
+  "mode": "shared",
+  "ir": {
+   "file": "captures/45023_239441.wav",
+   "source": {
+    "provider": "tone3000",
+    "id": "45023",
+    "modelId": "239441",
+    "url": "https://www.tone3000.com/tones/celestion-vintage-30-2002-mesa-boogie-4x12-sm57-45023",
+    "title": "Celestion Vintage 30 - 2002 Mesa Boogie 4x12 - SM57",
+    "creator": "OutmodedElectronics",
+    "license": "t3k"
+   }
+  },
+  "enabled": true
+ },
+ "postEq": [
+  {
+   "type": "peak",
+   "freq": 277.05515402124246,
+   "gainDb": -2.3368907567047352,
+   "q": 1.0
+  },
+  {
+   "type": "peak",
+   "freq": 1079.2546728716457,
+   "gainDb": -2.506954121628172,
+   "q": 1.0
+  },
+  {
+   "type": "peak",
+   "freq": 6005.785203375786,
+   "gainDb": -2.788190860383801,
+   "q": 1.0
+  },
+  {
+   "type": "lowPass",
+   "freq": 10184.095635271897,
+   "q": 0.707
+  }
+ ],
+ "output": {
+  "gainDb": -0.5275752650806678
+ }
+}

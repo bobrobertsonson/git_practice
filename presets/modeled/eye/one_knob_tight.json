@@ -1,0 +1,43 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "One-Knob Tight",
+  "notes": "Same voicing with a tight low cut at the input, for modern palm-muted riffing. Starting hypothesis. Modeled pedal, no capture; the cab slot is the repo identity IR.",
+  "category": "Swedish death (HM-2)",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.eye",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "gain": 8,
+            "level": 2.31,
+            "tightness": 7
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -7.646,
+    "autoTrimHash": "620cdd464a5ccdf35b87a5e3d6103e1ba4be0d1b94fdd6d143d0730ef62e7fc6"
+  }
+}

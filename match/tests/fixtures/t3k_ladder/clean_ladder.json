@@ -1,0 +1,53 @@
+{
+  "data": [
+    {
+      "id": 10013,
+      "created_at": "2026-05-01T00:00:00Z",
+      "updated_at": "2026-05-01T00:00:00Z",
+      "user_id": 1,
+      "model_url": "https://t3k.test/api/v1/models/10013/download",
+      "name": "Amp Gain 7",
+      "size": "standard",
+      "tone_id": 1001,
+      "architecture_version": "2"
+    },
+    {
+      "id": 10011,
+      "created_at": "2026-05-01T00:00:00Z",
+      "updated_at": "2026-05-01T00:00:00Z",
+      "user_id": 1,
+      "model_url": "https://t3k.test/api/v1/models/10011/download",
+      "name": "Amp Gain 3",
+      "size": "standard",
+      "tone_id": 1001,
+      "architecture_version": "2"
+    },
+    {
+      "id": 10012,
+      "created_at": "2026-05-01T00:00:00Z",
+      "updated_at": "2026-05-01T00:00:00Z",
+      "user_id": 1,
+      "model_url": "https://t3k.test/api/v1/models/10012/download",
+      "name": "Amp Gain 5",
+      "size": "standard",
+      "tone_id": 1001,
+      "architecture_version": "2"
+    },
+    {
+      "id": 10014,
+      "created_at": "2026-05-01T00:00:00Z",
+      "updated_at": "2026-05-01T00:00:00Z",
+      "user_id": 1,
+      "model_url": "https://t3k.test/api/v1/models/10014/download",
+      "name": "Amp Gain 9",
+      "size": "standard",
+      "tone_id": 1001,
+      "architecture_version": "2"
+    }
+  ],
+  "page": 1,
+  "page_size": 300,
+  "total": 4,
+  "total_pages": 1,
+  "_note": "HAND-WRITTEN fixture shaped like GET /api/v1/models; not a network recording"
+}

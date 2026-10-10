@@ -1,0 +1,199 @@
+{
+  "_comment": "Output of every committed preset that renders without TONE3000 captures, on tests/fixtures/di_riff.wav with default tonerender options (no level match), recorded with core as of cdb4b9a (v0.2 merge) before the v0.3 level-matching change. sha256 is of the float32 sample bytes; tests/test_auto_trim.cpp requires equality on the reference platform (Linux x86-64, gcc) and rms / peak within 0.01 dB elsewhere (libm differences). Regenerate only for a deliberate tone change: SAWBLADE_UPDATE_GOLDEN=1 sawblade_tests '[golden-presets]'.",
+  "input": "tests/fixtures/di_riff.wav",
+  "baseline": "cdb4b9a",
+  "presets": {
+    "modeled/chainsaw/bass_chainsaw.json": {
+      "sha256": "5dabf35332ad2a8b7df96ee4f9409211b68cc8325e8aa3288dd0541e8e939af9",
+      "frames": 192000,
+      "rmsDbfs": -12.7387,
+      "peakDbfs": -2.9969
+    },
+    "modeled/chainsaw/blend_partner.json": {
+      "sha256": "62a07685b64450046261800ed21f0e3c2a7ca5463ab6c1d7724522f5cb330d60",
+      "frames": 192000,
+      "rmsDbfs": -13.0955,
+      "peakDbfs": -2.9867
+    },
+    "modeled/chainsaw/classic_buzzsaw.json": {
+      "sha256": "2a30336afc07b472a309108d39b122a461abcacc007db23b1bf3b4e804446093",
+      "frames": 192000,
+      "rmsDbfs": -13.3178,
+      "peakDbfs": -2.997
+    },
+    "modeled/chainsaw/clean_mix_texture.json": {
+      "sha256": "8c10b274e339361cefa17513bd9ef027865192e4fbd76905123412b98f4f8d73",
+      "frames": 192000,
+      "rmsDbfs": -12.5871,
+      "peakDbfs": -3.3015
+    },
+    "modeled/chainsaw/custom_wall.json": {
+      "sha256": "4dcff0c43fca69cded385a264b2d313d8ad7a5b4ffa82546b03c1604781abd28",
+      "frames": 192000,
+      "rmsDbfs": -13.7906,
+      "peakDbfs": -3.0049
+    },
+    "modeled/chainsaw/dbeat_crust.json": {
+      "sha256": "2c99a9d2976d5ee7c1a91265d0ba20a7a5655b0caf3b4f548d0c25304d76c4b1",
+      "frames": 192000,
+      "rmsDbfs": -13.3304,
+      "peakDbfs": -3.0017
+    },
+    "modeled/chainsaw/death_n_roll.json": {
+      "sha256": "9dce233b27ae0656cb4efa4f854c13ed095bfbed3e632a372c5499cd39058097",
+      "frames": 192000,
+      "rmsDbfs": -11.4893,
+      "peakDbfs": -2.8337
+    },
+    "modeled/chainsaw/early_raw_demo.json": {
+      "sha256": "d82f1ec277a757af10c1cf106b4addadbbfd627ec710b78700170697cffdf1f7",
+      "frames": 192000,
+      "rmsDbfs": -11.2116,
+      "peakDbfs": -2.9915
+    },
+    "modeled/chainsaw/grind.json": {
+      "sha256": "a420e7d6f41bb1c20392f4820b083b317f9af9b71ee5e18d3102aef678edba5e",
+      "frames": 192000,
+      "rmsDbfs": -12.4342,
+      "peakDbfs": -3.0071
+    },
+    "modeled/chainsaw/modded_nasty.json": {
+      "sha256": "1ec389fcff8e99d29dd289b65d9801d7157ce33460beb3892184c8ff6bd60f23",
+      "frames": 192000,
+      "rmsDbfs": -12.7317,
+      "peakDbfs": -3.0033
+    },
+    "modeled/chainsaw/modern_tight_swedish.json": {
+      "sha256": "7a4908c324087aaa80d1b4d76fa203d6571c8e39c9f052cb1af6b9ea02c202e9",
+      "frames": 192000,
+      "rmsDbfs": -12.9591,
+      "peakDbfs": -2.9873
+    },
+    "modeled/chainsaw/pickle_chainsaw.json": {
+      "sha256": "190eac0746d1ce5cd9a8994df495c085bbf856f25eac7ee18a6fc09f4b381f3b",
+      "frames": 192000,
+      "rmsDbfs": -15.807,
+      "peakDbfs": -4.1238
+    },
+    "modeled/chainsaw/pickle_doom_saw.json": {
+      "sha256": "4772067b2b129377a9a54fb9f78ced98dd0989ddea06bad81ba2547f5ee7a3fe",
+      "frames": 192000,
+      "rmsDbfs": -17.4247,
+      "peakDbfs": -5.5192
+    },
+    "modeled/chainsaw/pickle_into_saw.json": {
+      "sha256": "8f296289172a5afc4bb0e858d1c41d400bd232f302c09275b3f25300d1943f3a",
+      "frames": 192000,
+      "rmsDbfs": -12.4858,
+      "peakDbfs": -3.2067
+    },
+    "modeled/chainsaw/powerviolence_hardcore.json": {
+      "sha256": "2e640d8cffc5e8f6434400c55f2824f0fd04ec8eae575d9feb454281c04877b7",
+      "frames": 192000,
+      "rmsDbfs": -12.3932,
+      "peakDbfs": -2.9919
+    },
+    "modeled/eye/one_knob_crust.json": {
+      "sha256": "a53ee1fa1f216bd3016d71f58ddcf276dacaf3787a6c83f66fc396f0b7de3dee",
+      "frames": 192000,
+      "rmsDbfs": -12.3827,
+      "peakDbfs": -3.0095
+    },
+    "modeled/eye/one_knob_max.json": {
+      "sha256": "daf8cca72b9377eb54c2d1cd90290ef8870d80cd2429f4121f221a8bfcdb4be8",
+      "frames": 192000,
+      "rmsDbfs": -12.1767,
+      "peakDbfs": -3.0014
+    },
+    "modeled/eye/one_knob_tight.json": {
+      "sha256": "225a62891f7315071b9a35620479ce9f29979503571bb05c6b6c15359710b726",
+      "frames": 192000,
+      "rmsDbfs": -12.2684,
+      "peakDbfs": -3.0142
+    },
+    "modeled/hm_chainsaw.json": {
+      "sha256": "86e3c10da041107691e78ebbf3e7774d56545c0fb0f74a126160fbb70f1bd310",
+      "frames": 192000,
+      "rmsDbfs": -12.6294,
+      "peakDbfs": -2.1192
+    },
+    "modeled/hm_v3/gothenburg_half_mids.json": {
+      "sha256": "6eb8d005a2e2f5d1751ea7a9cc8cfb3f5610919932d1dfb7d3f6c8e3b19b3175",
+      "frames": 192000,
+      "rmsDbfs": -13.1642,
+      "peakDbfs": -3.009
+    },
+    "modeled/hm_v3/grind_buzz.json": {
+      "sha256": "bef9ea672d35dd6f980f8d2c0dddc4ed67f0ccb3eb29758ff0e6ff84d5c0552d",
+      "frames": 192000,
+      "rmsDbfs": -13.6408,
+      "peakDbfs": -3.3529
+    },
+    "modeled/hm_v3/stockholm_custom.json": {
+      "sha256": "36f48b14c809178ce010ae1dd054d0b826a4101da70bf02c252b5d4da86fba18",
+      "frames": 192000,
+      "rmsDbfs": -11.9478,
+      "peakDbfs": -2.9981
+    },
+    "modeled/hm_v3/sunlight_all_tens.json": {
+      "sha256": "4edd635d22a1b07858dc61589157bf6323c20ec911467eaab53bc79b286c132f",
+      "frames": 192000,
+      "rmsDbfs": -14.4469,
+      "peakDbfs": -3.8479
+    },
+    "modeled/hmx/arizona_mids.json": {
+      "sha256": "9c957c10725c4834f3ed31b923f1f887e372ea4624e8e434a37fd72c42f804eb",
+      "frames": 192000,
+      "rmsDbfs": -13.4336,
+      "peakDbfs": -3.01
+    },
+    "modeled/hmx/berlin_saw_high.json": {
+      "sha256": "4baaec38811223d2c3d1f85c0d792d99f5333423fdafd856d9a7351bcc6d46e5",
+      "frames": 192000,
+      "rmsDbfs": -13.9941,
+      "peakDbfs": -3.014
+    },
+    "modeled/hmx/berlin_saw_low.json": {
+      "sha256": "9cc7509bedfce7008eb40e438bbe92488c5fd9b16d80faae1efef37de2fa26de",
+      "frames": 192000,
+      "rmsDbfs": -15.0417,
+      "peakDbfs": -2.9868
+    },
+    "modeled/hmx/berlin_saw_mid.json": {
+      "sha256": "c8644435a814c21b8aa5987cd09739b1be92555cc2c20730f12595b0c90dc585",
+      "frames": 192000,
+      "rmsDbfs": -13.1919,
+      "peakDbfs": -2.9942
+    },
+    "modeled/hmx/boosted_blend.json": {
+      "sha256": "b37c960d778d4c86ebeb93675e76ad523ab72fdc73fd036eb184c3d32a4be2a1",
+      "frames": 192000,
+      "rmsDbfs": -12.7989,
+      "peakDbfs": -3.0019
+    },
+    "modeled/hmx/decoupled_crust.json": {
+      "sha256": "61e954f095ac08a3772d3c53c2cb9dfddd68aa5328977f51c2be7f27b3edccca",
+      "frames": 192000,
+      "rmsDbfs": -14.9358,
+      "peakDbfs": -3.1287
+    },
+    "modeled/hmx/four_band_doom.json": {
+      "sha256": "ec740b698ef9b09cb74d38a098cd675c18c0c478b28011802fca50591b3d22e1",
+      "frames": 192000,
+      "rmsDbfs": -13.6155,
+      "peakDbfs": -2.9878
+    },
+    "modeled/saw_body_blend_demo.json": {
+      "sha256": "dabff08465770326f29680b134a5b07d3649e104e5f8b60f80c9d870b4ba5f86",
+      "frames": 192000,
+      "rmsDbfs": -11.6868,
+      "peakDbfs": -2.9609
+    },
+    "modeled/ts_boost.json": {
+      "sha256": "77c00d158ff1f1c2de2292b6aad1dd5234d97c8fad948e5ca7ad7a98fb93639e",
+      "frames": 192000,
+      "rmsDbfs": -12.2603,
+      "peakDbfs": -5.1945
+    }
+  }
+}

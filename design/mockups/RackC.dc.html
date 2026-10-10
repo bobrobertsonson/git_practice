@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direction C: studio rack</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&amp;family=Barlow+Condensed:wght@600;700&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#070707}
+.kn{position:relative;border-radius:50%;background:radial-gradient(circle at 40% 30%,#f2f2f2 0,#b8bbbf 45%,#6f7378 85%);box-shadow:0 6px 10px rgba(0,0,0,.7),inset 0 -2px 3px rgba(0,0,0,.35)}
+.kn::before{content:"";position:absolute;inset:-5px;border-radius:50%;background:#0d0d0d;z-index:-1}
+.kp{position:absolute;inset:0}
+.kp i{position:absolute;left:50%;top:8%;width:3px;height:32%;margin-left:-1.5px;border-radius:2px;background:#151515}
+.kl{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.16em;color:#cfd3d8}
+.unit{position:relative;border-radius:4px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.035) 0 1px,rgba(0,0,0,.05) 1px 2px),linear-gradient(180deg,#26282c,#141518);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 -2px 3px rgba(0,0,0,.6),0 8px 16px rgba(0,0,0,.7);display:flex;align-items:center;gap:22px;padding:0 74px}
+.ear{position:absolute;top:0;bottom:0;width:46px;background:linear-gradient(90deg,#3a3d42,#1d1f22);display:flex;flex-direction:column;justify-content:space-around;align-items:center}
+.ear span{width:12px;height:18px;border-radius:7px;background:#060606;box-shadow:inset 0 2px 3px #000,0 1px 0 rgba(255,255,255,.15)}
+.lcd{background:linear-gradient(180deg,#02140d,#03221a);color:#6dffbf;font-family:'Share Tech Mono',monospace;font-size:13px;text-shadow:0 0 6px rgba(109,255,191,.6);border-radius:4px;padding:6px 10px;box-shadow:inset 0 2px 6px rgba(0,0,0,.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vu{position:relative;width:150px;height:96px;border-radius:6px;background:linear-gradient(#f7e9c2,#e8d29a);box-shadow:inset 0 3px 10px rgba(0,0,0,.5),0 0 0 3px #0b0b0b;overflow:hidden}
+.btn{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.14em;color:#e8e8e8;background:linear-gradient(#3b3e43,#222428);border:1px solid #000;border-radius:3px;height:28px;padding:0 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.15)}
+</style>
+</helmet>
+<div style="width:1200px;height:760px;box-sizing:border-box;padding:24px 30px;background:radial-gradient(ellipse at 50% 0%,#1d1f22,#060607 75%);font-family:'Barlow Condensed',sans-serif;display:flex;flex-direction:column;gap:10px">
+
+ <div class="unit" style="height:96px">
+  <div class="ear" style="left:0"><span></span><span></span></div><div class="ear" style="right:0"><span></span><span></span></div>
+  <span style="font-family:'Big Shoulders Display',sans-serif;font-weight:900;font-size:30px;letter-spacing:.2em;color:#e9ecef">SAWBLADE</span>
+  <span class="kl">INPUT · GATE</span>
+  <div style="display:flex;gap:3px;align-items:flex-end;height:46px">
+   <sc-for list="{{ladder}}" as="b" hint-placeholder-count="16"><span style="width:8px;height:{{b.h}}px;border-radius:2px;background:{{b.c}};box-shadow:0 0 6px {{b.g}}"></span></sc-for>
+  </div>
+  <sc-for list="{{inKnobs}}" as="k" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div class="kn" style="width:36px;height:36px"><div class="kp" style="transform:rotate({{k.a}}deg)"><i></i></div></div><span class="kl">{{k.l}}</span></div></sc-for>
+  <button class="btn">LEARN FLOOR</button>
+  <div class="lcd" style="margin-left:auto">FLOOR −40.4 dBFS</div>
+ </div>
+
+ <div class="unit" style="height:252px;gap:0;padding:0 58px">
+  <div class="ear" style="left:0"><span></span><span></span><span></span></div><div class="ear" style="right:0"><span></span><span></span><span></span></div>
+  <sc-for list="{{chans}}" as="c" hint-placeholder-count="2">
+   <div style="flex:1;height:100%;box-sizing:border-box;padding:18px 22px;display:flex;flex-direction:column;gap:10px;border-right:1px solid #000;box-shadow:1px 0 0 rgba(255,255,255,.06)">
+    <div style="display:flex;align-items:center;gap:10px"><span style="width:12px;height:12px;border-radius:50%;background:{{c.color}};box-shadow:0 0 10px {{c.color}}"></span><span style="font-family:'Big Shoulders Display',sans-serif;font-weight:900;font-size:26px;letter-spacing:.2em;color:{{c.color}}">{{c.name}}</span><span class="kl" style="margin-left:auto">{{c.sub}}</span></div>
+    <sc-for list="{{c.slots}}" as="s" hint-placeholder-count="2"><div style="display:flex;gap:8px;align-items:center"><span class="kl" style="width:46px">{{s.slot}}</span><div class="lcd" style="flex:1">{{s.name}}</div><button class="btn" aria-label="Choose capture">▾</button></div></sc-for>
+    <div style="display:flex;justify-content:space-between;margin-top:auto">
+     <sc-for list="{{c.knobs}}" as="k" hint-placeholder-count="6"><div style="display:flex;flex-direction:column;align-items:center;gap:6px"><div class="kn" style="width:42px;height:42px"><div class="kp" style="transform:rotate({{k.a}}deg)"><i></i></div></div><span class="kl">{{k.l}}</span></div></sc-for>
+    </div>
+   </div>
+  </sc-for>
+ </div>
+
+ <div class="unit" style="flex:1">
+  <div class="ear" style="left:0"><span></span><span></span><span></span></div><div class="ear" style="right:0"><span></span><span></span><span></span></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:8px"><span class="kl" style="font-size:13px">BLEND</span><div class="kn" style="width:110px;height:110px"><div class="kp" style="transform:rotate({{blendAngle}}deg)"><i style="background:#c0301c;width:5px;margin-left:-2.5px"></i></div></div><span class="kl">{{blendText}}</span></div>
+  <div style="display:flex;flex-direction:column;gap:10px;width:260px">
+   <span class="kl">CAB · {{cabMode}}</span>
+   <div class="lcd">V30 MESA 4x12 · SM57 0.5in</div>
+   <div style="display:flex;gap:8px"><button class="btn">ALIGN</button><button class="btn">Ø B</button><button class="btn">EXPORT NAM</button></div>
+   <span class="kl" style="color:{{modeColor}}">● {{modeNote}}</span>
+  </div>
+  <sc-for list="{{outKnobs}}" as="k" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:6px"><div class="kn" style="width:42px;height:42px"><div class="kp" style="transform:rotate({{k.a}}deg)"><i></i></div></div><span class="kl">{{k.l}}</span></div></sc-for>
+  <div style="display:flex;gap:12px;margin-left:auto">
+   <sc-for list="{{meters}}" as="m" hint-placeholder-count="2">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div class="vu"><svg width="150" height="96" viewBox="0 0 150 96" aria-hidden="true"><path d="M20 72 A62 62 0 0 1 130 72" fill="none" stroke="#2a2a2a" stroke-width="2"></path><path d="M108 38 A62 62 0 0 1 130 72" fill="none" stroke="#c0301c" stroke-width="5"></path><text x="75" y="56" text-anchor="middle" font-family="Barlow Condensed" font-weight="700" font-size="12" fill="#2a2a2a" letter-spacing="2">{{m.label}}</text><line x1="75" y1="92" x2="{{m.x}}" y2="{{m.y}}" stroke="#111" stroke-width="2"></line><circle cx="75" cy="92" r="5" fill="#111"></circle></svg></div><span class="kl">{{m.cap}}</span></div>
+   </sc-for>
+  </div>
+ </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"blend":{"editor":"range","min":0,"max":100,"step":1,"default":55,"unit":"%"},"cabMode":{"editor":"enum","options":["shared","perPath"],"default":"shared"},"$preview":{"width":1200,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const ang = (p) => -135 + 270 * p;
+    const ks = (arr) => arr.map(([l, p]) => ({ l, a: ang(p) }));
+    const blend = this.props.blend ?? 55;
+    const shared = (this.props.cabMode ?? 'shared') === 'shared';
+    const needle = (v) => { const th = Math.PI * (0.19 + 0.62 * (1 - v)); return { x: (75 + 70 * Math.cos(th)).toFixed(1), y: (92 - 70 * Math.sin(th)).toFixed(1) }; };
+    const ladder = Array.from({ length: 16 }, (_, i) => { const on = i < 11; const c = i < 10 ? '#38e07a' : i < 13 ? '#ffb020' : '#ff3b2f'; return { h: 14 + i * 2, c: on ? c : '#1a1a1a', g: on ? c : 'transparent' }; });
+    return {
+      ladder, blendAngle: ang(blend / 100), blendText: (100 - blend) + ' SAW / ' + blend + ' BODY',
+      cabMode: shared ? 'SHARED' : 'PER PATH', modeColor: shared ? '#38e07a' : '#ffb020',
+      modeNote: shared ? 'LIVE-COMPATIBLE · NO-CAB EXPORT EXACT' : 'STUDIO BLEND · WITH-CAB EXPORT ONLY',
+      inKnobs: ks([['INPUT', .5], ['THRESH', .38], ['HOLD', .3], ['RELEASE', .42]]),
+      chans: [
+        { name: 'SAW', sub: 'CHANNEL A', color: '#ff7a1f', slots: [{ slot: 'PEDAL', name: 'HM-2w CHAINSAW · STD' }, { slot: 'AMP', name: 'JCM800 2203 · CRUNCH' }], knobs: ks([['PRE', .45], ['DRIVE', .62], ['LOW', .5], ['MID', .68], ['HIGH', .4], ['LEVEL', .55]]) },
+        { name: 'BODY', sub: 'CHANNEL B', color: '#5aa0e6', slots: [{ slot: 'BOOST', name: 'TS808 JAPAN 03 · HOT' }, { slot: 'AMP', name: '5150III IVORY · RED' }], knobs: ks([['PRE', .5], ['DRIVE', .55], ['LOW', .45], ['MID', .52], ['HIGH', .48], ['LEVEL', .5]]) }
+      ],
+      outKnobs: ks([['LOW', .5], ['MID', .58], ['HIGH', .45], ['COMP', .3], ['OUTPUT', .62]]),
+      meters: [{ label: 'VU', cap: 'OUTPUT', ...needle(0.7) }, { label: 'GR', cap: 'BUS COMP', ...needle(0.25) }]
+    };
+  }
+}
+</script>
+</body>
+</html>

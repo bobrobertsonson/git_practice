@@ -1,0 +1,59 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Modern Tight Swedish",
+  "category": "Swedish death (HM-2)",
+  "notes": "Modern tight Swedish: controlled low end, strong presence (Bloodbath, Gatecreeper, LIK). Narrow low focus, presence 11 dB, stage 1 down 2 dB and stage 2 up 2 dB. Use a high-gain amp (tone 88689 or 70977). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 2,
+          "params": {
+            "level": 2.95,
+            "low": 9,
+            "high": 9,
+            "distortion": 9,
+            "tightness": 5,
+            "mix": 100,
+            "mode": "stock",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 1.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 4800,
+            "presenceDb": 11,
+            "rolloffHz": 9000,
+            "gain1Db": -2,
+            "gain2Db": 2,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -7.262,
+    "autoTrimHash": "44607e3a804ed505ba24fcb61bfe31ae56fe621af90f8cd9d9fce374a56dba11"
+  }
+}

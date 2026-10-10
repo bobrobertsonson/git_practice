@@ -1,0 +1,13 @@
+Sawblade export notes - Notes parity: withcab (withcab export)
+
+Stages of the preset that are NOT in the trained model, in signal order:
+
+1. gate [before NAM]
+   Gate FIRST in the chain, keyed on the guitar (DI) before any pedal: open at -55 dB, close at -61 dB (hysteresis 6 dB), attack 0.5 ms, hold 20 ms, release 60 ms, range -90 dB.
+
+2. busComp [after NAM]
+   Bus compressor LAST (after the cab / post EQ): threshold -14 dB re the chain's pre-headroom level = -14 dB re 0 dBFS at the exported output, ratio 2:1, attack 10 ms, release 120 ms, knee 6 dB, make-up +0.0 dB, peak detector.
+
+Loader order: gate -> NAM model -> bus comp
+
+Derived from TONE3000 captures; for personal use only. dB figures are digital (dBFS), so match levels by ear / meter on the device.
