@@ -42,7 +42,7 @@ gaps are the bridges), then spray: soft edges, noise edge breakup, overspray haz
 
 ## Honest quality assessment
 
-- **Wolves: reachable and usable as direction.** W2 is the strongest (bold, symmetric, reads at a glance, the grille
+- **Wolves: reachable and usable as direction.** W2 is the strongest (bold, symmetric, reads at a glance, though it reads more cat or fox than wolf, the grille
   halftone suits it). W3 reads as a snarling wolf. W1 is the weakest: the howl pose is muddled (ear and muzzle compete).
   Muzzle and fangs are crude; a stencil artist would redraw the silhouettes. The spray effects (haze, drips, wear) are convincing.
 - **Rats: V3 and V1 are the more successful styles; V2 does not reach real engraving.** V3 is crisp and graphic and
