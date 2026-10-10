@@ -1,0 +1,71 @@
+<title>VERMIN and Wolf Concepts</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&family=Barlow+Condensed:wght@600;700&family=Barlow:wght@500;600&display=swap">
+<style>
+/* Layout: one column; two option groups (V, W), each a grid of labelled cards; dark workshop look only. */
+:root{
+  --bg:#0f0c09; --plate:#1a1714; --line:#3a332b; --fg:#e8e1d2; --dim:#b3a995; --blade:#ff8a3d; --ink:#14110d; --alu:#c4c0b6;
+  --display:'Allerta Stencil','Barlow Condensed',system-ui,sans-serif;
+  --label:'Barlow Condensed','Arial Narrow',system-ui,sans-serif;
+  --body:'Barlow',system-ui,-apple-system,sans-serif;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font:500 15px/1.5 var(--body);margin:0}
+.wrap{max-width:1200px;margin:0 auto;padding-inline:16px;padding-block:20px 48px;display:grid;gap:26px}
+.plate{background:var(--alu);color:var(--ink);font-family:var(--display);letter-spacing:.08em;text-transform:uppercase;padding:8px 14px;border-radius:3px;justify-self:start;font-size:clamp(18px,3vw,26px)}
+p{margin:0;max-width:72ch;color:var(--dim)} p b{color:var(--fg)}
+.note{background:var(--plate);border:1px solid var(--line);border-left:3px solid var(--blade);border-radius:4px;padding:12px 16px;display:grid;gap:6px}
+h2{font:400 22px/1.2 var(--display);letter-spacing:.06em;text-transform:uppercase;margin:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:14px}
+.card{background:var(--plate);border:1px solid var(--line);border-radius:4px;padding:12px;display:grid;gap:8px;align-content:start;min-width:0}
+.tag{display:flex;align-items:baseline;gap:10px}
+.id{font:700 14px/1 var(--label);letter-spacing:.1em;background:var(--blade);color:var(--ink);padding:5px 8px;border-radius:2px}
+.nm{font:700 15px/1.2 var(--label);letter-spacing:.1em;text-transform:uppercase}
+.card img{display:block;width:100%;height:auto;border-radius:2px;background:#000}
+.small{display:flex;gap:10px;align-items:end}
+.small img{width:120px}
+.small span{font:600 12px/1.3 var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.card p{font-size:14px}
+a{color:var(--fg)}
+footer{font-size:13px;color:var(--dim)}
+</style>
+
+<div class="wrap">
+  <span class="plate">VERMIN + cab wolf · concepts</span>
+  <p>Flat sketches to pick a <b>style</b> before any production render. VERMIN is a snarling rat with iron nails driven through it, in three styles. The cab wolf is a spray stencil in three takes. Pick one of each, or mix (for example "V3 style, W2 wolf"), by leaving a comment.</p>
+
+  <div class="note">
+    <p><b>Read these as style tests, not final art.</b> They're procedural drawings. The rats come out more cartoon mouse than vicious rat: round ears, an upright body, a soft face. The wolf muzzles are crude. What each sheet does show is how the style looks on the pedal face and the cab, and whether it still reads at small size.</p>
+    <p>Whichever style you pick, the production art should be hand-drawn vector art or a commissioned illustration in that style. The pose, the nails and the stencil treatment carry over from here.</p>
+  </div>
+
+  <h2>VERMIN · rat with nails</h2>
+  <div class="grid">
+    <div class="card"><div class="tag"><span class="id">V1</span><span class="nm">Spray stencil</span></div>
+      <a href="png/V1.png"><img src="png/V1.png" alt="V1: spray-stencil rat with nails" width="600" height="820"></a>
+      <div class="small"><img src="png/V1_300.png" alt="V1 at 300 px" width="300" height="410"><span>at 300 px</span></div>
+      <p>Same stencil language as the wolves, so the pedal and the cab read as one set. Bridges, overspray and drips. The nails get muddy.</p></div>
+    <div class="card"><div class="tag"><span class="id">V2</span><span class="nm">Woodcut / engraving</span></div>
+      <a href="png/V2.png"><img src="png/V2.png" alt="V2: woodcut-style rat with nails" width="600" height="820"></a>
+      <div class="small"><img src="png/V2_300.png" alt="V2 at 300 px" width="300" height="410"><span>at 300 px</span></div>
+      <p>Hatching and fur strokes. This is the weakest of the three as drawn here: rough rather than engraved. A real engraving would need an illustrator.</p></div>
+    <div class="card"><div class="tag"><span class="id">V3</span><span class="nm">Flat screen-print</span></div>
+      <a href="png/V3.png"><img src="png/V3.png" alt="V3: flat screen-print rat with nails" width="600" height="820"></a>
+      <div class="small"><img src="png/V3_300.png" alt="V3 at 300 px" width="300" height="410"><span>at 300 px</span></div>
+      <p>Solid bone shapes, halftone shading and an offset keyline. It's the crispest and the most legible at small size.</p></div>
+  </div>
+
+  <h2>Cab · stencil wolf</h2>
+  <div class="grid">
+    <div class="card"><div class="tag"><span class="id">W1</span><span class="nm">Howling bust · bone on tolex</span></div>
+      <a href="png/W1.png"><img src="png/W1.png" alt="W1: howling stencil wolf on tolex" width="700" height="700"></a>
+      <p>A howl pose. The weakest of the three: the ear and the muzzle compete.</p></div>
+    <div class="card"><div class="tag"><span class="id">W2</span><span class="nm">Front snarl · green on steel grille</span></div>
+      <a href="png/W2.png"><img src="png/W2.png" alt="W2: front-facing snarling stencil wolf, green on perforated grille" width="700" height="700"></a>
+      <p>The boldest of the three and it reads at a glance. The grille holes act as a halftone.</p></div>
+    <div class="card"><div class="tag"><span class="id">W3</span><span class="nm">Snarling profile · bone on cloth</span></div>
+      <a href="png/W3.png"><img src="png/W3.png" alt="W3: snarling stencil wolf in profile on grille cloth" width="700" height="700"></a>
+      <p>Clearly a snarling wolf, with drips and wear on woven cloth.</p></div>
+  </div>
+
+  <footer>All drawings are original and procedural, with no traced or copied art and no logos. The source is <code>design/concepts/</code> in the Sawblade repo.</footer>
+</div>
