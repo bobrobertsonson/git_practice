@@ -90,6 +90,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 .toggle .tv { font-family: var(--mono); font-size: 10.5px; }
 .led { width: 12px; height: 12px; border-radius: 50%; background: var(--led-off); box-shadow: inset 0 0 0 1px rgba(0,0,0,.35); transition: background 60ms, box-shadow 60ms; }
 .led.on { background: var(--led); box-shadow: 0 0 10px 2px rgba(255,61,31,.75), inset 0 0 0 1px rgba(0,0,0,.2); }
+.ledrows { display: flex; gap: 12px; }
 .ledrow { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
 .stomps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding-top: 14px; border-top: 2px solid var(--silk); }
 .stomp { display: grid; justify-items: center; gap: 7px; background: none; border: 0; color: var(--silk); padding: 4px; min-height: 0; cursor: pointer; font: inherit; }
@@ -141,10 +142,11 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
     <button id="demo">Demo scream</button>
     <button id="mic" aria-pressed="false">Live mic</button>
     <select id="preset" aria-label="Preset">
+      <option value="huge">Preset: Huge (album)</option>
       <option value="natural">Preset: Scream natural</option>
-      <option value="dark">Preset: Scream dark</option>
-      <option value="bright">Preset: Scream bright</option>
-      <option value="shout">Preset: Shout, thick</option>
+      <option value="dark">Preset: Scream dark / gutturals</option>
+      <option value="bright">Preset: Scream bright / highs</option>
+      <option value="live">Preset: Live stage</option>
       <option value="raw">Preset: Raw, control only</option>
     </select>
     <div class="grow" id="src">Source: <b>synthetic test scream</b> · load your own take</div>
@@ -157,7 +159,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
     <div class="brand"><span class="name">RASP</span><span class="model">extreme vocal processor · mic in / stereo out</span></div>
     <div class="sections">
       <div class="section" data-sec="control">
-        <div class="sec-head"><span class="sec-title">Control</span><span class="ledrow" title="Lights when chop is compressing more than 3 dB"><span class="led" id="grLed"></span><span id="grVal">0 dB</span></span></div>
+        <div class="sec-head"><span class="sec-title">Control</span><span class="ledrows"><span class="ledrow" title="Lights while the bleed reducer is turning stage bleed down"><span class="led" id="bleedLed"></span>bleed</span><span class="ledrow" title="Lights when chop is compressing more than 3 dB"><span class="led" id="grLed"></span><span id="grVal">0 dB</span></span></span></div>
         <div class="knobs" id="k-control"></div>
         <div class="toggles" id="t-control"></div>
       </div>
@@ -181,7 +183,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 
   <div class="menu">
     <h2>Menu</h2>
-    <p>On the hardware these are the section level faders and tap tempo.</p>
+    <p>On the hardware: level faders and three trim pots. Set the bleed reducer at soundcheck: with the band playing and you silent, turn it up until the bleed LED stays lit.</p>
     <div class="sliders" id="menu"></div>
   </div>
 
@@ -193,7 +195,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
     </section>
     <section>
       <h2>Feedback</h2>
-      <p>Chop is a compressor, so it raises quiet sounds, including room noise and wedge spill. That pushes the mic closer to feedback. Keep <strong>Lo cut</strong> up, use a dynamic cardioid mic, and use in-ears rather than a wedge where you can. Duck keeps the reverb and delay out from under your voice.</p>
+      <p>A produced chain is heavily compressed, so drums, amps and wedges in your mic get louder too. That causes mud and feedback. The <strong>bleed reducer</strong> turns them back down between phrases. In testing it restored 24.8 of 28.4 dB of voice-to-bleed separation. Use the <strong>Live stage</strong> preset, keep Lo cut up, use a dynamic cardioid mic, and use in-ears rather than a wedge where you can.</p>
     </section>
   </div>
 </div>
@@ -210,12 +212,14 @@ class RaspEngine {
     const lerp = (a, b, t) => a + (b - a) * t;
     const db = d => Math.pow(10, d / 20);
     const toDb = x => 20 * Math.log10(x + 1e-9);
+    const pow10db = ms => 10 * Math.log10(ms + 1e-12);
     const expMap = (t, lo, hi) => lo * Math.pow(hi / lo, t);
-    const coefMs = (ms, rate = sr) => Math.exp(-1 / (ms * 0.001 * rate));
+    const coefMs = ms => Math.exp(-1 / (ms * 0.001 * sr));
     const fastTanh = x => { x = clamp(x, -3, 3); const x2 = x * x; return x * (27 + x2) / (27 + 9 * x2); };
-    const safetyClip = x => { const a = Math.abs(x); if (a <= 0.8) return x; const y = 0.8 + 0.2 * fastTanh((a - 0.8) * 5); return x < 0 ? -y : y; };
+    const safetyClip = x => { const a = Math.abs(x); if (a <= 0.9) return x; const y = 0.9 + 0.1 * fastTanh((a - 0.9) * 10); return x < 0 ? -y : y; };
+    const knee = (over, ratio, k) => over > k * 0.5 ? over * (1 / ratio - 1) : over > -k * 0.5 ? (1 / ratio - 1) * (over + k * 0.5) ** 2 / (2 * k) : 0;
     // one-pole
-    const op = () => ({ a: 0, z: 0 });
+    const op = (hz, rate = sr) => { const f = { a: 0, z: 0 }; if (hz) f.a = Math.exp(-2 * PI * hz / rate); return f; };
     const opSet = (f, hz, rate = sr) => { f.a = Math.exp(-2 * PI * hz / rate); };
     const opLp = (f, x) => (f.z = x + f.a * (f.z - x));
     const opHp = (f, x) => x - opLp(f, x);
@@ -228,6 +232,15 @@ class RaspEngine {
       const v3 = x - f.ic2, v1 = (f.g * v3 + f.ic1) / (1 + f.g * (f.g + f.k)), v2 = f.ic2 + f.g * v1;
       f.ic1 = 2 * v1 - f.ic1; f.ic2 = 2 * v2 - f.ic2; f.lp = v2; f.bp = v1; f.hp = x - f.k * v1 - v2;
     };
+    // biquad (RBJ)
+    const bq = () => ({ b0: 1, b1: 0, b2: 0, a1: 0, a2: 0, z1: 0, z2: 0 });
+    const bqRun = (f, x) => { const y = f.b0 * x + f.z1; f.z1 = f.b1 * x - f.a1 * y + f.z2; f.z2 = f.b2 * x - f.a2 * y; return y; };
+    const bqNorm = (f, B0, B1, B2, A0, A1, A2) => { f.b0 = B0 / A0; f.b1 = B1 / A0; f.b2 = B2 / A0; f.a1 = A1 / A0; f.a2 = A2 / A0; };
+    const peaking = (f, hz, q, g) => { const A = 10 ** (g / 40), w = 2 * PI * hz / sr, al = Math.sin(w) / (2 * q), c = Math.cos(w); bqNorm(f, 1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A); };
+    const lowShelf = (f, hz, g) => { const A = 10 ** (g / 40), w = 2 * PI * hz / sr, c = Math.cos(w), s = 2 * Math.sqrt(A) * Math.sin(w) / 2 * Math.SQRT2;
+      bqNorm(f, A * ((A + 1) - (A - 1) * c + s), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - s), (A + 1) + (A - 1) * c + s, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - s); };
+    const highShelf = (f, hz, g) => { const A = 10 ** (g / 40), w = 2 * PI * hz / sr, c = Math.cos(w), s = 2 * Math.sqrt(A) * Math.sin(w) / 2 * Math.SQRT2;
+      bqNorm(f, A * ((A + 1) + (A - 1) * c + s), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - s), (A + 1) - (A - 1) * c + s, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - s); };
     // 4x oversampling filter (see rasp.h for the design)
     const OS = [
       [2.1738402454e-04, 2.7823415894e-04, 2.1738402454e-04, -1.5801157295e+00, 6.3849354156e-01],
@@ -240,57 +253,93 @@ class RaspEngine {
       return x; }; };
     const delay = n => ({ buf: new Float32Array(n), m: n - 1, w: 0 });
     const dWrite = (d, x) => { d.buf[d.w] = x; d.w = (d.w + 1) & d.m; };
-    const dRead = (d, s) => { const rp = d.w - s, i = Math.floor(rp), f = rp - i; const a = d.buf[i & d.m], b = d.buf[(i + 1) & d.m]; return a + (b - a) * f; };
+    const dRead = (d, s) => { const di = s | 0, fr = s - di; const a = d.buf[(d.w - di) & d.m], b = d.buf[(d.w - di - 1) & d.m]; return a + (b - a) * fr; };
     const dTap = (d, n) => d.buf[(d.w - n) & d.m];
     const ap = (n, len) => ({ buf: new Float32Array(n), len: clamp(len | 0, 1, n), i: 0 });
     const apRun = (r, x, g) => { const d = r.buf[r.i], v = x + g * d; r.buf[r.i] = v; if (++r.i >= r.len) r.i = 0; return d - g * v; };
     const logCosh = x => { const a = Math.abs(x); return a > 5 ? a - 0.69314718 : a + Math.log1p(Math.exp(-2 * a)) - 0.69314718; };
 
     let p = null;
-    // CONTROL
+    // ---- CONTROL
     const lc1 = svf(), lc2 = svf(), hc1 = svf(), hc2 = svf();
-    const up = osF(), down = osF(), hp720 = op(), capLp = op(), rmsIn = op(), rmsOut = op(), tone = svf(), level = sm(1, 50);
-    opSet(hp720, 720, sr * 4); opSet(rmsIn, 3); opSet(rmsOut, 3);
-    let gain = 1, prevC = 0;
+    // drive
+    const up = osF(), down = osF(), hp720 = op(720, sr * 4), capLp = op(), rmsIn = op(3), rmsOut = op(3), tone = svf(), level = sm(1, 50);
+    let gain = 1, prevC = 0, prevF = 0;
     const KCLIP = 0.3;
-    const C = { thr: -20, ratio: 4, att: coefMs(1.5), rel: 0, makeup: 1, amount: 0.5, gr: 0, lim: 0, limRel: coefMs(60) };
-    // THICKEN
-    const tHp = svf(), tdl = delay(4096), darkL = svf(), darkR = svf(), spreadS = sm(0.5, 60);
-    svfSet(tHp, 180, 0.707);
+    // voicing
+    const vLow = bq(), vMud = bq(), vPres = bq(), vAir = bq();
+    // de-esser
+    const deBand = svf(); svfSet(deBand, 7000, 1.0);
+    const deAtt = coefMs(0.5), deRel = coefMs(60);
+    let deHi = 0, deAll = 0, deDepth = 0.5;
+    // expander
+    const X = { on: true, thr: -50, rmsC: coefMs(5), att: coefMs(2), rel: coefMs(150), ms: 0, gr: 0 };
+    // chop
+    const C = { amount: 0.5, makeup: 1, crushMix: 0, gr: 0, fetThr: -16, fetRatio: 8, fetAtt: coefMs(0.4), fetRel: coefMs(60), fetGr: 0,
+      optThr: -20, optRatio: 3, optAtt: coefMs(12), optRms: coefMs(8), optRelFast: 0, optRelSlow: 0, optGr: 0, optMs: 0,
+      crAtt: coefMs(1), crRel: coefMs(80), crGr: 0 };
+    // ---- THICKEN
+    const tHp = svf(), tdl = delay(4096), darkL = svf(), darkR = svf(), spreadS = sm(0.6, 60);
+    svfSet(tHp, 150, 0.707);
     const tAp = [[3.1, 5.3, 7.9], [2.7, 4.9, 8.3]].map(row => row.map(ms => ap(1024, ms * 0.001 * sr)));
-    const TL = [4.7, 11.3, 17.9, 26.3], TR = [6.1, 9.7, 15.1, 23.9], TG = [0.62, -0.5, 0.42, -0.34];
-    // FLAVOUR: reverb
-    const vLen = [29.7, 37.1, 41.1, 43.7].map(ms => (ms * 0.001 * sr) | 0);
-    const vLines = vLen.map(() => delay(8192)), vDamp = vLen.map(() => { const f = op(); opSet(f, 6500); return f; });
-    const vFb = [0, 0, 0, 0], vPre = delay(4096), vHp = svf();
-    svfSet(vHp, 250, 0.707);
-    const vAp = [0.0048, 0.0036, 0.0127, 0.0093].map(s => ap(1024, s * sr));
-    // FLAVOUR: delay, duck, tilt
-    const DMAX = 1 << 17, dlL = delay(DMAX), dlR = delay(DMAX), fbHp = op(), fbLp = op(), tiltL = op(), tiltR = op(), delayS = sm(sr * 0.25, 80);
-    opSet(fbHp, 250); opSet(fbLp, 5000); opSet(tiltL, 1000); opSet(tiltR, 1000);
-    const duckAtt = coefMs(8), duckRel = coefMs(250);
+    const TL = [4.7, 11.3, 17.9, 26.3], TR = [6.1, 9.7, 15.1, 23.9], TG = [0.5, -0.4, 0.32, -0.26];
+    const mp = baseMs => ({ dl: delay(8192), base: baseMs * 0.001 * sr, win: 0.03 * sr, rate: 0, ph: 0 });
+    const mpRun = (m, x) => {
+      dWrite(m.dl, x);
+      m.ph += -m.rate / m.win; if (m.ph >= 1) m.ph -= 1; if (m.ph < 0) m.ph += 1;
+      let p2 = m.ph + 0.5; if (p2 >= 1) p2 -= 1;
+      const g1 = Math.sin(PI * m.ph), g2 = Math.sin(PI * p2);
+      return g1 * g1 * dRead(m.dl, m.base + m.win * m.ph) + g2 * g2 * dRead(m.dl, m.base + m.win * p2);
+    };
+    const dblL = mp(14), dblR = mp(21);
+    // ---- FLAVOUR: plate
+    const pLen = [23.1, 27.7, 31.9, 35.3, 39.7, 43.1, 47.9, 53.3].map(ms => ms * 0.001 * sr);
+    const pLines = pLen.map(() => delay(8192)), pDamp = pLen.map(() => op(7000)), pFb = new Float64Array(8);
+    const pPre = delay(8192), pHp = svf(); svfSet(pHp, 300, 0.707);
+    const pAp = [4.8, 3.6, 12.7, 9.3].map(ms => ap(2048, ms * 0.001 * sr));
+    const pModInc = 0.7 / sr; let pModPh = 0;
+    const po = new Float64Array(8);
+    // ---- FLAVOUR: delay etc.
+    const DMAX = 1 << 17, dlL = delay(DMAX), dlR = delay(DMAX), fbHp = op(300), fbLp = op(4500), tiltL = op(1000), tiltR = op(1000), delayS = sm(sr * 0.25, 80);
+    const retL = svf(), retR = svf(); svfSet(retL, 8000, 0.707); svfSet(retR, 8000, 0.707);
+    const duckAtt = coefMs(8), duckRel = coefMs(300);
     let duckEnv = 0, tiltLo = 1, tiltHi = 1;
+    // ---- BUS
+    const B = { amount: 0.5, thr: -15, makeup: 1, rmsC: coefMs(10), att: coefMs(15), rel: coefMs(200), limRel: coefMs(80), ms: 0, gr: 0, lim: 0 };
     // section gains
-    const gCtl = sm(1), gThk = sm(0.5), gFlv = sm(0.5), gOut = sm(1), gMix = sm(0.6);
+    const gCtl = sm(1), gThk = sm(0.6), gFlv = sm(0.55), gOut = sm(1), gMix = sm(0.6);
 
-    this.gainReductionDb = () => -C.gr + (C.lim > 0.891 ? toDb(C.lim / 0.891) : 0);
+    this.gainReductionDb = () => C.gr;
+    this.bleedReductionDb = () => -X.gr;
+    this.limiterDb = () => B.lim > 0.891 ? toDb(B.lim / 0.891) : 0;
 
     this.setParams = np => {
       p = Object.assign({}, np);
       const lo = expMap(p.loCut, 20, 600), hi = expMap(p.hiCut, 2000, 20000);
       svfSet(lc1, lo, 0.54); svfSet(lc2, lo, 1.31); svfSet(hc1, hi, 0.54); svfSet(hc2, hi, 1.31);
       const d2 = p.drive * p.drive; gain = 1 + 120 * d2;
-      const rf = 51e3 + 500e3 * d2;
-      opSet(capLp, clamp(1 / (2 * PI * rf * 51e-12), 1000, sr * 1.8), sr * 4);
-      svfSet(tone, [2200, 3800, 7000][clamp(p.brightness | 0, 0, 2)], 0.6);
-      C.thr = -6 - 30 * p.chop; C.ratio = 1.5 + 6.5 * p.chop; C.rel = coefMs(expMap(p.release, 25, 600));
-      C.makeup = db(-C.thr * (1 - 1 / C.ratio) * 0.5); C.amount = p.chop;
+      opSet(capLp, clamp(1 / (2 * PI * (51e3 + 500e3 * d2) * 51e-12), 1000, sr * 1.8), sr * 4);
+      const b = clamp(p.brightness | 0, 0, 2);
+      svfSet(tone, [2400, 4200, 7500][b], 0.6);
+      const V = [[170, 2.5, 420, -2.0, 2600, 1.5, 10000, 0.5], [150, 1.5, 450, -3.0, 3000, 3.0, 10000, 2.5], [120, 0.5, 500, -3.5, 3500, 4.0, 11000, 4.0]][b];
+      lowShelf(vLow, V[0], V[1]); peaking(vMud, V[2], 1.2, V[3]); peaking(vPres, V[4], 0.9, V[5]); highShelf(vAir, V[6], V[7]);
+      deDepth = p.deEss;
+      X.on = p.bleed > 0.001; X.thr = -70 + 40 * p.bleed;
+      C.amount = p.chop;
+      C.fetThr = -8 - 16 * p.chop; C.fetRatio = 4 + 8 * p.chop;
+      C.optThr = -14 - 14 * p.chop; C.optRatio = 2 + 2 * p.chop;
+      const relMs = expMap(p.release, 60, 800); C.optRelFast = coefMs(relMs * 0.25); C.optRelSlow = coefMs(relMs);
+      C.crushMix = 0.3 * p.chop;
+      const lost = -knee(-10 - C.fetThr, C.fetRatio, 6) - knee(-10 - C.optThr, C.optRatio, 10) * 0.7;
+      C.makeup = db(lost * 0.8);
       spreadS.target = p.spread;
+      const cents = 3 + 15 * p.spread; dblL.rate = 2 ** (cents / 1200) - 1; dblR.rate = 2 ** (-cents / 1200) - 1;
       const dk = expMap(1 - p.darken, 1500, 18000); svfSet(darkL, dk, 0.6); svfSet(darkR, dk, 0.6);
-      const rt = expMap(p.tail, 0.4, 6); for (let i = 0; i < 4; i++) vFb[i] = Math.pow(10, -3 * vLen[i] / (rt * sr));
+      const rt = expMap(p.tail, 0.5, 6); for (let i = 0; i < 8; i++) pFb[i] = Math.pow(10, -3 * pLen[i] / (rt * sr));
       const beat = 60 / clamp(p.bpm, 40, 240);
       delayS.target = clamp((p.delayTime === 0 ? beat * 0.5 : p.delayTime === 1 ? beat * 0.75 : beat) * sr, 1, DMAX - 4);
       const td = (p.tilt - 0.5) * 12; tiltLo = db(-td * 0.5); tiltHi = db(td * 0.5);
+      B.amount = p.glue; B.thr = -10 - 10 * p.glue; B.makeup = p.glue > 0.001 ? db(-knee(-12 - B.thr, 2, 8) * 0.8) : 1;
       gCtl.target = db(p.controlGainDb);
       gThk.target = p.thickenOn ? db(p.thickenGainDb) : 0;
       gFlv.target = p.flavourOn ? db(p.flavourGainDb) : 0;
@@ -302,9 +351,9 @@ class RaspEngine {
       for (let k = 0; k < 4; k++) {
         const u = up(k === 0 ? x * 4 : 0);
         const c = opLp(capLp, gain * opHp(hp720, u)) / KCLIP;
-        const dx = c - prevC;
-        const d = Math.abs(dx) > 1e-4 ? (logCosh(c) - logCosh(prevC)) / dx : Math.tanh(0.5 * (c + prevC));
-        prevC = c;
+        const dx = c - prevC, F = logCosh(c);
+        const d = Math.abs(dx) > 1e-4 ? (F - prevF) / dx : Math.tanh(0.5 * (c + prevC));
+        prevC = c; prevF = F;
         y = down(u + KCLIP * d);
       }
       svfRun(tone, y);
@@ -313,54 +362,93 @@ class RaspEngine {
       if (ein > 1e-7) level.target = clamp(Math.sqrt(ein / (eout + 1e-12)), 0.25, 2);
       return wet * smNext(level);
     };
+    const deEss = x => {
+      if (deDepth < 0.001) return x;
+      svfRun(deBand, x);
+      const b = deBand.bp * deBand.k;
+      let a = Math.abs(b); deHi = a + (a > deHi ? deAtt : deRel) * (deHi - a);
+      a = Math.abs(x); deAll = a + (a > deAll ? deAtt : deRel) * (deAll - a);
+      const over = clamp((deHi / (deAll + 1e-6) - 0.45) / 0.35, 0, 1);
+      return x - (1 - db(-8 * deDepth * over)) * b;
+    };
+    const expander = key => {
+      if (!X.on) return 1;
+      X.ms = key * key + X.rmsC * (X.ms - key * key);
+      const lvl = pow10db(X.ms);
+      const target = lvl < X.thr ? clamp((lvl - X.thr) * 3, -40, 0) : 0;
+      X.gr = target + (target > X.gr ? X.att : X.rel) * (X.gr - target);
+      return db(X.gr);
+    };
     const chop = x => {
-      let out = x;
-      if (C.amount > 0.001) {
-        const over = toDb(Math.abs(x)) - C.thr, knee = 8; let target = 0;
-        if (over > knee * 0.5) target = over * (1 / C.ratio - 1);
-        else if (over > -knee * 0.5) { const t = over + knee * 0.5; target = (1 / C.ratio - 1) * t * t / (2 * knee); }
-        C.gr = target + (target < C.gr ? C.att : C.rel) * (C.gr - target);
-        out = x * db(C.gr) * C.makeup;
-      }
-      const a = Math.abs(out);
-      C.lim = a > C.lim ? a : C.lim * C.limRel + a * (1 - C.limRel);
-      if (C.lim > 0.891) out *= 0.891 / C.lim;
-      return out;
+      if (C.amount < 0.001) { C.gr = 0; return x; }
+      const xDb = toDb(Math.abs(x));
+      let target = knee(xDb - C.fetThr, C.fetRatio, 6);
+      C.fetGr = target + (target < C.fetGr ? C.fetAtt : C.fetRel) * (C.fetGr - target);
+      let y = x * db(C.fetGr);
+      C.optMs = y * y + C.optRms * (C.optMs - y * y);
+      target = knee(pow10db(C.optMs) - C.optThr, C.optRatio, 10);
+      const rel = C.optGr < -3 ? C.optRelSlow : C.optRelFast;
+      C.optGr = target + (target < C.optGr ? C.optAtt : rel) * (C.optGr - target);
+      y *= db(C.optGr);
+      target = knee(xDb + 30, 20, 6);
+      C.crGr = target + (target < C.crGr ? C.crAtt : C.crRel) * (C.crGr - target);
+      const crushed = x * db(C.crGr + 16);
+      C.gr = -(C.fetGr + C.optGr);
+      return (y + C.crushMix * crushed) * C.makeup;
     };
     const thicken = (x, o) => {
-      svfRun(tHp, x); dWrite(tdl, tHp.hp);
+      svfRun(tHp, x); const h = tHp.hp; dWrite(tdl, h);
       const s = (0.25 + 0.75 * smNext(spreadS)) * 0.001 * sr;
       let l = 0, r = 0;
       for (let i = 0; i < 4; i++) { l += TG[i] * dRead(tdl, TL[i] * s); r += TG[i] * dRead(tdl, TR[i] * s); }
       let dl = l, dr = r;
       for (let i = 0; i < 3; i++) { dl = apRun(tAp[0][i], dl, 0.6); dr = apRun(tAp[1][i], dr, 0.6); }
       l = lerp(l, dl, p.diffuse); r = lerp(r, dr, p.diffuse);
+      l += 0.8 * mpRun(dblL, h); r += 0.8 * mpRun(dblR, h);
       svfRun(darkL, l); svfRun(darkR, r);
-      const m = 0.5 * (darkL.lp + darkR.lp), sd = 0.5 * (darkL.lp - darkR.lp) * p.width * 1.4;
+      const m = 0.5 * (darkL.lp + darkR.lp), sd = 0.5 * (darkL.lp - darkR.lp) * p.width * 1.3;
       o[0] = m + sd; o[1] = m - sd;
     };
-    const ov = [0, 0, 0, 0];
+    const plate = (x, o) => {
+      svfRun(pHp, x); dWrite(pPre, pHp.hp);
+      let d = dTap(pPre, (0.025 * sr) | 0);
+      for (let i = 0; i < 4; i++) d = apRun(pAp[i], d, 0.7);
+      pModPh += pModInc; if (pModPh >= 1) pModPh -= 1;
+      const mod = 0.0004 * sr * Math.sin(2 * PI * pModPh);
+      let sum = 0;
+      for (let i = 0; i < 8; i++) { const dd = pLen[i] + (i === 2 ? mod : i === 5 ? -mod : 0); po[i] = opLp(pDamp[i], dRead(pLines[i], dd)) * pFb[i]; sum += po[i]; }
+      sum *= 2 / 8;
+      for (let i = 0; i < 8; i++) dWrite(pLines[i], po[i] - sum + ((i & 1) ? -d : d));
+      o[0] = po[0] + po[2] + po[4] + po[6]; o[1] = po[1] + po[3] + po[5] + po[7];
+    };
+    const pv = [0, 0];
     const flavour = (x, o) => {
       const a = Math.abs(x);
       duckEnv = a + (a > duckEnv ? duckAtt : duckRel) * (duckEnv - a);
-      const dg = 1 - p.duck * 0.9 * clamp(duckEnv * 6, 0, 1);
-      // reverb
-      svfRun(vHp, x); dWrite(vPre, vHp.hp);
-      let d = dTap(vPre, (0.015 * sr) | 0);
-      for (let i = 0; i < 4; i++) d = apRun(vAp[i], d, 0.65);
-      for (let i = 0; i < 4; i++) ov[i] = opLp(vDamp[i], dTap(vLines[i], vLen[i])) * vFb[i];
-      const h0 = 0.5 * (ov[0] + ov[1] + ov[2] + ov[3]), h1 = 0.5 * (ov[0] - ov[1] + ov[2] - ov[3]);
-      const h2 = 0.5 * (ov[0] + ov[1] - ov[2] - ov[3]), h3 = 0.5 * (ov[0] - ov[1] - ov[2] + ov[3]);
-      dWrite(vLines[0], h0 + d); dWrite(vLines[1], h1 + d); dWrite(vLines[2], h2 - d); dWrite(vLines[3], h3 - d);
-      const rL = ov[0] - ov[2], rR = ov[1] - ov[3];
-      // ping-pong delay
+      const dg = 1 - p.duck * 0.85 * clamp(duckEnv * 6, 0, 1);
+      plate(x, pv);
       const ds = smNext(delayS), rep = p.repeats * 0.85;
       const dL = dRead(dlL, ds), dR = dRead(dlR, ds);
       const fbR = opLp(fbLp, opHp(fbHp, dR));
       dWrite(dlL, x + fbR * rep); dWrite(dlR, dL * rep);
-      let L = dg * (p.tailBlend * rL + p.delayBlend * dL), R = dg * (p.tailBlend * rR + p.delayBlend * dR);
+      let L = dg * (p.tailBlend * pv[0] * 0.5 + p.delayBlend * dL), R = dg * (p.tailBlend * pv[1] * 0.5 + p.delayBlend * dR);
+      svfRun(retL, L); svfRun(retR, R); L = retL.lp; R = retR.lp;
       let lo = opLp(tiltL, L); L = lo * tiltLo + (L - lo) * tiltHi;
       lo = opLp(tiltR, R); R = lo * tiltLo + (R - lo) * tiltHi;
+      o[0] = L; o[1] = R;
+    };
+    const bus = o => {
+      let L = o[0], R = o[1];
+      if (B.amount > 0.001) {
+        const m = 0.5 * (L * L + R * R);
+        B.ms = m + B.rmsC * (B.ms - m);
+        const target = knee(pow10db(B.ms) - B.thr, 2, 8);
+        B.gr = target + (target < B.gr ? B.att : B.rel) * (B.gr - target);
+        const g = db(B.gr) * B.makeup; L *= g; R *= g;
+      }
+      const a = Math.max(Math.abs(L), Math.abs(R));
+      B.lim = a > B.lim ? a : B.lim * B.limRel + a * (1 - B.limRel);
+      if (B.lim > 0.891) { const g = 0.891 / B.lim; L *= g; R *= g; }
       o[0] = L; o[1] = R;
     };
 
@@ -370,16 +458,21 @@ class RaspEngine {
       if (p.controlOn) {
         svfRun(lc1, x); svfRun(lc2, lc1.hp); svfRun(hc1, lc2.hp); svfRun(hc2, hc1.lp);
         x = hc2.lp;
-        x = lerp(x, drive(x), gm);
-        x = chop(x) * gc;
+        const eg = expander(x);
+        if (gm > 1e-4) x = lerp(x, drive(x), gm);
+        x = bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x))));
+        x = deEss(x);
+        x = chop(x) * eg * gc;
       }
       const gt = smNext(gThk), gf = smNext(gFlv);
       tO[0] = tO[1] = fO[0] = fO[1] = 0;
       if (gt > 1e-4) thicken(x, tO);
       if (gf > 1e-4) flavour(x, fO);
       const dry = p.solo ? 0 : x, go = smNext(gOut);
-      out[0] = safetyClip((dry + gt * tO[0] + gf * fO[0]) * go);
-      out[1] = safetyClip((dry + gt * tO[1] + gf * fO[1]) * go);
+      out[0] = (dry + gt * tO[0] + gf * fO[0]) * go;
+      out[1] = (dry + gt * tO[1] + gf * fO[1]) * go;
+      bus(out);
+      out[0] = safetyClip(out[0]); out[1] = safetyClip(out[1]);
       return out;
     };
   }
@@ -401,7 +494,7 @@ function makeBlockRunner(sr) {
         const b = Math.abs(oL[i]); if (b > peakOut) peakOut = b;
       }
     },
-    stats() { const s = { peakIn, peakOut, gr: eng.gainReductionDb() }; peakIn = peakOut = 0; return s; },
+    stats() { const s = { peakIn, peakOut, gr: eng.gainReductionDb(), bleed: eng.bleedReductionDb(), lim: eng.limiterDb() }; peakIn = peakOut = 0; return s; },
   };
 }
 
@@ -409,17 +502,18 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.5, hiCut: 0.75, drive: 0.35, brightness: 1, mix: 0.6, chop: 0.5, release: 0.4, controlGainDb: 0,
-  thickenOn: true, spread: 0.5, diffuse: 0.4, darken: 0.3, width: 0.8, solo: false, thickenGainDb: -6,
-  flavourOn: true, tail: 0.45, tailBlend: 0.25, repeats: 0.25, delayBlend: 0.15, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -6,
-  outDb: 0,
+  controlOn: true, loCut: 0.5, hiCut: 0.85, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, bleed: 0.7, controlGainDb: 0,
+  thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
+  flavourOn: true, tail: 0.5, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
+  glue: 0.5, outDb: 0,
 };
 const PRESETS = {
+  huge:    { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.6, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3 },
   natural: {},
-  dark:    { brightness: 0, drive: 0.45, loCut: 0.42, hiCut: 0.62, darken: 0.55, tilt: 0.35, tail: 0.55 },
-  bright:  { brightness: 2, drive: 0.3, loCut: 0.58, hiCut: 0.9, darken: 0.1, tilt: 0.62, chop: 0.55 },
-  shout:   { drive: 0.55, mix: 0.75, chop: 0.65, release: 0.3, spread: 0.7, diffuse: 0.55, thickenGainDb: -3, tailBlend: 0.18, delayBlend: 0.1 },
-  raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false },
+  dark:    { brightness: 0, drive: 0.5, loCut: 0.42, hiCut: 0.7, darken: 0.5, tilt: 0.35, tail: 0.55 },
+  bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65 },
+  live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.15, duck: 0.75, bleed: 0.78, loCut: 0.56, glue: 0.4 },
+  raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0 },
 };
 let params = Object.assign({}, DEFAULTS);
 
@@ -431,12 +525,12 @@ const KNOBS = {
     ["loCut", "Lo cut", v => hz(em(v, 20, 600)) + " Hz"],
     ["hiCut", "Hi cut", v => hz(em(v, 2000, 20000)) + " Hz"],
     ["drive", "Drive", pct], ["mix", "Mix", pct],
-    ["chop", "Chop", v => v < 0.001 ? "off" : (1.5 + 6.5 * v).toFixed(1) + ":1"],
-    ["release", "Release", v => Math.round(em(v, 25, 600)) + " ms"],
+    ["chop", "Chop", v => v < 0.001 ? "off" : pct(v)],
+    ["release", "Release", v => Math.round(em(v, 60, 800)) + " ms"],
   ],
   thicken: [["spread", "Spread", pct], ["diffuse", "Diffuse", pct], ["darken", "Darken", pct], ["width", "Width", pct]],
   flavour: [
-    ["tail", "Tail", v => em(v, 0.4, 6).toFixed(1) + " s"], ["tailBlend", "Blend", pct], ["repeats", "Repeats", pct], ["delayBlend", "Blend", pct],
+    ["tail", "Tail", v => em(v, 0.5, 6).toFixed(1) + " s"], ["tailBlend", "Blend", pct], ["repeats", "Repeats", pct], ["delayBlend", "Blend", pct],
     ["tilt", "Tilt", v => { const d = (v - 0.5) * 12; return (d > 0 ? "+" : "") + d.toFixed(1) + " dB"; }], ["duck", "Duck", pct],
   ],
 };
@@ -445,11 +539,14 @@ const TOGGLES = {
   flavour: [["delayTime", "Time", ["1/8", "1/8 dot", "1/4"]]],
 };
 const MENU = [
+  ["Live and cleanup"],
+  ["bleed", "Bleed reducer", 0, 1, 0.01, v => v < 0.001 ? "off" : Math.round(-70 + 40 * v) + " dBFS"],
+  ["deEss", "De-esser", 0, 1, 0.01, pct],
+  ["Bus"],
+  ["glue", "Glue", 0, 1, 0.01, pct], ["outDb", "Output", -24, 12, 0.5, v => v.toFixed(1) + " dB"],
   ["Section levels"],
   ["controlGainDb", "Control", -18, 12, 0.5, v => v.toFixed(1) + " dB"], ["thickenGainDb", "Thicken", -24, 6, 0.5, v => v.toFixed(1) + " dB"],
-  ["flavourGainDb", "Flavour", -24, 6, 0.5, v => v.toFixed(1) + " dB"], ["outDb", "Output", -24, 6, 0.5, v => v.toFixed(1) + " dB"],
-  ["Delay"],
-  ["bpm", "Tempo", 40, 240, 1, v => Math.round(v) + " bpm"],
+  ["flavourGainDb", "Flavour", -24, 6, 0.5, v => v.toFixed(1) + " dB"], ["bpm", "Tempo", 40, 240, 1, v => Math.round(v) + " bpm"],
 ];
 
 const knobEls = {}, toggleEls = {}, sliderEls = {};
@@ -594,6 +691,7 @@ function showStats(s) {
   const gr = params.controlOn && !bypass ? s.gr : 0;
   document.getElementById("grLed").classList.toggle("on", gr > 3);
   document.getElementById("grVal").textContent = "−" + Math.max(0, gr).toFixed(0) + " dB";
+  document.getElementById("bleedLed").classList.toggle("on", params.controlOn && !bypass && s.bleed > 6 && (playing || !!micStream));
 }
 
 function stopSource() {
@@ -687,4 +785,7 @@ function makeDemo(sr) {
   for (let i = 0; i < len; i++) d[i] *= 0.5 / pk;
   return buf;
 }
+
+// Open on the big produced sound.
+applyPreset("huge");
 </script>

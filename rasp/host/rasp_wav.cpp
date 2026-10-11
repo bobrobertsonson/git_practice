@@ -79,6 +79,7 @@ static bool setParam(rasp::Params& p, const char* arg) {
         {"thickengain", &p.thickenGainDb}, {"tail", &p.tail}, {"tailblend", &p.tailBlend},
         {"repeats", &p.repeats}, {"delayblend", &p.delayBlend}, {"bpm", &p.bpm}, {"tilt", &p.tilt},
         {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb},
+        {"deess", &p.deEss}, {"bleed", &p.bleed}, {"glue", &p.glue},
     };
     for (auto& e : fs) if (k == e.n) { *e.f = v; return true; }
     if (k == "bright")  { p.brightness = (int)v; return true; }
@@ -97,7 +98,8 @@ int main(int argc, char** argv) {
             "  e.g. %s scream.wav out.wav drive=0.5 bright=2 chop=0.6 spread=0.6 tailblend=0.3\n"
             "  names: locut hicut drive bright(0-2) mix chop release\n"
             "         spread diffuse darken width solo tail tailblend repeats delayblend time(0-2)\n"
-            "         bpm tilt duck control thicken flavour (0/1) *gain out (dB)\n", argv[0], argv[0]);
+            "         bpm tilt duck control thicken flavour (0/1) *gain out (dB)\n"
+            "         deess bleed glue\n", argv[0], argv[0]);
         return 1;
     }
     std::vector<float> buf; int sr = 0;
