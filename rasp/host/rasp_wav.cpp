@@ -75,14 +75,13 @@ static bool setParam(rasp::Params& p, const char* arg) {
     struct F { const char* n; float* f; } fs[] = {
         {"locut", &p.loCut}, {"hicut", &p.hiCut}, {"drive", &p.drive}, {"mix", &p.mix},
         {"chop", &p.chop}, {"release", &p.release}, {"controlgain", &p.controlGainDb},
-        {"fry", &p.fry}, {"rattle", &p.rattleHz}, {"throat", &p.throat}, {"vowel", &p.vowel}, {"air", &p.air},
         {"spread", &p.spread}, {"diffuse", &p.diffuse}, {"darken", &p.darken}, {"width", &p.width},
         {"thickengain", &p.thickenGainDb}, {"tail", &p.tail}, {"tailblend", &p.tailBlend},
         {"repeats", &p.repeats}, {"delayblend", &p.delayBlend}, {"bpm", &p.bpm}, {"tilt", &p.tilt},
         {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb},
     };
     for (auto& e : fs) if (k == e.n) { *e.f = v; return true; }
-    if (k == "type")    { p.driveType = (int)v; return true; }
+    if (k == "bright")  { p.brightness = (int)v; return true; }
     if (k == "time")    { p.delayTime = (int)v; return true; }
     if (k == "solo")    { p.solo = v != 0.f; return true; }
     if (k == "control") { p.controlOn = v != 0.f; return true; }
@@ -95,8 +94,8 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr,
             "usage: %s in.wav out.wav [name=value ...]\n"
-            "  e.g. %s dry.wav out.wav type=1 drive=0.8 fry=0.7 spread=0.6 tailblend=0.3\n"
-            "  names: locut hicut drive type(0-2) mix chop release fry rattle throat vowel air\n"
+            "  e.g. %s scream.wav out.wav drive=0.5 bright=2 chop=0.6 spread=0.6 tailblend=0.3\n"
+            "  names: locut hicut drive bright(0-2) mix chop release\n"
             "         spread diffuse darken width solo tail tailblend repeats delayblend time(0-2)\n"
             "         bpm tilt duck control thicken flavour (0/1) *gain out (dB)\n", argv[0], argv[0]);
         return 1;

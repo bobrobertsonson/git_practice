@@ -1,20 +1,22 @@
 // RASP - extreme vocal processor DSP core.
-// Header-only C++17, no heap, no dependencies: same code on desktop and on a
-// Cortex-M7 (Daisy Seed). Zero lookahead - every block is causal, so the
-// effect adds no buffering latency of its own (the hardware's audio block
-// size and converters are the only latency).
 //
-// Layout mirrors a "screamer" style plugin:
+// A channel strip for a vocal that is ALREADY screamed: it doesn't synthesize
+// a scream, it makes a real one sit like a produced record. The layout follows
+// screamer-style plugins (Ablaze Screamer), as publicly described:
 //
-//   in ─► CONTROL ──────────────► THICKEN ──────────► FLAVOUR ─────────► out (stereo)
-//         lo/hi cut                spread (doubles)    tail + blend (verb)
-//         drive (+ type switch)    diffuse             repeats + blend (delay, 3 times)
-//         mix                      darken, width       tilt
-//         chop (gate) + release    solo                duck
-//         gain                     gain                gain
+//              ┌──────────── dry (control out) ───────────────┐
+//   in ─► CONTROL ─┼─► THICKEN  (parallel: stereo comb + diffusion) ─┼─► sum ─► out L/R
+//              └─► FLAVOUR  (parallel: reverb + delay, ducked) ─┘
 //
-//   "drive" is the scream engine: sub-octave fry + rattle AM, formant throat,
-//   2x oversampled two-stage saturation, breath noise, glue compressor.
+//   CONTROL  lo cut / hi cut, drive (Tube-Screamer-style, 3-way brightness),
+//            mix, chop + release (compressor into a peak limiter), gain
+//   THICKEN  spread (comb tap spacing), diffuse, darken, width, solo, gain
+//   FLAVOUR  tail + blend (reverb), repeats + blend (ping-pong delay, 3 times),
+//            tilt (EQ on the effect), duck (effect dips while you sing), gain
+//
+// Header-only C++17, no heap, no dependencies. No lookahead and no block
+// processing: the only delay is filter phase delay in the drive path
+// (oversampling + tone filters, ~0.15 ms at 3 kHz).
 #pragma once
 #include <cmath>
 #include <cstdint>
@@ -26,58 +28,83 @@ constexpr float kPi = 3.14159265358979f;
 inline float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
 inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 inline float dbToLin(float db) { return std::pow(10.f, db / 20.f); }
+inline float linToDb(float x) { return 20.f * std::log10(x + 1e-9f); }
 inline float expMap(float t, float lo, float hi) { return lo * std::pow(hi / lo, t); }
+inline float coefMs(float ms, float sr) { return std::exp(-1.f / (ms * 0.001f * sr)); }
 
-// Cheap tanh approximation (good for saturation, fast on MCU).
 inline float fastTanh(float x) {
     x = clampf(x, -3.f, 3.f);
     float x2 = x * x;
     return x * (27.f + x2) / (27.f + 9.f * x2);
 }
 
+// Linear up to 0.8, then rounds off to 1.0. Only touches overs.
+inline float safetyClip(float x) {
+    float a = std::fabs(x);
+    if (a <= 0.8f) return x;
+    float y = 0.8f + 0.2f * fastTanh((a - 0.8f) * 5.f);
+    return x < 0.f ? -y : y;
+}
+
 struct OnePole {
     float a = 0.f, z = 0.f;
     void setCutoff(float hz, float sr) { a = std::exp(-2.f * kPi * hz / sr); }
-    float process(float x) { z = x + a * (z - x); return z; }
+    float lp(float x) { z = x + a * (z - x); return z; }
+    float hp(float x) { return x - lp(x); }
 };
 
-// Smooths a control value per sample to avoid zipper noise (~10 ms).
+// Per-sample control smoother (~20 ms). State is double: a float smoother
+// stalls short of large targets (a 24000-sample delay time stopped 3.75
+// samples early). The STM32H7 has a double-precision FPU, so this is cheap.
 struct Smoothed {
-    float a = 0.f, cur = 0.f, target = 0.f;
-    void init(float v, float sr) { a = std::exp(-1.f / (0.01f * sr)); cur = target = v; }
-    float next() { cur = target + a * (cur - target); return cur; }
+    double a = 0.0, cur = 0.0;
+    float target = 0.f;
+    void init(float v, float sr, float ms = 20.f) { a = std::exp(-1.0 / (ms * 0.001 * sr)); cur = target = v; }
+    float next() { cur = target + a * (cur - target); return (float)cur; }
 };
 
 // TPT state-variable filter (Zavalishin) - stable under modulation.
 struct SVF {
-    float g = 0, k = 1, ic1 = 0, ic2 = 0;
-    float lp = 0, bp = 0, hp = 0;
+    float g = 0, k = 1, ic1 = 0, ic2 = 0, lp = 0, bp = 0, hp = 0;
     void set(float hz, float q, float sr) {
-        hz = clampf(hz, 10.f, sr * 0.45f);
-        g = std::tan(kPi * hz / sr);
+        g = std::tan(kPi * clampf(hz, 10.f, sr * 0.45f) / sr);
         k = 1.f / q;
     }
     void process(float x) {
         float v3 = x - ic2;
         float v1 = (g * v3 + ic1) / (1.f + g * (g + k));
         float v2 = ic2 + g * v1;
-        ic1 = 2.f * v1 - ic1;
-        ic2 = 2.f * v2 - ic2;
+        ic1 = 2.f * v1 - ic1; ic2 = 2.f * v2 - ic2;
         lp = v2; bp = v1; hp = x - k * v1 - v2;
     }
 };
 
-struct Envelope {
-    float att = 0, rel = 0, env = 0;
-    void set(float attMs, float relMs, float sr) {
-        att = std::exp(-1.f / (attMs * 0.001f * sr));
-        rel = std::exp(-1.f / (relMs * 0.001f * sr));
-    }
+// Biquad, transposed direct form II. c = {b0, b1, b2, a1, a2}.
+struct Biquad {
+    float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+    void set(const float* c) { b0 = c[0]; b1 = c[1]; b2 = c[2]; a1 = c[3]; a2 = c[4]; }
     float process(float x) {
-        float a = std::fabs(x);
-        env = a + (a > env ? att : rel) * (env - a);
-        return env;
+        float y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
     }
+};
+
+// 10th-order elliptic lowpass for 4x oversampling, designed offline:
+// scipy.signal.ellip(10, 0.1, 90, 0.21, output='sos'). Passband to 0.42*fs
+// (20.2 kHz @ 48k), >= 90 dB down from 0.58*fs. Independent of the base rate.
+constexpr float kOS4[5][5] = {
+    {2.1738402454e-04f, 2.7823415894e-04f, 2.1738402454e-04f, -1.5801157295e+00f, 6.3849354156e-01f},
+    {1.0000000000e+00f, -5.0407447332e-01f, 1.0000000000e+00f, -1.5629856718e+00f, 7.1984100355e-01f},
+    {1.0000000000e+00f, -1.1101093521e+00f, 1.0000000000e+00f, -1.5439919071e+00f, 8.2467542187e-01f},
+    {1.0000000000e+00f, -1.3141678657e+00f, 1.0000000000e+00f, -1.5367789871e+00f, 9.1036321211e-01f},
+    {1.0000000000e+00f, -1.3826713524e+00f, 1.0000000000e+00f, -1.5494885685e+00f, 9.7285772614e-01f},
+};
+struct OSFilter {
+    Biquad s[5];
+    void init() { for (int i = 0; i < 5; i++) s[i].set(kOS4[i]); }
+    float process(float x) { for (auto& b : s) x = b.process(x); return x; }
 };
 
 struct Noise {
@@ -88,23 +115,23 @@ struct Noise {
     }
 };
 
-// Power-of-two circular delay line with fractional (linear) read.
 template <int N>
 struct DelayLine {
     static_assert((N & (N - 1)) == 0, "N must be a power of two");
     float buf[N] = {};
     int w = 0;
     void write(float x) { buf[w] = x; w = (w + 1) & (N - 1); }
-    float read(float d) const {  // d = samples behind the last write (>= 1)
-        float rp = (float)w - d;
-        int i = (int)std::floor(rp);
-        float f = rp - (float)i;
-        float a = buf[i & (N - 1)], b = buf[(i + 1) & (N - 1)];
-        return a + (b - a) * f;
+    float read(float d) const {  // d >= 1 samples behind the last write
+        // Split integer and fraction first: a float position near 2^17 would
+        // only keep ~1/128-sample precision.
+        int di = (int)d;
+        float frac = d - (float)di;
+        float a = buf[(w - di) & (N - 1)], b = buf[(w - di - 1) & (N - 1)];
+        return a + (b - a) * frac;
     }
+    float tap(int d) const { return buf[(w - d) & (N - 1)]; }
 };
 
-// Schroeder allpass with fixed length.
 template <int N>
 struct Allpass {
     float buf[N] = {};
@@ -112,356 +139,356 @@ struct Allpass {
     void setLen(int n) { len = n < 1 ? 1 : (n > N ? N : n); }
     float process(float x, float g) {
         float d = buf[i];
-        float y = d - g * x;
-        buf[i] = x + g * y;
+        float v = x + g * d;
+        buf[i] = v;
         if (++i >= len) i = 0;
-        return y;
-    }
-};
-
-// Lowpass-feedback comb (Freeverb style).
-template <int N>
-struct Comb {
-    float buf[N] = {};
-    int len = N, i = 0;
-    void setLen(int n) { len = n < 1 ? 1 : (n > N ? N : n); }
-    float z = 0;
-    float process(float x, float fb, float damp) {
-        float y = buf[i];
-        z = y + damp * (z - y);
-        buf[i] = x + z * fb;
-        if (++i >= len) i = 0;
-        return y;
+        return d - g * v;
     }
 };
 
 // ---------------------------------------------------------------------------
-// Parameters. Knob values are 0..1 unless noted.
+// Parameters. Knobs are 0..1 unless noted.
 // ---------------------------------------------------------------------------
 struct Params {
     // CONTROL
-    bool  controlOn = true;
-    float loCut     = 0.25f;  // 20..500 Hz
-    float hiCut     = 0.80f;  // 2k..20k Hz
-    float drive     = 0.60f;
-    int   driveType = 0;      // 3-way: 0 Fry, 1 Growl (guttural), 2 Squeal (high)
-    float mix       = 1.00f;  // dry/wet of the drive
-    float chop      = 0.50f;  // gate threshold: 0 = off, 0.5 = -50 dBFS, 1 = -20 dBFS
-    float release   = 0.30f;  // gate release 10..800 ms
+    bool  controlOn  = true;
+    float loCut      = 0.50f;  // 20..600 Hz   (0.5 = 110 Hz)
+    float hiCut      = 0.75f;  // 2k..20k Hz   (0.75 = 11 kHz)
+    float drive      = 0.35f;  // Tube-Screamer-style gain
+    int   brightness = 1;      // 3-way: 0 dark, 1 natural, 2 bright
+    float mix        = 0.60f;  // parallel blend of the drive (level-matched)
+    float chop       = 0.50f;  // compression amount (threshold + ratio together)
+    float release    = 0.40f;  // compressor release 25..600 ms
     float controlGainDb = 0.f;
 
-    // Scream engine detail (on hardware: shift-layer / menu)
-    float fry       = 0.5f;
-    float rattleHz  = 45.f;   // 20..90
-    float throat    = 0.5f;
-    float vowel     = 0.3f;   // dark "oo" .. bright "ee"
-    float air       = 0.25f;
+    // THICKEN (parallel)
+    bool  thickenOn  = true;
+    float spread     = 0.50f;  // comb tap spacing
+    float diffuse    = 0.40f;  // smear the taps into a dense cloud
+    float darken     = 0.30f;  // lowpass on the thicken branch
+    float width      = 0.80f;  // stereo width of the branch
+    bool  solo       = false;  // hear only the thicken branch
+    float thickenGainDb = -6.f;
 
-    // THICKEN
-    bool  thickenOn = true;
-    float spread    = 0.5f;   // doubled-voice level + detune
-    float diffuse   = 0.3f;   // smear the doubles
-    float darken    = 0.3f;   // lowpass on the doubles
-    float width     = 0.7f;   // stereo spread of the doubles
-    bool  solo      = false;  // hear only the doubles
-    float thickenGainDb = 0.f;
+    // FLAVOUR (parallel)
+    bool  flavourOn  = true;
+    float tail       = 0.45f;  // reverb decay, RT60 0.4..6 s
+    float tailBlend  = 0.25f;  // reverb level
+    float repeats    = 0.25f;  // delay feedback
+    float delayBlend = 0.15f;  // delay level
+    int   delayTime  = 0;      // 3-way: 0 = 1/8, 1 = dotted 1/8, 2 = 1/4
+    float bpm        = 120.f;
+    float tilt       = 0.50f;  // EQ on the effect: 0 dark .. 1 bright (+-6 dB)
+    float duck       = 0.60f;  // effect dips while the vocal is present
+    float flavourGainDb = -6.f;
 
-    // FLAVOUR
-    bool  flavourOn = true;
-    float tail      = 0.5f;   // reverb decay
-    float tailBlend = 0.2f;   // reverb level
-    float repeats   = 0.3f;   // delay feedback
-    float delayBlend= 0.15f;  // delay level
-    int   delayTime = 1;      // 3-way: 0 slap (110 ms), 1 eighth, 2 quarter
-    float bpm       = 120.f;  // for delayTime 1/2 (tap tempo on hardware)
-    float tilt      = 0.5f;   // 0 dark .. 0.5 flat .. 1 bright (+-6 dB)
-    float duck      = 0.5f;   // duck verb/delay while singing
-    float flavourGainDb = 0.f;
-
-    float outDb     = 0.f;
+    float outDb      = 0.f;
 };
 
 // ---------------------------------------------------------------------------
-// The scream engine (the "drive" knob's engine).
+// Drive: Tube-Screamer-style overdrive, 4x oversampled, level-matched.
+//
+// The TS808 op-amp stage only amplifies above ~720 Hz (4.7k + 0.047 uF to
+// ground), clips that with a diode pair in the feedback loop, and adds the
+// result back onto the clean input. A 51 pF feedback cap rolls the clipped
+// top off as the drive goes up. That's why a TS tightens the low end and puts
+// grit in the mids instead of fizz - exactly what a scream wants.
 // ---------------------------------------------------------------------------
-class ScreamEngine {
+class Drive {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        inEnv.set(1.f, 120.f, sr);
-        compEnv.set(3.f, 80.f, sr);
-        subLp.set(400.f, 0.707f, sr);
-        noiseBp.set(3500.f, 0.8f, sr);
-        jitter.setCutoff(8.f, sr);
-        upLp.set(sr * 0.45f, 0.707f, sr * 2.f);
-        downLp.set(sr * 0.45f, 0.707f, sr * 2.f);
-        dcBlock.setCutoff(15.f, sr);
+        up.init(); down.init();
+        hp720.setCutoff(720.f, sr * 4.f);
+        rmsIn.setCutoff(3.f, sr); rmsOut.setCutoff(3.f, sr);
+        level.init(1.f, sr, 50.f);
     }
-
-    void set(const Params& np) {
-        p = np;
-        float f1, f2;
-        switch (p.driveType) {
-            case 1:  f1 = lerp(250.f, 450.f, p.vowel);  f2 = lerp(600.f, 1200.f, p.vowel);  break;
-            case 2:  f1 = lerp(900.f, 1600.f, p.vowel); f2 = lerp(2500.f, 4200.f, p.vowel); break;
-            default: f1 = lerp(350.f, 800.f, p.vowel);  f2 = lerp(900.f, 2600.f, p.vowel);  break;
-        }
-        float q = 1.5f + p.throat * 8.f;
-        form1.set(f1, q, sr);
-        form2.set(f2, q * 0.8f, sr);
-        lowMid.set(p.driveType == 1 ? 180.f : 300.f, 0.9f, sr);
+    void set(float drive, int brightness) {
+        float d2 = drive * drive;
+        gain = 1.f + 120.f * d2;                                   // TS: 1 + (51k + 500k*pot)/4.7k
+        float rf = 51e3f + 500e3f * d2;
+        capLp.setCutoff(clampf(1.f / (2.f * kPi * rf * 51e-12f), 1000.f, sr * 1.8f), sr * 4.f);
+        static const float toneHz[3] = {2200.f, 3800.f, 7000.f};
+        tone.set(toneHz[brightness < 0 ? 0 : (brightness > 2 ? 2 : brightness)], 0.6f, sr);
     }
-
     float process(float x) {
-        float env = inEnv.process(x);
-        float push = clampf(env * 4.f, 0.f, 1.f);  // how hard the singer is pushing
-
-        // Fry: octave-down flip-flop (false-chord sub) + jittered rattle AM.
-        if (x > 0.f && lastX <= 0.f) subFlip = -subFlip;
-        lastX = x;
-        subLp.process(x * subFlip);
-        float rate = p.rattleHz * clampf(1.f + 7.f * jitter.process(noise.next()), 0.5f, 1.5f);
-        phase += rate / sr;
-        if (phase >= 1.f) phase -= 1.f;
-        float lfo = 0.5f + 0.5f * std::sin(2.f * kPi * phase);
-        float amDepth = p.fry * (p.driveType == 1 ? 0.9f : 0.6f);
-        float fried = x * (1.f - amDepth * lfo) + subLp.lp * p.fry * (p.driveType == 2 ? 0.3f : 1.2f);
-
-        // Throat: formants + chest weight.
-        form1.process(fried); form2.process(fried); lowMid.process(fried);
-        float throated = fried + p.throat * (2.5f * form1.bp + 1.8f * form2.bp + 0.8f * lowMid.bp);
-
-        // Grit: envelope-driven, 2x oversampled.
-        float pre = 1.f + p.drive * 30.f * (0.6f + 0.4f * push);
-        float g = saturate2x(throated * pre);
-        g -= dcBlock.process(g);
-
-        // Air: breath noise following the voice.
-        noiseBp.process(noise.next());
-        float wet = g * 0.5f + noiseBp.bp * env * p.air * 6.f;
-
-        // Glue compressor (~4:1 above -18 dBFS).
-        float ce = compEnv.process(wet);
-        float gr = ce > 0.125f ? std::pow(0.125f / ce, 0.75f) : 1.f;
-        return wet * gr * 1.6f;
+        // 4x oversampled TS core.
+        float y = 0.f;
+        for (int k = 0; k < 4; k++) {
+            float u = up.process(k == 0 ? x * 4.f : 0.f);
+            float c = capLp.lp(gain * hp720.hp(u)) * (1.f / kClip);
+            float d = kClip * clipADAA(c);                         // diode pair
+            y = down.process(u + d);
+        }
+        tone.process(y);
+        float wet = tone.lp;
+        // Auto level: keep the wet as loud as the dry so drive and mix
+        // change texture, not volume.
+        float ein = rmsIn.lp(x * x), eout = rmsOut.lp(wet * wet);
+        if (ein > 1e-7f) level.target = clampf(std::sqrt(ein / (eout + 1e-12f)), 0.25f, 2.f);
+        return wet * level.next();
     }
-
 private:
-    float stage(float x) {
-        float a = fastTanh(x + 0.25f) - fastTanh(0.25f);            // asymmetric: even harmonics
-        float fold = std::sin(a * (1.f + p.drive * 2.5f) * kPi * 0.5f); // folder: torn, fizzy top
-        return lerp(a, fold, 0.35f + 0.4f * p.drive);
+    // log(cosh(x)), the antiderivative of tanh, without overflow.
+    static float logCosh(float x) {
+        float a = std::fabs(x);
+        if (a > 5.f) return a - 0.69314718f;                       // correction < 5e-5
+        return a + std::log1p(std::exp(-2.f * a)) - 0.69314718f;
     }
-    float saturate2x(float x) {
-        upLp.process(x * 2.f); float a = upLp.lp;
-        upLp.process(0.f);     float b = upLp.lp;
-        downLp.process(stage(a));
-        downLp.process(stage(b));
-        return downLp.lp;
+    // First-order antiderivative anti-aliasing (Parker et al., 2016) of tanh.
+    // At 4x oversampling a hard-driven clipper still aliases (its harmonics
+    // run past 96 kHz); ADAA removes most of that for a 1/8-sample delay.
+    float clipADAA(float c) {
+        float dx = c - prevC, y;
+        if (std::fabs(dx) > 1e-4f) y = (logCosh(c) - logCosh(prevC)) / dx;
+        else y = std::tanh(0.5f * (c + prevC));
+        prevC = c;
+        return y;
     }
-
-    float sr = 48000.f;
-    Params p;
-    SVF subLp, form1, form2, lowMid, noiseBp, upLp, downLp;
-    Envelope inEnv, compEnv;
-    OnePole jitter, dcBlock;
-    Noise noise;
-    float lastX = 0.f, subFlip = 1.f, phase = 0.f;
+    static constexpr float kClip = 0.3f;
+    float prevC = 0.f;
+    float sr = 48000.f, gain = 1.f;
+    OSFilter up, down;
+    OnePole hp720, capLp, rmsIn, rmsOut;
+    SVF tone;
+    Smoothed level;
 };
 
 // ---------------------------------------------------------------------------
-// Chop: noise gate with hysteresis + hold. The main anti-feedback tool live.
+// Chop + release: soft-knee compressor into a zero-lookahead peak limiter.
+// One knob sets threshold and ratio together, so the scream stays even
+// without being flattened.
 // ---------------------------------------------------------------------------
 class Chop {
 public:
-    void init(float sampleRate) { sr = sampleRate; rmsCoef = std::exp(-1.f / (0.005f * sr)); }
+    void init(float sampleRate) { sr = sampleRate; att = coefMs(1.5f, sr); limRel = coefMs(60.f, sr); }
     void set(float chop, float release) {
-        enabled = chop > 0.001f;
-        openThr = dbToLin(lerp(-80.f, -20.f, chop));
-        closeThr = openThr * 0.6f;                         // ~4.4 dB hysteresis
-        attCoef = std::exp(-1.f / (0.001f * sr));          // 1 ms open
-        relCoef = std::exp(-1.f / (expMap(release, 10.f, 800.f) * 0.001f * sr));
-        holdLen = (int)(0.04f * sr);                       // 40 ms hold
+        thr = -6.f - 30.f * chop;                       // dBFS
+        ratio = 1.5f + 6.5f * chop;
+        rel = coefMs(expMap(release, 25.f, 600.f), sr);
+        makeup = dbToLin(-thr * (1.f - 1.f / ratio) * 0.5f);
+        amount = chop;
     }
-    // Detect on `key` (pre-drive), return gain to apply.
-    float process(float key) {
-        if (!enabled) return 1.f;
-        // 5 ms RMS detector: ignores single noise peaks that a peak detector would open on.
-        float k2 = key * key;
-        ms = k2 + rmsCoef * (ms - k2);
-        float e = std::sqrt(ms);
-        if (e > openThr) { open = true; hold = holdLen; }
-        else if (e < closeThr) { if (hold > 0) --hold; else open = false; }
-        float t = open ? 1.f : 0.f;
-        gain = t + (t > gain ? attCoef : relCoef) * (gain - t);
-        return gain;
+    float process(float x) {
+        float out = x;
+        if (amount > 0.001f) {
+            float lvl = linToDb(std::fabs(x));
+            float over = lvl - thr, target = 0.f;
+            const float knee = 8.f;
+            if (over > knee * 0.5f) target = over * (1.f / ratio - 1.f);
+            else if (over > -knee * 0.5f) { float t = over + knee * 0.5f; target = (1.f / ratio - 1.f) * t * t / (2.f * knee); }
+            grDb = target + (target < grDb ? att : rel) * (grDb - target);  // gain reduction is negative
+            out = x * dbToLin(grDb) * makeup;
+        }
+        // Peak limiter at -1 dBFS: instant attack, so the output never passes it.
+        const float ceil = 0.891f;
+        float a = std::fabs(out);
+        limEnv = a > limEnv ? a : limEnv * limRel + a * (1.f - limRel);
+        if (limEnv > ceil) out *= ceil / limEnv;
+        return out;
     }
-    bool isOpen() const { return open; }
+    float gainReductionDb() const { return -grDb + (limEnv > 0.891f ? linToDb(limEnv / 0.891f) : 0.f); }
 private:
-    float sr = 48000.f, openThr = 0, closeThr = 0, attCoef = 0, relCoef = 0, gain = 0;
-    float rmsCoef = 0, ms = 0;
-    int holdLen = 0, hold = 0;
-    bool enabled = true, open = false;
+    float sr = 48000.f, thr = -20.f, ratio = 4.f, att = 0, rel = 0, makeup = 1.f, amount = 0.5f;
+    float grDb = 0.f, limEnv = 0.f, limRel = 0.f;
 };
 
 // ---------------------------------------------------------------------------
-// Thicken: two modulated doubles, diffused, darkened and spread in stereo.
+// Thicken: stereo comb filtering + diffusion (no modulation, so no wobble).
+// Four fixed short taps per side at different spacings; the L/R difference
+// is what makes it wide. Runs on a parallel branch.
 // ---------------------------------------------------------------------------
 class Thicken {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        float s = sr / 48000.f;
-        apA1.setLen((int)(142 * s)); apA2.setLen((int)(379 * s));
-        apB1.setLen((int)(107 * s)); apB2.setLen((int)(277 * s));
+        hpIn.set(180.f, 0.707f, sr);
+        const float apMs[2][3] = {{3.1f, 5.3f, 7.9f}, {2.7f, 4.9f, 8.3f}};
+        for (int c = 0; c < 2; c++) for (int i = 0; i < 3; i++) ap[c][i].setLen((int)(apMs[c][i] * 0.001f * sr));
+        spreadS.init(0.5f, sr, 60.f);
     }
     void set(const Params& p) {
-        spread = p.spread; diffuse = p.diffuse; width = p.width; solo = p.solo;
-        darkA.setCutoff(expMap(1.f - p.darken, 1200.f, 16000.f), sr);
-        darkB.setCutoff(expMap(1.f - p.darken, 1200.f, 16000.f), sr);
+        spreadS.target = p.spread;
+        diffuse = p.diffuse; width = p.width;
+        float hz = expMap(1.f - p.darken, 1500.f, 18000.f);
+        darkL.set(hz, 0.6f, sr); darkR.set(hz, 0.6f, sr);
     }
-    void process(float m, float& L, float& R) {
-        dl.write(m);
-        phA += 0.63f / sr; if (phA >= 1.f) phA -= 1.f;
-        phB += 0.91f / sr; if (phB >= 1.f) phB -= 1.f;
-        float depth = 0.0004f + 0.0016f * spread;              // up to ~2 ms sweep = ~10-15 cents
-        float vA = dl.read(sr * (0.012f + depth * std::sin(2.f * kPi * phA)));
-        float vB = dl.read(sr * (0.019f + depth * std::sin(2.f * kPi * phB)));
-        vA = lerp(vA, apA2.process(apA1.process(vA, 0.6f), 0.6f), diffuse);
-        vB = lerp(vB, apB2.process(apB1.process(vB, 0.6f), 0.6f), diffuse);
-        vA = darkA.process(vA); vB = darkB.process(vB);
-        float lvl = spread * 0.8f;
-        float wA = 0.5f + 0.5f * width, wB = 0.5f - 0.5f * width;
-        float dryLvl = solo ? 0.f : 1.f;
-        L = m * dryLvl + lvl * (vA * wA + vB * wB);
-        R = m * dryLvl + lvl * (vB * wA + vA * wB);
+    void process(float x, float& L, float& R) {
+        hpIn.process(x);
+        dl.write(hpIn.hp);
+        // Tap times (ms) at full spread; spread scales them 0.25x..1x.
+        static const float tL[4] = {4.7f, 11.3f, 17.9f, 26.3f}, tR[4] = {6.1f, 9.7f, 15.1f, 23.9f};
+        static const float g[4] = {0.62f, -0.5f, 0.42f, -0.34f};
+        float s = (0.25f + 0.75f * spreadS.next()) * 0.001f * sr;
+        float l = 0.f, r = 0.f;
+        for (int i = 0; i < 4; i++) { l += g[i] * dl.read(tL[i] * s); r += g[i] * dl.read(tR[i] * s); }
+        float dlr = l, drr = r;
+        for (int i = 0; i < 3; i++) { dlr = ap[0][i].process(dlr, 0.6f); drr = ap[1][i].process(drr, 0.6f); }
+        l = lerp(l, dlr, diffuse); r = lerp(r, drr, diffuse);
+        darkL.process(l); darkR.process(r);
+        float m = 0.5f * (darkL.lp + darkR.lp), sd = 0.5f * (darkL.lp - darkR.lp) * width * 1.4f;
+        L = m + sd; R = m - sd;
     }
 private:
-    float sr = 48000.f, spread = 0, diffuse = 0, width = 0, phA = 0, phB = 0.37f;
-    bool solo = false;
-    DelayLine<4096> dl;                                        // 85 ms @ 48k, 42 ms @ 96k
-    Allpass<512> apA1, apA2, apB1, apB2;
-    OnePole darkA, darkB;
+    float sr = 48000.f, diffuse = 0.f, width = 0.f;
+    SVF hpIn, darkL, darkR;
+    DelayLine<4096> dl;                // 85 ms @ 48k
+    Allpass<1024> ap[2][3];
+    Smoothed spreadS;
 };
 
 // ---------------------------------------------------------------------------
-// Flavour: stereo delay + reverb, ducked by the voice, then tilt EQ.
+// Reverb: 4-line feedback delay network, Hadamard mix, damped, with input
+// diffusion and pre-delay. Decay is set as an RT60.
+// ---------------------------------------------------------------------------
+class Reverb {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        const float ms[4] = {29.7f, 37.1f, 41.1f, 43.7f};
+        for (int i = 0; i < 4; i++) { len[i] = (int)(ms[i] * 0.001f * sr); damp[i].setCutoff(6500.f, sr); }
+        inAp[0].setLen((int)(0.0048f * sr)); inAp[1].setLen((int)(0.0036f * sr));
+        inAp[2].setLen((int)(0.0127f * sr)); inAp[3].setLen((int)(0.0093f * sr));
+        inHp.set(250.f, 0.707f, sr);
+    }
+    void setDecay(float rt60) {
+        for (int i = 0; i < 4; i++) fb[i] = std::pow(10.f, -3.f * (float)len[i] / (rt60 * sr));
+    }
+    void process(float x, float& L, float& R) {
+        inHp.process(x);
+        pre.write(inHp.hp);
+        float d = pre.tap((int)(0.015f * sr));                    // 15 ms pre-delay
+        for (int i = 0; i < 4; i++) d = inAp[i].process(d, 0.65f);
+        float o[4];
+        for (int i = 0; i < 4; i++) o[i] = damp[i].lp(lines[i].tap(len[i])) * fb[i];
+        // 4x4 Hadamard / 2: energy-preserving mix.
+        float h0 = 0.5f * (o[0] + o[1] + o[2] + o[3]), h1 = 0.5f * (o[0] - o[1] + o[2] - o[3]);
+        float h2 = 0.5f * (o[0] + o[1] - o[2] - o[3]), h3 = 0.5f * (o[0] - o[1] - o[2] + o[3]);
+        lines[0].write(h0 + d); lines[1].write(h1 + d); lines[2].write(h2 - d); lines[3].write(h3 - d);
+        L = o[0] - o[2]; R = o[1] - o[3];
+    }
+private:
+    float sr = 48000.f, fb[4] = {};
+    int len[4] = {};
+    DelayLine<8192> lines[4];          // up to 85 ms @ 96k
+    DelayLine<4096> pre;
+    Allpass<1024> inAp[4];
+    OnePole damp[4];
+    SVF inHp;
+};
+
+// ---------------------------------------------------------------------------
+// Flavour: reverb + ping-pong delay on a parallel branch, ducked by the
+// vocal, then tilt EQ on the effect only.
 // ---------------------------------------------------------------------------
 class Flavour {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        float s = sr / 44100.f;
-        const int cl[4] = {1116, 1188, 1277, 1356};
-        for (int i = 0; i < 4; i++) { cL[i].setLen((int)(cl[i] * s)); cR[i].setLen((int)((cl[i] + 23) * s)); }
-        aL[0].setLen((int)(556 * s)); aL[1].setLen((int)(441 * s));
-        aR[0].setLen((int)(579 * s)); aR[1].setLen((int)(464 * s));
-        fbHpL.setCutoff(200.f, sr); fbHpR.setCutoff(200.f, sr);
-        fbLpL.setCutoff(4500.f, sr); fbLpR.setCutoff(4500.f, sr);
-        duckEnv.set(5.f, 250.f, sr);
-        tiltL.setCutoff(900.f, sr); tiltR.setCutoff(900.f, sr);
-        verbPre.set(300.f, 0.707f, sr);
+        verb.init(sr);
+        fbHp.setCutoff(250.f, sr); fbLp.setCutoff(5000.f, sr);
+        tiltL.setCutoff(1000.f, sr); tiltR.setCutoff(1000.f, sr);
+        duckAtt = coefMs(8.f, sr); duckRel = coefMs(250.f, sr);
+        delayS.init(sr * 0.25f, sr, 80.f);
     }
     void set(const Params& p) {
-        fbVerb = 0.70f + 0.28f * p.tail;
-        repeats = p.repeats * 0.9f;
+        verb.setDecay(expMap(p.tail, 0.4f, 6.f));
         tailBlend = p.tailBlend; delayBlend = p.delayBlend; duck = p.duck;
+        repeats = p.repeats * 0.85f;
         float beat = 60.f / clampf(p.bpm, 40.f, 240.f);
-        float t = p.delayTime == 0 ? 0.11f : (p.delayTime == 1 ? beat * 0.5f : beat);
-        delaySamples = clampf(t * sr, 1.f, (float)(kDelayMax - 2));
+        float t = p.delayTime == 0 ? beat * 0.5f : (p.delayTime == 1 ? beat * 0.75f : beat);
+        delayS.target = clampf(t * sr, 1.f, (float)(kDelayMax - 4));
         float db = (p.tilt - 0.5f) * 12.f;
         tiltLo = dbToLin(-db * 0.5f); tiltHi = dbToLin(db * 0.5f);
     }
-    void process(float& L, float& R) {
-        float d = duckEnv.process(0.5f * (L + R));
-        float dg = 1.f - duck * clampf(d * 8.f, 0.f, 1.f);
+    // key = the dry vocal (drives the ducking).
+    void process(float x, float key, float& L, float& R) {
+        float a = std::fabs(key);
+        env = a + (a > env ? duckAtt : duckRel) * (env - a);
+        float dg = 1.f - duck * 0.9f * clampf(env * 6.f, 0.f, 1.f);
 
-        // Ping-pong delay with darkening repeats.
-        float dL = dlL.read(delaySamples), dR = dlR.read(delaySamples);
-        float fL = fbLpL.process(dR - fbHpL.process(dR));      // cross-feed = ping-pong
-        float fR = fbLpR.process(dL - fbHpR.process(dL));
-        dlL.write(L + fL * repeats);
-        dlR.write(fR * repeats);
+        float rL, rR;
+        verb.process(x, rL, rR);
 
-        // Reverb (Freeverb-lite), high-passed input so the low end stays clean.
-        verbPre.process(0.5f * (L + R));
-        float in = verbPre.hp * 0.03f;
-        float rL = 0, rR = 0;
-        for (int i = 0; i < 4; i++) { rL += cL[i].process(in, fbVerb, 0.35f); rR += cR[i].process(in, fbVerb, 0.35f); }
-        for (int i = 0; i < 2; i++) { rL = aL[i].process(rL, 0.5f); rR = aR[i].process(rR, 0.5f); }
+        // Ping-pong: input goes left, repeats bounce L -> R -> L, each one darker.
+        float ds = delayS.next();
+        float dL = dlL.read(ds), dR = dlR.read(ds);
+        float fbR = fbLp.lp(fbHp.hp(dR));
+        dlL.write(x + fbR * repeats);
+        dlR.write(dL * repeats);
 
-        L += dg * (delayBlend * dL + tailBlend * rL * 3.f);
-        R += dg * (delayBlend * dR + tailBlend * rR * 3.f);
-
-        float lo = tiltL.process(L); L = lo * tiltLo + (L - lo) * tiltHi;
-        lo = tiltR.process(R);       R = lo * tiltLo + (R - lo) * tiltHi;
+        L = dg * (tailBlend * rL + delayBlend * dL);
+        R = dg * (tailBlend * rR + delayBlend * dR);
+        float lo = tiltL.lp(L); L = lo * tiltLo + (L - lo) * tiltHi;
+        lo = tiltR.lp(R);       R = lo * tiltLo + (R - lo) * tiltHi;
     }
 private:
-    static constexpr int kDelayMax = 1 << 17;                 // 2.7 s @ 48k
-    float sr = 48000.f, fbVerb = 0.8f, repeats = 0, tailBlend = 0, delayBlend = 0, duck = 0;
-    float delaySamples = 1000.f, tiltLo = 1.f, tiltHi = 1.f;
+    static constexpr int kDelayMax = 1 << 17;   // 2.7 s @ 48k
+    float sr = 48000.f, tailBlend = 0, delayBlend = 0, duck = 0, repeats = 0;
+    float env = 0, duckAtt = 0, duckRel = 0, tiltLo = 1, tiltHi = 1;
+    Reverb verb;
     DelayLine<kDelayMax> dlL, dlR;
-    OnePole fbHpL, fbHpR, fbLpL, fbLpR, tiltL, tiltR;
-    Comb<2048> cL[4], cR[4];
-    Allpass<1024> aL[2], aR[2];
-    Envelope duckEnv;
-    SVF verbPre;
+    OnePole fbHp, fbLp, tiltL, tiltR;
+    Smoothed delayS;
 };
 
 // ---------------------------------------------------------------------------
-// The whole box. ~1.6 MB of state (delay lines): on Daisy, place it in SDRAM.
+// The whole box. ~1.8 MB of state (delay lines): on Daisy, place it in SDRAM.
 // ---------------------------------------------------------------------------
 class Processor {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        scream.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr);
-        gCtl.init(1.f, sr); gThk.init(1.f, sr); gFlv.init(1.f, sr); gOut.init(1.f, sr); gMix.init(1.f, sr);
+        drive.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr);
+        gCtl.init(1.f, sr); gThk.init(0.5f, sr); gFlv.init(0.5f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
     }
 
     void setParams(const Params& np) {
         p = np;
-        loCut.set(expMap(p.loCut, 20.f, 500.f), 0.707f, sr);
-        hiCut.set(expMap(p.hiCut, 2000.f, 20000.f), 0.707f, sr);
-        scream.set(p); chop.set(p.chop, p.release); thicken.set(p); flavour.set(p);
+        loCut1.set(expMap(p.loCut, 20.f, 600.f), 0.54f, sr);   // 4th-order Butterworth pair
+        loCut2.set(expMap(p.loCut, 20.f, 600.f), 1.31f, sr);
+        hiCut1.set(expMap(p.hiCut, 2000.f, 20000.f), 0.54f, sr);
+        hiCut2.set(expMap(p.hiCut, 2000.f, 20000.f), 1.31f, sr);
+        drive.set(p.drive, p.brightness);
+        chop.set(p.chop, p.release);
+        thicken.set(p); flavour.set(p);
         gCtl.target = dbToLin(p.controlGainDb);
-        gThk.target = dbToLin(p.thickenGainDb);
-        gFlv.target = dbToLin(p.flavourGainDb);
+        gThk.target = p.thickenOn ? dbToLin(p.thickenGainDb) : 0.f;
+        gFlv.target = p.flavourOn ? dbToLin(p.flavourGainDb) : 0.f;
         gOut.target = dbToLin(p.outDb);
         gMix.target = p.mix;
     }
 
     void process(float in, float& outL, float& outR) {
-        // CONTROL
+        // CONTROL (series)
         float x = in;
-        float gc = gCtl.next(), gm = gMix.next();
+        float gm = gMix.next(), gc = gCtl.next();
         if (p.controlOn) {
-            loCut.process(x); hiCut.process(loCut.hp); x = hiCut.lp;
-            float gate = chop.process(x);                       // key on the clean signal
-            float wet = scream.process(x);
-            x = lerp(x, wet, gm) * gate * gc;
+            loCut1.process(x); loCut2.process(loCut1.hp);
+            hiCut1.process(loCut2.hp); hiCut2.process(hiCut1.lp);
+            x = hiCut2.lp;
+            x = lerp(x, drive.process(x), gm);
+            x = chop.process(x) * gc;
         }
-        // THICKEN
-        float L = x, R = x;
-        float gt = gThk.next();
-        if (p.thickenOn) { thicken.process(x, L, R); L *= gt; R *= gt; }
-        // FLAVOUR
-        float gf = gFlv.next();
-        if (p.flavourOn) { flavour.process(L, R); L *= gf; R *= gf; }
-        // OUT (soft safety clip)
+        // THICKEN + FLAVOUR (parallel, fed by the control output)
+        float tL = 0, tR = 0, fL = 0, fR = 0;
+        float gt = gThk.next(), gf = gFlv.next();
+        if (gt > 1e-4f) thicken.process(x, tL, tR);
+        if (gf > 1e-4f) flavour.process(x, x, fL, fR);
+        float dry = p.solo ? 0.f : x;
         float go = gOut.next();
-        outL = fastTanh(L * go);
-        outR = fastTanh(R * go);
+        outL = safetyClip((dry + gt * tL + gf * fL) * go);
+        outR = safetyClip((dry + gt * tR + gf * fR) * go);
     }
 
-    bool gateOpen() const { return chop.isOpen(); }
+    float gainReductionDb() const { return chop.gainReductionDb(); }
 
 private:
     float sr = 48000.f;
     Params p;
-    SVF loCut, hiCut;
-    ScreamEngine scream;
+    SVF loCut1, loCut2, hiCut1, hiCut2;
+    Drive drive;
     Chop chop;
     Thicken thicken;
     Flavour flavour;

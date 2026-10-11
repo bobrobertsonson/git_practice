@@ -131,23 +131,23 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
   <header>
     <span class="eyebrow">Hardware vocal processor · browser preview of the DSP</span>
     <h1>RASP Scream Box</h1>
-    <p>Load a dry vocal (or use the built-in demo), press play, and turn the knobs. Use <b>A/B</b> to compare with the dry vocal. This runs the same signal chain as the firmware: control → thicken → flavour.</p>
+    <p>Load a dry recording of your scream, press play, and turn the knobs. The built-in demo is a rough synthetic stand-in. Use <b>A/B</b> to compare with the dry vocal. This runs the same signal chain as the firmware: control → thicken → flavour.</p>
   </header>
 
   <div class="strip" role="group" aria-label="Source and transport">
     <button class="primary" id="play" aria-pressed="false">Play</button>
     <button id="ab" aria-pressed="false" title="Hear the dry input">A/B dry</button>
     <label class="filebtn" for="file">Load vocal…<input type="file" id="file" accept="audio/*"></label>
-    <button id="demo">Demo vowel</button>
+    <button id="demo">Demo scream</button>
     <button id="mic" aria-pressed="false">Live mic</button>
     <select id="preset" aria-label="Preset">
-      <option value="fry">Preset: Fry scream</option>
-      <option value="growl">Preset: Low guttural</option>
-      <option value="squeal">Preset: High squeal</option>
-      <option value="gang">Preset: Gang shout</option>
-      <option value="assist">Preset: Scream assist (blend)</option>
+      <option value="natural">Preset: Scream natural</option>
+      <option value="dark">Preset: Scream dark</option>
+      <option value="bright">Preset: Scream bright</option>
+      <option value="shout">Preset: Shout, thick</option>
+      <option value="raw">Preset: Raw, control only</option>
     </select>
-    <div class="grow" id="src">Source: <b>demo vowel (synthetic)</b></div>
+    <div class="grow" id="src">Source: <b>synthetic test scream</b> · load your own take</div>
     <div class="meters" aria-hidden="true">IN <span class="meter"><i id="mIn"></i></span> OUT <span class="meter"><i id="mOut"></i></span></div>
   </div>
   <div class="msg" id="msg" role="status"></div>
@@ -157,7 +157,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
     <div class="brand"><span class="name">RASP</span><span class="model">extreme vocal processor · mic in / stereo out</span></div>
     <div class="sections">
       <div class="section" data-sec="control">
-        <div class="sec-head"><span class="sec-title">Control</span><span class="ledrow"><span class="led" id="gateLed"></span>gate</span></div>
+        <div class="sec-head"><span class="sec-title">Control</span><span class="ledrow" title="Lights when chop is compressing more than 3 dB"><span class="led" id="grLed"></span><span id="grVal">0 dB</span></span></div>
         <div class="knobs" id="k-control"></div>
         <div class="toggles" id="t-control"></div>
       </div>
@@ -181,19 +181,19 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 
   <div class="menu">
     <h2>Menu</h2>
-    <p>On the hardware these sit behind the encoder and OLED screen. They shape the scream engine itself and the section levels.</p>
+    <p>On the hardware these are the section level faders and tap tempo.</p>
     <div class="sliders" id="menu"></div>
   </div>
 
   <div class="notes">
     <section>
       <h2>Latency</h2>
-      <p>The DSP adds <strong>no buffering of its own</strong>. Every stage is causal, and an impulse comes out on the same sample it went in. On a Daisy Seed with 4-sample blocks, the only delay is the converters plus about 0.2 ms of buffering. The browser adds 10–40 ms, so the live mic here is for auditioning the sound, not for judging feel.</p>
+      <p>The DSP adds <strong>no buffering of its own</strong>. Nothing looks ahead. The only delay is about 0.15 ms of filter phase delay in the drive path, the same kind an analog tone control has. On a Daisy Seed with 4-sample blocks, the only delay is the converters plus about 0.2 ms of buffering. The browser adds 10–40 ms, so the live mic here is for auditioning the sound, not for judging feel.</p>
       <p id="latency">Browser audio latency: not started.</p>
     </section>
     <section>
       <h2>Feedback</h2>
-      <p>The drive adds up to 30 dB of gain, so <strong>room noise and wedge spill get louder too</strong>. That loop is what makes feedback. Set <strong>Chop</strong> so the gate LED lights only while you sing. Keep Lo cut up, use a dynamic cardioid mic, and use in-ears instead of a wedge where you can.</p>
+      <p>Chop is a compressor, so it raises quiet sounds, including room noise and wedge spill. That pushes the mic closer to feedback. Keep <strong>Lo cut</strong> up, use a dynamic cardioid mic, and use in-ears rather than a wedge where you can. Duck keeps the reverb and delay out from under your voice.</p>
     </section>
   </div>
 </div>
@@ -209,166 +209,177 @@ class RaspEngine {
     const clamp = (x, lo, hi) => x < lo ? lo : (x > hi ? hi : x);
     const lerp = (a, b, t) => a + (b - a) * t;
     const db = d => Math.pow(10, d / 20);
+    const toDb = x => 20 * Math.log10(x + 1e-9);
     const expMap = (t, lo, hi) => lo * Math.pow(hi / lo, t);
-    const tanh = x => { x = clamp(x, -3, 3); const x2 = x * x; return x * (27 + x2) / (27 + 9 * x2); };
-    const onePole = () => ({ a: 0, z: 0 });
-    const opSet = (f, hz) => { f.a = Math.exp(-2 * PI * hz / sr); };
-    const op = (f, x) => (f.z = x + f.a * (f.z - x));
+    const coefMs = (ms, rate = sr) => Math.exp(-1 / (ms * 0.001 * rate));
+    const fastTanh = x => { x = clamp(x, -3, 3); const x2 = x * x; return x * (27 + x2) / (27 + 9 * x2); };
+    const safetyClip = x => { const a = Math.abs(x); if (a <= 0.8) return x; const y = 0.8 + 0.2 * fastTanh((a - 0.8) * 5); return x < 0 ? -y : y; };
+    // one-pole
+    const op = () => ({ a: 0, z: 0 });
+    const opSet = (f, hz, rate = sr) => { f.a = Math.exp(-2 * PI * hz / rate); };
+    const opLp = (f, x) => (f.z = x + f.a * (f.z - x));
+    const opHp = (f, x) => x - opLp(f, x);
+    const sm = (v, ms = 20) => ({ a: coefMs(ms), cur: v, target: v });
+    const smNext = s => (s.cur = s.target + s.a * (s.cur - s.target));
+    // SVF
     const svf = () => ({ g: 0, k: 1, ic1: 0, ic2: 0, lp: 0, bp: 0, hp: 0 });
-    const svfSet = (f, hz, q, rate = sr) => { hz = clamp(hz, 10, rate * 0.45); f.g = Math.tan(PI * hz / rate); f.k = 1 / q; };
+    const svfSet = (f, hz, q, rate = sr) => { f.g = Math.tan(PI * clamp(hz, 10, rate * 0.45) / rate); f.k = 1 / q; };
     const svfRun = (f, x) => {
       const v3 = x - f.ic2, v1 = (f.g * v3 + f.ic1) / (1 + f.g * (f.g + f.k)), v2 = f.ic2 + f.g * v1;
       f.ic1 = 2 * v1 - f.ic1; f.ic2 = 2 * v2 - f.ic2; f.lp = v2; f.bp = v1; f.hp = x - f.k * v1 - v2;
     };
-    const envF = (attMs, relMs) => ({ att: Math.exp(-1 / (attMs * 0.001 * sr)), rel: Math.exp(-1 / (relMs * 0.001 * sr)), env: 0 });
-    const envRun = (e, x) => { const a = Math.abs(x); e.env = a + (a > e.env ? e.att : e.rel) * (e.env - a); return e.env; };
-    let seed = 0x9E3779B9 | 0;
-    const noise = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed | 0) / 2147483648; };
+    // 4x oversampling filter (see rasp.h for the design)
+    const OS = [
+      [2.1738402454e-04, 2.7823415894e-04, 2.1738402454e-04, -1.5801157295e+00, 6.3849354156e-01],
+      [1.0, -5.0407447332e-01, 1.0, -1.5629856718e+00, 7.1984100355e-01],
+      [1.0, -1.1101093521e+00, 1.0, -1.5439919071e+00, 8.2467542187e-01],
+      [1.0, -1.3141678657e+00, 1.0, -1.5367789871e+00, 9.1036321211e-01],
+      [1.0, -1.3826713524e+00, 1.0, -1.5494885685e+00, 9.7285772614e-01]];
+    const osF = () => { const z = new Float64Array(10); return x => {
+      for (let i = 0; i < 5; i++) { const c = OS[i], y = c[0] * x + z[2 * i]; z[2 * i] = c[1] * x - c[3] * y + z[2 * i + 1]; z[2 * i + 1] = c[2] * x - c[4] * y; x = y; }
+      return x; }; };
     const delay = n => ({ buf: new Float32Array(n), m: n - 1, w: 0 });
     const dWrite = (d, x) => { d.buf[d.w] = x; d.w = (d.w + 1) & d.m; };
     const dRead = (d, s) => { const rp = d.w - s, i = Math.floor(rp), f = rp - i; const a = d.buf[i & d.m], b = d.buf[(i + 1) & d.m]; return a + (b - a) * f; };
-    const ring = (n, len) => ({ buf: new Float32Array(n), len: clamp(len | 0, 1, n), i: 0, z: 0 });
-    const apRun = (r, x, g) => { const d = r.buf[r.i], y = d - g * x; r.buf[r.i] = x + g * y; if (++r.i >= r.len) r.i = 0; return y; };
-    const combRun = (r, x, fb, damp) => { const y = r.buf[r.i]; r.z = y + damp * (r.z - y); r.buf[r.i] = x + r.z * fb; if (++r.i >= r.len) r.i = 0; return y; };
-    const smooth = v => ({ a: Math.exp(-1 / (0.01 * sr)), cur: v, target: v });
-    const sNext = s => (s.cur = s.target + s.a * (s.cur - s.target));
-
-    // --- state ---
-    const S = {
-      loCut: svf(), hiCut: svf(),
-      // scream
-      inEnv: envF(1, 120), compEnv: envF(3, 80), subLp: svf(), noiseBp: svf(), jitter: onePole(), upLp: svf(), downLp: svf(), dc: onePole(),
-      f1: svf(), f2: svf(), lowMid: svf(), lastX: 0, subFlip: 1, phase: 0,
-      // chop
-      gMs: 0, gRms: Math.exp(-1 / (0.005 * sr)), gOpen: false, gHold: 0, gGain: 0, gOn: true, gOpenThr: 0, gCloseThr: 0, gAtt: 0, gRel: 0, gHoldLen: 0,
-      // thicken
-      tdl: delay(4096), apA1: ring(1024, 142 * sr / 48000), apA2: ring(1024, 379 * sr / 48000), apB1: ring(1024, 107 * sr / 48000), apB2: ring(1024, 277 * sr / 48000),
-      darkA: onePole(), darkB: onePole(), phA: 0, phB: 0.37,
-      // flavour
-      dlL: delay(1 << 17), dlR: delay(1 << 17), fbHpL: onePole(), fbHpR: onePole(), fbLpL: onePole(), fbLpR: onePole(),
-      cL: [], cR: [], aL: [], aR: [], duckEnv: envF(5, 250), tiltL: onePole(), tiltR: onePole(), verbPre: svf(),
-      fbVerb: 0.8, delaySamples: 1000, tiltLo: 1, tiltHi: 1,
-      gCtl: smooth(1), gThk: smooth(1), gFlv: smooth(1), gOut: smooth(1), gMix: smooth(1),
-    };
-    const s44 = sr / 44100;
-    [1116, 1188, 1277, 1356].forEach(l => { S.cL.push(ring(4096, l * s44)); S.cR.push(ring(4096, (l + 23) * s44)); });
-    S.aL = [ring(2048, 556 * s44), ring(2048, 441 * s44)]; S.aR = [ring(2048, 579 * s44), ring(2048, 464 * s44)];
-    svfSet(S.subLp, 400, 0.707); svfSet(S.noiseBp, 3500, 0.8); opSet(S.jitter, 8);
-    svfSet(S.upLp, sr * 0.45, 0.707, sr * 2); svfSet(S.downLp, sr * 0.45, 0.707, sr * 2); opSet(S.dc, 15);
-    opSet(S.fbHpL, 200); opSet(S.fbHpR, 200); opSet(S.fbLpL, 4500); opSet(S.fbLpR, 4500);
-    opSet(S.tiltL, 900); opSet(S.tiltR, 900); svfSet(S.verbPre, 300, 0.707);
-    S.gHoldLen = (0.04 * sr) | 0; S.gAtt = Math.exp(-1 / (0.001 * sr));
+    const dTap = (d, n) => d.buf[(d.w - n) & d.m];
+    const ap = (n, len) => ({ buf: new Float32Array(n), len: clamp(len | 0, 1, n), i: 0 });
+    const apRun = (r, x, g) => { const d = r.buf[r.i], v = x + g * d; r.buf[r.i] = v; if (++r.i >= r.len) r.i = 0; return d - g * v; };
+    const logCosh = x => { const a = Math.abs(x); return a > 5 ? a - 0.69314718 : a + Math.log1p(Math.exp(-2 * a)) - 0.69314718; };
 
     let p = null;
-    this.gateOpen = () => S.gOpen;
+    // CONTROL
+    const lc1 = svf(), lc2 = svf(), hc1 = svf(), hc2 = svf();
+    const up = osF(), down = osF(), hp720 = op(), capLp = op(), rmsIn = op(), rmsOut = op(), tone = svf(), level = sm(1, 50);
+    opSet(hp720, 720, sr * 4); opSet(rmsIn, 3); opSet(rmsOut, 3);
+    let gain = 1, prevC = 0;
+    const KCLIP = 0.3;
+    const C = { thr: -20, ratio: 4, att: coefMs(1.5), rel: 0, makeup: 1, amount: 0.5, gr: 0, lim: 0, limRel: coefMs(60) };
+    // THICKEN
+    const tHp = svf(), tdl = delay(4096), darkL = svf(), darkR = svf(), spreadS = sm(0.5, 60);
+    svfSet(tHp, 180, 0.707);
+    const tAp = [[3.1, 5.3, 7.9], [2.7, 4.9, 8.3]].map(row => row.map(ms => ap(1024, ms * 0.001 * sr)));
+    const TL = [4.7, 11.3, 17.9, 26.3], TR = [6.1, 9.7, 15.1, 23.9], TG = [0.62, -0.5, 0.42, -0.34];
+    // FLAVOUR: reverb
+    const vLen = [29.7, 37.1, 41.1, 43.7].map(ms => (ms * 0.001 * sr) | 0);
+    const vLines = vLen.map(() => delay(8192)), vDamp = vLen.map(() => { const f = op(); opSet(f, 6500); return f; });
+    const vFb = [0, 0, 0, 0], vPre = delay(4096), vHp = svf();
+    svfSet(vHp, 250, 0.707);
+    const vAp = [0.0048, 0.0036, 0.0127, 0.0093].map(s => ap(1024, s * sr));
+    // FLAVOUR: delay, duck, tilt
+    const DMAX = 1 << 17, dlL = delay(DMAX), dlR = delay(DMAX), fbHp = op(), fbLp = op(), tiltL = op(), tiltR = op(), delayS = sm(sr * 0.25, 80);
+    opSet(fbHp, 250); opSet(fbLp, 5000); opSet(tiltL, 1000); opSet(tiltR, 1000);
+    const duckAtt = coefMs(8), duckRel = coefMs(250);
+    let duckEnv = 0, tiltLo = 1, tiltHi = 1;
+    // section gains
+    const gCtl = sm(1), gThk = sm(0.5), gFlv = sm(0.5), gOut = sm(1), gMix = sm(0.6);
+
+    this.gainReductionDb = () => -C.gr + (C.lim > 0.891 ? toDb(C.lim / 0.891) : 0);
 
     this.setParams = np => {
       p = Object.assign({}, np);
-      svfSet(S.loCut, expMap(p.loCut, 20, 500), 0.707);
-      svfSet(S.hiCut, expMap(p.hiCut, 2000, 20000), 0.707);
-      let f1, f2;
-      if (p.driveType === 1) { f1 = lerp(250, 450, p.vowel); f2 = lerp(600, 1200, p.vowel); }
-      else if (p.driveType === 2) { f1 = lerp(900, 1600, p.vowel); f2 = lerp(2500, 4200, p.vowel); }
-      else { f1 = lerp(350, 800, p.vowel); f2 = lerp(900, 2600, p.vowel); }
-      const q = 1.5 + p.throat * 8;
-      svfSet(S.f1, f1, q); svfSet(S.f2, f2, q * 0.8); svfSet(S.lowMid, p.driveType === 1 ? 180 : 300, 0.9);
-      S.gOn = p.chop > 0.001; S.gOpenThr = db(lerp(-80, -20, p.chop)); S.gCloseThr = S.gOpenThr * 0.6;
-      S.gRel = Math.exp(-1 / (expMap(p.release, 10, 800) * 0.001 * sr));
-      const dk = expMap(1 - p.darken, 1200, 16000); opSet(S.darkA, dk); opSet(S.darkB, dk);
-      S.fbVerb = 0.70 + 0.28 * p.tail;
+      const lo = expMap(p.loCut, 20, 600), hi = expMap(p.hiCut, 2000, 20000);
+      svfSet(lc1, lo, 0.54); svfSet(lc2, lo, 1.31); svfSet(hc1, hi, 0.54); svfSet(hc2, hi, 1.31);
+      const d2 = p.drive * p.drive; gain = 1 + 120 * d2;
+      const rf = 51e3 + 500e3 * d2;
+      opSet(capLp, clamp(1 / (2 * PI * rf * 51e-12), 1000, sr * 1.8), sr * 4);
+      svfSet(tone, [2200, 3800, 7000][clamp(p.brightness | 0, 0, 2)], 0.6);
+      C.thr = -6 - 30 * p.chop; C.ratio = 1.5 + 6.5 * p.chop; C.rel = coefMs(expMap(p.release, 25, 600));
+      C.makeup = db(-C.thr * (1 - 1 / C.ratio) * 0.5); C.amount = p.chop;
+      spreadS.target = p.spread;
+      const dk = expMap(1 - p.darken, 1500, 18000); svfSet(darkL, dk, 0.6); svfSet(darkR, dk, 0.6);
+      const rt = expMap(p.tail, 0.4, 6); for (let i = 0; i < 4; i++) vFb[i] = Math.pow(10, -3 * vLen[i] / (rt * sr));
       const beat = 60 / clamp(p.bpm, 40, 240);
-      const t = p.delayTime === 0 ? 0.11 : (p.delayTime === 1 ? beat * 0.5 : beat);
-      S.delaySamples = clamp(t * sr, 1, (1 << 17) - 2);
-      const td = (p.tilt - 0.5) * 12; S.tiltLo = db(-td * 0.5); S.tiltHi = db(td * 0.5);
-      S.gCtl.target = db(p.controlGainDb); S.gThk.target = db(p.thickenGainDb);
-      S.gFlv.target = db(p.flavourGainDb); S.gOut.target = db(p.outDb); S.gMix.target = p.mix;
+      delayS.target = clamp((p.delayTime === 0 ? beat * 0.5 : p.delayTime === 1 ? beat * 0.75 : beat) * sr, 1, DMAX - 4);
+      const td = (p.tilt - 0.5) * 12; tiltLo = db(-td * 0.5); tiltHi = db(td * 0.5);
+      gCtl.target = db(p.controlGainDb);
+      gThk.target = p.thickenOn ? db(p.thickenGainDb) : 0;
+      gFlv.target = p.flavourOn ? db(p.flavourGainDb) : 0;
+      gOut.target = db(p.outDb); gMix.target = p.mix;
     };
 
-    const stage = x => {
-      const a = tanh(x + 0.25) - tanh(0.25);
-      const fold = Math.sin(a * (1 + p.drive * 2.5) * PI * 0.5);
-      return lerp(a, fold, 0.35 + 0.4 * p.drive);
+    const drive = x => {
+      let y = 0;
+      for (let k = 0; k < 4; k++) {
+        const u = up(k === 0 ? x * 4 : 0);
+        const c = opLp(capLp, gain * opHp(hp720, u)) / KCLIP;
+        const dx = c - prevC;
+        const d = Math.abs(dx) > 1e-4 ? (logCosh(c) - logCosh(prevC)) / dx : Math.tanh(0.5 * (c + prevC));
+        prevC = c;
+        y = down(u + KCLIP * d);
+      }
+      svfRun(tone, y);
+      const wet = tone.lp;
+      const ein = opLp(rmsIn, x * x), eout = opLp(rmsOut, wet * wet);
+      if (ein > 1e-7) level.target = clamp(Math.sqrt(ein / (eout + 1e-12)), 0.25, 2);
+      return wet * smNext(level);
     };
-    const scream = x => {
-      const env = envRun(S.inEnv, x), push = clamp(env * 4, 0, 1);
-      if (x > 0 && S.lastX <= 0) S.subFlip = -S.subFlip;
-      S.lastX = x;
-      svfRun(S.subLp, x * S.subFlip);
-      const rate = p.rattleHz * clamp(1 + 7 * op(S.jitter, noise()), 0.5, 1.5);
-      S.phase += rate / sr; if (S.phase >= 1) S.phase -= 1;
-      const lfo = 0.5 + 0.5 * Math.sin(2 * PI * S.phase);
-      const amDepth = p.fry * (p.driveType === 1 ? 0.9 : 0.6);
-      const fried = x * (1 - amDepth * lfo) + S.subLp.lp * p.fry * (p.driveType === 2 ? 0.3 : 1.2);
-      svfRun(S.f1, fried); svfRun(S.f2, fried); svfRun(S.lowMid, fried);
-      const throated = fried + p.throat * (2.5 * S.f1.bp + 1.8 * S.f2.bp + 0.8 * S.lowMid.bp);
-      const pre = 1 + p.drive * 30 * (0.6 + 0.4 * push);
-      const xin = throated * pre;
-      svfRun(S.upLp, xin * 2); const a = S.upLp.lp; svfRun(S.upLp, 0); const b = S.upLp.lp;
-      svfRun(S.downLp, stage(a)); svfRun(S.downLp, stage(b));
-      let g = S.downLp.lp; g -= op(S.dc, g);
-      svfRun(S.noiseBp, noise());
-      const wet = g * 0.5 + S.noiseBp.bp * env * p.air * 6;
-      const ce = envRun(S.compEnv, wet);
-      const gr = ce > 0.125 ? Math.pow(0.125 / ce, 0.75) : 1;
-      return wet * gr * 1.6;
+    const chop = x => {
+      let out = x;
+      if (C.amount > 0.001) {
+        const over = toDb(Math.abs(x)) - C.thr, knee = 8; let target = 0;
+        if (over > knee * 0.5) target = over * (1 / C.ratio - 1);
+        else if (over > -knee * 0.5) { const t = over + knee * 0.5; target = (1 / C.ratio - 1) * t * t / (2 * knee); }
+        C.gr = target + (target < C.gr ? C.att : C.rel) * (C.gr - target);
+        out = x * db(C.gr) * C.makeup;
+      }
+      const a = Math.abs(out);
+      C.lim = a > C.lim ? a : C.lim * C.limRel + a * (1 - C.limRel);
+      if (C.lim > 0.891) out *= 0.891 / C.lim;
+      return out;
     };
-    const chop = key => {
-      if (!S.gOn) { S.gOpen = true; return 1; }
-      const k2 = key * key; S.gMs = k2 + S.gRms * (S.gMs - k2);
-      const e = Math.sqrt(S.gMs);
-      if (e > S.gOpenThr) { S.gOpen = true; S.gHold = S.gHoldLen; }
-      else if (e < S.gCloseThr) { if (S.gHold > 0) S.gHold--; else S.gOpen = false; }
-      const t = S.gOpen ? 1 : 0;
-      S.gGain = t + (t > S.gGain ? S.gAtt : S.gRel) * (S.gGain - t);
-      return S.gGain;
+    const thicken = (x, o) => {
+      svfRun(tHp, x); dWrite(tdl, tHp.hp);
+      const s = (0.25 + 0.75 * smNext(spreadS)) * 0.001 * sr;
+      let l = 0, r = 0;
+      for (let i = 0; i < 4; i++) { l += TG[i] * dRead(tdl, TL[i] * s); r += TG[i] * dRead(tdl, TR[i] * s); }
+      let dl = l, dr = r;
+      for (let i = 0; i < 3; i++) { dl = apRun(tAp[0][i], dl, 0.6); dr = apRun(tAp[1][i], dr, 0.6); }
+      l = lerp(l, dl, p.diffuse); r = lerp(r, dr, p.diffuse);
+      svfRun(darkL, l); svfRun(darkR, r);
+      const m = 0.5 * (darkL.lp + darkR.lp), sd = 0.5 * (darkL.lp - darkR.lp) * p.width * 1.4;
+      o[0] = m + sd; o[1] = m - sd;
     };
-    const out = [0, 0];
+    const ov = [0, 0, 0, 0];
+    const flavour = (x, o) => {
+      const a = Math.abs(x);
+      duckEnv = a + (a > duckEnv ? duckAtt : duckRel) * (duckEnv - a);
+      const dg = 1 - p.duck * 0.9 * clamp(duckEnv * 6, 0, 1);
+      // reverb
+      svfRun(vHp, x); dWrite(vPre, vHp.hp);
+      let d = dTap(vPre, (0.015 * sr) | 0);
+      for (let i = 0; i < 4; i++) d = apRun(vAp[i], d, 0.65);
+      for (let i = 0; i < 4; i++) ov[i] = opLp(vDamp[i], dTap(vLines[i], vLen[i])) * vFb[i];
+      const h0 = 0.5 * (ov[0] + ov[1] + ov[2] + ov[3]), h1 = 0.5 * (ov[0] - ov[1] + ov[2] - ov[3]);
+      const h2 = 0.5 * (ov[0] + ov[1] - ov[2] - ov[3]), h3 = 0.5 * (ov[0] - ov[1] - ov[2] + ov[3]);
+      dWrite(vLines[0], h0 + d); dWrite(vLines[1], h1 + d); dWrite(vLines[2], h2 - d); dWrite(vLines[3], h3 - d);
+      const rL = ov[0] - ov[2], rR = ov[1] - ov[3];
+      // ping-pong delay
+      const ds = smNext(delayS), rep = p.repeats * 0.85;
+      const dL = dRead(dlL, ds), dR = dRead(dlR, ds);
+      const fbR = opLp(fbLp, opHp(fbHp, dR));
+      dWrite(dlL, x + fbR * rep); dWrite(dlR, dL * rep);
+      let L = dg * (p.tailBlend * rL + p.delayBlend * dL), R = dg * (p.tailBlend * rR + p.delayBlend * dR);
+      let lo = opLp(tiltL, L); L = lo * tiltLo + (L - lo) * tiltHi;
+      lo = opLp(tiltR, R); R = lo * tiltLo + (R - lo) * tiltHi;
+      o[0] = L; o[1] = R;
+    };
+
+    const out = [0, 0], tO = [0, 0], fO = [0, 0];
     this.process = x => {
-      const gc = sNext(S.gCtl), gm = sNext(S.gMix);
+      const gm = smNext(gMix), gc = smNext(gCtl);
       if (p.controlOn) {
-        svfRun(S.loCut, x); svfRun(S.hiCut, S.loCut.hp); x = S.hiCut.lp;
-        const gate = chop(x);
-        const wet = scream(x);
-        x = lerp(x, wet, gm) * gate * gc;
+        svfRun(lc1, x); svfRun(lc2, lc1.hp); svfRun(hc1, lc2.hp); svfRun(hc2, hc1.lp);
+        x = hc2.lp;
+        x = lerp(x, drive(x), gm);
+        x = chop(x) * gc;
       }
-      let L = x, R = x;
-      const gt = sNext(S.gThk);
-      if (p.thickenOn) {
-        dWrite(S.tdl, x);
-        S.phA += 0.63 / sr; if (S.phA >= 1) S.phA -= 1;
-        S.phB += 0.91 / sr; if (S.phB >= 1) S.phB -= 1;
-        const depth = 0.0004 + 0.0016 * p.spread;
-        let vA = dRead(S.tdl, sr * (0.012 + depth * Math.sin(2 * PI * S.phA)));
-        let vB = dRead(S.tdl, sr * (0.019 + depth * Math.sin(2 * PI * S.phB)));
-        vA = lerp(vA, apRun(S.apA2, apRun(S.apA1, vA, 0.6), 0.6), p.diffuse);
-        vB = lerp(vB, apRun(S.apB2, apRun(S.apB1, vB, 0.6), 0.6), p.diffuse);
-        vA = op(S.darkA, vA); vB = op(S.darkB, vB);
-        const lvl = p.spread * 0.8, wA = 0.5 + 0.5 * p.width, wB = 0.5 - 0.5 * p.width, dry = p.solo ? 0 : 1;
-        L = (x * dry + lvl * (vA * wA + vB * wB)) * gt;
-        R = (x * dry + lvl * (vB * wA + vA * wB)) * gt;
-      }
-      const gf = sNext(S.gFlv);
-      if (p.flavourOn) {
-        const d = envRun(S.duckEnv, 0.5 * (L + R));
-        const dg = 1 - p.duck * clamp(d * 8, 0, 1);
-        const dL = dRead(S.dlL, S.delaySamples), dR = dRead(S.dlR, S.delaySamples);
-        const fL = op(S.fbLpL, dR - op(S.fbHpL, dR));
-        const fR = op(S.fbLpR, dL - op(S.fbHpR, dL));
-        const rep = p.repeats * 0.9;
-        dWrite(S.dlL, L + fL * rep); dWrite(S.dlR, fR * rep);
-        svfRun(S.verbPre, 0.5 * (L + R));
-        const vin = S.verbPre.hp * 0.03;
-        let rL = 0, rR = 0;
-        for (let i = 0; i < 4; i++) { rL += combRun(S.cL[i], vin, S.fbVerb, 0.35); rR += combRun(S.cR[i], vin, S.fbVerb, 0.35); }
-        for (let i = 0; i < 2; i++) { rL = apRun(S.aL[i], rL, 0.5); rR = apRun(S.aR[i], rR, 0.5); }
-        L += dg * (p.delayBlend * dL + p.tailBlend * rL * 3);
-        R += dg * (p.delayBlend * dR + p.tailBlend * rR * 3);
-        let lo = op(S.tiltL, L); L = lo * S.tiltLo + (L - lo) * S.tiltHi;
-        lo = op(S.tiltR, R); R = lo * S.tiltLo + (R - lo) * S.tiltHi;
-        L *= gf; R *= gf;
-      }
-      const go = sNext(S.gOut);
-      out[0] = tanh(L * go); out[1] = tanh(R * go);
+      const gt = smNext(gThk), gf = smNext(gFlv);
+      tO[0] = tO[1] = fO[0] = fO[1] = 0;
+      if (gt > 1e-4) thicken(x, tO);
+      if (gf > 1e-4) flavour(x, fO);
+      const dry = p.solo ? 0 : x, go = smNext(gOut);
+      out[0] = safetyClip((dry + gt * tO[0] + gf * fO[0]) * go);
+      out[1] = safetyClip((dry + gt * tO[1] + gf * fO[1]) * go);
       return out;
     };
   }
@@ -390,7 +401,7 @@ function makeBlockRunner(sr) {
         const b = Math.abs(oL[i]); if (b > peakOut) peakOut = b;
       }
     },
-    stats() { const s = { peakIn, peakOut, gate: eng.gateOpen() }; peakIn = peakOut = 0; return s; },
+    stats() { const s = { peakIn, peakOut, gr: eng.gainReductionDb() }; peakIn = peakOut = 0; return s; },
   };
 }
 
@@ -398,18 +409,17 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.25, hiCut: 0.8, drive: 0.6, driveType: 0, mix: 1, chop: 0.5, release: 0.3, controlGainDb: 0,
-  fry: 0.5, rattleHz: 45, throat: 0.5, vowel: 0.3, air: 0.25,
-  thickenOn: true, spread: 0.5, diffuse: 0.3, darken: 0.3, width: 0.7, solo: false, thickenGainDb: 0,
-  flavourOn: true, tail: 0.5, tailBlend: 0.2, repeats: 0.3, delayBlend: 0.15, delayTime: 1, bpm: 120, tilt: 0.5, duck: 0.5, flavourGainDb: 0,
-  outDb: -3,
+  controlOn: true, loCut: 0.5, hiCut: 0.75, drive: 0.35, brightness: 1, mix: 0.6, chop: 0.5, release: 0.4, controlGainDb: 0,
+  thickenOn: true, spread: 0.5, diffuse: 0.4, darken: 0.3, width: 0.8, solo: false, thickenGainDb: -6,
+  flavourOn: true, tail: 0.45, tailBlend: 0.25, repeats: 0.25, delayBlend: 0.15, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -6,
+  outDb: 0,
 };
 const PRESETS = {
-  fry:    {},
-  growl:  { driveType: 1, drive: 0.75, fry: 0.8, rattleHz: 32, throat: 0.65, vowel: 0.1, air: 0.15, loCut: 0.12, hiCut: 0.6, spread: 0.6, darken: 0.55, tailBlend: 0.15, tilt: 0.38, delayBlend: 0.08 },
-  squeal: { driveType: 2, drive: 0.55, fry: 0.25, rattleHz: 70, throat: 0.75, vowel: 0.85, air: 0.35, loCut: 0.45, hiCut: 0.92, spread: 0.3, darken: 0.1, tilt: 0.62 },
-  gang:   { driveType: 0, drive: 0.45, fry: 0.35, throat: 0.4, spread: 0.95, diffuse: 0.6, width: 1, tailBlend: 0.3, tail: 0.6, delayBlend: 0.1, delayTime: 0 },
-  assist: { driveType: 0, drive: 0.7, mix: 0.45, fry: 0.6, spread: 0.35, tailBlend: 0.12, delayBlend: 0.05 },
+  natural: {},
+  dark:    { brightness: 0, drive: 0.45, loCut: 0.42, hiCut: 0.62, darken: 0.55, tilt: 0.35, tail: 0.55 },
+  bright:  { brightness: 2, drive: 0.3, loCut: 0.58, hiCut: 0.9, darken: 0.1, tilt: 0.62, chop: 0.55 },
+  shout:   { drive: 0.55, mix: 0.75, chop: 0.65, release: 0.3, spread: 0.7, diffuse: 0.55, thickenGainDb: -3, tailBlend: 0.18, delayBlend: 0.1 },
+  raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false },
 };
 let params = Object.assign({}, DEFAULTS);
 
@@ -418,30 +428,27 @@ const hz = v => v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + "k" : Math.
 const em = (t, lo, hi) => lo * Math.pow(hi / lo, t);
 const KNOBS = {
   control: [
-    ["loCut", "Lo cut", v => hz(em(v, 20, 500)) + " Hz"],
+    ["loCut", "Lo cut", v => hz(em(v, 20, 600)) + " Hz"],
     ["hiCut", "Hi cut", v => hz(em(v, 2000, 20000)) + " Hz"],
     ["drive", "Drive", pct], ["mix", "Mix", pct],
-    ["chop", "Chop", v => v < 0.001 ? "off" : Math.round(-80 + 60 * v) + " dB"],
-    ["release", "Release", v => Math.round(em(v, 10, 800)) + " ms"],
+    ["chop", "Chop", v => v < 0.001 ? "off" : (1.5 + 6.5 * v).toFixed(1) + ":1"],
+    ["release", "Release", v => Math.round(em(v, 25, 600)) + " ms"],
   ],
   thicken: [["spread", "Spread", pct], ["diffuse", "Diffuse", pct], ["darken", "Darken", pct], ["width", "Width", pct]],
   flavour: [
-    ["tail", "Tail", pct], ["tailBlend", "Blend", pct], ["repeats", "Repeats", pct], ["delayBlend", "Blend", pct],
+    ["tail", "Tail", v => em(v, 0.4, 6).toFixed(1) + " s"], ["tailBlend", "Blend", pct], ["repeats", "Repeats", pct], ["delayBlend", "Blend", pct],
     ["tilt", "Tilt", v => { const d = (v - 0.5) * 12; return (d > 0 ? "+" : "") + d.toFixed(1) + " dB"; }], ["duck", "Duck", pct],
   ],
 };
 const TOGGLES = {
-  control: [["driveType", "Type", ["Fry", "Growl", "Squeal"]]],
-  flavour: [["delayTime", "Time", ["Slap", "1/8", "1/4"]]],
+  control: [["brightness", "Tone", ["Dark", "Natural", "Bright"]]],
+  flavour: [["delayTime", "Time", ["1/8", "1/8 dot", "1/4"]]],
 };
 const MENU = [
-  ["Scream engine"],
-  ["fry", "Fry", 0, 1, 0.01, pct], ["rattleHz", "Rattle rate", 20, 90, 1, v => Math.round(v) + " Hz"],
-  ["throat", "Throat", 0, 1, 0.01, pct], ["vowel", "Vowel", 0, 1, 0.01, v => v < 0.33 ? "oo " + pct(v) : v < 0.66 ? "ah " + pct(v) : "ee " + pct(v)],
-  ["air", "Air", 0, 1, 0.01, pct],
-  ["Levels"],
-  ["controlGainDb", "Control gain", -18, 12, 0.5, v => v.toFixed(1) + " dB"], ["thickenGainDb", "Thicken gain", -18, 12, 0.5, v => v.toFixed(1) + " dB"],
-  ["flavourGainDb", "Flavour gain", -18, 12, 0.5, v => v.toFixed(1) + " dB"], ["outDb", "Output", -24, 6, 0.5, v => v.toFixed(1) + " dB"],
+  ["Section levels"],
+  ["controlGainDb", "Control", -18, 12, 0.5, v => v.toFixed(1) + " dB"], ["thickenGainDb", "Thicken", -24, 6, 0.5, v => v.toFixed(1) + " dB"],
+  ["flavourGainDb", "Flavour", -24, 6, 0.5, v => v.toFixed(1) + " dB"], ["outDb", "Output", -24, 6, 0.5, v => v.toFixed(1) + " dB"],
+  ["Delay"],
   ["bpm", "Tempo", 40, 240, 1, v => Math.round(v) + " bpm"],
 ];
 
@@ -519,7 +526,7 @@ for (const row of MENU) {
 }
 {
   const r = document.createElement("label"); r.className = "checkrow";
-  r.innerHTML = '<input type="checkbox" id="solo"> Solo the thicken doubles';
+  r.innerHTML = '<input type="checkbox" id="solo"> Solo the thicken branch';
   menu.append(r);
   const cb = r.querySelector("input");
   sliderEls.solo = () => { cb.checked = params.solo; };
@@ -584,7 +591,9 @@ function showStats(s) {
   const w = v => Math.min(100, Math.max(0, (20 * Math.log10(v + 1e-9) + 60) / 60 * 100)) + "%";
   document.getElementById("mIn").style.width = w(s.peakIn);
   document.getElementById("mOut").style.width = w(s.peakOut);
-  document.getElementById("gateLed").classList.toggle("on", !!s.gate && params.controlOn && !bypass && (playing || !!micStream));
+  const gr = params.controlOn && !bypass ? s.gr : 0;
+  document.getElementById("grLed").classList.toggle("on", gr > 3);
+  document.getElementById("grVal").textContent = "−" + Math.max(0, gr).toFixed(0) + " dB";
 }
 
 function stopSource() {
@@ -635,7 +644,7 @@ document.getElementById("file").addEventListener("change", async e => {
 });
 document.getElementById("demo").addEventListener("click", async () => {
   await ensureAudio(); buffer = makeDemo(ctx.sampleRate);
-  document.getElementById("src").innerHTML = "Source: <b>demo vowel (synthetic)</b>"; msg(""); play();
+  document.getElementById("src").innerHTML = "Source: <b>synthetic test scream</b> · load your own take"; msg(""); play();
 });
 document.getElementById("mic").addEventListener("click", async () => {
   if (micStream) { stopSource(); return; }
@@ -652,27 +661,30 @@ document.getElementById("mic").addEventListener("click", async () => {
   }
 });
 
-// Synthetic sung vowel so there is something to hear before a file is loaded.
+// Rough synthetic scream so there is something to hear before a file is
+// loaded: jittery glottal pulses plus heavy breath noise through formant
+// filters. It is NOT a real scream; load your own take to judge the sound.
 function makeDemo(sr) {
-  const len = Math.floor(sr * 4.2), buf = new AudioBuffer({ length: len, numberOfChannels: 1, sampleRate: sr }), d = buf.getChannelData(0);
-  const notes = [[0.15, 1.35, 147], [1.6, 2.5, 165], [2.7, 3.9, 131]];
+  const len = Math.floor(sr * 4.4), buf = new AudioBuffer({ length: len, numberOfChannels: 1, sampleRate: sr }), d = buf.getChannelData(0);
+  const phrases = [[0.15, 1.25], [1.5, 2.2], [2.45, 4.1]];
   const bp = (f, q) => { const w = 2 * Math.PI * f / sr, al = Math.sin(w) / (2 * q), a0 = 1 + al; return { b0: al / a0, b2: -al / a0, a1: -2 * Math.cos(w) / a0, a2: (1 - al) / a0, x1: 0, x2: 0, y1: 0, y2: 0 }; };
   const run = (f, x) => { const y = f.b0 * x + f.b2 * f.x2 - f.a1 * f.y1 - f.a2 * f.y2; f.x2 = f.x1; f.x1 = x; f.y2 = f.y1; f.y1 = y; return y; };
-  const fA = [bp(730, 8), bp(1090, 10), bp(2440, 14)], fE = [bp(300, 8), bp(2300, 12), bp(3000, 14)];
-  let ph = 0, lp = 0;
+  const forms = [[700, 4, 1], [1250, 5, 0.8], [2700, 6, 0.6], [3800, 6, 0.35]].map(([f, q, g]) => ({ f: bp(f, q), g }));
+  let ph = 0, f0 = 170, wander = 0;
   for (let i = 0; i < len; i++) {
-    const t = i / sr; let f0 = 0, env = 0, vow = 0;
-    for (const [a, b, f] of notes) if (t >= a && t < b) { f0 = f; env = Math.min(1, (t - a) / 0.06, (b - t) / 0.12); vow = (t - a) / (b - a); }
-    f0 *= 1 + 0.012 * Math.sin(2 * Math.PI * 5.5 * t) * Math.min(1, t % 1.5);
-    ph += f0 / sr; if (ph >= 1) ph -= 1;
-    const pulse = f0 ? (ph < 0.6 ? Math.sin(Math.PI * ph / 0.6) ** 2 : 0) : 0;
-    const src = (pulse - lp) * 1.0 + (Math.random() * 2 - 1) * 0.02; lp = pulse;
-    let ya = 0, ye = 0;
-    fA.forEach((f, k) => ya += run(f, src) / (k + 1)); fE.forEach((f, k) => ye += run(f, src) / (k + 1));
-    d[i] = env * (ya * (1 - vow) + ye * vow) * 0.9 + (Math.random() * 2 - 1) * 0.0005;
+    const t = i / sr; let env = 0;
+    for (const [a, b] of phrases) if (t >= a && t < b) env = Math.min(1, (t - a) / 0.03, (b - t) / 0.08);
+    wander += (Math.random() - 0.5) * 0.02; wander *= 0.999;
+    f0 = 170 * (1 + 0.25 * wander);
+    ph += f0 / sr * (1 + 0.15 * (Math.random() - 0.5));
+    let pulse = 0;
+    if (ph >= 1) { ph -= 1; pulse = 0.8 + 0.6 * Math.random(); }
+    const src = pulse + (Math.random() * 2 - 1) * 0.35;
+    let y = 0; for (const fm of forms) y += run(fm.f, src) * fm.g;
+    d[i] = env * y;
   }
   let pk = 0; for (let i = 0; i < len; i++) pk = Math.max(pk, Math.abs(d[i]));
-  for (let i = 0; i < len; i++) d[i] *= 0.35 / pk;
+  for (let i = 0; i < len; i++) d[i] *= 0.5 / pk;
   return buf;
 }
 </script>
