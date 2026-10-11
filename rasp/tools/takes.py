@@ -10,6 +10,7 @@
 
   python3 tools/takes.py render samples/raw/*.wav
   python3 tools/takes.py render samples/raw/verse.wav --presets huge,dark
+  python3 tools/takes.py render samples/raw/verse.wav --match      # all at -23 LUFS + dry ref
   python3 tools/takes.py analyze renders/*.wav samples/ref/*.wav
   python3 tools/takes.py match samples/ref/final_vocal.wav renders/verse__huge.wav
   python3 tools/takes.py classify samples/raw/*
@@ -78,7 +79,19 @@ def loud_rms_db(x):
     return float(np.percentile(r[r > r.max() - 30], 90))
 
 
-def render(files, presets):
+def match_loudness(path, target):
+    """Rewrite a file at the target integrated loudness (BS.1770, via ffmpeg)."""
+    lufs, _, tp = ebur128(path)
+    gain = target - lufs
+    tmp = path.with_suffix(".tmp.wav")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-af", f"volume={gain:.2f}dB",
+                    "-c:a", "pcm_s24le", str(tmp)], check=True)
+    tmp.replace(path)
+    warn = "  (true peak over -1 dBTP after matching)" if tp + gain > -1 else ""
+    return lufs, gain, warn
+
+
+def render(files, presets, match=None):
     if not RASP_WAV.exists():
         sys.exit("build the renderer first: make -C rasp")
     out_dir = ROOT / "renders"
@@ -99,13 +112,26 @@ def render(files, presets):
             loud = loud_rms_db(decode(mono, 1)[:, 0])
             in_db = round(-18.0 - loud, 1)
             print(f"{f.name}: loud sections {loud:.1f} dBFS RMS -> input gain {in_db:+.1f} dB")
+            outs = []
+            if match is not None:
+                # A dry reference (both channels) to A/B against at the same loudness.
+                dry = out_dir / f"{f.stem}__dry.wav"
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(mono), "-ac", "2", "-c:a", "pcm_s24le", str(dry)],
+                               check=True)
+                outs.append(dry)
             for n in names:
                 if n not in all_presets:
                     sys.exit(f"unknown preset {n}; have {', '.join(all_presets)}")
                 dst = out_dir / f"{f.stem}__{n}.wav"
                 subprocess.run([str(RASP_WAV), str(mono), str(dst), f"in={in_db}"] + preset_args(all_presets[n]),
                                check=True, capture_output=True)
-                print("  " + str(dst.relative_to(ROOT.parent)))
+                outs.append(dst)
+            for dst in outs:
+                line = "  " + str(dst.relative_to(ROOT.parent))
+                if match is not None:
+                    lufs, gain, warn = match_loudness(dst, match)
+                    line += f"   {lufs:6.1f} LUFS -> {match:.0f} ({gain:+.1f} dB){warn}"
+                print(line)
 
 
 # --------------------------------------------------------------------------- analysis
@@ -271,12 +297,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("render"); r.add_argument("files", nargs="+"); r.add_argument("--presets")
+    r.add_argument("--match", nargs="?", type=float, const=-23.0, metavar="LUFS",
+                   help="loudness-match every render and a dry reference (default -23 LUFS) for fair A/B")
     a = sub.add_parser("analyze"); a.add_argument("files", nargs="+")
     m = sub.add_parser("match"); m.add_argument("reference"); m.add_argument("target")
     c = sub.add_parser("classify"); c.add_argument("files", nargs="+")
     args = ap.parse_args()
     if args.cmd == "render":
-        render(args.files, args.presets)
+        render(args.files, args.presets, args.match)
     elif args.cmd == "analyze":
         cmd_analyze(args.files)
     elif args.cmd == "classify":

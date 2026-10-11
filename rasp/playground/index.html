@@ -62,6 +62,8 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 .deck-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 12px; color: var(--muted); }
 .deck-head .time { font-family: var(--mono); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
 .deck-head .hint { flex: 1 1 220px; min-width: 0; }
+.deck-head .lufs { font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.deck-head .lufs b { color: var(--powder); font-weight: 500; }
 .deck-head button { min-height: 32px; padding: 6px 10px; font-size: 12px; }
 .wave { position: relative; height: 96px; border-radius: 7px; background: var(--wave-bg); cursor: ew-resize; touch-action: none; overflow: hidden; }
 .wave.loopmode { cursor: crosshair; }
@@ -155,6 +157,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
   <div class="strip" role="group" aria-label="Source and transport">
     <button class="primary" id="play" aria-pressed="false">Play</button>
     <button id="ab" aria-pressed="false" title="Hear the dry input">A/B dry</button>
+    <button id="match" aria-pressed="true" title="Play dry and processed at the same loudness (-23 LUFS) so A/B compares sound, not volume">Match loudness</button>
     <label class="filebtn" for="file">Load vocal…<input type="file" id="file" accept="audio/*"></label>
     <button id="realdi" hidden>Real DI</button>
     <button id="demo">Synthetic demo</button>
@@ -173,6 +176,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
   <div class="deck" id="deck">
     <div class="deck-head">
       <span class="time"><span id="tPos">0:00.00</span> / <span id="tDur">0:00.00</span></span>
+      <span class="lufs" id="lufs" title="Integrated loudness while the vocal is present, since the take was loaded (ITU BS.1770)">Dry — · RASP — LUFS</span>
       <span class="hint" id="waveHint">Drag to scrub. Shift-drag (or use Loop) to loop one phrase while you tweak. Double-click clears the loop.</span>
       <button id="rewind" title="Back to the start (Home)">To start</button>
       <button id="loopMode" aria-pressed="false" title="Drag on the waveform to pick a loop">Loop</button>
@@ -512,22 +516,102 @@ class RaspEngine {
 }
 
 // Shared block processor used by the worklet and by the fallback node.
+// Also does loudness matching for fair A/B: both the dry take and RASP's
+// output are measured as ITU BS.1770 integrated loudness over the same gated
+// blocks and, when matching is on, each is played at the target loudness, so
+// comparisons are about tone and texture, not volume.
 function makeBlockRunner(sr) {
   const eng = new RaspEngine(sr);
-  let bypass = false, peakIn = 0, peakOut = 0;
+  let bypass = false, match = true, target = -23, peakIn = 0, peakOut = 0;
+  // BS.1770 K-weighting for any sample rate (parametric form, as in libebur128).
+  const kw = () => {
+    let K = Math.tan(Math.PI * 1681.974450955533 / sr), Q = 0.7071752369554196;
+    const Vh = Math.pow(10, 3.999843853973347 / 20), Vb = Math.pow(Vh, 0.4996667741545416), a0 = 1 + K / Q + K * K;
+    const s1 = [(Vh + Vb * K / Q + K * K) / a0, 2 * (K * K - Vh) / a0, (Vh - Vb * K / Q + K * K) / a0, 2 * (K * K - 1) / a0, (1 - K / Q + K * K) / a0];
+    K = Math.tan(Math.PI * 38.13547087602444 / sr); Q = 0.5003270373238773;
+    const d = 1 + K / Q + K * K, s2 = [1, -2, 1, 2 * (K * K - 1) / d, (1 - K / Q + K * K) / d];
+    const z = [0, 0, 0, 0];
+    return x => {
+      let y = s1[0] * x + z[0]; z[0] = s1[1] * x - s1[3] * y + z[1]; z[1] = s1[2] * x - s1[4] * y;
+      const y2 = s2[0] * y + z[2]; z[2] = s2[1] * y - s2[3] * y2 + z[3]; z[3] = s2[2] * y - s2[4] * y2;
+      return y2;
+    };
+  };
+  const kDry = kw(), kL = kw(), kR = kw();
+  // Integrated loudness (BS.1770): 400 ms blocks, absolute gate on the dry
+  // signal (the vocal must be present), then a relative gate 10 LU below.
+  // It accumulates from the moment a take is loaded and settles within a few
+  // seconds, so each source gets one steady gain, not a slow auto-gain.
+  const winLen = Math.round(0.4 * sr);
+  let accD = 0, accW = 0, accN = 0, blocksD = [], blocksW = [], intDry = null, intWet = null, gDry = 1, gWet = 1;
+  // Until 3 blocks (1.2 s) are in, a fast 0.3 s estimate stands in, so the
+  // first notes after loading don't blast at the unmatched level.
+  let fastD = 0, fastW = 0;
+  const lufs = ms => -0.691 + 10 * Math.log10(ms + 1e-20);
+  const integrate = () => {
+    let sd = 0, k = 0; for (const e of blocksD) { sd += e; k++; }
+    const gate = lufs(sd / k) - 10;
+    let d = 0, w = 0, m = 0;
+    for (let i = 0; i < blocksD.length; i++) if (lufs(blocksD[i]) > gate) { d += blocksD[i]; w += blocksW[i]; m++; }
+    intDry = lufs(d / m); intWet = lufs(w / m);
+  };
+  const soft = v => { const a = Math.abs(v); if (a <= 0.9) return v; const y = 0.9 + 0.1 * Math.tanh((a - 0.9) * 10); return v < 0 ? -y : y; };
   return {
     eng,
-    set(msg) { if (msg.params) eng.setParams(msg.params); if ("bypass" in msg) bypass = msg.bypass; },
+    set(msg) {
+      if (msg.params) eng.setParams(msg.params);
+      if ("bypass" in msg) bypass = msg.bypass;
+      if ("match" in msg) match = msg.match;
+      if ("target" in msg) target = msg.target;
+      if (msg.resetLoudness) { blocksD = []; blocksW = []; accD = accW = accN = 0; intDry = intWet = null; fastD = fastW = 0; }
+    },
     run(inp, oL, oR) {
-      for (let i = 0; i < oL.length; i++) {
+      const n = oL.length;
+      let bd = 0, bw = 0;
+      for (let i = 0; i < n; i++) {
         const x = inp ? inp[i] : 0;
         const a = Math.abs(x); if (a > peakIn) peakIn = a;
         const o = eng.process(x);
-        if (bypass) { oL[i] = x; oR[i] = x; } else { oL[i] = o[0]; oR[i] = o[1]; }
+        const kd = kDry(x), l = kL(o[0]), r = kR(o[1]);
+        const ed = 2 * kd * kd, ew = l * l + r * r;   // dry plays on both channels
+        accD += ed; accW += ew; bd += ed; bw += ew;
+        if (++accN === winLen) {
+          const ed = accD / winLen, ew = accW / winLen;
+          if (lufs(ed) > -50) {             // vocal present
+            blocksD.push(ed); blocksW.push(ew);
+            if (blocksD.length > 9000) { blocksD.shift(); blocksW.shift(); }   // last hour
+            integrate();
+          }
+          accD = accW = accN = 0;
+        }
+        oL[i] = bypass ? x : o[0]; oR[i] = bypass ? x : o[1];
+      }
+      bd /= n; bw /= n;
+      if (lufs(bd) > -50) {
+        const c = Math.exp(-n / (0.3 * sr));
+        fastD = fastD ? fastD * c + bd * (1 - c) : bd;
+        fastW = fastW ? fastW * c + bw * (1 - c) : bw;
+      }
+      const settled = blocksD.length >= 3;
+      const lD = settled ? intDry : (fastD ? lufs(fastD) : null), lW = settled ? intWet : (fastW ? lufs(fastW) : null);
+      const clampDb = v => Math.min(30, Math.max(-30, v));
+      const wantDry = match && lD !== null ? Math.pow(10, clampDb(target - lD) / 20) : 1;
+      const wantWet = match && lW !== null ? Math.pow(10, clampDb(target - lW) / 20) : 1;
+      // Ramp gains across the block (no zipper noise).
+      const g0 = bypass ? gDry : gWet, g1 = bypass ? wantDry : wantWet;
+      for (let i = 0; i < n; i++) {
+        const g = g0 + (g1 - g0) * (i + 1) / n;
+        oL[i] = soft(oL[i] * g); oR[i] = soft(oR[i] * g);
         const b = Math.abs(oL[i]); if (b > peakOut) peakOut = b;
       }
+      gDry = wantDry; gWet = wantWet;
     },
-    stats() { const s = { peakIn, peakOut, gr: eng.gainReductionDb(), bleed: eng.bleedReductionDb(), lim: eng.limiterDb() }; peakIn = peakOut = 0; return s; },
+    stats() {
+      const s = { peakIn, peakOut, gr: eng.gainReductionDb(), bleed: eng.bleedReductionDb(), lim: eng.limiterDb(),
+        lufsDry: intDry, lufsWet: intWet,
+        gDryDb: 20 * Math.log10(gDry), gWetDb: 20 * Math.log10(gWet) };
+      peakIn = peakOut = 0; return s;
+    },
   };
 }
 
@@ -680,6 +764,8 @@ let ctx = null, node = null, runner = null, srcNode = null, micStream = null, bu
 const msg = t => { document.getElementById("msg").textContent = t; };
 const sendParams = () => { const m = { params }; if (node && node.port) node.port.postMessage(m); else if (runner) runner.set(m); };
 const sendBypass = () => { const m = { bypass }; if (node && node.port) node.port.postMessage(m); else if (runner) runner.set(m); };
+let matchOn = true;
+const sendRunner = m => { if (node && node.port) node.port.postMessage(m); else if (runner) runner.set(m); };
 
 const WORKLET_SRC = () => `
 ${RaspEngine.toString()}
@@ -715,11 +801,16 @@ async function ensureAudio() {
     };
   }
   node.connect(ctx.destination);
-  sendParams(); sendBypass();
+  sendParams(); sendBypass(); sendRunner({ match: matchOn, target: -23 });
   const lat = ((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000;
   document.getElementById("latency").textContent = `Browser audio latency here: about ${lat ? lat.toFixed(1) : "?"} ms output (plus input latency on the live mic). Sample rate ${ctx.sampleRate} Hz.`;
 }
 function showStats(s) {
+  const f = v => v === null || v === undefined ? "—" : v.toFixed(1);
+  const sign = v => (v >= 0 ? "+" : "") + v.toFixed(1);
+  document.getElementById("lufs").innerHTML = matchOn && s.lufsDry !== null
+    ? `Dry ${f(s.lufsDry)} · RASP ${f(s.lufsWet)} LUFS → both <b>−23</b> (${bypass ? "dry " + sign(s.gDryDb) : "RASP " + sign(s.gWetDb)} dB)`
+    : `Dry ${f(s.lufsDry)} · RASP ${f(s.lufsWet)} LUFS`;
   const w = v => Math.min(100, Math.max(0, (20 * Math.log10(v + 1e-9) + 60) / 60 * 100)) + "%";
   document.getElementById("mIn").style.width = w(s.peakIn);
   document.getElementById("mOut").style.width = w(s.peakOut);
@@ -793,6 +884,10 @@ document.getElementById("ab").addEventListener("click", e => {
   document.getElementById("ledOn").classList.toggle("on", !bypass);
 });
 document.getElementById("fsBypass").addEventListener("click", () => document.getElementById("ab").click());
+document.getElementById("match").addEventListener("click", e => {
+  matchOn = !matchOn; e.currentTarget.setAttribute("aria-pressed", String(matchOn)); sendRunner({ match: matchOn });
+  msg(matchOn ? "Loudness matching on: dry and processed both play at -23 LUFS." : "Loudness matching off: you hear the real output level.");
+});
 const sectionStomp = (id, key, led) => document.getElementById(id).addEventListener("click", e => {
   setParam(key, !params[key]); e.currentTarget.setAttribute("aria-pressed", String(params[key]));
   document.getElementById(led).classList.toggle("on", params[key]);
@@ -941,6 +1036,7 @@ function autoInputGain(quiet) {
   if (!quiet) msg(`Input gain set to ${g > 0 ? "+" : ""}${g} dB so the loud sections sit at -18 dBFS RMS. Adjust it in the menu.`);
 }
 function onNewBuffer() {
+  sendRunner({ resetLoudness: true });
   T.pos = 0; T.loopA = T.loopB = null; peaks = null;
   document.getElementById("loopClear").hidden = true;
   drawWave();
