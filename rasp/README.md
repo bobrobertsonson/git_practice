@@ -13,7 +13,7 @@ the box adds grit, control, size and space.
 | `dsp/rasp.h` | The DSP engine. Header-only C++17, no heap, no dependencies |
 | `host/rasp_wav.cpp` | Desktop tool: process a WAV file |
 | `daisy/main.cpp` | Firmware for an Electrosmith Daisy Seed (16 knobs, 4 faders, 3 trims, 2 toggles, 4 footswitches) |
-| `playground/index.html` | Playable browser preview, a JS port of `dsp/rasp.h` that matches it to −76 dB |
+| `playground/index.html` | Playable browser preview, a JS port of `dsp/rasp.h` that matches it to −76 dB. Load a recording, then scrub it on the waveform or loop one phrase |
 | `tools/probe.py` | Measurement kit for matching RASP to a reference plugin (section 6) |
 
 ```sh

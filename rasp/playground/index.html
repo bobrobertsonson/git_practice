@@ -19,12 +19,15 @@
   --led: #ff3d1f;
   --led-off: #6b2416;
   --ok: #7fd18b;
+  --wave-bg: #1c1a20;
+  --wave-ink: #6f6a63;
   --display: "Big Shoulders Display", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
   --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* also when opened as a local file */
 html, body { background: var(--stage); color: var(--ink); }
 body { font-family: var(--body); font-size: 15px; line-height: 1.5; padding-inline: 16px; padding-block: 28px 56px; }
 .wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 22px; }
@@ -52,6 +55,19 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 .meters { display: flex; gap: 10px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .meter { width: 70px; height: 8px; background: #2b2930; border-radius: 4px; overflow: hidden; }
 .meter i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--ok) 0 70%, var(--powder) 70% 90%, var(--led) 90%); transition: width 60ms linear; }
+
+/* ---------- waveform deck ---------- */
+.deck { background: var(--stage-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; display: grid; gap: 8px; }
+.deck-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 12px; color: var(--muted); }
+.deck-head .time { font-family: var(--mono); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.deck-head .hint { flex: 1 1 220px; min-width: 0; }
+.deck-head button { min-height: 32px; padding: 6px 10px; font-size: 12px; }
+.wave { position: relative; height: 96px; border-radius: 7px; background: var(--wave-bg); cursor: ew-resize; touch-action: none; overflow: hidden; }
+.wave.loopmode { cursor: crosshair; }
+.wave canvas { display: block; width: 100%; height: 100%; }
+.wave:focus-visible { outline: 2px solid var(--powder); outline-offset: 3px; }
+.wave-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; color: var(--muted); text-align: center; padding: 0 16px; }
+@media (max-width: 480px) { .wave { height: 80px; } .deck-head .hint { display: none; } }
 
 /* ---------- the pedal ---------- */
 .pedal {
@@ -151,6 +167,19 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
     </select>
     <div class="grow" id="src">Source: <b>synthetic test scream</b> · load your own take</div>
     <div class="meters" aria-hidden="true">IN <span class="meter"><i id="mIn"></i></span> OUT <span class="meter"><i id="mOut"></i></span></div>
+  </div>
+  <div class="deck" id="deck">
+    <div class="deck-head">
+      <span class="time"><span id="tPos">0:00.00</span> / <span id="tDur">0:00.00</span></span>
+      <span class="hint" id="waveHint">Drag to scrub. Shift-drag (or use Loop) to loop one phrase while you tweak. Double-click clears the loop.</span>
+      <button id="rewind" title="Back to the start (Home)">To start</button>
+      <button id="loopMode" aria-pressed="false" title="Drag on the waveform to pick a loop">Loop</button>
+      <button id="loopClear" hidden>Clear loop</button>
+    </div>
+    <div class="wave" id="wave" role="slider" tabindex="0" aria-label="Playback position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+      <canvas id="waveCanvas"></canvas>
+      <div class="wave-empty" id="waveEmpty" hidden>Live mic: the waveform shows loaded recordings.</div>
+    </div>
   </div>
   <div class="msg" id="msg" role="status"></div>
 
@@ -694,21 +723,62 @@ function showStats(s) {
   document.getElementById("bleedLed").classList.toggle("on", params.controlOn && !bypass && s.bleed > 6 && (playing || !!micStream));
 }
 
+// Transport. A paused position, an optional loop region, and the
+// context time when the current buffer source started.
+const T = { pos: 0, startCtx: 0, startOff: 0, loopA: null, loopB: null };
+const dur = () => buffer ? buffer.duration : 0;
+const loopRange = () => (T.loopA !== null ? [T.loopA, T.loopB] : [0, dur()]);
+function currentPos() {
+  if (!playing || !ctx) return T.pos;
+  const [a, b] = loopRange();
+  let p = T.startOff + (ctx.currentTime - T.startCtx);
+  if (p >= b && b > a) p = a + ((p - a) % (b - a));
+  return p;
+}
+function stopBufferSource() {
+  if (srcNode && !micStream) { try { srcNode.stop(); } catch (e) {} srcNode.disconnect(); srcNode = null; }
+}
 function stopSource() {
-  if (srcNode) { try { srcNode.stop && srcNode.stop(); } catch (e) {} srcNode.disconnect(); srcNode = null; }
+  if (playing) T.pos = currentPos();
+  stopBufferSource();
+  if (srcNode) { srcNode.disconnect(); srcNode = null; }
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   playing = false;
   document.getElementById("play").textContent = "Play"; document.getElementById("play").setAttribute("aria-pressed", "false");
   document.getElementById("mic").setAttribute("aria-pressed", "false");
+  document.getElementById("waveEmpty").hidden = true;
+  drawWave();
+}
+function startAt(offset) {
+  stopBufferSource();
+  const [a, b] = loopRange();
+  if (offset < a || offset >= b) offset = a;
+  srcNode = ctx.createBufferSource(); srcNode.buffer = buffer;
+  srcNode.loop = true; srcNode.loopStart = a; srcNode.loopEnd = b;
+  srcNode.connect(node); srcNode.start(0, offset);
+  T.startCtx = ctx.currentTime; T.startOff = offset;
 }
 async function play() {
   await ensureAudio();
-  stopSource();
-  if (!buffer) buffer = makeDemo(ctx.sampleRate);
-  srcNode = ctx.createBufferSource(); srcNode.buffer = buffer; srcNode.loop = true;
-  srcNode.connect(node); srcNode.start();
+  if (micStream) stopSource();
+  if (!buffer) { buffer = makeDemo(ctx.sampleRate); onNewBuffer(); }
+  startAt(T.pos);
   playing = true;
-  document.getElementById("play").textContent = "Stop"; document.getElementById("play").setAttribute("aria-pressed", "true");
+  document.getElementById("play").textContent = "Pause"; document.getElementById("play").setAttribute("aria-pressed", "true");
+  animateWave();
+}
+// While stopped, dragging plays a short grain from the scrub position.
+let grain = null, lastGrain = 0;
+function scrubGrain(pos) {
+  if (!ctx || !node || !buffer || playing) return;   // engine still loading
+  const now = performance.now();
+  if (now - lastGrain < 45) return;
+  lastGrain = now;
+  if (grain) { try { grain.stop(); } catch (e) {} grain.disconnect(); }
+  grain = ctx.createBufferSource(); grain.buffer = buffer;
+  const g = ctx.createGain(); grain.connect(g); g.connect(node);
+  const t = ctx.currentTime; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + 0.005); g.gain.linearRampToValueAtTime(0, t + 0.08);
+  grain.start(t, Math.min(pos, Math.max(0, dur() - 0.09)), 0.09);
 }
 document.getElementById("play").addEventListener("click", () => playing ? stopSource() : play().catch(e => msg("Could not start audio: " + e.message)));
 document.getElementById("ab").addEventListener("click", e => {
@@ -734,14 +804,16 @@ document.getElementById("file").addEventListener("change", async e => {
   const f = e.target.files[0]; if (!f) return;
   try {
     await ensureAudio();
+    stopSource();
     buffer = await ctx.decodeAudioData(await f.arrayBuffer());
+    onNewBuffer();
     document.getElementById("src").innerHTML = "Source: <b></b>";
     document.querySelector("#src b").textContent = f.name;
     msg(""); play();
   } catch (err) { msg("That file could not be decoded. Try a WAV or MP3 of a dry vocal."); }
 });
 document.getElementById("demo").addEventListener("click", async () => {
-  await ensureAudio(); buffer = makeDemo(ctx.sampleRate);
+  await ensureAudio(); stopSource(); buffer = makeDemo(ctx.sampleRate); onNewBuffer();
   document.getElementById("src").innerHTML = "Source: <b>synthetic test scream</b> · load your own take"; msg(""); play();
 });
 document.getElementById("mic").addEventListener("click", async () => {
@@ -752,6 +824,7 @@ document.getElementById("mic").addEventListener("click", async () => {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, latency: 0 } });
     srcNode = ctx.createMediaStreamSource(micStream); srcNode.connect(node);
     document.getElementById("mic").setAttribute("aria-pressed", "true");
+    document.getElementById("waveEmpty").hidden = false; drawWave();
     document.getElementById("src").innerHTML = "Source: <b>live mic</b> · wear headphones";
     msg("Live mic on. Wear headphones, or the speakers will feed back into the mic.");
   } catch (err) {
@@ -785,6 +858,133 @@ function makeDemo(sr) {
   for (let i = 0; i < len; i++) d[i] *= 0.5 / pk;
   return buf;
 }
+
+// ===========================================================================
+// Waveform: min/max peaks per pixel column, playhead, loop region, scrubbing
+// ===========================================================================
+const waveEl = document.getElementById("wave"), canvas = document.getElementById("waveCanvas"), c2d = canvas.getContext("2d");
+let peaks = null, peaksW = 0;
+const fmtTime = t => { const m = Math.floor(t / 60), sec = t - m * 60; return m + ":" + (sec < 10 ? "0" : "") + sec.toFixed(2); };
+function tokenColor(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function computePeaks(w) {
+  const chs = [], n = buffer.length;
+  for (let c = 0; c < buffer.numberOfChannels; c++) chs.push(buffer.getChannelData(c));
+  const out = new Float32Array(w * 2), per = n / w;
+  for (let x = 0; x < w; x++) {
+    let lo = 1, hi = -1;
+    const a = Math.floor(x * per), b = Math.min(n, Math.floor((x + 1) * per) + 1);
+    const step = Math.max(1, Math.floor((b - a) / 400));   // cap work on long files
+    for (let i = a; i < b; i += step) {
+      let v = 0; for (const ch of chs) v += ch[i]; v /= chs.length;
+      if (v < lo) lo = v; if (v > hi) hi = v;
+    }
+    out[2 * x] = lo; out[2 * x + 1] = hi;
+  }
+  return out;
+}
+function drawWave() {
+  const dpr = window.devicePixelRatio || 1, cw = waveEl.clientWidth, ch = waveEl.clientHeight;
+  const W = Math.max(1, Math.round(cw * dpr)), H = Math.max(1, Math.round(ch * dpr));
+  if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+  c2d.clearRect(0, 0, W, H);
+  const d = dur(), pos = currentPos();
+  document.getElementById("tPos").textContent = fmtTime(pos);
+  document.getElementById("tDur").textContent = fmtTime(d);
+  waveEl.setAttribute("aria-valuemax", d.toFixed(2)); waveEl.setAttribute("aria-valuenow", pos.toFixed(2));
+  waveEl.setAttribute("aria-valuetext", fmtTime(pos) + " of " + fmtTime(d));
+  if (!buffer || micStream) return;
+  if (!peaks || peaksW !== W) { peaks = computePeaks(W); peaksW = W; }
+  const mid = H / 2, amp = H / 2 - 4 * dpr, px = d ? pos / d * W : 0;
+  // Loop region
+  if (T.loopA !== null) {
+    const a = T.loopA / d * W, b = T.loopB / d * W;
+    c2d.fillStyle = "rgba(239,179,32,0.14)"; c2d.fillRect(a, 0, b - a, H);
+    c2d.fillStyle = tokenColor("--powder"); c2d.fillRect(a, 0, dpr, H); c2d.fillRect(b - dpr, 0, dpr, H);
+  }
+  // Centre line, then peaks: played part in the accent colour.
+  c2d.fillStyle = tokenColor("--line"); c2d.fillRect(0, mid, W, Math.max(1, dpr * 0.5));
+  const played = tokenColor("--powder"), rest = tokenColor("--wave-ink");
+  for (let x = 0; x < W; x++) {
+    const lo = peaks[2 * x], hi = peaks[2 * x + 1];
+    c2d.fillStyle = x < px ? played : rest;
+    const y0 = mid - hi * amp, y1 = mid - lo * amp;
+    c2d.fillRect(x, y0, 1, Math.max(dpr, y1 - y0));
+  }
+  // Playhead
+  c2d.fillStyle = tokenColor("--ink"); c2d.fillRect(Math.round(px) - dpr, 0, 2 * dpr, H);
+}
+let anim = 0;
+function animateWave() {
+  cancelAnimationFrame(anim);
+  const tick = () => { drawWave(); if (playing) anim = requestAnimationFrame(tick); };
+  anim = requestAnimationFrame(tick);
+}
+function onNewBuffer() {
+  T.pos = 0; T.loopA = T.loopB = null; peaks = null;
+  document.getElementById("loopClear").hidden = true;
+  drawWave();
+}
+function seek(t) {
+  const d = dur(); if (!d) return;
+  t = Math.min(Math.max(0, t), d - 1e-3);
+  T.pos = t;
+  if (playing) startAt(t); else scrubGrain(t);
+  drawWave();
+}
+function setLoop(a, b) {
+  if (b - a < 0.05) { T.loopA = T.loopB = null; } else { T.loopA = a; T.loopB = b; }
+  document.getElementById("loopClear").hidden = T.loopA === null;
+  if (playing) startAt(T.loopA !== null ? T.loopA : currentPos());
+  else if (T.loopA !== null) T.pos = T.loopA;
+  drawWave();
+}
+const xToTime = clientX => { const r = waveEl.getBoundingClientRect(); return Math.min(Math.max(0, (clientX - r.left) / r.width), 1) * dur(); };
+let drag = null, lastSeek = 0;
+waveEl.addEventListener("pointerdown", e => {
+  if (!buffer || micStream) return;
+  ensureAudio().catch(() => {});                 // a tap is a user gesture: audio can start now
+  waveEl.setPointerCapture(e.pointerId);
+  const t = xToTime(e.clientX);
+  const looping = e.shiftKey || document.getElementById("loopMode").getAttribute("aria-pressed") === "true";
+  drag = { id: e.pointerId, loop: looping, from: t };
+  if (!looping) seek(t);
+  e.preventDefault();
+});
+waveEl.addEventListener("pointermove", e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const t = xToTime(e.clientX);
+  if (drag.loop) { T.loopA = Math.min(drag.from, t); T.loopB = Math.max(drag.from, t); drawWave(); return; }
+  const now = performance.now();
+  if (playing && now - lastSeek < 40) { T.pos = t; drawWave(); return; }   // throttle restarts while playing
+  lastSeek = now; seek(t);
+});
+const endDrag = e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  if (drag.loop) setLoop(Math.min(drag.from, xToTime(e.clientX)), Math.max(drag.from, xToTime(e.clientX)));
+  else seek(xToTime(e.clientX));
+  drag = null;
+};
+waveEl.addEventListener("pointerup", endDrag);
+waveEl.addEventListener("pointercancel", e => { drag = null; drawWave(); });
+waveEl.addEventListener("dblclick", () => setLoop(0, 0));
+waveEl.addEventListener("keydown", e => {
+  if (!buffer) return;
+  const step = e.shiftKey ? 5 : 1, p = currentPos();
+  if (e.key === "ArrowRight") seek(p + step); else if (e.key === "ArrowLeft") seek(p - step);
+  else if (e.key === "Home") seek(0); else if (e.key === "End") seek(dur() - 0.05);
+  else if (e.key === " ") { document.getElementById("play").click(); }
+  else return;
+  e.preventDefault();
+});
+document.getElementById("rewind").addEventListener("click", () => seek(T.loopA !== null ? T.loopA : 0));
+document.getElementById("loopMode").addEventListener("click", e => {
+  const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+  e.currentTarget.setAttribute("aria-pressed", String(on)); waveEl.classList.toggle("loopmode", on);
+});
+document.getElementById("loopClear").addEventListener("click", () => setLoop(0, 0));
+new ResizeObserver(() => drawWave()).observe(waveEl);
+// Show the demo's waveform before audio is started (no AudioContext needed).
+try { buffer = makeDemo(48000); onNewBuffer(); } catch (e) { /* AudioBuffer unsupported: drawn after Play */ }
 
 // Open on the big produced sound.
 applyPreset("huge");
