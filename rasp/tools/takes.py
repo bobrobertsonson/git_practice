@@ -5,11 +5,14 @@
   analyze  Measure loudness, density, tone, width and sibilance.
   match    Compare a render against a reference vocal (ideally an isolated
            final vocal; a full mix works but the band skews the tone).
+  classify Guess each take's style (guttural, mid scream, high, shout, clean)
+           and suggest a starting preset.
 
   python3 tools/takes.py render samples/raw/*.wav
   python3 tools/takes.py render samples/raw/verse.wav --presets huge,dark
   python3 tools/takes.py analyze renders/*.wav samples/ref/*.wav
   python3 tools/takes.py match samples/ref/final_vocal.wav renders/verse__huge.wav
+  python3 tools/takes.py classify samples/raw/*
 
 Needs numpy and ffmpeg (any input format ffmpeg reads). Renders go to
 rasp/renders/, which git ignores.
@@ -183,17 +186,81 @@ def cmd_match(ref, target):
         print("  - " + h)
 
 
+# --------------------------------------------------------------------------- style
+def voice_features(path):
+    """Per-take voice measurements over the sung/screamed parts only."""
+    x = decode(path, 1)[:, 0]
+    win, hop = 2048, 960                                   # ~43 ms frames, 20 ms hop
+    n = max(0, (len(x) - win) // hop)
+    if n == 0:
+        sys.exit(f"{path}: too short")
+    idx = np.arange(win)[None, :] + hop * np.arange(n)[:, None]
+    fr = x[idx] * np.hanning(win)
+    rms = np.sqrt(np.mean(fr ** 2, axis=1) + 1e-20)
+    act = 20 * np.log10(rms) > 20 * np.log10(rms.max()) - 25
+    fr = fr[act]
+    # Periodicity + pitch: normalized autocorrelation peak in 60-1000 Hz.
+    F = np.fft.rfft(fr, 2 * win, axis=1)
+    ac = np.fft.irfft(np.abs(F) ** 2, axis=1)[:, :win]
+    ac = ac / (ac[:, :1] + 1e-20)
+    lo, hi = SR // 1000, SR // 60
+    lag = lo + np.argmax(ac[:, lo:hi], axis=1)
+    r = ac[np.arange(len(ac)), lag]
+    f0 = SR / lag
+    voiced = r > 0.5
+    spec = np.abs(F[:, : win + 1]) ** 2
+    f = np.fft.rfftfreq(2 * win, 1 / SR)
+    centroid = np.sum(spec * f, axis=1) / (np.sum(spec, axis=1) + 1e-20)
+    low = np.sum(spec[:, f < 300], axis=1) / (np.sum(spec, axis=1) + 1e-20)
+    return {
+        "periodic": float(np.mean(voiced)),               # share of frames with a clear pitch
+        "clarity": float(np.median(r)),                   # 1 = pure tone, ~0 = noise
+        "pitch_hz": float(np.median(f0[voiced])) if voiced.any() else 0.0,
+        "centroid_hz": float(np.median(centroid)),        # brightness
+        "low_share_db": float(10 * np.log10(np.median(low) + 1e-20)),
+    }
+
+
+def classify_style(v):
+    """Heuristic labels; thresholds come from synthetic tests and need checking
+    against real takes (they're printed so you can sanity-check them)."""
+    if v["periodic"] > 0.7 and v["clarity"] > 0.75:
+        return "clean / sung", "raw (RASP is built for distorted vocals; keep drive low)"
+    if v["periodic"] > 0.4:
+        return "shout / gritty sung", "natural"
+    if v["centroid_hz"] < 1300 and v["low_share_db"] > -14:
+        return "low growl / guttural", "dark"
+    if v["centroid_hz"] > 2600:
+        return "high scream / squeal", "bright"
+    return "mid scream (fry / false chord)", "huge"
+
+
+def cmd_classify(files):
+    rows = [(pathlib.Path(p).name, voice_features(p)) for p in files]
+    w = max(len(n) for n, _ in rows)
+    print(f"{'file':<{w}}  {'periodic':>8} {'clarity':>7} {'pitch':>7} {'bright':>7} {'lows':>6}   style -> starting preset")
+    for n, v in rows:
+        style, preset = classify_style(v)
+        print(f"{n:<{w}}  {v['periodic']:8.2f} {v['clarity']:7.2f} {v['pitch_hz']:6.0f}Hz {v['centroid_hz']:6.0f}Hz "
+              f"{v['low_share_db']:5.1f}   {style} -> {preset}")
+    print("\nperiodic = share of the take with a clear pitch, clarity = how tonal vs noisy (0-1),\n"
+          "bright = spectral centroid, lows = energy share below 300 Hz (dB).")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("render"); r.add_argument("files", nargs="+"); r.add_argument("--presets")
     a = sub.add_parser("analyze"); a.add_argument("files", nargs="+")
     m = sub.add_parser("match"); m.add_argument("reference"); m.add_argument("target")
+    c = sub.add_parser("classify"); c.add_argument("files", nargs="+")
     args = ap.parse_args()
     if args.cmd == "render":
         render(args.files, args.presets)
     elif args.cmd == "analyze":
         cmd_analyze(args.files)
+    elif args.cmd == "classify":
+        cmd_classify(args.files)
     else:
         cmd_match(args.reference, args.target)
 
