@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>RASP Scream Box</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -148,14 +149,15 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
   <header>
     <span class="eyebrow">Hardware vocal processor · browser preview of the DSP</span>
     <h1>RASP Scream Box</h1>
-    <p>Load a dry recording of your scream, press play, and turn the knobs. The built-in demo is a rough synthetic stand-in. Use <b>A/B</b> to compare with the dry vocal. This runs the same signal chain as the firmware: control → thicken → flavour.</p>
+    <p>It opens on a real DI, a dry lead growl track. Press play and turn the knobs, or load your own dry take. Use <b>A/B</b> to compare with the dry vocal. This runs the same signal chain as the firmware: control → thicken → flavour.</p>
   </header>
 
   <div class="strip" role="group" aria-label="Source and transport">
     <button class="primary" id="play" aria-pressed="false">Play</button>
     <button id="ab" aria-pressed="false" title="Hear the dry input">A/B dry</button>
     <label class="filebtn" for="file">Load vocal…<input type="file" id="file" accept="audio/*"></label>
-    <button id="demo">Demo scream</button>
+    <button id="realdi" hidden>Real DI</button>
+    <button id="demo">Synthetic demo</button>
     <button id="mic" aria-pressed="false">Live mic</button>
     <select id="preset" aria-label="Preset">
       <option value="huge">Preset: Huge (album)</option>
@@ -885,6 +887,9 @@ function computePeaks(w) {
     }
     out[2 * x] = lo; out[2 * x + 1] = hi;
   }
+  // Scale the drawing to the file's peak so quiet raw DIs stay readable.
+  let pk = 1e-6; for (let i = 0; i < out.length; i++) pk = Math.max(pk, Math.abs(out[i]));
+  for (let i = 0; i < out.length; i++) out[i] /= pk;
   return out;
 }
 function drawWave() {
@@ -926,14 +931,14 @@ function animateWave() {
 }
 // Like setting the preamp: bring the take's loud sections to -18 dBFS RMS,
 // the level the compressors are tuned for (raw takes often sit near -26).
-function autoInputGain() {
+function autoInputGain(quiet) {
   const d = buffer.getChannelData(0), w = Math.floor(buffer.sampleRate / 10), n = Math.floor(d.length / w), r = [];
   for (let i = 0; i < n; i++) { let e = 0; for (let j = i * w; j < (i + 1) * w; j++) e += d[j] * d[j]; r.push(10 * Math.log10(e / w + 1e-24)); }
   const top = Math.max(...r), act = r.filter(v => v > top - 30).sort((a, b) => a - b);
   const loud = act[Math.floor(act.length * 0.9)];
   const g = Math.round(Math.min(36, Math.max(-12, -18 - loud)) * 2) / 2;
   setParam("inDb", g);
-  msg(`Input gain set to ${g > 0 ? "+" : ""}${g} dB so the loud sections sit at -18 dBFS RMS. Adjust it in the menu.`);
+  if (!quiet) msg(`Input gain set to ${g > 0 ? "+" : ""}${g} dB so the loud sections sit at -18 dBFS RMS. Adjust it in the menu.`);
 }
 function onNewBuffer() {
   T.pos = 0; T.loopA = T.loopB = null; peaks = null;
@@ -1002,6 +1007,33 @@ new ResizeObserver(() => drawWave()).observe(waveEl);
 // Show the demo's waveform before audio is started (no AudioContext needed).
 try { buffer = makeDemo(48000); onNewBuffer(); } catch (e) { /* AudioBuffer unsupported: drawn after Play */ }
 
-// Open on the big produced sound.
+// A real, unprocessed DI (dry mic recording) published next to the page: 45 s of
+// a lead growl track. Opened as a local file the fetch fails, and the
+// synthetic demo stays.
+const REAL_DI = { file: "real_di.mp3", label: "Real DI · lead growl, dry (45 s excerpt)" };
+let realDiBuffer = null;
+async function loadRealDI(autoplay) {
+  try {
+    if (!realDiBuffer) {
+      const res = await fetch(REAL_DI.file);
+      if (!res.ok) throw new Error(res.status);
+      const bytes = await res.arrayBuffer();
+      const dec = ctx || new OfflineAudioContext(1, 1, 44100);
+      realDiBuffer = await dec.decodeAudioData(bytes);
+    }
+    if (playing || micStream) stopSource();
+    buffer = realDiBuffer; onNewBuffer(); autoInputGain(true);
+    document.getElementById("src").innerHTML = "Source: <b></b>";
+    document.querySelector("#src b").textContent = REAL_DI.label;
+    document.getElementById("realdi").hidden = false;
+    msg(`Real DI loaded. Input gain set to +${params.inDb} dB, like setting the preamp. Press Play, then A/B it against the dry take. These are growls: try the "Scream dark / gutturals" preset too.`);
+    if (autoplay) play();
+    return true;
+  } catch (e) { return false; }
+}
+document.getElementById("realdi").addEventListener("click", async () => { await ensureAudio(); loadRealDI(true); });
+
+// Open on the big produced sound, with the real DI loaded if it's available.
 applyPreset("huge");
+loadRealDI(false);
 </script>
