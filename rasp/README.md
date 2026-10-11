@@ -12,7 +12,11 @@ the box adds grit, control, size and space.
 |---|---|
 | `dsp/rasp.h` | The DSP engine. Header-only C++17, no heap, no dependencies |
 | `host/rasp_wav.cpp` | Desktop tool: process a WAV file |
-| `daisy/main.cpp` | Firmware for an Electrosmith Daisy Seed (16 knobs, 4 faders, 3 trims, 2 toggles, 4 footswitches) |
+| `daisy/main.cpp` | Floor-pedal firmware for an Electrosmith Daisy Seed: 16 knobs, 4 faders, 3 trims, 4 footswitches, presets in flash, USB MIDI. Builds against libDaisy v9.0.0 |
+| `daisy/pod/main.cpp` | Bench firmware for a Daisy Pod: the same DSP on a $70–90 board, for hearing it and measuring latency/CPU first |
+| `BUILD.md` | **What to buy and how to build it:** Stage 1 bench test, Stage 2 full pedal parts list |
+| `dsp/presets.h` | Factory presets, shared with the playground (`make check` verifies they match) |
+| `host/live_test.cpp` | Tests for bypass, mono and feedback (closed-loop room simulation) |
 | `playground/index.html` | Playable browser preview, a JS port of `dsp/rasp.h` that matches it to −76 dB. Load a recording, then scrub it on the waveform or loop one phrase |
 | `tools/probe.py` | Measurement kit for matching RASP to a reference plugin (section 6) |
 | `tools/takes.py` | Renders real takes through every preset, measures them, and compares them with finished reference vocals. See `samples/README.md` |
@@ -124,30 +128,39 @@ and check the LED goes out. Also on stage:
   its null. In-ears beat wedges.
 - Cupping the grille removes the mic's pickup pattern and invites feedback.
 
-Planned: an automatic howl detector (it finds a narrow, growing peak and
-notches it).
+### Live features (all in `dsp/rasp.h`, tested with `live_test`)
+
+| Feature | What it does | Tested |
+|---|---|---|
+| **Level-matched bypass** | The processed voice measured ~18 dB louder than the dry mic, so a plain bypass makes you vanish when you talk between songs. Bypass now plays the dry voice at the effect's loudness (K-weighted, learned while you sing, ~10 s memory), with a 25 ms crossfade. The relay only takes over if power fails | On the real DI, effect segments measured −10.5/−9.7/−10.2 LUFS and bypassed segments −9.6/−11.2/−10.5. Unmatched bypass would drop 6–8 dB. No clicks at the switch points |
+| **Mono mode** | For one-channel PAs. Drops the stereo comb taps (they become a fixed comb filter when summed) and keeps the detuned doubles | Comb ripple summed to mono: 6.9 dB → 3.6 dB peak-to-peak (plain noise: 3.0) |
+| **Feedback guard (HowlGuard)** | Watches the output spectrum every 21 ms. It looks for a peak that is narrow, without harmonics (a voice always has them), and steady for 250 ms, then drops a narrow −12 dB notch on it (up to 6, deepening if a frequency returns). Notches stay until cleared | In a simulated mic + resonant room + speaker loop that howled at 1296 Hz (up to 96% pure tone), it notched 1296 and 2956 Hz within 0.8–0.9 s and held the tone under 1%. **Zero notches** on all six full-length real vocal stems and on held clean notes with or without vibrato. A pure whistle does trigger it, as it would any feedback suppressor |
+| **Presets** | 6 factory presets plus 2 spare slots, saved in the Daisy's flash. Recall by footswitch (long press) or USB MIDI Program Change. Knobs use "pickup", so they don't jump a recalled preset | `make check`: C++ and playground defaults and presets match |
+
+```sh
+make && make check
+./live_test bypass take.wav out.wav in=10        # toggles bypass every 6 s
+./live_test feedback take.wav out.wav 0.07       # closed loop; add howl=0 to hear it howl
+./live_test falsepos take.wav in=8               # how many notches a take triggers
+```
 
 ## 4. Hardware
 
-**Platform: Electrosmith Daisy Seed** (STM32H750, 480 MHz Cortex-M7 with a
-double-precision FPU, 64 MB SDRAM, audio codec on board).
+**See [BUILD.md](BUILD.md) for exactly what to buy.** In brief:
+**Stage 1** is a Daisy Pod (about $70–90, no soldering) to hear it and measure it.
+**Stage 2** is the full floor pedal (about $280–380 in parts).
 
-- **CPU:** the engine runs at 26× real time on desktop. The anti-aliased drive is
-  about a third of that cost. Gain math uses fast log/exp approximations
-  (error < 0.01 dB). Daisy CPU use is **not measured yet**. My estimate is
-  20–40% at 48 kHz. If it's high, the drive can fall back to 2× oversampling.
-- **Memory:** 1.4 MB of delay lines, placed in SDRAM.
+- **Platform:** Electrosmith Daisy Seed (STM32H750, 480 MHz Cortex-M7 with a
+  double-precision FPU, 64 MB SDRAM). Both firmwares build against libDaisy
+  v9.0.0. The pedal binary is 149 KB, more than the 128 KB of internal flash,
+  so it uses Electrosmith's bootloader (stored in QSPI, runs from SRAM: 30% of
+  it used). The delay lines take 1.5 MB of SDRAM.
+- **CPU:** 26× real time on desktop. **Not measured on the Daisy yet**; Stage 1 does that.
+  The heaviest stage is the 4× oversampled drive; it can fall back to 2× if needed.
 - **Precision:** smoothers and slow oscillator phases are double precision.
-  As 32-bit floats they drifted measurably: a delay time stalled 3.75
-  samples short, and the doubles' pitch drifted.
-- **Panel:** 16 knobs through two CD4051 multiplexers, 4 level faders,
-  3 trims (bleed, de-ess, glue), 2 three-way toggles, a solo button,
-  4 footswitches, and 7 LEDs through a 74HC595 shift register. The pin map is
-  in `daisy/main.cpp`.
-- **Analog:** mic preamp (THAT1512 or INA217, 40–60 dB, optional +48 V
-  phantom), XLR in, XLR L/R out, a headphone amp, a bypass relay, a ground lift
-  and 9 V center-negative power.
-- Rough parts cost: about $160. A 1590DD-size enclosure or a small desktop case fits it.
+  As 32-bit floats they drifted measurably.
+- **Power:** 12 V DC, centre-negative. ±12 V for the analog side comes from an isolated DC-DC.
+  No phantom power in v1, so use a dynamic mic.
 
 ## 5. Presets (playground)
 
@@ -188,11 +201,13 @@ licensing.
 ## Status
 
 - **Verified on desktop:**
-  - Output is stable and bounded at 48 and 96 kHz, even at extreme settings.
+  - Output stays stable and bounded at 48 and 96 kHz, even at extreme settings.
   - Drive aliasing is −72 dB at full drive.
-  - The de-esser takes 5.2 dB off pure sibilance.
-  - The doubles measure ±12 cents at the default spread.
-  - The JS port matches the C++ engine to −76 dB or better.
+  - The JS port matches C++ to −71 dB or better, including on a real vocal
+    and on the live features.
+  - The live features pass the tests above.
+- **Both firmwares compile and link** against libDaisy v9.0.0.
 - **Not done:**
-  - Not tuned against real screams or a real Screamer. Raw tracks and `tools/probe.py` are the next step.
-  - `daisy/main.cpp` hasn't been compiled or run on hardware yet.
+  - Running on hardware: latency and CPU measurements (BUILD.md, Stage 1).
+  - A schematic/PCB for the analog front end.
+  - Tuning against more songs and styles.

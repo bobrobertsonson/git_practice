@@ -1,3 +1,6 @@
 rasp/rasp_wav
 rasp/renders/
 __pycache__/
+rasp/daisy/build/
+rasp/live_test
+rasp/presets_dump

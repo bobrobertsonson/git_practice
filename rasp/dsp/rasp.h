@@ -17,6 +17,8 @@
 //            diffuse, darken, width, solo
 //   FLAVOUR  8-line FDN plate (modulated), ping-pong delay, return EQ, tilt, duck
 //   BUS      stereo glue compressor ─► -1 dBFS peak limiter
+//   LIVE     mono mode, level-matched digital bypass, feedback notches
+//            (HowlGuard) on the final output
 //
 // Header-only C++17, no heap, no dependencies. No lookahead and no block
 // processing: the only delay on the dry path is filter phase delay in the
@@ -24,6 +26,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
 namespace rasp {
 
@@ -232,6 +235,12 @@ struct Params {
     float glue       = 0.50f;  // stereo glue compression (menu)
     float outDb      = 0.f;    // drives the bus limiter: louder = denser
     float inDb       = 0.f;    // input gain (the preamp gain knob): set so screams peak near -6 dBFS
+
+    // LIVE
+    bool  bypass     = false;  // digital bypass: dry voice, level-matched, click-free crossfade
+    bool  bypassMatch = true;  // match the bypassed voice to the effect's loudness
+    bool  mono       = false;  // one-channel PA: drop the stereo comb taps, sum to mono
+    bool  howl       = true;   // automatic feedback notches
 };
 
 // ---------------------------------------------------------------------------
@@ -497,9 +506,18 @@ public:
         float hz = expMap(1.f - p.darken, 1500.f, 18000.f);
         darkL.set(hz, 0.6f, sr); darkR.set(hz, 0.6f, sr);
     }
-    void process(float x, float& L, float& R) {
+    void process(float x, float& L, float& R, bool mono = false) {
         hpIn.process(x);
         float h = hpIn.hp;
+        if (mono) {
+            // One-channel PA: comb taps would turn into a fixed comb filter when
+            // summed, so only the micro-pitched doubles are kept.
+            float d = 0.8f * (dblL.process(h) + dblR.process(h)) * 0.7071f;
+            dl.write(h);
+            darkL.process(d); darkR.process(d);
+            L = R = darkL.lp;
+            return;
+        }
         dl.write(h);
         // Comb taps (ms) at full spread; spread scales them 0.25x..1x.
         static const float tL[4] = {4.7f, 11.3f, 17.9f, 26.3f}, tR[4] = {6.1f, 9.7f, 15.1f, 23.9f};
@@ -666,6 +684,202 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// ITU BS.1770 K-weighting (pre-filter shelf + RLB high-pass) for any rate.
+// ---------------------------------------------------------------------------
+struct KWeight {
+    Biquad shelf, hp;
+    void init(float sr) {
+        double K = std::tan(3.14159265358979 * 1681.974450955533 / sr), Q = 0.7071752369554196;
+        double Vh = std::pow(10.0, 3.999843853973347 / 20.0), Vb = std::pow(Vh, 0.4996667741545416);
+        double a0 = 1 + K / Q + K * K;
+        float c1[5] = {(float)((Vh + Vb * K / Q + K * K) / a0), (float)(2 * (K * K - Vh) / a0),
+                       (float)((Vh - Vb * K / Q + K * K) / a0), (float)(2 * (K * K - 1) / a0),
+                       (float)((1 - K / Q + K * K) / a0)};
+        shelf.set(c1);
+        K = std::tan(3.14159265358979 * 38.13547087602444 / sr); Q = 0.5003270373238773;
+        double d = 1 + K / Q + K * K;
+        float c2[5] = {1.f, -2.f, 1.f, (float)(2 * (K * K - 1) / d), (float)((1 - K / Q + K * K) / d)};
+        hp.set(c2);
+    }
+    float process(float x) { return hp.process(shelf.process(x)); }
+};
+
+// ---------------------------------------------------------------------------
+// Level-matched digital bypass. Live, the processed voice measured ~18 dB
+// louder than the dry mic, so a plain bypass would make the voice vanish when
+// you talk between songs. This keeps measuring both (K-weighted, 400 ms
+// blocks, only while you're singing, ~10 s memory) and plays the bypassed
+// voice at the effect's loudness, with a 25 ms equal-power crossfade.
+// ---------------------------------------------------------------------------
+class BypassMatcher {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        kDry.init(sr); kL.init(sr); kR.init(sr);
+        blockLen = (int)(0.4f * sr);
+        emaC = std::exp(-0.4 / 10.0);                // 10 s memory, in blocks
+        fade.init(0.f, sr, 8.f);                       // ~25 ms to settle
+        gain.init(1.f, sr, 200.f);
+    }
+    // dry: the mono voice; L/R: the processed output. Writes the final output.
+    void process(float dry, float& L, float& R, bool bypass, bool match) {
+        float kd = kDry.process(dry), l = kL.process(L), r = kR.process(R);
+        accD += 2.f * kd * kd;                         // dry plays on both channels
+        accW += l * l + r * r;
+        if (++accN >= blockLen) {
+            double ed = accD / accN, ew = accW / accN;
+            if (lufs(ed) > -50.0) {                    // only learn while the voice is there
+                emaD = emaD > 0 ? emaD * emaC + ed * (1 - emaC) : ed;
+                emaW = emaW > 0 ? emaW * emaC + ew * (1 - emaC) : ew;
+            }
+            accD = accW = 0; accN = 0;
+        }
+        float gDb = (match && emaD > 0 && emaW > 0) ? clampf((float)(lufs(emaW) - lufs(emaD)), -12.f, 30.f) : 0.f;
+        gain.target = dbToLin(gDb);
+        fade.target = bypass ? 1.f : 0.f;
+        float f = fade.next(), g = gain.next();
+        float a = std::cos(0.5f * kPi * f), b = std::sin(0.5f * kPi * f);   // equal power
+        float d = safetyClip(dry * g);
+        L = a * L + b * d;
+        R = a * R + b * d;
+    }
+    float matchDb() const { return (emaD > 0 && emaW > 0) ? (float)(lufs(emaW) - lufs(emaD)) : 0.f; }
+private:
+    static double lufs(double ms) { return -0.691 + 10.0 * std::log10(ms + 1e-20); }
+    float sr = 48000.f;
+    KWeight kDry, kL, kR;
+    int blockLen = 19200, accN = 0;
+    double accD = 0, accW = 0, emaD = 0, emaW = 0, emaC = 0.96;
+    Smoothed fade, gain;
+};
+
+// ---------------------------------------------------------------------------
+// Radix-2 FFT (in place, complex), for the howl detector.
+// ---------------------------------------------------------------------------
+template <int N>
+struct FFT {
+    static_assert((N & (N - 1)) == 0, "N must be a power of two");
+    float cosT[N / 2], sinT[N / 2];
+    int rev[N];
+    void init() {
+        int bits = 0; while ((1 << bits) < N) bits++;
+        for (int i = 0; i < N; i++) { int r = 0; for (int b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); rev[i] = r; }
+        for (int i = 0; i < N / 2; i++) { cosT[i] = std::cos(2.0 * 3.14159265358979 * i / N); sinT[i] = -std::sin(2.0 * 3.14159265358979 * i / N); }
+    }
+    void run(float* re, float* im) const {
+        for (int i = 0; i < N; i++) if (i < rev[i]) { std::swap(re[i], re[rev[i]]); std::swap(im[i], im[rev[i]]); }
+        for (int len = 2; len <= N; len <<= 1) {
+            int half = len >> 1, step = N / len;
+            for (int i = 0; i < N; i += len)
+                for (int j = 0; j < half; j++) {
+                    float wr = cosT[j * step], wi = sinT[j * step];
+                    float xr = re[i + j + half] * wr - im[i + j + half] * wi;
+                    float xi = re[i + j + half] * wi + im[i + j + half] * wr;
+                    re[i + j + half] = re[i + j] - xr; im[i + j + half] = im[i + j] - xi;
+                    re[i + j] += xr; im[i + j] += xi;
+                }
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// HowlGuard: automatic feedback suppression. Feedback is a single pure tone
+// that holds still and grows; a voice (even a sustained clean note) has
+// harmonics and moves, and a scream is noisy. Every ~21 ms the output
+// spectrum is checked for a peak that is
+//   - far above the average (> 20 dB), and narrow (> 12 dB over +-3..6 bins),
+//   - without harmonics at 2x or 1/2x (> 18 dB below),
+//   - at the same frequency for ~250 ms.
+// Then a narrow -12 dB notch goes on it (deeper if it comes back), up to 6.
+// The notches stay until cleared, the way stage feedback suppressors work.
+// ---------------------------------------------------------------------------
+class HowlGuard {
+public:
+    static constexpr int kN = 2048, kHop = 1024, kMaxNotch = 6;
+    void init(float sampleRate) {
+        sr = sampleRate;
+        fft.init();
+        for (int i = 0; i < kN; i++) win[i] = 0.5f - 0.5f * std::cos(2.f * kPi * i / (kN - 1));
+        clear();
+    }
+    void clear() {
+        for (auto& n : notches) { n.active = false; n.depthDb = 0.f; }
+        candBin = -1; candFrames = 0; deployed = 0;
+    }
+    void analyze(float x) {
+        ring[pos] = x; pos = (pos + 1) & (kN - 1);
+        if (++hopCount < kHop) return;
+        hopCount = 0;
+        frame();
+    }
+    // Apply the active notches (same filters on both channels).
+    void process(float& L, float& R) {
+        for (int i = 0; i < kMaxNotch; i++) if (notches[i].active) { L = notches[i].l.process(L); R = notches[i].r.process(R); }
+    }
+    int activeNotches() const { int c = 0; for (const auto& n : notches) c += n.active; return c; }
+    int deployedCount() const { return deployed; }
+    float notchHz(int i) const { return notches[i].active ? notches[i].hz : 0.f; }
+private:
+    struct Notch { bool active = false; float hz = 0, depthDb = 0; uint32_t age = 0; Biquad l, r; };
+    void frame() {
+        for (int i = 0; i < kN; i++) { re[i] = ring[(pos + i) & (kN - 1)] * win[i]; im[i] = 0.f; }
+        fft.run(re, im);
+        int lo = (int)(150.f / sr * kN), hi = (int)(8000.f / sr * kN);
+        float sum = 0.f; int best = lo; float bestP = 0.f;
+        for (int k = lo; k <= hi; k++) {
+            float pk = re[k] * re[k] + im[k] * im[k];
+            mag[k] = pk; sum += pk;
+            if (pk > bestP) { bestP = pk; best = k; }
+        }
+        for (int k = hi + 1; k < kN / 2 && k <= 2 * hi + 4; k++) mag[k] = re[k] * re[k] + im[k] * im[k];
+        float mean = sum / (hi - lo + 1);
+        bool tonal = false;
+        float level = bestP / (0.25f * kN * kN);        // ~ power relative to a full-scale sine
+        if (level > 1e-5f && bestP > 100.f * mean) {      // > -50 dBFS-ish and > 20 dB over the average
+            float side = 0.f; int ns = 0;
+            for (int d = 3; d <= 6; d++) { if (best - d >= lo) { side += mag[best - d]; ns++; } if (best + d <= hi) { side += mag[best + d]; ns++; } }
+            side /= ns;
+            float h2 = 0.f, h12 = 0.f;
+            for (int d = -1; d <= 1; d++) {
+                int k2 = 2 * best + d; if (k2 < kN / 2) h2 = std::fmax(h2, mag[k2]);
+                int k12 = best / 2 + d; if (k12 >= lo) h12 = std::fmax(h12, mag[k12]);
+            }
+            tonal = bestP > 16.f * side && bestP > 63.f * h2 && bestP > 63.f * h12;
+        }
+        if (tonal && candBin >= 0 && std::abs(best - candBin) <= 1) candFrames++;
+        else if (tonal) { candBin = best; candFrames = 1; }
+        else { candBin = -1; candFrames = 0; }
+        if (candFrames >= 12) {                           // ~250 ms at 48 kHz
+            // Parabolic interpolation for the exact frequency.
+            float a = std::log(mag[best - 1] + 1e-20f), b = std::log(mag[best] + 1e-20f), c = std::log(mag[best + 1] + 1e-20f);
+            float off = 0.5f * (a - c) / (a - 2 * b + c + 1e-20f);
+            deploy((best + clampf(off, -0.5f, 0.5f)) * sr / kN);
+            candBin = -1; candFrames = 0;
+        }
+        for (auto& n : notches) n.age++;
+    }
+    void deploy(float hz) {
+        for (auto& n : notches)                           // already notched nearby: go deeper
+            if (n.active && std::fabs(std::log2(hz / n.hz)) < 1.f / 12.f) { setNotch(n, n.hz, std::fmax(n.depthDb - 6.f, -24.f)); deployed++; return; }
+        Notch* slot = nullptr;
+        for (auto& n : notches) if (!n.active) { slot = &n; break; }
+        if (!slot) { slot = &notches[0]; for (auto& n : notches) if (n.age > slot->age) slot = &n; }   // replace the oldest
+        setNotch(*slot, hz, -12.f);
+        slot->active = true; slot->age = 0;
+        deployed++;
+    }
+    void setNotch(Notch& n, float hz, float depthDb) {
+        n.hz = hz; n.depthDb = depthDb;
+        n.l.peaking(hz, 20.f, depthDb, sr); n.r.peaking(hz, 20.f, depthDb, sr);
+    }
+    float sr = 48000.f;
+    FFT<kN> fft;
+    float ring[kN] = {}, win[kN], re[kN], im[kN], mag[kN] = {};
+    int pos = 0, hopCount = 0, candBin = -1, candFrames = 0, deployed = 0;
+    Notch notches[kMaxNotch];
+};
+
+// ---------------------------------------------------------------------------
 // The whole box. ~1.4 MB of state (delay lines): on Daisy, place it in SDRAM.
 // ---------------------------------------------------------------------------
 class Processor {
@@ -673,6 +887,7 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
+        bypassM.init(sr); howlG.init(sr);
         gIn.init(1.f, sr); gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
     }
@@ -702,6 +917,7 @@ public:
     void process(float in, float& outL, float& outR) {
         // CONTROL (series)
         float x = in * gIn.next();
+        const float dryVoice = x;                      // for the level-matched bypass
         float gm = gMix.next(), gc = gCtl.next();
         if (p.controlOn) {
             loCut1.process(x); loCut2.process(loCut1.hp);
@@ -721,20 +937,35 @@ public:
         // THICKEN + FLAVOUR (parallel, fed by the control output)
         float tL = 0, tR = 0, fL = 0, fR = 0;
         float gt = gThk.next(), gf = gFlv.next();
-        if (gt > 1e-4f) thicken.process(x, tL, tR);
+        if (gt > 1e-4f) thicken.process(x, tL, tR, p.mono);
         if (gf > 1e-4f) flavour.process(x, x, fL, fR);
         float dry = p.solo ? 0.f : x;
         float go = gOut.next();
         float L = (dry + gt * tL + gf * fL) * go, R = (dry + gt * tR + gf * fR) * go;
+        if (p.mono) { float m = 0.5f * (L + R); L = R = m; }
         // BUS
         bus.process(L, R);
-        outL = safetyClip(L);
-        outR = safetyClip(R);
+        L = safetyClip(L);
+        R = safetyClip(R);
+        bypassM.process(dryVoice, L, R, p.bypass, p.bypassMatch);
+        // Feedback notches last, so they also protect the bypassed voice; the
+        // detector listens to exactly what goes to the speakers.
+        if (p.howl) {
+            howlG.process(L, R);
+            howlG.analyze(0.5f * (L + R));
+        }
+        outL = L;
+        outR = R;
     }
 
     float gainReductionDb() const { return chop.gainReductionDb(); }
     float limiterDb() const { return bus.limiterDb(); }
     float bleedReductionDb() const { return expander.reductionDb(); }
+    float bypassMatchDb() const { return bypassM.matchDb(); }
+    int howlNotches() const { return howlG.activeNotches(); }
+    int howlEvents() const { return howlG.deployedCount(); }
+    float howlNotchHz(int i) const { return howlG.notchHz(i); }
+    void clearHowl() { howlG.clear(); }
 
 private:
     float sr = 48000.f;
@@ -748,6 +979,8 @@ private:
     Thicken thicken;
     Flavour flavour;
     Bus bus;
+    BypassMatcher bypassM;
+    HowlGuard howlG;
     Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix;
 };
 

@@ -127,7 +127,9 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 .srow output { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
 .srow input[type=range] { width: 100%; accent-color: var(--powder); }
 .group-label { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--powder); grid-column: 1 / -1; margin-top: 4px; }
-.checkrow { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.checkrow { display: flex; gap: 8px; align-items: center; font-size: 13px; grid-column: 1 / -1; }
+.liverow { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 13px; color: var(--muted); grid-column: 1 / -1; }
+.liverow button { min-height: 32px; padding: 6px 10px; font-size: 12px; }
 
 .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 22px; }
 .notes section { display: grid; gap: 8px; align-content: start; min-width: 0; }
@@ -433,7 +435,14 @@ class RaspEngine {
       return (y + C.crushMix * crushed) * C.makeup;
     };
     const thicken = (x, o) => {
-      svfRun(tHp, x); const h = tHp.hp; dWrite(tdl, h);
+      svfRun(tHp, x); const h = tHp.hp;
+      if (p.mono) {        // one-channel PA: drop the comb taps, keep the doubles
+        const d = 0.8 * (mpRun(dblL, h) + mpRun(dblR, h)) * 0.7071;
+        dWrite(tdl, h); svfRun(darkL, d); svfRun(darkR, d);
+        o[0] = o[1] = darkL.lp;
+        return;
+      }
+      dWrite(tdl, h);
       const s = (0.25 + 0.75 * smNext(spreadS)) * 0.001 * sr;
       let l = 0, r = 0;
       for (let i = 0; i < 4; i++) { l += TG[i] * dRead(tdl, TL[i] * s); r += TG[i] * dRead(tdl, TR[i] * s); }
@@ -488,9 +497,103 @@ class RaspEngine {
       o[0] = L; o[1] = R;
     };
 
+    // ---- LIVE: K-weighting, level-matched bypass, HowlGuard (see rasp.h)
+    const kweight = () => {
+      let K = Math.tan(PI * 1681.974450955533 / sr), Q = 0.7071752369554196;
+      const Vh = Math.pow(10, 3.999843853973347 / 20), Vb = Math.pow(Vh, 0.4996667741545416), a0 = 1 + K / Q + K * K;
+      const s1 = bq(); s1.b0 = (Vh + Vb * K / Q + K * K) / a0; s1.b1 = 2 * (K * K - Vh) / a0; s1.b2 = (Vh - Vb * K / Q + K * K) / a0; s1.a1 = 2 * (K * K - 1) / a0; s1.a2 = (1 - K / Q + K * K) / a0;
+      K = Math.tan(PI * 38.13547087602444 / sr); Q = 0.5003270373238773;
+      const d = 1 + K / Q + K * K, s2 = bq(); s2.b0 = 1; s2.b1 = -2; s2.b2 = 1; s2.a1 = 2 * (K * K - 1) / d; s2.a2 = (1 - K / Q + K * K) / d;
+      return x => bqRun(s2, bqRun(s1, x));
+    };
+    const BM = { kD: kweight(), kL: kweight(), kR: kweight(), blockLen: Math.round(0.4 * sr), n: 0, accD: 0, accW: 0, emaD: 0, emaW: 0,
+      emaC: Math.exp(-0.4 / 10), fade: sm(0, 8), gain: sm(1, 200) };
+    const lufsOf = ms => -0.691 + 10 * Math.log10(ms + 1e-20);
+    const bypassMatch = (dryV, o) => {
+      const kd = BM.kD(dryV), l = BM.kL(o[0]), r = BM.kR(o[1]);
+      BM.accD += 2 * kd * kd; BM.accW += l * l + r * r;
+      if (++BM.n >= BM.blockLen) {
+        const ed = BM.accD / BM.n, ew = BM.accW / BM.n;
+        if (lufsOf(ed) > -50) {
+          BM.emaD = BM.emaD > 0 ? BM.emaD * BM.emaC + ed * (1 - BM.emaC) : ed;
+          BM.emaW = BM.emaW > 0 ? BM.emaW * BM.emaC + ew * (1 - BM.emaC) : ew;
+        }
+        BM.accD = BM.accW = 0; BM.n = 0;
+      }
+      const gDb = p.bypassMatch && BM.emaD > 0 && BM.emaW > 0 ? clamp(lufsOf(BM.emaW) - lufsOf(BM.emaD), -12, 30) : 0;
+      BM.gain.target = db(gDb); BM.fade.target = p.bypass ? 1 : 0;
+      const f = smNext(BM.fade), g = smNext(BM.gain);
+      const a = Math.cos(0.5 * PI * f), b = Math.sin(0.5 * PI * f), dd = safetyClip(dryV * g);
+      o[0] = a * o[0] + b * dd; o[1] = a * o[1] + b * dd;
+    };
+    this.bypassMatchDb = () => BM.emaD > 0 && BM.emaW > 0 ? lufsOf(BM.emaW) - lufsOf(BM.emaD) : 0;
+    const HN = 2048, HHOP = 1024, HMAX = 6;
+    const H = { ring: new Float32Array(HN), win: new Float32Array(HN), re: new Float32Array(HN), im: new Float32Array(HN), mag: new Float32Array(HN),
+      rev: new Int32Array(HN), cosT: new Float32Array(HN / 2), sinT: new Float32Array(HN / 2), pos: 0, hop: 0, cand: -1, frames: 0, deployed: 0,
+      notches: Array.from({ length: HMAX }, () => ({ active: false, hz: 0, depth: 0, age: 0, l: bq(), r: bq() })) };
+    { let bits = 0; while ((1 << bits) < HN) bits++;
+      for (let i = 0; i < HN; i++) { let r = 0; for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); H.rev[i] = r; }
+      for (let i = 0; i < HN / 2; i++) { H.cosT[i] = Math.cos(2 * PI * i / HN); H.sinT[i] = -Math.sin(2 * PI * i / HN); }
+      for (let i = 0; i < HN; i++) H.win[i] = 0.5 - 0.5 * Math.cos(2 * PI * i / (HN - 1)); }
+    const fftRun = (re, im) => {
+      for (let i = 0; i < HN; i++) { const j = H.rev[i]; if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+      for (let len = 2; len <= HN; len <<= 1) {
+        const half = len >> 1, step = HN / len;
+        for (let i = 0; i < HN; i += len) for (let j = 0; j < half; j++) {
+          const wr = H.cosT[j * step], wi = H.sinT[j * step], k = i + j + half;
+          const xr = re[k] * wr - im[k] * wi, xi = re[k] * wi + im[k] * wr;
+          re[k] = re[i + j] - xr; im[k] = im[i + j] - xi; re[i + j] += xr; im[i + j] += xi;
+        }
+      }
+    };
+    const setNotch = (n, hz, depth) => { n.hz = hz; n.depth = depth; peaking(n.l, hz, 20, depth); peaking(n.r, hz, 20, depth); };
+    const deployNotch = hz => {
+      for (const n of H.notches) if (n.active && Math.abs(Math.log2(hz / n.hz)) < 1 / 12) { setNotch(n, n.hz, Math.max(n.depth - 6, -24)); H.deployed++; return; }
+      let slot = H.notches.find(n => !n.active);
+      if (!slot) { slot = H.notches[0]; for (const n of H.notches) if (n.age > slot.age) slot = n; }
+      setNotch(slot, hz, -12); slot.active = true; slot.age = 0; H.deployed++;
+    };
+    const howlFrame = () => {
+      const { re, im, mag } = H;
+      for (let i = 0; i < HN; i++) { re[i] = H.ring[(H.pos + i) & (HN - 1)] * H.win[i]; im[i] = 0; }
+      fftRun(re, im);
+      const lo = Math.floor(150 / sr * HN), hi = Math.floor(8000 / sr * HN);
+      let sum = 0, best = lo, bestP = 0;
+      for (let k = lo; k <= hi; k++) { const pk = re[k] * re[k] + im[k] * im[k]; mag[k] = pk; sum += pk; if (pk > bestP) { bestP = pk; best = k; } }
+      for (let k = hi + 1; k < HN / 2 && k <= 2 * hi + 4; k++) mag[k] = re[k] * re[k] + im[k] * im[k];
+      const mean = sum / (hi - lo + 1), level = bestP / (0.25 * HN * HN);
+      let tonal = false;
+      if (level > 1e-5 && bestP > 100 * mean) {
+        let side = 0, ns = 0;
+        for (let d = 3; d <= 6; d++) { if (best - d >= lo) { side += mag[best - d]; ns++; } if (best + d <= hi) { side += mag[best + d]; ns++; } }
+        side /= ns;
+        let h2 = 0, h12 = 0;
+        for (let d = -1; d <= 1; d++) { const k2 = 2 * best + d; if (k2 < HN / 2) h2 = Math.max(h2, mag[k2]); const k12 = Math.floor(best / 2) + d; if (k12 >= lo) h12 = Math.max(h12, mag[k12]); }
+        tonal = bestP > 16 * side && bestP > 63 * h2 && bestP > 63 * h12;
+      }
+      if (tonal && H.cand >= 0 && Math.abs(best - H.cand) <= 1) H.frames++;
+      else if (tonal) { H.cand = best; H.frames = 1; } else { H.cand = -1; H.frames = 0; }
+      if (H.frames >= 12) {
+        const a = Math.log(mag[best - 1] + 1e-20), b = Math.log(mag[best] + 1e-20), c = Math.log(mag[best + 1] + 1e-20);
+        const off = 0.5 * (a - c) / (a - 2 * b + c + 1e-20);
+        deployNotch((best + clamp(off, -0.5, 0.5)) * sr / HN);
+        H.cand = -1; H.frames = 0;
+      }
+      for (const n of H.notches) n.age++;
+    };
+    const howl = o => {
+      for (const n of H.notches) if (n.active) { o[0] = bqRun(n.l, o[0]); o[1] = bqRun(n.r, o[1]); }
+      H.ring[H.pos] = 0.5 * (o[0] + o[1]); H.pos = (H.pos + 1) & (HN - 1);
+      if (++H.hop >= HHOP) { H.hop = 0; howlFrame(); }
+    };
+    this.howlNotches = () => H.notches.filter(n => n.active).map(n => Math.round(n.hz));
+    this.howlEvents = () => H.deployed;
+    this.clearHowl = () => { for (const n of H.notches) { n.active = false; n.depth = 0; } H.cand = -1; H.frames = 0; H.deployed = 0; };
+
     const out = [0, 0], tO = [0, 0], fO = [0, 0];
     this.process = x => {
       x *= smNext(gIn);
+      const dryVoice = x;
       const gm = smNext(gMix), gc = smNext(gCtl);
       if (p.controlOn) {
         svfRun(lc1, x); svfRun(lc2, lc1.hp); svfRun(hc1, lc2.hp); svfRun(hc2, hc1.lp);
@@ -508,8 +611,11 @@ class RaspEngine {
       const dry = p.solo ? 0 : x, go = smNext(gOut);
       out[0] = (dry + gt * tO[0] + gf * fO[0]) * go;
       out[1] = (dry + gt * tO[1] + gf * fO[1]) * go;
+      if (p.mono) { const m = 0.5 * (out[0] + out[1]); out[0] = out[1] = m; }
       bus(out);
       out[0] = safetyClip(out[0]); out[1] = safetyClip(out[1]);
+      bypassMatch(dryVoice, out);
+      if (p.howl) howl(out);
       return out;
     };
   }
@@ -564,6 +670,7 @@ function makeBlockRunner(sr) {
       if ("match" in msg) match = msg.match;
       if ("target" in msg) target = msg.target;
       if (msg.resetLoudness) { blocksD = []; blocksW = []; accD = accW = accN = 0; intDry = intWet = null; fastD = fastW = 0; }
+      if (msg.clearHowl) eng.clearHowl();
     },
     run(inp, oL, oR) {
       const n = oL.length;
@@ -609,7 +716,8 @@ function makeBlockRunner(sr) {
     stats() {
       const s = { peakIn, peakOut, gr: eng.gainReductionDb(), bleed: eng.bleedReductionDb(), lim: eng.limiterDb(),
         lufsDry: intDry, lufsWet: intWet,
-        gDryDb: 20 * Math.log10(gDry), gWetDb: 20 * Math.log10(gWet) };
+        gDryDb: 20 * Math.log10(gDry), gWetDb: 20 * Math.log10(gWet),
+        notches: eng.howlNotches(), howlEvents: eng.howlEvents(), bypassMatchDb: eng.bypassMatchDb() };
       peakIn = peakOut = 0; return s;
     },
   };
@@ -623,6 +731,7 @@ const DEFAULTS = {
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
+  bypass: false, bypassMatch: true, mono: false, howl: true,
 };
 const PRESETS = {
   huge:    { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3 },
@@ -658,7 +767,7 @@ const TOGGLES = {
 const MENU = [
   ["Input"],
   ["inDb", "Input gain", -12, 36, 0.5, v => (v > 0 ? "+" : "") + v.toFixed(1) + " dB"],
-  ["Live and cleanup"],
+  ["Cleanup"],
   ["bleed", "Bleed reducer", 0, 1, 0.01, v => v < 0.001 ? "off" : Math.round(-70 + 40 * v) + " dBFS"],
   ["deEss", "De-esser", 0, 1, 0.01, pct],
   ["Bus"],
@@ -740,17 +849,32 @@ for (const row of MENU) {
   inp.addEventListener("input", () => setParam(key, parseFloat(inp.value)));
   sliderEls[key]();
 }
-{
+const addCheck = (key, label) => {
   const r = document.createElement("label"); r.className = "checkrow";
-  r.innerHTML = '<input type="checkbox" id="solo"> Solo the thicken branch';
+  r.innerHTML = `<input type="checkbox" id="c-${key}"> ${label}`;
   menu.append(r);
   const cb = r.querySelector("input");
-  sliderEls.solo = () => { cb.checked = params.solo; };
-  cb.addEventListener("change", () => setParam("solo", cb.checked));
+  sliderEls[key] = () => { cb.checked = !!params[key]; };
+  cb.addEventListener("change", () => setParam(key, cb.checked));
+  sliderEls[key]();
+};
+addCheck("solo", "Solo the thicken branch");
+{
+  const g = document.createElement("div"); g.className = "group-label"; g.textContent = "Live"; menu.append(g);
+}
+addCheck("mono", "Mono output (one-channel PA: drops the stereo comb taps)");
+addCheck("bypassMatch", "Level-matched bypass (the Bypass footswitch keeps your voice at the effect's loudness)");
+addCheck("howl", "Feedback guard (automatic notches on howling frequencies)");
+{
+  const r = document.createElement("div"); r.className = "liverow";
+  r.innerHTML = '<button id="clearHowl" type="button">Clear notches</button><span id="howlInfo">No feedback notches</span><span id="bypassInfo"></span>';
+  menu.append(r);
+  r.querySelector("#clearHowl").addEventListener("click", () => sendRunner({ clearHowl: true }));
 }
 
 function applyPreset(name) {
-  const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm, inDb: params.inDb };
+  const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm, inDb: params.inDb,
+    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl };
   params = Object.assign({}, DEFAULTS, PRESETS[name], keep);
   Object.keys(params).forEach(k => setParam(k, params[k], false));
   sendParams();
@@ -806,6 +930,12 @@ async function ensureAudio() {
   document.getElementById("latency").textContent = `Browser audio latency here: about ${lat ? lat.toFixed(1) : "?"} ms output (plus input latency on the live mic). Sample rate ${ctx.sampleRate} Hz.`;
 }
 function showStats(s) {
+  if (s.notches) {
+    document.getElementById("howlInfo").textContent = s.notches.length
+      ? `Feedback notches: ${s.notches.map(h => h + " Hz").join(", ")}` : "No feedback notches";
+    document.getElementById("bypassInfo").textContent = s.bypassMatchDb
+      ? `Bypass level match: ${s.bypassMatchDb >= 0 ? "+" : ""}${s.bypassMatchDb.toFixed(1)} dB` : "";
+  }
   const f = v => v === null || v === undefined ? "—" : v.toFixed(1);
   const sign = v => (v >= 0 ? "+" : "") + v.toFixed(1);
   document.getElementById("lufs").innerHTML = matchOn && s.lufsDry !== null
@@ -878,12 +1008,17 @@ function scrubGrain(pos) {
   grain.start(t, Math.min(pos, Math.max(0, dur() - 0.09)), 0.09);
 }
 document.getElementById("play").addEventListener("click", () => playing ? stopSource() : play().catch(e => msg("Could not start audio: " + e.message)));
+// A/B dry: the testing tool (raw take vs. processed, loudness-matched).
 document.getElementById("ab").addEventListener("click", e => {
   bypass = !bypass; e.currentTarget.setAttribute("aria-pressed", String(bypass)); sendBypass();
-  document.getElementById("fsBypass").setAttribute("aria-pressed", String(!bypass));
-  document.getElementById("ledOn").classList.toggle("on", !bypass);
 });
-document.getElementById("fsBypass").addEventListener("click", () => document.getElementById("ab").click());
+// Bypass footswitch: the pedal's own bypass, level-matched and crossfaded
+// (what the audience hears when you talk between songs).
+document.getElementById("fsBypass").addEventListener("click", e => {
+  setParam("bypass", !params.bypass);
+  e.currentTarget.setAttribute("aria-pressed", String(!params.bypass));
+  document.getElementById("ledOn").classList.toggle("on", !params.bypass);
+});
 document.getElementById("match").addEventListener("click", e => {
   matchOn = !matchOn; e.currentTarget.setAttribute("aria-pressed", String(matchOn)); sendRunner({ match: matchOn });
   msg(matchOn ? "Loudness matching on: dry and processed both play at -23 LUFS." : "Loudness matching off: you hear the real output level.");
