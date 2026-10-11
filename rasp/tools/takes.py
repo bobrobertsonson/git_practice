@@ -70,6 +70,14 @@ def decode(path, channels):
     return np.frombuffer(raw, np.float32).reshape(-1, channels)
 
 
+def loud_rms_db(x):
+    """90th percentile of 100 ms RMS over the active parts of a take."""
+    w = SR // 10
+    n = len(x) // w
+    r = 20 * np.log10(np.sqrt(np.mean(x[: n * w].reshape(n, w) ** 2, axis=1)) + 1e-12)
+    return float(np.percentile(r[r > r.max() - 30], 90))
+
+
 def render(files, presets):
     if not RASP_WAV.exists():
         sys.exit("build the renderer first: make -C rasp")
@@ -84,13 +92,20 @@ def render(files, presets):
             # rasp_wav reads 16-bit or float WAV; hand it 48 kHz mono float.
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(f), "-ac", "1", "-ar", str(SR),
                             "-c:a", "pcm_f32le", str(mono)], check=True)
+            # Input gain, like setting the preamp: bring the loud sections to
+            # -18 dBFS RMS, the level the compressors are tuned for. Peaks are
+            # a poor guide: raw screams can have a 20+ dB crest factor, and
+            # the stray transients are what the peak comp and limiter catch.
+            loud = loud_rms_db(decode(mono, 1)[:, 0])
+            in_db = round(-18.0 - loud, 1)
+            print(f"{f.name}: loud sections {loud:.1f} dBFS RMS -> input gain {in_db:+.1f} dB")
             for n in names:
                 if n not in all_presets:
                     sys.exit(f"unknown preset {n}; have {', '.join(all_presets)}")
                 dst = out_dir / f"{f.stem}__{n}.wav"
-                subprocess.run([str(RASP_WAV), str(mono), str(dst)] + preset_args(all_presets[n]),
+                subprocess.run([str(RASP_WAV), str(mono), str(dst), f"in={in_db}"] + preset_args(all_presets[n]),
                                check=True, capture_output=True)
-                print(dst.relative_to(ROOT.parent))
+                print("  " + str(dst.relative_to(ROOT.parent)))
 
 
 # --------------------------------------------------------------------------- analysis
@@ -199,36 +214,40 @@ def voice_features(path):
     rms = np.sqrt(np.mean(fr ** 2, axis=1) + 1e-20)
     act = 20 * np.log10(rms) > 20 * np.log10(rms.max()) - 25
     fr = fr[act]
-    # Periodicity + pitch: normalized autocorrelation peak in 60-1000 Hz.
-    F = np.fft.rfft(fr, 2 * win, axis=1)
-    ac = np.fft.irfft(np.abs(F) ** 2, axis=1)[:, :win]
-    ac = ac / (ac[:, :1] + 1e-20)
-    lo, hi = SR // 1000, SR // 60
-    lag = lo + np.argmax(ac[:, lo:hi], axis=1)
-    r = ac[np.arange(len(ac)), lag]
-    f0 = SR / lag
-    voiced = r > 0.5
-    spec = np.abs(F[:, : win + 1]) ** 2
-    f = np.fft.rfftfreq(2 * win, 1 / SR)
-    centroid = np.sum(spec * f, axis=1) / (np.sum(spec, axis=1) + 1e-20)
-    low = np.sum(spec[:, f < 300], axis=1) / (np.sum(spec, axis=1) + 1e-20)
+    spec = np.abs(np.fft.rfft(fr, axis=1))
+    # Cepstral peak prominence: how far the pitch peak in the cepstrum stands
+    # above its trend. Clean voices ~40 dB, gritty shouts 20-30, full screams
+    # ~15. Unlike autocorrelation it isn't fooled by vowel resonances (an
+    # autocorrelation "pitch" of ~500 Hz on real growls was the first formant).
+    cep = np.abs(np.fft.irfft(np.log(spec + 1e-9), axis=1))
+    q = np.arange(cep.shape[1]) / SR
+    sel = (q > 1 / 400) & (q < 1 / 60)                     # 60-400 Hz
+    cs, qs = 20 * np.log10(cep[:, sel] + 1e-12), q[sel]
+    A = np.vstack([qs, np.ones_like(qs)]).T
+    trend = (A @ np.linalg.lstsq(A, cs.T, rcond=None)[0]).T
+    pk = cs.argmax(axis=1)
+    prom = cs[np.arange(len(cs)), pk] - trend[np.arange(len(cs)), pk]
+    f0 = 1 / qs[pk]
+    power = spec ** 2
+    f = np.fft.rfftfreq(win, 1 / SR)
+    centroid = np.sum(power * f, axis=1) / (np.sum(power, axis=1) + 1e-20)
+    low = np.sum(power[:, f < 300], axis=1) / (np.sum(power, axis=1) + 1e-20)
     return {
-        "periodic": float(np.mean(voiced)),               # share of frames with a clear pitch
-        "clarity": float(np.median(r)),                   # 1 = pure tone, ~0 = noise
-        "pitch_hz": float(np.median(f0[voiced])) if voiced.any() else 0.0,
+        "cpp_db": float(np.median(prom)),
+        "pitch_hz": float(np.median(f0[prom > np.median(prom)])),
         "centroid_hz": float(np.median(centroid)),        # brightness
         "low_share_db": float(10 * np.log10(np.median(low) + 1e-20)),
     }
 
 
 def classify_style(v):
-    """Heuristic labels; thresholds come from synthetic tests and need checking
-    against real takes (they're printed so you can sanity-check them)."""
-    if v["periodic"] > 0.7 and v["clarity"] > 0.75:
+    """Heuristic labels. Thresholds come from synthetic voices plus a first
+    set of real death-metal stems; they're printed so you can check them."""
+    if v["cpp_db"] > 32:
         return "clean / sung", "raw (RASP is built for distorted vocals; keep drive low)"
-    if v["periodic"] > 0.4:
+    if v["cpp_db"] > 20:
         return "shout / gritty sung", "natural"
-    if v["centroid_hz"] < 1300 and v["low_share_db"] > -14:
+    if v["centroid_hz"] < 1300:
         return "low growl / guttural", "dark"
     if v["centroid_hz"] > 2600:
         return "high scream / squeal", "bright"
@@ -238,13 +257,14 @@ def classify_style(v):
 def cmd_classify(files):
     rows = [(pathlib.Path(p).name, voice_features(p)) for p in files]
     w = max(len(n) for n, _ in rows)
-    print(f"{'file':<{w}}  {'periodic':>8} {'clarity':>7} {'pitch':>7} {'bright':>7} {'lows':>6}   style -> starting preset")
+    print(f"{'file':<{w}}  {'CPP':>5} {'pitch':>7} {'bright':>8} {'lows':>6}   style -> starting preset")
     for n, v in rows:
         style, preset = classify_style(v)
-        print(f"{n:<{w}}  {v['periodic']:8.2f} {v['clarity']:7.2f} {v['pitch_hz']:6.0f}Hz {v['centroid_hz']:6.0f}Hz "
-              f"{v['low_share_db']:5.1f}   {style} -> {preset}")
-    print("\nperiodic = share of the take with a clear pitch, clarity = how tonal vs noisy (0-1),\n"
-          "bright = spectral centroid, lows = energy share below 300 Hz (dB).")
+        pitch = f"{v['pitch_hz']:5.0f}Hz" if v["cpp_db"] > 20 else "   n/a "
+        print(f"{n:<{w}}  {v['cpp_db']:5.1f} {pitch:>7} {v['centroid_hz']:6.0f}Hz {v['low_share_db']:6.1f}   {style} -> {preset}")
+    print("\nCPP = cepstral peak prominence, dB (clean ~40, gritty shout 20-30, full scream ~15),\n"
+          "pitch = only shown when there is a clear one, bright = spectral centroid,\n"
+          "lows = energy share below 300 Hz (dB).")
 
 
 def main():

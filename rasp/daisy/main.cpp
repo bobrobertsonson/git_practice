@@ -65,6 +65,9 @@ static void writeLeds(uint8_t bits) {
 
 int main() {
     hw.Init(true);                 // boost to 480 MHz
+    // Flush denormals to zero (FPSCR.FZ). Reverb and filter tails decay into
+    // denormals between phrases; without this they cost far more CPU.
+    __set_FPSCR(__get_FPSCR() | (1u << 24));
     // 4-sample blocks: buffering adds ~0.17 ms at 48 kHz. The codec's
     // converter delay sits on top of that - measure the round trip.
     hw.SetAudioBlockSize(4);

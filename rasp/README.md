@@ -17,6 +17,7 @@ the box adds grit, control, size and space.
 | `tools/probe.py` | Measurement kit for matching RASP to a reference plugin (section 6) |
 | `tools/takes.py` | Renders real takes through every preset, measures them, and compares them with finished reference vocals. See `samples/README.md` |
 | `samples/` | Drop zone for raw takes (`raw/`) and finished references (`ref/`) |
+| `tools/mixprint.py` | Learns a producer's vocal treatment (EQ, level, pan, rough space) from raw vocal stems plus the final mix |
 
 ```sh
 make
@@ -60,6 +61,33 @@ mic ─► CONTROL ─┼─► THICKEN  doubles + stereo combs        (parallel
 
 These numbers don't show whether it sounds good. Your ears and real takes
 decide that. **Send raw tracks and I'll tune against them.**
+
+## Tuned on real stems
+
+The first real session (six raw death-metal vocal stems plus the finished mix
+of the same song) changed the defaults:
+
+- **Gain staging:** the raw takes peaked near −7 dBFS, but their loud sections sat at only
+  −26 dBFS RMS (crest factor ~22 dB). An **input gain** stage now
+  brings loud sections to −18 dBFS RMS, the level the compressors are tuned
+  for. `takes.py` and the playground set it automatically; on hardware it's
+  the preamp gain.
+- **Tone:** `mixprint.py` measured the producer's EQ on these vocals: a cut at
+  400–630 Hz, a lift at 2.5–4 kHz, and the top rolled off. With the drive bypassed,
+  RASP's voicing already matched that within ~2 dB from 160 Hz to 6 kHz.
+  The Tube-Screamer drive was the outlier. It thinned 160–400 Hz by 6–10 dB
+  and dulled 2.5 kHz by up to 11 dB. Its corner now drops to 200/350/600 Hz
+  across the tone positions and its tone filter rises. The natural air shelf
+  is now +1 dB, the hi cut defaults to 12.6 kHz, and the lo cut to 78 Hz.
+- **Space:** the producer's reverb measured ~0.9 s, and the default plate now measures
+  about the same.
+- **Style detection:** autocorrelation mistook the first vowel resonance
+  (~500 Hz) for pitch and called growls "shouts". `takes.py classify` now
+  uses cepstral peak prominence. It labels five stems as low growls and one as a
+  brighter mid scream, which matches their spectrograms (not yet confirmed by ear).
+- **Speed:** silences between phrases made reverb and filter tails decay into
+  denormal floats, and real takes rendered at only 2× real time. Flushing
+  denormals (desktop and firmware) restored 37× real time with identical output.
 
 ## 2. Latency
 

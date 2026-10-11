@@ -7,6 +7,10 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#if defined(__SSE__) || defined(_M_X64) || defined(__x86_64__)
+#include <xmmintrin.h>
+#include <pmmintrin.h>
+#endif
 
 static bool readWav(const char* path, std::vector<float>& out, int& sr) {
     FILE* f = std::fopen(path, "rb");
@@ -78,7 +82,7 @@ static bool setParam(rasp::Params& p, const char* arg) {
         {"spread", &p.spread}, {"diffuse", &p.diffuse}, {"darken", &p.darken}, {"width", &p.width},
         {"thickengain", &p.thickenGainDb}, {"tail", &p.tail}, {"tailblend", &p.tailBlend},
         {"repeats", &p.repeats}, {"delayblend", &p.delayBlend}, {"bpm", &p.bpm}, {"tilt", &p.tilt},
-        {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb},
+        {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb}, {"in", &p.inDb},
         {"deess", &p.deEss}, {"bleed", &p.bleed}, {"glue", &p.glue},
     };
     for (auto& e : fs) if (k == e.n) { *e.f = v; return true; }
@@ -92,6 +96,13 @@ static bool setParam(rasp::Params& p, const char* arg) {
 }
 
 int main(int argc, char** argv) {
+    // Flush denormals to zero. Reverb and filter tails decay into denormal
+    // floats during the silences between phrases, which made real takes
+    // render ~10x slower than real time should allow.
+#if defined(__SSE__) || defined(_M_X64) || defined(__x86_64__)
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+#endif
     if (argc < 3) {
         std::fprintf(stderr,
             "usage: %s in.wav out.wav [name=value ...]\n"

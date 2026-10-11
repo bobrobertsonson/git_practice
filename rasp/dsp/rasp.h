@@ -196,8 +196,8 @@ inline float kneeCurve(float overDb, float ratio, float knee) {
 struct Params {
     // CONTROL
     bool  controlOn  = true;
-    float loCut      = 0.50f;  // 20..600 Hz   (0.5 = 110 Hz)
-    float hiCut      = 0.85f;  // 2k..20k Hz   (0.85 = 14 kHz)
+    float loCut      = 0.40f;  // 20..600 Hz   (0.4 = 78 Hz)
+    float hiCut      = 0.80f;  // 2k..20k Hz   (0.8 = 12.6 kHz)
     float drive      = 0.40f;  // Tube-Screamer-style gain
     int   brightness = 1;      // 3-way tone: 0 dark, 1 natural, 2 bright (drive tone + voicing EQ)
     float mix        = 0.60f;  // parallel blend of the drive (level-matched)
@@ -218,7 +218,7 @@ struct Params {
 
     // FLAVOUR (parallel)
     bool  flavourOn  = true;
-    float tail       = 0.50f;  // plate decay, RT60 0.5..6 s
+    float tail       = 0.35f;  // plate decay setting, 0.5..6 s (0.35 measures ~0.9 s with damping)
     float tailBlend  = 0.35f;  // reverb level
     float repeats    = 0.30f;  // delay feedback
     float delayBlend = 0.20f;  // delay level
@@ -231,6 +231,7 @@ struct Params {
     // BUS
     float glue       = 0.50f;  // stereo glue compression (menu)
     float outDb      = 0.f;    // drives the bus limiter: louder = denser
+    float inDb       = 0.f;    // input gain (the preamp gain knob): set so screams peak near -6 dBFS
 };
 
 // ---------------------------------------------------------------------------
@@ -247,7 +248,7 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         up.init(); down.init();
-        hp720.setCutoff(720.f, sr * 4.f);
+        hp720.setCutoff(720.f, sr * 4.f);                         // set per tone in set()
         rmsIn.setCutoff(3.f, sr); rmsOut.setCutoff(3.f, sr);
         level.init(1.f, sr, 50.f);
     }
@@ -256,8 +257,16 @@ public:
         gain = 1.f + 120.f * d2;                                   // TS: 1 + (51k + 500k*pot)/4.7k
         float rf = 51e3f + 500e3f * d2;
         capLp.setCutoff(clampf(1.f / (2.f * kPi * rf * 51e-12f), 1000.f, sr * 1.8f), sr * 4.f);
-        static const float toneHz[3] = {2400.f, 4200.f, 7500.f};
-        tone.set(toneHz[brightness < 0 ? 0 : (brightness > 2 ? 2 : brightness)], 0.6f, sr);
+        int b = brightness < 0 ? 0 : (brightness > 2 ? 2 : brightness);
+        static const float toneHz[3] = {4500.f, 7500.f, 11000.f};
+        tone.set(toneHz[b], 0.6f, sr);
+        // Where the drive starts amplifying, and its tone filter. The TS808's
+        // 720 Hz corner and dark tone keep a guitar tight, but on real guttural
+        // stems they thinned 160-400 Hz by 6-10 dB and dulled 2.5 kHz by up to
+        // 11 dB against a producer's mix of the same takes (tools/mixprint.py),
+        // so the corners sit lower and the tone filter higher.
+        static const float cornerHz[3] = {200.f, 350.f, 600.f};
+        hp720.setCutoff(cornerHz[b], sr * 4.f);
     }
     float process(float x) {
         float y = 0.f;
@@ -311,7 +320,7 @@ public:
         struct V { float lowHz, lowDb, mudHz, mudDb, presHz, presDb, airHz, airDb; };
         static const V v[3] = {
             {170.f, 2.5f, 420.f, -2.0f, 2600.f, 1.5f, 10000.f, 0.5f},   // dark: weight, gutturals
-            {150.f, 1.5f, 450.f, -3.0f, 3000.f, 3.0f, 10000.f, 2.5f},   // natural
+            {150.f, 1.5f, 450.f, -3.0f, 3000.f, 3.0f, 10000.f, 1.0f},   // natural
             {120.f, 0.5f, 500.f, -3.5f, 3500.f, 4.0f, 11000.f, 4.0f},   // bright: highs, squeals
         };
         const V& c = v[brightness < 0 ? 0 : (brightness > 2 ? 2 : brightness)];
@@ -664,7 +673,7 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
-        gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
+        gIn.init(1.f, sr); gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
     }
 
@@ -686,12 +695,13 @@ public:
         gThk.target = p.thickenOn ? dbToLin(p.thickenGainDb) : 0.f;
         gFlv.target = p.flavourOn ? dbToLin(p.flavourGainDb) : 0.f;
         gOut.target = dbToLin(p.outDb);
+        gIn.target = dbToLin(p.inDb);
         gMix.target = p.mix;
     }
 
     void process(float in, float& outL, float& outR) {
         // CONTROL (series)
-        float x = in;
+        float x = in * gIn.next();
         float gm = gMix.next(), gc = gCtl.next();
         if (p.controlOn) {
             loCut1.process(x); loCut2.process(loCut1.hp);
@@ -738,7 +748,7 @@ private:
     Thicken thicken;
     Flavour flavour;
     Bus bus;
-    Smoothed gCtl, gThk, gFlv, gOut, gMix;
+    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix;
 };
 
 } // namespace rasp

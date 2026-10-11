@@ -336,7 +336,7 @@ class RaspEngine {
     // ---- BUS
     const B = { amount: 0.5, thr: -15, makeup: 1, rmsC: coefMs(10), att: coefMs(15), rel: coefMs(200), limRel: coefMs(80), ms: 0, gr: 0, lim: 0 };
     // section gains
-    const gCtl = sm(1), gThk = sm(0.6), gFlv = sm(0.55), gOut = sm(1), gMix = sm(0.6);
+    const gIn = sm(1), gCtl = sm(1), gThk = sm(0.6), gFlv = sm(0.55), gOut = sm(1), gMix = sm(0.6);
 
     this.gainReductionDb = () => C.gr;
     this.bleedReductionDb = () => -X.gr;
@@ -349,8 +349,9 @@ class RaspEngine {
       const d2 = p.drive * p.drive; gain = 1 + 120 * d2;
       opSet(capLp, clamp(1 / (2 * PI * (51e3 + 500e3 * d2) * 51e-12), 1000, sr * 1.8), sr * 4);
       const b = clamp(p.brightness | 0, 0, 2);
-      svfSet(tone, [2400, 4200, 7500][b], 0.6);
-      const V = [[170, 2.5, 420, -2.0, 2600, 1.5, 10000, 0.5], [150, 1.5, 450, -3.0, 3000, 3.0, 10000, 2.5], [120, 0.5, 500, -3.5, 3500, 4.0, 11000, 4.0]][b];
+      svfSet(tone, [4500, 7500, 11000][b], 0.6);
+      opSet(hp720, [200, 350, 600][b], sr * 4);
+      const V = [[170, 2.5, 420, -2.0, 2600, 1.5, 10000, 0.5], [150, 1.5, 450, -3.0, 3000, 3.0, 10000, 1.0], [120, 0.5, 500, -3.5, 3500, 4.0, 11000, 4.0]][b];
       lowShelf(vLow, V[0], V[1]); peaking(vMud, V[2], 1.2, V[3]); peaking(vPres, V[4], 0.9, V[5]); highShelf(vAir, V[6], V[7]);
       deDepth = p.deEss;
       X.on = p.bleed > 0.001; X.thr = -70 + 40 * p.bleed;
@@ -372,7 +373,7 @@ class RaspEngine {
       gCtl.target = db(p.controlGainDb);
       gThk.target = p.thickenOn ? db(p.thickenGainDb) : 0;
       gFlv.target = p.flavourOn ? db(p.flavourGainDb) : 0;
-      gOut.target = db(p.outDb); gMix.target = p.mix;
+      gOut.target = db(p.outDb); gMix.target = p.mix; gIn.target = db(p.inDb || 0);
     };
 
     const drive = x => {
@@ -483,6 +484,7 @@ class RaspEngine {
 
     const out = [0, 0], tO = [0, 0], fO = [0, 0];
     this.process = x => {
+      x *= smNext(gIn);
       const gm = smNext(gMix), gc = smNext(gCtl);
       if (p.controlOn) {
         svfRun(lc1, x); svfRun(lc2, lc1.hp); svfRun(hc1, lc2.hp); svfRun(hc2, hc1.lp);
@@ -531,15 +533,15 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.5, hiCut: 0.85, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, bleed: 0.7, controlGainDb: 0,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
-  flavourOn: true, tail: 0.5, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
-  glue: 0.5, outDb: 0,
+  flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
+  glue: 0.5, outDb: 0, inDb: 0,
 };
 const PRESETS = {
-  huge:    { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.6, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3 },
+  huge:    { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3 },
   natural: {},
-  dark:    { brightness: 0, drive: 0.5, loCut: 0.42, hiCut: 0.7, darken: 0.5, tilt: 0.35, tail: 0.55 },
+  dark:    { brightness: 0, drive: 0.5, loCut: 0.36, hiCut: 0.72, darken: 0.5, tilt: 0.4, tail: 0.4 },
   bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65 },
   live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.15, duck: 0.75, bleed: 0.78, loCut: 0.56, glue: 0.4 },
   raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0 },
@@ -568,6 +570,8 @@ const TOGGLES = {
   flavour: [["delayTime", "Time", ["1/8", "1/8 dot", "1/4"]]],
 };
 const MENU = [
+  ["Input"],
+  ["inDb", "Input gain", -12, 36, 0.5, v => (v > 0 ? "+" : "") + v.toFixed(1) + " dB"],
   ["Live and cleanup"],
   ["bleed", "Bleed reducer", 0, 1, 0.01, v => v < 0.001 ? "off" : Math.round(-70 + 40 * v) + " dBFS"],
   ["deEss", "De-esser", 0, 1, 0.01, pct],
@@ -660,7 +664,7 @@ for (const row of MENU) {
 }
 
 function applyPreset(name) {
-  const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm };
+  const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm, inDb: params.inDb };
   params = Object.assign({}, DEFAULTS, PRESETS[name], keep);
   Object.keys(params).forEach(k => setParam(k, params[k], false));
   sendParams();
@@ -807,13 +811,14 @@ document.getElementById("file").addEventListener("change", async e => {
     stopSource();
     buffer = await ctx.decodeAudioData(await f.arrayBuffer());
     onNewBuffer();
+    autoInputGain();
     document.getElementById("src").innerHTML = "Source: <b></b>";
     document.querySelector("#src b").textContent = f.name;
-    msg(""); play();
+    play();
   } catch (err) { msg("That file could not be decoded. Try a WAV or MP3 of a dry vocal."); }
 });
 document.getElementById("demo").addEventListener("click", async () => {
-  await ensureAudio(); stopSource(); buffer = makeDemo(ctx.sampleRate); onNewBuffer();
+  await ensureAudio(); stopSource(); buffer = makeDemo(ctx.sampleRate); onNewBuffer(); setParam("inDb", 0);
   document.getElementById("src").innerHTML = "Source: <b>synthetic test scream</b> · load your own take"; msg(""); play();
 });
 document.getElementById("mic").addEventListener("click", async () => {
@@ -918,6 +923,17 @@ function animateWave() {
   cancelAnimationFrame(anim);
   const tick = () => { drawWave(); if (playing) anim = requestAnimationFrame(tick); };
   anim = requestAnimationFrame(tick);
+}
+// Like setting the preamp: bring the take's loud sections to -18 dBFS RMS,
+// the level the compressors are tuned for (raw takes often sit near -26).
+function autoInputGain() {
+  const d = buffer.getChannelData(0), w = Math.floor(buffer.sampleRate / 10), n = Math.floor(d.length / w), r = [];
+  for (let i = 0; i < n; i++) { let e = 0; for (let j = i * w; j < (i + 1) * w; j++) e += d[j] * d[j]; r.push(10 * Math.log10(e / w + 1e-24)); }
+  const top = Math.max(...r), act = r.filter(v => v > top - 30).sort((a, b) => a - b);
+  const loud = act[Math.floor(act.length * 0.9)];
+  const g = Math.round(Math.min(36, Math.max(-12, -18 - loud)) * 2) / 2;
+  setParam("inDb", g);
+  msg(`Input gain set to ${g > 0 ? "+" : ""}${g} dB so the loud sections sit at -18 dBFS RMS. Adjust it in the menu.`);
 }
 function onNewBuffer() {
   T.pos = 0; T.loopA = T.loopB = null; peaks = null;
