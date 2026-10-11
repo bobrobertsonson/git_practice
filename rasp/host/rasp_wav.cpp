@@ -1,10 +1,11 @@
 // Desktop test harness: run a WAV file through the RASP DSP core.
-//   rasp_wav in.wav out.wav [mode 0|1|2] [drive] [fry] [throat] [vowel] [air]
-// Reads 16-bit PCM or 32-bit float WAV (stereo is downmixed), writes 16-bit mono.
+//   rasp_wav in.wav out.wav [name=value ...]
+// Reads 16-bit PCM or 32-bit float WAV (stereo is downmixed), writes 16-bit stereo.
 #include "../dsp/rasp.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 static bool readWav(const char* path, std::vector<float>& out, int& sr) {
@@ -48,39 +49,73 @@ static bool readWav(const char* path, std::vector<float>& out, int& sr) {
     return false;
 }
 
-static void writeWav(const char* path, const std::vector<float>& in, int sr) {
+static void writeWav(const char* path, const std::vector<float>& L, const std::vector<float>& R, int sr) {
     FILE* f = std::fopen(path, "wb");
-    uint32_t dataSize = (uint32_t)in.size() * 2, riff = 36 + dataSize, fmtSize = 16, rate = sr, byteRate = sr * 2;
-    uint16_t pcm = 1, ch = 1, align = 2, bits = 16;
+    if (!f) { std::fprintf(stderr, "could not write %s\n", path); std::exit(1); }
+    uint32_t dataSize = (uint32_t)L.size() * 4, riff = 36 + dataSize, fmtSize = 16, rate = sr, byteRate = sr * 4;
+    uint16_t pcm = 1, ch = 2, align = 4, bits = 16;
     std::fwrite("RIFF", 1, 4, f); std::fwrite(&riff, 4, 1, f); std::fwrite("WAVEfmt ", 1, 8, f);
     std::fwrite(&fmtSize, 4, 1, f); std::fwrite(&pcm, 2, 1, f); std::fwrite(&ch, 2, 1, f);
     std::fwrite(&rate, 4, 1, f); std::fwrite(&byteRate, 4, 1, f); std::fwrite(&align, 2, 1, f);
     std::fwrite(&bits, 2, 1, f); std::fwrite("data", 1, 4, f); std::fwrite(&dataSize, 4, 1, f);
-    for (float s : in) { int16_t v = (int16_t)(rasp::clampf(s, -1.f, 1.f) * 32767.f); std::fwrite(&v, 2, 1, f); }
+    for (size_t i = 0; i < L.size(); ++i) {
+        int16_t v[2] = {(int16_t)(rasp::clampf(L[i], -1.f, 1.f) * 32767.f),
+                        (int16_t)(rasp::clampf(R[i], -1.f, 1.f) * 32767.f)};
+        std::fwrite(v, 2, 2, f);
+    }
     std::fclose(f);
+}
+
+// Apply "name=value" overrides to the parameter set.
+static bool setParam(rasp::Params& p, const char* arg) {
+    const char* eq = std::strchr(arg, '=');
+    if (!eq) return false;
+    std::string k(arg, eq - arg);
+    float v = (float)std::atof(eq + 1);
+    struct F { const char* n; float* f; } fs[] = {
+        {"locut", &p.loCut}, {"hicut", &p.hiCut}, {"drive", &p.drive}, {"mix", &p.mix},
+        {"chop", &p.chop}, {"release", &p.release}, {"controlgain", &p.controlGainDb},
+        {"fry", &p.fry}, {"rattle", &p.rattleHz}, {"throat", &p.throat}, {"vowel", &p.vowel}, {"air", &p.air},
+        {"spread", &p.spread}, {"diffuse", &p.diffuse}, {"darken", &p.darken}, {"width", &p.width},
+        {"thickengain", &p.thickenGainDb}, {"tail", &p.tail}, {"tailblend", &p.tailBlend},
+        {"repeats", &p.repeats}, {"delayblend", &p.delayBlend}, {"bpm", &p.bpm}, {"tilt", &p.tilt},
+        {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb},
+    };
+    for (auto& e : fs) if (k == e.n) { *e.f = v; return true; }
+    if (k == "type")    { p.driveType = (int)v; return true; }
+    if (k == "time")    { p.delayTime = (int)v; return true; }
+    if (k == "solo")    { p.solo = v != 0.f; return true; }
+    if (k == "control") { p.controlOn = v != 0.f; return true; }
+    if (k == "thicken") { p.thickenOn = v != 0.f; return true; }
+    if (k == "flavour") { p.flavourOn = v != 0.f; return true; }
+    return false;
 }
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: %s in.wav out.wav [mode] [drive] [fry] [throat] [vowel] [air]\n", argv[0]);
+        std::fprintf(stderr,
+            "usage: %s in.wav out.wav [name=value ...]\n"
+            "  e.g. %s dry.wav out.wav type=1 drive=0.8 fry=0.7 spread=0.6 tailblend=0.3\n"
+            "  names: locut hicut drive type(0-2) mix chop release fry rattle throat vowel air\n"
+            "         spread diffuse darken width solo tail tailblend repeats delayblend time(0-2)\n"
+            "         bpm tilt duck control thicken flavour (0/1) *gain out (dB)\n", argv[0], argv[0]);
         return 1;
     }
     std::vector<float> buf; int sr = 0;
     if (!readWav(argv[1], buf, sr)) { std::fprintf(stderr, "could not read %s\n", argv[1]); return 1; }
 
     rasp::Params p;
-    if (argc > 3) p.mode   = std::atoi(argv[3]);
-    if (argc > 4) p.drive  = std::atof(argv[4]);
-    if (argc > 5) p.fry    = std::atof(argv[5]);
-    if (argc > 6) p.throat = std::atof(argv[6]);
-    if (argc > 7) p.vowel  = std::atof(argv[7]);
-    if (argc > 8) p.air    = std::atof(argv[8]);
+    for (int i = 3; i < argc; ++i)
+        if (!setParam(p, argv[i])) { std::fprintf(stderr, "unknown parameter: %s\n", argv[i]); return 1; }
 
-    rasp::Processor proc;
+    // Processor holds ~1.6 MB of delay lines: keep it off the stack.
+    static rasp::Processor proc;
     proc.init((float)sr);
     proc.setParams(p);
-    for (float& s : buf) s = proc.process(s);
-    writeWav(argv[2], buf, sr);
-    std::printf("processed %zu samples @ %d Hz -> %s\n", buf.size(), sr, argv[2]);
+    buf.resize(buf.size() + sr * 2, 0.f);  // 2 s of tail for the reverb/delay
+    std::vector<float> L(buf.size()), R(buf.size());
+    for (size_t i = 0; i < buf.size(); ++i) proc.process(buf[i], L[i], R[i]);
+    writeWav(argv[2], L, R, sr);
+    std::printf("processed %zu samples @ %d Hz -> %s (stereo)\n", buf.size(), sr, argv[2]);
     return 0;
 }

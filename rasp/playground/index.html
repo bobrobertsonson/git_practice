@@ -1,0 +1,678 @@
+<title>RASP Scream Box</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a stage-gear page. One signal-yellow pedal enclosure is the hero; the
+   source/transport strip sits on top of it, the "menu" parameters below it.
+   Deliberately single-look (dark stage, yellow powdercoat) in both themes. */
+:root {
+  --stage: #17161a;
+  --stage-2: #222026;
+  --ink: #ece6da;
+  --muted: #a39d92;
+  --line: #3a373f;
+  --powder: #efb320;
+  --powder-shade: #d49a12;
+  --silk: #1b1813;
+  --knob: #141313;
+  --led: #ff3d1f;
+  --led-off: #6b2416;
+  --ok: #7fd18b;
+  --display: "Big Shoulders Display", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--stage); color: var(--ink); }
+body { font-family: var(--body); font-size: 15px; line-height: 1.5; padding-inline: 16px; padding-block: 28px 56px; }
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 22px; }
+
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--display); font-weight: 900; font-size: clamp(40px, 7vw, 64px); line-height: .9; margin: 0; letter-spacing: .01em; text-transform: uppercase; }
+header p { margin: 0; max-width: 64ch; color: var(--muted); }
+
+/* ---------- transport strip ---------- */
+.strip { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: var(--stage-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.strip .grow { flex: 1 1 180px; min-width: 0; font-size: 13px; color: var(--muted); }
+.strip .grow b { color: var(--ink); font-weight: 600; }
+button, .filebtn, select {
+  font: 600 13px/1 var(--body); color: var(--ink); background: #2d2a32; border: 1px solid #47434d;
+  border-radius: 7px; padding: 10px 14px; cursor: pointer; min-height: 40px;
+}
+button:hover, .filebtn:hover, select:hover { border-color: var(--muted); }
+button:focus-visible, .filebtn:focus-within, select:focus-visible, .knob:focus-visible, .toggle:focus-visible, .stomp:focus-visible { outline: 2px solid var(--powder); outline-offset: 3px; }
+button.primary { background: var(--powder); color: var(--silk); border-color: var(--powder); }
+button.primary[aria-pressed="true"] { background: #fff2c9; border-color: #fff2c9; }
+button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; border-color: var(--powder); color: var(--powder); }
+.filebtn { display: inline-flex; align-items: center; }
+.filebtn input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.meters { display: flex; gap: 10px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.meter { width: 70px; height: 8px; background: #2b2930; border-radius: 4px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--ok) 0 70%, var(--powder) 70% 90%, var(--led) 90%); transition: width 60ms linear; }
+
+/* ---------- the pedal ---------- */
+.pedal {
+  background: linear-gradient(180deg, var(--powder), var(--powder-shade));
+  color: var(--silk); border-radius: 18px; padding: 22px 22px 18px;
+  box-shadow: inset 0 2px 0 rgba(255,255,255,.35), inset 0 -3px 0 rgba(0,0,0,.18), 0 18px 40px rgba(0,0,0,.45);
+  display: grid; gap: 18px; position: relative;
+}
+.screw { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #f6e7b8, #8a6a14); box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }
+.screw::after { content: ""; position: absolute; inset: 5px 2px; background: rgba(0,0,0,.45); transform: rotate(35deg); }
+.s1 { top: 9px; left: 9px; } .s2 { top: 9px; right: 9px; } .s3 { bottom: 9px; left: 9px; } .s4 { bottom: 9px; right: 9px; }
+.brand { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; padding-inline: 8px; }
+.brand .name { font-family: var(--display); font-weight: 900; font-size: 34px; letter-spacing: .06em; line-height: 1; }
+.brand .model { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+.sections { display: grid; grid-template-columns: 1.35fr 1fr 1.35fr; gap: 0; }
+.section { padding: 6px 14px 4px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.section + .section { border-left: 2px solid var(--silk); }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sec-title { font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: .14em; text-transform: uppercase; }
+.knobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 12px 6px; justify-items: center; }
+.kcell { display: grid; justify-items: center; gap: 5px; width: 78px; }
+.knob { width: 54px; height: 54px; border-radius: 50%; position: relative; cursor: ns-resize; touch-action: none;
+  background: radial-gradient(circle at 40% 32%, #3a3838, var(--knob) 62%);
+  box-shadow: 0 3px 0 rgba(0,0,0,.35), 0 0 0 3px rgba(27,24,19,.12), inset 0 1px 0 rgba(255,255,255,.12); }
+.knob::before { content: ""; position: absolute; left: 50%; top: 5px; width: 3px; height: 17px; margin-left: -1.5px; border-radius: 2px; background: #f4efe2; transform-origin: 1.5px 22px; transform: rotate(var(--rot, 0deg)); }
+.ticks { position: absolute; inset: -9px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(from 225deg, var(--silk) 0 1deg, transparent 1deg 26.8deg, var(--silk) 26.8deg 27.8deg, transparent 27.8deg 53.6deg, var(--silk) 53.6deg 54.6deg, transparent 54.6deg 80.4deg, var(--silk) 80.4deg 81.4deg, transparent 81.4deg 107.2deg, var(--silk) 107.2deg 108.2deg, transparent 108.2deg 134deg, var(--silk) 134deg 135deg, transparent 135deg 160.8deg, var(--silk) 160.8deg 161.8deg, transparent 161.8deg 187.6deg, var(--silk) 187.6deg 188.6deg, transparent 188.6deg 214.4deg, var(--silk) 214.4deg 215.4deg, transparent 215.4deg 241.2deg, var(--silk) 241.2deg 242.2deg, transparent 242.2deg 268deg, var(--silk) 268deg 269deg, transparent 269deg);
+  -webkit-mask: radial-gradient(circle, transparent 33px, #000 34px); mask: radial-gradient(circle, transparent 33px, #000 34px); }
+.klabel { font-family: var(--display); font-weight: 800; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; line-height: 1; text-align: center; }
+.kval { font-family: var(--mono); font-size: 10.5px; line-height: 1; opacity: .8; font-variant-numeric: tabular-nums; min-height: 11px; }
+.toggles { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+.toggle { display: grid; gap: 4px; justify-items: center; cursor: pointer; background: none; border: 0; padding: 0; min-height: 0; color: var(--silk); font: inherit; }
+.toggle .slot { width: 26px; height: 46px; border-radius: 13px; background: var(--silk); position: relative; }
+.toggle .slot::after { content: ""; position: absolute; left: 4px; width: 18px; height: 14px; border-radius: 7px; background: linear-gradient(#f4efe2, #b9b2a2); top: calc(4px + var(--pos, 0) * 14px); transition: top 120ms ease; }
+.toggle .tl { font-family: var(--display); font-weight: 800; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
+.toggle .tv { font-family: var(--mono); font-size: 10.5px; }
+.led { width: 12px; height: 12px; border-radius: 50%; background: var(--led-off); box-shadow: inset 0 0 0 1px rgba(0,0,0,.35); transition: background 60ms, box-shadow 60ms; }
+.led.on { background: var(--led); box-shadow: 0 0 10px 2px rgba(255,61,31,.75), inset 0 0 0 1px rgba(0,0,0,.2); }
+.ledrow { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
+.stomps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding-top: 14px; border-top: 2px solid var(--silk); }
+.stomp { display: grid; justify-items: center; gap: 7px; background: none; border: 0; color: var(--silk); padding: 4px; min-height: 0; cursor: pointer; font: inherit; }
+.stomp .cap { width: 52px; height: 52px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #f7f3ea, #9d968a 70%); box-shadow: 0 4px 0 #6d675d, 0 0 0 5px rgba(27,24,19,.85); transition: transform 60ms, box-shadow 60ms; }
+.stomp:active .cap { transform: translateY(3px); box-shadow: 0 1px 0 #6d675d, 0 0 0 5px rgba(27,24,19,.85); }
+.stomp .sl { font-family: var(--display); font-weight: 800; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; display: flex; gap: 6px; align-items: center; }
+
+/* ---------- menu (under-the-hood params) ---------- */
+.menu { background: var(--stage-2); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 14px; }
+.menu h2, .notes h2 { font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: .1em; text-transform: uppercase; margin: 0; }
+.menu p { margin: 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
+.sliders { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px 26px; }
+.srow { display: grid; grid-template-columns: 92px 1fr 64px; gap: 10px; align-items: center; min-width: 0; }
+.srow label { font-size: 13px; color: var(--ink); }
+.srow output { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.srow input[type=range] { width: 100%; accent-color: var(--powder); }
+.group-label { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--powder); grid-column: 1 / -1; margin-top: 4px; }
+.checkrow { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 22px; }
+.notes section { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.notes p { margin: 0; color: var(--muted); max-width: 62ch; }
+.notes strong { color: var(--ink); }
+.msg { font-size: 13px; color: var(--powder); min-height: 1.2em; }
+
+@media (max-width: 860px) {
+  .sections { grid-template-columns: 1fr; }
+  .section + .section { border-left: 0; border-top: 2px solid var(--silk); padding-top: 14px; }
+}
+@media (max-width: 480px) {
+  .pedal { padding: 18px 12px 14px; }
+  .stomps { grid-template-columns: repeat(2, 1fr); }
+  .srow { grid-template-columns: 80px 1fr 58px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Hardware vocal processor · browser preview of the DSP</span>
+    <h1>RASP Scream Box</h1>
+    <p>Load a dry vocal (or use the built-in demo), press play, and turn the knobs. Use <b>A/B</b> to compare with the dry vocal. This runs the same signal chain as the firmware: control → thicken → flavour.</p>
+  </header>
+
+  <div class="strip" role="group" aria-label="Source and transport">
+    <button class="primary" id="play" aria-pressed="false">Play</button>
+    <button id="ab" aria-pressed="false" title="Hear the dry input">A/B dry</button>
+    <label class="filebtn" for="file">Load vocal…<input type="file" id="file" accept="audio/*"></label>
+    <button id="demo">Demo vowel</button>
+    <button id="mic" aria-pressed="false">Live mic</button>
+    <select id="preset" aria-label="Preset">
+      <option value="fry">Preset: Fry scream</option>
+      <option value="growl">Preset: Low guttural</option>
+      <option value="squeal">Preset: High squeal</option>
+      <option value="gang">Preset: Gang shout</option>
+      <option value="assist">Preset: Scream assist (blend)</option>
+    </select>
+    <div class="grow" id="src">Source: <b>demo vowel (synthetic)</b></div>
+    <div class="meters" aria-hidden="true">IN <span class="meter"><i id="mIn"></i></span> OUT <span class="meter"><i id="mOut"></i></span></div>
+  </div>
+  <div class="msg" id="msg" role="status"></div>
+
+  <div class="pedal" id="pedal">
+    <span class="screw s1"></span><span class="screw s2"></span><span class="screw s3"></span><span class="screw s4"></span>
+    <div class="brand"><span class="name">RASP</span><span class="model">extreme vocal processor · mic in / stereo out</span></div>
+    <div class="sections">
+      <div class="section" data-sec="control">
+        <div class="sec-head"><span class="sec-title">Control</span><span class="ledrow"><span class="led" id="gateLed"></span>gate</span></div>
+        <div class="knobs" id="k-control"></div>
+        <div class="toggles" id="t-control"></div>
+      </div>
+      <div class="section" data-sec="thicken">
+        <div class="sec-head"><span class="sec-title">Thicken</span></div>
+        <div class="knobs" id="k-thicken"></div>
+      </div>
+      <div class="section" data-sec="flavour">
+        <div class="sec-head"><span class="sec-title">Flavour</span><span class="ledrow" id="bpmLabel">120 bpm</span></div>
+        <div class="knobs" id="k-flavour"></div>
+        <div class="toggles" id="t-flavour"></div>
+      </div>
+    </div>
+    <div class="stomps">
+      <button class="stomp" id="fsBypass" aria-pressed="true"><span class="cap"></span><span class="sl"><span class="led on" id="ledOn"></span>Bypass</span></button>
+      <button class="stomp" id="fsThicken" aria-pressed="true"><span class="cap"></span><span class="sl"><span class="led on" id="ledThk"></span>Thicken</span></button>
+      <button class="stomp" id="fsFlavour" aria-pressed="true"><span class="cap"></span><span class="sl"><span class="led on" id="ledFlv"></span>Flavour</span></button>
+      <button class="stomp" id="fsTap"><span class="cap"></span><span class="sl"><span class="led" id="ledTap"></span>Tap</span></button>
+    </div>
+  </div>
+
+  <div class="menu">
+    <h2>Menu</h2>
+    <p>On the hardware these sit behind the encoder and OLED screen. They shape the scream engine itself and the section levels.</p>
+    <div class="sliders" id="menu"></div>
+  </div>
+
+  <div class="notes">
+    <section>
+      <h2>Latency</h2>
+      <p>The DSP adds <strong>no buffering of its own</strong>. Every stage is causal, and an impulse comes out on the same sample it went in. On a Daisy Seed with 4-sample blocks, the only delay is the converters plus about 0.2 ms of buffering. The browser adds 10–40 ms, so the live mic here is for auditioning the sound, not for judging feel.</p>
+      <p id="latency">Browser audio latency: not started.</p>
+    </section>
+    <section>
+      <h2>Feedback</h2>
+      <p>The drive adds up to 30 dB of gain, so <strong>room noise and wedge spill get louder too</strong>. That loop is what makes feedback. Set <strong>Chop</strong> so the gate LED lights only while you sing. Keep Lo cut up, use a dynamic cardioid mic, and use in-ears instead of a wedge where you can.</p>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ===========================================================================
+// RASP DSP engine: JavaScript port of rasp/dsp/rasp.h. Keep the two in sync.
+// ===========================================================================
+class RaspEngine {
+  constructor(sr) {
+    const PI = Math.PI;
+    const clamp = (x, lo, hi) => x < lo ? lo : (x > hi ? hi : x);
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const db = d => Math.pow(10, d / 20);
+    const expMap = (t, lo, hi) => lo * Math.pow(hi / lo, t);
+    const tanh = x => { x = clamp(x, -3, 3); const x2 = x * x; return x * (27 + x2) / (27 + 9 * x2); };
+    const onePole = () => ({ a: 0, z: 0 });
+    const opSet = (f, hz) => { f.a = Math.exp(-2 * PI * hz / sr); };
+    const op = (f, x) => (f.z = x + f.a * (f.z - x));
+    const svf = () => ({ g: 0, k: 1, ic1: 0, ic2: 0, lp: 0, bp: 0, hp: 0 });
+    const svfSet = (f, hz, q, rate = sr) => { hz = clamp(hz, 10, rate * 0.45); f.g = Math.tan(PI * hz / rate); f.k = 1 / q; };
+    const svfRun = (f, x) => {
+      const v3 = x - f.ic2, v1 = (f.g * v3 + f.ic1) / (1 + f.g * (f.g + f.k)), v2 = f.ic2 + f.g * v1;
+      f.ic1 = 2 * v1 - f.ic1; f.ic2 = 2 * v2 - f.ic2; f.lp = v2; f.bp = v1; f.hp = x - f.k * v1 - v2;
+    };
+    const envF = (attMs, relMs) => ({ att: Math.exp(-1 / (attMs * 0.001 * sr)), rel: Math.exp(-1 / (relMs * 0.001 * sr)), env: 0 });
+    const envRun = (e, x) => { const a = Math.abs(x); e.env = a + (a > e.env ? e.att : e.rel) * (e.env - a); return e.env; };
+    let seed = 0x9E3779B9 | 0;
+    const noise = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed | 0) / 2147483648; };
+    const delay = n => ({ buf: new Float32Array(n), m: n - 1, w: 0 });
+    const dWrite = (d, x) => { d.buf[d.w] = x; d.w = (d.w + 1) & d.m; };
+    const dRead = (d, s) => { const rp = d.w - s, i = Math.floor(rp), f = rp - i; const a = d.buf[i & d.m], b = d.buf[(i + 1) & d.m]; return a + (b - a) * f; };
+    const ring = (n, len) => ({ buf: new Float32Array(n), len: clamp(len | 0, 1, n), i: 0, z: 0 });
+    const apRun = (r, x, g) => { const d = r.buf[r.i], y = d - g * x; r.buf[r.i] = x + g * y; if (++r.i >= r.len) r.i = 0; return y; };
+    const combRun = (r, x, fb, damp) => { const y = r.buf[r.i]; r.z = y + damp * (r.z - y); r.buf[r.i] = x + r.z * fb; if (++r.i >= r.len) r.i = 0; return y; };
+    const smooth = v => ({ a: Math.exp(-1 / (0.01 * sr)), cur: v, target: v });
+    const sNext = s => (s.cur = s.target + s.a * (s.cur - s.target));
+
+    // --- state ---
+    const S = {
+      loCut: svf(), hiCut: svf(),
+      // scream
+      inEnv: envF(1, 120), compEnv: envF(3, 80), subLp: svf(), noiseBp: svf(), jitter: onePole(), upLp: svf(), downLp: svf(), dc: onePole(),
+      f1: svf(), f2: svf(), lowMid: svf(), lastX: 0, subFlip: 1, phase: 0,
+      // chop
+      gMs: 0, gRms: Math.exp(-1 / (0.005 * sr)), gOpen: false, gHold: 0, gGain: 0, gOn: true, gOpenThr: 0, gCloseThr: 0, gAtt: 0, gRel: 0, gHoldLen: 0,
+      // thicken
+      tdl: delay(4096), apA1: ring(1024, 142 * sr / 48000), apA2: ring(1024, 379 * sr / 48000), apB1: ring(1024, 107 * sr / 48000), apB2: ring(1024, 277 * sr / 48000),
+      darkA: onePole(), darkB: onePole(), phA: 0, phB: 0.37,
+      // flavour
+      dlL: delay(1 << 17), dlR: delay(1 << 17), fbHpL: onePole(), fbHpR: onePole(), fbLpL: onePole(), fbLpR: onePole(),
+      cL: [], cR: [], aL: [], aR: [], duckEnv: envF(5, 250), tiltL: onePole(), tiltR: onePole(), verbPre: svf(),
+      fbVerb: 0.8, delaySamples: 1000, tiltLo: 1, tiltHi: 1,
+      gCtl: smooth(1), gThk: smooth(1), gFlv: smooth(1), gOut: smooth(1), gMix: smooth(1),
+    };
+    const s44 = sr / 44100;
+    [1116, 1188, 1277, 1356].forEach(l => { S.cL.push(ring(4096, l * s44)); S.cR.push(ring(4096, (l + 23) * s44)); });
+    S.aL = [ring(2048, 556 * s44), ring(2048, 441 * s44)]; S.aR = [ring(2048, 579 * s44), ring(2048, 464 * s44)];
+    svfSet(S.subLp, 400, 0.707); svfSet(S.noiseBp, 3500, 0.8); opSet(S.jitter, 8);
+    svfSet(S.upLp, sr * 0.45, 0.707, sr * 2); svfSet(S.downLp, sr * 0.45, 0.707, sr * 2); opSet(S.dc, 15);
+    opSet(S.fbHpL, 200); opSet(S.fbHpR, 200); opSet(S.fbLpL, 4500); opSet(S.fbLpR, 4500);
+    opSet(S.tiltL, 900); opSet(S.tiltR, 900); svfSet(S.verbPre, 300, 0.707);
+    S.gHoldLen = (0.04 * sr) | 0; S.gAtt = Math.exp(-1 / (0.001 * sr));
+
+    let p = null;
+    this.gateOpen = () => S.gOpen;
+
+    this.setParams = np => {
+      p = Object.assign({}, np);
+      svfSet(S.loCut, expMap(p.loCut, 20, 500), 0.707);
+      svfSet(S.hiCut, expMap(p.hiCut, 2000, 20000), 0.707);
+      let f1, f2;
+      if (p.driveType === 1) { f1 = lerp(250, 450, p.vowel); f2 = lerp(600, 1200, p.vowel); }
+      else if (p.driveType === 2) { f1 = lerp(900, 1600, p.vowel); f2 = lerp(2500, 4200, p.vowel); }
+      else { f1 = lerp(350, 800, p.vowel); f2 = lerp(900, 2600, p.vowel); }
+      const q = 1.5 + p.throat * 8;
+      svfSet(S.f1, f1, q); svfSet(S.f2, f2, q * 0.8); svfSet(S.lowMid, p.driveType === 1 ? 180 : 300, 0.9);
+      S.gOn = p.chop > 0.001; S.gOpenThr = db(lerp(-80, -20, p.chop)); S.gCloseThr = S.gOpenThr * 0.6;
+      S.gRel = Math.exp(-1 / (expMap(p.release, 10, 800) * 0.001 * sr));
+      const dk = expMap(1 - p.darken, 1200, 16000); opSet(S.darkA, dk); opSet(S.darkB, dk);
+      S.fbVerb = 0.70 + 0.28 * p.tail;
+      const beat = 60 / clamp(p.bpm, 40, 240);
+      const t = p.delayTime === 0 ? 0.11 : (p.delayTime === 1 ? beat * 0.5 : beat);
+      S.delaySamples = clamp(t * sr, 1, (1 << 17) - 2);
+      const td = (p.tilt - 0.5) * 12; S.tiltLo = db(-td * 0.5); S.tiltHi = db(td * 0.5);
+      S.gCtl.target = db(p.controlGainDb); S.gThk.target = db(p.thickenGainDb);
+      S.gFlv.target = db(p.flavourGainDb); S.gOut.target = db(p.outDb); S.gMix.target = p.mix;
+    };
+
+    const stage = x => {
+      const a = tanh(x + 0.25) - tanh(0.25);
+      const fold = Math.sin(a * (1 + p.drive * 2.5) * PI * 0.5);
+      return lerp(a, fold, 0.35 + 0.4 * p.drive);
+    };
+    const scream = x => {
+      const env = envRun(S.inEnv, x), push = clamp(env * 4, 0, 1);
+      if (x > 0 && S.lastX <= 0) S.subFlip = -S.subFlip;
+      S.lastX = x;
+      svfRun(S.subLp, x * S.subFlip);
+      const rate = p.rattleHz * clamp(1 + 7 * op(S.jitter, noise()), 0.5, 1.5);
+      S.phase += rate / sr; if (S.phase >= 1) S.phase -= 1;
+      const lfo = 0.5 + 0.5 * Math.sin(2 * PI * S.phase);
+      const amDepth = p.fry * (p.driveType === 1 ? 0.9 : 0.6);
+      const fried = x * (1 - amDepth * lfo) + S.subLp.lp * p.fry * (p.driveType === 2 ? 0.3 : 1.2);
+      svfRun(S.f1, fried); svfRun(S.f2, fried); svfRun(S.lowMid, fried);
+      const throated = fried + p.throat * (2.5 * S.f1.bp + 1.8 * S.f2.bp + 0.8 * S.lowMid.bp);
+      const pre = 1 + p.drive * 30 * (0.6 + 0.4 * push);
+      const xin = throated * pre;
+      svfRun(S.upLp, xin * 2); const a = S.upLp.lp; svfRun(S.upLp, 0); const b = S.upLp.lp;
+      svfRun(S.downLp, stage(a)); svfRun(S.downLp, stage(b));
+      let g = S.downLp.lp; g -= op(S.dc, g);
+      svfRun(S.noiseBp, noise());
+      const wet = g * 0.5 + S.noiseBp.bp * env * p.air * 6;
+      const ce = envRun(S.compEnv, wet);
+      const gr = ce > 0.125 ? Math.pow(0.125 / ce, 0.75) : 1;
+      return wet * gr * 1.6;
+    };
+    const chop = key => {
+      if (!S.gOn) { S.gOpen = true; return 1; }
+      const k2 = key * key; S.gMs = k2 + S.gRms * (S.gMs - k2);
+      const e = Math.sqrt(S.gMs);
+      if (e > S.gOpenThr) { S.gOpen = true; S.gHold = S.gHoldLen; }
+      else if (e < S.gCloseThr) { if (S.gHold > 0) S.gHold--; else S.gOpen = false; }
+      const t = S.gOpen ? 1 : 0;
+      S.gGain = t + (t > S.gGain ? S.gAtt : S.gRel) * (S.gGain - t);
+      return S.gGain;
+    };
+    const out = [0, 0];
+    this.process = x => {
+      const gc = sNext(S.gCtl), gm = sNext(S.gMix);
+      if (p.controlOn) {
+        svfRun(S.loCut, x); svfRun(S.hiCut, S.loCut.hp); x = S.hiCut.lp;
+        const gate = chop(x);
+        const wet = scream(x);
+        x = lerp(x, wet, gm) * gate * gc;
+      }
+      let L = x, R = x;
+      const gt = sNext(S.gThk);
+      if (p.thickenOn) {
+        dWrite(S.tdl, x);
+        S.phA += 0.63 / sr; if (S.phA >= 1) S.phA -= 1;
+        S.phB += 0.91 / sr; if (S.phB >= 1) S.phB -= 1;
+        const depth = 0.0004 + 0.0016 * p.spread;
+        let vA = dRead(S.tdl, sr * (0.012 + depth * Math.sin(2 * PI * S.phA)));
+        let vB = dRead(S.tdl, sr * (0.019 + depth * Math.sin(2 * PI * S.phB)));
+        vA = lerp(vA, apRun(S.apA2, apRun(S.apA1, vA, 0.6), 0.6), p.diffuse);
+        vB = lerp(vB, apRun(S.apB2, apRun(S.apB1, vB, 0.6), 0.6), p.diffuse);
+        vA = op(S.darkA, vA); vB = op(S.darkB, vB);
+        const lvl = p.spread * 0.8, wA = 0.5 + 0.5 * p.width, wB = 0.5 - 0.5 * p.width, dry = p.solo ? 0 : 1;
+        L = (x * dry + lvl * (vA * wA + vB * wB)) * gt;
+        R = (x * dry + lvl * (vB * wA + vA * wB)) * gt;
+      }
+      const gf = sNext(S.gFlv);
+      if (p.flavourOn) {
+        const d = envRun(S.duckEnv, 0.5 * (L + R));
+        const dg = 1 - p.duck * clamp(d * 8, 0, 1);
+        const dL = dRead(S.dlL, S.delaySamples), dR = dRead(S.dlR, S.delaySamples);
+        const fL = op(S.fbLpL, dR - op(S.fbHpL, dR));
+        const fR = op(S.fbLpR, dL - op(S.fbHpR, dL));
+        const rep = p.repeats * 0.9;
+        dWrite(S.dlL, L + fL * rep); dWrite(S.dlR, fR * rep);
+        svfRun(S.verbPre, 0.5 * (L + R));
+        const vin = S.verbPre.hp * 0.03;
+        let rL = 0, rR = 0;
+        for (let i = 0; i < 4; i++) { rL += combRun(S.cL[i], vin, S.fbVerb, 0.35); rR += combRun(S.cR[i], vin, S.fbVerb, 0.35); }
+        for (let i = 0; i < 2; i++) { rL = apRun(S.aL[i], rL, 0.5); rR = apRun(S.aR[i], rR, 0.5); }
+        L += dg * (p.delayBlend * dL + p.tailBlend * rL * 3);
+        R += dg * (p.delayBlend * dR + p.tailBlend * rR * 3);
+        let lo = op(S.tiltL, L); L = lo * S.tiltLo + (L - lo) * S.tiltHi;
+        lo = op(S.tiltR, R); R = lo * S.tiltLo + (R - lo) * S.tiltHi;
+        L *= gf; R *= gf;
+      }
+      const go = sNext(S.gOut);
+      out[0] = tanh(L * go); out[1] = tanh(R * go);
+      return out;
+    };
+  }
+}
+
+// Shared block processor used by the worklet and by the fallback node.
+function makeBlockRunner(sr) {
+  const eng = new RaspEngine(sr);
+  let bypass = false, peakIn = 0, peakOut = 0;
+  return {
+    eng,
+    set(msg) { if (msg.params) eng.setParams(msg.params); if ("bypass" in msg) bypass = msg.bypass; },
+    run(inp, oL, oR) {
+      for (let i = 0; i < oL.length; i++) {
+        const x = inp ? inp[i] : 0;
+        const a = Math.abs(x); if (a > peakIn) peakIn = a;
+        const o = eng.process(x);
+        if (bypass) { oL[i] = x; oR[i] = x; } else { oL[i] = o[0]; oR[i] = o[1]; }
+        const b = Math.abs(oL[i]); if (b > peakOut) peakOut = b;
+      }
+    },
+    stats() { const s = { peakIn, peakOut, gate: eng.gateOpen() }; peakIn = peakOut = 0; return s; },
+  };
+}
+
+// ===========================================================================
+// Parameters, presets and UI
+// ===========================================================================
+const DEFAULTS = {
+  controlOn: true, loCut: 0.25, hiCut: 0.8, drive: 0.6, driveType: 0, mix: 1, chop: 0.5, release: 0.3, controlGainDb: 0,
+  fry: 0.5, rattleHz: 45, throat: 0.5, vowel: 0.3, air: 0.25,
+  thickenOn: true, spread: 0.5, diffuse: 0.3, darken: 0.3, width: 0.7, solo: false, thickenGainDb: 0,
+  flavourOn: true, tail: 0.5, tailBlend: 0.2, repeats: 0.3, delayBlend: 0.15, delayTime: 1, bpm: 120, tilt: 0.5, duck: 0.5, flavourGainDb: 0,
+  outDb: -3,
+};
+const PRESETS = {
+  fry:    {},
+  growl:  { driveType: 1, drive: 0.75, fry: 0.8, rattleHz: 32, throat: 0.65, vowel: 0.1, air: 0.15, loCut: 0.12, hiCut: 0.6, spread: 0.6, darken: 0.55, tailBlend: 0.15, tilt: 0.38, delayBlend: 0.08 },
+  squeal: { driveType: 2, drive: 0.55, fry: 0.25, rattleHz: 70, throat: 0.75, vowel: 0.85, air: 0.35, loCut: 0.45, hiCut: 0.92, spread: 0.3, darken: 0.1, tilt: 0.62 },
+  gang:   { driveType: 0, drive: 0.45, fry: 0.35, throat: 0.4, spread: 0.95, diffuse: 0.6, width: 1, tailBlend: 0.3, tail: 0.6, delayBlend: 0.1, delayTime: 0 },
+  assist: { driveType: 0, drive: 0.7, mix: 0.45, fry: 0.6, spread: 0.35, tailBlend: 0.12, delayBlend: 0.05 },
+};
+let params = Object.assign({}, DEFAULTS);
+
+const pct = v => Math.round(v * 100) + "%";
+const hz = v => v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + "k" : Math.round(v) + "";
+const em = (t, lo, hi) => lo * Math.pow(hi / lo, t);
+const KNOBS = {
+  control: [
+    ["loCut", "Lo cut", v => hz(em(v, 20, 500)) + " Hz"],
+    ["hiCut", "Hi cut", v => hz(em(v, 2000, 20000)) + " Hz"],
+    ["drive", "Drive", pct], ["mix", "Mix", pct],
+    ["chop", "Chop", v => v < 0.001 ? "off" : Math.round(-80 + 60 * v) + " dB"],
+    ["release", "Release", v => Math.round(em(v, 10, 800)) + " ms"],
+  ],
+  thicken: [["spread", "Spread", pct], ["diffuse", "Diffuse", pct], ["darken", "Darken", pct], ["width", "Width", pct]],
+  flavour: [
+    ["tail", "Tail", pct], ["tailBlend", "Blend", pct], ["repeats", "Repeats", pct], ["delayBlend", "Blend", pct],
+    ["tilt", "Tilt", v => { const d = (v - 0.5) * 12; return (d > 0 ? "+" : "") + d.toFixed(1) + " dB"; }], ["duck", "Duck", pct],
+  ],
+};
+const TOGGLES = {
+  control: [["driveType", "Type", ["Fry", "Growl", "Squeal"]]],
+  flavour: [["delayTime", "Time", ["Slap", "1/8", "1/4"]]],
+};
+const MENU = [
+  ["Scream engine"],
+  ["fry", "Fry", 0, 1, 0.01, pct], ["rattleHz", "Rattle rate", 20, 90, 1, v => Math.round(v) + " Hz"],
+  ["throat", "Throat", 0, 1, 0.01, pct], ["vowel", "Vowel", 0, 1, 0.01, v => v < 0.33 ? "oo " + pct(v) : v < 0.66 ? "ah " + pct(v) : "ee " + pct(v)],
+  ["air", "Air", 0, 1, 0.01, pct],
+  ["Levels"],
+  ["controlGainDb", "Control gain", -18, 12, 0.5, v => v.toFixed(1) + " dB"], ["thickenGainDb", "Thicken gain", -18, 12, 0.5, v => v.toFixed(1) + " dB"],
+  ["flavourGainDb", "Flavour gain", -18, 12, 0.5, v => v.toFixed(1) + " dB"], ["outDb", "Output", -24, 6, 0.5, v => v.toFixed(1) + " dB"],
+  ["bpm", "Tempo", 40, 240, 1, v => Math.round(v) + " bpm"],
+];
+
+const knobEls = {}, toggleEls = {}, sliderEls = {};
+function knobRender(key) {
+  const k = knobEls[key]; if (!k) return;
+  const v = params[key];
+  k.el.style.setProperty("--rot", (-135 + 270 * v) + "deg");
+  k.el.setAttribute("aria-valuenow", v.toFixed(2));
+  k.el.setAttribute("aria-valuetext", k.fmt(v));
+  k.val.textContent = k.fmt(v);
+}
+function setParam(key, v, push = true) {
+  params[key] = v;
+  knobRender(key);
+  if (toggleEls[key]) toggleEls[key]();
+  if (sliderEls[key]) sliderEls[key]();
+  if (key === "bpm") document.getElementById("bpmLabel").textContent = Math.round(v) + " bpm";
+  if (push) sendParams();
+}
+function buildKnob(parent, key, label, fmt) {
+  const cell = document.createElement("div"); cell.className = "kcell";
+  const el = document.createElement("div"); el.className = "knob"; el.tabIndex = 0;
+  el.setAttribute("role", "slider"); el.setAttribute("aria-label", label); el.setAttribute("aria-valuemin", "0"); el.setAttribute("aria-valuemax", "1");
+  el.innerHTML = '<span class="ticks"></span>';
+  const lab = document.createElement("div"); lab.className = "klabel"; lab.textContent = label;
+  const val = document.createElement("div"); val.className = "kval";
+  cell.append(el, lab, val); parent.append(cell);
+  knobEls[key] = { el, val, fmt };
+  let startY = 0, startV = 0, id = null;
+  el.addEventListener("pointerdown", e => { id = e.pointerId; el.setPointerCapture(id); startY = e.clientY; startV = params[key]; e.preventDefault(); });
+  el.addEventListener("pointermove", e => {
+    if (e.pointerId !== id) return;
+    const sens = e.shiftKey ? 600 : 180;
+    setParam(key, Math.min(1, Math.max(0, startV + (startY - e.clientY) / sens)));
+  });
+  const end = e => { if (e.pointerId === id) id = null; };
+  el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+  el.addEventListener("dblclick", () => setParam(key, DEFAULTS[key]));
+  el.addEventListener("wheel", e => { e.preventDefault(); setParam(key, Math.min(1, Math.max(0, params[key] - Math.sign(e.deltaY) * 0.02))); }, { passive: false });
+  el.addEventListener("keydown", e => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") setParam(key, Math.min(1, params[key] + step));
+    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") setParam(key, Math.max(0, params[key] - step));
+    else if (e.key === "Home") setParam(key, 0); else if (e.key === "End") setParam(key, 1);
+    else return;
+    e.preventDefault();
+  });
+  knobRender(key);
+}
+function buildToggle(parent, key, label, names) {
+  const b = document.createElement("button"); b.className = "toggle"; b.type = "button";
+  b.innerHTML = `<span class="tl">${label}</span><span class="slot"></span><span class="tv"></span>`;
+  parent.append(b);
+  const render = () => { b.style.setProperty("--pos", params[key]); b.querySelector(".tv").textContent = names[params[key]]; b.setAttribute("aria-label", `${label}: ${names[params[key]]}`); };
+  toggleEls[key] = render;
+  b.addEventListener("click", () => setParam(key, (params[key] + 1) % 3));
+  render();
+}
+for (const sec of ["control", "thicken", "flavour"]) {
+  KNOBS[sec].forEach(([k, l, f]) => buildKnob(document.getElementById("k-" + sec), k, l, f));
+  (TOGGLES[sec] || []).forEach(([k, l, n]) => buildToggle(document.getElementById("t-" + sec), k, l, n));
+}
+const menu = document.getElementById("menu");
+for (const row of MENU) {
+  if (row.length === 1) { const g = document.createElement("div"); g.className = "group-label"; g.textContent = row[0]; menu.append(g); continue; }
+  const [key, label, min, max, step, fmt] = row;
+  const r = document.createElement("div"); r.className = "srow";
+  r.innerHTML = `<label for="s-${key}">${label}</label><input type="range" id="s-${key}" min="${min}" max="${max}" step="${step}"><output for="s-${key}"></output>`;
+  menu.append(r);
+  const inp = r.querySelector("input"), out = r.querySelector("output");
+  sliderEls[key] = () => { inp.value = params[key]; out.textContent = fmt(params[key]); };
+  inp.addEventListener("input", () => setParam(key, parseFloat(inp.value)));
+  sliderEls[key]();
+}
+{
+  const r = document.createElement("label"); r.className = "checkrow";
+  r.innerHTML = '<input type="checkbox" id="solo"> Solo the thicken doubles';
+  menu.append(r);
+  const cb = r.querySelector("input");
+  sliderEls.solo = () => { cb.checked = params.solo; };
+  cb.addEventListener("change", () => setParam("solo", cb.checked));
+}
+
+function applyPreset(name) {
+  const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm };
+  params = Object.assign({}, DEFAULTS, PRESETS[name], keep);
+  Object.keys(params).forEach(k => setParam(k, params[k], false));
+  sendParams();
+}
+document.getElementById("preset").addEventListener("change", e => applyPreset(e.target.value));
+
+// ===========================================================================
+// Audio graph
+// ===========================================================================
+let ctx = null, node = null, runner = null, srcNode = null, micStream = null, buffer = null, playing = false, bypass = false;
+const msg = t => { document.getElementById("msg").textContent = t; };
+const sendParams = () => { const m = { params }; if (node && node.port) node.port.postMessage(m); else if (runner) runner.set(m); };
+const sendBypass = () => { const m = { bypass }; if (node && node.port) node.port.postMessage(m); else if (runner) runner.set(m); };
+
+const WORKLET_SRC = () => `
+${RaspEngine.toString()}
+${makeBlockRunner.toString()}
+class RaspProc extends AudioWorkletProcessor {
+  constructor() { super(); this.r = makeBlockRunner(sampleRate); this.n = 0;
+    this.port.onmessage = e => this.r.set(e.data); }
+  process(inputs, outputs) {
+    const i = inputs[0] && inputs[0][0], o = outputs[0];
+    this.r.run(i, o[0], o[1] || o[0]);
+    if (++this.n % 16 === 0) this.port.postMessage(this.r.stats());
+    return true;
+  }
+}
+registerProcessor("rasp", RaspProc);`;
+
+async function ensureAudio() {
+  if (ctx) { if (ctx.state === "suspended") await ctx.resume(); return; }
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+  try {
+    const url = URL.createObjectURL(new Blob([WORKLET_SRC()], { type: "application/javascript" }));
+    await ctx.audioWorklet.addModule(url);
+    node = new AudioWorkletNode(ctx, "rasp", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
+    node.port.onmessage = e => showStats(e.data);
+  } catch (err) {
+    // Fallback: run the engine on the main thread.
+    node = ctx.createScriptProcessor(256, 1, 2);
+    runner = makeBlockRunner(ctx.sampleRate);
+    let n = 0;
+    node.onaudioprocess = e => {
+      runner.run(e.inputBuffer.getChannelData(0), e.outputBuffer.getChannelData(0), e.outputBuffer.getChannelData(1));
+      if (++n % 4 === 0) showStats(runner.stats());
+    };
+  }
+  node.connect(ctx.destination);
+  sendParams(); sendBypass();
+  const lat = ((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000;
+  document.getElementById("latency").textContent = `Browser audio latency here: about ${lat ? lat.toFixed(1) : "?"} ms output (plus input latency on the live mic). Sample rate ${ctx.sampleRate} Hz.`;
+}
+function showStats(s) {
+  const w = v => Math.min(100, Math.max(0, (20 * Math.log10(v + 1e-9) + 60) / 60 * 100)) + "%";
+  document.getElementById("mIn").style.width = w(s.peakIn);
+  document.getElementById("mOut").style.width = w(s.peakOut);
+  document.getElementById("gateLed").classList.toggle("on", !!s.gate && params.controlOn && !bypass && (playing || !!micStream));
+}
+
+function stopSource() {
+  if (srcNode) { try { srcNode.stop && srcNode.stop(); } catch (e) {} srcNode.disconnect(); srcNode = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  playing = false;
+  document.getElementById("play").textContent = "Play"; document.getElementById("play").setAttribute("aria-pressed", "false");
+  document.getElementById("mic").setAttribute("aria-pressed", "false");
+}
+async function play() {
+  await ensureAudio();
+  stopSource();
+  if (!buffer) buffer = makeDemo(ctx.sampleRate);
+  srcNode = ctx.createBufferSource(); srcNode.buffer = buffer; srcNode.loop = true;
+  srcNode.connect(node); srcNode.start();
+  playing = true;
+  document.getElementById("play").textContent = "Stop"; document.getElementById("play").setAttribute("aria-pressed", "true");
+}
+document.getElementById("play").addEventListener("click", () => playing ? stopSource() : play().catch(e => msg("Could not start audio: " + e.message)));
+document.getElementById("ab").addEventListener("click", e => {
+  bypass = !bypass; e.currentTarget.setAttribute("aria-pressed", String(bypass)); sendBypass();
+  document.getElementById("fsBypass").setAttribute("aria-pressed", String(!bypass));
+  document.getElementById("ledOn").classList.toggle("on", !bypass);
+});
+document.getElementById("fsBypass").addEventListener("click", () => document.getElementById("ab").click());
+const sectionStomp = (id, key, led) => document.getElementById(id).addEventListener("click", e => {
+  setParam(key, !params[key]); e.currentTarget.setAttribute("aria-pressed", String(params[key]));
+  document.getElementById(led).classList.toggle("on", params[key]);
+});
+sectionStomp("fsThicken", "thickenOn", "ledThk");
+sectionStomp("fsFlavour", "flavourOn", "ledFlv");
+let lastTap = 0;
+document.getElementById("fsTap").addEventListener("click", () => {
+  const now = performance.now(), dt = now - lastTap; lastTap = now;
+  const led = document.getElementById("ledTap"); led.classList.add("on"); setTimeout(() => led.classList.remove("on"), 90);
+  if (dt > 250 && dt < 1500) setParam("bpm", Math.round(60000 / dt));
+});
+
+document.getElementById("file").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    await ensureAudio();
+    buffer = await ctx.decodeAudioData(await f.arrayBuffer());
+    document.getElementById("src").innerHTML = "Source: <b></b>";
+    document.querySelector("#src b").textContent = f.name;
+    msg(""); play();
+  } catch (err) { msg("That file could not be decoded. Try a WAV or MP3 of a dry vocal."); }
+});
+document.getElementById("demo").addEventListener("click", async () => {
+  await ensureAudio(); buffer = makeDemo(ctx.sampleRate);
+  document.getElementById("src").innerHTML = "Source: <b>demo vowel (synthetic)</b>"; msg(""); play();
+});
+document.getElementById("mic").addEventListener("click", async () => {
+  if (micStream) { stopSource(); return; }
+  try {
+    await ensureAudio();
+    stopSource();
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, latency: 0 } });
+    srcNode = ctx.createMediaStreamSource(micStream); srcNode.connect(node);
+    document.getElementById("mic").setAttribute("aria-pressed", "true");
+    document.getElementById("src").innerHTML = "Source: <b>live mic</b> · wear headphones";
+    msg("Live mic on. Wear headphones, or the speakers will feed back into the mic.");
+  } catch (err) {
+    msg("The mic is blocked here. To sing through it live, download rasp/playground/index.html from the repo and open it in Chrome on your own computer. Until then, load a recording of your dry vocal.");
+  }
+});
+
+// Synthetic sung vowel so there is something to hear before a file is loaded.
+function makeDemo(sr) {
+  const len = Math.floor(sr * 4.2), buf = new AudioBuffer({ length: len, numberOfChannels: 1, sampleRate: sr }), d = buf.getChannelData(0);
+  const notes = [[0.15, 1.35, 147], [1.6, 2.5, 165], [2.7, 3.9, 131]];
+  const bp = (f, q) => { const w = 2 * Math.PI * f / sr, al = Math.sin(w) / (2 * q), a0 = 1 + al; return { b0: al / a0, b2: -al / a0, a1: -2 * Math.cos(w) / a0, a2: (1 - al) / a0, x1: 0, x2: 0, y1: 0, y2: 0 }; };
+  const run = (f, x) => { const y = f.b0 * x + f.b2 * f.x2 - f.a1 * f.y1 - f.a2 * f.y2; f.x2 = f.x1; f.x1 = x; f.y2 = f.y1; f.y1 = y; return y; };
+  const fA = [bp(730, 8), bp(1090, 10), bp(2440, 14)], fE = [bp(300, 8), bp(2300, 12), bp(3000, 14)];
+  let ph = 0, lp = 0;
+  for (let i = 0; i < len; i++) {
+    const t = i / sr; let f0 = 0, env = 0, vow = 0;
+    for (const [a, b, f] of notes) if (t >= a && t < b) { f0 = f; env = Math.min(1, (t - a) / 0.06, (b - t) / 0.12); vow = (t - a) / (b - a); }
+    f0 *= 1 + 0.012 * Math.sin(2 * Math.PI * 5.5 * t) * Math.min(1, t % 1.5);
+    ph += f0 / sr; if (ph >= 1) ph -= 1;
+    const pulse = f0 ? (ph < 0.6 ? Math.sin(Math.PI * ph / 0.6) ** 2 : 0) : 0;
+    const src = (pulse - lp) * 1.0 + (Math.random() * 2 - 1) * 0.02; lp = pulse;
+    let ya = 0, ye = 0;
+    fA.forEach((f, k) => ya += run(f, src) / (k + 1)); fE.forEach((f, k) => ye += run(f, src) / (k + 1));
+    d[i] = env * (ya * (1 - vow) + ye * vow) * 0.9 + (Math.random() * 2 - 1) * 0.0005;
+  }
+  let pk = 0; for (let i = 0; i < len; i++) pk = Math.max(pk, Math.abs(d[i]));
+  for (let i = 0; i < len; i++) d[i] *= 0.35 / pk;
+  return buf;
+}
+</script>
