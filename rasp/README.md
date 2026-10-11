@@ -15,6 +15,8 @@ the box adds grit, control, size and space.
 | `daisy/main.cpp` | Firmware for an Electrosmith Daisy Seed (16 knobs, 4 faders, 3 trims, 2 toggles, 4 footswitches) |
 | `playground/index.html` | Playable browser preview, a JS port of `dsp/rasp.h` that matches it to −76 dB. Load a recording, then scrub it on the waveform or loop one phrase |
 | `tools/probe.py` | Measurement kit for matching RASP to a reference plugin (section 6) |
+| `tools/takes.py` | Renders real takes through every preset, measures them, and compares them with finished reference vocals. See `samples/README.md` |
+| `samples/` | Drop zone for raw takes (`raw/`) and finished references (`ref/`) |
 
 ```sh
 make
@@ -35,7 +37,7 @@ mic ─► CONTROL ─┼─► THICKEN  doubles + stereo combs        (parallel
 | Stage | Controls | What it does, and why it's there |
 |---|---|---|
 | **Control** | lo cut, hi cut | 24 dB/oct high- and low-pass filters. Removes rumble and handling noise, and fizz above the voice |
-| | drive, mix | Tube-Screamer-style overdrive. Gain is applied only above ~720 Hz, through a soft diode-pair clip added onto the clean signal, with a cap rolloff as drive rises. This gives grit in the mids without fizz. 4× oversampled with anti-aliasing on the clipper (aliasing −72 dB at full drive). Level-matched, so drive and mix change texture, not volume |
+| | drive, mix | Tube-Screamer-style overdrive, with a 24 dB/oct high-pass after it at the lo cut frequency: distorting a rough voice creates low rumble that would otherwise add ~12 dB below 120 Hz. Gain is applied only above ~720 Hz, through a soft diode-pair clip added onto the clean signal, with a cap rolloff as drive rises. This gives grit in the mids without fizz. 4× oversampled with anti-aliasing on the clipper (aliasing −72 dB at full drive). Level-matched, so drive and mix change texture, not volume |
 | | tone switch | Sets the drive's tone filter **and** a mix-style voicing EQ: chest-weight shelf, a cut in the boxy 420–500 Hz region, a 2.6–3.5 kHz presence lift, and an air shelf. Dark suits gutturals; bright suits highs and squeals |
 | | *de-esser* (trim) | A dynamic bell at 7 kHz, up to 8 dB. Drive plus presence plus air would otherwise make every "s" and "t" spit |
 | | chop, release | Three compressors on one knob, the way produced screams are usually compressed: a FET-style peak compressor (fast, catches spikes), an opto-style leveler (slow, two-stage release, evens out phrases), and a parallel "crush" blended underneath for density. The LED lights above 3 dB of gain reduction |

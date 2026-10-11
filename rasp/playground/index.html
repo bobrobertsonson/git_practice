@@ -290,7 +290,7 @@ class RaspEngine {
 
     let p = null;
     // ---- CONTROL
-    const lc1 = svf(), lc2 = svf(), hc1 = svf(), hc2 = svf();
+    const lc1 = svf(), lc2 = svf(), hc1 = svf(), hc2 = svf(), dHp1 = svf(), dHp2 = svf();
     // drive
     const up = osF(), down = osF(), hp720 = op(720, sr * 4), capLp = op(), rmsIn = op(3), rmsOut = op(3), tone = svf(), level = sm(1, 50);
     let gain = 1, prevC = 0, prevF = 0;
@@ -345,7 +345,7 @@ class RaspEngine {
     this.setParams = np => {
       p = Object.assign({}, np);
       const lo = expMap(p.loCut, 20, 600), hi = expMap(p.hiCut, 2000, 20000);
-      svfSet(lc1, lo, 0.54); svfSet(lc2, lo, 1.31); svfSet(hc1, hi, 0.54); svfSet(hc2, hi, 1.31);
+      svfSet(lc1, lo, 0.54); svfSet(lc2, lo, 1.31); svfSet(hc1, hi, 0.54); svfSet(hc2, hi, 1.31); svfSet(dHp1, lo, 0.54); svfSet(dHp2, lo, 1.31);
       const d2 = p.drive * p.drive; gain = 1 + 120 * d2;
       opSet(capLp, clamp(1 / (2 * PI * (51e3 + 500e3 * d2) * 51e-12), 1000, sr * 1.8), sr * 4);
       const b = clamp(p.brightness | 0, 0, 2);
@@ -488,7 +488,7 @@ class RaspEngine {
         svfRun(lc1, x); svfRun(lc2, lc1.hp); svfRun(hc1, lc2.hp); svfRun(hc2, hc1.lp);
         x = hc2.lp;
         const eg = expander(x);
-        if (gm > 1e-4) x = lerp(x, drive(x), gm);
+        if (gm > 1e-4) { svfRun(dHp1, drive(x)); svfRun(dHp2, dHp1.hp); x = lerp(x, dHp2.hp, gm); }
         x = bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x))));
         x = deEss(x);
         x = chop(x) * eg * gc;

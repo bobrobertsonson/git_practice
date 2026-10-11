@@ -674,6 +674,8 @@ public:
         loCut2.set(expMap(p.loCut, 20.f, 600.f), 1.31f, sr);
         hiCut1.set(expMap(p.hiCut, 2000.f, 20000.f), 0.54f, sr);
         hiCut2.set(expMap(p.hiCut, 2000.f, 20000.f), 1.31f, sr);
+        driveHp1.set(expMap(p.loCut, 20.f, 600.f), 0.54f, sr);   // 24 dB/oct, like the lo cut
+        driveHp2.set(expMap(p.loCut, 20.f, 600.f), 1.31f, sr);
         drive.set(p.drive, p.brightness);
         voicing.set(p.brightness, sr);
         deEss.set(p.deEss);
@@ -696,7 +698,12 @@ public:
             hiCut1.process(loCut2.hp); hiCut2.process(hiCut1.lp);
             x = hiCut2.lp;
             float eg = expander.gain(x);              // keyed on the clean signal
-            if (gm > 1e-4f) x = lerp(x, drive.process(x), gm);   // skip the heaviest stage when unused
+            if (gm > 1e-4f) {                          // skip the heaviest stage when unused
+                // Distortion creates new low-frequency difference tones below
+                // the lo cut, so the wet path gets its own high-pass.
+                driveHp1.process(drive.process(x)); driveHp2.process(driveHp1.hp);
+                x = lerp(x, driveHp2.hp, gm);
+            }
             x = voicing.process(x);
             x = deEss.process(x);
             x = chop.process(x) * eg * gc;
@@ -722,7 +729,7 @@ public:
 private:
     float sr = 48000.f;
     Params p;
-    SVF loCut1, loCut2, hiCut1, hiCut2;
+    SVF loCut1, loCut2, hiCut1, hiCut2, driveHp1, driveHp2;
     Drive drive;
     Voicing voicing;
     DeEsser deEss;
