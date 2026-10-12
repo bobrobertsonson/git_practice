@@ -40,12 +40,22 @@ follow a drop perfectly, with no pitch detection guesswork.
 
 Pick these from the preset menu at the top of the SubForge window in Logic.
 
-- **Default**: a punchy, slightly driven 808.
-- **Long 30 Hz Boom**: matched to a reference track by measuring its 808. It
-  dives from about 120 Hz to 30 Hz in roughly 80 ms, barely decays (about 5 dB
-  in the first second), and cuts off when the note ends. **Fine** is set to -49
-  cents so that **B-1** in Logic plays exactly 30 Hz. If your song is in
-  another key, set Fine back to 0 and play your root note.
+| Preset | What it is | How to play it |
+| --- | --- | --- |
+| **Default** | Punchy, slightly driven 808 | Any short note |
+| **Long 30 Hz Boom** | Matched to a reference track: dives from ~120 Hz to 30 Hz, barely decays | Play **B-1**; the note length sets how long it rings (Fine is at -49 cents to hit exactly 30 Hz) |
+| **Trap 808 Slide** | Melodic 808 for basslines | Note length matters; overlap notes to slide between them |
+| **Short Punchy 808** | Short, bouncy, hard attack | Fast patterns |
+| **Distorted 808** | Gritty and saturated, cuts through busy mixes | Any note |
+| **Clean Sine Sub** | Pure deep sub, no dirt | Sparse mixes, big systems |
+| **Phone-Safe 808** | Extra harmonics so it reads on phones and laptops | Any note |
+| **Impact Boom** | One big cinematic hit with a deep pitch dive | Single hits on downbeats |
+| **Classic Drop (1 bar)** | Falls two octaves over one bar | Start one bar before the downbeat |
+| **Long Drop (2 bars)** | Three octaves over two bars, hangs then plunges | Start two bars before the downbeat |
+| **Quick Dive (1 beat)** | One octave in one beat | Fills |
+| **Impact Drop (2 beats)** | Hard attack that sinks fast, then rumbles out | Transitions |
+
+Every preset keeps its peak at or under the Ceiling (-6 dB, or -4 dB for Long 30 Hz Boom).
 
 ## Building and installing in Logic (Mac)
 

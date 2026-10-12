@@ -114,6 +114,8 @@ struct Preset
 inline const std::vector<Preset> all {
     { "Default", {} },
 
+    // --- Booms -------------------------------------------------------------
+
     // Matched to a reference track: a 30 Hz 808 that dives from ~120 Hz,
     // barely decays, and is cut off by the note end. Fine is set so B-1 in
     // Logic plays 30 Hz; set it to 0 to stay at concert pitch.
@@ -122,6 +124,62 @@ inline const std::vector<Preset> all {
         { params::decay, 8000.0f }, { params::oneShot, 0.0f }, { params::release, 150.0f }, { params::click, 0.1f },
         { params::lowCut, 18.0f }, { params::crossover, 60.0f }, { params::harmonics, 0.15f },
         { params::autoHarmonics, 0.2f }, { params::drive, -3.0f }, { params::ceiling, -4.0f } } },
+
+    // Melodic 808 for basslines: gated by note length, overlapping notes slide.
+    { "Trap 808 Slide",
+      { { params::punch, 5.0f }, { params::punchTime, 30.0f }, { params::decay, 2500.0f }, { params::oneShot, 0.0f },
+        { params::release, 80.0f }, { params::glide, 90.0f }, { params::click, 0.15f }, { params::harmonics, 0.4f },
+        { params::autoHarmonics, 0.5f }, { params::drive, 6.0f } } },
+
+    // Short, bouncy hit with a strong attack for fast patterns.
+    { "Short Punchy 808",
+      { { params::punch, 12.0f }, { params::punchTime, 25.0f }, { params::decay, 350.0f }, { params::click, 0.35f },
+        { params::harmonics, 0.45f }, { params::drive, 5.0f } } },
+
+    // Gritty, saturated 808 that cuts through a busy mix.
+    { "Distorted 808",
+      { { params::punch, 9.0f }, { params::punchTime, 35.0f }, { params::decay, 1500.0f }, { params::drive, 14.0f },
+        { params::harmonics, 0.6f }, { params::autoHarmonics, 0.4f }, { params::crossover, 90.0f } } },
+
+    // Pure, deep sub with no dirt: for sparse mixes and big systems.
+    { "Clean Sine Sub",
+      { { params::punch, 3.0f }, { params::punchTime, 20.0f }, { params::decay, 3000.0f }, { params::oneShot, 0.0f },
+        { params::release, 120.0f }, { params::click, 0.0f }, { params::harmonics, 0.15f },
+        { params::autoHarmonics, 0.3f }, { params::drive, -8.0f }, { params::lowCut, 22.0f } } },
+
+    // Extra harmonics so the 808 still reads on phones and laptops.
+    { "Phone-Safe 808",
+      { { params::decay, 1200.0f }, { params::click, 0.3f }, { params::harmonics, 0.7f },
+        { params::autoHarmonics, 1.0f }, { params::crossover, 80.0f }, { params::drive, 4.0f } } },
+
+    // One big cinematic hit: a deep pitch dive with a hard attack.
+    { "Impact Boom",
+      { { params::punch, 24.0f }, { params::punchTime, 18.0f }, { params::decay, 1800.0f }, { params::click, 0.5f },
+        { params::harmonics, 0.4f }, { params::drive, 8.0f } } },
+
+    // --- Drops -------------------------------------------------------------
+
+    // Falls two octaves over one bar (4/4), lands in key.
+    { "Classic Drop (1 bar)",
+      { { params::mode, 1.0f }, { params::dropAmount, 24.0f }, { params::dropLength, 4.0f }, { params::dropCurve, 0.3f },
+        { params::decay, 1500.0f }, { params::click, 0.0f }, { params::harmonics, 0.4f },
+        { params::autoHarmonics, 0.8f }, { params::drive, 2.0f } } },
+
+    // Three octaves over two bars, hangs at the top and then plunges.
+    { "Long Drop (2 bars)",
+      { { params::mode, 1.0f }, { params::dropAmount, 36.0f }, { params::dropLength, 5.0f }, { params::dropCurve, 0.5f },
+        { params::decay, 2500.0f }, { params::click, 0.0f }, { params::harmonics, 0.45f },
+        { params::autoHarmonics, 0.9f }, { params::drive, 2.0f } } },
+
+    // A quick one-octave fall over a single beat, for fills.
+    { "Quick Dive (1 beat)",
+      { { params::mode, 1.0f }, { params::dropAmount, 12.0f }, { params::dropLength, 2.0f }, { params::dropCurve, -0.4f },
+        { params::decay, 600.0f }, { params::click, 0.2f }, { params::drive, 4.0f } } },
+
+    // Transition hit: a hard attack that sinks fast, then rumbles out.
+    { "Impact Drop (2 beats)",
+      { { params::mode, 1.0f }, { params::dropAmount, 24.0f }, { params::dropLength, 3.0f }, { params::dropCurve, -0.6f },
+        { params::decay, 2000.0f }, { params::click, 0.5f }, { params::harmonics, 0.5f }, { params::drive, 8.0f } } },
 };
 
 } // namespace subforge::presets

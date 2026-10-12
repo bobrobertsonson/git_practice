@@ -203,9 +203,20 @@ void SubForgeProcessor::getStateInformation (juce::MemoryBlock& destData)
 
 void SubForgeProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
-        if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return;
+
+    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+
+    // replaceState skips parameters whose stored value already maps to the same
+    // switch or menu position, which can leave the host holding an in-between
+    // value (e.g. 0.76 for a switch that's on). Push every value back so the
+    // host sees exactly what was saved.
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+            if (auto* raw = apvts.getRawParameterValue (ranged->getParameterID()))
+                ranged->setValueNotifyingHost (ranged->convertTo0to1 (raw->load()));
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
