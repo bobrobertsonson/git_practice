@@ -42,15 +42,32 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"width", "Width", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(width), nullptr, false},
         {"solo", "Thicken Solo", "Thicken", K::Bool, 0, 1, nullptr, RASP_B(solo), nullptr, false},
         {"thickenGainDb", "Thicken Level", "Thicken", K::Db, -24, 6, nullptr, RASP_F(thickenGainDb), nullptr, false},
-        // PITCH layers (ids octDown/octUp kept so saved sessions still load)
-        {"pitch1Semi", "Pitch 1 Interval", "Pitch", K::Choice, 0, 24, kSemis,
+        // HARMONY pairs (ids octDown/octUp/pitch1Semi/pitch2Semi kept so saved sessions still load)
+        {"pitch1Semi", "Harmony 1 Interval", "Harmony", K::Choice, 0, 24, kSemis,
          [](const rasp::Params& p) { return (float)(p.pitch1Semi + 12); },
          [](rasp::Params& p, float v) { p.pitch1Semi = (int)std::lround(v) - 12; }, nullptr, false},
-        {"octDown", "Pitch 1 Level", "Pitch", K::Unit, 0, 1, nullptr, RASP_F(octDown), nullptr, false},
-        {"pitch2Semi", "Pitch 2 Interval", "Pitch", K::Choice, 0, 24, kSemis,
+        {"octDown", "Harmony 1 Level", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(octDown), nullptr, false},
+        {"pitch2Semi", "Harmony 2 Interval", "Harmony", K::Choice, 0, 24, kSemis,
          [](const rasp::Params& p) { return (float)(p.pitch2Semi + 12); },
          [](rasp::Params& p, float v) { p.pitch2Semi = (int)std::lround(v) - 12; }, nullptr, false},
-        {"octUp", "Pitch 2 Level", "Pitch", K::Unit, 0, 1, nullptr, RASP_F(octUp), nullptr, false},
+        {"octUp", "Harmony 2 Level", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(octUp), nullptr, false},
+        {"harm3Semi", "Harmony 3 Interval", "Harmony", K::Choice, 0, 24, kSemis,
+         [](const rasp::Params& p) { return (float)(p.harm3Semi + 12); },
+         [](rasp::Params& p, float v) { p.harm3Semi = (int)std::lround(v) - 12; }, nullptr, false},
+        {"harm3Level", "Harmony 3 Level", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harm3Level), nullptr, false},
+        {"harm4Semi", "Harmony 4 Interval", "Harmony", K::Choice, 0, 24, kSemis,
+         [](const rasp::Params& p) { return (float)(p.harm4Semi + 12); },
+         [](rasp::Params& p, float v) { p.harm4Semi = (int)std::lround(v) - 12; }, nullptr, false},
+        {"harm4Level", "Harmony 4 Level", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harm4Level), nullptr, false},
+        {"harm1Width", "Harmony 1 Width", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harm1Width), nullptr, false},
+        {"harm2Width", "Harmony 2 Width", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harm2Width), nullptr, false},
+        {"harm3Width", "Harmony 3 Width", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harm3Width), nullptr, false},
+        {"harm4Width", "Harmony 4 Width", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harm4Width), nullptr, false},
+        {"harmRandPitch", "Harmony Randomize Pitch", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harmRandPitch), nullptr, false},
+        {"harmRandTime", "Harmony Randomize Time", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harmRandTime), nullptr, false},
+        {"harmLoCut", "Harmony Low Cut", "Harmony", K::Hz, 20, 1000, nullptr, RASP_F(harmLoCut), nullptr, false},
+        {"harmHiCut", "Harmony High Cut", "Harmony", K::Hz, 1000, 20000, nullptr, RASP_F(harmHiCut), nullptr, false},
+        {"harmWidth", "Harmony Width", "Harmony", K::Unit, 0, 1, nullptr, RASP_F(harmWidth), nullptr, false},
         // FLAVOUR
         {"flavourOn", "Flavour On", "Flavour", K::Bool, 0, 1, nullptr, RASP_B(flavourOn), nullptr, false},
         {"tail", "Tail", "Flavour", K::Unit, 0, 1, nullptr, RASP_F(tail),
@@ -121,6 +138,15 @@ static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout() {
                     juce::AudioParameterFloatAttributes().withLabel("bpm").withStringFromValueFunction(
                         [](float v, int) { return juce::String(v, 1) + " bpm"; })));
                 break;
+            case ParamSpec::Hz: {
+                juce::NormalisableRange<float> r(s.lo, s.hi);
+                r.setSkewForCentre(std::sqrt(s.lo * s.hi));
+                layout.add(std::make_unique<juce::AudioParameterFloat>(
+                    pid, s.name, r, def,
+                    juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction(
+                        [](float v, int) { return hz(v); })));
+                break;
+            }
             case ParamSpec::Unit: {
                 auto fmt = s.display;
                 layout.add(std::make_unique<juce::AudioParameterFloat>(

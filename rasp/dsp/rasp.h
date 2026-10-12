@@ -253,12 +253,24 @@ struct Params {
     bool  mono       = false;  // one-channel PA: drop the stereo comb taps, sum to mono
     bool  howl       = true;   // automatic feedback notches
 
-    // PITCH layers (parallel, under the voice). Levels: 0 = off, 1 = as loud
-    // as the voice. Intervals in semitones, -12..+12 (default: octave down, octave up).
-    float octDown    = 0.f;    // pitch layer 1 level
-    float octUp      = 0.f;    // pitch layer 2 level
-    int   pitch1Semi = -12;    // pitch layer 1 interval
-    int   pitch2Semi = 12;     // pitch layer 2 interval
+    // HARMONY: four stereo pairs of shifted / doubled voices (Mantra-style).
+    // Levels: 0 = off, 1 = each voice as loud as the lead. Intervals in
+    // semitones, -12..+12 (0 = a double). Width: 0 = both voices centred,
+    // 1 = hard left / right. Pairs 1 and 2 keep the old pitch-layer names.
+    float octDown    = 0.f;    // pair 1 level
+    float octUp      = 0.f;    // pair 2 level
+    float harm3Level = 0.f;
+    float harm4Level = 0.f;
+    int   pitch1Semi = -12;    // pair 1 interval
+    int   pitch2Semi = 12;     // pair 2 interval
+    int   harm3Semi  = 0;
+    int   harm4Semi  = 7;
+    float harm1Width = 0.7f, harm2Width = 0.7f, harm3Width = 0.7f, harm4Width = 0.7f;
+    float harmRandPitch = 0.4f;   // 0..1: each voice drifts up to +-20 cents
+    float harmRandTime  = 0.4f;   // 0..1: each voice's timing wanders up to 20 ms
+    float harmLoCut  = 80.f;      // Hz, on the harmony bus
+    float harmHiCut  = 12000.f;   // Hz
+    float harmWidth  = 1.f;       // scales every pair's width
 
     // MATCH (Learn): input EQ that brings a voice/mic to the tone the presets
     // were tuned on. match[] is filled by Processor's learner (dB per band,
@@ -542,6 +554,7 @@ public:
         dly = dlyT; cents = centsT; gain = gainT;      // start settled
     }
     void setDepth(float maxCents) { cmax = maxCents; }
+    void setRange(float ms) { range = ms * 0.001f * sr; }
     float process(float x) {
         dl.write(x);
         if (++count >= period) { count = 0; pick(); }
@@ -878,9 +891,17 @@ public:
     // walk a head's delay out of range); it happens on a knob move only.
     void setRatio(float ratio) {
         if (std::fabs(ratio - cur) < 1e-6f) return;
-        cur = ratio; rho = 1.0 - ratio;
-        start = rho > 0.0 ? base : base + grain * -rho;   // down: delay grows; up: delay shrinks
+        cur = ratio; rho = rhoNow = 1.0 - ratio;
+        // Up: start high enough that +20 cents of drift can't run a head below base.
+        start = rho > 0.0 ? base : base + grain * (-rho + 0.013);
         h[0] = Head{start, 0}; h[1] = Head{start + half * rho, half};
+    }
+    // Small live deviations that don't restart the heads: a pitch drift in
+    // cents (|drift| far below one semitone, so the sweep never changes
+    // direction) and an extra read delay in samples (timing wander).
+    void setDrift(float cents, float extraDelay) {
+        rhoNow = 1.0 - cur * std::pow(2.0, cents / 1200.0);
+        extra = extraDelay;
     }
     float process(float x) {
         dl.write(x);
@@ -892,8 +913,8 @@ public:
             if (hd.searching && remaining > 0) searchStep(hd, remaining);
             if (hd.age >= grain) { hd.d = start + hd.best; hd.age = 0; hd.searching = false; }
             float sn = std::sin(kPi * (float)hd.age / (float)grain);
-            y += sn * sn * dl.read((float)hd.d);
-            hd.d += rho; hd.age++;
+            y += sn * sn * dl.read((float)hd.d + extra);
+            hd.d += rhoNow; hd.age++;
         }
         return y;
     }
@@ -905,7 +926,7 @@ private:
     // Align with where the other head will be when this one restarts.
     void beginSearch(Head& hd, const Head& other) {
         hd.searching = true; hd.fine = false; hd.c = 0; hd.best = 0; hd.bestScore = -1e30;
-        hd.oR = (int)(other.d + rho * lead);
+        hd.oR = (int)(other.d + rhoNow * lead);
     }
     void searchStep(Head& hd, int delta) {
         int c = hd.c;
@@ -929,44 +950,110 @@ private:
         double sc = xy / std::sqrt(bb);
         if (sc > hd.bestScore) { hd.bestScore = sc; hd.best = c; }
     }
-    float sr = 48000.f, cur = -1.f;
-    double rho = 0.5, base = 600.0, start = 600.0;
+    float sr = 48000.f, cur = -1.f, extra = 0.f;
+    double rho = 0.5, rhoNow = 0.5, base = 600.0, start = 600.0;
     int grain = 1920, half = 960, corr = 288, search = 576, lead = 312;
     Head h[2];
-    DelayLine<8192 * RASP_SR_SCALE> dl;               // up: start + search + grain <= 77 ms
+    DelayLine<8192 * RASP_SR_SCALE> dl;               // up: start + search + grain + wander <= 100 ms (48k)
 };
 
 // ---------------------------------------------------------------------------
-// Pitch: two shifted layers of the compressed voice, each set in semitones
-// (-12..+12; default an octave down and an octave up). They lag the voice by
-// roughly 13-65 ms, like a tight double; the dry voice is untouched. Filters
-// follow the interval: a deep layer is low-passed so it adds weight rather
-// than a second voice (2.2 kHz at -12, opening to ~8.8 kHz at -1); a high
-// layer is high-passed so it doesn't double the body (500 Hz at +12, down to
-// ~125 Hz at +1).
+// Harmony: four stereo pairs (eight voices) of the compressed voice, each pair
+// at an interval of -12..+12 semitones, with its own level and width - the
+// layout of Neural DSP's Mantra, which a user runs for octave-down doubles and
+// fifths. Every voice wanders on its own (randomize pitch: up to +-20 cents;
+// randomize time: up to 20 ms), so a pair reads as two more singers rather
+// than one effect. Unison voices are Double voices (they already wander);
+// shifted voices are WSOLA Shifters with a slow random drift on top. The bus
+// gets a low cut and a high cut. The shifted voices lag the lead by roughly
+// 13-65 ms plus the time wander, like a tight double; the lead is untouched.
 // ---------------------------------------------------------------------------
-class Pitch {
+class Harmony {
 public:
+    static constexpr int kPairs = 4;
     void init(float sampleRate) {
         sr = sampleRate;
-        for (auto& v : layer) { v.sh.init(sr, 1.f); v.semis = 99; }
-        set(-12, 12);
+        static const uint32_t seeds[kPairs * 2] = {0x51ed270u, 0x2b1c9a5u, 0x7f4a7c1u, 0x3c6ef37u,
+                                                   0x6a09e66u, 0x1f83d9au, 0x5be0cd1u, 0x4c3a2f9u};
+        for (int v = 0; v < kPairs * 2; v++) {
+            Voice& vc = voice[v];
+            vc.semis = 99; vc.rng = seeds[v];
+            vc.sh.init(sr, 1.f);
+            vc.dbl.init(sr, seeds[v] ^ 0x9e3779b9u, 9.f + 3.f * v, (v & 1) ? -1.f : 1.f, (v & 1) ? -1.f : 1.f);
+            vc.a = std::exp(-1.0 / (0.4 * sr));
+            vc.period = (int)((0.5f + 0.25f * rand01(vc)) * sr);
+            pick(vc);
+            vc.cents = vc.centsT; vc.ext = vc.extT;
+        }
+        for (auto& g : gain) g.init(0.f, sr, 30.f);
+        set(Params());
     }
-    void set(int semis1, int semis2) { setLayer(layer[0], semis1); setLayer(layer[1], semis2); }
-    void process(float x, float& a, float& b) { a = run(layer[0], x); b = run(layer[1], x); }
+    void set(const Params& p) {
+        const float lv[kPairs] = {p.octDown, p.octUp, p.harm3Level, p.harm4Level};
+        const int st[kPairs] = {p.pitch1Semi, p.pitch2Semi, p.harm3Semi, p.harm4Semi};
+        const float wd[kPairs] = {p.harm1Width, p.harm2Width, p.harm3Width, p.harm4Width};
+        randPitch = clampf(p.harmRandPitch, 0.f, 1.f); randTime = clampf(p.harmRandTime, 0.f, 1.f);
+        for (int k = 0; k < kPairs; k++) {
+            int semis = st[k] < -12 ? -12 : (st[k] > 12 ? 12 : st[k]);
+            // Upward pairs read louder at the same level, so they sit a little lower.
+            gain[k].target = clampf(lv[k], 0.f, 1.f) * (semis > 0 ? 0.7f : 1.f);
+            const float w = clampf(wd[k] * p.harmWidth, 0.f, 1.f);
+            for (int side = 0; side < 2; side++) {
+                Voice& vc = voice[k * 2 + side];
+                if (semis != vc.semis) { vc.semis = semis; vc.sh.setRatio((float)std::pow(2.0, semis / 12.0)); }
+                const float pan = side ? w : -w;                 // equal-power pan
+                vc.gl = std::cos((pan + 1.f) * kPi * 0.25f); vc.gr = std::sin((pan + 1.f) * kPi * 0.25f);
+                vc.dbl.setDepth(20.f * randPitch); vc.dbl.setRange(20.f * randTime);
+            }
+        }
+        lc[0].set(clampf(p.harmLoCut, 20.f, 1000.f), 0.707f, sr); lc[1].set(clampf(p.harmLoCut, 20.f, 1000.f), 0.707f, sr);
+        hc[0].set(clampf(p.harmHiCut, 1000.f, 20000.f), 0.707f, sr); hc[1].set(clampf(p.harmHiCut, 1000.f, 20000.f), 0.707f, sr);
+    }
+    bool active() const { for (const auto& g : gain) if (g.cur > 1e-4 || g.target > 0.f) return true; return false; }
+    void process(float x, float& L, float& R) {
+        float l = 0.f, r = 0.f;
+        for (int k = 0; k < kPairs; k++) {
+            const float g = gain[k].next();
+            if (g < 1e-4f) continue;
+            for (int side = 0; side < 2; side++) {
+                Voice& vc = voice[k * 2 + side];
+                float y;
+                if (vc.semis == 0) y = vc.dbl.process(x);
+                else {
+                    if (++vc.count >= vc.period) { vc.count = 0; pick(vc); }
+                    vc.cents = vc.centsT + vc.a * (vc.cents - vc.centsT);
+                    vc.ext = vc.extT + vc.a * (vc.ext - vc.extT);
+                    vc.sh.setDrift((float)vc.cents, (float)vc.ext);
+                    y = vc.sh.process(x);
+                }
+                l += g * vc.gl * y; r += g * vc.gr * y;
+            }
+        }
+        lc[0].process(l); hc[0].process(lc[0].hp); L = hc[0].lp;
+        lc[1].process(r); hc[1].process(lc[1].hp); R = hc[1].lp;
+    }
+    // Which octave partners a howl could get from the pairs (see HowlGuard).
+    bool hasInterval(int semis) const {
+        for (int k = 0; k < kPairs; k++) if (voice[k * 2].semis == semis && gain[k].target > 0.05f) return true;
+        return false;
+    }
 private:
-    struct Layer { Shifter sh; SVF hp, lp; int semis = 99; };
-    void setLayer(Layer& v, int semis) {
-        semis = semis < -12 ? -12 : (semis > 12 ? 12 : semis);
-        if (semis == v.semis) return;
-        v.semis = semis;
-        v.sh.setRatio(std::pow(2.f, semis / 12.f));
-        if (semis < 0) { v.hp.set(55.f, 0.707f, sr); v.lp.set(2200.f * std::pow(4.f, (semis + 12) / 11.f), 0.707f, sr); }
-        else           { v.hp.set(semis == 0 ? 55.f : 500.f * std::pow(4.f, (semis - 12) / 11.f), 0.707f, sr); v.lp.set(9000.f, 0.707f, sr); }
+    struct Voice {
+        Shifter sh; Double dbl;
+        int semis = 99, period = 24000, count = 0;
+        uint32_t rng = 1;
+        float gl = 0.707f, gr = 0.707f, centsT = 0.f, extT = 0.f;
+        double a = 0.0, cents = 0.0, ext = 0.0;
+    };
+    static float rand01(Voice& v) { v.rng = v.rng * 1664525u + 1013904223u; return (float)(v.rng >> 8) * (1.f / 16777216.f); }
+    void pick(Voice& v) {
+        v.centsT = (rand01(v) - 0.5f) * 40.f * randPitch;
+        v.extT = rand01(v) * 0.020f * sr * randTime;
     }
-    float run(Layer& v, float x) { v.hp.process(v.sh.process(x)); v.lp.process(v.hp.hp); return v.lp.lp; }
-    float sr = 48000.f;
-    Layer layer[2];
+    float sr = 48000.f, randPitch = 0.4f, randTime = 0.4f;
+    Voice voice[kPairs * 2];
+    Smoothed gain[kPairs];
+    SVF lc[2], hc[2];
 };
 
 // ---------------------------------------------------------------------------
@@ -1317,8 +1404,8 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
-        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); pitch.init(sr); learner.init(sr);
-        gMega.init(0.f, sr, 10.f); gOctD.init(0.f, sr, 30.f); gOctU.init(0.f, sr, 30.f);
+        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); harmony.init(sr); learner.init(sr);
+        gMega.init(0.f, sr, 10.f);
         gIn.init(1.f, sr); gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
     }
@@ -1344,14 +1431,9 @@ public:
         gIn.target = dbToLin(p.inDb);
         gMix.target = p.mix;
         gMega.target = p.mega ? 1.f : 0.f;
-        pitch.set(p.pitch1Semi, p.pitch2Semi);
+        harmony.set(p);
         matchEq.set(p.match, p.matchAmount, sr);
-        // Upward layers sit a little lower: they read louder at the same level.
-        gOctD.target = clampf(p.octDown, 0.f, 1.f) * (p.pitch1Semi > 0 ? 0.7f : 1.f);
-        gOctU.target = clampf(p.octUp, 0.f, 1.f) * (p.pitch2Semi > 0 ? 0.7f : 1.f);
-        const bool on1 = p.octDown > 0.05f, on2 = p.octUp > 0.05f;
-        howlG.setOctaves((on1 && p.pitch1Semi == -12) || (on2 && p.pitch2Semi == -12),
-                         (on1 && p.pitch1Semi == 12) || (on2 && p.pitch2Semi == 12));
+        howlG.setOctaves(harmony.hasInterval(-12), harmony.hasInterval(12));
         throwFx.set(p.throwOn, p.bpm);
     }
 
@@ -1385,23 +1467,21 @@ public:
         megaFade = gmg;
         mega.track(x);
         if (gmg > 1e-4f) x = lerp(x, mega.process(x), gmg);
-        // PITCH layers, before the effects so they share the doubles and space.
-        float god = gOctD.next(), gou = gOctU.next();
-        if (god > 1e-4f || gou > 1e-4f) {
-            float dn, upv;
-            pitch.process(x, dn, upv);
-            x += god * dn + gou * upv;
-        }
+        // HARMONY pairs: a stereo bus of their own; they also feed the reverb
+        // and delay so they sit in the same space as the lead.
+        float hL = 0.f, hR = 0.f;
+        if (harmony.active()) harmony.process(x, hL, hR);
+        const float xFx = x + 0.5f * (hL + hR);
         // THICKEN + FLAVOUR (parallel, fed by the control output)
         float tL = 0, tR = 0, fL = 0, fR = 0;
         float gt = gThk.next(), gf = gFlv.next();
         if (gt > 1e-4f) thicken.process(x, tL, tR, p.mono);
-        if (gf > 1e-4f) flavour.process(x, x, fL, fR);
+        if (gf > 1e-4f) flavour.process(xFx, x, fL, fR);
         float dry = p.solo ? 0.f : x;
         float go = gOut.next();
         float wL, wR;
         throwFx.process(x, wL, wR);
-        float L = (dry + gt * tL + gf * fL + wL) * go, R = (dry + gt * tR + gf * fR + wR) * go;
+        float L = (dry + hL + gt * tL + gf * fL + wL) * go, R = (dry + hR + gt * tR + gf * fR + wR) * go;
         if (p.mono) { float m = 0.5f * (L + R); L = R = m; }
         // BUS
         bus.process(L, R);
@@ -1458,12 +1538,12 @@ private:
     HowlGuard howlG;
     Mega mega;
     Throw throwFx;
-    Pitch pitch;
+    Harmony harmony;
     Learner learner;
     MatchEQ matchEq;
     float learnedDev[kMatchBands] = {};
     volatile bool learnReady = false;
-    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega, gOctD, gOctU;
+    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega;
     float megaFade = 0.f;
 };
 

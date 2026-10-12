@@ -8,12 +8,12 @@
 
 // One host parameter, mapped onto a field of rasp::Params.
 struct ParamSpec {
-    enum Kind { Unit, Db, Bool, Choice, Bpm };
+    enum Kind { Unit, Db, Bool, Choice, Bpm, Hz };
     const char* id;
     const char* name;
-    const char* section;       // "Control", "Thicken", "Flavour", "Bus", "Live", "Momentary"
+    const char* section;       // "Control", "Thicken", "Harmony", "Flavour", "Bus", "Live", "Momentary"
     Kind kind;
-    float lo, hi;              // Db and Bpm ranges (Unit is 0..1)
+    float lo, hi;              // Db, Bpm and Hz ranges (Unit is 0..1)
     const char* choices;       // Choice: "a|b|c"
     float (*get)(const rasp::Params&);
     void (*set)(rasp::Params&, float);

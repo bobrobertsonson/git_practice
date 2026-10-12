@@ -3,7 +3,7 @@
 namespace {
 const juce::Colour kBg{0xff121214}, kPanel{0xff1d1d21}, kEdge{0xff2c2c33}, kText{0xffe8e6e3},
     kDim{0xff8d8a86}, kAccent{0xffe2462c};
-constexpr int kW = 1172, kH = 590, kHeader = 64, kCellW = 92, kCellH = 112, kTitle = 34, kPad = 10;
+constexpr int kW = 1050, kH = 870, kHeader = 64, kCellW = 92, kCellH = 112, kTitle = 34, kPad = 10;
 
 using APVTS = juce::AudioProcessorValueTreeState;
 
@@ -86,18 +86,24 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     addKnob(thicken, "thickenGainDb", "Level"); addToggle(thicken, "solo", "Solo");
 
 
-    auto& flavour = panels[3]; flavour.title = "FLAVOUR"; flavour.cols = 3;
+    auto& flavour = panels[2]; flavour.title = "FLAVOUR"; flavour.cols = 3;
     addPower(flavour, "flavourOn");
     addKnob(flavour, "tail", "Tail"); addKnob(flavour, "tailBlend", "Tail blend"); addKnob(flavour, "tilt", "Tilt");
     addKnob(flavour, "repeats", "Repeats"); addKnob(flavour, "delayBlend", "Delay blend"); addChoice(flavour, "delayTime", "Time");
     addKnob(flavour, "duck", "Duck"); addKnob(flavour, "flavourGainDb", "Level"); addKnob(flavour, "bpm", "Tempo");
     addToggle(flavour, "sync", "Sync to host");
 
-    auto& pitch = panels[2]; pitch.title = "PITCH"; pitch.cols = 1;
-    addChoice(pitch, "pitch1Semi", "Pitch 1"); addKnob(pitch, "octDown", "Level");
-    addChoice(pitch, "pitch2Semi", "Pitch 2"); addKnob(pitch, "octUp", "Level");
+    auto& harm = panels[4]; harm.title = "HARMONY"; harm.cols = 8; harm.newRow = true;
+    addChoice(harm, "pitch1Semi", "Pair 1"); addKnob(harm, "octDown", "Level 1");
+    addChoice(harm, "pitch2Semi", "Pair 2"); addKnob(harm, "octUp", "Level 2");
+    addChoice(harm, "harm3Semi", "Pair 3"); addKnob(harm, "harm3Level", "Level 3");
+    addChoice(harm, "harm4Semi", "Pair 4"); addKnob(harm, "harm4Level", "Level 4");
+    addKnob(harm, "harm1Width", "Width 1"); addKnob(harm, "harm2Width", "Width 2");
+    addKnob(harm, "harm3Width", "Width 3"); addKnob(harm, "harm4Width", "Width 4");
+    addKnob(harm, "harmRandPitch", "Random pitch"); addKnob(harm, "harmRandTime", "Random time");
+    addKnob(harm, "harmLoCut", "Low cut"); addKnob(harm, "harmHiCut", "High cut");
 
-    auto& bus = panels[4]; bus.title = "BUS / LIVE"; bus.cols = 2;
+    auto& bus = panels[3]; bus.title = "BUS / LIVE"; bus.cols = 2;
     addKnob(bus, "inDb", "Input"); addKnob(bus, "glue", "Glue"); addKnob(bus, "outDb", "Output");
     addKnob(bus, "matchAmount", "Match"); addToggle(bus, "mono", "Mono"); addToggle(bus, "bypassMatch", "Match bypass"); addToggle(bus, "howl", "Feedback guard");
 
@@ -198,10 +204,12 @@ void RaspEditor::resized() {
 
     status.setBounds(getLocalBounds().removeFromBottom(30).reduced(kPad + 4, 0));
 
-    int x = kPad;
+    int x = kPad, y = kHeader, rowBottom = kHeader;
     for (auto& pn : panels) {
         const int rows = ((int)pn.cells.size() + pn.cols - 1) / pn.cols;
-        pn.bounds = {x, kHeader, pn.cols * kCellW + 2 * kPad, kTitle + rows * kCellH + kPad};
+        if (pn.newRow) { x = kPad; y = rowBottom + kPad; }
+        pn.bounds = {x, y, pn.cols * kCellW + 2 * kPad, kTitle + rows * kCellH + kPad};
+        rowBottom = std::max(rowBottom, pn.bounds.getBottom());
         if (pn.power) pn.power->setBounds(pn.bounds.getRight() - 60, pn.bounds.getY() + 4, 52, 26);
         for (size_t i = 0; i < pn.cells.size(); i++)
             pn.cells[i]->setBounds(pn.bounds.getX() + kPad + (int)(i % (size_t)pn.cols) * kCellW,

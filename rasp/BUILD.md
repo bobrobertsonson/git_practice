@@ -96,7 +96,7 @@ current parts; quantities match the firmware.
 
 | Part | Qty | ≈ Price | Notes |
 |---|---|---|---|
-| 16 mm pots, B10K linear (e.g. Alpha 16 mm) | 20 | $1.50 each | Knobs: two banks of 8 through the multiplexers, plus **Pitch 1/2 level** and **Pitch 1/2 interval** (−12…+12 semitones) on the third |
+| 16 mm pots, B10K linear (e.g. Alpha 16 mm) | 20 | $1.50 each | Knobs: two banks of 8 through the multiplexers, plus **Harmony pair 1/2 level** and **interval** (−12…+12 semitones) on the third. Pairs 3–4, widths and randomize live in presets / MIDI; how many pairs the Daisy can run at once is measured in Stage 1 |
 | 45 mm slide pots, 10 kΩ linear (e.g. Bourns PTA45) | 4 | $3 each | Section level faders: control, thicken, flavour, output |
 | 9 mm pots or trimmers, 10 kΩ linear | 3 | $1 each | Bleed, de-ess and glue trims |
 | **CD4051B** 8:1 analog multiplexer (DIP-16) | 3 | $0.60 each | Pot banks into A0, A1 and A8. The third (glue trim, pitch 1/2 level, pitch 1/2 interval, 3 spare inputs) shares select lines D0–D2 with the first |

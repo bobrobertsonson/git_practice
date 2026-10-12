@@ -49,7 +49,7 @@ mic ─► CONTROL ─► (+ OCTAVE) ─┼─► THICKEN  doubles + stereo comb
 | | *air* (menu) | Extra high shelf at 7 kHz, 0–12 dB. +4 in Huge, +7 in Air |
 | | body | Broad low-mid boost at 220 Hz, 0–9 dB: chest and weight. +5 in Huge, fitted to fix "still thin" (see below) |
 | | *bleed reducer* (trim) | Downward expander (1:4 below threshold, up to −40 dB), keyed on the clean mic signal. Compression lifts stage bleed; this turns it back down between phrases. Its own LED shows when it's working. See section 3 |
-| **Pitch** | pitch 1, pitch 2 (interval + level) | Two shifted layers of the compressed voice, each at any interval from −12 to +12 semitones (default: an octave down and an octave up), mixed in before the effects. They need no pitch tracking, so they work on screams. Each new grain starts in phase with the one fading out, so there's no flutter: on a 220 Hz tone every interval lands on its pitch, with stray tones 41–51 dB down. Filters follow the interval: low layers are low-passed so they add weight, high layers are high-passed. The layers lag the voice by 13–65 ms, like a tight double |
+| **Harmony** | 4 pairs × (interval, level, width); randomize pitch / time; low cut, high cut | Four stereo pairs of voices made from the compressed voice, laid out like Neural DSP's Mantra: each pair at any interval from −12 to +12 semitones (0 = a double), with a level and a width (both voices centred → hard left/right). Every voice drifts on its own (randomize pitch up to ±20 cents, time up to 20 ms), so a pair reads as two more singers. Shifted voices use grain-aligned shifting (clean on every interval tested, stray tones ≥26 dB down); unison voices are the double-track voices. The pairs have their own stereo bus with a low and high cut, and also feed the reverb and delay. Defaults: pair 1 an octave down, pair 2 an octave up, pair 3 unison, pair 4 a fifth up, all at level 0 |
 | **Thicken** | spread | **Synthetic double tracks**: a pair, plus a second pair as spread goes past 0.35 (the "quad-tracked" metal vocal). Each voice's timing wanders 12–36 ms, its pitch drifts up to ±20 cents and its level ±1.5 dB, and each has its own slight tone. That's what makes a real double read as a second performance. Also quieter stereo comb taps (3–26 ms) |
 | | diffuse, darken, width, solo | Allpass smearing of the combs, lowpass on the branch, mid/side width, and a solo for the branch alone |
 | **Flavour** | tail + blend | 8-line feedback-delay-network plate, RT60 0.5–6 s. 25 ms pre-delay, slight modulation so long tails don't ring metallic, and a 300 Hz–8 kHz return EQ |
@@ -86,6 +86,10 @@ decide that. **Send raw tracks and I'll tune against them.**
   more 250 Hz on the lead than Huge. A **Body** control (+5 in Huge) brings it
   within 1 dB. Your blind picks agreed: louder doubles were "fuller" and the
   78 Hz lo cut "bigger" than 130 Hz, so Huge's doubles went up to +3 dB.
+- **Harmony** (four stereo pairs, Mantra-style) replaced the two mono pitch
+  layers, after the user showed their Mantra setups (an octave-down pair, unison
+  doubles, a fifth). The feedback guard knows about octave pairs; no false notches
+  on three leads with all four pairs on.
 - **Pitch layers** in semitones (−12…+12) replaced the fixed octaves. The
   feedback guard catches howls at every interval tested (−12, −7, −5, −2, −1,
   0, +7, +12), with no false notches on three real leads.

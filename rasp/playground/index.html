@@ -339,13 +339,13 @@ class RaspEngine {
     const shHead = (d, age) => ({ d, age, searching: false, fine: false, oR: 0, c: 0, best: 0, bestScore: 0 });
     const shSetRatio = (S, ratio) => {      // mirrors Shifter::setRatio: a new interval restarts both heads
       if (Math.abs(ratio - S.cur) < 1e-6) return;
-      S.cur = ratio; S.rho = 1 - ratio;
-      S.start = S.rho > 0 ? S.base : S.base + S.grain * -S.rho;
+      S.cur = ratio; S.rho = S.rhoNow = 1 - ratio;
+      S.start = S.rho > 0 ? S.base : S.base + S.grain * (-S.rho + 0.013);
       S.h = [shHead(S.start, 0), shHead(S.start + S.half * S.rho, S.half)];
     };
     const shifter = ratio => {
       const S = { dl: delay(8192), grain: Math.trunc(0.04 * sr), corr: Math.trunc(0.006 * sr),
-        search: Math.trunc(0.012 * sr) & ~1, lead: Math.trunc(0.0065 * sr), cur: -1 };
+        search: Math.trunc(0.012 * sr) & ~1, lead: Math.trunc(0.0065 * sr), cur: -1, extra: 0 };
       S.half = Math.trunc(S.grain / 2); S.base = S.corr + S.lead + 2;
       shSetRatio(S, ratio);
       return S;
@@ -376,30 +376,16 @@ class RaspEngine {
         if (remaining === S.lead) {
           const other = S.h[1 - k];
           hd.searching = true; hd.fine = false; hd.c = 0; hd.best = 0; hd.bestScore = -1e30;
-          hd.oR = Math.trunc(other.d + S.rho * S.lead);
+          hd.oR = Math.trunc(other.d + S.rhoNow * S.lead);
         }
         if (hd.searching && remaining > 0) shStep(S, hd, remaining);
         if (hd.age >= S.grain) { hd.d = S.start + hd.best; hd.age = 0; hd.searching = false; }
         const sn = Math.sin(PI * hd.age / S.grain);
-        y += sn * sn * dRead(S.dl, hd.d);
-        hd.d += S.rho; hd.age++;
+        y += sn * sn * dRead(S.dl, hd.d + S.extra);
+        hd.d += S.rhoNow; hd.age++;
       }
       return y;
     };
-    // Pitch layers (mirrors class Pitch): interval in semitones, filters follow it.
-    const pLayer = () => ({ sh: shifter(1), hp: svf(), lp: svf(), semis: 99 });
-    const pLayers = [pLayer(), pLayer()];
-    const pSet = (v, semis) => {
-      semis = clamp(semis | 0, -12, 12);
-      if (semis === v.semis) return;
-      v.semis = semis;
-      shSetRatio(v.sh, Math.fround(Math.pow(2, semis / 12)));
-      if (semis < 0) { svfSet(v.hp, 55, 0.707); svfSet(v.lp, 2200 * Math.pow(4, (semis + 12) / 11), 0.707); }
-      else { svfSet(v.hp, semis === 0 ? 55 : 500 * Math.pow(4, (semis - 12) / 11), 0.707); svfSet(v.lp, 9000, 0.707); }
-    };
-    pSet(pLayers[0], -12); pSet(pLayers[1], 12);
-    const pRun = (v, x) => { svfRun(v.hp, shRun(v.sh, x)); svfRun(v.lp, v.hp.hp); return v.lp.lp; };
-    const gOctD = sm(0, 30), gOctU = sm(0, 30);
 
     let p = null;
     // ---- CONTROL
@@ -448,6 +434,66 @@ class RaspEngine {
       return (lo + (y - lo) * v.tiltHi) * v.gain;
     };
     const voices = [dblVoice(0x1234567, 12, 1, 1.5), dblVoice(0x89abcde, 16, -1, -1.5), dblVoice(0x2468ace, 22, -1, -1), dblVoice(0x13579bd, 26, 1, 1)];
+    // ---- HARMONY: four stereo pairs (mirrors class Harmony in rasp.h, same seeds)
+    const HSEEDS = [0x51ed270, 0x2b1c9a5, 0x7f4a7c1, 0x3c6ef37, 0x6a09e66, 0x1f83d9a, 0x5be0cd1, 0x4c3a2f9];
+    const HR = { randPitch: 0.4, randTime: 0.4 };
+    const hRand = v => { v.rng = (Math.imul(v.rng, 1664525) + 1013904223) >>> 0; return (v.rng >>> 8) / 16777216; };
+    const hPick = v => { v.centsT = (hRand(v) - 0.5) * 40 * HR.randPitch; v.extT = hRand(v) * 0.020 * sr * HR.randTime; };
+    const hVoices = HSEEDS.map((seed, v) => {
+      const vc = { semis: 99, rng: seed >>> 0, sh: shifter(1),
+        dbl: dblVoice((seed ^ 0x9e3779b9) >>> 0, 9 + 3 * v, (v & 1) ? -1 : 1, (v & 1) ? -1 : 1),
+        a: Math.exp(-1 / (0.4 * sr)), count: 0, gl: Math.SQRT1_2, gr: Math.SQRT1_2 };
+      vc.period = Math.trunc((0.5 + 0.25 * hRand(vc)) * sr);
+      hPick(vc); vc.cents = vc.centsT; vc.ext = vc.extT;
+      return vc;
+    });
+    const hGain = [0, 1, 2, 3].map(() => sm(0, 30)), hLc = [svf(), svf()], hHc = [svf(), svf()];
+    const hSet = q => {
+      const lv = [q.octDown || 0, q.octUp || 0, q.harm3Level || 0, q.harm4Level || 0];
+      const st = [q.pitch1Semi ?? -12, q.pitch2Semi ?? 12, q.harm3Semi ?? 0, q.harm4Semi ?? 7];
+      const wd = [q.harm1Width ?? 0.7, q.harm2Width ?? 0.7, q.harm3Width ?? 0.7, q.harm4Width ?? 0.7];
+      HR.randPitch = clamp(q.harmRandPitch ?? 0.4, 0, 1); HR.randTime = clamp(q.harmRandTime ?? 0.4, 0, 1);
+      for (let k = 0; k < 4; k++) {
+        const semis = clamp(st[k] | 0, -12, 12);
+        hGain[k].target = clamp(lv[k], 0, 1) * (semis > 0 ? 0.7 : 1);
+        const w = clamp(wd[k] * (q.harmWidth ?? 1), 0, 1);
+        for (let side = 0; side < 2; side++) {
+          const vc = hVoices[k * 2 + side];
+          if (semis !== vc.semis) { vc.semis = semis; shSetRatio(vc.sh, Math.fround(Math.pow(2, semis / 12))); }
+          const pan = side ? w : -w;
+          vc.gl = Math.cos((pan + 1) * PI * 0.25); vc.gr = Math.sin((pan + 1) * PI * 0.25);
+          vc.dbl.cmax = 20 * HR.randPitch; vc.dbl.range = 20 * HR.randTime * 0.001 * sr;
+        }
+      }
+      const lcHz = clamp(q.harmLoCut ?? 80, 20, 1000), hcHz = clamp(q.harmHiCut ?? 12000, 1000, 20000);
+      for (const f of hLc) svfSet(f, lcHz, 0.707); for (const f of hHc) svfSet(f, hcHz, 0.707);
+    };
+    hSet({});
+    const hActive = () => hGain.some(g => g.cur > 1e-4 || g.target > 0);
+    const hHas = semis => [0, 1, 2, 3].some(k => hVoices[k * 2].semis === semis && hGain[k].target > 0.05);
+    const hOut = [0, 0];
+    const harmony = (x, o) => {
+      let l = 0, r = 0;
+      for (let k = 0; k < 4; k++) {
+        const g = smNext(hGain[k]);
+        if (g < 1e-4) continue;
+        for (let side = 0; side < 2; side++) {
+          const vc = hVoices[k * 2 + side];
+          let y;
+          if (vc.semis === 0) y = dblRun(vc.dbl, x);
+          else {
+            if (++vc.count >= vc.period) { vc.count = 0; hPick(vc); }
+            vc.cents = vc.centsT + vc.a * (vc.cents - vc.centsT);
+            vc.ext = vc.extT + vc.a * (vc.ext - vc.extT);
+            vc.sh.rhoNow = 1 - vc.sh.cur * Math.pow(2, vc.cents / 1200); vc.sh.extra = Math.fround(vc.ext);
+            y = shRun(vc.sh, x);
+          }
+          l += g * vc.gl * y; r += g * vc.gr * y;
+        }
+      }
+      svfRun(hLc[0], l); svfRun(hHc[0], hLc[0].hp); o[0] = hHc[0].lp;
+      svfRun(hLc[1], r); svfRun(hHc[1], hLc[1].hp); o[1] = hHc[1].lp;
+    };
     // ---- FLAVOUR: plate
     const pLen = [23.1, 27.7, 31.9, 35.3, 39.7, 43.1, 47.9, 53.3].map(ms => ms * 0.001 * sr);
     const pLines = pLen.map(() => delay(8192)), pDamp = pLen.map(() => op(7000)), pFb = new Float64Array(8);
@@ -505,11 +551,8 @@ class RaspEngine {
       gOut.target = db(p.outDb); gMix.target = p.mix; gIn.target = db(p.inDb || 0);
       gMega.target = p.mega ? 1 : 0;
       setMatch();
-      const s1 = p.pitch1Semi ?? -12, s2 = p.pitch2Semi ?? 12;
-      pSet(pLayers[0], s1); pSet(pLayers[1], s2);
-      gOctD.target = clamp(p.octDown || 0, 0, 1) * (s1 > 0 ? 0.7 : 1); gOctU.target = clamp(p.octUp || 0, 0, 1) * (s2 > 0 ? 0.7 : 1);
-      const on1 = (p.octDown || 0) > 0.05, on2 = (p.octUp || 0) > 0.05;
-      H.octDown = (on1 && s1 === -12) || (on2 && s2 === -12); H.octUp = (on1 && s1 === 12) || (on2 && s2 === 12);
+      hSet(p);
+      H.octDown = hHas(-12); H.octUp = hHas(12);
       thSend.target = p.throwOn ? 1 : 0;
       thTime.target = clamp(60 / clamp(p.bpm, 40, 240) * sr, 1, THMAX - 4);
     };
@@ -612,8 +655,8 @@ class RaspEngine {
       o[0] = po[0] + po[2] + po[4] + po[6]; o[1] = po[1] + po[3] + po[5] + po[7];
     };
     const pv = [0, 0];
-    const flavour = (x, o) => {
-      const a = Math.abs(x);
+    const flavour = (x, key, o) => {
+      const a = Math.abs(key);
       duckEnv = a + (a > duckEnv ? duckAtt : duckRel) * (duckEnv - a);
       const dg = 1 - p.duck * 0.85 * clamp(duckEnv * 6, 0, 1);
       plate(x, pv);
@@ -805,19 +848,17 @@ class RaspEngine {
       megaFade = gmg;
       megaTrack(x);
       if (gmg > 1e-4) x = lerp(x, mega(x), gmg);
-      const god = smNext(gOctD), gou = smNext(gOctU);
-      if (god > 1e-4 || gou > 1e-4) {
-        const pa = pRun(pLayers[0], x), pb = pRun(pLayers[1], x);
-        x += god * pa + gou * pb;
-      }
+      hOut[0] = hOut[1] = 0;
+      if (hActive()) harmony(x, hOut);
+      const xFx = x + 0.5 * (hOut[0] + hOut[1]);
       const gt = smNext(gThk), gf = smNext(gFlv);
       tO[0] = tO[1] = fO[0] = fO[1] = 0;
       if (gt > 1e-4) thicken(x, tO);
-      if (gf > 1e-4) flavour(x, fO);
+      if (gf > 1e-4) flavour(xFx, x, fO);
       const dry = p.solo ? 0 : x, go = smNext(gOut);
       throwFx(x, wO);
-      out[0] = (dry + gt * tO[0] + gf * fO[0] + wO[0]) * go;
-      out[1] = (dry + gt * tO[1] + gf * fO[1] + wO[1]) * go;
+      out[0] = (dry + hOut[0] + gt * tO[0] + gf * fO[0] + wO[0]) * go;
+      out[1] = (dry + hOut[1] + gt * tO[1] + gf * fO[1] + wO[1]) * go;
       if (p.mono) { const m = 0.5 * (out[0] + out[1]); out[0] = out[1] = m; }
       bus(out);
       out[0] = safetyClip(out[0]); out[1] = safetyClip(out[1]);
@@ -934,7 +975,9 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, matchAmount: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12, bleed: 0.7, controlGainDb: 0,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, matchAmount: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12,
+  harm3Level: 0, harm4Level: 0, harm3Semi: 0, harm4Semi: 7, harm1Width: 0.7, harm2Width: 0.7, harm3Width: 0.7, harm4Width: 0.7,
+  harmRandPitch: 0.4, harmRandTime: 0.4, harmLoCut: 80, harmHiCut: 12000, harmWidth: 1, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
@@ -981,10 +1024,22 @@ const MENU = [
   ["airDb", "Air (7 kHz shelf)", 0, 12, 0.5, v => "+" + v.toFixed(1) + " dB"],
   ["bodyDb", "Body (220 Hz)", 0, 9, 0.5, v => "+" + v.toFixed(1) + " dB"],
   ["matchAmount", "Match (after Learn)", 0, 1, 0.01, pct],
-  ["pitch1Semi", "Pitch 1 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
-  ["octDown", "Pitch 1 level", 0, 1, 0.01, pct],
-  ["pitch2Semi", "Pitch 2 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
-  ["octUp", "Pitch 2 level", 0, 1, 0.01, pct],
+  ["pitch1Semi", "Harmony 1 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
+  ["octDown", "Harmony 1 level", 0, 1, 0.01, pct],
+  ["harm1Width", "Harmony 1 width", 0, 1, 0.01, pct],
+  ["pitch2Semi", "Harmony 2 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
+  ["octUp", "Harmony 2 level", 0, 1, 0.01, pct],
+  ["harm2Width", "Harmony 2 width", 0, 1, 0.01, pct],
+  ["harm3Semi", "Harmony 3 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
+  ["harm3Level", "Harmony 3 level", 0, 1, 0.01, pct],
+  ["harm3Width", "Harmony 3 width", 0, 1, 0.01, pct],
+  ["harm4Semi", "Harmony 4 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
+  ["harm4Level", "Harmony 4 level", 0, 1, 0.01, pct],
+  ["harm4Width", "Harmony 4 width", 0, 1, 0.01, pct],
+  ["harmRandPitch", "Harmony randomize pitch", 0, 1, 0.01, pct],
+  ["harmRandTime", "Harmony randomize time", 0, 1, 0.01, pct],
+  ["harmLoCut", "Harmony low cut", 20, 1000, 1, v => Math.round(v) + " Hz"],
+  ["harmHiCut", "Harmony high cut", 1000, 20000, 100, v => (v / 1000).toFixed(1) + " kHz"],
   ["Bus"],
   ["glue", "Glue", 0, 1, 0.01, pct], ["outDb", "Output", -24, 12, 0.5, v => v.toFixed(1) + " dB"],
   ["Section levels"],
