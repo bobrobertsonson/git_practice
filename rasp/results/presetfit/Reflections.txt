@@ -1,0 +1,18 @@
+# Reflections
+# mix: Reflections-Scapegoat.mp3
+# lead: 22 - Vox Lead 1.wav
+# other stems: 23 - Vox Dub 1.wav, 24 - Vox Lead 2.wav, 25 - Vox Dub 2.wav, 26 - Vox L.wav, 27 - Vox R.wav, 28 - Vox L 2.wav, 29 - Vox R 2.wav, 30 - Vox L_3.wav, 31 - Vox R_3.wav, 32 - Vocal FX.wav, 33 - Vox Whisper.wav
+
+lead: 22 - Vox Lead 1.wav   input gain -1.2 dB   bands used: 250 400 630 1k 1.6k 2.5k 4k 6.3k 10k 16k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         250   400   630    1k  1.6k  2.5k    4k  6.3k   10k   16k   rms
+huge          -0.5  -0.8  -1.4   0.0   1.0  -0.2   0.6   3.3   5.5   2.6    2.3
+natural       -0.1  -1.1  -1.6   0.0   0.9  -0.2   1.2   4.9   9.7  17.9    6.7
+dark          -1.7  -2.1  -2.4   0.0   1.4   1.9   4.9   8.7  11.0  25.4    9.4
+bright         1.4  -0.4  -0.8   0.0   0.5  -1.0  -0.8   2.4   5.2   6.5    2.8
+live           0.1  -1.1  -1.6   0.0   0.8  -0.2   1.1   4.8   9.6  17.9    6.6
+raw           -0.7  -1.5  -1.8   0.0   1.1   0.4   2.3   3.6   4.2  12.6    4.5
+air            0.8  -0.2  -0.7   0.0   0.8  -0.8  -0.8   0.6  -0.3  -2.5    1.0
+
+closest: air (1.0 dB), huge (2.3 dB), bright (2.8 dB), raw (4.5 dB), live (6.6 dB), natural (6.7 dB), dark (9.4 dB)

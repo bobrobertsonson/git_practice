@@ -1,0 +1,6 @@
+# Opeth
+# mix: Opeth-Heir-Apparent.mp3
+# lead: 62 Death Vox.wav
+# other stems: 61 VoxFX 1.wav, 63 Death dub.wav, 64 VoxFX 2.wav, 65 Megaphon.wav
+
+too few bands where the vocal is audible in the mix to fit presets

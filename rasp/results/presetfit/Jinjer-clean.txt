@@ -1,0 +1,18 @@
+# Jinjer-clean
+# mix: 01-On-the-Top-1.mp3
+# lead: 48 Vox Cln main.wav
+# other stems: 38 Vox Extreme main.wav, 39 Vox Extreme dbl.wav, 40 Vox Extreme L.wav, 41 Vox Extreme R.wav, 42 Vox Whisper.wav, 43 Vox Whisper dbl.wav, 44 Vox Sub L.wav, 45 Vox Sub R.wav, 46 Vox Cln Soft.wav, 47 Vox Cln Soft dbl.wav, 49 Vox Cln dbl.wav, 50 Vox Cln Back high L.wav, 51 Vox Cln Back high R.wav, 52 Vox Cln Back low L.wav, 53 Vox Cln Back low R.wav, 54 Vox Cln Back octave.wav
+
+lead: 48 Vox Cln main.wav   input gain +4.7 dB   bands used: 250 400 630 1k 1.6k 2.5k 4k 6.3k 10k 16k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         250   400   630    1k  1.6k  2.5k    4k  6.3k   10k   16k   rms
+huge          -0.0   1.9   1.4   0.0  -1.5  -1.7  -0.9  -1.4   0.4  -1.4    1.2
+natural        0.3   1.5   1.2   0.0  -1.7  -2.2  -1.0   0.4   5.2  14.1    4.9
+dark          -0.4   0.3   0.6   0.0  -1.0  -0.2   2.4   4.7   7.3  22.4    7.6
+bright         1.6   2.8   2.1   0.0  -1.8  -2.9  -2.6  -1.6   0.6   2.9    2.1
+live           0.5   1.7   1.1   0.0  -1.7  -2.0  -0.8   0.5   5.2  14.1    4.9
+raw            0.2   1.2   1.2   0.0  -1.6  -2.1  -1.7  -0.6   0.3   9.6    3.2
+air            0.6   2.7   2.0   0.0  -1.9  -3.5  -3.2  -4.4  -5.7  -6.8    3.7
+
+closest: huge (1.2 dB), bright (2.1 dB), raw (3.2 dB), air (3.7 dB), live (4.9 dB), natural (4.9 dB), dark (7.6 dB)

@@ -1,0 +1,18 @@
+# AtTheGates
+# mix: 06-The-Chasm.mp3
+# lead: 41-LV 1.wav
+# other stems: 42-LV 2.wav, 43-BV J.wav, 44-BV S.wav
+
+lead: 41-LV 1.wav   input gain +5.6 dB   bands used: 630 1k 1.6k 10k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         630    1k  1.6k   10k   rms
+huge          -0.6   0.0   1.7   3.8    2.1
+natural       -0.8   0.0   1.6   8.9    4.5
+dark          -1.7   0.0   2.3  12.2    6.2
+bright         0.2   0.0   1.2   1.7    1.0
+live          -0.8   0.0   1.6   9.3    4.7
+raw           -0.9   0.0   1.8   2.7    1.7
+air            0.3   0.0   1.4  -7.3    3.7
+
+closest: bright (1.0 dB), raw (1.7 dB), huge (2.1 dB), air (3.7 dB), natural (4.5 dB), live (4.7 dB), dark (6.2 dB)

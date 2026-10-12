@@ -1,0 +1,18 @@
+# VeilOfMaya
+# mix: Veil-Of-Maya-Red-Fur.mp3
+# lead: 83 LD VOCAL.wav
+# other stems: 100 VOCAL PAD C_1.wav, 101 VOCAL PAD L_1.wav, 102 VOCAL PAD R_1.wav, 103 ARE YOU HAPPY NOW_1.wav, 104 DELAY THROW_1.wav, 105 DELAY THROW_2.wav, 106 DELAY THROW_3.wav, 107 DELAY THROW_4.wav, 108 DIE_1.wav, 109 DISTORT VOCAL STACK_1.wav, 110 DISTORTION_1.wav, 111 PRE DELAY_1.wav, 112 REVERSE VOCAL_1.wav, 113 REVERSE VOCAL_2.wav, 114 SUFFER.wav, 115 SUFFER_2.wav, 116 VOCAL CHOP.wav, 117 VOCAL CHOP_2.wav, 118 VOCAL GLITCH_1.wav, 119 VOCAL STACK BRIDGE_1.wav, 120 VOCAL SYNTH_1.wav, 121 VOCAL SYNTH_2.wav, 70 MAIN SCREAM_1.wav, 71 MAIN SCREAM_2.wav, 72 SCRM DUB L_1.wav, 73 SCRM DUB R_1.wav, 74 SCRM HIGH L_1.wav, 75 SCRM HIGH R_1.wav, 76 SCRM LOW L_1.wav, 77 SCRM LOW R_1.wav, 78 PITCH SCREAM L_1.wav, 79 PITCH SCREAM R_1.wav, 80 LD VRS VOCAL_1.wav, 81 VERSE ALT_1.wav, 82 LD VOC VRS 2_1.wav, 84 LD VOCAL_2.wav, 85 LD HEAT VOCAL_1.wav, 86 LD DUB L_1.wav, 87 LD DUB R_1.wav, 88 VRS DUB L_1.wav, 89 VRS DUB R_1.wav, 90 HARM L_1.wav, 91 HARM R_1.wav, 92 HIGH OCT L_1.wav, 93 HIGH OCT R_1.wav, 94 HIGH OCT L_2.wav, 95 HIGH OCT R_2.wav, 96 LOW HARM L_1.wav, 97 LOW HARM R_1.wav, 98 LOW OCT L_1.wav, 99 LOW OCT R_1.wav
+
+lead: 83 LD VOCAL.wav   input gain -1.0 dB   bands used: 400 630 1k 1.6k 2.5k 6.3k 10k 16k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         400   630    1k  1.6k  2.5k  6.3k   10k   16k   rms
+huge          -2.8  -5.0   0.0  -1.4  -6.1  -3.2  -2.4  -4.8    3.7
+natural       -2.4  -4.7   0.0  -1.3  -6.2  -1.5   0.5  10.6    4.8
+dark          -2.9  -5.6   0.0  -0.6  -4.7   2.6   1.4  18.2    7.1
+bright        -2.8  -4.2   0.0  -1.8  -6.5  -2.7  -2.4  -0.5    3.2
+live          -3.2  -5.2   0.0  -1.5  -5.5  -1.8   0.3  10.5    4.8
+raw           -1.9  -4.3   0.0  -1.9  -6.9  -0.1  -2.9   7.5    4.1
+air           -2.6  -4.1   0.0  -2.0  -6.3  -3.1  -5.4  -7.7    4.5
+
+closest: bright (3.2 dB), huge (3.7 dB), raw (4.1 dB), air (4.5 dB), live (4.8 dB), natural (4.8 dB), dark (7.1 dB)

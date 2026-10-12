@@ -1,0 +1,6 @@
+# Meshuggah
+# mix: 01-Future-Breed-Machine.mp3
+# lead: 20. VOCALS 1.wav
+# other stems: 21. VOCALS 2.wav, 22. BACKING VOCALS 1.wav, 23. BACKING VOCALS 2.wav
+
+too few bands where the vocal is audible in the mix to fit presets

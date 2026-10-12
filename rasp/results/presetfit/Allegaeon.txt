@@ -1,0 +1,18 @@
+# Allegaeon
+# mix: 01-Roundabout-1.mp3
+# lead: 53 Vocals 1.wav
+# other stems: 54 Vocals 1 ADT 100 dbl.wav, 55 Vocals 1 ADT 60 dbl.wav, 56 Vocals 2.wav, 57 Vocals 2 ADT 60 dbl.wav, 58 Vocals 3.wav, 59 Vocals 3 ADT 100.wav, 60 Harms 1 HI.wav, 61 Harms 2 HI.wav, 62 Harms 3 LOW.wav, 63 Harms 4 LOW.wav, 64 Vox Low Heavys 1.wav, 65 Vox Low Heavys 2.wav, 66 Vox Low Heavys 3.wav, 67 Vox Mid Heavys 1.wav, 68 Outro Vox 01.wav, 69 Outro Vox 02.wav, 70 Outro Vox 03.wav, 71 Outro Vox 04.wav, 72 Outro Vox 05.wav, 73 Outro Vox 06.wav, 74 Outro Vox 07.wav, 75 Outro Vox 08.wav, 76 Outro Vox 09.wav, 77 Outro Vox 10.wav, 78 Outro Vox 11.wav, 79 Outro Vox 12.wav, 80 Outro Vox 13.wav, 81 Outro Vox 14.wav, 82 Outro Vox 15.wav
+
+lead: 53 Vocals 1.wav   input gain -3.8 dB   bands used: 250 400 630 1k 1.6k 2.5k 6.3k 10k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         250   400   630    1k  1.6k  2.5k  6.3k   10k   rms
+huge          -3.9   1.1   0.8   0.0  -0.6  -2.7   0.5  -0.9    1.8
+natural       -3.9  -0.3   0.8   0.0  -1.8  -3.9   0.8   1.6    2.2
+dark          -4.8  -1.5   0.1   0.0  -1.3  -2.1   3.8   3.2    2.6
+bright        -2.8   0.5   1.4   0.0  -2.2  -5.0  -1.6  -1.7    2.4
+live          -3.6  -0.2   0.6   0.0  -1.9  -4.1   0.6   1.4    2.1
+raw           -3.4  -0.6   0.7   0.0  -2.0  -4.5  -1.0  -2.4    2.3
+air           -3.4   1.6   1.5   0.0  -0.9  -3.6  -1.9  -5.2    2.8
+
+closest: huge (1.8 dB), live (2.1 dB), natural (2.2 dB), raw (2.3 dB), bright (2.4 dB), dark (2.6 dB), air (2.8 dB)
