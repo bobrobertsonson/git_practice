@@ -9,7 +9,8 @@ For each processed file (rendered from the same DI, same start point):
   - coherence: how much of the output is a linear function of the DI (%)
   - dynamics: spread of the 100 ms level while singing, in vs out (dB), and
     the in/out slope (1.0 = untouched, 0.25 = ~4:1 overall)
-  - width: side/mid energy (dB; -inf = mono) and L/R correlation
+  - width: side/mid energy (dB; -inf = mono) and L/R correlation, and side/mid
+    per band when the file is stereo
   - space: energy after the voice stops (tail level, dB re the voice)
 
 It does not try to name harmony intervals: on distorted screams, matching
@@ -83,6 +84,13 @@ def transfer(x, y, nfft=8192):
     return f, H, coh
 
 
+def psd(x, nfft=8192):
+    w, P = np.hanning(nfft), 0
+    for s in range(0, len(x) - nfft, nfft // 2):
+        P = P + np.abs(np.fft.rfft(x[s:s + nfft] * w)) ** 2
+    return np.fft.rfftfreq(nfft, 1 / SR), P
+
+
 def band(v, f, fc):
     sel = (f >= fc / 2 ** (1 / 3)) & (f < fc * 2 ** (1 / 3))
     return np.mean(v[sel])
@@ -131,6 +139,9 @@ def main():
         sm = 10 * np.log10((side ** 2).sum() / ((mid ** 2).sum() + 1e-20) + 1e-20)
         corr = np.corrcoef(L, R)[0, 1] if np.std(R) > 0 else 1.0
         print(f"   width: side/mid {sm:.1f} dB, L/R correlation {corr:.2f}")
+        if sm > -60:
+            fs, Pm = psd(mid); _, Ps = psd(side)
+            print("   side/mid by band " + " ".join(f"{b}:{10 * np.log10(band(Ps, fs, b) / (band(Pm, fs, b) + 1e-30) + 1e-20):+.1f}" for b in BANDS))
 
         quiet = ~act[:m]
         tail = 10 * np.log10(np.mean(10 ** (dout[:m][quiet] / 10)) / np.mean(10 ** (dout[:m][a] / 10)) + 1e-20) if quiet.any() else float("nan")
