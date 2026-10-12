@@ -1,0 +1,8 @@
+# Your DIs and session stems stay on your disk (samples/), renders are rebuilt.
+samples/*
+!samples/README.md
+renders/
+build*/
+axe_wav
+synth_di
+engine_test

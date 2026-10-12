@@ -1,0 +1,13 @@
+# Audio never goes to git: DIs, stems (Nail the Mix sessions etc.) and renders.
+*.wav
+*.wave
+*.aif
+*.aiff
+*.flac
+*.mp3
+*.m4a
+*.ogg
+*.opus
+*.caf
+*.zip
+__pycache__/
