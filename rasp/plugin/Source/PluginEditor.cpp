@@ -10,7 +10,7 @@
 namespace {
 const juce::Colour kBg{0xff121214}, kPanel{0xff1d1d21}, kEdge{0xff2c2c33}, kText{0xffe8e6e3},
     kDim{0xff8d8a86}, kAccent{0xffe2462c};
-constexpr int kW = 1050, kH = 870, kHeader = 64, kCellW = 92, kCellH = 112, kTitle = 34, kPad = 10;
+constexpr int kW = 1180, kH = 980, kHeader = 64, kCellW = 92, kCellH = 112, kTitle = 34, kPad = 10;
 
 using APVTS = juce::AudioProcessorValueTreeState;
 
@@ -52,6 +52,24 @@ struct ChoiceCell : juce::Component {
         label.setBounds(r.removeFromTop(18));
         box.setBounds(r.withSizeKeepingCentre(r.getWidth() - 8, 24).translated(0, -10));
     }
+};
+
+// A momentary button in a panel cell: on while the mouse holds it.
+struct HoldCell : juce::Component {
+    juce::TextButton button;
+    juce::RangedAudioParameter* prm;
+    HoldCell(APVTS& s, const char* id, const juce::String& name, const juce::String& tip) : prm(s.getParameter(id)) {
+        button.setButtonText(name);
+        button.setTooltip(tip);
+        button.onStateChange = [this] {
+            const bool down = button.isDown();
+            if (down == (prm->getValue() > 0.5f)) return;
+            prm->beginChangeGesture(); prm->setValueNotifyingHost(down ? 1.f : 0.f); prm->endChangeGesture();
+        };
+        addAndMakeVisible(button);
+    }
+    void sync() { button.setToggleState(prm->getValue() > 0.5f, juce::dontSendNotification); }
+    void resized() override { button.setBounds(getLocalBounds().withSizeKeepingCentre(getWidth() - 10, 40)); }
 };
 
 struct ToggleCell : juce::Component {
@@ -110,8 +128,15 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     addKnob(harm, "harmRandPitch", "Random pitch"); addKnob(harm, "harmRandTime", "Random time");
     addKnob(harm, "harmLoCut", "Low cut"); addKnob(harm, "harmHiCut", "High cut");
 
-    auto& stut = panels[5]; stut.title = "STUTTER"; stut.cols = 2;
-    addChoice(stut, "stutterDiv", "Slice"); addKnob(stut, "glitchAmount", "Glitch");
+    auto& gl = panels[5]; gl.title = "GLITCH / DEGRADE"; gl.cols = 4;
+    addChoice(gl, "stutterDiv", "Slice"); addKnob(gl, "glitchAmount", "Glitch"); addChoice(gl, "glitchPattern", "Pattern");
+    addChoice(gl, "throwStyle", "Throw");
+    addHold(gl, "tapeStop", "TAPE STOP", "Hold: the voice slows to a stop like a tape deck losing power");
+    addChoice(gl, "tapeTime", "Stop time");
+    addHold(gl, "freeze", "FREEZE", "Hold: the moment before the press sustains as a drifting drone under your voice");
+    addHold(gl, "gate", "GATE", "Hold: the voice chops on and off in the Gate pattern, on the tempo grid");
+    addChoice(gl, "gatePattern", "Gate pattern"); addKnob(gl, "crush", "Crush"); addKnob(gl, "crushMix", "Crush mix");
+    addKnob(gl, "lofi", "Lo-fi");
 
     auto& bus = panels[3]; bus.title = "BUS / LIVE"; bus.cols = 2;
     addKnob(bus, "inDb", "Input"); addKnob(bus, "glue", "Glue"); addKnob(bus, "outDb", "Output");
@@ -172,6 +197,12 @@ void RaspEditor::addChoice(Panel& pn, const char* id, const juce::String& label)
     pn.cells.push_back(std::make_unique<ChoiceCell>(proc.apvts, id, label));
     addAndMakeVisible(*pn.cells.back());
 }
+void RaspEditor::addHold(Panel& pn, const char* id, const juce::String& label, const juce::String& tip) {
+    auto cell = std::make_unique<HoldCell>(proc.apvts, id, label, tip);
+    holds.push_back(cell.get());
+    pn.cells.push_back(std::move(cell));
+    addAndMakeVisible(*pn.cells.back());
+}
 void RaspEditor::addToggle(Panel& pn, const char* id, const juce::String& label) {
     pn.cells.push_back(std::make_unique<ToggleCell>(proc.apvts, id, label));
     addAndMakeVisible(*pn.cells.back());
@@ -214,7 +245,7 @@ void RaspEditor::resized() {
     preset.setBounds(top.removeFromRight(120));
     top.removeFromRight(12);
     for (auto* b : {&glitchBtn, &stutterBtn, &throwBtn, &megaBtn}) {
-        b->setBounds(top.removeFromRight(72));
+        b->setBounds(top.removeFromRight(84));
         top.removeFromRight(6);
     }
     top.removeFromRight(6);
@@ -251,6 +282,7 @@ void RaspEditor::timerCallback() {
     throwBtn.setToggleState(proc.apvts.getRawParameterValue("throwOn")->load() > 0.5f, juce::dontSendNotification);
     stutterBtn.setToggleState(proc.apvts.getRawParameterValue("stutter")->load() > 0.5f, juce::dontSendNotification);
     glitchBtn.setToggleState(proc.apvts.getRawParameterValue("glitch")->load() > 0.5f, juce::dontSendNotification);
+    for (auto* h : holds) static_cast<HoldCell*>(h)->sync();
     if (preset.getSelectedId() != proc.getCurrentProgram() + 1)
         preset.setSelectedId(proc.getCurrentProgram() + 1, juce::dontSendNotification);
 }

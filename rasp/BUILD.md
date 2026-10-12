@@ -46,7 +46,7 @@ make LIBDAISY_DIR=../../../libDaisy program-dfu
 | Encoder hold 2 s | Clear the feedback notches |
 | Button 1 hold | **Mega** while held |
 | Button 2 | Tap: thicken + flavour on/off. Hold: **Throw** while held |
-| TRS MIDI in | CC 80 = Mega, CC 81 = Throw, CC 88 = Stutter, CC 89 = Glitch (value ≥ 64 = on); CC 90 = stutter slice, CC 91 = glitch amount |
+| TRS MIDI in | CC 80 = Mega, CC 81 = Throw, CC 88 = Stutter, CC 89 = Glitch (value ≥ 64 = on); CC 90 = stutter slice, CC 91 = glitch amount; CC 92/93/94 = Tape stop / Freeze / Gate (held); CC 95 gate pattern, 96 glitch pattern, 97 throw style, 102 crush, 103 lo-fi, 104 tape stop time |
 | LED 2 | Red: chop is compressing more than 3 dB. Blue: a feedback notch is active. White: Mega or Throw held |
 
 **What to measure on the bench before Stage 2:**
@@ -107,7 +107,7 @@ current parts; quantities match the firmware.
 | SPDT ON-ON toggle | 2 | $2 each | Mono switch and ground lift |
 | Momentary pushbutton | 1 | $1 | Solo (hold 2 s to save the preset) |
 | 6.35 mm stereo (TRS) panel jack | 1 | $3 | **AUX** for the momentary effects: tip = Mega (D29), ring = Throw (D30), sleeve = ground |
-| 6.35 mm stereo (TRS) panel jack + 2 × 10 kΩ | 1 | $3 | **AUX 2**: tip = Stutter (mux 3 input 5), ring = Glitch (mux 3 input 6), sleeve = ground; each input gets a 10 kΩ pull-up to 3V3 |
+| 6.35 mm stereo (TRS) panel jack + 2 × 10 kΩ | 1 | $3 | **AUX 2**: tip = Stutter (mux 3 input 5), ring = Glitch (mux 3 input 6), sleeve = ground; each input gets a 10 kΩ pull-up to 3V3. Both buttons together = Tape stop (both AUX buttons = Freeze) |
 | 10 kΩ linear pot (trim) | 1 | $2 | **Slice** for Stutter (mux 3 input 7): 1/4, 1/8, 1/16, 1/32 |
 | Dual momentary footswitch, TRS | 2 | $40–60 each | Plugs into AUX. **Boss FS-7**, or a **Boss FS-6** set to momentary, with a TRS cable. A mono (TS) cable shorts the ring; the firmware ignores a contact closed at power-up, so that only disables Throw |
 | Knob caps | 19 | $15 | – |

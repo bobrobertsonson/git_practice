@@ -286,7 +286,20 @@ struct Params {
     bool  stutter    = false;  // beat-repeat: loops the slice that starts at the press, on the tempo grid
     bool  glitch     = false;  // stutter whose repeats roll, reverse, drop an octave or gate at random
     int   stutterDiv = 2;      // slice: 0 = 1/4, 1 = 1/8, 2 = 1/16, 3 = 1/32 note
-    float glitchAmount = 0.6f; // how often a glitch repeat is varied (0..1)
+    float glitchAmount = 0.6f; // how often a glitch repeat is varied; above 0.5 the "computer
+                               // crash" moves join in (crush, ring mod, pitch jumps, skips, buzz)
+    int   glitchPattern = 0;   // 0 = random; 1-4 = a fixed 8-step sequence of moves (rehearsable)
+    bool  tapeStop   = false;  // the voice slows to a stop like a tape deck losing power
+    int   tapeTime   = 1;      // how long the stop takes: 0 = 1/8, 1 = 1/4, 2 = 1/2 note, 3 = 1 bar
+    bool  freeze     = false;  // the moment before the press sustains as a drifting drone
+    bool  gate       = false;  // the voice chops on and off in a 16-step pattern on the grid
+    int   gatePattern = 0;     // 0 = 1/16 chop, 1 = 1/8 chop, 2 = syncopated, 3 = trance
+    int   throwStyle = 0;      // 0 = clean throw, 1 = glitch throw (repeats jump in time and crush)
+
+    // DEGRADE (not momentary): a bitcrushed / lo-fi voice
+    float crush      = 0.f;    // 0 = off .. 1 = 3 bits at ~1.2 kHz
+    float crushMix   = 1.f;    // crushed vs clean
+    float lofi       = 0.f;    // band-limit toward a blown-out phone speaker
 };
 
 // ---------------------------------------------------------------------------
@@ -1135,6 +1148,9 @@ private:
 // and the repeats ring out under the next phrase. Separate from the flavour
 // delay so a throw never makes the normal delay louder, and it works with the
 // flavour section switched off.
+// Glitch style: at every repeat the delay time jumps to a random fraction of
+// the beat (the 80 ms time smoother turns each jump into a pitch swoop) and
+// the feedback is crushed to 6 bits at 1/3 rate, so the tail breaks up.
 // ---------------------------------------------------------------------------
 class Throw {
 public:
@@ -1144,54 +1160,236 @@ public:
         send.init(0.f, sr, 8.f);
         timeS.init(sr * 0.5f, sr, 80.f);
     }
-    void set(bool on, float bpm) {
+    void set(bool on, float bpm, int style = 0) {
         send.target = on ? 1.f : 0.f;
-        timeS.target = clampf(60.f / clampf(bpm, 40.f, 240.f) * sr, 1.f, (float)(kMax - 4));
+        beat = clampf(60.f / clampf(bpm, 40.f, 240.f) * sr, 1.f, (float)(kMax - 4) / 1.5f);
+        glitchy = style == 1;
+        if (!glitchy) timeS.target = beat;
     }
     void process(float x, float& L, float& R) {
+        if (glitchy && ++cnt >= (int)timeS.target) {
+            cnt = 0;
+            static const float kMul[5] = {1.f, 0.5f, 0.75f, 0.25f, 1.5f};
+            rng = rng * 1664525u + 1013904223u;
+            timeS.target = beat * kMul[(rng >> 8) % 5];
+        }
         float t = timeS.next();
         float dL = dlL.read(t), dR = dlR.read(t);
-        dlL.write(x * send.next() + fbLp.lp(fbHp.hp(dR)) * kFeedback);
+        float fb = fbLp.lp(fbHp.hp(dR));
+        if (glitchy) {
+            if (--hold <= 0) { hold = 3; held = std::floor(fb * 32.f + 0.5f) * (1.f / 32.f); }
+            fb = held;
+        }
+        dlL.write(x * send.next() + fb * kFeedback);
         dlR.write(dL * kFeedback);
         L = kLevel * dL; R = kLevel * dR;
     }
 private:
     static constexpr int kMax = (1 << 17) * RASP_SR_SCALE;      // 2.7 s @ 48k: a quarter note down to 22 bpm
     static constexpr float kFeedback = 0.62f, kLevel = 0.8f;    // ~4 s to -60 dB at 120 bpm
-    float sr = 48000.f;
+    float sr = 48000.f, beat = 24000.f, held = 0.f;
+    bool glitchy = false;
+    int cnt = 0, hold = 0;
+    uint32_t rng = 0x7e1a7e1au;
     DelayLine<kMax> dlL, dlR;
     OnePole fbHp, fbLp;
     Smoothed send, timeS;
 };
 
 // ---------------------------------------------------------------------------
+// Degrade: bitcrusher + sample-rate reducer + lo-fi band-limit. Crush maps to
+// 16 -> 3 bits and 48 kHz -> ~1.2 kHz (sample-and-hold, no smoothing, so it
+// aliases on purpose); lo-fi squeezes the band toward 600 Hz - 2.5 kHz.
+// ---------------------------------------------------------------------------
+class Degrade {
+public:
+    void init(float sampleRate) { sr = sampleRate; set(0.f, 1.f, 0.f); }
+    void set(float crush, float mix, float lofi) {
+        const float c = clampf(crush, 0.f, 1.f), l = clampf(lofi, 0.f, 1.f);
+        crushOn = c > 0.001f; lofiOn = l > 0.001f;
+        levels = std::exp2(15.f - 13.f * c);                 // 2^(bits-1)
+        hold = 1 + (int)(c * c * 39.f * sr / 48000.f);
+        wet = crushOn ? clampf(mix, 0.f, 1.f) : 0.f;
+        hp.set(expMap(l, 20.f, 600.f), 0.707f, sr);
+        lp.set(expMap(1.f - l, 2500.f, 20000.f), 0.707f, sr);
+        drive = 1.f + 3.f * l;
+    }
+    float process(float x) {
+        float y = x;
+        if (crushOn) {
+            if (++cnt >= hold) { cnt = 0; held = std::floor(x * levels + 0.5f) / levels; }
+            y = x + (held - x) * wet;
+        }
+        if (lofiOn) {
+            hp.process(y); lp.process(hp.hp);
+            const float d = lp.lp * drive;
+            y = d / (1.f + std::fabs(d));                     // a small speaker breaking up
+        }
+        return y;
+    }
+private:
+    float sr = 48000.f, levels = 32768.f, wet = 0.f, held = 0.f, drive = 1.f;
+    int hold = 1, cnt = 0;
+    bool crushOn = false, lofiOn = false;
+    SVF hp, lp;
+};
+
+// ---------------------------------------------------------------------------
+// Gate: momentary 16-step rhythmic gate on the 1/16 grid, starting at the
+// press. 2 ms edges.
+// ---------------------------------------------------------------------------
+class Gate {
+public:
+    void init(float sampleRate) { sr = sampleRate; env.init(1.f, sr, 2.f); }
+    void set(bool on_, int pattern, float bpm) {
+        on = on_; pat = pattern < 0 ? 0 : (pattern > 3 ? 3 : pattern);
+        step = std::max(1, (int)(60.f / clampf(bpm, 40.f, 240.f) * 0.25f * sr));
+    }
+    float process(float x) {
+        static const uint16_t kPat[4] = {0xAAAA, 0xCCCC, 0xB6B6, 0xE8E8};   // bit 15 = first step
+        if (!on) { pos = 0; env.target = 1.f; }
+        else {
+            const int k = (pos / step) & 15;
+            env.target = ((kPat[pat] >> (15 - k)) & 1) ? 1.f : 0.f;
+            if (++pos >= 16 * step) pos = 0;
+        }
+        return x * env.next();
+    }
+private:
+    float sr = 48000.f;
+    bool on = false;
+    int pat = 0, step = 6000, pos = 0;
+    Smoothed env;
+};
+
+// ---------------------------------------------------------------------------
+// Tape stop: held, the voice slows to a stop over tapeTime, pitch falling
+// with it (a read head that slows down behind the live write head). Let go
+// and the live voice comes back with an 8 ms crossfade.
+// ---------------------------------------------------------------------------
+class TapeStop {
+public:
+    void init(float sampleRate) { sr = sampleRate; mix.init(0.f, sr, 8.f); }
+    void set(bool on_, int time, float bpm) {
+        on = on_;
+        static const float beats[4] = {0.5f, 1.f, 2.f, 4.f};
+        const int t = time < 0 ? 0 : (time > 3 ? 3 : time);
+        len = std::min(60.f / clampf(bpm, 40.f, 240.f) * beats[t] * sr, (float)(2 * (kMax - 8)));
+    }
+    bool active() const { return running || mix.cur > 1e-4; }
+    float process(float x) {
+        dl.write(x);
+        if (on && !running) { running = true; t = 0.f; d = 1.f; }
+        if (!on) running = false;
+        mix.target = running ? 1.f : 0.f;
+        const float g = mix.next();
+        if (g < 1e-4f) return x;
+        float y = 0.f;
+        if (t < len) {
+            const float speed = 1.f - t / len;
+            d += 1.f - speed;                                   // the read head falls behind
+            y = dl.read(std::min(d, (float)(kMax - 4))) * std::fmin(1.f, speed * 12.f);
+            t += 1.f;
+        }
+        return x + (y - x) * g;
+    }
+private:
+    static constexpr int kMax = (1 << 18) * RASP_SR_SCALE;      // 5.4 s @ 48k
+    float sr = 48000.f, len = 24000.f, t = 0.f, d = 1.f;
+    bool on = false, running = false;
+    DelayLine<kMax> dl;
+    Smoothed mix;
+};
+
+// ---------------------------------------------------------------------------
+// Freeze: held, the 250 ms before the press sustains as a drone: four
+// overlapping 120 ms grains read from random spots in that window, each a few
+// cents off and panned apart, so it drifts instead of buzzing. It plays under
+// the live voice; on release it fades over ~0.4 s.
+// ---------------------------------------------------------------------------
+class Freeze {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate; win = (int)(0.25f * sr); grain = (int)(0.12f * sr);
+        level.init(0.f, sr, 40.f);
+        for (int v = 0; v < 4; v++) { gr[v].age = v * grain / 4; newGrain(gr[v]); }
+    }
+    void set(bool on_) { on = on_; level.target = on ? 1.f : 0.f; level.a = std::exp(-1.0 / ((on ? 0.04 : 0.4) * sr)); }
+    bool active() const { return frozen; }
+    void process(float x, float& L, float& R) {
+        if (!frozen) { buf[w] = x; w = (w + 1) % kMax; }
+        if (on && !frozen) { frozen = true; start = (w - win + kMax) % kMax; }
+        const float g = level.next();
+        L = R = 0.f;
+        if (!frozen) return;
+        if (!on && g < 1e-4f) { frozen = false; return; }
+        for (auto& v : gr) {
+            const float ph = (float)v.age / (float)grain;
+            const float sn = std::sin(kPi * ph), wgt = sn * sn;
+            const float pos = v.pos + (float)v.age * v.ratio;
+            const int i0 = (int)pos;
+            const float fr = pos - (float)i0;
+            const float a = buf[(start + i0) % kMax], b = buf[(start + i0 + 1) % kMax];
+            const float s = (a + (b - a) * fr) * wgt * g * 0.8f;
+            L += s * v.gl; R += s * v.gr;
+            if (++v.age >= grain) { v.age = 0; newGrain(v); }
+        }
+    }
+private:
+    struct Grain { int age = 0; float pos = 0.f, ratio = 1.f, gl = 0.7f, gr = 0.7f; };
+    static constexpr int kMax = (1 << 15) * RASP_SR_SCALE;      // 0.68 s @ 48k
+    float rnd() { rng = rng * 1664525u + 1013904223u; return (float)(rng >> 8) * (1.f / 16777216.f); }
+    void newGrain(Grain& v) {
+        v.pos = rnd() * (float)(win - grain - 2);
+        v.ratio = 1.f + (rnd() - 0.5f) * 0.012f;                // +-10 cents
+        const float pan = (rnd() - 0.5f) * 1.4f;
+        v.gl = std::cos((pan + 1.f) * kPi * 0.25f); v.gr = std::sin((pan + 1.f) * kPi * 0.25f);
+    }
+    float sr = 48000.f;
+    int win = 12000, grain = 5760, start = 0, w = 0;
+    bool on = false, frozen = false;
+    uint32_t rng = 0xf4ee2e01u;
+    Grain gr[4];
+    Smoothed level;
+    float buf[kMax] = {};
+};
+
+// ---------------------------------------------------------------------------
 // Stutter / glitch: a momentary beat-repeat. When pressed it records one slice
 // (a tempo division) of the voice starting at the press, while the voice still
-// plays live; then it loops that slice on the grid until release. GLITCH loops
-// the same way, but each repeat may (glitchAmount = how often) roll to a half
-// or quarter of the slice, play it reversed, play it at half speed (an octave
-// down) or gate its second half; choices come from a seeded LCG, so renders
-// repeat and the playground port matches. Every loop gets 2 ms fades and the
-// switch to and from the live voice is a 4 ms crossfade: no clicks.
+// plays live; then it loops that slice on the grid until release.
+// GLITCH loops the same way, but each repeat may be changed. How often is set
+// by glitchAmount; up to 0.5 the moves are musical (roll to 1/2 or 1/4,
+// reverse, half speed = octave down, gate the second half). Above 0.5 the
+// "computer crash" moves join in, more often the higher it goes: crush to 4
+// bits at 1/8 rate, ring mod at 300-1500 Hz, pitch jumps (a fifth up, an
+// octave up or down), skips (a repeat read from up to 1 s earlier, like a
+// scratched CD) and buzz (a 2-12 ms loop: a stuck-buffer tone). glitchPattern
+// 1-4 replaces the dice with a fixed 8-step sequence, so a song part can be
+// rehearsed. Choices come from a seeded LCG, so renders repeat and the
+// playground port matches. Loops get short fades and a 4 ms crossfade to and
+// from the live voice: no clicks except the ones the moves make on purpose.
 // ---------------------------------------------------------------------------
 class Stutter {
 public:
+    enum Move { kNormal, kRoll2, kRoll4, kRev, kHalf, kGate, kCrush, kRing, kUp5, kUp8, kDown8, kSkip, kBuzz };
     void init(float sampleRate) {
         sr = sampleRate;
         fade = std::max(1, (int)(0.002f * sr));
         mix.init(0.f, sr, 4.f);
     }
-    void set(bool stutterOn, bool glitchOn, int division, float amount, float bpm) {
+    void set(bool stutterOn, bool glitchOn, int division, float amount, int pattern, float bpm) {
         on = stutterOn || glitchOn; glitch = glitchOn; amt = clampf(amount, 0.f, 1.f);
+        pat = pattern < 0 ? 0 : (pattern > 4 ? 4 : pattern);
         static const float frac[4] = {1.f, 0.5f, 0.25f, 0.125f};
         const int d = division < 0 ? 0 : (division > 3 ? 3 : division);
         int n = (int)(60.f / clampf(bpm, 40.f, 240.f) * frac[d] * sr);
-        baseLen = n < 8 * fade ? 8 * fade : (n > kMax - 1 ? kMax - 1 : n);
+        baseLen = n < 8 * fade ? 8 * fade : (n > kSlice ? kSlice : n);
     }
     bool active() const { return state != kIdle; }
     float process(float x) {
         if (state != kLoop) { buf[w] = x; w = (w + 1) % kMax; }    // frozen while looping
-        if (state == kIdle && on) { state = kRec; start = (w - 1 + kMax) % kMax; rec = 0; slice = baseLen; }
+        if (state == kIdle && on) { state = kRec; start = (w - 1 + kMax) % kMax; rec = 0; slice = baseLen; step = 0; }
         if (state == kRec) {
             if (!on) state = kIdle;
             else if (++rec >= slice) { state = kLoop; pos = 0; pick(); }
@@ -1208,39 +1406,77 @@ public:
     }
 private:
     enum { kIdle, kRec, kLoop };
-    static constexpr int kMax = (1 << 17) * RASP_SR_SCALE;      // 2.7 s @ 48k: a quarter note down to 22 bpm
+    static constexpr int kMax = (1 << 18) * RASP_SR_SCALE;      // 5.4 s @ 48k: slice + 1 s of history for skips
+    static constexpr int kSlice = (1 << 17) * RASP_SR_SCALE;    // longest slice: a quarter note down to 22 bpm
     float rnd() { rng = rng * 1664525u + 1013904223u; return (float)(rng >> 8) * (1.f / 16777216.f); }
-    void pick() {
-        sub = slice; rev = false; half = false; gate = false;
-        if (!glitch || rnd() >= amt) return;
+    int choose() {
+        if (pat > 0) {
+            static const uint8_t kSeq[4][8] = {
+                {kNormal, kRoll2, kNormal, kRev, kNormal, kRoll4, kHalf, kGate},
+                {kRev, kRev, kCrush, kNormal, kBuzz, kNormal, kHalf, kRoll2},
+                {kNormal, kUp5, kNormal, kDown8, kCrush, kRing, kRoll4, kGate},
+                {kBuzz, kSkip, kCrush, kRing, kRev, kUp8, kRoll4, kGate}};
+            return kSeq[pat - 1][(step++) & 7];
+        }
+        if (rnd() >= std::fmin(1.f, amt * 1.25f)) return kNormal;
+        if (amt > 0.5f && rnd() < (amt - 0.5f) * 1.6f) {
+            static const uint8_t kWild[7] = {kCrush, kRing, kUp5, kUp8, kDown8, kSkip, kBuzz};
+            return kWild[std::min(6, (int)(rnd() * 7.f))];
+        }
         const float k = rnd();
-        if (k < 0.35f) sub = std::max(slice >> (k < 0.2f ? 1 : 2), 4 * fade);   // roll
-        else if (k < 0.55f) rev = true;
-        else if (k < 0.75f) half = true;
-        else gate = true;
+        return k < 0.2f ? kRoll2 : (k < 0.35f ? kRoll4 : (k < 0.55f ? kRev : (k < 0.75f ? kHalf : kGate)));
     }
-    float read() const {
+    void pick() {
+        move = glitch ? choose() : kNormal;
+        sub = slice; rate = 1.f; base = start; fl = fade;
+        switch (move) {
+            case kRoll2: sub = std::max(slice >> 1, 4 * fade); break;
+            case kRoll4: sub = std::max(slice >> 2, 4 * fade); break;
+            case kHalf:  rate = 0.5f; break;
+            case kUp5:   rate = 1.5f; break;
+            case kUp8:   rate = 2.f; break;
+            case kDown8: rate = 0.5f; break;
+            case kRing:  ringInc = (300.f + 1200.f * rnd()) / sr; break;
+            case kSkip:  base = (start - 1 - (int)(rnd() * std::fmin(1.f * sr, (float)(kMax - kSlice - 2))) + kMax) % kMax; break;
+            case kBuzz:  sub = std::max(4, (int)((0.002f + 0.010f * rnd()) * sr)); fl = std::max(1, sub / 8); break;
+            default: break;
+        }
+        if (move == kCrush) { held = 0.f; holdCnt = 0; }
+    }
+    float read() {
         const int i = pos % sub;
         float v;
-        if (half) {
-            const float fi = 0.5f * (float)i;
+        if (move == kRev) {
+            v = buf[(base + sub - 1 - i) % kMax];
+        } else if (rate != 1.f) {
+            float fi = rate * (float)i;
+            const float span = (float)(sub - 1);
+            if (fi >= span) fi = std::fmod(fi, span);            // faster reads wrap inside the slice
             const int i0 = (int)fi;
             const float fr = fi - (float)i0;
-            const float a = buf[(start + i0) % kMax], b = buf[(start + i0 + 1) % kMax];
+            const float a = buf[(base + i0) % kMax], b = buf[(base + i0 + 1) % kMax];
             v = a + (b - a) * fr;
         } else {
-            v = buf[(start + (rev ? sub - 1 - i : i)) % kMax];
+            v = buf[(base + i) % kMax];
         }
-        float wgt = std::fmin(1.f, std::fmin((float)i / (float)fade, (float)(sub - i) / (float)fade));
-        if (gate) {
+        if (move == kCrush) {
+            if (holdCnt-- <= 0) { holdCnt = 7; held = std::floor(v * 8.f + 0.5f) * 0.125f; }
+            v = held;
+        } else if (move == kRing) {
+            ringPh += ringInc; if (ringPh >= 1.f) ringPh -= 1.f;
+            v *= std::sin(2.f * kPi * ringPh) * 1.4f;
+        }
+        float wgt = std::fmin(1.f, std::fmin((float)i / (float)fl, (float)(sub - i) / (float)fl));
+        if (move == kGate) {
             const int h = slice / 2;
             wgt = pos >= h ? 0.f : std::fmin(wgt, (float)(h - pos) / (float)fade);
         }
         return v * wgt;
     }
-    float sr = 48000.f, amt = 0.6f;
-    bool on = false, glitch = false, rev = false, half = false, gate = false;
-    int fade = 96, baseLen = 6000, slice = 6000, sub = 6000, start = 0, w = 0, rec = 0, pos = 0, state = kIdle;
+    float sr = 48000.f, amt = 0.6f, rate = 1.f, ringInc = 0.f, ringPh = 0.f, held = 0.f;
+    bool on = false, glitch = false;
+    int fade = 96, fl = 96, baseLen = 6000, slice = 6000, sub = 6000, start = 0, base = 0, w = 0, rec = 0, pos = 0;
+    int state = kIdle, move = kNormal, pat = 0, step = 0, holdCnt = 0;
     uint32_t rng = 0x5eed1234u;
     Smoothed mix;
     float buf[kMax] = {};
@@ -1496,7 +1732,8 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
-        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); stutterFx.init(sr); harmony.init(sr); learner.init(sr);
+        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); stutterFx.init(sr);
+        degrade.init(sr); gateFx.init(sr); tape.init(sr); freezeFx.init(sr); harmony.init(sr); learner.init(sr);
         gMega.init(0.f, sr, 10.f);
         gDt.init(0.f, sr, 30.f);
         // Double-track: two takes that each wander around 10-22 ms, so which
@@ -1532,8 +1769,12 @@ public:
         harmony.set(p);
         matchEq.set(p.match, p.matchAmount, sr);
         howlG.setOctaves(harmony.hasInterval(-12), harmony.hasInterval(12));
-        throwFx.set(p.throwOn, p.bpm);
-        stutterFx.set(p.stutter, p.glitch, p.stutterDiv, p.glitchAmount, p.bpm);
+        throwFx.set(p.throwOn, p.bpm, p.throwStyle);
+        stutterFx.set(p.stutter, p.glitch, p.stutterDiv, p.glitchAmount, p.glitchPattern, p.bpm);
+        degrade.set(p.crush, p.crushMix, p.lofi);
+        gateFx.set(p.gate, p.gatePattern, p.bpm);
+        tape.set(p.tapeStop, p.tapeTime, p.bpm);
+        freezeFx.set(p.freeze);
     }
 
     void process(float in, float& outL, float& outR) {
@@ -1566,9 +1807,16 @@ public:
         megaFade = gmg;
         mega.track(x);
         if (gmg > 1e-4f) x = lerp(x, mega.process(x), gmg);
-        // STUTTER / GLITCH loops the (mega'd) voice; harmony, doubles, reverb
-        // and delay all hear the loop.
+        // DEGRADE, then the momentary GATE, STUTTER / GLITCH and TAPE STOP, in
+        // that order (a tape stop also stops a loop); harmony, doubles, reverb
+        // and delay all hear the result.
+        x = degrade.process(x);
+        x = gateFx.process(x);
         x = stutterFx.process(x);
+        x = tape.process(x);
+        // FREEZE: a drone of the moment before the press, under the live voice.
+        float zL, zR;
+        freezeFx.process(x, zL, zR);
         // HARMONY pairs: a stereo bus of their own; they also feed the reverb
         // and delay so they sit in the same space as the lead.
         float hL = 0.f, hR = 0.f;
@@ -1588,7 +1836,7 @@ public:
         float go = gOut.next();
         float wL, wR;
         throwFx.process(x, wL, wR);
-        float L = (dryL + hL + gt * tL + gf * fL + wL) * go, R = (dryR + hR + gt * tR + gf * fR + wR) * go;
+        float L = (dryL + hL + gt * tL + gf * fL + wL + zL) * go, R = (dryR + hR + gt * tR + gf * fR + wR + zR) * go;
         if (p.mono) { float m = 0.5f * (L + R); L = R = m; }
         // BUS
         bus.process(L, R);
@@ -1598,7 +1846,7 @@ public:
         // Feedback notches last, so they also protect the bypassed voice; the
         // detector listens to exactly what goes to the speakers.
         if (p.howl) {
-            if (megaFade > 1e-4f || stutterFx.active()) howlG.holdOff();   // loops repeat tones on purpose
+            if (megaFade > 1e-4f || stutterFx.active() || freezeFx.active() || tape.active()) howlG.holdOff();   // loops repeat tones on purpose
             howlG.process(L, R);
             howlG.analyze(0.5f * (L + R));
         }
@@ -1646,6 +1894,10 @@ private:
     Mega mega;
     Throw throwFx;
     Stutter stutterFx;
+    Degrade degrade;
+    Gate gateFx;
+    TapeStop tape;
+    Freeze freezeFx;
     Harmony harmony;
     Learner learner;
     MatchEQ matchEq;

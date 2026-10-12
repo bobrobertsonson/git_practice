@@ -297,6 +297,54 @@ playground's buttons or S/G keys, or MIDI CC 88/89.
 
 The playground matches C++ to −69 to −79 dB through the same schedule.
 
+### The crash kit: wild glitch, tape stop, freeze, gate, glitch throw, degrade
+
+- **Glitch amount over 50%** turns Glitch into a computer falling over. The
+  more you turn it up, the more often a repeat is replaced by a "crash" move:
+  - crush to 4 bits at 1/8 rate
+  - ring mod at a random 300–1500 Hz
+  - a pitch jump: a fifth up, or an octave up or down
+  - a skip: the repeat is read from up to a second earlier, like a scratched CD
+  - buzz: a 2–12 ms loop, a stuck-buffer tone
+  
+  At 100% with a 1/32 slice it doesn't stop breaking.
+- **Glitch pattern A–D** swaps the dice for a fixed 8-step sequence of moves,
+  so a part sounds the same every night (D is the crash one: buzz, skip,
+  crush, ring, reverse, octave up, roll, gap).
+- **Tape stop** (hold): the voice slows to a stop over 1/8, 1/4, 1/2 or a bar,
+  pitch falling with it. Let go and the live voice is back in 8 ms. It comes
+  after Stutter, so it can stop a loop.
+- **Freeze** (hold): the 250 ms before the press sustains as a drone. It's
+  four drifting 120 ms grains, a few cents apart and panned, playing under the
+  live voice, about 2.5 dB below the captured moment. It fades over 0.4 s on
+  release.
+- **Gate** (hold): a 16-step on/off pattern on the 1/16 grid: 1/16 chop,
+  1/8 chop, syncopated, or trance.
+- **Throw style: glitch.** Each repeat of the throw jumps to a random fraction
+  of the beat (the time smoother turns each jump into a pitch swoop), and the
+  feedback is crushed to 6 bits, so the tail breaks up as it fades.
+- **Degrade** (not momentary, saved with the sound): Crush (16 → 3 bits,
+  48 kHz → ~1.2 kHz with no anti-aliasing, so it aliases on purpose), Crush mix,
+  and Lo-fi (squeezes the band toward 600 Hz–2.5 kHz with soft speaker
+  break-up). It sits after Mega, so loops, harmony, doubles and effects all
+  hear the degraded voice.
+
+Pedal: both buttons of the AUX footswitch together = Freeze; both of AUX 2 =
+Tape stop. Gate, patterns, throw style and Degrade are on MIDI (CC 92–97,
+102–104; see `daisy/main.cpp`), as on the Pod.
+
+`live_test glitchfx` holds Tape stop at 4.4–5.4 s, Freeze at 5.5–8.5 s, Gate at
+12.2–14.2 s and a glitch Throw at 14.5–15 s, and reports:
+
+- Tape stop: level holds for the first ~0.4 s and is silent by 0.5 s (a 1/4
+  note at 120 bpm). The release step is about the voice's own.
+- Freeze: the layer stays steady until release, then fades.
+- Gate: 8 of 16 steps open with the 1/16 pattern.
+- Glitch throw: the tail decays from −16 dB to −42 dB over 2.5 s.
+
+The playground matches C++ to −70 to −79 dB on all of these. With Degrade on
+it's −58 to −61 dB: the crusher's rounding falls differently in JS doubles.
+
 ## 3c. Blind A/B listening test
 
 `abtest/template.html` plus `python3 tools/build_abtest.py` builds a listening

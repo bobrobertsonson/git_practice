@@ -25,6 +25,8 @@ private:
     void addChoice(Panel&, const char* id, const juce::String& label);
     void addToggle(Panel&, const char* id, const juce::String& label);
     void addPower(Panel&, const char* id);
+    void addHold(Panel&, const char* id, const juce::String& label, const juce::String& tip);
+    std::vector<juce::Component*> holds;   // HoldCells, lit by the timer when automation holds them
 
     RaspProcessor& proc;
     juce::LookAndFeel_V4 laf;

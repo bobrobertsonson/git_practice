@@ -39,6 +39,7 @@ run's page under *Artifacts*.
 | Harmony | **HARMONY** row: four stereo pairs, each with an interval (−12 … +12 semitones; 0 = doubles), level and width, plus randomize pitch/time and the harmony bus's low and high cut. **Body** (220 Hz) and **Air** (7 kHz) are in the Control panel |
 | Mega / Throw | Hold the **MEGA** / **THROW** buttons, or draw them on automation lanes. Both are "on while held" and survive preset changes |
 | Stutter / Glitch | Hold **STUTTER** (beat-repeat of the slice that starts at the press) or **GLITCH** (the same with random rolls, reverses, octave drops and gaps). Slice and Glitch amount are in the STUTTER panel; the tempo comes from the host when Sync is on |
+| Crash kit | GLITCH / DEGRADE panel: Glitch over 50% adds crash moves; Pattern A–D for repeatable glitches; hold **TAPE STOP**, **FREEZE** or **GATE**; Throw style Clean/Glitch; Crush, Crush mix and Lo-fi degrade the voice |
 | Feedback guard | Off by default in the plugin (it's for a live mic near speakers). Turn it on when tracking through monitors |
 | Input gain | Set it so screams peak around −6 dBFS, the same as the pedal's preamp knob |
 

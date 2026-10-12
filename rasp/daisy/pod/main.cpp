@@ -12,7 +12,7 @@
 //   Button 2       tap: thicken + flavour on/off
 //                  hold: THROW while held (long delay; repeats ring out after release)
 //   Both buttons   hold 2 s: LEARN (sing ~15 s; LED 1 blinks while it listens). Applies to every preset
-//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st), CC 87 = double-track, CC 88 / 89 = STUTTER / GLITCH (held), CC 90 = slice, CC 91 = glitch amount
+//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st), CC 87 = double-track, CC 88 / 89 = STUTTER / GLITCH (held), CC 90 = slice, CC 91 = glitch amount, CC 92-94 = TAPE STOP / FREEZE / GATE (held), CC 95 = gate pattern, CC 96 = glitch pattern, CC 97 = throw style, CC 102 = crush, CC 103 = lo-fi, CC 104 = tape stop time
 //   LED 2          red = chop compressing > 3 dB, blue = feedback notch active,
 //                  white = a momentary effect is held
 #include "daisy_pod.h"
@@ -36,6 +36,9 @@ static void loadPreset() {
     bool bypass = params.bypass, thk = params.thickenOn, flv = params.flavourOn;
     bool mega = params.mega, thr = params.throwOn, st = params.stutter, gl = params.glitch;
     int sdiv = params.stutterDiv; float gamt = params.glitchAmount;
+    bool ts = params.tapeStop, fz = params.freeze, gt = params.gate;
+    int gpat = params.glitchPattern, gtp = params.gatePattern, tst = params.throwStyle, ttm = params.tapeTime;
+    float cr = params.crush, lf = params.lofi;
     float od = params.octDown, ou = params.octUp;           // set over MIDI: a performance setting
     int s1 = params.pitch1Semi, s2 = params.pitch2Semi;
     float match[rasp::kMatchBands], amt = params.matchAmount;          // Learn result: the singer's, not the preset's
@@ -43,6 +46,8 @@ static void loadPreset() {
     params = rasp::presetParams(preset);
     params.bypass = bypass; params.mega = mega; params.throwOn = thr;
     params.stutter = st; params.glitch = gl; params.stutterDiv = sdiv; params.glitchAmount = gamt;
+    params.tapeStop = ts; params.freeze = fz; params.gate = gt; params.glitchPattern = gpat; params.gatePattern = gtp;
+    params.throwStyle = tst; params.tapeTime = ttm; params.crush = cr; params.lofi = lf;
     params.octDown = od; params.octUp = ou; params.pitch1Semi = s1; params.pitch2Semi = s2;
     for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = match[b];
     params.matchAmount = amt;
@@ -103,6 +108,15 @@ int main() {
                 if (cc.control_number == 89) params.glitch = cc.value >= 64;
                 if (cc.control_number == 90) params.stutterDiv = std::min(3, cc.value / 32);
                 if (cc.control_number == 91) params.glitchAmount = cc.value / 127.f;
+                if (cc.control_number == 92) params.tapeStop = cc.value >= 64;
+                if (cc.control_number == 93) params.freeze = cc.value >= 64;
+                if (cc.control_number == 94) params.gate = cc.value >= 64;
+                if (cc.control_number == 95) params.gatePattern = std::min(3, cc.value / 32);
+                if (cc.control_number == 96) params.glitchPattern = std::min(4, cc.value * 5 / 128);
+                if (cc.control_number == 97) params.throwStyle = cc.value >= 64 ? 1 : 0;
+                if (cc.control_number == 102) params.crush = cc.value / 127.f;
+                if (cc.control_number == 103) params.lofi = cc.value / 127.f;
+                if (cc.control_number == 104) params.tapeTime = std::min(3, cc.value / 32);
             }
         }
         // Both buttons held 2 s: Learn (not Mega/Throw).

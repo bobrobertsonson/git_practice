@@ -11,6 +11,9 @@
 //   live_test stutter in.wav out.wav [name=value ...]
 //            hold stutter 2-4 s and glitch 6-9 s: how exactly the loop repeats,
 //            the largest sample step while held vs the same run without
+//   live_test glitchfx in.wav out.wav [name=value ...]
+//            tape stop 4.4-5.4 s, freeze 5.5-8.5 s, gate 12.2-14.2 s, glitch throw 14.5-15 s:
+//            levels in each part vs the same run without, and release steps
 ////
 // Prints numbers; the WAVs are for listening and for tools that measure them.
 #include "common.h"
@@ -112,6 +115,57 @@ int main(int argc, char** argv) {
         double d = 0; size_t i0 = (size_t)(4.1 * sr), i1 = std::min(n, (size_t)(5.5 * sr));
         for (size_t i = i0; i < i1; i++) d = std::max(d, (double)std::fabs(L[i] - rL[i]));
         std::printf("after release (4.1-5.5 s) largest difference from the run without: %.1f dBFS\n", 20 * std::log10(d + 1e-9));
+        writeWav(argv[3], L, R, sr);
+        return 0;
+    }
+
+    if (mode == "glitchfx") {
+        if (argc < 4) return usage();
+        p.flavourOn = false; p.thickenOn = false;
+        proc.setParams(p);
+        ref.init((float)sr); ref.setParams(p);
+        std::vector<float> rL(n), rR(n);
+        auto held = [&](double t, double a, double b) { return t >= a && t < b; };
+        for (size_t i = 0; i < n; i++) {
+            double t = (double)i / sr;
+            bool ts = held(t, 4.4, 5.4), fz = held(t, 5.5, 8.5), gt = held(t, 12.2, 14.2), th = held(t, 14.5, 15);
+            if (ts != p.tapeStop || fz != p.freeze || gt != p.gate || th != p.throwOn) {
+                p.tapeStop = ts; p.freeze = fz; p.gate = gt; p.throwOn = th; p.throwStyle = 1; proc.setParams(p);
+            }
+            proc.process(in[i], L[i], R[i]);
+            ref.process(in[i], rL[i], rR[i]);
+        }
+        auto rmsDb = [&](const std::vector<float>& x, double a, double b) {
+            size_t i0 = (size_t)(a * sr), i1 = std::min(n, (size_t)(b * sr));
+            double e = 0; for (size_t i = i0; i < i1; i++) e += (double)x[i] * x[i];
+            return 10 * std::log10(e / std::max<size_t>(1, i1 - i0) + 1e-20);
+        };
+        auto maxStep = [&](const std::vector<float>& x, double a, double b) {
+            size_t i0 = (size_t)(a * sr) + 1, i1 = std::min(n, (size_t)(b * sr));
+            float m = 0; for (size_t i = i0; i < i1; i++) m = std::max(m, std::fabs(x[i] - x[i - 1]));
+            return 20 * std::log10(m + 1e-9);
+        };
+        std::printf("tape stop (%s at %.0f bpm), level per 0.1 s from the press:", (const char*[]){"1/8", "1/4", "1/2", "1 bar"}[std::max(0, std::min(3, p.tapeTime))], p.bpm);
+        for (double t = 4.4; t < 5.4; t += 0.1) std::printf(" %+.0f", rmsDb(L, t, t + 0.1) - rmsDb(rL, t, t + 0.1));
+        std::printf(" dB vs live\n  release step at 5.4 s: %.1f dBFS (voice there %.1f)\n", maxStep(L, 5.39, 5.43), maxStep(rL, 5.39, 5.43));
+        std::vector<float> dL(n), dR(n);
+        for (size_t i = 0; i < n; i++) { dL[i] = L[i] - rL[i]; dR[i] = R[i] - rR[i]; }
+        std::printf("freeze layer (difference from the run without), per 0.5 s 5.5-9.5 s:");
+        for (double t = 5.5; t < 9.5; t += 0.5) std::printf(" %+.0f", rmsDb(dL, t, t + 0.5));
+        std::printf(" dB; voice %.0f dB\n", rmsDb(rL, 5.5, 8.5));
+        std::vector<float> sd(n);
+        for (size_t i = 0; i < n; i++) sd[i] = 0.5f * (dL[i] - dR[i]);
+        std::printf("  freeze side/layer: %.0f dB (0 = fully wide, very negative = mono)\n", rmsDb(sd, 6, 8) - rmsDb(dL, 6, 8));
+        double on = 0, off = 0;
+        for (int k = 0; k < 16; k++) {
+            double a = 12.2 + k * (60.0 / p.bpm / 4), b = a + 60.0 / p.bpm / 4;
+            double d = rmsDb(L, a + 0.005, b - 0.005) - rmsDb(rL, a + 0.005, b - 0.005);
+            if (d > -6) on++; else off++;
+        }
+        std::printf("gate (pattern %d): %.0f open / %.0f shut 1/16 steps in the first bar\n", p.gatePattern, on, off);
+        std::printf("glitch throw tail (difference from the run without) per 0.5 s 15-17.5 s:");
+        for (double t = 15.0; t < 17.5 && t * sr < n; t += 0.5) std::printf(" %+.0f", rmsDb(dL, t, t + 0.5));
+        std::printf(" dB\n");
         writeWav(argv[3], L, R, sr);
         return 0;
     }

@@ -27,11 +27,15 @@
 //   STUTTER  repeats the slice that starts at the press, on the tap/MIDI tempo grid
 //   GLITCH   the same, but repeats roll, reverse, drop an octave or cut out at random
 // SLICE trim (side panel): stutter slice 1/4, 1/8, 1/16, 1/32 note.
+// Both buttons of a dual footswitch at once: AUX = FREEZE (the moment sustains
+// as a drone), AUX 2 = TAPE STOP (the voice slows to a stop).
 // USB MIDI: Program Change 0-7 recalls preset slots 1-8 (from a laptop/backing-track rig);
 // CC 80 = MEGA, CC 81 = THROW (value >= 64 on), for triggering from a timeline;
 // CC 86 (>= 64) = start Learn. CC 87 (>= 64 on) = double-track (lead as two hard-panned takes).
 // CC 88 = STUTTER, CC 89 = GLITCH (>= 64 on), CC 90 = slice (0-127 -> 1/4..1/32),
-// CC 91 = glitch amount (0-127).
+// CC 91 = glitch amount (0-127). CC 92 = TAPE STOP, CC 93 = FREEZE, CC 94 = GATE
+// (>= 64 on); CC 95 = gate pattern, CC 96 = glitch pattern (0 = random), CC 97 =
+// throw style (>= 64 glitch), CC 102 = crush, CC 103 = lo-fi, CC 104 = tape stop time.
 // CC 82 / 83 = pitch 1 / 2 level (0-127), CC 84 / 85 = pitch 1 / 2 interval
 // (0-127 -> -12..+12 semitones). A knob takes over again once moved.
 //
@@ -164,6 +168,7 @@ static void saveCurrent() {
     s.slot[s.current] = params;
     s.slot[s.current].mega = s.slot[s.current].throwOn = false;   // momentaries aren't part of a sound
     s.slot[s.current].stutter = s.slot[s.current].glitch = false;
+    s.slot[s.current].freeze = s.slot[s.current].tapeStop = s.slot[s.current].gate = false;
     storage.Save();
 }
 
@@ -265,7 +270,7 @@ int main() {
     // AUX 2 on mux 3 (analog inputs read as switches, with hysteresis).
     bool aux2[2] = {false, false}, aux2Armed[2];
     for (int k = 0; k < 2; k++) aux2Armed[k] = hw.adc.GetMuxFloat(MUX3, 5 + k) > 0.6f;
-    bool midiStutter = false, midiGlitch = false;
+    bool midiStutter = false, midiGlitch = false, midiTape = false, midiFreeze = false, midiGate = false;
     float lastSliceKnob = -1.f;
     for (;;) {
         uint32_t now = System::GetNow();
@@ -337,6 +342,15 @@ int main() {
                 if (cc.control_number == 89) midiGlitch = cc.value >= 64;
                 if (cc.control_number == 90) params.stutterDiv = std::min(3, cc.value / 32);
                 if (cc.control_number == 91) params.glitchAmount = cc.value / 127.f;
+                if (cc.control_number == 92) midiTape = cc.value >= 64;
+                if (cc.control_number == 93) midiFreeze = cc.value >= 64;
+                if (cc.control_number == 94) midiGate = cc.value >= 64;
+                if (cc.control_number == 95) params.gatePattern = std::min(3, cc.value / 32);
+                if (cc.control_number == 96) params.glitchPattern = std::min(4, cc.value * 5 / 128);
+                if (cc.control_number == 97) params.throwStyle = cc.value >= 64 ? 1 : 0;
+                if (cc.control_number == 102) params.crush = cc.value / 127.f;
+                if (cc.control_number == 103) params.lofi = cc.value / 127.f;
+                if (cc.control_number == 104) params.tapeTime = std::min(3, cc.value / 32);
             }
         }
 
@@ -354,10 +368,17 @@ int main() {
                 blinkCount = 2;
             }
         }
-        params.mega       = (megaArmed && auxMega.Pressed()) || midiMega;
-        params.throwOn    = (throwArmed && auxThrow.Pressed()) || midiThrow;
-        params.stutter    = (aux2Armed[0] && aux2[0]) || midiStutter;
-        params.glitch     = (aux2Armed[1] && aux2[1]) || midiGlitch;
+        // Both buttons of a dual footswitch together: AUX = FREEZE, AUX 2 = TAPE STOP.
+        const bool fsMega = megaArmed && auxMega.Pressed(), fsThrow = throwArmed && auxThrow.Pressed();
+        const bool fsStut = aux2Armed[0] && aux2[0], fsGlit = aux2Armed[1] && aux2[1];
+        const bool auxBoth = fsMega && fsThrow, aux2Both = fsStut && fsGlit;
+        params.mega       = (fsMega && !auxBoth) || midiMega;
+        params.throwOn    = (fsThrow && !auxBoth) || midiThrow;
+        params.freeze     = auxBoth || midiFreeze;
+        params.stutter    = (fsStut && !aux2Both) || midiStutter;
+        params.glitch     = (fsGlit && !aux2Both) || midiGlitch;
+        params.tapeStop   = aux2Both || midiTape;
+        params.gate       = midiGate;
         // NOTE: setParams runs outside the audio interrupt. A production build
         // should hand params over with a lock-free double buffer.
         proc.setParams(params);
@@ -373,7 +394,7 @@ int main() {
         leds |= (!params.bypass && bleedDb > 6.f) << 2;   // set the bleed trim so this is lit when you're silent
         leds |= params.thickenOn << 3;
         leds |= params.flavourOn << 4;
-        leds |= (now < tapLedOff || blinkOn || params.mega || params.throwOn || params.stutter || params.glitch) << 5;   // also lit while a momentary is held
+        leds |= (now < tapLedOff || blinkOn || params.mega || params.throwOn || params.stutter || params.glitch || params.freeze || params.tapeStop || params.gate) << 5;   // also lit while a momentary is held
         leds |= (!params.bypass && limDb > 1.f) << 6;
         leds |= (now < notchLedOff || proc.howlNotches() > 0) << 7;
         writeLeds(leds);

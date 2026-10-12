@@ -110,6 +110,17 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"glitch", "Glitch", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(glitch), nullptr, true},
         {"stutterDiv", "Stutter Slice", "Momentary", K::Choice, 0, 3, "1/4|1/8|1/16|1/32", RASP_I(stutterDiv), nullptr, true},
         {"glitchAmount", "Glitch Amount", "Momentary", K::Unit, 0, 1, nullptr, RASP_F(glitchAmount), nullptr, true},
+        {"glitchPattern", "Glitch Pattern", "Momentary", K::Choice, 0, 4, "Random|Pattern A|Pattern B|Pattern C|Pattern D", RASP_I(glitchPattern), nullptr, true},
+        {"tapeStop", "Tape Stop", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(tapeStop), nullptr, true},
+        {"tapeTime", "Tape Stop Time", "Momentary", K::Choice, 0, 3, "1/8|1/4|1/2|1 bar", RASP_I(tapeTime), nullptr, true},
+        {"freeze", "Freeze", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(freeze), nullptr, true},
+        {"gate", "Gate", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(gate), nullptr, true},
+        {"gatePattern", "Gate Pattern", "Momentary", K::Choice, 0, 3, "1/16 chop|1/8 chop|Syncopated|Trance", RASP_I(gatePattern), nullptr, true},
+        {"throwStyle", "Throw Style", "Momentary", K::Choice, 0, 1, "Clean|Glitch", RASP_I(throwStyle), nullptr, true},
+        // DEGRADE: part of the sound (saved with presets)
+        {"crush", "Crush", "Degrade", K::Unit, 0, 1, nullptr, RASP_F(crush), nullptr, false},
+        {"crushMix", "Crush Mix", "Degrade", K::Unit, 0, 1, nullptr, RASP_F(crushMix), nullptr, false},
+        {"lofi", "Lo-fi", "Degrade", K::Unit, 0, 1, nullptr, RASP_F(lofi), nullptr, false},
     };
     return specs;
 }

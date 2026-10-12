@@ -226,7 +226,10 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
       <button class="stomp hold" id="fsThrow" data-key="throwOn" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledThrow"></span>Throw</span></button>
       <button class="stomp hold" id="fsStutter" data-key="stutter" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledStutter"></span>Stutter</span></button>
       <button class="stomp hold" id="fsGlitch" data-key="glitch" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledGlitch"></span>Glitch</span></button>
-      <p class="hold-hint">Momentary, on while held (or hold <kbd>M</kbd> / <kbd>T</kbd> / <kbd>S</kbd> / <kbd>G</kbd>). <b>Mega</b>: hard-clipped mid burst. <b>Throw</b>: sends the voice to a long delay that rings out after you let go. <b>Stutter</b>: repeats the slice that starts when you press, on the tempo grid. <b>Glitch</b>: the same, with repeats that roll, reverse, drop an octave or cut out.</p>
+      <button class="stomp hold" id="fsTape" data-key="tapeStop" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledTape"></span>Tape stop</span></button>
+      <button class="stomp hold" id="fsFreeze" data-key="freeze" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledFreeze"></span>Freeze</span></button>
+      <button class="stomp hold" id="fsGate" data-key="gate" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledGate"></span>Gate</span></button>
+      <p class="hold-hint">Momentary, on while held (or hold <kbd>M</kbd> / <kbd>T</kbd> / <kbd>S</kbd> / <kbd>G</kbd> / <kbd>Z</kbd> / <kbd>F</kbd> / <kbd>A</kbd>). <b>Mega</b>: hard-clipped mid burst. <b>Throw</b>: sends the voice to a long delay that rings out after you let go. <b>Stutter</b>: repeats the slice that starts when you press, on the tempo grid. <b>Glitch</b>: the same, with repeats that roll, reverse, drop an octave or cut out; above 50% amount it crashes like a computer (crush, ring mod, pitch jumps, skips, buzz). <b>Tape stop</b>: the voice slows to a stop. <b>Freeze</b>: the moment before the press sustains as a drone. <b>Gate</b>: chops the voice on the grid.</p>
     </div>
   </div>
 
@@ -329,45 +332,85 @@ class RaspEngine {
       return bqRun(mgPostPk, mgLp2.lp) * Math.sqrt(MG.ms) / 2.0;
     };
     const THMAX = 1 << 17, thL = delay(THMAX), thR = delay(THMAX), thFbHp = op(350), thFbLp = op(3500), thSend = sm(0, 8), thTime = sm(sr * 0.5, 80);
+    const TH = { beat: 24000, glitchy: false, cnt: 0, hold: 0, held: 0, rng: 0x7e1a7e1a };
     const throwFx = (x, o) => {
+      if (TH.glitchy && ++TH.cnt >= Math.trunc(thTime.target)) {
+        TH.cnt = 0;
+        TH.rng = (Math.imul(TH.rng, 1664525) + 1013904223) >>> 0;
+        thTime.target = Math.fround(TH.beat * [1, 0.5, 0.75, 0.25, 1.5][(TH.rng >>> 8) % 5]);
+      }
       const t = smNext(thTime), dL = dRead(thL, t), dR = dRead(thR, t);
-      dWrite(thL, x * smNext(thSend) + opLp(thFbLp, opHp(thFbHp, dR)) * 0.62);
+      let fb = opLp(thFbLp, opHp(thFbHp, dR));
+      if (TH.glitchy) { if (--TH.hold <= 0) { TH.hold = 3; TH.held = Math.floor(Math.fround(fb * 32) + 0.5) * (1 / 32); } fb = TH.held; }
+      dWrite(thL, x * smNext(thSend) + fb * 0.62);
       dWrite(thR, dL * 0.62);
       o[0] = 0.8 * dL; o[1] = 0.8 * dR;
     };
     const wO = [0, 0];
     let megaFade = 0;
     // STUTTER / GLITCH (mirrors class Stutter in rasp.h, same LCG)
-    const STMAX = 1 << 17;
-    const ST = { buf: new Float32Array(STMAX), fade: Math.max(1, Math.trunc(0.002 * sr)), mix: sm(0, 4), on: false, glitch: false, amt: 0.6,
-      baseLen: 6000, slice: 6000, sub: 6000, start: 0, w: 0, rec: 0, pos: 0, state: 0, rev: false, half: false, gate: false, rng: 0x5eed1234 };
+    const STMAX = 1 << 18, STSLICE = 1 << 17;
+    const MV = { normal: 0, roll2: 1, roll4: 2, rev: 3, half: 4, gate: 5, crush: 6, ring: 7, up5: 8, up8: 9, down8: 10, skip: 11, buzz: 12 };
+    const ST_SEQ = [[0, 1, 0, 3, 0, 2, 4, 5], [3, 3, 6, 0, 12, 0, 4, 1], [0, 8, 0, 10, 6, 7, 2, 5], [12, 11, 6, 7, 3, 9, 2, 5]];
+    const ST_WILD = [6, 7, 8, 9, 10, 11, 12];
+    const ST = { buf: new Float32Array(STMAX), fade: Math.max(1, Math.trunc(0.002 * sr)), mix: sm(0, 4), on: false, glitch: false, amt: 0.6, pat: 0,
+      baseLen: 6000, slice: 6000, sub: 6000, start: 0, base: 0, w: 0, rec: 0, pos: 0, state: 0, move: 0, step: 0, rate: 1, fl: 96,
+      ringInc: 0, ringPh: 0, held: 0, holdCnt: 0, rng: 0x5eed1234 };
     const stRnd = () => { ST.rng = (Math.imul(ST.rng, 1664525) + 1013904223) >>> 0; return (ST.rng >>> 8) / 16777216; };
     const stSet = q => {
       ST.on = !!(q.stutter || q.glitch); ST.glitch = !!q.glitch; ST.amt = clamp(q.glitchAmount ?? 0.6, 0, 1);
+      ST.pat = clamp((q.glitchPattern ?? 0) | 0, 0, 4);
       const d = clamp((q.stutterDiv ?? 2) | 0, 0, 3), n = Math.trunc(Math.fround(Math.fround(Math.fround(60 / clamp(q.bpm, 40, 240)) * [1, 0.5, 0.25, 0.125][d]) * sr));
-      ST.baseLen = n < 8 * ST.fade ? 8 * ST.fade : (n > STMAX - 1 ? STMAX - 1 : n);
+      ST.baseLen = n < 8 * ST.fade ? 8 * ST.fade : (n > STSLICE ? STSLICE : n);
+    };
+    const stChoose = () => {
+      if (ST.pat > 0) return ST_SEQ[ST.pat - 1][(ST.step++) & 7];
+      if (stRnd() >= Math.min(1, ST.amt * 1.25)) return MV.normal;
+      if (ST.amt > 0.5 && stRnd() < (ST.amt - 0.5) * 1.6) return ST_WILD[Math.min(6, Math.trunc(stRnd() * 7))];
+      const k = stRnd();
+      return k < 0.2 ? MV.roll2 : (k < 0.35 ? MV.roll4 : (k < 0.55 ? MV.rev : (k < 0.75 ? MV.half : MV.gate)));
     };
     const stPick = () => {
-      ST.sub = ST.slice; ST.rev = ST.half = ST.gate = false;
-      if (!ST.glitch || stRnd() >= ST.amt) return;
-      const k = stRnd();
-      if (k < 0.35) ST.sub = Math.max(ST.slice >> (k < 0.2 ? 1 : 2), 4 * ST.fade);
-      else if (k < 0.55) ST.rev = true;
-      else if (k < 0.75) ST.half = true;
-      else ST.gate = true;
+      ST.move = ST.glitch ? stChoose() : MV.normal;
+      ST.sub = ST.slice; ST.rate = 1; ST.base = ST.start; ST.fl = ST.fade;
+      switch (ST.move) {
+        case MV.roll2: ST.sub = Math.max(ST.slice >> 1, 4 * ST.fade); break;
+        case MV.roll4: ST.sub = Math.max(ST.slice >> 2, 4 * ST.fade); break;
+        case MV.half: ST.rate = 0.5; break;
+        case MV.up5: ST.rate = 1.5; break;
+        case MV.up8: ST.rate = 2; break;
+        case MV.down8: ST.rate = 0.5; break;
+        case MV.ring: ST.ringInc = Math.fround((300 + 1200 * stRnd()) / sr); break;
+        case MV.skip: ST.base = (ST.start - 1 - Math.trunc(stRnd() * Math.min(sr, STMAX - STSLICE - 2)) + STMAX) % STMAX; break;
+        case MV.buzz: ST.sub = Math.max(4, Math.trunc(Math.fround(Math.fround(0.002 + Math.fround(0.010 * stRnd())) * sr))); ST.fl = Math.max(1, (ST.sub / 8) | 0); break;
+      }
+      if (ST.move === MV.crush) { ST.held = 0; ST.holdCnt = 0; }
     };
     const stRead = () => {
       const i = ST.pos % ST.sub, b = ST.buf;
       let v;
-      if (ST.half) { const fi = 0.5 * i, i0 = fi | 0, fr = fi - i0, a = b[(ST.start + i0) % STMAX]; v = a + (b[(ST.start + i0 + 1) % STMAX] - a) * fr; }
-      else v = b[(ST.start + (ST.rev ? ST.sub - 1 - i : i)) % STMAX];
-      let wg = Math.min(1, Math.min(i / ST.fade, (ST.sub - i) / ST.fade));
-      if (ST.gate) { const h = (ST.slice / 2) | 0; wg = ST.pos >= h ? 0 : Math.min(wg, (h - ST.pos) / ST.fade); }
+      if (ST.move === MV.rev) v = b[(ST.base + ST.sub - 1 - i) % STMAX];
+      else if (ST.rate !== 1) {
+        let fi = Math.fround(ST.rate * i);
+        const span = ST.sub - 1;
+        if (fi >= span) fi = Math.fround(fi % span);
+        const i0 = Math.trunc(fi), fr = fi - i0, a = b[(ST.base + i0) % STMAX];
+        v = a + (b[(ST.base + i0 + 1) % STMAX] - a) * fr;
+      } else v = b[(ST.base + i) % STMAX];
+      if (ST.move === MV.crush) {
+        if (ST.holdCnt-- <= 0) { ST.holdCnt = 7; ST.held = Math.floor(Math.fround(v * 8) + 0.5) * 0.125; }
+        v = ST.held;
+      } else if (ST.move === MV.ring) {
+        ST.ringPh = Math.fround(ST.ringPh + ST.ringInc); if (ST.ringPh >= 1) ST.ringPh = Math.fround(ST.ringPh - 1);
+        v *= Math.sin(2 * PI * ST.ringPh) * 1.4;
+      }
+      let wg = Math.min(1, Math.min(i / ST.fl, (ST.sub - i) / ST.fl));
+      if (ST.move === MV.gate) { const h = (ST.slice / 2) | 0; wg = ST.pos >= h ? 0 : Math.min(wg, (h - ST.pos) / ST.fade); }
       return v * wg;
     };
     const stutter = x => {
       if (ST.state !== 2) { ST.buf[ST.w] = x; ST.w = (ST.w + 1) % STMAX; }
-      if (ST.state === 0 && ST.on) { ST.state = 1; ST.start = (ST.w - 1 + STMAX) % STMAX; ST.rec = 0; ST.slice = ST.baseLen; }
+      if (ST.state === 0 && ST.on) { ST.state = 1; ST.start = (ST.w - 1 + STMAX) % STMAX; ST.rec = 0; ST.slice = ST.baseLen; ST.step = 0; }
       if (ST.state === 1) {
         if (!ST.on) ST.state = 0;
         else if (++ST.rec >= ST.slice) { ST.state = 2; ST.pos = 0; stPick(); }
@@ -378,6 +421,94 @@ class RaspEngine {
       const g = smNext(ST.mix);
       if (ST.state === 2 && !ST.on && g < 1e-4) ST.state = 0;
       return x + (y - x) * g;
+    };
+    // DEGRADE (mirrors class Degrade)
+    const DG = { crushOn: false, lofiOn: false, levels: 32768, hold: 1, cnt: 0, held: 0, wet: 0, drive: 1, hp: svf(), lp: svf() };
+    const dgSet = q => {
+      const c = clamp(q.crush ?? 0, 0, 1), l = clamp(q.lofi ?? 0, 0, 1);
+      DG.crushOn = c > 0.001; DG.lofiOn = l > 0.001;
+      DG.levels = Math.fround(Math.pow(2, Math.fround(15 - Math.fround(13 * c))));
+      DG.hold = 1 + Math.trunc(Math.fround(Math.fround(Math.fround(c * c) * 39) * sr / 48000));
+      DG.wet = DG.crushOn ? clamp(q.crushMix ?? 1, 0, 1) : 0;
+      svfSet(DG.hp, expMap(l, 20, 600), 0.707); svfSet(DG.lp, expMap(1 - l, 2500, 20000), 0.707);
+      DG.drive = 1 + 3 * l;
+    };
+    const degrade = x => {
+      let y = x;
+      if (DG.crushOn) {
+        if (++DG.cnt >= DG.hold) { DG.cnt = 0; DG.held = Math.fround(Math.floor(Math.fround(x * DG.levels) + 0.5) / DG.levels); }
+        y = x + (DG.held - x) * DG.wet;
+      }
+      if (DG.lofiOn) { svfRun(DG.hp, y); svfRun(DG.lp, DG.hp.hp); const d = DG.lp.lp * DG.drive; y = d / (1 + Math.abs(d)); }
+      return y;
+    };
+    // GATE (mirrors class Gate)
+    const GT = { on: false, pat: 0, step: 6000, pos: 0, env: sm(1, 2) };
+    const GT_PAT = [0xAAAA, 0xCCCC, 0xB6B6, 0xE8E8];
+    const gtSet = q => { GT.on = !!q.gate; GT.pat = clamp((q.gatePattern ?? 0) | 0, 0, 3); GT.step = Math.max(1, Math.trunc(Math.fround(Math.fround(Math.fround(60 / clamp(q.bpm, 40, 240)) * 0.25) * sr))); };
+    const gateFx = x => {
+      if (!GT.on) { GT.pos = 0; GT.env.target = 1; }
+      else {
+        const k = Math.trunc(GT.pos / GT.step) & 15;
+        GT.env.target = ((GT_PAT[GT.pat] >> (15 - k)) & 1) ? 1 : 0;
+        if (++GT.pos >= 16 * GT.step) GT.pos = 0;
+      }
+      return x * smNext(GT.env);
+    };
+    // TAPE STOP (mirrors class TapeStop)
+    const TPMAX = 1 << 18;
+    const TP = { dl: delay(TPMAX), on: false, running: false, len: 24000, t: 0, d: 1, mix: sm(0, 8) };
+    const tpSet = q => {
+      TP.on = !!q.tapeStop;
+      const tt = clamp((q.tapeTime ?? 1) | 0, 0, 3);
+      TP.len = Math.min(Math.fround(Math.fround(Math.fround(60 / clamp(q.bpm, 40, 240)) * [0.5, 1, 2, 4][tt]) * sr), 2 * (TPMAX - 8));
+    };
+    const tapeStop = x => {
+      dWrite(TP.dl, x);
+      if (TP.on && !TP.running) { TP.running = true; TP.t = 0; TP.d = 1; }
+      if (!TP.on) TP.running = false;
+      TP.mix.target = TP.running ? 1 : 0;
+      const g = smNext(TP.mix);
+      if (g < 1e-4) return x;
+      let y = 0;
+      if (TP.t < TP.len) {
+        const speed = Math.fround(1 - Math.fround(TP.t / TP.len));
+        TP.d = Math.fround(TP.d + Math.fround(1 - speed));
+        y = dRead(TP.dl, Math.min(TP.d, TPMAX - 4)) * Math.min(1, Math.fround(speed * 12));
+        TP.t += 1;
+      }
+      return x + (y - x) * g;
+    };
+    // FREEZE (mirrors class Freeze)
+    const FZMAX = 1 << 15;
+    const FZ = { buf: new Float32Array(FZMAX), win: Math.trunc(0.25 * sr), grain: Math.trunc(0.12 * sr), start: 0, w: 0, on: false, frozen: false,
+      rng: 0xf4ee2e01, level: sm(0, 40), gr: [] };
+    const fzRnd = () => { FZ.rng = (Math.imul(FZ.rng, 1664525) + 1013904223) >>> 0; return (FZ.rng >>> 8) / 16777216; };
+    const fzNew = v => {
+      v.pos = Math.fround(fzRnd() * (FZ.win - FZ.grain - 2));
+      v.ratio = Math.fround(1 + Math.fround(Math.fround(fzRnd() - 0.5) * 0.012));
+      const pan = Math.fround(Math.fround(fzRnd() - 0.5) * 1.4);
+      v.gl = Math.cos((pan + 1) * PI * 0.25); v.gr = Math.sin((pan + 1) * PI * 0.25);
+    };
+    for (let v = 0; v < 4; v++) { const g = { age: Math.trunc(v * FZ.grain / 4), pos: 0, ratio: 1, gl: 0.7, gr: 0.7 }; fzNew(g); FZ.gr.push(g); }
+    const fzSet = q => { FZ.on = !!q.freeze; FZ.level.target = FZ.on ? 1 : 0; FZ.level.a = Math.exp(-1 / ((FZ.on ? 0.04 : 0.4) * sr)); };
+    const fzOut = [0, 0];
+    const freeze = x => {
+      if (!FZ.frozen) { FZ.buf[FZ.w] = x; FZ.w = (FZ.w + 1) % FZMAX; }
+      if (FZ.on && !FZ.frozen) { FZ.frozen = true; FZ.start = (FZ.w - FZ.win + FZMAX) % FZMAX; }
+      const g = smNext(FZ.level);
+      fzOut[0] = fzOut[1] = 0;
+      if (!FZ.frozen) return fzOut;
+      if (!FZ.on && g < 1e-4) { FZ.frozen = false; return fzOut; }
+      for (const v of FZ.gr) {
+        const ph = v.age / FZ.grain, sn = Math.sin(PI * ph), wgt = sn * sn;
+        const pos = Math.fround(v.pos + Math.fround(v.age * v.ratio)), i0 = Math.trunc(pos), fr = pos - i0;
+        const a = FZ.buf[(FZ.start + i0) % FZMAX], b = FZ.buf[(FZ.start + i0 + 1) % FZMAX];
+        const s = (a + (b - a) * fr) * wgt * g * 0.8;
+        fzOut[0] += s * v.gl; fzOut[1] += s * v.gr;
+        if (++v.age >= FZ.grain) { v.age = 0; fzNew(v); }
+      }
+      return fzOut;
     };
     // Octave layers (mirrors Shifter / Octave in rasp.h: WSOLA-aligned grains).
     const shHead = (d, age) => ({ d, age, searching: false, fine: false, oR: 0, c: 0, best: 0, bestScore: 0 });
@@ -602,8 +733,10 @@ class RaspEngine {
       hSet(p);
       H.octDown = hHas(-12); H.octUp = hHas(12);
       thSend.target = p.throwOn ? 1 : 0;
-      thTime.target = clamp(60 / clamp(p.bpm, 40, 240) * sr, 1, THMAX - 4);
-      stSet(p);
+      stSet(p); dgSet(p); gtSet(p); tpSet(p); fzSet(p);
+      TH.beat = clamp(Math.fround(Math.fround(60 / clamp(p.bpm, 40, 240)) * sr), 1, (THMAX - 4) / 1.5);
+      TH.glitchy = (p.throwStyle | 0) === 1;
+      if (!TH.glitchy) thTime.target = TH.beat;
     };
 
     // Mirrors Drive::process: the dry takes the same oversampling filters as
@@ -897,7 +1030,11 @@ class RaspEngine {
       megaFade = gmg;
       megaTrack(x);
       if (gmg > 1e-4) x = lerp(x, mega(x), gmg);
+      x = degrade(x);
+      x = gateFx(x);
       x = stutter(x);
+      x = tapeStop(x);
+      freeze(x);
       hOut[0] = hOut[1] = 0;
       if (hActive()) harmony(x, hOut);
       const xFx = x + 0.5 * (hOut[0] + hOut[1]);
@@ -908,13 +1045,13 @@ class RaspEngine {
       const gd = smNext(gDt), tkA = dblRun(dtA, x), tkB = dblRun(dtB, x);
       const dryL = p.solo ? 0 : lerp(x, tkA, gd), dryR = p.solo ? 0 : lerp(x, tkB, gd), go = smNext(gOut);
       throwFx(x, wO);
-      out[0] = (dryL + hOut[0] + gt * tO[0] + gf * fO[0] + wO[0]) * go;
-      out[1] = (dryR + hOut[1] + gt * tO[1] + gf * fO[1] + wO[1]) * go;
+      out[0] = (dryL + fzOut[0] + hOut[0] + gt * tO[0] + gf * fO[0] + wO[0]) * go;
+      out[1] = (dryR + fzOut[1] + hOut[1] + gt * tO[1] + gf * fO[1] + wO[1]) * go;
       if (p.mono) { const m = 0.5 * (out[0] + out[1]); out[0] = out[1] = m; }
       bus(out);
       out[0] = safetyClip(out[0]); out[1] = safetyClip(out[1]);
       bypassMatch(dryVoice, out);
-      if (p.howl) { if (megaFade > 1e-4 || ST.state !== 0) H.hold = Math.floor(0.3 * sr / HHOP) + 1; howl(out); }
+      if (p.howl) { if (megaFade > 1e-4 || ST.state !== 0 || FZ.frozen || TP.running || TP.mix.cur > 1e-4) H.hold = Math.floor(0.3 * sr / HHOP) + 1; howl(out); }
       return out;
     };
   }
@@ -1032,7 +1169,8 @@ const DEFAULTS = {
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.1, width: 0.85, solo: false, doubleTrack: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
-  bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false, stutter: false, glitch: false, stutterDiv: 2, glitchAmount: 0.6,
+  bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false, stutter: false, glitch: false, stutterDiv: 2, glitchAmount: 0.6, glitchPattern: 0,
+  tapeStop: false, tapeTime: 1, freeze: false, gate: false, gatePattern: 0, throwStyle: 0, crush: 0, crushMix: 1, lofi: 0,
 };
 const PRESETS = {
   huge:    { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5 },
@@ -1093,7 +1231,15 @@ const MENU = [
   ["harmHiCut", "Harmony high cut", 1000, 20000, 100, v => (v / 1000).toFixed(1) + " kHz"],
   ["Stutter / glitch"],
   ["stutterDiv", "Stutter slice", 0, 3, 1, v => ["1/4", "1/8", "1/16", "1/32"][Math.round(v)]],
-  ["glitchAmount", "Glitch amount", 0, 1, 0.01, pct],
+  ["glitchAmount", "Glitch amount (over 50%: crash)", 0, 1, 0.01, pct],
+  ["glitchPattern", "Glitch pattern", 0, 4, 1, v => ["random", "A", "B", "C", "D"][Math.round(v)]],
+  ["tapeTime", "Tape stop time", 0, 3, 1, v => ["1/8", "1/4", "1/2", "1 bar"][Math.round(v)]],
+  ["gatePattern", "Gate pattern", 0, 3, 1, v => ["1/16 chop", "1/8 chop", "syncopated", "trance"][Math.round(v)]],
+  ["throwStyle", "Throw style", 0, 1, 1, v => Math.round(v) ? "glitch" : "clean"],
+  ["Degrade"],
+  ["crush", "Crush (bits + sample rate)", 0, 1, 0.01, v => v < 0.001 ? "off" : Math.round(16 - 13 * v) + " bit"],
+  ["crushMix", "Crush mix", 0, 1, 0.01, pct],
+  ["lofi", "Lo-fi (blown speaker)", 0, 1, 0.01, pct],
   ["Bus"],
   ["glue", "Glue", 0, 1, 0.01, pct], ["outDb", "Output", -24, 12, 0.5, v => v.toFixed(1) + " dB"],
   ["Section levels"],
@@ -1217,7 +1363,8 @@ addCheck("howl", "Feedback guard (automatic notches on howling frequencies)");
 
 function applyPreset(name) {
   const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm, inDb: params.inDb,
-    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl, mega: params.mega, throwOn: params.throwOn, stutter: params.stutter, glitch: params.glitch, stutterDiv: params.stutterDiv, glitchAmount: params.glitchAmount,
+    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl, mega: params.mega, throwOn: params.throwOn, stutter: params.stutter, glitch: params.glitch, stutterDiv: params.stutterDiv, glitchAmount: params.glitchAmount, glitchPattern: params.glitchPattern,
+    tapeStop: params.tapeStop, tapeTime: params.tapeTime, freeze: params.freeze, gate: params.gate, gatePattern: params.gatePattern, throwStyle: params.throwStyle,
     match: params.match, matchAmount: params.matchAmount };
   params = Object.assign({}, DEFAULTS, PRESETS[name], keep);
   Object.keys(params).forEach(k => setParam(k, params[k], false));
@@ -1389,7 +1536,7 @@ document.querySelectorAll(".stomp.hold").forEach(btn => {
   btn.addEventListener("keyup", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); setHold(btn, false); } });
   btn.addEventListener("contextmenu", e => e.preventDefault());
 });
-const holdKeys = { m: "fsMega", t: "fsThrow", s: "fsStutter", g: "fsGlitch" };
+const holdKeys = { m: "fsMega", t: "fsThrow", s: "fsStutter", g: "fsGlitch", z: "fsTape", f: "fsFreeze", a: "fsGate" };
 const typing = () => { const a = document.activeElement; return a && (a.tagName === "INPUT" || a.tagName === "SELECT" || a.tagName === "TEXTAREA"); };
 document.addEventListener("keydown", e => { const id = holdKeys[e.key.toLowerCase()]; if (id && !e.repeat && !typing() && !e.metaKey && !e.ctrlKey) setHold(document.getElementById(id), true); });
 document.addEventListener("keyup", e => { const id = holdKeys[e.key.toLowerCase()]; if (id) setHold(document.getElementById(id), false); });
