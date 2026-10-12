@@ -1,0 +1,253 @@
+dry: andrew-di-dry.wav   188.0 s   -21.6 LUFS   singing 59% of the time
+
+== andrew-di-aggressive-charlie.wav
+   offset +0.2 ms   loudness +7.7 LU   peak -7.0 dBFS
+   EQ re 1 kHz 63:-2.8 100:+0.2 160:+2.0 250:-0.4 400:-6.9 630:-4.4 1000:+0.0 1600:+2.6 2500:+4.2 4000:+6.9 6300:-1.2 10000:-3.7 16000:-13.5
+   coherence % 63:7 100:51 160:87 250:86 400:89 630:87 1000:90 1600:83 2500:78 4000:74 6300:50 10000:69 16000:18
+   dynamics: level spread 9.2 -> 4.2 dB, in/out slope 0.37
+   width: side/mid -70.2 dB, L/R correlation 1.00
+   space: level in the gaps -22.4 dB re singing
+
+== andrew-di-all-our-screams-have.wav
+   offset +0.2 ms   loudness +8.3 LU   peak -6.6 dBFS
+   EQ re 1 kHz 63:-13.2 100:-14.5 160:-6.5 250:-2.5 400:-3.8 630:-3.6 1000:+0.0 1600:+2.3 2500:+3.6 4000:+3.2 6300:+0.6 10000:-0.8 16000:-7.6
+   coherence % 63:1 100:9 160:71 250:83 400:88 630:87 1000:90 1600:82 2500:79 4000:75 6300:68 10000:80 16000:42
+   dynamics: level spread 9.2 -> 4.7 dB, in/out slope 0.43
+   width: side/mid -65.6 dB, L/R correlation 1.00
+   space: level in the gaps -23.4 dB re singing
+
+== andrew-di-balanced-sculpt.wav
+   offset +0.0 ms   loudness +2.8 LU   peak -11.9 dBFS
+   EQ re 1 kHz 63:+4.1 100:+5.0 160:+5.8 250:+4.1 400:+0.3 630:-1.1 1000:+0.0 1600:+3.8 2500:+4.4 4000:+6.7 6300:+1.9 10000:+2.6 16000:-2.0
+   coherence % 63:74 100:86 160:87 250:81 400:85 630:86 1000:90 1600:86 2500:81 4000:79 6300:79 10000:82 16000:85
+   dynamics: level spread 9.2 -> 4.0 dB, in/out slope 0.32
+   width: side/mid -63.2 dB, L/R correlation 1.00
+   space: level in the gaps -22.0 dB re singing
+
+== andrew-di-bocanada.wav
+   offset +0.1 ms   loudness +7.4 LU   peak -6.2 dBFS
+   EQ re 1 kHz 63:-29.1 100:-18.5 160:-8.5 250:-1.7 400:-2.7 630:-3.0 1000:+0.0 1600:+3.7 2500:+2.4 4000:+6.5 6300:+3.2 10000:+1.9 16000:-2.1
+   coherence % 63:1 100:38 160:86 250:87 400:91 630:91 1000:93 1600:91 2500:88 4000:81 6300:81 10000:85 16000:82
+   dynamics: level spread 9.2 -> 4.1 dB, in/out slope 0.41
+   width: side/mid -70.3 dB, L/R correlation 1.00
+   space: level in the gaps -22.1 dB re singing
+
+== andrew-di-clean-metal.wav
+   offset +1.2 ms   loudness +8.3 LU   peak -6.6 dBFS
+   EQ re 1 kHz 63:+2.8 100:+4.6 160:+4.3 250:+6.4 400:+5.1 630:+0.8 1000:+0.0 1600:+1.7 2500:-3.0 4000:-1.1 6300:-3.4 10000:-3.8 16000:-7.2
+   coherence % 63:1 100:18 160:52 250:56 400:45 630:17 1000:6 1600:3 2500:1 4000:1 6300:1 10000:1 16000:0
+   dynamics: level spread 9.2 -> 4.5 dB, in/out slope 0.37
+   width: side/mid -70.0 dB, L/R correlation 1.00
+   space: level in the gaps -21.8 dB re singing
+
+== andrew-di-distorted-scream.wav
+   offset +0.2 ms   loudness +7.4 LU   peak -8.3 dBFS
+   EQ re 1 kHz 63:-11.4 100:-5.9 160:-1.9 250:-0.5 400:-1.1 630:-1.4 1000:+0.0 1600:+0.4 2500:+0.5 4000:+0.8 6300:+0.4 10000:+1.3 16000:-2.5
+   coherence % 63:1 100:16 160:67 250:73 400:81 630:83 1000:87 1600:76 2500:69 4000:62 6300:65 10000:72 16000:44
+   dynamics: level spread 9.2 -> 4.3 dB, in/out slope 0.35
+   width: side/mid -71.5 dB, L/R correlation 1.00
+   space: level in the gaps -21.7 dB re singing
+
+== andrew-di-dry.wav
+   offset +0.0 ms   loudness +3.0 LU   peak -0.3 dBFS
+   EQ re 1 kHz 63:+0.0 100:+0.0 160:+0.0 250:+0.0 400:+0.0 630:+0.0 1000:+0.0 1600:+0.0 2500:+0.0 4000:+0.0 6300:+0.0 10000:+0.0 16000:+0.0
+   coherence % 63:100 100:100 160:100 250:100 400:100 630:100 1000:100 1600:100 2500:100 4000:100 6300:100 10000:100 16000:100
+   dynamics: level spread 9.2 -> 9.2 dB, in/out slope 1.00
+   width: side/mid -200.0 dB, L/R correlation 1.00
+   space: level in the gaps -33.1 dB re singing
+
+== andrew-di-german-metal.wav
+   offset +1.2 ms   loudness +10.4 LU   peak -4.8 dBFS
+   EQ re 1 kHz 63:-1.7 100:+6.7 160:+11.8 250:+11.3 400:+6.1 630:-0.0 1000:+0.0 1600:-5.5 2500:-4.9 4000:-4.1 6300:-9.0 10000:-10.5 16000:-24.6
+   coherence % 63:11 100:52 160:67 250:49 400:33 630:14 1000:8 1600:1 2500:1 4000:1 6300:0 10000:0 16000:0
+   dynamics: level spread 9.2 -> 3.1 dB, in/out slope 0.28
+   width: side/mid -33.8 dB, L/R correlation 1.00
+   side/mid by band 63:-27.8 100:-27.4 160:-32.1 250:-31.5 400:-33.6 630:-33.0 1000:-33.6 1600:-35.5 2500:-36.3 4000:-36.3 6300:-37.1 10000:-43.2 16000:-50.1
+   space: level in the gaps -19.6 dB re singing
+
+== andrew-di-growls.wav
+   offset +1.2 ms   loudness +7.6 LU   peak -8.1 dBFS
+   EQ re 1 kHz 63:+11.5 100:+15.2 160:+16.2 250:+13.2 400:+8.0 630:+3.8 1000:+0.0 1600:-6.2 2500:-8.9 4000:-2.9 6300:-4.8 10000:-6.4 16000:-10.2
+   coherence % 63:6 100:37 160:59 250:45 400:37 630:25 1000:10 1600:1 2500:1 4000:1 6300:1 10000:1 16000:0
+   dynamics: level spread 9.2 -> 2.9 dB, in/out slope 0.21
+   width: side/mid -15.2 dB, L/R correlation 0.94
+   side/mid by band 63:-11.5 100:-12.7 160:-14.8 250:-15.2 400:-15.4 630:-15.4 1000:-14.8 1600:-14.9 2500:-15.7 4000:-15.3 6300:-15.7 10000:-17.2 16000:-18.9
+   space: level in the gaps -15.6 dB re singing
+
+== andrew-di-growlsy.wav
+   offset +0.2 ms   loudness +8.0 LU   peak -6.9 dBFS
+   EQ re 1 kHz 63:-7.8 100:-3.8 160:-1.0 250:-2.0 400:-7.1 630:-3.9 1000:+0.0 1600:+1.8 2500:+3.5 4000:+6.2 6300:-1.4 10000:-3.4 16000:-12.8
+   coherence % 63:2 100:23 160:66 250:66 400:64 630:68 1000:78 1600:75 2500:73 4000:69 6300:49 10000:68 16000:19
+   dynamics: level spread 9.2 -> 3.8 dB, in/out slope 0.31
+   width: side/mid -15.7 dB, L/R correlation 0.95
+   side/mid by band 63:-21.7 100:-17.9 160:-15.6 250:-16.5 400:-16.5 630:-16.0 1000:-15.6 1600:-15.4 2500:-15.3 4000:-15.6 6300:-16.2 10000:-18.8 16000:-25.9
+   space: level in the gaps -19.5 dB re singing
+
+== andrew-di-its-gonna-blow.wav
+   offset +0.1 ms   loudness +7.4 LU   peak -8.2 dBFS
+   EQ re 1 kHz 63:+2.6 100:+5.2 160:+4.6 250:+2.1 400:-0.3 630:-2.0 1000:+0.0 1600:+1.4 2500:+2.0 4000:+4.2 6300:+0.4 10000:-1.2 16000:-10.6
+   coherence % 63:6 100:37 160:66 250:65 400:78 630:81 1000:83 1600:69 2500:55 4000:49 6300:55 10000:58 16000:16
+   dynamics: level spread 9.2 -> 2.3 dB, in/out slope 0.22
+   width: side/mid -200.0 dB, L/R correlation 1.00
+   space: level in the gaps -17.3 dB re singing
+
+== andrew-di-lead-double-fake.wav
+   offset +34.5 ms   loudness +8.1 LU   peak -7.5 dBFS
+   EQ re 1 kHz 63:+5.0 100:-8.9 160:-23.3 250:-11.5 400:-7.5 630:-6.2 1000:+0.0 1600:+3.1 2500:+2.6 4000:+5.7 6300:+2.2 10000:-1.1 16000:-15.7
+   coherence % 63:0 100:0 160:0 250:1 400:1 630:0 1000:0 1600:0 2500:0 4000:0 6300:0 10000:1 16000:0
+   dynamics: level spread 9.2 -> 4.0 dB, in/out slope 0.29
+   width: side/mid -0.0 dB, L/R correlation 0.00
+   side/mid by band 63:+0.2 100:+0.0 160:-0.2 250:+0.3 400:-0.2 630:+0.1 1000:-0.1 1600:+0.1 2500:+0.0 4000:-0.0 6300:+0.0 10000:+0.0 16000:-0.0
+   space: level in the gaps -15.7 dB re singing
+
+== andrew-di-lead-heavy.wav
+   offset +0.6 ms   loudness +8.6 LU   peak -6.8 dBFS
+   EQ re 1 kHz 63:-12.2 100:-13.9 160:-5.0 250:-5.6 400:-6.0 630:-2.9 1000:+0.0 1600:+4.7 2500:+3.0 4000:+8.7 6300:+1.7 10000:+2.7 16000:-6.9
+   coherence % 63:1 100:11 160:71 250:71 400:80 630:83 1000:87 1600:76 2500:68 4000:62 6300:59 10000:70 16000:34
+   dynamics: level spread 9.2 -> 3.2 dB, in/out slope 0.25
+   width: side/mid -66.1 dB, L/R correlation 1.00
+   space: level in the gaps -15.0 dB re singing
+
+== andrew-di-lead-no-mic-pre.wav
+   offset +1.2 ms   loudness +7.6 LU   peak -8.3 dBFS
+   EQ re 1 kHz 63:-8.2 100:+2.7 160:+8.8 250:+8.7 400:+6.4 630:+2.4 1000:+0.0 1600:-5.5 2500:-11.3 4000:-5.9 6300:-7.1 10000:-11.5 16000:-14.4
+   coherence % 63:1 100:41 160:73 250:61 400:41 630:20 1000:9 1600:2 2500:1 4000:1 6300:2 10000:1 16000:1
+   dynamics: level spread 9.2 -> 4.4 dB, in/out slope 0.39
+   width: side/mid -55.2 dB, L/R correlation 1.00
+   side/mid by band 63:-42.3 100:-40.7 160:-47.4 250:-48.1 400:-53.7 630:-56.0 1000:-58.3 1600:-57.6 2500:-57.4 4000:-57.4 6300:-57.3 10000:-60.8 16000:-63.0
+   space: level in the gaps -24.6 dB re singing
+
+== andrew-di-lead-vox.wav
+   offset +1.4 ms   loudness +7.3 LU   peak -7.4 dBFS
+   EQ re 1 kHz 63:+15.1 100:+20.2 160:+20.9 250:+17.6 400:+11.1 630:+4.0 1000:+0.0 1600:-0.9 2500:-4.2 4000:-0.4 6300:-1.3 10000:-0.9 16000:-4.3
+   coherence % 63:14 100:58 160:66 250:51 400:39 630:16 1000:5 1600:2 2500:1 4000:2 6300:1 10000:0 16000:0
+   dynamics: level spread 9.2 -> 3.3 dB, in/out slope 0.21
+   width: side/mid -21.5 dB, L/R correlation 0.99
+   side/mid by band 63:-19.8 100:-20.7 160:-20.5 250:-22.2 400:-21.2 630:-21.6 1000:-21.8 1600:-21.4 2500:-21.5 4000:-21.4 6300:-21.5 10000:-21.5 16000:-21.5
+   space: level in the gaps -15.4 dB re singing
+
+== andrew-di-main-vocal-and-fx.wav
+   offset +0.6 ms   loudness +8.0 LU   peak -6.2 dBFS
+   EQ re 1 kHz 63:-35.4 100:-30.3 160:-18.7 250:-13.5 400:-9.5 630:-5.0 1000:+0.0 1600:+1.3 2500:-0.3 4000:+4.7 6300:-1.0 10000:-5.0 16000:-11.4
+   coherence % 63:0 100:3 160:50 250:63 400:77 630:81 1000:85 1600:73 2500:68 4000:63 6300:66 10000:73 16000:64
+   dynamics: level spread 9.2 -> 3.3 dB, in/out slope 0.28
+   width: side/mid -75.1 dB, L/R correlation 1.00
+   space: level in the gaps -16.7 dB re singing
+
+== andrew-di-main-vocal.wav
+   offset +0.6 ms   loudness +8.3 LU   peak -1.7 dBFS
+   EQ re 1 kHz 63:-15.7 100:-9.4 160:-4.7 250:-1.2 400:-0.5 630:-1.0 1000:+0.0 1600:+2.3 2500:+3.9 4000:+2.8 6300:+2.2 10000:+4.1 16000:-1.0
+   coherence % 63:2 100:38 160:87 250:88 400:89 630:91 1000:94 1600:92 2500:89 4000:85 6300:71 10000:90 16000:70
+   dynamics: level spread 9.2 -> 4.6 dB, in/out slope 0.51
+   width: side/mid -86.1 dB, L/R correlation 1.00
+   space: level in the gaps -25.9 dB re singing
+
+== andrew-di-main-vox-1.wav
+   offset +1.2 ms   loudness +7.7 LU   peak -7.4 dBFS
+   EQ re 1 kHz 63:-0.6 100:+7.3 160:+12.3 250:+11.9 400:+7.6 630:+3.3 1000:+0.0 1600:-3.5 2500:-4.5 4000:+2.2 6300:-2.8 10000:-6.1 16000:-14.9
+   coherence % 63:8 100:57 160:74 250:58 400:44 630:22 1000:6 1600:1 2500:1 4000:2 6300:1 10000:1 16000:1
+   dynamics: level spread 9.2 -> 4.0 dB, in/out slope 0.33
+   width: side/mid -65.7 dB, L/R correlation 1.00
+   space: level in the gaps -21.2 dB re singing
+
+== andrew-di-metal-all-rounder.wav
+   offset +0.1 ms   loudness +7.6 LU   peak -3.8 dBFS
+   EQ re 1 kHz 63:-7.3 100:-1.5 160:+1.3 250:+1.3 400:-1.6 630:-1.1 1000:+0.0 1600:+2.1 2500:+3.8 4000:+7.0 6300:+5.2 10000:+4.8 16000:+2.0
+   coherence % 63:49 100:87 160:92 250:89 400:90 630:90 1000:93 1600:91 2500:89 4000:86 6300:83 10000:81 16000:89
+   dynamics: level spread 9.2 -> 4.1 dB, in/out slope 0.43
+   width: side/mid -28.5 dB, L/R correlation 1.00
+   side/mid by band 63:-28.9 100:-26.7 160:-27.8 250:-28.2 400:-28.5 630:-28.4 1000:-28.2 1600:-28.4 2500:-28.7 4000:-29.0 6300:-31.1 10000:-36.7 16000:-48.3
+   space: level in the gaps -24.2 dB re singing
+
+== andrew-di-metal-dry.wav
+   offset +0.1 ms   loudness +7.5 LU   peak -8.2 dBFS
+   EQ re 1 kHz 63:-12.4 100:-7.1 160:-2.7 250:-1.2 400:-1.2 630:-1.5 1000:+0.0 1600:+0.7 2500:+1.6 4000:+1.2 6300:+1.9 10000:+1.4 16000:-2.1
+   coherence % 63:6 100:52 160:80 250:77 400:84 630:85 1000:89 1600:84 2500:80 4000:76 6300:73 10000:76 16000:75
+   dynamics: level spread 9.2 -> 4.1 dB, in/out slope 0.35
+   width: side/mid -66.7 dB, L/R correlation 1.00
+   space: level in the gaps -21.0 dB re singing
+
+== andrew-di-octave-down.wav
+   offset -0.0 ms   loudness +7.6 LU   peak -7.4 dBFS
+   EQ re 1 kHz 63:-8.7 100:-5.5 160:-1.8 250:+1.7 400:-0.9 630:-2.3 1000:+0.0 1600:+3.8 2500:+2.5 4000:+7.7 6300:+4.5 10000:+1.3 16000:-4.2
+   coherence % 63:0 100:1 160:4 250:10 400:18 630:29 1000:57 1600:68 2500:39 4000:51 6300:64 10000:82 16000:52
+   dynamics: level spread 9.2 -> 3.1 dB, in/out slope 0.24
+   width: side/mid -63.9 dB, L/R correlation 1.00
+   space: level in the gaps -17.2 dB re singing
+
+== andrew-di-only-human.wav
+   offset +1.2 ms   loudness +8.7 LU   peak -6.9 dBFS
+   EQ re 1 kHz 63:+0.6 100:-4.3 160:-2.7 250:+4.9 400:+5.0 630:+0.4 1000:+0.0 1600:+2.5 2500:-4.0 4000:-1.0 6300:-4.7 10000:-6.8 16000:-13.9
+   coherence % 63:1 100:3 160:21 250:48 400:44 630:17 1000:6 1600:3 2500:1 4000:1 6300:1 10000:2 16000:1
+   dynamics: level spread 9.2 -> 4.3 dB, in/out slope 0.35
+   width: side/mid -70.0 dB, L/R correlation 1.00
+   space: level in the gaps -20.4 dB re singing
+
+== andrew-di-pushing-the-tape.wav
+   offset +0.4 ms   loudness +7.6 LU   peak -2.7 dBFS
+   EQ re 1 kHz 63:+0.4 100:+4.8 160:+2.9 250:+1.0 400:-0.1 630:-1.7 1000:+0.0 1600:+1.6 2500:+2.5 4000:+1.3 6300:-0.2 10000:+2.9 16000:-0.7
+   coherence % 63:31 100:85 160:96 250:96 400:98 630:98 1000:98 1600:96 2500:94 4000:77 6300:74 10000:92 16000:80
+   dynamics: level spread 9.2 -> 6.8 dB, in/out slope 0.73
+   width: side/mid -82.1 dB, L/R correlation 1.00
+   space: level in the gaps -26.4 dB re singing
+
+== andrew-di-scream-vocal.wav
+   offset +0.6 ms   loudness +8.3 LU   peak -7.1 dBFS
+   EQ re 1 kHz 63:-13.1 100:-12.4 160:-8.8 250:-2.5 400:-0.7 630:-1.1 1000:+0.0 1600:+1.9 2500:+3.1 4000:+1.9 6300:+0.7 10000:+1.1 16000:-7.1
+   coherence % 63:0 100:4 160:34 250:73 400:85 630:87 1000:90 1600:84 2500:75 4000:58 6300:59 10000:74 16000:25
+   dynamics: level spread 9.2 -> 5.1 dB, in/out slope 0.49
+   width: side/mid -21.3 dB, L/R correlation 0.99
+   side/mid by band 63:-38.5 100:-37.2 160:-34.0 250:-27.3 400:-22.5 630:-20.9 1000:-20.8 1600:-20.6 2500:-21.2 4000:-23.2 6300:-28.8 10000:-35.3 16000:-38.7
+   space: level in the gaps -23.5 dB re singing
+
+== andrew-di-screamy-grit.wav
+   offset +0.8 ms   loudness +7.7 LU   peak -1.4 dBFS
+   EQ re 1 kHz 63:-8.1 100:-13.0 160:-4.8 250:-1.8 400:-1.4 630:-0.9 1000:+0.0 1600:-0.1 2500:+0.0 4000:+1.1 6300:+0.5 10000:+0.4 16000:-2.6
+   coherence % 63:1 100:9 160:68 250:86 400:94 630:95 1000:96 1600:90 2500:84 4000:81 6300:81 10000:88 16000:71
+   dynamics: level spread 9.2 -> 6.3 dB, in/out slope 0.68
+   width: side/mid -38.4 dB, L/R correlation 1.00
+   side/mid by band 63:-56.3 100:-44.9 160:-41.3 250:-39.5 400:-39.0 630:-38.3 1000:-38.0 1600:-38.1 2500:-38.4 4000:-38.8 6300:-41.2 10000:-47.6 16000:-61.1
+   space: level in the gaps -22.7 dB re singing
+
+== andrew-di-thick-and-gluey.wav
+   offset +0.1 ms   loudness +7.8 LU   peak -6.4 dBFS
+   EQ re 1 kHz 63:-12.9 100:-4.5 160:+0.1 250:+0.4 400:-1.0 630:-2.4 1000:+0.0 1600:+2.3 2500:+2.7 4000:+4.1 6300:-0.6 10000:-3.8 16000:-14.5
+   coherence % 63:9 100:57 160:81 250:81 400:86 630:88 1000:91 1600:88 2500:83 4000:75 6300:78 10000:84 16000:58
+   dynamics: level spread 9.2 -> 3.7 dB, in/out slope 0.36
+   width: side/mid -78.5 dB, L/R correlation 1.00
+   space: level in the gaps -20.6 dB re singing
+
+== andrew-di-tube-crush.wav
+   offset +0.4 ms   loudness +8.2 LU   peak -6.9 dBFS
+   EQ re 1 kHz 63:-4.2 100:-13.5 160:-7.5 250:-1.1 400:-2.0 630:-2.6 1000:+0.0 1600:+3.5 2500:+1.5 4000:+7.2 6300:+3.9 10000:-2.7 16000:-13.4
+   coherence % 63:1 100:3 160:43 250:71 400:83 630:85 1000:87 1600:81 2500:61 4000:61 6300:67 10000:58 16000:7
+   dynamics: level spread 9.2 -> 2.6 dB, in/out slope 0.27
+   width: side/mid -160.5 dB, L/R correlation 1.00
+   space: level in the gaps -19.1 dB re singing
+
+== andrew-di-vintage-drive.wav
+   offset +0.2 ms   loudness +7.6 LU   peak -7.5 dBFS
+   EQ re 1 kHz 63:-16.7 100:-18.1 160:-8.1 250:-0.9 400:-1.9 630:-2.6 1000:+0.0 1600:+3.6 2500:+2.0 4000:+6.9 6300:+1.3 10000:-3.4 16000:-14.9
+   coherence % 63:0 100:3 160:49 250:81 400:89 630:90 1000:92 1600:88 2500:77 4000:76 6300:75 10000:78 16000:19
+   dynamics: level spread 9.2 -> 4.0 dB, in/out slope 0.43
+   width: side/mid -200.0 dB, L/R correlation 1.00
+   space: level in the gaps -22.9 dB re singing
+
+== andrew-di-vocal-doubler-100width-no-other-processing.wav
+   offset -0.0 ms   loudness +6.4 LU   peak -7.5 dBFS
+   EQ re 1 kHz 63:+0.5 100:+0.7 160:-0.3 250:+0.8 400:-0.5 630:-0.8 1000:+0.0 1600:+0.2 2500:+0.0 4000:+1.2 6300:+0.9 10000:-0.3 16000:-1.1
+   coherence % 63:56 100:59 160:49 250:53 400:54 630:52 1000:51 1600:52 2500:51 4000:54 6300:55 10000:53 16000:51
+   dynamics: level spread 9.2 -> 6.6 dB, in/out slope 0.61
+   width: side/mid -3.3 dB, L/R correlation 0.36
+   side/mid by band 63:-1.7 100:-1.7 160:-2.7 250:-4.2 400:-3.2 630:-3.3 1000:-3.4 1600:-3.2 2500:-3.3 4000:-3.4 6300:-3.5 10000:-3.4 16000:-3.3
+   space: level in the gaps -25.3 dB re singing
+
+== andrew-di-vocal-doubler.wav
+   offset +0.6 ms   loudness +7.8 LU   peak -7.4 dBFS
+   EQ re 1 kHz 63:-16.4 100:-10.2 160:-3.1 250:+1.3 400:-1.0 630:-1.9 1000:+0.0 1600:+0.5 2500:+1.5 4000:+2.7 6300:-0.2 10000:-0.1 16000:-3.2
+   coherence % 63:1 100:17 160:67 250:69 400:74 630:73 1000:78 1600:72 2500:68 4000:66 6300:68 10000:71 16000:59
+   dynamics: level spread 9.2 -> 3.5 dB, in/out slope 0.43
+   width: side/mid -9.4 dB, L/R correlation 0.79
+   side/mid by band 63:-8.2 100:-8.6 160:-8.6 250:-11.1 400:-8.7 630:-9.7 1000:-9.4 1600:-9.0 2500:-9.4 4000:-9.7 6300:-9.7 10000:-9.6 16000:-9.8
+   space: level in the gaps -23.2 dB re singing
+

@@ -75,3 +75,24 @@ match the Mantra exports (after the output change above):
 RASP is still denser than any Mantra chain but 3 (slope < 0.25), and Huge
 lifts the gaps ~4 dB more. Left for now: compression was asked for in Logic,
 and the stereo re-exports and A/B round 2 come first.
+
+## mantra-andrew-stereo.txt
+
+Stereo re-exports of the same 29 settings (`_Stereo/`, 44.1 kHz, 2 ch), with
+reverb, delay and modulation off, measured against the same mono
+`andrew-di-dry.wav`. File names are identical to the mono set; the only extra
+file is a stereo `andrew-di-dry.wav`, which measures as the DI itself (flat EQ,
+100% coherence), a check that the alignment is right.
+
+Loudness reads about +3 LU higher than in the mono table for nearly every
+file, including the stereo dry. That's the second channel adding to the
+loudness sum, not a level change; subtract 3 LU to compare with
+`mantra-andrew.txt`. German Metal (-4.3 vs mono) and Growls (+5.8) differ
+beyond that offset.
+
+Width (side/mid, L/R correlation): only the doubler and pitch/fake-double
+chains are really stereo: Lead Double Fake -0.0 dB / 0.00 (fully
+decorrelated), Vocal Doubler 100 width -3.3 dB / 0.36, Vocal Doubler
+-9.4 dB / 0.79, Growls and Growlsy about -15 dB / 0.95, Lead Vox and Scream
+Vocal about -21 dB / 0.99. Metal All-Rounder (-28.5) and German Metal (-33.8)
+are slightly wide; everything else is below -38 dB, effectively mono.
