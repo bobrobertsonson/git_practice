@@ -217,12 +217,31 @@ See [plugin/README.md](plugin/README.md) for download, install and behaviour.
 
 | Preset | Use |
 |---|---|
-| Huge (album) | More drive, chop, doubles, plate and glue; output pushed into the limiter |
+| Huge (album) | More drive, chop, doubles, plate and glue; output pushed into the limiter; open top (hi cut 17 kHz, +4 dB air) |
 | Scream natural | The default |
-| Scream dark | Gutturals and lows: dark voicing, more drive, darker thicken |
+| Scream dark | Dark voicing, more drive, darker thicken. A deliberate dark sound for thin or harsh takes, not a starting point for gutturals (see below) |
 | Scream bright | Highs and squeals: bright voicing, more de-essing |
 | Live stage | Tighter effects, more duck, a higher lo cut, bleed reducer set higher |
 | Raw | Filters and light compression only |
+| Air | Huge with a very bright modern top: bright voicing, open hi cut, +10 dB air, more de-essing |
+
+**Fitted to producers.** `tools/presetfit.py` measures what a producer did to a
+lead vocal (raw stem against the finished mix), then scores how close each
+preset gets. Lower is better:
+
+| Tone error, dB | Bloodbath | Gojira | Immortal Disfigurement | KnockedLoose |
+|---|---|---|---|---|
+| old Huge | 1.9 | 4.6 | 6.6 | 3.4 |
+| **new Huge** | 1.7 | 0.5 | 5.3 | 3.4 |
+| **Air** (+10 dB) | ~2.3 | ~3.5 | ~2.5 | ~3.9 |
+| Dark | 3.8 | 8.4 | 9.8 | 4.2 |
+
+- Every producer kept more air than the old hi cut, which is why new Huge
+  improved everywhere.
+- Dark fit worst on three of the four and was never closest, so
+  `takes.py classify` no longer suggests it for growls.
+- Air is for Immortal Disfigurement-style mixes that lift 6–10 kHz by about
+  13 dB. On the others it overshoots the top, as expected.
 
 ## 6. Matching a reference plugin by measurement
 

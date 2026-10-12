@@ -39,7 +39,7 @@ make LIBDAISY_DIR=../../../libDaisy program-dfu
 
 | Control | Does |
 |---|---|
-| Encoder turn | Picks the preset: huge / natural / dark / bright / live / raw. LED 1 colour shows which |
+| Encoder turn | Picks the preset: huge / natural / dark / bright / live / raw / air. LED 1 colour shows which |
 | Encoder press | Level-matched bypass. LED 1 is off while bypassed |
 | Knob 1 / Knob 2 | Drive / chop |
 | Button 1 | Input gain: 0, +6, +12 or +18 dB |

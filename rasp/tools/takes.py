@@ -42,6 +42,7 @@ NAMES = {
     "repeats": "repeats", "delayBlend": "delayblend", "delayTime": "time", "bpm": "bpm",
     "tilt": "tilt", "duck": "duck", "flavourGainDb": "flavourgain", "glue": "glue", "outDb": "out",
     "controlOn": "control", "thickenOn": "thicken", "flavourOn": "flavour", "solo": "solo",
+    "airDb": "air",
 }
 
 
@@ -278,7 +279,9 @@ def classify_style(v):
         # below 300 Hz) already have the weight "dark" adds; they need bite.
         if v["low_share_db"] > -8:
             return "deep guttural (bass-heavy)", "natural (dark would add more mud)"
-        return "low growl / guttural", "dark"
+        # Not "dark": against four producers' finished leads (tools/presetfit.py)
+        # dark fit worst on three and was never closest; they all kept more top.
+        return "low growl / guttural", "huge"
     if v["centroid_hz"] > 2600:
         return "high scream / squeal", "bright"
     return "mid scream (fry / false chord)", "huge"

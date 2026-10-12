@@ -4,7 +4,7 @@
 // the Pod's headphone out: same DSP as the full pedal, ~1 ms through the box.
 // Builds against libDaisy v9.0.0 (see Makefile); not yet run on hardware.
 //
-//   Encoder turn   preset: huge, natural, dark, bright, live, raw (LED 1 colour)
+//   Encoder turn   preset: huge, natural, dark, bright, live, raw, air (LED 1 colour)
 //   Encoder press  bypass (level-matched; LED 1 off while bypassed); hold 2 s = clear feedback notches
 //   Knob 1         drive          Knob 2   chop
 //   Button 1       tap: input gain step 0 / +6 / +12 / +18 dB (LED 2 flashes the step)
@@ -53,7 +53,7 @@ int main() {
     hw.midi.StartReceive();
 
     static const float presetColour[rasp::kNumPresets][3] = {
-        {1, 0.3f, 0}, {0, 1, 0}, {0.6f, 0, 1}, {0, 0.8f, 1}, {1, 1, 0}, {1, 1, 1}};
+        {1, 0.3f, 0}, {0, 1, 0}, {0.6f, 0, 1}, {0, 0.8f, 1}, {1, 1, 0}, {1, 1, 1}, {1, 0, 0.5f}};
     uint32_t flashUntil = 0;
     constexpr float kHoldMs = 250.f;   // longer than a tap: the button acts as a momentary
     bool midiMega = false, midiThrow = false, cleared = false;

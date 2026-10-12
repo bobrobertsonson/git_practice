@@ -175,6 +175,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
       <option value="bright">Preset: Scream bright / highs</option>
       <option value="live">Preset: Live stage</option>
       <option value="raw">Preset: Raw, control only</option>
+      <option value="air">Preset: Air (bright modern top)</option>
     </select>
     <div class="grow" id="src">Source: <b>synthetic test scream</b> · load your own take</div>
     <div class="meters" aria-hidden="true">IN <span class="meter"><i id="mIn"></i></span> OUT <span class="meter"><i id="mOut"></i></span></div>
@@ -787,12 +788,13 @@ const DEFAULTS = {
   bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false,
 };
 const PRESETS = {
-  huge:    { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3 },
+  huge:    { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, hiCut: 0.95, airDb: 4 },
   natural: {},
   dark:    { brightness: 0, drive: 0.5, loCut: 0.36, hiCut: 0.72, darken: 0.5, tilt: 0.4, tail: 0.4 },
   bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65 },
   live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.15, duck: 0.75, bleed: 0.78, loCut: 0.56, glue: 0.4 },
   raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0 },
+  air:     { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, brightness: 2, hiCut: 1, airDb: 10, deEss: 0.7 },
 };
 let params = Object.assign({}, DEFAULTS);
 

@@ -2,7 +2,7 @@
 
 The same DSP engine as the pedal (`../dsp/rasp.h`), wrapped with
 [JUCE 8](https://juce.com) as an effect plugin. The panel follows the pedal:
-Control / Thicken / Flavour / Bus+Live, with the six factory presets.
+Control / Thicken / Flavour / Bus+Live, with the seven factory presets.
 
 ## Get it
 
@@ -30,7 +30,7 @@ run's page under *Artifacts*.
 
 | | |
 |---|---|
-| Presets | Huge, Natural, Dark, Bright, Live, Raw, in Logic's preset menu and the plugin's own. Input gain, tempo and the Live switches stay put when you change presets |
+| Presets | Huge, Natural, Dark, Bright, Live, Raw, Air, in Logic's preset menu and the plugin's own. Input gain, tempo and the Live switches stay put when you change presets |
 | Bypass | Logic's bypass button uses the engine's level-matched, click-free bypass, so A/B is fair |
 | Tempo | Delay follows the project tempo (turn **Sync to host** off to set it by hand) |
 | Channels | Mono → Stereo (recommended), Stereo → Stereo (input summed to mono, like a mic) or Mono → Mono (comb taps drop out automatically) |

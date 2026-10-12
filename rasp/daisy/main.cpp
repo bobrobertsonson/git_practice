@@ -26,7 +26,7 @@
 // CC 80 = MEGA, CC 81 = THROW (value >= 64 on), for triggering from a timeline.
 //
 // Presets: 8 slots in QSPI flash (4 MB in), first boot fills them with the factory set
-// (huge, natural, dark, bright, live, raw, natural, natural). After a recall,
+// (huge, natural, dark, bright, live, raw, air, natural). After a recall,
 // each knob keeps the preset's value until you move it ("pickup").
 //
 // Bypass: digital and level-matched (your voice doesn't drop ~18 dB when you

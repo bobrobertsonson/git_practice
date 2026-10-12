@@ -6,9 +6,9 @@
 
 namespace rasp {
 
-constexpr int kNumPresets = 6;
+constexpr int kNumPresets = 7;
 inline const char* presetName(int i) {
-    static const char* names[kNumPresets] = {"huge", "natural", "dark", "bright", "live", "raw"};
+    static const char* names[kNumPresets] = {"huge", "natural", "dark", "bright", "live", "raw", "air"};
     return (i >= 0 && i < kNumPresets) ? names[i] : "";
 }
 
@@ -19,6 +19,11 @@ inline Params presetParams(int i) {
         case 0:  // huge: album sound
             p.drive = 0.45f; p.chop = 0.65f; p.spread = 0.75f; p.thickenGainDb = -2.f; p.tail = 0.45f;
             p.tailBlend = 0.45f; p.delayBlend = 0.22f; p.flavourGainDb = -4.f; p.glue = 0.65f; p.outDb = 3.f;
+            // Top end fitted to four producers' lead vocals (tools/presetfit.py:
+            // Bloodbath, Gojira, Immortal Disfigurement, KnockedLoose). Every one
+            // kept more air than the old 12.6 kHz hi cut; average tone error
+            // 4.1 -> 2.7 dB, Gojira 4.6 -> 0.5 dB.
+            p.hiCut = 0.95f; p.airDb = 4.f;
             break;
         case 1:  // natural: the defaults
             break;
@@ -34,6 +39,11 @@ inline Params presetParams(int i) {
             break;
         case 5:  // raw: filters and light compression only
             p.mix = 0.f; p.chop = 0.35f; p.thickenOn = false; p.flavourOn = false; p.glue = 0.f;
+            break;
+        case 6:  // air: huge with a very bright modern-deathcore top (Immortal
+                 // Disfigurement lifts 6-10 kHz ~13 dB; fit 6.6 -> ~2.5 dB there)
+            p = presetParams(0);
+            p.brightness = 2; p.hiCut = 1.f; p.airDb = 10.f; p.deEss = 0.7f;
             break;
         default: break;
     }
