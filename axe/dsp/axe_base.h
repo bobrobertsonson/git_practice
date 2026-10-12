@@ -263,6 +263,18 @@ struct Params {
     int   rate = 4;            // kRateBeats index (1/16)
     float swing = 0.f;         // delays every 2nd step: 0 straight .. 1 (75%, hard shuffle)
 
+    // LEARN MY PLAYING: filled in by Learn Playing (and settable by hand)
+    float pickSense = 8.f;     // dB jump that counts as a pick attack, 3..16
+    float pickHold = 60.f;     // shortest time between pick attacks, 20..250 ms
+    float noiseFloor = -70.f;  // your rig's hiss and hum, -100..-30 dBFS
+    bool  autoGate = false;    // the gate opens 8 dB above the noise floor (+ Gate x 24 dB)
+    float lowNote = 0.f;       // pitch tracker range, Hz; 0 = the instrument's whole range
+    float highNote = 0.f;
+
+    // TONE MATCH: a global EQ in front of every floor, filled in by Learn Target / Match Now
+    float matchAmount = 1.f;   // 0..1
+    float match[8] = {0, 0, 0, 0, 0, 0, 0, 0};   // dB at kMatchHz
+
     // TIGHT
     float tight = 0.5f;        // compression depth on all three bands
     float punch = 0.5f;        // attack: 0 = clamps instantly, 1 = lets the pick through (~25 ms)
@@ -489,7 +501,7 @@ public:
         msC = coefMs(50.f, sr); fall = 10.f / sr;
         need = (int)(12.f * sr);
     }
-    void setSeconds(float s) { need = (int)(s * sr); }
+    void setSeconds(float s) { need = (int)std::fmin(s * sr, 2.0e9f); }   // (an hour-long ask must not overflow)
     void start() { active = true; got = 0; ms = 0.f; runMax = -120.f; for (auto& e : energy) e = 0.0; for (auto& b : band) b.reset(); }
     void cancel() { active = false; }
     bool learning() const { return active; }
@@ -550,5 +562,41 @@ inline void matchGains(const float* fresh, const float* now, float* gainsOut) {
     }
     for (int i = 0; i < kMatchBands; i++) gainsOut[i] = g[i];
 }
+
+// The Tone Match EQ: 8 peaking bands at kMatchHz, times Amount. Coefficients
+// glide (a coefficient step in a running filter clicks).
+class MatchEQ {
+public:
+    void init(float sampleRate) { sr = sampleRate; for (auto& b : eq) b = Biquad{}; on = false; for (auto& g : cur) g = 0.f; curAmt = 0.f; }
+    void reset() { for (auto& b : eq) b.reset(); }
+    // once per control block
+    void set(const float* gains, float amount, bool snap) {
+        bool changed = std::fabs(amount - curAmt) > 1e-6f;
+        for (int i = 0; i < kMatchBands; i++) changed = changed || std::fabs(gains[i] - cur[i]) > 1e-6f;
+        if (!changed && !snap) return;
+        curAmt = amount;
+        on = false;
+        Biquad t;
+        for (int i = 0; i < kMatchBands; i++) {
+            cur[i] = gains[i];
+            const float db = clampf(gains[i], -12.f, 12.f) * clampf(amount, 0.f, 1.f);
+            if (std::fabs(db) > 1e-3f) on = true;
+            t.peaking(kMatchHz[i], kMatchQ, db, sr);
+            eq[i].glideTo(t, snap);
+        }
+        if (!on) onUntil = snap ? 0 : kCtl;   // let the glide to flat finish
+    }
+    float process(float x) {
+        if (!on) { if (onUntil <= 0) return x; onUntil--; }
+        for (auto& b : eq) x = b.process(x);
+        return x;
+    }
+private:
+    float sr = 48000.f, curAmt = 0.f;
+    float cur[kMatchBands] = {};
+    bool on = false;
+    int onUntil = 0;
+    Biquad eq[kMatchBands];
+};
 
 }  // namespace axe

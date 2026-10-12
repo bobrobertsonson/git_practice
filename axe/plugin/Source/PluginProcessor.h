@@ -1,6 +1,7 @@
 // AxeElevator plugin: wraps the DSP core (dsp/axe.h) as an AU / VST3 / LV2 effect.
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <vector>
@@ -25,7 +26,7 @@ struct ParamSpec {
 
 const std::vector<ParamSpec>& paramSpecs();
 
-class AxeProcessor : public juce::AudioProcessor {
+class AxeProcessor : public juce::AudioProcessor, private juce::Timer {
 public:
     AxeProcessor();
     ~AxeProcessor() override;
@@ -63,10 +64,17 @@ public:
     struct Meters {
         std::atomic<float> gr[3] = {0.f, 0.f, 0.f}, gate{0.f}, bpm{120.f}, pitch{0.f};
         std::atomic<int> step{0};
-        std::atomic<bool> triggered{false}, hostTempo{false};
+        std::atomic<bool> triggered{false}, hostTempo{false}, hasTarget{false};
+        std::atomic<int> learning{0};          // axe::LearnWhat
+        std::atomic<float> learnProgress{0.f};
     } meters;
 
+    // Editor buttons: pulse a learn parameter (a rising edge starts it; the
+    // Anagram sees the same parameters as toggles).
+    void pulse(const char* id);
+
 private:
+    void timerCallback() override;
     axe::Params buildParams() const;
 
     std::unique_ptr<axe::Processor> engine[2];
@@ -76,8 +84,23 @@ private:
     struct Listener : juce::AudioProcessorValueTreeState::Listener {
         AxeProcessor& p;
         explicit Listener(AxeProcessor& o) : p(o) {}
-        void parameterChanged(const juce::String&, float) override { p.dirty = true; }
+        void parameterChanged(const juce::String& id, float) override {
+            // LV2: a hand-set Match band or Learn value wins over a learned one
+            if (id.startsWith("match") && id != "matchNow" && id != "matchAmount") p.lv2MatchOn = false;
+            if (id == "pickSense" || id == "pickHold" || id == "noiseFloor" || id == "lowNote" || id == "highNote") p.lv2PlayingOn = false;
+            p.dirty = true;
+        }
     } listener{*this};
+    std::atomic<float>* learnPlayingRaw = nullptr;
+    std::atomic<float>* learnTargetRaw = nullptr;
+    std::atomic<float>* matchNowRaw = nullptr;
+    bool lastLearnPlaying = false, lastLearnTarget = false, lastMatchNow = false;
+    // learn results crossing from the audio thread
+    std::array<float, axe::kMatchBands> learnedMatch{}, targetFromAudio{}, targetSaved{}, lv2Match{};
+    axe::PlayingProfile learnedPlay, lv2Playing;
+    std::atomic<bool> matchReady{false}, playingReady{false}, targetReady{false}, targetToEngine{false}, haveTargetSaved{false};
+    std::atomic<bool> lv2MatchOn{false}, lv2PlayingOn{false};
+    bool targetCopied = false;
     std::atomic<bool> dirty{true};
     bool isLv2 = false;
 

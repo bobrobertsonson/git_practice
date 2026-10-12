@@ -2,8 +2,13 @@
 //
 // Goes before an amp sim. One mode ("floor") runs at a time:
 //
-//   in ─► input trim ─┬─► capture buffer, envelope, pick onsets, pitch ──► (read by the fx modes)
-//                     └─► [ MODE ] ─► mix (phase-aligned dry) ─► gate ─► output ─► bypass xfade ─► out
+//   in ─► input trim ─► TONE MATCH ─┬─► capture buffer, envelope, pick onsets, pitch ──► (read by the fx modes)
+//                                  └─► [ MODE ] ─► mix (phase-aligned dry) ─► gate ─► output ─► bypass xfade ─► out
+//
+// LEARN: Learn Target / Match Now fill the Tone Match EQ (pull any guitar
+// toward a sound you captured); Learn Playing measures your pick attack,
+// picking speed, noise floor and note range for the pick detector, the gate
+// and the pitch tracker.
 //
 //   tone   1 TIGHT          3-band compressor: palm mutes stay tight, the lows don't flub
 //          2 SUB            octave down: Poly (filter-bank divider, holds chords) or Mono (WSOLA)
@@ -40,6 +45,8 @@ inline bool selfGated(int mode) { return mode >= kGlitch; }
 inline bool needsPitch(const Params& p) {
     return (p.mode == kLaser && p.lTrack) || p.mode == kChip || (p.mode == kRing && p.rTrack) || p.mode == kFeedback;
 }
+
+enum LearnWhat : int { kLearnNone = 0, kLearnTarget, kLearnMatch, kLearnPlaying };
 
 // ---------------------------------------------------------------------------
 // Voice: one complete mode chain at one instrument setting. The Processor
@@ -128,6 +135,11 @@ public:
         inG.init(1.f, sr); outG.init(1.f, sr);
         pitch.init(sr);
         pitchInst = -1;   // init() set the guitar range: re-apply the instrument
+        matchEq.init(sr);
+        matchAmt.init(1.f, sr);
+        for (auto& g : matchG) g.init(0.f, sr);
+        toneLearner.init(sr);
+        playLearner.init(sr);
         onsets.init(sr);
         envF.set(2.f, 80.f, sr);
         gateKeyC = coefMs(5.f, sr); gateAtt = coefMs(1.f, sr); gateRel = coefMs(120.f, sr);
@@ -146,10 +158,17 @@ public:
         params.tempo = clampf(p.tempo, 40.f, 300.f);
         inG.target = fastDbToLin(clampf(p.inDb, -24.f, 24.f));
         outG.target = fastDbToLin(clampf(p.outDb, -60.f, 24.f));
-        gateOn = p.gate > 1e-3f; gateThr = -75.f + 45.f * clampf(p.gate, 0.f, 1.f);
+        if (p.autoGate) { gateOn = true; gateThr = clampf(p.noiseFloor, -100.f, -30.f) + 8.f + 24.f * clampf(p.gate, 0.f, 1.f); }
+        else { gateOn = p.gate > 1e-3f; gateThr = -75.f + 45.f * clampf(p.gate, 0.f, 1.f); }
+        onsets.configure(p.pickSense, p.pickHold, std::fmax(-55.f, p.noiseFloor + 12.f));
         voices[active].setTargets(params);
         if (fade > 0) voices[1 - active].setTargets(params);
-        if (pitchInst != params.instrument) { pitch.setInstrument(params.instrument); pitchInst = params.instrument; }
+        matchAmt.target = clampf(p.matchAmount, 0.f, 1.f);
+        for (int b = 0; b < kMatchBands; b++) matchG[b].target = clampf(p.match[b], -12.f, 12.f);
+        if (pitchInst != params.instrument || std::fabs(pitchLo - p.lowNote) > 0.f || std::fabs(pitchHi - p.highNote) > 0.f) {
+            pitch.setInstrument(params.instrument, p.lowNote, p.highNote);
+            pitchInst = params.instrument; pitchLo = p.lowNote; pitchHi = p.highNote;
+        }
         if (!haveParams) { haveParams = true; applyNow(); }
     }
     // Host transport, once per block: tempo (<= 0: none), and the beat
@@ -169,6 +188,10 @@ public:
         pitch.reset(); onsets.reset(); envF.reset();
         ctx.beats = 0.0; ctx.step = -1; ctx.tick = false; ctx.env = 0.f; ctx.pitch = 0.f; ctx.pitchConf = 0.f;
         ctx.onset = false; ctx.onsetLevel = 0.f;
+        matchEq.reset();
+        matchAmt.snap(clampf(params.matchAmount, 0.f, 1.f));
+        for (int b = 0; b < kMatchBands; b++) matchG[b].snap(clampf(params.match[b], -12.f, 12.f));
+        { float g[kMatchBands]; for (int b = 0; b < kMatchBands; b++) g[b] = matchG[b].cur; matchEq.set(g, matchAmt.cur, true); }
         lastTrig = params.trigger; ctx.trig = params.trigger; ctx.trigEdge = ctx.trigFall = false;
     }
     void process(const float* in, float* out, int n) {
@@ -179,7 +202,9 @@ public:
             if (ctl == 0) controlTick();
             ctl = (ctl + 1) % kCtl;
             const float x = in[i];
-            const float xi = x * inG.next();
+            float xi = x * inG.next();
+            if (learnWhat != kLearnNone) learnFeed(xi);   // learning hears the guitar before Tone Match
+            xi = matchEq.process(xi);
             analyse(xi);
             float y;
             if (fade > 0) {
@@ -206,7 +231,45 @@ public:
     float detectedPitch() const { return ctx.pitchConf > 0.5f ? ctx.pitch : 0.f; }
     int latencySamples() const { return 0; }
 
+    // --- Learn ---------------------------------------------------------------
+    void learnTarget() { learnWhat = kLearnTarget; toneLearner.start(); }
+    void matchNow() { if (haveTarget) { learnWhat = kLearnMatch; toneLearner.start(); } }
+    void learnPlaying() { learnWhat = kLearnPlaying; playLearner.start(); }
+    void cancelLearn() { learnWhat = kLearnNone; toneLearner.cancel(); playLearner.cancel(); }
+    void setLearnSeconds(float tone, float playing) { toneLearner.setSeconds(tone); playLearner.setSeconds(playing); }
+    int learning() const { return learnWhat; }
+    float learnProgress() const { return learnWhat == kLearnPlaying ? playLearner.progress() : toneLearner.progress(); }
+    bool hasTarget() const { return haveTarget; }
+    const float* targetProfile() const { return target; }
+    void setTargetProfile(const float* t) { for (int i = 0; i < kMatchBands; i++) target[i] = t[i]; haveTarget = true; }
+    // Each returns true once, when its learning finished.
+    bool learnedMatch(float* gains) {
+        if (!matchReady) return false;
+        matchReady = false;
+        for (int i = 0; i < kMatchBands; i++) gains[i] = matchOut[i];
+        return true;
+    }
+    bool learnedPlaying(PlayingProfile& out) {
+        if (!playingReady) return false;
+        playingReady = false; out = playingOut;
+        return true;
+    }
+
 private:
+    void learnFeed(float xi) {
+        if (learnWhat == kLearnPlaying) {
+            if (playLearner.feed(xi, pitch.pitchHz(), pitch.confidence())) {
+                playLearner.result(playingOut); playingReady = true; learnWhat = kLearnNone;
+            }
+            return;
+        }
+        float prof[kMatchBands];
+        if (toneLearner.feed(xi, prof)) {
+            if (learnWhat == kLearnTarget) { setTargetProfile(prof); }
+            else { matchGains(target, prof, matchOut); matchReady = true; }
+            learnWhat = kLearnNone;
+        }
+    }
     void applyNow() {
         voices[active].configure(params.mode, params.instrument, params);
         voices[active].reset();
@@ -221,7 +284,10 @@ private:
         ctx.bpm = (params.sync == 1 && hostBpm > 0.f) ? clampf(hostBpm, 20.f, 400.f) : params.tempo;
         ctx.stepBeats = kRateBeats[params.rate];
         ctx.stepSamples = ctx.beatsToSamples(ctx.stepBeats);
-        runPitch = needsPitch(params);
+        runPitch = needsPitch(params) || learnWhat == kLearnPlaying;
+        // Tone Match: amount and bands glide (~25 ms), the filters follow per block
+        matchAmt.control();
+        { float g[kMatchBands]; for (int b = 0; b < kMatchBands; b++) { matchG[b].control(); g[b] = matchG[b].cur; } matchEq.set(g, matchAmt.cur, false); }
         Voice& v = voices[active];
         if (fade == 0 && (v.mode != params.mode || v.inst != params.instrument)) {
             active = 1 - active;
@@ -266,11 +332,11 @@ private:
         if (!gateOn) { gateGr = 0.f; return 1.f; }
         gateMs = key * key + gateKeyC * (gateMs - key * key);
         const float lvl = fastPowDb10(gateMs);
-        float target = 0.f;
+        float want = 0.f;
         if (lvl >= gateThr) hold = holdLen;
         else if (hold > 0) hold--;
-        else target = clampf((lvl - gateThr) * 3.f, -60.f, 0.f);    // 1:4 below threshold
-        gateGr = target + (target > gateGr ? gateAtt : gateRel) * (gateGr - target);
+        else want = clampf((lvl - gateThr) * 3.f, -60.f, 0.f);    // 1:4 below threshold
+        gateGr = want + (want > gateGr ? gateAtt : gateRel) * (gateGr - want);
         return fastDbToLin(gateGr);
     }
 
@@ -289,6 +355,16 @@ private:
     Follower envF;
     bool runPitch = false, lastTrig = false;
     int pitchInst = -1;
+    float pitchLo = -1.f, pitchHi = -1.f;
+    // tone match and learning
+    MatchEQ matchEq;
+    Ramp matchAmt, matchG[kMatchBands];
+    Learner toneLearner;
+    PlayingLearner playLearner;
+    int learnWhat = kLearnNone;
+    float target[kMatchBands] = {}, matchOut[kMatchBands] = {};
+    bool haveTarget = false, matchReady = false, playingReady = false;
+    PlayingProfile playingOut;
     // host transport
     float hostBpm = 0.f;
     double hostPpq = 0.0;

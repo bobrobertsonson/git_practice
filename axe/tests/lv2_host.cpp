@@ -191,6 +191,36 @@ int test(Host& host) {
         for (size_t i = 60000; i < x.size(); i++) during = std::max(during, (double)std::fabs(y[i] - x[i]));
         CHECK(before < 1e-6 && during > 0.01, "Trigger port: glitch before %g, while held %g", before, during);
     }
+    // Tone Match through the ports only: Learn Target on a bright signal, Match
+    // Now on a dull one, and the dull one comes out brighter (the wrapper
+    // can't move its own ports, so the learned bands apply inside the plugin)
+    {
+        Instance in(host, 48000.f, 128);
+        std::vector<float> bright((size_t)(48000 * 14)), dull(bright.size());
+        uint32_t r = 1; float lp = 0.f;
+        for (size_t i = 0; i < bright.size(); i++) {
+            r = r * 1664525u + 1013904223u;
+            const float n = (float)(r >> 8) / 8388608.f - 1.f;
+            lp += 0.08f * (n - lp);
+            bright[i] = 0.15f * n; dull[i] = 0.5f * lp;
+        }
+        auto tilt = [](const std::vector<float>& v, size_t a) {   // share of energy in the slope: brightness
+            double e = 0, d = 0; for (size_t i = a; i < v.size(); i++) { e += (double)v[i] * v[i]; d += (double)(v[i] - v[i - 1]) * (v[i] - v[i - 1]); }
+            return d / (e + 1e-30);
+        };
+        in.set("tight", 0.f);
+        in.set("learnTarget", 1.f); in.run(bright, 128); in.set("learnTarget", 0.f);
+        in.set("matchNow", 1.f); in.run(dull, 128); in.set("matchNow", 0.f);
+        std::vector<float> test(dull.begin(), dull.begin() + 96000);
+        auto y = in.run(test, 128);
+        const double gain = tilt(y, 24000) / tilt(test, 24000);
+        std::printf("  tone match over LV2: highs-to-lows ratio x%.2f\n", gain);
+        CHECK(gain > 1.5, "Tone Match over LV2 ports did not brighten a dull input (x%.2f)", gain);
+        in.set("match7", 0.5f);   // hand-setting a band hands control back to the ports
+        auto y2 = in.run(test, 128);
+        const double gain2 = tilt(y2, 24000) / tilt(test, 24000);
+        CHECK(gain2 < gain, "a hand-set Match band should replace the learned ones (x%.2f)", gain2);
+    }
     std::printf("lv2 host checks: %d failed\n", failures);
     return failures;
 }

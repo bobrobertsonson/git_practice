@@ -123,6 +123,26 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"rdWarble", "Warble", "Radio", axe::kRadio, K::Float, 0, 100, 30, "%", nullptr, 0, AXE_SET(p.rdWarble = pct(v))},
         {"rdSpin", "Spin", "Radio", axe::kRadio, K::Float, 50, 2000, 218, "ms", nullptr, 316, AXE_SET(p.rdSpin = invExp(v, 50.f, 2000.f))},
         {"rdFade", "Fading", "Radio", axe::kRadio, K::Float, 0, 100, 30, "%", nullptr, 0, AXE_SET(p.rdFade = pct(v))},
+        // Learn My Playing (Learn Playing fills these; all settable by hand)
+        {"learnPlaying", "Learn Playing", "Learn", -1, K::Bool, 0, 1, 0, "", nullptr, 0, AXE_SET((void)p)},
+        {"pickSense", "Pick Sense", "Learn", -1, K::Float, 3, 16, 8, "dB", nullptr, 0, AXE_SET(p.pickSense = v)},
+        {"pickHold", "Pick Hold", "Learn", -1, K::Float, 20, 250, 60, "ms", nullptr, 70, AXE_SET(p.pickHold = v)},
+        {"noiseFloor", "Noise Floor", "Learn", -1, K::Float, -100, -30, -70, "dB", nullptr, 0, AXE_SET(p.noiseFloor = v)},
+        {"lowNote", "Low Note", "Learn", -1, K::Float, 0, 1500, 0, "Hz", nullptr, 200, AXE_SET(p.lowNote = v)},
+        {"highNote", "High Note", "Learn", -1, K::Float, 0, 1500, 0, "Hz", nullptr, 200, AXE_SET(p.highNote = v)},
+        // Tone Match
+        {"learnTarget", "Learn Target", "Tone Match", -1, K::Bool, 0, 1, 0, "", nullptr, 0, AXE_SET((void)p)},
+        {"matchNow", "Match Now", "Tone Match", -1, K::Bool, 0, 1, 0, "", nullptr, 0, AXE_SET((void)p)},
+        {"matchAmount", "Match", "Tone Match", -1, K::Float, 0, 100, 100, "%", nullptr, 0, AXE_SET(p.matchAmount = pct(v))},
+        {"match0", "Match 250 Hz", "Tone Match", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[0] = v)},
+        {"match1", "Match 500 Hz", "Tone Match", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[1] = v)},
+        {"match2", "Match 1 kHz", "Tone Match", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[2] = v)},
+        {"match3", "Match 1.6 kHz", "Tone Match 2", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[3] = v)},
+        {"match4", "Match 2.5 kHz", "Tone Match 2", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[4] = v)},
+        {"match5", "Match 4 kHz", "Tone Match 2", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[5] = v)},
+        {"match6", "Match 6.3 kHz", "Tone Match 2", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[6] = v)},
+        {"match7", "Match 10 kHz", "Tone Match 2", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[7] = v)},
+        {"autoGate", "Auto Gate", "Tone Match 2", -1, K::Bool, 0, 1, 0, "", nullptr, 0, AXE_SET(p.autoGate = v > 0.5f)},
     };
     return specs;
 }
@@ -182,9 +202,17 @@ AxeProcessor::AxeProcessor()
     bypassParam = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter("bypass"));
     bypassRaw = apvts.getRawParameterValue("bypass");
     apvts.addParameterListener("bypass", &listener);
+    learnPlayingRaw = apvts.getRawParameterValue("learnPlaying");
+    learnTargetRaw = apvts.getRawParameterValue("learnTarget");
+    matchNowRaw = apvts.getRawParameterValue("matchNow");
+    // Learn results reach the parameters through the message thread. LV2 has
+    // no message loop to rely on, and must not move its own ports: there the
+    // results are applied inside the plugin instead.
+    if (!isLv2) startTimerHz(10);
 }
 
 AxeProcessor::~AxeProcessor() {
+    stopTimer();
     for (const auto& s : paramSpecs()) apvts.removeParameterListener(s.id, &listener);
     apvts.removeParameterListener("bypass", &listener);
 }
@@ -204,6 +232,7 @@ void AxeProcessor::prepareToPlay(double sampleRate, int) {
         e->setParams(buildParams());
         e->reset();
     }
+    if (haveTargetSaved) targetToEngine = true;
     dirty = true;
 }
 
@@ -216,6 +245,8 @@ axe::Params AxeProcessor::buildParams() const {
     const auto& specs = paramSpecs();
     for (size_t i = 0; i < specs.size(); i++) specs[i].apply(p, raw[i]->load());
     p.bypass = bypassRaw->load() > 0.5f;
+    if (lv2MatchOn) for (int b = 0; b < axe::kMatchBands; b++) p.match[b] = lv2Match[(size_t)b];
+    if (lv2PlayingOn) { p.pickSense = lv2Playing.pickSense; p.pickHold = lv2Playing.pickHold; p.noiseFloor = lv2Playing.noiseFloor; p.lowNote = lv2Playing.lowNote; p.highNote = lv2Playing.highNote; }
     return p;
 }
 
@@ -228,6 +259,27 @@ void AxeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuff
     const int numIn = getTotalNumInputChannels(), numOut = getTotalNumOutputChannels();
     if (!engine[0] || numOut < 1) { buffer.clear(); return; }
 
+    // Learn: rising edges of the three learn parameters (buttons in the window, toggles on the Anagram)
+    {
+        const bool lp = learnPlayingRaw->load() > 0.5f, lt = learnTargetRaw->load() > 0.5f, mn = matchNowRaw->load() > 0.5f;
+        if (lp && !lastLearnPlaying) engine[0]->learnPlaying();
+        if (lt && !lastLearnTarget) { engine[0]->learnTarget(); targetCopied = false; }
+        if (mn && !lastMatchNow) engine[0]->matchNow();
+        lastLearnPlaying = lp; lastLearnTarget = lt; lastMatchNow = mn;
+        if (targetToEngine.exchange(false)) engine[0]->setTargetProfile(targetSaved.data());
+        float g[axe::kMatchBands];
+        if (engine[0]->learnedMatch(g)) {
+            for (int b = 0; b < axe::kMatchBands; b++) learnedMatch[(size_t)b] = g[b];
+            if (isLv2) { lv2Match = learnedMatch; lv2MatchOn = true; dirty = true; }
+            else matchReady = true;
+        }
+        axe::PlayingProfile pp;
+        if (engine[0]->learnedPlaying(pp)) {
+            learnedPlay = pp;
+            if (isLv2) { lv2Playing = pp; lv2PlayingOn = true; dirty = true; }
+            else playingReady = true;
+        }
+    }
     if (dirty.exchange(false)) {
         const axe::Params p = buildParams();
         for (auto& e : engine) e->setParams(p);
@@ -260,17 +312,62 @@ void AxeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuff
     meters.step = engine[0]->step();
     meters.triggered = engine[0]->triggered();
     meters.pitch = engine[0]->detectedPitch();
+    meters.learning = engine[0]->learning();
+    meters.learnProgress = engine[0]->learnProgress();
+    meters.hasTarget = engine[0]->hasTarget();
+    if (engine[0]->hasTarget() && engine[0]->learning() == axe::kLearnNone && !targetCopied) {
+        const float* t = engine[0]->targetProfile();
+        for (int b = 0; b < axe::kMatchBands; b++) targetFromAudio[(size_t)b] = t[b];
+        targetCopied = true; targetReady = true;
+    }
 }
 
+void AxeProcessor::timerCallback() {
+    auto setP = [this](const char* id, float v) {
+        if (auto* prm = apvts.getParameter(id)) { prm->beginChangeGesture(); prm->setValueNotifyingHost(prm->convertTo0to1(v)); prm->endChangeGesture(); }
+    };
+    if (targetReady.exchange(false)) { targetSaved = targetFromAudio; haveTargetSaved = true; }
+    if (matchReady.exchange(false))
+        for (int b = 0; b < axe::kMatchBands; b++) setP(("match" + std::to_string(b)).c_str(), learnedMatch[(size_t)b]);
+    if (playingReady.exchange(false)) {
+        setP("pickSense", learnedPlay.pickSense); setP("pickHold", learnedPlay.pickHold); setP("noiseFloor", learnedPlay.noiseFloor);
+        setP("lowNote", learnedPlay.lowNote); setP("highNote", learnedPlay.highNote);
+    }
+}
+
+void AxeProcessor::pulse(const char* id) {
+    if (auto* prm = apvts.getParameter(id)) {
+        prm->beginChangeGesture(); prm->setValueNotifyingHost(1.f); prm->endChangeGesture();
+        // back to off after a moment, so the next press is a new rising edge
+        juce::Timer::callAfterDelay(150, [this, s = juce::String(id)] {
+            if (auto* q = apvts.getParameter(s)) { q->beginChangeGesture(); q->setValueNotifyingHost(0.f); q->endChangeGesture(); }
+        });
+    }
+}
+
+// The Tone Match target is saved with the session, so Match Now works later.
 void AxeProcessor::getStateInformation(juce::MemoryBlock& destData) {
     auto state = apvts.copyState();
+    if (targetReady.exchange(false)) { targetSaved = targetFromAudio; haveTargetSaved = true; }   // LV2: no timer
+    if (haveTargetSaved) {
+        juce::String t;
+        for (float v : targetSaved) t << juce::String(v, 3) << " ";
+        state.setProperty("toneTarget", t.trim(), nullptr);
+    }
     if (auto xml = state.createXml()) copyXmlToBinary(*xml, destData);
 }
 
 void AxeProcessor::setStateInformation(const void* data, int sizeInBytes) {
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
         if (xml->hasTagName(apvts.state.getType())) {
-            apvts.replaceState(juce::ValueTree::fromXml(*xml));
+            auto state = juce::ValueTree::fromXml(*xml);
+            auto t = juce::StringArray::fromTokens(state.getProperty("toneTarget").toString(), " ", "");
+            if (t.size() == axe::kMatchBands) {
+                for (int b = 0; b < axe::kMatchBands; b++) targetSaved[(size_t)b] = t[b].getFloatValue();
+                haveTargetSaved = true; targetToEngine = true;
+            }
+            state.removeProperty("toneTarget", nullptr);
+            apvts.replaceState(state);
             dirty = true;
         }
 }

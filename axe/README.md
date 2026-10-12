@@ -81,7 +81,7 @@ reports **zero latency**: no lookahead, no block processing.
 | Radio | Band-limiting white noise | Station 23 dB above two octaves off |
 | Sub | Chords (E5, A5, open E, open G, drop-C, drop-A, low E-G#-B) | Every note's sub within ~2 dB |
 | Pitch tracker | Guitar 55 Hz–1 kHz, bass 31–220 Hz | Within 1% |
-| All floors | Bypass, reset sync, block size, 44.1–192 kHz, click checks | 1159 checks pass |
+| All floors | Bypass, reset sync, block size, 44.1–192 kHz, click checks | 1176 checks pass |
 
 Per-floor cost on one desktop x86 core at 48 kHz: 0.3–2.5% (Buzzsaw 4.5%).
 
@@ -118,8 +118,12 @@ REQUIREMENTS.md, CAVEATS.md, LV2-FEATURES.md and TIME.md:
   the untouched input.
 - **Reset**: `kx:Reset` clears state; a 0-sample `run()` is harmless.
 - **Control ports only**, with real ranges and units, and choices as
-  enumerations. 90 parameters in **15 pages of exactly 6**: Global, Trigger,
-  then one page per floor.
+  enumerations. 108 parameters in **18 pages of exactly 6**: Global, Trigger,
+  one page per floor, then Learn, Tone Match and Tone Match 2.
+- **Learn on the Anagram**: Learn Playing, Learn Target and Match Now are
+  toggle ports; switching one on starts it. The wrapper can't move its own
+  ports, so learned values apply inside the plugin and the knobs keep showing
+  the old ones until you turn one (turning a knob hands control back to it).
 - **Trigger** is a toggle port: bind it to a footswitch. Whether a footswitch
   can drive it momentarily is a question for Darkglass.
 - **Tempo**: TIME.md says the Anagram only exposes BPM, through a
@@ -138,13 +142,36 @@ Other limits:
   no dependencies, a small plain-LV2 wrapper without JUCE is the cleanest
   route there (follow-up).
 
-## Learn (parked)
+## Learn
 
-The first version had *Learn* inside the New Strings floor. That floor is
-gone, so Learn is out for now. The `Learner` class is still in `axe_base.h`,
-ready to come back as a global *Tone Match* stage, a *Learn My Playing*
-setup step (pick strength, noise floor and pitch range, used to tune the
-Laser, Gate and pitch trackers), or both.
+Two learn functions, on the **SETUP** page (the Learn and Tone Match pages on
+the Anagram). Both only listen: they never record or store audio.
+
+**Learn My Playing** (press, then play normally for 10 s with a few pauses).
+It measures your rig and sets five controls, which you can also set by hand:
+
+| Control | Learned from | Used by |
+|---|---|---|
+| Pick Sense | Half the typical jump in level when you pick | The pick detector: Laser, Dive Bomb, Freeze and Feedback in Always |
+| Pick Hold | Half your fastest picking interval | Stops one pick firing twice |
+| Noise Floor | The quietest 5% of the pauses | Auto Gate: the gate opens 8 dB above it (+ Gate) |
+| Low Note / High Note | The notes you played, ±2 semitones (0 Hz = the instrument's full range) | The note tracker: Laser, Chiptune, Ring, Feedback stop jumping to octaves you never play |
+
+**Tone Match** (an EQ before every floor, 8 bands, 250 Hz–10 kHz, ±12 dB):
+
+1. **Learn Target**: play a reference for 12 s (a DI or guitar whose tone
+   you like). Its tone is stored with the session.
+2. **Match Now**: play your own guitar for 12 s. The Match bands move your
+   tone towards the target; **Match** sets how far (0–100%).
+
+Only playing counts towards the 12 s: pauses don't.
+
+| Check (`engine_test`, `plugin_test`, `lv2_host`) | Result |
+|---|---|
+| Tone Match, worst band error above 1.6 kHz | 10.7 dB → 1.3 dB |
+| Learn My Playing on a synthetic DI (notes 82–220 Hz, a pick every 250 ms, pauses, hiss at −66 dBFS) | Floor −68 dBFS, pick hold 125 ms, range 73–247 Hz |
+| Auto Gate | Hiss in the pauses 21 dB down, notes unchanged |
+| Tone Match through LV2 ports only | Dull input's high-to-low ratio ×2.35 |
 
 ## Adding a floor
 

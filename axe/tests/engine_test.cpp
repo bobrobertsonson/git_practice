@@ -12,6 +12,8 @@
 //   fx              each fx mode does what it says (glitch repeats, laser fires,
 //                   dive drops, chip follows pitch, gate chops, shifter shifts,
 //                   freeze sustains, feedback sings, swarm scatters, radio band-limits)
+//   learn           Tone Match pulls a guitar onto a target; Learn My Playing
+//                   measures floor, pick attack and speed, note range; auto gate
 #include "../host/common.h"
 #include <cmath>
 #include <functional>
@@ -260,6 +262,8 @@ static void testSmoothing() {
         {"radio band", axe::kRadio, [](axe::Params& p, bool hi) { p.rdBand = hi ? 1.f : 0.f; }},
         {"radio width", axe::kRadio, [](axe::Params& p, bool hi) { p.rdWidth = hi ? 1.f : 0.f; }},
         {"radio warble", axe::kRadio, [](axe::Params& p, bool hi) { p.rdWarble = hi ? 1.f : 0.f; }},
+        {"tone match amount", axe::kTight, [](axe::Params& p, bool hi) { for (auto& g : p.match) g = 9.f; p.matchAmount = hi ? 1.f : 0.f; }},
+        {"tone match band", axe::kTight, [](axe::Params& p, bool hi) { p.match[2] = hi ? 12.f : -12.f; }},
     };
     for (const auto& j : jumps) {
         for (int dir = 0; dir < 2; dir++) {
@@ -533,6 +537,83 @@ static void testFx() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Learn: Tone Match and Learn My Playing
+// ---------------------------------------------------------------------------
+static void testLearn() {
+    const float sr = 48000.f;
+    // TONE MATCH: target = pinkish noise bursts; current guitar = a different
+    // sequence through a high cut. Match Now should pull it onto the target.
+    {
+        Lcg r; Sig target((size_t)(12.f * sr)), dull(target.size());
+        axe::Biquad pink, pink2, cut1, cut2;
+        pink.lowShelf(400.f, 10.f, sr); pink2.lowShelf(400.f, 10.f, sr);
+        cut1.highShelf(2500.f, -9.f, sr); cut2.peaking(5000.f, 1.f, -4.f, sr);
+        for (size_t i = 0; i < target.size(); i++) target[i] = pink.process(r.next()) * (std::fmod((float)i / sr, 0.5f) < 0.4f ? 0.2f : 0.f);
+        Lcg r2; r2.s = 99;
+        for (size_t i = 0; i < dull.size(); i++) dull[i] = cut2.process(cut1.process(pink2.process(r2.next()) * (std::fmod((float)i / sr, 0.6f) < 0.45f ? 0.25f : 0.f)));
+        auto& p = procA(); p.init(sr); p.setLearnSeconds(8.f, 8.f);
+        axe::Params prm = modeParams(axe::kTight); prm.tight = 0.f;
+        p.setParams(prm); p.reset();
+        p.learnTarget(); run(p, target);
+        CHECK(p.hasTarget(), "Learn Target did not finish");
+        p.matchNow(); run(p, dull);
+        float g[axe::kMatchBands] = {};
+        CHECK(p.learnedMatch(g), "Match Now did not produce a match");
+        std::printf("  tone match (dB):");
+        for (int b = 0; b < axe::kMatchBands; b++) std::printf(" %g:%+.1f", axe::kMatchHz[b], g[b]);
+        std::printf("\n");
+        for (int b = 0; b < axe::kMatchBands; b++) prm.match[b] = g[b];
+        Sig fixed = render(prm, dull, sr);
+        float pf[axe::kMatchBands], pd[axe::kMatchBands], px[axe::kMatchBands];
+        auto prof = [&](const Sig& s, float* o) { axe::Learner l; l.init(sr); l.setSeconds(1e6f); l.start(); for (float v : s) l.feed(v, o); l.result(o); };
+        prof(target, pf); prof(dull, pd); prof(fixed, px);
+        double before = 0, after = 0;
+        for (int b = 3; b < axe::kMatchBands; b++) { before = std::max(before, (double)std::fabs(pd[b] - pf[b])); after = std::max(after, (double)std::fabs(px[b] - pf[b])); }
+        std::printf("  tone match: worst band error above 1.6 kHz %.1f dB -> %.1f dB\n", before, after);
+        CHECK(after < 1.5 && after < before * 0.3, "Tone Match leaves %.1f dB (was %.1f)", after, before);
+    }
+    // LEARN MY PLAYING: phrases of plucked notes from E2 to A3, a pick every
+    // 250 ms, pauses between phrases, over hiss at about -66 dBFS
+    {
+        Sig x((size_t)(12.f * sr), 0.f);
+        Lcg r;
+        for (auto& v : x) v = 0.00071f * r.next();                 // uniform +-0.00071: -66 dBFS RMS
+        const float notes[8] = {82.4f, 98.f, 110.f, 123.5f, 146.8f, 164.8f, 196.f, 220.f};
+        int k = 0;
+        for (float t0 = 0.f; t0 < 11.5f; t0 += 0.25f) {
+            if (std::fmod(t0, 2.5f) >= 1.9f) continue;              // pause after each phrase
+            const float f0 = notes[k++ % 8];
+            for (size_t i = (size_t)(t0 * sr); i < x.size() && i < (size_t)((t0 + 0.24f) * sr); i++) {
+                float t = (float)i / sr - t0, v = 0.f;
+                for (int h = 1; h <= 6; h++) v += 0.25f / (float)h * std::sin(2.f * axe::kPi * f0 * (float)h * t);
+                x[i] += v * std::exp(-6.f * t) * std::fmin(1.f, t * 2000.f);
+            }
+        }
+        auto& p = procA(); p.init(sr); p.setLearnSeconds(8.f, 11.f);
+        axe::Params prm = modeParams(axe::kTight); p.setParams(prm); p.reset();
+        p.learnPlaying(); run(p, x);
+        axe::PlayingProfile pp;
+        CHECK(p.learnedPlaying(pp), "Learn Playing did not finish");
+        std::printf("  learn playing: floor %.1f dBFS, pick sense %.1f dB, pick hold %.0f ms, notes %.0f-%.0f Hz\n",
+                    pp.noiseFloor, pp.pickSense, pp.pickHold, pp.lowNote, pp.highNote);
+        CHECK(std::fabs(pp.noiseFloor + 66.f) < 5.f, "noise floor read as %.1f dBFS (want ~-66)", pp.noiseFloor);
+        CHECK(std::fabs(pp.pickHold - 125.f) < 40.f, "pick hold %.0f ms (want ~125: half the fastest picking)", pp.pickHold);
+        CHECK(pp.pickSense >= 4.f && pp.pickSense <= 16.f, "pick sense %.1f dB out of range", pp.pickSense);
+        CHECK(pp.lowNote > 65.f && pp.lowNote < 82.f && pp.highNote > 220.f && pp.highNote < 280.f,
+              "note range %.0f-%.0f Hz (want just around 82-220)", pp.lowNote, pp.highNote);
+        // Auto Gate from the learned floor: the hiss between phrases goes, the notes stay
+        axe::Params g = modeParams(axe::kTight); g.tight = 0.f; g.autoGate = true; g.gate = 0.f; g.noiseFloor = pp.noiseFloor;
+        Sig y = render(g, x, sr);
+        g.autoGate = false;
+        Sig y0 = render(g, x, sr);
+        const size_t p0 = (size_t)(2.3f * sr), p1 = (size_t)(2.45f * sr), n0 = (size_t)(0.5f * sr), n1 = (size_t)(0.6f * sr);
+        const double hissCut = rmsDb(y0, p0, p1) - rmsDb(y, p0, p1), noteChange = rmsDb(y, n0, n1) - rmsDb(y0, n0, n1);
+        std::printf("  auto gate: hiss in the pauses down %.1f dB, notes changed %+.2f dB\n", hissCut, noteChange);
+        CHECK(hissCut > 18.0 && std::fabs(noteChange) < 0.5, "auto gate (hiss down %.1f dB, notes %+.2f dB)", hissCut, noteChange);
+    }
+}
+
 int main() {
     flushDenormals();
     std::printf("bypass / null\n");   testBypassAndNull();
@@ -543,6 +624,7 @@ int main() {
     std::printf("clock and pitch\n"); testClockAndPitch();
     std::printf("sub\n");             testSub();
     std::printf("fx\n");              testFx();
+    std::printf("learn\n");           testLearn();
     std::printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

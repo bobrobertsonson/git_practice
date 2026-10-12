@@ -128,7 +128,12 @@ AxeEditor::AxeEditor(AxeProcessor& p)
         addAndMakeVisible(floors[m]);
     }
     for (const auto& s : paramSpecs()) {
-        if (s.mode >= 0) {
+        const bool setupPage = !std::strcmp(s.page, "Learn") || !std::strncmp(s.page, "Tone Match", 10);
+        if (setupPage) {
+            if (!std::strcmp(s.id, "learnPlaying") || !std::strcmp(s.id, "learnTarget") || !std::strcmp(s.id, "matchNow")) continue;   // buttons
+            setupControls.push_back(std::make_unique<ParamControl>(p.apvts, s));
+            addChildComponent(*setupControls.back());
+        } else if (s.mode >= 0) {
             modeControls[s.mode].push_back(std::make_unique<ParamControl>(p.apvts, s));
             addChildComponent(*modeControls[s.mode].back());
         } else if (!std::strcmp(s.page, "Global")) {
@@ -144,6 +149,15 @@ AxeEditor::AxeEditor(AxeProcessor& p)
     guitarBtn.onClick = [this] { setChoice("instrument", 0); };
     bassBtn.onClick = [this] { setChoice("instrument", 1); };
     bypassBtn.setClickingTogglesState(true);
+    setupBtn.onClick = [this] { setupShown = !setupShown; showMode(currentMode()); };
+    learnPlayingBtn.onClick = [this] { proc.pulse("learnPlaying"); };
+    learnTargetBtn.onClick = [this] { proc.pulse("learnTarget"); };
+    matchNowBtn.onClick = [this] { proc.pulse("matchNow"); };
+    learnPlayingBtn.setTooltip("Play normally for 10 seconds, with a few pauses: sets pick sense, pick hold, noise floor and note range");
+    learnTargetBtn.setTooltip("Play a reference (a DI or tone you like) for 12 seconds: stores its tone");
+    matchNowBtn.setTooltip("Play your own guitar for 12 seconds: the Match bands move your tone towards the target");
+    for (auto* b : {&learnPlayingBtn, &learnTargetBtn, &matchNowBtn}) addChildComponent(*b);
+    addAndMakeVisible(setupBtn);
     triggerBtn.setTooltip("Hold to fire. Shift-click (or right-click) to latch.");
     for (auto* b : {&guitarBtn, &bassBtn, &bypassBtn}) addAndMakeVisible(*b);
     addAndMakeVisible(triggerBtn);
@@ -168,8 +182,11 @@ void AxeEditor::showMode(int mode) {
     shownMode = mode;
     for (int m = 0; m < axe::kNumModes; m++) {
         floors[m].setToggleState(m == mode, juce::dontSendNotification);
-        for (auto& c : modeControls[m]) c->setVisible(m == mode);
+        for (auto& c : modeControls[m]) c->setVisible(!setupShown && m == mode);
     }
+    setupBtn.setToggleState(setupShown, juce::dontSendNotification);
+    for (auto& c : setupControls) c->setVisible(setupShown);
+    for (auto* b : {&learnPlayingBtn, &learnTargetBtn, &matchNowBtn}) b->setVisible(setupShown);
     resized();
     repaint();
 }
@@ -196,7 +213,27 @@ void AxeEditor::paint(juce::Graphics& g) {
     g.drawText(juce::String(axe::modeName(mode)).toUpperCase(), ind.reduced(4, 0), juce::Justification::centredLeft);
     g.setColour(kDim);
     g.setFont(juce::FontOptions(12.f));
-    g.drawText(kModeBlurb[mode], pageArea.getX(), pageArea.getY() - 24, pageArea.getWidth(), 18, juce::Justification::centredLeft);
+    g.drawText(setupShown ? "SETUP: Learn My Playing tunes the pick detector, gate and note trackers; Tone Match EQs your guitar towards a target"
+                          : kModeBlurb[mode], pageArea.getX(), pageArea.getY() - 24, pageArea.getWidth(), 18, juce::Justification::centredLeft);
+    if (setupShown) {
+        const int what = proc.meters.learning.load();
+        const float prog = proc.meters.learnProgress.load();
+        juce::String st;
+        if (what == axe::kLearnPlaying) st = "Listening to your playing... play normally, leave a few pauses";
+        else if (what == axe::kLearnTarget) st = "Listening to the target...";
+        else if (what == axe::kLearnMatch) st = "Listening to your guitar...";
+        else st = proc.meters.hasTarget.load() ? "Target stored: press MATCH NOW and play" : "No target yet: press LEARN TARGET and play a reference";
+        auto sa = statusArea;
+        g.setColour(kBg);
+        g.fillRoundedRectangle(sa.removeFromBottom(6).toFloat(), 3.f);
+        if (what != axe::kLearnNone) {
+            g.setColour(kAmber);
+            auto bar = statusArea.withTrimmedTop(statusArea.getHeight() - 6);
+            g.fillRoundedRectangle(bar.withWidth((int)((float)bar.getWidth() * juce::jlimit(0.f, 1.f, prog))).toFloat(), 3.f);
+        }
+        g.setColour(what != axe::kLearnNone ? kAmber : kDim);
+        g.drawText(st, sa, juce::Justification::centredLeft);
+    }
     // the step lights: 8 steps of the Rate grid, the current one lit
     {
         const int st = proc.meters.step.load();
@@ -240,7 +277,9 @@ void AxeEditor::resized() {
     auto r = getLocalBounds().reduced(20);
     auto top = r.removeFromTop(48);
     bypassBtn.setBounds(top.removeFromRight(90).reduced(0, 8));
-    top.removeFromRight(16);
+    top.removeFromRight(8);
+    setupBtn.setBounds(top.removeFromRight(80).reduced(0, 8));
+    top.removeFromRight(8);
     bassBtn.setBounds(top.removeFromRight(80).reduced(0, 8));
     guitarBtn.setBounds(top.removeFromRight(80).reduced(0, 8));
     top.removeFromRight(16);
@@ -272,6 +311,7 @@ void AxeEditor::resized() {
 
     const int mode = shownMode < 0 ? 0 : shownMode;
     auto page = r;
+    if (setupShown) { meterArea = {}; layoutSetup(page); return; }
     if (mode == axe::kTight) meterArea = page.removeFromBottom(22);
     else meterArea = page.removeFromBottom(22);
     auto& cs = modeControls[mode];
@@ -283,6 +323,22 @@ void AxeEditor::resized() {
     }
 }
 
+// Row 1: the three learn buttons and the status line. Row 2: the Learn My
+// Playing results (all settable by hand) and Auto Gate. Row 3: Tone Match.
+void AxeEditor::layoutSetup(juce::Rectangle<int> page) {
+    auto row1 = page.removeFromTop(44);
+    for (auto* b : {&learnPlayingBtn, &learnTargetBtn, &matchNowBtn}) b->setBounds(row1.removeFromLeft(150).reduced(4, 6));
+    statusArea = row1.reduced(12, 8);
+    std::vector<ParamControl*> learn, match;
+    for (size_t i = 0; i < setupControls.size(); i++) (i < 5 || i == setupControls.size() - 1 ? learn : match).push_back(setupControls[i].get());
+    const int rh = page.getHeight() / 2;
+    auto row2 = page.removeFromTop(rh), row3 = page;
+    const int w2 = row2.getWidth() / juce::jmax(1, (int)learn.size());
+    for (auto* c : learn) c->setBounds(row2.removeFromLeft(w2).reduced(6, 2));
+    const int w3 = row3.getWidth() / juce::jmax(1, (int)match.size());
+    for (auto* c : match) c->setBounds(row3.removeFromLeft(w3).reduced(2, 2));
+}
+
 void AxeEditor::timerCallback() {
     const int m = currentMode();
     if (m != shownMode) showMode(m);
@@ -292,4 +348,5 @@ void AxeEditor::timerCallback() {
     triggerBtn.setToggleState(proc.apvts.getRawParameterValue("trigger")->load() > 0.5f, juce::dontSendNotification);
     repaint(stepArea.expanded(0, 18));
     repaint(meterArea);
+    if (setupShown) repaint(statusArea);
 }

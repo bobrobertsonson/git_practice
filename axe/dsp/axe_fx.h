@@ -108,8 +108,11 @@ public:
         setInstrument(kGuitar);
         reset();
     }
-    void setInstrument(int inst) {
-        const float fmin = inst == kBass ? 28.f : 50.f, fmax = inst == kBass ? 700.f : 1400.f;
+    // The instrument's range, narrowed to [lo, hi] Hz when Learn My Playing
+    // has measured yours (0 = no limit): fewer octave mistakes.
+    void setInstrument(int inst, float lo = 0.f, float hi = 0.f) {
+        float fmin = inst == kBass ? 28.f : 50.f, fmax = inst == kBass ? 700.f : 1400.f;
+        if (lo > 0.f && hi > lo) { fmin = std::fmax(fmin, lo); fmax = std::fmin(fmax, hi); if (fmax < fmin * 1.5f) fmax = fmin * 1.5f; }
         tauMax = (int)(srD / fmin); if (tauMax > kW) tauMax = kW;
         tauMin = (int)(srD / fmax); if (tauMin < 2) tauMin = 2;
     }
@@ -179,23 +182,131 @@ private:
 };
 
 // Pick attacks: a fast envelope jumping well above a slow one.
+// (Learn My Playing sets the jump, the hold time and the floor.)
 class OnsetDetector {
 public:
-    void init(float sr) {
+    void init(float sampleRate) {
+        sr = sampleRate;
         fast.set(0.5f, 20.f, sr); slow.set(30.f, 250.f, sr);
-        refractory = (int)(0.06f * sr);
+        configure(8.f, 60.f, -55.f);
         reset();
+    }
+    void configure(float jumpDb, float holdMs, float floorDb) {
+        jump = clampf(jumpDb, 3.f, 20.f);
+        refractory = (int)(clampf(holdMs, 10.f, 500.f) * 0.001f * sr);
+        floor = clampf(floorDb, -100.f, -20.f);
     }
     void reset() { fast.reset(); slow.reset(); hold = 0; }
     bool process(float x, float& level) {
         const float f = fast.process(x), s = slow.process(x);
         if (hold > 0) { hold--; return false; }
-        if (f > -55.f && f - s > 8.f) { hold = refractory; level = fastDbToLin(f); return true; }
+        if (f > floor && f - s > jump) { hold = refractory; level = fastDbToLin(f); return true; }
         return false;
     }
 private:
     Follower fast, slow;
+    float sr = 48000.f, jump = 8.f, floor = -55.f;
     int hold = 0, refractory = 2880;
+};
+
+// ---------------------------------------------------------------------------
+// Learn My Playing: ~10 s of normal playing. It measures your noise floor
+// (the quietest moments), how hard your pick attacks jump above the ringing
+// notes, how fast you pick, and the range of notes you play, so the pick
+// detector, the gate and the pitch tracker fit you instead of a guess.
+// ---------------------------------------------------------------------------
+struct PlayingProfile {
+    float pickSense = 8.f, pickHold = 60.f, noiseFloor = -70.f, lowNote = 0.f, highNote = 0.f;
+};
+
+class PlayingLearner {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        fast.set(0.5f, 20.f, sr); slow.set(30.f, 250.f, sr);
+        tick = (int)(0.01f * sr);
+        need = (int)(10.f * sr);
+        riseDb = 3.f / sr;
+    }
+    void setSeconds(float s) { need = (int)std::fmin(s * sr, 2.0e9f); }
+    void start() {
+        active = true; n = 0; t = 0; blockSum = 0.0; armed = true; noiseEst = 0.f; hold = 0; sinceOnset = -1; peakJump = 0.f; peakLeft = 0;
+        nJumps = nIois = 0;
+        for (auto& h : levelHist) h = 0;
+        for (auto& h : noteHist) h = 0;
+        fast.reset(); slow.reset();
+    }
+    void cancel() { active = false; }
+    bool learning() const { return active; }
+    float progress() const { return active ? (float)n / (float)need : 0.f; }
+    bool feed(float x, float pitchHz, float pitchConf) {
+        if (!active) return false;
+        blockSum += (double)x * x;   // plain 10 ms blocks: a smoothed level would hide short pauses
+        const float f = fast.process(x), s = slow.process(x);
+        // pick attacks: the biggest jump in the 10 ms after it starts; the next
+        // one only counts once the jump has fallen back (one pick, one count)
+        if (sinceOnset >= 0) sinceOnset++;
+        if (f - s < 0.5f) armed = true;   // fully settled: a low note's envelope ripples for a while
+        noiseEst = std::fmin(s, noiseEst + riseDb);   // the quietest level lately (rises 3 dB/s)
+        if (peakLeft > 0) {
+            peakJump = std::fmax(peakJump, f - s);
+            if (--peakLeft == 0 && nJumps < kMax) jumps[nJumps++] = peakJump;
+        } else if (hold > 0) {
+            hold--;
+        } else if (armed && f - s > 5.f && f > noiseEst + 18.f) {   // hiss flickers are not picks
+            armed = false;
+            if (sinceOnset > 0 && nIois < kMax) iois[nIois++] = (float)sinceOnset / sr * 1000.f;
+            sinceOnset = 0; peakJump = f - s; peakLeft = tick; hold = (int)(0.04f * sr);
+        }
+        if (++t >= tick) {
+            t = 0;
+            const int b = (int)clampf(fastPowDb10((float)(blockSum / (double)tick)) + 120.f, 0.f, 120.f);
+            blockSum = 0.0;
+            levelHist[b]++;
+            if (pitchHz > 0.f && pitchConf > 0.7f) {
+                const int note = (int)std::lround(69.f + 12.f * std::log2(pitchHz / 440.f));
+                if (note >= 0 && note < 128) noteHist[note]++;
+            }
+        }
+        if (++n >= need) { active = false; return true; }
+        return false;
+    }
+    void result(PlayingProfile& r) {
+        // noise floor: the 5th percentile of the 50 ms level
+        r.noiseFloor = clampf(histPercentile(levelHist, 121, 0.05f) - 120.f, -100.f, -30.f);
+        r.pickSense = nJumps >= 4 ? clampf(0.5f * median(jumps, nJumps), 4.f, 16.f) : 8.f;
+        r.pickHold = nIois >= 4 ? clampf(0.5f * percentile(iois, nIois, 0.1f), 25.f, 250.f) : 60.f;
+        int notes = 0; for (int h : noteHist) notes += h;
+        if (notes >= 20) {
+            const float lo = histPercentile(noteHist, 128, 0.03f), hi = histPercentile(noteHist, 128, 0.97f);
+            r.lowNote = 440.f * std::pow(2.f, (lo - 69.f - 2.f) / 12.f);    // a whole tone of headroom
+            r.highNote = 440.f * std::pow(2.f, (hi - 69.f + 2.f) / 12.f);
+        } else {
+            r.lowNote = r.highNote = 0.f;
+        }
+    }
+private:
+    static float histPercentile(const int* h, int n, float q) {
+        int total = 0; for (int i = 0; i < n; i++) total += h[i];
+        if (total == 0) return 0.f;
+        const int want = (int)(q * (float)total);
+        int acc = 0;
+        for (int i = 0; i < n; i++) { acc += h[i]; if (acc > want) return (float)i; }
+        return (float)(n - 1);
+    }
+    static float percentile(float* v, int n, float q) {   // small n: insertion sort in place
+        for (int i = 1; i < n; i++) { float k = v[i]; int j = i - 1; while (j >= 0 && v[j] > k) { v[j + 1] = v[j]; j--; } v[j + 1] = k; }
+        return v[(int)(q * (float)(n - 1))];
+    }
+    static float median(float* v, int n) { return percentile(v, n, 0.5f); }
+    static constexpr int kMax = 512;
+    Follower fast, slow;
+    float sr = 48000.f, peakJump = 0.f, noiseEst = 0.f, riseDb = 0.f;
+    double blockSum = 0.0;
+    bool active = false, armed = true;
+    int n = 0, need = 480000, t = 0, tick = 480, hold = 0, sinceOnset = -1, peakLeft = 0, nJumps = 0, nIois = 0;
+    float jumps[kMax] = {}, iois[kMax] = {};
+    int levelHist[121] = {}, noteHist[128] = {};
 };
 
 // Hilbert pair for the frequency shifter: two allpass chains 90 degrees

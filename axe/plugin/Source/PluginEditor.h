@@ -53,13 +53,19 @@ private:
     void showMode(int mode);
     int currentMode() const;
     void setChoice(const char* id, int index);
+    void layoutSetup(juce::Rectangle<int> page);
 
     AxeProcessor& proc;
     AxeLook look;
     int shownMode = -1;
 
     juce::TextButton floors[axe::kNumModes];
-    juce::TextButton guitarBtn{"GUITAR"}, bassBtn{"BASS"}, bypassBtn{"BYPASS"};
+    juce::TextButton guitarBtn{"GUITAR"}, bassBtn{"BASS"}, bypassBtn{"BYPASS"}, setupBtn{"SETUP"};
+    // SETUP page: Learn My Playing and Tone Match
+    juce::TextButton learnPlayingBtn{"LEARN MY PLAYING"}, learnTargetBtn{"LEARN TARGET"}, matchNowBtn{"MATCH NOW"};
+    std::vector<std::unique_ptr<ParamControl>> setupControls;
+    bool setupShown = false;
+    juce::Rectangle<int> statusArea;
     juce::AudioProcessorValueTreeState::ButtonAttachment bypassAtt;
     TriggerButton triggerBtn;
 

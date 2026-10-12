@@ -59,7 +59,7 @@ static void testLayout() {
     for (const auto& s : specs) {
         if (s.page != last) { CHECK(!seen.count(s.page), "page %s is split", s.page); seen.insert(s.page); last = s.page; }
     }
-    CHECK((int)perPage.size() == 2 + axe::kNumModes, "%d pages (want Global, Trigger and one per mode)", (int)perPage.size());
+    CHECK((int)perPage.size() == 2 + axe::kNumModes + 3, "%d pages (want Global, Trigger, one per mode, Learn, Tone Match x2)", (int)perPage.size());
     for (int m = 0; m < axe::kNumModes; m++) {
         int n = 0; for (const auto& s : specs) n += s.mode == m;
         CHECK(n == 6, "mode %s has %d controls", axe::modeName(m), n);
@@ -190,6 +190,79 @@ static void testEditor(const char* snapDir) {
             if (os.openedOk()) { os.setPosition(0); os.truncate(); juce::PNGImageFormat().writeImageToStream(img, os); }
         }
     }
+    // the SETUP page (Learn, Tone Match)
+    juce::Button* setup = nullptr;
+    for (auto* c : ed->getChildren())
+        if (auto* b = dynamic_cast<juce::Button*>(c)) if (b->getButtonText() == "SETUP") setup = b;
+    CHECK(setup != nullptr, "no SETUP button");
+    if (setup) {
+        setup->triggerClick();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(120);
+        int learnButtons = 0;
+        for (auto* c : ed->getChildren())
+            if (auto* b = dynamic_cast<juce::Button*>(c)) learnButtons += b->isVisible() && b->getButtonText().startsWith("LEARN");
+        CHECK(learnButtons == 2, "SETUP page should show the two LEARN buttons (%d)", learnButtons);
+        auto img = ed->createComponentSnapshot(ed->getLocalBounds());
+        if (snapDir) {
+            juce::File f = juce::File(snapDir).getChildFile("editor-setup.png");
+            juce::FileOutputStream os(f);
+            if (os.openedOk()) { os.setPosition(0); os.truncate(); juce::PNGImageFormat().writeImageToStream(img, os); }
+        }
+    }
+}
+
+// Learn: the learn parameters start the engine's learners on a rising edge;
+// the results come back as parameter values (AU / VST3), and the Tone Match
+// target survives a save and reload.
+static void testLearn() {
+    const double sr = 48000.0;
+    AxeProcessor p;
+    p.prepareToPlay(sr, 256);
+    auto pump = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil(300); };
+    // Learn My Playing: notes every 0.5 s (the pluck helper), 9 s
+    auto notes = pluck(sr, 11.0, 110.f);
+    setParam(p, "learnPlaying", 1.f);
+    run(p, notes, 256);
+    setParam(p, "learnPlaying", 0.f);
+    pump();
+    const float hold = p.apvts.getRawParameterValue("pickHold")->load(), floor = p.apvts.getRawParameterValue("noiseFloor")->load();
+    const float lo = p.apvts.getRawParameterValue("lowNote")->load(), hi = p.apvts.getRawParameterValue("highNote")->load();
+    std::printf("  learn playing -> pick hold %.0f ms, noise floor %.0f dB, notes %.0f-%.0f Hz\n", hold, floor, lo, hi);
+    CHECK(std::fabs(hold - 60.f) > 1.f, "Learn Playing did not set Pick Hold");
+    CHECK(lo > 0.f && lo < 110.f && hi > 110.f, "Learn Playing note range %.0f-%.0f Hz should hold 110 Hz", lo, hi);
+
+    // Tone Match: a bright target, then a dull guitar
+    juce::Random rnd(7);
+    std::vector<float> bright((size_t)(sr * 14.0)), dull(bright.size());
+    float lp = 0.f;
+    for (size_t i = 0; i < bright.size(); i++) {
+        const float n = rnd.nextFloat() * 2.f - 1.f;
+        lp += 0.08f * (n - lp);
+        bright[i] = 0.15f * n;
+        dull[i] = 0.5f * lp;
+    }
+    CHECK(!p.meters.hasTarget.load(), "a target before Learn Target");
+    setParam(p, "learnTarget", 1.f);
+    run(p, bright, 256);
+    setParam(p, "learnTarget", 0.f);
+    CHECK(p.meters.hasTarget.load(), "Learn Target did not finish");
+    pump();
+    setParam(p, "matchNow", 1.f);
+    run(p, dull, 256);
+    setParam(p, "matchNow", 0.f);
+    pump();
+    const float m7 = p.apvts.getRawParameterValue("match7")->load(), m0 = p.apvts.getRawParameterValue("match0")->load();
+    std::printf("  tone match -> 250 Hz %+.1f dB, 10 kHz %+.1f dB\n", m0, m7);
+    CHECK(m7 > m0 + 3.f, "Match Now should lift the highs of a dull guitar towards a bright target");
+
+    // the target is in the saved state
+    juce::MemoryBlock mb;
+    p.getStateInformation(mb);
+    AxeProcessor q;
+    q.setStateInformation(mb.getData(), (int)mb.getSize());
+    q.prepareToPlay(sr, 256);
+    run(q, std::vector<float>(512, 0.f), 256);
+    CHECK(q.meters.hasTarget.load(), "Tone Match target not restored from the saved state");
 }
 
 int main(int argc, char** argv) {
@@ -199,6 +272,7 @@ int main(int argc, char** argv) {
     std::printf("bypass and automation\n"); testBypassAndAutomation();
     std::printf("state\n");                testState();
     std::printf("tempo and trigger\n");    testTempoAndTrigger();
+    std::printf("learn\n");                testLearn();
     std::printf("editor\n");               testEditor(argc > 1 ? argv[1] : nullptr);
     std::printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

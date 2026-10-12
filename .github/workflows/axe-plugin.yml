@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Engine unit tests (bypass/null, sample rates, smoothing, reset, clock, pitch, sub, fx floors)
+      - name: Engine unit tests (bypass/null, sample rates, smoothing, reset, clock, pitch, sub, fx floors, learn)
         run: make -C axe check
 
   macos:
