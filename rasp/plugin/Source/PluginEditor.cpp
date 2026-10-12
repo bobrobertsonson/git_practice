@@ -99,7 +99,7 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
 
     auto& bus = panels[4]; bus.title = "BUS / LIVE"; bus.cols = 2;
     addKnob(bus, "inDb", "Input"); addKnob(bus, "glue", "Glue"); addKnob(bus, "outDb", "Output");
-    addToggle(bus, "mono", "Mono"); addToggle(bus, "bypassMatch", "Match bypass"); addToggle(bus, "howl", "Feedback guard");
+    addKnob(bus, "matchAmount", "Match"); addToggle(bus, "mono", "Mono"); addToggle(bus, "bypassMatch", "Match bypass"); addToggle(bus, "howl", "Feedback guard");
 
     for (int i = 0; i < proc.getNumPrograms(); i++) preset.addItem(proc.getProgramName(i), i + 1);
     preset.setSelectedId(proc.getCurrentProgram() + 1, juce::dontSendNotification);
@@ -116,6 +116,9 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     throwBtn.setTooltip("Hold: send the voice to a long delay; repeats ring out after release");
 
     clearNotches.onClick = [this] { proc.requestClearNotches(); };
+    learnBtn.setTooltip("Sing (or play a DI) for about 15 seconds: RASP matches your voice and mic to the tone the presets were tuned on");
+    learnBtn.onClick = [this] { proc.requestLearn(); };
+    addAndMakeVisible(learnBtn);
     addAndMakeVisible(clearNotches);
 
     status.setColour(juce::Label::textColourId, kDim);
@@ -190,6 +193,8 @@ void RaspEditor::resized() {
     throwBtn.setBounds(top.removeFromRight(80));
     top.removeFromRight(8);
     megaBtn.setBounds(top.removeFromRight(80));
+    top.removeFromRight(16);
+    learnBtn.setBounds(top.removeFromRight(90));
 
     status.setBounds(getLocalBounds().removeFromBottom(30).reduced(kPad + 4, 0));
 
@@ -212,6 +217,9 @@ void RaspEditor::timerCallback() {
       << " dB   Bleed " << juce::String(m.bleed.load(), 0) << " dB   Notches " << m.notches.load() << "   "
       << juce::roundToInt(m.bpm.load()) << " bpm" << (m.hostTempo.load() ? " (host)" : "");
     status.setText(t, juce::dontSendNotification);
+    if (proc.applyLearned()) learnBtn.setButtonText("LEARNED");
+    else if (m.learning.load()) learnBtn.setButtonText("SING " + juce::String(juce::roundToInt(m.learnProgress.load() * 100.f)) + "%");
+    else if (learnBtn.getButtonText().startsWith("SING")) learnBtn.setButtonText("LEARN");
     // Light the hold buttons when automation (not the mouse) engages them.
     megaBtn.setToggleState(proc.apvts.getRawParameterValue("mega")->load() > 0.5f, juce::dontSendNotification);
     throwBtn.setToggleState(proc.apvts.getRawParameterValue("throwOn")->load() > 0.5f, juce::dontSendNotification);

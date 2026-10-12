@@ -63,9 +63,24 @@ public:
     struct Meters {
         std::atomic<float> chopGr{0}, limiter{0}, bleed{0}, bypassMatch{0}, bpm{120};
         std::atomic<int> notches{0};
-        std::atomic<bool> hostTempo{false};
+        std::atomic<bool> hostTempo{false}, learning{false};
+        std::atomic<float> learnProgress{0};
     } meters;
     void requestClearNotches() { clearNotches = true; }
+    // Learn: the audio thread starts it and hands back the gains; applyLearned()
+    // (message thread) writes them into the match parameters so they save.
+    void requestLearn() { learnCmd = 1; }
+    bool applyLearned() {
+        if (!learnDone.exchange(false)) return false;
+        for (int i = 0; i < rasp::kMatchBands; i++)
+            if (auto* prm = apvts.getParameter("match" + juce::String(i))) {
+                prm->beginChangeGesture(); prm->setValueNotifyingHost(prm->convertTo0to1(learned[i])); prm->endChangeGesture();
+            }
+        if (auto* amt = apvts.getParameter("matchAmount")) {
+            amt->beginChangeGesture(); amt->setValueNotifyingHost(1.f); amt->endChangeGesture();
+        }
+        return true;
+    }
 
 private:
     void parameterChanged(const juce::String&, float) override { dirty = true; }
@@ -74,7 +89,9 @@ private:
     std::unique_ptr<rasp::Processor> engine;
     std::vector<std::atomic<float>*> raw;        // paramSpecs() order
     std::atomic<float>* syncParam = nullptr;
-    std::atomic<bool> dirty{true}, clearNotches{false};
+    std::atomic<bool> dirty{true}, clearNotches{false}, learnDone{false};
+    std::atomic<int> learnCmd{0};
+    float learned[rasp::kMatchBands] = {};
     int currentProgram = 0;
     float lastBpm = 0.f;
     bool lastMonoOut = false;

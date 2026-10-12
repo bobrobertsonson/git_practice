@@ -504,6 +504,7 @@ class RaspEngine {
       gFlv.target = p.flavourOn ? db(p.flavourGainDb) : 0;
       gOut.target = db(p.outDb); gMix.target = p.mix; gIn.target = db(p.inDb || 0);
       gMega.target = p.mega ? 1 : 0;
+      setMatch();
       const s1 = p.pitch1Semi ?? -12, s2 = p.pitch2Semi ?? 12;
       pSet(pLayers[0], s1); pSet(pLayers[1], s2);
       gOctD.target = clamp(p.octDown || 0, 0, 1) * (s1 > 0 ? 0.7 : 1); gOctU.target = clamp(p.octUp || 0, 0, 1) * (s2 > 0 ? 0.7 : 1);
@@ -734,6 +735,49 @@ class RaspEngine {
     };
     this.howlNotches = () => H.notches.filter(n => n.active).map(n => Math.round(n.hz));
     this.howlEvents = () => H.deployed;
+    // ---- MATCH + LEARN (mirrors MatchEQ / Learner / matchGainsFromDeviation in rasp.h)
+    const MATCH_HZ = [100, 160, 250, 400, 630, 1600, 2500, 4000, 6300, 10000];
+    const MATCH_TARGET = [-20.4, -15.6, -9.0, -1.7, -1.4, 0.2, -2.5, -9.5, -10.8, -13.5];
+    const mEq = MATCH_HZ.map(() => bq());
+    let mOn = false;
+    const setMatch = () => {
+      const amt = clamp(p.matchAmount || 0, 0, 1), g = p.match || [];
+      mOn = amt > 0.001;
+      MATCH_HZ.forEach((hz, i) => peaking(mEq[i], hz, 2.1, clamp(g[i] || 0, -12, 12) * amt));
+    };
+    // Listen to a take (already at the input gain) like the Learn button: ~15 s of singing.
+    this.learn = (pcm, seconds = 15) => {
+      const bands = MATCH_HZ.concat([1000]).map(hz => { const f = svf(); svfSet(f, hz, 4.32); return f; });
+      const energy = new Float64Array(bands.length), msC = coefMs(50), fall = 10 / sr, need = Math.trunc(seconds * sr);
+      let ms = 0, runMax = -120, got = 0;
+      for (let n = 0; n < pcm.length && got < need; n++) {
+        const x = pcm[n];
+        ms = x * x + msC * (ms - x * x);
+        const lvl = pow10db(ms);
+        runMax = Math.max(lvl, runMax - fall);
+        const voiced = lvl > -50 && lvl > runMax - 20;
+        for (let i = 0; i < bands.length; i++) { svfRun(bands[i], x); if (voiced) { const b = bands[i].bp * bands[i].k; energy[i] += b * b; } }
+        if (voiced) got++;
+      }
+      if (got < need) return null;
+      const ref = energy[MATCH_HZ.length] + 1e-30;
+      const dev = MATCH_HZ.map((_, i) => 10 * Math.log10((energy[i] + 1e-30) / ref));
+      const want = dev.map((d, i) => clamp(MATCH_TARGET[i] - d, -9, 9)), g = want.slice(), fs = 48000;
+      for (let it = 0; it < 6; it++) {
+        const qs = MATCH_HZ.map((hz, j) => { const f = bq(); const w = 2 * PI * hz / fs, A = 10 ** (g[j] / 40), al = Math.sin(w) / (2 * 2.1), c = Math.cos(w);
+          bqNorm(f, 1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A); return f; });
+        MATCH_HZ.forEach((hz, i) => {
+          const w = 2 * PI * hz / fs; let resp = 0;
+          for (const b of qs) {
+            const nr = b.b0 + b.b1 * Math.cos(w) + b.b2 * Math.cos(2 * w), ni = -(b.b1 * Math.sin(w) + b.b2 * Math.sin(2 * w));
+            const dr = 1 + b.a1 * Math.cos(w) + b.a2 * Math.cos(2 * w), di = -(b.a1 * Math.sin(w) + b.a2 * Math.sin(2 * w));
+            resp += 10 * Math.log10((nr * nr + ni * ni) / (dr * dr + di * di));
+          }
+          g[i] = clamp(g[i] + 0.7 * (want[i] - resp), -12, 12);
+        });
+      }
+      return { deviation: dev, gains: g };
+    };
     this.clearHowl = () => { for (const n of H.notches) { n.active = false; n.depth = 0; } H.cand = -1; H.frames = 0; H.deployed = 0; };
 
     const out = [0, 0], tO = [0, 0], fO = [0, 0];
@@ -743,6 +787,7 @@ class RaspEngine {
       // permanently stop the AudioWorklet).
       if (!p) { out[0] = out[1] = 0; return out; }
       x *= smNext(gIn);
+      if (mOn) for (const b of mEq) x = bqRun(b, x);
       const dryVoice = x;
       const gm = smNext(gMix), gc = smNext(gCtl);
       if (p.controlOn) {
@@ -889,7 +934,7 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12, bleed: 0.7, controlGainDb: 0,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, matchAmount: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
@@ -935,6 +980,7 @@ const MENU = [
   ["deEss", "De-esser", 0, 1, 0.01, pct],
   ["airDb", "Air (7 kHz shelf)", 0, 12, 0.5, v => "+" + v.toFixed(1) + " dB"],
   ["bodyDb", "Body (220 Hz)", 0, 9, 0.5, v => "+" + v.toFixed(1) + " dB"],
+  ["matchAmount", "Match (after Learn)", 0, 1, 0.01, pct],
   ["pitch1Semi", "Pitch 1 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
   ["octDown", "Pitch 1 level", 0, 1, 0.01, pct],
   ["pitch2Semi", "Pitch 2 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
@@ -1040,10 +1086,29 @@ addCheck("howl", "Feedback guard (automatic notches on howling frequencies)");
   menu.append(r);
   r.querySelector("#clearHowl").addEventListener("click", () => sendRunner({ clearHowl: true }));
 }
+{
+  // Learn: analyse the loaded take (at the current input gain) and set the Match EQ.
+  const r = document.createElement("div"); r.className = "liverow";
+  r.innerHTML = '<button id="learnBtn" type="button">Learn this voice</button><span id="learnInfo">Match the loaded take to the tone the presets were tuned on</span>';
+  menu.append(r);
+  r.querySelector("#learnBtn").addEventListener("click", () => {
+    const info = r.querySelector("#learnInfo");
+    if (!buffer) { info.textContent = "Load a take first."; return; }
+    const g = 10 ** ((params.inDb || 0) / 20), src = buffer.getChannelData(0), pcm = new Float32Array(src.length);
+    for (let i = 0; i < src.length; i++) pcm[i] = src[i] * g;
+    const res = new RaspEngine(buffer.sampleRate).learn(pcm);
+    if (!res) { info.textContent = "Needs about 15 seconds of singing; this take has less."; return; }
+    params.match = res.gains;
+    setParam("matchAmount", 1);
+    const lbl = ["100", "160", "250", "400", "630", "1.6k", "2.5k", "4k", "6.3k", "10k"];
+    info.textContent = "Match set: " + res.gains.map((v, i) => lbl[i] + " " + (v > 0 ? "+" : "") + v.toFixed(1)).join(" · ") + " dB";
+  });
+}
 
 function applyPreset(name) {
   const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm, inDb: params.inDb,
-    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl, mega: params.mega, throwOn: params.throwOn };
+    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl, mega: params.mega, throwOn: params.throwOn,
+    match: params.match, matchAmount: params.matchAmount };
   params = Object.assign({}, DEFAULTS, PRESETS[name], keep);
   Object.keys(params).forEach(k => setParam(k, params[k], false));
   sendParams();

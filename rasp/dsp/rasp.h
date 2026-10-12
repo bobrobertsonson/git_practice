@@ -260,6 +260,12 @@ struct Params {
     int   pitch1Semi = -12;    // pitch layer 1 interval
     int   pitch2Semi = 12;     // pitch layer 2 interval
 
+    // MATCH (Learn): input EQ that brings a voice/mic to the tone the presets
+    // were tuned on. match[] is filled by Processor's learner (dB per band,
+    // kMatchHz below); matchAmount scales it (0 = off).
+    float match[10]  = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    float matchAmount = 0.f;
+
     // MOMENTARY (held footswitch / button; on while held)
     bool  mega       = false;  // the voice becomes a mid-focused hard-clipped burst
     bool  throwOn    = false;  // the voice is sent to a long ping-pong delay; repeats ring out after release
@@ -739,6 +745,104 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Learn + Match: adapt to any voice and mic. The learner listens to ~15 s of
+// singing (it skips gaps), measures the long-term spectrum in 1/3-octave
+// bands relative to 1 kHz, and compares it with kMatchTarget: the median of
+// seven singers' raw takes the presets were fitted on (Bloodbath, Slamadeus,
+// Immortal Disfigurement, ATG, KnockedLoose, Meshuggah, Gojira VOX 4), measured
+// with this same analyzer. The difference (clamped to +-9 dB) becomes a
+// 10-band input EQ, so every preset starts from the input it was tuned for.
+// The first user's DI measured 7-9 dB darker at 1.6-2.5 kHz and up to 7 dB
+// heavier at 100-250 Hz than that median, and came out of Huge thin and boxy.
+// ---------------------------------------------------------------------------
+constexpr int kMatchBands = 10;
+constexpr float kMatchHz[kMatchBands] = {100.f, 160.f, 250.f, 400.f, 630.f, 1600.f, 2500.f, 4000.f, 6300.f, 10000.f};
+// dB re 1 kHz at kMatchHz; regenerate with `learn_tool --target` (see host/learn_tool.cpp).
+constexpr float kMatchTarget[kMatchBands] = {-20.4f, -15.6f, -9.0f, -1.7f, -1.4f, 0.2f, -2.5f, -9.5f, -10.8f, -13.5f};
+
+class Learner {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        for (int i = 0; i <= kMatchBands; i++) band[i].set(i == kMatchBands ? 1000.f : kMatchHz[i], 4.32f, sr);
+        msC = coefMs(50.f, sr); fall = 10.f / sr;      // running peak falls 10 dB/s
+        need = (int)(15.f * sr);
+    }
+    void setSeconds(float seconds) { need = (int)(seconds * sr); }
+    void start() { active = true; got = 0; ms = 0.f; runMax = -120.f; for (auto& e : energy) e = 0.0; }
+    void cancel() { active = false; }
+    bool learning() const { return active; }
+    float progress() const { return active ? (float)got / (float)need : 0.f; }
+    // Returns true once, when enough singing has been heard; deviations in dB re 1 kHz.
+    bool feed(float x, float* deviation) {
+        if (!active) return false;
+        ms = x * x + msC * (ms - x * x);
+        float lvl = fastPowDb10(ms);
+        runMax = std::fmax(lvl, runMax - fall);
+        bool voiced = lvl > -50.f && lvl > runMax - 20.f;
+        for (int i = 0; i <= kMatchBands; i++) {
+            band[i].process(x);
+            if (voiced) { float b = band[i].bp * band[i].k; energy[i] += (double)b * b; }
+        }
+        if (voiced && ++got >= need) {
+            active = false;
+            result(deviation);
+            return true;
+        }
+        return false;
+    }
+    // What has been heard so far (for offline measurement of whole takes).
+    float secondsHeard() const { return (float)got / sr; }
+    void result(float* deviation) const {
+        const double ref = energy[kMatchBands] + 1e-30;
+        for (int i = 0; i < kMatchBands; i++) deviation[i] = (float)(10.0 * std::log10((energy[i] + 1e-30) / ref));
+    }
+private:
+    float sr = 48000.f, ms = 0.f, msC = 0.f, runMax = -120.f, fall = 0.f;
+    bool active = false;
+    int got = 0, need = 720000;
+    SVF band[kMatchBands + 1];
+    double energy[kMatchBands + 1] = {};
+};
+
+// Turns per-band corrections into peaking-filter gains. Neighbouring peaks
+// overlap, so the gains are refined a few times against the cascade's actual
+// response at the band centres.
+inline void matchGainsFromDeviation(const float* deviation, float* gainsOut) {
+    float want[kMatchBands], g[kMatchBands];
+    for (int i = 0; i < kMatchBands; i++) { want[i] = clampf(kMatchTarget[i] - deviation[i], -9.f, 9.f); g[i] = want[i]; }
+    const float fs = 48000.f;
+    for (int it = 0; it < 6; it++) {
+        Biquad bq[kMatchBands];
+        for (int j = 0; j < kMatchBands; j++) bq[j].peaking(kMatchHz[j], 2.1f, g[j], fs);
+        for (int i = 0; i < kMatchBands; i++) {
+            float w = 2.f * kPi * kMatchHz[i] / fs, resp = 0.f;
+            for (int j = 0; j < kMatchBands; j++) {
+                const Biquad& b = bq[j];   // |H(e^jw)| of b0 + b1 z^-1 + b2 z^-2 over 1 + a1 z^-1 + a2 z^-2
+                float cr = std::cos(w), sn = std::sin(w), c2 = std::cos(2.f * w), s2 = std::sin(2.f * w);
+                float nr = b.b0 + b.b1 * cr + b.b2 * c2, ni = -(b.b1 * sn + b.b2 * s2);
+                float dr = 1.f + b.a1 * cr + b.a2 * c2, di = -(b.a1 * sn + b.a2 * s2);
+                resp += 10.f * std::log10((nr * nr + ni * ni) / (dr * dr + di * di));
+            }
+            g[i] = clampf(g[i] + 0.7f * (want[i] - resp), -12.f, 12.f);
+        }
+    }
+    for (int i = 0; i < kMatchBands; i++) gainsOut[i] = g[i];
+}
+
+class MatchEQ {
+public:
+    void set(const float* gains, float amount, float sr) {
+        on = amount > 0.001f;
+        for (int i = 0; i < kMatchBands; i++) eq[i].peaking(kMatchHz[i], 2.1f, clampf(gains[i], -12.f, 12.f) * clampf(amount, 0.f, 1.f), sr);
+    }
+    float process(float x) { if (!on) return x; for (auto& b : eq) x = b.process(x); return x; }
+private:
+    bool on = false;
+    Biquad eq[kMatchBands];
+};
+
+// ---------------------------------------------------------------------------
 // Shifter: fixed-ratio pitch shift for the octave layers. Two read heads
 // sweep a delay line (the delay changes by 1 - ratio samples per sample) and
 // crossfade with sin^2 / cos^2 over a 40 ms grain. Plain granular shifting
@@ -1210,7 +1314,7 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
-        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); pitch.init(sr);
+        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); pitch.init(sr); learner.init(sr);
         gMega.init(0.f, sr, 10.f); gOctD.init(0.f, sr, 30.f); gOctU.init(0.f, sr, 30.f);
         gIn.init(1.f, sr); gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
@@ -1238,6 +1342,7 @@ public:
         gMix.target = p.mix;
         gMega.target = p.mega ? 1.f : 0.f;
         pitch.set(p.pitch1Semi, p.pitch2Semi);
+        matchEq.set(p.match, p.matchAmount, sr);
         // Upward layers sit a little lower: they read louder at the same level.
         gOctD.target = clampf(p.octDown, 0.f, 1.f) * (p.pitch1Semi > 0 ? 0.7f : 1.f);
         gOctU.target = clampf(p.octUp, 0.f, 1.f) * (p.pitch2Semi > 0 ? 0.7f : 1.f);
@@ -1251,6 +1356,9 @@ public:
         // CONTROL (series)
         float x = in * gIn.next();
         const float dryVoice = x;                      // for the level-matched bypass
+        // LEARN listens to the raw input; MATCH corrects it before everything else.
+        if (learner.feed(x, learnedDev)) learnReady = true;
+        x = matchEq.process(x);
         float gm = gMix.next(), gc = gCtl.next();
         if (p.controlOn) {
             loCut1.process(x); loCut2.process(loCut1.hp);
@@ -1317,6 +1425,20 @@ public:
     float howlNotchHz(int i) const { return howlG.notchHz(i); }
     void clearHowl() { howlG.clear(); }
 
+    // Learn: listen to ~15 s of singing, then learnedMatch() gives the match[]
+    // gains to put into Params (with matchAmount > 0). Call from the control
+    // thread; feed happens in process().
+    void startLearn() { learnReady = false; learner.start(); }
+    void cancelLearn() { learner.cancel(); }
+    bool learning() const { return learner.learning(); }
+    float learnProgress() const { return learner.progress(); }
+    bool learnedMatch(float* gains) {
+        if (!learnReady) return false;
+        learnReady = false;
+        matchGainsFromDeviation(learnedDev, gains);
+        return true;
+    }
+
 private:
     float sr = 48000.f;
     Params p;
@@ -1334,6 +1456,10 @@ private:
     Mega mega;
     Throw throwFx;
     Pitch pitch;
+    Learner learner;
+    MatchEQ matchEq;
+    float learnedDev[kMatchBands] = {};
+    volatile bool learnReady = false;
     Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega, gOctD, gOctU;
     float megaFade = 0.f;
 };

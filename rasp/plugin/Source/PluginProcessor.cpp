@@ -73,6 +73,18 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"bypassMatch", "Match Bypass Level", "Live", K::Bool, 0, 1, nullptr, RASP_B(bypassMatch), nullptr, true},
         {"mono", "Mono", "Live", K::Bool, 0, 1, nullptr, RASP_B(mono), nullptr, true},
         {"howl", "Feedback Guard", "Live", K::Bool, 0, 1, nullptr, RASP_B(howl), nullptr, true},
+        // MATCH (Learn): set by the LEARN button, kept across presets
+        {"matchAmount", "Match Amount", "Live", K::Unit, 0, 1, nullptr, RASP_F(matchAmount), nullptr, true},
+        {"match0", "Match 100 Hz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[0]), nullptr, true},
+        {"match1", "Match 160 Hz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[1]), nullptr, true},
+        {"match2", "Match 250 Hz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[2]), nullptr, true},
+        {"match3", "Match 400 Hz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[3]), nullptr, true},
+        {"match4", "Match 630 Hz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[4]), nullptr, true},
+        {"match5", "Match 1.6 kHz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[5]), nullptr, true},
+        {"match6", "Match 2.5 kHz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[6]), nullptr, true},
+        {"match7", "Match 4 kHz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[7]), nullptr, true},
+        {"match8", "Match 6.3 kHz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[8]), nullptr, true},
+        {"match9", "Match 10 kHz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[9]), nullptr, true},
         // MOMENTARY: on while held (buttons in the window, or automation lanes)
         {"mega", "Mega", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(mega), nullptr, true},
         {"throwOn", "Throw", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(throwOn), nullptr, true},
@@ -188,6 +200,16 @@ void RaspProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuf
         lastMonoOut = monoOut;
     }
     if (clearNotches.exchange(false)) engine->clearHowl();
+    if (learnCmd.exchange(0) == 1) engine->startLearn();
+    meters.learning = engine->learning();
+    meters.learnProgress = engine->learnProgress();
+    {
+        float g[rasp::kMatchBands];
+        if (engine->learnedMatch(g)) {
+            for (int i = 0; i < rasp::kMatchBands; i++) learned[i] = g[i];
+            learnDone = true;                   // the editor's timer writes the parameters
+        }
+    }
 
     const float* inL = numIn > 0 ? buffer.getReadPointer(0) : nullptr;
     const float* inR = numIn > 1 ? buffer.getReadPointer(1) : nullptr;

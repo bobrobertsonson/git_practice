@@ -104,6 +104,14 @@ inline bool setParam(rasp::Params& p, const char* arg) {
     };
     for (auto& e : fs) if (k == e.n) { *e.f = v; return true; }
     if (k == "bright")  { p.brightness = (int)v; return true; }
+    if (k == "learn")   return true;                  // handled by rasp_wav
+    if (k == "match") {                               // match=g0,g1,...,g9 (dB)
+        const char* c = eq + 1;
+        for (int b = 0; b < rasp::kMatchBands && *c; b++) { p.match[b] = (float)std::atof(c); while (*c && *c != ',') c++; if (*c) c++; }
+        if (p.matchAmount <= 0.f) p.matchAmount = 1.f;
+        return true;
+    }
+    if (k == "matchamt") { p.matchAmount = v; return true; }
     if (k == "pitch1")  { p.pitch1Semi = (int)std::lround(v); return true; }
     if (k == "pitch2")  { p.pitch2Semi = (int)std::lround(v); return true; }
     if (k == "time")    { p.delayTime = (int)v; return true; }

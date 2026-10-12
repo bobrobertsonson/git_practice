@@ -31,6 +31,7 @@ private:
     juce::ComboBox preset;
     juce::TextButton bypass{"BYPASS"}, clearNotches{"Clear notches"};
     juce::TextButton megaBtn{"MEGA"}, throwBtn{"THROW"};   // momentary: on while held
+    juce::TextButton learnBtn{"LEARN"};                    // listen to ~15 s of singing, set Match
     void holdButton(juce::TextButton&, const char* id);
     juce::Label status;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttach;

@@ -176,6 +176,32 @@ int main(int argc, char** argv) {
         check(maxDiff(mo2.L, pa.L) > 1e-2, "mega + throw change the sound", maxDiff(mo2.L, pa.L));
     }
 
+    // 8. Learn: the LEARN request listens to the input, then writes the match
+    //    parameters (and turns Match on), and the engine uses them.
+    {
+        auto lx = testSignal(sr, 30.0);
+        RaspProcessor lp; lp.setCurrentProgram(0); setParam(lp, "sync", 0.f);
+        lp.requestLearn();
+        runPlugin(lp, lx, sr, 1, 2, [] { return 512; });
+        const bool applied = lp.applyLearned();
+        float amt = lp.apvts.getRawParameterValue("matchAmount")->load(), sum = 0.f;
+        bool finite = true;
+        for (int i = 0; i < rasp::kMatchBands; i++) {
+            float v = lp.apvts.getRawParameterValue("match" + juce::String(i))->load();
+            finite = finite && std::isfinite(v); sum += std::fabs(v);
+        }
+        check(applied && amt > 0.99f && finite && sum > 1.f, "learn sets the match EQ and turns Match on (sum |dB|)", sum);
+        rasp::Params lpar = rasp::presetParams(0); lpar.howl = false; lpar.matchAmount = 1.f;
+        for (int i = 0; i < rasp::kMatchBands; i++) lpar.match[i] = lp.apvts.getRawParameterValue("match" + juce::String(i))->load();
+        auto le = std::make_unique<rasp::Processor>(); le->init((float)sr); le->setParams(lpar);
+        Out lr; lr.L.resize(in.size()); lr.R.resize(in.size());
+        for (size_t i = 0; i < in.size(); i++) le->process(in[i], lr.L[i], lr.R[i]);
+        Out lo = runPlugin(lp, in, sr, 1, 2, [] { return 512; });
+        check(maxDiff(lo.L, lr.L) < 1e-4, "learned match: plugin == engine (-80 dB)", maxDiff(lo.L, lr.L));
+        lp.setCurrentProgram(3);
+        check(lp.apvts.getRawParameterValue("matchAmount")->load() > 0.99f, "match survives a preset change");
+    }
+
     // Editor.
     {
         RaspProcessor ep;

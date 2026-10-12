@@ -204,6 +204,37 @@ make && make check
 - **Power:** 12 V DC, centre-negative. ±12 V for the analog side comes from an isolated DC-DC.
   No phantom power in v1, so use a dynamic mic.
 
+## 3a. Learn: adapt to any voice and mic
+
+Press **Learn** and sing for about 15 seconds (gaps are skipped). RASP
+measures your long-term tone in ten bands, compares it with the median of seven
+singers' raw takes that the presets were fitted on, and sets a **Match** EQ at
+the input (up to ±9 dB per band) so every preset starts from the input it was
+tuned for. **Match** (0–100 %) scales it. The result is kept across presets:
+
+- **Plugin:** saved in the session.
+- **Pedal:** saved in flash.
+
+How to trigger it:
+
+| Where | How |
+|---|---|
+| Plugin | LEARN button |
+| Pedal | Hold BYPASS 2 s; the effect LED blinks while it listens |
+| Pod | Hold both buttons 2 s |
+| MIDI | CC 86 |
+| Playground | "Learn this voice" in the menu |
+
+`learn_tool take.wav` shows what it hears and sets. `learn_tool --target`
+rebuilds the reference from reference takes; `make check` keeps the C++ and JS
+tables equal.
+
+The first user's own DI was 7–9 dB darker at 1.6–2.5 kHz and up to 7 dB heavier
+at 100–250 Hz than that median. Through Huge it came out thin and boxy. Learn
+set +3.6…+5.1 dB of bite, +3…+3.6 dB of air and trimmed 100–160 Hz, which
+brought its processed tone closer to the other singers' (band-by-band mismatch
+3.2 → 2.1 dB).
+
 ## 3b. Momentary effects: Mega and Throw
 
 Both are on only while held: on the pedal's AUX footswitch, the Pod's buttons,

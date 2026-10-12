@@ -37,6 +37,10 @@ def compare(label, c, j):
             problems.append(f"{label}: {k} C++ {c[k]} vs playground {j[k]}")
 
 
+# Learn's reference tone must be the same in both engines.
+js_target = json.loads(re.search(r"const MATCH_TARGET = (\[[^\]]*\])", html).group(1))
+if [round(v, 3) for v in js_target] != [round(v, 3) for v in cpp.pop("matchTarget")]:
+    problems.append("Learn target (kMatchTarget vs MATCH_TARGET) differs")
 compare("defaults", cpp["defaults"], js_defaults)
 for name in js_presets:
     if name not in cpp:

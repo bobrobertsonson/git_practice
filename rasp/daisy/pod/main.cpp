@@ -11,6 +11,7 @@
 //                  hold: MEGA while held (hard-clipped mid burst)
 //   Button 2       tap: thicken + flavour on/off
 //                  hold: THROW while held (long delay; repeats ring out after release)
+//   Both buttons   hold 2 s: LEARN (sing ~15 s; LED 1 blinks while it listens). Applies to every preset
 //   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st)
 //   LED 2          red = chop compressing > 3 dB, blue = feedback notch active,
 //                  white = a momentary effect is held
@@ -36,9 +37,13 @@ static void loadPreset() {
     bool mega = params.mega, thr = params.throwOn;
     float od = params.octDown, ou = params.octUp;           // set over MIDI: a performance setting
     int s1 = params.pitch1Semi, s2 = params.pitch2Semi;
+    float match[rasp::kMatchBands], amt = params.matchAmount;          // Learn result: the singer's, not the preset's
+    for (int b = 0; b < rasp::kMatchBands; b++) match[b] = params.match[b];
     params = rasp::presetParams(preset);
     params.bypass = bypass; params.mega = mega; params.throwOn = thr;
     params.octDown = od; params.octUp = ou; params.pitch1Semi = s1; params.pitch2Semi = s2;
+    for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = match[b];
+    params.matchAmount = amt;
     if (!thk) params.thickenOn = false;
     if (!flv) params.flavourOn = false;
 }
@@ -59,7 +64,7 @@ int main() {
         {1, 0.3f, 0}, {0, 1, 0}, {0.6f, 0, 1}, {0, 0.8f, 1}, {1, 1, 0}, {1, 1, 1}, {1, 0, 0.5f}};
     uint32_t flashUntil = 0;
     constexpr float kHoldMs = 250.f;   // longer than a tap: the button acts as a momentary
-    bool midiMega = false, midiThrow = false, cleared = false;
+    bool midiMega = false, midiThrow = false, cleared = false, learnArmed = false;
     float encHeld = 0.f, b1Held = 0.f, b2Held = 0.f;
     for (;;) {
         hw.ProcessAllControls();
@@ -93,8 +98,19 @@ int main() {
                 if (cc.control_number == 85) params.pitch2Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
             }
         }
-        params.mega    = (hw.button1.Pressed() && b1Held >= kHoldMs) || midiMega;
-        params.throwOn = (hw.button2.Pressed() && b2Held >= kHoldMs) || midiThrow;
+        // Both buttons held 2 s: Learn (not Mega/Throw).
+        const bool both = hw.button1.Pressed() && hw.button2.Pressed();
+        if (both && b1Held > 2000 && b2Held > 2000 && !learnArmed) { proc.startLearn(); learnArmed = true; }
+        if (!hw.button1.Pressed() && !hw.button2.Pressed()) learnArmed = false;
+        params.mega    = !both && ((hw.button1.Pressed() && b1Held >= kHoldMs) || midiMega);
+        params.throwOn = !both && ((hw.button2.Pressed() && b2Held >= kHoldMs) || midiThrow);
+        {
+            float g[rasp::kMatchBands];
+            if (proc.learnedMatch(g)) {
+                for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = g[b];
+                params.matchAmount = 1.f;
+            }
+        }
 
         params.drive = hw.knob1.Process();
         params.chop = hw.knob2.Process();
@@ -102,7 +118,7 @@ int main() {
         proc.setParams(params);
 
         const float* c = presetColour[preset];
-        float on = params.bypass ? 0.f : 1.f;
+        float on = (params.bypass || (proc.learning() && (now / 120) % 2)) ? 0.f : 1.f;
         hw.led1.Set(c[0] * on, c[1] * on, c[2] * on);
         bool flash = now < flashUntil && ((flashUntil - now) / 150) % 2 == 0;
         bool held = params.mega || params.throwOn;

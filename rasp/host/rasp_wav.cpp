@@ -23,6 +23,24 @@ int main(int argc, char** argv) {
     for (int i = 3; i < argc; ++i)
         if (!setParam(p, argv[i])) { std::fprintf(stderr, "unknown parameter: %s\n", argv[i]); return 1; }
 
+    // learn=1: listen to the take first (like pressing Learn), then render
+    // with the Match EQ it sets (matchamt defaults to 1).
+    bool learn = false;
+    for (int i = 3; i < argc; i++) if (std::string(argv[i]) == "learn=1") learn = true;
+    if (learn) {
+        static rasp::Processor pre;
+        pre.init((float)sr); pre.setParams(p); pre.startLearn();
+        float l, r, g[rasp::kMatchBands];
+        bool got = false;
+        for (size_t i = 0; i < buf.size() && !got; i++) { pre.process(buf[i], l, r); got = pre.learnedMatch(g); }
+        if (!got) { std::fprintf(stderr, "learn: less than 15 s of singing in %s\n", argv[1]); return 1; }
+        for (int b = 0; b < rasp::kMatchBands; b++) p.match[b] = g[b];
+        if (p.matchAmount <= 0.f) p.matchAmount = 1.f;
+        std::printf("learned match (dB):");
+        for (float v : g) std::printf(" %.1f", v);
+        std::printf("\n");
+    }
+
     // Processor holds ~1.6 MB of delay lines: keep it off the stack.
     static rasp::Processor proc;
     proc.init((float)sr);

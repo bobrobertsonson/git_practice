@@ -11,7 +11,8 @@
 //   Switch   mono (one-channel PA)
 //
 // Footswitches (short press / long press = held 0.6 s):
-//   BYPASS   level-matched digital bypass            /  -
+//   BYPASS   level-matched digital bypass            /  (held 2 s) LEARN: sing for ~15 s; the
+//            effect LED blinks while it listens. The match is saved and applies to every preset
 //   THICKEN  thicken on/off                           /  previous preset
 //   FLAVOUR  flavour on/off                           /  next preset
 //   TAP      tap tempo                                /  (held 2 s) clear feedback notches
@@ -24,6 +25,7 @@
 // power-up is ignored until it is first released.
 // USB MIDI: Program Change 0-7 recalls preset slots 1-8 (from a laptop/backing-track rig);
 // CC 80 = MEGA, CC 81 = THROW (value >= 64 on), for triggering from a timeline;
+// CC 86 (>= 64) = start Learn.
 // CC 82 / 83 = pitch 1 / 2 level (0-127), CC 84 / 85 = pitch 1 / 2 interval
 // (0-127 -> -12..+12 semitones). A knob takes over again once moved.
 //
@@ -74,6 +76,8 @@ constexpr int kSlots = 8;
 struct Stored {
     rasp::Params slot[kSlots];
     int current;
+    float match[rasp::kMatchBands];   // Learn result: belongs to the singer and mic, not a preset
+    float matchAmount;
     bool operator==(const Stored& o) const { return std::memcmp(this, &o, sizeof(Stored)) == 0; }
     bool operator!=(const Stored& o) const { return !(*this == o); }
 };
@@ -137,6 +141,8 @@ static void recall(int slot) {
     float bpm = params.bpm;
     params = s.slot[slot];
     params.bypass = bypass; params.mono = mono; params.bpm = bpm;
+    for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = s.match[b];
+    params.matchAmount = s.matchAmount;
     s.current = slot;
     for (int i = 0; i < kPots; i++) { pickup[i].at = readPot(i); pickup[i].locked = true; }
 }
@@ -214,10 +220,14 @@ int main() {
     Stored defaults;
     for (int i = 0; i < kSlots; i++) defaults.slot[i] = rasp::presetParams(i < rasp::kNumPresets ? i : 1);
     defaults.current = 1;          // natural
+    for (int b = 0; b < rasp::kMatchBands; b++) defaults.match[b] = 0.f;
+    defaults.matchAmount = 0.f;    // no Learn yet
     // Presets live 4 MB into the QSPI flash, well clear of the program the
     // bootloader stores at its start.
     storage.Init(defaults, 0x400000);
     params = storage.GetSettings().slot[storage.GetSettings().current];
+    for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = storage.GetSettings().match[b];
+    params.matchAmount = storage.GetSettings().matchAmount;
 
     MidiUsbHandler::Config midiCfg;
     midiCfg.transport_config.periph = MidiUsbTransport::Config::INTERNAL;
@@ -247,11 +257,12 @@ int main() {
         // Short press acts on release; long press acts once while held.
         static bool longDone[5];
         Switch* sw[5] = {&fsBypass, &fsThicken, &fsFlavour, &fsTap, &btnSolo};
-        const float longMs[5] = {1e9f, 600.f, 600.f, 2000.f, 2000.f};
+        const float longMs[5] = {2000.f, 600.f, 600.f, 2000.f, 2000.f};
         for (int i = 0; i < 5; i++) {
             if (sw[i]->RisingEdge()) longDone[i] = false;
             if (sw[i]->Pressed() && !longDone[i] && sw[i]->TimeHeldMs() > longMs[i]) {
                 longDone[i] = true;
+                if (i == 0) proc.startLearn();
                 if (i == 1) { recall(storage.GetSettings().current - 1); blinkCount = storage.GetSettings().current + 1; }
                 if (i == 2) { recall(storage.GetSettings().current + 1); blinkCount = storage.GetSettings().current + 1; }
                 if (i == 3) proc.clearHowl();
@@ -287,6 +298,7 @@ int main() {
                 if (cc.control_number == 81) midiThrow = cc.value >= 64;
                 if (cc.control_number == 82) params.octDown = cc.value / 127.f;
                 if (cc.control_number == 83) params.octUp = cc.value / 127.f;
+                if (cc.control_number == 86 && cc.value >= 64) proc.startLearn();
                 if (cc.control_number == 84) params.pitch1Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
                 if (cc.control_number == 85) params.pitch2Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
             }
@@ -296,6 +308,16 @@ int main() {
         params.brightness = readToggle(toneA, toneB);
         params.delayTime  = readToggle(timeA, timeB);
         params.mono       = !monoSw.Read();
+        {   // Learn finished: keep it for every preset and across power cycles.
+            float g[rasp::kMatchBands];
+            if (proc.learnedMatch(g)) {
+                Stored& st = storage.GetSettings();
+                for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = st.match[b] = g[b];
+                params.matchAmount = st.matchAmount = 1.f;
+                storage.Save();
+                blinkCount = 2;
+            }
+        }
         params.mega       = (megaArmed && auxMega.Pressed()) || midiMega;
         params.throwOn    = (throwArmed && auxThrow.Pressed()) || midiThrow;
         // NOTE: setParams runs outside the audio interrupt. A production build
@@ -307,7 +329,8 @@ int main() {
         if (blinkCount > 0 && now >= blinkUntil) { blinkUntil = now + 300; blinkCount--; }
         bool blinkOn = now < blinkUntil && (blinkUntil - now) > 150;
         uint8_t leds = 0;
-        leds |= (!params.bypass) << 0;
+        const bool learnBlink = proc.learning() && (now / 120) % 2;
+        leds |= (!params.bypass && !learnBlink) << 0;
         leds |= (!params.bypass && grDb > 3.f) << 1;
         leds |= (!params.bypass && bleedDb > 6.f) << 2;   // set the bleed trim so this is lit when you're silent
         leds |= params.thickenOn << 3;
