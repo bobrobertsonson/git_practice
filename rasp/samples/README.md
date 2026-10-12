@@ -13,7 +13,10 @@ high scream/squeal, shout or clean, and suggests a starting preset.
 Its thresholds were set on synthetic voices, so check them against real takes.
 
 WAV, AIFF, FLAC and MP3 all work. 48 kHz is ideal; other rates are converted.
-GitHub rejects files over 100 MB, so trim long takes or use FLAC.
+**Audio is never committed:** `.gitignore` excludes `raw/`, `ref/` and every
+audio and zip file in the repo, so stems and mixes stay on your machine. The
+tools also take paths anywhere on disk (for example `~/Music/NTM_Vocals/*.wav`),
+so you don't have to copy anything here.
 
 ```sh
 make -C rasp

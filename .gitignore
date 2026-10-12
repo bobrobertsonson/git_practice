@@ -6,3 +6,14 @@ rasp/daisy/pod/build/
 rasp/live_test
 rasp/presets_dump
 rasp/plugin/build/
+# Your recordings and reference mixes never go to GitHub (commercial stems,
+# unreleased takes). Keep them in samples/raw and samples/ref, or anywhere
+# on disk, and point the tools at them.
+rasp/samples/raw/
+rasp/samples/ref/
+*.wav
+*.aif
+*.aiff
+*.flac
+*.mp3
+*.zip
