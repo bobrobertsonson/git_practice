@@ -32,6 +32,9 @@ import sys
 import numpy as np
 
 SR = 44100
+# Below this coherence the band, not the vocal, sets the cross-spectrum and the
+# EQ estimate is noise (on KnockedLoose: +30 dB "boosts" at 63 Hz at 6%).
+MIN_COH = 0.12
 BANDS = [63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000]
 
 
@@ -53,6 +56,27 @@ def find_lag(ref, y, max_s=10.0):
     cand = np.concatenate([c[:m], c[-m:]])
     i = int(np.argmax(np.abs(cand)))
     return i if i < m else i - 2 * m
+
+
+def place_in_mix(stem, mix_mono):
+    """Find where a stem sits in the mix, searching the whole song, and return
+    it on the mix's timeline. Exports often start at different bars (a verse
+    stem, a full-length double), so each stem is aligned on its own.
+    Returns (stem on mix timeline, offset in samples, peak/noise confidence)."""
+    n = 1 << int(np.ceil(np.log2(len(stem) + len(mix_mono))))
+    c = np.fft.irfft(np.fft.rfft(mix_mono, n) * np.conj(np.fft.rfft(stem, n)), n)
+    valid = np.concatenate([c[:len(mix_mono)], c[n - len(stem):]])  # lags 0..mix, then negative
+    i = int(np.argmax(np.abs(valid)))
+    lag = i if i < len(mix_mono) else i - len(valid)
+    conf = float(np.abs(valid[i]) / (np.percentile(np.abs(valid), 99.9) + 1e-12))
+    out = np.zeros(len(mix_mono))
+    if lag >= 0:
+        seg = stem[:len(mix_mono) - lag]
+        out[lag:lag + len(seg)] = seg
+    else:
+        seg = stem[-lag:-lag + len(mix_mono)]
+        out[:len(seg)] = seg
+    return out, lag, conf
 
 
 def align(y, lag, length):
@@ -140,28 +164,36 @@ def main():
 
     names = [pathlib.Path(s).stem for s in args.stems]
     raw = [decode(s, 1)[:, 0] for s in args.stems]
-    n = max(len(x) for x in raw)
-    stems = [np.pad(x, (0, n - len(x))) for x in raw]
-    X = np.stack(stems, axis=1)
     mix = decode(args.mix, 2)
-    lag = find_lag(X.sum(axis=1), mix.mean(axis=1))
-    Y = align(mix, lag, n)
-    print(f"mix offset vs stems: {lag / SR * 1000:+.1f} ms")
+    mono = mix.mean(axis=1)
+    cols = []
+    print("where each stem starts in the mix (confidence: correlation peak over the")
+    print("99.9th percentile; below ~1.5 the placement is a guess and the stem's row is noise)")
+    for nm, x in zip(names, raw):
+        col, lag, conf = place_in_mix(x, mono)
+        cols.append(col)
+        print(f"  {nm[:22]:<23}{lag / SR:+9.3f} s   confidence {conf:5.1f}")
+    X = np.stack(cols, axis=1)
+    Y = mix
+    n = len(mix)
 
     # Short window: EQ, level, pan, coherence. Long window: the space.
     H, coh = transfer(X, Y, 1 << 13)
     f = np.fft.rfftfreq(1 << 13, 1 / SR)
+    cm = coh.mean(axis=1)
+    band_coh = {b: float(np.mean(cm[(f >= b / 2 ** (1 / 3)) & (f < b * 2 ** (1 / 3))])) for b in BANDS}
     print("\nper stem: level and placement in the mix (at 1 kHz), then EQ relative to 1 kHz")
+    print(f"(bands where the vocals explain under {MIN_COH:.0%} of the mix show '-': the band dominates there)")
     print(f"{'stem':<16}{'level':>7}{'pan L/R':>9}  " + "".join(f"{blabel(b):>6}" for b in BANDS))
     for i, nm in enumerate(names):
         curve, ref = eq_curve(H, f, i)
         l = band_db(np.abs(H[:, i, 0]) ** 2, f, 1000)
         r = band_db(np.abs(H[:, i, 1]) ** 2, f, 1000)
-        print(f"{nm[:15]:<16}{ref:7.1f}{l - r:+9.1f}  " + "".join(f"{curve[b]:6.1f}" for b in BANDS))
+        print(f"{nm[:15]:<16}{ref:7.1f}{l - r:+9.1f}  "
+              + "".join(f"{curve[b]:6.1f}" if band_coh[b] >= MIN_COH else f"{'-':>6}" for b in BANDS))
     print("\nhow much of the mix the vocals explain (coherence, %):")
     print("          " + "".join(f"{blabel(b):>6}" for b in BANDS))
-    cm = coh.mean(axis=1)
-    print("          " + "".join(f"{100 * np.mean(cm[(f >= b / 2 ** (1 / 3)) & (f < b * 2 ** (1 / 3))]):6.0f}" for b in BANDS))
+    print("          " + "".join(f"{100 * band_coh[b]:6.0f}" for b in BANDS))
 
     Hl, _ = transfer(X, Y, 1 << 16)
     print("\nspace each stem was put in (from a 1.5 s impulse response; upper bounds, see --help):")
@@ -177,9 +209,9 @@ def main():
     if args.compare:
         k = [str(pathlib.Path(s)) for s in args.stems].index(str(pathlib.Path(args.compare_stem)))
         render = decode(args.compare, 2)
-        x = X[:, k:k + 1]
-        lag_r = find_lag(x[:, 0], render.mean(axis=1))
-        Yr = align(render, lag_r, n)
+        x = raw[k][:, None]                               # the render follows the raw stem's timeline
+        lag_r = find_lag(raw[k], render.mean(axis=1))
+        Yr = align(render, lag_r, len(raw[k]))
         Hr, _ = transfer(x, Yr, 1 << 13)
         prod, _ = eq_curve(H, f, k)
         rasp, _ = eq_curve(Hr, f, 0)
