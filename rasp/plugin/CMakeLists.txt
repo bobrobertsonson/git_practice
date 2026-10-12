@@ -9,7 +9,11 @@
 # Pass -DRASP_JUCE_DIR=/path/to/JUCE to use a local JUCE checkout instead.
 cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
-project(RASP VERSION 0.1.0 LANGUAGES C CXX)
+# CI passes its run number and commit, so every build shows which one it is
+# (in the window header) and Logic sees a new AU version and rescans it.
+set(RASP_BUILD_NUMBER 0 CACHE STRING "Build number (CI run number)")
+set(RASP_BUILD_ID "local" CACHE STRING "Build id shown in the window (commit)")
+project(RASP VERSION 0.2.${RASP_BUILD_NUMBER} LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -53,7 +57,9 @@ target_compile_definitions(RASP PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0)
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    RASP_BUILD_NUMBER=${RASP_BUILD_NUMBER}
+    RASP_BUILD_ID="${RASP_BUILD_ID}")
 
 target_link_libraries(RASP
     PRIVATE
@@ -70,7 +76,8 @@ if(RASP_PLUGIN_TESTS)
     juce_add_console_app(plugin_test PRODUCT_NAME "plugin_test")
     target_sources(plugin_test PRIVATE tests/plugin_test.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
     target_include_directories(plugin_test PRIVATE Source ../dsp)
-    target_compile_definitions(plugin_test PRIVATE RASP_SR_SCALE=2 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_compile_definitions(plugin_test PRIVATE RASP_SR_SCALE=2 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        RASP_BUILD_NUMBER=${RASP_BUILD_NUMBER} RASP_BUILD_ID="${RASP_BUILD_ID}")
     target_link_libraries(plugin_test PRIVATE juce::juce_audio_utils juce::juce_recommended_config_flags)
     set_target_properties(plugin_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()

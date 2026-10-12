@@ -18,6 +18,7 @@ jobs:
         run: >
           cmake -S rasp/plugin -B build -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DRASP_PLUGIN_TESTS=ON
+          -DRASP_BUILD_NUMBER=${{ github.run_number }} -DRASP_BUILD_ID=${GITHUB_SHA::7}
 
       - name: Build AU, VST3, standalone, tests
         run: cmake --build build --config Release -j 4
@@ -48,7 +49,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: RASP-macOS
+          name: RASP-macOS-build-${{ github.run_number }}
           path: dist/*.zip
 
   linux:

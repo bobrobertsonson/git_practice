@@ -1,5 +1,12 @@
 #include "PluginEditor.h"
 
+#ifndef RASP_BUILD_NUMBER
+#define RASP_BUILD_NUMBER 0
+#endif
+#ifndef RASP_BUILD_ID
+#define RASP_BUILD_ID "local"
+#endif
+
 namespace {
 const juce::Colour kBg{0xff121214}, kPanel{0xff1d1d21}, kEdge{0xff2c2c33}, kText{0xffe8e6e3},
     kDim{0xff8d8a86}, kAccent{0xffe2462c};
@@ -176,6 +183,9 @@ void RaspEditor::paint(juce::Graphics& g) {
     g.setColour(kDim);
     g.setFont(juce::FontOptions(12.f));
     g.drawText("extreme vocal processor", kPad + 92, 0, 160, kHeader, juce::Justification::centredLeft);
+    g.setFont(juce::FontOptions(10.f));
+    g.drawText(juce::String("build ") + juce::String(RASP_BUILD_NUMBER) + " \u00b7 " + RASP_BUILD_ID,
+               kPad + 92, kHeader / 2 + 8, 200, 14, juce::Justification::centredLeft);
 
     for (auto& pn : panels) {
         g.setColour(kPanel);
