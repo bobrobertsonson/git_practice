@@ -96,10 +96,10 @@ current parts; quantities match the firmware.
 
 | Part | Qty | ≈ Price | Notes |
 |---|---|---|---|
-| 16 mm pots, B10K linear (e.g. Alpha 16 mm) | 18 | $1.50 each | Knobs: two banks of 8 through the multiplexers, plus **Octave down** and **Octave up** on the third |
+| 16 mm pots, B10K linear (e.g. Alpha 16 mm) | 20 | $1.50 each | Knobs: two banks of 8 through the multiplexers, plus **Pitch 1/2 level** and **Pitch 1/2 interval** (−12…+12 semitones) on the third |
 | 45 mm slide pots, 10 kΩ linear (e.g. Bourns PTA45) | 4 | $3 each | Section level faders: control, thicken, flavour, output |
 | 9 mm pots or trimmers, 10 kΩ linear | 3 | $1 each | Bleed, de-ess and glue trims |
-| **CD4051B** 8:1 analog multiplexer (DIP-16) | 3 | $0.60 each | Pot banks into A0, A1 and A8. The third (glue trim, octave down, octave up, 5 spare inputs) shares select lines D0–D2 with the first |
+| **CD4051B** 8:1 analog multiplexer (DIP-16) | 3 | $0.60 each | Pot banks into A0, A1 and A8. The third (glue trim, pitch 1/2 level, pitch 1/2 interval, 3 spare inputs) shares select lines D0–D2 with the first |
 | **74HC595** shift register (DIP-16) | 1 | $0.50 | Drives 8 LEDs from 3 pins |
 | 3 mm LEDs + bezels, 1 kΩ resistors | 8 | $3 total | Effect, chop, bleed, thicken, flavour, tap/preset, limiter, feedback |
 | Soft-touch **momentary** SPST footswitches | 4 | $4 each | Bypass, thicken, flavour, tap. Bypass is digital, so these must be momentary, not latching |
@@ -157,7 +157,7 @@ XLR in ─┬─► THAT1512 (gain pot) ─► divider ─► Daisy IN L ──�
         └─► relay NC contact ─────────────────────┐               ├─► THAT1646 ×2 ─► mic/line pad ─► relay NO ─► XLR out L/R
                                                     └── (power off: in → out L)
                                                                    └─► NJM4556 (vol pot) ─► headphone jack
-Pots: 16 → 2× CD4051 (A0, A1; selects D0–D5) · faders A2–A5 · trims A6, A7 · 3rd CD4051 on A8 (glue, octave down/up; selects D0–D2)
+Pots: 16 → 2× CD4051 (A0, A1; selects D0–D5) · faders A2–A5 · trims A6, A7 · 3rd CD4051 on A8 (glue, pitch levels and intervals; selects D0–D2)
 Footswitches D10–D13 · solo D14 · tone D6/D7 · time D8/D9 · mono D28 · AUX tip/ring D29/D30
 LEDs via 74HC595 on D24/D25/D26 · relay driver D27 · USB = MIDI + flashing
 ```

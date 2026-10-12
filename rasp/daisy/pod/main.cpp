@@ -11,7 +11,7 @@
 //                  hold: MEGA while held (hard-clipped mid burst)
 //   Button 2       tap: thicken + flavour on/off
 //                  hold: THROW while held (long delay; repeats ring out after release)
-//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = octave down / up level
+//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st)
 //   LED 2          red = chop compressing > 3 dB, blue = feedback notch active,
 //                  white = a momentary effect is held
 #include "daisy_pod.h"
@@ -35,9 +35,10 @@ static void loadPreset() {
     bool bypass = params.bypass, thk = params.thickenOn, flv = params.flavourOn;
     bool mega = params.mega, thr = params.throwOn;
     float od = params.octDown, ou = params.octUp;           // set over MIDI: a performance setting
+    int s1 = params.pitch1Semi, s2 = params.pitch2Semi;
     params = rasp::presetParams(preset);
     params.bypass = bypass; params.mega = mega; params.throwOn = thr;
-    params.octDown = od; params.octUp = ou;
+    params.octDown = od; params.octUp = ou; params.pitch1Semi = s1; params.pitch2Semi = s2;
     if (!thk) params.thickenOn = false;
     if (!flv) params.flavourOn = false;
 }
@@ -88,6 +89,8 @@ int main() {
                 if (cc.control_number == 81) midiThrow = cc.value >= 64;
                 if (cc.control_number == 82) params.octDown = cc.value / 127.f;
                 if (cc.control_number == 83) params.octUp = cc.value / 127.f;
+                if (cc.control_number == 84) params.pitch1Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
+                if (cc.control_number == 85) params.pitch2Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
             }
         }
         params.mega    = (hw.button1.Pressed() && b1Held >= kHoldMs) || midiMega;

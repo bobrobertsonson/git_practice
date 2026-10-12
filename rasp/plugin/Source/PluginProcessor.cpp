@@ -7,6 +7,11 @@
 #define RASP_B(m) [](const rasp::Params& p) { return p.m ? 1.f : 0.f; }, [](rasp::Params& p, float v) { p.m = v > 0.5f; }
 #define RASP_I(m) [](const rasp::Params& p) { return (float)p.m; }, [](rasp::Params& p, float v) { p.m = (int)std::lround(v); }
 
+// Interval menu: index 0..24 = -12..+12 semitones.
+static const char* kSemis =
+    "-12 oct|-11 st|-10 st|-9 st|-8 st|-7 5th|-6 st|-5 4th|-4 st|-3 st|-2 st|-1 st|0 unison|"
+    "+1 st|+2 st|+3 st|+4 st|+5 4th|+6 st|+7 5th|+8 st|+9 st|+10 st|+11 st|+12 oct";
+
 static juce::String hz(float h) { return h >= 1000.f ? juce::String(h / 1000.f, 1) + " kHz" : juce::String(juce::roundToInt(h)) + " Hz"; }
 
 const std::vector<ParamSpec>& paramSpecs() {
@@ -26,6 +31,7 @@ const std::vector<ParamSpec>& paramSpecs() {
          [](float v) { return juce::String(juce::roundToInt(rasp::expMap(v, 60.f, 800.f))) + " ms"; }, false},
         {"deEss", "De-ess", "Control", K::Unit, 0, 1, nullptr, RASP_F(deEss), nullptr, false},
         {"airDb", "Air", "Control", K::Db, 0, 12, nullptr, RASP_F(airDb), nullptr, false},
+        {"bodyDb", "Body", "Control", K::Db, 0, 9, nullptr, RASP_F(bodyDb), nullptr, false},
         {"bleed", "Bleed Reducer", "Control", K::Unit, 0, 1, nullptr, RASP_F(bleed), nullptr, false},
         {"controlGainDb", "Control Level", "Control", K::Db, -18, 12, nullptr, RASP_F(controlGainDb), nullptr, false},
         // THICKEN
@@ -36,9 +42,15 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"width", "Width", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(width), nullptr, false},
         {"solo", "Thicken Solo", "Thicken", K::Bool, 0, 1, nullptr, RASP_B(solo), nullptr, false},
         {"thickenGainDb", "Thicken Level", "Thicken", K::Db, -24, 6, nullptr, RASP_F(thickenGainDb), nullptr, false},
-        // OCTAVE layers (shown in the Thicken panel)
-        {"octDown", "Octave Down", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(octDown), nullptr, false},
-        {"octUp", "Octave Up", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(octUp), nullptr, false},
+        // PITCH layers (ids octDown/octUp kept so saved sessions still load)
+        {"pitch1Semi", "Pitch 1 Interval", "Pitch", K::Choice, 0, 24, kSemis,
+         [](const rasp::Params& p) { return (float)(p.pitch1Semi + 12); },
+         [](rasp::Params& p, float v) { p.pitch1Semi = (int)std::lround(v) - 12; }, nullptr, false},
+        {"octDown", "Pitch 1 Level", "Pitch", K::Unit, 0, 1, nullptr, RASP_F(octDown), nullptr, false},
+        {"pitch2Semi", "Pitch 2 Interval", "Pitch", K::Choice, 0, 24, kSemis,
+         [](const rasp::Params& p) { return (float)(p.pitch2Semi + 12); },
+         [](rasp::Params& p, float v) { p.pitch2Semi = (int)std::lround(v) - 12; }, nullptr, false},
+        {"octUp", "Pitch 2 Level", "Pitch", K::Unit, 0, 1, nullptr, RASP_F(octUp), nullptr, false},
         // FLAVOUR
         {"flavourOn", "Flavour On", "Flavour", K::Bool, 0, 1, nullptr, RASP_B(flavourOn), nullptr, false},
         {"tail", "Tail", "Flavour", K::Unit, 0, 1, nullptr, RASP_F(tail),

@@ -215,6 +215,7 @@ struct Params {
     float chop       = 0.55f;  // compression amount: peak comp + leveler + parallel crush
     float release    = 0.40f;  // leveler release 60..800 ms
     float deEss      = 0.50f;  // de-esser depth (menu)
+    float bodyDb     = 0.f;    // broad low-mid boost at 220 Hz, 0..9 dB: chest and weight
     float airDb      = 0.f;    // extra high shelf at 7 kHz, 0..12 dB (menu): the very bright
                                // modern-deathcore top (one producer lifted 6-10 kHz by ~13 dB)
     float bleed      = 0.70f;  // bleed reducer threshold: 0 off, 0.5 = -50, 0.7 = -42, 1 = -30 dBFS RMS (menu)
@@ -252,9 +253,12 @@ struct Params {
     bool  mono       = false;  // one-channel PA: drop the stereo comb taps, sum to mono
     bool  howl       = true;   // automatic feedback notches
 
-    // OCTAVE (parallel layers under the voice, 0 = off, 1 = as loud as the voice)
-    float octDown    = 0.f;    // one octave down: weight under gutturals and screams
-    float octUp      = 0.f;    // one octave up: a squeal layer
+    // PITCH layers (parallel, under the voice). Levels: 0 = off, 1 = as loud
+    // as the voice. Intervals in semitones, -12..+12 (default: octave down, octave up).
+    float octDown    = 0.f;    // pitch layer 1 level
+    float octUp      = 0.f;    // pitch layer 2 level
+    int   pitch1Semi = -12;    // pitch layer 1 interval
+    int   pitch2Semi = 12;     // pitch layer 2 interval
 
     // MOMENTARY (held footswitch / button; on while held)
     bool  mega       = false;  // the voice becomes a mid-focused hard-clipped burst
@@ -354,8 +358,9 @@ private:
 // ---------------------------------------------------------------------------
 class Voicing {
 public:
-    void set(int brightness, float airDb, float sr) {
+    void set(int brightness, float airDb, float bodyDb, float sr) {
         extra.highShelf(7000.f, clampf(airDb, 0.f, 12.f), sr);
+        body.peaking(220.f, 0.8f, clampf(bodyDb, 0.f, 9.f), sr);
         struct V { float lowHz, lowDb, mudHz, mudDb, presHz, presDb, airHz, airDb; };
         static const V v[3] = {
             {170.f, 2.5f, 420.f, -2.0f, 2600.f, 1.5f, 10000.f, 0.5f},   // dark: weight, gutturals
@@ -369,9 +374,9 @@ public:
         air.highShelf(c.airHz, c.airDb, sr);
     }
     // The de-esser runs after this, so extra air also gets its sibilance held back.
-    float process(float x) { return extra.process(air.process(pres.process(mud.process(low.process(x))))); }
+    float process(float x) { return body.process(extra.process(air.process(pres.process(mud.process(low.process(x)))))); }
 private:
-    Biquad low, mud, pres, air, extra;
+    Biquad low, mud, pres, air, extra, body;
 };
 
 // ---------------------------------------------------------------------------
@@ -754,11 +759,19 @@ private:
 class Shifter {
 public:
     void init(float sampleRate, float ratio) {
-        sr = sampleRate; rho = 1.0 - ratio;
+        sr = sampleRate;
         grain = (int)(0.04f * sr); half = grain / 2;
         corr = (int)(0.006f * sr); search = (int)(0.012f * sr) & ~1;   // even: coarse grid ends on it
         lead = (int)(0.0065f * sr);                   // >= search/2 + 1 coarse + 2 fine steps
         base = (double)(corr + lead + 2);
+        cur = -1.f;
+        setRatio(ratio);
+    }
+    // A new interval restarts both heads (a change of ratio would otherwise
+    // walk a head's delay out of range); it happens on a knob move only.
+    void setRatio(float ratio) {
+        if (std::fabs(ratio - cur) < 1e-6f) return;
+        cur = ratio; rho = 1.0 - ratio;
         start = rho > 0.0 ? base : base + grain * -rho;   // down: delay grows; up: delay shrinks
         h[0] = Head{start, 0}; h[1] = Head{start + half * rho, half};
     }
@@ -809,7 +822,7 @@ private:
         double sc = xy / std::sqrt(bb);
         if (sc > hd.bestScore) { hd.bestScore = sc; hd.best = c; }
     }
-    float sr = 48000.f;
+    float sr = 48000.f, cur = -1.f;
     double rho = 0.5, base = 600.0, start = 600.0;
     int grain = 1920, half = 960, corr = 288, search = 576, lead = 312;
     Head h[2];
@@ -817,27 +830,36 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Octave: one octave down and one up, from the compressed voice. The shifted
-// layers lag the voice by roughly 13-65 ms, like a tight double; the dry voice
-// is untouched. The down layer is low-passed so it adds weight rather than a
-// second voice.
+// Pitch: two shifted layers of the compressed voice, each set in semitones
+// (-12..+12; default an octave down and an octave up). They lag the voice by
+// roughly 13-65 ms, like a tight double; the dry voice is untouched. Filters
+// follow the interval: a deep layer is low-passed so it adds weight rather
+// than a second voice (2.2 kHz at -12, opening to ~8.8 kHz at -1); a high
+// layer is high-passed so it doesn't double the body (500 Hz at +12, down to
+// ~125 Hz at +1).
 // ---------------------------------------------------------------------------
-class Octave {
+class Pitch {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        dn.init(sr, 0.5f); upS.init(sr, 2.f);
-        dnHp.set(55.f, 0.707f, sr); dnLp.set(2200.f, 0.707f, sr);
-        upHp.set(500.f, 0.707f, sr); upLp.set(9000.f, 0.707f, sr);
+        for (auto& v : layer) { v.sh.init(sr, 1.f); v.semis = 99; }
+        set(-12, 12);
     }
-    void process(float x, float& down, float& up) {
-        dnHp.process(dn.process(x)); dnLp.process(dnHp.hp); down = dnLp.lp;
-        upHp.process(upS.process(x)); upLp.process(upHp.hp); up = upLp.lp;
-    }
+    void set(int semis1, int semis2) { setLayer(layer[0], semis1); setLayer(layer[1], semis2); }
+    void process(float x, float& a, float& b) { a = run(layer[0], x); b = run(layer[1], x); }
 private:
+    struct Layer { Shifter sh; SVF hp, lp; int semis = 99; };
+    void setLayer(Layer& v, int semis) {
+        semis = semis < -12 ? -12 : (semis > 12 ? 12 : semis);
+        if (semis == v.semis) return;
+        v.semis = semis;
+        v.sh.setRatio(std::pow(2.f, semis / 12.f));
+        if (semis < 0) { v.hp.set(55.f, 0.707f, sr); v.lp.set(2200.f * std::pow(4.f, (semis + 12) / 11.f), 0.707f, sr); }
+        else           { v.hp.set(semis == 0 ? 55.f : 500.f * std::pow(4.f, (semis - 12) / 11.f), 0.707f, sr); v.lp.set(9000.f, 0.707f, sr); }
+    }
+    float run(Layer& v, float x) { v.hp.process(v.sh.process(x)); v.lp.process(v.hp.hp); return v.lp.lp; }
     float sr = 48000.f;
-    Shifter dn, upS;
-    SVF dnHp, dnLp, upHp, upLp;
+    Layer layer[2];
 };
 
 // ---------------------------------------------------------------------------
@@ -1188,7 +1210,7 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
-        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); octave.init(sr);
+        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); pitch.init(sr);
         gMega.init(0.f, sr, 10.f); gOctD.init(0.f, sr, 30.f); gOctU.init(0.f, sr, 30.f);
         gIn.init(1.f, sr); gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
@@ -1203,7 +1225,7 @@ public:
         driveHp1.set(expMap(p.loCut, 20.f, 600.f), 0.54f, sr);   // 24 dB/oct, like the lo cut
         driveHp2.set(expMap(p.loCut, 20.f, 600.f), 1.31f, sr);
         drive.set(p.drive, p.brightness);
-        voicing.set(p.brightness, p.airDb, sr);
+        voicing.set(p.brightness, p.airDb, p.bodyDb, sr);
         deEss.set(p.deEss);
         expander.set(p.bleed);
         chop.set(p.chop, p.release);
@@ -1215,8 +1237,13 @@ public:
         gIn.target = dbToLin(p.inDb);
         gMix.target = p.mix;
         gMega.target = p.mega ? 1.f : 0.f;
-        gOctD.target = clampf(p.octDown, 0.f, 1.f); gOctU.target = clampf(p.octUp, 0.f, 1.f) * 0.7f;
-        howlG.setOctaves(p.octDown > 0.05f, p.octUp > 0.05f);
+        pitch.set(p.pitch1Semi, p.pitch2Semi);
+        // Upward layers sit a little lower: they read louder at the same level.
+        gOctD.target = clampf(p.octDown, 0.f, 1.f) * (p.pitch1Semi > 0 ? 0.7f : 1.f);
+        gOctU.target = clampf(p.octUp, 0.f, 1.f) * (p.pitch2Semi > 0 ? 0.7f : 1.f);
+        const bool on1 = p.octDown > 0.05f, on2 = p.octUp > 0.05f;
+        howlG.setOctaves((on1 && p.pitch1Semi == -12) || (on2 && p.pitch2Semi == -12),
+                         (on1 && p.pitch1Semi == 12) || (on2 && p.pitch2Semi == 12));
         throwFx.set(p.throwOn, p.bpm);
     }
 
@@ -1247,11 +1274,11 @@ public:
         megaFade = gmg;
         mega.track(x);
         if (gmg > 1e-4f) x = lerp(x, mega.process(x), gmg);
-        // OCTAVE layers, before the effects so they share the doubles and space.
+        // PITCH layers, before the effects so they share the doubles and space.
         float god = gOctD.next(), gou = gOctU.next();
         if (god > 1e-4f || gou > 1e-4f) {
             float dn, upv;
-            octave.process(x, dn, upv);
+            pitch.process(x, dn, upv);
             x += god * dn + gou * upv;
         }
         // THICKEN + FLAVOUR (parallel, fed by the control output)
@@ -1306,7 +1333,7 @@ private:
     HowlGuard howlG;
     Mega mega;
     Throw throwFx;
-    Octave octave;
+    Pitch pitch;
     Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega, gOctD, gOctU;
     float megaFade = 0.f;
 };

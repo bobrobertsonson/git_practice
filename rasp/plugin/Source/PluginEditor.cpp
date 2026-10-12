@@ -3,7 +3,7 @@
 namespace {
 const juce::Colour kBg{0xff121214}, kPanel{0xff1d1d21}, kEdge{0xff2c2c33}, kText{0xffe8e6e3},
     kDim{0xff8d8a86}, kAccent{0xffe2462c};
-constexpr int kW = 1050, kH = 590, kHeader = 64, kCellW = 92, kCellH = 112, kTitle = 34, kPad = 10;
+constexpr int kW = 1172, kH = 590, kHeader = 64, kCellW = 92, kCellH = 112, kTitle = 34, kPad = 10;
 
 using APVTS = juce::AudioProcessorValueTreeState;
 
@@ -71,29 +71,33 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     setLookAndFeel(&laf);
 
     auto& s = proc.apvts;
-    panels.resize(4);
+    panels.resize(5);
     auto& control = panels[0]; control.title = "CONTROL"; control.cols = 3;
     addPower(control, "controlOn");
     addKnob(control, "drive", "Drive"); addKnob(control, "mix", "Drive mix"); addChoice(control, "brightness", "Tone");
     addKnob(control, "chop", "Chop"); addKnob(control, "release", "Release"); addKnob(control, "deEss", "De-ess");
     addKnob(control, "loCut", "Lo cut"); addKnob(control, "hiCut", "Hi cut"); addKnob(control, "bleed", "Bleed reducer");
-    addKnob(control, "airDb", "Air"); addKnob(control, "controlGainDb", "Level");
+    addKnob(control, "bodyDb", "Body"); addKnob(control, "airDb", "Air"); addKnob(control, "controlGainDb", "Level");
 
     auto& thicken = panels[1]; thicken.title = "THICKEN"; thicken.cols = 2;
     addPower(thicken, "thickenOn");
     addKnob(thicken, "spread", "Spread"); addKnob(thicken, "diffuse", "Diffuse");
     addKnob(thicken, "darken", "Darken"); addKnob(thicken, "width", "Width");
     addKnob(thicken, "thickenGainDb", "Level"); addToggle(thicken, "solo", "Solo");
-    addKnob(thicken, "octDown", "Octave down"); addKnob(thicken, "octUp", "Octave up");
 
-    auto& flavour = panels[2]; flavour.title = "FLAVOUR"; flavour.cols = 3;
+
+    auto& flavour = panels[3]; flavour.title = "FLAVOUR"; flavour.cols = 3;
     addPower(flavour, "flavourOn");
     addKnob(flavour, "tail", "Tail"); addKnob(flavour, "tailBlend", "Tail blend"); addKnob(flavour, "tilt", "Tilt");
     addKnob(flavour, "repeats", "Repeats"); addKnob(flavour, "delayBlend", "Delay blend"); addChoice(flavour, "delayTime", "Time");
     addKnob(flavour, "duck", "Duck"); addKnob(flavour, "flavourGainDb", "Level"); addKnob(flavour, "bpm", "Tempo");
     addToggle(flavour, "sync", "Sync to host");
 
-    auto& bus = panels[3]; bus.title = "BUS / LIVE"; bus.cols = 2;
+    auto& pitch = panels[2]; pitch.title = "PITCH"; pitch.cols = 1;
+    addChoice(pitch, "pitch1Semi", "Pitch 1"); addKnob(pitch, "octDown", "Level");
+    addChoice(pitch, "pitch2Semi", "Pitch 2"); addKnob(pitch, "octUp", "Level");
+
+    auto& bus = panels[4]; bus.title = "BUS / LIVE"; bus.cols = 2;
     addKnob(bus, "inDb", "Input"); addKnob(bus, "glue", "Glue"); addKnob(bus, "outDb", "Output");
     addToggle(bus, "mono", "Mono"); addToggle(bus, "bypassMatch", "Match bypass"); addToggle(bus, "howl", "Feedback guard");
 

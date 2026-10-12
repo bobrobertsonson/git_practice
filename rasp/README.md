@@ -46,9 +46,10 @@ mic ─► CONTROL ─► (+ OCTAVE) ─┼─► THICKEN  doubles + stereo comb
 | | tone switch | Sets the drive's tone filter **and** a mix-style voicing EQ: chest-weight shelf, a cut in the boxy 420–500 Hz region, a 2.6–3.5 kHz presence lift, and an air shelf. Dark suits gutturals; bright suits highs and squeals |
 | | *de-esser* (trim) | A dynamic bell at 7 kHz, up to 8 dB. Drive plus presence plus air would otherwise make every "s" and "t" spit |
 | | chop, release | Four stages on one knob, the way produced screams are usually compressed: a **leveler** that rides the voice toward −18 dBFS (up to ±15 dB, only while you're singing), a FET-style peak compressor (fast, catches spikes), an opto-style compressor (two-stage release, evens out phrases), and a parallel "crush" blended underneath for density. Because of the leveler, it compresses the same whatever your input gain. The LED lights above 3 dB of gain reduction |
-| | *air* (menu) | Extra high shelf at 7 kHz, 0–12 dB. +4 in Huge, +10 in Air |
+| | *air* (menu) | Extra high shelf at 7 kHz, 0–12 dB. +4 in Huge, +7 in Air |
+| | body | Broad low-mid boost at 220 Hz, 0–9 dB: chest and weight. +5 in Huge, fitted to fix "still thin" (see below) |
 | | *bleed reducer* (trim) | Downward expander (1:4 below threshold, up to −40 dB), keyed on the clean mic signal. Compression lifts stage bleed; this turns it back down between phrases. Its own LED shows when it's working. See section 3 |
-| **Octave** | octave down, octave up | Layers one octave below and above the compressed voice (0 = off, 1 = as loud as the voice), mixed in before the effects. They need no pitch tracking, so they work on screams. Each new grain starts in phase with the one fading out, so there's no flutter: a 220 Hz tone comes out as a clean 110 or 440 Hz. The layers lag the voice by 13–65 ms, like a tight double |
+| **Pitch** | pitch 1, pitch 2 (interval + level) | Two shifted layers of the compressed voice, each at any interval from −12 to +12 semitones (default: an octave down and an octave up), mixed in before the effects. They need no pitch tracking, so they work on screams. Each new grain starts in phase with the one fading out, so there's no flutter: on a 220 Hz tone every interval lands on its pitch, with stray tones 41–51 dB down. Filters follow the interval: low layers are low-passed so they add weight, high layers are high-passed. The layers lag the voice by 13–65 ms, like a tight double |
 | **Thicken** | spread | **Synthetic double tracks**: a pair, plus a second pair as spread goes past 0.35 (the "quad-tracked" metal vocal). Each voice's timing wanders 12–36 ms, its pitch drifts up to ±20 cents and its level ±1.5 dB, and each has its own slight tone. That's what makes a real double read as a second performance. Also quieter stereo comb taps (3–26 ms) |
 | | diffuse, darken, width, solo | Allpass smearing of the combs, lowpass on the branch, mid/side width, and a solo for the branch alone |
 | **Flavour** | tail + blend | 8-line feedback-delay-network plate, RT60 0.5–6 s. 25 ms pre-delay, slight modulation so long tails don't ring metallic, and a 300 Hz–8 kHz return EQ |
@@ -80,6 +81,14 @@ decide that. **Send raw tracks and I'll tune against them.**
   Huge's Chop also went from 0.65 to 0.75.
 - **Thickener.** The doubles now wander like real double tracks, with a
   second pair in Huge, and Huge's thicken level went from −2 to 0 dB.
+- **Still thin** (second listen). The mix fits can't see below 400 Hz on most
+  songs (the band covers it), but KnockedLoose's can: its producer had 4.1 dB
+  more 250 Hz on the lead than Huge. A **Body** control (+5 in Huge) brings it
+  within 1 dB. Your blind picks agreed: louder doubles were "fuller" and the
+  78 Hz lo cut "bigger" than 130 Hz, so Huge's doubles went up to +3 dB.
+- **Pitch layers** in semitones (−12…+12) replaced the fixed octaves. The
+  feedback guard catches howls at every interval tested (−12, −7, −5, −2, −1,
+  0, +7, +12), with no false notches on three real leads.
 - **Octave layers** were added, and the feedback guard knows about them. A
   howl's octave copy otherwise looked like a voice's harmonic, and the guard
   missed a howl carrying 42% of the output. Now it's caught at every octave
@@ -252,7 +261,7 @@ See [plugin/README.md](plugin/README.md) for download, install and behaviour.
 | Scream bright | Highs and squeals: bright voicing, more de-essing |
 | Live stage | Tighter effects, more duck, a higher lo cut, bleed reducer set higher |
 | Raw | Filters and light compression only |
-| Air | Huge with a very bright modern top: bright voicing, open hi cut, +10 dB air, more de-essing |
+| Air | Huge with a bright modern top: open hi cut, +7 dB air, more de-essing. A brighter version was rejected in the blind A/B test as "extremely harsh" |
 
 **Fitted to producers.** `tools/presetfit.py` measures what a producer did to a
 lead vocal (raw stem against the finished mix), then scores how close each

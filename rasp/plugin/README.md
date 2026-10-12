@@ -36,7 +36,7 @@ run's page under *Artifacts*.
 | Channels | Mono → Stereo (recommended), Stereo → Stereo (input summed to mono, like a mic) or Mono → Mono (comb taps drop out automatically) |
 | Sample rates | 44.1 – 192 kHz |
 | Latency | None reported: there's no lookahead; the drive adds only ~0.15 ms of filter phase delay |
-| Octave | **Octave down** / **Octave up** knobs in the Thicken panel: layers an octave below and above the voice. **Air** (Control panel) is an extra 7 kHz shelf |
+| Pitch | **PITCH** panel: two layers, each with an interval menu (−12 … +12 semitones) and a level. Defaults are an octave down and an octave up. **Body** (220 Hz) and **Air** (7 kHz) are in the Control panel |
 | Mega / Throw | Hold the **MEGA** / **THROW** buttons, or draw them on automation lanes. Both are "on while held" and survive preset changes |
 | Feedback guard | Off by default in the plugin (it's for a live mic near speakers). Turn it on when tracking through monitors |
 | Input gain | Set it so screams peak around −6 dBFS, the same as the pedal's preamp knob |

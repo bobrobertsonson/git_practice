@@ -99,11 +99,13 @@ inline bool setParam(rasp::Params& p, const char* arg) {
         {"spread", &p.spread}, {"diffuse", &p.diffuse}, {"darken", &p.darken}, {"width", &p.width},
         {"thickengain", &p.thickenGainDb}, {"tail", &p.tail}, {"tailblend", &p.tailBlend},
         {"repeats", &p.repeats}, {"delayblend", &p.delayBlend}, {"bpm", &p.bpm}, {"tilt", &p.tilt},
-        {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb}, {"in", &p.inDb}, {"air", &p.airDb}, {"octdown", &p.octDown}, {"octup", &p.octUp},
+        {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb}, {"in", &p.inDb}, {"air", &p.airDb}, {"body", &p.bodyDb}, {"octdown", &p.octDown}, {"octup", &p.octUp},
         {"deess", &p.deEss}, {"bleed", &p.bleed}, {"glue", &p.glue},
     };
     for (auto& e : fs) if (k == e.n) { *e.f = v; return true; }
     if (k == "bright")  { p.brightness = (int)v; return true; }
+    if (k == "pitch1")  { p.pitch1Semi = (int)std::lround(v); return true; }
+    if (k == "pitch2")  { p.pitch2Semi = (int)std::lround(v); return true; }
     if (k == "time")    { p.delayTime = (int)v; return true; }
     if (k == "solo")    { p.solo = v != 0.f; return true; }
     if (k == "control") { p.controlOn = v != 0.f; return true; }

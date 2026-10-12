@@ -336,12 +336,18 @@ class RaspEngine {
     const wO = [0, 0];
     let megaFade = 0;
     // Octave layers (mirrors Shifter / Octave in rasp.h: WSOLA-aligned grains).
+    const shHead = (d, age) => ({ d, age, searching: false, fine: false, oR: 0, c: 0, best: 0, bestScore: 0 });
+    const shSetRatio = (S, ratio) => {      // mirrors Shifter::setRatio: a new interval restarts both heads
+      if (Math.abs(ratio - S.cur) < 1e-6) return;
+      S.cur = ratio; S.rho = 1 - ratio;
+      S.start = S.rho > 0 ? S.base : S.base + S.grain * -S.rho;
+      S.h = [shHead(S.start, 0), shHead(S.start + S.half * S.rho, S.half)];
+    };
     const shifter = ratio => {
-      const S = { dl: delay(8192), rho: 1 - ratio, grain: Math.trunc(0.04 * sr), corr: Math.trunc(0.006 * sr),
-        search: Math.trunc(0.012 * sr) & ~1, lead: Math.trunc(0.0065 * sr) };
-      S.half = Math.trunc(S.grain / 2); S.base = S.corr + S.lead + 2; S.start = S.rho > 0 ? S.base : S.base + S.grain * -S.rho;
-      const head = (d, age) => ({ d, age, searching: false, fine: false, oR: 0, c: 0, best: 0, bestScore: 0 });
-      S.h = [head(S.start, 0), head(S.start + S.half * S.rho, S.half)];
+      const S = { dl: delay(8192), grain: Math.trunc(0.04 * sr), corr: Math.trunc(0.006 * sr),
+        search: Math.trunc(0.012 * sr) & ~1, lead: Math.trunc(0.0065 * sr), cur: -1 };
+      S.half = Math.trunc(S.grain / 2); S.base = S.corr + S.lead + 2;
+      shSetRatio(S, ratio);
       return S;
     };
     const shScore = (S, hd, c, delta) => {
@@ -380,8 +386,19 @@ class RaspEngine {
       }
       return y;
     };
-    const shDn = shifter(0.5), shUp = shifter(2), oDnHp = svf(), oDnLp = svf(), oUpHp = svf(), oUpLp = svf();
-    svfSet(oDnHp, 55, 0.707); svfSet(oDnLp, 2200, 0.707); svfSet(oUpHp, 500, 0.707); svfSet(oUpLp, 9000, 0.707);
+    // Pitch layers (mirrors class Pitch): interval in semitones, filters follow it.
+    const pLayer = () => ({ sh: shifter(1), hp: svf(), lp: svf(), semis: 99 });
+    const pLayers = [pLayer(), pLayer()];
+    const pSet = (v, semis) => {
+      semis = clamp(semis | 0, -12, 12);
+      if (semis === v.semis) return;
+      v.semis = semis;
+      shSetRatio(v.sh, Math.fround(Math.pow(2, semis / 12)));
+      if (semis < 0) { svfSet(v.hp, 55, 0.707); svfSet(v.lp, 2200 * Math.pow(4, (semis + 12) / 11), 0.707); }
+      else { svfSet(v.hp, semis === 0 ? 55 : 500 * Math.pow(4, (semis - 12) / 11), 0.707); svfSet(v.lp, 9000, 0.707); }
+    };
+    pSet(pLayers[0], -12); pSet(pLayers[1], 12);
+    const pRun = (v, x) => { svfRun(v.hp, shRun(v.sh, x)); svfRun(v.lp, v.hp.hp); return v.lp.lp; };
     const gOctD = sm(0, 30), gOctU = sm(0, 30);
 
     let p = null;
@@ -392,7 +409,7 @@ class RaspEngine {
     let gain = 1, prevC = 0, prevF = 0;
     const KCLIP = 0.3;
     // voicing
-    const vLow = bq(), vMud = bq(), vPres = bq(), vAir = bq(), vExtra = bq();
+    const vLow = bq(), vMud = bq(), vPres = bq(), vAir = bq(), vExtra = bq(), vBody = bq();
     // de-esser
     const deBand = svf(); svfSet(deBand, 7000, 1.0);
     const deAtt = coefMs(0.5), deRel = coefMs(60);
@@ -464,6 +481,7 @@ class RaspEngine {
       const V = [[170, 2.5, 420, -2.0, 2600, 1.5, 10000, 0.5], [150, 1.5, 450, -3.0, 3000, 3.0, 10000, 1.0], [120, 0.5, 500, -3.5, 3500, 4.0, 11000, 4.0]][b];
       lowShelf(vLow, V[0], V[1]); peaking(vMud, V[2], 1.2, V[3]); peaking(vPres, V[4], 0.9, V[5]); highShelf(vAir, V[6], V[7]);
       highShelf(vExtra, 7000, clamp(p.airDb || 0, 0, 12));
+      peaking(vBody, 220, 0.8, clamp(p.bodyDb || 0, 0, 9));
       deDepth = p.deEss;
       X.on = p.bleed > 0.001; X.thr = -70 + 40 * p.bleed;
       C.amount = p.chop; C.lvRange = 15 * p.chop;
@@ -486,8 +504,11 @@ class RaspEngine {
       gFlv.target = p.flavourOn ? db(p.flavourGainDb) : 0;
       gOut.target = db(p.outDb); gMix.target = p.mix; gIn.target = db(p.inDb || 0);
       gMega.target = p.mega ? 1 : 0;
-      gOctD.target = clamp(p.octDown || 0, 0, 1); gOctU.target = clamp(p.octUp || 0, 0, 1) * 0.7;
-      H.octDown = (p.octDown || 0) > 0.05; H.octUp = (p.octUp || 0) > 0.05;
+      const s1 = p.pitch1Semi ?? -12, s2 = p.pitch2Semi ?? 12;
+      pSet(pLayers[0], s1); pSet(pLayers[1], s2);
+      gOctD.target = clamp(p.octDown || 0, 0, 1) * (s1 > 0 ? 0.7 : 1); gOctU.target = clamp(p.octUp || 0, 0, 1) * (s2 > 0 ? 0.7 : 1);
+      const on1 = (p.octDown || 0) > 0.05, on2 = (p.octUp || 0) > 0.05;
+      H.octDown = (on1 && s1 === -12) || (on2 && s2 === -12); H.octUp = (on1 && s1 === 12) || (on2 && s2 === 12);
       thSend.target = p.throwOn ? 1 : 0;
       thTime.target = clamp(60 / clamp(p.bpm, 40, 240) * sr, 1, THMAX - 4);
     };
@@ -731,7 +752,7 @@ class RaspEngine {
         const wet = drive(x, gm > 1e-4);
         x = lerp(driveDry, wet, gm);
         svfRun(dHp1, x); svfRun(dHp2, dHp1.hp); x = dHp2.hp;
-        x = bqRun(vExtra, bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x)))));
+        x = bqRun(vBody, bqRun(vExtra, bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x))))));
         x = deEss(x);
         x = chop(x, eg > 0.7) * eg * gc;
       }
@@ -741,9 +762,8 @@ class RaspEngine {
       if (gmg > 1e-4) x = lerp(x, mega(x), gmg);
       const god = smNext(gOctD), gou = smNext(gOctU);
       if (god > 1e-4 || gou > 1e-4) {
-        svfRun(oDnHp, shRun(shDn, x)); svfRun(oDnLp, oDnHp.hp);
-        svfRun(oUpHp, shRun(shUp, x)); svfRun(oUpLp, oUpHp.hp);
-        x += god * oDnLp.lp + gou * oUpLp.lp;
+        const pa = pRun(pLayers[0], x), pb = pRun(pLayers[1], x);
+        x += god * pa + gou * pb;
       }
       const gt = smNext(gThk), gf = smNext(gFlv);
       tO[0] = tO[1] = fO[0] = fO[1] = 0;
@@ -869,20 +889,20 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, octDown: 0, octUp: 0, bleed: 0.7, controlGainDb: 0,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
   bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false,
 };
 const PRESETS = {
-  huge:    { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 0, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, hiCut: 0.95, airDb: 4 },
+  huge:    { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, hiCut: 0.95, airDb: 4, bodyDb: 5 },
   natural: {},
   dark:    { brightness: 0, drive: 0.5, loCut: 0.36, hiCut: 0.72, darken: 0.5, tilt: 0.4, tail: 0.4 },
   bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65 },
   live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.15, duck: 0.75, bleed: 0.78, loCut: 0.56, glue: 0.4 },
   raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0 },
-  air:     { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 0, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, brightness: 2, hiCut: 1, airDb: 10, deEss: 0.7 },
+  air:     { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, hiCut: 1, airDb: 7, bodyDb: 5, deEss: 0.75 },
 };
 let params = Object.assign({}, DEFAULTS);
 
@@ -914,8 +934,11 @@ const MENU = [
   ["bleed", "Bleed reducer", 0, 1, 0.01, v => v < 0.001 ? "off" : Math.round(-70 + 40 * v) + " dBFS"],
   ["deEss", "De-esser", 0, 1, 0.01, pct],
   ["airDb", "Air (7 kHz shelf)", 0, 12, 0.5, v => "+" + v.toFixed(1) + " dB"],
-  ["octDown", "Octave down", 0, 1, 0.01, pct],
-  ["octUp", "Octave up", 0, 1, 0.01, pct],
+  ["bodyDb", "Body (220 Hz)", 0, 9, 0.5, v => "+" + v.toFixed(1) + " dB"],
+  ["pitch1Semi", "Pitch 1 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
+  ["octDown", "Pitch 1 level", 0, 1, 0.01, pct],
+  ["pitch2Semi", "Pitch 2 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
+  ["octUp", "Pitch 2 level", 0, 1, 0.01, pct],
   ["Bus"],
   ["glue", "Glue", 0, 1, 0.01, pct], ["outDb", "Output", -24, 12, 0.5, v => v.toFixed(1) + " dB"],
   ["Section levels"],
