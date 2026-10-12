@@ -59,3 +59,19 @@ the A/B.
 
 Exports were mono, so doubler/width settings couldn't be measured; stereo
 exports of the doubler and harmony settings would fix that.
+
+### Same DI, like for like (2026-10-12)
+
+With `andrew-di-dry.wav` itself, and RASP's reverb, delay and doubles off to
+match the Mantra exports (after the output change above):
+
+| | in/out slope | phrase spread | gaps | 100 Hz | 250 Hz | 4 kHz | 16 kHz |
+|---|---|---|---|---|---|---|---|
+| Mantra median (IQR) | 0.35 (0.28-0.43) | 4.0 dB | -21.7 | -8 | -1 | +4.5 | -5.6 |
+| RASP huge | 0.17 | 2.0 dB | -18.1 | -1 | +2 | +3.8 | -1.3 |
+| RASP natural | 0.25 | 2.8 dB | -20.6 | -2 | -0.5 | +3.6 | -14.7 |
+| RASP bright | 0.27 | 2.7 dB | -21.2 | -20 | -2 | +4.9 | -3.3 |
+
+RASP is still denser than any Mantra chain but 3 (slope < 0.25), and Huge
+lifts the gaps ~4 dB more. Left for now: compression was asked for in Logic,
+and the stereo re-exports and A/B round 2 come first.
