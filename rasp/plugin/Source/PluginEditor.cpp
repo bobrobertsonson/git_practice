@@ -105,6 +105,11 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     bypassAttach = std::make_unique<APVTS::ButtonAttachment>(s, "bypass", bypass);
     addAndMakeVisible(bypass);
 
+    holdButton(megaBtn, "mega");
+    holdButton(throwBtn, "throwOn");
+    megaBtn.setTooltip("Hold: hard-clipped mid burst (or automate the Mega parameter)");
+    throwBtn.setTooltip("Hold: send the voice to a long delay; repeats ring out after release");
+
     clearNotches.onClick = [this] { proc.requestClearNotches(); };
     addAndMakeVisible(clearNotches);
 
@@ -117,6 +122,19 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
 }
 
 RaspEditor::~RaspEditor() { setLookAndFeel(nullptr); }
+
+void RaspEditor::holdButton(juce::TextButton& b, const char* id) {
+    auto* prm = proc.apvts.getParameter(id);
+    b.setColour(juce::TextButton::buttonOnColourId, kAccent);
+    b.onStateChange = [&b, prm] {
+        const bool down = b.isDown();
+        if (down == (prm->getValue() > 0.5f)) return;
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost(down ? 1.f : 0.f);
+        prm->endChangeGesture();
+    };
+    addAndMakeVisible(b);
+}
 
 void RaspEditor::addKnob(Panel& pn, const char* id, const juce::String& label) {
     pn.cells.push_back(std::make_unique<KnobCell>(proc.apvts, id, label));
@@ -163,6 +181,10 @@ void RaspEditor::resized() {
     clearNotches.setBounds(top.removeFromRight(120));
     top.removeFromRight(8);
     preset.setBounds(top.removeFromRight(150));
+    top.removeFromRight(16);
+    throwBtn.setBounds(top.removeFromRight(80));
+    top.removeFromRight(8);
+    megaBtn.setBounds(top.removeFromRight(80));
 
     status.setBounds(getLocalBounds().removeFromBottom(30).reduced(kPad + 4, 0));
 
@@ -185,6 +207,9 @@ void RaspEditor::timerCallback() {
       << " dB   Bleed " << juce::String(m.bleed.load(), 0) << " dB   Notches " << m.notches.load() << "   "
       << juce::roundToInt(m.bpm.load()) << " bpm" << (m.hostTempo.load() ? " (host)" : "");
     status.setText(t, juce::dontSendNotification);
+    // Light the hold buttons when automation (not the mouse) engages them.
+    megaBtn.setToggleState(proc.apvts.getRawParameterValue("mega")->load() > 0.5f, juce::dontSendNotification);
+    throwBtn.setToggleState(proc.apvts.getRawParameterValue("throwOn")->load() > 0.5f, juce::dontSendNotification);
     if (preset.getSelectedId() != proc.getCurrentProgram() + 1)
         preset.setSelectedId(proc.getCurrentProgram() + 1, juce::dontSendNotification);
 }

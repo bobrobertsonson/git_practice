@@ -5,11 +5,15 @@
 // Builds against libDaisy v9.0.0 (see Makefile); not yet run on hardware.
 //
 //   Encoder turn   preset: huge, natural, dark, bright, live, raw (LED 1 colour)
-//   Encoder press  bypass (level-matched; LED 1 off while bypassed)
+//   Encoder press  bypass (level-matched; LED 1 off while bypassed); hold 2 s = clear feedback notches
 //   Knob 1         drive          Knob 2   chop
-//   Button 1       input gain step: 0 / +6 / +12 / +18 dB (LED 2 flashes the step)
-//   Button 2       thicken + flavour on/off; hold 2 s = clear feedback notches
-//   LED 2          red = chop compressing > 3 dB, blue = feedback notch active
+//   Button 1       tap: input gain step 0 / +6 / +12 / +18 dB (LED 2 flashes the step)
+//                  hold: MEGA while held (hard-clipped mid burst)
+//   Button 2       tap: thicken + flavour on/off
+//                  hold: THROW while held (long delay; repeats ring out after release)
+//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on)
+//   LED 2          red = chop compressing > 3 dB, blue = feedback notch active,
+//                  white = a momentary effect is held
 #include "daisy_pod.h"
 #include "../../dsp/rasp.h"
 #include "../../dsp/presets.h"
@@ -29,8 +33,9 @@ static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer
 
 static void loadPreset() {
     bool bypass = params.bypass, thk = params.thickenOn, flv = params.flavourOn;
+    bool mega = params.mega, thr = params.throwOn;
     params = rasp::presetParams(preset);
-    params.bypass = bypass;
+    params.bypass = bypass; params.mega = mega; params.throwOn = thr;
     if (!thk) params.thickenOn = false;
     if (!flv) params.flavourOn = false;
 }
@@ -45,21 +50,44 @@ int main() {
     proc.setParams(params);
     hw.StartAdc();
     hw.StartAudio(AudioCallback);
+    hw.midi.StartReceive();
 
     static const float presetColour[rasp::kNumPresets][3] = {
         {1, 0.3f, 0}, {0, 1, 0}, {0.6f, 0, 1}, {0, 0.8f, 1}, {1, 1, 0}, {1, 1, 1}};
     uint32_t flashUntil = 0;
+    constexpr float kHoldMs = 250.f;   // longer than a tap: the button acts as a momentary
+    bool midiMega = false, midiThrow = false, cleared = false;
+    float encHeld = 0.f, b1Held = 0.f, b2Held = 0.f;
     for (;;) {
         hw.ProcessAllControls();
         uint32_t now = System::GetNow();
         int inc = hw.encoder.Increment();
         if (inc) { preset = (preset + inc + rasp::kNumPresets) % rasp::kNumPresets; loadPreset(); }
-        if (hw.encoder.RisingEdge()) params.bypass = !params.bypass;
-        if (hw.button1.RisingEdge()) { gainStep = (gainStep + 1) % 4; flashUntil = now + 150 * (gainStep + 1); }
-        if (hw.button2.FallingEdge() && hw.button2.TimeHeldMs() < 2000) {
+        // Taps act on release, so a hold never also triggers the tap action.
+        // libDaisy's TimeHeldMs() reads 0 once released, so keep the last value.
+        if (hw.encoder.Pressed()) encHeld = hw.encoder.TimeHeldMs();
+        if (hw.button1.Pressed()) b1Held = hw.button1.TimeHeldMs();
+        if (hw.button2.Pressed()) b2Held = hw.button2.TimeHeldMs();
+        if (hw.encoder.FallingEdge() && encHeld < 2000) params.bypass = !params.bypass;
+        if (hw.encoder.Pressed() && encHeld > 2000 && !cleared) { proc.clearHowl(); cleared = true; }
+        if (!hw.encoder.Pressed()) cleared = false;
+        if (hw.button1.FallingEdge() && b1Held < kHoldMs) {
+            gainStep = (gainStep + 1) % 4; flashUntil = now + 150 * (gainStep + 1);
+        }
+        if (hw.button2.FallingEdge() && b2Held < kHoldMs) {
             params.thickenOn = params.flavourOn = !params.thickenOn;
         }
-        if (hw.button2.Pressed() && hw.button2.TimeHeldMs() > 2000) proc.clearHowl();
+        hw.midi.Listen();
+        while (hw.midi.HasEvents()) {
+            MidiEvent e = hw.midi.PopEvent();
+            if (e.type == ControlChange) {
+                auto cc = e.AsControlChange();
+                if (cc.control_number == 80) midiMega = cc.value >= 64;
+                if (cc.control_number == 81) midiThrow = cc.value >= 64;
+            }
+        }
+        params.mega    = (hw.button1.Pressed() && b1Held >= kHoldMs) || midiMega;
+        params.throwOn = (hw.button2.Pressed() && b2Held >= kHoldMs) || midiThrow;
 
         params.drive = hw.knob1.Process();
         params.chop = hw.knob2.Process();
@@ -70,8 +98,9 @@ int main() {
         float on = params.bypass ? 0.f : 1.f;
         hw.led1.Set(c[0] * on, c[1] * on, c[2] * on);
         bool flash = now < flashUntil && ((flashUntil - now) / 150) % 2 == 0;
-        hw.led2.Set(flash ? 1.f : (grDb > 3.f ? 1.f : 0.f), flash ? 1.f : 0.f,
-                    flash ? 1.f : (proc.howlNotches() > 0 ? 1.f : 0.f));
+        bool held = params.mega || params.throwOn;
+        hw.led2.Set(flash || held ? 1.f : (grDb > 3.f ? 1.f : 0.f), flash || held ? 1.f : 0.f,
+                    flash || held ? 1.f : (proc.howlNotches() > 0 ? 1.f : 0.f));
         hw.UpdateLeds();
         System::Delay(1);
     }

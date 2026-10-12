@@ -5,15 +5,19 @@
 //            closed loop: the mic hears the voice plus the speaker through a
 //            resonant room (modes at 1.3 and 2.9 kHz, 10 ms away)
 //   live_test falsepos in.wav [name=value ...]        how many notches a take triggers
+//   live_test momentary in.wav out.wav [name=value ...]
+//            hold mega 2-4 s and 6-8 s, hold throw 10-11 s: level jump and
+//            click size at each mega edge, and the throw's tail after release
 //
 // Prints numbers; the WAVs are for listening and for tools that measure them.
 #include "common.h"
 #include <cmath>
 
 static rasp::Processor proc;   // ~1.5 MB: keep it off the stack
+static rasp::Processor ref;    // the same run without the momentary effects
 
 static int usage() {
-    std::fprintf(stderr, "usage: live_test bypass|feedback|falsepos ... (see source)\n");
+    std::fprintf(stderr, "usage: live_test bypass|feedback|falsepos|momentary ... (see source)\n");
     return 1;
 }
 
@@ -31,6 +35,47 @@ int main(int argc, char** argv) {
     proc.setParams(p);
     const size_t n = in.size();
     std::vector<float> L(n), R(n);
+
+    if (mode == "momentary") {
+        if (argc < 4) return usage();
+        ref.init((float)sr); ref.setParams(p);
+        std::vector<float> rL(n), rR(n);
+        auto held = [&](double t, double a, double b) { return t >= a && t < b; };
+        for (size_t i = 0; i < n; i++) {
+            double t = (double)i / sr;
+            bool mg = held(t, 2, 4) || held(t, 6, 8), th = held(t, 10, 11);
+            if (mg != p.mega || th != p.throwOn) { p.mega = mg; p.throwOn = th; proc.setParams(p); }
+            proc.process(in[i], L[i], R[i]);
+            ref.process(in[i], rL[i], rR[i]);
+        }
+        auto rmsDb = [&](const std::vector<float>& x, double a, double b) {
+            size_t i0 = (size_t)(a * sr), i1 = std::min(n, (size_t)(b * sr));
+            double e = 0; for (size_t i = i0; i < i1; i++) e += (double)x[i] * x[i];
+            return 10 * std::log10(e / std::max<size_t>(1, i1 - i0) + 1e-20);
+        };
+        // Clicks: largest sample step near an edge vs the largest step of
+        // the reference run in the same place (the voice itself moves too).
+        auto step = [&](const std::vector<float>& x, double a, double b) {
+            size_t i0 = (size_t)(a * sr) + 1, i1 = std::min(n, (size_t)(b * sr));
+            float m = 0; for (size_t i = i0; i < i1; i++) m = std::max(m, std::fabs(x[i] - x[i - 1]));
+            return m;
+        };
+        std::printf("mega edge   level change (0.3 s after vs before)   largest step: with mega / without\n");
+        for (double e : {2.0, 4.0, 6.0, 8.0}) {
+            if (e * sr >= n) break;
+            double d = rmsDb(L, e + 0.03, e + 0.33) - rmsDb(L, e - 0.33, e - 0.03);
+            double dr = rmsDb(rL, e + 0.03, e + 0.33) - rmsDb(rL, e - 0.33, e - 0.03);
+            std::printf("  %4.1f s    %+5.1f dB (voice itself %+5.1f dB)            %6.1f / %6.1f dBFS\n", e, d, dr,
+                        20 * std::log10(step(L, e - 0.01, e + 0.02) + 1e-9), 20 * std::log10(step(rL, e - 0.01, e + 0.02) + 1e-9));
+        }
+        std::vector<float> dL(n);
+        for (size_t i = 0; i < n; i++) dL[i] = L[i] - rL[i];
+        std::printf("throw tail after release at 11 s (difference from the no-throw run, per 0.5 s):\n ");
+        for (double t = 11.0; t < 15.0 && t * sr < n; t += 0.5) std::printf(" %+6.1f", rmsDb(dL, t, t + 0.5));
+        std::printf(" dB\nbefore the throw (9-10 s, should be silent): %+.1f dB\n", rmsDb(dL, 9.0, 10.0));
+        writeWav(argv[3], L, R, sr);
+        return 0;
+    }
 
     if (mode == "bypass") {
         if (argc < 4) return usage();

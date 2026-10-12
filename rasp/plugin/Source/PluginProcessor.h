@@ -11,7 +11,7 @@ struct ParamSpec {
     enum Kind { Unit, Db, Bool, Choice, Bpm };
     const char* id;
     const char* name;
-    const char* section;       // "Control", "Thicken", "Flavour", "Bus", "Live"
+    const char* section;       // "Control", "Thicken", "Flavour", "Bus", "Live", "Momentary"
     Kind kind;
     float lo, hi;              // Db and Bpm ranges (Unit is 0..1)
     const char* choices;       // Choice: "a|b|c"

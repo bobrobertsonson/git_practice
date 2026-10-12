@@ -57,6 +57,9 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"bypassMatch", "Match Bypass Level", "Live", K::Bool, 0, 1, nullptr, RASP_B(bypassMatch), nullptr, true},
         {"mono", "Mono", "Live", K::Bool, 0, 1, nullptr, RASP_B(mono), nullptr, true},
         {"howl", "Feedback Guard", "Live", K::Bool, 0, 1, nullptr, RASP_B(howl), nullptr, true},
+        // MOMENTARY: on while held (buttons in the window, or automation lanes)
+        {"mega", "Mega", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(mega), nullptr, true},
+        {"throwOn", "Throw", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(throwOn), nullptr, true},
     };
     return specs;
 }

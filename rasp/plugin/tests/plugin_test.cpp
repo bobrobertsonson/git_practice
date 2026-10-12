@@ -159,6 +159,23 @@ int main(int argc, char** argv) {
     Out bo = runPlugin(by, in, sr, 1, 2, [] { return 512; });
     check(std::fabs(rmsDb(bo.L) - base) < 3.0, "bypassed loudness within 3 dB of effect (dB)", rmsDb(bo.L) - base);
 
+    // 7. Momentary effects: the plugin's Mega/Throw parameters drive the engine's.
+    {
+        rasp::Params mp = rasp::presetParams(0); mp.howl = false; mp.mega = true; mp.throwOn = true;
+        auto me = std::make_unique<rasp::Processor>(); me->init((float)sr); me->setParams(mp);
+        Out mr; mr.L.resize(in.size()); mr.R.resize(in.size());
+        for (size_t i = 0; i < in.size(); i++) me->process(in[i], mr.L[i], mr.R[i]);
+        RaspProcessor mpl; mpl.setCurrentProgram(0); setParam(mpl, "sync", 0.f);
+        setParam(mpl, "mega", 1.f); setParam(mpl, "throwOn", 1.f);
+        mpl.setCurrentProgram(3); mpl.setCurrentProgram(0);           // presets must not release a held switch
+        Out mo2 = runPlugin(mpl, in, sr, 1, 2, [] { return 512; });
+        // -80 dB here: mega's +36 dB into the clipper magnifies the last-bit
+        // parameter rounding (measured -93 dB). A preset change releasing a
+        // held switch would differ by 0 dB.
+        check(maxDiff(mo2.L, mr.L) < 1e-4, "mega + throw held == engine (-80 dB), survives preset change", maxDiff(mo2.L, mr.L));
+        check(maxDiff(mo2.L, pa.L) > 1e-2, "mega + throw change the sound", maxDiff(mo2.L, pa.L));
+    }
+
     // Editor.
     {
         RaspProcessor ep;

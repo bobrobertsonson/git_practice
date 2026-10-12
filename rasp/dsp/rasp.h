@@ -249,6 +249,10 @@ struct Params {
     bool  bypassMatch = true;  // match the bypassed voice to the effect's loudness
     bool  mono       = false;  // one-channel PA: drop the stereo comb taps, sum to mono
     bool  howl       = true;   // automatic feedback notches
+
+    // MOMENTARY (held footswitch / button; on while held)
+    bool  mega       = false;  // the voice becomes a mid-focused hard-clipped burst
+    bool  throwOn    = false;  // the voice is sent to a long ping-pong delay; repeats ring out after release
 };
 
 // ---------------------------------------------------------------------------
@@ -659,6 +663,104 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Mega: a momentary "mega distortion" burst, modelled on a producer-printed
+// accent layer (KnockedLoose session, 104 MEGA DIST VOCAL). That layer is
+// hard-clipped and band-focused: relative to its 800 Hz octave, 100-200 Hz sit
+// 29-36 dB down, 400 Hz -13, 1.6 kHz -7, 3.2 kHz -12, 6.4 kHz -17, 10 kHz -19.
+// Run on the same singer's clean main stem, this voicing lands within ~4 dB
+// of that from 400 Hz to 18 kHz (lows are tighter still).
+// Level: the clipped tone is scaled by the voice's own envelope (fast RMS,
+// tracked even while mega is off), like a gated fuzz. Matching wet to dry
+// RMS instead would turn mic hiss in the gaps into full-level fizz.
+// Pre-filter to the mids, clip hard (4x oversampled, ADAA), filter to the band
+// again, then match the input loudness so stomping it changes texture, not
+// level. Replaces the control output while held; thicken and flavour follow it.
+// ---------------------------------------------------------------------------
+class Mega {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        up.init(); down.init();
+        preHp1.set(500.f, 0.54f, sr); preHp2.set(500.f, 1.31f, sr);
+        prePeak.peaking(750.f, 0.9f, 6.f, sr);
+        postHp.set(450.f, 0.707f, sr);
+        postLp1.set(12000.f, 0.6f, sr); postLp2.set(12000.f, 0.6f, sr);
+        postPeak.peaking(700.f, 1.0f, 9.f, sr);
+        envAtt = coefMs(3.f, sr); envRel = coefMs(60.f, sr);
+    }
+    // Call every sample, engaged or not, so the envelope is ready on the first stomp.
+    void track(float x) {
+        float e = x * x;
+        ms = e + (e > ms ? envAtt : envRel) * (ms - e);
+    }
+    float process(float x) {
+        preHp1.process(x); preHp2.process(preHp1.hp);
+        float u0 = prePeak.process(preHp2.hp) * kGain;
+        float y = 0.f;
+        for (int k = 0; k < 4; k++) {
+            float u = up.process(k == 0 ? u0 * 4.f : 0.f);
+            y = down.process(clipADAA(u));
+        }
+        postHp.process(y);
+        postLp1.process(postHp.hp); postLp2.process(postLp1.lp);
+        float wet = postPeak.process(postLp2.lp);
+        return wet * std::sqrt(ms) * kSatInv;
+    }
+private:
+    // First-order ADAA of a hard clip at +-1: F(x) = x^2/2 inside, |x| - 1/2 outside.
+    float clipADAA(float c) {
+        float a = std::fabs(c);
+        float F = a <= 1.f ? 0.5f * c * c : a - 0.5f;
+        float dx = c - prevC, y;
+        if (std::fabs(dx) > 1e-5f) y = (F - prevF) / dx;
+        else y = clampf(0.5f * (c + prevC), -1.f, 1.f);
+        prevC = c; prevF = F;
+        return y;
+    }
+    static constexpr float kGain = 60.f;          // +36 dB into the clipper
+    static constexpr float kSatInv = 1.f / 2.0f;  // set so mega lands ~1 dB over the normal sound (3 singers)
+    float sr = 48000.f, prevC = 0.f, prevF = 0.f, ms = 0.f, envAtt = 0.f, envRel = 0.f;
+    OSFilter up, down;
+    SVF preHp1, preHp2, postHp, postLp1, postLp2;
+    Biquad prePeak, postPeak;
+};
+
+// ---------------------------------------------------------------------------
+// Throw: a momentary delay send. While held, the voice feeds its own
+// quarter-note ping-pong delay with long feedback; on release the send closes
+// and the repeats ring out under the next phrase. Separate from the flavour
+// delay so a throw never makes the normal delay louder, and it works with the
+// flavour section switched off.
+// ---------------------------------------------------------------------------
+class Throw {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        fbHp.setCutoff(350.f, sr); fbLp.setCutoff(3500.f, sr);
+        send.init(0.f, sr, 8.f);
+        timeS.init(sr * 0.5f, sr, 80.f);
+    }
+    void set(bool on, float bpm) {
+        send.target = on ? 1.f : 0.f;
+        timeS.target = clampf(60.f / clampf(bpm, 40.f, 240.f) * sr, 1.f, (float)(kMax - 4));
+    }
+    void process(float x, float& L, float& R) {
+        float t = timeS.next();
+        float dL = dlL.read(t), dR = dlR.read(t);
+        dlL.write(x * send.next() + fbLp.lp(fbHp.hp(dR)) * kFeedback);
+        dlR.write(dL * kFeedback);
+        L = kLevel * dL; R = kLevel * dR;
+    }
+private:
+    static constexpr int kMax = (1 << 17) * RASP_SR_SCALE;      // 2.7 s @ 48k: a quarter note down to 22 bpm
+    static constexpr float kFeedback = 0.62f, kLevel = 0.8f;    // ~4 s to -60 dB at 120 bpm
+    float sr = 48000.f;
+    DelayLine<kMax> dlL, dlR;
+    OnePole fbHp, fbLp;
+    Smoothed send, timeS;
+};
+
+// ---------------------------------------------------------------------------
 // Bus: stereo-linked glue compressor (2:1, slow) into a -1 dBFS peak limiter.
 // The output level drives the limiter, so turning it up makes the whole
 // vocal denser and louder without clipping.
@@ -824,12 +926,18 @@ public:
     void process(float& L, float& R) {
         for (int i = 0; i < kMaxNotch; i++) if (notches[i].active) { L = notches[i].l.process(L); R = notches[i].r.process(R); }
     }
+    // Don't deploy new notches for now + 0.3 s: mega's clipped, mid-focused tone
+    // is tonal enough to read as feedback (one false notch at 645 Hz on a
+    // Gojira lead). Existing notches keep working.
+    void holdOff() { hold = (int)(0.3f * sr / kHop) + 1; }
     int activeNotches() const { int c = 0; for (const auto& n : notches) c += n.active; return c; }
     int deployedCount() const { return deployed; }
     float notchHz(int i) const { return notches[i].active ? notches[i].hz : 0.f; }
 private:
+    int hold = 0;
     struct Notch { bool active = false; float hz = 0, depthDb = 0; uint32_t age = 0; Biquad l, r; };
     void frame() {
+        if (hold > 0) { hold--; candFrames = 0; candBin = -1; return; }
         for (int i = 0; i < kN; i++) { re[i] = ring[(pos + i) & (kN - 1)] * win[i]; im[i] = 0.f; }
         fft.run(re, im);
         int lo = (int)(150.f / sr * kN), hi = (int)(8000.f / sr * kN);
@@ -895,7 +1003,8 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
-        bypassM.init(sr); howlG.init(sr);
+        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr);
+        gMega.init(0.f, sr, 10.f);
         gIn.init(1.f, sr); gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
     }
@@ -920,6 +1029,8 @@ public:
         gOut.target = dbToLin(p.outDb);
         gIn.target = dbToLin(p.inDb);
         gMix.target = p.mix;
+        gMega.target = p.mega ? 1.f : 0.f;
+        throwFx.set(p.throwOn, p.bpm);
     }
 
     void process(float in, float& outL, float& outR) {
@@ -942,6 +1053,11 @@ public:
             x = deEss.process(x);
             x = chop.process(x) * eg * gc;
         }
+        // MOMENTARY: mega replaces the voice (crossfaded) before the effects.
+        float gmg = gMega.next();
+        megaFade = gmg;
+        mega.track(x);
+        if (gmg > 1e-4f) x = lerp(x, mega.process(x), gmg);
         // THICKEN + FLAVOUR (parallel, fed by the control output)
         float tL = 0, tR = 0, fL = 0, fR = 0;
         float gt = gThk.next(), gf = gFlv.next();
@@ -949,7 +1065,9 @@ public:
         if (gf > 1e-4f) flavour.process(x, x, fL, fR);
         float dry = p.solo ? 0.f : x;
         float go = gOut.next();
-        float L = (dry + gt * tL + gf * fL) * go, R = (dry + gt * tR + gf * fR) * go;
+        float wL, wR;
+        throwFx.process(x, wL, wR);
+        float L = (dry + gt * tL + gf * fL + wL) * go, R = (dry + gt * tR + gf * fR + wR) * go;
         if (p.mono) { float m = 0.5f * (L + R); L = R = m; }
         // BUS
         bus.process(L, R);
@@ -959,6 +1077,7 @@ public:
         // Feedback notches last, so they also protect the bypassed voice; the
         // detector listens to exactly what goes to the speakers.
         if (p.howl) {
+            if (megaFade > 1e-4f) howlG.holdOff();
             howlG.process(L, R);
             howlG.analyze(0.5f * (L + R));
         }
@@ -989,7 +1108,10 @@ private:
     Bus bus;
     BypassMatcher bypassM;
     HowlGuard howlG;
-    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix;
+    Mega mega;
+    Throw throwFx;
+    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega;
+    float megaFade = 0.f;
 };
 
 } // namespace rasp

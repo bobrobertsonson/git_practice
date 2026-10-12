@@ -30,6 +30,8 @@ private:
     std::vector<Panel> panels;
     juce::ComboBox preset;
     juce::TextButton bypass{"BYPASS"}, clearNotches{"Clear notches"};
+    juce::TextButton megaBtn{"MEGA"}, throwBtn{"THROW"};   // momentary: on while held
+    void holdButton(juce::TextButton&, const char* id);
     juce::Label status;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttach;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> powerAttach;

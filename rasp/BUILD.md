@@ -43,8 +43,11 @@ make LIBDAISY_DIR=../../../libDaisy program-dfu
 | Encoder press | Level-matched bypass. LED 1 is off while bypassed |
 | Knob 1 / Knob 2 | Drive / chop |
 | Button 1 | Input gain: 0, +6, +12 or +18 dB |
-| Button 2 | Thicken + flavour on/off. Hold 2 s to clear the feedback notches |
-| LED 2 | Red: chop is compressing more than 3 dB. Blue: a feedback notch is active |
+| Encoder hold 2 s | Clear the feedback notches |
+| Button 1 hold | **Mega** while held |
+| Button 2 | Tap: thicken + flavour on/off. Hold: **Throw** while held |
+| TRS MIDI in | CC 80 = Mega, CC 81 = Throw (value ≥ 64 = on) |
+| LED 2 | Red: chop is compressing more than 3 dB. Blue: a feedback notch is active. White: Mega or Throw held |
 
 **What to measure on the bench before Stage 2:**
 - **Round-trip latency:** send a click out of the interface into the Pod and record the Pod's output.
@@ -66,7 +69,7 @@ current parts; quantities match the firmware.
 
 | Part | Qty | ≈ Price | Notes |
 |---|---|---|---|
-| Electrosmith **Daisy Seed 65 MB** | 1 | $30–50 | 64 MB SDRAM holds the 1.5 MB of delay lines. VIN accepts about 4–17 V |
+| Electrosmith **Daisy Seed 65 MB** | 1 | $30–50 | 64 MB SDRAM holds the ~2.5 MB of delay lines. VIN accepts about 4–17 V |
 | 2×20 female headers, 2.54 mm | 2 | $2 | So the Seed plugs in rather than being soldered |
 
 ### Analog: mic in, outputs, headphones
@@ -103,6 +106,8 @@ current parts; quantities match the firmware.
 | ON-OFF-ON toggles (SPDT centre-off) | 2 | $3 each | Tone (dark/natural/bright) and delay time |
 | SPDT ON-ON toggle | 2 | $2 each | Mono switch and ground lift |
 | Momentary pushbutton | 1 | $1 | Solo (hold 2 s to save the preset) |
+| 6.35 mm stereo (TRS) panel jack | 1 | $3 | **AUX** for the momentary effects: tip = Mega (D29), ring = Throw (D30), sleeve = ground |
+| Dual momentary footswitch, TRS | 1 | $40–60 | Plugs into AUX. **Boss FS-7**, or a **Boss FS-6** set to momentary, with a TRS cable. A mono (TS) cable shorts the ring; the firmware ignores a contact closed at power-up, so that only disables Throw |
 | Knob caps | 19 | $15 | – |
 
 ### Connectors
@@ -153,7 +158,7 @@ XLR in ─┬─► THAT1512 (gain pot) ─► divider ─► Daisy IN L ──�
                                                     └── (power off: in → out L)
                                                                    └─► NJM4556 (vol pot) ─► headphone jack
 Pots: 16 → 2× CD4051 (A0, A1; selects D0–D5) · faders A2–A5 · trims A6–A8
-Footswitches D10–D13 · solo D14 · tone D6/D7 · time D8/D9 · mono D28
+Footswitches D10–D13 · solo D14 · tone D6/D7 · time D8/D9 · mono D28 · AUX tip/ring D29/D30
 LEDs via 74HC595 on D24/D25/D26 · relay driver D27 · USB = MIDI + flashing
 ```
 

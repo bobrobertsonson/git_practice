@@ -113,6 +113,8 @@ inline bool setParam(rasp::Params& p, const char* arg) {
     if (k == "bypassmatch") { p.bypassMatch = v != 0.f; return true; }
     if (k == "mono")    { p.mono = v != 0.f; return true; }
     if (k == "howl")    { p.howl = v != 0.f; return true; }
+    if (k == "mega")    { p.mega = v != 0.f; return true; }
+    if (k == "throw")   { p.throwOn = v != 0.f; return true; }
     return false;
 }
 

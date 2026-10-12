@@ -166,15 +166,46 @@ make && make check
 
 - **Platform:** Electrosmith Daisy Seed (STM32H750, 480 MHz Cortex-M7 with a
   double-precision FPU, 64 MB SDRAM). Both firmwares build against libDaisy
-  v9.0.0. The pedal binary is 149 KB, more than the 128 KB of internal flash,
+  v9.0.0. The pedal binary is 153 KB, more than the 128 KB of internal flash,
   so it uses Electrosmith's bootloader (stored in QSPI, runs from SRAM: 30% of
-  it used). The delay lines take 1.5 MB of SDRAM.
+  it used). The delay lines take about 2.5 MB of SDRAM.
 - **CPU:** 26× real time on desktop. **Not measured on the Daisy yet**; Stage 1 does that.
   The heaviest stage is the 4× oversampled drive; it can fall back to 2× if needed.
 - **Precision:** smoothers and slow oscillator phases are double precision.
   As 32-bit floats they drifted measurably.
 - **Power:** 12 V DC, centre-negative. ±12 V for the analog side comes from an isolated DC-DC.
   No phantom power in v1, so use a dynamic mic.
+
+## 3b. Momentary effects: Mega and Throw
+
+Both are on only while held: on the pedal's AUX footswitch, the Pod's buttons,
+the plugin's buttons or automation lanes, the playground's buttons or the M/T
+keys, or MIDI CC 80/81.
+
+- **Mega** turns the voice into a hard-clipped, mid-focused burst for accents.
+  It's modelled on the producer-printed "MEGA DIST VOCAL" layer from the
+  KnockedLoose session. Run on the same singer's clean main stem, it lands
+  within ~4 dB of that layer's tone from 400 Hz to 18 kHz, with tighter lows.
+  - It plays about 1–2 dB over the normal sound on three different singers.
+  - It follows the voice's own envelope like a gated fuzz, so mic hiss
+    between words stays quiet: engaging it into silence measures −94 dBFS.
+  - Thicken and flavour stay on after it, so the burst sits in the same space.
+  - While Mega is held, the feedback guard places no new notches. Its tone read
+    as feedback once (a false notch at 645 Hz on a Gojira lead); with this
+    rule, that take gives zero false notches.
+- **Throw** sends the voice to its own quarter-note ping-pong delay. Let go and
+  the repeats ring out under the next phrase (about −5 dB per repeat, ~4 s at
+  120 bpm), while the main delay stays as set. It also works with flavour off.
+
+`live_test momentary` holds Mega at 2–4 s and 6–8 s and Throw at 10–11 s, then
+reports:
+
+- the level change at each Mega edge
+- click size against the plain run
+- the Throw tail
+
+The playground's JS engine matches the C++ engine to about −80 dB through the
+same schedule.
 
 ## 4b. Logic Pro and other DAWs
 

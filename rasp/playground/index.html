@@ -112,6 +112,9 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 .ledrows { display: flex; gap: 12px; }
 .ledrow { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
 .stomps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding-top: 14px; border-top: 2px solid var(--silk); }
+.stomps.momentary { border-top: 1px dashed var(--silk); margin-top: 12px; align-items: center; }
+.stomps.momentary .hold-hint { grid-column: span 2; margin: 0; font-size: 12px; color: var(--silk); opacity: .85; }
+.stomp.hold[aria-pressed="true"] .cap { transform: translateY(3px); box-shadow: 0 1px 0 #6d675d, 0 0 0 5px rgba(27,24,19,.85); }
 .stomp { display: grid; justify-items: center; gap: 7px; background: none; border: 0; color: var(--silk); padding: 4px; min-height: 0; cursor: pointer; font: inherit; }
 .stomp .cap { width: 52px; height: 52px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #f7f3ea, #9d968a 70%); box-shadow: 0 4px 0 #6d675d, 0 0 0 5px rgba(27,24,19,.85); transition: transform 60ms, box-shadow 60ms; }
 .stomp:active .cap { transform: translateY(3px); box-shadow: 0 1px 0 #6d675d, 0 0 0 5px rgba(27,24,19,.85); }
@@ -144,6 +147,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 @media (max-width: 480px) {
   .pedal { padding: 18px 12px 14px; }
   .stomps { grid-template-columns: repeat(2, 1fr); }
+  .stomps.momentary .hold-hint { grid-column: 1 / -1; }
   .srow { grid-template-columns: 80px 1fr 58px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -215,6 +219,11 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
       <button class="stomp" id="fsThicken" aria-pressed="true"><span class="cap"></span><span class="sl"><span class="led on" id="ledThk"></span>Thicken</span></button>
       <button class="stomp" id="fsFlavour" aria-pressed="true"><span class="cap"></span><span class="sl"><span class="led on" id="ledFlv"></span>Flavour</span></button>
       <button class="stomp" id="fsTap"><span class="cap"></span><span class="sl"><span class="led" id="ledTap"></span>Tap</span></button>
+    </div>
+    <div class="stomps momentary">
+      <button class="stomp hold" id="fsMega" data-key="mega" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledMega"></span>Mega</span></button>
+      <button class="stomp hold" id="fsThrow" data-key="throwOn" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledThrow"></span>Throw</span></button>
+      <p class="hold-hint">Momentary, on while held (or hold <kbd>M</kbd> / <kbd>T</kbd>). <b>Mega</b>: hard-clipped mid burst. <b>Throw</b>: sends the voice to a long delay that rings out after you let go.</p>
     </div>
   </div>
 
@@ -295,6 +304,36 @@ class RaspEngine {
     const ap = (n, len) => ({ buf: new Float32Array(n), len: clamp(len | 0, 1, n), i: 0 });
     const apRun = (r, x, g) => { const d = r.buf[r.i], v = x + g * d; r.buf[r.i] = v; if (++r.i >= r.len) r.i = 0; return d - g * v; };
     const logCosh = x => { const a = Math.abs(x); return a > 5 ? a - 0.69314718 : a + Math.log1p(Math.exp(-2 * a)) - 0.69314718; };
+
+    // ---- MOMENTARY (mirrors Mega and Throw in dsp/rasp.h)
+    const mgUp = osF(), mgDown = osF(), mgPre1 = svf(), mgPre2 = svf(), mgPrePk = bq(), mgPostHp = svf(), mgLp1 = svf(), mgLp2 = svf(), mgPostPk = bq();
+    svfSet(mgPre1, 500, 0.54); svfSet(mgPre2, 500, 1.31); peaking(mgPrePk, 750, 0.9, 6);
+    svfSet(mgPostHp, 450, 0.707); svfSet(mgLp1, 12000, 0.6); svfSet(mgLp2, 12000, 0.6); peaking(mgPostPk, 700, 1.0, 9);
+    const MG = { prevC: 0, prevF: 0, ms: 0, att: coefMs(3), rel: coefMs(60) }, gMega = sm(0, 10);
+    const megaTrack = x => { const e = x * x; MG.ms = e + (e > MG.ms ? MG.att : MG.rel) * (MG.ms - e); };
+    const mega = x => {
+      svfRun(mgPre1, x); svfRun(mgPre2, mgPre1.hp);
+      const u0 = bqRun(mgPrePk, mgPre2.hp) * 60;
+      let y = 0;
+      for (let k = 0; k < 4; k++) {
+        const c = mgUp(k === 0 ? u0 * 4 : 0), a = Math.abs(c);
+        const F = a <= 1 ? 0.5 * c * c : a - 0.5, dx = c - MG.prevC;
+        const d = Math.abs(dx) > 1e-5 ? (F - MG.prevF) / dx : clamp(0.5 * (c + MG.prevC), -1, 1);
+        MG.prevC = c; MG.prevF = F;
+        y = mgDown(d);
+      }
+      svfRun(mgPostHp, y); svfRun(mgLp1, mgPostHp.hp); svfRun(mgLp2, mgLp1.lp);
+      return bqRun(mgPostPk, mgLp2.lp) * Math.sqrt(MG.ms) / 2.0;
+    };
+    const THMAX = 1 << 17, thL = delay(THMAX), thR = delay(THMAX), thFbHp = op(350), thFbLp = op(3500), thSend = sm(0, 8), thTime = sm(sr * 0.5, 80);
+    const throwFx = (x, o) => {
+      const t = smNext(thTime), dL = dRead(thL, t), dR = dRead(thR, t);
+      dWrite(thL, x * smNext(thSend) + opLp(thFbLp, opHp(thFbHp, dR)) * 0.62);
+      dWrite(thR, dL * 0.62);
+      o[0] = 0.8 * dL; o[1] = 0.8 * dR;
+    };
+    const wO = [0, 0];
+    let megaFade = 0;
 
     let p = null;
     // ---- CONTROL
@@ -382,6 +421,9 @@ class RaspEngine {
       gThk.target = p.thickenOn ? db(p.thickenGainDb) : 0;
       gFlv.target = p.flavourOn ? db(p.flavourGainDb) : 0;
       gOut.target = db(p.outDb); gMix.target = p.mix; gIn.target = db(p.inDb || 0);
+      gMega.target = p.mega ? 1 : 0;
+      thSend.target = p.throwOn ? 1 : 0;
+      thTime.target = clamp(60 / clamp(p.bpm, 40, 240) * sr, 1, THMAX - 4);
     };
 
     const drive = x => {
@@ -529,7 +571,7 @@ class RaspEngine {
     this.bypassMatchDb = () => BM.emaD > 0 && BM.emaW > 0 ? lufsOf(BM.emaW) - lufsOf(BM.emaD) : 0;
     const HN = 2048, HHOP = 1024, HMAX = 6;
     const H = { ring: new Float32Array(HN), win: new Float32Array(HN), re: new Float32Array(HN), im: new Float32Array(HN), mag: new Float32Array(HN),
-      rev: new Int32Array(HN), cosT: new Float32Array(HN / 2), sinT: new Float32Array(HN / 2), pos: 0, hop: 0, cand: -1, frames: 0, deployed: 0,
+      rev: new Int32Array(HN), cosT: new Float32Array(HN / 2), sinT: new Float32Array(HN / 2), pos: 0, hop: 0, cand: -1, frames: 0, deployed: 0, hold: 0,
       notches: Array.from({ length: HMAX }, () => ({ active: false, hz: 0, depth: 0, age: 0, l: bq(), r: bq() })) };
     { let bits = 0; while ((1 << bits) < HN) bits++;
       for (let i = 0; i < HN; i++) { let r = 0; for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); H.rev[i] = r; }
@@ -554,6 +596,7 @@ class RaspEngine {
       setNotch(slot, hz, -12); slot.active = true; slot.age = 0; H.deployed++;
     };
     const howlFrame = () => {
+      if (H.hold > 0) { H.hold--; H.cand = -1; H.frames = 0; return; }
       const { re, im, mag } = H;
       for (let i = 0; i < HN; i++) { re[i] = H.ring[(H.pos + i) & (HN - 1)] * H.win[i]; im[i] = 0; }
       fftRun(re, im);
@@ -608,18 +651,23 @@ class RaspEngine {
         x = deEss(x);
         x = chop(x) * eg * gc;
       }
+      const gmg = smNext(gMega);
+      megaFade = gmg;
+      megaTrack(x);
+      if (gmg > 1e-4) x = lerp(x, mega(x), gmg);
       const gt = smNext(gThk), gf = smNext(gFlv);
       tO[0] = tO[1] = fO[0] = fO[1] = 0;
       if (gt > 1e-4) thicken(x, tO);
       if (gf > 1e-4) flavour(x, fO);
       const dry = p.solo ? 0 : x, go = smNext(gOut);
-      out[0] = (dry + gt * tO[0] + gf * fO[0]) * go;
-      out[1] = (dry + gt * tO[1] + gf * fO[1]) * go;
+      throwFx(x, wO);
+      out[0] = (dry + gt * tO[0] + gf * fO[0] + wO[0]) * go;
+      out[1] = (dry + gt * tO[1] + gf * fO[1] + wO[1]) * go;
       if (p.mono) { const m = 0.5 * (out[0] + out[1]); out[0] = out[1] = m; }
       bus(out);
       out[0] = safetyClip(out[0]); out[1] = safetyClip(out[1]);
       bypassMatch(dryVoice, out);
-      if (p.howl) howl(out);
+      if (p.howl) { if (megaFade > 1e-4) H.hold = Math.floor(0.3 * sr / HHOP) + 1; howl(out); }
       return out;
     };
   }
@@ -735,7 +783,7 @@ const DEFAULTS = {
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
-  bypass: false, bypassMatch: true, mono: false, howl: true,
+  bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false,
 };
 const PRESETS = {
   huge:    { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3 },
@@ -878,7 +926,7 @@ addCheck("howl", "Feedback guard (automatic notches on howling frequencies)");
 
 function applyPreset(name) {
   const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm, inDb: params.inDb,
-    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl };
+    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl, mega: params.mega, throwOn: params.throwOn };
   params = Object.assign({}, DEFAULTS, PRESETS[name], keep);
   Object.keys(params).forEach(k => setParam(k, params[k], false));
   sendParams();
@@ -1033,6 +1081,27 @@ const sectionStomp = (id, key, led) => document.getElementById(id).addEventListe
 });
 sectionStomp("fsThicken", "thickenOn", "ledThk");
 sectionStomp("fsFlavour", "flavourOn", "ledFlv");
+// Momentary footswitches: on while held (pointer, Space/Enter on the button,
+// or the M / T keys anywhere on the page).
+function setHold(btn, on) {
+  const key = btn.dataset.key;
+  if (params[key] === on) return;
+  setParam(key, on);
+  btn.setAttribute("aria-pressed", String(on));
+  btn.querySelector(".led").classList.toggle("on", on);
+}
+document.querySelectorAll(".stomp.hold").forEach(btn => {
+  btn.addEventListener("pointerdown", e => { btn.setPointerCapture(e.pointerId); setHold(btn, true); });
+  for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(ev, () => setHold(btn, false));
+  btn.addEventListener("keydown", e => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); setHold(btn, true); } });
+  btn.addEventListener("keyup", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); setHold(btn, false); } });
+  btn.addEventListener("contextmenu", e => e.preventDefault());
+});
+const holdKeys = { m: "fsMega", t: "fsThrow" };
+const typing = () => { const a = document.activeElement; return a && (a.tagName === "INPUT" || a.tagName === "SELECT" || a.tagName === "TEXTAREA"); };
+document.addEventListener("keydown", e => { const id = holdKeys[e.key.toLowerCase()]; if (id && !e.repeat && !typing() && !e.metaKey && !e.ctrlKey) setHold(document.getElementById(id), true); });
+document.addEventListener("keyup", e => { const id = holdKeys[e.key.toLowerCase()]; if (id) setHold(document.getElementById(id), false); });
+window.addEventListener("blur", () => document.querySelectorAll(".stomp.hold").forEach(b => setHold(b, false)));
 let lastTap = 0;
 document.getElementById("fsTap").addEventListener("click", () => {
   const now = performance.now(), dt = now - lastTap; lastTap = now;

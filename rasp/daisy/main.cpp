@@ -16,7 +16,14 @@
 //   FLAVOUR  flavour on/off                           /  next preset
 //   TAP      tap tempo                                /  (held 2 s) clear feedback notches
 // Solo button: short = solo thicken, held 2 s = save the current sound to this preset slot.
-// USB MIDI: Program Change 0-7 recalls preset slots 1-8 (from a laptop/backing-track rig).
+// AUX jack (TRS, for a dual momentary footswitch such as a Boss FS-7, or an FS-6
+// set to momentary): tip = MEGA, ring = THROW, both on only while held.
+//   MEGA   the voice becomes a hard-clipped, mid-focused burst
+//   THROW  the voice feeds a long ping-pong delay; repeats ring out after release
+// A mono (TS) footswitch shorts the ring, so a switch that reads "held" at
+// power-up is ignored until it is first released.
+// USB MIDI: Program Change 0-7 recalls preset slots 1-8 (from a laptop/backing-track rig);
+// CC 80 = MEGA, CC 81 = THROW (value >= 64 on), for triggering from a timeline.
 //
 // Presets: 8 slots in QSPI flash (4 MB in), first boot fills them with the factory set
 // (huge, natural, dark, bright, live, raw, natural, natural). After a recall,
@@ -37,6 +44,7 @@
 //       Q0 effect on, Q1 chop (>3 dB GR), Q2 bleed reducer active, Q3 thicken,
 //       Q4 flavour, Q5 tap / preset blink, Q6 bus limiter, Q7 feedback notch
 //   D27 bypass relay driver (via transistor)
+//   D29 / D30  AUX jack tip (MEGA) / ring (THROW), sleeve to ground; internal pull-ups
 //   USB (micro-USB on the Seed): MIDI device + power while bench-testing
 // Check every pin against the Daisy Seed pinout before you build a PCB.
 #include "daisy_seed.h"
@@ -50,7 +58,7 @@ static DaisySeed hw;
 // ~1.5 MB of delay lines: must live in the 64 MB SDRAM, not internal SRAM.
 static rasp::Processor DSY_SDRAM_BSS proc;
 static rasp::Params params;
-static Switch fsBypass, fsThicken, fsFlavour, fsTap, btnSolo;
+static Switch fsBypass, fsThicken, fsFlavour, fsTap, btnSolo, auxMega, auxThrow;
 static GPIO toneA, toneB, timeA, timeB, monoSw, srData, srClock, srLatch, relay;
 static MidiUsbHandler midi;
 static volatile float grDb = 0.f, bleedDb = 0.f, limDb = 0.f;
@@ -126,6 +134,7 @@ static void recall(int slot) {
 static void saveCurrent() {
     Stored& s = storage.GetSettings();
     s.slot[s.current] = params;
+    s.slot[s.current].mega = s.slot[s.current].throwOn = false;   // momentaries aren't part of a sound
     storage.Save();
 }
 
@@ -178,6 +187,8 @@ int main() {
     fsFlavour.Init(seed::D12, 1000.f);
     fsTap.Init(seed::D13, 1000.f);
     btnSolo.Init(seed::D14, 1000.f);
+    auxMega.Init(seed::D29, 1000.f);
+    auxThrow.Init(seed::D30, 1000.f);
     toneA.Init(seed::D6, GPIO::Mode::INPUT, GPIO::Pull::PULLUP);
     toneB.Init(seed::D7, GPIO::Mode::INPUT, GPIO::Pull::PULLUP);
     timeA.Init(seed::D8, GPIO::Mode::INPUT, GPIO::Pull::PULLUP);
@@ -210,9 +221,18 @@ int main() {
 
     uint32_t lastTap = 0, tapLedOff = 0, notchLedOff = 0, blinkUntil = 0;
     int lastHowl = 0, blinkCount = 0;
+    // AUX: ignore a contact that is already closed at power-up (a TS plug
+    // shorts the ring) until it opens once.
+    System::Delay(20);
+    auxMega.Debounce(); auxThrow.Debounce();
+    bool megaArmed = !auxMega.RawState(), throwArmed = !auxThrow.RawState();
+    bool midiMega = false, midiThrow = false;
     for (;;) {
         uint32_t now = System::GetNow();
         fsBypass.Debounce(); fsThicken.Debounce(); fsFlavour.Debounce(); fsTap.Debounce(); btnSolo.Debounce();
+        auxMega.Debounce(); auxThrow.Debounce();
+        if (!auxMega.Pressed()) megaArmed = true;
+        if (!auxThrow.Pressed()) throwArmed = true;
 
         // Short press acts on release; long press acts once while held.
         static bool longDone[5];
@@ -251,12 +271,19 @@ int main() {
                 int pc = e.AsProgramChange().program;
                 if (pc < kSlots) { recall(pc); blinkCount = pc + 1; }
             }
+            if (e.type == ControlChange) {
+                auto cc = e.AsControlChange();
+                if (cc.control_number == 80) midiMega = cc.value >= 64;
+                if (cc.control_number == 81) midiThrow = cc.value >= 64;
+            }
         }
 
         for (int i = 0; i < kPots; i++) applyPot(i);
         params.brightness = readToggle(toneA, toneB);
         params.delayTime  = readToggle(timeA, timeB);
         params.mono       = !monoSw.Read();
+        params.mega       = (megaArmed && auxMega.Pressed()) || midiMega;
+        params.throwOn    = (throwArmed && auxThrow.Pressed()) || midiThrow;
         // NOTE: setParams runs outside the audio interrupt. A production build
         // should hand params over with a lock-free double buffer.
         proc.setParams(params);
@@ -271,7 +298,7 @@ int main() {
         leds |= (!params.bypass && bleedDb > 6.f) << 2;   // set the bleed trim so this is lit when you're silent
         leds |= params.thickenOn << 3;
         leds |= params.flavourOn << 4;
-        leds |= (now < tapLedOff || blinkOn) << 5;
+        leds |= (now < tapLedOff || blinkOn || params.mega || params.throwOn) << 5;   // also lit while a momentary is held
         leds |= (!params.bypass && limDb > 1.f) << 6;
         leds |= (now < notchLedOff || proc.howlNotches() > 0) << 7;
         writeLeds(leds);
