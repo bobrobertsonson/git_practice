@@ -343,7 +343,7 @@ class RaspEngine {
     let gain = 1, prevC = 0, prevF = 0;
     const KCLIP = 0.3;
     // voicing
-    const vLow = bq(), vMud = bq(), vPres = bq(), vAir = bq();
+    const vLow = bq(), vMud = bq(), vPres = bq(), vAir = bq(), vExtra = bq();
     // de-esser
     const deBand = svf(); svfSet(deBand, 7000, 1.0);
     const deAtt = coefMs(0.5), deRel = coefMs(60);
@@ -400,6 +400,7 @@ class RaspEngine {
       opSet(hp720, [200, 350, 600][b], sr * 4);
       const V = [[170, 2.5, 420, -2.0, 2600, 1.5, 10000, 0.5], [150, 1.5, 450, -3.0, 3000, 3.0, 10000, 1.0], [120, 0.5, 500, -3.5, 3500, 4.0, 11000, 4.0]][b];
       lowShelf(vLow, V[0], V[1]); peaking(vMud, V[2], 1.2, V[3]); peaking(vPres, V[4], 0.9, V[5]); highShelf(vAir, V[6], V[7]);
+      highShelf(vExtra, 7000, clamp(p.airDb || 0, 0, 12));
       deDepth = p.deEss;
       X.on = p.bleed > 0.001; X.thr = -70 + 40 * p.bleed;
       C.amount = p.chop;
@@ -647,7 +648,7 @@ class RaspEngine {
         x = hc2.lp;
         const eg = expander(x);
         if (gm > 1e-4) { svfRun(dHp1, drive(x)); svfRun(dHp2, dHp1.hp); x = lerp(x, dHp2.hp, gm); }
-        x = bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x))));
+        x = bqRun(vExtra, bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x)))));
         x = deEss(x);
         x = chop(x) * eg * gc;
       }
@@ -779,7 +780,7 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, bleed: 0.7, controlGainDb: 0,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
@@ -822,6 +823,7 @@ const MENU = [
   ["Cleanup"],
   ["bleed", "Bleed reducer", 0, 1, 0.01, v => v < 0.001 ? "off" : Math.round(-70 + 40 * v) + " dBFS"],
   ["deEss", "De-esser", 0, 1, 0.01, pct],
+  ["airDb", "Air (7 kHz shelf)", 0, 12, 0.5, v => "+" + v.toFixed(1) + " dB"],
   ["Bus"],
   ["glue", "Glue", 0, 1, 0.01, pct], ["outDb", "Output", -24, 12, 0.5, v => v.toFixed(1) + " dB"],
   ["Section levels"],

@@ -10,6 +10,10 @@ Both curves are relative to 1 kHz, so level doesn't count, only tone.
 
   python3 tools/presetfit.py --mix final.mp3 --lead stems/lead.wav stems/*.wav
   python3 tools/presetfit.py --mix final.mp3 --lead lead.wav other.wav --presets huge,natural
+  python3 tools/presetfit.py ... --try "huge+air:preset=huge,hicut=0.95,bright=2"
+
+--try adds a candidate (label:rasp_wav settings, comma-separated); repeat it
+to compare several tunings against the same producer measurement.
 
 Prints the per-band difference (producer minus RASP: positive = the producer
 has more there) for every preset, then the ranking. Needs numpy and ffmpeg,
@@ -48,6 +52,8 @@ def main():
     ap.add_argument("stems", nargs="*", help="the session's other vocal stems")
     ap.add_argument("--presets", default=",".join(PRESETS))
     ap.add_argument("--in-db", type=float, help="input gain for the renders (default: auto)")
+    ap.add_argument("--try", dest="tries", action="append", default=[],
+                    help='candidate "label:preset=huge,hicut=0.95" (repeatable)')
     args = ap.parse_args()
 
     paths = [args.lead] + [s for s in args.stems if pathlib.Path(s).resolve() != pathlib.Path(args.lead).resolve()]
@@ -75,15 +81,19 @@ def main():
     print(f"lead: {pathlib.Path(args.lead).name}   input gain {in_db:+.1f} dB   bands used: "
           + " ".join(mp.blabel(b) for b in bands))
     print(f"\nproducer minus RASP, dB (positive = the producer has more)")
-    print(f"{'preset':<10}" + "".join(f"{mp.blabel(b):>6}" for b in bands) + "   rms")
+    print(f"{'preset':<12}" + "".join(f"{mp.blabel(b):>6}" for b in bands) + "   rms")
     results = []
     with tempfile.TemporaryDirectory() as td:
         src = pathlib.Path(td) / "lead.wav"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", args.lead, "-ac", "1", "-c:a", "pcm_f32le",
                         "-map_metadata", "-1", str(src)], check=True)
-        for name in args.presets.split(","):
-            out = pathlib.Path(td) / f"{name}.wav"
-            subprocess.run([str(ROOT / "rasp_wav"), str(src), str(out), f"preset={name}", f"in={in_db}"],
+        cands = [(n, [f"preset={n}"]) for n in args.presets.split(",") if n]
+        for t in args.tries:
+            label, _, spec = t.partition(":")
+            cands.append((label, spec.split(",")))
+        for i, (name, settings) in enumerate(cands):
+            out = pathlib.Path(td) / f"c{i}.wav"
+            subprocess.run([str(ROOT / "rasp_wav"), str(src), str(out)] + settings + [f"in={in_db}"],
                            check=True, capture_output=True)
             render = mp.decode(out, 2)
             lag = mp.find_lag(lead, render.mean(axis=1))
@@ -93,7 +103,7 @@ def main():
             d = np.array([prod[b] - ours[b] for b in bands])
             rms = float(np.sqrt(np.mean(d ** 2)))
             results.append((rms, name))
-            print(f"{name:<10}" + "".join(f"{v:6.1f}" for v in d) + f"  {rms:5.1f}")
+            print(f"{name[:12]:<12}" + "".join(f"{v:6.1f}" for v in d) + f"  {rms:5.1f}")
     results.sort()
     print("\nclosest: " + ", ".join(f"{n} ({r:.1f} dB)" for r, n in results))
 

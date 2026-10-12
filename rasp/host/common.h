@@ -99,7 +99,7 @@ inline bool setParam(rasp::Params& p, const char* arg) {
         {"spread", &p.spread}, {"diffuse", &p.diffuse}, {"darken", &p.darken}, {"width", &p.width},
         {"thickengain", &p.thickenGainDb}, {"tail", &p.tail}, {"tailblend", &p.tailBlend},
         {"repeats", &p.repeats}, {"delayblend", &p.delayBlend}, {"bpm", &p.bpm}, {"tilt", &p.tilt},
-        {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb}, {"in", &p.inDb},
+        {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb}, {"in", &p.inDb}, {"air", &p.airDb},
         {"deess", &p.deEss}, {"bleed", &p.bleed}, {"glue", &p.glue},
     };
     for (auto& e : fs) if (k == e.n) { *e.f = v; return true; }

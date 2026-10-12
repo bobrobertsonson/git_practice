@@ -215,6 +215,8 @@ struct Params {
     float chop       = 0.55f;  // compression amount: peak comp + leveler + parallel crush
     float release    = 0.40f;  // leveler release 60..800 ms
     float deEss      = 0.50f;  // de-esser depth (menu)
+    float airDb      = 0.f;    // extra high shelf at 7 kHz, 0..12 dB (menu): the very bright
+                               // modern-deathcore top (one producer lifted 6-10 kHz by ~13 dB)
     float bleed      = 0.70f;  // bleed reducer threshold: 0 off, 0.5 = -50, 0.7 = -42, 1 = -30 dBFS RMS (menu)
     float controlGainDb = 0.f;
 
@@ -337,7 +339,8 @@ private:
 // ---------------------------------------------------------------------------
 class Voicing {
 public:
-    void set(int brightness, float sr) {
+    void set(int brightness, float airDb, float sr) {
+        extra.highShelf(7000.f, clampf(airDb, 0.f, 12.f), sr);
         struct V { float lowHz, lowDb, mudHz, mudDb, presHz, presDb, airHz, airDb; };
         static const V v[3] = {
             {170.f, 2.5f, 420.f, -2.0f, 2600.f, 1.5f, 10000.f, 0.5f},   // dark: weight, gutturals
@@ -350,9 +353,10 @@ public:
         pres.peaking(c.presHz, 0.9f, c.presDb, sr);
         air.highShelf(c.airHz, c.airDb, sr);
     }
-    float process(float x) { return air.process(pres.process(mud.process(low.process(x)))); }
+    // The de-esser runs after this, so extra air also gets its sibilance held back.
+    float process(float x) { return extra.process(air.process(pres.process(mud.process(low.process(x))))); }
 private:
-    Biquad low, mud, pres, air;
+    Biquad low, mud, pres, air, extra;
 };
 
 // ---------------------------------------------------------------------------
@@ -1018,7 +1022,7 @@ public:
         driveHp1.set(expMap(p.loCut, 20.f, 600.f), 0.54f, sr);   // 24 dB/oct, like the lo cut
         driveHp2.set(expMap(p.loCut, 20.f, 600.f), 1.31f, sr);
         drive.set(p.drive, p.brightness);
-        voicing.set(p.brightness, sr);
+        voicing.set(p.brightness, p.airDb, sr);
         deEss.set(p.deEss);
         expander.set(p.bleed);
         chop.set(p.chop, p.release);

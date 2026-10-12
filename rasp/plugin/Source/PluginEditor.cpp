@@ -77,7 +77,7 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     addKnob(control, "drive", "Drive"); addKnob(control, "mix", "Drive mix"); addChoice(control, "brightness", "Tone");
     addKnob(control, "chop", "Chop"); addKnob(control, "release", "Release"); addKnob(control, "deEss", "De-ess");
     addKnob(control, "loCut", "Lo cut"); addKnob(control, "hiCut", "Hi cut"); addKnob(control, "bleed", "Bleed reducer");
-    addKnob(control, "controlGainDb", "Level");
+    addKnob(control, "airDb", "Air"); addKnob(control, "controlGainDb", "Level");
 
     auto& thicken = panels[1]; thicken.title = "THICKEN"; thicken.cols = 2;
     addPower(thicken, "thickenOn");

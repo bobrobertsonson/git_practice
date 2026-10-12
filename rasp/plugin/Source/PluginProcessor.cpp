@@ -25,6 +25,7 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"release", "Release", "Control", K::Unit, 0, 1, nullptr, RASP_F(release),
          [](float v) { return juce::String(juce::roundToInt(rasp::expMap(v, 60.f, 800.f))) + " ms"; }, false},
         {"deEss", "De-ess", "Control", K::Unit, 0, 1, nullptr, RASP_F(deEss), nullptr, false},
+        {"airDb", "Air", "Control", K::Db, 0, 12, nullptr, RASP_F(airDb), nullptr, false},
         {"bleed", "Bleed Reducer", "Control", K::Unit, 0, 1, nullptr, RASP_F(bleed), nullptr, false},
         {"controlGainDb", "Control Level", "Control", K::Db, -18, 12, nullptr, RASP_F(controlGainDb), nullptr, false},
         // THICKEN
