@@ -370,8 +370,11 @@ public:
         struct V { float lowHz, lowDb, mudHz, mudDb, presHz, presDb, airHz, airDb; };
         static const V v[3] = {
             {170.f, 2.5f, 420.f, -2.0f, 2600.f, 1.5f, 10000.f, 0.5f},   // dark: weight, gutturals
-            {150.f, 1.5f, 450.f, -3.0f, 3000.f, 3.0f, 10000.f, 1.0f},   // natural
-            {120.f, 0.5f, 500.f, -3.5f, 3500.f, 4.0f, 11000.f, 4.0f},   // bright: highs, squeals
+            {150.f, 1.5f, 450.f, -3.0f, 3000.f, 1.5f, 10000.f, 1.0f},   // natural
+            {120.f, 0.5f, 500.f, -3.5f, 3500.f, 2.0f, 11000.f, 4.0f},   // bright: highs, squeals
+            // Presence was +3 / +4 dB: across 13 producer fits (results/presetfit)
+            // RASP had a median 1.8 dB (natural) / 2.8 dB (bright) more 2.5 kHz
+            // than the producers' leads, in 10 of 13 songs.
         };
         const V& c = v[brightness < 0 ? 0 : (brightness > 2 ? 2 : brightness)];
         low.lowShelf(c.lowHz, c.lowDb, sr);

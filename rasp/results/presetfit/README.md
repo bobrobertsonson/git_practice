@@ -56,3 +56,15 @@ python3 rasp/tools/presetfit.py --presets huge,natural,dark,bright,live,raw,air 
   --mix Sylosis-Poison-For-The-Lost.mp3 --lead "47 MAIN VOCAL.wav" \
   "48 BACKING VOCAL LEFT.wav" "49 BACKING VOCAL RIGHT.wav" ...
 ```
+
+## Follow-ups (cloud session)
+
+- Across the 13 fits, `huge`'s median error is under 1 dB in every band except
+  2.5 kHz, where RASP had 1.8 dB more than the producers (10 of 13 songs);
+  `bright` had 2.8 dB more. The voicing's presence lift went from +3 to +1.5 dB
+  (natural) and +4 to +2 dB (bright).
+- These fits predate Body (+5 dB in `huge`) and the gentler `air`. At 250 Hz the
+  old `huge` matched the producers' median (7 songs), so Body may exceed what
+  producers use; it stays at +5 for now because it answered "still thin" on
+  the user's own voice, and the blind A/B test (round 2) asks Body +5 vs 0 and
+  +5 vs +8.
