@@ -93,6 +93,20 @@ of the same song) changed the defaults:
   denormal floats, and real takes rendered at only 2× real time. Flushing
   denormals (desktop and firmware) restored 37× real time with identical output.
 
+### Second session: deep slam gutturals (two raw stems, no mix)
+
+- **A different voice:** brightness of ~600 Hz against ~1 kHz in the first session, and
+  about half the energy below 300 Hz. There's also a strong sweeping resonance at
+  1.2–1.8 kHz. It was recorded quiet (−32 to −35 LUFS), so it needs ~10 dB of input gain.
+- **Presets:** "dark" kept this voice muddy (presence −15.9 dB share), while "natural" and "huge"
+  gave it bite (−12 to −13 dB). `classify` now sends very bass-heavy voices
+  (more than ~16% of energy below 300 Hz) to "natural" instead of "dark".
+- **Feedback guard:** zero false notches across both full songs on three presets,
+  despite that strong resonance.
+- **Playground bug found:** the browser engine could receive audio before its
+  first settings arrived, throw, and silently stop. In a headless test this hit
+  7 of 14 page loads. It now outputs silence until the settings arrive (0 of 14).
+
 ## 2. Latency
 
 - **No buffering and no lookahead in the DSP.** The dry path has only

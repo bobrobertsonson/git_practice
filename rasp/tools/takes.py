@@ -274,6 +274,10 @@ def classify_style(v):
     if v["cpp_db"] > 20:
         return "shout / gritty sung", "natural"
     if v["centroid_hz"] < 1300:
+        # Very bass-heavy voices (deep slam gutturals put ~half their energy
+        # below 300 Hz) already have the weight "dark" adds; they need bite.
+        if v["low_share_db"] > -8:
+            return "deep guttural (bass-heavy)", "natural (dark would add more mud)"
         return "low growl / guttural", "dark"
     if v["centroid_hz"] > 2600:
         return "high scream / squeal", "bright"
