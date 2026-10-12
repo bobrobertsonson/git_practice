@@ -12,7 +12,7 @@
 //   Button 2       tap: thicken + flavour on/off
 //                  hold: THROW while held (long delay; repeats ring out after release)
 //   Both buttons   hold 2 s: LEARN (sing ~15 s; LED 1 blinks while it listens). Applies to every preset
-//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st), CC 87 = double-track, CC 88 / 89 = STUTTER / GLITCH (held), CC 90 = slice, CC 91 = glitch amount, CC 92-94 = TAPE STOP / FREEZE / GATE (held), CC 95 = gate pattern, CC 96 = glitch pattern, CC 97 = throw style, CC 102 = crush, CC 103 = lo-fi, CC 104 = tape stop time
+//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st), CC 87 = double-track, CC 88 / 89 = STUTTER / GLITCH (held), CC 90 = slice, CC 91 = glitch amount, CC 92-94 = TAPE STOP / FREEZE / GATE (held), CC 95 = gate pattern, CC 96 = glitch pattern, CC 97 = throw style, CC 102 = crush, CC 103 = lo-fi, CC 104 = tape stop time, CC 105-107 = weight / fill / smooth
 //   LED 2          red = chop compressing > 3 dB, blue = feedback notch active,
 //                  white = a momentary effect is held
 #include "daisy_pod.h"
@@ -117,6 +117,9 @@ int main() {
                 if (cc.control_number == 102) params.crush = cc.value / 127.f;
                 if (cc.control_number == 103) params.lofi = cc.value / 127.f;
                 if (cc.control_number == 104) params.tapeTime = std::min(3, cc.value / 32);
+                if (cc.control_number == 105) params.weight = cc.value / 127.f;
+                if (cc.control_number == 106) params.fill = cc.value / 127.f;
+                if (cc.control_number == 107) params.smooth = cc.value / 127.f;
             }
         }
         // Both buttons held 2 s: Learn (not Mega/Throw).

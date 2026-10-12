@@ -571,6 +571,26 @@ class RaspEngine {
     const KCLIP = 0.3;
     // voicing
     const vLow = bq(), vMud = bq(), vPres = bq(), vAir = bq(), vExtra = bq(), vBody = bq();
+    // SCULPT (mirrors class Sculpt)
+    const SC = { on: false, w: 0, drive: 1, bandHp: svf(), bandLp: svf(), postHp: svf(), postLp: svf(), weightEq: bq(), fillEq: bq(), smoothEq: bq() };
+    const scSet = q => {
+      SC.w = clamp(q.weight ?? 0.3, 0, 1); SC.drive = 1 + 6 * SC.w;
+      svfSet(SC.bandHp, 70, 0.707); svfSet(SC.bandLp, 350, 0.707); svfSet(SC.postHp, 100, 0.707); svfSet(SC.postLp, 900, 0.707);
+      peaking(SC.weightEq, 180, 0.7, 7 * SC.w);
+      const fl = clamp(q.fill ?? 0.2, 0, 1), smo = clamp(q.smooth ?? 0.3, 0, 1);
+      peaking(SC.fillEq, 400, 0.6, 6 * fl); peaking(SC.smoothEq, 3800, 1.0, -6 * smo);
+      SC.on = SC.w > 0.001 || fl > 0.001 || smo > 0.001;
+    };
+    const sculpt = x => {
+      if (!SC.on) return x;
+      if (SC.w > 0.001) {
+        svfRun(SC.bandHp, x); svfRun(SC.bandLp, SC.bandHp.hp);
+        const b = SC.bandLp.lp * SC.drive, res = (b / (1 + Math.abs(b)) - b) / SC.drive;
+        svfRun(SC.postHp, res); svfRun(SC.postLp, SC.postHp.hp);
+        x = bqRun(SC.weightEq, x) - 1.5 * SC.w * SC.postLp.lp;
+      }
+      return bqRun(SC.smoothEq, bqRun(SC.fillEq, x));
+    };
     // de-esser
     const deBand = svf(); svfSet(deBand, 7000, 1.0);
     const deAtt = coefMs(0.5), deRel = coefMs(60);
@@ -706,6 +726,7 @@ class RaspEngine {
       lowShelf(vLow, V[0], V[1]); peaking(vMud, V[2], 1.2, V[3]); peaking(vPres, V[4], 0.9, V[5]); highShelf(vAir, V[6], V[7]);
       highShelf(vExtra, 7000, clamp(p.airDb || 0, 0, 12));
       peaking(vBody, 220, 0.8, clamp(p.bodyDb || 0, 0, 9));
+      scSet(p);
       deDepth = p.deEss;
       X.on = p.bleed > 0.001; X.thr = -70 + 40 * p.bleed;
       C.amount = p.chop; C.lvRange = 15 * p.chop;
@@ -987,7 +1008,7 @@ class RaspEngine {
       if (got < need) return null;
       const ref = energy[MATCH_HZ.length] + 1e-30;
       const dev = MATCH_HZ.map((_, i) => 10 * Math.log10((energy[i] + 1e-30) / ref));
-      const want = dev.map((d, i) => clamp(MATCH_TARGET[i] - d, -9, 9)), g = want.slice(), fs = 48000;
+      const want = dev.map((d, i) => clamp(MATCH_TARGET[i] - d, i < 3 ? -2 : -9, 9)), g = want.slice(), fs = 48000;
       for (let it = 0; it < 6; it++) {
         const qs = MATCH_HZ.map((hz, j) => { const f = bq(); const w = 2 * PI * hz / fs, A = 10 ** (g[j] / 40), al = Math.sin(w) / (2 * 2.1), c = Math.cos(w);
           bqNorm(f, 1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A); return f; });
@@ -1023,6 +1044,7 @@ class RaspEngine {
         x = lerp(driveDry, wet, gm);
         svfRun(dHp1, x); svfRun(dHp2, dHp1.hp); x = dHp2.hp;
         x = bqRun(vBody, bqRun(vExtra, bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x))))));
+        x = sculpt(x);
         x = deEss(x);
         x = chop(x, eg > 0.7) * eg * gc;
       }
@@ -1163,7 +1185,7 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, matchAmount: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, weight: 0.3, fill: 0.2, smooth: 0.3, matchAmount: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12,
   harm3Level: 0, harm4Level: 0, harm3Semi: 0, harm4Semi: 7, harm1Width: 0.7, harm2Width: 0.7, harm3Width: 0.7, harm4Width: 0.7,
   harmRandPitch: 0.4, harmRandTime: 0.4, harmLoCut: 80, harmHiCut: 12000, harmWidth: 1, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.1, width: 0.85, solo: false, doubleTrack: false, thickenGainDb: -4,
@@ -1173,13 +1195,13 @@ const DEFAULTS = {
   tapeStop: false, tapeTime: 1, freeze: false, gate: false, gatePattern: 0, throwStyle: 0, crush: 0, crushMix: 1, lofi: 0,
 };
 const PRESETS = {
-  huge:    { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5 },
+  huge:    { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5, weight: 0.6, fill: 0.4, smooth: 0.4 },
   natural: {},
   dark:    { brightness: 0, drive: 0.5, loCut: 0.36, hiCut: 0.72, darken: 0.5, tilt: 0.4, tail: 0.4 },
-  bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65 },
+  bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65, smooth: 0 },
   live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.15, duck: 0.75, bleed: 0.78, loCut: 0.56, glue: 0.4 },
-  raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0 },
-  air:     { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 1, airDb: 5, bodyDb: 5, deEss: 0.75 },
+  raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0, weight: 0, fill: 0, smooth: 0 },
+  air:     { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 1, airDb: 5, bodyDb: 5, deEss: 0.75, weight: 0.5, fill: 0.3, smooth: 0 },
 };
 let params = Object.assign({}, DEFAULTS);
 
@@ -1212,6 +1234,9 @@ const MENU = [
   ["deEss", "De-esser", 0, 1, 0.01, pct],
   ["airDb", "Air (7 kHz shelf)", 0, 12, 0.5, v => "+" + v.toFixed(1) + " dB"],
   ["bodyDb", "Body (220 Hz)", 0, 9, 0.5, v => "+" + v.toFixed(1) + " dB"],
+  ["weight", "Weight (low-mid fullness)", 0, 1, 0.01, pct],
+  ["fill", "Fill (400 Hz)", 0, 1, 0.01, v => "+" + (6 * v).toFixed(1) + " dB"],
+  ["smooth", "Smooth (drive fizz)", 0, 1, 0.01, v => "-" + (6 * v).toFixed(1) + " dB"],
   ["matchAmount", "Match (after Learn)", 0, 1, 0.01, pct],
   ["pitch1Semi", "Harmony 1 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
   ["octDown", "Harmony 1 level", 0, 1, 0.01, pct],

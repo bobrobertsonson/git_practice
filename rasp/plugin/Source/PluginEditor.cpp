@@ -97,11 +97,11 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
 
     auto& s = proc.apvts;
     panels.resize(6);
-    auto& control = panels[0]; control.title = "CONTROL"; control.cols = 3;
+    auto& control = panels[0]; control.title = "CONTROL"; control.cols = 4;
     addPower(control, "controlOn");
-    addKnob(control, "drive", "Drive"); addKnob(control, "mix", "Drive mix"); addChoice(control, "brightness", "Tone");
-    addKnob(control, "chop", "Chop"); addKnob(control, "release", "Release"); addKnob(control, "deEss", "De-ess");
-    addKnob(control, "loCut", "Lo cut"); addKnob(control, "hiCut", "Hi cut"); addKnob(control, "bleed", "Bleed reducer");
+    addKnob(control, "drive", "Drive"); addKnob(control, "mix", "Drive mix"); addChoice(control, "brightness", "Tone"); addKnob(control, "weight", "Weight");
+    addKnob(control, "chop", "Chop"); addKnob(control, "release", "Release"); addKnob(control, "deEss", "De-ess"); addKnob(control, "fill", "Fill");
+    addKnob(control, "loCut", "Lo cut"); addKnob(control, "hiCut", "Hi cut"); addKnob(control, "bleed", "Bleed reducer"); addKnob(control, "smooth", "Smooth");
     addKnob(control, "bodyDb", "Body"); addKnob(control, "airDb", "Air"); addKnob(control, "controlGainDb", "Level");
 
     auto& thicken = panels[1]; thicken.title = "THICKEN"; thicken.cols = 2;

@@ -217,6 +217,12 @@ struct Params {
     float release    = 0.40f;  // leveler release 60..800 ms
     float deEss      = 0.50f;  // de-esser depth (menu)
     float bodyDb     = 0.f;    // broad low-mid boost at 220 Hz, 0..9 dB: chest and weight
+    // SCULPT (before the effects): fullness
+    // Defaults lean full: "still thin" in Logic, after Body; on Andrew's DI the
+    // drive stacked up to +7.6 dB of 4 kHz share while 400-630 Hz sat ~1.7 dB under.
+    float weight     = 0.3f;   // 180 Hz bell (0..7 dB) + saturated 70-350 Hz harmonics (0..1)
+    float fill       = 0.2f;   // broad 400 Hz lift, 0..6 dB: undoes the voicing's mud cut
+    float smooth     = 0.3f;   // 3.8 kHz dip, 0..6 dB: tames the fizz the drive adds
     float airDb      = 0.f;    // extra high shelf at 7 kHz, 0..12 dB (menu): the very bright
                                // modern-deathcore top (one producer lifted 6-10 kHz by ~13 dB)
     float bleed      = 0.70f;  // bleed reducer threshold: 0 off, 0.5 = -50, 0.7 = -42, 1 = -30 dBFS RMS (menu)
@@ -421,6 +427,49 @@ public:
     float process(float x) { return body.process(extra.process(air.process(pres.process(mud.process(low.process(x)))))); }
 private:
     Biquad low, mud, pres, air, extra, body;
+};
+
+// ---------------------------------------------------------------------------
+// Sculpt: fullness before the effects. WEIGHT takes 70-350 Hz, saturates it
+// and adds it back band-limited to 100-900 Hz, so the low mids carry their
+// own harmonics (density you hear on small speakers too, unlike a plain bass
+// boost). FILL lifts 400 Hz broadly; SMOOTH dips 3.8 kHz, where the drive
+// stacks fizz (up to +7 dB of 4 kHz share at mix 0.6 on Andrew's DI).
+// ---------------------------------------------------------------------------
+class Sculpt {
+public:
+    void init(float sampleRate) { sr = sampleRate; set(0.f, 0.f, 0.f); }
+    void set(float weight, float fill, float smooth) {
+        w = clampf(weight, 0.f, 1.f);
+        drive = 1.f + 6.f * w;
+        weightEq.peaking(180.f, 0.7f, 7.f * w, sr);
+        bandHp.set(70.f, 0.707f, sr); bandLp.set(350.f, 0.707f, sr);
+        postHp.set(100.f, 0.707f, sr); postLp.set(900.f, 0.707f, sr);
+        fillEq.peaking(400.f, 0.6f, 6.f * clampf(fill, 0.f, 1.f), sr);
+        smoothEq.peaking(3800.f, 1.0f, -6.f * clampf(smooth, 0.f, 1.f), sr);
+        on = w > 0.001f || fill > 0.001f || smooth > 0.001f;
+    }
+    float process(float x) {
+        if (!on) return x;
+        if (w > 0.001f) {
+            bandHp.process(x); bandLp.process(bandHp.hp);
+            // The saturation residue (the clipped band minus the band) is
+            // only harmonics plus a little compression: it adds density
+            // without the phase-shifted fundamental, which, added back on its
+            // own, cancelled ~2 dB around 630 Hz. The level itself comes from
+            // a minimum-phase 180 Hz bell.
+            const float b = bandLp.lp * drive;
+            const float res = (b / (1.f + std::fabs(b)) - b) / drive;
+            postHp.process(res); postLp.process(postHp.hp);
+            x = weightEq.process(x) - 1.5f * w * postLp.lp;
+        }
+        return smoothEq.process(fillEq.process(x));
+    }
+private:
+    float sr = 48000.f, w = 0.f, drive = 1.f;
+    bool on = false;
+    SVF bandHp, bandLp, postHp, postLp;
+    Biquad weightEq, fillEq, smoothEq;
 };
 
 // ---------------------------------------------------------------------------
@@ -849,7 +898,13 @@ private:
 // response at the band centres.
 inline void matchGainsFromDeviation(const float* deviation, float* gainsOut) {
     float want[kMatchBands], g[kMatchBands];
-    for (int i = 0; i < kMatchBands; i++) { want[i] = clampf(kMatchTarget[i] - deviation[i], -9.f, 9.f); g[i] = want[i]; }
+    // The low bands (100-250 Hz) are never cut by more than 2 dB: a heavier
+    // voice than the reference singers is weight to keep, not a fault to fix
+    // (on Andrew's DIs Learn was taking up to 7 dB out of 100-250 Hz: "thin").
+    for (int i = 0; i < kMatchBands; i++) {
+        want[i] = clampf(kMatchTarget[i] - deviation[i], i < 3 ? -2.f : -9.f, 9.f);
+        g[i] = want[i];
+    }
     const float fs = 48000.f;
     for (int it = 0; it < 6; it++) {
         Biquad bq[kMatchBands];
@@ -1731,7 +1786,7 @@ class Processor {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
+        drive.init(sr); sculpt.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
         bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); stutterFx.init(sr);
         degrade.init(sr); gateFx.init(sr); tape.init(sr); freezeFx.init(sr); harmony.init(sr); learner.init(sr);
         gMega.init(0.f, sr, 10.f);
@@ -1754,6 +1809,7 @@ public:
         driveHp2.set(expMap(p.loCut, 20.f, 600.f), 1.31f, sr);
         drive.set(p.drive, p.brightness);
         voicing.set(p.brightness, p.airDb, p.bodyDb, sr);
+        sculpt.set(p.weight, p.fill, p.smooth);
         deEss.set(p.deEss);
         expander.set(p.bleed);
         chop.set(p.chop, p.release);
@@ -1799,6 +1855,7 @@ public:
             driveHp1.process(x); driveHp2.process(driveHp1.hp);
             x = driveHp2.hp;
             x = voicing.process(x);
+            x = sculpt.process(x);
             x = deEss.process(x);
             x = chop.process(x, eg > 0.7f) * eg * gc;   // leveler holds while the bleed reducer is closing
         }
@@ -1883,6 +1940,7 @@ private:
     SVF loCut1, loCut2, hiCut1, hiCut2, driveHp1, driveHp2;
     Drive drive;
     Voicing voicing;
+    Sculpt sculpt;
     DeEsser deEss;
     Expander expander;
     Chop chop;

@@ -29,6 +29,9 @@ inline Params presetParams(int i) {
             // body brings it within 1 dB. Doubles +3 dB: preferred blind as
             // "fuller" / "larger" (abtest).
             p.bodyDb = 5.f;
+            // Sculpt: the fullest preset (weight +4 dB at 160 Hz share, fizz at
+            // 4 kHz +7.6 -> ~+4 dB on Andrew's DI).
+            p.weight = 0.6f; p.fill = 0.4f; p.smooth = 0.4f;
             // Output -3 dB (was +3): on Andrew's DI, 29 Mantra settings left a
             // median 4.0 dB of phrase-to-phrase level (in/out slope 0.35); Huge
             // left 2.3 dB (0.09), mostly from driving the bus limiter. -6 dB into
@@ -40,6 +43,7 @@ inline Params presetParams(int i) {
             break;
         case 3:  // bright: highs and squeals
             p.brightness = 2; p.drive = 0.35f; p.loCut = 0.58f; p.hiCut = 0.95f; p.darken = 0.1f; p.tilt = 0.62f; p.deEss = 0.65f;
+            p.smooth = 0.f;   // bright keeps its presence
             break;
         case 4:  // live: tighter effects, more duck, bleed reducer higher
             p.tail = 0.35f; p.tailBlend = 0.25f; p.repeats = 0.2f; p.delayBlend = 0.15f; p.duck = 0.75f;
@@ -47,6 +51,7 @@ inline Params presetParams(int i) {
             break;
         case 5:  // raw: filters and light compression only
             p.mix = 0.f; p.chop = 0.35f; p.thickenOn = false; p.flavourOn = false; p.glue = 0.f;
+            p.weight = 0.f; p.fill = 0.f; p.smooth = 0.f;
             break;
         case 6:  // air: huge with a very bright modern-deathcore top (Immortal
                  // Disfigurement lifts 6-10 kHz ~13 dB). The bright voicing + 10 dB
@@ -54,6 +59,7 @@ inline Params presetParams(int i) {
                  // keeps the natural voicing with a 7 dB shelf and more de-essing.
             p = presetParams(0);
             p.hiCut = 1.f; p.airDb = 5.f; p.deEss = 0.75f;   // 7 -> 5: Mantra on Andrew's DI cut 16 kHz (median -5.6 dB)
+            p.weight = 0.5f; p.fill = 0.3f; p.smooth = 0.f;
             break;
         default: break;
     }

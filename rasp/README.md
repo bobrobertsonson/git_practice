@@ -239,6 +239,35 @@ set +3.6…+5.1 dB of bite, +3…+3.6 dB of air and trimmed 100–160 Hz, which
 brought its processed tone closer to the other singers' (band-by-band mismatch
 3.2 → 2.1 dB).
 
+## 3a. Sculpt: fullness before the effects
+
+"Still thin" kept coming back, so three controls in CONTROL fill out the voice
+before anything else hears it. They come right after the tone voicing, ahead
+of de-ess, chop, doubles and reverb.
+
+- **Weight:** a 180 Hz bell (up to +7 dB) plus the saturation residue of
+  70–350 Hz: the clipped band minus the band. That residue is harmonics only.
+  Adding the band itself back cancelled ~2 dB around 630 Hz, so it's left out.
+- **Fill:** a broad 400 Hz lift (up to +6 dB). The voicing cuts "mud" at
+  420–500 Hz, which left 400–630 Hz about 1.7 dB under the DI.
+- **Smooth:** a 3.8 kHz dip (up to −6 dB). At mix 0.6 the drive stacked up to
+  +7.6 dB of 4 kHz share on Andrew's DI, which reads as fizz and thinness.
+
+Defaults are weight 0.3, fill 0.2 and smooth 0.3. Huge uses 0.6 / 0.4 / 0.4,
+Air 0.5 / 0.3 / 0, Bright keeps its presence (smooth 0), and Raw is flat.
+
+On Andrew's DI, Huge's band share relative to the DI (effects off):
+
+| | 100 | 160 | 250 | 400 | 630 | 2.5k | 4k |
+|---|---|---|---|---|---|---|---|
+| Before | +3.9 | +3.1 | +2.8 | −1.6 | −1.7 | +3.9 | +7.6 |
+| Weight 0.7, Fill 0.5, Smooth 0.5 | +4.7 | +6.4 | +5.3 | −0.6 | −1.6 | +0.4 | +3.4 |
+
+**Learn keeps your weight.** The match now cuts 100–250 Hz by at most 2 dB. On
+Andrew's DIs it had been taking up to 7 dB out, because his voice carries more
+low end than the reference singers. That made a learned sound thinner than an
+unlearned one.
+
 ## 3b. Momentary effects: Mega and Throw
 
 Both are on only while held: on the pedal's AUX footswitch, the Pod's buttons,

@@ -32,6 +32,9 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"deEss", "De-ess", "Control", K::Unit, 0, 1, nullptr, RASP_F(deEss), nullptr, false},
         {"airDb", "Air", "Control", K::Db, 0, 12, nullptr, RASP_F(airDb), nullptr, false},
         {"bodyDb", "Body", "Control", K::Db, 0, 9, nullptr, RASP_F(bodyDb), nullptr, false},
+        {"weight", "Weight", "Control", K::Unit, 0, 1, nullptr, RASP_F(weight), nullptr, false},
+        {"fill", "Fill", "Control", K::Unit, 0, 1, nullptr, RASP_F(fill), nullptr, false},
+        {"smooth", "Smooth", "Control", K::Unit, 0, 1, nullptr, RASP_F(smooth), nullptr, false},
         {"bleed", "Bleed Reducer", "Control", K::Unit, 0, 1, nullptr, RASP_F(bleed), nullptr, false},
         {"controlGainDb", "Control Level", "Control", K::Db, -18, 12, nullptr, RASP_F(controlGainDb), nullptr, false},
         // THICKEN

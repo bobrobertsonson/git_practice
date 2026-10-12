@@ -97,7 +97,7 @@ inline bool setParam(rasp::Params& p, const char* arg) {
         {"locut", &p.loCut}, {"hicut", &p.hiCut}, {"drive", &p.drive}, {"mix", &p.mix},
         {"chop", &p.chop}, {"release", &p.release}, {"controlgain", &p.controlGainDb},
         {"spread", &p.spread}, {"diffuse", &p.diffuse}, {"darken", &p.darken}, {"width", &p.width},
-        {"thickengain", &p.thickenGainDb}, {"crush", &p.crush}, {"crushmix", &p.crushMix}, {"lofi", &p.lofi}, {"tail", &p.tail}, {"tailblend", &p.tailBlend},
+        {"thickengain", &p.thickenGainDb}, {"weight", &p.weight}, {"fill", &p.fill}, {"smooth", &p.smooth}, {"crush", &p.crush}, {"crushmix", &p.crushMix}, {"lofi", &p.lofi}, {"tail", &p.tail}, {"tailblend", &p.tailBlend},
         {"repeats", &p.repeats}, {"delayblend", &p.delayBlend}, {"bpm", &p.bpm}, {"tilt", &p.tilt},
         {"duck", &p.duck}, {"flavourgain", &p.flavourGainDb}, {"out", &p.outDb}, {"in", &p.inDb}, {"air", &p.airDb}, {"body", &p.bodyDb}, {"octdown", &p.octDown}, {"octup", &p.octUp},
         {"h1", &p.octDown}, {"h2", &p.octUp}, {"h3", &p.harm3Level}, {"h4", &p.harm4Level},

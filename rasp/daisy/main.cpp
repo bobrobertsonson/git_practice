@@ -36,6 +36,7 @@
 // CC 91 = glitch amount (0-127). CC 92 = TAPE STOP, CC 93 = FREEZE, CC 94 = GATE
 // (>= 64 on); CC 95 = gate pattern, CC 96 = glitch pattern (0 = random), CC 97 =
 // throw style (>= 64 glitch), CC 102 = crush, CC 103 = lo-fi, CC 104 = tape stop time.
+// CC 105 / 106 / 107 = Sculpt weight / fill / smooth (also saved per preset slot).
 // CC 82 / 83 = pitch 1 / 2 level (0-127), CC 84 / 85 = pitch 1 / 2 interval
 // (0-127 -> -12..+12 semitones). A knob takes over again once moved.
 //
@@ -351,6 +352,9 @@ int main() {
                 if (cc.control_number == 102) params.crush = cc.value / 127.f;
                 if (cc.control_number == 103) params.lofi = cc.value / 127.f;
                 if (cc.control_number == 104) params.tapeTime = std::min(3, cc.value / 32);
+                if (cc.control_number == 105) params.weight = cc.value / 127.f;
+                if (cc.control_number == 106) params.fill = cc.value / 127.f;
+                if (cc.control_number == 107) params.smooth = cc.value / 127.f;
             }
         }
 
