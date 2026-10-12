@@ -23,4 +23,12 @@ renders: axe_wav synth_di
 clean:
 	rm -f axe_wav synth_di engine_test
 
-.PHONY: all clean check renders
+.PHONY: all clean check renders lv2check
+
+# Headless LV2 host (lilv) for the built bundle: make lv2check LV2_BUNDLE_DIR=build/AxeElevator_artefacts/Release/LV2
+lv2_host: tests/lv2_host.cpp host/common.h
+	$(CXX) $(CXXFLAGS) -o $@ tests/lv2_host.cpp $$(pkg-config --cflags --libs lilv-0)
+
+LV2_BUNDLE_DIR ?= build/AxeElevator_artefacts/Release/LV2
+lv2check: lv2_host
+	LV2_PATH=$(abspath $(LV2_BUNDLE_DIR)) ./lv2_host test urn:snotch:axeelevator

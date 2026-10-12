@@ -1,0 +1,141 @@
+# AxeElevator CI.
+#   engine        engine unit tests (Linux x86)
+#   macos         universal AU (+VST3, Standalone) for Logic, validated with auval
+#   linux-arm64   LV2 for aarch64 (Anagram / MOD class), built in Debian 11 so it
+#                 needs glibc <= 2.31 (Anagram has 2.34), tested in a headless
+#                 lilv host and Carla's plugin discovery
+# The Anagram toolchain build itself is in axe-anagram.yml (manual: ~1 h first run).
+name: AxeElevator plugin
+
+on:
+  push:
+    paths: ["axe/**", ".github/workflows/axe-plugin.yml"]
+  pull_request:
+    paths: ["axe/**", ".github/workflows/axe-plugin.yml"]
+  workflow_dispatch:
+
+jobs:
+  engine:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Engine unit tests (bypass/null, sample rates, smoothing, reset, sub, learn)
+        run: make -C axe check
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Engine unit tests (Apple clang)
+        run: make -C axe check
+
+      - name: Configure (universal binary, fetches JUCE 8.0.9)
+        run: >
+          cmake -S axe/plugin -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DAXE_PLUGIN_TESTS=ON
+
+      - name: Build AU, VST3, Standalone, tests
+        run: cmake --build build --config Release -j 4
+
+      - name: Headless plugin tests
+        run: ./build/plugin_test build/snapshots
+
+      - name: Sign (ad-hoc) and validate the Audio Unit with auval
+        run: |
+          AU=build/AxeElevator_artefacts/Release/AU/AxeElevator.component
+          lipo -info "$AU/Contents/MacOS/AxeElevator"
+          codesign --force --deep --sign - "$AU"
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$AU" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 2
+          auval -a | grep -i snch || true
+          auval -strict -v aufx AxEv Snch
+
+      - name: Package
+        run: |
+          cd build/AxeElevator_artefacts/Release
+          codesign --force --deep --sign - VST3/AxeElevator.vst3
+          codesign --force --deep --sign - Standalone/AxeElevator.app
+          mkdir -p ../../../dist
+          ditto -c -k --keepParent AU/AxeElevator.component ../../../dist/AxeElevator-AU.zip
+          ditto -c -k --keepParent VST3/AxeElevator.vst3 ../../../dist/AxeElevator-VST3.zip
+          ditto -c -k --keepParent Standalone/AxeElevator.app ../../../dist/AxeElevator-Standalone.zip
+          cp ../../snapshots/*.png ../../../dist/ || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AxeElevator-macOS
+          path: dist/*
+
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bullseye        # glibc 2.31: loads on the Anagram (2.34) and newer desktops
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: armv8-a           # generic 64-bit ARM (desktop aarch64, Raspberry Pi 4/5)
+            march: armv8-a
+          - variant: armv8.2-a         # the Anagram's cores (Cortex-A76/A55)
+            march: armv8.2-a
+    steps:
+      - name: Dependencies
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends build-essential git ca-certificates python3-pip pkg-config \
+            ninja-build file binutils libfreetype6-dev libfontconfig1-dev fonts-dejavu-core \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxcomposite-dev \
+            liblilv-dev lv2-dev lilv-utils
+          apt-get install -y -q --no-install-recommends carla || echo "no carla package: skipping Carla discovery"
+          pip3 install -q "cmake>=3.22,<3.32"
+
+      - uses: actions/checkout@v4
+
+      - name: Engine unit tests
+        run: make -C axe check
+
+      - name: Configure (LV2 via Darkglass juce-anagram-lv2, -march=${{ matrix.march }})
+        run: >
+          cmake -S axe/plugin -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DAXE_FORMATS=LV2 -DAXE_PLUGIN_TESTS=ON
+          -DCMAKE_C_FLAGS="-march=${{ matrix.march }}" -DCMAKE_CXX_FLAGS="-march=${{ matrix.march }}"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Headless plugin tests
+        run: ./build/plugin_test
+
+      - name: Binary checks (aarch64, no X11, glibc <= 2.34 for the Anagram)
+        run: |
+          SO=build/AxeElevator_artefacts/Release/LV2/AxeElevator.lv2/AxeElevator.so
+          file "$SO"
+          file "$SO" | grep -q "ARM aarch64"
+          echo "NEEDED:"; readelf -d "$SO" | grep NEEDED
+          if readelf -d "$SO" | grep NEEDED | grep -qiE "libX11|libGL|wayland"; then echo "links a display library: won't load on the Anagram"; exit 1; fi
+          MAXGLIBC=$(objdump -T "$SO" | grep -o "GLIBC_[0-9.]*" | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "highest glibc symbol: $MAXGLIBC"
+          [ "$(printf '%s\n' "$MAXGLIBC" 2.34 | sort -V | tail -1)" = "2.34" ]
+
+      - name: LV2 in a headless host (lilv) and Carla discovery
+        run: |
+          make -C axe lv2check LV2_BUNDLE_DIR=$PWD/build/AxeElevator_artefacts/Release/LV2
+          export LV2_PATH=$PWD/build/AxeElevator_artefacts/Release/LV2
+          lv2info urn:snotch:axeelevator | head -20
+          if [ -x /usr/lib/carla/carla-discovery-native ]; then
+            /usr/lib/carla/carla-discovery-native lv2 "$LV2_PATH/AxeElevator.lv2" | tee carla.txt
+            grep -q "audio.ins::1" carla.txt
+          fi
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cd build/AxeElevator_artefacts/Release/LV2
+          tar czf ../../../../dist/AxeElevator-LV2-linux-aarch64-${{ matrix.variant }}.tar.gz AxeElevator.lv2
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AxeElevator-LV2-aarch64-${{ matrix.variant }}
+          path: dist/*

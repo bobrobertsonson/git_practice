@@ -1,0 +1,88 @@
+# AxeElevator for the Darkglass Anagram, built with Darkglass's own toolchain
+# (github.com/Darkglass-Electronics/plugin-builder: GCC 9.4, glibc 2.34,
+# -mcpu=cortex-a76.cortex-a55, i.e. ARMv8.2 64-bit), the "direct bootstrap"
+# path of Plugin-Dev-Setup's BUILDING-LINUX.md, the same toolchain their docker
+# image (BUILDING-DOCKER.md) wraps.
+#
+# Manual: the first run bootstraps the toolchain (~1 h, ~5 GB) and caches it;
+# later runs restore it in a couple of minutes. The cache key is the
+# plugin-builder commit, so a toolchain update rebuilds it.
+name: AxeElevator Anagram LV2
+
+on:
+  workflow_dispatch:
+
+env:
+  PLUGIN_BUILDER_REF: daa4e3bb37c797f19f3ea7b3eff7ebd6d2f75c23
+  CT_ALLOW_BUILD_AS_ROOT_SURE: y
+  FORCE_UNSAFE_CONFIGURE: 1
+
+jobs:
+  anagram:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain dependencies (from plugin-builder's README)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q acl bc curl cvs git mercurial rsync subversion wget \
+            bison bzip2 flex gawk gperf gzip help2man nano perl patch tar texinfo unzip \
+            automake binutils build-essential cpio libtool libcrypt-dev libncurses-dev pkg-config \
+            python-is-python3 libtool-bin qemu-user-static lv2-dev sordi ninja-build
+
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL; df -h /
+
+      - name: Checkout plugin-builder
+        run: |
+          git clone https://github.com/Darkglass-Electronics/plugin-builder ~/plugin-builder
+          git -C ~/plugin-builder checkout $PLUGIN_BUILDER_REF
+          sed -i 's/CT_LOG_PROGRESS_BAR=y/CT_LOG_PROGRESS_BAR=n/' ~/plugin-builder/toolchain/*.config
+
+      - name: Restore toolchain
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/darkglass-linux-workdir
+          key: darkglass-anagram-minimal-${{ env.PLUGIN_BUILDER_REF }}
+
+      - name: Bootstrap toolchain (first run only, ~1 h)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          ~/plugin-builder/bootstrap.sh darkglass-anagram minimal
+          ~/plugin-builder/.clean-install.sh darkglass-anagram || true
+          rm -rf ~/darkglass-linux-workdir/*/build ~/darkglass-linux-workdir/download
+
+      - name: Build the LV2 (cross-compiled; LV2 only)
+        run: |
+          source ~/plugin-builder/local.env darkglass-anagram
+          # local.env's "cmake" is an alias that adds the toolchain file; aliases
+          # don't expand in scripts, so pass it explicitly (Darkglass's docs:
+          # use $(which cmake) for --build)
+          $(which cmake) -DCMAKE_TOOLCHAIN_FILE="$HOST_DIR/usr/share/darkglass-plugin-builder/toolchainfile.cmake" \
+            -S axe/plugin -B build-anagram -DCMAKE_BUILD_TYPE=Release -DAXE_FORMATS=LV2
+          $(which cmake) --build build-anagram -j 4
+
+      - name: Checks (aarch64, ARMv8.2 target, metadata parses)
+        run: |
+          B=build-anagram/AxeElevator_artefacts/Release/LV2/AxeElevator.lv2
+          ls -la $B
+          file $B/AxeElevator.so
+          file $B/AxeElevator.so | grep -q "ARM aarch64"
+          readelf -d $B/AxeElevator.so | grep NEEDED
+          objdump -T $B/AxeElevator.so | grep -o "GLIBC_[0-9.]*" | sort -uV | tail -1
+          sordi $B/manifest.ttl > /dev/null
+          sordi $B/dsp.ttl > /dev/null
+          grep -q 'dg:abbreviation "AXE"' $B/dsp.ttl
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          tar -C build-anagram/AxeElevator_artefacts/Release/LV2 -czf dist/AxeElevator-LV2-anagram.tar.gz AxeElevator.lv2
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AxeElevator-LV2-anagram
+          path: dist/*

@@ -219,7 +219,7 @@ struct Ramp {
         v = prev; inc = (cur - prev) * (1.f / kCtl);
     }
     float next() { v += inc; return v; }   // per sample within the block
-    bool moving() const { return cur != prev || cur != target; }
+    bool moving() const { return std::fabs(cur - prev) > 0.f || std::fabs(cur - target) > 0.f; }
 };
 
 // ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ struct Params {
     float bright = 0.5f;       // harmonic exciter: rebuilds the zing dull strings lost
     float clarity = 0.5f;      // pick-attack presence
     float airDb = 2.f;         // high shelf, 0..9 dB
-    float matchAmount = 0.f;   // how far to pull toward the learned fresh strings
+    float matchAmount = 1.f;   // how far to pull toward the learned fresh strings (gains are 0 until Learn)
     float match[kMatchBands] = {0, 0, 0, 0, 0, 0, 0, 0};   // learned EQ, dB (set by Learn)
 
     // BUZZSAW
@@ -1116,7 +1116,7 @@ public:
             y *= gate(xi) * outG.next();
             // bypass: linear crossfade with the untouched input
             float bt = params.bypass ? 0.f : 1.f;
-            if (bypassMix != bt) bypassMix = clampf(bypassMix + (bt > bypassMix ? 1.f : -1.f) / (float)bypLen, 0.f, 1.f);
+            if (std::fabs(bypassMix - bt) > 0.f) bypassMix = clampf(bypassMix + (bt > bypassMix ? 1.f : -1.f) / (float)bypLen, 0.f, 1.f);
             out[i] = x + bypassMix * (y - x);
         }
         // Never pass NaN/inf on (a broken host buffer, an unstable filter): recover silently.
