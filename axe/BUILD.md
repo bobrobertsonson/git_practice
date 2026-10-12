@@ -48,8 +48,9 @@ The Anagram can't load custom plugins without Darkglass's developer access.
 To build:
 
 **On GitHub:** run the **AxeElevator Anagram LV2** workflow (Actions tab →
-Run workflow). It bootstraps Darkglass's plugin-builder toolchain (GCC 9.4,
-glibc 2.34, `-mcpu=cortex-a76.cortex-a55`). The first run takes ~1 h, then
+Run workflow). It bootstraps Darkglass's plugin-builder toolchain (its GCC 15 config,
+glibc 2.34, `-mcpu=cortex-a76.cortex-a55`; their default GCC 9 can't compile
+JUCE 8.0.9's bundled HarfBuzz). The first run takes ~1 h, then
 the toolchain is cached. The artifact is `AxeElevator.lv2`.
 
 **Locally, the Docker route** (Plugin-Dev-Setup's BUILDING-DOCKER.md):

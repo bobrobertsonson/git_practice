@@ -4,8 +4,9 @@
 #   linux-arm64   LV2 for aarch64 (Anagram / MOD class), built in Ubuntu 20.04 so it
 #                 needs glibc <= 2.31 (Anagram has 2.34), tested in a headless
 #                 lilv host and Carla's plugin discovery
-#                 (Ubuntu 20.04 container: glibc 2.31 and GCC 9.4, the GCC of
-#                 Darkglass's toolchain; Debian 11's archive is past LTS)
+#                 (Ubuntu 20.04 container: glibc 2.31; GCC 10, because JUCE 8.0.9's
+#                 bundled HarfBuzz doesn't compile against GCC 9's libstdc++;
+#                 libstdc++ is linked statically, so no newer runtime is needed)
 # The Anagram toolchain build itself is in axe-anagram.yml (manual: ~1 h first run).
 name: AxeElevator plugin
 
@@ -21,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Engine unit tests (bypass/null, sample rates, smoothing, reset, sub, learn)
+      - name: Engine unit tests (bypass/null, sample rates, smoothing, reset, clock, pitch, sub, fx floors)
         run: make -C axe check
 
   macos:
@@ -88,7 +89,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends build-essential git ca-certificates python3-pip pkg-config \
+          apt-get install -y -q --no-install-recommends build-essential gcc-10 g++-10 git ca-certificates python3-pip pkg-config \
             ninja-build file binutils libfreetype6-dev libfontconfig1-dev fonts-dejavu-core \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxcomposite-dev \
             liblilv-dev lv2-dev lilv-utils
@@ -101,6 +102,9 @@ jobs:
         run: make -C axe check
 
       - name: Configure (LV2 via Darkglass juce-anagram-lv2, -march=${{ matrix.march }})
+        env:
+          CC: gcc-10
+          CXX: g++-10
         run: >
           cmake -S axe/plugin -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DAXE_FORMATS=LV2 -DAXE_PLUGIN_TESTS=ON

@@ -27,6 +27,7 @@
 #endif
 
 #include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 

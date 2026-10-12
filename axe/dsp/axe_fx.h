@@ -878,10 +878,8 @@ public:
         const float f = fade.next(on);
         if (f > 0.f && rng.uni() < dens / sr) spawn();
         float y = 0.f;
-        int live = 0;
         for (auto& g : gr) {
             if (!g.on) continue;
-            live++;
             const float w = std::sin(kPi * (float)g.age / (float)g.len);
             y += w * w * c.cap->read(g.pos);
             g.pos += g.rate; g.age++;

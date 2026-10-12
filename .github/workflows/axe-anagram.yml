@@ -1,6 +1,7 @@
 # AxeElevator for the Darkglass Anagram, built with Darkglass's own toolchain
-# (github.com/Darkglass-Electronics/plugin-builder: GCC 9.4, glibc 2.34,
-# -mcpu=cortex-a76.cortex-a55, i.e. ARMv8.2 64-bit), the "direct bootstrap"
+# (github.com/Darkglass-Electronics/plugin-builder, its GCC 15 config:
+# glibc 2.34, -mcpu=cortex-a76.cortex-a55, i.e. ARMv8.2 64-bit; the default
+# GCC 9 config can't compile JUCE 8.0.9's bundled HarfBuzz), the "direct bootstrap"
 # path of Plugin-Dev-Setup's BUILDING-LINUX.md, the same toolchain their docker
 # image (BUILDING-DOCKER.md) wraps.
 #
@@ -14,6 +15,7 @@ on:
 
 env:
   PLUGIN_BUILDER_REF: daa4e3bb37c797f19f3ea7b3eff7ebd6d2f75c23
+  PLATFORM: darkglass-anagram-gcc15
   CT_ALLOW_BUILD_AS_ROOT_SURE: y
   FORCE_UNSAFE_CONFIGURE: 1
 
@@ -46,18 +48,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/darkglass-linux-workdir
-          key: darkglass-anagram-minimal-${{ env.PLUGIN_BUILDER_REF }}
+          key: ${{ env.PLATFORM }}-minimal-${{ env.PLUGIN_BUILDER_REF }}
 
       - name: Bootstrap toolchain (first run only, ~1 h)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          ~/plugin-builder/bootstrap.sh darkglass-anagram minimal
-          ~/plugin-builder/.clean-install.sh darkglass-anagram || true
+          ~/plugin-builder/bootstrap.sh $PLATFORM minimal
+          ~/plugin-builder/.clean-install.sh $PLATFORM || true
           rm -rf ~/darkglass-linux-workdir/*/build ~/darkglass-linux-workdir/download
 
       - name: Build the LV2 (cross-compiled; LV2 only)
         run: |
-          source ~/plugin-builder/local.env darkglass-anagram
+          source ~/plugin-builder/local.env $PLATFORM
           # local.env's "cmake" is an alias that adds the toolchain file; aliases
           # don't expand in scripts, so pass it explicitly (Darkglass's docs:
           # use $(which cmake) for --build)
