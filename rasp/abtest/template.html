@@ -120,6 +120,9 @@ const CLIPS = [
   { file: "slam.mp3", label: "Slamadeus, vocal 1 (slam gutturals)" },
   { file: "id.mp3", label: "Immortal Disfigurement, lead (deathcore)" },
   { file: "atg.mp3", label: "ATG, backing vocal (mid scream)" },
+  // Your own DI, with the Match EQ that Learn sets for it (learn_tool on the full take).
+  { file: "me.mp3", label: "You: main vocal DI (with your Learn match)", mine: true,
+    base: { match: [-1.4, -3.0, -1.3, 0.1, -1.6, 3.6, 5.1, 3.4, 3.0, 3.6], matchAmount: 1 } },
 ];
 // Each experiment changes one thing against a base preset. x is the current factory value.
 const EXPERIMENTS = [
@@ -136,6 +139,8 @@ const EXPERIMENTS = [
   { key: "air-preset-2", q: "Preset", base: "huge", x: {}, y: { $preset: "air" }, xl: "Huge", yl: "Air (gentler: +7 dB shelf, natural voicing)" },
   { key: "pitch-oct-2", q: "Pitch layer", base: "huge", x: { octDown: 0 }, y: { octDown: 0.3, pitch1Semi: -12 }, xl: "No pitch layer (current)", yl: "Octave down at 30%" },
   { key: "pitch-fifth-2", q: "Pitch layer", base: "huge", x: { octDown: 0 }, y: { octDown: 0.3, pitch1Semi: -7 }, xl: "No pitch layer (current)", yl: "Fifth down (−7 st) at 30%" },
+  { key: "learn-2", q: "Learn (match to your voice)", base: "huge", onlyMine: true, x: { matchAmount: 1 }, y: { matchAmount: 0 }, xl: "Learn match on", yl: "Learn match off" },
+  { key: "mantra-oct-2", q: "Harmony pairs", base: "huge", x: {}, y: { octUp: 0.3, pitch2Semi: -12, octDown: 0.05, pitch1Semi: 0, harmRandPitch: 0.36, harmRandTime: 0.48, harmLoCut: 131, harmHiCut: 8430, harmWidth: 0.67 }, xl: "No harmony pairs", yl: "Octave-down pair + quiet doubles (your Mantra 'German' setup)" },
   { key: "pitch-semi-2", q: "Pitch layer", base: "huge", x: { octDown: 0.3, pitch1Semi: -12 }, y: { octDown: 0.3, pitch1Semi: -1 }, xl: "Octave down at 30%", yl: "One semitone down at 30% (dissonant)" },
 ];
 const TARGET_LUFS = -20;
@@ -202,7 +207,7 @@ async function loadClip(i) {
     for (let s = 0; s + n <= pcm.length; s += n) { let e = 0; for (let k = s; k < s + n; k++) e += pcm[k] * pcm[k]; const d = 10 * Math.log10(e / n + 1e-12); if (d > -45) lv.push(d); }
     lv.sort((a, b) => a - b);
     const p90 = lv.length ? lv[Math.floor(lv.length * 0.9)] : -18;
-    return { pcm: new Float32Array(pcm), sr, inDb: Math.max(-12, Math.min(36, Math.round((-18 - p90) * 2) / 2)) };
+    return { index: i, pcm: new Float32Array(pcm), sr, inDb: Math.max(-12, Math.min(36, Math.round((-18 - p90) * 2) / 2)) };
   })();
   clipCache.set(i, job);
   return job;
@@ -210,7 +215,7 @@ async function loadClip(i) {
 const paramsFor = (exp, side, clip) => {
   const v = side === "x" ? exp.x : exp.y;
   const preset = v.$preset || exp.base;
-  const p = Object.assign({}, DEFAULTS, PRESETS[preset] || {}, v, { inDb: clip.inDb, bpm: 120, howl: false });
+  const p = Object.assign({}, DEFAULTS, PRESETS[preset] || {}, CLIPS[clip.index].base || {}, v, { inDb: clip.inDb, bpm: 120, howl: false });
   delete p.$preset;
   return p;
 };
@@ -230,7 +235,10 @@ function nextTrial(prevKey) {
   let pool = EXPERIMENTS.filter(e => counts[e.key] === min && e.key !== prevKey);
   if (!pool.length) pool = EXPERIMENTS.filter(e => e.key !== prevKey);
   const exp = pool[Math.floor(Math.random() * pool.length)];
-  return { exp, clip: (counts[exp.key] + Math.floor(Math.random() * CLIPS.length)) % CLIPS.length, aIsX: Math.random() < 0.5 };
+  // Your own voice comes up half the time (always, for experiments only about it).
+  const mine = CLIPS.findIndex(c => c.mine), others = CLIPS.map((c, i) => i).filter(i => !CLIPS[i].mine);
+  const clip = exp.onlyMine || Math.random() < 0.5 ? mine : others[(counts[exp.key] + Math.floor(Math.random() * others.length)) % others.length];
+  return { exp, clip, aIsX: Math.random() < 0.5 };
 }
 
 // ---- playback: both versions run together; the switch only moves the gains, so you keep your place
