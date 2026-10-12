@@ -1195,13 +1195,13 @@ const DEFAULTS = {
   tapeStop: false, tapeTime: 1, freeze: false, gate: false, gatePattern: 0, throwStyle: 0, crush: 0, crushMix: 1, lofi: 0,
 };
 const PRESETS = {
-  huge:    { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5, weight: 0.6, fill: 0.4, smooth: 0.4 },
+  huge:    { drive: 0.45, chop: 0.65, spread: 0.6, thickenGainDb: -3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5, weight: 0.6, fill: 0.4, smooth: 0.4, darken: 0.25 },
   natural: {},
   dark:    { brightness: 0, drive: 0.5, loCut: 0.36, hiCut: 0.72, darken: 0.5, tilt: 0.4, tail: 0.4 },
   bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65, smooth: 0 },
   live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.15, duck: 0.75, bleed: 0.78, loCut: 0.56, glue: 0.4 },
   raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0, weight: 0, fill: 0, smooth: 0 },
-  air:     { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 1, airDb: 5, bodyDb: 5, deEss: 0.75, weight: 0.5, fill: 0.3, smooth: 0 },
+  air:     { drive: 0.45, chop: 0.65, spread: 0.6, thickenGainDb: -3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 1, airDb: 5, bodyDb: 5, deEss: 0.75, weight: 0.5, fill: 0.3, smooth: 0, darken: 0.25 },
 };
 let params = Object.assign({}, DEFAULTS);
 

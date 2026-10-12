@@ -17,7 +17,7 @@ inline Params presetParams(int i) {
     Params p;
     switch (i) {
         case 0:  // huge: album sound
-            p.drive = 0.45f; p.chop = 0.75f; p.spread = 0.75f; p.thickenGainDb = 3.f; p.tail = 0.45f;
+            p.drive = 0.45f; p.chop = 0.65f; p.spread = 0.6f; p.thickenGainDb = -3.f; p.tail = 0.45f;
             p.tailBlend = 0.45f; p.delayBlend = 0.22f; p.flavourGainDb = -4.f; p.glue = 0.65f; p.outDb = -3.f;
             // Top end fitted to four producers' lead vocals (tools/presetfit.py:
             // Bloodbath, Gojira, Immortal Disfigurement, KnockedLoose). Every one
@@ -26,12 +26,19 @@ inline Params presetParams(int i) {
             p.hiCut = 0.95f; p.airDb = 4.f;
             // "Still thin": KnockedLoose (the one mix whose band leaves 250 Hz
             // measurable) had 4.1 dB more 250 Hz on the lead than Huge; +5 dB
-            // body brings it within 1 dB. Doubles +3 dB: preferred blind as
-            // "fuller" / "larger" (abtest).
+            // body brings it within 1 dB. (Doubles were +3 dB after the blind
+            // A/B called it "fuller"; in a real mix that read as fake, see below.)
             p.bodyDb = 5.f;
             // Sculpt: the fullest preset (weight +4 dB at 160 Hz share, fizz at
             // 4 kHz +7.6 -> ~+4 dB on Andrew's DI).
             p.weight = 0.6f; p.fill = 0.4f; p.smooth = 0.4f;
+            // "Sounds fake, has artifacts, doesn't sit in a mix" (Logic, build 28):
+            // the synthetic doubles were 1.2 dB LOUDER than the lead (side -2.5 dB
+            // re mid, wider than Mantra's doubler at width 100). Doubles +3 -> -3 dB,
+            // spread .75 -> .6 (less detune wander), darken .25 (their top was the
+            // most exposed), chop .75 -> .65: doubles now 2.5 dB under the lead,
+            // side -7.3 dB, between Mantra's doubler preset (-9.4) and width 100 (-3.3).
+            p.darken = 0.25f;
             // Output -3 dB (was +3): on Andrew's DI, 29 Mantra settings left a
             // median 4.0 dB of phrase-to-phrase level (in/out slope 0.35); Huge
             // left 2.3 dB (0.09), mostly from driving the bus limiter. -6 dB into
