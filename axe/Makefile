@@ -3,13 +3,13 @@ CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra
 
 all: axe_wav synth_di engine_test
 
-axe_wav: host/axe_wav.cpp host/common.h dsp/axe.h
+axe_wav: host/axe_wav.cpp host/common.h dsp/axe.h dsp/axe_base.h dsp/axe_tone.h dsp/axe_fx.h
 	$(CXX) $(CXXFLAGS) -o $@ host/axe_wav.cpp
 
 synth_di: host/synth_di.cpp host/common.h
 	$(CXX) $(CXXFLAGS) -o $@ host/synth_di.cpp
 
-engine_test: tests/engine_test.cpp host/common.h dsp/axe.h
+engine_test: tests/engine_test.cpp host/common.h dsp/axe.h dsp/axe_base.h dsp/axe_tone.h dsp/axe_fx.h
 	$(CXX) $(CXXFLAGS) -o $@ tests/engine_test.cpp
 
 # Unit tests for the engine (no audio files needed).

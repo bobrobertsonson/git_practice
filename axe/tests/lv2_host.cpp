@@ -6,7 +6,8 @@
 //   lv2_host run <plugin-uri> in.wav out.wav [symbol=value ...]
 //
 // The checks: the plugin instantiates at several rates; a 0-sample run is
-// harmless; every mode gives finite output; lv2:enabled = 0 passes the input
+// harmless; all 13 modes give finite output; the Trigger port works;
+// lv2:enabled = 0 passes the input
 // through bit-exact after its crossfade; kx:Reset makes two instances fed
 // different histories bit-identical (Anagram dual mono).
 #include "../host/common.h"
@@ -149,8 +150,9 @@ int test(Host& host) {
         CHECK(in.ok(), "instantiate at %.0f Hz", sr);
         if (!in.ok()) continue;
         lilv_instance_run(in.inst, 0);                      // pre-run with 0 samples (Anagram does this)
-        for (int mode = 0; mode < 4; mode++) {
+        for (int mode = 0; mode < 13; mode++) {
             in.set("mode", (float)mode);
+            in.set("trigger", mode == 3 ? 0.f : 1.f);   // a glitch held from the first sample repeats silence
             auto y = in.run(pluck(sr, 0.5f, 110.f), 128);
             bool finite = true; double e = 0;
             for (float v : y) { finite = finite && std::isfinite(v); e += (double)v * v; }
@@ -160,7 +162,7 @@ int test(Host& host) {
     // lv2:enabled = 0: bit-exact pass-through after the 20 ms crossfade
     {
         Instance in(host, 48000.f, 128);
-        in.set("mode", 3.f); in.set("gain", 90.f);
+        in.set("mode", 2.f); in.set("gain", 90.f);   // Buzzsaw
         auto x = pluck(48000.f, 1.f, 98.f);
         auto y = in.run(x, 128, [&](size_t i) { if (i == 12032) in.set("lv2_enabled", 0.f); });
         double err = 0; for (size_t i = 14400; i < x.size(); i++) err = std::max(err, (double)std::fabs(y[i] - x[i]));
@@ -169,7 +171,7 @@ int test(Host& host) {
     // kx:Reset: two instances with different histories become identical
     {
         Instance a(host, 48000.f, 128), b(host, 48000.f, 128);
-        for (auto* in : {&a, &b}) { in->set("mode", 1.f); in->set("gate", 30.f); }
+        for (auto* in : {&a, &b}) { in->set("mode", 11.f); in->set("trigger", 1.f); in->set("gate", 30.f); }   // Swarm: random grains
         a.run(pluck(48000.f, 0.7f, 123.f), 128);
         b.run(pluck(48000.f, 0.4f, 87.f), 64);
         a.set("lv2_reset", 1.f); b.set("lv2_reset", 1.f);
@@ -177,6 +179,17 @@ int test(Host& host) {
         auto ya = a.run(x, 128), yb = b.run(x, 128);
         bool same = true; for (size_t i = 0; i < x.size(); i++) if (ya[i] != yb[i]) { same = false; break; }
         CHECK(same, "after kx:Reset two instances differ (dual-mono sync)");
+    }
+    // the Trigger port: a glitch only changes the sound while it's held
+    {
+        Instance in(host, 48000.f, 128);
+        in.set("mode", 3.f); in.set("gChaos", 0.f); in.set("tempo", 120.f); in.set("sync", 0.f);
+        auto x = pluck(48000.f, 2.f, 110.f);
+        auto y = in.run(x, 128, [&](size_t i) { if (i == 48000) in.set("trigger", 1.f); });
+        double before = 0, during = 0;
+        for (size_t i = 4800; i < 47000; i++) before = std::max(before, (double)std::fabs(y[i] - x[i]));   // after the 40 ms switch from floor 1
+        for (size_t i = 60000; i < x.size(); i++) during = std::max(during, (double)std::fabs(y[i] - x[i]));
+        CHECK(before < 1e-6 && during > 0.01, "Trigger port: glitch before %g, while held %g", before, during);
     }
     std::printf("lv2 host checks: %d failed\n", failures);
     return failures;

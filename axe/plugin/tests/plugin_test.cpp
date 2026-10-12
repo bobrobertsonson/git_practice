@@ -53,17 +53,16 @@ static void testLayout() {
     std::map<std::string, int> perPage;
     for (const auto& s : specs) { ids.insert(s.id); perPage[s.page]++; }
     CHECK(ids.size() == specs.size(), "duplicate parameter ids");
-    for (auto& [page, n] : perPage) CHECK(n <= 6, "page %s has %d parameters (the Anagram shows 6 per page)", page.c_str(), n);
-    // the Anagram pages strictly by 6 in port order: every page but the last must be full
-    { int idx = 0; std::string cur = specs[0].page;
-      for (size_t i = 0; i < specs.size(); i++) {
-          if (specs[i].page != cur) { CHECK(idx % 6 == 0, "page %s starts at position %d, not on a 6-boundary", specs[i].page, idx); cur = specs[i].page; }
-          idx++;
-      } }
-    // pages appear in parameter order as contiguous groups
+    // the Anagram pages strictly by 6 in port order: every page exactly 6, contiguous
+    for (auto& [page, n] : perPage) CHECK(n == 6, "page %s has %d parameters (want exactly 6)", page.c_str(), n);
     std::string last; std::set<std::string> seen;
     for (const auto& s : specs) {
         if (s.page != last) { CHECK(!seen.count(s.page), "page %s is split", s.page); seen.insert(s.page); last = s.page; }
+    }
+    CHECK((int)perPage.size() == 2 + axe::kNumModes, "%d pages (want Global, Trigger and one per mode)", (int)perPage.size());
+    for (int m = 0; m < axe::kNumModes; m++) {
+        int n = 0; for (const auto& s : specs) n += s.mode == m;
+        CHECK(n == 6, "mode %s has %d controls", axe::modeName(m), n);
     }
     CHECK(p.getBypassParameter() != nullptr, "no bypass parameter (required for lv2:enabled)");
     auto alt = p.getAlternateDisplayNames();
@@ -86,6 +85,7 @@ static void testRatesAndModes() {
             for (int inst = 0; inst < 2; inst++) {
                 setParam(p, "mode", (float)m);
                 setParam(p, "instrument", (float)inst);
+                setParam(p, "trigger", m == axe::kGlitch ? 0.f : 1.f);
                 auto x = pluck(sr, 0.6, inst ? 55.f : 110.f);
                 auto y = run(p, x, 512);
                 bool ok = true; double e = 0;
@@ -111,13 +111,13 @@ static void testBypassAndAutomation() {
     // automation of every float parameter, full range in one block: no clicks on a steady tone
     std::vector<float> tone((size_t)sr * 2);
     for (size_t i = 0; i < tone.size(); i++) tone[i] = 0.2f * (float)std::sin(2.0 * M_PI * 220.0 * (double)i / sr);
+    // (the fx pages are rhythmic or random by design; the engine test covers their smoothed controls)
     for (const auto& s : paramSpecs()) {
-        if (s.kind != ParamSpec::Float) continue;
+        if (s.kind != ParamSpec::Float || s.mode >= axe::kGlitch) continue;
+        if (!std::strcmp(s.id, "tempo") || !std::strcmp(s.id, "swing")) continue;
         AxeProcessor q;
         q.prepareToPlay(sr, 128);
-        int mode = !std::strcmp(s.page, "Tight") ? 0 : !std::strcmp(s.page, "Sub") ? 1 : !std::strcmp(s.page, "Buzzsaw") ? 3 : 2;
-        setParam(q, "mode", (float)mode);
-        if (!std::strcmp(s.page, "Match")) setParam(q, "matchAmount", 100.f);
+        setParam(q, "mode", (float)(s.mode < 0 ? axe::kTight : s.mode));
         setParam(q, s.id, s.lo);
         auto out = run(q, tone, 128, [&](size_t i) { if (i == 48000) setParam(q, s.id, s.hi); });
         auto d2 = [&](size_t a, size_t b) { float m = 0; for (size_t i = a; i < b; i++) m = std::max(m, std::fabs(out[i] - 2 * out[i - 1] + out[i - 2])); return m; };
@@ -129,13 +129,8 @@ static void testBypassAndAutomation() {
 static void testState() {
     AxeProcessor a;
     a.prepareToPlay(48000.0, 256);
-    setParam(a, "mode", 2.f); setParam(a, "instrument", 1.f); setParam(a, "bright", 80.f); setParam(a, "match5", 6.5f); setParam(a, "release", 120.f);
-    // a learned fresh profile is part of the session
-    auto fresh = pluck(48000.0, 13.0, 196.f);
-    setParam(a, "learnFresh", 1.f);
-    run(a, fresh, 512);
-    setParam(a, "learnFresh", 0.f);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(300);   // the timer collects the profile
+    setParam(a, "mode", (float)axe::kLaser); setParam(a, "instrument", 1.f); setParam(a, "lSweep", 300.f);
+    setParam(a, "rate", 7.f); setParam(a, "tempo", 141.f); setParam(a, "engage", 1.f); setParam(a, "release", 120.f);
     juce::MemoryBlock mb;
     a.getStateInformation(mb);
     AxeProcessor b;
@@ -144,43 +139,38 @@ static void testState() {
         float va = a.apvts.getRawParameterValue(s.id)->load(), vb = b.apvts.getRawParameterValue(s.id)->load();
         CHECK(std::fabs(va - vb) < 1e-4f, "state round trip changed %s (%g -> %g)", s.id, va, vb);
     }
-    b.prepareToPlay(48000.0, 256);
-    std::vector<float> one(256, 0.f);
-    run(b, one, 256);
-    CHECK(b.meters.hasFresh.load(), "the learned fresh-strings profile did not survive save/load");
 }
 
-static void testLearn() {
+// The host's tempo drives the grid when Sync = Host; the Tempo knob otherwise.
+struct FakePlayHead : juce::AudioPlayHead {
+    double bpm = 150.0, ppq = 0.0; bool playing = true;
+    juce::Optional<PositionInfo> getPosition() const override {
+        PositionInfo p; p.setBpm(bpm); p.setPpqPosition(ppq); p.setIsPlaying(playing); return p;
+    }
+};
+
+static void testTempoAndTrigger() {
     const double sr = 48000.0;
     AxeProcessor p;
-    p.prepareToPlay(sr, 512);
-    setParam(p, "mode", 2.f);
-    // fresh: bright plucks; dull: the same through a strong high cut
-    auto fresh = pluck(sr, 13.0, 147.f, 0.25f, 80);
-    auto dull = pluck(sr, 13.0, 165.f, 0.25f, 80);
-    juce::IIRFilter lp; lp.setCoefficients(juce::IIRCoefficients::makeLowPass(sr, 2500.0, 0.7));
-    lp.processSamples(dull.data(), (int)dull.size());
-    setParam(p, "learnFresh", 1.f); run(p, fresh, 512); setParam(p, "learnFresh", 0.f);
-    run(p, std::vector<float>(512, 0.f), 512);
-    setParam(p, "learnNow", 1.f); run(p, dull, 512); setParam(p, "learnNow", 0.f);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
-    // expected: the engine's own Learner on the same audio
-    auto profile = [&](const std::vector<float>& x, float* out) {
-        axe::Learner l; l.init((float)sr); l.start();
-        for (float v : x) if (l.feed(v, out)) break;
-    };
-    float pf[axe::kMatchBands], pn[axe::kMatchBands], want[axe::kMatchBands];
-    profile(fresh, pf); profile(dull, pn);
-    axe::matchGains(pf, pn, want);
-    double worst = 0;
-    std::printf("  learned match (dB):");
-    for (int b = 0; b < axe::kMatchBands; b++) {
-        float got = p.apvts.getRawParameterValue("match" + juce::String(b))->load();
-        std::printf(" %+.1f", got);
-        worst = std::max(worst, (double)std::fabs(got - want[b]));
-    }
-    std::printf("\n");
-    CHECK(worst < 0.15 && std::fabs(want[6]) > 1.f, "Learn did not put the engine's match into the Match parameters (off by %.2f dB)", worst);
+    FakePlayHead ph;
+    p.setPlayHead(&ph);
+    p.prepareToPlay(sr, 256);
+    setParam(p, "mode", (float)axe::kStutter);
+    setParam(p, "tempo", 100.f);
+    auto x = pluck(sr, 0.5, 110.f);
+    run(p, x, 256, [&](size_t i) { ph.ppq = (double)i / sr * ph.bpm / 60.0; });
+    CHECK(std::fabs(p.meters.bpm.load() - 150.f) < 0.01f, "host tempo not followed (%.2f BPM)", p.meters.bpm.load());
+    setParam(p, "sync", 0.f);
+    run(p, x, 256);
+    CHECK(std::fabs(p.meters.bpm.load() - 100.f) < 0.01f, "Tempo knob not used with Sync = Tempo Knob (%.2f BPM)", p.meters.bpm.load());
+    // Trigger reaches the engine
+    setParam(p, "trigger", 1.f);
+    run(p, std::vector<float>(512, 0.f), 256);
+    CHECK(p.meters.triggered.load(), "Trigger parameter does not reach the engine");
+    setParam(p, "trigger", 0.f);
+    run(p, std::vector<float>(512, 0.f), 256);
+    CHECK(!p.meters.triggered.load(), "Trigger does not release");
+    p.setPlayHead(nullptr);
 }
 
 static void testEditor(const char* snapDir) {
@@ -208,7 +198,7 @@ int main(int argc, char** argv) {
     std::printf("rates and modes\n");      testRatesAndModes();
     std::printf("bypass and automation\n"); testBypassAndAutomation();
     std::printf("state\n");                testState();
-    std::printf("learn\n");                testLearn();
+    std::printf("tempo and trigger\n");    testTempoAndTrigger();
     std::printf("editor\n");               testEditor(argc > 1 ? argv[1] : nullptr);
     std::printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

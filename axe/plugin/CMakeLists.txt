@@ -61,7 +61,9 @@ else()
             GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
             GIT_TAG 8.0.9
             GIT_SHALLOW TRUE
-            PATCH_COMMAND patch -p1 -N -i "${JUCE_ANAGRAM_LV2_DIR}/cross-compilation-patches/v8.0.9.patch" || true
+            # (through sh: CMake runs the command without a shell; -N and "|| true"
+            # keep a re-configure from failing on the already-applied patch)
+            PATCH_COMMAND sh -c "patch -p1 -N -i '${JUCE_ANAGRAM_LV2_DIR}/cross-compilation-patches/v8.0.9.patch' || true"
             UPDATE_DISCONNECTED TRUE)
     else()
         FetchContent_Declare(JUCE
@@ -82,7 +84,7 @@ juce_add_plugin(AxeElevator
     BUNDLE_ID "com.snotch.axeelevator"
     PLUGIN_MANUFACTURER_CODE Snch
     PLUGIN_CODE AxEv
-    DESCRIPTION "Pre-amp DI enhancer for guitar and bass"
+    DESCRIPTION "Pre-amp sound mangler for guitar and bass: tone shapers, glitch, laser, dive, chiptune and more"
     FORMATS ${AXE_FORMATS}
     LV2URI "urn:snotch:axeelevator"     # (JUCE keyword is LV2URI; LV2_URI is silently ignored)
     IS_SYNTH FALSE
@@ -91,7 +93,7 @@ juce_add_plugin(AxeElevator
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     AU_MAIN_TYPE kAudioUnitType_Effect
-    VST3_CATEGORIES Fx Distortion Dynamics
+    VST3_CATEGORIES Fx Distortion Modulation
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
 if(AXE_LV2)

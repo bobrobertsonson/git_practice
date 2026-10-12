@@ -1,21 +1,21 @@
-# AxeElevator — a pre-amp DI enhancer for guitar and bass
+# AxeElevator — a pre-amp sound mangler for guitar and bass
 
 *(Working title. Company: Snotch / Studio Notsch.)*
 
-AxeElevator goes on a **clean DI, before an amp sim**. It's inspired by the
-idea behind Dark Cabin Studios' DI Enhancer, but it's our own design: no
-code, names or graphics of theirs, and any comparison with their plugin is
-done black-box only (render a DI through it, measure with `tools/drywet.py`).
+AxeElevator goes **between your guitar (or bass) and an amp sim**. It has 13
+"floors": three tone shapers and ten triggerable, tempo-aware noise makers.
+Each floor is voiced for guitar and for bass, and the big **TRIGGER** button
+(a footswitch on the Anagram) fires the wild stuff on and off.
 
 | Path | What it is |
 |---|---|
-| `dsp/axe.h` | The DSP engine. Header-only C++17, no heap, no dependencies, no allocation in the audio thread. The same file will run on a Daisy Seed |
+| `dsp/axe.h` | The engine: signal chain, Voice, Processor. Includes `axe_base.h` (shared DSP parts), `axe_tone.h` (Tight, Sub, Buzzsaw) and `axe_fx.h` (the ten fx floors plus the clock, trigger, pitch tracker and pick detector). Header-only C++17, no heap, no allocation in the audio thread, so the same code can run on a Daisy Seed |
 | `plugin/` | JUCE plugin: AU / VST3 / Standalone (macOS) and LV2 through Darkglass's `juce-anagram-lv2` wrapper (Linux, Anagram, MOD) |
-| `host/axe_wav.cpp` | Process a WAV file from the command line |
-| `host/synth_di.cpp` | Synthetic guitar and bass DIs (chords, palm mutes, bends, fresh vs dull strings) for testing |
+| `host/axe_wav.cpp` | Process a WAV file from the command line, with `trigat=` to stomp the Trigger at set times |
+| `host/synth_di.cpp` | Synthetic guitar and bass DIs (chords, palm mutes, bends) for testing |
 | `tests/engine_test.cpp` | Engine unit tests (`make check`) |
 | `tests/lv2_host.cpp` | Minimal headless LV2 host (lilv) with the features mod-host provides; LV2 checks (`make lv2check`) |
-| `tools/render_all.sh` | Renders DIs through every mode and measures them (`renders/report.txt`) |
+| `tools/render_all.sh` | Renders DIs through every floor (fx floors with Trigger held 2–5 s) and measures them |
 | `tools/drywet.py` | From RASP: what did a chain do to a DI (EQ, level, dynamics, low end) |
 | `BUILD.md` | How to build every target, including the Anagram toolchain |
 | `samples/` | Your DIs go here. Git-ignored: audio never goes to GitHub |
@@ -23,28 +23,67 @@ done black-box only (render a DI through it, measure with `tools/drywet.py`).
 ```sh
 make                 # axe_wav, synth_di, engine_test
 make check           # engine unit tests
-tools/render_all.sh  # synthetic DIs -> every mode -> renders/report.txt
-./axe_wav my_di.wav out.wav mode=buzzsaw inst=guitar gain=0.8
+tools/render_all.sh  # synthetic DIs -> every floor -> renders/
+./axe_wav riff.wav out.wav mode=glitch tempo=140 rate=1/16 trigat=2,4   # Trigger held 2-4 s
 ./axe_wav            # lists every parameter
 ```
 
-## The modes
+## Trigger, Engage, tempo
 
-One mode runs at a time. The **Guitar / Bass** switch re-voices every mode
-(crossovers, filter corners, EQ centres). Global controls: **Input**, **Gate**
-(a downward expander for DI hiss and hum, keyed on the input), **Mix**, **Output**.
+These global controls drive every fx floor:
 
-| Floor | Mode | Knobs | What it does |
-|---|---|---|---|
-| 1 | **Tight** | Tight, Punch, Release, Low, Mid, High | 3-band compressor (Linkwitz-Riley split at 150 Hz / 1.8 kHz, bass 90 / 800 Hz). Each band's threshold rides that band's own average level, so it works the same at any DI level. The low band clamps hardest and fastest: a palm mute's lows bloom 10–40 ms after the pick, and stopping that bloom is what "tight" means. Punch lengthens the attack so the pick click still gets through |
-| 2 | **Sub** | Poly/Mono, Sub, Dry, Sub Tone, Range, Grit | Octave down blended with the DI. **Poly** holds up on chords (below). **Mono** is RASP's WSOLA shifter: the cleanest on single notes, but it warbles on chords. Range sets the highest note that gets a sub; Grit saturates the sub so it stays audible on small speakers |
-| 3 | **New Strings** | Bright, Clarity, Air, Match, Learn Fresh, Learn Now | Gives dull strings back what fresh ones have: upper harmonics (Bright: a level-independent exciter whose new harmonics land at 3–8 kHz, bass 1.8–5 kHz), pick attack (Clarity: a presence bell that opens on transients) and top (Air). **Learn**: play ~12 s on fresh strings (*Learn Fresh*), and later ~12 s on your dull strings (*Learn Now*). It computes the EQ that pulls them toward the fresh sound, in 8 bands from 250 Hz to 10 kHz |
-| 4 | **Buzzsaw** | Gain, Lows, Highs, Scoop, Level, Blend | HM-2-style heavy drive, our own circuit: a lift into two 4× oversampled clipping stages (antiderivative anti-aliasing), then big boosts near 100 Hz and 1 kHz (bass ~70 Hz / 800 Hz) with the middle scooped between them. Auto-levelled to the DI's loudness. Blend adds the clean DI underneath (bass: try 30–40%) |
+| Control | What it does |
+|---|---|
+| **Trigger** | The button or footswitch. In the plugin window: hold to fire; shift-click (or right-click) latches |
+| **Engage** | *Always*: the floor runs all the time, and Trigger adds that floor's action (below). *While Triggered*: the floor only sounds while Trigger is held |
+| **Sync** | *Host Tempo* follows Logic's tempo and bar position when the host has them; *Tempo Knob* always uses the knob |
+| **Tempo** | 40–300 BPM. The Anagram passes plugins no tempo yet, so there you set it here (asked of Darkglass) |
+| **Rate** | The grid every fx floor uses: 1/1 … 1/32, triplets, dotted. With no host transport running, pressing Trigger restarts the grid, so the first step lands on your stomp |
+| **Swing** | Delays every second step, up to 75% (hard shuffle) |
 
-Every continuous control is smoothed (filter coefficients glide per sample).
-Mode and instrument changes crossfade over 40 ms between two engines, and
-bypass crossfades over 20 ms. The plugin reports **zero latency**: there is
-no lookahead and no block processing anywhere.
+Plus **Input**, **Gate** (a noise gate keyed on your input), **Mix** and **Output**.
+
+## The floors
+
+| | Floor | Knobs | What it does | Trigger (Engage = Always) |
+|---|---|---|---|---|
+| 1 | **Tight** | Tight, Punch, Release, Low, Mid, High | 3-band compressor: the lows clamp fast, so palm mutes don't flub | — (While Triggered switches it in) |
+| 2 | **Sub** | Poly/Mono, Sub, Dry, Sub Tone, Range, Grit | Octave down. Poly holds chords (below); Mono is RASP's WSOLA shifter, cleanest on single notes | — |
+| 3 | **Buzzsaw** | Gain, Lows, Highs, Scoop, Level, Blend | HM-2-style chainsaw drive: big lows and 1 kHz, scooped middle, 4× oversampled | — |
+| 4 | **Glitch** | Chaos, Crush, Pitch Jumps, Tape Stops, Reverse, Smooth | Beat repeat: grabs the last step and replays it. Each step Chaos decides between repeat, roll (½ or ¼ repeats), pitch jump, tape stop, reverse and fresh audio. Chaos 0 = a clean stutter | Holds a glitch. In Always it also glitches by itself now and then |
+| 5 | **Laser** | Pitch, Track Note, Drop, Sweep, Tone, Level | Every pick fires a falling "pew" (sine to square), as loud as you picked; Track starts it two octaves above your note | Machine gun: one shot per Rate step, even with no input |
+| 6 | **Dive Bomb** | Depth, Dive Time, Return, Curve, Wobble, Dry | Pitch drops 1–36 semitones over a time in beats, wobbles at the bottom, climbs back | Holds a dive. In Always every pick also dives |
+| 7 | **Chiptune** | Pulse Width, Crush, Arpeggio, Octave, Glide, Dry | Follows your note with a pulse-wave game voice (mono: the strongest note wins) | Runs the arpeggiator (octave, power, major, minor, random) on the Rate |
+| 8 | **Stutter Gate** | Pattern, Duty, Depth, Shape, Random, Muffle | Rhythmic chopping on the Rate: all, offbeat, trance, gallop, chug, random | Double-time roll |
+| 9 | **Ring Shredder** | Type, Freq, Track Note, Jumps, Glide, Drive | Ring modulator or frequency shifter (every partial moved by the same Hz: metallic). The carrier can follow your note | The carrier jumps (octaves, fifths, fourths) on the Rate, with glide |
+| 10 | **Freeze** | Size, Attack, Release, Drift, Shimmer, Level | Holds what you just played as an endless pad (four detuned grains, Shimmer adds octave-up grains). You play on top | Freezes now. In Always every pick re-freezes |
+| 11 | **Feedback** | Harmonic, Swell, Release, Level, Bloom, Tone | Amp feedback without the volume: a resonator on a harmonic of your note that starts singing on its own and outlives the string | Swells now. In Always it swells on notes you let ring |
+| 12 | **Swarm** | Density, Grain Size, Spray, Pitch Spread, Reverse, Level | Granular cloud: grains from up to 1.5 s back, some shifted or reversed | 4× burst |
+| 13 | **Radio** | Station, Width, Static, Warble, Spin, Fading | Your guitar as a shortwave broadcast: band-pass station, fading, wow and flutter, static | Spins the dial to a new station, re-tuning on the Rate while held |
+
+Every continuous control is smoothed. Floor and instrument changes crossfade
+over 40 ms between two engines, and bypass crossfades over 20 ms. The plugin
+reports **zero latency**: no lookahead, no block processing.
+
+### Measured (`engine_test`)
+
+| Floor | Check | Result |
+|---|---|---|
+| Glitch | Chaos 0: correlation of the output with itself one step later, while held | 0.999 (a clean repeat) |
+| Laser | A pick fires a falling tone | 1.5 kHz → 940 Hz over 400 ms |
+| Dive Bomb | Octave down after the dive time, back after the return | 220.0 Hz from 440, then 440.0 Hz |
+| Chiptune | 220 Hz in, octave +1 | 440.0 Hz square wave |
+| Stutter Gate | Offbeat pattern, full depth | Closed steps 81 dB down |
+| Ring Shredder | Frequency shift of 1 kHz by +100 Hz | 1100 Hz; image 49 dB down, carrier 108 dB down |
+| Freeze | One second after the string stopped | −4.7 dB re the note; gone after release |
+| Feedback | Octave sustain two seconds into a decaying note | 40 dB above the string's own octave |
+| Swarm | Grain level | −9 dB re the input |
+| Radio | Band-limiting white noise | Station 23 dB above two octaves off |
+| Sub | Chords (E5, A5, open E, open G, drop-C, drop-A, low E-G#-B) | Every note's sub within ~2 dB |
+| Pitch tracker | Guitar 55 Hz–1 kHz, bass 31–220 Hz | Within 1% |
+| All floors | Bypass, reset sync, block size, 44.1–192 kHz, click checks | 1159 checks pass |
+
+Per-floor cost on one desktop x86 core at 48 kHz: 0.3–2.5% (Buzzsaw 4.5%).
 
 ### Sub on chords — and why not a phase vocoder
 
@@ -52,140 +91,68 @@ A single-voice shifter (like RASP's WSOLA) finds *one* period in the signal
 and repeats or skips whole periods. A chord has no single period, so it
 lurches between notes: that's the warble.
 
-A **phase vocoder** works in the frequency domain instead. It cuts the audio
-into overlapping windows of ~40–90 ms, takes an FFT of each, and treats every
-frequency bin as a little oscillator with a magnitude and a phase. To shift
-down an octave it halves each bin's frequency (moving its energy to half the
-bin index and rotating its phase half as fast), then resynthesises with an
-inverse FFT and overlap-add. Because every partial of every note is handled
-separately, chords shift cleanly. The catch is the window: a bin can only be
-read once the whole window has arrived, so the shifted signal comes out one
-window late, plus processing. Good chord separation on low guitar notes needs
-windows of 2048–4096 samples, which is **40–90 ms of latency**. That's far
-over your 10 ms limit, and it's why studio pitch shifters can afford it and a
-pre-amp pedal can't.
+A **phase vocoder** works in the frequency domain. It cuts the audio into
+overlapping 40–90 ms windows, FFTs each one, halves every frequency bin's
+frequency, and resynthesises. Chords shift cleanly, but the shifted signal
+comes out a whole window late: **40–90 ms of latency**, over the 10 ms
+budget.
 
-**What Poly does instead: a filter-bank divider.** It uses the same idea of
-handling each partial separately, but with filters instead of windows:
-
-- 56 narrow band-pass filters, 1/12 octave apart, cover the range (guitar
-  50 Hz–1.3 kHz, so drop tunings down to A; bass 28–720 Hz, so a 5-string's low B).
-- In each band, a pair of state-variable filters gives the band as a rotating
-  phasor. Taking its square root halves the rotation: the band's content an
-  octave down, at the band's own level.
-- A band only speaks when it is the strongest of its neighbours, so bands
-  sitting *between* two chord notes (which beat) stay quiet. Neighbouring
-  bands that carry the same partial line up their polarity, so they can't cancel.
-- The bank runs decimated to ~6 kHz, so it costs about 2% of one desktop core.
-
-There's no buffering, the DI itself is untouched, and the plugin reports zero
-latency. The trade is **bloom**: a narrow filter takes time to ring up, so the
-sub of a low E reaches full level ~45–75 ms after the pick (A3: ~35 ms). It
-arrives as a fast swell rather than a delayed copy.
-
-Measured (`engine_test` and a sweep of chord shapes, sub level of each note
-re that note's level, 0 dB = equal):
-
-| Chord | Poly | Mono (WSOLA) |
-|---|---|---|
-| E major low triad E2-G#2-B2 | 0.0 / +0.1 / +0.2 dB, stray low energy −17 dB | one note at −15.8 dB, stray energy only −2.6 dB below the subs |
-| E5, A5, open E, open G, drop-C C5, drop-A A5 | every note within −2.8 … +0.8 dB | (warbles) |
-| single notes 76–200 Hz | ±0.7 dB across the range | clean |
-
-### Learn (New Strings)
-
-The Learner (from RASP) measures the long-term spectrum of what you play in
-8 bands, relative to the 250 Hz–1 kHz level, so it doesn't care how hard you
-hit or how hot the DI is. It only counts while you play. The match is the
-difference between the fresh and the current profile. It is capped at ±3 dB
-below 1.2 kHz (that region depends more on *what* you played than on the
-strings) and ±12 dB above, and refined against the real filter cascade. On a
-test pair (a fresh riff, then a different riff with ~6 dB less top) it took
-the worst band error above 1.6 kHz from 5.6 dB to 0.0 dB.
-
-In Logic the learned bands land on the eight **Match** parameters, so they
-save with the session and you can edit them by hand. The fresh-strings
-profile is saved too, so *Learn Now* works in a later session. On the
-Anagram see the notes below.
-
-## Measured on the synthetic DIs (`tools/render_all.sh`)
-
-Loudness change, and the spread of the 100 ms level while playing (lower =
-tighter or denser):
-
-| | Palm-muted chugs | Chords | Bass line |
-|---|---|---|---|
-| Tight (default) | −0.4 LU, spread 9.1 → 6.4 dB | −3.6 LU, 17.8 → 9.0 dB | +0.6 LU, 12.0 → 8.6 dB |
-| Tight (hard) | −0.2 LU, 9.1 → 5.0 dB | −4.2 LU, 17.8 → 4.4 dB | +1.0 LU, 12.0 → 6.1 dB |
-| Sub (poly, default) | energy below 70 Hz −21.5 → −9.3 dB | −35 → −13.2 dB | |
-| New Strings (default) | dull-strings DI: −3…−11 dB vs fresh above 1.6 kHz → −3.4…−0.5 dB | | |
-| Buzzsaw (default) | −0.2 LU (auto level), peak < −10 dBFS | −0.7 LU | +0.1 LU |
-
-These numbers show the processing does what it says, not that it sounds
-good: real DIs and your ears decide that. Drop your DIs in `samples/` and run
-`tools/render_all.sh samples/`.
+**Poly does it with filters instead of windows.** 56 narrow bands, 1/12
+octave apart (guitar 50 Hz–1.3 kHz, bass 28–720 Hz), each split into a
+rotating phasor whose rotation is halved, so each band's content drops an
+octave. A band only speaks when it's the strongest of its neighbours, so
+bands sitting between two chord notes stay quiet. The bank runs decimated to
+~6 kHz. There's no buffering and the DI is untouched. The trade is
+**bloom**: the sub of a low E reaches full level ~45–75 ms after the pick
+(A3: ~35 ms).
 
 ## Darkglass Anagram / MOD notes
 
 Built with Darkglass's `juce-anagram-lv2` wrapper, following Plugin-Dev-Setup's
-REQUIREMENTS.md, CAVEATS.md and LV2-FEATURES.md:
+REQUIREMENTS.md, CAVEATS.md, LV2-FEATURES.md and TIME.md:
 
-- **IO**: mono in / mono out. Two mono instances are bit-identical after
-  `kx:Reset`, so the Anagram can pair them for stereo (tested).
+- **IO**: mono in / mono out. Two instances are bit-identical after
+  `kx:Reset`, including the "random" fx (seeded generators), so the Anagram
+  can pair them for stereo.
 - **Bypass**: `lv2:enabled` control port (default 1), a 20 ms crossfade to
-  the untouched input. The plugin never changes it itself.
-- **Reset**: `kx:Reset` clears all state and jumps smoothed values to their
-  targets. A 0-sample `run()` is harmless (tested).
-- **Smoothing**: every parameter. Mode and instrument changes crossfade, so
-  scene changes don't drop out or click.
-- **Control ports only**, with real ranges and units (dB, Hz, ms, %) and
-  choices as enumerations, because the Anagram can't ask a plugin for value
-  text. Parameters come in **pages of 6**: Global, Tight, Sub, New Strings,
-  Buzzsaw, then Match (6 + 2).
-- `dg:abbreviation "AXE"`, 200×200 block images (`plugin/images`, drawn by
-  `tools/make_block_images.py`), category `lv2:DistortionPlugin`.
-- The plugin never touches CPU flags (no flush-to-zero in the LV2 build), and
-  it doesn't link X11 or any display library.
-- **ARMv8.2 64-bit** builds: the Darkglass toolchain workflow
-  (`.github/workflows/axe-anagram.yml`), and an `-march=armv8.2-a` CI build.
+  the untouched input.
+- **Reset**: `kx:Reset` clears state; a 0-sample `run()` is harmless.
+- **Control ports only**, with real ranges and units, and choices as
+  enumerations. 90 parameters in **15 pages of exactly 6**: Global, Trigger,
+  then one page per floor.
+- **Trigger** is a toggle port: bind it to a footswitch. Whether a footswitch
+  can drive it momentarily is a question for Darkglass.
+- **Tempo**: TIME.md says the Anagram only exposes BPM, through a
+  `time:beatsPerMinute` port designation. The JUCE wrapper doesn't implement
+  that, so for now the Tempo knob is the clock there. Asked of Darkglass.
+- `dg:abbreviation "AXE"`, 200×200 block images, no CPU-flag changes, no
+  X11 or display library, ARMv8.2 builds.
 
-**Known limits:**
+Other limits:
 
-- **Learn on the Anagram**: a plugin there shouldn't move its own control
-  ports, and the wrapper has no way to ask the host to. So a learned match is
-  applied *inside* the plugin until you touch a Match port, and it isn't saved
-  with the preset (it's audible right away). The Match ports can always be set
-  by hand. The fix is host-side: the wrapper could use the
-  `control-input-port-change-request` feature the Anagram already supports.
-  That's in the email to Darkglass.
 - **Desktop LV2 hosts**: the wrapper *requires* the `nominalBlockLength`
-  option. mod-host, Carla and Ardour provide it. Ubuntu 24.04's `jalv` and
-  `lv2apply` don't, and refuse to load the plugin. `tests/lv2_host.cpp`
-  provides it.
-- **MOD Dwarf**: runs glibc 2.27 and GCC 7.5's runtime (an ARMv8.0
-  Cortex-A35). The CI LV2 is built against glibc 2.31 and links libstdc++
-  statically, so it needs a glibc ≥ 2.31 system: fine for the Anagram (2.34)
-  and current desktops, **not** for the Dwarf. A Dwarf build needs MOD's
-  `mod-plugin-builder` toolchain. Note that every JUCE plugin also needs
-  freetype and fontconfig on the target. Because the engine is a dependency-free
-  header, a small plain-LV2 wrapper (no JUCE) would be the cleanest route for
-  the Dwarf. That's a follow-up.
+  option. mod-host, Carla and Ardour provide it; Ubuntu's `jalv` and
+  `lv2apply` don't. `tests/lv2_host.cpp` provides it.
+- **MOD Dwarf**: glibc 2.27 and an ARMv8.0 CPU. The CI LV2 needs glibc ≥ 2.31,
+  so a Dwarf build needs MOD's `mod-plugin-builder`. Because the engine has
+  no dependencies, a small plain-LV2 wrapper without JUCE is the cleanest
+  route there (follow-up).
 
-## Daisy Seed (later)
+## Learn (parked)
 
-`dsp/axe.h` already keeps the pedal rules: no heap, fixed-size buffers (set
-`AXE_SR_SCALE 1` for ≤ 96 kHz), no allocation or system calls in `process()`,
-and float math. Per-mode cost on one desktop x86 core at 48 kHz: Tight 1.0%,
-Sub poly 1.9%, Sub mono 0.8%, New Strings 0.9%, Buzzsaw 3.5%. That leaves
-headroom on the Seed's 480 MHz Cortex-M7, to be measured on a board (see
-`rasp/daisy` for the firmware pattern).
+The first version had *Learn* inside the New Strings floor. That floor is
+gone, so Learn is out for now. The `Learner` class is still in `axe_base.h`,
+ready to come back as a global *Tone Match* stage, a *Learn My Playing*
+setup step (pick strength, noise floor and pitch range, used to tune the
+Laser, Gate and pitch trackers), or both.
 
-## Adding a mode
+## Adding a floor
 
-Each mode is one class in `dsp/axe.h` with `init / configure(instrument) /
-setTargets / snap / reset / control / process(x, dryAligned)`. Add it to
-`Mode`, the switches in `Voice`, its fields in `Params`, a page of ≤ 6
-entries in `plugin/Source/PluginProcessor.cpp`'s parameter table, and a row
-in `kModeIds` in the editor. The tests loop over `kNumModes`, so a new mode
-gets the null, sample-rate, block-size, reset and click tests automatically
-once its parameters are added to the smoothing list.
+Each floor is one class with `init / configure(instrument) / setTargets /
+snap / reset / control / process(x, dryAligned)`, reading the shared
+`FxContext` for the clock, Trigger and input analysis. Add it to `Mode` in
+`axe_base.h`, to the `Voice` in `axe.h`, its fields to `Params`, and a page of
+exactly 6 entries to `plugin/Source/PluginProcessor.cpp`. The editor builds
+its page from that table. The tests loop over `kNumModes`, so a new floor
+gets the bypass, null, silence, sample-rate, block-size, reset and
+click checks automatically.

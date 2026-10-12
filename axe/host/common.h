@@ -85,10 +85,11 @@ inline void writeWav(const char* path, const std::vector<float>& x, int sr) {
 }
 
 inline int modeByName(const std::string& s) {
-    if (s == "tight" || s == "0") return axe::kTight;
-    if (s == "sub" || s == "1") return axe::kSub;
-    if (s == "strings" || s == "newstrings" || s == "2") return axe::kStrings;
-    if (s == "buzzsaw" || s == "buzz" || s == "3") return axe::kBuzzsaw;
+    static const char* names[axe::kNumModes] = {"tight", "sub", "buzzsaw", "glitch", "laser", "dive", "chip", "stutter", "ring", "freeze", "feedback", "swarm", "radio"};
+    for (int m = 0; m < axe::kNumModes; m++) if (s == names[m] || s == std::to_string(m)) return m;
+    if (s == "buzz") return axe::kBuzzsaw;
+    if (s == "chiptune") return axe::kChip;
+    if (s == "gate") return axe::kStutter;
     return -1;
 }
 
@@ -102,18 +103,32 @@ inline bool setParam(axe::Params& p, const char* arg) {
     if (k == "inst" || k == "instrument") { p.instrument = (sv == "bass" || sv == "1") ? axe::kBass : axe::kGuitar; return true; }
     if (k == "subtype") { p.subType = (sv == "mono" || sv == "1") ? 1 : 0; return true; }
     if (k == "bypass") { p.bypass = v != 0.f; return true; }
-    if (k == "match") {   // match=g0,...,g7 (dB)
-        const char* c = eq + 1;
-        for (int b = 0; b < axe::kMatchBands && *c; b++) { p.match[b] = (float)std::atof(c); while (*c && *c != ',') c++; if (*c) c++; }
-        if (p.matchAmount <= 0.f) p.matchAmount = 1.f;
-        return true;
-    }
+    if (k == "trigger") { p.trigger = v != 0.f; return true; }
+    if (k == "engage") { p.engage = (sv == "trigger" || sv == "1") ? axe::kWhileTriggered : axe::kAlways; return true; }
+    if (k == "sync") { p.sync = v != 0.f ? 1 : 0; return true; }
+    if (k == "rate") { for (int r = 0; r < axe::kNumRates; r++) if (sv == axe::rateName(r)) { p.rate = r; return true; } p.rate = (int)v; return true; }
+    if (k == "ltrack") { p.lTrack = v != 0.f; return true; }
+    if (k == "rtrack") { p.rTrack = v != 0.f; return true; }
+    if (k == "carp") { p.cArp = (int)v; return true; }
+    if (k == "coct") { p.cOctave = (int)v; return true; }
+    if (k == "pattern") { p.sPattern = (int)v; return true; }
+    if (k == "rtype") { p.rType = (int)v; return true; }
+    if (k == "harmonic") { p.fbHarmonic = (int)v; return true; }
     struct F { const char* n; float* f; } fs[] = {
-        {"in", &p.inDb}, {"gate", &p.gate}, {"mix", &p.mix}, {"out", &p.outDb},
+        {"in", &p.inDb}, {"gate", &p.gate}, {"mix", &p.mix}, {"out", &p.outDb}, {"tempo", &p.tempo}, {"swing", &p.swing},
         {"tight", &p.tight}, {"punch", &p.punch}, {"release", &p.release}, {"low", &p.lowDb}, {"mid", &p.midDb}, {"high", &p.highDb},
         {"sub", &p.sub}, {"dry", &p.dry}, {"subtone", &p.subTone}, {"range", &p.range}, {"grit", &p.grit},
-        {"bright", &p.bright}, {"clarity", &p.clarity}, {"air", &p.airDb}, {"amount", &p.matchAmount},
         {"gain", &p.gain}, {"lows", &p.lows}, {"highs", &p.highs}, {"scoop", &p.scoop}, {"level", &p.level}, {"blend", &p.blend},
+        {"chaos", &p.gChaos}, {"crush", &p.gCrush}, {"jumps", &p.gJumps}, {"tapestop", &p.gTapeStop}, {"reverse", &p.gReverse}, {"smooth", &p.gSmooth},
+        {"lpitch", &p.lPitch}, {"drop", &p.lDrop}, {"sweep", &p.lSweep}, {"tone", &p.lTone}, {"llevel", &p.lLevel},
+        {"depth", &p.dDepth}, {"dtime", &p.dTime}, {"dreturn", &p.dReturn}, {"curve", &p.dCurve}, {"wobble", &p.dWobble}, {"ddry", &p.dDry},
+        {"pulse", &p.cPulse}, {"ccrush", &p.cCrush}, {"glide", &p.cGlide}, {"cdry", &p.cDry},
+        {"duty", &p.sDuty}, {"sdepth", &p.sDepth}, {"shape", &p.sShape}, {"random", &p.sRandom}, {"stone", &p.sTone},
+        {"rfreq", &p.rFreq}, {"jump", &p.rJump}, {"rglide", &p.rGlide}, {"drive", &p.rDrive},
+        {"size", &p.fzSize}, {"attack", &p.fzAttack}, {"frelease", &p.fzRelease}, {"drift", &p.fzDrift}, {"shimmer", &p.fzShimmer}, {"flevel", &p.fzLevel},
+        {"swell", &p.fbSwell}, {"fbrelease", &p.fbRelease}, {"fblevel", &p.fbLevel}, {"bloom", &p.fbBloom}, {"fbtone", &p.fbTone},
+        {"density", &p.swDensity}, {"grain", &p.swSize}, {"spray", &p.swSpray}, {"spitch", &p.swPitch}, {"sreverse", &p.swReverse}, {"swlevel", &p.swLevel},
+        {"band", &p.rdBand}, {"width", &p.rdWidth}, {"static", &p.rdStatic}, {"warble", &p.rdWarble}, {"spin", &p.rdSpin}, {"fade", &p.rdFade},
     };
     for (auto& e : fs) if (k == e.n) { *e.f = v; return true; }
     return false;
@@ -121,10 +136,21 @@ inline bool setParam(axe::Params& p, const char* arg) {
 
 inline void printParams() {
     std::fprintf(stderr,
-        "global : mode=tight|sub|strings|buzzsaw inst=guitar|bass in=dB gate=0..1 mix=0..1 out=dB bypass=0|1\n"
-        "tight  : tight punch release (0..1)  low mid high (dB)\n"
-        "sub    : subtype=poly|mono sub dry subtone range grit (0..1)\n"
-        "strings: bright clarity (0..1) air (dB) amount (0..1) match=g0,..,g7 (dB)\n"
-        "         learnfresh=fresh_strings.wav  (then the input is learned as 'now' and matched)\n"
-        "buzzsaw: gain lows highs scoop blend (0..1) level (dB)\n");
+        "global  : mode=tight|sub|buzzsaw|glitch|laser|dive|chip|stutter|ring|freeze|feedback|swarm|radio\n"
+        "          inst=guitar|bass in=dB gate=0..1 mix=0..1 out=dB bypass=0|1\n"
+        "trigger : trigger=0|1 engage=always|trigger sync=0|1 tempo=BPM rate=1/16 (1/1..1/32, 1/8T, 1/8D...) swing=0..1\n"
+        "          trigat=SECONDS[,SECONDS...]  toggles Trigger at those times (axe_wav only)\n"
+        "tight   : tight punch release (0..1)  low mid high (dB)\n"
+        "sub     : subtype=poly|mono sub dry subtone range grit\n"
+        "buzzsaw : gain lows highs scoop blend (0..1) level (dB)\n"
+        "glitch  : chaos crush jumps tapestop reverse smooth\n"
+        "laser   : lpitch ltrack=0|1 drop sweep tone llevel\n"
+        "dive    : depth (semitones) dtime dreturn curve wobble ddry\n"
+        "chip    : pulse ccrush carp=0..5 coct=0|1|2 glide cdry\n"
+        "stutter : pattern=0..5 duty sdepth shape random stone\n"
+        "ring    : rtype=0|1 rfreq rtrack=0|1 jump rglide drive\n"
+        "freeze  : size attack frelease drift shimmer flevel\n"
+        "feedback: harmonic=0..3 swell fbrelease fblevel bloom fbtone\n"
+        "swarm   : density grain spray spitch sreverse swlevel\n"
+        "radio   : band width static warble spin fade\n");
 }
