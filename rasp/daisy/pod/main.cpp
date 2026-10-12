@@ -12,7 +12,7 @@
 //   Button 2       tap: thicken + flavour on/off
 //                  hold: THROW while held (long delay; repeats ring out after release)
 //   Both buttons   hold 2 s: LEARN (sing ~15 s; LED 1 blinks while it listens). Applies to every preset
-//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st), CC 87 = double-track
+//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st), CC 87 = double-track, CC 88 / 89 = STUTTER / GLITCH (held), CC 90 = slice, CC 91 = glitch amount
 //   LED 2          red = chop compressing > 3 dB, blue = feedback notch active,
 //                  white = a momentary effect is held
 #include "daisy_pod.h"
@@ -34,13 +34,15 @@ static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer
 
 static void loadPreset() {
     bool bypass = params.bypass, thk = params.thickenOn, flv = params.flavourOn;
-    bool mega = params.mega, thr = params.throwOn;
+    bool mega = params.mega, thr = params.throwOn, st = params.stutter, gl = params.glitch;
+    int sdiv = params.stutterDiv; float gamt = params.glitchAmount;
     float od = params.octDown, ou = params.octUp;           // set over MIDI: a performance setting
     int s1 = params.pitch1Semi, s2 = params.pitch2Semi;
     float match[rasp::kMatchBands], amt = params.matchAmount;          // Learn result: the singer's, not the preset's
     for (int b = 0; b < rasp::kMatchBands; b++) match[b] = params.match[b];
     params = rasp::presetParams(preset);
     params.bypass = bypass; params.mega = mega; params.throwOn = thr;
+    params.stutter = st; params.glitch = gl; params.stutterDiv = sdiv; params.glitchAmount = gamt;
     params.octDown = od; params.octUp = ou; params.pitch1Semi = s1; params.pitch2Semi = s2;
     for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = match[b];
     params.matchAmount = amt;
@@ -97,6 +99,10 @@ int main() {
                 if (cc.control_number == 84) params.pitch1Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
                 if (cc.control_number == 85) params.pitch2Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
                 if (cc.control_number == 87) params.doubleTrack = cc.value >= 64;
+                if (cc.control_number == 88) params.stutter = cc.value >= 64;
+                if (cc.control_number == 89) params.glitch = cc.value >= 64;
+                if (cc.control_number == 90) params.stutterDiv = std::min(3, cc.value / 32);
+                if (cc.control_number == 91) params.glitchAmount = cc.value / 127.f;
             }
         }
         // Both buttons held 2 s: Learn (not Mega/Throw).

@@ -106,6 +106,10 @@ const std::vector<ParamSpec>& paramSpecs() {
         // MOMENTARY: on while held (buttons in the window, or automation lanes)
         {"mega", "Mega", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(mega), nullptr, true},
         {"throwOn", "Throw", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(throwOn), nullptr, true},
+        {"stutter", "Stutter", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(stutter), nullptr, true},
+        {"glitch", "Glitch", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(glitch), nullptr, true},
+        {"stutterDiv", "Stutter Slice", "Momentary", K::Choice, 0, 3, "1/4|1/8|1/16|1/32", RASP_I(stutterDiv), nullptr, true},
+        {"glitchAmount", "Glitch Amount", "Momentary", K::Unit, 0, 1, nullptr, RASP_F(glitchAmount), nullptr, true},
     };
     return specs;
 }

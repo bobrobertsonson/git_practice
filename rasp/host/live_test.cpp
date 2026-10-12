@@ -8,7 +8,10 @@
 //   live_test momentary in.wav out.wav [name=value ...]
 //            hold mega 2-4 s and 6-8 s, hold throw 10-11 s: level jump and
 //            click size at each mega edge, and the throw's tail after release
-//
+//   live_test stutter in.wav out.wav [name=value ...]
+//            hold stutter 2-4 s and glitch 6-9 s: how exactly the loop repeats,
+//            the largest sample step while held vs the same run without
+////
 // Prints numbers; the WAVs are for listening and for tools that measure them.
 #include "common.h"
 #include <cmath>
@@ -73,6 +76,42 @@ int main(int argc, char** argv) {
         std::printf("throw tail after release at 11 s (difference from the no-throw run, per 0.5 s):\n ");
         for (double t = 11.0; t < 15.0 && t * sr < n; t += 0.5) std::printf(" %+6.1f", rmsDb(dL, t, t + 0.5));
         std::printf(" dB\nbefore the throw (9-10 s, should be silent): %+.1f dB\n", rmsDb(dL, 9.0, 10.0));
+        writeWav(argv[3], L, R, sr);
+        return 0;
+    }
+
+    if (mode == "stutter") {
+        if (argc < 4) return usage();
+        p.flavourOn = false; p.thickenOn = false;   // measure the loop itself, not the effects' tails
+        proc.setParams(p);
+        ref.init((float)sr); ref.setParams(p);
+        std::vector<float> rL(n), rR(n);
+        auto held = [&](double t, double a, double b) { return t >= a && t < b; };
+        for (size_t i = 0; i < n; i++) {
+            double t = (double)i / sr;
+            bool st = held(t, 2, 4), gl = held(t, 6, 9);
+            if (st != p.stutter || gl != p.glitch) { p.stutter = st; p.glitch = gl; proc.setParams(p); }
+            proc.process(in[i], L[i], R[i]);
+            ref.process(in[i], rL[i], rR[i]);
+        }
+        auto maxStep = [&](const std::vector<float>& x, double a, double b) {
+            size_t i0 = (size_t)(a * sr) + 1, i1 = std::min(n, (size_t)(b * sr));
+            float m = 0; for (size_t i = i0; i < i1; i++) m = std::max(m, std::fabs(x[i] - x[i - 1]));
+            return 20 * std::log10(m + 1e-9);
+        };
+        static const float frac[4] = {1.f, 0.5f, 0.25f, 0.125f};
+        const size_t slice = (size_t)(60.0 / p.bpm * frac[std::max(0, std::min(3, p.stutterDiv))] * sr);
+        // Loop exactness: correlation of the output with itself one slice later,
+        // over the held part after the first slice was recorded.
+        size_t a = (size_t)(2.0 * sr) + 2 * slice, b = (size_t)(4.0 * sr) - slice - (size_t)(0.01 * sr);
+        double xy = 0, xx = 0, yy = 0;
+        for (size_t i = a; i < b && i + slice < n; i++) { xy += (double)L[i] * L[i + slice]; xx += (double)L[i] * L[i]; yy += (double)L[i + slice] * L[i + slice]; }
+        std::printf("slice %.0f ms; stutter loop: correlation one slice apart %.3f\n", 1000.0 * slice / sr, xy / std::sqrt(xx * yy + 1e-20));
+        std::printf("largest step (dBFS), with / without:  stutter 2-4.1 s %.1f / %.1f   glitch 6-9.1 s %.1f / %.1f\n",
+                    maxStep(L, 1.99, 4.1), maxStep(rL, 1.99, 4.1), maxStep(L, 5.99, 9.1), maxStep(rL, 5.99, 9.1));
+        double d = 0; size_t i0 = (size_t)(4.1 * sr), i1 = std::min(n, (size_t)(5.5 * sr));
+        for (size_t i = i0; i < i1; i++) d = std::max(d, (double)std::fabs(L[i] - rL[i]));
+        std::printf("after release (4.1-5.5 s) largest difference from the run without: %.1f dBFS\n", 20 * std::log10(d + 1e-9));
         writeWav(argv[3], L, R, sr);
         return 0;
     }

@@ -78,7 +78,7 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     setLookAndFeel(&laf);
 
     auto& s = proc.apvts;
-    panels.resize(5);
+    panels.resize(6);
     auto& control = panels[0]; control.title = "CONTROL"; control.cols = 3;
     addPower(control, "controlOn");
     addKnob(control, "drive", "Drive"); addKnob(control, "mix", "Drive mix"); addChoice(control, "brightness", "Tone");
@@ -110,6 +110,9 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     addKnob(harm, "harmRandPitch", "Random pitch"); addKnob(harm, "harmRandTime", "Random time");
     addKnob(harm, "harmLoCut", "Low cut"); addKnob(harm, "harmHiCut", "High cut");
 
+    auto& stut = panels[5]; stut.title = "STUTTER"; stut.cols = 2;
+    addChoice(stut, "stutterDiv", "Slice"); addKnob(stut, "glitchAmount", "Glitch");
+
     auto& bus = panels[3]; bus.title = "BUS / LIVE"; bus.cols = 2;
     addKnob(bus, "inDb", "Input"); addKnob(bus, "glue", "Glue"); addKnob(bus, "outDb", "Output");
     addKnob(bus, "matchAmount", "Match"); addToggle(bus, "mono", "Mono"); addToggle(bus, "bypassMatch", "Match bypass"); addToggle(bus, "howl", "Feedback guard");
@@ -125,6 +128,10 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
 
     holdButton(megaBtn, "mega");
     holdButton(throwBtn, "throwOn");
+    holdButton(stutterBtn, "stutter");
+    holdButton(glitchBtn, "glitch");
+    stutterBtn.setTooltip("Hold: repeat the slice that starts now, on the tempo grid (Slice sets its length)");
+    glitchBtn.setTooltip("Hold: like stutter, but repeats roll, reverse, drop an octave or gate at random (Glitch sets how often)");
     megaBtn.setTooltip("Hold: hard-clipped mid burst (or automate the Mega parameter)");
     throwBtn.setTooltip("Hold: send the voice to a long delay; repeats ring out after release");
 
@@ -200,17 +207,18 @@ void RaspEditor::paint(juce::Graphics& g) {
 
 void RaspEditor::resized() {
     auto top = getLocalBounds().removeFromTop(kHeader).reduced(kPad, 14);
-    bypass.setBounds(top.removeFromRight(110));
-    top.removeFromRight(8);
-    clearNotches.setBounds(top.removeFromRight(120));
-    top.removeFromRight(8);
-    preset.setBounds(top.removeFromRight(150));
-    top.removeFromRight(16);
-    throwBtn.setBounds(top.removeFromRight(80));
-    top.removeFromRight(8);
-    megaBtn.setBounds(top.removeFromRight(80));
-    top.removeFromRight(16);
-    learnBtn.setBounds(top.removeFromRight(90));
+    bypass.setBounds(top.removeFromRight(90));
+    top.removeFromRight(6);
+    clearNotches.setBounds(top.removeFromRight(110));
+    top.removeFromRight(6);
+    preset.setBounds(top.removeFromRight(120));
+    top.removeFromRight(12);
+    for (auto* b : {&glitchBtn, &stutterBtn, &throwBtn, &megaBtn}) {
+        b->setBounds(top.removeFromRight(72));
+        top.removeFromRight(6);
+    }
+    top.removeFromRight(6);
+    learnBtn.setBounds(top.removeFromRight(76));
 
     status.setBounds(getLocalBounds().removeFromBottom(30).reduced(kPad + 4, 0));
 
@@ -241,6 +249,8 @@ void RaspEditor::timerCallback() {
     // Light the hold buttons when automation (not the mouse) engages them.
     megaBtn.setToggleState(proc.apvts.getRawParameterValue("mega")->load() > 0.5f, juce::dontSendNotification);
     throwBtn.setToggleState(proc.apvts.getRawParameterValue("throwOn")->load() > 0.5f, juce::dontSendNotification);
+    stutterBtn.setToggleState(proc.apvts.getRawParameterValue("stutter")->load() > 0.5f, juce::dontSendNotification);
+    glitchBtn.setToggleState(proc.apvts.getRawParameterValue("glitch")->load() > 0.5f, juce::dontSendNotification);
     if (preset.getSelectedId() != proc.getCurrentProgram() + 1)
         preset.setSelectedId(proc.getCurrentProgram() + 1, juce::dontSendNotification);
 }

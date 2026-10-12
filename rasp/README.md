@@ -270,6 +270,33 @@ reports:
 The playground's JS engine matches the C++ engine to about −80 dB through the
 same schedule.
 
+### Stutter and glitch
+
+Two more momentaries for the live rig, on the pedal's AUX 2 footswitch (tip =
+Stutter, ring = Glitch), the plugin's STUTTER / GLITCH buttons, the
+playground's buttons or S/G keys, or MIDI CC 88/89.
+
+- **Stutter** is a beat-repeat. On the press it records one slice of the voice
+  (Slice: 1/4, 1/8, 1/16 or 1/32 note at the tap, MIDI or host tempo) while you
+  keep hearing yourself live. Then it loops that slice on the grid until you
+  let go.
+- **Glitch** loops the same way, but each repeat may roll to a half or quarter
+  slice, play backwards, drop an octave (half speed) or cut out halfway. Glitch
+  amount sets how often. The choices are seeded, so a render repeats exactly.
+- It sits after Mega and before harmony, doubles, reverb and delay, so those
+  all follow the loop. Mega + Stutter loops the burst.
+- Loops get 2 ms fades and a 4 ms crossfade to and from the live voice. While
+  a loop plays, the feedback guard places no new notches, because a loop
+  repeats tones on purpose.
+
+`live_test stutter` holds Stutter at 2–4 s and Glitch at 6–9 s. On a real take:
+
+- the loop measures correlation 1.000 one slice apart, at 1/8, 1/16 and 1/32
+- the largest sample step while held is below the voice's own, so no clicks
+- Glitch repeats vary (correlation 1.00, 0.72, −0.03, 0.37 … at amount 1)
+
+The playground matches C++ to −69 to −79 dB through the same schedule.
+
 ## 3c. Blind A/B listening test
 
 `abtest/template.html` plus `python3 tools/build_abtest.py` builds a listening

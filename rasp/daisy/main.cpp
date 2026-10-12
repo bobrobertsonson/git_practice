@@ -23,9 +23,15 @@
 //   THROW  the voice feeds a long ping-pong delay; repeats ring out after release
 // A mono (TS) footswitch shorts the ring, so a switch that reads "held" at
 // power-up is ignored until it is first released.
+// AUX 2 jack (TRS, same kind of footswitch): tip = STUTTER, ring = GLITCH, on while held.
+//   STUTTER  repeats the slice that starts at the press, on the tap/MIDI tempo grid
+//   GLITCH   the same, but repeats roll, reverse, drop an octave or cut out at random
+// SLICE trim (side panel): stutter slice 1/4, 1/8, 1/16, 1/32 note.
 // USB MIDI: Program Change 0-7 recalls preset slots 1-8 (from a laptop/backing-track rig);
 // CC 80 = MEGA, CC 81 = THROW (value >= 64 on), for triggering from a timeline;
 // CC 86 (>= 64) = start Learn. CC 87 (>= 64 on) = double-track (lead as two hard-panned takes).
+// CC 88 = STUTTER, CC 89 = GLITCH (>= 64 on), CC 90 = slice (0-127 -> 1/4..1/32),
+// CC 91 = glitch amount (0-127).
 // CC 82 / 83 = pitch 1 / 2 level (0-127), CC 84 / 85 = pitch 1 / 2 interval
 // (0-127 -> -12..+12 semitones). A knob takes over again once moved.
 //
@@ -43,7 +49,9 @@
 //   A2..A5 (D17..D20)  faders: control, thicken, flavour, output
 //   A6, A7 (D21, D22)  trims: bleed, de-ess
 //   A8 (D23)  mux 3 out (glue trim, pitch 1 level, pitch 2 level, pitch 1 interval,
-//             pitch 2 interval, 3 spare), CD4051 select
+//             pitch 2 interval, AUX 2 tip, AUX 2 ring, slice trim), CD4051 select.
+//             AUX 2 tip/ring: 10k pull-up to 3V3 each, the footswitch shorts to
+//             the sleeve (ground): reads ~1.0 open, ~0 held
 //             shares D0 D1 D2 with mux 1 (libDaisy steps every mux in lockstep)
 //   D6/D7  tone toggle    D8/D9  delay-time toggle    D14 solo button   D28 mono switch
 //   D10 FS bypass   D11 FS thicken   D12 FS flavour   D13 FS tap
@@ -73,7 +81,11 @@ static volatile int howlEvents = 0;
 
 // ---------------------------------------------------------------- presets in flash
 constexpr int kSlots = 8;
+// Bump when rasp::Params changes shape (new fields): a stored layout that
+// doesn't match is replaced by the factory set instead of read as garbage.
+constexpr uint32_t kLayout = 0x52415300u + (uint32_t)sizeof(rasp::Params);
 struct Stored {
+    uint32_t layout;
     rasp::Params slot[kSlots];
     int current;
     float match[rasp::kMatchBands];   // Learn result: belongs to the singer and mic, not a preset
@@ -151,6 +163,7 @@ static void saveCurrent() {
     Stored& s = storage.GetSettings();
     s.slot[s.current] = params;
     s.slot[s.current].mega = s.slot[s.current].throwOn = false;   // momentaries aren't part of a sound
+    s.slot[s.current].stutter = s.slot[s.current].glitch = false;
     storage.Save();
 }
 
@@ -218,6 +231,7 @@ int main() {
 
     // Presets: first boot fills flash with the factory set.
     Stored defaults;
+    defaults.layout = kLayout;
     for (int i = 0; i < kSlots; i++) defaults.slot[i] = rasp::presetParams(i < rasp::kNumPresets ? i : 1);
     defaults.current = 1;          // natural
     for (int b = 0; b < rasp::kMatchBands; b++) defaults.match[b] = 0.f;
@@ -225,6 +239,7 @@ int main() {
     // Presets live 4 MB into the QSPI flash, well clear of the program the
     // bootloader stores at its start.
     storage.Init(defaults, 0x400000);
+    if (storage.GetSettings().layout != kLayout) storage.RestoreDefaults();
     params = storage.GetSettings().slot[storage.GetSettings().current];
     for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = storage.GetSettings().match[b];
     params.matchAmount = storage.GetSettings().matchAmount;
@@ -247,12 +262,28 @@ int main() {
     auxMega.Debounce(); auxThrow.Debounce();
     bool megaArmed = !auxMega.RawState(), throwArmed = !auxThrow.RawState();
     bool midiMega = false, midiThrow = false;
+    // AUX 2 on mux 3 (analog inputs read as switches, with hysteresis).
+    bool aux2[2] = {false, false}, aux2Armed[2];
+    for (int k = 0; k < 2; k++) aux2Armed[k] = hw.adc.GetMuxFloat(MUX3, 5 + k) > 0.6f;
+    bool midiStutter = false, midiGlitch = false;
+    float lastSliceKnob = -1.f;
     for (;;) {
         uint32_t now = System::GetNow();
         fsBypass.Debounce(); fsThicken.Debounce(); fsFlavour.Debounce(); fsTap.Debounce(); btnSolo.Debounce();
         auxMega.Debounce(); auxThrow.Debounce();
         if (!auxMega.Pressed()) megaArmed = true;
         if (!auxThrow.Pressed()) throwArmed = true;
+        for (int k = 0; k < 2; k++) {
+            const float v = hw.adc.GetMuxFloat(MUX3, 5 + k);
+            if (v < 0.3f) aux2[k] = true; else if (v > 0.6f) { aux2[k] = false; aux2Armed[k] = true; }
+        }
+        {   // slice trim: only takes over when moved, so MIDI CC 90 can set it too
+            const float v = hw.adc.GetMuxFloat(MUX3, 7);
+            if (lastSliceKnob < 0.f || std::fabs(v - lastSliceKnob) > 0.08f) {
+                lastSliceKnob = v;
+                params.stutterDiv = std::min(3, (int)(v * 4.f));
+            }
+        }
 
         // Short press acts on release; long press acts once while held.
         static bool longDone[5];
@@ -302,6 +333,10 @@ int main() {
                 if (cc.control_number == 84) params.pitch1Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
                 if (cc.control_number == 85) params.pitch2Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
                 if (cc.control_number == 87) params.doubleTrack = cc.value >= 64;
+                if (cc.control_number == 88) midiStutter = cc.value >= 64;
+                if (cc.control_number == 89) midiGlitch = cc.value >= 64;
+                if (cc.control_number == 90) params.stutterDiv = std::min(3, cc.value / 32);
+                if (cc.control_number == 91) params.glitchAmount = cc.value / 127.f;
             }
         }
 
@@ -321,6 +356,8 @@ int main() {
         }
         params.mega       = (megaArmed && auxMega.Pressed()) || midiMega;
         params.throwOn    = (throwArmed && auxThrow.Pressed()) || midiThrow;
+        params.stutter    = (aux2Armed[0] && aux2[0]) || midiStutter;
+        params.glitch     = (aux2Armed[1] && aux2[1]) || midiGlitch;
         // NOTE: setParams runs outside the audio interrupt. A production build
         // should hand params over with a lock-free double buffer.
         proc.setParams(params);
@@ -336,7 +373,7 @@ int main() {
         leds |= (!params.bypass && bleedDb > 6.f) << 2;   // set the bleed trim so this is lit when you're silent
         leds |= params.thickenOn << 3;
         leds |= params.flavourOn << 4;
-        leds |= (now < tapLedOff || blinkOn || params.mega || params.throwOn) << 5;   // also lit while a momentary is held
+        leds |= (now < tapLedOff || blinkOn || params.mega || params.throwOn || params.stutter || params.glitch) << 5;   // also lit while a momentary is held
         leds |= (!params.bypass && limDb > 1.f) << 6;
         leds |= (now < notchLedOff || proc.howlNotches() > 0) << 7;
         writeLeds(leds);

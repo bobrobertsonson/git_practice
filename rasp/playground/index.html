@@ -113,7 +113,7 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
 .ledrow { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
 .stomps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding-top: 14px; border-top: 2px solid var(--silk); }
 .stomps.momentary { border-top: 1px dashed var(--silk); margin-top: 12px; align-items: center; }
-.stomps.momentary .hold-hint { grid-column: span 2; margin: 0; font-size: 12px; color: var(--silk); opacity: .85; }
+.stomps.momentary .hold-hint { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--silk); opacity: .85; }
 .stomp.hold[aria-pressed="true"] .cap { transform: translateY(3px); box-shadow: 0 1px 0 #6d675d, 0 0 0 5px rgba(27,24,19,.85); }
 .stomp { display: grid; justify-items: center; gap: 7px; background: none; border: 0; color: var(--silk); padding: 4px; min-height: 0; cursor: pointer; font: inherit; }
 .stomp .cap { width: 52px; height: 52px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #f7f3ea, #9d968a 70%); box-shadow: 0 4px 0 #6d675d, 0 0 0 5px rgba(27,24,19,.85); transition: transform 60ms, box-shadow 60ms; }
@@ -224,7 +224,9 @@ button[aria-pressed="true"]:not(.primary):not(.stomp) { background: #3a2a10; bor
     <div class="stomps momentary">
       <button class="stomp hold" id="fsMega" data-key="mega" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledMega"></span>Mega</span></button>
       <button class="stomp hold" id="fsThrow" data-key="throwOn" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledThrow"></span>Throw</span></button>
-      <p class="hold-hint">Momentary, on while held (or hold <kbd>M</kbd> / <kbd>T</kbd>). <b>Mega</b>: hard-clipped mid burst. <b>Throw</b>: sends the voice to a long delay that rings out after you let go.</p>
+      <button class="stomp hold" id="fsStutter" data-key="stutter" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledStutter"></span>Stutter</span></button>
+      <button class="stomp hold" id="fsGlitch" data-key="glitch" aria-pressed="false"><span class="cap"></span><span class="sl"><span class="led" id="ledGlitch"></span>Glitch</span></button>
+      <p class="hold-hint">Momentary, on while held (or hold <kbd>M</kbd> / <kbd>T</kbd> / <kbd>S</kbd> / <kbd>G</kbd>). <b>Mega</b>: hard-clipped mid burst. <b>Throw</b>: sends the voice to a long delay that rings out after you let go. <b>Stutter</b>: repeats the slice that starts when you press, on the tempo grid. <b>Glitch</b>: the same, with repeats that roll, reverse, drop an octave or cut out.</p>
     </div>
   </div>
 
@@ -335,6 +337,48 @@ class RaspEngine {
     };
     const wO = [0, 0];
     let megaFade = 0;
+    // STUTTER / GLITCH (mirrors class Stutter in rasp.h, same LCG)
+    const STMAX = 1 << 17;
+    const ST = { buf: new Float32Array(STMAX), fade: Math.max(1, Math.trunc(0.002 * sr)), mix: sm(0, 4), on: false, glitch: false, amt: 0.6,
+      baseLen: 6000, slice: 6000, sub: 6000, start: 0, w: 0, rec: 0, pos: 0, state: 0, rev: false, half: false, gate: false, rng: 0x5eed1234 };
+    const stRnd = () => { ST.rng = (Math.imul(ST.rng, 1664525) + 1013904223) >>> 0; return (ST.rng >>> 8) / 16777216; };
+    const stSet = q => {
+      ST.on = !!(q.stutter || q.glitch); ST.glitch = !!q.glitch; ST.amt = clamp(q.glitchAmount ?? 0.6, 0, 1);
+      const d = clamp((q.stutterDiv ?? 2) | 0, 0, 3), n = Math.trunc(Math.fround(Math.fround(Math.fround(60 / clamp(q.bpm, 40, 240)) * [1, 0.5, 0.25, 0.125][d]) * sr));
+      ST.baseLen = n < 8 * ST.fade ? 8 * ST.fade : (n > STMAX - 1 ? STMAX - 1 : n);
+    };
+    const stPick = () => {
+      ST.sub = ST.slice; ST.rev = ST.half = ST.gate = false;
+      if (!ST.glitch || stRnd() >= ST.amt) return;
+      const k = stRnd();
+      if (k < 0.35) ST.sub = Math.max(ST.slice >> (k < 0.2 ? 1 : 2), 4 * ST.fade);
+      else if (k < 0.55) ST.rev = true;
+      else if (k < 0.75) ST.half = true;
+      else ST.gate = true;
+    };
+    const stRead = () => {
+      const i = ST.pos % ST.sub, b = ST.buf;
+      let v;
+      if (ST.half) { const fi = 0.5 * i, i0 = fi | 0, fr = fi - i0, a = b[(ST.start + i0) % STMAX]; v = a + (b[(ST.start + i0 + 1) % STMAX] - a) * fr; }
+      else v = b[(ST.start + (ST.rev ? ST.sub - 1 - i : i)) % STMAX];
+      let wg = Math.min(1, Math.min(i / ST.fade, (ST.sub - i) / ST.fade));
+      if (ST.gate) { const h = (ST.slice / 2) | 0; wg = ST.pos >= h ? 0 : Math.min(wg, (h - ST.pos) / ST.fade); }
+      return v * wg;
+    };
+    const stutter = x => {
+      if (ST.state !== 2) { ST.buf[ST.w] = x; ST.w = (ST.w + 1) % STMAX; }
+      if (ST.state === 0 && ST.on) { ST.state = 1; ST.start = (ST.w - 1 + STMAX) % STMAX; ST.rec = 0; ST.slice = ST.baseLen; }
+      if (ST.state === 1) {
+        if (!ST.on) ST.state = 0;
+        else if (++ST.rec >= ST.slice) { ST.state = 2; ST.pos = 0; stPick(); }
+      }
+      let y = 0;
+      if (ST.state === 2) { y = stRead(); if (++ST.pos >= ST.slice) { ST.pos = 0; stPick(); } }
+      ST.mix.target = (ST.state === 2 && ST.on) ? 1 : 0;
+      const g = smNext(ST.mix);
+      if (ST.state === 2 && !ST.on && g < 1e-4) ST.state = 0;
+      return x + (y - x) * g;
+    };
     // Octave layers (mirrors Shifter / Octave in rasp.h: WSOLA-aligned grains).
     const shHead = (d, age) => ({ d, age, searching: false, fine: false, oR: 0, c: 0, best: 0, bestScore: 0 });
     const shSetRatio = (S, ratio) => {      // mirrors Shifter::setRatio: a new interval restarts both heads
@@ -559,6 +603,7 @@ class RaspEngine {
       H.octDown = hHas(-12); H.octUp = hHas(12);
       thSend.target = p.throwOn ? 1 : 0;
       thTime.target = clamp(60 / clamp(p.bpm, 40, 240) * sr, 1, THMAX - 4);
+      stSet(p);
     };
 
     // Mirrors Drive::process: the dry takes the same oversampling filters as
@@ -852,6 +897,7 @@ class RaspEngine {
       megaFade = gmg;
       megaTrack(x);
       if (gmg > 1e-4) x = lerp(x, mega(x), gmg);
+      x = stutter(x);
       hOut[0] = hOut[1] = 0;
       if (hActive()) harmony(x, hOut);
       const xFx = x + 0.5 * (hOut[0] + hOut[1]);
@@ -868,7 +914,7 @@ class RaspEngine {
       bus(out);
       out[0] = safetyClip(out[0]); out[1] = safetyClip(out[1]);
       bypassMatch(dryVoice, out);
-      if (p.howl) { if (megaFade > 1e-4) H.hold = Math.floor(0.3 * sr / HHOP) + 1; howl(out); }
+      if (p.howl) { if (megaFade > 1e-4 || ST.state !== 0) H.hold = Math.floor(0.3 * sr / HHOP) + 1; howl(out); }
       return out;
     };
   }
@@ -986,7 +1032,7 @@ const DEFAULTS = {
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.1, width: 0.85, solo: false, doubleTrack: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
-  bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false,
+  bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false, stutter: false, glitch: false, stutterDiv: 2, glitchAmount: 0.6,
 };
 const PRESETS = {
   huge:    { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5 },
@@ -1045,6 +1091,9 @@ const MENU = [
   ["harmRandTime", "Harmony randomize time", 0, 1, 0.01, pct],
   ["harmLoCut", "Harmony low cut", 20, 1000, 1, v => Math.round(v) + " Hz"],
   ["harmHiCut", "Harmony high cut", 1000, 20000, 100, v => (v / 1000).toFixed(1) + " kHz"],
+  ["Stutter / glitch"],
+  ["stutterDiv", "Stutter slice", 0, 3, 1, v => ["1/4", "1/8", "1/16", "1/32"][Math.round(v)]],
+  ["glitchAmount", "Glitch amount", 0, 1, 0.01, pct],
   ["Bus"],
   ["glue", "Glue", 0, 1, 0.01, pct], ["outDb", "Output", -24, 12, 0.5, v => v.toFixed(1) + " dB"],
   ["Section levels"],
@@ -1168,7 +1217,7 @@ addCheck("howl", "Feedback guard (automatic notches on howling frequencies)");
 
 function applyPreset(name) {
   const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm, inDb: params.inDb,
-    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl, mega: params.mega, throwOn: params.throwOn,
+    bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl, mega: params.mega, throwOn: params.throwOn, stutter: params.stutter, glitch: params.glitch, stutterDiv: params.stutterDiv, glitchAmount: params.glitchAmount,
     match: params.match, matchAmount: params.matchAmount };
   params = Object.assign({}, DEFAULTS, PRESETS[name], keep);
   Object.keys(params).forEach(k => setParam(k, params[k], false));
@@ -1340,7 +1389,7 @@ document.querySelectorAll(".stomp.hold").forEach(btn => {
   btn.addEventListener("keyup", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); setHold(btn, false); } });
   btn.addEventListener("contextmenu", e => e.preventDefault());
 });
-const holdKeys = { m: "fsMega", t: "fsThrow" };
+const holdKeys = { m: "fsMega", t: "fsThrow", s: "fsStutter", g: "fsGlitch" };
 const typing = () => { const a = document.activeElement; return a && (a.tagName === "INPUT" || a.tagName === "SELECT" || a.tagName === "TEXTAREA"); };
 document.addEventListener("keydown", e => { const id = holdKeys[e.key.toLowerCase()]; if (id && !e.repeat && !typing() && !e.metaKey && !e.ctrlKey) setHold(document.getElementById(id), true); });
 document.addEventListener("keyup", e => { const id = holdKeys[e.key.toLowerCase()]; if (id) setHold(document.getElementById(id), false); });

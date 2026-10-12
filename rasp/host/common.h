@@ -132,6 +132,10 @@ inline bool setParam(rasp::Params& p, const char* arg) {
     if (k == "howl")    { p.howl = v != 0.f; return true; }
     if (k == "mega")    { p.mega = v != 0.f; return true; }
     if (k == "throw")   { p.throwOn = v != 0.f; return true; }
+    if (k == "stutter") { p.stutter = v != 0.f; return true; }
+    if (k == "glitch")  { p.glitch = v != 0.f; return true; }
+    if (k == "sdiv")    { p.stutterDiv = (int)v; return true; }
+    if (k == "gamt")    { p.glitchAmount = v; return true; }
     return false;
 }
 

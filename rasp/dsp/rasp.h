@@ -32,6 +32,7 @@
 #define RASP_SR_SCALE 1
 #endif
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <utility>
@@ -282,6 +283,10 @@ struct Params {
     // MOMENTARY (held footswitch / button; on while held)
     bool  mega       = false;  // the voice becomes a mid-focused hard-clipped burst
     bool  throwOn    = false;  // the voice is sent to a long ping-pong delay; repeats ring out after release
+    bool  stutter    = false;  // beat-repeat: loops the slice that starts at the press, on the tempo grid
+    bool  glitch     = false;  // stutter whose repeats roll, reverse, drop an octave or gate at random
+    int   stutterDiv = 2;      // slice: 0 = 1/4, 1 = 1/8, 2 = 1/16, 3 = 1/32 note
+    float glitchAmount = 0.6f; // how often a glitch repeat is varied (0..1)
 };
 
 // ---------------------------------------------------------------------------
@@ -1160,6 +1165,88 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Stutter / glitch: a momentary beat-repeat. When pressed it records one slice
+// (a tempo division) of the voice starting at the press, while the voice still
+// plays live; then it loops that slice on the grid until release. GLITCH loops
+// the same way, but each repeat may (glitchAmount = how often) roll to a half
+// or quarter of the slice, play it reversed, play it at half speed (an octave
+// down) or gate its second half; choices come from a seeded LCG, so renders
+// repeat and the playground port matches. Every loop gets 2 ms fades and the
+// switch to and from the live voice is a 4 ms crossfade: no clicks.
+// ---------------------------------------------------------------------------
+class Stutter {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        fade = std::max(1, (int)(0.002f * sr));
+        mix.init(0.f, sr, 4.f);
+    }
+    void set(bool stutterOn, bool glitchOn, int division, float amount, float bpm) {
+        on = stutterOn || glitchOn; glitch = glitchOn; amt = clampf(amount, 0.f, 1.f);
+        static const float frac[4] = {1.f, 0.5f, 0.25f, 0.125f};
+        const int d = division < 0 ? 0 : (division > 3 ? 3 : division);
+        int n = (int)(60.f / clampf(bpm, 40.f, 240.f) * frac[d] * sr);
+        baseLen = n < 8 * fade ? 8 * fade : (n > kMax - 1 ? kMax - 1 : n);
+    }
+    bool active() const { return state != kIdle; }
+    float process(float x) {
+        if (state != kLoop) { buf[w] = x; w = (w + 1) % kMax; }    // frozen while looping
+        if (state == kIdle && on) { state = kRec; start = (w - 1 + kMax) % kMax; rec = 0; slice = baseLen; }
+        if (state == kRec) {
+            if (!on) state = kIdle;
+            else if (++rec >= slice) { state = kLoop; pos = 0; pick(); }
+        }
+        float y = 0.f;
+        if (state == kLoop) {
+            y = read();
+            if (++pos >= slice) { pos = 0; pick(); }
+        }
+        mix.target = (state == kLoop && on) ? 1.f : 0.f;
+        const float g = mix.next();
+        if (state == kLoop && !on && g < 1e-4f) state = kIdle;
+        return x + (y - x) * g;
+    }
+private:
+    enum { kIdle, kRec, kLoop };
+    static constexpr int kMax = (1 << 17) * RASP_SR_SCALE;      // 2.7 s @ 48k: a quarter note down to 22 bpm
+    float rnd() { rng = rng * 1664525u + 1013904223u; return (float)(rng >> 8) * (1.f / 16777216.f); }
+    void pick() {
+        sub = slice; rev = false; half = false; gate = false;
+        if (!glitch || rnd() >= amt) return;
+        const float k = rnd();
+        if (k < 0.35f) sub = std::max(slice >> (k < 0.2f ? 1 : 2), 4 * fade);   // roll
+        else if (k < 0.55f) rev = true;
+        else if (k < 0.75f) half = true;
+        else gate = true;
+    }
+    float read() const {
+        const int i = pos % sub;
+        float v;
+        if (half) {
+            const float fi = 0.5f * (float)i;
+            const int i0 = (int)fi;
+            const float fr = fi - (float)i0;
+            const float a = buf[(start + i0) % kMax], b = buf[(start + i0 + 1) % kMax];
+            v = a + (b - a) * fr;
+        } else {
+            v = buf[(start + (rev ? sub - 1 - i : i)) % kMax];
+        }
+        float wgt = std::fmin(1.f, std::fmin((float)i / (float)fade, (float)(sub - i) / (float)fade));
+        if (gate) {
+            const int h = slice / 2;
+            wgt = pos >= h ? 0.f : std::fmin(wgt, (float)(h - pos) / (float)fade);
+        }
+        return v * wgt;
+    }
+    float sr = 48000.f, amt = 0.6f;
+    bool on = false, glitch = false, rev = false, half = false, gate = false;
+    int fade = 96, baseLen = 6000, slice = 6000, sub = 6000, start = 0, w = 0, rec = 0, pos = 0, state = kIdle;
+    uint32_t rng = 0x5eed1234u;
+    Smoothed mix;
+    float buf[kMax] = {};
+};
+
+// ---------------------------------------------------------------------------
 // Bus: stereo-linked glue compressor (2:1, slow) into a -1 dBFS peak limiter.
 // The output level drives the limiter, so turning it up makes the whole
 // vocal denser and louder without clipping.
@@ -1409,7 +1496,7 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
-        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); harmony.init(sr); learner.init(sr);
+        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); stutterFx.init(sr); harmony.init(sr); learner.init(sr);
         gMega.init(0.f, sr, 10.f);
         gDt.init(0.f, sr, 30.f);
         // Double-track: two takes that each wander around 10-22 ms, so which
@@ -1446,6 +1533,7 @@ public:
         matchEq.set(p.match, p.matchAmount, sr);
         howlG.setOctaves(harmony.hasInterval(-12), harmony.hasInterval(12));
         throwFx.set(p.throwOn, p.bpm);
+        stutterFx.set(p.stutter, p.glitch, p.stutterDiv, p.glitchAmount, p.bpm);
     }
 
     void process(float in, float& outL, float& outR) {
@@ -1478,6 +1566,9 @@ public:
         megaFade = gmg;
         mega.track(x);
         if (gmg > 1e-4f) x = lerp(x, mega.process(x), gmg);
+        // STUTTER / GLITCH loops the (mega'd) voice; harmony, doubles, reverb
+        // and delay all hear the loop.
+        x = stutterFx.process(x);
         // HARMONY pairs: a stereo bus of their own; they also feed the reverb
         // and delay so they sit in the same space as the lead.
         float hL = 0.f, hR = 0.f;
@@ -1507,7 +1598,7 @@ public:
         // Feedback notches last, so they also protect the bypassed voice; the
         // detector listens to exactly what goes to the speakers.
         if (p.howl) {
-            if (megaFade > 1e-4f) howlG.holdOff();
+            if (megaFade > 1e-4f || stutterFx.active()) howlG.holdOff();   // loops repeat tones on purpose
             howlG.process(L, R);
             howlG.analyze(0.5f * (L + R));
         }
@@ -1554,6 +1645,7 @@ private:
     HowlGuard howlG;
     Mega mega;
     Throw throwFx;
+    Stutter stutterFx;
     Harmony harmony;
     Learner learner;
     MatchEQ matchEq;
