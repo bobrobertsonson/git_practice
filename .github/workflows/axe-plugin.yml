@@ -1,9 +1,11 @@
 # AxeElevator CI.
 #   engine        engine unit tests (Linux x86)
 #   macos         universal AU (+VST3, Standalone) for Logic, validated with auval
-#   linux-arm64   LV2 for aarch64 (Anagram / MOD class), built in Debian 11 so it
+#   linux-arm64   LV2 for aarch64 (Anagram / MOD class), built in Ubuntu 20.04 so it
 #                 needs glibc <= 2.31 (Anagram has 2.34), tested in a headless
 #                 lilv host and Carla's plugin discovery
+#                 (Ubuntu 20.04 container: glibc 2.31 and GCC 9.4, the GCC of
+#                 Darkglass's toolchain; Debian 11's archive is past LTS)
 # The Anagram toolchain build itself is in axe-anagram.yml (manual: ~1 h first run).
 name: AxeElevator plugin
 
@@ -71,7 +73,7 @@ jobs:
 
   linux-arm64:
     runs-on: ubuntu-24.04-arm
-    container: debian:bullseye        # glibc 2.31: loads on the Anagram (2.34) and newer desktops
+    container: ubuntu:20.04           # glibc 2.31: loads on the Anagram (2.34) and newer desktops
     strategy:
       fail-fast: false
       matrix:
@@ -82,6 +84,8 @@ jobs:
             march: armv8.2-a
     steps:
       - name: Dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update -q
           apt-get install -y -q --no-install-recommends build-essential git ca-certificates python3-pip pkg-config \

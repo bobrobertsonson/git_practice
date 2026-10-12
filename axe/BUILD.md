@@ -76,7 +76,7 @@ ssh root@192.168.51.1 "systemctl restart jack2 lvgl-app"
 ## Other aarch64 (Raspberry Pi, MOD-like boxes)
 
 The **linux-arm64** CI job builds the LV2 for generic `armv8-a` and for
-`armv8.2-a` in Debian 11, so it needs glibc ≥ 2.31. It links libstdc++
+`armv8.2-a` in Ubuntu 20.04, so it needs glibc ≥ 2.31. It links libstdc++
 statically and needs freetype and fontconfig on the target. The MOD Dwarf
 (glibc 2.27) needs MOD's mod-plugin-builder toolchain instead: see README,
 "MOD Dwarf".
