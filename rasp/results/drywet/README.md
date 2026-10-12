@@ -96,3 +96,22 @@ decorrelated), Vocal Doubler 100 width -3.3 dB / 0.36, Vocal Doubler
 -9.4 dB / 0.79, Growls and Growlsy about -15 dB / 0.95, Lead Vox and Scream
 Vocal about -21 dB / 0.99. Metal All-Rounder (-28.5) and German Metal (-33.8)
 are slightly wide; everything else is below -38 dB, effectively mono.
+
+### Stereo: RASP's doubles vs Mantra's doubler (2026-10-12)
+
+Same DI, reverb and delay off. Side/mid by band (dB):
+
+| | overall | 100 Hz | 1 kHz | 4 kHz | 10 kHz | 16 kHz |
+|---|---|---|---|---|---|---|
+| Mantra Vocal Doubler (width 100, nothing else) | -3.3 | -1.7 | -3.4 | -3.4 | -3.4 | -3.3 |
+| Mantra Vocal Doubler (preset) | -9.4 | -8.6 | -9.4 | -9.7 | -9.6 | -9.8 |
+| RASP huge, darken 0.3 (old default) | -2.6 | -7.6 | -2.5 | -3.0 | -7.5 | -15.0 |
+| RASP huge, darken 0.1 (new default) | | -7.6 | -2.5 | -2.7 | -4.2 | -7.0 |
+
+RASP's doubles were already as wide as Mantra's at its widest; what differed
+is that Mantra keeps the width flat to 16 kHz, where double-tracking is heard
+(consonants, fizz), and ours closed above ~6 kHz. Darken default 0.3 -> 0.1.
+Lows stay narrower on purpose (mono-compatible low end).
+
+Lead Double Fake is fully decorrelated (L/R correlation 0.00, no center): two
+fake takes hard-panned with nothing in the middle. RASP has no such mode yet.

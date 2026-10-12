@@ -225,7 +225,7 @@ struct Params {
     bool  thickenOn  = true;
     float spread     = 0.60f;  // double detune (0..18 cents) + comb spacing
     float diffuse    = 0.35f;  // smear the combs into a dense cloud
-    float darken     = 0.30f;  // lowpass on the thicken branch
+    float darken     = 0.10f;  // lowpass on the thicken branch (0.3 -> 0.1: Mantra's doubler keeps its width flat to 16 kHz; at 0.3 ours fell to -7.5 dB side/mid at 10 kHz)
     float width      = 0.85f;  // stereo width of the branch
     bool  solo       = false;  // hear only the thicken branch
     float thickenGainDb = -4.f;
