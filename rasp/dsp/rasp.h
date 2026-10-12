@@ -252,6 +252,10 @@ struct Params {
     bool  mono       = false;  // one-channel PA: drop the stereo comb taps, sum to mono
     bool  howl       = true;   // automatic feedback notches
 
+    // OCTAVE (parallel layers under the voice, 0 = off, 1 = as loud as the voice)
+    float octDown    = 0.f;    // one octave down: weight under gutturals and screams
+    float octUp      = 0.f;    // one octave up: a squeal layer
+
     // MOMENTARY (held footswitch / button; on while held)
     bool  mega       = false;  // the voice becomes a mid-focused hard-clipped burst
     bool  throwOn    = false;  // the voice is sent to a long ping-pong delay; repeats ring out after release
@@ -270,7 +274,7 @@ class Drive {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        up.init(); down.init();
+        up.init(); down.init(); downDry.init();
         hp720.setCutoff(720.f, sr * 4.f);                         // set per tone in set()
         rmsIn.setCutoff(3.f, sr); rmsOut.setCutoff(3.f, sr);
         level.init(1.f, sr, 50.f);
@@ -291,16 +295,27 @@ public:
         static const float cornerHz[3] = {200.f, 350.f, 600.f};
         hp720.setCutoff(cornerHz[b], sr * 4.f);
     }
-    float process(float x) {
-        float y = 0.f;
+    // Returns the driven signal; `dry` gets the clean input through exactly the
+    // same oversampling filters, so blending the two never cancels. (Blending
+    // with the raw input did: at mix 0.6 a real lead lost 10 dB at 100 Hz and
+    // had a 7.7 dB notch at 4.5 kHz, which sounded hollow.) The tone filter
+    // shapes only the clipped part, the TS's added grit, so the clean part of
+    // the drive stays in phase with the dry. With wetNeeded false only the
+    // dry path runs (mix at 0).
+    float process(float x, float& dry, bool wetNeeded = true) {
+        float yd = 0.f, yc = 0.f;
         for (int k = 0; k < 4; k++) {
             float u = up.process(k == 0 ? x * 4.f : 0.f);
-            float c = capLp.lp(gain * hp720.hp(u)) * (1.f / kClip);
-            float d = kClip * clipADAA(c);                         // diode pair
-            y = down.process(u + d);
+            yd = downDry.process(u);
+            if (wetNeeded) {
+                float c = capLp.lp(gain * hp720.hp(u)) * (1.f / kClip);
+                yc = down.process(kClip * clipADAA(c));            // diode pair
+            }
         }
-        tone.process(y);
-        float wet = tone.lp;
+        dry = yd;
+        if (!wetNeeded) return yd;
+        tone.process(yc);
+        float wet = yd + tone.lp;
         // Auto level: keep the wet as loud as the dry so drive and mix
         // change texture, not volume.
         float ein = rmsIn.lp(x * x), eout = rmsOut.lp(wet * wet);
@@ -327,7 +342,7 @@ private:
     static constexpr float kClip = 0.3f;
     float prevC = 0.f, prevF = 0.f;
     float sr = 48000.f, gain = 1.f;
-    OSFilter up, down;
+    OSFilter up, down, downDry;
     OnePole hp720, capLp, rmsIn, rmsOut;
     SVF tone;
     Smoothed level;
@@ -432,9 +447,11 @@ public:
         fetAtt = coefMs(0.4f, sr); fetRel = coefMs(60.f, sr);
         optAtt = coefMs(12.f, sr); optRms = coefMs(8.f, sr);
         crAtt = coefMs(1.f, sr); crRel = coefMs(80.f, sr);
+        lvRms = coefMs(50.f, sr); lvDown = coefMs(150.f, sr); lvUp = coefMs(600.f, sr);
     }
     void set(float chop, float release) {
         amount = chop;
+        lvRange = 15.f * chop;                       // leveler: +-15 dB at full chop
         fetThr = -8.f - 16.f * chop;  fetRatio = 4.f + 8.f * chop;
         optThr = -14.f - 14.f * chop; optRatio = 2.f + 2.f * chop;
         float relMs = expMap(release, 60.f, 800.f);
@@ -444,8 +461,21 @@ public:
         float lost = -kneeCurve(-10.f - fetThr, fetRatio, 6.f) - kneeCurve(-10.f - optThr, optRatio, 10.f) * 0.7f;
         makeup = dbToLin(lost * 0.8f);
     }
-    float process(float x) {
-        if (amount < 0.001f) { grDb = 0.f; return x; }
+    // voiced: the bleed reducer's key says the singer is there (not just the band).
+    float process(float x, bool voiced = true) {
+        if (amount < 0.001f) { grDb = 0.f; lvDb = 0.f; return x; }
+        // 0. Leveler: rides the voice toward -18 dBFS RMS over seconds, so
+        //    the stages below see the same level whatever the input gain, and
+        //    loud and quiet phrases even out. A real raw lead kept 6.6 of its
+        //    7.0 LU loudness range without it. It only moves while the singer
+        //    is there, so gaps and bleed aren't pulled up.
+        lvMs = x * x + lvRms * (lvMs - x * x);
+        float lvl = fastPowDb10(lvMs);
+        if (voiced && lvl > -50.f) {
+            float t = clampf(-18.f - lvl, -lvRange, lvRange);
+            lvDb = t + (t < lvDb ? lvDown : lvUp) * (lvDb - t);
+        }
+        x *= fastDbToLin(lvDb);
         // 1. FET peak comp
         float xDb = fastLinToDb(std::fabs(x));
         float target = kneeCurve(xDb - fetThr, fetRatio, 6.f);
@@ -466,42 +496,72 @@ public:
         return (y + crushMix * crushed) * makeup;
     }
     float gainReductionDb() const { return grDb; }
+    float levelerDb() const { return lvDb; }
 private:
     float sr = 48000.f, amount = 0.5f, makeup = 1.f, crushMix = 0.f, grDb = 0.f;
+    float lvRange = 0.f, lvRms = 0.f, lvDown = 0.f, lvUp = 0.f, lvMs = 0.f, lvDb = 0.f;
     float fetThr = -16, fetRatio = 8, fetAtt = 0, fetRel = 0, fetGr = 0;
     float optThr = -20, optRatio = 3, optAtt = 0, optRms = 0, optRelFast = 0, optRelSlow = 0, optGr = 0, optMs = 0;
     float crAtt = 0, crRel = 0, crGr = 0;
 };
 
 // ---------------------------------------------------------------------------
-// Micro-pitch shifter: two crossfading read heads sweeping a short delay.
-// A few cents of detune plus a Haas delay is the classic "double-tracked"
-// sound. The heads add 10-40 ms of delay, which is fine on a parallel branch.
+// Double: one synthetic double-tracked voice. A real double is a second
+// performance: its timing wanders 10-30 ms against the lead, its pitch drifts
+// a few cents either way, its level and tone differ a little. A fixed detune at
+// a fixed delay (the first version) reads as one voice with a faint chorus.
+// Every 0.5-0.75 s each voice picks new random targets for delay, detune and
+// level, and glides to them over ~0.4 s. The detune is a two-head granular
+// shift (heads crossfade with sin^2 / cos^2, so they always sum to 1).
+// Seeded LCG noise, so renders are repeatable and the playground's JS port
+// matches sample for sample.
 // ---------------------------------------------------------------------------
-class MicroPitch {
+class Double {
 public:
-    void init(float sampleRate, float baseMs) { sr = sampleRate; base = baseMs * 0.001f * sr; win = 0.03f * sr; }
-    void setCents(float cents) { rate = std::pow(2.0, cents / 1200.0) - 1.0; }
+    void init(float sampleRate, uint32_t seed, float baseMs, float sign, float tiltDb) {
+        sr = sampleRate; rng = seed; sgn = sign;
+        base0 = baseMs * 0.001f * sr; range = 0.010f * sr; win = 0.03f * sr;
+        tiltHi = dbToLin(tiltDb); tilt.setCutoff(1500.f, sr);
+        a = std::exp(-1.0 / (0.4 * sr));
+        period = (int)((0.5f + 0.25f * rand01()) * sr);
+        pick();
+        dly = dlyT; cents = centsT; gain = gainT;      // start settled
+    }
+    void setDepth(float maxCents) { cmax = maxCents; }
     float process(float x) {
         dl.write(x);
-        // Delay changes by -rate samples per sample -> pitch ratio (1 + rate).
-        // The step is ~5e-6 per sample, too small for a float accumulator
-        // to stay accurate, so the phase is double.
-        ph += -rate / win;
+        if (++count >= period) { count = 0; pick(); }
+        dly = dlyT + a * (dly - dlyT); cents = centsT + a * (cents - centsT); gain = gainT + a * (gain - gainT);
+        // Delay shrinks by `rate` samples per sample -> pitch ratio 1 + rate.
+        // ln(2)/1200 per cent: within 0.1 cent of 2^(c/1200)-1 up to 20 cents.
+        ph += -(cents * 5.776226504666211e-4) / win;
         if (ph >= 1.0) ph -= 1.0;
         if (ph < 0.0) ph += 1.0;
         float p1 = (float)ph, p2 = p1 + 0.5f; if (p2 >= 1.f) p2 -= 1.f;
-        float g1 = std::sin(kPi * p1), g2 = std::sin(kPi * p2);
-        return g1 * g1 * dl.read(base + win * p1) + g2 * g2 * dl.read(base + win * p2);
+        float sn = std::sin(kPi * p1), g1 = sn * sn;
+        float y = g1 * dl.read((float)dly + win * p1) + (1.f - g1) * dl.read((float)dly + win * p2);
+        float lo = tilt.lp(y);
+        return (lo + (y - lo) * tiltHi) * (float)gain;
     }
 private:
-    float sr = 48000.f, base = 600.f, win = 1440.f;
-    double rate = 0.0, ph = 0.0;
-    DelayLine<8192 * RASP_SR_SCALE> dl;
+    float rand01() { rng = rng * 1664525u + 1013904223u; return (float)(rng >> 8) * (1.f / 16777216.f); }
+    void pick() {
+        dlyT = base0 + rand01() * range;
+        centsT = sgn * 0.5f * cmax + (rand01() - 0.5f) * cmax;
+        gainT = dbToLin((rand01() - 0.5f) * 3.f);      // +-1.5 dB
+    }
+    float sr = 48000.f, sgn = 1.f, base0 = 600.f, range = 480.f, win = 1440.f, tiltHi = 1.f, cmax = 12.f;
+    float dlyT = 0.f, centsT = 0.f, gainT = 1.f;
+    double a = 0.0, dly = 0.0, cents = 0.0, gain = 1.0, ph = 0.0;
+    uint32_t rng = 1;
+    int period = 24000, count = 0;
+    OnePole tilt;
+    DelayLine<8192 * RASP_SR_SCALE> dl;               // base + wander + head window: <= 66 ms
 };
 
 // ---------------------------------------------------------------------------
-// Thicken: two micro-pitched doubles (one per side) + stereo comb taps,
+// Thicken: synthetic double tracks (a pair, plus a second pair as spread goes
+// past 0.35: the "quad-tracked" metal vocal) + quieter stereo comb taps,
 // diffused, darkened, width-controlled. Runs on a parallel branch.
 // ---------------------------------------------------------------------------
 class Thicken {
@@ -511,42 +571,49 @@ public:
         hpIn.set(150.f, 0.707f, sr);
         const float apMs[2][3] = {{3.1f, 5.3f, 7.9f}, {2.7f, 4.9f, 8.3f}};
         for (int c = 0; c < 2; c++) for (int i = 0; i < 3; i++) ap[c][i].setLen((int)(apMs[c][i] * 0.001f * sr));
-        dblL.init(sr, 14.f); dblR.init(sr, 21.f);
+        // seed, base delay (ms), detune side, tone tilt above 1.5 kHz (dB)
+        voice[0].init(sr, 0x1234567u, 12.f, +1.f, +1.5f);   // left
+        voice[1].init(sr, 0x89abcdeu, 16.f, -1.f, -1.5f);   // right
+        voice[2].init(sr, 0x2468aceu, 22.f, -1.f, -1.0f);   // left, second pair
+        voice[3].init(sr, 0x13579bdu, 26.f, +1.f, +1.0f);   // right, second pair
         spreadS.init(0.6f, sr, 60.f);
     }
     void set(const Params& p) {
         spreadS.target = p.spread;
         diffuse = p.diffuse; width = p.width;
-        float cents = 3.f + 15.f * p.spread;
-        dblL.setCents(cents); dblR.setCents(-cents);
+        for (auto& v : voice) v.setDepth(4.f + 16.f * p.spread);   // detune wander, cents
         float hz = expMap(1.f - p.darken, 1500.f, 18000.f);
         darkL.set(hz, 0.6f, sr); darkR.set(hz, 0.6f, sr);
     }
     void process(float x, float& L, float& R, bool mono = false) {
         hpIn.process(x);
         float h = hpIn.hp;
+        float sp = spreadS.next();
+        float g2 = 0.75f * clampf((sp - 0.35f) * 2.f, 0.f, 1.f);   // second pair fades in
+        float v0 = voice[0].process(h), v1 = voice[1].process(h), v2 = voice[2].process(h), v3 = voice[3].process(h);
         if (mono) {
             // One-channel PA: comb taps would turn into a fixed comb filter when
-            // summed, so only the micro-pitched doubles are kept.
-            float d = 0.8f * (dblL.process(h) + dblR.process(h)) * 0.7071f;
+            // summed, so only the doubles are kept.
+            float d = 0.6f * (v0 + v1 + g2 * (v2 + v3));
             dl.write(h);
             darkL.process(d); darkR.process(d);
             L = R = darkL.lp;
             return;
         }
         dl.write(h);
-        // Comb taps (ms) at full spread; spread scales them 0.25x..1x.
+        // Comb taps (ms) at full spread; spread scales them 0.25x..1x. Half
+        // the level they had: they add size but also a fixed comb colour.
         static const float tL[4] = {4.7f, 11.3f, 17.9f, 26.3f}, tR[4] = {6.1f, 9.7f, 15.1f, 23.9f};
-        static const float g[4] = {0.5f, -0.4f, 0.32f, -0.26f};
-        float s = (0.25f + 0.75f * spreadS.next()) * 0.001f * sr;
+        static const float g[4] = {0.25f, -0.2f, 0.16f, -0.13f};
+        float s = (0.25f + 0.75f * sp) * 0.001f * sr;
         float l = 0.f, r = 0.f;
         for (int i = 0; i < 4; i++) { l += g[i] * dl.read(tL[i] * s); r += g[i] * dl.read(tR[i] * s); }
         float dlr = l, drr = r;
         for (int i = 0; i < 3; i++) { dlr = ap[0][i].process(dlr, 0.6f); drr = ap[1][i].process(drr, 0.6f); }
         l = lerp(l, dlr, diffuse); r = lerp(r, drr, diffuse);
         // Doubles: the main source of "size".
-        l += 0.8f * dblL.process(h);
-        r += 0.8f * dblR.process(h);
+        l += 0.9f * (v0 + g2 * v2);
+        r += 0.9f * (v1 + g2 * v3);
         darkL.process(l); darkR.process(r);
         float m = 0.5f * (darkL.lp + darkR.lp), sd = 0.5f * (darkL.lp - darkR.lp) * width * 1.3f;
         L = m + sd; R = m - sd;
@@ -556,7 +623,7 @@ private:
     SVF hpIn, darkL, darkR;
     DelayLine<4096 * RASP_SR_SCALE> dl;   // 85 ms @ 48k
     Allpass<1024 * RASP_SR_SCALE> ap[2][3];
-    MicroPitch dblL, dblR;
+    Double voice[4];
     Smoothed spreadS;
 };
 
@@ -664,6 +731,113 @@ private:
     OnePole fbHp, fbLp, tiltL, tiltR;
     SVF retLpL, retLpR;
     Smoothed delayS;
+};
+
+// ---------------------------------------------------------------------------
+// Shifter: fixed-ratio pitch shift for the octave layers. Two read heads
+// sweep a delay line (the delay changes by 1 - ratio samples per sample) and
+// crossfade with sin^2 / cos^2 over a 40 ms grain. Plain granular shifting
+// starts each grain out of phase with the one fading out: an octave down of a
+// 220 Hz tone came out as 95 and 120 Hz instead of 110 (grain-rate flutter).
+// So each new grain picks its start point (WSOLA): it searches 12 ms of delay
+// for the best normalised correlation with the head that's playing, and
+// starts there, in phase. No pitch tracking, so screams and gutturals work.
+//
+// Real-time cost is spread out: the search for a head runs over the 6.5 ms
+// before it restarts, one candidate per sample (every 2nd offset, then the
+// two neighbours of the best), instead of ~166k multiply-adds in one sample,
+// which would overrun the Daisy's 4-sample audio blocks. The samples it
+// compares are the ones that will be in place at the restart, read Δ samples
+// earlier, so the data must already exist: hence the minimum delay of
+// corr + lead samples (~12.5 ms of extra lag on the octave layers).
+// ---------------------------------------------------------------------------
+class Shifter {
+public:
+    void init(float sampleRate, float ratio) {
+        sr = sampleRate; rho = 1.0 - ratio;
+        grain = (int)(0.04f * sr); half = grain / 2;
+        corr = (int)(0.006f * sr); search = (int)(0.012f * sr) & ~1;   // even: coarse grid ends on it
+        lead = (int)(0.0065f * sr);                   // >= search/2 + 1 coarse + 2 fine steps
+        base = (double)(corr + lead + 2);
+        start = rho > 0.0 ? base : base + grain * -rho;   // down: delay grows; up: delay shrinks
+        h[0] = Head{start, 0}; h[1] = Head{start + half * rho, half};
+    }
+    float process(float x) {
+        dl.write(x);
+        float y = 0.f;
+        for (int k = 0; k < 2; k++) {
+            Head& hd = h[k];
+            int remaining = grain - hd.age;
+            if (remaining == lead) beginSearch(hd, h[1 - k]);
+            if (hd.searching && remaining > 0) searchStep(hd, remaining);
+            if (hd.age >= grain) { hd.d = start + hd.best; hd.age = 0; hd.searching = false; }
+            float sn = std::sin(kPi * (float)hd.age / (float)grain);
+            y += sn * sn * dl.read((float)hd.d);
+            hd.d += rho; hd.age++;
+        }
+        return y;
+    }
+private:
+    struct Head {
+        double d = 0.0; int age = 0;
+        bool searching = false, fine = false; int oR = 0, c = 0, best = 0; double bestScore = 0.0;
+    };
+    // Align with where the other head will be when this one restarts.
+    void beginSearch(Head& hd, const Head& other) {
+        hd.searching = true; hd.fine = false; hd.c = 0; hd.best = 0; hd.bestScore = -1e30;
+        hd.oR = (int)(other.d + rho * lead);
+    }
+    void searchStep(Head& hd, int delta) {
+        int c = hd.c;
+        if (!hd.fine) {
+            score(hd, c, delta);
+            hd.c += 2;
+            if (hd.c > search) { hd.fine = true; hd.c = hd.best - 1; }
+        } else {
+            if (c >= 0 && c <= search && c != hd.best) score(hd, c, delta);
+            if (c >= hd.best + 1) { hd.searching = false; return; }
+            hd.c += (c + 1 == hd.best) ? 2 : 1;       // best-1, then best+1
+        }
+    }
+    void score(Head& hd, int c, int delta) {
+        int a0 = hd.oR - delta, b0 = (int)start + c - delta;
+        double xy = 0.0, bb = 1e-9;
+        for (int m = 0; m < corr; m += 2) {
+            double a = dl.tap(a0 - m), b = dl.tap(b0 - m);
+            xy += a * b; bb += b * b;
+        }
+        double sc = xy / std::sqrt(bb);
+        if (sc > hd.bestScore) { hd.bestScore = sc; hd.best = c; }
+    }
+    float sr = 48000.f;
+    double rho = 0.5, base = 600.0, start = 600.0;
+    int grain = 1920, half = 960, corr = 288, search = 576, lead = 312;
+    Head h[2];
+    DelayLine<8192 * RASP_SR_SCALE> dl;               // up: start + search + grain <= 77 ms
+};
+
+// ---------------------------------------------------------------------------
+// Octave: one octave down and one up, from the compressed voice. The shifted
+// layers lag the voice by roughly 13-65 ms, like a tight double; the dry voice
+// is untouched. The down layer is low-passed so it adds weight rather than a
+// second voice.
+// ---------------------------------------------------------------------------
+class Octave {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        dn.init(sr, 0.5f); upS.init(sr, 2.f);
+        dnHp.set(55.f, 0.707f, sr); dnLp.set(2200.f, 0.707f, sr);
+        upHp.set(500.f, 0.707f, sr); upLp.set(9000.f, 0.707f, sr);
+    }
+    void process(float x, float& down, float& up) {
+        dnHp.process(dn.process(x)); dnLp.process(dnHp.hp); down = dnLp.lp;
+        upHp.process(upS.process(x)); upLp.process(upHp.hp); up = upLp.lp;
+    }
+private:
+    float sr = 48000.f;
+    Shifter dn, upS;
+    SVF dnHp, dnLp, upHp, upLp;
 };
 
 // ---------------------------------------------------------------------------
@@ -934,11 +1108,13 @@ public:
     // is tonal enough to read as feedback (one false notch at 645 Hz on a
     // Gojira lead). Existing notches keep working.
     void holdOff() { hold = (int)(0.3f * sr / kHop) + 1; }
+    void setOctaves(bool down, bool up) { octDown = down; octUp = up; }
     int activeNotches() const { int c = 0; for (const auto& n : notches) c += n.active; return c; }
     int deployedCount() const { return deployed; }
     float notchHz(int i) const { return notches[i].active ? notches[i].hz : 0.f; }
 private:
     int hold = 0;
+    bool octDown = false, octUp = false;
     struct Notch { bool active = false; float hz = 0, depthDb = 0; uint32_t age = 0; Biquad l, r; };
     void frame() {
         if (hold > 0) { hold--; candFrames = 0; candBin = -1; return; }
@@ -964,7 +1140,12 @@ private:
                 int k2 = 2 * best + d; if (k2 < kN / 2) h2 = std::fmax(h2, mag[k2]);
                 int k12 = best / 2 + d; if (k12 >= lo) h12 = std::fmax(h12, mag[k12]);
             }
-            tonal = bestP > 16.f * side && bestP > 63.f * h2 && bestP > 63.f * h12;
+            // A voice has partials an octave around its peaks; feedback is a lone
+            // tone. But an octave layer gives a howl its own octave partner, so
+            // with octave down (up) on, the partial below (above) can't count
+            // as proof of a voice: with octave down at 0.6 the guard otherwise
+            // missed a howl carrying 42% of the output.
+            tonal = bestP > 16.f * side && (octUp || bestP > 63.f * h2) && (octDown || bestP > 63.f * h12);
         }
         if (tonal && candBin >= 0 && std::abs(best - candBin) <= 1) candFrames++;
         else if (tonal) { candBin = best; candFrames = 1; }
@@ -1007,8 +1188,8 @@ public:
     void init(float sampleRate) {
         sr = sampleRate;
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
-        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr);
-        gMega.init(0.f, sr, 10.f);
+        bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); octave.init(sr);
+        gMega.init(0.f, sr, 10.f); gOctD.init(0.f, sr, 30.f); gOctU.init(0.f, sr, 30.f);
         gIn.init(1.f, sr); gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
     }
@@ -1034,6 +1215,8 @@ public:
         gIn.target = dbToLin(p.inDb);
         gMix.target = p.mix;
         gMega.target = p.mega ? 1.f : 0.f;
+        gOctD.target = clampf(p.octDown, 0.f, 1.f); gOctU.target = clampf(p.octUp, 0.f, 1.f) * 0.7f;
+        howlG.setOctaves(p.octDown > 0.05f, p.octUp > 0.05f);
         throwFx.set(p.throwOn, p.bpm);
     }
 
@@ -1047,21 +1230,30 @@ public:
             hiCut1.process(loCut2.hp); hiCut2.process(hiCut1.lp);
             x = hiCut2.lp;
             float eg = expander.gain(x);              // keyed on the clean signal
-            if (gm > 1e-4f) {                          // skip the heaviest stage when unused
-                // Distortion creates new low-frequency difference tones below
-                // the lo cut, so the wet path gets its own high-pass.
-                driveHp1.process(drive.process(x)); driveHp2.process(driveHp1.hp);
-                x = lerp(x, driveHp2.hp, gm);
-            }
+            // The dry always takes the drive's filter path (same latency and
+            // phase as the wet); the clipper only runs when the mix is up.
+            float dryA, wet = drive.process(x, dryA, gm > 1e-4f);
+            x = lerp(dryA, wet, gm);
+            // Distortion creates low difference tones below the lo cut; this
+            // high-pass treats wet and dry alike, so it can't cause cancellation.
+            driveHp1.process(x); driveHp2.process(driveHp1.hp);
+            x = driveHp2.hp;
             x = voicing.process(x);
             x = deEss.process(x);
-            x = chop.process(x) * eg * gc;
+            x = chop.process(x, eg > 0.7f) * eg * gc;   // leveler holds while the bleed reducer is closing
         }
         // MOMENTARY: mega replaces the voice (crossfaded) before the effects.
         float gmg = gMega.next();
         megaFade = gmg;
         mega.track(x);
         if (gmg > 1e-4f) x = lerp(x, mega.process(x), gmg);
+        // OCTAVE layers, before the effects so they share the doubles and space.
+        float god = gOctD.next(), gou = gOctU.next();
+        if (god > 1e-4f || gou > 1e-4f) {
+            float dn, upv;
+            octave.process(x, dn, upv);
+            x += god * dn + gou * upv;
+        }
         // THICKEN + FLAVOUR (parallel, fed by the control output)
         float tL = 0, tR = 0, fL = 0, fR = 0;
         float gt = gThk.next(), gf = gFlv.next();
@@ -1114,7 +1306,8 @@ private:
     HowlGuard howlG;
     Mega mega;
     Throw throwFx;
-    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega;
+    Octave octave;
+    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega, gOctD, gOctU;
     float megaFade = 0.f;
 };
 

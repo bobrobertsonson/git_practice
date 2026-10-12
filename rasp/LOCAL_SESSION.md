@@ -50,7 +50,7 @@ A locally built plugin isn't quarantined, so `xattr` isn't needed. Restart Logic
 
 - **Engine:** `rasp/dsp/rasp.h`. **Presets:** `rasp/dsp/presets.h`, mirrored in
   `rasp/playground/index.html` (`make -C rasp check` keeps them equal).
-- **Momentary effects:** Mega (KnockedLoose-style burst) and Throw.
+- **Momentary effects:** Mega (KnockedLoose-style burst) and Throw. **Octave** down/up layers. **Air** shelf.
 - **Reference tools:**
   - `tools/mixprint.py`: a producer's EQ, pan and space per stem, from the stems plus the mix.
   - `tools/presetfit.py`: which preset or tuning comes closest to that producer

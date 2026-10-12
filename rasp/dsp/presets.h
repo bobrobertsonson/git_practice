@@ -17,7 +17,7 @@ inline Params presetParams(int i) {
     Params p;
     switch (i) {
         case 0:  // huge: album sound
-            p.drive = 0.45f; p.chop = 0.65f; p.spread = 0.75f; p.thickenGainDb = -2.f; p.tail = 0.45f;
+            p.drive = 0.45f; p.chop = 0.75f; p.spread = 0.75f; p.thickenGainDb = 0.f; p.tail = 0.45f;
             p.tailBlend = 0.45f; p.delayBlend = 0.22f; p.flavourGainDb = -4.f; p.glue = 0.65f; p.outDb = 3.f;
             // Top end fitted to four producers' lead vocals (tools/presetfit.py:
             // Bloodbath, Gojira, Immortal Disfigurement, KnockedLoose). Every one

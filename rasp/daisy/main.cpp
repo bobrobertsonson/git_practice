@@ -23,7 +23,8 @@
 // A mono (TS) footswitch shorts the ring, so a switch that reads "held" at
 // power-up is ignored until it is first released.
 // USB MIDI: Program Change 0-7 recalls preset slots 1-8 (from a laptop/backing-track rig);
-// CC 80 = MEGA, CC 81 = THROW (value >= 64 on), for triggering from a timeline.
+// CC 80 = MEGA, CC 81 = THROW (value >= 64 on), for triggering from a timeline;
+// CC 82 / 83 = octave down / up level (0-127). A knob takes over again once moved.
 //
 // Presets: 8 slots in QSPI flash (4 MB in), first boot fills them with the factory set
 // (huge, natural, dark, bright, live, raw, air, natural). After a recall,
@@ -37,7 +38,9 @@
 //   A0 (D15)  mux 1 out (control 6 + spread, diffuse), CD4051 select D0 D1 D2
 //   A1 (D16)  mux 2 out (darken, width + flavour 6),   CD4051 select D3 D4 D5
 //   A2..A5 (D17..D20)  faders: control, thicken, flavour, output
-//   A6..A8 (D21..D23)  trims: bleed, de-ess, glue
+//   A6, A7 (D21, D22)  trims: bleed, de-ess
+//   A8 (D23)  mux 3 out (glue trim, octave down, octave up, 5 spare), CD4051 select
+//             shares D0 D1 D2 with mux 1 (libDaisy steps every mux in lockstep)
 //   D6/D7  tone toggle    D8/D9  delay-time toggle    D14 solo button   D28 mono switch
 //   D10 FS bypass   D11 FS thicken   D12 FS flavour   D13 FS tap
 //   D24 / D25 / D26  74HC595 data / clock / latch -> LEDs:
@@ -75,8 +78,8 @@ struct Stored {
 static PersistentStorage<Stored> storage(hw.qspi);
 
 // ---------------------------------------------------------------- analog controls
-enum AdcChan { MUX1, MUX2, FADER_CTL, FADER_THK, FADER_FLV, FADER_OUT, TRIM_BLEED, TRIM_DEESS, TRIM_GLUE, NUM_ADC };
-constexpr int kPots = 23;   // 16 mux knobs + 4 faders + 3 trims
+enum AdcChan { MUX1, MUX2, FADER_CTL, FADER_THK, FADER_FLV, FADER_OUT, TRIM_BLEED, TRIM_DEESS, MUX3, NUM_ADC };
+constexpr int kPots = 25;   // 16 mux knobs + 4 faders + 2 trims + mux 3 (glue, octave down, octave up)
 
 // Knob "pickup": after a preset recall a control keeps the preset's value
 // until it is moved by more than ~3% from where it sat at recall time.
@@ -93,7 +96,8 @@ static Pickup pickup[kPots];
 static float readPot(int i) {
     if (i < 8)  return hw.adc.GetMuxFloat(MUX1, i);
     if (i < 16) return hw.adc.GetMuxFloat(MUX2, i - 8);
-    return hw.adc.GetFloat(FADER_CTL + (i - 16));
+    if (i < 22) return hw.adc.GetFloat(FADER_CTL + (i - 16));    // faders, bleed, de-ess
+    return hw.adc.GetMuxFloat(MUX3, i - 22);
 }
 
 static float faderDb(float v, float lo, float hi) { return lo + (hi - lo) * v; }
@@ -117,6 +121,7 @@ static void applyPot(int i) {
         case 19: params.outDb = faderDb(v, -24.f, 12.f); break;
         case 20: params.bleed = v; break;       case 21: params.deEss = v; break;
         case 22: params.glue = v; break;
+        case 23: params.octDown = v; break;     case 24: params.octUp = v; break;
     }
 }
 
@@ -178,7 +183,7 @@ int main() {
     adc[FADER_OUT].InitSingle(seed::A5);
     adc[TRIM_BLEED].InitSingle(seed::A6);
     adc[TRIM_DEESS].InitSingle(seed::A7);
-    adc[TRIM_GLUE].InitSingle(seed::A8);
+    adc[MUX3].InitMux(seed::A8, 8, seed::D0, seed::D1, seed::D2);
     hw.adc.Init(adc, NUM_ADC);
     hw.adc.Start();
 
@@ -275,6 +280,8 @@ int main() {
                 auto cc = e.AsControlChange();
                 if (cc.control_number == 80) midiMega = cc.value >= 64;
                 if (cc.control_number == 81) midiThrow = cc.value >= 64;
+                if (cc.control_number == 82) params.octDown = cc.value / 127.f;
+                if (cc.control_number == 83) params.octUp = cc.value / 127.f;
             }
         }
 

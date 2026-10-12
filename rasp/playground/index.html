@@ -335,12 +335,60 @@ class RaspEngine {
     };
     const wO = [0, 0];
     let megaFade = 0;
+    // Octave layers (mirrors Shifter / Octave in rasp.h: WSOLA-aligned grains).
+    const shifter = ratio => {
+      const S = { dl: delay(8192), rho: 1 - ratio, grain: Math.trunc(0.04 * sr), corr: Math.trunc(0.006 * sr),
+        search: Math.trunc(0.012 * sr) & ~1, lead: Math.trunc(0.0065 * sr) };
+      S.half = Math.trunc(S.grain / 2); S.base = S.corr + S.lead + 2; S.start = S.rho > 0 ? S.base : S.base + S.grain * -S.rho;
+      const head = (d, age) => ({ d, age, searching: false, fine: false, oR: 0, c: 0, best: 0, bestScore: 0 });
+      S.h = [head(S.start, 0), head(S.start + S.half * S.rho, S.half)];
+      return S;
+    };
+    const shScore = (S, hd, c, delta) => {
+      const a0 = hd.oR - delta, b0 = Math.trunc(S.start) + c - delta;
+      let xy = 0, bb = 1e-9;
+      for (let m = 0; m < S.corr; m += 2) { const a = dTap(S.dl, a0 - m), b = dTap(S.dl, b0 - m); xy += a * b; bb += b * b; }
+      const sc = xy / Math.sqrt(bb);
+      if (sc > hd.bestScore) { hd.bestScore = sc; hd.best = c; }
+    };
+    const shStep = (S, hd, delta) => {
+      const c = hd.c;
+      if (!hd.fine) {
+        shScore(S, hd, c, delta); hd.c += 2;
+        if (hd.c > S.search) { hd.fine = true; hd.c = hd.best - 1; }
+      } else {
+        if (c >= 0 && c <= S.search && c !== hd.best) shScore(S, hd, c, delta);
+        if (c >= hd.best + 1) { hd.searching = false; return; }
+        hd.c += (c + 1 === hd.best) ? 2 : 1;
+      }
+    };
+    const shRun = (S, x) => {
+      dWrite(S.dl, x);
+      let y = 0;
+      for (let k = 0; k < 2; k++) {
+        const hd = S.h[k], remaining = S.grain - hd.age;
+        if (remaining === S.lead) {
+          const other = S.h[1 - k];
+          hd.searching = true; hd.fine = false; hd.c = 0; hd.best = 0; hd.bestScore = -1e30;
+          hd.oR = Math.trunc(other.d + S.rho * S.lead);
+        }
+        if (hd.searching && remaining > 0) shStep(S, hd, remaining);
+        if (hd.age >= S.grain) { hd.d = S.start + hd.best; hd.age = 0; hd.searching = false; }
+        const sn = Math.sin(PI * hd.age / S.grain);
+        y += sn * sn * dRead(S.dl, hd.d);
+        hd.d += S.rho; hd.age++;
+      }
+      return y;
+    };
+    const shDn = shifter(0.5), shUp = shifter(2), oDnHp = svf(), oDnLp = svf(), oUpHp = svf(), oUpLp = svf();
+    svfSet(oDnHp, 55, 0.707); svfSet(oDnLp, 2200, 0.707); svfSet(oUpHp, 500, 0.707); svfSet(oUpLp, 9000, 0.707);
+    const gOctD = sm(0, 30), gOctU = sm(0, 30);
 
     let p = null;
     // ---- CONTROL
     const lc1 = svf(), lc2 = svf(), hc1 = svf(), hc2 = svf(), dHp1 = svf(), dHp2 = svf();
     // drive
-    const up = osF(), down = osF(), hp720 = op(720, sr * 4), capLp = op(), rmsIn = op(3), rmsOut = op(3), tone = svf(), level = sm(1, 50);
+    const up = osF(), down = osF(), downDry = osF(), hp720 = op(720, sr * 4), capLp = op(), rmsIn = op(3), rmsOut = op(3), tone = svf(), level = sm(1, 50);
     let gain = 1, prevC = 0, prevF = 0;
     const KCLIP = 0.3;
     // voicing
@@ -354,21 +402,35 @@ class RaspEngine {
     // chop
     const C = { amount: 0.5, makeup: 1, crushMix: 0, gr: 0, fetThr: -16, fetRatio: 8, fetAtt: coefMs(0.4), fetRel: coefMs(60), fetGr: 0,
       optThr: -20, optRatio: 3, optAtt: coefMs(12), optRms: coefMs(8), optRelFast: 0, optRelSlow: 0, optGr: 0, optMs: 0,
-      crAtt: coefMs(1), crRel: coefMs(80), crGr: 0 };
+      crAtt: coefMs(1), crRel: coefMs(80), crGr: 0,
+      lvRange: 0, lvRms: coefMs(50), lvDown: coefMs(150), lvUp: coefMs(600), lvMs: 0, lvDb: 0 };
     // ---- THICKEN
     const tHp = svf(), tdl = delay(4096), darkL = svf(), darkR = svf(), spreadS = sm(0.6, 60);
     svfSet(tHp, 150, 0.707);
     const tAp = [[3.1, 5.3, 7.9], [2.7, 4.9, 8.3]].map(row => row.map(ms => ap(1024, ms * 0.001 * sr)));
-    const TL = [4.7, 11.3, 17.9, 26.3], TR = [6.1, 9.7, 15.1, 23.9], TG = [0.5, -0.4, 0.32, -0.26];
-    const mp = baseMs => ({ dl: delay(8192), base: baseMs * 0.001 * sr, win: 0.03 * sr, rate: 0, ph: 0 });
-    const mpRun = (m, x) => {
-      dWrite(m.dl, x);
-      m.ph += -m.rate / m.win; if (m.ph >= 1) m.ph -= 1; if (m.ph < 0) m.ph += 1;
-      let p2 = m.ph + 0.5; if (p2 >= 1) p2 -= 1;
-      const g1 = Math.sin(PI * m.ph), g2 = Math.sin(PI * p2);
-      return g1 * g1 * dRead(m.dl, m.base + m.win * m.ph) + g2 * g2 * dRead(m.dl, m.base + m.win * p2);
+    const TL = [4.7, 11.3, 17.9, 26.3], TR = [6.1, 9.7, 15.1, 23.9], TG = [0.25, -0.2, 0.16, -0.13];
+    // Double-track voices (mirrors class Double in rasp.h, same LCG seeds).
+    const dblVoice = (seed, baseMs, sign, tiltDb) => {
+      const v = { dl: delay(8192), rng: seed >>> 0, sgn: sign, base0: baseMs * 0.001 * sr, range: 0.010 * sr, win: 0.03 * sr,
+        tiltHi: db(tiltDb), tilt: op(1500), a: Math.exp(-1 / (0.4 * sr)), cmax: 12, count: 0, ph: 0, dlyT: 0, centsT: 0, gainT: 1 };
+      v.rand = () => { v.rng = (Math.imul(v.rng, 1664525) + 1013904223) >>> 0; return (v.rng >>> 8) / 16777216; };
+      v.pick = () => { v.dlyT = v.base0 + v.rand() * v.range; v.centsT = v.sgn * 0.5 * v.cmax + (v.rand() - 0.5) * v.cmax; v.gainT = db((v.rand() - 0.5) * 3); };
+      v.period = Math.trunc((0.5 + 0.25 * v.rand()) * sr);
+      v.pick(); v.dly = v.dlyT; v.cents = v.centsT; v.gain = v.gainT;
+      return v;
     };
-    const dblL = mp(14), dblR = mp(21);
+    const dblRun = (v, x) => {
+      dWrite(v.dl, x);
+      if (++v.count >= v.period) { v.count = 0; v.pick(); }
+      v.dly = v.dlyT + v.a * (v.dly - v.dlyT); v.cents = v.centsT + v.a * (v.cents - v.centsT); v.gain = v.gainT + v.a * (v.gain - v.gainT);
+      v.ph += -(v.cents * 5.776226504666211e-4) / v.win; if (v.ph >= 1) v.ph -= 1; if (v.ph < 0) v.ph += 1;
+      let p2 = v.ph + 0.5; if (p2 >= 1) p2 -= 1;
+      const sn = Math.sin(PI * v.ph), g1 = sn * sn;
+      const y = g1 * dRead(v.dl, v.dly + v.win * v.ph) + (1 - g1) * dRead(v.dl, v.dly + v.win * p2);
+      const lo = opLp(v.tilt, y);
+      return (lo + (y - lo) * v.tiltHi) * v.gain;
+    };
+    const voices = [dblVoice(0x1234567, 12, 1, 1.5), dblVoice(0x89abcde, 16, -1, -1.5), dblVoice(0x2468ace, 22, -1, -1), dblVoice(0x13579bd, 26, 1, 1)];
     // ---- FLAVOUR: plate
     const pLen = [23.1, 27.7, 31.9, 35.3, 39.7, 43.1, 47.9, 53.3].map(ms => ms * 0.001 * sr);
     const pLines = pLen.map(() => delay(8192)), pDamp = pLen.map(() => op(7000)), pFb = new Float64Array(8);
@@ -404,7 +466,7 @@ class RaspEngine {
       highShelf(vExtra, 7000, clamp(p.airDb || 0, 0, 12));
       deDepth = p.deEss;
       X.on = p.bleed > 0.001; X.thr = -70 + 40 * p.bleed;
-      C.amount = p.chop;
+      C.amount = p.chop; C.lvRange = 15 * p.chop;
       C.fetThr = -8 - 16 * p.chop; C.fetRatio = 4 + 8 * p.chop;
       C.optThr = -14 - 14 * p.chop; C.optRatio = 2 + 2 * p.chop;
       const relMs = expMap(p.release, 60, 800); C.optRelFast = coefMs(relMs * 0.25); C.optRelSlow = coefMs(relMs);
@@ -412,7 +474,7 @@ class RaspEngine {
       const lost = -knee(-10 - C.fetThr, C.fetRatio, 6) - knee(-10 - C.optThr, C.optRatio, 10) * 0.7;
       C.makeup = db(lost * 0.8);
       spreadS.target = p.spread;
-      const cents = 3 + 15 * p.spread; dblL.rate = 2 ** (cents / 1200) - 1; dblR.rate = 2 ** (-cents / 1200) - 1;
+      for (const v of voices) v.cmax = 4 + 16 * p.spread;
       const dk = expMap(1 - p.darken, 1500, 18000); svfSet(darkL, dk, 0.6); svfSet(darkR, dk, 0.6);
       const rt = expMap(p.tail, 0.5, 6); for (let i = 0; i < 8; i++) pFb[i] = Math.pow(10, -3 * pLen[i] / (rt * sr));
       const beat = 60 / clamp(p.bpm, 40, 240);
@@ -424,22 +486,32 @@ class RaspEngine {
       gFlv.target = p.flavourOn ? db(p.flavourGainDb) : 0;
       gOut.target = db(p.outDb); gMix.target = p.mix; gIn.target = db(p.inDb || 0);
       gMega.target = p.mega ? 1 : 0;
+      gOctD.target = clamp(p.octDown || 0, 0, 1); gOctU.target = clamp(p.octUp || 0, 0, 1) * 0.7;
+      H.octDown = (p.octDown || 0) > 0.05; H.octUp = (p.octUp || 0) > 0.05;
       thSend.target = p.throwOn ? 1 : 0;
       thTime.target = clamp(60 / clamp(p.bpm, 40, 240) * sr, 1, THMAX - 4);
     };
 
-    const drive = x => {
-      let y = 0;
+    // Mirrors Drive::process: the dry takes the same oversampling filters as
+    // the wet (no cancellation when blended); tone shapes only the clipped part.
+    let driveDry = 0;
+    const drive = (x, wetNeeded) => {
+      let yd = 0, yc = 0;
       for (let k = 0; k < 4; k++) {
         const u = up(k === 0 ? x * 4 : 0);
-        const c = opLp(capLp, gain * opHp(hp720, u)) / KCLIP;
-        const dx = c - prevC, F = logCosh(c);
-        const d = Math.abs(dx) > 1e-4 ? (F - prevF) / dx : Math.tanh(0.5 * (c + prevC));
-        prevC = c; prevF = F;
-        y = down(u + KCLIP * d);
+        yd = downDry(u);
+        if (wetNeeded) {
+          const c = opLp(capLp, gain * opHp(hp720, u)) / KCLIP;
+          const dx = c - prevC, F = logCosh(c);
+          const d = Math.abs(dx) > 1e-4 ? (F - prevF) / dx : Math.tanh(0.5 * (c + prevC));
+          prevC = c; prevF = F;
+          yc = down(KCLIP * d);
+        }
       }
-      svfRun(tone, y);
-      const wet = tone.lp;
+      driveDry = yd;
+      if (!wetNeeded) return yd;
+      svfRun(tone, yc);
+      const wet = yd + tone.lp;
       const ein = opLp(rmsIn, x * x), eout = opLp(rmsOut, wet * wet);
       if (ein > 1e-7) level.target = clamp(Math.sqrt(ein / (eout + 1e-12)), 0.25, 2);
       return wet * smNext(level);
@@ -461,8 +533,13 @@ class RaspEngine {
       X.gr = target + (target > X.gr ? X.att : X.rel) * (X.gr - target);
       return db(X.gr);
     };
-    const chop = x => {
-      if (C.amount < 0.001) { C.gr = 0; return x; }
+    const chop = (x, voiced) => {
+      if (C.amount < 0.001) { C.gr = 0; C.lvDb = 0; return x; }
+      // leveler (see Chop::process)
+      C.lvMs = x * x + C.lvRms * (C.lvMs - x * x);
+      const lvl = pow10db(C.lvMs);
+      if (voiced && lvl > -50) { const t = clamp(-18 - lvl, -C.lvRange, C.lvRange); C.lvDb = t + (t < C.lvDb ? C.lvDown : C.lvUp) * (C.lvDb - t); }
+      x *= db(C.lvDb);
       const xDb = toDb(Math.abs(x));
       let target = knee(xDb - C.fetThr, C.fetRatio, 6);
       C.fetGr = target + (target < C.fetGr ? C.fetAtt : C.fetRel) * (C.fetGr - target);
@@ -480,20 +557,22 @@ class RaspEngine {
     };
     const thicken = (x, o) => {
       svfRun(tHp, x); const h = tHp.hp;
+      const sp = smNext(spreadS), g2 = 0.75 * clamp((sp - 0.35) * 2, 0, 1);
+      const v0 = dblRun(voices[0], h), v1 = dblRun(voices[1], h), v2 = dblRun(voices[2], h), v3 = dblRun(voices[3], h);
       if (p.mono) {        // one-channel PA: drop the comb taps, keep the doubles
-        const d = 0.8 * (mpRun(dblL, h) + mpRun(dblR, h)) * 0.7071;
+        const d = 0.6 * (v0 + v1 + g2 * (v2 + v3));
         dWrite(tdl, h); svfRun(darkL, d); svfRun(darkR, d);
         o[0] = o[1] = darkL.lp;
         return;
       }
       dWrite(tdl, h);
-      const s = (0.25 + 0.75 * smNext(spreadS)) * 0.001 * sr;
+      const s = (0.25 + 0.75 * sp) * 0.001 * sr;
       let l = 0, r = 0;
       for (let i = 0; i < 4; i++) { l += TG[i] * dRead(tdl, TL[i] * s); r += TG[i] * dRead(tdl, TR[i] * s); }
       let dl = l, dr = r;
       for (let i = 0; i < 3; i++) { dl = apRun(tAp[0][i], dl, 0.6); dr = apRun(tAp[1][i], dr, 0.6); }
       l = lerp(l, dl, p.diffuse); r = lerp(r, dr, p.diffuse);
-      l += 0.8 * mpRun(dblL, h); r += 0.8 * mpRun(dblR, h);
+      l += 0.9 * (v0 + g2 * v2); r += 0.9 * (v1 + g2 * v3);
       svfRun(darkL, l); svfRun(darkR, r);
       const m = 0.5 * (darkL.lp + darkR.lp), sd = 0.5 * (darkL.lp - darkR.lp) * p.width * 1.3;
       o[0] = m + sd; o[1] = m - sd;
@@ -573,7 +652,7 @@ class RaspEngine {
     this.bypassMatchDb = () => BM.emaD > 0 && BM.emaW > 0 ? lufsOf(BM.emaW) - lufsOf(BM.emaD) : 0;
     const HN = 2048, HHOP = 1024, HMAX = 6;
     const H = { ring: new Float32Array(HN), win: new Float32Array(HN), re: new Float32Array(HN), im: new Float32Array(HN), mag: new Float32Array(HN),
-      rev: new Int32Array(HN), cosT: new Float32Array(HN / 2), sinT: new Float32Array(HN / 2), pos: 0, hop: 0, cand: -1, frames: 0, deployed: 0, hold: 0,
+      rev: new Int32Array(HN), cosT: new Float32Array(HN / 2), sinT: new Float32Array(HN / 2), pos: 0, hop: 0, cand: -1, frames: 0, deployed: 0, hold: 0, octDown: false, octUp: false,
       notches: Array.from({ length: HMAX }, () => ({ active: false, hz: 0, depth: 0, age: 0, l: bq(), r: bq() })) };
     { let bits = 0; while ((1 << bits) < HN) bits++;
       for (let i = 0; i < HN; i++) { let r = 0; for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); H.rev[i] = r; }
@@ -614,7 +693,8 @@ class RaspEngine {
         side /= ns;
         let h2 = 0, h12 = 0;
         for (let d = -1; d <= 1; d++) { const k2 = 2 * best + d; if (k2 < HN / 2) h2 = Math.max(h2, mag[k2]); const k12 = Math.floor(best / 2) + d; if (k12 >= lo) h12 = Math.max(h12, mag[k12]); }
-        tonal = bestP > 16 * side && bestP > 63 * h2 && bestP > 63 * h12;
+        // octave layers give a howl its own octave partner (see HowlGuard in rasp.h)
+        tonal = bestP > 16 * side && (H.octUp || bestP > 63 * h2) && (H.octDown || bestP > 63 * h12);
       }
       if (tonal && H.cand >= 0 && Math.abs(best - H.cand) <= 1) H.frames++;
       else if (tonal) { H.cand = best; H.frames = 1; } else { H.cand = -1; H.frames = 0; }
@@ -648,15 +728,23 @@ class RaspEngine {
         svfRun(lc1, x); svfRun(lc2, lc1.hp); svfRun(hc1, lc2.hp); svfRun(hc2, hc1.lp);
         x = hc2.lp;
         const eg = expander(x);
-        if (gm > 1e-4) { svfRun(dHp1, drive(x)); svfRun(dHp2, dHp1.hp); x = lerp(x, dHp2.hp, gm); }
+        const wet = drive(x, gm > 1e-4);
+        x = lerp(driveDry, wet, gm);
+        svfRun(dHp1, x); svfRun(dHp2, dHp1.hp); x = dHp2.hp;
         x = bqRun(vExtra, bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x)))));
         x = deEss(x);
-        x = chop(x) * eg * gc;
+        x = chop(x, eg > 0.7) * eg * gc;
       }
       const gmg = smNext(gMega);
       megaFade = gmg;
       megaTrack(x);
       if (gmg > 1e-4) x = lerp(x, mega(x), gmg);
+      const god = smNext(gOctD), gou = smNext(gOctU);
+      if (god > 1e-4 || gou > 1e-4) {
+        svfRun(oDnHp, shRun(shDn, x)); svfRun(oDnLp, oDnHp.hp);
+        svfRun(oUpHp, shRun(shUp, x)); svfRun(oUpLp, oUpHp.hp);
+        x += god * oDnLp.lp + gou * oUpLp.lp;
+      }
       const gt = smNext(gThk), gf = smNext(gFlv);
       tO[0] = tO[1] = fO[0] = fO[1] = 0;
       if (gt > 1e-4) thicken(x, tO);
@@ -781,20 +869,20 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bleed: 0.7, controlGainDb: 0,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, octDown: 0, octUp: 0, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.3, width: 0.85, solo: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
   bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false,
 };
 const PRESETS = {
-  huge:    { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, hiCut: 0.95, airDb: 4 },
+  huge:    { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 0, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, hiCut: 0.95, airDb: 4 },
   natural: {},
   dark:    { brightness: 0, drive: 0.5, loCut: 0.36, hiCut: 0.72, darken: 0.5, tilt: 0.4, tail: 0.4 },
   bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65 },
   live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.15, duck: 0.75, bleed: 0.78, loCut: 0.56, glue: 0.4 },
   raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0 },
-  air:     { drive: 0.45, chop: 0.65, spread: 0.75, thickenGainDb: -2, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, brightness: 2, hiCut: 1, airDb: 10, deEss: 0.7 },
+  air:     { drive: 0.45, chop: 0.75, spread: 0.75, thickenGainDb: 0, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: 3, brightness: 2, hiCut: 1, airDb: 10, deEss: 0.7 },
 };
 let params = Object.assign({}, DEFAULTS);
 
@@ -826,6 +914,8 @@ const MENU = [
   ["bleed", "Bleed reducer", 0, 1, 0.01, v => v < 0.001 ? "off" : Math.round(-70 + 40 * v) + " dBFS"],
   ["deEss", "De-esser", 0, 1, 0.01, pct],
   ["airDb", "Air (7 kHz shelf)", 0, 12, 0.5, v => "+" + v.toFixed(1) + " dB"],
+  ["octDown", "Octave down", 0, 1, 0.01, pct],
+  ["octUp", "Octave up", 0, 1, 0.01, pct],
   ["Bus"],
   ["glue", "Glue", 0, 1, 0.01, pct], ["outDb", "Output", -24, 12, 0.5, v => v.toFixed(1) + " dB"],
   ["Section levels"],

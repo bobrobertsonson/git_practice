@@ -35,19 +35,21 @@ make
 
 ```
                 ┌──────────────────── dry (control out) ────────────────────┐
-mic ─► CONTROL ─┼─► THICKEN  doubles + stereo combs        (parallel) ──────┼─► BUS ─► L/R out
-                └─► FLAVOUR  plate + delay, ducked          (parallel) ──────┘
+mic ─► CONTROL ─► (+ OCTAVE) ─┼─► THICKEN  doubles + stereo combs   (parallel) ─┼─► BUS ─► L/R out
+                              └─► FLAVOUR  plate + delay, ducked     (parallel) ─┘
 ```
 
 | Stage | Controls | What it does, and why it's there |
 |---|---|---|
 | **Control** | lo cut, hi cut | 24 dB/oct high- and low-pass filters. Removes rumble and handling noise, and fizz above the voice |
-| | drive, mix | Tube-Screamer-style overdrive, with a 24 dB/oct high-pass after it at the lo cut frequency: distorting a rough voice creates low rumble that would otherwise add ~12 dB below 120 Hz. Gain is applied only above ~720 Hz, through a soft diode-pair clip added onto the clean signal, with a cap rolloff as drive rises. This gives grit in the mids without fizz. 4× oversampled with anti-aliasing on the clipper (aliasing −72 dB at full drive). Level-matched, so drive and mix change texture, not volume |
+| | drive, mix | Tube-Screamer-style overdrive, with a 24 dB/oct high-pass after it at the lo cut frequency: distorting a rough voice creates low rumble that would otherwise add ~12 dB below 120 Hz. Gain is applied only above ~720 Hz, through a soft diode-pair clip added onto the clean signal, with a cap rolloff as drive rises. This gives grit in the mids without fizz. 4× oversampled with anti-aliasing on the clipper (aliasing −72 dB at full drive). Level-matched, so drive and mix change texture, not volume. The clean signal takes the drive's own filter path, so blending wet and dry can't cancel (see *Hollow* below) |
 | | tone switch | Sets the drive's tone filter **and** a mix-style voicing EQ: chest-weight shelf, a cut in the boxy 420–500 Hz region, a 2.6–3.5 kHz presence lift, and an air shelf. Dark suits gutturals; bright suits highs and squeals |
 | | *de-esser* (trim) | A dynamic bell at 7 kHz, up to 8 dB. Drive plus presence plus air would otherwise make every "s" and "t" spit |
-| | chop, release | Three compressors on one knob, the way produced screams are usually compressed: a FET-style peak compressor (fast, catches spikes), an opto-style leveler (slow, two-stage release, evens out phrases), and a parallel "crush" blended underneath for density. The LED lights above 3 dB of gain reduction |
+| | chop, release | Four stages on one knob, the way produced screams are usually compressed: a **leveler** that rides the voice toward −18 dBFS (up to ±15 dB, only while you're singing), a FET-style peak compressor (fast, catches spikes), an opto-style compressor (two-stage release, evens out phrases), and a parallel "crush" blended underneath for density. Because of the leveler, it compresses the same whatever your input gain. The LED lights above 3 dB of gain reduction |
+| | *air* (menu) | Extra high shelf at 7 kHz, 0–12 dB. +4 in Huge, +10 in Air |
 | | *bleed reducer* (trim) | Downward expander (1:4 below threshold, up to −40 dB), keyed on the clean mic signal. Compression lifts stage bleed; this turns it back down between phrases. Its own LED shows when it's working. See section 3 |
-| **Thicken** | spread | **Two micro-pitched doubles** (±3–18 cents, 14 and 21 ms, one per side): the classic double-tracked sound and the main source of size. Also stereo comb taps (3–26 ms) |
+| **Octave** | octave down, octave up | Layers one octave below and above the compressed voice (0 = off, 1 = as loud as the voice), mixed in before the effects. They need no pitch tracking, so they work on screams. Each new grain starts in phase with the one fading out, so there's no flutter: a 220 Hz tone comes out as a clean 110 or 440 Hz. The layers lag the voice by 13–65 ms, like a tight double |
+| **Thicken** | spread | **Synthetic double tracks**: a pair, plus a second pair as spread goes past 0.35 (the "quad-tracked" metal vocal). Each voice's timing wanders 12–36 ms, its pitch drifts up to ±20 cents and its level ±1.5 dB, and each has its own slight tone. That's what makes a real double read as a second performance. Also quieter stereo comb taps (3–26 ms) |
 | | diffuse, darken, width, solo | Allpass smearing of the combs, lowpass on the branch, mid/side width, and a solo for the branch alone |
 | **Flavour** | tail + blend | 8-line feedback-delay-network plate, RT60 0.5–6 s. 25 ms pre-delay, slight modulation so long tails don't ring metallic, and a 300 Hz–8 kHz return EQ |
 | | repeats + blend, time switch | Ping-pong delay at 1/8, dotted 1/8 or 1/4 of the tapped tempo. Each repeat gets darker |
@@ -65,6 +67,23 @@ mic ─► CONTROL ─┼─► THICKEN  doubles + stereo combs        (parallel
 
 These numbers don't show whether it sounds good. Your ears and real takes
 decide that. **Send raw tracks and I'll tune against them.**
+
+### What changed after a Logic listening test ("hollow, needs compression, thickener doesn't do much")
+
+- **Hollow.** The drive's parallel blend mixed the raw voice with the drive
+  path, which had extra filters and oversampling delay. At the default blend a
+  real lead lost 10 dB at 100 Hz and had a 7.7 dB notch at 4.5 kHz. The clean
+  signal now takes the same path. The notch is gone (+2.4 dB) and the low loss
+  is halved (−5 dB, the drive's own mid focus).
+- **Compression.** The leveler (above) makes Chop independent of input gain:
+  the old version lost about 1.5 dB of density with a 12 dB quieter input.
+  Huge's Chop also went from 0.65 to 0.75.
+- **Thickener.** The doubles now wander like real double tracks, with a
+  second pair in Huge, and Huge's thicken level went from −2 to 0 dB.
+- **Octave layers** were added, and the feedback guard knows about them. A
+  howl's octave copy otherwise looked like a voice's harmonic, and the guard
+  missed a howl carrying 42% of the output. Now it's caught at every octave
+  setting, with no false notches on six real takes.
 
 ## Tuned on real stems
 
@@ -169,7 +188,7 @@ make && make check
   v9.0.0. The pedal binary is 153 KB, more than the 128 KB of internal flash,
   so it uses Electrosmith's bootloader (stored in QSPI, runs from SRAM: 30% of
   it used). The delay lines take about 2.5 MB of SDRAM.
-- **CPU:** 26× real time on desktop. **Not measured on the Daisy yet**; Stage 1 does that.
+- **CPU:** 19× real time on desktop (14× with both octave layers on). **Not measured on the Daisy yet**; Stage 1 does that. The octave search is spread over time (at most 288 multiply-adds in any one sample) so it never spikes inside the Daisy's 4-sample audio block.
   The heaviest stage is the 4× oversampled drive; it can fall back to 2× if needed.
 - **Precision:** smoothers and slow oscillator phases are double precision.
   As 32-bit floats they drifted measurably.

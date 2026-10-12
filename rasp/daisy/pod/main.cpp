@@ -11,7 +11,7 @@
 //                  hold: MEGA while held (hard-clipped mid burst)
 //   Button 2       tap: thicken + flavour on/off
 //                  hold: THROW while held (long delay; repeats ring out after release)
-//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on)
+//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = octave down / up level
 //   LED 2          red = chop compressing > 3 dB, blue = feedback notch active,
 //                  white = a momentary effect is held
 #include "daisy_pod.h"
@@ -34,8 +34,10 @@ static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer
 static void loadPreset() {
     bool bypass = params.bypass, thk = params.thickenOn, flv = params.flavourOn;
     bool mega = params.mega, thr = params.throwOn;
+    float od = params.octDown, ou = params.octUp;           // set over MIDI: a performance setting
     params = rasp::presetParams(preset);
     params.bypass = bypass; params.mega = mega; params.throwOn = thr;
+    params.octDown = od; params.octUp = ou;
     if (!thk) params.thickenOn = false;
     if (!flv) params.flavourOn = false;
 }
@@ -84,6 +86,8 @@ int main() {
                 auto cc = e.AsControlChange();
                 if (cc.control_number == 80) midiMega = cc.value >= 64;
                 if (cc.control_number == 81) midiThrow = cc.value >= 64;
+                if (cc.control_number == 82) params.octDown = cc.value / 127.f;
+                if (cc.control_number == 83) params.octUp = cc.value / 127.f;
             }
         }
         params.mega    = (hw.button1.Pressed() && b1Held >= kHoldMs) || midiMega;

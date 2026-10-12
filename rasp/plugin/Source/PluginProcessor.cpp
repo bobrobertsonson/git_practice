@@ -36,6 +36,9 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"width", "Width", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(width), nullptr, false},
         {"solo", "Thicken Solo", "Thicken", K::Bool, 0, 1, nullptr, RASP_B(solo), nullptr, false},
         {"thickenGainDb", "Thicken Level", "Thicken", K::Db, -24, 6, nullptr, RASP_F(thickenGainDb), nullptr, false},
+        // OCTAVE layers (shown in the Thicken panel)
+        {"octDown", "Octave Down", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(octDown), nullptr, false},
+        {"octUp", "Octave Up", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(octUp), nullptr, false},
         // FLAVOUR
         {"flavourOn", "Flavour On", "Flavour", K::Bool, 0, 1, nullptr, RASP_B(flavourOn), nullptr, false},
         {"tail", "Tail", "Flavour", K::Unit, 0, 1, nullptr, RASP_F(tail),
