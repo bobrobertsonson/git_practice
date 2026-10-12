@@ -14,7 +14,7 @@
 //            ─► chop: FET-style peak comp ─► opto-style leveler, + parallel crush
 //            ─► bleed reducer (expander keyed on the clean mic, for live use)
 //   THICKEN  two micro-pitched doubles (±cents, Haas-delayed) + comb taps,
-//            diffuse, darken, width, solo
+//            diffuse, darken, width, solo, double-track (lead as two hard-panned takes)
 //   FLAVOUR  8-line FDN plate (modulated), ping-pong delay, return EQ, tilt, duck
 //   BUS      stereo glue compressor ─► -1 dBFS peak limiter
 //   LIVE     mono mode, level-matched digital bypass, feedback notches
@@ -228,6 +228,7 @@ struct Params {
     float darken     = 0.10f;  // lowpass on the thicken branch (0.3 -> 0.1: Mantra's doubler keeps its width flat to 16 kHz; at 0.3 ours fell to -7.5 dB side/mid at 10 kHz)
     float width      = 0.85f;  // stereo width of the branch
     bool  solo       = false;  // hear only the thicken branch
+    bool  doubleTrack = false; // the lead becomes two fake takes, hard left/right, nothing in the center
     float thickenGainDb = -4.f;
 
     // FLAVOUR (parallel)
@@ -1406,6 +1407,11 @@ public:
         drive.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
         bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); harmony.init(sr); learner.init(sr);
         gMega.init(0.f, sr, 10.f);
+        gDt.init(0.f, sr, 30.f);
+        // Double-track: two takes that each wander around 10-22 ms, so which
+        // side leads keeps changing (the image doesn't lean to one side).
+        dtA.init(sr, 0x0d7a11eu, 10.f, +1.f, +0.5f); dtA.setDepth(8.f); dtA.setRange(12.f);
+        dtB.init(sr, 0x0d7b22fu, 10.f, -1.f, -0.5f); dtB.setDepth(8.f); dtB.setRange(12.f);
         gIn.init(1.f, sr); gCtl.init(1.f, sr); gThk.init(0.6f, sr); gFlv.init(0.55f, sr); gOut.init(1.f, sr); gMix.init(0.6f, sr);
         setParams(p);
     }
@@ -1431,6 +1437,7 @@ public:
         gIn.target = dbToLin(p.inDb);
         gMix.target = p.mix;
         gMega.target = p.mega ? 1.f : 0.f;
+        gDt.target = p.doubleTrack ? 1.f : 0.f;
         harmony.set(p);
         matchEq.set(p.match, p.matchAmount, sr);
         howlG.setOctaves(harmony.hasInterval(-12), harmony.hasInterval(12));
@@ -1477,11 +1484,16 @@ public:
         float gt = gThk.next(), gf = gFlv.next();
         if (gt > 1e-4f) thicken.process(x, tL, tR, p.mono);
         if (gf > 1e-4f) flavour.process(xFx, x, fL, fR);
-        float dry = p.solo ? 0.f : x;
+        // DOUBLE-TRACK: the lead itself is replaced by two fake takes, one hard
+        // left, one hard right (the quad-tracked metal vocal). The takes always
+        // run so switching it on crossfades from fresh audio.
+        float gd = gDt.next();
+        float tkA = dtA.process(x), tkB = dtB.process(x);
+        float dryL = p.solo ? 0.f : lerp(x, tkA, gd), dryR = p.solo ? 0.f : lerp(x, tkB, gd);
         float go = gOut.next();
         float wL, wR;
         throwFx.process(x, wL, wR);
-        float L = (dry + hL + gt * tL + gf * fL + wL) * go, R = (dry + hR + gt * tR + gf * fR + wR) * go;
+        float L = (dryL + hL + gt * tL + gf * fL + wL) * go, R = (dryR + hR + gt * tR + gf * fR + wR) * go;
         if (p.mono) { float m = 0.5f * (L + R); L = R = m; }
         // BUS
         bus.process(L, R);
@@ -1543,7 +1555,8 @@ private:
     MatchEQ matchEq;
     float learnedDev[kMatchBands] = {};
     volatile bool learnReady = false;
-    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega;
+    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega, gDt;
+    Double dtA, dtB;
     float megaFade = 0.f;
 };
 

@@ -433,6 +433,9 @@ class RaspEngine {
       const lo = opLp(v.tilt, y);
       return (lo + (y - lo) * v.tiltHi) * v.gain;
     };
+    // Double-track takes (mirror dtA/dtB in rasp.h)
+    const dtA = dblVoice(0x0d7a11e, 10, 1, 0.5), dtB = dblVoice(0x0d7b22f, 10, -1, -0.5);
+    for (const v of [dtA, dtB]) { v.cmax = 8; v.range = 12 * 0.001 * sr; }
     const voices = [dblVoice(0x1234567, 12, 1, 1.5), dblVoice(0x89abcde, 16, -1, -1.5), dblVoice(0x2468ace, 22, -1, -1), dblVoice(0x13579bd, 26, 1, 1)];
     // ---- HARMONY: four stereo pairs (mirrors class Harmony in rasp.h, same seeds)
     const HSEEDS = [0x51ed270, 0x2b1c9a5, 0x7f4a7c1, 0x3c6ef37, 0x6a09e66, 0x1f83d9a, 0x5be0cd1, 0x4c3a2f9];
@@ -509,7 +512,7 @@ class RaspEngine {
     // ---- BUS
     const B = { amount: 0.5, thr: -15, makeup: 1, rmsC: coefMs(10), att: coefMs(15), rel: coefMs(200), limRel: coefMs(80), ms: 0, gr: 0, lim: 0 };
     // section gains
-    const gIn = sm(1), gCtl = sm(1), gThk = sm(0.6), gFlv = sm(0.55), gOut = sm(1), gMix = sm(0.6);
+    const gIn = sm(1), gCtl = sm(1), gThk = sm(0.6), gFlv = sm(0.55), gOut = sm(1), gMix = sm(0.6), gDt = sm(0, 30);
 
     this.gainReductionDb = () => C.gr;
     this.bleedReductionDb = () => -X.gr;
@@ -547,6 +550,7 @@ class RaspEngine {
       B.amount = p.glue; B.thr = -10 - 10 * p.glue; B.makeup = p.glue > 0.001 ? db(-knee(-12 - B.thr, 2, 8) * 0.8) : 1;
       gCtl.target = db(p.controlGainDb);
       gThk.target = p.thickenOn ? db(p.thickenGainDb) : 0;
+      gDt.target = p.doubleTrack ? 1 : 0;
       gFlv.target = p.flavourOn ? db(p.flavourGainDb) : 0;
       gOut.target = db(p.outDb); gMix.target = p.mix; gIn.target = db(p.inDb || 0);
       gMega.target = p.mega ? 1 : 0;
@@ -855,10 +859,11 @@ class RaspEngine {
       tO[0] = tO[1] = fO[0] = fO[1] = 0;
       if (gt > 1e-4) thicken(x, tO);
       if (gf > 1e-4) flavour(xFx, x, fO);
-      const dry = p.solo ? 0 : x, go = smNext(gOut);
+      const gd = smNext(gDt), tkA = dblRun(dtA, x), tkB = dblRun(dtB, x);
+      const dryL = p.solo ? 0 : lerp(x, tkA, gd), dryR = p.solo ? 0 : lerp(x, tkB, gd), go = smNext(gOut);
       throwFx(x, wO);
-      out[0] = (dry + hOut[0] + gt * tO[0] + gf * fO[0] + wO[0]) * go;
-      out[1] = (dry + hOut[1] + gt * tO[1] + gf * fO[1] + wO[1]) * go;
+      out[0] = (dryL + hOut[0] + gt * tO[0] + gf * fO[0] + wO[0]) * go;
+      out[1] = (dryR + hOut[1] + gt * tO[1] + gf * fO[1] + wO[1]) * go;
       if (p.mono) { const m = 0.5 * (out[0] + out[1]); out[0] = out[1] = m; }
       bus(out);
       out[0] = safetyClip(out[0]); out[1] = safetyClip(out[1]);
@@ -978,7 +983,7 @@ const DEFAULTS = {
   controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, matchAmount: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12,
   harm3Level: 0, harm4Level: 0, harm3Semi: 0, harm4Semi: 7, harm1Width: 0.7, harm2Width: 0.7, harm3Width: 0.7, harm4Width: 0.7,
   harmRandPitch: 0.4, harmRandTime: 0.4, harmLoCut: 80, harmHiCut: 12000, harmWidth: 1, bleed: 0.7, controlGainDb: 0,
-  thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.1, width: 0.85, solo: false, thickenGainDb: -4,
+  thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.1, width: 0.85, solo: false, doubleTrack: false, thickenGainDb: -4,
   flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
   bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false,
@@ -1129,6 +1134,7 @@ const addCheck = (key, label) => {
   sliderEls[key]();
 };
 addCheck("solo", "Solo the thicken branch");
+addCheck("doubleTrack", "Double-track: the lead as two takes, hard left/right");
 {
   const g = document.createElement("div"); g.className = "group-label"; g.textContent = "Live"; menu.append(g);
 }

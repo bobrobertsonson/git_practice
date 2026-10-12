@@ -83,7 +83,7 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     addPower(thicken, "thickenOn");
     addKnob(thicken, "spread", "Spread"); addKnob(thicken, "diffuse", "Diffuse");
     addKnob(thicken, "darken", "Darken"); addKnob(thicken, "width", "Width");
-    addKnob(thicken, "thickenGainDb", "Level"); addToggle(thicken, "solo", "Solo");
+    addKnob(thicken, "thickenGainDb", "Level"); addToggle(thicken, "solo", "Solo"); addToggle(thicken, "doubleTrack", "Double-track");
 
 
     auto& flavour = panels[2]; flavour.title = "FLAVOUR"; flavour.cols = 3;

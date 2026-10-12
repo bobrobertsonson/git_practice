@@ -122,6 +122,7 @@ inline bool setParam(rasp::Params& p, const char* arg) {
     if (k == "pitch2" || k == "h2st") { p.pitch2Semi = (int)std::lround(v); return true; }
     if (k == "time")    { p.delayTime = (int)v; return true; }
     if (k == "solo")    { p.solo = v != 0.f; return true; }
+    if (k == "dtrack")  { p.doubleTrack = v != 0.f; return true; }
     if (k == "control") { p.controlOn = v != 0.f; return true; }
     if (k == "thicken") { p.thickenOn = v != 0.f; return true; }
     if (k == "flavour") { p.flavourOn = v != 0.f; return true; }

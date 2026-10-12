@@ -25,7 +25,7 @@
 // power-up is ignored until it is first released.
 // USB MIDI: Program Change 0-7 recalls preset slots 1-8 (from a laptop/backing-track rig);
 // CC 80 = MEGA, CC 81 = THROW (value >= 64 on), for triggering from a timeline;
-// CC 86 (>= 64) = start Learn.
+// CC 86 (>= 64) = start Learn. CC 87 (>= 64 on) = double-track (lead as two hard-panned takes).
 // CC 82 / 83 = pitch 1 / 2 level (0-127), CC 84 / 85 = pitch 1 / 2 interval
 // (0-127 -> -12..+12 semitones). A knob takes over again once moved.
 //
@@ -301,6 +301,7 @@ int main() {
                 if (cc.control_number == 86 && cc.value >= 64) proc.startLearn();
                 if (cc.control_number == 84) params.pitch1Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
                 if (cc.control_number == 85) params.pitch2Semi = (int)std::lround(cc.value * 24.f / 127.f) - 12;
+                if (cc.control_number == 87) params.doubleTrack = cc.value >= 64;
             }
         }
 

@@ -41,6 +41,7 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"darken", "Darken", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(darken), nullptr, false},
         {"width", "Width", "Thicken", K::Unit, 0, 1, nullptr, RASP_F(width), nullptr, false},
         {"solo", "Thicken Solo", "Thicken", K::Bool, 0, 1, nullptr, RASP_B(solo), nullptr, false},
+        {"doubleTrack", "Double-Track", "Thicken", K::Bool, 0, 1, nullptr, RASP_B(doubleTrack), nullptr, false},
         {"thickenGainDb", "Thicken Level", "Thicken", K::Db, -24, 6, nullptr, RASP_F(thickenGainDb), nullptr, false},
         // HARMONY pairs (ids octDown/octUp/pitch1Semi/pitch2Semi kept so saved sessions still load)
         {"pitch1Semi", "Harmony 1 Interval", "Harmony", K::Choice, 0, 24, kSemis,
