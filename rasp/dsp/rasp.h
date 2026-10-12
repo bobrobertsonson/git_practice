@@ -382,12 +382,16 @@ public:
         body.peaking(220.f, 0.8f, clampf(bodyDb, 0.f, 9.f), sr);
         struct V { float lowHz, lowDb, mudHz, mudDb, presHz, presDb, airHz, airDb; };
         static const V v[3] = {
-            {170.f, 2.5f, 420.f, -2.0f, 2600.f, 1.5f, 10000.f, 0.5f},   // dark: weight, gutturals
+            {170.f, 2.5f, 420.f, -2.0f, 2600.f, 1.5f,  6000.f, -6.0f},  // dark: weight, gutturals
             {150.f, 1.5f, 450.f, -3.0f, 3000.f, 1.5f, 10000.f, 1.0f},   // natural
-            {120.f, 0.5f, 500.f, -3.5f, 3500.f, 2.0f, 11000.f, 4.0f},   // bright: highs, squeals
+            {120.f, 0.5f, 500.f, -3.5f, 3500.f, 0.5f, 11000.f, 4.0f},   // bright: highs, squeals
             // Presence was +3 / +4 dB: across 13 producer fits (results/presetfit)
             // RASP had a median 1.8 dB (natural) / 2.8 dB (bright) more 2.5 kHz
             // than the producers' leads, in 10 of 13 songs.
+            // Screamer's own dark/natural/bright on the same take (results/screamer):
+            // its dark rolls the top off hard (-10 dB at 6.3k, -28 at 10k re 1k) where
+            // ours added air, so dark now shelves -6 dB from 6 kHz; its bright has
+            // ~2 dB less 2.5-4 kHz than ours, so bright presence +2 -> +0.5 dB.
         };
         const V& c = v[brightness < 0 ? 0 : (brightness > 2 ? 2 : brightness)];
         low.lowShelf(c.lowHz, c.lowDb, sr);

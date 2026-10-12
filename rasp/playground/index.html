@@ -527,7 +527,7 @@ class RaspEngine {
       const b = clamp(p.brightness | 0, 0, 2);
       svfSet(tone, [4500, 7500, 11000][b], 0.6);
       opSet(hp720, [200, 350, 600][b], sr * 4);
-      const V = [[170, 2.5, 420, -2.0, 2600, 1.5, 10000, 0.5], [150, 1.5, 450, -3.0, 3000, 1.5, 10000, 1.0], [120, 0.5, 500, -3.5, 3500, 2.0, 11000, 4.0]][b];
+      const V = [[170, 2.5, 420, -2.0, 2600, 1.5, 6000, -6.0], [150, 1.5, 450, -3.0, 3000, 1.5, 10000, 1.0], [120, 0.5, 500, -3.5, 3500, 0.5, 11000, 4.0]][b];
       lowShelf(vLow, V[0], V[1]); peaking(vMud, V[2], 1.2, V[3]); peaking(vPres, V[4], 0.9, V[5]); highShelf(vAir, V[6], V[7]);
       highShelf(vExtra, 7000, clamp(p.airDb || 0, 0, 12));
       peaking(vBody, 220, 0.8, clamp(p.bodyDb || 0, 0, 9));
