@@ -226,6 +226,16 @@ reports:
 The playground's JS engine matches the C++ engine to about −80 dB through the
 same schedule.
 
+## 3c. Blind A/B listening test
+
+`abtest/template.html` plus `python3 tools/build_abtest.py` builds a listening
+page that runs the playground's engine in a worker, renders two versions of a
+real DI that differ in one setting, and matches both to −20 LUFS (BS.1770).
+You flip between them while they play (they stay in sync), pick one, and the
+page reveals which was which. Picks go to the published page's database,
+where Claude reads them to retune presets. The DI clips are published with the
+page only; they're never committed.
+
 ## 4b. Logic Pro and other DAWs
 
 The same engine runs as an Audio Unit (Logic Pro), VST3 and standalone app,

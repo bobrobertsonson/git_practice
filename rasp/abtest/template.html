@@ -1,0 +1,372 @@
+<title>RASP Ear Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one narrow column, operated with a thumb. Transport, then the A|B switch, then the verdict. */
+:root {
+  --bg: #e7ebee; --panel: #f6f8f9; --ink: #141c24; --muted: #5b6672; --line: #c7cfd6;
+  --accent: #9b2a26; --accent-ink: #ffffff; --sel: #1d2a36; --sel-ink: #f1f4f6; --good: #2f6b3c;
+  --f-display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --f-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1418; --panel: #172027; --ink: #e5eaee; --muted: #93a0ab; --line: #2b3741;
+  --accent: #e06a5f; --accent-ink: #160604; --sel: #e5eaee; --sel-ink: #0f1418; --good: #7cc58b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1418; --panel: #172027; --ink: #e5eaee; --muted: #93a0ab; --line: #2b3741;
+  --accent: #e06a5f; --accent-ink: #160604; --sel: #e5eaee; --sel-ink: #0f1418; --good: #7cc58b; color-scheme: dark }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
+.wrap { max-width: 640px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 48px; display: grid; gap: 18px; }
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+h1 { font: 800 2.4rem/1 var(--f-display); letter-spacing: .02em; text-transform: uppercase; margin: 0; text-wrap: balance; }
+.meta { font: 500 .8rem/1.3 var(--f-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.intro { color: var(--muted); margin: 0; max-width: 62ch; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 14px; }
+.eyebrow { font: 600 .72rem/1 var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.question { font: 700 1.6rem/1.1 var(--f-display); text-transform: uppercase; letter-spacing: .03em; margin: 0; }
+.clip { color: var(--muted); font-size: .92rem; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.transport { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 10px 16px; font-weight: 600; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.status { font: .85rem/1.3 var(--f-mono); color: var(--muted); }
+.ab { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ab button { border: 2px solid var(--line); background: var(--bg); border-radius: 12px; padding-block: 18px; font: 800 3rem/1 var(--f-display); }
+.ab button[aria-pressed="true"] { background: var(--sel); color: var(--sel-ink); border-color: var(--sel); }
+.hint { font-size: .85rem; color: var(--muted); margin: 0; }
+.verdict { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.verdict button, .strength button { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 12px 6px; font-weight: 600; }
+.verdict button[aria-pressed="true"], .strength button[aria-pressed="true"] { background: var(--sel); color: var(--sel-ink); border-color: var(--sel); }
+.strength { display: flex; gap: 8px; flex-wrap: wrap; }
+.strength button { padding: 8px 14px; }
+label.note { display: grid; gap: 6px; font-size: .85rem; color: var(--muted); }
+input[type=text] { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; width: 100%; }
+.reveal { border-left: 3px solid var(--accent); padding-left: 12px; display: grid; gap: 4px; }
+.reveal b { font-family: var(--f-mono); font-weight: 600; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+.tablewrap { overflow-x: auto; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 .72rem/1.2 var(--f-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lead { color: var(--good); font-weight: 600; }
+.empty { color: var(--muted); }
+.save { font-size: .85rem; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>RASP Ear Test</h1>
+    <span class="meta" id="count">0 rated</span>
+  </header>
+  <p class="intro">Two versions of the same raw vocal, both run through RASP and matched for loudness. They differ in one setting. Flip between them while it plays, pick the one you'd rather put on a record, then see what each was. Headphones or decent monitors, please.</p>
+
+  <section class="panel" aria-labelledby="q">
+    <div class="eyebrow" id="eyebrow">Round 1</div>
+    <h2 class="question" id="q">Loading the engine…</h2>
+    <div class="clip" id="clip">&nbsp;</div>
+    <div class="transport">
+      <button class="btn primary" id="play" disabled>Play</button>
+      <button class="btn" id="restart" disabled>From the top</button>
+      <span class="status" id="status">Rendering…</span>
+    </div>
+    <div class="ab" role="group" aria-label="Which version you hear">
+      <button id="selA" aria-pressed="true">A</button>
+      <button id="selB" aria-pressed="false">B</button>
+    </div>
+    <p class="hint">Keys: <b>A</b>/<b>B</b> or <b>Space</b> to flip, <b>P</b> to play or stop. Switching keeps your place.</p>
+
+    <div class="eyebrow">Which is better?</div>
+    <div class="verdict" role="group" aria-label="Your pick">
+      <button id="pickA" aria-pressed="false">A</button>
+      <button id="pickSame" aria-pressed="false">Can't tell</button>
+      <button id="pickB" aria-pressed="false">B</button>
+    </div>
+    <div class="strength" role="group" aria-label="How sure">
+      <button id="slight" aria-pressed="false">Slightly</button>
+      <button id="clear" aria-pressed="true">Clearly</button>
+    </div>
+    <label class="note" for="note">Why, in a few words (optional)
+      <input type="text" id="note" placeholder="e.g. B sounds fuller, A is harsh on the S's" maxlength="300">
+    </label>
+    <div class="transport">
+      <button class="btn primary" id="submit" disabled>Save and reveal</button>
+      <button class="btn" id="skip">Skip</button>
+      <span class="save" id="save"></span>
+    </div>
+    <div class="reveal" id="reveal" hidden></div>
+  </section>
+
+  <section class="panel" aria-labelledby="res">
+    <h2 class="question" id="res">Your results so far</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Setting</th><th>You preferred</th><th>Votes</th></tr></thead>
+      <tbody id="results"><tr><td colspan="3" class="empty">No ratings yet. Each round you rate adds a row here, and Claude reads them to retune the presets.</td></tr></tbody>
+    </table></div>
+  </section>
+</div>
+
+<script type="text/plain" id="engine-src">
+/*ENGINE*/
+</script>
+
+<script>
+const CLIPS = [
+  { file: "bb.mp3", label: "Bloodbath, main vocal (death metal)" },
+  { file: "slam.mp3", label: "Slamadeus, vocal 1 (slam gutturals)" },
+  { file: "id.mp3", label: "Immortal Disfigurement, lead (deathcore)" },
+  { file: "atg.mp3", label: "ATG, backing vocal (mid scream)" },
+];
+// Each experiment changes one thing against a base preset. x is the current factory value.
+const EXPERIMENTS = [
+  { key: "chop-up", q: "Compression", base: "huge", x: { chop: 0.75 }, y: { chop: 0.92 }, xl: "Chop 75% (current Huge)", yl: "Chop 92%" },
+  { key: "chop-down", q: "Compression", base: "huge", x: { chop: 0.75 }, y: { chop: 0.55 }, xl: "Chop 75% (current Huge)", yl: "Chop 55%" },
+  { key: "drive-blend", q: "Drive blend", base: "huge", x: { mix: 0.6 }, y: { mix: 0.3 }, xl: "Drive mix 60% (current)", yl: "Drive mix 30%" },
+  { key: "drive-amt", q: "Drive amount", base: "huge", x: { drive: 0.45 }, y: { drive: 0.7 }, xl: "Drive 45% (current Huge)", yl: "Drive 70%" },
+  { key: "thicken-down", q: "Doubles level", base: "huge", x: { thickenGainDb: 0 }, y: { thickenGainDb: -6 }, xl: "Thicken 0 dB (current Huge)", yl: "Thicken −6 dB" },
+  { key: "thicken-up", q: "Doubles level", base: "huge", x: { thickenGainDb: 0 }, y: { thickenGainDb: 4 }, xl: "Thicken 0 dB (current Huge)", yl: "Thicken +4 dB" },
+  { key: "spread", q: "Doubles spread", base: "huge", x: { spread: 0.75 }, y: { spread: 0.35 }, xl: "Spread 75%, four doubles (current)", yl: "Spread 35%, two doubles" },
+  { key: "air-off", q: "Top end", base: "huge", x: { airDb: 4 }, y: { airDb: 0 }, xl: "Air +4 dB (current Huge)", yl: "No air" },
+  { key: "air-more", q: "Top end", base: "huge", x: { airDb: 4 }, y: { airDb: 9 }, xl: "Air +4 dB (current Huge)", yl: "Air +9 dB" },
+  { key: "octave", q: "Octave down layer", base: "huge", x: { octDown: 0 }, y: { octDown: 0.35 }, xl: "No octave (current)", yl: "Octave down 35%" },
+  { key: "reverb", q: "Reverb amount", base: "huge", x: { tailBlend: 0.45 }, y: { tailBlend: 0.22 }, xl: "Tail blend 45% (current Huge)", yl: "Tail blend 22%" },
+  { key: "delay", q: "Delay amount", base: "huge", x: { delayBlend: 0.22 }, y: { delayBlend: 0.08 }, xl: "Delay blend 22% (current Huge)", yl: "Delay blend 8%" },
+  { key: "locut", q: "Low end", base: "huge", x: { loCut: 0.4 }, y: { loCut: 0.55 }, xl: "Lo cut 78 Hz (current)", yl: "Lo cut 130 Hz" },
+  { key: "tone-bright", q: "Tone switch", base: "huge", x: { brightness: 1 }, y: { brightness: 2 }, xl: "Natural (current Huge)", yl: "Bright" },
+  { key: "huge-natural", q: "Preset", base: "huge", x: {}, y: { $preset: "natural" }, xl: "Huge", yl: "Natural" },
+  { key: "huge-air", q: "Preset", base: "huge", x: {}, y: { $preset: "air" }, xl: "Huge", yl: "Air" },
+];
+const TARGET_LUFS = -20;
+
+const $ = id => document.getElementById(id);
+const engineSrc = $("engine-src").textContent;
+// Pull DEFAULTS and PRESETS out of the engine bundle for the main thread too.
+const { DEFAULTS, PRESETS } = new Function(engineSrc.replace(/class RaspEngine[\s\S]*?\n}\n/, "") + "; return { DEFAULTS, PRESETS };")();
+
+// ---- render worker: the real RASP engine plus BS.1770 loudness
+const workerSrc = engineSrc + `
+function biquad(b0, b1, b2, a0, a1, a2) { const f = { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0, z1: 0, z2: 0 };
+  return x => { const y = f.b0 * x + f.z1; f.z1 = f.b1 * x - f.a1 * y + f.z2; f.z2 = f.b2 * x - f.a2 * y; return y; }; }
+function kweight(sr) {   // ITU-R BS.1770 pre-filter, designed for any rate
+  let G = 3.999843853973347, Q = 0.7071752369554196, fc = 1681.974450955533;
+  let A = 10 ** (G / 40), w = 2 * Math.PI * fc / sr, al = Math.sin(w) / (2 * Q), c = Math.cos(w), r = 2 * Math.sqrt(A) * al;
+  const shelf = biquad(A * ((A + 1) + (A - 1) * c + r), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - r),
+                       (A + 1) - (A - 1) * c + r, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - r);
+  fc = 38.13547087602444; Q = 0.5003270373238773; w = 2 * Math.PI * fc / sr; al = Math.sin(w) / (2 * Q); c = Math.cos(w);
+  const hp = biquad((1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + al, -2 * c, 1 - al);
+  return x => hp(shelf(x));
+}
+function loudness(L, R, sr) {
+  const kl = kweight(sr), kr = kweight(sr), blk = Math.round(0.4 * sr), hop = Math.round(0.1 * sr);
+  const sq = new Float64Array(L.length);
+  for (let i = 0; i < L.length; i++) { const a = kl(L[i]), b = kr(R[i]); sq[i] = a * a + b * b; }
+  const pre = new Float64Array(sq.length + 1); for (let i = 0; i < sq.length; i++) pre[i + 1] = pre[i] + sq[i];
+  const z = []; for (let s = 0; s + blk <= sq.length; s += hop) z.push((pre[s + blk] - pre[s]) / blk);
+  const lk = v => -0.691 + 10 * Math.log10(v + 1e-20);
+  let g = z.filter(v => lk(v) > -70); if (!g.length) return -70;
+  const rel = lk(g.reduce((a, b) => a + b, 0) / g.length) - 10;
+  g = g.filter(v => lk(v) > rel);
+  return lk(g.reduce((a, b) => a + b, 0) / g.length);
+}
+self.onmessage = e => {
+  const { id, pcm, sr, params } = e.data;
+  try {
+    const eng = new RaspEngine(sr);
+    eng.setParams(params);
+    const n = pcm.length + Math.round(1.5 * sr), L = new Float32Array(n), R = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const o = eng.process(i < pcm.length ? pcm[i] : 0); L[i] = o[0]; R[i] = o[1]; }
+    self.postMessage({ id, L, R, lufs: loudness(L, R, sr) }, [L.buffer, R.buffer]);
+  } catch (err) { self.postMessage({ id, error: String(err) }); }
+};`;
+const worker = new Worker(URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" })));
+const pending = new Map();
+let nextId = 1;
+worker.onmessage = e => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data); };
+const renderInWorker = (pcm, sr, params) => new Promise((resolve, reject) => {
+  const id = nextId++; pending.set(id, { resolve, reject });
+  worker.postMessage({ id, pcm: pcm.slice(), sr, params });
+});
+
+// ---- clips: decode once, set the input gain like a preamp (loud-section RMS to -18 dBFS)
+const clipCache = new Map();
+async function loadClip(i) {
+  if (clipCache.has(i)) return clipCache.get(i);
+  const job = (async () => {
+    const res = await fetch(CLIPS[i].file);
+    if (!res.ok) throw new Error("Couldn't load " + CLIPS[i].file);
+    const ctx = new OfflineAudioContext(1, 1, 48000);
+    const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+    const pcm = buf.getChannelData(0), sr = buf.sampleRate, n = Math.round(0.1 * sr), lv = [];
+    for (let s = 0; s + n <= pcm.length; s += n) { let e = 0; for (let k = s; k < s + n; k++) e += pcm[k] * pcm[k]; const d = 10 * Math.log10(e / n + 1e-12); if (d > -45) lv.push(d); }
+    lv.sort((a, b) => a - b);
+    const p90 = lv.length ? lv[Math.floor(lv.length * 0.9)] : -18;
+    return { pcm: new Float32Array(pcm), sr, inDb: Math.max(-12, Math.min(36, Math.round((-18 - p90) * 2) / 2)) };
+  })();
+  clipCache.set(i, job);
+  return job;
+}
+const paramsFor = (exp, side, clip) => {
+  const v = side === "x" ? exp.x : exp.y;
+  const preset = v.$preset || exp.base;
+  const p = Object.assign({}, DEFAULTS, PRESETS[preset] || {}, v, { inDb: clip.inDb, bpm: 120, howl: false });
+  delete p.$preset;
+  return p;
+};
+async function renderTrial(t) {
+  const clip = await loadClip(t.clip);
+  const [x, y] = await Promise.all([renderInWorker(clip.pcm, clip.sr, paramsFor(t.exp, "x", clip)),
+                                    renderInWorker(clip.pcm, clip.sr, paramsFor(t.exp, "y", clip))]);
+  return { sr: clip.sr, x, y };
+}
+
+// ---- trial order: least-rated experiments first, rotating clips
+let ratings = [];          // from the store (or this visit only)
+function nextTrial(prevKey) {
+  const counts = {}; for (const e of EXPERIMENTS) counts[e.key] = 0;
+  for (const r of ratings) if (counts[r.experiment] !== undefined) counts[r.experiment]++;
+  const min = Math.min(...Object.values(counts));
+  let pool = EXPERIMENTS.filter(e => counts[e.key] === min && e.key !== prevKey);
+  if (!pool.length) pool = EXPERIMENTS.filter(e => e.key !== prevKey);
+  const exp = pool[Math.floor(Math.random() * pool.length)];
+  return { exp, clip: (counts[exp.key] + Math.floor(Math.random() * CLIPS.length)) % CLIPS.length, aIsX: Math.random() < 0.5 };
+}
+
+// ---- playback: both versions run together; the switch only moves the gains, so you keep your place
+let ac = null, sources = [], gains = [], playing = false, sel = "A", cur = null, curRender = null, nextRender = null, round = 1;
+const gainFor = lufs => 10 ** ((TARGET_LUFS - lufs) / 20);
+function stop() { for (const s of sources) try { s.stop(); } catch (e) { /* already stopped */ } sources = []; playing = false; $("play").textContent = "Play"; }
+function start() {
+  if (!curRender) return;
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume();
+  stop();
+  const sides = cur.aIsX ? [curRender.x, curRender.y] : [curRender.y, curRender.x];
+  gains = sides.map((r, i) => {
+    const b = ac.createBuffer(2, r.L.length, curRender.sr); b.copyToChannel(r.L, 0); b.copyToChannel(r.R, 1);
+    const src = ac.createBufferSource(); src.buffer = b; src.loop = true;
+    const g = ac.createGain(); g.gain.value = ((i === 0) === (sel === "A")) ? gainFor(r.lufs) : 0;
+    src.connect(g).connect(ac.destination); sources.push(src); g.lvl = gainFor(r.lufs); return g;
+  });
+  const t0 = ac.currentTime + 0.05; for (const s of sources) s.start(t0);
+  playing = true; $("play").textContent = "Stop";
+}
+function select(which) {
+  sel = which;
+  $("selA").setAttribute("aria-pressed", String(which === "A"));
+  $("selB").setAttribute("aria-pressed", String(which === "B"));
+  if (playing && ac) gains.forEach((g, i) => g.gain.setTargetAtTime(((i === 0) === (which === "A")) ? g.lvl : 0, ac.currentTime, 0.008));
+}
+
+// ---- verdict
+let pick = null, strength = "clear";
+function setPick(p) { pick = p; for (const [id, v] of [["pickA", "A"], ["pickSame", "same"], ["pickB", "B"]]) $(id).setAttribute("aria-pressed", String(p === v)); $("submit").disabled = !curRender || !p; }
+function setStrength(s) { strength = s; $("slight").setAttribute("aria-pressed", String(s === "slight")); $("clear").setAttribute("aria-pressed", String(s === "clear")); }
+
+async function showTrial(t, renderPromise) {
+  cur = t; curRender = null; stop(); select("A"); setPick(null); setStrength("clear"); $("note").value = "";
+  $("reveal").hidden = true; $("submit").textContent = "Save and reveal";
+  $("eyebrow").textContent = "Round " + round;
+  $("q").textContent = t.exp.q;
+  $("clip").textContent = CLIPS[t.clip].label;
+  $("play").disabled = $("restart").disabled = true;
+  $("status").textContent = "Rendering both versions…";
+  try {
+    curRender = await renderPromise;
+    if (cur !== t) return;
+    $("play").disabled = $("restart").disabled = false;
+    $("status").textContent = "Ready. Both at " + TARGET_LUFS + " LUFS.";
+    $("submit").disabled = !pick;
+  } catch (e) {
+    $("status").textContent = "This round failed to render (" + e.message + "). Skip to the next.";
+  }
+}
+function advance() {
+  round++;
+  const t = nextRender ? nextRender.t : nextTrial(cur && cur.exp.key);
+  const pr = nextRender ? nextRender.p : renderTrial(t);
+  nextRender = null;
+  showTrial(t, pr).then(prefetch);
+}
+function prefetch() { if (nextRender) return; const t = nextTrial(cur.exp.key); nextRender = { t, p: renderTrial(t) }; nextRender.p.catch(() => { nextRender = null; }); }
+
+// ---- storage: ratings go to the artifact's database, where Claude reads them
+let db = null;
+const describe = (exp, side) => side === "x" ? exp.xl : exp.yl;
+async function save() {
+  if (!cur || !pick) return;
+  if ($("submit").textContent === "Next round") { advance(); return; }
+  const chosen = pick === "same" ? "same" : ((pick === "A") === cur.aIsX ? "x" : "y");
+  const row = {
+    experiment: cur.exp.key, question: cur.exp.q, clip: CLIPS[cur.clip].file, preferred: chosen,
+    strength: pick === "same" ? null : strength, note: $("note").value.trim(),
+    x: describe(cur.exp, "x"), y: describe(cur.exp, "y"), a_was: cur.aIsX ? "x" : "y", at: new Date().toISOString(),
+  };
+  $("submit").disabled = true;
+  if (db) {
+    try { await db.collection("ratings").add(row); $("save").textContent = "Saved."; }
+    catch (e) { $("save").textContent = e.code === "quota_exceeded" ? "The ratings store is full." : "Couldn't save this one (" + (e.code || "error") + ")."; ratings.push(row); renderResults(); }
+  } else { ratings.push(row); renderResults(); $("save").textContent = "Kept for this visit only (saving isn't available in this view)."; }
+  const aDesc = describe(cur.exp, cur.aIsX ? "x" : "y"), bDesc = describe(cur.exp, cur.aIsX ? "y" : "x");
+  $("reveal").replaceChildren();
+  for (const [k, d] of [["A", aDesc], ["B", bDesc]]) { const p = document.createElement("div"); const b = document.createElement("b"); b.textContent = k + ": "; p.append(b, d); $("reveal").append(p); }
+  $("reveal").hidden = false;
+  $("submit").textContent = "Next round"; $("submit").disabled = false;
+}
+
+function renderResults() {
+  $("count").textContent = ratings.length + " rated";
+  const by = new Map();
+  for (const r of ratings) {
+    const e = EXPERIMENTS.find(x => x.key === r.experiment); if (!e) continue;
+    const s = by.get(e.key) || { e, x: 0, y: 0, same: 0 }; s[r.preferred === "x" ? "x" : r.preferred === "y" ? "y" : "same"]++; by.set(e.key, s);
+  }
+  const tb = $("results"); tb.replaceChildren();
+  if (!by.size) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 3; td.className = "empty"; td.textContent = "No ratings yet. Each round you rate adds a row here, and Claude reads them to retune the presets."; tr.append(td); tb.append(tr); return; }
+  for (const s of [...by.values()].sort((a, b) => (b.x + b.y + b.same) - (a.x + a.y + a.same))) {
+    const tr = document.createElement("tr");
+    const lead = s.x === s.y ? "Even so far" : (s.x > s.y ? s.e.xl : s.e.yl);
+    const td1 = document.createElement("td"); td1.textContent = s.e.q;
+    const td2 = document.createElement("td"); td2.textContent = lead; if (s.x !== s.y) td2.className = "lead";
+    const td3 = document.createElement("td"); td3.className = "num"; td3.textContent = s.x + "–" + s.y + (s.same ? " · " + s.same + " same" : "");
+    tr.append(td1, td2, td3); tb.append(tr);
+  }
+}
+
+// ---- wiring
+$("play").addEventListener("click", () => playing ? stop() : start());
+$("restart").addEventListener("click", start);
+$("selA").addEventListener("click", () => select("A"));
+$("selB").addEventListener("click", () => select("B"));
+$("pickA").addEventListener("click", () => setPick("A"));
+$("pickB").addEventListener("click", () => setPick("B"));
+$("pickSame").addEventListener("click", () => setPick("same"));
+$("slight").addEventListener("click", () => setStrength("slight"));
+$("clear").addEventListener("click", () => setStrength("clear"));
+$("submit").addEventListener("click", save);
+$("skip").addEventListener("click", advance);
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.metaKey || e.ctrlKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "a") select("A"); else if (k === "b") select("B");
+  else if (k === " ") { e.preventDefault(); select(sel === "A" ? "B" : "A"); }
+  else if (k === "p") { if (!$("play").disabled) playing ? stop() : start(); }
+});
+
+(async () => {
+  const t = nextTrial(null);
+  showTrial(t, renderTrial(t)).then(prefetch);
+  try {
+    db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+  } catch (e) { db = null; }
+  if (db) {
+    db.collection("ratings").onSnapshot(snap => { ratings = snap.docs.map(d => d.data()); renderResults(); },
+      () => { $("save").textContent = "Saved ratings couldn't be loaded; new ones still save."; });
+  } else {
+    $("save").textContent = "Saving isn't available in this view; ratings stay on this page until you leave.";
+  }
+})();
+</script>
