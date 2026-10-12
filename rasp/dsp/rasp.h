@@ -24,6 +24,14 @@
 // processing: the only delay on the dry path is filter phase delay in the
 // drive (oversampling + tone filters, ~0.15 ms at 3 kHz).
 #pragma once
+
+// Delay buffers are sized for sample rates up to 96 kHz (the Daisy runs at
+// 48k). Desktop builds that must also run at 176.4/192 kHz, like the plugin,
+// define RASP_SR_SCALE 2, which doubles them (~3 MB instead of ~1.5 MB).
+#ifndef RASP_SR_SCALE
+#define RASP_SR_SCALE 1
+#endif
+
 #include <cmath>
 #include <cstdint>
 #include <utility>
@@ -158,7 +166,7 @@ struct OSFilter {
 template <int N>
 struct DelayLine {
     static_assert((N & (N - 1)) == 0, "N must be a power of two");
-    float buf[N] = {};
+    float buf[(size_t)N] = {};
     int w = 0;
     void write(float x) { buf[w] = x; w = (w + 1) & (N - 1); }
     float read(float d) const {  // d >= 1 samples behind the last write
@@ -174,7 +182,7 @@ struct DelayLine {
 
 template <int N>
 struct Allpass {
-    float buf[N] = {};
+    float buf[(size_t)N] = {};
     int len = N, i = 0;
     void setLen(int n) { len = n < 1 ? 1 : (n > N ? N : n); }
     float process(float x, float g) {
@@ -481,7 +489,7 @@ public:
 private:
     float sr = 48000.f, base = 600.f, win = 1440.f;
     double rate = 0.0, ph = 0.0;
-    DelayLine<8192> dl;
+    DelayLine<8192 * RASP_SR_SCALE> dl;
 };
 
 // ---------------------------------------------------------------------------
@@ -538,8 +546,8 @@ public:
 private:
     float sr = 48000.f, diffuse = 0.f, width = 0.f;
     SVF hpIn, darkL, darkR;
-    DelayLine<4096> dl;                // 85 ms @ 48k
-    Allpass<1024> ap[2][3];
+    DelayLine<4096 * RASP_SR_SCALE> dl;   // 85 ms @ 48k
+    Allpass<1024 * RASP_SR_SCALE> ap[2][3];
     MicroPitch dblL, dblR;
     Smoothed spreadS;
 };
@@ -584,9 +592,9 @@ public:
 private:
     float sr = 48000.f, fb[8] = {}, len[8] = {};
     double modPh = 0.0, modInc = 0.0;          // tiny per-sample step: keep it double
-    DelayLine<8192> lines[8];          // up to 85 ms @ 96k
-    DelayLine<8192> pre;
-    Allpass<2048> inAp[4];
+    DelayLine<8192 * RASP_SR_SCALE> lines[8];   // up to 85 ms @ 96k
+    DelayLine<8192 * RASP_SR_SCALE> pre;
+    Allpass<2048 * RASP_SR_SCALE> inAp[4];
     OnePole damp[8];
     SVF inHp;
 };
@@ -640,7 +648,7 @@ public:
         lo = tiltR.lp(R);       R = lo * tiltLo + (R - lo) * tiltHi;
     }
 private:
-    static constexpr int kDelayMax = 1 << 17;   // 2.7 s @ 48k
+    static constexpr int kDelayMax = (1 << 17) * RASP_SR_SCALE;   // 2.7 s @ 48k
     float sr = 48000.f, tailBlend = 0, delayBlend = 0, duck = 0, repeats = 0;
     float env = 0, duckAtt = 0, duckRel = 0, tiltLo = 1, tiltHi = 1;
     Plate plate;
@@ -759,8 +767,8 @@ private:
 template <int N>
 struct FFT {
     static_assert((N & (N - 1)) == 0, "N must be a power of two");
-    float cosT[N / 2], sinT[N / 2];
-    int rev[N];
+    float cosT[(size_t)N / 2], sinT[(size_t)N / 2];
+    int rev[(size_t)N];
     void init() {
         int bits = 0; while ((1 << bits) < N) bits++;
         for (int i = 0; i < N; i++) { int r = 0; for (int b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); rev[i] = r; }

@@ -176,6 +176,12 @@ make && make check
 - **Power:** 12 V DC, centre-negative. ±12 V for the analog side comes from an isolated DC-DC.
   No phantom power in v1, so use a dynamic mic.
 
+## 4b. Logic Pro and other DAWs
+
+The same engine runs as an Audio Unit (Logic Pro), VST3 and standalone app,
+built with JUCE. A GitHub Actions job builds and validates the Mac version.
+See [plugin/README.md](plugin/README.md) for download, install and behaviour.
+
 ## 5. Presets (playground)
 
 | Preset | Use |

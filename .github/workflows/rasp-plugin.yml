@@ -1,0 +1,70 @@
+# Builds the RASP plugin. The macOS job produces the Audio Unit for Logic Pro
+# (universal: Apple silicon + Intel), validates it with Apple's auval, the
+# same check Logic runs, and uploads it as a downloadable artifact.
+name: RASP plugin
+
+on:
+  push:
+    paths: ["rasp/**", ".github/workflows/rasp-plugin.yml"]
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (universal binary, fetches JUCE 8.0.4)
+        run: >
+          cmake -S rasp/plugin -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DRASP_PLUGIN_TESTS=ON
+
+      - name: Build AU, VST3, standalone, tests
+        run: cmake --build build --config Release -j 4
+
+      - name: Headless plugin tests
+        run: ./build/plugin_test
+
+      - name: Sign (ad-hoc) and validate the Audio Unit with auval
+        run: |
+          AU=build/RASP_artefacts/Release/AU/RASP.component
+          codesign --force --deep --sign - "$AU"
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$AU" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 2
+          auval -a | grep -i rasp || true
+          auval -strict -v aufx Rsp1 RspA
+
+      - name: Package
+        run: |
+          cd build/RASP_artefacts/Release
+          codesign --force --deep --sign - VST3/RASP.vst3
+          codesign --force --deep --sign - Standalone/RASP.app
+          mkdir -p ../../../dist
+          ditto -c -k --keepParent AU/RASP.component ../../../dist/RASP-AU.zip
+          ditto -c -k --keepParent VST3/RASP.vst3 ../../../dist/RASP-VST3.zip
+          ditto -c -k --keepParent Standalone/RASP.app ../../../dist/RASP-Standalone.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RASP-macOS
+          path: dist/*.zip
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxcomposite-dev
+      - name: Engine checks
+        run: make -C rasp check
+      - name: Build plugin + tests
+        run: |
+          cmake -S rasp/plugin -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRASP_PLUGIN_TESTS=ON
+          cmake --build build
+      - name: Headless plugin tests
+        run: ./build/plugin_test

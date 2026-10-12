@@ -4,3 +4,4 @@ __pycache__/
 rasp/daisy/build/
 rasp/live_test
 rasp/presets_dump
+rasp/plugin/build/
