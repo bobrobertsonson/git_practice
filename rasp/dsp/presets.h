@@ -18,7 +18,7 @@ inline Params presetParams(int i) {
     switch (i) {
         case 0:  // huge: album sound
             p.drive = 0.45f; p.chop = 0.75f; p.spread = 0.75f; p.thickenGainDb = 3.f; p.tail = 0.45f;
-            p.tailBlend = 0.45f; p.delayBlend = 0.22f; p.flavourGainDb = -4.f; p.glue = 0.65f; p.outDb = 3.f;
+            p.tailBlend = 0.45f; p.delayBlend = 0.22f; p.flavourGainDb = -4.f; p.glue = 0.65f; p.outDb = -3.f;
             // Top end fitted to four producers' lead vocals (tools/presetfit.py:
             // Bloodbath, Gojira, Immortal Disfigurement, KnockedLoose). Every one
             // kept more air than the old 12.6 kHz hi cut; average tone error
@@ -29,7 +29,10 @@ inline Params presetParams(int i) {
             // body brings it within 1 dB. Doubles +3 dB: preferred blind as
             // "fuller" / "larger" (abtest).
             p.bodyDb = 5.f;
-            break;
+            // Output -3 dB (was +3): on Andrew's DI, 29 Mantra settings left a
+            // median 4.0 dB of phrase-to-phrase level (in/out slope 0.35); Huge
+            // left 2.3 dB (0.09), mostly from driving the bus limiter. -6 dB into
+            // the limiter costs only 0.9 LU of loudness (results/drywet).
         case 1:  // natural: the defaults
             break;
         case 2:  // dark: gutturals and lows
@@ -50,7 +53,7 @@ inline Params presetParams(int i) {
                  // version was picked against blind as "extremely harsh", so it
                  // keeps the natural voicing with a 7 dB shelf and more de-essing.
             p = presetParams(0);
-            p.hiCut = 1.f; p.airDb = 7.f; p.deEss = 0.75f;
+            p.hiCut = 1.f; p.airDb = 5.f; p.deEss = 0.75f;   // 7 -> 5: Mantra on Andrew's DI cut 16 kHz (median -5.6 dB)
             break;
         default: break;
     }

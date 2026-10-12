@@ -42,3 +42,20 @@ recorded.
 - `andrew-di-vintage-drive.wav`: preset "Vintage Drive"
 - `andrew-di-vocal-doubler-100width-no-other-processing.wav`: vocal doubler only, width 100, everything else off
 - `andrew-di-vocal-doubler.wav`: preset "Vocal Doubler"
+
+## What RASP took from it (2026-10-12)
+
+The 20 chains that stay mostly linear (coherence > 50% at 1 kHz), median EQ
+re 1 kHz: 63 Hz -12, 100 Hz -8, 160 Hz -3, 250 Hz -1, 2.5 kHz +2.5,
+4 kHz +4.5, 16 kHz -5.6 dB. Across all 29: in/out slope median 0.35
+(IQR 0.28-0.43), level left between phrases 4.0 dB, gaps -21.7 dB.
+
+RASP on Andrew's other DI (`Vocal - Main`, 150 s): Huge slope 0.09 / 2.3 dB,
+louder than every Mantra chain because it drove the bus limiter. Changes:
+Huge/Air output +3 -> -3 dB (slope 0.14, -0.9 LU); Air shelf 7 -> 5 dB
+(16 kHz +3.9 -> +1.5). Not changed: Huge keeps ~8 dB more 100 Hz and ~4 dB
+more 160-250 Hz than Mantra's median (Body +5, chosen against "thin"), pending
+the A/B.
+
+Exports were mono, so doubler/width settings couldn't be measured; stereo
+exports of the doubler and harmony settings would fix that.
