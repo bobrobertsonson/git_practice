@@ -1,0 +1,54 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Arizona Mids",
+  "notes": "Modern desert death metal: high-mids pushed, presence up, LED clip, 20 % clean blend (Gatecreeper-style); into a high-gain amp, TONE3000 88689. Starting hypothesis, fitted against captures later. Modeled pedal, no capture; the cab slot is the repo identity IR.",
+  "category": "Death metal",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hmx",
+          "slot": "pedal",
+          "modelVersion": 1,
+          "params": {
+            "level": 0.91,
+            "low": 8,
+            "lowMid": 5,
+            "highMid": 9,
+            "high": 7,
+            "distortion": 9,
+            "presence": 8,
+            "tightness": 3,
+            "mix": 80,
+            "clip": "led",
+            "boost": "off",
+            "lowMidFreq": 5,
+            "highMidFreq": 6,
+            "midVoice": "stock"
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -6.082,
+    "autoTrimHash": "266c040dc9ec316fb65eaa1201fb9547bdfb2df47e1a8c415c68c03eab997242"
+  }
+}

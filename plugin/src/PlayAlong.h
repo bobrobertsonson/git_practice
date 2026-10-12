@@ -1,0 +1,376 @@
+#pragma once
+
+// Play-along backing for the plugin (docs/specs/phase5_2_playalong_plugin.md): a StemPlayer
+// (core/stem_player.h) plus everything that lets the message thread, a loader thread and the audio
+// thread share it. JUCE-free.
+//
+// Threading
+//   audio thread    process(): drains the command queue, runs the StemPlayer, measures the rig's output
+//                   loudness, publishes a Snapshot (atomics). Never allocates, locks, does I/O or throws.
+//   separation      (phase 5.1b) one more worker, started on the first song file: separates an audio file into
+//   thread          the stem cache (core/separate_song.h) and hands the cache directory to the loader thread,
+//                   so the rest is the 5.2 path unchanged. Never the audio or message thread. Cancellable
+//                   (cancelSeparation, a newer request, destruction); the destructor cancels and joins it.
+//   loader thread   one worker: loads a folder of stems (loadStemDirectory), hands the StemSet to the
+//                   player through its SwapSlot (lock-free) and frees retired sets (collectGarbage). It
+//                   is separate from the plugin's EngineLoader on purpose: a long song load must not
+//                   hold up preset builds or prepareToPlay.
+//   other threads   (message thread, host state restore, tests): every setter below. Setters update the
+//                   saved settings under a mutex and push a command into the SPSC queue. The queue's
+//                   producer side is serialised by a mutex that the audio thread never takes. Nothing
+//                   the audio thread touches is ever locked by it.
+// The StemPlayer's own setters are audio-thread-only (core/stem_player.h); only setStartOffsetSamples,
+// setStemSet, collectGarbage and prepare/reset are used from other threads, as that header allows.
+
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <filesystem>
+#include <functional>
+#include <limits>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+#include "TakeRecorder.h"
+#include "sawblade/loudness.h"
+#include "sawblade/model_store.h"
+#include "sawblade/separator.h"  // CancelToken only (header-only); the engine is behind SAWBLADE_WITH_SEPARATOR
+#include "sawblade/stem_player.h"
+#include "sawblade/stem_set.h"
+#include "sawblade/wav_io.h"
+
+namespace sawblade::plugin {
+
+constexpr double kBackingLevelMinDb = -40.0;   // control range of the backing level
+constexpr double kBackingLevelMaxDb = 6.0;
+constexpr double kBackingLevelDefaultDb = 0.0;
+constexpr double kRigReferenceLufs = -18.0;    // assumed rig loudness until a rig signal has been observed
+constexpr double kOffsetLimitMs = 10000.0;     // control range of the offset
+constexpr double kDefaultBpm = 120.0;
+
+// Everything the play-along panel saves (plugin state `playAlong`, docs/PRESET_SCHEMA.md). UI state: not tone.
+struct PlayAlongSettings {
+  std::string folder;                       // folder of stems ("" = none chosen)
+  std::string songFile;                     // audio file separated on this machine ("" = none); exclusive with folder
+  bool fourStemModel = false;               // separation model: false = htdemucs_6s (guitar stem), true = htdemucs (4-stem)
+  double offsetMs = 0.0;                    // where the DI/playhead start lies inside the song (matcher sign, see below)
+  bool loopOn = false;
+  double loopAMs = -1.0, loopBMs = -1.0;    // loop points in playhead time; < 0 = unset
+  bool countIn = false;
+  double bpm = kDefaultBpm;
+  GuitarMode guitarMode = GuitarMode::Muted;
+  double levelDb = kBackingLevelDefaultDb;  // backing level
+  bool keepOther = false;                   // OtherRole::Other ("keep keys") instead of OtherRole::Guitar
+  bool hostSync = false;                    // plugin only: follow the host transport
+
+  bool operator==(const PlayAlongSettings&) const = default;
+  bool isDefault() const { return *this == PlayAlongSettings{}; }
+};
+// Audio files CHOOSE SONG FILE separates (everything else is treated as a folder of stems): lower-case extension
+// with the dot. Whether the platform can decode it is decided at load time.
+bool isSongFileName(const std::string& path);
+
+// offsetMs follows the matcher's `--offset-ms` and `tonerender --backing-offset-ms`: where the DI starts
+// inside the song. Positive: the stems lead (stem audio from offsetMs plays at playhead 0). The
+// StemPlayer's own offset is the opposite sign (core/stem_player.h): player offset = -offset.
+
+nlohmann::json playAlongToJson(const PlayAlongSettings& s);
+// Tolerant: never throws; wrong-typed or missing fields keep their defaults, numbers are clamped.
+PlayAlongSettings playAlongFromJson(const nlohmann::json& j);
+
+// The one-time suggested backing level: rig loudness minus the song's backing loudness (so the backing
+// sits at the rig's loudness), clamped to the control range. `rig` none (no rig signal observed yet)
+// uses kRigReferenceLufs. `backing` none (silent / no backing stems) gives the default level.
+double suggestedBackingLevelDb(std::optional<double> rigLufs, std::optional<double> backingLufs);
+
+// Cheap running estimate of the rig output's loudness (K-weighted, 100 ms hops, BS.1770 absolute gate
+// -70 LUFS and a -10 LU relative gate against the running gated mean, leaky with a 30 s time constant).
+// The rig output is dual mono (both output channels carry it), so a hop's loudness is that of two equal
+// channels. process() is real-time safe; lufs() may be read from any thread.
+class RigLoudness {
+ public:
+  static constexpr double kHopSeconds = 0.1, kMemorySeconds = 30.0, kMinGatedSeconds = 0.5;
+  void prepare(double sampleRate);
+  void process(const float* x, int n) noexcept;
+  std::optional<double> lufs() const noexcept;
+
+ private:
+  struct Bq {
+    LoudnessBiquad c;
+    double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    double step(double x) noexcept {
+      const double y = c.b0 * x + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2;
+      x2 = x1;
+      x1 = x;
+      y2 = y1;
+      y1 = y;
+      return y;
+    }
+  };
+  Bq shelf_, hp_;
+  int hopN_ = 4800, hopPos_ = 0;
+  double acc_ = 0.0, decay_ = 1.0;
+  double absE_ = 0.0, absW_ = 0.0, relE_ = 0.0, relW_ = 0.0;
+  std::atomic<double> est_{std::numeric_limits<double>::quiet_NaN()};
+};
+
+// A command from a non-audio thread to the audio thread.
+struct PlayAlongCmd {
+  enum class Type : std::uint8_t { Play, Pause, Seek, SetLoop, ClearLoop, CountIn, GuitarMode, Level, HostSync };
+  Type type = Type::Pause;
+  std::int64_t a = 0, b = 0;
+  double d = 0.0;
+};
+
+// Preallocated lock-free single-producer / single-consumer ring (the caller serialises producers).
+class PlayAlongQueue {
+ public:
+  static constexpr std::size_t kCapacity = 256;  // power of two
+  bool push(const PlayAlongCmd& c) noexcept {    // false when full (nothing is stored)
+    const auto t = tail_.load(std::memory_order_relaxed);
+    if (t - head_.load(std::memory_order_acquire) >= kCapacity) return false;
+    buf_[t & (kCapacity - 1)] = c;
+    tail_.store(t + 1, std::memory_order_release);
+    return true;
+  }
+  bool pop(PlayAlongCmd& c) noexcept {
+    const auto h = head_.load(std::memory_order_relaxed);
+    if (h == tail_.load(std::memory_order_acquire)) return false;
+    c = buf_[h & (kCapacity - 1)];
+    head_.store(h + 1, std::memory_order_release);
+    return true;
+  }
+
+ private:
+  std::array<PlayAlongCmd, kCapacity> buf_{};
+  std::atomic<std::size_t> head_{0}, tail_{0};
+};
+
+class PlayAlong {
+ public:
+  struct Snapshot {  // published by the audio thread at the end of every block
+    bool hasSet = false, playing = false, countingIn = false, atEnd = false, loopActive = false;
+    bool following = false;       // plugin mode with host sync on: the host owns the transport
+    std::int64_t position = 0;    // playhead time, samples
+    std::int64_t length = 0;      // playhead length, samples
+    std::int64_t loopStart = 0, loopEnd = 0;
+    double sampleRate = 0.0;
+  };
+  struct LoadStatus {
+    enum class State { None, Separating, Loading, Ready, Failed, Cancelled, NotSeparated };
+    State state = State::None;
+    std::string message;                      // why it failed
+    std::string songName;                     // folder name of the loaded song
+    std::vector<std::string> warnings;        // from the loader
+    std::optional<double> backingLufs;
+    std::optional<double> suggestedLevelDb;   // what the last user load suggested (and applied)
+    double lengthSeconds = 0.0;
+    bool otherMappedToGuitar = false, hasGuitarStem = false;
+    // State::Separating: progress of the job (separationEtaSeconds < 0: not known yet).
+    double separationFraction = 0.0, separationEtaSeconds = -1.0;
+    // State::Failed because the separation model is missing or wrong: `message` already ends with the
+    // complete install + fetch command, repeated in `fetchCommand` (separationModelInstallCommand; run from the
+    // repository root). The panel shows it in a copyable field.
+    bool modelMissing = false;
+    std::string fetchCommand;
+    bool cacheHit = false;                    // Ready: the stems came from the stem cache, no separation ran
+    // A load that was refused before anything changed (a folder that is not a stem set): the message shows in
+    // the status line over whatever state there is, and the loaded song stays loaded. Filled in by loadStatus()
+    // from a member the load worker never touches; cleared by the next accepted load, expires after kRefusalShown.
+    std::string notice;
+  };
+  struct HostTransport {
+    bool playing = false;
+    std::int64_t sample = 0;  // host position of the block's first sample
+  };
+
+  PlayAlong();
+  ~PlayAlong();
+  PlayAlong(const PlayAlong&) = delete;
+  PlayAlong& operator=(const PlayAlong&) = delete;
+
+  // ---- non-audio threads ---------------------------------------------------------------------
+  // Standalone: free-run, backing always enabled. Plugin: follows the host transport once hostSync is on.
+  void setStandalone(bool standalone) noexcept { standalone_.store(standalone, std::memory_order_relaxed); }
+  bool standalone() const noexcept { return standalone_.load(std::memory_order_relaxed); }
+  // Allocates (prepareToPlay). maxRigLatencySamples bounds setRigLatencySamples().
+  void prepare(double sampleRate, int maxBlock, int maxRigLatencySamples);
+  // Latency of the rig, host samples: the backing is delayed by it. Atomic; the audio thread applies it.
+  void setRigLatencySamples(int samples) noexcept { rigLatency_.store(samples, std::memory_order_relaxed); }
+
+  // Starts a background load of `folder` (never throws; failures show in loadStatus()). `userInitiated`
+  // loads also set the backing level once from the loudness rule (suggestedBackingLevelDb); state
+  // restores and reloads never touch the level.
+  // A folder that is not a set of separated stems (classifyStemFolder: every audio file has a stem name, at
+  // least two stems) is refused synchronously: LoadStatus::notice says so, settings and the loaded song are
+  // untouched. restore() does not check (a saved folder, or a cache folder, loads as before).
+  // Returns true when the load was accepted (started), false when refused.
+  bool loadFolder(const std::string& folder, bool userInitiated);
+  // CHOOSE SONG FILE / CHOOSE STEMS FOLDER / a drop: a folder is loadFolder; an audio file (isSongFileName) is separated on the separation thread
+  // (stem cache first: a second load is instant) and then loaded exactly like a folder. Never throws.
+  // Without SAWBLADE_WITH_SEPARATOR a file fails with "not available in this build".
+  // Returns false only for a refused folder (see loadFolder).
+  bool loadSong(const std::string& path, bool userInitiated);
+  // How long a refusal notice shows, and a test hook for the clock that times it (null = steady_clock).
+  using Clock = std::chrono::steady_clock;
+  static constexpr std::chrono::seconds kRefusalShown{8};
+  void setClock(std::function<Clock::time_point()> clock);
+  // Cancels a running or queued separation (no-op otherwise): the status becomes Cancelled and the previous
+  // song, if any, stays loaded. Returns at once.
+  void cancelSeparation();
+  // Separation model for song files; a loaded song file is separated again (cache first) with the new model.
+  void setFourStemModel(bool fourStem);
+  // How audio files are decoded: the default is the core decoder (wav, flac, mp3). The processor installs
+  // one that also handles m4a / aac / aiff / ogg with the platform decoders. Set before the first load.
+  using SongDecoder = std::function<AudioFile(const std::filesystem::path&)>;
+  void setSongDecoder(SongDecoder d);
+  // Applies saved settings (state restore): never changes the level automatically, loads the folder in
+  // the background if there is one.
+  void restore(const PlayAlongSettings& s);
+
+  void play();
+  void pause();
+  void seekSamples(std::int64_t playheadSample);
+  void setLoopMs(double aMs, double bMs, bool on);
+  void setCountIn(bool on, double bpm);
+  void setGuitarMode(GuitarMode m);
+  void setLevelDb(double db);
+  void setOffsetMs(double ms);
+  void setHostSync(bool on);
+  void setKeepOther(bool keep);  // reloads the folder with the other role
+
+  PlayAlongSettings settings() const;
+  // The stems directory the player is using: for a song FILE the separation cache directory (once it is
+  // separated, or restored from the cache), else settings().folder; "" when nothing is loaded. settings().folder
+  // and settings().songFile are exclusive, so record + match use this, never settings().folder alone.
+  std::string activeStemsDir() const;
+  LoadStatus loadStatus() const;
+  Snapshot snapshot() const noexcept;
+  std::optional<double> rigLoudnessLufs() const noexcept { return loud_.lufs(); }
+  // Waits until neither the separation thread nor the loader thread has work (a separated song is handed to
+  // the loader before the separation thread goes idle, so this covers the whole file -> backing path).
+  bool waitForLoader(std::chrono::milliseconds timeout = std::chrono::milliseconds(60000));
+  std::uint64_t commandsDropped() const noexcept { return dropped_.load(); }
+  // A command was dropped because the queue was full, so the audio side may differ from the settings.
+  // The loader thread's 0.5 s tick calls resyncIfNeeded(); tests may call it directly. It re-sends the
+  // whole settings state (level, mode, count-in, loop, host sync, offset); transport events (play, pause,
+  // seek) are not replayed.
+  bool needsResync() const noexcept { return resync_.load(); }
+  void resyncIfNeeded();
+
+  // ---- audio thread --------------------------------------------------------------------------
+  // `rig` is the rig's mono output for these n samples (read only: measured for the loudness estimate).
+  // bl / br are overwritten with the backing for the same n samples. host.sample is the host position
+  // of the first sample (ignored in Standalone mode).
+  void process(const float* rig, float* bl, float* br, int n, const HostTransport& host) noexcept;
+  // The first part of process(): applies the queued commands, the rig latency and the host position for
+  // this block. Called before takeStartInfo(); process() then skips it for the same block.
+  void prepareBlock(const HostTransport& host) noexcept;
+  // Where the song is at the first sample of the block `prepareBlock` was just called for: the stem sample
+  // that plays then (player offset applied; the backing is delayed by the rig latency, which is exactly what
+  // lines the DI sample up with it). `running` = the backing is playing, not counting in, and (plugin mode)
+  // following the host.
+  TakeStartInfo takeStartInfo(const HostTransport& host) const noexcept;
+
+ private:
+  struct Request {
+    std::string folder;
+    std::string name;  // song name shown in the panel ("" = the folder's name)
+    double rate = 0.0;
+    OtherRole role = OtherRole::Guitar;
+    bool user = false;
+    std::uint64_t id = 0;
+    bool cacheHit = false;
+  };
+
+  void push(const PlayAlongCmd& c);
+  void applyAll();                         // pushes the whole settings state
+  // allowSeparate: only choosing a song (or dropping one) and the model toggle may start a separation; a state restore, a rate
+  // change or KEEP KEYS only use stems that are cached already (else NotSeparated).
+  void requestLoad(bool user, bool allowSeparate = false);
+  void requestSong(const PlayAlongSettings& s, OtherRole role, bool user, bool allowSeparate);
+  void submitLoad(const std::string& dir, const std::string& name, OtherRole role, bool user, bool cacheHit);
+  void supersedeSeparation();
+  void separationMain();
+  struct SepRequest;
+  void runSeparation(const SepRequest& r);
+  void loaderMain();
+  void runLoad(const Request& r);
+  void applyCommand(const PlayAlongCmd& c) noexcept;
+  void applyOffset(double ms);
+  void pushLoop(const PlayAlongSettings& s, double rate);
+
+  StemPlayer player_;
+  RigLoudness loud_;
+  std::atomic<bool> standalone_{false};
+  std::atomic<double> rate_{0.0};
+  std::atomic<double> loadedRate_{0.0};
+  std::atomic<int> rigLatency_{0};
+  std::atomic<std::uint64_t> dropped_{0};
+  std::atomic<bool> resync_{false};
+
+  mutable std::mutex m_;  // settings_, status_
+  PlayAlongSettings settings_;
+  LoadStatus status_;
+  std::string refusal_;  // m_: the last refused load's message (see LoadStatus::notice)
+  Clock::time_point refusalAt_;
+  std::function<Clock::time_point()> clock_;
+  Clock::time_point now() const;
+
+  std::mutex producerM_;  // serialises queue producers (never taken by the audio thread)
+  PlayAlongQueue queue_;
+  std::mutex prepareM_;   // prepare() vs the loader's setStemSet (never taken by the audio thread)
+
+  // Separation worker (started on the first song file). One job at a time, the latest request wins.
+  struct SepRequest {
+    std::string file;
+    bool fourStem = false;
+    OtherRole role = OtherRole::Guitar;
+    bool user = false;
+    bool allowSeparate = true;
+    std::string prevFolder, prevSongFile;  // restored if the user cancels
+    std::uint64_t id = 0;
+    std::shared_ptr<CancelToken> token;
+  };
+  std::mutex sepM_;
+  std::condition_variable sepCv_, sepIdleCv_;
+  std::optional<SepRequest> sepPending_;
+  std::shared_ptr<CancelToken> sepRunningToken_;
+  std::atomic<std::uint64_t> sepId_{0};
+  std::string sepPrevFolder_, sepPrevSong_;   // what a cancel goes back to (under sepM_)
+  bool sepBusy_ = false, sepStop_ = false;
+  SongDecoder decoder_;                       // under sepM_
+  std::atomic<double> sepFraction_{0.0}, sepEta_{-1.0};
+  // The cache directory of the song file + model last separated (under m_): KEEP KEYS and rate reloads
+  // reuse it instead of separating again.
+  std::string songDir_, songDirFile_;
+  bool songDirFourStem_ = false;
+
+  // Loader worker.
+  std::mutex loaderM_;
+  std::condition_variable loaderCv_, idleCv_;
+  std::optional<Request> pending_;
+  std::uint64_t requestId_ = 0;
+  bool busy_ = false, stop_ = false, loadWanted_ = false, wantedUser_ = false;
+
+  // Audio-thread state.
+  bool blockPrepared_ = false;
+  int appliedLatency_ = 0;
+  bool wantLoop_ = false, hostSync_ = false, followMode_ = false;
+  std::int64_t loopA_ = 0, loopB_ = 0;
+  std::atomic<bool> sHasSet_{false}, sPlaying_{false}, sCounting_{false}, sAtEnd_{false}, sLoop_{false}, sFollowing_{false};
+  std::atomic<std::int64_t> sPos_{0}, sLen_{0}, sLoopA_{0}, sLoopB_{0};
+
+  std::thread sepThread_;
+  std::thread thread_;  // last
+};
+
+}  // namespace sawblade::plugin

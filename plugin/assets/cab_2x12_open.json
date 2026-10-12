@@ -1,0 +1,22 @@
+{
+  "cab": "2x12",
+  "width": 1328,
+  "height": 949,
+  "px_per_mm": 1.58095,
+  "drivers": [
+    {
+      "slot": 1,
+      "cx": 403.14,
+      "cy": 474.5,
+      "cone_radius": 203.15,
+      "cap_radius": 53.75
+    },
+    {
+      "slot": 2,
+      "cx": 924.86,
+      "cy": 474.5,
+      "cone_radius": 203.15,
+      "cap_radius": 53.75
+    }
+  ]
+}

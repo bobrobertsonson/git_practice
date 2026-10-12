@@ -1,0 +1,25 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Notes parity: nocab",
+  "paths": {
+    "a": {"role": "saw", "blocks": [
+      {"id": "a1", "type": "nam", "slot": "amp", "model": {"file": "../../../../tests/fixtures/nam/linear_identity.nam"}}]},
+    "b": {"role": "body", "blocks": [
+      {"id": "b1", "type": "nam", "slot": "amp", "model": {"file": "../../../../tests/fixtures/nam/linear_identity.nam"}}]}
+  },
+  "align": {"mode": "off"},
+  "blend": 0.5,
+  "gate": {"enabled": true, "thresholdDb": -50.0, "hysteresisDb": 6.0, "attackMs": 0.5, "holdMs": 20.0, "releaseMs": 60.0,
+           "rangeDb": -90.0, "mode": "gate", "ratio": 4.0, "keyHighPassHz": 0.0, "releaseCurve": "one-pole"},
+  "cab": {"mode": "shared", "enabled": true, "normalize": true,
+          "ir": {"file": "../../../../tests/fixtures/ir/impulse.wav",
+                 "source": {"provider": "tone3000", "id": "21", "title": "V30 Mesa 4x12", "creator": "@OutmodedElectronics", "license": "t3k"}}},
+  "postEq": [
+    {"type": "highPass", "freq": 80.0, "gainDb": 0.0, "q": 0.7071, "enabled": true},
+    {"type": "peak", "freq": 3000.0, "gainDb": 2.5, "q": 1.2, "enabled": true},
+    {"type": "lowShelf", "freq": 120.0, "gainDb": -3.0, "q": 0.7071, "enabled": false}
+  ],
+  "busComp": {"enabled": true, "thresholdDb": -10.0, "ratio": 4.0, "kneeDb": 3.0, "attackMs": 1.0, "releaseMs": 80.0, "makeupDb": 1.5},
+  "output": {"gainDb": -2.0}
+}

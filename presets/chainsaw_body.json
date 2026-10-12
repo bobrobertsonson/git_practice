@@ -1,0 +1,190 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Chainsaw + Body",
+  "category": "Swedish death (HM-2)",
+  "notes": "Default north-star blend (live-compatible). HM-2-style saw into a low-gain amp, blended with a boosted modern high-gain body. Body slightly forward for tightness; complementary EQ: body dips 1.6 kHz so the saw's rasp owns it. Values are starting hypotheses (see docs/TONE_TARGETS.md). Captures are TONE3000 tones (HM-2 58569, JCM 800 86089, 6505+ 70977, V30-style cab 84863); the body boost is the modeled TS (pedal.ts). Resolve them with sawblade-t3k resolve.",
+  "gate": {
+    "enabled": true,
+    "thresholdDb": -55.0,
+    "hysteresisDb": 6.0,
+    "attackMs": 0.5,
+    "holdMs": 20.0,
+    "releaseMs": 60.0,
+    "rangeDb": -90.0
+  },
+  "paths": {
+    "a": {
+      "role": "saw",
+      "preEq": [
+        {
+          "type": "highPass",
+          "freq": 90,
+          "q": 0.707
+        }
+      ],
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "nam",
+          "slot": "pedal",
+          "model": {
+            "file": "captures/58569_496942.nam",
+            "source": {
+              "provider": "tone3000",
+              "id": "58569",
+              "modelId": "496942",
+              "url": "https://www.tone3000.com/tones/boss-hm-2-1985-mij-ttsv10-58569",
+              "title": "Boss HM-2 1985 MIJ TTSV10",
+              "creator": "OutmodedElectronics",
+              "license": "t3k"
+            }
+          }
+        },
+        {
+          "id": "a2",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "captures/86089_731435.nam",
+            "source": {
+              "provider": "tone3000",
+              "id": "86089",
+              "modelId": "731435",
+              "url": "https://www.tone3000.com/tones/marshall-jcm-800-2203-86089",
+              "title": "Marshall JCM 800 2203",
+              "creator": "sarcobe",
+              "license": "t3k"
+            }
+          },
+          "normalizeLoudness": true
+        }
+      ],
+      "eq": [
+        {
+          "type": "peak",
+          "freq": 120,
+          "gainDb": -3.0,
+          "q": 1.0
+        },
+        {
+          "type": "peak",
+          "freq": 3200,
+          "gainDb": -2.0,
+          "q": 2.0
+        },
+        {
+          "type": "lowPass",
+          "freq": 7000,
+          "q": 0.707
+        }
+      ],
+      "levelDb": 0.0
+    },
+    "b": {
+      "role": "body",
+      "blocks": [
+        {
+          "id": "b1",
+          "type": "pedal.ts",
+          "slot": "boost",
+          "modelVersion": 1,
+          "params": {
+            "drive": 0,
+            "tone": 5,
+            "level": 8
+          }
+        },
+        {
+          "id": "b2",
+          "type": "nam",
+          "slot": "amp",
+          "model": {
+            "file": "captures/70977_584871.nam",
+            "source": {
+              "provider": "tone3000",
+              "id": "70977",
+              "modelId": "584871",
+              "url": "https://www.tone3000.com/tones/6505-full-pack-70977",
+              "title": "6505+ FULL Pack",
+              "creator": "AmpsPedalsPickups",
+              "license": "t3k"
+            }
+          },
+          "normalizeLoudness": true
+        }
+      ],
+      "eq": [
+        {
+          "type": "peak",
+          "freq": 250,
+          "gainDb": -2.0,
+          "q": 1.2
+        },
+        {
+          "type": "peak",
+          "freq": 1600,
+          "gainDb": -2.0,
+          "q": 1.0
+        },
+        {
+          "type": "lowPass",
+          "freq": 8000,
+          "q": 0.707
+        }
+      ],
+      "levelDb": 0.0
+    }
+  },
+  "align": {
+    "mode": "auto",
+    "maxLagMs": 5.0
+  },
+  "blend": 0.55,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "captures/84863_721117.wav",
+      "source": {
+        "provider": "tone3000",
+        "id": "84863",
+        "modelId": "721117",
+        "url": "https://www.tone3000.com/tones/mesa-oversized-sm57-and-vr2-5150-power-84863",
+        "title": "Mesa Oversized SM57 and VR2 5150 Power",
+        "creator": "jpisoutoftune",
+        "license": "t3k"
+      }
+    },
+    "enabled": true
+  },
+  "postEq": [
+    {
+      "type": "highPass",
+      "freq": 75,
+      "q": 0.707
+    },
+    {
+      "type": "peak",
+      "freq": 1300,
+      "gainDb": 1.5,
+      "q": 1.0
+    },
+    {
+      "type": "lowPass",
+      "freq": 9000,
+      "q": 0.707
+    }
+  ],
+  "busComp": {
+    "enabled": true,
+    "thresholdDb": -14.0,
+    "ratio": 2.0,
+    "kneeDb": 6.0,
+    "attackMs": 15.0,
+    "releaseMs": 80.0,
+    "makeupDb": 1.0
+  },
+  "output": {
+    "gainDb": -3.0
+  }
+}

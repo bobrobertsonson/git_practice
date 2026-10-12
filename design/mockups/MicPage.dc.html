@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sawblade: cab and mic</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&amp;family=Barlow+Condensed:wght@500;600;700&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#050505}
+.st{font-family:'Allerta Stencil',sans-serif;letter-spacing:.08em}
+.kl{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.16em}
+.mono{font-family:'Share Tech Mono',monospace}
+.btn{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:.12em;height:32px;padding:0 12px;border-radius:4px;border:1px solid #3a352d;background:#1b1916;color:#e8e1d2}
+</style>
+</helmet>
+<div style="width:1280px;height:800px;display:flex;flex-direction:column;background:#0b0a09;color:#e8e1d2;font-family:'Barlow Condensed',sans-serif">
+ <div style="height:58px;display:flex;align-items:center;gap:14px;padding:0 18px;background:#121110;border-bottom:1px solid #2a2622">
+  <button class="btn" aria-label="Back to rig">‹ RIG</button><span class="st" style="font-size:22px;color:#7fd13b">CAB · MIC</span><span class="kl" style="color:#a39a8a">DRAG THE MIC · EACH POSITION IS A REAL IR FROM THE CAPTURE PACK</span>
+ </div>
+ <div style="flex:1;display:flex;gap:18px;padding:16px;min-height:0">
+  <div style="position:relative;width:700px;height:700px;flex:none;border-radius:8px;overflow:hidden;box-shadow:0 20px 40px rgba(0,0,0,.7)">
+   <img src="/_blob/bc61e55256a435eb69bae2044023437f" alt="4x12 with grille removed, four speakers and a microphone" style="width:700px;height:700px;display:block">
+   <sc-for list="{{spots}}" as="p" hint-placeholder-count="8">
+    <button aria-label="Mic position {{p.n}}" style="position:absolute;left:{{p.x}}px;top:{{p.y}}px;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;border:2px solid {{p.c}};background:{{p.bg}};box-shadow:0 0 10px {{p.c}}"></button>
+   </sc-for>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;gap:12px">
+   <span class="kl" style="color:#a39a8a">IR PACK</span>
+   <span style="font-weight:700;font-size:20px">Marshall 1960BV V30 and G12T75</span>
+   <span class="kl" style="color:#a39a8a;letter-spacing:.06em">@jpisoutoftune · t3k · 55 IRs · VIA TONE3000</span>
+   <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+    <sc-for list="{{fields}}" as="f" hint-placeholder-count="4"><div style="padding:10px;border-radius:6px;background:#151311;box-shadow:inset 0 0 0 1px #2a2622"><span class="kl" style="color:#a39a8a">{{f.l}}</span><div class="mono" style="font-size:15px;margin-top:4px">{{f.v}}</div></div></sc-for>
+   </div>
+   <span class="kl" style="color:#a39a8a">SELECTED IR</span>
+   <span class="mono" style="font-size:13px;color:#b8f08a">Marshall G12 1 SM57 3</span>
+   <svg width="440" height="140" viewBox="0 0 440 140" aria-hidden="true" style="background:#0e0d0c;border-radius:6px"><path d="M0 110 C 40 60, 70 46, 110 48 S 190 40, 230 42 S 300 52, 330 70 S 400 118, 440 132" fill="none" stroke="#7fd13b" stroke-width="2"></path><text x="8" y="16" fill="#6f685b" font-family="Share Tech Mono" font-size="10">IR frequency response</text></svg>
+   <div style="display:flex;gap:8px"><button class="btn">▶ A/B NEXT POSITION</button><button class="btn">BLEND 2 MICS</button></div>
+   <div style="margin-top:auto;padding:10px;border-radius:6px;background:#1a1714;font-size:13px;line-height:1.4;color:#a39a8a">Positions come from the IR pack's own mic shots; dots show where the pack has an IR. Mic distance and angle snap to the nearest real capture.</div>
+  </div>
+ </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const pos = [[408, 405, 1], [380, 380, 0], [440, 440, 0], [470, 470, 0], [310, 300, 0], [992, 405, 0], [408, 992, 0], [992, 992, 0]];
+    const spots = pos.map(([x, y, sel], i) => ({ n: i + 1, x: Math.round(x / 2), y: Math.round(y / 2), c: sel ? '#7fd13b' : 'rgba(232,225,210,.75)', bg: sel ? '#7fd13b' : 'rgba(0,0,0,.35)' }));
+    return { spots, fields: [{ l: 'SPEAKER', v: 'UPPER-LEFT · V-30 TYPE' }, { l: 'MIC', v: 'DYNAMIC (SM57-TYPE)' }, { l: 'DISTANCE', v: '1.0 in' }, { l: 'POSITION', v: 'CAP EDGE' }] };
+  }
+}
+</script>
+</body>
+</html>

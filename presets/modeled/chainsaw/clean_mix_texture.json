@@ -1,0 +1,59 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Clean Mix Texture",
+  "category": "Swedish death (HM-2)",
+  "notes": "A texture layer: soft clipping at a 30 percent wet mix, to sit over a clean tone or another amp. Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 2,
+          "params": {
+            "level": 9.08,
+            "low": 6,
+            "high": 8,
+            "distortion": 7,
+            "tightness": 2,
+            "mix": 30,
+            "mode": "stock",
+            "clip": "soft",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 0.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 4800,
+            "presenceDb": 8,
+            "rolloffHz": 9000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -7.676,
+    "autoTrimHash": "82ee7936d42a595870e4f997abdc9333223decb4bbc2454b2c5152e3551065a4"
+  }
+}

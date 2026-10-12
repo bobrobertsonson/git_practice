@@ -1,0 +1,72 @@
+{
+  "loaderOrder": "Loader order: gate -> NAM (irmix-nocab-standard.nam) -> cab IR + post EQ (irmix-nocab.ir.wav)",
+  "mode": "nocab",
+  "stages": [
+    {
+      "hardware": "Expander FIRST in the chain, keyed on the guitar (DI) before any pedal: open at -48.5 dB, close at -52.5 dB (hysteresis 4 dB), attack 0.25 ms, hold 35 ms, release 90 ms, range -60 dB, ratio 3.5:1, key high-pass 120 Hz.",
+      "inModel": false,
+      "position": "before NAM",
+      "settings": {
+        "attackMs": 0.25,
+        "closeThresholdDb": -52.5,
+        "holdMs": 35.0,
+        "hysteresisDb": 4.0,
+        "keyHighPassHz": 120.0,
+        "keyedOn": "DI (guitar signal before any pedal/amp)",
+        "mode": "expander",
+        "rangeDb": -60.0,
+        "ratio": 3.5,
+        "releaseCurve": "linear-db",
+        "releaseMs": 90.0,
+        "thresholdDb": -48.5
+      },
+      "stage": "gate"
+    },
+    {
+      "hardware": "Load the cab IR: two mic IRs mixed into one, 70% A + 30% B (A = SM57 cap (file ir_a.wav; by @someone; cc-by-nc; tone3000 id 31); B = R121 edge (file ir_b.wav; by @other; cc-by; tone3000 id 32)). Easiest: load the exported irmix-nocab.ir.wav instead; it already holds this cab (and the post EQ) as one IR, mono 48 kHz 32-bit float, loaded WITHOUT loudness normalisation.",
+      "inModel": false,
+      "position": "after NAM",
+      "settings": {
+        "cabMode": "irMix",
+        "exportedIr": "irmix-nocab.ir.wav",
+        "irA": {
+          "creator": "@someone",
+          "file": "ir_a.wav",
+          "license": "cc-by-nc",
+          "provider": "tone3000",
+          "title": "SM57 cap",
+          "toneId": "31"
+        },
+        "irB": {
+          "creator": "@other",
+          "file": "ir_b.wav",
+          "license": "cc-by",
+          "provider": "tone3000",
+          "title": "R121 edge",
+          "toneId": "32"
+        },
+        "mix": 0.3,
+        "normalize": true
+      },
+      "stage": "cab"
+    },
+    {
+      "hardware": "Post EQ after the cab: high shelf 6000 Hz, -1.2 dB, Q 0.5. Already folded into the exported IR (irmix-nocab.ir.wav); add it again only if you do not use that IR.",
+      "inModel": false,
+      "position": "after NAM",
+      "settings": {
+        "bands": [
+          {
+            "freqHz": 6000.0,
+            "gainDb": -1.25,
+            "q": 0.5,
+            "type": "highShelf"
+          }
+        ],
+        "foldedIntoExportedIr": true
+      },
+      "stage": "postEq"
+    }
+  ],
+  "version": 1
+}

@@ -1,0 +1,29 @@
+{
+  "name": "footswitch",
+  "file": "footswitch.png",
+  "frame_width": 128,
+  "frame_height": 128,
+  "frames": 2,
+  "layout": "vertical",
+  "sheet_width": 128,
+  "sheet_height": 256,
+  "pivot_px": [
+    64.0,
+    64.0
+  ],
+  "mm_per_px": 0.3125,
+  "frame_mm": 40.0,
+  "view": "top-down orthographic",
+  "background": "transparent (straight RGBA)",
+  "baked_shadow": false,
+  "supersample": 2,
+  "samples": 16,
+  "blender": "bpy 4.2.0 / Cycles CPU",
+  "type": "momentary",
+  "states": [
+    "up",
+    "down"
+  ],
+  "pressed_depth_mm": 2.4,
+  "note": "cap travels 2.4 mm below the collar rim; in ortho the difference is shading only"
+}

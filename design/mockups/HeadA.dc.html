@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direction A: two-channel head</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&amp;family=Barlow+Condensed:wght@600;700&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#070707}
+.kw{display:flex;flex-direction:column;align-items:center;gap:8px}
+.kn{position:relative;border-radius:50%;background:repeating-conic-gradient(#1b1b1b 0 5deg,#3a3a3a 5deg 10deg);box-shadow:0 10px 14px rgba(0,0,0,.6),0 2px 3px rgba(0,0,0,.7)}
+.kc{position:absolute;inset:14%;border-radius:50%;background:radial-gradient(circle at 36% 28%,#8c8c8c 0,#3a3a3a 38%,#121212 78%);box-shadow:inset 0 1px 1px rgba(255,255,255,.35),inset 0 -3px 6px rgba(0,0,0,.6)}
+.kp{position:absolute;inset:0}
+.kp i{position:absolute;left:50%;top:10%;width:3px;height:30%;margin-left:-1.5px;border-radius:2px;background:#f4efe6;box-shadow:0 0 3px rgba(0,0,0,.6)}
+.tk{position:absolute;inset:-10px;border-radius:50%;background:repeating-conic-gradient(from -135deg,currentColor 0 1.6deg,transparent 1.6deg 27deg);-webkit-mask:radial-gradient(circle,transparent 63%,#000 64%,#000 71%,transparent 72%);mask:radial-gradient(circle,transparent 63%,#000 64%,#000 71%,transparent 72%)}
+.kl{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:.14em}
+.lcd{background:linear-gradient(180deg,#160c02,#241303);color:#ffb347;font-family:'Share Tech Mono',monospace;font-size:14px;text-shadow:0 0 6px rgba(255,170,60,.65);border-radius:5px;padding:7px 10px;box-shadow:inset 0 2px 6px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.18);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.screw{position:absolute;width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#f2f2f2,#8f8f8f 60%,#4a4a4a);box-shadow:0 1px 2px rgba(0,0,0,.6)}
+.screw::after{content:"";position:absolute;left:2px;right:2px;top:6px;height:2px;background:#3a3a3a;transform:rotate(35deg)}
+.jewel{width:16px;height:16px;border-radius:50%;border:3px solid #c9c9c9;box-shadow:0 0 14px var(--c),inset 0 -2px 3px rgba(0,0,0,.45);background:radial-gradient(circle at 35% 32%,#fff 0 10%,var(--c) 35%,#1a0000 90%)}
+.btn{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.12em;color:#151515;background:linear-gradient(#f3f3f3,#bdbdbd);border:1px solid #6f6f6f;border-radius:4px;box-shadow:0 3px 0 #555,0 5px 8px rgba(0,0,0,.5);padding:0 10px;height:30px;min-width:34px}
+</style>
+</helmet>
+<div style="width:1200px;height:760px;box-sizing:border-box;padding:28px;background:radial-gradient(ellipse at 50% 20%,#1c1c1c,#070707 70%);font-family:'Barlow Condensed',sans-serif">
+ <div style="position:relative;height:704px;border-radius:20px;padding:22px 26px;box-sizing:border-box;background:repeating-linear-gradient(45deg,#121212 0 2px,#1b1b1b 2px 3px),#141414;box-shadow:0 30px 60px rgba(0,0,0,.8),inset 0 0 0 3px #0b0b0b,inset 0 0 0 5px #3a3a3a;display:flex;flex-direction:column;gap:18px">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;height:84px">
+   <div style="display:flex;gap:10px;align-items:center">
+    <span class="jewel" style="--c:#ff3b2f"></span><span class="kl" style="color:#9a9a9a">GATE</span>
+   </div>
+   <div style="display:flex;align-items:center;gap:16px;padding:10px 28px;border-radius:10px;background:linear-gradient(180deg,#e9e9e9,#9a9a9a);box-shadow:0 4px 10px rgba(0,0,0,.7),inset 0 1px 0 #fff">
+    <svg width="52" height="52" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="9" fill="#141414"></circle><path d="M26 2l5 9h-10zM50 26l-9 5v-10zM26 50l-5-9h10zM2 26l9-5v10zM43 9l-3 10-7-7zM43 43l-10-3 7-7zM9 43l3-10 7 7zM9 9l10 3-7 7z" fill="#141414"></path><circle cx="26" cy="26" r="3" fill="#bdbdbd"></circle></svg>
+    <span style="font-family:'Big Shoulders Display',sans-serif;font-weight:900;font-size:58px;letter-spacing:.16em;color:#141414;text-shadow:0 1px 0 rgba(255,255,255,.6);line-height:1">SAWBLADE</span>
+   </div>
+   <div style="display:flex;gap:10px;align-items:center">
+    <span class="kl" style="color:#9a9a9a">{{modeLabel}}</span><span class="jewel" style="--c:{{modeColor}}"></span>
+   </div>
+  </div>
+
+  <div style="position:relative;height:340px;border-radius:12px;padding:20px;box-sizing:border-box;background:repeating-linear-gradient(90deg,rgba(255,255,255,.07) 0 1px,rgba(0,0,0,.05) 1px 2px),linear-gradient(180deg,#dcdee1,#a7abb0);box-shadow:inset 0 1px 0 #fff,inset 0 -2px 4px rgba(0,0,0,.35),0 6px 14px rgba(0,0,0,.7);display:flex;gap:18px">
+   <span class="screw" style="left:8px;top:8px"></span><span class="screw" style="right:8px;top:8px"></span><span class="screw" style="left:8px;bottom:8px"></span><span class="screw" style="right:8px;bottom:8px"></span>
+
+   <div style="flex:1;border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:14px;color:#fff6ea;background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.14) 0 1px,transparent 2px) 0 0/9px 9px,radial-gradient(circle at 70% 60%,rgba(0,0,0,.14) 0 1px,transparent 2px) 0 0/11px 11px,linear-gradient(160deg,{{sawLight}},{{saw}} 55%,{{sawDark}});box-shadow:inset 0 2px 3px rgba(255,255,255,.35),inset 0 -3px 6px rgba(0,0,0,.35),0 3px 8px rgba(0,0,0,.45)">
+    <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-family:'Big Shoulders Display',sans-serif;font-weight:900;font-size:34px;letter-spacing:.2em;text-shadow:0 2px 0 rgba(0,0,0,.25)">SAW</span><span class="kl">CHANNEL A</span></div>
+    <sc-for list="{{sawSlots}}" as="s" hint-placeholder-count="2">
+     <div style="display:flex;align-items:center;gap:8px"><span class="kl" style="width:52px">{{s.slot}}</span><button class="btn" aria-label="Previous capture">‹</button><div class="lcd" style="flex:1">{{s.name}}</div><button class="btn" aria-label="Next capture">›</button></div>
+    </sc-for>
+    <div style="display:flex;justify-content:space-between;margin-top:6px">
+     <sc-for list="{{sawKnobs}}" as="k" hint-placeholder-count="5">
+      <div class="kw"><div class="kn" style="width:54px;height:54px"><span class="tk" style="color:rgba(255,246,234,.8)"></span><div class="kc"></div><div class="kp" style="transform:rotate({{k.a}}deg)"><i></i></div></div><span class="kl">{{k.l}}</span></div>
+     </sc-for>
+    </div>
+   </div>
+
+   <div style="width:190px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#1a1a1a">
+    <span class="kl" style="font-size:15px">BLEND</span>
+    <div style="display:flex;align-items:center;gap:8px"><span class="kl" style="color:{{saw}}">SAW</span>
+     <div class="kn" style="width:130px;height:130px"><span class="tk" style="color:#1a1a1a;inset:-14px"></span><div class="kc" style="inset:12%;background:radial-gradient(circle at 36% 28%,#f5f5f5 0,#b9bcc0 40%,#6d7076 80%)"></div><div class="kp" style="transform:rotate({{blendAngle}}deg)"><i style="background:#c0301c;height:34%;width:5px;margin-left:-2.5px"></i></div></div>
+     <span class="kl" style="color:#2b3136">BODY</span></div>
+    <div class="lcd" style="font-size:13px">{{blendText}}</div>
+    <div style="display:flex;gap:8px"><button class="btn">ALIGN</button><button class="btn">Ø B</button></div>
+    <span class="kl" style="color:#3a3a3a;font-size:12px">Δ −0.48 ms · NORMAL</span>
+   </div>
+
+   <div style="flex:1;border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:14px;color:#e8ecf0;background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.08) 0 1px,transparent 2px) 0 0/9px 9px,linear-gradient(160deg,#454950,#262a2f 55%,#15171a);box-shadow:inset 0 2px 3px rgba(255,255,255,.18),inset 0 -3px 6px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.45)">
+    <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-family:'Big Shoulders Display',sans-serif;font-weight:900;font-size:34px;letter-spacing:.2em">BODY</span><span class="kl">CHANNEL B</span></div>
+    <sc-for list="{{bodySlots}}" as="s" hint-placeholder-count="2">
+     <div style="display:flex;align-items:center;gap:8px"><span class="kl" style="width:52px">{{s.slot}}</span><button class="btn" aria-label="Previous capture">‹</button><div class="lcd" style="flex:1">{{s.name}}</div><button class="btn" aria-label="Next capture">›</button></div>
+    </sc-for>
+    <div style="display:flex;justify-content:space-between;margin-top:6px">
+     <sc-for list="{{bodyKnobs}}" as="k" hint-placeholder-count="5">
+      <div class="kw"><div class="kn" style="width:54px;height:54px"><span class="tk" style="color:rgba(232,236,240,.75)"></span><div class="kc"></div><div class="kp" style="transform:rotate({{k.a}}deg)"><i></i></div></div><span class="kl">{{k.l}}</span></div>
+     </sc-for>
+    </div>
+   </div>
+  </div>
+
+  <div style="flex:1;display:flex;gap:22px;align-items:center;padding:0 8px">
+   <sc-for list="{{masterKnobs}}" as="k" hint-placeholder-count="4">
+    <div class="kw" style="color:#cfcfcf"><div class="kn" style="width:58px;height:58px"><span class="tk" style="color:#8a8a8a"></span><div class="kc"></div><div class="kp" style="transform:rotate({{k.a}}deg)"><i></i></div></div><span class="kl">{{k.l}}</span></div>
+   </sc-for>
+   <div style="display:flex;flex-direction:column;gap:8px;flex:1;min-width:0">
+    <span class="kl" style="color:#9a9a9a">CAB · {{cabMode}}</span>
+    <div style="display:flex;align-items:center;gap:8px"><button class="btn" aria-label="Previous cab">‹</button><div class="lcd" style="flex:1">V30 MESA 4x12 · SM57 0.5in</div><button class="btn" aria-label="Next cab">›</button></div>
+   </div>
+   <div style="position:relative;width:170px;height:112px;border-radius:8px;background:linear-gradient(#f6eed8,#e5d9b8);box-shadow:inset 0 3px 10px rgba(0,0,0,.45),0 0 0 4px #2a2a2a,0 0 0 6px #6a6a6a;overflow:hidden">
+    <svg width="170" height="112" viewBox="0 0 170 112" aria-hidden="true"><path d="M25 82 A70 70 0 0 1 145 82" fill="none" stroke="#2a2a2a" stroke-width="2"></path><path d="M120 46 A70 70 0 0 1 145 82" fill="none" stroke="#c0301c" stroke-width="5"></path><text x="85" y="62" text-anchor="middle" font-family="Barlow Condensed" font-weight="700" font-size="13" fill="#2a2a2a" letter-spacing="2">VU</text><line x1="85" y1="104" x2="{{needleX}}" y2="{{needleY}}" stroke="#141414" stroke-width="2"></line><circle cx="85" cy="104" r="6" fill="#141414"></circle></svg>
+   </div>
+  </div>
+ </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"sawEnamel":{"editor":"color","options":["#e8641a","#c9361e","#e0a020","#2f8f6e"],"default":"#e8641a"},"blend":{"editor":"range","min":0,"max":100,"step":1,"default":55,"unit":"%"},"cabMode":{"editor":"enum","options":["shared","perPath"],"default":"shared"},"$preview":{"width":1200,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const hex = this.props.sawEnamel ?? '#e8641a';
+    const sh = (h, f) => { const n = parseInt(h.slice(1), 16); const c = [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.max(0, Math.min(255, Math.round(v * f)))); return '#' + c.map(v => v.toString(16).padStart(2, '0')).join(''); };
+    const ang = (p) => -135 + 270 * p;
+    const blend = this.props.blend ?? 55;
+    const shared = (this.props.cabMode ?? 'shared') === 'shared';
+    const needle = 0.72;
+    const th = Math.PI * (1 - needle) * 0.62 + Math.PI * 0.19;
+    return {
+      saw: hex, sawLight: sh(hex, 1.18), sawDark: sh(hex, 0.62),
+      blendAngle: ang(blend / 100),
+      blendText: (100 - blend) + ' SAW / ' + blend + ' BODY',
+      modeLabel: shared ? 'LIVE' : 'STUDIO', modeColor: shared ? '#38e07a' : '#ffb020',
+      cabMode: shared ? 'SHARED' : 'PER PATH',
+      needleX: (85 + 78 * Math.cos(th)).toFixed(1), needleY: (104 - 78 * Math.sin(th)).toFixed(1),
+      sawSlots: [{ slot: 'PEDAL', name: 'HM-2w CHAINSAW · STD' }, { slot: 'AMP', name: 'JCM800 2203 · CRUNCH' }],
+      bodySlots: [{ slot: 'BOOST', name: 'TS808 JAPAN 03 · HOT' }, { slot: 'AMP', name: '5150III IVORY · RED' }],
+      sawKnobs: [['PRE', .45], ['DRIVE', .62], ['LOW', .5], ['MID', .68], ['HIGH', .4], ['LEVEL', .55]].map(([l, p]) => ({ l, a: ang(p) })),
+      bodyKnobs: [['PRE', .5], ['DRIVE', .55], ['LOW', .45], ['MID', .52], ['HIGH', .48], ['LEVEL', .5]].map(([l, p]) => ({ l, a: ang(p) })),
+      masterKnobs: [['GATE', .35], ['RELEASE', .45], ['TONE', .5], ['COMP', .3], ['OUTPUT', .62]].map(([l, p]) => ({ l, a: ang(p) }))
+    };
+  }
+}
+</script>
+</body>
+</html>

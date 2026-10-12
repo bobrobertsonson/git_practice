@@ -1,0 +1,62 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Sunlight All Tens",
+  "notes": "All-tens Swedish buzzsaw on the calibrated model: the early-90s Stockholm studio sound, everything maxed, drive range from saturated. Into a low-gain British-style amp (TONE3000 86089). Calibrated voicing (pedal.hm modelVersion 3, fitted to real captures in phase 7.1). Modeled pedal, no capture; the cab slot is the repo identity IR. Starting hypothesis, not a tuned tone.",
+  "category": "Swedish death (HM-2)",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 3,
+          "params": {
+            "level": 0.0,
+            "low": 10,
+            "high": 10,
+            "distortion": 10,
+            "tightness": 0,
+            "mix": 100,
+            "mode": "stock",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 0.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 4800,
+            "presenceDb": 8,
+            "rolloffHz": 16000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0,
+            "customLowDb": 3.2,
+            "customHighDb": 3.0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "gainDb": -4.0,
+    "autoTrimDb": -9.51,
+    "autoTrimHash": "24bbeb798110bda2aa350cebd3ecde62ec0bb2dbe6c27045ec316ffd341a90e7"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Classic Buzzsaw",
+  "category": "Swedish death (HM-2)",
+  "notes": "All-tens Swedish buzzsaw: the early-90s Stockholm studio sound (Entombed, Dismember). Everything maxed, low output because the colour-mix EQ is a big boost. Add a nam amp block on the main machine: a low-gain British-style amp (JCM800 2203 @sarcobe, tone 86089) with a V30 cab (45023). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 2,
+          "params": {
+            "level": 1.76,
+            "low": 10,
+            "high": 10,
+            "distortion": 10,
+            "tightness": 0,
+            "mix": 100,
+            "mode": "stock",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 0.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 4800,
+            "presenceDb": 8,
+            "rolloffHz": 9000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -6.658,
+    "autoTrimHash": "85e011d0dd068e5732feef66bd814c3debb60313dc54f7cba0b16af1a91825ca"
+  }
+}

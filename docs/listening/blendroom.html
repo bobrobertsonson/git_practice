@@ -1,0 +1,153 @@
+<title>Sawblade Blend Room</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&family=Barlow+Condensed:wght@500;600;700&family=Share+Tech+Mono&display=swap">
+<style>
+/* Layout: one transport, three faders. A mixer strip, not a playlist. */
+:root{
+  --bg:#0d0c0a; --panel:#171512; --line:#2c2823; --fg:#ece5d6; --muted:#a59c8b; --saw:#ff6a1a; --ok:#7fd13b; --di:#8fb8e6;
+  --display:'Allerta Stencil','Arial Narrow',sans-serif;
+  --body:'Barlow Condensed','Arial Narrow',system-ui,sans-serif;
+  --mono:'Share Tech Mono',ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.4}
+.wrap{max-width:720px;margin:0 auto;padding-inline:16px;padding-block:28px 56px;display:flex;flex-direction:column;gap:22px}
+h1{font-family:var(--display);font-weight:400;font-size:32px;letter-spacing:.06em;color:var(--saw);margin:0;transform:rotate(-1deg)}
+p{margin:0}.muted{color:var(--muted)}
+select,button{font-family:var(--body);font-weight:700;font-size:15px;letter-spacing:.06em;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:4px;height:40px;padding:0 12px}
+button.play{background:var(--saw);color:#140a04;border-color:var(--saw);min-width:96px}
+button:disabled{opacity:.45}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.strip{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.fader{display:grid;grid-template-columns:150px 1fr 58px;gap:10px;align-items:center}
+.fader label{font-weight:700;letter-spacing:.08em}
+.fader input[type=range]{width:100%;min-width:0}
+.fader .v{font-family:var(--mono);font-size:13px;color:var(--muted);text-align:right}
+.seek{display:grid;grid-template-columns:1fr 110px;gap:10px;align-items:center}
+.seek input{width:100%;min-width:0}.seek .t{font-family:var(--mono);font-size:13px;color:var(--muted);text-align:right}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:12px;font-weight:700;letter-spacing:.1em;padding:4px 8px;border-radius:3px;background:#221f1b;color:#cfc6b4;cursor:pointer;border:1px solid transparent}
+.chip:hover{border-color:var(--line)}
+.note{color:var(--muted);font-size:15px}
+.status{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--saw);margin-right:6px;vertical-align:middle}
+.dot.di{background:var(--di)}.dot.ok{background:var(--ok)}
+.hint{background:var(--panel);border-left:3px solid var(--saw);padding:10px 14px;color:var(--fg)}
+input[type=range]{accent-color:var(--saw)}
+</style>
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:8px">
+    <h1>SAWBLADE · BLEND ROOM</h1>
+    <p class="muted">Backing with no guitar at all, and two guitar faders you can blend in: the DI through Sawblade, and the dry DI. All three play in sync.</p>
+  </header>
+
+  <div class="strip">
+    <div class="row">
+      <label for="song" style="font-weight:700;letter-spacing:.08em">SONG</label>
+      <select id="song" aria-label="Song"></select>
+      <button id="play" class="play" disabled>LOAD</button>
+    </div>
+    <p id="meta" class="note"></p>
+    <div class="seek"><input id="seek" type="range" min="0" max="1000" value="0" aria-label="Position" disabled><span class="t" id="time">0:00 / 0:00</span></div>
+    <div class="fader"><label for="fB"><span class="dot ok"></span>BACKING</label><input id="fB" type="range" min="0" max="100" value="100" aria-label="Backing level"><span class="v" id="vB">0 dB</span></div>
+    <div class="fader"><label for="fG"><span class="dot"></span>SAWBLADE GUITAR</label><input id="fG" type="range" min="0" max="100" value="0" aria-label="Sawblade guitar level"><span class="v" id="vG">off</span></div>
+    <div class="fader"><label for="fD"><span class="dot di"></span>DRY DI</label><input id="fD" type="range" min="0" max="100" value="0" aria-label="Dry DI level"><span class="v" id="vD">off</span></div>
+    <div class="chips" aria-label="Quick mixes">
+      <span class="chip" data-mix="100,0,0">BACKING ONLY</span>
+      <span class="chip" data-mix="100,80,0">IN THE BAND</span>
+      <span class="chip" data-mix="0,100,0">GUITAR ALONE</span>
+      <span class="chip" data-mix="0,0,100">DI ALONE</span>
+      <span class="chip" data-mix="100,0,70">DI IN THE BAND</span>
+    </div>
+    <p class="status" id="status">Pick a song, then LOAD. Tracks stream, so long songs start in a few seconds.</p>
+  </div>
+
+  <p class="hint">For Gatecreeper the backing is the cover's own drums, bass and vocals. For the other songs there was no mix, so the backing is the bass DI through an amp plus the drum MIDI through a sampled kit; it's rougher, and real backings go in when you send the original songs.</p>
+</div>
+<script>
+/* Streamed playback: three <audio> elements through one Web Audio mixer. No decodeAudioData —
+   a 6-minute song would otherwise need ~400 MB of RAM, which phones refuse. */
+(function(){
+  const $=id=>document.getElementById(id);
+  const songSel=$('song'), playBtn=$('play'), seek=$('seek'), timeEl=$('time'), meta=$('meta'), status=$('status');
+  const faders={B:$('fB'),G:$('fG'),D:$('fD')}, vals={B:$('vB'),G:$('vG'),D:$('vD')};
+  const names={B:'backing',G:'guitar',D:'di'};
+  let ctx=null, els=null, gains=null, playing=false, dur=0, raf=0, manifest=[], seeking=false;
+  const dB=v=>v<=0?'off':(20*Math.log10(v/100)).toFixed(0)+' dB';
+  const fmt=s=>{s=Math.max(0,s|0);return (s/60|0)+':'+String(s%60).padStart(2,'0')};
+  function gainOf(k){const v=+faders[k].value;return v<=0?0:Math.pow(v/100,1.6)}
+  function applyGains(){ if(!gains)return; for(const k in gains){gains[k].gain.setTargetAtTime(gainOf(k),ctx.currentTime,0.02)} }
+  for(const k in faders){ faders[k].addEventListener('input',()=>{vals[k].textContent=dB(+faders[k].value);applyGains()}); }
+  document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{const [b,g,d]=c.dataset.mix.split(',');faders.B.value=b;faders.G.value=g;faders.D.value=d;for(const k in faders)vals[k].textContent=dB(+faders[k].value);applyGains();}));
+  function teardown(){ cancelAnimationFrame(raf); playing=false; if(els){for(const k in els){try{els[k].pause();els[k].removeAttribute('src');els[k].load();}catch(e){}}} els=null; gains=null; }
+  function load(){
+    const s=manifest[songSel.selectedIndex]; if(!s)return;
+    teardown(); playBtn.disabled=true; status.textContent='Buffering '+s.title+' …';
+    try{
+      ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();
+      if(ctx.state==='suspended')ctx.resume();
+      els={}; gains={}; let ready=0;
+      for(const k in names){
+        const a=new Audio(); a.preload='auto'; a.src=s.key+'/'+names[k]+'.mp3';
+        const src=ctx.createMediaElementSource(a); const g=ctx.createGain(); g.gain.value=gainOf(k); src.connect(g).connect(ctx.destination);
+        els[k]=a; gains[k]=g;
+        a.addEventListener('error',()=>{ status.textContent='Could not load '+names[k]+'.mp3 for this song.'; playBtn.textContent='LOAD'; playBtn.disabled=false; playBtn.onclick=load; });
+        a.addEventListener('loadedmetadata',()=>{ dur=Math.max(dur,a.duration||0); timeEl.textContent='0:00 / '+fmt(dur); });
+        a.addEventListener('canplay',()=>{ if(++ready===3){ status.textContent='Ready.'; playBtn.textContent='PLAY'; playBtn.disabled=false; playBtn.onclick=toggle; seek.disabled=false; } },{once:true});
+        a.load();
+      }
+      dur=0; seek.value=0;
+      meta.textContent=s.artist+' · '+s.style+' · guitar: '+(s.guitarPreset||'')+(s.notes?' · '+s.notes:'');
+      els.B.addEventListener('ended',()=>{ pause(); for(const k in els)els[k].currentTime=0; seek.value=0; });
+    }catch(e){ status.textContent='Could not start: '+e.message; playBtn.textContent='LOAD'; playBtn.disabled=false; playBtn.onclick=load; }
+  }
+  function resync(){ if(!els)return; const t=els.B.currentTime; for(const k of ['G','D']){ if(Math.abs(els[k].currentTime-t)>0.06) els[k].currentTime=t; } }
+  async function play(){ if(!els)return; if(ctx.state==='suspended')await ctx.resume(); resync(); await Promise.all(Object.values(els).map(a=>a.play().catch(()=>{}))); playing=true; playBtn.textContent='PAUSE'; tick(); }
+  function pause(){ if(!els)return; for(const k in els)els[k].pause(); playing=false; cancelAnimationFrame(raf); playBtn.textContent='PLAY'; }
+  function toggle(){ playing?pause():play(); }
+  function tick(){ if(!playing)return; const p=els.B.currentTime; if(!seeking){seek.value=dur?Math.min(1000,p/dur*1000):0; timeEl.textContent=fmt(p)+' / '+fmt(dur);} if((p*4|0)%8===0)resync(); raf=requestAnimationFrame(tick); }
+  seek.addEventListener('input',()=>{ seeking=true; const p=seek.value/1000*dur; timeEl.textContent=fmt(p)+' / '+fmt(dur); });
+  seek.addEventListener('change',()=>{ seeking=false; if(!els)return; const p=seek.value/1000*dur; for(const k in els)els[k].currentTime=p; });
+  songSel.addEventListener('change',()=>{ teardown(); seek.disabled=true; seek.value=0; playBtn.textContent='LOAD'; playBtn.onclick=load; meta.textContent=''; status.textContent='Press LOAD.'; timeEl.textContent='0:00 / 0:00'; });
+  fetch('manifest.json').then(r=>r.json()).then(m=>{ manifest=m.songs||m; manifest.forEach(s=>{const o=document.createElement('option');o.textContent=s.artist+' · '+s.title;songSel.appendChild(o)}); playBtn.disabled=false; playBtn.onclick=load; }).catch(()=>{ status.textContent='No songs published yet.'; });
+})();
+</script>
+<script>
+/* previous in-memory player, disabled */
+(function(){ return;
+  const $=id=>document.getElementById(id);
+  const songSel=$('song'), playBtn=$('play'), seek=$('seek'), timeEl=$('time'), meta=$('meta'), status=$('status');
+  const faders={B:$('fB'),G:$('fG'),D:$('fD')}, vals={B:$('vB'),G:$('vG'),D:$('vD')};
+  let ctx=null, buffers=null, gains=null, sources=null, startAt=0, offset=0, playing=false, dur=0, raf=0, manifest=[];
+  const dB=v=>v<=0?'off':(20*Math.log10(v/100)).toFixed(0)+' dB';
+  const fmt=s=>{s=Math.max(0,s|0);return (s/60|0)+':'+String(s%60).padStart(2,'0')};
+  function gainOf(k){const v=+faders[k].value;return v<=0?0:Math.pow(v/100,1.6)}
+  function applyGains(){ if(!gains)return; for(const k in gains){gains[k].gain.setTargetAtTime(gainOf(k),ctx.currentTime,0.02)} }
+  for(const k in faders){ faders[k].addEventListener('input',()=>{vals[k].textContent=dB(+faders[k].value);applyGains()}); }
+  document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{const [b,g,d]=c.dataset.mix.split(',');faders.B.value=b;faders.G.value=g;faders.D.value=d;for(const k in faders)vals[k].textContent=dB(+faders[k].value);applyGains();}));
+  async function load(){
+    const s=manifest[songSel.selectedIndex]; if(!s)return;
+    stop(); playBtn.disabled=true; status.textContent='Loading '+s.title+' …';
+    try{
+      ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();
+      const names={B:'backing',G:'guitar',D:'di'}; buffers={};
+      for(const k in names){ const r=await fetch(s.key+'/'+names[k]+'.mp3'); if(!r.ok)throw new Error(names[k]+' missing'); buffers[k]=await ctx.decodeAudioData(await r.arrayBuffer()); status.textContent='Decoded '+names[k]; }
+      dur=Math.max(...Object.values(buffers).map(b=>b.duration)); offset=0; seek.disabled=false; seek.value=0;
+      meta.textContent=s.artist+' · '+s.style+' · guitar: '+(s.guitarPreset||'')+(s.notes?' · '+s.notes:'');
+      status.textContent='Ready.'; playBtn.textContent='PLAY'; playBtn.disabled=false; playBtn.onclick=toggle;
+    }catch(e){ status.textContent='Could not load: '+e.message; playBtn.textContent='LOAD'; playBtn.disabled=false; playBtn.onclick=load; }
+  }
+  function start(from){
+    if(!buffers)return; sources={}; gains={};
+    for(const k in buffers){ const src=ctx.createBufferSource(); src.buffer=buffers[k]; const g=ctx.createGain(); g.gain.value=gainOf(k); src.connect(g).connect(ctx.destination); sources[k]=src; gains[k]=g; }
+    const t=ctx.currentTime+0.05; for(const k in sources) sources[k].start(t,from); startAt=t-from; playing=true; playBtn.textContent='PAUSE'; tick();
+    sources.B.onended=()=>{ if(playing && ctx.currentTime-startAt>=dur-0.1){ stop(); offset=0; seek.value=0; } };
+  }
+  function stop(){ if(sources){for(const k in sources){try{sources[k].stop()}catch(e){}}} sources=null; gains=null; playing=false; cancelAnimationFrame(raf); if(playBtn.textContent==='PAUSE')playBtn.textContent='PLAY'; }
+  function toggle(){ if(ctx&&ctx.state==='suspended')ctx.resume(); if(playing){ offset=ctx.currentTime-startAt; stop(); } else { start(offset); } }
+  function tick(){ if(!playing)return; const p=ctx.currentTime-startAt; seek.value=Math.min(1000,p/dur*1000); timeEl.textContent=fmt(p)+' / '+fmt(dur); raf=requestAnimationFrame(tick); }
+  seek.addEventListener('input',()=>{ const p=seek.value/1000*dur; timeEl.textContent=fmt(p)+' / '+fmt(dur); });
+  seek.addEventListener('change',()=>{ const p=seek.value/1000*dur; const was=playing; stop(); offset=p; if(was)start(p); });
+  songSel.addEventListener('change',()=>{ stop(); buffers=null; seek.disabled=true; playBtn.textContent='LOAD'; playBtn.onclick=load; meta.textContent=''; status.textContent='Press LOAD.'; });
+  fetch('manifest.json').then(r=>r.json()).then(m=>{ manifest=m.songs||m; manifest.forEach(s=>{const o=document.createElement('option');o.textContent=s.artist+' · '+s.title;songSel.appendChild(o)}); playBtn.disabled=false; playBtn.onclick=load; }).catch(()=>{ status.textContent='No songs published yet.'; });
+})();
+</script>

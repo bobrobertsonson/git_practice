@@ -1,0 +1,28 @@
+{
+  "name": "led_orange",
+  "file": "led_orange.png",
+  "frame_width": 64,
+  "frame_height": 64,
+  "frames": 2,
+  "layout": "vertical",
+  "sheet_width": 64,
+  "sheet_height": 128,
+  "pivot_px": [
+    32.0,
+    32.0
+  ],
+  "mm_per_px": 0.3125,
+  "frame_mm": 20.0,
+  "view": "top-down orthographic",
+  "background": "transparent (straight RGBA)",
+  "baked_shadow": false,
+  "supersample": 2,
+  "samples": 16,
+  "blender": "bpy 4.2.0 / Cycles CPU",
+  "type": "led",
+  "states": [
+    "off",
+    "on"
+  ],
+  "colour": "orange"
+}

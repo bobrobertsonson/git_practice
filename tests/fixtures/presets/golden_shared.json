@@ -1,0 +1,36 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Golden shared (live-compatible)",
+  "notes": "Golden-render preset: only in-repo fixtures. Gate, two NAM blocks on A, Linear boost + WaveNet on B, auto align, shared cab ir_a, post EQ, bus comp.",
+  "gate": { "enabled": true, "thresholdDb": -55.0, "hysteresisDb": 6.0, "attackMs": 0.5, "holdMs": 20.0, "releaseMs": 60.0, "rangeDb": -90.0 },
+  "paths": {
+    "a": {
+      "role": "saw",
+      "preEq": [ { "type": "highPass", "freq": 90, "q": 0.707 } ],
+      "blocks": [
+        { "id": "a1", "type": "nam", "slot": "pedal", "model": { "file": "../nam/wavenet.nam" } },
+        { "id": "a2", "type": "nam", "slot": "amp",   "model": { "file": "../nam/lstm.nam" }, "normalizeLoudness": true }
+      ],
+      "eq": [ { "type": "lowPass", "freq": 7000, "q": 0.707 } ],
+      "levelDb": -3.0
+    },
+    "b": {
+      "role": "body",
+      "blocks": [
+        { "id": "b1", "type": "nam", "slot": "boost", "model": { "file": "../nam/linear_identity.nam" }, "outputGainDb": 6.0 },
+        { "id": "b2", "type": "nam", "slot": "amp",   "model": { "file": "../nam/wavenet.nam" }, "normalizeLoudness": true }
+      ],
+      "eq": [ { "type": "peak", "freq": 1600, "gainDb": -2.0, "q": 1.5 } ]
+    }
+  },
+  "align": { "mode": "auto", "maxLagMs": 5.0 },
+  "blend": 0.55,
+  "cab": { "mode": "shared", "ir": { "file": "../ir/ir_a.wav" } },
+  "postEq": [
+    { "type": "highPass", "freq": 70, "q": 0.707 },
+    { "type": "peak", "freq": 1500, "gainDb": 2.0, "q": 1.2 }
+  ],
+  "busComp": { "enabled": true, "thresholdDb": -18.0, "ratio": 3.0, "kneeDb": 6.0, "attackMs": 10.0, "releaseMs": 100.0, "makeupDb": 2.0 },
+  "output": { "gainDb": -3.0 }
+}

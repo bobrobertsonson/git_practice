@@ -1,0 +1,21 @@
+{
+  "schema": "sawblade.preset",
+  "version": 1,
+  "name": "Chainsaw + Body",
+  "gate": { "enabled": true, "thresholdDb": -55 },
+  "paths": {
+    "a": { "role": "saw",
+           "preEq": [ { "type": "highPass", "freq": 60, "q": 0.707 } ],
+           "blocks": [ { "id": "a1", "type": "nam", "slot": "pedal", "model": { "file": "hm2.nam" } },
+                       { "id": "a2", "type": "nam", "slot": "amp",   "model": { "file": "jcm_lowgain.nam" } } ],
+           "eq": [ { "type": "lowPass", "freq": 8000, "q": 0.707 } ] },
+    "b": { "role": "body",
+           "blocks": [ { "id": "b1", "type": "nam", "slot": "boost", "model": { "file": "ts808.nam" } },
+                       { "id": "b2", "type": "nam", "slot": "amp",   "model": { "file": "5150.nam" } } ] }
+  },
+  "align": { "mode": "auto" },
+  "blend": 0.55,
+  "cab": { "mode": "shared", "ir": { "file": "v30_4x12.wav" } },
+  "postEq": [ { "type": "peak", "freq": 1500, "gainDb": 2, "q": 1.2 } ],
+  "output": { "gainDb": -3 }
+}

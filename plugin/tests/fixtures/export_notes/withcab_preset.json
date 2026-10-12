@@ -1,0 +1,21 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Notes parity: withcab",
+  "paths": {
+    "a": {"role": "saw", "blocks": [
+      {"id": "a1", "type": "nam", "slot": "amp", "model": {"file": "../../../../tests/fixtures/nam/linear_identity.nam"}}]},
+    "b": {"role": "body", "blocks": [
+      {"id": "b1", "type": "nam", "slot": "amp", "model": {"file": "../../../../tests/fixtures/nam/linear_identity.nam"}}]}
+  },
+  "align": {"mode": "off"},
+  "blend": 0.5,
+  "gate": {"enabled": true, "thresholdDb": -55.0, "hysteresisDb": 6.0, "attackMs": 0.5, "holdMs": 20.0, "releaseMs": 60.0,
+           "rangeDb": -90.0, "mode": "gate", "ratio": 4.0, "keyHighPassHz": 0.0, "releaseCurve": "one-pole"},
+  "cab": {"mode": "perPath", "enabled": true, "normalize": true,
+          "irA": {"file": "../../../../tests/fixtures/ir/ir_a.wav"},
+          "irB": {"file": "../../../../tests/fixtures/ir/ir_b.wav"}},
+  "postEq": [],
+  "busComp": {"enabled": true, "thresholdDb": -14.0, "ratio": 2.0, "kneeDb": 6.0, "attackMs": 10.0, "releaseMs": 120.0, "makeupDb": 0.0},
+  "output": {"gainDb": 0.0}
+}

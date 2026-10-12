@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sawblade main window</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&amp;family=Barlow:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0d0e0f}
+a{color:#f07a2a}a:hover{color:#ff9a55}
+</style>
+</helmet>
+<div style="width: 1200px; height: 760px; box-sizing: border-box; background: #121314; color: #e8e6e1; font-family: 'Barlow', sans-serif; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden">
+
+  <!-- Header -->
+  <div style="height: 64px; box-sizing: border-box; padding: 0 20px; display: flex; align-items: center; gap: 16px; background: #0b0c0d; border-bottom: 1px solid #2a2d31">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="#f07a2a" stroke-width="2" aria-hidden="true"><circle cx="14" cy="14" r="5"></circle><path d="M14 2l3 5h-6zM26 14l-5 3v-6zM14 26l-3-5h6zM2 14l5-3v6zM22.5 5.5l-1.6 5.5-3.9-3.9zM22.5 22.5l-5.5-1.6 3.9-3.9zM5.5 22.5l1.6-5.5 3.9 3.9zM5.5 5.5l5.5 1.6-3.9 3.9z"></path></svg>
+      <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 26px; letter-spacing: 0.12em">SAWBLADE</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 4px; margin-left: 24px">
+      <button aria-label="Previous preset" style="width: 44px; height: 40px; background: #1b1d1f; color: #e8e6e1; border: 1px solid #2a2d31; border-radius: 6px 0 0 6px; font-size: 16px">‹</button>
+      <button style="width: 280px; height: 40px; background: #1b1d1f; color: #e8e6e1; border: 1px solid #2a2d31; font-family: 'Barlow', sans-serif; font-size: 15px; font-weight: 500; text-align: left; padding: 0 14px">Chainsaw + Body</button>
+      <button aria-label="Next preset" style="width: 44px; height: 40px; background: #1b1d1f; color: #e8e6e1; border: 1px solid #2a2d31; border-radius: 0 6px 6px 0; font-size: 16px">›</button>
+      <button style="height: 40px; margin-left: 8px; padding: 0 14px; background: transparent; color: #b8bbc0; border: 1px solid #2a2d31; border-radius: 6px; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 15px; letter-spacing: 0.08em">SAVE</button>
+    </div>
+    <div style="flex-grow: 1"></div>
+    <div style="display: flex; flex-direction: column; align-items: flex-end; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #9a9da3">
+      <span>LATENCY 0 smp</span>
+      <span>48.0 kHz</span>
+    </div>
+    <sc-if value="{{shared}}" hint-placeholder-val="{{ true }}">
+      <span style="height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: 14px; background: #16301f; color: #7fdc9a; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.06em">LIVE-COMPATIBLE</span>
+    </sc-if>
+    <sc-if value="{{perPath}}" hint-placeholder-val="{{ false }}">
+      <span style="height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: 14px; background: #3a2a12; color: #ffc067; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.06em">STUDIO BLEND</span>
+    </sc-if>
+    <button style="height: 40px; padding: 0 18px; background: #f07a2a; color: #121314; border: none; border-radius: 6px; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.08em">EXPORT NAM</button>
+  </div>
+
+  <!-- Body -->
+  <div style="flex-grow: 1; display: flex; gap: 12px; padding: 12px; box-sizing: border-box; min-height: 0">
+
+    <!-- Input / gate column -->
+    <div style="width: 150px; display: flex; flex-direction: column; gap: 12px; background: #1b1d1f; border: 1px solid #2a2d31; border-radius: 10px; padding: 14px; box-sizing: border-box">
+      <div style="display: flex; align-items: center; justify-content: space-between">
+        <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 15px; letter-spacing: 0.1em; color: #b8bbc0">INPUT · GATE</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9a9da3">
+        <span style="width: 10px; height: 10px; border-radius: 5px; background: #7fdc9a"></span>
+        <span>Gate open</span>
+      </div>
+      <sc-for list="{{gateKnobs}}" as="k" hint-placeholder-count="4">
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 2px">
+          <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true">
+            <circle cx="28" cy="28" r="22" fill="none" stroke="#2f3236" stroke-width="5" stroke-dasharray="103.7 200" stroke-linecap="round" transform="rotate(135 28 28)"></circle>
+            <circle cx="28" cy="28" r="22" fill="none" stroke="#d6d3cc" stroke-width="5" stroke-dasharray="{{k.dash}}" stroke-linecap="round" transform="rotate(135 28 28)"></circle>
+            <circle cx="28" cy="28" r="14" fill="#25282b"></circle>
+          </svg>
+          <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; color: #b8bbc0">{{k.label}}</span>
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #e8e6e1">{{k.value}}</span>
+        </div>
+      </sc-for>
+      <div style="flex-grow: 1"></div>
+      <div style="font-size: 12px; line-height: 1.35; color: #9a9da3">Keyed on the DI. Never exported into NAM.</div>
+    </div>
+
+    <!-- Paths column -->
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0">
+      <sc-for list="{{paths}}" as="p" hint-placeholder-count="2">
+        <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 10px; background: #1b1d1f; border: 1px solid #2a2d31; border-radius: 10px; padding: 12px 14px; box-sizing: border-box; border-top: 3px solid {{p.color}}">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px; letter-spacing: 0.1em; color: {{p.color}}">{{p.name}}</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #9a9da3">{{p.id}}</span>
+            <div style="flex-grow: 1"></div>
+            <button style="height: 32px; padding: 0 10px; background: transparent; color: #b8bbc0; border: 1px solid #2a2d31; border-radius: 6px; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em">Ø INVERT</button>
+            <button style="height: 32px; padding: 0 10px; background: transparent; color: #b8bbc0; border: 1px solid #2a2d31; border-radius: 6px; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em">SOLO</button>
+            <button style="height: 32px; padding: 0 10px; background: #25282b; color: #e8e6e1; border: 1px solid #3a3e43; border-radius: 6px; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em">ON</button>
+          </div>
+          <div style="flex-grow: 1; display: flex; align-items: stretch; gap: 8px">
+            <!-- pre EQ -->
+            <div style="width: 110px; display: flex; flex-direction: column; gap: 6px; background: #151618; border: 1px solid #2a2d31; border-radius: 8px; padding: 8px; box-sizing: border-box">
+              <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.1em; color: #9a9da3">PRE-EQ</span>
+              <svg width="92" height="54" viewBox="0 0 92 54" aria-hidden="true"><path d="M0 27H92" stroke="#2f3236" stroke-width="1"></path><path d="{{p.preCurve}}" fill="none" stroke="{{p.color}}" stroke-width="2"></path></svg>
+            </div>
+            <sc-for list="{{p.stages}}" as="s" hint-placeholder-count="2">
+              <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; background: #151618; border: 1px solid #2a2d31; border-radius: 8px; padding: 8px 10px; box-sizing: border-box">
+                <div style="display: flex; align-items: center; gap: 6px">
+                  <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.1em; color: {{p.color}}">{{s.slot}}</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9a9da3">NAM</span>
+                  <div style="flex-grow: 1"></div>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9a9da3">{{s.gain}}</span>
+                </div>
+                <span style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.name}}</span>
+                <span style="font-size: 12px; color: #9a9da3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.credit}}</span>
+                <div style="flex-grow: 1"></div>
+                <div style="display: flex; gap: 6px">
+                  <button style="flex-grow: 1; height: 28px; background: #25282b; color: #e8e6e1; border: 1px solid #3a3e43; border-radius: 5px; font-size: 12px">Browse TONE3000</button>
+                  <button aria-label="Bypass stage" style="width: 32px; height: 28px; background: transparent; color: #9a9da3; border: 1px solid #3a3e43; border-radius: 5px; font-size: 12px">⏻</button>
+                </div>
+              </div>
+            </sc-for>
+            <!-- path EQ -->
+            <div style="width: 110px; display: flex; flex-direction: column; gap: 6px; background: #151618; border: 1px solid #2a2d31; border-radius: 8px; padding: 8px; box-sizing: border-box">
+              <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.1em; color: #9a9da3">PATH EQ</span>
+              <svg width="92" height="54" viewBox="0 0 92 54" aria-hidden="true"><path d="M0 27H92" stroke="#2f3236" stroke-width="1"></path><path d="{{p.postCurve}}" fill="none" stroke="{{p.color}}" stroke-width="2"></path></svg>
+            </div>
+            <!-- level -->
+            <div style="width: 74px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px">
+              <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true">
+                <circle cx="28" cy="28" r="22" fill="none" stroke="#2f3236" stroke-width="5" stroke-dasharray="103.7 200" stroke-linecap="round" transform="rotate(135 28 28)"></circle>
+                <circle cx="28" cy="28" r="22" fill="none" stroke="{{p.color}}" stroke-width="5" stroke-dasharray="{{p.levelDash}}" stroke-linecap="round" transform="rotate(135 28 28)"></circle>
+                <circle cx="28" cy="28" r="14" fill="#25282b"></circle>
+              </svg>
+              <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; color: #b8bbc0">LEVEL</span>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px">{{p.level}}</span>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- Merge column -->
+    <div style="width: 300px; display: flex; flex-direction: column; gap: 12px">
+      <!-- Align + blend -->
+      <div style="display: flex; flex-direction: column; gap: 10px; background: #1b1d1f; border: 1px solid #2a2d31; border-radius: 10px; padding: 12px 14px; box-sizing: border-box">
+        <div style="display: flex; align-items: center; gap: 8px">
+          <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 15px; letter-spacing: 0.1em; color: #b8bbc0">ALIGN · BLEND</span>
+          <div style="flex-grow: 1"></div>
+          <button style="height: 32px; padding: 0 12px; background: #25282b; color: #e8e6e1; border: 1px solid #3a3e43; border-radius: 6px; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em">AUTO ALIGN</button>
+        </div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #9a9da3">B Δ −0.48 ms · polarity normal · r 0.91</div>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+          <div style="display: flex; flex-direction: column; align-items: center; width: 60px">
+            <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.08em; color: {{sawColor}}">SAW</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">{{sawPct}}%</span>
+          </div>
+          <svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
+            <circle cx="60" cy="60" r="48" fill="none" stroke="#2f3236" stroke-width="9" stroke-dasharray="226.2 400" stroke-linecap="round" transform="rotate(135 60 60)"></circle>
+            <circle cx="60" cy="60" r="48" fill="none" stroke="{{sawColor}}" stroke-width="9" stroke-dasharray="{{blendSawDash}}" stroke-linecap="butt" transform="rotate(135 60 60)"></circle>
+            <circle cx="60" cy="60" r="48" fill="none" stroke="{{bodyColor}}" stroke-width="9" stroke-dasharray="{{blendBodyDash}}" stroke-linecap="butt" transform="{{blendBodyRotate}}"></circle>
+            <circle cx="60" cy="60" r="34" fill="#25282b"></circle>
+            <text x="60" y="66" text-anchor="middle" fill="#e8e6e1" font-family="Barlow Condensed, sans-serif" font-weight="700" font-size="18" letter-spacing="1.5">BLEND</text>
+          </svg>
+          <div style="display: flex; flex-direction: column; align-items: center; width: 60px">
+            <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.08em; color: {{bodyColor}}">BODY</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">{{blend}}%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cab -->
+      <div style="display: flex; flex-direction: column; gap: 8px; background: #1b1d1f; border: 1px solid #2a2d31; border-radius: 10px; padding: 12px 14px; box-sizing: border-box">
+        <div style="display: flex; align-items: center; gap: 8px">
+          <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 15px; letter-spacing: 0.1em; color: #b8bbc0">CAB</span>
+          <div style="flex-grow: 1"></div>
+          <div style="display: flex; border: 1px solid #3a3e43; border-radius: 6px; overflow: hidden">
+            <button style="height: 30px; padding: 0 10px; border: none; background: {{sharedBg}}; color: {{sharedFg}}; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.06em">SHARED</button>
+            <button style="height: 30px; padding: 0 10px; border: none; background: {{perPathBg}}; color: {{perPathFg}}; font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.06em">PER PATH</button>
+          </div>
+        </div>
+        <sc-for list="{{irs}}" as="ir" hint-placeholder-count="1">
+          <div style="display: flex; align-items: center; gap: 8px; background: #151618; border: 1px solid #2a2d31; border-radius: 8px; padding: 8px 10px">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9a9da3">IR</span>
+            <span style="font-size: 14px; font-weight: 600; flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ir.name}}</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9a9da3">{{ir.tag}}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <!-- Post / comp / out -->
+      <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 8px; background: #1b1d1f; border: 1px solid #2a2d31; border-radius: 10px; padding: 12px 14px; box-sizing: border-box">
+        <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 15px; letter-spacing: 0.1em; color: #b8bbc0">POST EQ · BUS COMP · OUT</span>
+        <svg width="270" height="58" viewBox="0 0 270 58" aria-hidden="true"><path d="M0 29H270" stroke="#2f3236" stroke-width="1"></path><path d="M0 50 C 20 32, 40 27, 80 27 S 140 28, 160 21 S 185 27, 200 28 S 245 30, 270 46" fill="none" stroke="#d6d3cc" stroke-width="2"></path></svg>
+        <div style="display: flex; justify-content: space-between">
+          <sc-for list="{{outKnobs}}" as="k" hint-placeholder-count="4">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 1px">
+              <svg width="48" height="48" viewBox="0 0 56 56" aria-hidden="true">
+                <circle cx="28" cy="28" r="22" fill="none" stroke="#2f3236" stroke-width="5" stroke-dasharray="103.7 200" stroke-linecap="round" transform="rotate(135 28 28)"></circle>
+                <circle cx="28" cy="28" r="22" fill="none" stroke="#d6d3cc" stroke-width="5" stroke-dasharray="{{k.dash}}" stroke-linecap="round" transform="rotate(135 28 28)"></circle>
+                <circle cx="28" cy="28" r="14" fill="#25282b"></circle>
+              </svg>
+              <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.08em; color: #b8bbc0">{{k.label}}</span>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px">{{k.value}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer status -->
+  <div style="height: 40px; box-sizing: border-box; padding: 0 20px; display: flex; align-items: center; gap: 12px; background: #0b0c0d; border-top: 1px solid #2a2d31; font-size: 13px; color: #b8bbc0">
+    <span style="width: 8px; height: 8px; border-radius: 4px; background: {{statusDot}}"></span>
+    <span>{{exportNote}}</span>
+    <div style="flex-grow: 1"></div>
+    <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #9a9da3">preset v1</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"blend":{"editor":"range","min":0,"max":100,"step":1,"default":55,"unit":"%"},"cabMode":{"editor":"enum","options":["shared","perPath"],"default":"shared"},"sawColor":{"editor":"color","options":["#f07a2a","#e8553a","#f2a93b"],"default":"#f07a2a"},"bodyColor":{"editor":"color","options":["#4f9be8","#7a8cff","#3fb8c9"],"default":"#4f9be8"},"$preview":{"width":1200,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const ARC = 103.67;
+    const BIG = 226.19;
+    const dash = (pct) => (ARC * pct).toFixed(1) + ' 200';
+    const knob = (label, value, pct) => ({ label, value, dash: dash(pct) });
+    const blend = Math.max(0, Math.min(100, this.props.blend ?? 55));
+    const sawColor = this.props.sawColor ?? '#f07a2a';
+    const bodyColor = this.props.bodyColor ?? '#4f9be8';
+    const shared = (this.props.cabMode ?? 'shared') === 'shared';
+    const sawLen = BIG * (100 - blend) / 100;
+    const bodyLen = BIG * blend / 100;
+    const bodyStartDeg = 135 + 270 * (100 - blend) / 100;
+    return {
+      blend,
+      sawPct: 100 - blend,
+      sawColor,
+      bodyColor,
+      shared,
+      perPath: !shared,
+      blendSawDash: sawLen.toFixed(1) + ' 400',
+      blendBodyDash: bodyLen.toFixed(1) + ' 400',
+      blendBodyRotate: 'rotate(' + bodyStartDeg.toFixed(1) + ' 60 60)',
+      sharedBg: shared ? '#e8e6e1' : 'transparent',
+      sharedFg: shared ? '#121314' : '#b8bbc0',
+      perPathBg: shared ? 'transparent' : '#e8e6e1',
+      perPathFg: shared ? '#b8bbc0' : '#121314',
+      statusDot: shared ? '#7fdc9a' : '#ffc067',
+      exportNote: shared
+        ? 'Live-compatible: both paths share one cab IR, so the no-cab NAM export is exact.'
+        : 'Studio blend: separate cab IRs per path. Only the with-cab NAM export is exact.',
+      irs: shared
+        ? [{ name: '[Cab IR] 4x12 V30 · SM57', tag: 'A+B' }]
+        : [{ name: '[Cab IR] 4x12 V30 · SM57', tag: 'A' }, { name: '[Cab IR] 4x12 Greenback · R121', tag: 'B' }],
+      gateKnobs: [
+        knob('INPUT', '0.0 dB', 0.5),
+        knob('THRESH', '−55 dB', 0.3),
+        knob('HOLD', '20 ms', 0.2),
+        knob('RELEASE', '60 ms', 0.35)
+      ],
+      paths: [
+        {
+          id: 'A', name: 'SAW', color: sawColor, level: '0.0 dB', levelDash: dash(0.5),
+          preCurve: 'M0 50 C 10 30, 18 27, 30 27 S 92 27, 92 27',
+          postCurve: 'M0 27 C 30 27, 50 26, 62 27 S 78 30, 92 50',
+          stages: [
+            { slot: 'PEDAL', name: '[HM-2 capture] both knobs max', credit: 'TONE3000 · [creator] · [license]', gain: 'in 0 / out 0 dB' },
+            { slot: 'AMP', name: '[Low/med-gain amp capture]', credit: 'TONE3000 · [creator] · [license]', gain: 'in 0 / out 0 dB' }
+          ]
+        },
+        {
+          id: 'B', name: 'BODY', color: bodyColor, level: '−1.5 dB', levelDash: dash(0.45),
+          preCurve: 'M0 27 S 92 27, 92 27',
+          postCurve: 'M0 44 C 15 30, 25 27, 40 27 S 70 22, 78 27 S 88 40, 92 48',
+          stages: [
+            { slot: 'BOOST', name: '[Overdrive boost capture]', credit: 'TONE3000 · [creator] · [license]', gain: 'in 0 / out 0 dB' },
+            { slot: 'AMP', name: '[High-gain amp capture]', credit: 'TONE3000 · [creator] · [license]', gain: 'in 0 / out 0 dB' }
+          ]
+        }
+      ],
+      outKnobs: [
+        knob('THRESH', '−12 dB', 0.55),
+        knob('RATIO', '2:1', 0.2),
+        knob('RELEASE', '100 ms', 0.3),
+        knob('OUTPUT', '−3.0 dB', 0.42)
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

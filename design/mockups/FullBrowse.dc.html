@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sawblade: capture browser</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Allerta+Stencil&amp;family=Barlow+Condensed:wght@500;600;700&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#050505}
+.st{font-family:'Allerta Stencil',sans-serif;letter-spacing:.08em}
+.kl{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.16em}
+.mono{font-family:'Share Tech Mono',monospace}
+.btn{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:.12em;height:32px;padding:0 12px;border-radius:4px;border:1px solid #3a352d;background:#1b1916;color:#e8e1d2}
+.pill{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;height:28px;padding:0 10px;border-radius:14px;border:1px solid #3a352d;background:transparent;color:#cfc6b4}
+</style>
+</helmet>
+<div style="width:1280px;height:800px;display:flex;flex-direction:column;background:#0b0a09;color:#e8e1d2;font-family:'Barlow Condensed',sans-serif">
+ <div style="height:58px;display:flex;align-items:center;gap:14px;padding:0 18px;background:#121110;border-bottom:1px solid #2a2622">
+  <button class="btn" aria-label="Back to rig">‹ RIG</button>
+  <span class="st" style="font-size:22px;color:#ff6a1a">CAPTURES</span>
+  <span class="kl" style="color:#a39a8a">FOR · SAW PEDAL SLOT</span>
+  <div style="flex:1"></div>
+  <label class="kl" style="display:flex;align-items:center;gap:8px;color:#a39a8a">SEARCH<input aria-label="Search captures" value="HM-2" style="width:220px;height:30px;border-radius:4px;border:1px solid #3a352d;background:#0e0d0c;color:#e8e1d2;padding:0 10px;font-family:'Share Tech Mono',monospace"></label>
+  <span class="kl" style="color:#a39a8a">TONE3000 · NAM CAPTURES AND IRs · @andrewnotsch</span>
+ </div>
+ <div style="flex:1;display:flex;min-height:0">
+  <div style="width:220px;padding:16px;display:flex;flex-direction:column;gap:14px;border-right:1px solid #2a2622;background:#100f0e">
+   <sc-for list="{{filters}}" as="f" hint-placeholder-count="4">
+    <div style="display:flex;flex-direction:column;gap:6px"><span class="kl" style="color:#a39a8a">{{f.t}}</span><div style="display:flex;flex-wrap:wrap;gap:6px"><sc-for list="{{f.o}}" as="o" hint-placeholder-count="3"><button class="pill" style="background:{{o.bg}};color:{{o.fg}};border-color:{{o.bd}}">{{o.l}}</button></sc-for></div></div>
+   </sc-for>
+   <div style="margin-top:auto;padding:10px;border-radius:6px;background:#1a1714;font-size:12px;line-height:1.35;color:#a39a8a">Non-commercial licences are hidden — Sawblade is a commercial product.</div>
+  </div>
+  <div style="flex:1;padding:16px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-content:start;overflow:hidden">
+   <sc-for list="{{cards}}" as="c" hint-placeholder-count="6">
+    <div style="border-radius:8px;padding:12px;background:#151311;box-shadow:inset 0 0 0 {{c.sel}}px #ff6a1a,inset 0 0 0 1px #2a2622;display:flex;flex-direction:column;gap:8px">
+     <div style="display:flex;gap:10px;align-items:center"><div style="width:46px;height:46px;border-radius:6px;background:{{c.sw}};box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)"></div><div style="display:flex;flex-direction:column;min-width:0"><span style="font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{c.t}}</span><span class="kl" style="color:#a39a8a;letter-spacing:.06em">@{{c.by}} · {{c.lic}}</span></div></div>
+     <div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{c.tags}}" as="tg" hint-placeholder-count="3"><span class="kl" style="padding:3px 6px;border-radius:3px;background:#221f1b;color:#cfc6b4;letter-spacing:.08em">{{tg}}</span></sc-for></div>
+     <div style="display:flex;align-items:center;gap:8px"><span class="mono" style="font-size:12px;color:#a39a8a">♥ {{c.fav}} · ↓ {{c.dl}}</span><div style="flex:1"></div><button class="btn" style="height:28px;font-size:11px" aria-label="Preview {{c.t}}">▶ PREVIEW</button><button class="btn" style="height:28px;font-size:11px;background:#2a1a0e;border-color:#6b3a14;color:#ffb27a">USE</button></div>
+    </div>
+   </sc-for>
+  </div>
+  <div style="width:300px;padding:16px;border-left:1px solid #2a2622;background:#100f0e;display:flex;flex-direction:column;gap:10px">
+   <span class="kl" style="color:#a39a8a">SELECTED</span>
+   <span style="font-weight:700;font-size:20px">Boss HM-2w CHAINSAW</span>
+   <span class="kl" style="color:#a39a8a;letter-spacing:.06em">@ebheron · t3k · 2026-07-26 · 2 models</span>
+   <div style="display:flex;flex-direction:column;gap:6px"><sc-for list="{{models}}" as="m" hint-placeholder-count="2"><button class="btn" style="text-align:left;height:36px;background:{{m.bg}}">{{m.n}}<span class="mono" style="float:right;font-size:11px;color:#a39a8a">{{m.s}}</span></button></sc-for></div>
+   <svg width="268" height="110" viewBox="0 0 268 110" aria-hidden="true" style="background:#0b0a09;border-radius:6px"><path d="M0 95 C 30 60, 50 52, 80 50 S 130 34, 150 30 S 190 40, 210 55 S 250 90, 268 100" fill="none" stroke="#ff6a1a" stroke-width="2"></path><text x="8" y="16" fill="#8a8273" font-family="Share Tech Mono" font-size="10">preview spectrum through the current rig</text></svg>
+   <span class="kl" style="color:#a39a8a;letter-spacing:.06em;line-height:1.4">Preview plays a built-in DI riff through this capture inside your current rig.</span>
+   <button class="btn" style="margin-top:auto;height:40px;background:#ff6a1a;border-color:#ff6a1a;color:#140a04">USE IN SAW PEDAL</button>
+  </div>
+ </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const on = (l) => ({ l, bg: '#2a1a0e', fg: '#ffb27a', bd: '#6b3a14' });
+    const off = (l) => ({ l, bg: 'transparent', fg: '#cfc6b4', bd: '#3a352d' });
+    return {
+      filters: [
+        { t: 'SOURCE', o: [on('FAVORITES'), off('TRENDING'), off('LATEST')] },
+        { t: 'GEAR', o: [on('PEDAL'), off('AMP'), off('CAB IR')] },
+        { t: 'QUALITY', o: [on('A2'), on('NEWER'), on('POPULAR')] },
+        { t: 'SIZE', o: [on('STANDARD'), off('LITE'), off('ANY')] }
+      ],
+      cards: [
+        { t: 'Boss HM-2w CHAINSAW', by: 'ebheron', lic: 't3k', fav: 186, dl: '2.7k', tags: ['A2', 'PEDAL', '2026'], sw: 'linear-gradient(135deg,#1a1a1a,#ff6a1a)', sel: 2 },
+        { t: 'Boss HM-2 1985 MIJ TTSV10', by: 'OutmodedElectronics', lic: 't3k', fav: 94, dl: '1.9k', tags: ['A2', '48 MODELS', 'BELOW FLOOR'], sw: 'linear-gradient(135deg,#1a1a1a,#c94a12)', sel: 0 },
+        { t: 'Boss HM-2 (Extreme Edition)', by: 'v24x', lic: 't3k', fav: 40, dl: '1.5k', tags: ['A2', 'BELOW FLOOR'], sw: 'linear-gradient(135deg,#1a1a1a,#a8340c)', sel: 0 },
+        { t: 'Boss HM-2', by: 'v24x', lic: 't3k', fav: 36, dl: '1.2k', tags: ['A2', 'BELOW FLOOR'], sw: 'linear-gradient(135deg,#1a1a1a,#8f2c0a)', sel: 0 },
+        { t: 'BOOST PEDAL PACK', by: 'Deathblossomaudio', lic: 't3k', fav: 1070, dl: '13.8k', tags: ['A2', 'BOOST'], sw: 'linear-gradient(135deg,#1d2a3a,#4f8fd0)', sel: 0 },
+        { t: 'Ibanez TS808 (Japan 2003)', by: 'v24x', lic: 't3k', fav: 597, dl: '14.7k', tags: ['A2', 'BOOST', '50 MODELS'], sw: 'linear-gradient(135deg,#1d2a3a,#2f6fa8)', sel: 0 }
+      ],
+      models: [{ n: 'CHAINSAW · Standard', s: 'A2 · smaller', bg: '#2a1a0e' }, { n: 'CHAINSAW · Custom', s: 'A2 · heavier', bg: '#1b1916' }]
+    };
+  }
+}
+</script>
+</body>
+</html>

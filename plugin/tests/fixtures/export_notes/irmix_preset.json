@@ -1,0 +1,23 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "Notes parity: irmix",
+  "paths": {
+    "a": {"role": "saw", "blocks": [
+      {"id": "a1", "type": "nam", "slot": "amp", "model": {"file": "../../../../tests/fixtures/nam/linear_identity.nam"}}]},
+    "b": {"role": "body", "blocks": [
+      {"id": "b1", "type": "nam", "slot": "amp", "model": {"file": "../../../../tests/fixtures/nam/linear_identity.nam"}}]}
+  },
+  "align": {"mode": "off"},
+  "blend": 0.5,
+  "gate": {"enabled": true, "thresholdDb": -48.5, "hysteresisDb": 4.0, "attackMs": 0.25, "holdMs": 35.0, "releaseMs": 90.0,
+           "rangeDb": -60.0, "mode": "expander", "ratio": 3.5, "keyHighPassHz": 120.0, "releaseCurve": "linear-db"},
+  "cab": {"mode": "irMix", "enabled": true, "normalize": true, "mix": 0.3,
+          "irA": {"file": "../../../../tests/fixtures/ir/ir_a.wav",
+                  "source": {"provider": "tone3000", "id": "31", "title": "SM57 cap", "creator": "@someone", "license": "cc-by-nc"}},
+          "irB": {"file": "../../../../tests/fixtures/ir/ir_b.wav",
+                  "source": {"provider": "tone3000", "id": "32", "title": "R121 edge", "creator": "@other", "license": "cc-by"}}},
+  "postEq": [{"type": "highShelf", "freq": 6000.0, "gainDb": -1.25, "q": 0.5, "enabled": true}],
+  "busComp": {"enabled": false},
+  "output": {"gainDb": 0.0}
+}

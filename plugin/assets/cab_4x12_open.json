@@ -1,0 +1,36 @@
+{
+  "cab": "4x12",
+  "width": 1328,
+  "height": 1328,
+  "px_per_mm": 1.54419,
+  "drivers": [
+    {
+      "slot": 1,
+      "cx": 386.05,
+      "cy": 386.05,
+      "cone_radius": 198.43,
+      "cap_radius": 52.5
+    },
+    {
+      "slot": 2,
+      "cx": 941.95,
+      "cy": 386.05,
+      "cone_radius": 198.43,
+      "cap_radius": 52.5
+    },
+    {
+      "slot": 3,
+      "cx": 386.05,
+      "cy": 941.95,
+      "cone_radius": 198.43,
+      "cap_radius": 52.5
+    },
+    {
+      "slot": 4,
+      "cx": 941.95,
+      "cy": 941.95,
+      "cone_radius": 198.43,
+      "cap_radius": 52.5
+    }
+  ]
+}

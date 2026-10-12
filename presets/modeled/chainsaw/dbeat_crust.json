@@ -1,0 +1,59 @@
+{
+  "schema": "sawblade.preset",
+  "version": 3,
+  "name": "D-Beat Crust",
+  "category": "Hardcore / Crust",
+  "notes": "D-beat crust: less low end, cutting upper mids, tight bottom (Anti Cimex, Disfear, Wolfbrigade). Presence up and a little lower in frequency. Pair with a plexi-style amp (tone 76884). Single path, no captures: renders from files in this repo only (the shared cab is the repo identity IR, a stand-in for a real cab). Starting hypotheses, not a tuned tone.",
+  "paths": {
+    "a": {
+      "role": "saw",
+      "blocks": [
+        {
+          "id": "a1",
+          "type": "pedal.hm",
+          "slot": "pedal",
+          "modelVersion": 2,
+          "params": {
+            "level": 1.98,
+            "low": 5,
+            "high": 10,
+            "distortion": 8,
+            "tightness": 4,
+            "mix": 100,
+            "mode": "stock",
+            "clip": "silicon",
+            "clip2": "follow",
+            "lowFreq": 100,
+            "lowQ": 0.8,
+            "highFreq": 1000,
+            "highSpread": 1.5,
+            "presenceFreq": 4500,
+            "presenceDb": 10,
+            "rolloffHz": 9000,
+            "gain1Db": 0,
+            "gain2Db": 0,
+            "bias": 0
+          }
+        }
+      ]
+    },
+    "b": {
+      "enabled": false,
+      "blocks": []
+    }
+  },
+  "align": {
+    "mode": "off"
+  },
+  "blend": 0.0,
+  "cab": {
+    "mode": "shared",
+    "ir": {
+      "file": "../../../tests/fixtures/ir/impulse.wav"
+    }
+  },
+  "output": {
+    "autoTrimDb": -6.966,
+    "autoTrimHash": "9804a0eadb0ddbc68c598c8842c2fc61f59e4c82358ced8b5955550d21c9072f"
+  }
+}
