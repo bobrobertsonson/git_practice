@@ -1,0 +1,18 @@
+# VestaCollide-sung
+# mix: Vesta-Collide-VII.mp3
+# lead: 59 VOC - Sing Main1.wav
+# other stems: 38 VOC - Scream - Main C1.wav, 39 VOC - Scream - Main C2.wav, 40 VOC - Scream Dub Left1.wav, 41 VOC - Scream Dub Right1.wav, 42 VOC - Dub2 Left1.wav, 43 VOC - Scream - Dub2 Right2.wav, 44 VOC - Scream - Main C3.wav, 45 VOC - Scream Main3 Dub.wav, 46 VOC - Scream - Layer.wav, 47 VOC - Sing Dub1.wav, 48 VOC - Sing Dub2.wav, 49 VOC - Sing Dub3.wav, 50 VOC - Sing Dub4.wav, 51 VOC - Sing Dub5.wav, 52 VOC - Sing Dub6.wav, 53 VOC - Sing Dub7.wav, 54 VOC - Sing Dub8.wav, 55 VOC - Sing Harm 1.wav, 56 VOC - Sing Harm 2.wav, 57 VOC - Sing High1.wav, 58 VOC - Sing High2.wav, 60 VOC - Sing Main 2.wav, 61 VOC - Sing Main 3.wav, 62 VOC - Sing Main 4.wav, 63 VOC - Sing Whoa 1.wav, 64 VOC - Sing Whoa 2.wav, 65 VOC - Sing Whoa Harm1.wav, 66 VOC - Sing Whoa Harm2.wav, 67 VOC - Sing xDub1.wav, 68 VOC - Sing xDub2.wav
+
+lead: 59 VOC - Sing Main1.wav   input gain +7.2 dB   bands used: 250 400 630 1k 1.6k 6.3k 10k 16k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         250   400   630    1k  1.6k  6.3k   10k   16k   rms
+huge           2.2   1.3   1.5   0.0  -0.6   4.3   7.9   5.4    3.9
+natural        3.3   1.5   1.2   0.0  -0.7   6.7  13.4  22.5    9.6
+dark           2.0   0.8   0.5   0.0  -0.1  11.9  16.3  29.9   12.8
+bright         4.6   2.0   2.0   0.0  -1.0   3.3   6.1  10.4    4.8
+live           3.7   1.6   1.3   0.0  -0.7   6.8  13.6  22.6    9.8
+raw            4.5   2.6   1.4   0.0  -0.7   5.8   8.1  16.7    7.1
+air            3.3   1.7   2.3   0.0  -0.8   0.2  -0.9   0.5    1.6
+
+closest: air (1.6 dB), huge (3.9 dB), bright (4.8 dB), raw (7.1 dB), natural (9.6 dB), live (9.8 dB), dark (12.8 dB)

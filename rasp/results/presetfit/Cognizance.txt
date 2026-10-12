@@ -1,0 +1,6 @@
+# Cognizance
+# mix: COGNIZANCE-The-Succession-of-Flesh-1.mp3
+# lead: 39 Voc Scream 1.wav
+# other stems: 40 Voc Scream 2.wav, 41 Voc Scream 3.wav, 42 Voc Scream 4.wav, 43 Voc Scream 5.wav, 44 Voc Scream 6.wav, 45 Voc FRANK 1.wav, 46 Voc FRANK 2.wav
+
+too few bands where the vocal is audible in the mix to fit presets

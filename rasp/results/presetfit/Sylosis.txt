@@ -1,0 +1,18 @@
+# Sylosis
+# mix: Sylosis-Poison-For-The-Lost.mp3
+# lead: 47 MAIN VOCAL.wav
+# other stems: 48 BACKING VOCAL LEFT.wav, 49 BACKING VOCAL RIGHT.wav, 50 LAST CHORUS EXTRA VOX.wav, 51 CHORUS GANG VOCALS.wav
+
+lead: 47 MAIN VOCAL.wav   input gain -5.7 dB   bands used: 400 630 1k 1.6k 2.5k 6.3k 10k 16k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         400   630    1k  1.6k  2.5k  6.3k   10k   16k   rms
+huge           3.2   0.5   0.0  -0.6  -1.7  -0.4  -0.9  -4.3    2.0
+natural        2.8   0.2   0.0  -0.7  -1.9   0.9   3.2   9.7    3.8
+dark           1.6  -0.5   0.0  -0.2   0.0   4.1   4.8  17.1    6.5
+bright         3.7   1.0   0.0  -1.0  -2.6  -1.1  -0.3  -1.5    1.8
+live           2.9   0.2   0.0  -0.7  -1.8   1.0   3.2   9.6    3.8
+raw            2.4  -0.0   0.0  -0.6  -2.3  -0.5  -1.2   5.5    2.3
+air            3.9   1.1   0.0  -0.7  -2.4  -2.9  -4.7  -9.6    4.3
+
+closest: bright (1.8 dB), huge (2.0 dB), raw (2.3 dB), live (3.8 dB), natural (3.8 dB), air (4.3 dB), dark (6.5 dB)

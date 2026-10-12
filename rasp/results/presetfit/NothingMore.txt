@@ -1,0 +1,6 @@
+# NothingMore
+# mix: Nothing-More-Were-All-Gonna-Die-FINAL-48k-24bit.mp3
+# lead: 36 CHRS-1.wav
+# other stems: 33 Verse 1.wav, 34 Verse 2.wav, 35 Verse 3.wav, 37 CHRS-2.wav, 38 CHRS-Adlib.wav, 39 Dub-1.wav, 40 BGV-1.wav, 41 BGV-2.wav, 42 BGV-3.wav, 43 BGV-4-L Fmaj.wav, 44 BGV-4-R Fmaj.wav, 45 BGV-5-L Fmaj.wav, 46 BGV-5-R Fmaj.wav, 47 BGV-6-L Fmaj.wav, 48 BGV-6-R Fmaj.wav, 49 Aux Vox.wav
+
+too few bands where the vocal is audible in the mix to fit presets

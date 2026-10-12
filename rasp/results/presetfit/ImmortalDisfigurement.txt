@@ -1,0 +1,18 @@
+# ImmortalDisfigurement
+# mix: Immortal-Disfigurement-Gospel-Of-Annihilation.mp3
+# lead: 41 - Vox Shane Lead.wav
+# other stems: 34 - Vox CJ 1.wav, 35 - Vox CJ 2.wav, 36 - Vox CJ 3.wav, 37 - Vox CJ 4.wav, 38 - Vox CJ Clicker.wav, 39 - Vox CJ Back L.wav, 40 - Vox CJ Back R.wav, 42 - Vox Shane Dub.wav, 43 - Vox Shane L.wav, 44 - Vox Shane R.wav, 45 - Vox Shane Whisper L.wav, 46 - Vox Shane Whisper R.wav, 47 - Vox Shane Scream L.wav, 48 - Vox Shane Scream R.wav, 49 - Vox Shane Low-Harm.wav, 50 - Vox Shane Low-Harm Dub.wav, 51 - Vox FX Reverb Tail.wav, 52 - Vox FX Shane Bridge.wav
+
+lead: 41 - Vox Shane Lead.wav   input gain +0.8 dB   bands used: 250 400 630 1k 1.6k 2.5k 4k 6.3k 10k 16k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         250   400   630    1k  1.6k  2.5k    4k  6.3k   10k   16k   rms
+huge           1.3   2.3   2.0   0.0  -1.2   0.3   4.3   8.0  11.2  11.9    6.0
+natural        4.9   2.4   1.8   0.0  -1.4   0.0   7.4  11.3  16.9  30.1   11.9
+dark           1.8   0.9   0.6   0.0  -0.7   2.0  11.9  17.1  20.7  37.4   15.1
+bright         7.6   3.6   2.9   0.0  -1.9  -1.0   5.0   7.6   9.2  16.9    7.3
+live           6.0   2.6   1.8   0.0  -1.4   0.0   8.0  11.7  17.7  30.6   12.3
+raw            8.8   3.8   2.0   0.0  -1.5  -0.5  10.0  10.3  11.3  23.8   10.0
+air            3.5   3.2   3.1   0.0  -1.6  -0.7   2.2   2.7  -0.8   5.9    2.9
+
+closest: air (2.9 dB), huge (6.0 dB), bright (7.3 dB), raw (10.0 dB), natural (11.9 dB), live (12.3 dB), dark (15.1 dB)

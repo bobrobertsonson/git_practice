@@ -1,0 +1,18 @@
+# Bloodbath
+# mix: Bloodbath_Zombie-Inferno.mp3
+# lead: 31 VOC MAIN 1.wav
+# other stems: 32 VOC MAIN 2.wav, 33 VOC M DUB 1.wav, 34 VOC L DUB.wav, 35 VOC R DUB.wav, 36 VOC X.wav
+
+lead: 31 VOC MAIN 1.wav   input gain +8.2 dB   bands used: 400 630 1k 1.6k 2.5k 6.3k 10k
+
+producer minus RASP, dB (positive = the producer has more)
+preset         400   630    1k  1.6k  2.5k  6.3k   10k   rms
+huge          -0.6  -1.0   0.0   1.4   0.4  -0.9  -0.5    0.8
+natural       -0.9  -1.3   0.0   1.0   0.1  -0.6   2.1    1.1
+dark          -2.3  -2.1   0.0   1.3   1.9   1.2   2.8    1.9
+bright        -0.0  -0.5   0.0   0.8  -0.7  -1.3  -0.4    0.7
+live          -0.9  -1.3   0.0   1.0   0.1  -0.7   2.0    1.1
+raw           -1.2  -1.6   0.0   0.9   0.3  -1.4  -2.7    1.4
+air            0.3  -0.2   0.0   1.3  -0.2  -1.7  -5.4    2.2
+
+closest: bright (0.7 dB), huge (0.8 dB), live (1.1 dB), natural (1.1 dB), raw (1.4 dB), dark (1.9 dB), air (2.2 dB)
