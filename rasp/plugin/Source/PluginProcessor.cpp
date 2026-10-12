@@ -96,6 +96,7 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"howl", "Feedback Guard", "Live", K::Bool, 0, 1, nullptr, RASP_B(howl), nullptr, true},
         // MATCH (Learn): set by the LEARN button, kept across presets
         {"matchAmount", "Match Amount", "Live", K::Unit, 0, 1, nullptr, RASP_F(matchAmount), nullptr, true},
+        {"matchOn", "Match On", "Live", K::Bool, 0, 1, nullptr, RASP_B(matchOn), nullptr, true},
         {"match0", "Match 100 Hz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[0]), nullptr, true},
         {"match1", "Match 160 Hz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[1]), nullptr, true},
         {"match2", "Match 250 Hz", "Match", K::Db, -12, 12, nullptr, RASP_F(match[2]), nullptr, true},

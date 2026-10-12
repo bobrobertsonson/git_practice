@@ -164,6 +164,11 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     learnBtn.setTooltip("Sing (or play a DI) for about 15 seconds: RASP matches your voice and mic to the tone the presets were tuned on");
     learnBtn.onClick = [this] { proc.requestLearn(); };
     addAndMakeVisible(learnBtn);
+    matchBtn.setClickingTogglesState(true);
+    matchBtn.setTooltip("Switch the learned match off and on to hear what Learn changed");
+    matchAttach = std::make_unique<APVTS::ButtonAttachment>(s, "matchOn", matchBtn);
+    matchBtn.onStateChange = [this] { matchBtn.setButtonText(matchBtn.getToggleState() ? "MATCH ON" : "MATCH OFF"); };
+    addAndMakeVisible(matchBtn);
     addAndMakeVisible(clearNotches);
 
     status.setColour(juce::Label::textColourId, kDim);
@@ -249,6 +254,8 @@ void RaspEditor::resized() {
         top.removeFromRight(6);
     }
     top.removeFromRight(6);
+    matchBtn.setBounds(top.removeFromRight(96));
+    top.removeFromRight(6);
     learnBtn.setBounds(top.removeFromRight(76));
 
     status.setBounds(getLocalBounds().removeFromBottom(30).reduced(kPad + 4, 0));
@@ -283,6 +290,7 @@ void RaspEditor::timerCallback() {
     stutterBtn.setToggleState(proc.apvts.getRawParameterValue("stutter")->load() > 0.5f, juce::dontSendNotification);
     glitchBtn.setToggleState(proc.apvts.getRawParameterValue("glitch")->load() > 0.5f, juce::dontSendNotification);
     for (auto* h : holds) static_cast<HoldCell*>(h)->sync();
+    matchBtn.setEnabled(proc.apvts.getRawParameterValue("matchAmount")->load() > 0.001f);   // nothing to A/B before a Learn
     if (preset.getSelectedId() != proc.getCurrentProgram() + 1)
         preset.setSelectedId(proc.getCurrentProgram() + 1, juce::dontSendNotification);
 }

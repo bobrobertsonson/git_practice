@@ -263,6 +263,8 @@ On Andrew's DI, Huge's band share relative to the DI (effects off):
 | Before | +3.9 | +3.1 | +2.8 | −1.6 | −1.7 | +3.9 | +7.6 |
 | Weight 0.7, Fill 0.5, Smooth 0.5 | +4.7 | +6.4 | +5.3 | −0.6 | −1.6 | +0.4 | +3.4 |
 
+**MATCH ON / OFF** (next to LEARN in the plugin, a menu checkbox in the playground, MIDI CC 108 on the pedal and Pod) switches the learned match out and back in without losing it, so you can hear exactly what Learn changed.
+
 **Learn keeps your weight.** The match now cuts 100–250 Hz by at most 2 dB. On
 Andrew's DIs it had been taking up to 7 dB out, because his voice carries more
 low end than the reference singers. That made a learned sound thinner than an

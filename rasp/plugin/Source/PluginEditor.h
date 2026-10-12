@@ -36,6 +36,8 @@ private:
     juce::TextButton megaBtn{"MEGA"}, throwBtn{"THROW"};   // momentary: on while held
     juce::TextButton stutterBtn{"STUTTER"}, glitchBtn{"GLITCH"};
     juce::TextButton learnBtn{"LEARN"};                    // listen to ~15 s of singing, set Match
+    juce::TextButton matchBtn{"MATCH ON"};                 // A/B the learned match
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> matchAttach;
     void holdButton(juce::TextButton&, const char* id);
     juce::Label status;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttach;

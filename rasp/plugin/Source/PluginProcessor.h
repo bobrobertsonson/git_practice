@@ -79,6 +79,9 @@ public:
         if (auto* amt = apvts.getParameter("matchAmount")) {
             amt->beginChangeGesture(); amt->setValueNotifyingHost(1.f); amt->endChangeGesture();
         }
+        if (auto* on = apvts.getParameter("matchOn")) {
+            on->beginChangeGesture(); on->setValueNotifyingHost(1.f); on->endChangeGesture();
+        }
         return true;
     }
 

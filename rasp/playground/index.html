@@ -987,7 +987,7 @@ class RaspEngine {
     const mEq = MATCH_HZ.map(() => bq());
     let mOn = false;
     const setMatch = () => {
-      const amt = clamp(p.matchAmount || 0, 0, 1), g = p.match || [];
+      const amt = p.matchOn === false ? 0 : clamp(p.matchAmount || 0, 0, 1), g = p.match || [];
       mOn = amt > 0.001;
       MATCH_HZ.forEach((hz, i) => peaking(mEq[i], hz, 2.1, clamp(g[i] || 0, -12, 12) * amt));
     };
@@ -1185,7 +1185,7 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, weight: 0.3, fill: 0.2, smooth: 0.3, matchAmount: 0, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, weight: 0.3, fill: 0.2, smooth: 0.3, matchAmount: 0, matchOn: true, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12,
   harm3Level: 0, harm4Level: 0, harm3Semi: 0, harm4Semi: 7, harm1Width: 0.7, harm2Width: 0.7, harm3Width: 0.7, harm4Width: 0.7,
   harmRandPitch: 0.4, harmRandTime: 0.4, harmLoCut: 80, harmHiCut: 12000, harmWidth: 1, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.1, width: 0.85, solo: false, doubleTrack: false, thickenGainDb: -4,
@@ -1353,6 +1353,7 @@ const addCheck = (key, label) => {
   cb.addEventListener("change", () => setParam(key, cb.checked));
   sliderEls[key]();
 };
+addCheck("matchOn", "Learned match on (untick to hear without it)");
 addCheck("solo", "Solo the thicken branch");
 addCheck("doubleTrack", "Double-track: the lead as two takes, hard left/right");
 {
@@ -1380,7 +1381,7 @@ addCheck("howl", "Feedback guard (automatic notches on howling frequencies)");
     const res = new RaspEngine(buffer.sampleRate).learn(pcm);
     if (!res) { info.textContent = "Needs about 15 seconds of singing; this take has less."; return; }
     params.match = res.gains;
-    setParam("matchAmount", 1);
+    setParam("matchAmount", 1); setParam("matchOn", true);
     const lbl = ["100", "160", "250", "400", "630", "1.6k", "2.5k", "4k", "6.3k", "10k"];
     info.textContent = "Match set: " + res.gains.map((v, i) => lbl[i] + " " + (v > 0 ? "+" : "") + v.toFixed(1)).join(" · ") + " dB";
   });
@@ -1390,7 +1391,7 @@ function applyPreset(name) {
   const keep = { controlOn: params.controlOn, thickenOn: params.thickenOn, flavourOn: params.flavourOn, bpm: params.bpm, inDb: params.inDb,
     bypass: params.bypass, bypassMatch: params.bypassMatch, mono: params.mono, howl: params.howl, mega: params.mega, throwOn: params.throwOn, stutter: params.stutter, glitch: params.glitch, stutterDiv: params.stutterDiv, glitchAmount: params.glitchAmount, glitchPattern: params.glitchPattern,
     tapeStop: params.tapeStop, tapeTime: params.tapeTime, freeze: params.freeze, gate: params.gate, gatePattern: params.gatePattern, throwStyle: params.throwStyle,
-    match: params.match, matchAmount: params.matchAmount };
+    match: params.match, matchAmount: params.matchAmount, matchOn: params.matchOn };
   params = Object.assign({}, DEFAULTS, PRESETS[name], keep);
   Object.keys(params).forEach(k => setParam(k, params[k], false));
   sendParams();

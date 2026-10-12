@@ -355,6 +355,7 @@ int main() {
                 if (cc.control_number == 105) params.weight = cc.value / 127.f;
                 if (cc.control_number == 106) params.fill = cc.value / 127.f;
                 if (cc.control_number == 107) params.smooth = cc.value / 127.f;
+                if (cc.control_number == 108) params.matchOn = cc.value >= 64;
             }
         }
 

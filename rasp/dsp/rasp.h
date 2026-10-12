@@ -285,6 +285,7 @@ struct Params {
     // kMatchHz below); matchAmount scales it (0 = off).
     float match[10]  = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     float matchAmount = 0.f;
+    bool  matchOn    = true;   // A/B the learned match without losing it
 
     // MOMENTARY (held footswitch / button; on while held)
     bool  mega       = false;  // the voice becomes a mid-focused hard-clipped burst
@@ -1823,7 +1824,7 @@ public:
         gMega.target = p.mega ? 1.f : 0.f;
         gDt.target = p.doubleTrack ? 1.f : 0.f;
         harmony.set(p);
-        matchEq.set(p.match, p.matchAmount, sr);
+        matchEq.set(p.match, p.matchOn ? p.matchAmount : 0.f, sr);
         howlG.setOctaves(harmony.hasInterval(-12), harmony.hasInterval(12));
         throwFx.set(p.throwOn, p.bpm, p.throwStyle);
         stutterFx.set(p.stutter, p.glitch, p.stutterDiv, p.glitchAmount, p.glitchPattern, p.bpm);
