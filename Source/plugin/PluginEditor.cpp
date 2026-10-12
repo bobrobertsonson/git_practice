@@ -39,7 +39,7 @@ SubForgeEditor::SubForgeEditor (SubForgeProcessor& p)
     setLookAndFeel (&lookAndFeel);
 
     sound.title = "SOUND";
-    for (auto* paramId : { id::mode, id::tune, id::punch, id::punchTime, id::decay, id::oneShot, id::release,
+    for (auto* paramId : { id::mode, id::tune, id::fine, id::punch, id::punchTime, id::decay, id::oneShot, id::release,
                            id::glide, id::click, id::velocity })
         addControl (sound, paramId);
 
@@ -55,14 +55,14 @@ SubForgeEditor::SubForgeEditor (SubForgeProcessor& p)
     for (auto* paramId : { id::duckDepth, id::duckThreshold, id::duckRelease, id::output, id::phoneCheck })
         addControl (mix, paramId);
 
-    punchControl = sound.controls[2];
-    punchTimeControl = sound.controls[3];
-    releaseControl = sound.controls[6];
+    punchControl = sound.controls[3];
+    punchTimeControl = sound.controls[4];
+    releaseControl = sound.controls[7];
 
     for (auto* meter : { &outputMeter, &subMeter, &duckMeter })
         addAndMakeVisible (meter);
 
-    setSize (margin * 2 + cellWidth * 10 + 24, headerHeight + rowHeight * 3 + margin * 4);
+    setSize (margin * 2 + cellWidth * 11 + 24, headerHeight + rowHeight * 3 + margin * 4);
     startTimerHz (30);
 }
 

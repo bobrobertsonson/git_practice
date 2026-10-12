@@ -25,12 +25,12 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 4.0; }
+    double getTailLengthSeconds() const override { return 12.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    int getNumPrograms() override { return (int) subforge::presets::all.size(); }
+    int getCurrentProgram() override { return currentProgram; }
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destData) override;
@@ -49,12 +49,14 @@ private:
     void handleMidi (const juce::MidiMessage&);
 
     subforge::SubEngine engine;
+    int currentProgram = 0;
     juce::AudioBuffer<float> sidechainCopy;
 
     struct
     {
         std::atomic<float>* mode;
         std::atomic<float>* tune;
+        std::atomic<float>* fine;
         std::atomic<float>* punch;
         std::atomic<float>* punchTime;
         std::atomic<float>* decay;

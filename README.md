@@ -36,6 +36,17 @@ follow a drop perfectly, with no pitch detection guesswork.
   Curve** (negative = fast start, positive = slow start then plunge). Use 12, 24
   or 36 semitones to land on the same note an octave or more lower, so it ends in key.
 
+## Presets
+
+Pick these from the preset menu at the top of the SubForge window in Logic.
+
+- **Default**: a punchy, slightly driven 808.
+- **Long 30 Hz Boom**: matched to a reference track by measuring its 808. It
+  dives from about 120 Hz to 30 Hz in roughly 80 ms, barely decays (about 5 dB
+  in the first second), and cuts off when the note ends. **Fine** is set to -49
+  cents so that **B-1** in Logic plays exactly 30 Hz. If your song is in
+  another key, set Fine back to 0 and play your root note.
+
 ## Building and installing in Logic (Mac)
 
 You need Xcode (from the App Store) and CMake (`brew install cmake`).
@@ -87,9 +98,9 @@ choose **AU Instruments → SubForge → SubForge**.
 | Section | Control | Range | Default |
 | --- | --- | --- | --- |
 | Sound | Mode | Boom / Drop | Boom |
-| | Tune | ±24 st | 0 |
-| | Punch / Punch Time | 0–24 st / 5–150 ms | 7 st / 40 ms |
-| | Decay | 50–4000 ms (time to fall 60 dB) | 800 ms |
+| | Tune / Fine | ±24 st / ±100 cents | 0 / 0 |
+| | Punch / Punch Time | 0–36 st / 5–150 ms | 7 st / 40 ms |
+| | Decay | 50–12000 ms (time to fall 60 dB) | 800 ms |
 | | One Shot / Release | on/off / 5–2000 ms | on / 60 ms |
 | | Glide | 0–500 ms | 0 |
 | | Click | 0–100 % | 20 % |
@@ -100,7 +111,7 @@ choose **AU Instruments → SubForge → SubForge**.
 | Low End | Low Cut | 15–60 Hz | 25 Hz |
 | | Crossover | 60–200 Hz | 100 Hz |
 | | Harmonics / Auto Harmonics | 0–100 % | 35 % / 60 % |
-| | Drive | 0–18 dB | 3 dB |
+| | Drive | -12 to +18 dB (negative keeps the sub clean under the ceiling) | 3 dB |
 | | Ceiling | -18 to 0 dBFS | -6 dBFS |
 | Kick Duck + Output | Duck Depth / Threshold / Release | 0–24 dB / -48–0 dB / 20–500 ms | 8 dB / -30 dB / 120 ms |
 | | Output | -24 to +6 dB (after the ceiling) | 0 dB |

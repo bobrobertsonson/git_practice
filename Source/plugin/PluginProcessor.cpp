@@ -22,6 +22,7 @@ SubForgeProcessor::SubForgeProcessor()
 
     p.mode = get (id::mode);
     p.tune = get (id::tune);
+    p.fine = get (id::fine);
     p.punch = get (id::punch);
     p.punchTime = get (id::punchTime);
     p.decay = get (id::decay);
@@ -85,7 +86,7 @@ subforge::EngineSettings SubForgeProcessor::readSettings() const
     const int lengthIndex = juce::jlimit (0, (int) std::size (subforge::params::dropLengthBeats) - 1,
                                           juce::roundToInt (p.dropLength->load()));
     s.dropBeats = subforge::params::dropLengthBeats[lengthIndex];
-    s.tuneSemis = p.tune->load();
+    s.tuneSemis = p.tune->load() + p.fine->load() / 100.0f;
     s.lowCutHz = p.lowCut->load();
     s.crossoverHz = p.crossover->load();
     s.driveDb = p.drive->load();
@@ -164,6 +165,29 @@ void SubForgeProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     raiseMeter (meterOutputPeakDb, (float) meters.outputPeakDb);
     raiseMeter (meterSubReductionDb, (float) meters.subReductionDb);
     raiseMeter (meterDuckReductionDb, (float) meters.duckReductionDb);
+}
+
+void SubForgeProcessor::setCurrentProgram (int index)
+{
+    const auto& presets = subforge::presets::all;
+    if (index < 0 || index >= (int) presets.size())
+        return;
+
+    currentProgram = index;
+
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+            ranged->setValueNotifyingHost (ranged->getDefaultValue());
+
+    for (const auto& [paramId, value] : presets[(size_t) index].values)
+        if (auto* param = apvts.getParameter (paramId))
+            param->setValueNotifyingHost (param->convertTo0to1 (value));
+}
+
+const juce::String SubForgeProcessor::getProgramName (int index)
+{
+    const auto& presets = subforge::presets::all;
+    return index >= 0 && index < (int) presets.size() ? presets[(size_t) index].name : juce::String();
 }
 
 juce::AudioProcessorEditor* SubForgeProcessor::createEditor()

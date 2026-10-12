@@ -338,6 +338,30 @@ int main (int argc, char** argv)
         check (std::abs (hz - 98.0) < 2.0, "glide lands on the new note", fmt ("%.1f Hz (expect 98.0)", hz));
     }
 
+    // 12. The "Long 30 Hz Boom" preset settings: B-1 at -49 cents lands on 30 Hz
+    //     after a fast dive (the reference averages ~75 Hz over its first 25 ms),
+    //     and still sustains a second later.
+    {
+        EngineSettings s;
+        s.tuneSemis = -0.49;
+        s.voice.punchSemis = 28.0;
+        s.voice.punchMs = 22.0;
+        s.voice.decayMs = 8000.0;
+        s.voice.oneShot = false;
+        s.voice.releaseMs = 150.0;
+        s.voice.clickLevel = 0.0;
+        s.voice.harmonics = 0.0;
+        s.lowCutHz = 18.0;
+        s.driveDb = -3.0;
+        s.ceilingDb = -4.0;
+        const auto x = render (s, { { 0.0, 23, 1.0f }, { 2.4, 23, 0.0f } }, 3.0);
+        const double startHz = zeroCrossingHz (x, 0.0, 0.025);
+        const double settledHz = zeroCrossingHz (x, 0.4, 1.4);
+        const double sustainDb = gainToDb (rms (x, 1.0, 1.1)) - gainToDb (rms (x, 0.15, 0.25));
+        check (startHz > 60.0 && std::abs (settledHz - 30.0) < 0.3 && sustainDb > -8.0, "long 30 Hz boom preset",
+               fmt ("first 25 ms avg %.0f Hz, settles at %.2f Hz", startHz, settledHz) + fmt (", %.1f dB after 1 s", sustainDb));
+    }
+
     if (! outDir.empty())
     {
         EngineSettings boom;
