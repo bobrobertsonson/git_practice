@@ -68,6 +68,7 @@ cd git_practice
 git checkout claude/peaceful-goldberg-oil95u
 cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 cmake --build build --config Release --target SubForge_AU
+cmake --build build --config Release --target SubForgeDuck_AU
 ```
 
 The first configure downloads JUCE, so it takes a minute. The build copies
@@ -76,6 +77,7 @@ accepts it:
 
 ```sh
 auval -v aumu Sfg1 Sbfg
+auval -v aufx Sfd1 Sbfg
 ```
 
 Then open Logic. If it doesn't show up, use **Logic Pro → Settings → Plug-in
@@ -134,6 +136,26 @@ choose **AU Instruments → SubForge → SubForge**.
 | | Roll Hold / Roll Window / Roll Depth | on/off / 60–250 ms / 0–12 dB | off / 150 ms / 2 dB |
 | | Output | -24 to +6 dB (after the ceiling) | 0 dB |
 | | Phone Check | on/off, monitoring only | off |
+
+## SubForge Duck (for the bass track)
+
+![SubForge Duck](docs/subforge_duck_ui.png)
+
+A small effect that makes room for SubForge in the bass. It splits the bass at
+**Split** and turns down only the part below it while the side chain plays; the
+grit above the split is never touched. With nothing ducking it is transparent:
+the two halves add back up to the original bass.
+
+1. On the bass track, add **Audio FX → Audio Units → SubForge → SubForge Duck**.
+2. In its header, set **Side Chain** to your SubForge track.
+3. Play a boom and lower **Threshold** until **Low Duck** shows about the
+   **Depth** (start with 6–8 dB). Set **Release** so the bass comes back right
+   after the boom.
+4. Raise **Split** if the bass still fights the boom, lower it if the bass loses
+   too much weight.
+
+It also works keyed by the kick, with the same **Roll Hold** as SubForge for
+double kick.
 
 ## Signal flow
 

@@ -68,4 +68,40 @@ if(SUBFORGE_BUILD_PLUGIN)
             juce::juce_recommended_config_flags
             juce::juce_recommended_lto_flags
             juce::juce_recommended_warning_flags)
+
+    # SubForge Duck: effect for the bass track, keyed by SubForge.
+    juce_add_plugin(SubForgeDuck
+        COMPANY_NAME "SubForge"
+        BUNDLE_ID com.subforge.subforgeduck
+        PRODUCT_NAME "SubForge Duck"
+        PLUGIN_MANUFACTURER_CODE Sbfg
+        PLUGIN_CODE Sfd1
+        IS_SYNTH FALSE
+        NEEDS_MIDI_INPUT FALSE
+        NEEDS_MIDI_OUTPUT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+        AU_MAIN_TYPE kAudioUnitType_Effect
+        VST3_CATEGORIES Fx Dynamics
+        COPY_PLUGIN_AFTER_BUILD ${APPLE}
+        FORMATS ${SUBFORGE_FORMATS})
+
+    target_sources(SubForgeDuck PRIVATE
+        Source/duck/DuckProcessor.cpp
+        Source/duck/DuckEditor.cpp)
+
+    target_include_directories(SubForgeDuck PRIVATE Source/duck)
+
+    target_compile_definitions(SubForgeDuck PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0)
+
+    target_link_libraries(SubForgeDuck
+        PRIVATE
+            subforge_dsp
+            juce::juce_audio_utils
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_lto_flags
+            juce::juce_recommended_warning_flags)
 endif()

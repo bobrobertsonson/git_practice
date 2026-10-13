@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Ducker.h"
 #include "Filters.h"
 #include "SubVoice.h"
 
@@ -56,6 +57,7 @@ public:
         heldNotes.clear();
         heldNotes.reserve (128);
         filtersDirty = true;
+        ducker.prepare (sampleRate);
         reset();
         setSettings (settings);
     }
@@ -64,13 +66,8 @@ public:
     {
         lowCut.reset();
         harmHighPass.reset();
-        sidechainLowPass.reset();
         phoneHighPass.reset();
-        duckEnv = 0.0;
-        onsetFast = onsetSlow = 0.0;
-        samplesSinceOnset = 1 << 30;
-        inRoll = false;
-        duckSmoothedDb = 0.0;
+        ducker.reset();
         voice = SubVoice();
         tail = SubVoice();
         voice.prepare (sampleRate);
@@ -103,14 +100,8 @@ public:
         driveGain = dbToGain (settings.driveDb);
         ceiling = dbToGain (settings.ceilingDb);
         outputGain = dbToGain (settings.outputDb);
-        duckReleaseCoef = std::exp (-1.0 / std::max (1.0, settings.duckReleaseMs * 0.001 * sampleRate));
-        duckAttackCoef = std::exp (-1.0 / (0.001 * sampleRate));
-        onsetFastCoef = std::exp (-1.0 / (0.002 * sampleRate));
-        onsetSlowCoef = std::exp (-1.0 / (0.030 * sampleRate));
-        smoothFastCoef = std::exp (-1.0 / (0.001 * sampleRate));
-        smoothSlowCoef = std::exp (-1.0 / (0.008 * sampleRate));
-        rollWindowSamples = static_cast<int> (settings.rollWindowMs * 0.001 * sampleRate);
-        refractorySamples = static_cast<int> (0.025 * sampleRate);
+        ducker.setSettings ({ settings.duckDepthDb, settings.duckThresholdDb, settings.duckReleaseMs,
+                              settings.rollHold, settings.rollWindowMs, settings.rollDepthDb });
     }
 
     void noteOn (int note, float velocity)
@@ -193,54 +184,9 @@ public:
                 if (sidechainR != nullptr) sc += sidechainR[i];
                 if (sidechainL != nullptr && sidechainR != nullptr) sc *= 0.5;
 
-                const double low = sidechainLowPass.process (sc);
-                const double level = std::abs (low);
-                const double coef = level > duckEnv ? duckAttackCoef : duckReleaseCoef;
-                duckEnv = level + coef * (duckEnv - level);
-
-                const double amount = std::clamp ((gainToDb (duckEnv) - settings.duckThresholdDb) / 12.0, 0.0, 1.0);
-                double targetDb = amount * settings.duckDepthDb;
-
-                if (settings.rollHold)
-                {
-                    // Kick onsets: short-term energy jumps well above the recent average.
-                    // Comparing fast against slow energy ignores the ripple within one kick.
-                    const double power = low * low;
-                    onsetFast = power + onsetFastCoef * (onsetFast - power);
-                    onsetSlow = power + onsetSlowCoef * (onsetSlow - power);
-
-                    const double thresholdPower = dbToGain (2.0 * settings.duckThresholdDb);
-                    const bool onset = samplesSinceOnset > refractorySamples
-                                       && onsetFast > thresholdPower
-                                       && onsetFast > 2.5 * onsetSlow;
-
-                    if (onset)
-                    {
-                        inRoll = samplesSinceOnset < rollWindowSamples;
-                        samplesSinceOnset = 0;
-                    }
-                    else if (samplesSinceOnset < (1 << 30))
-                    {
-                        ++samplesSinceOnset;
-                    }
-
-                    if (samplesSinceOnset > rollWindowSamples)
-                        inRoll = false;
-
-                    if (inRoll)
-                        targetDb = settings.rollDepthDb;
-                }
-                else
-                {
-                    inRoll = false;
-                }
-
-                // Fast into a duck, smooth everywhere else so roll transitions never step.
-                const double smoothCoef = targetDb > duckSmoothedDb && ! inRoll ? smoothFastCoef : smoothSlowCoef;
-                duckSmoothedDb = targetDb + smoothCoef * (duckSmoothedDb - targetDb);
-
-                duckGain = dbToGain (-duckSmoothedDb);
-                blockDuckReductionDb = std::max (blockDuckReductionDb, duckSmoothedDb);
+                const double reductionDb = ducker.process (sc);
+                duckGain = dbToGain (-reductionDb);
+                blockDuckReductionDb = std::max (blockDuckReductionDb, reductionDb);
             }
 
             double out = (clipped + harm + a.click + b.click) * duckGain;
@@ -285,7 +231,6 @@ private:
 
         lowCut.setHighPass (sampleRate, settings.lowCutHz);
         harmHighPass.setHighPass (sampleRate, settings.crossoverHz);
-        sidechainLowPass.setLowPass (sampleRate, 150.0, 0.7071);
         phoneHighPass.setHighPass (sampleRate, 150.0);
         filtersDirty = false;
     }
@@ -303,15 +248,10 @@ private:
     std::vector<int> heldNotes;
 
     Butterworth4 lowCut, harmHighPass, phoneHighPass;
-    Biquad sidechainLowPass;
     bool filtersDirty = true;
 
     double driveGain = 1.0, ceiling = 0.5, outputGain = 1.0;
-    double duckEnv = 0.0, duckAttackCoef = 0.0, duckReleaseCoef = 0.0;
-    double onsetFast = 0.0, onsetSlow = 0.0, onsetFastCoef = 0.0, onsetSlowCoef = 0.0;
-    double duckSmoothedDb = 0.0, smoothFastCoef = 0.0, smoothSlowCoef = 0.0;
-    int samplesSinceOnset = 1 << 30, rollWindowSamples = 0, refractorySamples = 0;
-    bool inRoll = false;
+    Ducker ducker;
 
     double blockPeak = 0.0, blockSubReductionDb = 0.0, blockDuckReductionDb = 0.0;
 };

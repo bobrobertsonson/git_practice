@@ -4,6 +4,7 @@
 //
 // With an output dir, demo renders are also written as 24-bit WAV files.
 
+#include "BassDuck.h"
 #include "SubEngine.h"
 
 #include <cmath>
@@ -205,6 +206,43 @@ std::vector<double> gainCurveDb (const std::vector<float>& processed, const std:
     for (double t = from; t + 0.01 <= to; t += 0.01)
         g.push_back (gainToDb (rms (processed, t, t + 0.01)) - gainToDb (rms (reference, t, t + 0.01)));
     return g;
+}
+
+// Level of one frequency in a signal (single-bin DFT), in dB.
+double toneLevelDb (const std::vector<float>& x, double freq, double from, double to)
+{
+    const size_t a = static_cast<size_t> (from * kSampleRate);
+    const size_t b = std::min (x.size(), static_cast<size_t> (to * kSampleRate));
+    double re = 0.0, im = 0.0;
+    for (size_t i = a; i < b; ++i)
+    {
+        const double ph = 2.0 * kPi * freq * static_cast<double> (i) / kSampleRate;
+        re += x[i] * std::cos (ph);
+        im += x[i] * std::sin (ph);
+    }
+    return gainToDb (2.0 * std::sqrt (re * re + im * im) / static_cast<double> (b - a));
+}
+
+std::vector<float> sines (double seconds, std::initializer_list<std::pair<double, double>> partials)
+{
+    std::vector<float> x (static_cast<size_t> (seconds * kSampleRate), 0.0f);
+    for (size_t i = 0; i < x.size(); ++i)
+        for (auto [freq, amp] : partials)
+            x[i] += static_cast<float> (amp * std::sin (2.0 * kPi * freq * static_cast<double> (i) / kSampleRate));
+    return x;
+}
+
+std::vector<float> runBassDuck (const BassDuckSettings& settings, std::vector<float> bass, const std::vector<float>* key)
+{
+    BassDuck duck;
+    duck.prepare (kSampleRate);
+    duck.setSettings (settings);
+    for (size_t pos = 0; pos < bass.size(); pos += kBlock)
+    {
+        const int n = static_cast<int> (std::min<size_t> (kBlock, bass.size() - pos));
+        duck.process (bass.data() + pos, nullptr, key != nullptr ? key->data() + pos : nullptr, nullptr, n);
+    }
+    return bass;
 }
 
 int failures = 0;
@@ -443,6 +481,38 @@ int main (int argc, char** argv)
                    + fmt ("; with it: %.1f dB swing", range (holdCurve))
                    + fmt (", held at -%.1f dB, first hit -%.1f dB", -mean (holdCurve), firstHit)
                    + fmt (", after run -%.1f dB, next single kick -%.1f dB", afterRun, laterHit));
+    }
+
+    // 14. SubForge Duck is transparent while nothing is ducking: every
+    //     frequency comes out at the level it went in.
+    {
+        BassDuckSettings s;
+        double worst = 0.0;
+        for (double freq : { 30.0, 60.0, 100.0, 150.0, 400.0, 2000.0 })
+        {
+            const auto in = sines (1.0, { { freq, 0.5 } });
+            const auto out = runBassDuck (s, in, nullptr);
+            worst = std::max (worst, std::abs (toneLevelDb (out, freq, 0.5, 1.0) - toneLevelDb (in, freq, 0.5, 1.0)));
+        }
+        check (worst < 0.05, "bass duck is transparent when idle", fmt ("worst level change %.3f dB", worst));
+    }
+
+    // 15. Keyed by a SubForge boom, it ducks only the bass below the split.
+    {
+        BassDuckSettings s;
+        s.splitHz = 100.0;
+        s.duck.depthDb = 8.0;
+        const auto bass = sines (2.0, { { 45.0, 0.4 }, { 400.0, 0.2 } });
+        auto boom = sines (2.0, { { 31.0, 0.5 } });
+        for (size_t i = 0; i < static_cast<size_t> (kSampleRate); ++i)
+            boom[i] = 0.0f; // boom starts at 1 s
+        const auto out = runBassDuck (s, bass, &boom);
+        const double lowBefore = toneLevelDb (out, 45.0, 0.5, 0.95) - toneLevelDb (bass, 45.0, 0.5, 0.95);
+        const double lowDuring = toneLevelDb (out, 45.0, 1.3, 1.9) - toneLevelDb (bass, 45.0, 1.3, 1.9);
+        const double highDuring = toneLevelDb (out, 400.0, 1.3, 1.9) - toneLevelDb (bass, 400.0, 1.3, 1.9);
+        check (std::abs (lowBefore) < 0.1 && lowDuring < -6.0 && std::abs (highDuring) < 0.3,
+               "bass duck cuts only the low end under the boom",
+               fmt ("45 Hz: %.1f dB before, %.1f dB during", lowBefore, lowDuring) + fmt ("; 400 Hz during: %+.2f dB", highDuring));
     }
 
     if (! outDir.empty())
