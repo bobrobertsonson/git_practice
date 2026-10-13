@@ -794,7 +794,8 @@ class RaspEngine {
       const dk = expMap(1 - p.darken, 1500, 18000); svfSet(darkL, dk, 0.6); svfSet(darkR, dk, 0.6);
       const rt = expMap(p.tail, 0.5, 6); for (let i = 0; i < 8; i++) pFb[i] = Math.pow(10, -3 * pLen[i] / (rt * sr));
       const beat = 60 / clamp(p.bpm, 40, 240);
-      delayS.target = clamp((p.delayTime === 0 ? beat * 0.5 : p.delayTime === 1 ? beat * 0.75 : beat) * sr, 1, DMAX - 4);
+      delayS.target = clamp(beat * [0.5, 0.75, 1, 0.25, 1 / 3, 1.5, 2, 2 / 3][clamp(p.delayTime | 0, 0, 7)] * sr, 1, DMAX - 4);
+      DD.depth = db(-30 * clamp(p.delayDuck ?? 0.5, 0, 1)); DD.rel = coefMs(expMap(clamp(p.duckRelease ?? 0.4, 0, 1), 80, 1200));
       const td = (p.tilt - 0.5) * 12; tiltLo = db(-td * 0.5); tiltHi = db(td * 0.5);
       B.amount = p.glue; B.thr = -10 - 10 * p.glue; B.makeup = p.glue > 0.001 ? db(-knee(-12 - B.thr, 2, 8) * 0.8) : 1;
       gCtl.target = db(p.controlGainDb);
@@ -911,16 +912,25 @@ class RaspEngine {
       o[0] = po[0] + po[2] + po[4] + po[6]; o[1] = po[1] + po[3] + po[5] + po[7];
     };
     const pv = [0, 0];
+    // Delay duck (mirrors Flavour in rasp.h): follows whether a line is being sung.
+    const DD = { c: coefMs(10), ms: 0, runMax: -100, fall: 10 / sr, hold: 0, holdN: Math.trunc(0.15 * sr), att: coefMs(15), rel: coefMs(300), depth: 1, gain: 1 };
     const flavour = (x, key, o) => {
       const a = Math.abs(key);
       duckEnv = a + (a > duckEnv ? duckAtt : duckRel) * (duckEnv - a);
       const dg = 1 - p.duck * 0.85 * clamp(duckEnv * 6, 0, 1);
+      const k2 = key * key;
+      DD.ms = k2 + DD.c * (DD.ms - k2);
+      const lvl = 10 * Math.log10(DD.ms + 1e-12);
+      DD.runMax = Math.max(lvl, DD.runMax - DD.fall);
+      if (lvl > -50 && lvl > DD.runMax - 18) DD.hold = DD.holdN; else if (DD.hold > 0) DD.hold--;
+      const dt = DD.hold > 0 ? DD.depth : 1;
+      DD.gain = dt + (dt < DD.gain ? DD.att : DD.rel) * (DD.gain - dt);
       plate(x, pv);
       const ds = smNext(delayS), rep = p.repeats * 0.85;
       const dL = dRead(dlL, ds), dR = dRead(dlR, ds);
       const fbR = opLp(fbLp, opHp(fbHp, dR));
       dWrite(dlL, x + fbR * rep); dWrite(dlR, dL * rep);
-      let L = dg * (p.tailBlend * pv[0] * 0.5 + p.delayBlend * dL), R = dg * (p.tailBlend * pv[1] * 0.5 + p.delayBlend * dR);
+      let L = dg * (p.tailBlend * pv[0] * 0.5 + p.delayBlend * DD.gain * dL), R = dg * (p.tailBlend * pv[1] * 0.5 + p.delayBlend * DD.gain * dR);
       svfRun(retL, L); svfRun(retR, R); L = retL.lp; R = retR.lp;
       let lo = opLp(tiltL, L); L = lo * tiltLo + (L - lo) * tiltHi;
       lo = opLp(tiltR, R); R = lo * tiltLo + (R - lo) * tiltHi;
@@ -1245,19 +1255,19 @@ const DEFAULTS = {
   harm3Level: 0, harm4Level: 0, harm3Semi: 0, harm4Semi: 7, harm1Width: 0.7, harm2Width: 0.7, harm3Width: 0.7, harm4Width: 0.7,
   harmRandPitch: 0.4, harmRandTime: 0.4, harmLoCut: 80, harmHiCut: 12000, harmWidth: 1, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.1, width: 0.85, solo: false, doubleTrack: false, thickenGainDb: -4,
-  flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.2, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, flavourGainDb: -5,
+  flavourOn: true, tail: 0.35, tailBlend: 0.35, repeats: 0.3, delayBlend: 0.3, delayTime: 0, bpm: 120, tilt: 0.5, duck: 0.6, delayDuck: 0.5, duckRelease: 0.4, flavourGainDb: -5,
   glue: 0.5, outDb: 0, inDb: 0,
   bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false, stutter: false, glitch: false, stutterDiv: 2, glitchAmount: 0.6, glitchPattern: 0,
   tapeStop: false, tapeTime: 1, freeze: false, gate: false, gatePattern: 0, throwStyle: 0, crush: 0, crushMix: 1, lofi: 0,
 };
 const PRESETS = {
-  huge:    { drive: 0.45, chop: 0.65, spread: 0.6, thickenGainDb: -3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5, weight: 0.6, fill: 0.4, smooth: 0.4, darken: 0.25 },
+  huge:    { drive: 0.45, chop: 0.65, spread: 0.6, thickenGainDb: -3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.35, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5, weight: 0.6, fill: 0.4, smooth: 0.4, darken: 0.25 },
   natural: {},
   dark:    { brightness: 0, drive: 0.5, loCut: 0.36, hiCut: 0.72, darken: 0.5, tilt: 0.4, tail: 0.4 },
   bright:  { brightness: 2, drive: 0.35, loCut: 0.58, hiCut: 0.95, darken: 0.1, tilt: 0.62, deEss: 0.65, smooth: 0 },
-  live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.15, duck: 0.75, bleed: 0.78, loCut: 0.56, glue: 0.4 },
+  live:    { tail: 0.35, tailBlend: 0.25, repeats: 0.2, delayBlend: 0.25, duck: 0.75, delayDuck: 0.7, bleed: 0.78, loCut: 0.56, glue: 0.4 },
   raw:     { mix: 0, chop: 0.35, thickenOn: false, flavourOn: false, glue: 0, weight: 0, fill: 0, smooth: 0 },
-  air:     { drive: 0.45, chop: 0.65, spread: 0.6, thickenGainDb: -3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.22, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 1, airDb: 5, bodyDb: 5, deEss: 0.75, weight: 0.5, fill: 0.3, smooth: 0, darken: 0.25 },
+  air:     { drive: 0.45, chop: 0.65, spread: 0.6, thickenGainDb: -3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.35, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 1, airDb: 5, bodyDb: 5, deEss: 0.75, weight: 0.5, fill: 0.3, smooth: 0, darken: 0.25 },
 };
 let params = Object.assign({}, DEFAULTS);
 
@@ -1312,6 +1322,10 @@ const MENU = [
   ["harmRandTime", "Harmony randomize time", 0, 1, 0.01, pct],
   ["harmLoCut", "Harmony low cut", 20, 1000, 1, v => Math.round(v) + " Hz"],
   ["harmHiCut", "Harmony high cut", 1000, 20000, 100, v => (v / 1000).toFixed(1) + " kHz"],
+  ["Delay"],
+  ["delayTime", "Delay time", 0, 7, 1, v => ["1/8", "1/8 dotted", "1/4", "1/16", "1/8 triplet", "1/4 dotted", "1/2", "1/4 triplet"][Math.round(v)]],
+  ["delayDuck", "Delay duck (drops under a line)", 0, 1, 0.01, v => v < 0.005 ? "off" : "-" + Math.round(30 * v) + " dB"],
+  ["duckRelease", "Delay swell after the line", 0, 1, 0.01, v => Math.round(80 * Math.pow(15, v)) + " ms"],
   ["Stutter / glitch"],
   ["stutterDiv", "Stutter slice", 0, 3, 1, v => ["1/4", "1/8", "1/16", "1/32"][Math.round(v)]],
   ["glitchAmount", "Glitch amount (over 50%: crash)", 0, 1, 0.01, pct],
@@ -1381,7 +1395,8 @@ function buildToggle(parent, key, label, names) {
   const b = document.createElement("button"); b.className = "toggle"; b.type = "button";
   b.innerHTML = `<span class="tl">${label}</span><span class="slot"></span><span class="tv"></span>`;
   parent.append(b);
-  const render = () => { b.style.setProperty("--pos", params[key]); b.querySelector(".tv").textContent = names[params[key]]; b.setAttribute("aria-label", `${label}: ${names[params[key]]}`); };
+  const nameOf = v => names[v] ?? (key === "delayTime" ? ["1/8", "1/8 dotted", "1/4", "1/16", "1/8 triplet", "1/4 dotted", "1/2", "1/4 triplet"][v] : String(v));
+  const render = () => { b.style.setProperty("--pos", Math.min(2, params[key])); b.querySelector(".tv").textContent = nameOf(params[key]); b.setAttribute("aria-label", `${label}: ${nameOf(params[key])}`); };
   toggleEls[key] = render;
   b.addEventListener("click", () => setParam(key, (params[key] + 1) % 3));
   render();

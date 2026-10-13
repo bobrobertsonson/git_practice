@@ -305,6 +305,31 @@ unlearned one.
 - MIDI on the pedal and Pod: CC 108 match on, 109 compare, 110 character,
   111 plosive.
 
+### Delay duck and more delay times
+
+- **Delay duck** (FLAVOUR, default 50%): the delay alone drops while you
+  sing a line (up to −30 dB), and the repeats bloom once the line ends.
+  - It follows whether a line is being sung, not the raw level: within 18 dB
+    of the recent peak, held 150 ms across the gaps between words. So it stays
+    down for the whole line instead of pumping on every syllable.
+  - The delay itself keeps running underneath, so the trail is full when it
+    comes up.
+  - **Swell** (80 ms–1.2 s) sets how fast it comes back.
+  - The older Duck control still dips reverb and delay together by level.
+- On Andrew's DI (delay level re the voice, at delay blend 0.5):
+
+  | Delay duck | During lines | Just after lines |
+  |---|---|---|
+  | Off | −22.5 dB | −30.6 dB |
+  | 50% | −37.4 dB | −33.6 dB |
+  | 100% | −51.8 dB | −34.2 dB |
+
+- With the delay out of the words, there's room for more of it: default delay
+  blend 0.2 → 0.3, Huge 0.22 → 0.35, Live 0.15 → 0.25 with a 70% duck.
+- **Delay time** now has 8 values: 1/8, dotted 1/8, 1/4, 1/16, 1/8 triplet,
+  dotted 1/4, 1/2 and 1/4 triplet. The pedal's 3-way toggle covers the first
+  three; MIDI CC 114 reaches all of them (CC 112 delay duck, CC 113 swell).
+
 ## 3b. Momentary effects: Mega and Throw
 
 Both are on only while held: on the pedal's AUX footswitch, the Pod's buttons,

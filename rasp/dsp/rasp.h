@@ -246,11 +246,14 @@ struct Params {
     float tail       = 0.35f;  // plate decay setting, 0.5..6 s (0.35 measures ~0.9 s with damping)
     float tailBlend  = 0.35f;  // reverb level
     float repeats    = 0.30f;  // delay feedback
-    float delayBlend = 0.20f;  // delay level
-    int   delayTime  = 0;      // 3-way: 0 = 1/8, 1 = dotted 1/8, 2 = 1/4
+    float delayBlend = 0.30f;  // delay level (0.2 -> 0.3 with the delay duck: louder trails, quieter under the lines)
+    int   delayTime  = 0;      // 0 = 1/8, 1 = dotted 1/8, 2 = 1/4 (the pedal's 3-way), 3 = 1/16,
+                               // 4 = 1/8 triplet, 5 = dotted 1/4, 6 = 1/2, 7 = 1/4 triplet
     float bpm        = 120.f;
     float tilt       = 0.50f;  // EQ on the effect: 0 dark .. 1 bright (+-6 dB)
     float duck       = 0.60f;  // effect dips while the vocal is present
+    float delayDuck  = 0.5f;   // the delay alone drops while you sing a line (0..-30 dB) and swells back after it
+    float duckRelease = 0.4f;  // how fast it swells back: 80 ms .. 1.2 s
     float flavourGainDb = -5.f;
 
     // BUS
@@ -912,13 +915,18 @@ public:
         tiltL.setCutoff(1000.f, sr); tiltR.setCutoff(1000.f, sr);
         duckAtt = coefMs(8.f, sr); duckRel = coefMs(300.f, sr);
         delayS.init(sr * 0.25f, sr, 80.f);
+        vadC = coefMs(10.f, sr); dAtt = coefMs(15.f, sr); dRel = coefMs(300.f, sr);
+        fall = 10.f / sr; holdN = (int)(0.15f * sr);
     }
     void set(const Params& p) {
         plate.setDecay(expMap(p.tail, 0.5f, 6.f));
         tailBlend = p.tailBlend; delayBlend = p.delayBlend; duck = p.duck;
         repeats = p.repeats * 0.85f;
         float beat = 60.f / clampf(p.bpm, 40.f, 240.f);
-        float t = p.delayTime == 0 ? beat * 0.5f : (p.delayTime == 1 ? beat * 0.75f : beat);
+        static const float kBeats[8] = {0.5f, 0.75f, 1.f, 0.25f, 1.f / 3.f, 1.5f, 2.f, 2.f / 3.f};
+        float t = beat * kBeats[p.delayTime < 0 ? 0 : (p.delayTime > 7 ? 7 : p.delayTime)];
+        dDepth = dbToLin(-30.f * clampf(p.delayDuck, 0.f, 1.f));
+        dRel = coefMs(expMap(clampf(p.duckRelease, 0.f, 1.f), 80.f, 1200.f), sr);
         delayS.target = clampf(t * sr, 1.f, (float)(kDelayMax - 4));
         float db = (p.tilt - 0.5f) * 12.f;
         tiltLo = dbToLin(-db * 0.5f); tiltHi = dbToLin(db * 0.5f);
@@ -928,6 +936,17 @@ public:
         float a = std::fabs(key);
         env = a + (a > env ? duckAtt : duckRel) * (env - a);
         float dg = 1.f - duck * 0.85f * clampf(env * 6.f, 0.f, 1.f);
+        // Delay duck: follows whether a line is being sung (level within 18 dB
+        // of the recent peak, held 150 ms across the gaps between words), not
+        // the level itself, so it stays down for the whole line and the
+        // repeats bloom once the line ends.
+        const float k2 = key * key;
+        vadMs = k2 + vadC * (vadMs - k2);
+        const float lvl = 10.f * std::log10(vadMs + 1e-12f);
+        runMax = std::fmax(lvl, runMax - fall);
+        if (lvl > -50.f && lvl > runMax - 18.f) hold = holdN; else if (hold > 0) hold--;
+        const float dt = hold > 0 ? dDepth : 1.f;
+        dGain = dt + (dt < dGain ? dAtt : dRel) * (dGain - dt);
 
         float rL, rR;
         plate.process(x, rL, rR);
@@ -939,8 +958,8 @@ public:
         dlL.write(x + fbR * repeats);
         dlR.write(dL * repeats);
 
-        L = dg * (tailBlend * rL * 0.5f + delayBlend * dL);
-        R = dg * (tailBlend * rR * 0.5f + delayBlend * dR);
+        L = dg * (tailBlend * rL * 0.5f + delayBlend * dGain * dL);
+        R = dg * (tailBlend * rR * 0.5f + delayBlend * dGain * dR);
         retLpL.process(L); retLpR.process(R);
         L = retLpL.lp; R = retLpR.lp;
         float lo = tiltL.lp(L); L = lo * tiltLo + (L - lo) * tiltHi;
@@ -950,6 +969,8 @@ private:
     static constexpr int kDelayMax = (1 << 17) * RASP_SR_SCALE;   // 2.7 s @ 48k
     float sr = 48000.f, tailBlend = 0, delayBlend = 0, duck = 0, repeats = 0;
     float env = 0, duckAtt = 0, duckRel = 0, tiltLo = 1, tiltHi = 1;
+    float vadC = 0, vadMs = 0, runMax = -100.f, fall = 0, dAtt = 0, dRel = 0, dDepth = 1, dGain = 1;
+    int hold = 0, holdN = 7200;
     Plate plate;
     DelayLine<kDelayMax> dlL, dlR;
     OnePole fbHp, fbLp, tiltL, tiltR;

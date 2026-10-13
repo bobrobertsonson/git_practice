@@ -18,7 +18,7 @@ inline Params presetParams(int i) {
     switch (i) {
         case 0:  // huge: album sound
             p.drive = 0.45f; p.chop = 0.65f; p.spread = 0.6f; p.thickenGainDb = -3.f; p.tail = 0.45f;
-            p.tailBlend = 0.45f; p.delayBlend = 0.22f; p.flavourGainDb = -4.f; p.glue = 0.65f; p.outDb = -3.f;
+            p.tailBlend = 0.45f; p.delayBlend = 0.35f; p.flavourGainDb = -4.f; p.glue = 0.65f; p.outDb = -3.f;
             // Top end fitted to four producers' lead vocals (tools/presetfit.py:
             // Bloodbath, Gojira, Immortal Disfigurement, KnockedLoose). Every one
             // kept more air than the old 12.6 kHz hi cut; average tone error
@@ -53,7 +53,8 @@ inline Params presetParams(int i) {
             p.smooth = 0.f;   // bright keeps its presence
             break;
         case 4:  // live: tighter effects, more duck, bleed reducer higher
-            p.tail = 0.35f; p.tailBlend = 0.25f; p.repeats = 0.2f; p.delayBlend = 0.15f; p.duck = 0.75f;
+            p.tail = 0.35f; p.tailBlend = 0.25f; p.repeats = 0.2f; p.delayBlend = 0.25f; p.duck = 0.75f;
+            p.delayDuck = 0.7f;   // live: the delay stays out of the words, more than in the studio
             p.bleed = 0.78f; p.loCut = 0.56f; p.glue = 0.4f;
             break;
         case 5:  // raw: filters and light compression only

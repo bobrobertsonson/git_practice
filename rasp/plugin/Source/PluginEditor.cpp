@@ -116,7 +116,7 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     addKnob(flavour, "tail", "Tail"); addKnob(flavour, "tailBlend", "Tail blend"); addKnob(flavour, "tilt", "Tilt");
     addKnob(flavour, "repeats", "Repeats"); addKnob(flavour, "delayBlend", "Delay blend"); addChoice(flavour, "delayTime", "Time");
     addKnob(flavour, "duck", "Duck"); addKnob(flavour, "flavourGainDb", "Level"); addKnob(flavour, "bpm", "Tempo");
-    addToggle(flavour, "sync", "Sync to host");
+    addToggle(flavour, "sync", "Sync to host"); addKnob(flavour, "delayDuck", "Delay duck"); addKnob(flavour, "duckRelease", "Swell");
 
     auto& harm = panels[4]; harm.title = "HARMONY"; harm.cols = 8; harm.newRow = true;
     addChoice(harm, "pitch1Semi", "Pair 1"); addKnob(harm, "octDown", "Level 1");

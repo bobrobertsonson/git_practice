@@ -12,7 +12,7 @@
 //   Button 2       tap: thicken + flavour on/off
 //                  hold: THROW while held (long delay; repeats ring out after release)
 //   Both buttons   hold 2 s: LEARN (sing ~15 s; LED 1 blinks while it listens). Applies to every preset
-//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st), CC 87 = double-track, CC 88 / 89 = STUTTER / GLITCH (held), CC 90 = slice, CC 91 = glitch amount, CC 92-94 = TAPE STOP / FREEZE / GATE (held), CC 95 = gate pattern, CC 96 = glitch pattern, CC 97 = throw style, CC 102 = crush, CC 103 = lo-fi, CC 104 = tape stop time, CC 105-107 = weight / fill / smooth, CC 108 match on, CC 109 compare, CC 110 character, CC 111 plosive
+//   TRS MIDI in    CC 80 = MEGA, CC 81 = THROW (value >= 64 on), CC 82 / 83 = pitch 1 / 2 level, CC 84 / 85 = pitch 1 / 2 interval (-12..+12 st), CC 87 = double-track, CC 88 / 89 = STUTTER / GLITCH (held), CC 90 = slice, CC 91 = glitch amount, CC 92-94 = TAPE STOP / FREEZE / GATE (held), CC 95 = gate pattern, CC 96 = glitch pattern, CC 97 = throw style, CC 102 = crush, CC 103 = lo-fi, CC 104 = tape stop time, CC 105-107 = weight / fill / smooth, CC 108 match on, CC 109 compare, CC 110 character, CC 111 plosive, CC 112 delay duck, CC 113 delay swell, CC 114 delay time
 //   LED 2          red = chop compressing > 3 dB, blue = feedback notch active,
 //                  white = a momentary effect is held
 #include "daisy_pod.h"
@@ -124,6 +124,9 @@ int main() {
                 if (cc.control_number == 109) params.compare = cc.value >= 64;
                 if (cc.control_number == 110) params.character = std::min(4, cc.value * 5 / 128);
                 if (cc.control_number == 111) params.plosive = cc.value / 127.f;
+                if (cc.control_number == 112) params.delayDuck = cc.value / 127.f;
+                if (cc.control_number == 113) params.duckRelease = cc.value / 127.f;
+                if (cc.control_number == 114) params.delayTime = std::min(7, cc.value / 16);
             }
         }
         // Both buttons held 2 s: Learn (not Mega/Throw).

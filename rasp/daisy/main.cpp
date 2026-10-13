@@ -39,6 +39,8 @@
 // CC 105 / 106 / 107 = Sculpt weight / fill / smooth (also saved per preset slot).
 // CC 108 = learned match on/off, CC 109 = compare (held), CC 110 = character
 // (0 off, auto, scream, shout, clean), CC 111 = plosive control.
+// CC 112 = delay duck, CC 113 = delay swell time, CC 114 = delay time (all 8 values;
+// the panel toggle covers the first three).
 // CC 82 / 83 = pitch 1 / 2 level (0-127), CC 84 / 85 = pitch 1 / 2 interval
 // (0-127 -> -12..+12 semitones). A knob takes over again once moved.
 //
@@ -361,6 +363,9 @@ int main() {
                 if (cc.control_number == 109) params.compare = cc.value >= 64;
                 if (cc.control_number == 110) params.character = std::min(4, cc.value * 5 / 128);
                 if (cc.control_number == 111) params.plosive = cc.value / 127.f;
+                if (cc.control_number == 112) params.delayDuck = cc.value / 127.f;
+                if (cc.control_number == 113) params.duckRelease = cc.value / 127.f;
+                if (cc.control_number == 114) params.delayTime = std::min(7, cc.value / 16);
             }
         }
 
