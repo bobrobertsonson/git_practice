@@ -49,8 +49,24 @@
 // each knob keeps the preset's value until you move it ("pickup").
 //
 // Bypass: digital and level-matched (your voice doesn't drop ~18 dB when you
-// talk between songs). The relay is energized while the pedal runs; without
-// power it falls back to a hard-wired dry path from XLR in to XLR out.
+// talk between songs).
+//
+// FAIL-SAFE (BUILD.md, "Fail-safe"):
+//  - The bypass relay is held by a heartbeat, not a level: D27 toggles once per
+//    audio block (500 Hz) into a charge pump that keeps the relay transistor on.
+//    No power, a crash, a hang or a stalled audio interrupt all stop the pulse,
+//    and within ~50 ms the relay drops to the hard-wired XLR in -> XLR out path.
+//  - Every block is checked: a non-finite sample, or the output silent for 1 s
+//    while a voice is coming in, mutes the block and stops the heartbeat; the
+//    main loop re-initializes the engine and the pulse resumes (~0.2 s of
+//    plain mic).
+//  - The STM32 independent watchdog reboots the chip if the main loop stops for
+//    4 s (long enough for the bootloader); the relay has long since dropped.
+//  - DSP load above 90% sheds harmony pairs 3-4 and freeze, then all harmony and
+//    double-track, then thicken, instead of glitching; they come back after 5 s
+//    below 65%.
+//  - XLR "dry thru" is a passive split of the mic: a clean channel at FOH that
+//    works with the pedal unplugged.
 //
 // Pin map (Daisy Seed: D15..D23 are also A0..A8, D25 is A10, D28 is A11):
 //   A0 (D15)  mux 1 out (control 6 + spread, diffuse), CD4051 select D0 D1 D2
@@ -72,6 +88,8 @@
 //   USB (micro-USB on the Seed): MIDI device + power while bench-testing
 // Check every pin against the Daisy Seed pinout before you build a PCB.
 #include "daisy_seed.h"
+#include "util/CpuLoadMeter.h"
+#include "failsafe.h"
 #include "../dsp/rasp.h"
 #include "../dsp/presets.h"
 #include <cstring>
@@ -129,8 +147,23 @@ static float readPot(int i) {
 
 static float faderDb(float v, float lo, float hi) { return lo + (hi - lo) * v; }
 
+// Which pots are fitted. The lean build (make LEAN=1) has 8 knobs: drive,
+// drive mix, chop, reverb, delay, thicken level, output, bleed reducer; every
+// other setting comes from the preset slot (and MIDI). Unfitted mux inputs are
+// tied to ground on the board and never read.
+#ifdef RASP_LEAN
+static constexpr bool kFitted[kPots] = {
+    0, 0, 1, 1, 1, 0, 0, 0,      // mux 1: drive, mix, chop
+    0, 0, 0, 1, 0, 1, 0, 0,      // mux 2: reverb (tail blend), delay (delay blend)
+    0, 1, 0, 1, 1, 0,            // thicken level, output, bleed
+    0, 0, 0, 0, 0};              // mux 3 (AUX 2 and the slice trim are read separately)
+#else
+static constexpr bool kFitted[kPots] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+#endif
+
 // Writes pot i into params, unless it's still parked after a preset recall.
 static void applyPot(int i) {
+    if (!kFitted[i]) return;
     float v = readPot(i);
     if (!pickup[i].moved(v)) return;
     switch (i) {
@@ -178,8 +211,20 @@ static void saveCurrent() {
 }
 
 // ---------------------------------------------------------------- audio
+static CpuLoadMeter cpuLoad;
+static rasp_pedal::HealthCheck health;
+static rasp_pedal::LoadShedder shedder;
+static volatile bool silenceExpected = false;   // a gate / tape stop / stutter is held: silence is fine
+static bool pulse = false;
+
 static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size) {
-    for (size_t i = 0; i < size; i++) proc.process(in[0][i], out[0][i], out[1][i]);
+    cpuLoad.OnBlockStart();
+    if (!health.needsReset())
+        for (size_t i = 0; i < size; i++) proc.process(in[0][i], out[0][i], out[1][i]);
+    health.check(in[0], out[0], out[1], size, silenceExpected);
+    // Heartbeat: the relay stays energized only while this keeps toggling.
+    if (health.healthy()) { pulse = !pulse; relay.Write(pulse); }
+    cpuLoad.OnBlockEnd();
     grDb = proc.gainReductionDb();
     bleedDb = proc.bleedReductionDb();
     limDb = proc.limiterDb();
@@ -237,7 +282,7 @@ int main() {
     srClock.Init(seed::D25, GPIO::Mode::OUTPUT);
     srLatch.Init(seed::D26, GPIO::Mode::OUTPUT);
     relay.Init(seed::D27, GPIO::Mode::OUTPUT);
-    relay.Write(true);             // effect path in circuit while powered
+    relay.Write(false);            // the heartbeat from the audio callback energizes it
 
     // Presets: first boot fills flash with the factory set.
     Stored defaults;
@@ -262,7 +307,19 @@ int main() {
     proc.init(hw.AudioSampleRate());
     proc.setParams(params);
     recall(storage.GetSettings().current);
+    cpuLoad.Init(hw.AudioSampleRate(), hw.AudioBlockSize());
+    health.init(hw.AudioSampleRate(), hw.AudioBlockSize());
     hw.StartAudio(AudioCallback);
+
+    // Independent watchdog: LSI ~32 kHz / 256 = 125 Hz, reload 500 -> ~4 s.
+    // Long enough to cover the bootloader after a reset; the relay drops long
+    // before it fires.
+    static IWDG_HandleTypeDef iwdg;
+    iwdg.Instance = IWDG1;
+    iwdg.Init.Prescaler = IWDG_PRESCALER_256;
+    iwdg.Init.Reload = 500;
+    iwdg.Init.Window = IWDG_WINDOW_DISABLE;
+    HAL_IWDG_Init(&iwdg);
 
     uint32_t lastTap = 0, tapLedOff = 0, notchLedOff = 0, blinkUntil = 0;
     int lastHowl = 0, blinkCount = 0;
@@ -394,9 +451,20 @@ int main() {
         params.glitch     = (fsGlit && !aux2Both) || midiGlitch;
         params.tapeStop   = aux2Both || midiTape;
         params.gate       = midiGate;
+        // Fail-safe housekeeping: feed the watchdog, recover from a fault,
+        // shed load.
+        HAL_IWDG_Refresh(&iwdg);
+        silenceExpected = params.gate || params.tapeStop || params.stutter || params.glitch;
+        if (health.needsReset()) {            // audio is muted, relay on the plain mic
+            proc.init(hw.AudioSampleRate());
+            System::Delay(200);
+            health.recovered();
+            blinkCount = 1;                   // one blink: a fault was caught
+        }
+        shedder.update(cpuLoad.GetAvgCpuLoad(), now);
         // NOTE: setParams runs outside the audio interrupt. A production build
         // should hand params over with a lock-free double buffer.
-        proc.setParams(params);
+        proc.setParams(shedder.apply(params));
 
         // LEDs. The tap LED blinks the preset number after a recall or save.
         if (howlEvents != lastHowl) { lastHowl = howlEvents; notchLedOff = now + 2000; }

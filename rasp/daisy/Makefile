@@ -9,5 +9,9 @@ APP_TYPE = BOOT_SRAM
 CPP_SOURCES = main.cpp
 LIBDAISY_DIR ?= ../../libDaisy
 OPT = -O2
+# make LEAN=1: the under-$300 build with 8 knobs (BUILD.md, "Lean build")
+ifeq ($(LEAN),1)
+C_DEFS = -DRASP_LEAN
+endif
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core
 include $(SYSTEM_FILES_DIR)/Makefile

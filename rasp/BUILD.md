@@ -58,7 +58,7 @@ make LIBDAISY_DIR=../../../libDaisy program-dfu
 
 ---
 
-## Stage 2: the full floor pedal (≈ $280–380 in parts)
+## Stage 2: the floor pedal (≈ $220 lean, ≈ $350 full panel)
 
 The firmware is `daisy/main.cpp`; its header lists every pin. **No PCB or
 schematic exists yet.** Build v1 point-to-point on perfboard, or have the
@@ -84,13 +84,88 @@ current parts; quantities match the firmware.
 | Dual-gang 16 mm pot, A10K (log) | 1 | $3 | Headphone volume |
 | Resistor divider into Daisy IN | – | – | Scale the preamp output to about 1 Vrms, the Seed's input ceiling (AC-coupled) |
 
-### Bypass relay (power-fail fallback)
+### Bypass relay and fail-safe
 
 | Part | Qty | ≈ Price | Notes |
 |---|---|---|---|
-| **Panasonic TQ2-5V**, DPDT, non-latching, 5 V coil | 1 | $4 | De-energized, it hard-wires XLR in → XLR out L. The firmware energizes it at boot |
-| 2N3904 transistor + 1 kΩ base resistor | 1 | $0.20 | Relay driver from pin D27 |
+| **Panasonic TQ2-5V**, DPDT, non-latching, 5 V coil | 1 | $4 | De-energized, it hard-wires XLR in → XLR out L (and R). It is only energized while the firmware's heartbeat runs |
+| 2N3904 transistor | 1 | $0.10 | Relay driver |
+| 1 µF film/ceramic cap, 10 µF electrolytic, 2 × 1N4148, 47 kΩ, 10 kΩ | 1 set | $1 | Heartbeat charge pump (below) |
 | 1N4148 diode | 1 | $0.05 | Flyback across the coil |
+
+The relay is held by a **heartbeat**, not a steady level. D27 toggles once per
+audio block (500 Hz), straight from the audio interrupt:
+
+```
+D27 ──┤1 µF├──┬──|>|──┬──────── 10 kΩ ── base 2N3904   (emitter to GND,
+              │ D1    │                                  collector to relay coil,
+             |<| D2  ═╪═ 10 µF       47 kΩ             coil to +5 V, 1N4148
+              │       │  │            │                  across the coil)
+             GND     GND └────────────┴── GND
+```
+
+The 1 µF cap passes only a changing signal. D1/D2 pump it into the 10 µF
+cap, and the 47 kΩ bleeds that cap down when the pulse stops. If D27 sits
+high or low (crash, hang, stalled audio, no power), the transistor turns off
+within ~50 ms and the relay drops: the plain mic goes straight to the outputs.
+Check the timing with a scope or an LED on the coil before trusting it on stage.
+
+Layers, from the firmware side (`daisy/failsafe.h`, tested by `make
+failsafe_test`):
+
+1. **Dry thru XLR.** A passive split of the mic: a clean channel at front of
+   house that works even with the pedal unplugged. Ask the engineer to keep a
+   channel for it, muted or low.
+2. **Heartbeat relay** (above). No power, crash or hang → plain mic in ~50 ms.
+3. **Health check.** A non-finite sample, or the output silent for 1 s while
+   a voice is coming in, mutes the block and stops the heartbeat. Silence is
+   expected while Gate, Tape stop, Stutter or Glitch is held. The main loop
+   restarts the engine; ~0.2 s of plain mic, then RASP again.
+4. **Watchdog.** The STM32's independent watchdog reboots the chip if the
+   main loop stops for 4 s.
+5. **Load shedding.** Above 90% DSP load for 0.5 s, the heaviest layers go
+   off a step at a time: harmony pairs 3–4 and freeze, then all harmony and
+   double-track, then thicken. They come back after 5 s below 65%, so nothing
+   glitches.
+
+### Lean build: under $300
+
+The full panel above (20 knobs, 4 faders, the big console case) runs about
+$350. The lean build keeps the same circuit, firmware and fail-safe with 8
+knobs, and every other setting comes from the 8 preset slots and MIDI. Build
+it with `make LEAN=1`.
+
+| Part | ≈ Price |
+|---|---|
+| Daisy Seed (Seed3, 65 MB) + headers | $32 |
+| THAT1512 mic preamp + gain pot/network | $12 |
+| 2 × THAT1646 line drivers + mic/line toggle | $17 |
+| Relay, heartbeat pump, driver | $6 |
+| 8 × 16 mm pots + knobs: drive, drive mix, chop, reverb, delay, thicken level, output, bleed | $20 |
+| 3 × CD4051, 74HC595, 8 LEDs | $6 |
+| 4 momentary footswitches (bypass, thicken, flavour, tap) | $16 |
+| Tone toggle, mono toggle, ground-lift toggle | $7 |
+| XLR: 1 in, 3 out (L, R, dry thru) | $20 |
+| 2 × TRS jacks (AUX, AUX 2) + DC jack | $8 |
+| 12 V adapter + Traco ±12 V module + protection/decoupling | $25 |
+| Hammond 1590DD-size enclosure | $28 |
+| Perfboard, sockets, wire, hardware | $25 |
+| **Total** | **≈ $222** |
+| Optional: one Boss FS-7 dual footswitch for AUX (Mega/Throw, both = Freeze) | $50 |
+
+- No headphone amp; monitor through the PA or your IEM mix.
+- Tie the unused mux inputs to ground.
+- Wire mux 3 input 7 (Slice) to a 10 k/10 k divider for a fixed 1/16 slice,
+  or fit the trim.
+
+### Stage checklist
+
+- Dry thru → its own FOH channel. Tell the engineer it's the backup.
+- Power: a spare 12 V adapter in the bag; a locking DC plug if you can.
+- Before doors: unplug the pedal's power while singing. You should still be
+  heard (relay), and the dry channel should show signal.
+- The tap LED blinks once after a recovery (a fault was caught). If it ever
+  happens, note what you were doing and send it over.
 
 ### Controls and LEDs
 

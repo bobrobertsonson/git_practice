@@ -63,6 +63,8 @@ jobs:
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxcomposite-dev
       - name: Engine checks
         run: make -C rasp check
+      - name: Pedal fail-safe tests
+        run: make -C rasp failsafe_test && rasp/failsafe_test
       - name: Build plugin + tests
         run: |
           cmake -S rasp/plugin -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRASP_PLUGIN_TESTS=ON

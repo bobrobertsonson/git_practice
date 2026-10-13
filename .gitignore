@@ -19,3 +19,4 @@ rasp/samples/ref/
 *.zip
 rasp/abtest/index.html
 rasp/learn_tool
+rasp/failsafe_test

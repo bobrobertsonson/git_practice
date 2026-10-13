@@ -18,6 +18,8 @@
 #include "daisy_pod.h"
 #include "../../dsp/rasp.h"
 #include "../../dsp/presets.h"
+#include "util/CpuLoadMeter.h"
+#include "../failsafe.h"
 
 using namespace daisy;
 
@@ -27,8 +29,19 @@ static rasp::Params params;
 static int preset = 0, gainStep = 2;
 static volatile float grDb = 0.f;
 
+// Fail-safes (daisy/failsafe.h): the Pod has no bypass relay, so a fault mutes
+// and the engine restarts; load shedding is the same as the pedal's.
+static CpuLoadMeter cpuLoad;
+static rasp_pedal::HealthCheck health;
+static rasp_pedal::LoadShedder shedder;
+static volatile bool silenceExpected = false;
+
 static void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size) {
-    for (size_t i = 0; i < size; i++) proc.process(in[0][i], out[0][i], out[1][i]);
+    cpuLoad.OnBlockStart();
+    if (!health.needsReset())
+        for (size_t i = 0; i < size; i++) proc.process(in[0][i], out[0][i], out[1][i]);
+    health.check(in[0], out[0], out[1], size, silenceExpected);
+    cpuLoad.OnBlockEnd();
     grDb = proc.gainReductionDb();
 }
 
@@ -64,6 +77,8 @@ int main() {
     loadPreset();
     proc.setParams(params);
     hw.StartAdc();
+    cpuLoad.Init(hw.AudioSampleRate(), hw.AudioBlockSize());
+    health.init(hw.AudioSampleRate(), hw.AudioBlockSize());
     hw.StartAudio(AudioCallback);
     hw.midi.StartReceive();
 
@@ -146,7 +161,10 @@ int main() {
         params.drive = hw.knob1.Process();
         params.chop = hw.knob2.Process();
         params.inDb = 6.f * gainStep;
-        proc.setParams(params);
+        silenceExpected = params.gate || params.tapeStop || params.stutter || params.glitch;
+        if (health.needsReset()) { proc.init(hw.AudioSampleRate()); System::Delay(200); health.recovered(); }
+        shedder.update(cpuLoad.GetAvgCpuLoad(), now);
+        proc.setParams(shedder.apply(params));
 
         const float* c = presetColour[preset];
         float on = (params.bypass || (proc.learning() && (now / 120) % 2)) ? 0.f : 1.f;
