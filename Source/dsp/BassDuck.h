@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
+#include <vector>
 
 namespace subforge
 {
@@ -42,6 +45,142 @@ struct BassDuckSettings
     double splitHz = 100.0;   // only the bass below this is ducked
     bool fullBand = false;    // duck the whole signal (e.g. a guitar bus dipping for each hit)
     DuckSettings duck;
+
+    // Look-ahead: start ducking before the key hits, so the low end is already
+    // empty when the boom lands. 0 = off. The track is delayed by a fixed
+    // maxLookAheadMs whenever this is on; the host compensates for it.
+    double lookAheadMs = 0.0;
+    double gap = 0.5;   // share of the look-ahead held at full depth before the hit; the rest fades down
+};
+
+inline constexpr double maxLookAheadMs = 750.0;
+
+inline int lookAheadLatencySamples (double sampleRate)
+{
+    return static_cast<int> (std::lround (maxLookAheadMs * 0.001 * sampleRate));
+}
+
+// Turns the ducker's reduction into one that starts early. The output runs
+// `latency` samples behind the key, so for each output sample the reductions
+// coming up in the next `window` samples are already known:
+//
+//   reduction(n) = max( r(m) over the gap before the hit,
+//                       r(m) - slope * distance, over the fade before that )
+//
+// Both maxima are sliding-window maxima, kept in O(1) per sample with
+// monotonic queues (the fade uses r(m) - slope * m, which keeps its order as
+// the window slides).
+class LookAhead
+{
+public:
+    void prepare (int newLatency)
+    {
+        latency = newLatency;
+        const auto size = static_cast<size_t> (latency + 1);
+        history.assign (size, 0.0);
+        holdQueue.init (size + 1);
+        fadeQueue.init (size + 1);
+        reset();
+    }
+
+    void reset()
+    {
+        std::fill (history.begin(), history.end(), 0.0);
+        holdQueue.clear();
+        fadeQueue.clear();
+        now = 0;
+        nextHold = nextFade = 0;
+    }
+
+    void setShape (int windowSamples, double gap, double depthDb)
+    {
+        window = std::clamp (windowSamples, 0, latency);
+        hold = static_cast<int> (std::lround (window * std::clamp (gap, 0.0, 1.0)));
+        const double newSlope = depthDb / std::max (1, window - hold);
+
+        if (std::abs (newSlope - slope) > 1.0e-12)
+        {
+            // Queued fade values were ordered with the old slope; rebuild them from history.
+            slope = newSlope;
+            fadeQueue.clear();
+            nextFade = std::max<std::int64_t> (0, now - latency + hold + 1);
+        }
+    }
+
+    // Push the reduction the key calls for now; returns the reduction for the
+    // (delayed) output sample being written now.
+    double process (double reductionDb)
+    {
+        history[slot (now)] = reductionDb;
+
+        const std::int64_t hitAt = now - latency;  // key index lined up with this output sample
+        const std::int64_t holdEnd = hitAt + hold;
+        const std::int64_t fadeEnd = hitAt + window;
+
+        for (; nextFade <= fadeEnd; ++nextFade)
+            if (nextFade > holdEnd)
+                push (fadeQueue, nextFade, true);
+        nextFade = std::max (nextFade, holdEnd + 1);
+        while (! fadeQueue.empty() && fadeQueue.front() <= holdEnd)
+            fadeQueue.popFront();
+
+        for (; nextHold <= holdEnd; ++nextHold)
+            push (holdQueue, nextHold, false);
+        while (! holdQueue.empty() && holdQueue.front() < hitAt)
+            holdQueue.popFront();
+
+        double out = 0.0;
+        if (! holdQueue.empty())
+            out = history[slot (holdQueue.front())];
+        if (! fadeQueue.empty())
+            out = std::max (out, fadeValue (fadeQueue.front()) + slope * static_cast<double> (holdEnd));
+
+        ++now;
+        return std::max (0.0, out);
+    }
+
+private:
+    // Fixed-size ring of sample indices.
+    struct IndexQueue
+    {
+        std::vector<std::int64_t> items;
+        size_t head = 0, count = 0;
+
+        void init (size_t capacity) { items.assign (capacity, 0); clear(); }
+        void clear() { head = count = 0; }
+        bool empty() const { return count == 0; }
+        std::int64_t front() const { return items[head]; }
+        std::int64_t back() const { return items[(head + count - 1) % items.size()]; }
+        void popFront() { head = (head + 1) % items.size(); --count; }
+        void popBack() { --count; }
+        void pushBack (std::int64_t i)
+        {
+            if (count == items.size())
+                popFront();
+            items[(head + count) % items.size()] = i;
+            ++count;
+        }
+    };
+
+    size_t slot (std::int64_t index) const { return static_cast<size_t> (index % static_cast<std::int64_t> (history.size())); }
+    double fadeValue (std::int64_t index) const { return history[slot (index)] - slope * static_cast<double> (index); }
+
+    void push (IndexQueue& q, std::int64_t index, bool fade)
+    {
+        if (index < 0 || index < now - latency || index > now)
+            return;
+        const auto value = [&] (std::int64_t i) { return fade ? fadeValue (i) : history[slot (i)]; };
+        const double v = value (index);
+        while (! q.empty() && value (q.back()) <= v)
+            q.popBack();
+        q.pushBack (index);
+    }
+
+    std::vector<double> history;
+    IndexQueue holdQueue, fadeQueue;
+    int latency = 0, window = 0, hold = 0;
+    double slope = 0.0;
+    std::int64_t now = 0, nextHold = 0, nextFade = 0;
 };
 
 // SubForge Duck: put it on the bass, key it with SubForge (or the kick). It turns
@@ -54,6 +193,10 @@ public:
     {
         sampleRate = newSampleRate;
         ducker.prepare (sampleRate);
+        latency = lookAheadLatencySamples (sampleRate);
+        lookAhead.prepare (latency);
+        for (auto& d : delays)
+            d.assign (static_cast<size_t> (latency), 0.0f);
         splitDirty = true;
         setSettings (settings);
         reset();
@@ -64,13 +207,29 @@ public:
         for (auto& x : crossovers)
             x.reset();
         ducker.reset();
+        lookAhead.reset();
+        for (auto& d : delays)
+            std::fill (d.begin(), d.end(), 0.0f);
+        delayPos = 0;
     }
+
+    // Delay this adds while look-ahead is on (report it to the host).
+    int latencySamples() const { return lookAheadOn ? latency : 0; }
 
     void setSettings (const BassDuckSettings& s)
     {
         splitDirty = splitDirty || std::abs (s.splitHz - settings.splitHz) > 1.0e-9;
         settings = s;
         ducker.setSettings (settings.duck);
+
+        const bool wantLookAhead = settings.lookAheadMs > 0.0 && latency > 0;
+        if (wantLookAhead != lookAheadOn)
+        {
+            lookAheadOn = wantLookAhead;
+            reset();
+        }
+        lookAhead.setShape (static_cast<int> (std::lround (settings.lookAheadMs * 0.001 * sampleRate)),
+                            settings.gap, settings.duck.depthDb);
 
         if (splitDirty)
         {
@@ -90,7 +249,9 @@ public:
             if (keyR != nullptr) key += keyR[i];
             if (keyL != nullptr && keyR != nullptr) key *= 0.5;
 
-            const double reductionDb = (keyL != nullptr || keyR != nullptr) ? ducker.process (key) : 0.0;
+            double reductionDb = (keyL != nullptr || keyR != nullptr) ? ducker.process (key) : 0.0;
+            if (lookAheadOn)
+                reductionDb = lookAhead.process (reductionDb);
             const double lowGain = dbToGain (-reductionDb);
             blockReductionDb = std::max (blockReductionDb, reductionDb);
 
@@ -100,11 +261,23 @@ public:
                 if (channels[ch] == nullptr)
                     continue;
 
+                double input = channels[ch][i];
+                if (lookAheadOn)
+                {
+                    // Delay the track so the key is heard `latency` samples ahead of it.
+                    auto& slot = delays[static_cast<size_t> (ch)][delayPos];
+                    input = slot;
+                    slot = channels[ch][i];
+                }
+
                 double low = 0.0, high = 0.0;
-                crossovers[ch].process (channels[ch][i], low, high);
+                crossovers[ch].process (input, low, high);
                 // Full band keeps the same crossover path so switching modes never changes the tone.
                 channels[ch][i] = static_cast<float> (settings.fullBand ? (low + high) * lowGain : low * lowGain + high);
             }
+
+            if (lookAheadOn && ++delayPos == static_cast<size_t> (latency))
+                delayPos = 0;
         }
     }
 
@@ -123,6 +296,11 @@ private:
 
     std::array<LinkwitzRiley4, 2> crossovers;
     Ducker ducker;
+    LookAhead lookAhead;
+    std::array<std::vector<float>, 2> delays;
+    size_t delayPos = 0;
+    int latency = 0;
+    bool lookAheadOn = false;
     double blockReductionDb = 0.0;
 };
 

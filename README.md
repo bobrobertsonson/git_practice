@@ -196,6 +196,28 @@ double kick.
 guitar or music bus, keyed by SubForge, so the band dips for a moment on each
 hit (Depth 2–4 dB, Release about 200 ms).
 
+### Look-ahead: empty the low end before the hit
+
+Instead of drawing a volume dip before every boom, let SubForge Duck do it.
+Set **Look-ahead** to how early the duck should start (**1/32**, **1/16**,
+**1/8** or **1/4** note, following the song tempo). Over that window the
+ducked part fades down, then holds at full **Depth** for the **Gap** (50% =
+the last half of the window), and the boom lands on an empty low end.
+**Release** sets how it comes back afterwards, as before.
+
+- **Bass** (Full Band off, Split 100–120 Hz): the same as automating a low
+  cut up before each hit. The bass keeps its grit.
+- **Sub layer** (Full Band on, insert it after SubForge on the sub-layer
+  track): the same as a volume dip before each hit.
+
+Key both from the **boom/drop track**, not the kick, so they only dip for hits.
+Start with 1/8 and Gap 50%; try 1/4 on slow breakdowns.
+
+While Look-ahead is on, the plugin delays its track by 750 ms and tells
+Logic, which shifts everything back into line, so you won't hear the
+delay on playback. Turn it off (or bypass the plugin) while recording onto
+that track. At 1/4 note, the look-ahead is capped at 750 ms (below 80 BPM).
+
 ## Signal flow
 
 ```

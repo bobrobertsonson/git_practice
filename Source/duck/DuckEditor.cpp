@@ -28,9 +28,16 @@ SubForgeDuckEditor::SubForgeDuckEditor (SubForgeDuckProcessor& p)
     lookAndFeel.setColour (juce::Slider::textBoxTextColourId, textColour);
     lookAndFeel.setColour (juce::ToggleButton::tickColourId, duckBlue);
     lookAndFeel.setColour (juce::Label::textColourId, textColour);
+    lookAndFeel.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff2c3038));
+    lookAndFeel.setColour (juce::ComboBox::outlineColourId, juce::Colour (0xff3a3e48));
+    lookAndFeel.setColour (juce::ComboBox::textColourId, textColour);
+    lookAndFeel.setColour (juce::ComboBox::arrowColourId, duckBlue);
+    lookAndFeel.setColour (juce::PopupMenu::backgroundColourId, panel);
+    lookAndFeel.setColour (juce::PopupMenu::highlightedBackgroundColourId, duckBlue.withAlpha (0.4f));
     setLookAndFeel (&lookAndFeel);
 
-    for (auto* paramId : { id::split, id::fullBand, id::depth, id::threshold, id::release, id::rollHold, id::rollWindow, id::rollDepth })
+    for (auto* paramId : { id::split, id::fullBand, id::depth, id::threshold, id::release, id::rollHold, id::rollWindow, id::rollDepth,
+                           id::lookAhead, id::gap })
     {
         auto c = std::make_unique<Control>();
         auto* param = duckProcessor.apvts.getParameter (paramId);
@@ -39,7 +46,14 @@ SubForgeDuckEditor::SubForgeDuckEditor (SubForgeDuckProcessor& p)
         c->label.setFont (juce::FontOptions (13.0f));
         addAndMakeVisible (c->label);
 
-        if (dynamic_cast<juce::AudioParameterBool*> (param) != nullptr)
+        if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (param))
+        {
+            c->combo = std::make_unique<juce::ComboBox>();
+            c->combo->addItemList (choice->choices, 1);
+            c->comboAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+                duckProcessor.apvts, paramId, *c->combo);
+        }
+        else if (dynamic_cast<juce::AudioParameterBool*> (param) != nullptr)
         {
             c->toggle = std::make_unique<juce::ToggleButton> ("On");
             c->buttonAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
@@ -140,7 +154,10 @@ void SubForgeDuckEditor::timerCallback()
         c.label.setAlpha (dim ? 0.35f : 1.0f);
     };
 
+    const bool lookAhead = duckProcessor.apvts.getRawParameterValue (subforge::duckparams::lookAhead)->load() > 0.5f;
+
     setDim (*controls[0], fullBand);  // Split does nothing in full-band mode
-    for (size_t i = 6; i < controls.size(); ++i)
-        setDim (*controls[i], ! rollHold);
+    setDim (*controls[6], ! rollHold);
+    setDim (*controls[7], ! rollHold);
+    setDim (*controls[9], ! lookAhead);
 }

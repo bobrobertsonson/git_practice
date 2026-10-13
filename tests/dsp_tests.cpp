@@ -607,6 +607,49 @@ int main (int argc, char** argv)
                fmt ("every band within %.2f dB of -4 dB during the boom; %+.2f dB before it", worst, before));
     }
 
+    // 18. Look-ahead empties the low end before the hit: the bass fades down
+    //     over the first half of the window, sits at full depth for the gap,
+    //     and the boom lands on an already-clear low end. The track comes out
+    //     exactly the reported latency late, so the host can line it back up.
+    {
+        BassDuckSettings s;
+        s.splitHz = 100.0;
+        s.duck.depthDb = 12.0;
+        s.lookAheadMs = 250.0;  // an 8th note at 120 BPM
+        s.gap = 0.5;
+        const double hit = 1.5;
+        const auto bass = sines (3.0, { { 45.0, 0.4 }, { 400.0, 0.2 } });
+        auto boom = sines (3.0, { { 31.0, 0.5 } });
+        for (size_t i = 0; i < static_cast<size_t> (hit * kSampleRate); ++i)
+            boom[i] = 0.0f;
+
+        BassDuck probe;
+        probe.prepare (kSampleRate);
+        probe.setSettings (s);
+        const int latency = probe.latencySamples();
+
+        auto out = runBassDuck (s, bass, &boom);
+        out.erase (out.begin(), out.begin() + latency);  // undo the delay, as the host does
+
+        const auto lowDb = [&] (double from, double to)
+        { return toneLevelDb (out, 45.0, from, to) - toneLevelDb (bass, 45.0, from, to); };
+        const double early = lowDb (hit - 0.6, hit - 0.3);      // before the window
+        const double fading = lowDb (hit - 0.21, hit - 0.15);   // inside the fade
+        const double gapDb = lowDb (hit - 0.10, hit - 0.01);    // the gap right before the hit
+        const double highGap = toneLevelDb (out, 400.0, hit - 0.10, hit - 0.01) - toneLevelDb (bass, 400.0, hit - 0.10, hit - 0.01);
+
+        check (latency == lookAheadLatencySamples (kSampleRate) && std::abs (early) < 0.3 && fading < -1.0
+                   && fading > gapDb + 2.0 && gapDb < -9.0 && std::abs (highGap) < 0.3,
+               "look-ahead clears the low end before the hit",
+               fmt ("45 Hz: %+.1f dB early, %.1f dB fading", early, fading) + fmt (", %.1f dB in the gap; 400 Hz %+.2f dB", gapDb, highGap));
+
+        BassDuckSettings off = s;
+        off.lookAheadMs = 0.0;
+        const auto plain = runBassDuck (off, bass, &boom);
+        const double plainGap = toneLevelDb (plain, 45.0, hit - 0.10, hit - 0.01) - toneLevelDb (bass, 45.0, hit - 0.10, hit - 0.01);
+        check (std::abs (plainGap) < 0.3, "without look-ahead nothing moves before the hit", fmt ("45 Hz in the gap %+.2f dB", plainGap));
+    }
+
     if (! outDir.empty())
     {
         EngineSettings boom;

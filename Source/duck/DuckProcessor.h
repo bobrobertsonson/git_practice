@@ -16,11 +16,17 @@ inline constexpr auto release = "release";
 inline constexpr auto rollHold = "rollHold";
 inline constexpr auto rollWindow = "rollWindow";
 inline constexpr auto rollDepth = "rollDepth";
+inline constexpr auto lookAhead = "lookAhead";
+inline constexpr auto gap = "gap";
+
+// Look-ahead choices, as note lengths in beats (index 0 = off).
+inline constexpr double lookAheadBeats[] = { 0.0, 0.125, 0.25, 0.5, 1.0 };
 } // namespace subforge::duckparams
 
 // SubForge Duck: an effect for the bass. Route SubForge (or the kick) into its
 // side chain and it ducks only the bass below the split frequency.
-class SubForgeDuckProcessor : public juce::AudioProcessor
+class SubForgeDuckProcessor : public juce::AudioProcessor,
+                              private juce::AsyncUpdater
 {
 public:
     SubForgeDuckProcessor();
@@ -54,9 +60,12 @@ public:
 
 private:
     subforge::BassDuckSettings readSettings() const;
+    void handleAsyncUpdate() override;
 
     subforge::BassDuck duck;
     juce::AudioBuffer<float> keyCopy;
+    double bpm = 120.0;
+    std::atomic<int> wantedLatency { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SubForgeDuckProcessor)
 };

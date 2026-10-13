@@ -23,10 +23,17 @@ private:
         juce::Label label;
         std::unique_ptr<juce::Slider> slider;
         std::unique_ptr<juce::ToggleButton> toggle;
+        std::unique_ptr<juce::ComboBox> combo;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sliderAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> buttonAttachment;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> comboAttachment;
 
-        juce::Component& widget() { return slider != nullptr ? static_cast<juce::Component&> (*slider) : *toggle; }
+        juce::Component& widget()
+        {
+            if (slider != nullptr) return *slider;
+            if (combo != nullptr) return *combo;
+            return *toggle;
+        }
     };
 
     void timerCallback() override;

@@ -30,6 +30,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { id::rollHold, 1 }, "Roll Hold", false));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::rollWindow, 1 }, "Roll Window", range (60.0f, 250.0f, 140.0f), 150.0f, unit ("ms", 0)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::rollDepth, 1 }, "Roll Depth", NormalisableRange<float> (0.0f, 12.0f), 2.0f, unit ("dB", 1)));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { id::lookAhead, 1 }, "Look-ahead",
+                                                        StringArray { "Off", "1/32", "1/16", "1/8", "1/4" }, 0));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::gap, 1 }, "Gap", NormalisableRange<float> (0.0f, 100.0f), 50.0f, unit ("%", 0)));
     return layout;
 }
 
@@ -76,6 +79,10 @@ subforge::BassDuckSettings SubForgeDuckProcessor::readSettings() const
     s.duck.rollHold = get (id::rollHold) > 0.5;
     s.duck.rollWindowMs = get (id::rollWindow);
     s.duck.rollDepthDb = get (id::rollDepth);
+
+    const int choice = juce::jlimit (0, (int) std::size (id::lookAheadBeats) - 1, juce::roundToInt (get (id::lookAhead)));
+    s.lookAheadMs = std::min (subforge::maxLookAheadMs, id::lookAheadBeats[choice] * 60000.0 / bpm);
+    s.gap = get (id::gap) / 100.0;
     return s;
 }
 
@@ -84,13 +91,33 @@ void SubForgeDuckProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     keyCopy.setSize (2, samplesPerBlock);
     duck.prepare (sampleRate);
     duck.setSettings (readSettings());
+    setLatencySamples (duck.latencySamples());
+}
+
+void SubForgeDuckProcessor::handleAsyncUpdate()
+{
+    setLatencySamples (wantedLatency.load());
 }
 
 void SubForgeDuckProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
+
+    if (auto* head = getPlayHead())
+        if (auto position = head->getPosition())
+            if (auto hostBpm = position->getBpm(); hostBpm && *hostBpm > 0.0)
+                bpm = *hostBpm;
+
     duck.setSettings (readSettings());
+
+    // Look-ahead delays the track; tell the host so it lines everything back up.
+    const int latency = duck.latencySamples();
+    if (latency != getLatencySamples())
+    {
+        wantedLatency = latency;
+        triggerAsyncUpdate();   // no-op while one is already pending
+    }
 
     // The key arrives in the same buffer the output is written to, so copy it first.
     const float* keyL = nullptr;
