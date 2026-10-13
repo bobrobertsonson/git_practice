@@ -1,6 +1,7 @@
 # Screamer factory presets vs RASP (2026-10-12)
 
-`presets.txt`: one unprocessed multi-voice take, then the same take through
+`presets.txt`: the demo from the Screamer website. One unprocessed multi-voice
+take (not Andrew's voice), then the same take through
 Screamer's Default and its scream / clean / shout x dark / natural / bright
 presets, measured against the take with `tools/drywet.py`. Black-box
 measurement only. The audio stays out of git.

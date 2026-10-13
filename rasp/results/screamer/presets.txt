@@ -1,5 +1,5 @@
 Screamer (black-box): one multi-voice take, then the same take through 10 factory presets,
-recorded by Andrew in one file and split by silence (presets 17.6 s each). Measured with
+from the Ablaze Audio Screamer website demo, in one file and split by silence (presets 17.6 s each). Measured with
 tools/drywet.py against the unprocessed take. Mono recording, so no width figures.
 
 dry: dry.wav   17.6 s   -24.1 LUFS   singing 71% of the time
