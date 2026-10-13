@@ -66,6 +66,8 @@ private:
     Control* punchControl = nullptr;
     Control* punchTimeControl = nullptr;
     Control* releaseControl = nullptr;
+    Control* rollWindowControl = nullptr;
+    Control* rollDepthControl = nullptr;
 
     Meter outputMeter { "Output", -48.0f, 0.0f, false };
     Meter subMeter { "Sub Clip", 0.0f, 18.0f, true };

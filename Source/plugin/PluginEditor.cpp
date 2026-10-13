@@ -52,12 +52,15 @@ SubForgeEditor::SubForgeEditor (SubForgeProcessor& p)
         addControl (lowEnd, paramId);
 
     mix.title = "KICK DUCK + OUTPUT";
-    for (auto* paramId : { id::duckDepth, id::duckThreshold, id::duckRelease, id::output, id::phoneCheck })
+    for (auto* paramId : { id::duckDepth, id::duckThreshold, id::duckRelease, id::rollHold, id::rollWindow,
+                           id::rollDepth, id::output, id::phoneCheck })
         addControl (mix, paramId);
 
     punchControl = sound.controls[3];
     punchTimeControl = sound.controls[4];
     releaseControl = sound.controls[7];
+    rollWindowControl = mix.controls[4];
+    rollDepthControl = mix.controls[5];
 
     for (auto* meter : { &outputMeter, &subMeter, &duckMeter })
         addAndMakeVisible (meter);
@@ -198,6 +201,7 @@ void SubForgeEditor::timerCallback()
     // Fade out the controls that don't apply to the current mode.
     const bool dropMode = processor.apvts.getRawParameterValue (subforge::params::mode)->load() > 0.5f;
     const bool oneShot = processor.apvts.getRawParameterValue (subforge::params::oneShot)->load() > 0.5f;
+    const bool rollHold = processor.apvts.getRawParameterValue (subforge::params::rollHold)->load() > 0.5f;
 
     const auto setDim = [] (Control* c, bool dim)
     {
@@ -209,6 +213,8 @@ void SubForgeEditor::timerCallback()
     setDim (punchControl, dropMode);
     setDim (punchTimeControl, dropMode);
     setDim (releaseControl, oneShot);
+    setDim (rollWindowControl, ! rollHold);
+    setDim (rollDepthControl, ! rollHold);
 
     for (auto* c : drop.controls)
         setDim (c, ! dropMode);

@@ -176,6 +176,37 @@ std::vector<float> kickTrack (double seconds, double bpm)
     return x;
 }
 
+// Tight metal-style kicks at a fixed interval between start and end.
+std::vector<float> kickRun (double seconds, double start, double end, double interval, double decaySeconds = 0.04)
+{
+    std::vector<float> x (static_cast<size_t> (seconds * kSampleRate), 0.0f);
+
+    for (double t0 = start; t0 < end; t0 += interval)
+    {
+        double phase = 0.0;
+        for (int i = 0; i < static_cast<int> (0.2 * kSampleRate); ++i)
+        {
+            const size_t idx = static_cast<size_t> (t0 * kSampleRate) + static_cast<size_t> (i);
+            if (idx >= x.size())
+                break;
+            const double t = i / kSampleRate;
+            phase += (60.0 + 120.0 * std::exp (-t / 0.015)) / kSampleRate;
+            x[idx] += static_cast<float> (0.9 * std::exp (-t / decaySeconds) * std::sin (2.0 * kPi * phase));
+        }
+    }
+
+    return x;
+}
+
+// Gain of `processed` relative to `reference` in consecutive 10 ms windows, in dB.
+std::vector<double> gainCurveDb (const std::vector<float>& processed, const std::vector<float>& reference, double from, double to)
+{
+    std::vector<double> g;
+    for (double t = from; t + 0.01 <= to; t += 0.01)
+        g.push_back (gainToDb (rms (processed, t, t + 0.01)) - gainToDb (rms (reference, t, t + 0.01)));
+    return g;
+}
+
 int failures = 0;
 
 void check (bool ok, const std::string& name, const std::string& detail)
@@ -360,6 +391,58 @@ int main (int argc, char** argv)
         const double sustainDb = gainToDb (rms (x, 1.0, 1.1)) - gainToDb (rms (x, 0.15, 0.25));
         check (startHz > 60.0 && std::abs (settledHz - 30.0) < 0.3 && sustainDb > -8.0, "long 30 Hz boom preset",
                fmt ("first 25 ms avg %.0f Hz, settles at %.2f Hz", startHz, settledHz) + fmt (", %.1f dB after 1 s", sustainDb));
+    }
+
+    // 13. Roll Hold: a double-kick run ducks fully on its first hit, then holds a
+    //     steady light reduction instead of pumping, and normal ducking returns after.
+    {
+        EngineSettings s = pureSine();
+        s.voice.mode = Mode::drop;
+        s.voice.dropSemis = 1.0;
+        s.dropBeats = 16.0;
+        s.duckDepthDb = 8.0;
+        auto kicks = kickRun (3.2, 0.5, 2.0, 60.0 / 180.0 / 4.0); // 16ths at 180 bpm
+        const auto single = kickRun (3.2, 2.6, 2.61, 1.0);
+        for (size_t i = 0; i < kicks.size(); ++i)
+            kicks[i] += single[i];
+
+        const auto plain = render (s, { { 0.0, 36, 1.0f } }, 3.2);
+        const auto buried = render (s, { { 0.0, 36, 1.0f } }, 3.2, 120.0, &kicks);
+        s.duckReleaseMs = 40.0;   // a short release and higher threshold pump instead
+        s.duckThresholdDb = -12.0;
+        const auto pumping = render (s, { { 0.0, 36, 1.0f } }, 3.2, 120.0, &kicks);
+        s.duckReleaseMs = 120.0;
+        s.duckThresholdDb = -30.0;
+        s.rollHold = true;
+        s.rollDepthDb = 2.0;
+        const auto held = render (s, { { 0.0, 36, 1.0f } }, 3.2, 120.0, &kicks);
+
+        const auto range = [] (const std::vector<double>& g)
+        {
+            return *std::max_element (g.begin(), g.end()) - *std::min_element (g.begin(), g.end());
+        };
+        const auto mean = [] (const std::vector<double>& g)
+        {
+            double sum = 0.0;
+            for (double v : g) sum += v;
+            return sum / static_cast<double> (g.size());
+        };
+
+        const auto buriedCurve = gainCurveDb (buried, plain, 1.0, 1.9);
+        const auto pumpCurve = gainCurveDb (pumping, plain, 1.0, 1.9);
+        const auto holdCurve = gainCurveDb (held, plain, 1.0, 1.9);
+        const auto deepest = [] (const std::vector<double>& g) { return -*std::min_element (g.begin(), g.end()); };
+        const double firstHit = deepest (gainCurveDb (held, plain, 0.5, 0.56));
+        const double afterRun = -mean (gainCurveDb (held, plain, 2.4, 2.55));
+        const double laterHit = deepest (gainCurveDb (held, plain, 2.6, 2.66));
+
+        check (-mean (buriedCurve) > 6.0 && range (pumpCurve) > 3.0 && range (holdCurve) < 1.5 && std::abs (-mean (holdCurve) - 2.0) < 1.0
+                   && firstHit > 6.0 && afterRun < 1.0 && laterHit > 6.0,
+               "roll hold stops double-kick pumping",
+               fmt ("without it: buried at -%.1f dB or pumping %.1f dB", -mean (buriedCurve), range (pumpCurve))
+                   + fmt ("; with it: %.1f dB swing", range (holdCurve))
+                   + fmt (", held at -%.1f dB, first hit -%.1f dB", -mean (holdCurve), firstHit)
+                   + fmt (", after run -%.1f dB, next single kick -%.1f dB", afterRun, laterHit));
     }
 
     if (! outDir.empty())

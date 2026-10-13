@@ -50,6 +50,7 @@ Pick these from the preset menu at the top of the SubForge window in Logic.
 | **Clean Sine Sub** | Pure deep sub, no dirt | Sparse mixes, big systems |
 | **Phone-Safe 808** | Extra harmonics so it reads on phones and laptops | Any note |
 | **Impact Boom** | One big cinematic hit with a deep pitch dive | Single hits on downbeats |
+| **Metal Breakdown Boom** | Deep boom for dense metal mixes, with Roll Hold on so it survives double kick | Play your low root (B-1 for B tuning); route the kick into the side chain |
 | **Classic Drop (1 bar)** | Falls two octaves over one bar | Start one bar before the downbeat |
 | **Long Drop (2 bars)** | Three octaves over two bars, hangs then plunges | Start two bars before the downbeat |
 | **Quick Dive (1 beat)** | One octave in one beat | Fills |
@@ -97,6 +98,12 @@ choose **AU Instruments → SubForge → SubForge**.
    end triggers it, so hats and claps on the same bus won't. If Logic doesn't offer
    a side chain menu for the instrument, use Logic's Compressor on the SubForge
    track with the kick as its side chain instead.
+
+   **Double kick:** turn on **Roll Hold**. The first kick of a run still ducks
+   fully, but once kicks come closer together than **Roll Window** (150 ms
+   catches 16ths down to about 100 BPM), SubForge stops ducking on every hit
+   and holds a steady **Roll Depth** (2 dB) until the run ends. Without it, a
+   fast kick run either buries the sub for the whole run or makes it pump.
 5. **Make room under drops.** Put a Compressor on your bass track with SubForge
    as its side chain, or simply cut or thin the bass while a drop plays.
 6. **Turn on Phone Check** to hear roughly what a phone speaker plays (everything
@@ -124,6 +131,7 @@ choose **AU Instruments → SubForge → SubForge**.
 | | Drive | -12 to +18 dB (negative keeps the sub clean under the ceiling) | 3 dB |
 | | Ceiling | -18 to 0 dBFS | -6 dBFS |
 | Kick Duck + Output | Duck Depth / Threshold / Release | 0–24 dB / -48–0 dB / 20–500 ms | 8 dB / -30 dB / 120 ms |
+| | Roll Hold / Roll Window / Roll Depth | on/off / 60–250 ms / 0–12 dB | off / 150 ms / 2 dB |
 | | Output | -24 to +6 dB (after the ceiling) | 0 dB |
 | | Phone Check | on/off, monitoring only | off |
 

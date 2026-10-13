@@ -77,6 +77,9 @@ private:
         std::atomic<float>* duckDepth;
         std::atomic<float>* duckThreshold;
         std::atomic<float>* duckRelease;
+        std::atomic<float>* rollHold;
+        std::atomic<float>* rollWindow;
+        std::atomic<float>* rollDepth;
         std::atomic<float>* phoneCheck;
         std::atomic<float>* output;
     } p {};

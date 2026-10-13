@@ -43,6 +43,9 @@ SubForgeProcessor::SubForgeProcessor()
     p.duckDepth = get (id::duckDepth);
     p.duckThreshold = get (id::duckThreshold);
     p.duckRelease = get (id::duckRelease);
+    p.rollHold = get (id::rollHold);
+    p.rollWindow = get (id::rollWindow);
+    p.rollDepth = get (id::rollDepth);
     p.phoneCheck = get (id::phoneCheck);
     p.output = get (id::output);
 }
@@ -94,6 +97,9 @@ subforge::EngineSettings SubForgeProcessor::readSettings() const
     s.duckDepthDb = p.duckDepth->load();
     s.duckThresholdDb = p.duckThreshold->load();
     s.duckReleaseMs = p.duckRelease->load();
+    s.rollHold = p.rollHold->load() > 0.5f;
+    s.rollWindowMs = p.rollWindow->load();
+    s.rollDepthDb = p.rollDepth->load();
     s.phoneCheck = p.phoneCheck->load() > 0.5f;
     s.outputDb = p.output->load();
     return s;
