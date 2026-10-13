@@ -23,6 +23,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     };
 
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::split, 1 }, "Split", range (40.0f, 250.0f, 100.0f), 100.0f, unit ("Hz", 0)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { id::fullBand, 1 }, "Full Band", false));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::depth, 1 }, "Depth", NormalisableRange<float> (0.0f, 24.0f), 8.0f, unit ("dB", 1)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::threshold, 1 }, "Threshold", NormalisableRange<float> (-48.0f, 0.0f), -30.0f, unit ("dB", 1)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::release, 1 }, "Release", range (20.0f, 500.0f, 120.0f), 120.0f, unit ("ms", 0)));
@@ -68,6 +69,7 @@ subforge::BassDuckSettings SubForgeDuckProcessor::readSettings() const
 
     subforge::BassDuckSettings s;
     s.splitHz = get (id::split);
+    s.fullBand = get (id::fullBand) > 0.5;
     s.duck.depthDb = get (id::depth);
     s.duck.thresholdDb = get (id::threshold);
     s.duck.releaseMs = get (id::release);

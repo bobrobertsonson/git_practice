@@ -46,6 +46,10 @@ SubForgeProcessor::SubForgeProcessor()
     p.rollHold = get (id::rollHold);
     p.rollWindow = get (id::rollWindow);
     p.rollDepth = get (id::rollDepth);
+    p.impactLevel = get (id::impactLevel);
+    p.impactTone = get (id::impactTone);
+    p.impactLength = get (id::impactLength);
+    p.impactSpace = get (id::impactSpace);
     p.phoneCheck = get (id::phoneCheck);
     p.output = get (id::output);
 }
@@ -100,6 +104,7 @@ subforge::EngineSettings SubForgeProcessor::readSettings() const
     s.rollHold = p.rollHold->load() > 0.5f;
     s.rollWindowMs = p.rollWindow->load();
     s.rollDepthDb = p.rollDepth->load();
+    s.impact = { p.impactLevel->load(), p.impactTone->load(), p.impactLength->load(), p.impactSpace->load() };
     s.phoneCheck = p.phoneCheck->load() > 0.5f;
     s.outputDb = p.output->load();
     return s;

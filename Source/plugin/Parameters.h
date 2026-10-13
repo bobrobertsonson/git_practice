@@ -38,6 +38,10 @@ inline constexpr auto duckRelease = "duckRelease";
 inline constexpr auto rollHold = "rollHold";
 inline constexpr auto rollWindow = "rollWindow";
 inline constexpr auto rollDepth = "rollDepth";
+inline constexpr auto impactLevel = "impactLevel";
+inline constexpr auto impactTone = "impactTone";
+inline constexpr auto impactLength = "impactLength";
+inline constexpr auto impactSpace = "impactSpace";
 inline constexpr auto phoneCheck = "phoneCheck";
 inline constexpr auto output = "output";
 
@@ -96,6 +100,10 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     add (std::make_unique<AudioParameterFloat> (ParameterID { duckDepth, 1 }, "Duck Depth", NormalisableRange<float> (0.0f, 24.0f), 8.0f, unit ("dB", 1)));
     add (std::make_unique<AudioParameterFloat> (ParameterID { duckThreshold, 1 }, "Duck Threshold", NormalisableRange<float> (-48.0f, 0.0f), -30.0f, unit ("dB", 1)));
     add (std::make_unique<AudioParameterFloat> (ParameterID { duckRelease, 1 }, "Duck Release", range (20.0f, 500.0f, 120.0f), 120.0f, unit ("ms", 0)));
+    add (std::make_unique<AudioParameterFloat> (ParameterID { impactLevel, 1 }, "Impact", NormalisableRange<float> (0.0f, 1.0f), 0.0f, percent));
+    add (std::make_unique<AudioParameterFloat> (ParameterID { impactTone, 1 }, "Impact Tone", range (1000.0f, 12000.0f, 4000.0f), 4000.0f, unit ("Hz", 0)));
+    add (std::make_unique<AudioParameterFloat> (ParameterID { impactLength, 1 }, "Impact Length", range (50.0f, 2000.0f, 400.0f), 400.0f, unit ("ms", 0)));
+    add (std::make_unique<AudioParameterFloat> (ParameterID { impactSpace, 1 }, "Impact Space", NormalisableRange<float> (0.0f, 1.0f), 0.4f, percent));
     add (std::make_unique<AudioParameterBool> (ParameterID { rollHold, 1 }, "Roll Hold", false));
     add (std::make_unique<AudioParameterFloat> (ParameterID { rollWindow, 1 }, "Roll Window", range (60.0f, 250.0f, 140.0f), 150.0f, unit ("ms", 0)));
     add (std::make_unique<AudioParameterFloat> (ParameterID { rollDepth, 1 }, "Roll Depth", NormalisableRange<float> (0.0f, 12.0f), 2.0f, unit ("dB", 1)));
@@ -161,7 +169,9 @@ inline const std::vector<Preset> all {
     // One big cinematic hit: a deep pitch dive with a hard attack.
     { "Impact Boom",
       { { params::punch, 24.0f }, { params::punchTime, 18.0f }, { params::decay, 1800.0f }, { params::click, 0.5f },
-        { params::harmonics, 0.4f }, { params::drive, 8.0f } } },
+        { params::harmonics, 0.4f }, { params::drive, 8.0f },
+        { params::impactLevel, 0.6f }, { params::impactTone, 5000.0f }, { params::impactLength, 600.0f },
+        { params::impactSpace, 0.6f } } },
 
     // For dense metal: a deep boom that ducks hard under breakdown hits and holds
     // steady under double kick instead of disappearing. Fine 0 + B-1 = low B.
@@ -170,7 +180,9 @@ inline const std::vector<Preset> all {
         { params::release, 120.0f }, { params::click, 0.3f }, { params::lowCut, 20.0f }, { params::crossover, 80.0f },
         { params::harmonics, 0.2f }, { params::autoHarmonics, 0.3f }, { params::drive, 0.0f }, { params::ceiling, -7.0f },
         { params::duckDepth, 6.0f }, { params::duckRelease, 100.0f }, { params::rollHold, 1.0f },
-        { params::rollWindow, 150.0f }, { params::rollDepth, 2.0f } } },
+        { params::rollWindow, 150.0f }, { params::rollDepth, 2.0f },
+        { params::impactLevel, 0.45f }, { params::impactTone, 3500.0f }, { params::impactLength, 350.0f },
+        { params::impactSpace, 0.45f } } },
 
     // --- Drops -------------------------------------------------------------
 
@@ -194,7 +206,9 @@ inline const std::vector<Preset> all {
     // Transition hit: a hard attack that sinks fast, then rumbles out.
     { "Impact Drop (2 beats)",
       { { params::mode, 1.0f }, { params::dropAmount, 24.0f }, { params::dropLength, 3.0f }, { params::dropCurve, -0.6f },
-        { params::decay, 2000.0f }, { params::click, 0.5f }, { params::harmonics, 0.5f }, { params::drive, 8.0f } } },
+        { params::decay, 2000.0f }, { params::click, 0.5f }, { params::harmonics, 0.5f }, { params::drive, 8.0f },
+        { params::impactLevel, 0.5f }, { params::impactTone, 6000.0f }, { params::impactLength, 800.0f },
+        { params::impactSpace, 0.7f } } },
 };
 
 } // namespace subforge::presets

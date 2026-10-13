@@ -36,6 +36,38 @@ follow a drop perfectly, with no pitch detection guesswork.
   Curve** (negative = fast start, positive = slow start then plunge). Use 12, 24
   or 36 semitones to land on the same note an octave or more lower, so it ends in key.
 
+## Impact layer
+
+A sub on its own is felt, not heard. On records, a hit also has a "heard" layer
+on top. **Impact** adds one, fired with every new note so it always lines up
+with the boom:
+
+- **Impact**: level of the layer (0 = off).
+- **Tone**: how bright the noise burst is (dark around 1–2 kHz, crashy 8–12 kHz).
+- **Length**: how long the burst lasts.
+- **Space**: how much room tail it gets. The tail is in stereo, so the hit
+  sounds wide while the sub stays mono and centered.
+
+The layer is kept above 150 Hz, so it never adds to the low end, and the kick
+duck leaves it alone. It's on in **Impact Boom**, **Metal Breakdown Boom** and
+**Impact Drop**.
+
+## Making hits feel big (breakdown recipe)
+
+1. **Gap:** stop the guitars and bass a 16th or 8th before the hit. A hit after
+   silence feels huge; a hit under a wall of guitars doesn't.
+2. **Lead-in:** a reversed cymbal or riser over the bar before, ending on the hit.
+3. **Hit:** SubForge (**Metal Breakdown Boom**, Impact on) on your low root,
+   plus a crash. Pull the SubForge note 10–20 ms after the kick, or set Duck
+   Depth to 2–3 dB, so the kick doesn't duck the boom's own attack.
+4. **Mix dip:** put **SubForge Duck** on the guitar or music bus, turn on
+   **Full Band**, side chain it to SubForge, Depth 3 dB, Release about 200 ms.
+   The band dips for a moment on each hit, so the hit sounds louder without the
+   master getting louder.
+5. **Bass:** another **SubForge Duck** on the bass (Full Band off, Split about
+   100 Hz), side chained to SubForge.
+6. **Level:** set the boom so the master limiter grabs no more than 2–3 dB.
+
 ## Presets
 
 Pick these from the preset menu at the top of the SubForge window in Logic.
@@ -132,6 +164,7 @@ choose **AU Instruments → SubForge → SubForge**.
 | | Harmonics / Auto Harmonics | 0–100 % | 35 % / 60 % |
 | | Drive | -12 to +18 dB (negative keeps the sub clean under the ceiling) | 3 dB |
 | | Ceiling | -18 to 0 dBFS | -6 dBFS |
+| Impact | Impact / Tone / Length / Space | 0–100 % / 1–12 kHz / 50–2000 ms / 0–100 % | 0 % (off) / 4 kHz / 400 ms / 40 % |
 | Kick Duck + Output | Duck Depth / Threshold / Release | 0–24 dB / -48–0 dB / 20–500 ms | 8 dB / -30 dB / 120 ms |
 | | Roll Hold / Roll Window / Roll Depth | on/off / 60–250 ms / 0–12 dB | off / 150 ms / 2 dB |
 | | Output | -24 to +6 dB (after the ceiling) | 0 dB |
@@ -156,6 +189,10 @@ the two halves add back up to the original bass.
 
 It also works keyed by the kick, with the same **Roll Hold** as SubForge for
 double kick.
+
+**Full Band** ducks the whole track instead of only below Split. Use it on the
+guitar or music bus, keyed by SubForge, so the band dips for a moment on each
+hit (Depth 2–4 dB, Release about 200 ms).
 
 ## Signal flow
 

@@ -47,6 +47,10 @@ SubForgeEditor::SubForgeEditor (SubForgeProcessor& p)
     for (auto* paramId : { id::dropAmount, id::dropLength, id::dropCurve })
         addControl (drop, paramId);
 
+    impact.title = "IMPACT (heard on every speaker)";
+    for (auto* paramId : { id::impactLevel, id::impactTone, id::impactLength, id::impactSpace })
+        addControl (impact, paramId);
+
     lowEnd.title = "LOW END";
     for (auto* paramId : { id::lowCut, id::crossover, id::harmonics, id::autoHarmonics, id::drive, id::ceiling })
         addControl (lowEnd, paramId);
@@ -65,7 +69,7 @@ SubForgeEditor::SubForgeEditor (SubForgeProcessor& p)
     for (auto* meter : { &outputMeter, &subMeter, &duckMeter })
         addAndMakeVisible (meter);
 
-    setSize (margin * 2 + cellWidth * 11 + 24, headerHeight + rowHeight * 3 + margin * 4);
+    setSize (margin * 2 + cellWidth * 11 + 24, headerHeight + rowHeight * 4 + margin * 5);
     startTimerHz (30);
 }
 
@@ -123,7 +127,7 @@ void SubForgeEditor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (13.0f));
     g.drawText ("808 booms + sub drops that sit in the mix", margin + 150, 10, 400, 30, juce::Justification::centredLeft);
 
-    for (auto* section : { &sound, &drop, &lowEnd, &mix })
+    for (auto* section : { &sound, &drop, &impact, &lowEnd, &mix })
     {
         g.setColour (panel);
         g.fillRoundedRectangle (section->bounds.toFloat(), 8.0f);
@@ -166,11 +170,11 @@ void SubForgeEditor::resized()
     auto row2 = area.removeFromTop (rowHeight);
     layoutSection (drop, row2.removeFromLeft (sectionWidth (drop)));
     row2.removeFromLeft (margin);
-    layoutSection (lowEnd, row2.removeFromLeft (sectionWidth (lowEnd)));
+    layoutSection (impact, row2.removeFromLeft (sectionWidth (impact)));
 
     area.removeFromTop (margin);
     auto row3 = area.removeFromTop (rowHeight);
-    layoutSection (mix, row3.removeFromLeft (sectionWidth (mix)));
+    layoutSection (lowEnd, row3.removeFromLeft (sectionWidth (lowEnd)));
     row3.removeFromLeft (margin * 2);
 
     const int meterWidth = 70;
@@ -179,6 +183,10 @@ void SubForgeEditor::resized()
         meter->setBounds (row3.removeFromLeft (meterWidth));
         row3.removeFromLeft (margin);
     }
+
+    area.removeFromTop (margin);
+    auto row4 = area.removeFromTop (rowHeight);
+    layoutSection (mix, row4.removeFromLeft (sectionWidth (mix)));
 }
 
 void SubForgeEditor::timerCallback()
@@ -202,6 +210,7 @@ void SubForgeEditor::timerCallback()
     const bool dropMode = processor.apvts.getRawParameterValue (subforge::params::mode)->load() > 0.5f;
     const bool oneShot = processor.apvts.getRawParameterValue (subforge::params::oneShot)->load() > 0.5f;
     const bool rollHold = processor.apvts.getRawParameterValue (subforge::params::rollHold)->load() > 0.5f;
+    const bool impactOn = processor.apvts.getRawParameterValue (subforge::params::impactLevel)->load() > 0.0f;
 
     const auto setDim = [] (Control* c, bool dim)
     {
@@ -215,6 +224,9 @@ void SubForgeEditor::timerCallback()
     setDim (releaseControl, oneShot);
     setDim (rollWindowControl, ! rollHold);
     setDim (rollDepthControl, ! rollHold);
+
+    for (size_t i = 1; i < impact.controls.size(); ++i)
+        setDim (impact.controls[i], ! impactOn);
 
     for (auto* c : drop.controls)
         setDim (c, ! dropMode);

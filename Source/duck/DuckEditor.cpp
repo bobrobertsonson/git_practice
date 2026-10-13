@@ -30,7 +30,7 @@ SubForgeDuckEditor::SubForgeDuckEditor (SubForgeDuckProcessor& p)
     lookAndFeel.setColour (juce::Label::textColourId, textColour);
     setLookAndFeel (&lookAndFeel);
 
-    for (auto* paramId : { id::split, id::depth, id::threshold, id::release, id::rollHold, id::rollWindow, id::rollDepth })
+    for (auto* paramId : { id::split, id::fullBand, id::depth, id::threshold, id::release, id::rollHold, id::rollWindow, id::rollDepth })
     {
         auto c = std::make_unique<Control>();
         auto* param = duckProcessor.apvts.getParameter (paramId);
@@ -76,7 +76,7 @@ void SubForgeDuckEditor::paint (juce::Graphics& g)
 
     g.setColour (dimText);
     g.setFont (juce::FontOptions (13.0f));
-    g.drawText ("ducks only the low end of this track when the side chain plays", margin + 220, 10, 460, 30,
+    g.drawText ("ducks this track's low end (or all of it) when the side chain plays", margin + 220, 10, 460, 30,
                 juce::Justification::centredLeft);
 
     auto area = getLocalBounds().reduced (margin);
@@ -89,7 +89,7 @@ void SubForgeDuckEditor::paint (juce::Graphics& g)
     auto meter = area.removeFromLeft (meterWidth);
     g.setColour (dimText);
     g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    g.drawText ("Low Duck", meter.removeFromTop (18), juce::Justification::centred);
+    g.drawText ("Duck", meter.removeFromTop (18), juce::Justification::centred);
     auto readout = meter.removeFromBottom (18);
     auto bar = meter.reduced (28, 4);
     g.setColour (panel);
@@ -133,9 +133,14 @@ void SubForgeDuckEditor::timerCallback()
     }
 
     const bool rollHold = duckProcessor.apvts.getRawParameterValue (subforge::duckparams::rollHold)->load() > 0.5f;
-    for (size_t i = 5; i < controls.size(); ++i)
+    const bool fullBand = duckProcessor.apvts.getRawParameterValue (subforge::duckparams::fullBand)->load() > 0.5f;
+    const auto setDim = [] (Control& c, bool dim)
     {
-        controls[i]->widget().setAlpha (rollHold ? 1.0f : 0.35f);
-        controls[i]->label.setAlpha (rollHold ? 1.0f : 0.35f);
-    }
+        c.widget().setAlpha (dim ? 0.35f : 1.0f);
+        c.label.setAlpha (dim ? 0.35f : 1.0f);
+    };
+
+    setDim (*controls[0], fullBand);  // Split does nothing in full-band mode
+    for (size_t i = 6; i < controls.size(); ++i)
+        setDim (*controls[i], ! rollHold);
 }

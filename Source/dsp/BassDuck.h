@@ -40,6 +40,7 @@ private:
 struct BassDuckSettings
 {
     double splitHz = 100.0;   // only the bass below this is ducked
+    bool fullBand = false;    // duck the whole signal (e.g. a guitar bus dipping for each hit)
     DuckSettings duck;
 };
 
@@ -101,7 +102,8 @@ public:
 
                 double low = 0.0, high = 0.0;
                 crossovers[ch].process (channels[ch][i], low, high);
-                channels[ch][i] = static_cast<float> (low * lowGain + high);
+                // Full band keeps the same crossover path so switching modes never changes the tone.
+                channels[ch][i] = static_cast<float> (settings.fullBand ? (low + high) * lowGain : low * lowGain + high);
             }
         }
     }

@@ -2,6 +2,7 @@
 
 #include "Ducker.h"
 #include "Filters.h"
+#include "Impact.h"
 #include "SubVoice.h"
 
 #include <algorithm>
@@ -34,6 +35,8 @@ struct EngineSettings
     double rollWindowMs = 150.0;
     double rollDepthDb = 2.0;
 
+    ImpactSettings impact;        // noise burst + room fired with every new note
+
     bool phoneCheck = false;      // monitor-only: hear roughly what a phone speaker plays
     double outputDb = 0.0;
 };
@@ -58,6 +61,7 @@ public:
         heldNotes.reserve (128);
         filtersDirty = true;
         ducker.prepare (sampleRate);
+        impact.prepare (sampleRate);
         reset();
         setSettings (settings);
     }
@@ -68,6 +72,8 @@ public:
         harmHighPass.reset();
         phoneHighPass.reset();
         ducker.reset();
+        impact.reset();
+        phoneHighPassR.reset();
         voice = SubVoice();
         tail = SubVoice();
         voice.prepare (sampleRate);
@@ -88,7 +94,10 @@ public:
                        || std::abs (s.crossoverHz - settings.crossoverHz) > 1.0e-9;
 
         if (s.phoneCheck != settings.phoneCheck)
+        {
             phoneHighPass.reset();
+            phoneHighPassR.reset();
+        }
 
         settings = s;
         updateFilters();
@@ -100,6 +109,7 @@ public:
         driveGain = dbToGain (settings.driveDb);
         ceiling = dbToGain (settings.ceilingDb);
         outputGain = dbToGain (settings.outputDb);
+        impact.setSettings (settings.impact);
         ducker.setSettings ({ settings.duckDepthDb, settings.duckThresholdDb, settings.duckReleaseMs,
                               settings.rollHold, settings.rollWindowMs, settings.rollDepthDb });
     }
@@ -126,6 +136,7 @@ public:
         }
 
         voice.start (settings.voice, note + settings.tuneSemis, velocity);
+        impact.trigger (1.0 - settings.voice.velocitySens * (1.0 - std::clamp (static_cast<double> (velocity), 0.0, 1.0)));
     }
 
     void noteOff (int note)
@@ -189,18 +200,32 @@ public:
                 blockDuckReductionDb = std::max (blockDuckReductionDb, reductionDb);
             }
 
-            double out = (clipped + harm + a.click + b.click) * duckGain;
-            out = softClip (out, ceiling) * outputGain;
+            const double mono = (clipped + harm + a.click + b.click) * duckGain;
+
+            // The impact layer sits on top in stereo; it has no low end, so the
+            // kick duck leaves it alone. The ceiling still caps every channel.
+            double impactL = 0.0, impactR = 0.0;
+            if (impact.isActive())
+            {
+                impact.process (impactL, impactR);
+                if (outR == nullptr)
+                    impactL = impactR = 0.5 * (impactL + impactR);
+            }
+
+            double left = softClip (mono + impactL, ceiling) * outputGain;
+            double right = softClip (mono + impactR, ceiling) * outputGain;
 
             if (settings.phoneCheck)
-                out = phoneHighPass.process (out);
+            {
+                left = phoneHighPass.process (left);
+                right = phoneHighPassR.process (right);
+            }
 
-            blockPeak = std::max (blockPeak, std::abs (out));
+            blockPeak = std::max (blockPeak, std::max (std::abs (left), std::abs (right)));
 
-            const float sample = static_cast<float> (out);
-            outL[i] = sample;
+            outL[i] = static_cast<float> (left);
             if (outR != nullptr)
-                outR[i] = sample;
+                outR[i] = static_cast<float> (right);
         }
     }
 
@@ -232,6 +257,7 @@ private:
         lowCut.setHighPass (sampleRate, settings.lowCutHz);
         harmHighPass.setHighPass (sampleRate, settings.crossoverHz);
         phoneHighPass.setHighPass (sampleRate, 150.0);
+        phoneHighPassR.setHighPass (sampleRate, 150.0);
         filtersDirty = false;
     }
 
@@ -247,11 +273,12 @@ private:
     SubVoice voice, tail;
     std::vector<int> heldNotes;
 
-    Butterworth4 lowCut, harmHighPass, phoneHighPass;
+    Butterworth4 lowCut, harmHighPass, phoneHighPass, phoneHighPassR;
     bool filtersDirty = true;
 
     double driveGain = 1.0, ceiling = 0.5, outputGain = 1.0;
     Ducker ducker;
+    Impact impact;
 
     double blockPeak = 0.0, blockSubReductionDb = 0.0, blockDuckReductionDb = 0.0;
 };

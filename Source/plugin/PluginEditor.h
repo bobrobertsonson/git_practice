@@ -61,7 +61,7 @@ private:
     juce::LookAndFeel_V4 lookAndFeel;
 
     std::vector<std::unique_ptr<Control>> controls;
-    Section sound, drop, lowEnd, mix;
+    Section sound, drop, impact, lowEnd, mix;
 
     Control* punchControl = nullptr;
     Control* punchTimeControl = nullptr;

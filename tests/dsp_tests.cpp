@@ -245,6 +245,47 @@ std::vector<float> runBassDuck (const BassDuckSettings& settings, std::vector<fl
     return bass;
 }
 
+struct Stereo
+{
+    std::vector<float> left, right;
+};
+
+Stereo renderStereo (const EngineSettings& settings, const std::vector<NoteEvent>& events, double seconds)
+{
+    SubEngine engine;
+    engine.prepare (kSampleRate);
+    engine.setSettings (settings);
+
+    const int total = static_cast<int> (seconds * kSampleRate);
+    Stereo out { std::vector<float> (static_cast<size_t> (total)), std::vector<float> (static_cast<size_t> (total)) };
+    size_t nextEvent = 0;
+
+    for (int pos = 0; pos < total;)
+    {
+        int end = std::min (total, pos + kBlock);
+        while (nextEvent < events.size())
+        {
+            const int at = static_cast<int> (events[nextEvent].time * kSampleRate);
+            if (at > pos) { end = std::min (end, at); break; }
+            const auto& e = events[nextEvent++];
+            if (e.velocity > 0.0f) engine.noteOn (e.note, e.velocity); else engine.noteOff (e.note);
+        }
+        engine.process (out.left.data() + pos, out.right.data() + pos, nullptr, nullptr, end - pos);
+        pos = end;
+    }
+    return out;
+}
+
+std::vector<float> filtered (const std::vector<float>& x, double freq, bool highPass)
+{
+    Butterworth4 f;
+    if (highPass) f.setHighPass (kSampleRate, freq); else f.setLowPass (kSampleRate, freq);
+    std::vector<float> y (x.size());
+    for (size_t i = 0; i < x.size(); ++i)
+        y[i] = static_cast<float> (f.process (x[i]));
+    return y;
+}
+
 int failures = 0;
 
 void check (bool ok, const std::string& name, const std::string& detail)
@@ -513,6 +554,57 @@ int main (int argc, char** argv)
         check (std::abs (lowBefore) < 0.1 && lowDuring < -6.0 && std::abs (highDuring) < 0.3,
                "bass duck cuts only the low end under the boom",
                fmt ("45 Hz: %.1f dB before, %.1f dB during", lowBefore, lowDuring) + fmt ("; 400 Hz during: %+.2f dB", highDuring));
+    }
+
+    // 16. The impact layer adds a wide, bright burst and tail on top of the boom
+    //     without touching the sub below 100 Hz, and the ceiling still holds.
+    {
+        EngineSettings dry;
+        dry.voice.punchSemis = 24.0;
+        dry.voice.decayMs = 1800.0;
+        EngineSettings wet = dry;
+        wet.impact = { 0.6, 4000.0, 400.0, 0.5 };
+
+        const auto a = renderStereo (dry, { { 0.0, 29, 1.0f } }, 1.5);
+        const auto b = renderStereo (wet, { { 0.0, 29, 1.0f } }, 1.5);
+
+        const double addedHighDb = gainToDb (rms (filtered (b.left, 1000.0, true), 0.0, 0.5))
+                                   - gainToDb (rms (filtered (a.left, 1000.0, true), 0.0, 0.5));
+        const double lowChangeDb = std::abs (gainToDb (rms (filtered (b.left, 80.0, false), 0.1, 1.0))
+                                             - gainToDb (rms (filtered (a.left, 80.0, false), 0.1, 1.0)));
+
+        const auto hl = filtered (b.left, 1000.0, true), hr = filtered (b.right, 1000.0, true);
+        double lr = 0.0, ll = 0.0, rr = 0.0;
+        for (size_t i = static_cast<size_t> (0.2 * kSampleRate); i < static_cast<size_t> (0.6 * kSampleRate); ++i)
+        {
+            lr += hl[i] * hr[i]; ll += hl[i] * hl[i]; rr += hr[i] * hr[i];
+        }
+        const double correlation = lr / std::sqrt (ll * rr);
+        const double ceiling = dbToGain (wet.ceilingDb);
+
+        check (addedHighDb > 10.0 && lowChangeDb < 1.0 && correlation < 0.9
+                   && std::max (peak (b.left), peak (b.right)) <= ceiling + 1.0e-6,
+               "impact layer adds a wide top without touching the sub",
+               fmt ("+%.0f dB above 1 kHz, sub below 80 Hz changes %.2f dB", addedHighDb, lowChangeDb)
+                   + fmt (", L/R tail correlation %.2f, peak %.2f dBFS", correlation, gainToDb (std::max (peak (b.left), peak (b.right)))));
+    }
+
+    // 17. Full-band duck turns the whole signal down (for a guitar or music bus).
+    {
+        BassDuckSettings s;
+        s.fullBand = true;
+        s.duck.depthDb = 4.0;
+        const auto bus = sines (2.0, { { 45.0, 0.3 }, { 400.0, 0.3 }, { 2000.0, 0.2 } });
+        auto boom = sines (2.0, { { 31.0, 0.5 } });
+        for (size_t i = 0; i < static_cast<size_t> (kSampleRate); ++i)
+            boom[i] = 0.0f;
+        const auto out = runBassDuck (s, bus, &boom);
+        double worst = 0.0;
+        for (double freq : { 45.0, 400.0, 2000.0 })
+            worst = std::max (worst, std::abs (toneLevelDb (out, freq, 1.3, 1.9) - toneLevelDb (bus, freq, 1.3, 1.9) + 4.0));
+        const double before = toneLevelDb (out, 400.0, 0.5, 0.95) - toneLevelDb (bus, 400.0, 0.5, 0.95);
+        check (worst < 0.5 && std::abs (before) < 0.1, "full-band duck dips everything evenly",
+               fmt ("every band within %.2f dB of -4 dB during the boom; %+.2f dB before it", worst, before));
     }
 
     if (! outDir.empty())

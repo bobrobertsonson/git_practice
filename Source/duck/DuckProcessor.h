@@ -9,6 +9,7 @@
 namespace subforge::duckparams
 {
 inline constexpr auto split = "split";
+inline constexpr auto fullBand = "fullBand";
 inline constexpr auto depth = "depth";
 inline constexpr auto threshold = "threshold";
 inline constexpr auto release = "release";

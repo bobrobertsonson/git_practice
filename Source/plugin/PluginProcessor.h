@@ -80,6 +80,10 @@ private:
         std::atomic<float>* rollHold;
         std::atomic<float>* rollWindow;
         std::atomic<float>* rollDepth;
+        std::atomic<float>* impactLevel;
+        std::atomic<float>* impactTone;
+        std::atomic<float>* impactLength;
+        std::atomic<float>* impactSpace;
         std::atomic<float>* phoneCheck;
         std::atomic<float>* output;
     } p {};
