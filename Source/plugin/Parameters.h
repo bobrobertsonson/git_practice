@@ -184,15 +184,40 @@ inline const std::vector<Preset> all {
         { params::impactLevel, 0.45f }, { params::impactTone, 3500.0f }, { params::impactLength, 350.0f },
         { params::impactSpace, 0.45f } } },
 
+    // --- Sub layers --------------------------------------------------------
+
+    // A clean, steady sub under open chords and big sections. Follow the bass
+    // root notes; note length sets how long it sounds. Ducks lightly under
+    // the kick and holds steady through double kick.
+    { "Sub Layer (Sustained)",
+      { { params::punch, 0.0f }, { params::decay, 12000.0f }, { params::oneShot, 0.0f }, { params::release, 80.0f },
+        { params::glide, 30.0f }, { params::click, 0.0f }, { params::velocity, 0.2f }, { params::lowCut, 20.0f },
+        { params::crossover, 80.0f }, { params::harmonics, 0.1f }, { params::autoHarmonics, 0.2f },
+        { params::drive, -6.0f }, { params::ceiling, -8.0f }, { params::duckDepth, 4.0f },
+        { params::duckRelease, 90.0f }, { params::rollHold, 1.0f }, { params::rollDepth, 2.0f } } },
+
+    // Tight sub that doubles palm-muted chugs: short attack, short release,
+    // a touch of punch so each chug lands. Copy the chug rhythm on the root.
+    // Low Cut sits at its minimum: a low cut close to the note rings after
+    // each chug and smears fast patterns together.
+    { "Sub Layer (Chugs)",
+      { { params::punch, 2.0f }, { params::punchTime, 15.0f }, { params::decay, 600.0f }, { params::oneShot, 0.0f },
+        { params::release, 15.0f }, { params::click, 0.1f }, { params::velocity, 0.4f }, { params::lowCut, 15.0f },
+        { params::crossover, 80.0f }, { params::harmonics, 0.15f }, { params::autoHarmonics, 0.3f },
+        { params::drive, 0.0f }, { params::ceiling, -8.0f }, { params::duckDepth, 3.0f },
+        { params::duckRelease, 60.0f }, { params::rollHold, 1.0f }, { params::rollDepth, 1.5f } } },
+
     // --- Drops -------------------------------------------------------------
 
-    // Falls two octaves over one bar (4/4), lands in key.
+    // The classic metal sub drop: played ON the downbeat, hits, then falls two
+    // octaves over the bar (fast at first, then settling), in key.
     { "Classic Drop (1 bar)",
-      { { params::mode, 1.0f }, { params::dropAmount, 24.0f }, { params::dropLength, 4.0f }, { params::dropCurve, 0.3f },
-        { params::decay, 1500.0f }, { params::click, 0.0f }, { params::harmonics, 0.4f },
-        { params::autoHarmonics, 0.8f }, { params::drive, 2.0f } } },
+      { { params::mode, 1.0f }, { params::dropAmount, 24.0f }, { params::dropLength, 4.0f }, { params::dropCurve, -0.3f },
+        { params::decay, 1500.0f }, { params::click, 0.25f }, { params::harmonics, 0.4f },
+        { params::autoHarmonics, 0.8f }, { params::drive, 2.0f },
+        { params::impactLevel, 0.45f }, { params::impactTone, 4500.0f }, { params::impactLength, 700.0f },
+        { params::impactSpace, 0.6f } } },
 
-    // Three octaves over two bars, hangs at the top and then plunges.
     { "Long Drop (2 bars)",
       { { params::mode, 1.0f }, { params::dropAmount, 36.0f }, { params::dropLength, 5.0f }, { params::dropCurve, 0.5f },
         { params::decay, 2500.0f }, { params::click, 0.0f }, { params::harmonics, 0.45f },

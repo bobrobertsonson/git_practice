@@ -50,7 +50,7 @@ with the boom:
 
 The layer is kept above 150 Hz, so it never adds to the low end, and the kick
 duck leaves it alone. It's on in **Impact Boom**, **Metal Breakdown Boom** and
-**Impact Drop**.
+**Impact Drop** and **Classic Drop**.
 
 ## Making hits feel big (breakdown recipe)
 
@@ -83,8 +83,10 @@ Pick these from the preset menu at the top of the SubForge window in Logic.
 | **Phone-Safe 808** | Extra harmonics so it reads on phones and laptops | Any note |
 | **Impact Boom** | One big cinematic hit with a deep pitch dive | Single hits on downbeats |
 | **Metal Breakdown Boom** | Deep boom for dense metal mixes, with Roll Hold on so it survives double kick | Play your low root (B-1 for B tuning); route the kick into the side chain |
-| **Classic Drop (1 bar)** | Falls two octaves over one bar | Start one bar before the downbeat |
-| **Long Drop (2 bars)** | Three octaves over two bars, hangs then plunges | Start two bars before the downbeat |
+| **Sub Layer (Sustained)** | Clean, steady sub under open chords and big sections | Follow the bass root notes; note length sets how long it sounds |
+| **Sub Layer (Chugs)** | Tight sub that doubles palm-muted chugs | Copy the chug rhythm on the root note. For fast chugs, play it an octave up (e.g. B0 instead of B-1): a 30 Hz wave needs 33 ms per cycle, so very low chugs can't stop and start cleanly |
+| **Classic Drop (1 bar)** | The classic metal sub drop: hits, then falls two octaves over the bar | Play it **on** the downbeat of the section |
+| **Long Drop (2 bars)** | Lead-in drop: hangs at the top, then plunges into the section | Start two bars **before** the downbeat so it lands on it |
 | **Quick Dive (1 beat)** | One octave in one beat | Fills |
 | **Impact Drop (2 beats)** | Hard attack that sinks fast, then rumbles out | Transitions |
 
