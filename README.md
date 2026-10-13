@@ -35,6 +35,8 @@ follow a drop perfectly, with no pitch detection guesswork.
   play, over **Drop Length** (synced to the song tempo), shaped by **Drop
   Curve** (negative = fast start, positive = slow start then plunge). Use 12, 24
   or 36 semitones to land on the same note an octave or more lower, so it ends in key.
+  Set Drop Length to **Free** to set the fall in milliseconds with **Drop Time**
+  instead (e.g. 1100 ms to fill exactly the gap before a downbeat).
 
 ## Impact layer
 
@@ -159,7 +161,8 @@ choose **AU Instruments → SubForge → SubForge**.
 | | Click | 0–100 % | 20 % |
 | | Velocity | 0–100 % sensitivity | 50 % |
 | Drop | Drop Amount | 1–48 st | 24 |
-| | Drop Length | 1/4 to 16 beats | 4 beats |
+| | Drop Length | 1/4 to 16 beats, or Free | 4 beats |
+| | Drop Time (Free only) | 50–16000 ms | 1000 ms |
 | | Drop Curve | -1 to +1 | 0.3 |
 | Low End | Low Cut | 15–60 Hz | 25 Hz |
 | | Crossover | 60–200 Hz | 100 Hz |

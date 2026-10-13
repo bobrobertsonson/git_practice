@@ -34,6 +34,7 @@ SubForgeProcessor::SubForgeProcessor()
     p.dropAmount = get (id::dropAmount);
     p.dropLength = get (id::dropLength);
     p.dropCurve = get (id::dropCurve);
+    p.dropTime = get (id::dropTime);
     p.lowCut = get (id::lowCut);
     p.crossover = get (id::crossover);
     p.harmonics = get (id::harmonics);
@@ -90,9 +91,11 @@ subforge::EngineSettings SubForgeProcessor::readSettings() const
     v.harmonics = p.harmonics->load();
     v.autoHarmonics = p.autoHarmonics->load();
 
-    const int lengthIndex = juce::jlimit (0, (int) std::size (subforge::params::dropLengthBeats) - 1,
-                                          juce::roundToInt (p.dropLength->load()));
-    s.dropBeats = subforge::params::dropLengthBeats[lengthIndex];
+    const int lengthIndex = juce::roundToInt (p.dropLength->load());
+    if (lengthIndex == subforge::params::dropLengthFree)
+        s.dropMs = p.dropTime->load();
+    else
+        s.dropBeats = subforge::params::dropLengthBeats[juce::jlimit (0, (int) std::size (subforge::params::dropLengthBeats) - 1, lengthIndex)];
     s.tuneSemis = p.tune->load() + p.fine->load() / 100.0f;
     s.lowCutHz = p.lowCut->load();
     s.crossoverHz = p.crossover->load();

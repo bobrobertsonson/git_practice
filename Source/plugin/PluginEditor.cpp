@@ -44,7 +44,7 @@ SubForgeEditor::SubForgeEditor (SubForgeProcessor& p)
         addControl (sound, paramId);
 
     drop.title = "DROP";
-    for (auto* paramId : { id::dropAmount, id::dropLength, id::dropCurve })
+    for (auto* paramId : { id::dropAmount, id::dropLength, id::dropTime, id::dropCurve })
         addControl (drop, paramId);
 
     impact.title = "IMPACT (heard on every speaker)";
@@ -228,8 +228,11 @@ void SubForgeEditor::timerCallback()
     for (size_t i = 1; i < impact.controls.size(); ++i)
         setDim (impact.controls[i], ! impactOn);
 
+    const bool freeLength = juce::roundToInt (processor.apvts.getRawParameterValue (subforge::params::dropLength)->load())
+                            == subforge::params::dropLengthFree;
     for (auto* c : drop.controls)
         setDim (c, ! dropMode);
+    setDim (drop.controls[2], ! dropMode || ! freeLength);  // Drop Time only counts in Free
 }
 
 //==============================================================================

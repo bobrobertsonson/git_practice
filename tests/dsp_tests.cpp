@@ -400,6 +400,25 @@ int main (int argc, char** argv)
                fmt ("max step %.4f vs %.4f for a clean hit", choked, clean));
     }
 
+    // 7b. Free drop length: the fall takes exactly Drop Time, whatever the tempo.
+    {
+        EngineSettings s = pureSine();
+        s.voice.mode = Mode::drop;
+        s.voice.dropSemis = 12.0;
+        s.voice.dropCurve = 0.0;
+        s.dropMs = 750.0;
+        double worst = 0.0;
+        for (double bpm : { 90.0, 180.0 })
+        {
+            const auto x = render (s, { { 0.0, 48, 1.0f } }, 1.5, bpm);
+            // halfway (375 ms) should be 6 semitones down; after 750 ms, the full octave
+            const double mid = 12.0 * std::log2 (zeroCrossingHz (x, 0.355, 0.395) / midiNoteToHz (48));
+            const double end = 12.0 * std::log2 (zeroCrossingHz (x, 0.9, 1.2) / midiNoteToHz (48));
+            worst = std::max ({ worst, std::abs (mid + 6.0), std::abs (end + 12.0) });
+        }
+        check (worst < 0.4, "free drop time ignores tempo", fmt ("worst pitch error %.2f semitones at 90 and 180 BPM", worst));
+    }
+
     // 8. Sub-audible energy is removed by the low cut.
     {
         EngineSettings s = pureSine();

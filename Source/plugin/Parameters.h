@@ -24,6 +24,7 @@ inline constexpr auto velocity = "velocity";
 inline constexpr auto dropAmount = "dropAmount";
 inline constexpr auto dropLength = "dropLength";
 inline constexpr auto dropCurve = "dropCurve";
+inline constexpr auto dropTime = "dropTime";
 
 inline constexpr auto lowCut = "lowCut";
 inline constexpr auto crossover = "crossover";
@@ -46,8 +47,10 @@ inline constexpr auto phoneCheck = "phoneCheck";
 inline constexpr auto output = "output";
 
 inline const juce::StringArray modeChoices { "Boom", "Drop" };
-inline const juce::StringArray dropLengthChoices { "1/4 beat", "1/2 beat", "1 beat", "2 beats", "4 beats", "8 beats", "16 beats" };
+// The last choice, "Free", uses Drop Time (ms) instead of a beat length.
+inline const juce::StringArray dropLengthChoices { "1/4 beat", "1/2 beat", "1 beat", "2 beats", "4 beats", "8 beats", "16 beats", "Free" };
 inline constexpr double dropLengthBeats[] = { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0 };
+inline constexpr int dropLengthFree = 7;
 
 inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 {
@@ -89,6 +92,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
                                               AudioParameterIntAttributes().withLabel ("st")));
     add (std::make_unique<AudioParameterChoice> (ParameterID { dropLength, 1 }, "Drop Length", dropLengthChoices, 4));
     add (std::make_unique<AudioParameterFloat> (ParameterID { dropCurve, 1 }, "Drop Curve", NormalisableRange<float> (-1.0f, 1.0f), 0.3f, unit ("", 2)));
+    add (std::make_unique<AudioParameterFloat> (ParameterID { dropTime, 1 }, "Drop Time", range (50.0f, 16000.0f, 1000.0f), 1000.0f, unit ("ms", 0)));
 
     add (std::make_unique<AudioParameterFloat> (ParameterID { lowCut, 1 }, "Low Cut", range (15.0f, 60.0f, 30.0f), 25.0f, unit ("Hz", 0)));
     add (std::make_unique<AudioParameterFloat> (ParameterID { crossover, 1 }, "Crossover", range (60.0f, 200.0f, 110.0f), 100.0f, unit ("Hz", 0)));

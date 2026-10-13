@@ -18,6 +18,7 @@ struct EngineSettings
 
     double tuneSemis = 0.0;
     double dropBeats = 4.0;       // drop length in beats, converted with the host tempo
+    double dropMs = 0.0;          // > 0: free drop length in ms instead (ignores tempo)
 
     double lowCutHz = 25.0;       // removes sub-audible energy that only eats headroom
     double crossoverHz = 100.0;   // harmonics layer is kept above this, sub stays below it
@@ -102,7 +103,7 @@ public:
         settings = s;
         updateFilters();
 
-        settings.voice.dropSeconds = settings.dropBeats * 60.0 / tempoBpm;
+        settings.voice.dropSeconds = settings.dropMs > 0.0 ? settings.dropMs * 0.001 : settings.dropBeats * 60.0 / tempoBpm;
         voice.updateSettings (settings.voice);
         tail.updateSettings (settings.voice);
 

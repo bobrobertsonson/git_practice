@@ -68,6 +68,7 @@ private:
         std::atomic<float>* dropAmount;
         std::atomic<float>* dropLength;
         std::atomic<float>* dropCurve;
+        std::atomic<float>* dropTime;
         std::atomic<float>* lowCut;
         std::atomic<float>* crossover;
         std::atomic<float>* harmonics;
