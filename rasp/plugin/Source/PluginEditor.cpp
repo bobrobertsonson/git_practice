@@ -102,7 +102,7 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     addKnob(control, "drive", "Drive"); addKnob(control, "mix", "Drive mix"); addChoice(control, "brightness", "Tone"); addKnob(control, "weight", "Weight");
     addKnob(control, "chop", "Chop"); addKnob(control, "release", "Release"); addKnob(control, "deEss", "De-ess"); addKnob(control, "fill", "Fill");
     addKnob(control, "loCut", "Lo cut"); addKnob(control, "hiCut", "Hi cut"); addKnob(control, "bleed", "Bleed reducer"); addKnob(control, "smooth", "Smooth");
-    addKnob(control, "bodyDb", "Body"); addKnob(control, "airDb", "Air"); addKnob(control, "controlGainDb", "Level");
+    addKnob(control, "bodyDb", "Body"); addKnob(control, "airDb", "Air"); addKnob(control, "controlGainDb", "Level"); addKnob(control, "plosive", "Plosive");
 
     auto& thicken = panels[1]; thicken.title = "THICKEN"; thicken.cols = 2;
     addPower(thicken, "thickenOn");
@@ -140,21 +140,23 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
 
     auto& bus = panels[3]; bus.title = "BUS / LIVE"; bus.cols = 2;
     addKnob(bus, "inDb", "Input"); addKnob(bus, "glue", "Glue"); addKnob(bus, "outDb", "Output");
-    addKnob(bus, "matchAmount", "Match"); addToggle(bus, "mono", "Mono"); addToggle(bus, "bypassMatch", "Match bypass"); addToggle(bus, "howl", "Feedback guard");
+    addKnob(bus, "matchAmount", "Match"); addToggle(bus, "mono", "Mono"); addToggle(bus, "bypassMatch", "Match bypass"); addToggle(bus, "howl", "Feedback guard"); addChoice(bus, "character", "Character");
 
     for (int i = 0; i < proc.getNumPrograms(); i++) preset.addItem(proc.getProgramName(i), i + 1);
     preset.setSelectedId(proc.getCurrentProgram() + 1, juce::dontSendNotification);
     preset.onChange = [this] { proc.setCurrentProgram(preset.getSelectedId() - 1); };
-    addAndMakeVisible(preset);
+    content.addAndMakeVisible(preset);
 
     bypass.setClickingTogglesState(true);
     bypassAttach = std::make_unique<APVTS::ButtonAttachment>(s, "bypass", bypass);
-    addAndMakeVisible(bypass);
+    content.addAndMakeVisible(bypass);
 
     holdButton(megaBtn, "mega");
     holdButton(throwBtn, "throwOn");
     holdButton(stutterBtn, "stutter");
     holdButton(glitchBtn, "glitch");
+    holdButton(compareBtn, "compare");
+    compareBtn.setTooltip("Hold: hear your dry voice at the processed loudness, for a fair before/after");
     stutterBtn.setTooltip("Hold: repeat the slice that starts now, on the tempo grid (Slice sets its length)");
     glitchBtn.setTooltip("Hold: like stutter, but repeats roll, reverse, drop an octave or gate at random (Glitch sets how often)");
     megaBtn.setTooltip("Hold: hard-clipped mid burst (or automate the Mega parameter)");
@@ -163,19 +165,25 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     clearNotches.onClick = [this] { proc.requestClearNotches(); };
     learnBtn.setTooltip("Sing (or play a DI) for about 15 seconds: RASP matches your voice and mic to the tone the presets were tuned on");
     learnBtn.onClick = [this] { proc.requestLearn(); };
-    addAndMakeVisible(learnBtn);
+    content.addAndMakeVisible(learnBtn);
     matchBtn.setClickingTogglesState(true);
     matchBtn.setTooltip("Switch the learned match off and on to hear what Learn changed");
     matchAttach = std::make_unique<APVTS::ButtonAttachment>(s, "matchOn", matchBtn);
     matchBtn.onStateChange = [this] { matchBtn.setButtonText(matchBtn.getToggleState() ? "MATCH ON" : "MATCH OFF"); };
-    addAndMakeVisible(matchBtn);
-    addAndMakeVisible(clearNotches);
+    content.addAndMakeVisible(matchBtn);
+    content.addAndMakeVisible(clearNotches);
 
     status.setColour(juce::Label::textColourId, kDim);
     status.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(status);
+    content.addAndMakeVisible(status);
 
-    setSize(kW, kH);
+    content.painter = [this](juce::Graphics& g) { paintContent(g); };
+    addAndMakeVisible(content);
+    const float s0 = juce::jlimit(0.5f, 1.5f, proc.uiScale.load());   // read before the limits resize us
+    setResizable(true, true);
+    setResizeLimits(kW / 2, kH / 2, kW * 3 / 2, kH * 3 / 2);
+    getConstrainer()->setFixedAspectRatio((double)kW / (double)kH);
+    setSize(juce::roundToInt(kW * s0), juce::roundToInt(kH * s0));
     startTimerHz(15);
 }
 
@@ -191,34 +199,36 @@ void RaspEditor::holdButton(juce::TextButton& b, const char* id) {
         prm->setValueNotifyingHost(down ? 1.f : 0.f);
         prm->endChangeGesture();
     };
-    addAndMakeVisible(b);
+    content.addAndMakeVisible(b);
 }
 
 void RaspEditor::addKnob(Panel& pn, const char* id, const juce::String& label) {
     pn.cells.push_back(std::make_unique<KnobCell>(proc.apvts, id, label));
-    addAndMakeVisible(*pn.cells.back());
+    content.addAndMakeVisible(*pn.cells.back());
 }
 void RaspEditor::addChoice(Panel& pn, const char* id, const juce::String& label) {
     pn.cells.push_back(std::make_unique<ChoiceCell>(proc.apvts, id, label));
-    addAndMakeVisible(*pn.cells.back());
+    content.addAndMakeVisible(*pn.cells.back());
 }
 void RaspEditor::addHold(Panel& pn, const char* id, const juce::String& label, const juce::String& tip) {
     auto cell = std::make_unique<HoldCell>(proc.apvts, id, label, tip);
     holds.push_back(cell.get());
     pn.cells.push_back(std::move(cell));
-    addAndMakeVisible(*pn.cells.back());
+    content.addAndMakeVisible(*pn.cells.back());
 }
 void RaspEditor::addToggle(Panel& pn, const char* id, const juce::String& label) {
     pn.cells.push_back(std::make_unique<ToggleCell>(proc.apvts, id, label));
-    addAndMakeVisible(*pn.cells.back());
+    content.addAndMakeVisible(*pn.cells.back());
 }
 void RaspEditor::addPower(Panel& pn, const char* id) {
     pn.power = std::make_unique<juce::ToggleButton>("On");
     powerAttach.push_back(std::make_unique<APVTS::ButtonAttachment>(proc.apvts, id, *pn.power));
-    addAndMakeVisible(*pn.power);
+    content.addAndMakeVisible(*pn.power);
 }
 
-void RaspEditor::paint(juce::Graphics& g) {
+void RaspEditor::paint(juce::Graphics& g) { g.fillAll(kBg); }
+
+void RaspEditor::paintContent(juce::Graphics& g) {
     g.fillAll(kBg);
     g.setColour(kText);
     g.setFont(juce::FontOptions(26.f, juce::Font::bold));
@@ -239,18 +249,41 @@ void RaspEditor::paint(juce::Graphics& g) {
         g.setFont(juce::FontOptions(14.f, juce::Font::bold));
         g.drawText(pn.title, pn.bounds.getX() + 12, pn.bounds.getY(), 140, kTitle, juce::Justification::centredLeft);
     }
+
+    // Input meter (bottom left). Green zone: singing RMS -30..-12 dBFS, where
+    // the drive, chop and Learn were tuned; red: peaks within 3 dB of clipping.
+    const int mx = kPad + 4, my = kH - 22, mw = 220, mh = 12;
+    auto xOf = [&](float db) { return mx + 30 + (int)((juce::jlimit(-60.f, 0.f, db) + 60.f) / 60.f * (float)(mw - 30)); };
+    g.setColour(kDim);
+    g.setFont(juce::FontOptions(11.f, juce::Font::bold));
+    g.drawText("IN", mx, my - 1, 26, mh + 2, juce::Justification::centredLeft);
+    g.setColour(kEdge);
+    g.fillRect(mx + 30, my, mw - 30, mh);
+    g.setColour(juce::Colour(0xff254a2e));
+    g.fillRect(xOf(-30.f), my, xOf(-12.f) - xOf(-30.f), mh);
+    g.setColour(juce::Colour(0xff5a2020));
+    g.fillRect(xOf(-3.f), my, xOf(0.f) - xOf(-3.f), mh);
+    const bool good = meterRms > -30.f && meterRms < -12.f, hot = meterPeak > -3.f;
+    g.setColour(hot ? juce::Colour(0xffe2462c) : (good ? juce::Colour(0xff4cc26a) : kText));
+    g.fillRect(mx + 30, my + 3, xOf(meterRms) - (mx + 30), mh - 6);
+    g.fillRect(xOf(meterPeak) - 1, my, 2, mh);
 }
 
 void RaspEditor::resized() {
-    auto top = getLocalBounds().removeFromTop(kHeader).reduced(kPad, 14);
+    const float sc = (float)getWidth() / (float)kW;
+    content.setBounds(0, 0, kW, kH);
+    content.setTransform(juce::AffineTransform::scale(sc));
+    if (getWidth() >= kW / 2) proc.uiScale = sc;   // not the 0 x 0 pass before setSize
+    const juce::Rectangle<int> all(0, 0, kW, kH);
+    auto top = all.withHeight(kHeader).reduced(kPad, 14);
     bypass.setBounds(top.removeFromRight(90));
     top.removeFromRight(6);
     clearNotches.setBounds(top.removeFromRight(110));
     top.removeFromRight(6);
     preset.setBounds(top.removeFromRight(120));
     top.removeFromRight(12);
-    for (auto* b : {&glitchBtn, &stutterBtn, &throwBtn, &megaBtn}) {
-        b->setBounds(top.removeFromRight(84));
+    for (auto* b : {&glitchBtn, &stutterBtn, &throwBtn, &megaBtn, &compareBtn}) {
+        b->setBounds(top.removeFromRight(b == &compareBtn ? 92 : 78));
         top.removeFromRight(6);
     }
     top.removeFromRight(6);
@@ -258,7 +291,7 @@ void RaspEditor::resized() {
     top.removeFromRight(6);
     learnBtn.setBounds(top.removeFromRight(76));
 
-    status.setBounds(getLocalBounds().removeFromBottom(30).reduced(kPad + 4, 0));
+    status.setBounds(all.withTop(kH - 30).reduced(kPad + 4, 0).withTrimmedLeft(236));
 
     int x = kPad, y = kHeader, rowBottom = kHeader;
     for (auto& pn : panels) {
@@ -280,6 +313,8 @@ void RaspEditor::timerCallback() {
     t << "Chop " << juce::String(m.chopGr.load(), 1) << " dB   Limiter " << juce::String(m.limiter.load(), 1)
       << " dB   Bleed " << juce::String(m.bleed.load(), 0) << " dB   Notches " << m.notches.load() << "   "
       << juce::roundToInt(m.bpm.load()) << " bpm" << (m.hostTempo.load() ? " (host)" : "");
+    if (const int c = m.character.load(); c > 0) t << "   Voice: " << (c == 3 ? "clean" : (c == 2 ? "shout" : "scream"));
+    if (m.plosive.load() < -3.f) t << "   Pop cut";
     status.setText(t, juce::dontSendNotification);
     if (proc.applyLearned()) learnBtn.setButtonText("LEARNED");
     else if (m.learning.load()) learnBtn.setButtonText("SING " + juce::String(juce::roundToInt(m.learnProgress.load() * 100.f)) + "%");
@@ -289,6 +324,9 @@ void RaspEditor::timerCallback() {
     throwBtn.setToggleState(proc.apvts.getRawParameterValue("throwOn")->load() > 0.5f, juce::dontSendNotification);
     stutterBtn.setToggleState(proc.apvts.getRawParameterValue("stutter")->load() > 0.5f, juce::dontSendNotification);
     glitchBtn.setToggleState(proc.apvts.getRawParameterValue("glitch")->load() > 0.5f, juce::dontSendNotification);
+    compareBtn.setToggleState(proc.apvts.getRawParameterValue("compare")->load() > 0.5f, juce::dontSendNotification);
+    meterPeak = m.inPeak.load(); meterRms = m.inRms.load();
+    content.repaint(kPad, kH - 26, 240, 22);
     for (auto* h : holds) static_cast<HoldCell*>(h)->sync();
     matchBtn.setEnabled(proc.apvts.getRawParameterValue("matchAmount")->load() > 0.001f);   // nothing to A/B before a Learn
     if (preset.getSelectedId() != proc.getCurrentProgram() + 1)

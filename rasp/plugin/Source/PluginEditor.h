@@ -26,6 +26,15 @@ private:
     void addToggle(Panel&, const char* id, const juce::String& label);
     void addPower(Panel&, const char* id);
     void addHold(Panel&, const char* id, const juce::String& label, const juce::String& tip);
+    // Everything is laid out at kW x kH inside `content`, which is scaled to the
+    // window, so the window can be any size (aspect locked) and stays sharp.
+    struct Content : juce::Component {
+        std::function<void(juce::Graphics&)> painter;
+        void paint(juce::Graphics& g) override { if (painter) painter(g); }
+    } content;
+    void paintContent(juce::Graphics&);
+    juce::TextButton compareBtn{"COMPARE"};   // hold: the dry voice at the processed loudness
+    float meterPeak = -100.f, meterRms = -100.f;
     std::vector<juce::Component*> holds;   // HoldCells, lit by the timer when automation holds them
 
     RaspProcessor& proc;

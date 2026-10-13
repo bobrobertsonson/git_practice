@@ -65,8 +65,11 @@ public:
         std::atomic<int> notches{0};
         std::atomic<bool> hostTempo{false}, learning{false};
         std::atomic<float> learnProgress{0};
+        std::atomic<float> inPeak{-100.f}, inRms{-100.f}, plosive{0.f};
+        std::atomic<int> character{0};
     } meters;
     void requestClearNotches() { clearNotches = true; }
+    std::atomic<float> uiScale{0.8f};   // editor size, saved with the session
     // Learn: the audio thread starts it and hands back the gains; applyLearned()
     // (message thread) writes them into the match parameters so they save.
     void requestLearn() { learnCmd = 1; }
@@ -95,6 +98,7 @@ private:
     std::atomic<bool> dirty{true}, clearNotches{false}, learnDone{false};
     std::atomic<int> learnCmd{0};
     float learned[rasp::kMatchBands] = {};
+    float inMs = 0.f;
     int currentProgram = 0;
     float lastBpm = 0.f;
     bool lastMonoOut = false;

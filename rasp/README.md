@@ -270,6 +270,41 @@ Andrew's DIs it had been taking up to 7 dB out, because his voice carries more
 low end than the reference singers. That made a learned sound thinner than an
 unlearned one.
 
+## 3a+. Practical: window size, compare, input meter, character, plosives
+
+- **Resizable window.** The plugin draws at 1180×980 and scales to the
+  window. It opens at 80% (944×784, which fits a laptop screen), can be dragged
+  from 50% to 150% with the aspect locked, and remembers its size in the
+  session.
+- **COMPARE** (hold, header): your dry voice at the processed loudness, using
+  the level-matched bypass's 10 s loudness memory. RASP adds about +15 LU, and
+  louder always sounds better, so this is the fair before/after.
+- **Input meter** (bottom left): RMS bar plus a peak tick. Green between
+  −30 and −12 dBFS RMS (where the drive, chop and Learn were tuned), red for
+  peaks within 3 dB of clipping.
+- **Character** (BUS / LIVE): Off, Auto, Scream, Shout or Clean, after
+  Screamer's own scream/shout/clean presets (`results/screamer`).
+  - Shout trims the lows (300 Hz shelf −4 dB).
+  - Clean also trims the lows, runs the drive at 35% and sits 2 dB down.
+  - **Auto** follows the voice phrase by phrase. It measures periodicity
+    (normalized autocorrelation at 50–400 Hz) every ~21 ms and glides over
+    ~0.3 s.
+  - On real stems: Gojira's sung tracks read 91% and 94% clean. Gojira's,
+    Meshuggah's, Immortal Disfigurement's and Bloodbath's screams, Andrew's DI
+    and the Screamer take read 97–100% scream.
+  - The status line shows the current voice.
+- **Plosive** (CONTROL, default 50%): a pop or eating-the-mic burst is a
+  sudden jump of the lows over their own recent level that the mids don't
+  share. During one, the voice crossfades toward a 4th-order 200 Hz high-pass
+  for ~80 ms.
+  - On a test pop (3 ms rise, 30 ms decay): −6.5 dB of low end. In the middle
+    of Andrew's singing: about −3 dB. It only sees the pop ~3 ms in, so the
+    front edge passes.
+  - Without pops it changes the voice by −24 dB, so it rarely mistakes his
+    bassy voice for a pop. "Pop cut" shows in the status line when it acts.
+- MIDI on the pedal and Pod: CC 108 match on, 109 compare, 110 character,
+  111 plosive.
+
 ## 3b. Momentary effects: Mega and Throw
 
 Both are on only while held: on the pedal's AUX footswitch, the Pod's buttons,

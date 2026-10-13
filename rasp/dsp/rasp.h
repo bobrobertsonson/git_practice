@@ -223,6 +223,9 @@ struct Params {
     float weight     = 0.3f;   // 180 Hz bell (0..7 dB) + saturated 70-350 Hz harmonics (0..1)
     float fill       = 0.2f;   // broad 400 Hz lift, 0..6 dB: undoes the voicing's mud cut
     float smooth     = 0.3f;   // 3.8 kHz dip, 0..6 dB: tames the fizz the drive adds
+    float plosive    = 0.5f;   // dynamic low cut on pops / proximity bursts (0 = off)
+    int   character  = 0;      // 0 off, 1 auto (follows the voice), 2 scream, 3 shout, 4 clean
+    bool  compare    = false;  // momentary: hear the dry voice at the processed loudness
     float airDb      = 0.f;    // extra high shelf at 7 kHz, 0..12 dB (menu): the very bright
                                // modern-deathcore top (one producer lifted 6-10 kHz by ~13 dB)
     float bleed      = 0.70f;  // bleed reducer threshold: 0 off, 0.5 = -50, 0.7 = -42, 1 = -30 dBFS RMS (menu)
@@ -471,6 +474,127 @@ private:
     bool on = false;
     SVF bandHp, bandLp, postHp, postLp;
     Biquad weightEq, fillEq, smoothEq;
+};
+
+// ---------------------------------------------------------------------------
+// Plosive: a dynamic low cut. Pops and eating-the-mic bursts put far more
+// energy below 150 Hz than the voice above it; when the low band jumps past
+// the 300 Hz - 3 kHz band, the low band is pulled down within ~1 ms and let
+// back over ~80 ms. A steady voice, however bassy, doesn't trigger it.
+// ---------------------------------------------------------------------------
+class Plosive {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        lo1.set(150.f, 0.707f, sr); midHp.set(300.f, 0.707f, sr); midLp.set(3000.f, 0.707f, sr);
+        cut.set(200.f, 0.54f, sr); cut2.set(200.f, 1.31f, sr);
+        att = coefMs(1.f, sr); rel = coefMs(80.f, sr); slow = coefMs(60.f, sr); lslow = coefMs(250.f, sr);
+    }
+    void set(float amount) { amt = clampf(amount, 0.f, 1.f); }
+    float reductionDb() const { return linToDb(std::fmax(gain, 1e-4f)); }
+    float process(float x) {
+        lo1.process(x);
+        const float lo = lo1.lp;
+        midHp.process(x); midLp.process(midHp.hp);
+        const float el = lo * lo, em = midLp.lp * midLp.lp;
+        envLo = el + att * (envLo - el);                          // fast: catches the pop
+        envLoSlow = el + lslow * (envLoSlow - el);               // the lows' own recent level
+        envMid = em + slow * (envMid - em);                      // the voice around it
+        float target = 1.f;
+        if (amt > 0.001f) {
+            // A pop is a sudden jump of the lows over their own recent level
+            // that the mids don't share; a bass-heavy voice is steady.
+            const float ratio = envLo / (envMid + 1e-9f), jump = envLo / (envLoSlow + 1e-9f);
+            const float thr = 20.f - 14.f * amt;                 // lows 8..13 dB over the mids
+            if (jump > 2.f && ratio > thr) target = 1.f - std::fmin(1.f, 1.4f * amt);   // how far toward the high-pass
+        }
+        gain = target < gain ? target + att * (gain - target) : target + rel * (gain - target);
+        // During a pop, crossfade to a 4th-order 200 Hz high-pass (-19 dB at
+        // 110 Hz). (A shelf made as x - (1-g) * LP(x) took almost nothing out
+        // near its corner, where pops live.)
+        cut.process(x); cut2.process(cut.hp);
+        return x + (cut2.hp - x) * (1.f - gain);
+    }
+private:
+    float sr = 48000.f, amt = 0.5f, att = 0.f, rel = 0.f, slow = 0.f, lslow = 0.f, envLo = 0.f, envLoSlow = 0.f, envMid = 0.f, gain = 1.f;
+    SVF lo1, midHp, midLp, cut, cut2;
+};
+
+// ---------------------------------------------------------------------------
+// Character: scream / shout / clean, set by hand or followed automatically.
+// Auto measures periodicity every ~21 ms: the peak of the normalized
+// autocorrelation at 50-400 Hz on a 12 kHz copy of the input. Sung parts sit
+// near 0.99 (Gojira's sung stems: median 0.99), screams around 0.45-0.5 (four
+// screamers' stems and Andrew's DI), so the split is wide. Like Screamer's own
+// scream / shout / clean presets (results/screamer): scream as is; shout with
+// the lows trimmed (300 Hz shelf -4 dB); clean also trimmed, at 35% of the
+// drive and 2 dB down. Weights glide over ~0.3 s.
+// ---------------------------------------------------------------------------
+class Character {
+public:
+    void init(float sampleRate) {
+        sr = sampleRate;
+        dec = std::max(1, (int)std::lround(sr / 12000.f));
+        aa1.setCutoff(4000.f, sr); aa2.setCutoff(4000.f, sr);
+        rSmooth = 0.f;
+        glide = std::exp(-(float)kHop / (0.3f * 12000.f));
+        shelf.lowShelf(300.f, 0.f, sr);
+    }
+    void set(int mode) { this->mode = mode; }
+    // Feed the input (before anything else); runs the detector.
+    void listen(float x) {
+        if (mode != 1) return;
+        const float y = aa2.lp(aa1.lp(x));
+        if (++dc < dec) return;
+        dc = 0;
+        buf[pos] = y; pos = (pos + 1) % kN;
+        if (++fill >= kHop) { fill = 0; analyze(); }
+    }
+    float mixScale() const { return 1.f - 0.65f * wClean; }
+    float levelGain() const { return dbToLin(-2.f * wClean); }
+    float process(float x) { return (wShout + wClean) > 0.002f || shelfDb < -0.01f ? shelf.process(x) : x; }
+    // Called once per sample block from setParams/process: updates the weights
+    // for manual modes and the shelf.
+    void update() {
+        if (mode == 0) { wShout = wClean = 0.f; }
+        else if (mode == 2) { wShout = 0.f; wClean = 0.f; }
+        else if (mode == 3) { wShout = 1.f; wClean = 0.f; }
+        else if (mode == 4) { wShout = 0.f; wClean = 1.f; }
+        updateShelf();
+    }
+    int current() const { return mode == 0 ? 0 : (wClean > 0.5f ? 3 : (wShout > 0.5f ? 2 : 1)); }   // 1 scream, 2 shout, 3 clean
+    float periodicity() const { return rSmooth; }
+private:
+    static constexpr int kN = 512, kHop = 256, kLagMin = 30, kLagMax = 240;
+    static float smoothstep(float a, float b, float x) { float t = clampf((x - a) / (b - a), 0.f, 1.f); return t * t * (3.f - 2.f * t); }
+    void analyze() {
+        float w[kN], mean = 0.f, e = 0.f;
+        for (int i = 0; i < kN; i++) { w[i] = buf[(pos + i) % kN]; mean += w[i]; }
+        mean /= kN;
+        for (int i = 0; i < kN; i++) { w[i] -= mean; e += w[i] * w[i]; }
+        if (e / kN < 1e-6f) return;                              // silence: hold the last state
+        float best = 0.f;
+        for (int lag = kLagMin; lag <= kLagMax; lag++) {
+            float xy = 0.f, xx = 0.f, yy = 0.f;
+            for (int i = 0; i + lag < kN; i++) { xy += w[i] * w[i + lag]; xx += w[i] * w[i]; yy += w[i + lag] * w[i + lag]; }
+            const float r = xy / std::sqrt(xx * yy + 1e-20f);
+            if (r > best) best = r;
+        }
+        rSmooth = best + 0.7f * (rSmooth - best);               // ~60 ms
+        const float c = smoothstep(0.78f, 0.9f, rSmooth), sh = smoothstep(0.6f, 0.72f, rSmooth) * (1.f - c);
+        wClean = c + glide * (wClean - c);
+        wShout = sh + glide * (wShout - sh);
+        updateShelf();
+    }
+    void updateShelf() {
+        const float db = -4.f * (wShout + wClean);
+        if (std::fabs(db - shelfDb) > 0.05f) { shelfDb = db; shelf.lowShelf(300.f, db, sr); }
+    }
+    float sr = 48000.f, glide = 0.98f, rSmooth = 0.f, wShout = 0.f, wClean = 0.f, shelfDb = 0.f;
+    int mode = 0, dec = 4, dc = 0, pos = 0, fill = 0;
+    OnePole aa1, aa2;
+    Biquad shelf;
+    float buf[kN] = {};
 };
 
 // ---------------------------------------------------------------------------
@@ -1787,7 +1911,7 @@ class Processor {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        drive.init(sr); sculpt.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
+        drive.init(sr); sculpt.init(sr); plosiveFx.init(sr); character.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
         bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); stutterFx.init(sr);
         degrade.init(sr); gateFx.init(sr); tape.init(sr); freezeFx.init(sr); harmony.init(sr); learner.init(sr);
         gMega.init(0.f, sr, 10.f);
@@ -1811,6 +1935,8 @@ public:
         drive.set(p.drive, p.brightness);
         voicing.set(p.brightness, p.airDb, p.bodyDb, sr);
         sculpt.set(p.weight, p.fill, p.smooth);
+        plosiveFx.set(p.plosive);
+        character.set(p.character); character.update();
         deEss.set(p.deEss);
         expander.set(p.bleed);
         chop.set(p.chop, p.release);
@@ -1841,11 +1967,13 @@ public:
         // LEARN listens to the raw input; MATCH corrects it before everything else.
         if (learner.feed(x, learnedDev)) learnReady = true;
         x = matchEq.process(x);
-        float gm = gMix.next(), gc = gCtl.next();
+        character.listen(x);                           // scream / shout / clean (auto mode)
+        float gm = gMix.next() * character.mixScale(), gc = gCtl.next() * character.levelGain();
         if (p.controlOn) {
             loCut1.process(x); loCut2.process(loCut1.hp);
             hiCut1.process(loCut2.hp); hiCut2.process(hiCut1.lp);
             x = hiCut2.lp;
+            x = plosiveFx.process(x);                 // pops and proximity bursts, before anything reacts to them
             float eg = expander.gain(x);              // keyed on the clean signal
             // The dry always takes the drive's filter path (same latency and
             // phase as the wet); the clipper only runs when the mix is up.
@@ -1857,6 +1985,7 @@ public:
             x = driveHp2.hp;
             x = voicing.process(x);
             x = sculpt.process(x);
+            x = character.process(x);
             x = deEss.process(x);
             x = chop.process(x, eg > 0.7f) * eg * gc;   // leveler holds while the bleed reducer is closing
         }
@@ -1900,7 +2029,7 @@ public:
         bus.process(L, R);
         L = safetyClip(L);
         R = safetyClip(R);
-        bypassM.process(dryVoice, L, R, p.bypass, p.bypassMatch);
+        bypassM.process(dryVoice, L, R, p.bypass || p.compare, p.bypassMatch || p.compare);
         // Feedback notches last, so they also protect the bypassed voice; the
         // detector listens to exactly what goes to the speakers.
         if (p.howl) {
@@ -1916,6 +2045,9 @@ public:
     float limiterDb() const { return bus.limiterDb(); }
     float bleedReductionDb() const { return expander.reductionDb(); }
     float bypassMatchDb() const { return bypassM.matchDb(); }
+    float plosiveDb() const { return plosiveFx.reductionDb(); }
+    int characterNow() const { return character.current(); }
+    float periodicity() const { return character.periodicity(); }
     int howlNotches() const { return howlG.activeNotches(); }
     int howlEvents() const { return howlG.deployedCount(); }
     float howlNotchHz(int i) const { return howlG.notchHz(i); }
@@ -1942,6 +2074,8 @@ private:
     Drive drive;
     Voicing voicing;
     Sculpt sculpt;
+    Plosive plosiveFx;
+    Character character;
     DeEsser deEss;
     Expander expander;
     Chop chop;

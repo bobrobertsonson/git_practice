@@ -571,6 +571,59 @@ class RaspEngine {
     const KCLIP = 0.3;
     // voicing
     const vLow = bq(), vMud = bq(), vPres = bq(), vAir = bq(), vExtra = bq(), vBody = bq();
+    // PLOSIVE (mirrors class Plosive)
+    const PL = { amt: 0.5, lo1: svf(), midHp: svf(), midLp: svf(), cut: svf(), cut2: svf(), envLo: 0, envLoSlow: 0, envMid: 0, gain: 1,
+      att: coefMs(1), rel: coefMs(80), slow: coefMs(60), lslow: coefMs(250) };
+    svfSet(PL.lo1, 150, 0.707); svfSet(PL.midHp, 300, 0.707); svfSet(PL.midLp, 3000, 0.707); svfSet(PL.cut, 200, 0.54); svfSet(PL.cut2, 200, 1.31);
+    const plosive = x => {
+      svfRun(PL.lo1, x); const lo = PL.lo1.lp;
+      svfRun(PL.midHp, x); svfRun(PL.midLp, PL.midHp.hp);
+      const el = lo * lo, em = PL.midLp.lp * PL.midLp.lp;
+      PL.envLo = el + PL.att * (PL.envLo - el); PL.envLoSlow = el + PL.lslow * (PL.envLoSlow - el); PL.envMid = em + PL.slow * (PL.envMid - em);
+      let target = 1;
+      if (PL.amt > 0.001) {
+        const ratio = PL.envLo / (PL.envMid + 1e-9), jump = PL.envLo / (PL.envLoSlow + 1e-9), thr = 20 - 14 * PL.amt;
+        if (jump > 2 && ratio > thr) target = 1 - Math.min(1, 1.4 * PL.amt);
+      }
+      PL.gain = target < PL.gain ? target + PL.att * (PL.gain - target) : target + PL.rel * (PL.gain - target);
+      svfRun(PL.cut, x); svfRun(PL.cut2, PL.cut.hp);
+      return x + (PL.cut2.hp - x) * (1 - PL.gain);
+    };
+    // CHARACTER (mirrors class Character)
+    const CH = { mode: 0, dec: Math.max(1, Math.round(sr / 12000)), dc: 0, pos: 0, fill: 0, buf: new Float32Array(512), aa1: op(4000), aa2: op(4000),
+      r: 0, wShout: 0, wClean: 0, shelfDb: 0, shelf: bq(), glide: Math.exp(-256 / (0.3 * 12000)) };
+    const chSmooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+    const chShelf = () => { const d = -4 * (CH.wShout + CH.wClean); if (Math.abs(d - CH.shelfDb) > 0.05) { CH.shelfDb = d; lowShelf(CH.shelf, 300, d); } };
+    const chSet = q => {
+      CH.mode = (q.character ?? 0) | 0;
+      if (CH.mode === 0 || CH.mode === 2) { CH.wShout = 0; CH.wClean = 0; }
+      else if (CH.mode === 3) { CH.wShout = 1; CH.wClean = 0; }
+      else if (CH.mode === 4) { CH.wShout = 0; CH.wClean = 1; }
+      chShelf();
+    };
+    const chAnalyze = () => {
+      const N = 512, w = new Float32Array(N); let mean = 0, e = 0;
+      for (let i = 0; i < N; i++) { w[i] = CH.buf[(CH.pos + i) % N]; mean += w[i]; }
+      mean /= N; for (let i = 0; i < N; i++) { w[i] -= mean; e += w[i] * w[i]; }
+      if (e / N < 1e-6) return;
+      let best = 0;
+      for (let lag = 30; lag <= 240; lag++) {
+        let xy = 0, xx = 0, yy = 0;
+        for (let i = 0; i + lag < N; i++) { xy += w[i] * w[i + lag]; xx += w[i] * w[i]; yy += w[i + lag] * w[i + lag]; }
+        const r = xy / Math.sqrt(xx * yy + 1e-20); if (r > best) best = r;
+      }
+      CH.r = best + 0.7 * (CH.r - best);
+      const c = chSmooth(0.78, 0.9, CH.r), sh = chSmooth(0.6, 0.72, CH.r) * (1 - c);
+      CH.wClean = c + CH.glide * (CH.wClean - c); CH.wShout = sh + CH.glide * (CH.wShout - sh);
+      chShelf();
+    };
+    const chListen = x => {
+      if (CH.mode !== 1) return;
+      const y = opLp(CH.aa2, opLp(CH.aa1, x));
+      if (++CH.dc < CH.dec) return;
+      CH.dc = 0; CH.buf[CH.pos] = y; CH.pos = (CH.pos + 1) % 512;
+      if (++CH.fill >= 256) { CH.fill = 0; chAnalyze(); }
+    };
     // SCULPT (mirrors class Sculpt)
     const SC = { on: false, w: 0, drive: 1, bandHp: svf(), bandLp: svf(), postHp: svf(), postLp: svf(), weightEq: bq(), fillEq: bq(), smoothEq: bq() };
     const scSet = q => {
@@ -726,7 +779,7 @@ class RaspEngine {
       lowShelf(vLow, V[0], V[1]); peaking(vMud, V[2], 1.2, V[3]); peaking(vPres, V[4], 0.9, V[5]); highShelf(vAir, V[6], V[7]);
       highShelf(vExtra, 7000, clamp(p.airDb || 0, 0, 12));
       peaking(vBody, 220, 0.8, clamp(p.bodyDb || 0, 0, 9));
-      scSet(p);
+      scSet(p); PL.amt = clamp(p.plosive ?? 0.5, 0, 1); chSet(p);
       deDepth = p.deEss;
       X.on = p.bleed > 0.001; X.thr = -70 + 40 * p.bleed;
       C.amount = p.chop; C.lvRange = 15 * p.chop;
@@ -911,8 +964,8 @@ class RaspEngine {
         }
         BM.accD = BM.accW = 0; BM.n = 0;
       }
-      const gDb = p.bypassMatch && BM.emaD > 0 && BM.emaW > 0 ? clamp(lufsOf(BM.emaW) - lufsOf(BM.emaD), -12, 30) : 0;
-      BM.gain.target = db(gDb); BM.fade.target = p.bypass ? 1 : 0;
+      const gDb = (p.bypassMatch || p.compare) && BM.emaD > 0 && BM.emaW > 0 ? clamp(lufsOf(BM.emaW) - lufsOf(BM.emaD), -12, 30) : 0;
+      BM.gain.target = db(gDb); BM.fade.target = (p.bypass || p.compare) ? 1 : 0;
       const f = smNext(BM.fade), g = smNext(BM.gain);
       const a = Math.cos(0.5 * PI * f), b = Math.sin(0.5 * PI * f), dd = safetyClip(dryV * g);
       o[0] = a * o[0] + b * dd; o[1] = a * o[1] + b * dd;
@@ -1035,16 +1088,19 @@ class RaspEngine {
       x *= smNext(gIn);
       if (mOn) for (const b of mEq) x = bqRun(b, x);
       const dryVoice = x;
-      const gm = smNext(gMix), gc = smNext(gCtl);
+      chListen(x);
+      const gm = smNext(gMix) * (1 - 0.65 * CH.wClean), gc = smNext(gCtl) * db(-2 * CH.wClean);
       if (p.controlOn) {
         svfRun(lc1, x); svfRun(lc2, lc1.hp); svfRun(hc1, lc2.hp); svfRun(hc2, hc1.lp);
         x = hc2.lp;
+        x = plosive(x);
         const eg = expander(x);
         const wet = drive(x, gm > 1e-4);
         x = lerp(driveDry, wet, gm);
         svfRun(dHp1, x); svfRun(dHp2, dHp1.hp); x = dHp2.hp;
         x = bqRun(vBody, bqRun(vExtra, bqRun(vAir, bqRun(vPres, bqRun(vMud, bqRun(vLow, x))))));
         x = sculpt(x);
+        if (CH.wShout + CH.wClean > 0.002 || CH.shelfDb < -0.01) x = bqRun(CH.shelf, x);
         x = deEss(x);
         x = chop(x, eg > 0.7) * eg * gc;
       }
@@ -1185,7 +1241,7 @@ function makeBlockRunner(sr) {
 // Parameters, presets and UI
 // ===========================================================================
 const DEFAULTS = {
-  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, weight: 0.3, fill: 0.2, smooth: 0.3, matchAmount: 0, matchOn: true, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12,
+  controlOn: true, loCut: 0.4, hiCut: 0.8, drive: 0.4, brightness: 1, mix: 0.6, chop: 0.55, release: 0.4, deEss: 0.5, airDb: 0, bodyDb: 0, weight: 0.3, fill: 0.2, smooth: 0.3, plosive: 0.5, character: 0, compare: false, matchAmount: 0, matchOn: true, octDown: 0, octUp: 0, pitch1Semi: -12, pitch2Semi: 12,
   harm3Level: 0, harm4Level: 0, harm3Semi: 0, harm4Semi: 7, harm1Width: 0.7, harm2Width: 0.7, harm3Width: 0.7, harm4Width: 0.7,
   harmRandPitch: 0.4, harmRandTime: 0.4, harmLoCut: 80, harmHiCut: 12000, harmWidth: 1, bleed: 0.7, controlGainDb: 0,
   thickenOn: true, spread: 0.6, diffuse: 0.35, darken: 0.1, width: 0.85, solo: false, doubleTrack: false, thickenGainDb: -4,
@@ -1237,6 +1293,8 @@ const MENU = [
   ["weight", "Weight (low-mid fullness)", 0, 1, 0.01, pct],
   ["fill", "Fill (400 Hz)", 0, 1, 0.01, v => "+" + (6 * v).toFixed(1) + " dB"],
   ["smooth", "Smooth (drive fizz)", 0, 1, 0.01, v => "-" + (6 * v).toFixed(1) + " dB"],
+  ["plosive", "Plosive control", 0, 1, 0.01, pct],
+  ["character", "Character", 0, 4, 1, v => ["off", "auto", "scream", "shout", "clean"][Math.round(v)]],
   ["matchAmount", "Match (after Learn)", 0, 1, 0.01, pct],
   ["pitch1Semi", "Harmony 1 interval", -12, 12, 1, v => (v > 0 ? "+" : "") + Math.round(v) + " st"],
   ["octDown", "Harmony 1 level", 0, 1, 0.01, pct],

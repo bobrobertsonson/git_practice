@@ -37,6 +37,8 @@
 // (>= 64 on); CC 95 = gate pattern, CC 96 = glitch pattern (0 = random), CC 97 =
 // throw style (>= 64 glitch), CC 102 = crush, CC 103 = lo-fi, CC 104 = tape stop time.
 // CC 105 / 106 / 107 = Sculpt weight / fill / smooth (also saved per preset slot).
+// CC 108 = learned match on/off, CC 109 = compare (held), CC 110 = character
+// (0 off, auto, scream, shout, clean), CC 111 = plosive control.
 // CC 82 / 83 = pitch 1 / 2 level (0-127), CC 84 / 85 = pitch 1 / 2 interval
 // (0-127 -> -12..+12 semitones). A knob takes over again once moved.
 //
@@ -356,6 +358,9 @@ int main() {
                 if (cc.control_number == 106) params.fill = cc.value / 127.f;
                 if (cc.control_number == 107) params.smooth = cc.value / 127.f;
                 if (cc.control_number == 108) params.matchOn = cc.value >= 64;
+                if (cc.control_number == 109) params.compare = cc.value >= 64;
+                if (cc.control_number == 110) params.character = std::min(4, cc.value * 5 / 128);
+                if (cc.control_number == 111) params.plosive = cc.value / 127.f;
             }
         }
 

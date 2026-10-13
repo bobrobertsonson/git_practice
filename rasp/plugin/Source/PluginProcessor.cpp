@@ -33,6 +33,8 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"airDb", "Air", "Control", K::Db, 0, 12, nullptr, RASP_F(airDb), nullptr, false},
         {"bodyDb", "Body", "Control", K::Db, 0, 9, nullptr, RASP_F(bodyDb), nullptr, false},
         {"weight", "Weight", "Control", K::Unit, 0, 1, nullptr, RASP_F(weight), nullptr, false},
+        {"plosive", "Plosive", "Control", K::Unit, 0, 1, nullptr, RASP_F(plosive), nullptr, true},
+        {"character", "Character", "Live", K::Choice, 0, 4, "Off|Auto|Scream|Shout|Clean", RASP_I(character), nullptr, true},
         {"fill", "Fill", "Control", K::Unit, 0, 1, nullptr, RASP_F(fill), nullptr, false},
         {"smooth", "Smooth", "Control", K::Unit, 0, 1, nullptr, RASP_F(smooth), nullptr, false},
         {"bleed", "Bleed Reducer", "Control", K::Unit, 0, 1, nullptr, RASP_F(bleed), nullptr, false},
@@ -112,6 +114,7 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"throwOn", "Throw", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(throwOn), nullptr, true},
         {"stutter", "Stutter", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(stutter), nullptr, true},
         {"glitch", "Glitch", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(glitch), nullptr, true},
+        {"compare", "Compare", "Momentary", K::Bool, 0, 1, nullptr, RASP_B(compare), nullptr, true},
         {"stutterDiv", "Stutter Slice", "Momentary", K::Choice, 0, 3, "1/4|1/8|1/16|1/32", RASP_I(stutterDiv), nullptr, true},
         {"glitchAmount", "Glitch Amount", "Momentary", K::Unit, 0, 1, nullptr, RASP_F(glitchAmount), nullptr, true},
         {"glitchPattern", "Glitch Pattern", "Momentary", K::Choice, 0, 4, "Random|Pattern A|Pattern B|Pattern C|Pattern D", RASP_I(glitchPattern), nullptr, true},
@@ -261,9 +264,11 @@ void RaspProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuf
     const float* inR = numIn > 1 ? buffer.getReadPointer(1) : nullptr;
     float* outL = buffer.getWritePointer(0);
     float* outR = numOut > 1 ? buffer.getWritePointer(1) : nullptr;
+    float pk = 0.f, ss = 0.f;
     for (int i = 0; i < n; i++) {
         float x = inL ? inL[i] : 0.f;
         if (inR) x = 0.5f * (x + inR[i]);
+        pk = std::fmax(pk, std::fabs(x)); ss += x * x;
         float L, R;
         engine->process(x, L, R);
         if (outR) { outL[i] = L; outR[i] = R; }
@@ -276,6 +281,17 @@ void RaspProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuf
     meters.bleed = engine->bleedReductionDb();
     meters.bypassMatch = engine->bypassMatchDb();
     meters.notches = engine->howlNotches();
+    meters.character = engine->characterNow();
+    meters.plosive = engine->plosiveDb();
+    // Input meter: peak with a slow fall, RMS over ~300 ms (what the drive and
+    // the leveler react to).
+    {
+        const float a = std::exp(-(float)n / (0.3f * (float)getSampleRate()));
+        inMs = ss / (float)std::max(1, n) + a * (inMs - ss / (float)std::max(1, n));
+        const float pkDb = juce::Decibels::gainToDecibels(pk, -100.f);
+        meters.inPeak = std::fmax(pkDb, meters.inPeak.load() - 20.f * (float)n / (float)getSampleRate());
+        meters.inRms = juce::Decibels::gainToDecibels(std::sqrt(inMs), -100.f);
+    }
 }
 
 int RaspProcessor::getNumPrograms() { return rasp::kNumPresets; }
@@ -301,6 +317,7 @@ juce::AudioProcessorParameter* RaspProcessor::getBypassParameter() const {
 void RaspProcessor::getStateInformation(juce::MemoryBlock& destData) {
     auto state = apvts.copyState();
     state.setProperty("program", currentProgram, nullptr);
+    state.setProperty("uiScale", uiScale.load(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary(*xml, destData);
 }
 
@@ -309,6 +326,7 @@ void RaspProcessor::setStateInformation(const void* data, int sizeInBytes) {
         if (xml->hasTagName(apvts.state.getType())) {
             auto state = juce::ValueTree::fromXml(*xml);
             currentProgram = state.getProperty("program", 0);
+            uiScale = (float)(double)state.getProperty("uiScale", 0.8);
             apvts.replaceState(state);
             dirty = true;
         }
