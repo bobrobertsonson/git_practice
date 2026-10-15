@@ -423,6 +423,13 @@ int main() {
                 if (cc.control_number == 112) params.delayDuck = cc.value / 127.f;
                 if (cc.control_number == 113) params.duckRelease = cc.value / 127.f;
                 if (cc.control_number == 114) params.delayTime = std::min(7, cc.value / 16);
+                if (cc.control_number == 115) params.voxMode = std::min(4, cc.value * 5 / 128);
+                if (cc.control_number == 116) params.voxMix = cc.value / 127.f;
+                if (cc.control_number == 117) params.voxNote = std::min(24, cc.value * 25 / 128);
+                if (cc.control_number == 118) params.voxChord = std::min(5, cc.value * 6 / 128);
+                if (cc.control_number == 119) params.voxFollow = cc.value >= 64;
+                if (cc.control_number == 20) params.voxFormant = cc.value / 127.f;
+                if (cc.control_number == 21) params.voxRing = cc.value / 127.f;
             }
         }
 

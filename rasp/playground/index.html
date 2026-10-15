@@ -347,7 +347,8 @@ class RaspEngine {
       o[0] = 0.8 * dL; o[1] = 0.8 * dR;
     };
     const wO = [0, 0];
-    let megaFade = 0;
+    let megaFade = 0, voxFade = 0;
+    const gVox = sm(0, 30);
     // STUTTER / GLITCH (mirrors class Stutter in rasp.h, same LCG)
     const STMAX = 1 << 18, STSLICE = 1 << 17;
     const MV = { normal: 0, roll2: 1, roll4: 2, rev: 3, half: 4, gate: 5, crush: 6, ring: 7, up5: 8, up8: 9, down8: 10, skip: 11, buzz: 12 };
@@ -441,6 +442,103 @@ class RaspEngine {
       }
       if (DG.lofiOn) { svfRun(DG.hp, y); svfRun(DG.lp, DG.hp.hp); const d = DG.lp.lp * DG.drive; y = d / (1 + Math.abs(d)); }
       return y;
+    };
+    // VOX: vocoder / robot / talkbox / formant (mirrors class Vox)
+    const VX = (() => {
+      const N = 16, span = 7800 / 110, o = { fc: [], mod: [], car: [], em: new Float64Array(N), ec: new Float64Array(N), cb: new Float64Array(N), held: new Float64Array(N),
+        sib: svf(), aa1: op(3000), aa2: op(3000), runMode: 0, mode: 0, iv: [0], follow: false, havePitch: false, shift: 0, ring: 0, ringPh: 0,
+        phase: new Float64Array(8), logF: 0, logTarget: 0, noteLog: 0, trackedLog: 0, inMs: 0, outMs: 0, gLevel: 1, fcnt: 0,
+        dec: Math.max(1, Math.round(sr / 12000)), dc: 0, pos: 0, hop: 0, buf: new Float32Array(384) };
+      for (let k = 0; k < N; k++) { o.fc.push(110 * Math.pow(span, k / (N - 1))); o.mod.push([svf(), svf()]); o.car.push([svf(), svf()]); }
+      o.semisPerBand = 12 * Math.log2(span) / (N - 1);
+      svfSet(o.sib, 5000, 0.707);
+      o.atk = coefMs(1); o.carRel = coefMs(30); o.lvl = coefMs(30); o.lvlG = coefMs(50); o.glide = Math.exp(-1 / (0.01 * sr)); o.rel = coefMs(12);
+      o.frame = Math.trunc(0.01 * sr);
+      o.logF = o.logTarget = Math.log2(65.406 * Math.pow(2, 7 / 12));
+      return o;
+    })();
+    const vxSet = q => {
+      const m = (q.voxMode ?? 0) | 0;
+      if (m > 0 && m !== VX.runMode) {
+        VX.runMode = m;
+        const Q = m === 3 ? 3.5 : (m === 4 ? 2 : 2.2), relMs = m === 2 ? 6 : (m === 3 ? 8 : (m === 4 ? 10 : 12));
+        VX.rel = coefMs(relMs);
+        for (let k = 0; k < 16; k++) for (let i = 0; i < 2; i++) { svfSet(VX.mod[k][i], VX.fc[k], Q); svfSet(VX.car[k][i], VX.fc[k], Q); }
+      }
+      VX.mode = m;
+      const CH = [[0], [0, 7], [0, 12], [0, 7, 12], [0, 3, 7, 12], [0, 4, 7, 12]];
+      VX.iv = CH[clamp((q.voxChord ?? 0) | 0, 0, 5)];
+      VX.noteLog = Math.log2(65.406 * Math.pow(2, clamp(Math.round(q.voxNote ?? 7), 0, 24) / 12));
+      VX.follow = !!q.voxFollow;
+      VX.shift = (clamp(q.voxFormant ?? 0.5, 0, 1) - 0.5) * 24 / VX.semisPerBand;
+      VX.ring = clamp(q.voxRing ?? 0, 0, 1);
+    };
+    const vxBand = (s, x) => { svfRun(s[0], x); svfRun(s[1], s[0].k * s[0].bp); return s[1].k * s[1].bp; };
+    const vxBlep = (t, dt) => { if (t < dt) { t /= dt; return t + t - t * t - 1; } if (t > 1 - dt) { t = (t - 1) / dt; return t * t + t + t + 1; } return 0; };
+    const vxSaw = (i, dt) => { let ph = VX.phase[i] + dt; ph -= Math.floor(ph); VX.phase[i] = ph; return 2 * ph - 1 - vxBlep(ph, dt); };
+    const vxPulse = (i, dt) => { let ph = VX.phase[i] + dt; ph -= Math.floor(ph); VX.phase[i] = ph; let p2 = ph + 0.12; p2 -= Math.floor(p2); return (2 * ph - vxBlep(ph, dt)) - (2 * p2 - vxBlep(p2, dt)); };
+    const vxAnalyze = () => {
+      const K = 384, w = new Float64Array(K), cum = new Float64Array(K + 1); let mean = 0;
+      for (let i = 0; i < K; i++) { w[i] = VX.buf[(VX.pos + i) % K]; mean += w[i]; }
+      mean /= K;
+      for (let i = 0; i < K; i++) { w[i] -= mean; cum[i + 1] = cum[i] + w[i] * w[i]; }
+      if (cum[K] / K < 1e-6) return;
+      const r = new Float64Array(242); let best = 0;
+      for (let lag = 30; lag <= 241; lag++) {
+        let xy = 0; for (let i = 0; i + lag < K; i++) xy += w[i] * w[i + lag];
+        r[lag] = xy / Math.sqrt(cum[K - lag] * (cum[K] - cum[lag]) + 1e-20);
+        if (lag <= 240 && r[lag] > best) best = r[lag];
+      }
+      if (best < 0.6) return;
+      let pick = 30;
+      for (let lag = 31; lag <= 240; lag++) if (r[lag] >= 0.9 * best && r[lag] >= r[lag - 1] && r[lag] >= r[lag + 1]) { pick = lag; break; }
+      let lagF = pick;
+      if (pick > 30) { const a = r[pick - 1], b = r[pick], c = r[pick + 1], den = a - 2 * b + c; if (Math.abs(den) > 1e-9) lagF += clamp(0.5 * (a - c) / den, -0.5, 0.5); }
+      const hz = sr / VX.dec / lagF, semis = Math.floor(12 * Math.log2(hz / 65.406) + 0.5);
+      VX.trackedLog = Math.log2(65.406) + semis / 12; VX.havePitch = true;
+    };
+    const vox = x => {
+      const V = VX, m = V.runMode;
+      if (V.follow) {
+        const y = opLp(V.aa2, opLp(V.aa1, x));
+        if (++V.dc >= V.dec) { V.dc = 0; V.buf[V.pos] = y; V.pos = (V.pos + 1) % 384; if (++V.hop >= 192) { V.hop = 0; vxAnalyze(); } }
+      }
+      V.logTarget = (V.follow && V.havePitch) ? V.trackedLog : V.noteLog;
+      V.logF = V.logTarget + V.glide * (V.logF - V.logTarget);
+      const f = Math.pow(2, V.logF);
+      let c = 0;
+      if (m !== 4) {
+        let oi = 0;
+        for (const iv of V.iv) {
+          const fn = f * Math.pow(2, iv / 12);
+          if (m === 2) c += vxPulse(oi++, fn / sr);
+          else { c += vxSaw(oi++, fn * 1.00347 / sr); c += vxSaw(oi++, fn * 0.99654 / sr); }
+        }
+        if (m === 3) c = fastTanh(1.5 * c);
+      }
+      const hold = m === 2 && ++V.fcnt >= V.frame;
+      if (hold) V.fcnt = 0;
+      for (let k = 0; k < 16; k++) {
+        const b = vxBand(V.mod[k], x), a = Math.abs(b);
+        V.em[k] = a + (a > V.em[k] ? V.atk : V.rel) * (V.em[k] - a);
+        if (m === 4) V.cb[k] = b;
+        else { const cb = vxBand(V.car[k], c), ac = Math.abs(cb); V.cb[k] = cb; V.ec[k] = ac + (ac > V.ec[k] ? V.atk : V.carRel) * (V.ec[k] - ac); }
+      }
+      let y = 0;
+      for (let k = 0; k < 16; k++) {
+        const src = clamp(k - V.shift, 0, 15), i0 = Math.trunc(src), i1 = i0 + 1 < 16 ? i0 + 1 : i0;
+        let e = V.em[i0] + (V.em[i1] - V.em[i0]) * (src - i0);
+        if (m === 2) { if (hold) V.held[k] = e; e = V.held[k]; }
+        const g = m === 4 ? Math.min(8, e / (V.em[k] + 1e-5)) : Math.min(31.6, e / (V.ec[k] + 1e-5));
+        y += (k & 1) ? -V.cb[k] * g : V.cb[k] * g;
+      }
+      if (m !== 4) { svfRun(V.sib, x); y += (m === 3 ? 0.3 : 0.5) * V.sib.hp; }
+      if (V.ring > 0) { V.ringPh += 2 * f / sr; V.ringPh -= Math.floor(V.ringPh); y *= 1 - V.ring + V.ring * Math.sin(6.283185307179586 * V.ringPh); }
+      V.inMs = x * x + V.lvl * (V.inMs - x * x);
+      V.outMs = y * y + V.lvl * (V.outMs - y * y);
+      const gt = Math.min(8, Math.sqrt(V.inMs / (V.outMs + 1e-12)));
+      V.gLevel = gt + V.lvlG * (V.gLevel - gt);
+      return y * V.gLevel;
     };
     // GATE (mirrors class Gate)
     const GT = { on: false, pat: 0, step: 6000, pos: 0, env: sm(1, 2) };
@@ -808,7 +906,7 @@ class RaspEngine {
       hSet(p);
       H.octDown = hHas(-12); H.octUp = hHas(12);
       thSend.target = p.throwOn ? 1 : 0;
-      stSet(p); dgSet(p); gtSet(p); tpSet(p); fzSet(p);
+      stSet(p); dgSet(p); vxSet(p); gVox.target = (p.voxMode ?? 0) > 0 ? clamp(p.voxMix ?? 0.7, 0, 1) : 0; gtSet(p); tpSet(p); fzSet(p);
       TH.beat = clamp(Math.fround(Math.fround(60 / clamp(p.bpm, 40, 240)) * sr), 1, (THMAX - 4) / 1.5);
       TH.glitchy = (p.throwStyle | 0) === 1;
       if (!TH.glitchy) thTime.target = TH.beat;
@@ -1118,6 +1216,9 @@ class RaspEngine {
       megaFade = gmg;
       megaTrack(x);
       if (gmg > 1e-4) x = lerp(x, mega(x), gmg);
+      const gv = smNext(gVox);
+      voxFade = VX.runMode >= 1 && VX.runMode <= 3 ? gv : 0;
+      if (gv > 1e-4) x = lerp(x, vox(x), gv);
       x = degrade(x);
       x = gateFx(x);
       x = stutter(x);
@@ -1139,7 +1240,7 @@ class RaspEngine {
       bus(out);
       out[0] = safetyClip(out[0]); out[1] = safetyClip(out[1]);
       bypassMatch(dryVoice, out);
-      if (p.howl) { if (megaFade > 1e-4 || ST.state !== 0 || FZ.frozen || TP.running || TP.mix.cur > 1e-4) H.hold = Math.floor(0.3 * sr / HHOP) + 1; howl(out); }
+      if (p.howl) { if (megaFade > 1e-4 || voxFade > 1e-4 || ST.state !== 0 || FZ.frozen || TP.running || TP.mix.cur > 1e-4) H.hold = Math.floor(0.3 * sr / HHOP) + 1; howl(out); }
       return out;
     };
   }
@@ -1259,6 +1360,7 @@ const DEFAULTS = {
   glue: 0.5, outDb: 0, inDb: 0,
   bypass: false, bypassMatch: true, mono: false, howl: true, mega: false, throwOn: false, stutter: false, glitch: false, stutterDiv: 2, glitchAmount: 0.6, glitchPattern: 0,
   tapeStop: false, tapeTime: 1, freeze: false, gate: false, gatePattern: 0, throwStyle: 0, crush: 0, crushMix: 1, lofi: 0,
+  voxMode: 0, voxMix: 0.7, voxNote: 7, voxChord: 0, voxFollow: false, voxFormant: 0.5, voxRing: 0,
 };
 const PRESETS = {
   huge:    { drive: 0.45, chop: 0.65, spread: 0.6, thickenGainDb: -3, tail: 0.45, tailBlend: 0.45, delayBlend: 0.35, flavourGainDb: -4, glue: 0.65, outDb: -3, hiCut: 0.95, airDb: 4, bodyDb: 5, weight: 0.6, fill: 0.4, smooth: 0.4, darken: 0.25 },
@@ -1337,6 +1439,13 @@ const MENU = [
   ["crush", "Crush (bits + sample rate)", 0, 1, 0.01, v => v < 0.001 ? "off" : Math.round(16 - 13 * v) + " bit"],
   ["crushMix", "Crush mix", 0, 1, 0.01, pct],
   ["lofi", "Lo-fi (blown speaker)", 0, 1, 0.01, pct],
+  ["Vox (vocoder / robot / talkbox / formant)"],
+  ["voxMode", "Vox mode", 0, 4, 1, v => ["off", "vocoder", "robot", "talkbox", "formant"][Math.round(v)]],
+  ["voxMix", "Vox mix", 0, 1, 0.01, pct],
+  ["voxNote", "Vox note", 0, 24, 1, v => ["C2","C#2","D2","D#2","E2","F2","F#2","G2","G#2","A2","A#2","B2","C3","C#3","D3","D#3","E3","F3","F#3","G3","G#3","A3","A#3","B3","C4"][Math.round(v)]],
+  ["voxChord", "Vox chord", 0, 5, 1, v => ["single", "fifth", "octave", "power", "minor", "major"][Math.round(v)]],
+  ["voxFormant", "Vox formant", 0, 1, 0.01, v => { const st = Math.round((v - 0.5) * 24); return (st > 0 ? "+" : "") + st + " st"; }],
+  ["voxRing", "Vox ring mod", 0, 1, 0.01, pct],
   ["Bus"],
   ["glue", "Glue", 0, 1, 0.01, pct], ["outDb", "Output", -24, 12, 0.5, v => v.toFixed(1) + " dB"],
   ["Section levels"],
@@ -1429,6 +1538,7 @@ const addCheck = (key, label) => {
 addCheck("matchOn", "Learned match on (untick to hear without it)");
 addCheck("solo", "Solo the thicken branch");
 addCheck("doubleTrack", "Double-track: the lead as two takes, hard left/right");
+addCheck("voxFollow", "Vox follows your pitch (snapped to semitones: hard-tuned robot)");
 {
   const g = document.createElement("div"); g.className = "group-label"; g.textContent = "Live"; menu.append(g);
 }

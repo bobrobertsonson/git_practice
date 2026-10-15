@@ -13,6 +13,8 @@ int main(int argc, char** argv) {
             "  names: locut hicut drive bright(0-2) mix chop release\n"
             "         spread diffuse darken width solo tail tailblend repeats delayblend time(0-2)\n"
             "         bpm tilt duck control thicken flavour (0/1) *gain out (dB)\n"
+            "         vox(0-4: off vocoder robot talkbox formant) voxmix note(0-24 from C2) chord(0-5)\n"
+            "         follow(0/1) formant ring\n"
             "         deess bleed glue in (dB)  bypass bypassmatch mono howl (0/1)\n", argv[0], argv[0]);
         return 1;
     }

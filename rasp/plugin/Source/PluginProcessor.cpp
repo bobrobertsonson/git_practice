@@ -130,6 +130,16 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"crush", "Crush", "Degrade", K::Unit, 0, 1, nullptr, RASP_F(crush), nullptr, false},
         {"crushMix", "Crush Mix", "Degrade", K::Unit, 0, 1, nullptr, RASP_F(crushMix), nullptr, false},
         {"lofi", "Lo-fi", "Degrade", K::Unit, 0, 1, nullptr, RASP_F(lofi), nullptr, false},
+        // VOX: VocalSynth-style voice synthesis (saved with presets)
+        {"voxMode", "Vox Mode", "Vox", K::Choice, 0, 4, "Off|Vocoder|Robot|Talkbox|Formant", RASP_I(voxMode), nullptr, false},
+        {"voxMix", "Vox Mix", "Vox", K::Unit, 0, 1, nullptr, RASP_F(voxMix), nullptr, false},
+        {"voxNote", "Vox Note", "Vox", K::Choice, 0, 24,
+         "C2|C#2|D2|D#2|E2|F2|F#2|G2|G#2|A2|A#2|B2|C3|C#3|D3|D#3|E3|F3|F#3|G3|G#3|A3|A#3|B3|C4", RASP_I(voxNote), nullptr, false},
+        {"voxChord", "Vox Chord", "Vox", K::Choice, 0, 5, "Single|Fifth|Octave|Power|Minor|Major", RASP_I(voxChord), nullptr, false},
+        {"voxFollow", "Vox Follow Pitch", "Vox", K::Bool, 0, 1, nullptr, RASP_B(voxFollow), nullptr, false},
+        {"voxFormant", "Vox Formant", "Vox", K::Unit, 0, 1, nullptr, RASP_F(voxFormant),
+         [](float v) { const int st = juce::roundToInt((v - 0.5f) * 24.f); return (st > 0 ? "+" : "") + juce::String(st) + " st"; }, false},
+        {"voxRing", "Vox Ring Mod", "Vox", K::Unit, 0, 1, nullptr, RASP_F(voxRing), nullptr, false},
     };
     return specs;
 }

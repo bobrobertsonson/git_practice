@@ -46,7 +46,7 @@ make LIBDAISY_DIR=../../../libDaisy program-dfu
 | Encoder hold 2 s | Clear the feedback notches |
 | Button 1 hold | **Mega** while held |
 | Button 2 | Tap: thicken + flavour on/off. Hold: **Throw** while held |
-| TRS MIDI in | CC 80 = Mega, CC 81 = Throw, CC 88 = Stutter, CC 89 = Glitch (value ≥ 64 = on); CC 90 = stutter slice, CC 91 = glitch amount; CC 92/93/94 = Tape stop / Freeze / Gate (held); CC 95 gate pattern, 96 glitch pattern, 97 throw style, 102 crush, 103 lo-fi, 104 tape stop time |
+| TRS MIDI in | CC 80 = Mega, CC 81 = Throw, CC 88 = Stutter, CC 89 = Glitch (value ≥ 64 = on); CC 90 = stutter slice, CC 91 = glitch amount; CC 92/93/94 = Tape stop / Freeze / Gate (held); CC 95 gate pattern, 96 glitch pattern, 97 throw style, 102 crush, 103 lo-fi, 104 tape stop time; Vox: CC 115 mode (off / vocoder / robot / talkbox / formant in five steps), 116 mix, 117 note (C2–C4), 118 chord, 119 follow pitch (≥ 64), 20 formant, 21 ring mod |
 | LED 2 | Red: chop is compressing more than 3 dB. Blue: a feedback notch is active. White: Mega or Throw held |
 
 **What to measure on the bench before Stage 2:**

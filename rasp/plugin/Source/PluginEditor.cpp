@@ -10,7 +10,7 @@
 namespace {
 const juce::Colour kBg{0xff121214}, kPanel{0xff1d1d21}, kEdge{0xff2c2c33}, kText{0xffe8e6e3},
     kDim{0xff8d8a86}, kAccent{0xffe2462c};
-constexpr int kW = 1180, kH = 980, kHeader = 64, kCellW = 92, kCellH = 112, kTitle = 34, kPad = 10;
+constexpr int kW = 1180, kH = 1040, kHeader = 64, kCellW = 92, kCellH = 112, kTitle = 34, kPad = 10;
 
 using APVTS = juce::AudioProcessorValueTreeState;
 
@@ -96,7 +96,7 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     setLookAndFeel(&laf);
 
     auto& s = proc.apvts;
-    panels.resize(6);
+    panels.resize(7);
     auto& control = panels[0]; control.title = "CONTROL"; control.cols = 4;
     addPower(control, "controlOn");
     addKnob(control, "drive", "Drive"); addKnob(control, "mix", "Drive mix"); addChoice(control, "brightness", "Tone"); addKnob(control, "weight", "Weight");
@@ -137,6 +137,11 @@ RaspEditor::RaspEditor(RaspProcessor& p) : AudioProcessorEditor(p), proc(p) {
     addHold(gl, "gate", "GATE", "Hold: the voice chops on and off in the Gate pattern, on the tempo grid");
     addChoice(gl, "gatePattern", "Gate pattern"); addKnob(gl, "crush", "Crush"); addKnob(gl, "crushMix", "Crush mix");
     addKnob(gl, "lofi", "Lo-fi");
+
+    auto& vox = panels[6]; vox.title = "VOX"; vox.cols = 8; vox.under = 4;
+    addChoice(vox, "voxMode", "Mode"); addKnob(vox, "voxMix", "Mix"); addChoice(vox, "voxNote", "Note");
+    addChoice(vox, "voxChord", "Chord"); addToggle(vox, "voxFollow", "Follow pitch"); addKnob(vox, "voxFormant", "Formant");
+    addKnob(vox, "voxRing", "Ring mod");
 
     auto& bus = panels[3]; bus.title = "BUS / LIVE"; bus.cols = 2;
     addKnob(bus, "inDb", "Input"); addKnob(bus, "glue", "Glue"); addKnob(bus, "outDb", "Output");
@@ -297,6 +302,7 @@ void RaspEditor::resized() {
     for (auto& pn : panels) {
         const int rows = ((int)pn.cells.size() + pn.cols - 1) / pn.cols;
         if (pn.newRow) { x = kPad; y = rowBottom + kPad; }
+        if (pn.under >= 0) { x = panels[(size_t)pn.under].bounds.getX(); y = panels[(size_t)pn.under].bounds.getBottom() + kPad; }
         pn.bounds = {x, y, pn.cols * kCellW + 2 * kPad, kTitle + rows * kCellH + kPad};
         rowBottom = std::max(rowBottom, pn.bounds.getBottom());
         if (pn.power) pn.power->setBounds(pn.bounds.getRight() - 60, pn.bounds.getY() + 4, 52, 26);

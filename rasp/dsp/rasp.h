@@ -16,6 +16,8 @@
 //   THICKEN  two micro-pitched doubles (±cents, Haas-delayed) + comb taps,
 //            diffuse, darken, width, solo, double-track (lead as two hard-panned takes)
 //   FLAVOUR  8-line FDN plate (modulated), ping-pong delay, return EQ, tilt, duck
+//   VOX      vocoder / robot / talkbox / formant on a 16-band filterbank
+//            (after the control strip and Mega, before the degrade)
 //   BUS      stereo glue compressor ─► -1 dBFS peak limiter
 //   LIVE     mono mode, level-matched digital bypass, feedback notches
 //            (HowlGuard) on the final output
@@ -313,6 +315,15 @@ struct Params {
     float crush      = 0.f;    // 0 = off .. 1 = 3 bits at ~1.2 kHz
     float crushMix   = 1.f;    // crushed vs clean
     float lofi       = 0.f;    // band-limit toward a blown-out phone speaker
+
+    // VOX (VocalSynth-style voice synthesis; see class Vox)
+    int   voxMode    = 0;      // 0 off, 1 vocoder, 2 robot, 3 talkbox, 4 formant
+    float voxMix     = 0.7f;   // synth voice vs your voice
+    int   voxNote    = 7;      // carrier note, semitones above C2 (0..24; 7 = G2)
+    int   voxChord   = 0;      // 0 single, 1 fifth, 2 octave, 3 power (1-5-8), 4 minor, 5 major
+    bool  voxFollow  = false;  // carrier follows your pitch, snapped to semitones
+    float voxFormant = 0.5f;   // formant shift -12..+12 semitones (0.5 = none)
+    float voxRing    = 0.f;    // ring mod depth (at twice the carrier pitch)
 };
 
 // ---------------------------------------------------------------------------
@@ -1436,6 +1447,200 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Vox: VocalSynth-style voice synthesis. A 16-band filterbank (110 Hz - 7.8
+// kHz, ~4.9 semitones apart, two cascaded band-passes per band) follows the
+// voice's level in each band and imposes it on a carrier:
+//   1 Vocoder  a detuned-saw chord (a fixed note, or following your pitch)
+//   2 Robot    a narrow-pulse buzz; band levels held per 10 ms frame, so it
+//              steps like a computer voice
+//   3 Talkbox  an overdriven saw chord through narrower, more resonant bands
+//   4 Formant  the voice itself with its band envelope moved up or down
+//              (monster or chipmunk without changing the pitch)
+// Formant shift moves the envelope in every mode. Each carrier band is
+// normalised by its own level, so a chord with no harmonic in a band still
+// speaks there. Sibilance above 5 kHz passes straight through so words stay
+// clear (modes 1-3). Ring mod runs at twice the carrier pitch. The output is
+// matched to the input's loudness.
+// Follow: autocorrelation pitch tracker (decimated to ~12 kHz, 384-sample
+// window every 192 samples, 50-400 Hz), snapped to the nearest semitone and
+// glided over ~10 ms: a hard-tuned robot. Noisy screams have no stable pitch;
+// it holds the last note through them.
+// ---------------------------------------------------------------------------
+class Vox {
+public:
+    static constexpr int kBands = 16;
+    void init(float sampleRate) {
+        sr = sampleRate;
+        const float span = 7800.f / 110.f;
+        for (int k = 0; k < kBands; k++) fc[k] = 110.f * std::pow(span, (float)k / (float)(kBands - 1));
+        semisPerBand = 12.f * std::log2(span) / (float)(kBands - 1);
+        sib.set(5000.f, 0.707f, sr);
+        dec = std::max(1, (int)std::lround(sr / 12000.f));
+        aa1.setCutoff(3000.f, sr); aa2.setCutoff(3000.f, sr);
+        atk = coefMs(1.f, sr); carRel = coefMs(30.f, sr);
+        lvl = coefMs(30.f, sr); lvlG = coefMs(50.f, sr); glide = std::exp(-1.0 / (0.01 * sr));
+        frame = (int)(0.01f * sr);
+        runMode = 0; mode = -1;
+        set(0, 7, 0, false, 0.5f, 0.f);
+        logF = logTarget = std::log2(noteHz(7));
+    }
+    void set(int newMode, int note, int chord, bool fol, float formant, float ringDepth) {
+        if (newMode > 0 && newMode != runMode) {
+            runMode = newMode;
+            const float q = runMode == 3 ? 3.5f : (runMode == 4 ? 2.f : 2.2f);
+            const float relMs = runMode == 2 ? 6.f : (runMode == 3 ? 8.f : (runMode == 4 ? 10.f : 12.f));
+            rel = coefMs(relMs, sr);
+            for (int k = 0; k < kBands; k++)
+                for (int s = 0; s < 2; s++) { mod[k][s].set(fc[k], q, sr); car[k][s].set(fc[k], q, sr); }
+        }
+        mode = newMode;
+        static const int kChords[6][4] = {{0, 99, 99, 99}, {0, 7, 99, 99}, {0, 12, 99, 99}, {0, 7, 12, 99}, {0, 3, 7, 12}, {0, 4, 7, 12}};
+        const int c = chord < 0 ? 0 : (chord > 5 ? 5 : chord);
+        nNotes = 0;
+        for (int i = 0; i < 4; i++) if (kChords[c][i] != 99) iv[nNotes++] = (float)kChords[c][i];
+        const int n = note < 0 ? 0 : (note > 24 ? 24 : note);
+        noteLog = std::log2(noteHz(n));
+        follow = fol;
+        shift = (clampf(formant, 0.f, 1.f) - 0.5f) * 24.f / semisPerBand;
+        ring = clampf(ringDepth, 0.f, 1.f);
+    }
+    // Something to hear (the caller crossfades); robot, vocoder and talkbox
+    // hold a steady pitch, which the feedback guard must not notch.
+    bool tonal() const { return runMode >= 1 && runMode <= 3; }
+    float process(float x) {
+        if (follow) track(x);
+        logTarget = (follow && havePitch) ? trackedLog : noteLog;
+        logF = logTarget + glide * (logF - logTarget);
+        const double f = std::exp2(logF);
+        // CARRIER
+        float c = 0.f;
+        if (runMode != 4) {
+            const bool robot = runMode == 2;
+            int o = 0;
+            for (int i = 0; i < nNotes; i++) {
+                const double fn = f * std::exp2(iv[i] / 12.0);
+                if (robot) {
+                    c += pulse(o++, fn / sr);
+                } else {
+                    c += saw(o++, fn * 1.00347 / sr);    // +-6 cents
+                    c += saw(o++, fn * 0.99654 / sr);
+                }
+            }
+            if (runMode == 3) c = fastTanh(1.5f * c);
+        }
+        // BANDS
+        const bool hold = runMode == 2 && ++fcnt >= frame;
+        if (hold) fcnt = 0;
+        for (int k = 0; k < kBands; k++) {
+            const float m = band(mod[k], x);
+            em[k] = follow1(em[k], std::fabs(m), atk, rel);
+            if (runMode == 4) cb[k] = m;
+            else {
+                cb[k] = band(car[k], c);
+                ec[k] = follow1(ec[k], std::fabs(cb[k]), atk, carRel);
+            }
+        }
+        float y = 0.f;
+        for (int k = 0; k < kBands; k++) {
+            float src = clampf((float)k - shift, 0.f, (float)(kBands - 1));
+            const int i0 = (int)src; const int i1 = i0 + 1 < kBands ? i0 + 1 : i0;
+            float e = em[i0] + (em[i1] - em[i0]) * (src - (float)i0);
+            if (runMode == 2) { if (hold) held[k] = e; e = held[k]; }
+            const float g = runMode == 4 ? std::min(8.f, e / (em[k] + 1e-5f)) : std::min(31.6f, e / (ec[k] + 1e-5f));
+            y += (k & 1) ? -cb[k] * g : cb[k] * g;       // alternate polarity: neighbours sum flatter at the crossovers
+        }
+        if (runMode != 4) { sib.process(x); y += (runMode == 3 ? 0.3f : 0.5f) * sib.hp; }
+        if (ring > 0.f) {
+            ringPh += 2.0 * f / sr; ringPh -= std::floor(ringPh);
+            y *= 1.f - ring + ring * (float)std::sin(6.283185307179586 * ringPh);
+        }
+        // LEVEL: follow the input's loudness (+18 dB at most).
+        inMs = x * x + lvl * (inMs - x * x);
+        outMs = y * y + lvl * (outMs - y * y);
+        const float gt = std::min(8.f, std::sqrt(inMs / (outMs + 1e-12f)));
+        gLevel = gt + lvlG * (gLevel - gt);
+        return y * gLevel;
+    }
+    float pitchHz() const { return (float)std::exp2(logF); }
+private:
+    static double noteHz(int n) { return 65.406 * std::exp2(n / 12.0); }             // C2 + n semitones
+    static float follow1(float e, float a, float at, float rl) { return a + (a > e ? at : rl) * (e - a); }
+    static float band(SVF* s, float x) {
+        s[0].process(x); s[1].process(s[0].k * s[0].bp);
+        return s[1].k * s[1].bp;
+    }
+    // Oscillators run in double (the H7 FPU has it): float phase would drift
+    // audibly over a long note, and it keeps the browser port in step.
+    static double blep(double t, double dt) {
+        if (t < dt) { t /= dt; return t + t - t * t - 1.0; }
+        if (t > 1.0 - dt) { t = (t - 1.0) / dt; return t * t + t + t + 1.0; }
+        return 0.0;
+    }
+    float saw(int o, double dt) {
+        double& ph = phase[o];
+        ph += dt; ph -= std::floor(ph);
+        return (float)(2.0 * ph - 1.0 - blep(ph, dt));
+    }
+    // Narrow pulse (12% duty): the difference of two saws.
+    float pulse(int o, double dt) {
+        double& ph = phase[o];
+        ph += dt; ph -= std::floor(ph);
+        double p2 = ph + 0.12; p2 -= std::floor(p2);
+        return (float)((2.0 * ph - blep(ph, dt)) - (2.0 * p2 - blep(p2, dt)));
+    }
+    void track(float x) {
+        const float y = aa2.lp(aa1.lp(x));
+        if (++dc < dec) return;
+        dc = 0;
+        buf[pos] = y; pos = (pos + 1) % kN;
+        if (++hopCnt >= kHop) { hopCnt = 0; analyze(); }
+    }
+    void analyze() {
+        float w[kN], cum[kN + 1], mean = 0.f;
+        for (int i = 0; i < kN; i++) { w[i] = buf[(pos + i) % kN]; mean += w[i]; }
+        mean /= (float)kN;
+        cum[0] = 0.f;
+        for (int i = 0; i < kN; i++) { w[i] -= mean; cum[i + 1] = cum[i] + w[i] * w[i]; }
+        if (cum[kN] / (float)kN < 1e-6f) return;                 // silence: hold
+        float r[kLagMax + 2] = {}, best = 0.f;
+        for (int lag = kLagMin; lag <= kLagMax + 1; lag++) {
+            float xy = 0.f;
+            for (int i = 0; i + lag < kN; i++) xy += w[i] * w[i + lag];
+            const float xx = cum[kN - lag], yy = cum[kN] - cum[lag];
+            r[lag] = xy / std::sqrt(xx * yy + 1e-20f);
+            if (lag <= kLagMax && r[lag] > best) best = r[lag];
+        }
+        if (best < 0.6f) return;                                   // unvoiced / scream: hold
+        // The shortest lag that is a local peak near the best (avoids
+        // dropping an octave on a strong second period).
+        int pick = kLagMin;
+        for (int lag = kLagMin + 1; lag <= kLagMax; lag++)
+            if (r[lag] >= 0.9f * best && r[lag] >= r[lag - 1] && r[lag] >= r[lag + 1]) { pick = lag; break; }
+        float lagF = (float)pick;
+        if (pick > kLagMin) {
+            const float a = r[pick - 1], b = r[pick], cc = r[pick + 1], den = a - 2.f * b + cc;
+            if (std::fabs(den) > 1e-9f) lagF += clampf(0.5f * (a - cc) / den, -0.5f, 0.5f);
+        }
+        const double hz = (double)sr / dec / lagF;
+        const double semis = std::floor(12.0 * std::log2(hz / 65.406) + 0.5);
+        trackedLog = std::log2(65.406) + semis / 12.0;
+        havePitch = true;
+    }
+    static constexpr int kN = 384, kHop = 192, kLagMin = 30, kLagMax = 240;
+    float sr = 48000.f, fc[kBands] = {}, semisPerBand = 4.9f, shift = 0.f, ring = 0.f;
+    float atk = 0.f, rel = 0.f, carRel = 0.f, lvl = 0.f, lvlG = 0.f;
+    double glide = 0.0, ringPh = 0.0, logF = 6.6, logTarget = 6.6, noteLog = 6.6, trackedLog = 6.6, phase[8] = {};
+    float iv[4] = {}, em[kBands] = {}, ec[kBands] = {}, cb[kBands] = {}, held[kBands] = {};
+    float inMs = 0.f, outMs = 0.f, gLevel = 1.f;
+    int mode = 0, runMode = 0, nNotes = 1, frame = 480, fcnt = 0;
+    bool follow = false, havePitch = false;
+    SVF mod[kBands][2], car[kBands][2], sib;
+    OnePole aa1, aa2;
+    int dec = 4, dc = 0, pos = 0, hopCnt = 0;
+    float buf[kN] = {};
+};
+
+// ---------------------------------------------------------------------------
 // Gate: momentary 16-step rhythmic gate on the 1/16 grid, starting at the
 // press. 2 ms edges.
 // ---------------------------------------------------------------------------
@@ -1934,9 +2139,10 @@ public:
         sr = sampleRate;
         drive.init(sr); sculpt.init(sr); plosiveFx.init(sr); character.init(sr); deEss.init(sr); expander.init(sr); chop.init(sr); thicken.init(sr); flavour.init(sr); bus.init(sr);
         bypassM.init(sr); howlG.init(sr); mega.init(sr); throwFx.init(sr); stutterFx.init(sr);
-        degrade.init(sr); gateFx.init(sr); tape.init(sr); freezeFx.init(sr); harmony.init(sr); learner.init(sr);
+        degrade.init(sr); vox.init(sr); gateFx.init(sr); tape.init(sr); freezeFx.init(sr); harmony.init(sr); learner.init(sr);
         gMega.init(0.f, sr, 10.f);
         gDt.init(0.f, sr, 30.f);
+        gVox.init(0.f, sr, 30.f);
         // Double-track: two takes that each wander around 10-22 ms, so which
         // side leads keeps changing (the image doesn't lean to one side).
         dtA.init(sr, 0x0d7a11eu, 10.f, +1.f, +0.5f); dtA.setDepth(8.f); dtA.setRange(12.f);
@@ -1976,6 +2182,8 @@ public:
         throwFx.set(p.throwOn, p.bpm, p.throwStyle);
         stutterFx.set(p.stutter, p.glitch, p.stutterDiv, p.glitchAmount, p.glitchPattern, p.bpm);
         degrade.set(p.crush, p.crushMix, p.lofi);
+        vox.set(p.voxMode, p.voxNote, p.voxChord, p.voxFollow, p.voxFormant, p.voxRing);
+        gVox.target = p.voxMode > 0 ? clampf(p.voxMix, 0.f, 1.f) : 0.f;
         gateFx.set(p.gate, p.gatePattern, p.bpm);
         tape.set(p.tapeStop, p.tapeTime, p.bpm);
         freezeFx.set(p.freeze);
@@ -2015,6 +2223,11 @@ public:
         megaFade = gmg;
         mega.track(x);
         if (gmg > 1e-4f) x = lerp(x, mega.process(x), gmg);
+        // VOX: the synth voice (vocoder / robot / talkbox / formant), after mega
+        // and before the degrade, so crush and lo-fi can follow it.
+        const float gv = gVox.next();
+        voxFade = vox.tonal() ? gv : 0.f;
+        if (gv > 1e-4f) x = lerp(x, vox.process(x), gv);
         // DEGRADE, then the momentary GATE, STUTTER / GLITCH and TAPE STOP, in
         // that order (a tape stop also stops a loop); harmony, doubles, reverb
         // and delay all hear the result.
@@ -2054,7 +2267,7 @@ public:
         // Feedback notches last, so they also protect the bypassed voice; the
         // detector listens to exactly what goes to the speakers.
         if (p.howl) {
-            if (megaFade > 1e-4f || stutterFx.active() || freezeFx.active() || tape.active()) howlG.holdOff();   // loops repeat tones on purpose
+            if (megaFade > 1e-4f || voxFade > 1e-4f || stutterFx.active() || freezeFx.active() || tape.active()) howlG.holdOff();   // loops repeat tones on purpose
             howlG.process(L, R);
             howlG.analyze(0.5f * (L + R));
         }
@@ -2068,6 +2281,7 @@ public:
     float bypassMatchDb() const { return bypassM.matchDb(); }
     float plosiveDb() const { return plosiveFx.reductionDb(); }
     int characterNow() const { return character.current(); }
+    float voxPitchHz() const { return vox.pitchHz(); }
     float periodicity() const { return character.periodicity(); }
     int howlNotches() const { return howlG.activeNotches(); }
     int howlEvents() const { return howlG.deployedCount(); }
@@ -2109,6 +2323,7 @@ private:
     Throw throwFx;
     Stutter stutterFx;
     Degrade degrade;
+    Vox vox;
     Gate gateFx;
     TapeStop tape;
     Freeze freezeFx;
@@ -2117,9 +2332,9 @@ private:
     MatchEQ matchEq;
     float learnedDev[kMatchBands] = {};
     volatile bool learnReady = false;
-    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega, gDt;
+    Smoothed gIn, gCtl, gThk, gFlv, gOut, gMix, gMega, gDt, gVox;
     Double dtA, dtB;
-    float megaFade = 0.f;
+    float megaFade = 0.f, voxFade = 0.f;
 };
 
 } // namespace rasp

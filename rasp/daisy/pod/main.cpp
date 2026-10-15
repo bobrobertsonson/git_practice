@@ -52,6 +52,8 @@ static void loadPreset() {
     bool ts = params.tapeStop, fz = params.freeze, gt = params.gate;
     int gpat = params.glitchPattern, gtp = params.gatePattern, tst = params.throwStyle, ttm = params.tapeTime;
     float cr = params.crush, lf = params.lofi;
+    const int vm = params.voxMode, vn = params.voxNote, vc = params.voxChord; const bool vf = params.voxFollow;   // vox: set over MIDI
+    const float vx = params.voxMix, vfo = params.voxFormant, vr = params.voxRing;
     float od = params.octDown, ou = params.octUp;           // set over MIDI: a performance setting
     int s1 = params.pitch1Semi, s2 = params.pitch2Semi;
     float match[rasp::kMatchBands], amt = params.matchAmount;          // Learn result: the singer's, not the preset's
@@ -61,6 +63,7 @@ static void loadPreset() {
     params.stutter = st; params.glitch = gl; params.stutterDiv = sdiv; params.glitchAmount = gamt;
     params.tapeStop = ts; params.freeze = fz; params.gate = gt; params.glitchPattern = gpat; params.gatePattern = gtp;
     params.throwStyle = tst; params.tapeTime = ttm; params.crush = cr; params.lofi = lf;
+    params.voxMode = vm; params.voxNote = vn; params.voxChord = vc; params.voxFollow = vf; params.voxMix = vx; params.voxFormant = vfo; params.voxRing = vr;
     params.octDown = od; params.octUp = ou; params.pitch1Semi = s1; params.pitch2Semi = s2;
     for (int b = 0; b < rasp::kMatchBands; b++) params.match[b] = match[b];
     params.matchAmount = amt;
@@ -142,6 +145,13 @@ int main() {
                 if (cc.control_number == 112) params.delayDuck = cc.value / 127.f;
                 if (cc.control_number == 113) params.duckRelease = cc.value / 127.f;
                 if (cc.control_number == 114) params.delayTime = std::min(7, cc.value / 16);
+                if (cc.control_number == 115) params.voxMode = std::min(4, cc.value * 5 / 128);
+                if (cc.control_number == 116) params.voxMix = cc.value / 127.f;
+                if (cc.control_number == 117) params.voxNote = std::min(24, cc.value * 25 / 128);
+                if (cc.control_number == 118) params.voxChord = std::min(5, cc.value * 6 / 128);
+                if (cc.control_number == 119) params.voxFollow = cc.value >= 64;
+                if (cc.control_number == 20) params.voxFormant = cc.value / 127.f;
+                if (cc.control_number == 21) params.voxRing = cc.value / 127.f;
             }
         }
         // Both buttons held 2 s: Learn (not Mega/Throw).

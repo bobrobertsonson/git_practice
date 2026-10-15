@@ -17,6 +17,7 @@ public:
         std::vector<std::unique_ptr<juce::Component>> cells;
         int cols = 3;
         bool newRow = false;        // start a second row of panels
+        int under = -1;             // stack directly below this panel instead
     };
 
 private:

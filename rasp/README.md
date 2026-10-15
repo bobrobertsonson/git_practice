@@ -436,6 +436,47 @@ Tape stop. Gate, patterns, throw style and Degrade are on MIDI (CC 92–97,
 The playground matches C++ to −70 to −79 dB on all of these. With Degrade on
 it's −58 to −61 dB: the crusher's rounding falls differently in JS doubles.
 
+### Vox: vocoder, robot, talkbox, formant
+
+The synth-voice side of a VocalSynth-style plugin, written from scratch: a
+16-band filterbank (110 Hz–7.8 kHz, ~5 semitones apart) follows your voice's
+level in each band and puts it on a carrier.
+
+| Mode | Carrier | Sounds like |
+|---|---|---|
+| Vocoder | a chord of detuned saws | the classic synth choir / Daft Punk voice |
+| Robot | a narrow-pulse buzz; band levels held in 10 ms steps | a computer voice, stepped and buzzy |
+| Talkbox | an overdriven saw chord through narrower bands | a guitar talking |
+| Formant | your own voice, its band envelope moved | monster (formant down) or chipmunk (up), same pitch |
+
+- **Note** (C2–C4) and **Chord** (single, fifth, octave, power, minor, major)
+  set the carrier. **Follow pitch** tracks your voice instead and snaps it to
+  the nearest semitone: a hard-tuned robot that follows your melody. It holds
+  the last note through noisy screams, which have no stable pitch, so it works
+  best on cleans and shouts.
+- **Formant** (±12 semitones) moves the envelope in every mode.
+- **Ring mod** at twice the carrier pitch, for metallic.
+- Sibilance above 5 kHz passes through, so words stay clear. The output
+  follows your input's loudness, so switching modes changes the texture, not
+  the level.
+- It sits after Mega and before Degrade, so crush and lo-fi can follow it,
+  and the loops, harmony, doubles and reverb all hear the synth voice. The
+  feedback guard holds off while a tonal mode (vocoder, robot, talkbox) is up,
+  as it does for Mega: a held note is not feedback.
+
+Plugin: the VOX panel under HARMONY. Playground: the Vox group in the menu.
+Pedal and Pod: MIDI CC 115 mode, 116 mix, 117 note, 118 chord, 119 follow,
+20 formant, 21 ring mod (CC 120 and up are MIDI channel-mode messages, so
+those two sit low).
+
+`make vox_test`: every mode, chord and ring setting stays finite and within
+3 dB of the input's loudness; follow snaps a 150 Hz voice to D3; no voice
+gives no carrier; with Vox off the output is bit-identical whatever its
+settings. The playground matches C++ to −74 to −78 dB in every mode, follow
+included. On the Daisy it costs well under half of what four harmony pairs
+do (a host benchmark: +21% over the default chain with a major chord, against
++51% for the harmony).
+
 ## 3c. Blind A/B listening test
 
 `abtest/template.html` plus `python3 tools/build_abtest.py` builds a listening
