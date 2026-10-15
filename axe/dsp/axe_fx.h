@@ -111,7 +111,7 @@ public:
     // The instrument's range, narrowed to [lo, hi] Hz when Learn My Playing
     // has measured yours (0 = no limit): fewer octave mistakes.
     void setInstrument(int inst, float lo = 0.f, float hi = 0.f) {
-        float fmin = inst == kBass ? 28.f : 50.f, fmax = inst == kBass ? 700.f : 1400.f;
+        float fmin = inst == kBass ? 28.f : 40.f, fmax = inst == kBass ? 700.f : 1400.f;   // guitar down to 8-string / drop-A territory
         if (lo > 0.f && hi > lo) { fmin = std::fmax(fmin, lo); fmax = std::fmin(fmax, hi); if (fmax < fmin * 1.5f) fmax = fmin * 1.5f; }
         tauMax = (int)(srD / fmin); if (tauMax > kW) tauMax = kW;
         tauMin = (int)(srD / fmax); if (tauMin < 2) tauMin = 2;
@@ -230,7 +230,7 @@ public:
     }
     void setSeconds(float s) { need = (int)std::fmin(s * sr, 2.0e9f); }
     void start() {
-        active = true; n = 0; t = 0; blockSum = 0.0; armed = true; noiseEst = 0.f; hold = 0; sinceOnset = -1; peakJump = 0.f; peakLeft = 0;
+        active = true; n = 0; waited = 0; t = 0; blockSum = 0.0; armed = true; noiseEst = 0.f; hold = 0; sinceOnset = -1; peakJump = 0.f; peakLeft = 0;
         nJumps = nIois = 0;
         for (auto& h : levelHist) h = 0;
         for (auto& h : noteHist) h = 0;
@@ -268,7 +268,10 @@ public:
                 if (note >= 0 && note < 128) noteHist[note]++;
             }
         }
-        if (++n >= need) { active = false; return true; }
+        // the clock starts at your first pick (press Learn, then pick up the
+        // guitar); with no pick at all it gives up after 3x the time
+        if (sinceOnset >= 0) ++n; else ++waited;
+        if (n >= need || waited >= 3 * need) { active = false; return true; }
         return false;
     }
     void result(PlayingProfile& r) {
@@ -304,7 +307,7 @@ private:
     float sr = 48000.f, peakJump = 0.f, noiseEst = 0.f, riseDb = 0.f;
     double blockSum = 0.0;
     bool active = false, armed = true;
-    int n = 0, need = 480000, t = 0, tick = 480, hold = 0, sinceOnset = -1, peakLeft = 0, nJumps = 0, nIois = 0;
+    int n = 0, waited = 0, need = 480000, t = 0, tick = 480, hold = 0, sinceOnset = -1, peakLeft = 0, nJumps = 0, nIois = 0;
     float jumps[kMax] = {}, iois[kMax] = {};
     int levelHist[121] = {}, noteHist[128] = {};
 };

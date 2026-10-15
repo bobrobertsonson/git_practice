@@ -586,6 +586,9 @@ static void testLearn() {
             targets::profile(targets::render(targets::kModels[i]), strings::kSR, pr);
             for (int b = 0; b < axe::kMatchBands; b++) worst = std::max(worst, (double)std::fabs(pr[b] - axe::kTargetPresets[i][b]));
         }
+        for (int i = 0; i < targets::kNumMeasured; i++)
+            for (int b = 0; b < axe::kMatchBands; b++) worst = std::max(worst, (double)std::fabs(targets::kMeasured[i].profile[b] - axe::kTargetPresets[targets::kNum + i][b]));
+        CHECK(axe::kNumTargetPresets == targets::kNum + targets::kNumMeasured, "preset count");
         CHECK(worst < 0.05, "dsp/axe_targets.h is stale (%.2f dB off): run ./make_targets > dsp/axe_targets.h", worst);
     }
     // ... and picking one re-matches at once: a vintage-humbucker DI (the
@@ -603,12 +606,14 @@ static void testLearn() {
             for (int i = 0; i < axe::kNumTargetPresets; i++) if (!std::strcmp(axe::kTargetPresetNames[i], name)) prm.target = i + 1;
             p.setParams(prm);
             float out[axe::kMatchBands] = {};
+            CHECK(!p.learnedMatch(out), "the solver should spread over a few control ticks, not run inside setParams");
+            run(p, Sig(2048, 0.f));              // ~1500 samples of control ticks
             CHECK(p.learnedMatch(out), "choosing %s did not re-match", name);
-            return out[6];   // 6.3 kHz
+            return (out[4] + out[5] + out[6] + out[7]) / 4.f;   // the 2.5-10 kHz bands
         };
         const float hot = pick("Hot Humbucker"), single = pick("Single Coil"), same = pick("Vintage Humbucker");
-        std::printf("  preset targets at 6.3 kHz: Hot Humbucker %+.1f dB, Single Coil %+.1f dB, Vintage Humbucker (same as the DI) %+.1f dB\n", hot, single, same);
-        CHECK(hot < -4.f && single > 4.f && std::fabs(same) < 1.5f, "preset matches (hot %+.1f, single %+.1f, same %+.1f)", hot, single, same);
+        std::printf("  preset targets, mean 2.5-10 kHz band: Hot Humbucker %+.1f dB, Single Coil %+.1f dB, Vintage Humbucker (same as the DI) %+.1f dB\n", hot, single, same);
+        CHECK(hot < -3.f && single > 3.f && std::fabs(same) < 1.f, "preset matches (hot %+.1f, single %+.1f, same %+.1f)", hot, single, same);
     }
     // LEARN MY PLAYING: phrases of plucked notes from E2 to A3, a pick every
     // 250 ms, pauses between phrases, over hiss at about -66 dBFS
@@ -639,6 +644,17 @@ static void testLearn() {
         CHECK(pp.pickSense >= 4.f && pp.pickSense <= 16.f, "pick sense %.1f dB out of range", pp.pickSense);
         CHECK(pp.lowNote > 65.f && pp.lowNote < 82.f && pp.highNote > 220.f && pp.highNote < 280.f,
               "note range %.0f-%.0f Hz (want just around 82-220)", pp.lowNote, pp.highNote);
+        // pressing Learn, then taking 6 s to start playing: the clock waits for the first pick
+        {
+            Sig late((size_t)(6.f * sr), 0.f);
+            Lcg rl; for (auto& v : late) v = 0.00071f * rl.next();
+            late.insert(late.end(), x.begin(), x.end());
+            p.init(sr); p.setLearnSeconds(8.f, 11.f); p.setParams(prm); p.reset();
+            p.learnPlaying(); run(p, late);
+            axe::PlayingProfile pl;
+            CHECK(p.learnedPlaying(pl) && pl.lowNote > 65.f && pl.highNote > 220.f && std::fabs(pl.pickHold - pp.pickHold) < 30.f,
+                  "a late start spoils Learn Playing (notes %.0f-%.0f Hz, pick hold %.0f ms)", pl.lowNote, pl.highNote, pl.pickHold);
+        }
         // Auto Gate from the learned floor: the hiss between phrases goes, the notes stay
         axe::Params g = modeParams(axe::kTight); g.tight = 0.f; g.autoGate = true; g.gate = 0.f; g.noiseFloor = pp.noiseFloor;
         Sig y = render(g, x, sr);

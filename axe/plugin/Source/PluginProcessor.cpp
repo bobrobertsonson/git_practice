@@ -9,6 +9,15 @@ float pct(float v) { return v * 0.01f; }
 float invExp(float v, float lo, float hi) { return std::log(v / lo) / std::log(hi / lo); }
 float invLin(float v, float lo, float hi) { return (v - lo) / (hi - lo); }
 int toInt(float v) { return (int)std::lround(v); }
+// "My Target|<the presets in dsp/axe_targets.h>"
+const char* targetChoices() {
+    static const std::string s = [] {
+        std::string c = "My Target";
+        for (const char* n : axe::kTargetPresetNames) { c += "|"; c += n; }
+        return c;
+    }();
+    return s.c_str();
+}
 }  // namespace
 
 #define AXE_SET(expr) [](axe::Params& p, float v) { (void)v; expr; }
@@ -132,7 +141,7 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"highNote", "High Note", "Learn", -1, K::Float, 0, 1500, 0, "Hz", nullptr, 200, AXE_SET(p.highNote = v)},
         // Tone Match
         // Target: "My Target" (Learn Target) or a preset (dsp/axe_targets.h, same order)
-        {"target", "Target", "Tone Match", -1, K::Choice, 0, axe::kNumTargetPresets, 0, "", "My Target|Single Coil|Vintage Humbucker|Hot Humbucker|Active Pickups|Warm Neck|Active Bass|Passive Bass|Flatwound Bass", 0, AXE_SET(p.target = toInt(v))},
+        {"target", "Target", "Tone Match", -1, K::Choice, 0, axe::kNumTargetPresets, 0, "", targetChoices(), 0, AXE_SET(p.target = toInt(v))},
         {"learnTarget", "Learn Target", "Tone Match", -1, K::Bool, 0, 1, 0, "", nullptr, 0, AXE_SET((void)p)},
         {"matchAmount", "Match", "Tone Match", -1, K::Float, 0, 100, 100, "%", nullptr, 0, AXE_SET(p.matchAmount = pct(v))},
         {"match0", "Match 250 Hz", "Tone Match", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[0] = v)},

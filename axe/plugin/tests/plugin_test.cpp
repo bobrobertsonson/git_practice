@@ -250,7 +250,7 @@ static void testLearn() {
 
     // a preset Target re-matches at once
     setParam(p, "target", 3.f);   // Hot Humbucker
-    run(p, std::vector<float>(1024, 0.f), 256);
+    run(p, std::vector<float>(4096, 0.f), 256);   // the re-match takes ~30 ms
     pump();
     const float h6 = band(p, 6);
     std::printf("  Target = Hot Humbucker -> 6.3 kHz %+.1f dB\n", h6);
@@ -268,7 +268,7 @@ static void testLearn() {
     CHECK(q.meters.hasTarget.load() && q.meters.hasMyTone.load(), "learned target / tone not restored from the saved state");
     CHECK(std::fabs(band(q, 6) - 2.5f) < 0.01f, "reloading a session re-matched over a hand-set band (%+.2f)", band(q, 6));
     setParam(q, "target", 1.f);   // and they still work: Single Coil
-    run(q, std::vector<float>(1024, 0.f), 256);
+    run(q, std::vector<float>(4096, 0.f), 256);
     pump();
     CHECK(band(q, 6) > h6 + 3.f, "after reload, picking a Target should still re-match (%+.1f)", band(q, 6));
 }

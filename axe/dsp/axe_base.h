@@ -494,13 +494,15 @@ private:
 // peaking-filter cascade). It skips
 // silence and only counts while you play.
 // ---------------------------------------------------------------------------
+constexpr float kLearnStageQ = 1.5f;   // each of the Learner's three band-pass stages
+
 class Learner {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
         // three cascaded band-passes per band (~1/2 octave): skirts of -18 dB/octave,
         // so the strong low notes don't leak into the weak high bands of a DI
-        for (int i = 0; i < kMatchBands; i++) for (auto& st : band[i]) st.set(kMatchHz[i], kStageQ, sr);
+        for (int i = 0; i < kMatchBands; i++) for (auto& st : band[i]) st.set(kMatchHz[i], kLearnStageQ, sr);
         msC = coefMs(50.f, sr); fall = 10.f / sr;
         need = (int)(12.f * sr);
     }
@@ -532,7 +534,6 @@ private:
     float sr = 48000.f, ms = 0.f, msC = 0.f, runMax = -120.f, fall = 0.f;
     bool active = false;
     int got = 0, need = 576000;
-    static constexpr float kStageQ = 1.5f;
     SVF band[kMatchBands][3];
     double energy[kMatchBands] = {};
 };
@@ -547,26 +548,106 @@ inline float biquadDb(const Biquad& b, float w) {
     return 10.f * std::log10((nr * nr + ni * ni) / (dr * dr + di * di));
 }
 
-// fresh, now: Learner profiles. Low bands are capped at +-3 dB (they depend
-// more on what you played than on the strings), the highs at +-12 dB.
-inline void matchGains(const float* fresh, const float* now, float* gainsOut) {
-    float want[kMatchBands], g[kMatchBands];
-    for (int i = 0; i < kMatchBands; i++) {
-        float lim = kMatchHz[i] < 1200.f ? 3.f : 12.f;
-        want[i] = clampf(fresh[i] - now[i], -lim, lim);
-        g[i] = want[i];
-    }
-    const float fs = 48000.f;
-    for (int it = 0; it < 8; it++) {
-        Biquad bq[kMatchBands];
-        for (int j = 0; j < kMatchBands; j++) bq[j].peaking(kMatchHz[j], kMatchQ, g[j], fs);
-        for (int i = 0; i < kMatchBands; i++) {
-            float w = 2.f * kPi * kMatchHz[i] / fs, resp = 0.f;
-            for (int j = 0; j < kMatchBands; j++) resp += biquadDb(bq[j], w);
-            g[i] = clampf(g[i] + 0.6f * (want[i] - resp), -12.f, 12.f);
+// target, now: Learner profiles (dB re the 250 Hz-1 kHz bands). Finds the EQ
+// gains that make the Learner measure `target` on the EQ'd signal. It models
+// the measurement instead of assuming band i moves by gain i: your spectrum
+// is interpolated from `now`, passed through the EQ and each band's three
+// band-pass stages, and re-normalised to the 250 Hz-1 kHz reference. (On a
+// guitar's steep top end a band's energy comes mostly from its lower edge,
+// and changing the low bands moves the reference for every band.)
+// Low bands are capped at +-3 dB (they depend more on what you played than
+// on the instrument), the highs at +-12 dB.
+// It runs a few iterations at a time (step), so the audio thread never spends
+// more than a sliver of a block on it.
+class MatchSolver {
+public:
+    void begin(const float* target, const float* now) {
+        if (!gridReady) initGrid();
+        for (int k = 0; k < kN; k++) {
+            // spectral density (dB per Hz) between the band centres, from `now`
+            const float lf = std::log(f[k]);
+            int i = 0; while (i < kMatchBands - 2 && lf > std::log(kMatchHz[i + 1])) i++;
+            const float la = std::log(kMatchHz[i]), lb = std::log(kMatchHz[i + 1]);
+            const float da = now[i] - 10.f * std::log10(kMatchHz[i]), db = now[i + 1] - 10.f * std::log10(kMatchHz[i + 1]);
+            const float u = clampf((lf - la) / (lb - la), -1.5f, 2.5f);   // gentle extrapolation past the ends
+            dens[k] = std::pow(10.f, (da + u * (db - da)) / 10.f) * f[k];   // x f: energy per log-frequency step
         }
+        for (int i = 0; i < kMatchBands; i++) {
+            tgt[i] = target[i]; mine[i] = now[i]; g[i] = 0.f;
+            lim[i] = kMatchHz[i] < 1200.f ? 3.f : 12.f;
+        }
+        measure(g, base);                        // the model's view of `now` with no EQ
+        left = kIters;
     }
-    for (int i = 0; i < kMatchBands; i++) gainsOut[i] = g[i];
+    bool busy() const { return left > 0; }
+    // Runs up to n iterations; true when it has just finished.
+    bool step(int n) {
+        if (left <= 0) return false;
+        // a little smoothing between neighbours: no +11 / -11 dB zig-zags
+        // (they'd sound peaky for a fraction of a dB of match)
+        constexpr float kSmooth = 0.05f;
+        for (; n > 0 && left > 0; n--, left--) {
+            float pr[kMatchBands], ng[kMatchBands];
+            measure(g, pr);
+            for (int i = 0; i < kMatchBands; i++) {
+                const float predicted = mine[i] + (pr[i] - base[i]);
+                const float l = i > 0 ? g[i - 1] : g[i], r = i < kMatchBands - 1 ? g[i + 1] : g[i];
+                ng[i] = clampf(g[i] + 0.7f * (tgt[i] - predicted) - kSmooth * (2.f * g[i] - l - r), -lim[i], lim[i]);
+            }
+            for (int i = 0; i < kMatchBands; i++) g[i] = ng[i];
+        }
+        return left == 0;
+    }
+    void result(float* out) const { for (int i = 0; i < kMatchBands; i++) out[i] = g[i]; }
+    static constexpr int kIters = 24;
+
+private:
+    static constexpr int kN = 96;                // log grid, 30 Hz - 18 kHz
+    static constexpr float kFs = 48000.f;
+    void initGrid() {
+        const float lf0 = std::log(30.f), lf1 = std::log(18000.f);
+        for (int k = 0; k < kN; k++) {
+            f[k] = std::exp(lf0 + (lf1 - lf0) * (float)k / (kN - 1));
+            const float w = 2.f * kPi * f[k] / kFs;
+            cw[k] = std::cos(w); sw[k] = std::sin(w); c2[k] = std::cos(2.f * w); s2[k] = std::sin(2.f * w);
+            for (int b = 0; b < kMatchBands; b++) {   // |band-pass|^2, three stages
+                const float x = f[k] / kMatchHz[b], q2 = kLearnStageQ * kLearnStageQ;
+                const float h = (x * x / q2) / ((1.f - x * x) * (1.f - x * x) + x * x / q2);
+                wband[b][k] = h * h * h;
+            }
+        }
+        gridReady = true;
+    }
+    void measure(const float* gains, float* prof) const {
+        Biquad bq[kMatchBands];
+        for (int j = 0; j < kMatchBands; j++) bq[j].peaking(kMatchHz[j], kMatchQ, gains[j], kFs);
+        double e[kMatchBands] = {};
+        for (int k = 0; k < kN; k++) {
+            float db = 0.f;
+            for (int j = 0; j < kMatchBands; j++) {
+                const Biquad& q = bq[j];
+                const float nr = q.b0 + q.b1 * cw[k] + q.b2 * c2[k], ni = -(q.b1 * sw[k] + q.b2 * s2[k]);
+                const float dr = 1.f + q.a1 * cw[k] + q.a2 * c2[k], di = -(q.a1 * sw[k] + q.a2 * s2[k]);
+                db += 10.f * std::log10((nr * nr + ni * ni) / (dr * dr + di * di));
+            }
+            const double sk = (double)dens[k] * std::pow(10.0, db / 10.0);
+            for (int b = 0; b < kMatchBands; b++) e[b] += wband[b][k] * sk;
+        }
+        const double ref = (e[0] + e[1] + e[2]) / 3.0 + 1e-30;
+        for (int b = 0; b < kMatchBands; b++) prof[b] = (float)(10.0 * std::log10(e[b] / ref + 1e-30));
+    }
+    bool gridReady = false;
+    int left = 0;
+    float f[kN] = {}, dens[kN] = {}, cw[kN] = {}, sw[kN] = {}, c2[kN] = {}, s2[kN] = {}, wband[kMatchBands][kN] = {};
+    float tgt[kMatchBands] = {}, mine[kMatchBands] = {}, g[kMatchBands] = {}, base[kMatchBands] = {}, lim[kMatchBands] = {};
+};
+
+// All at once (tools and tests).
+inline void matchGains(const float* target, const float* now, float* gainsOut) {
+    MatchSolver m;
+    m.begin(target, now);
+    while (!m.step(MatchSolver::kIters)) {}
+    m.result(gainsOut);
 }
 
 // The Tone Match EQ: 8 peaking bands at kMatchHz, times Amount. Coefficients

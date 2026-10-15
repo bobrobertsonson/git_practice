@@ -80,8 +80,8 @@ reports **zero latency**: no lookahead, no block processing.
 | Swarm | Grain level | −9 dB re the input |
 | Radio | Band-limiting white noise | Station 23 dB above two octaves off |
 | Sub | Chords (E5, A5, open E, open G, drop-C, drop-A, low E-G#-B) | Every note's sub within ~2 dB |
-| Pitch tracker | Guitar 55 Hz–1 kHz, bass 31–220 Hz | Within 1% |
-| All floors | Bypass, reset sync, block size, 44.1–192 kHz, click checks | 1183 checks pass |
+| Pitch tracker | Guitar 55 Hz–1 kHz, bass 31–220 Hz (guitar range reaches down to 40 Hz for 8-strings and drop-A and lower) | Within 1% |
+| All floors | Bypass, reset sync, block size, 44.1–192 kHz, click checks | 1188 checks pass |
 
 Per-floor cost on one desktop x86 core at 48 kHz: 0.3–2.5% (Buzzsaw 4.5%).
 
@@ -148,7 +148,8 @@ Other limits:
 Two learn functions, on the **SETUP** page (the Learn and Tone Match pages on
 the Anagram). Both only listen: they never record or store audio.
 
-**Learn My Playing** (press, then play normally for 10 s with a few pauses).
+**Learn My Playing** (press, then play normally for 10 s with a few pauses;
+the 10 s start at your first pick).
 It measures your rig and sets five controls, which you can also set by hand:
 
 | Control | Learned from | Used by |
@@ -164,14 +165,27 @@ guitar's tone, so the match updates the moment you pick a Target:
 
 - **My Target**: press **Learn Target** and play a reference for 12 s (a DI
   or guitar whose tone you like). It's saved with the session.
-- **Presets**: five for guitar (Single Coil, Vintage Humbucker, Hot
-  Humbucker, Active Pickups, Warm Neck), three for bass (Active Bass, Passive
-  Bass, Flatwound Bass). They're **modelled, not measured**: a magnetic
-  pickup is mostly a resonant lowpass, so each preset is a string model
-  through a pickup resonance (`host/target_models.h`), measured by Tone
-  Match's own analyser into `dsp/axe_targets.h` (`./make_targets`;
-  `engine_test` checks the table is current). Measured presets from real DIs
-  can join them: `./learn_target di.wav` prints a row.
+- **Measured presets** (from 61 DIs out of 12 professional metal
+  sessions, averaged per session and then per group, so a session with six
+  rhythm tracks counts once): **Dark Rhythm**, **Modern Rhythm**, **Bright
+  Rhythm** (likely active pickups), **Lead**, **Clean**, **Punchy Bass**,
+  **Deep Bass**. The DIs stay on disk; only the 8 numbers per preset are in
+  the code (`host/target_models.h`). Names describe the sound, never the
+  source. `./learn_target di.wav` measures any DI into a new row.
+- **Modelled presets**: Single Coil, Vintage Humbucker, Hot Humbucker,
+  Active Pickups, Warm Neck, Active Bass, Passive Bass, Flatwound Bass. A
+  magnetic pickup is mostly a resonant lowpass, so each is a string model
+  through a pickup resonance, measured by Tone Match's own analyser into
+  `dsp/axe_targets.h` (`./make_targets`; `engine_test` checks the table).
+
+How the match is solved: the bands are chosen so that Tone Match's analyser
+would *measure* the Target on your EQ'd guitar. Your spectrum is modelled
+between the band centres, passed through the EQ and the analyser's band
+filters, and re-normalised (a guitar's top end falls steeply, so a band's
+energy comes mostly from its lower edge, and the low bands set the
+reference for every other band). Light smoothing stops neighbouring bands
+zig-zagging. The solver runs a little per control tick: a re-match is done
+~30 ms after you pick a Target, and no audio block pays for it.
 
 **Match** sets how far (0–100%). Re-run Learn My Playing when you change
 guitars. Your learned values and bands are saved; reloading a session keeps
@@ -179,8 +193,9 @@ any band you set by hand.
 
 | Check (`engine_test`, `plugin_test`, `lv2_host`) | Result |
 |---|---|
-| Tone Match, worst band error above 1.6 kHz | 11.4 dB → 0.7 dB |
-| Preset Target on a modelled vintage-humbucker DI, 6.3 kHz band | Hot Humbucker −5.0 dB, Single Coil +9.4 dB, Vintage Humbucker 0.0 dB |
+| Tone Match, worst band error above 1.6 kHz (noise test) | 11.4 dB → 0.4 dB |
+| Tone Match on real rhythm DIs (4 sessions) to each measured guitar Target, worst band above 1.6 kHz | 0.4–2.9 dB where the bands can reach it; 3–8 dB for dark ↔ very bright, which needs more than the ±12 dB per band |
+| Preset Target on a modelled vintage-humbucker DI, mean of the 2.5–10 kHz bands | Hot Humbucker −4.2 dB, Single Coil +4.5 dB, Vintage Humbucker +0.3 dB |
 | Learn My Playing on a synthetic DI (notes 82–220 Hz, a pick every 250 ms, pauses, hiss at −66 dBFS) | Floor −68 dBFS, pick hold 125 ms, range 73–247 Hz |
 | Auto Gate | Hiss in the pauses 21 dB down, notes unchanged |
 | Tone Match through LV2 ports only | Learned target: DI's high-to-low ratio ×3.3; Single Coil vs Hot Humbucker Target: 9 dB more above 4 kHz |

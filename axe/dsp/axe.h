@@ -140,6 +140,7 @@ public:
         matchAmt.init(1.f, sr);
         for (auto& g : matchG) g.init(0.f, sr);
         toneLearner.init(sr);
+        myToneLearner.init(sr); myToneLearner.setSeconds(1e6f);   // runs as long as Learn Playing does
         playLearner.init(sr);
         onsets.init(sr);
         envF.set(2.f, 80.f, sr);
@@ -236,8 +237,8 @@ public:
 
     // --- Learn ---------------------------------------------------------------
     void learnTarget() { learnWhat = kLearnTarget; toneLearner.start(); }
-    void learnPlaying() { learnWhat = kLearnPlaying; playLearner.start(); toneLearner.start(); }   // also hears your tone
-    void cancelLearn() { learnWhat = kLearnNone; toneLearner.cancel(); playLearner.cancel(); }
+    void learnPlaying() { learnWhat = kLearnPlaying; playLearner.start(); myToneLearner.start(); }   // also hears your tone
+    void cancelLearn() { learnWhat = kLearnNone; toneLearner.cancel(); myToneLearner.cancel(); playLearner.cancel(); }
     void setLearnSeconds(float tone, float playing) { toneLearner.setSeconds(tone); playLearner.setSeconds(playing); }
     int learning() const { return learnWhat; }
     float learnProgress() const { return learnWhat == kLearnPlaying ? playLearner.progress() : toneLearner.progress(); }
@@ -267,11 +268,11 @@ private:
     void learnFeed(float xi) {
         float prof[kMatchBands];
         if (learnWhat == kLearnPlaying) {
-            toneLearner.feed(xi, prof);
+            myToneLearner.feed(xi, prof);
             if (playLearner.feed(xi, pitch.pitchHz(), pitch.confidence())) {
                 playLearner.result(playingOut); playingReady = true; learnWhat = kLearnNone;
-                toneLearner.result(prof); toneLearner.cancel();   // whatever it heard while you played
-                if (toneLearner.heardSeconds() > 1.f) setMyTone(prof);
+                myToneLearner.result(prof); myToneLearner.cancel();   // everything it heard while you played
+                if (myToneLearner.heardSeconds() > 1.f) setMyTone(prof);
             }
             return;
         }
@@ -281,8 +282,7 @@ private:
     void rematch() {
         const float* t = targetSel > 0 ? kTargetPresets[targetSel - 1] : (haveTarget ? target : nullptr);
         if (!t || !haveMine) return;
-        matchGains(t, mine, matchOut);
-        matchReady = true;
+        solver.begin(t, mine);                   // finishes over the next few control ticks
     }
     void applyNow() {
         voices[active].configure(params.mode, params.instrument, params);
@@ -299,6 +299,9 @@ private:
         ctx.stepBeats = kRateBeats[params.rate];
         ctx.stepSamples = ctx.beatsToSamples(ctx.stepBeats);
         runPitch = needsPitch(params) || learnWhat == kLearnPlaying;
+        // one solver iteration every 4th tick (~0.02 ms on a desktop core): a
+        // re-match finishes ~30 ms after you pick a Target, and no block pays for it
+        if (solver.busy() && (++solverTick & 3) == 0 && solver.step(1)) { solver.result(matchOut); matchReady = true; }
         // Tone Match: amount and bands glide (~25 ms), the filters follow per block
         matchAmt.control();
         { float g[kMatchBands]; for (int b = 0; b < kMatchBands; b++) { matchG[b].control(); g[b] = matchG[b].cur; } matchEq.set(g, matchAmt.cur, false); }
@@ -373,7 +376,9 @@ private:
     // tone match and learning
     MatchEQ matchEq;
     Ramp matchAmt, matchG[kMatchBands];
-    Learner toneLearner;
+    Learner toneLearner, myToneLearner;
+    MatchSolver solver;
+    unsigned solverTick = 0;
     PlayingLearner playLearner;
     int learnWhat = kLearnNone;
     float target[kMatchBands] = {}, mine[kMatchBands] = {}, matchOut[kMatchBands] = {};
