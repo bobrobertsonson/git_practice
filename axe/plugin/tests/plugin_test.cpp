@@ -231,38 +231,46 @@ static void testLearn() {
     CHECK(std::fabs(hold - 60.f) > 1.f, "Learn Playing did not set Pick Hold");
     CHECK(lo > 0.f && lo < 110.f && hi > 110.f, "Learn Playing note range %.0f-%.0f Hz should hold 110 Hz", lo, hi);
 
-    // Tone Match: a bright target, then a dull guitar
+    CHECK(p.meters.hasMyTone.load(), "Learn Playing did not learn your tone");
+
+    // Tone Match: Learn Target on a bright reference re-matches your (dark) tone to it
     juce::Random rnd(7);
-    std::vector<float> bright((size_t)(sr * 14.0)), dull(bright.size());
-    float lp = 0.f;
-    for (size_t i = 0; i < bright.size(); i++) {
-        const float n = rnd.nextFloat() * 2.f - 1.f;
-        lp += 0.08f * (n - lp);
-        bright[i] = 0.15f * n;
-        dull[i] = 0.5f * lp;
-    }
+    std::vector<float> bright((size_t)(sr * 14.0));
+    for (auto& v : bright) v = 0.15f * (rnd.nextFloat() * 2.f - 1.f);
     CHECK(!p.meters.hasTarget.load(), "a target before Learn Target");
     setParam(p, "learnTarget", 1.f);
     run(p, bright, 256);
     setParam(p, "learnTarget", 0.f);
     CHECK(p.meters.hasTarget.load(), "Learn Target did not finish");
     pump();
-    setParam(p, "matchNow", 1.f);
-    run(p, dull, 256);
-    setParam(p, "matchNow", 0.f);
-    pump();
-    const float m7 = p.apvts.getRawParameterValue("match7")->load(), m0 = p.apvts.getRawParameterValue("match0")->load();
-    std::printf("  tone match -> 250 Hz %+.1f dB, 10 kHz %+.1f dB\n", m0, m7);
-    CHECK(m7 > m0 + 3.f, "Match Now should lift the highs of a dull guitar towards a bright target");
+    auto band = [&](AxeProcessor& x, int b) { return x.apvts.getRawParameterValue(("match" + std::to_string(b)).c_str())->load(); };
+    const float m0 = band(p, 0), m6 = band(p, 6);
+    std::printf("  tone match to the learned target -> 250 Hz %+.1f dB, 6.3 kHz %+.1f dB\n", m0, m6);
+    CHECK(m6 > m0 + 3.f, "Tone Match should lift the highs of a dark guitar towards a bright target");
 
-    // the target is in the saved state
+    // a preset Target re-matches at once
+    setParam(p, "target", 3.f);   // Hot Humbucker
+    run(p, std::vector<float>(1024, 0.f), 256);
+    pump();
+    const float h6 = band(p, 6);
+    std::printf("  Target = Hot Humbucker -> 6.3 kHz %+.1f dB\n", h6);
+    CHECK(h6 < m6 - 3.f, "picking the Hot Humbucker target should darken the match (%+.1f vs %+.1f)", h6, m6);
+
+    // hand-tweak a band; the saved session keeps the target, your tone and that band
+    setParam(p, "match6", 2.5f);
     juce::MemoryBlock mb;
     p.getStateInformation(mb);
     AxeProcessor q;
-    q.setStateInformation(mb.getData(), (int)mb.getSize());
     q.prepareToPlay(sr, 256);
-    run(q, std::vector<float>(512, 0.f), 256);
-    CHECK(q.meters.hasTarget.load(), "Tone Match target not restored from the saved state");
+    q.setStateInformation(mb.getData(), (int)mb.getSize());
+    run(q, std::vector<float>(1024, 0.f), 256);
+    pump();
+    CHECK(q.meters.hasTarget.load() && q.meters.hasMyTone.load(), "learned target / tone not restored from the saved state");
+    CHECK(std::fabs(band(q, 6) - 2.5f) < 0.01f, "reloading a session re-matched over a hand-set band (%+.2f)", band(q, 6));
+    setParam(q, "target", 1.f);   // and they still work: Single Coil
+    run(q, std::vector<float>(1024, 0.f), 256);
+    pump();
+    CHECK(band(q, 6) > h6 + 3.f, "after reload, picking a Target should still re-match (%+.1f)", band(q, 6));
 }
 
 int main(int argc, char** argv) {

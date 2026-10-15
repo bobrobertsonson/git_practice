@@ -11,6 +11,7 @@
 // through bit-exact after its crossfade; kx:Reset makes two instances fed
 // different histories bit-identical (Anagram dual mono).
 #include "../host/common.h"
+#include "../host/target_models.h"
 #include <lilv/lilv.h>
 #include <lv2/buf-size/buf-size.h>
 #include <lv2/options/options.h>
@@ -191,26 +192,27 @@ int test(Host& host) {
         for (size_t i = 60000; i < x.size(); i++) during = std::max(during, (double)std::fabs(y[i] - x[i]));
         CHECK(before < 1e-6 && during > 0.01, "Trigger port: glitch before %g, while held %g", before, during);
     }
-    // Tone Match through the ports only: Learn Target on a bright signal, Match
-    // Now on a dull one, and the dull one comes out brighter (the wrapper
+    // Tone Match through the ports only: Learn Playing on a (modelled) guitar DI,
+    // Learn Target on bright noise, and the DI comes out brighter (the wrapper
     // can't move its own ports, so the learned bands apply inside the plugin)
     {
         Instance in(host, 48000.f, 128);
         std::vector<float> bright((size_t)(48000 * 14)), dull(bright.size());
-        uint32_t r = 1; float lp = 0.f;
+        uint32_t r = 1;
         for (size_t i = 0; i < bright.size(); i++) {
             r = r * 1664525u + 1013904223u;
             const float n = (float)(r >> 8) / 8388608.f - 1.f;
-            lp += 0.08f * (n - lp);
-            bright[i] = 0.15f * n; dull[i] = 0.5f * lp;
+            bright[i] = 0.15f * n;
         }
+        dull = targets::render({"DI", false, 0.6f, 3400.f, 2.0f});   // a modelled humbucker DI
+        dull.resize(bright.size());
         auto tilt = [](const std::vector<float>& v, size_t a) {   // share of energy in the slope: brightness
             double e = 0, d = 0; for (size_t i = a; i < v.size(); i++) { e += (double)v[i] * v[i]; d += (double)(v[i] - v[i - 1]) * (v[i] - v[i - 1]); }
             return d / (e + 1e-30);
         };
         in.set("tight", 0.f);
+        in.set("learnPlaying", 1.f); in.run(dull, 128); in.set("learnPlaying", 0.f);   // your tone
         in.set("learnTarget", 1.f); in.run(bright, 128); in.set("learnTarget", 0.f);
-        in.set("matchNow", 1.f); in.run(dull, 128); in.set("matchNow", 0.f);
         std::vector<float> test(dull.begin(), dull.begin() + 96000);
         auto y = in.run(test, 128);
         const double gain = tilt(y, 24000) / tilt(test, 24000);
@@ -220,6 +222,19 @@ int test(Host& host) {
         auto y2 = in.run(test, 128);
         const double gain2 = tilt(y2, 24000) / tilt(test, 24000);
         CHECK(gain2 < gain, "a hand-set Match band should replace the learned ones (x%.2f)", gain2);
+        // a preset Target re-matches through the port: Single Coil comes out brighter than Hot Humbucker
+        auto top = [](const std::vector<float>& v) {   // share of energy above ~4 kHz, dB
+            axe::Biquad h1, h2; h1.highpass(4000.f, 0.7071f, 48000.f); h2.highpass(4000.f, 0.7071f, 48000.f);
+            double e = 0, t = 0;
+            for (size_t i = 0; i < v.size(); i++) { float hv = h2.process(h1.process(v[i])); if (i >= 24000) { e += (double)v[i] * v[i]; t += (double)hv * hv; } }
+            return 10.0 * std::log10(t / (e + 1e-30) + 1e-30);
+        };
+        in.set("target", 1.f);
+        const double single = top(in.run(test, 128));
+        in.set("target", 3.f);
+        const double hot = top(in.run(test, 128));
+        std::printf("  Target over LV2, energy above 4 kHz: Single Coil %.1f dB, Hot Humbucker %.1f dB\n", single, hot);
+        CHECK(single > hot + 6.0, "Target port did not re-match (Single Coil %.1f dB, Hot Humbucker %.1f dB)", single, hot);
     }
     std::printf("lv2 host checks: %d failed\n", failures);
     return failures;

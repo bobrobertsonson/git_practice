@@ -131,8 +131,9 @@ const std::vector<ParamSpec>& paramSpecs() {
         {"lowNote", "Low Note", "Learn", -1, K::Float, 0, 1500, 0, "Hz", nullptr, 200, AXE_SET(p.lowNote = v)},
         {"highNote", "High Note", "Learn", -1, K::Float, 0, 1500, 0, "Hz", nullptr, 200, AXE_SET(p.highNote = v)},
         // Tone Match
+        // Target: "My Target" (Learn Target) or a preset (dsp/axe_targets.h, same order)
+        {"target", "Target", "Tone Match", -1, K::Choice, 0, axe::kNumTargetPresets, 0, "", "My Target|Single Coil|Vintage Humbucker|Hot Humbucker|Active Pickups|Warm Neck|Active Bass|Passive Bass|Flatwound Bass", 0, AXE_SET(p.target = toInt(v))},
         {"learnTarget", "Learn Target", "Tone Match", -1, K::Bool, 0, 1, 0, "", nullptr, 0, AXE_SET((void)p)},
-        {"matchNow", "Match Now", "Tone Match", -1, K::Bool, 0, 1, 0, "", nullptr, 0, AXE_SET((void)p)},
         {"matchAmount", "Match", "Tone Match", -1, K::Float, 0, 100, 100, "%", nullptr, 0, AXE_SET(p.matchAmount = pct(v))},
         {"match0", "Match 250 Hz", "Tone Match", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[0] = v)},
         {"match1", "Match 500 Hz", "Tone Match", -1, K::Float, -12, 12, 0, "dB", nullptr, 0, AXE_SET(p.match[1] = v)},
@@ -204,7 +205,7 @@ AxeProcessor::AxeProcessor()
     apvts.addParameterListener("bypass", &listener);
     learnPlayingRaw = apvts.getRawParameterValue("learnPlaying");
     learnTargetRaw = apvts.getRawParameterValue("learnTarget");
-    matchNowRaw = apvts.getRawParameterValue("matchNow");
+    targetRaw = apvts.getRawParameterValue("target");
     // Learn results reach the parameters through the message thread. LV2 has
     // no message loop to rely on, and must not move its own ports: there the
     // results are applied inside the plugin instead.
@@ -232,7 +233,9 @@ void AxeProcessor::prepareToPlay(double sampleRate, int) {
         e->setParams(buildParams());
         e->reset();
     }
-    if (haveTargetSaved) targetToEngine = true;
+    if (tgt.haveSaved) tgt.toEngine = true;
+    if (mine.haveSaved) mine.toEngine = true;
+    targetSync = true;
     dirty = true;
 }
 
@@ -261,12 +264,14 @@ void AxeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuff
 
     // Learn: rising edges of the three learn parameters (buttons in the window, toggles on the Anagram)
     {
-        const bool lp = learnPlayingRaw->load() > 0.5f, lt = learnTargetRaw->load() > 0.5f, mn = matchNowRaw->load() > 0.5f;
-        if (lp && !lastLearnPlaying) engine[0]->learnPlaying();
-        if (lt && !lastLearnTarget) { engine[0]->learnTarget(); targetCopied = false; }
-        if (mn && !lastMatchNow) engine[0]->matchNow();
-        lastLearnPlaying = lp; lastLearnTarget = lt; lastMatchNow = mn;
-        if (targetToEngine.exchange(false)) engine[0]->setTargetProfile(targetSaved.data());
+        const bool lp = learnPlayingRaw->load() > 0.5f, lt = learnTargetRaw->load() > 0.5f;
+        if (lp && !lastLearnPlaying) { engine[0]->learnPlaying(); mine.copied = false; }
+        if (lt && !lastLearnTarget) { engine[0]->learnTarget(); tgt.copied = false; }
+        lastLearnPlaying = lp; lastLearnTarget = lt;
+        // a restored session: profiles and Target come back without re-matching (keeps its bands)
+        if (tgt.toEngine.exchange(false)) engine[0]->setTargetProfile(tgt.saved.data(), false);
+        if (mine.toEngine.exchange(false)) engine[0]->setMyTone(mine.saved.data(), false);
+        if (targetSync.exchange(false)) engine[0]->syncTarget((int)std::lround(targetRaw->load()));
         float g[axe::kMatchBands];
         if (engine[0]->learnedMatch(g)) {
             for (int b = 0; b < axe::kMatchBands; b++) learnedMatch[(size_t)b] = g[b];
@@ -315,10 +320,10 @@ void AxeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuff
     meters.learning = engine[0]->learning();
     meters.learnProgress = engine[0]->learnProgress();
     meters.hasTarget = engine[0]->hasTarget();
-    if (engine[0]->hasTarget() && engine[0]->learning() == axe::kLearnNone && !targetCopied) {
-        const float* t = engine[0]->targetProfile();
-        for (int b = 0; b < axe::kMatchBands; b++) targetFromAudio[(size_t)b] = t[b];
-        targetCopied = true; targetReady = true;
+    meters.hasMyTone = engine[0]->hasMyTone();
+    if (engine[0]->learning() == axe::kLearnNone) {
+        if (engine[0]->hasTarget()) tgt.fromEngine(engine[0]->targetProfile());
+        if (engine[0]->hasMyTone()) mine.fromEngine(engine[0]->myTone());
     }
 }
 
@@ -326,7 +331,7 @@ void AxeProcessor::timerCallback() {
     auto setP = [this](const char* id, float v) {
         if (auto* prm = apvts.getParameter(id)) { prm->beginChangeGesture(); prm->setValueNotifyingHost(prm->convertTo0to1(v)); prm->endChangeGesture(); }
     };
-    if (targetReady.exchange(false)) { targetSaved = targetFromAudio; haveTargetSaved = true; }
+    tgt.collect(); mine.collect();
     if (matchReady.exchange(false))
         for (int b = 0; b < axe::kMatchBands; b++) setP(("match" + std::to_string(b)).c_str(), learnedMatch[(size_t)b]);
     if (playingReady.exchange(false)) {
@@ -345,15 +350,12 @@ void AxeProcessor::pulse(const char* id) {
     }
 }
 
-// The Tone Match target is saved with the session, so Match Now works later.
+// The learned target and your tone are saved with the session, so picking a
+// Target later still re-matches.
 void AxeProcessor::getStateInformation(juce::MemoryBlock& destData) {
     auto state = apvts.copyState();
-    if (targetReady.exchange(false)) { targetSaved = targetFromAudio; haveTargetSaved = true; }   // LV2: no timer
-    if (haveTargetSaved) {
-        juce::String t;
-        for (float v : targetSaved) t << juce::String(v, 3) << " ";
-        state.setProperty("toneTarget", t.trim(), nullptr);
-    }
+    tgt.collect(); mine.collect();   // (LV2 has no timer)
+    tgt.save(state, "toneTarget"); mine.save(state, "myTone");
     if (auto xml = state.createXml()) copyXmlToBinary(*xml, destData);
 }
 
@@ -361,13 +363,9 @@ void AxeProcessor::setStateInformation(const void* data, int sizeInBytes) {
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
         if (xml->hasTagName(apvts.state.getType())) {
             auto state = juce::ValueTree::fromXml(*xml);
-            auto t = juce::StringArray::fromTokens(state.getProperty("toneTarget").toString(), " ", "");
-            if (t.size() == axe::kMatchBands) {
-                for (int b = 0; b < axe::kMatchBands; b++) targetSaved[(size_t)b] = t[b].getFloatValue();
-                haveTargetSaved = true; targetToEngine = true;
-            }
-            state.removeProperty("toneTarget", nullptr);
+            tgt.load(state, "toneTarget"); mine.load(state, "myTone");
             apvts.replaceState(state);
+            targetSync = true;
             dirty = true;
         }
 }

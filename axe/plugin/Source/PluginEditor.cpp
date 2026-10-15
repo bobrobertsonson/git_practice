@@ -130,8 +130,9 @@ AxeEditor::AxeEditor(AxeProcessor& p)
     for (const auto& s : paramSpecs()) {
         const bool setupPage = !std::strcmp(s.page, "Learn") || !std::strncmp(s.page, "Tone Match", 10);
         if (setupPage) {
-            if (!std::strcmp(s.id, "learnPlaying") || !std::strcmp(s.id, "learnTarget") || !std::strcmp(s.id, "matchNow")) continue;   // buttons
+            if (!std::strcmp(s.id, "learnPlaying") || !std::strcmp(s.id, "learnTarget")) continue;   // buttons
             setupControls.push_back(std::make_unique<ParamControl>(p.apvts, s));
+            if (!std::strcmp(s.id, "target")) targetMenu = setupControls.back().get();
             addChildComponent(*setupControls.back());
         } else if (s.mode >= 0) {
             modeControls[s.mode].push_back(std::make_unique<ParamControl>(p.apvts, s));
@@ -152,11 +153,9 @@ AxeEditor::AxeEditor(AxeProcessor& p)
     setupBtn.onClick = [this] { setupShown = !setupShown; showMode(currentMode()); };
     learnPlayingBtn.onClick = [this] { proc.pulse("learnPlaying"); };
     learnTargetBtn.onClick = [this] { proc.pulse("learnTarget"); };
-    matchNowBtn.onClick = [this] { proc.pulse("matchNow"); };
-    learnPlayingBtn.setTooltip("Play normally for 10 seconds, with a few pauses: sets pick sense, pick hold, noise floor and note range");
-    learnTargetBtn.setTooltip("Play a reference (a DI or tone you like) for 12 seconds: stores its tone");
-    matchNowBtn.setTooltip("Play your own guitar for 12 seconds: the Match bands move your tone towards the target");
-    for (auto* b : {&learnPlayingBtn, &learnTargetBtn, &matchNowBtn}) addChildComponent(*b);
+    learnPlayingBtn.setTooltip("Play normally for 10 seconds, with a few pauses: sets pick sense, pick hold, noise floor, note range, and learns your tone for Tone Match");
+    learnTargetBtn.setTooltip("Play a reference (a DI or tone you like) for 12 seconds: it becomes My Target");
+    for (auto* b : {&learnPlayingBtn, &learnTargetBtn}) addChildComponent(*b);
     addAndMakeVisible(setupBtn);
     triggerBtn.setTooltip("Hold to fire. Shift-click (or right-click) to latch.");
     for (auto* b : {&guitarBtn, &bassBtn, &bypassBtn}) addAndMakeVisible(*b);
@@ -186,7 +185,7 @@ void AxeEditor::showMode(int mode) {
     }
     setupBtn.setToggleState(setupShown, juce::dontSendNotification);
     for (auto& c : setupControls) c->setVisible(setupShown);
-    for (auto* b : {&learnPlayingBtn, &learnTargetBtn, &matchNowBtn}) b->setVisible(setupShown);
+    for (auto* b : {&learnPlayingBtn, &learnTargetBtn}) b->setVisible(setupShown);
     resized();
     repaint();
 }
@@ -219,10 +218,13 @@ void AxeEditor::paint(juce::Graphics& g) {
         const int what = proc.meters.learning.load();
         const float prog = proc.meters.learnProgress.load();
         juce::String st;
+        const bool mineKnown = proc.meters.hasMyTone.load();
+        const bool preset = proc.apvts.getRawParameterValue("target")->load() > 0.5f;
         if (what == axe::kLearnPlaying) st = "Listening to your playing... play normally, leave a few pauses";
         else if (what == axe::kLearnTarget) st = "Listening to the target...";
-        else if (what == axe::kLearnMatch) st = "Listening to your guitar...";
-        else st = proc.meters.hasTarget.load() ? "Target stored: press MATCH NOW and play" : "No target yet: press LEARN TARGET and play a reference";
+        else if (!mineKnown) st = "First: LEARN MY PLAYING (learns your tone)";
+        else if (!preset && !proc.meters.hasTarget.load()) st = "Pick a Target, or LEARN TARGET";
+        else st = "Matched to the Target";
         auto sa = statusArea;
         g.setColour(kBg);
         g.fillRoundedRectangle(sa.removeFromBottom(6).toFloat(), 3.f);
@@ -326,11 +328,16 @@ void AxeEditor::resized() {
 // Row 1: the three learn buttons and the status line. Row 2: the Learn My
 // Playing results (all settable by hand) and Auto Gate. Row 3: Tone Match.
 void AxeEditor::layoutSetup(juce::Rectangle<int> page) {
-    auto row1 = page.removeFromTop(44);
-    for (auto* b : {&learnPlayingBtn, &learnTargetBtn, &matchNowBtn}) b->setBounds(row1.removeFromLeft(150).reduced(4, 6));
-    statusArea = row1.reduced(12, 8);
+    auto row1 = page.removeFromTop(48);
+    for (auto* b : {&learnPlayingBtn, &learnTargetBtn}) b->setBounds(row1.removeFromLeft(150).reduced(4, 8));
+    if (targetMenu) targetMenu->setBounds(row1.removeFromLeft(190).reduced(4, 0));
+    statusArea = row1.reduced(12, 10);
     std::vector<ParamControl*> learn, match;
-    for (size_t i = 0; i < setupControls.size(); i++) (i < 5 || i == setupControls.size() - 1 ? learn : match).push_back(setupControls[i].get());
+    for (size_t i = 0; i < setupControls.size(); i++) {
+        auto* c = setupControls[i].get();
+        if (c == targetMenu) continue;
+        (i < 5 || i == setupControls.size() - 1 ? learn : match).push_back(c);
+    }
     const int rh = page.getHeight() / 2;
     auto row2 = page.removeFromTop(rh), row3 = page;
     const int w2 = row2.getWidth() / juce::jmax(1, (int)learn.size());

@@ -271,7 +271,8 @@ struct Params {
     float lowNote = 0.f;       // pitch tracker range, Hz; 0 = the instrument's whole range
     float highNote = 0.f;
 
-    // TONE MATCH: a global EQ in front of every floor, filled in by Learn Target / Match Now
+    // TONE MATCH: a global EQ in front of every floor: Target (learned or preset) minus your tone
+    int   target = 0;          // Tone Match target: 0 = the learned one, 1.. = kTargetPresets
     float matchAmount = 1.f;   // 0..1
     float match[8] = {0, 0, 0, 0, 0, 0, 0, 0};   // dB at kMatchHz
 
@@ -488,24 +489,27 @@ private:
 // Learn + Match (adapted from RASP's Learner/MatchEQ). Learn measures the
 // long-term spectrum of what you play in 8 bands, relative to the level of
 // the 250 Hz-1 kHz bands (so it doesn't care how hard you hit or how hot the
-// DI is). Learn "Fresh" on new strings stores a reference; Learn "Now" on
-// the dull strings computes the EQ that pulls them toward it (the
-// difference, refined against the real peaking-filter cascade). It skips
+// DI is). One profile is the Target (learned, or a preset), the other is your
+// tone; matchGains turns the difference into the EQ (refined against the real
+// peaking-filter cascade). It skips
 // silence and only counts while you play.
 // ---------------------------------------------------------------------------
 class Learner {
 public:
     void init(float sampleRate) {
         sr = sampleRate;
-        for (int i = 0; i < kMatchBands; i++) band[i].set(kMatchHz[i], 2.9f, sr);   // ~1/2 octave wide
+        // three cascaded band-passes per band (~1/2 octave): skirts of -18 dB/octave,
+        // so the strong low notes don't leak into the weak high bands of a DI
+        for (int i = 0; i < kMatchBands; i++) for (auto& st : band[i]) st.set(kMatchHz[i], kStageQ, sr);
         msC = coefMs(50.f, sr); fall = 10.f / sr;
         need = (int)(12.f * sr);
     }
     void setSeconds(float s) { need = (int)std::fmin(s * sr, 2.0e9f); }   // (an hour-long ask must not overflow)
-    void start() { active = true; got = 0; ms = 0.f; runMax = -120.f; for (auto& e : energy) e = 0.0; for (auto& b : band) b.reset(); }
+    void start() { active = true; got = 0; ms = 0.f; runMax = -120.f; for (auto& e : energy) e = 0.0; for (auto& b : band) for (auto& st : b) st.reset(); }
     void cancel() { active = false; }
     bool learning() const { return active; }
     float progress() const { return active ? (float)got / (float)need : 0.f; }
+    float heardSeconds() const { return (float)got / sr; }
     bool feed(float x, float* profile) {
         if (!active) return false;
         ms = x * x + msC * (ms - x * x);
@@ -513,8 +517,9 @@ public:
         runMax = std::fmax(lvl, runMax - fall);
         bool playing = lvl > -60.f && lvl > runMax - 25.f;
         for (int i = 0; i < kMatchBands; i++) {
-            band[i].process(x);
-            if (playing) { float b = band[i].bp * band[i].k; energy[i] += (double)b * b; }
+            float b = x;
+            for (auto& st : band[i]) { st.process(b); b = st.bp * st.k; }
+            if (playing) energy[i] += (double)b * b;
         }
         if (playing && ++got >= need) { active = false; result(profile); return true; }
         return false;
@@ -527,7 +532,8 @@ private:
     float sr = 48000.f, ms = 0.f, msC = 0.f, runMax = -120.f, fall = 0.f;
     bool active = false;
     int got = 0, need = 576000;
-    SVF band[kMatchBands];
+    static constexpr float kStageQ = 1.5f;
+    SVF band[kMatchBands][3];
     double energy[kMatchBands] = {};
 };
 

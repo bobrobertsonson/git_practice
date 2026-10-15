@@ -64,7 +64,7 @@ public:
     struct Meters {
         std::atomic<float> gr[3] = {0.f, 0.f, 0.f}, gate{0.f}, bpm{120.f}, pitch{0.f};
         std::atomic<int> step{0};
-        std::atomic<bool> triggered{false}, hostTempo{false}, hasTarget{false};
+        std::atomic<bool> triggered{false}, hostTempo{false}, hasTarget{false}, hasMyTone{false};
         std::atomic<int> learning{0};          // axe::LearnWhat
         std::atomic<float> learnProgress{0.f};
     } meters;
@@ -86,21 +86,42 @@ private:
         explicit Listener(AxeProcessor& o) : p(o) {}
         void parameterChanged(const juce::String& id, float) override {
             // LV2: a hand-set Match band or Learn value wins over a learned one
-            if (id.startsWith("match") && id != "matchNow" && id != "matchAmount") p.lv2MatchOn = false;
+            if (id.startsWith("match") && id != "matchAmount") p.lv2MatchOn = false;
             if (id == "pickSense" || id == "pickHold" || id == "noiseFloor" || id == "lowNote" || id == "highNote") p.lv2PlayingOn = false;
             p.dirty = true;
         }
     } listener{*this};
     std::atomic<float>* learnPlayingRaw = nullptr;
     std::atomic<float>* learnTargetRaw = nullptr;
-    std::atomic<float>* matchNowRaw = nullptr;
-    bool lastLearnPlaying = false, lastLearnTarget = false, lastMatchNow = false;
+    std::atomic<float>* targetRaw = nullptr;
+    bool lastLearnPlaying = false, lastLearnTarget = false;
     // learn results crossing from the audio thread
-    std::array<float, axe::kMatchBands> learnedMatch{}, targetFromAudio{}, targetSaved{}, lv2Match{};
+    std::array<float, axe::kMatchBands> learnedMatch{}, lv2Match{};
     axe::PlayingProfile learnedPlay, lv2Playing;
-    std::atomic<bool> matchReady{false}, playingReady{false}, targetReady{false}, targetToEngine{false}, haveTargetSaved{false};
+    std::atomic<bool> matchReady{false}, playingReady{false}, targetSync{false};
     std::atomic<bool> lv2MatchOn{false}, lv2PlayingOn{false};
-    bool targetCopied = false;
+    // A learned profile (the Tone Match target, your tone): copied out of the
+    // engine once per learn, saved with the session, put back on load.
+    struct SavedProfile {
+        std::array<float, axe::kMatchBands> saved{}, fromAudio{};
+        std::atomic<bool> ready{false}, toEngine{false}, haveSaved{false};
+        bool copied = false;   // audio thread
+        void fromEngine(const float* p) { if (copied) return; for (int b = 0; b < axe::kMatchBands; b++) fromAudio[(size_t)b] = p[b]; copied = true; ready = true; }
+        void collect() { if (ready.exchange(false)) { saved = fromAudio; haveSaved = true; } }
+        void save(juce::ValueTree& st, const char* key) const {
+            if (!haveSaved) return;
+            juce::String t; for (float v : saved) t << juce::String(v, 3) << " ";
+            st.setProperty(key, t.trim(), nullptr);
+        }
+        void load(juce::ValueTree& st, const char* key) {
+            auto t = juce::StringArray::fromTokens(st.getProperty(key).toString(), " ", "");
+            if (t.size() == axe::kMatchBands) {
+                for (int b = 0; b < axe::kMatchBands; b++) saved[(size_t)b] = t[b].getFloatValue();
+                haveSaved = true; toEngine = true; copied = true;   // (don't copy the old engine's back over it)
+            }
+            st.removeProperty(key, nullptr);
+        }
+    } tgt, mine;
     std::atomic<bool> dirty{true};
     bool isLv2 = false;
 

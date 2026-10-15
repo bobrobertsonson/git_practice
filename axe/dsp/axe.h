@@ -5,10 +5,10 @@
 //   in ─► input trim ─► TONE MATCH ─┬─► capture buffer, envelope, pick onsets, pitch ──► (read by the fx modes)
 //                                  └─► [ MODE ] ─► mix (phase-aligned dry) ─► gate ─► output ─► bypass xfade ─► out
 //
-// LEARN: Learn Target / Match Now fill the Tone Match EQ (pull any guitar
-// toward a sound you captured); Learn Playing measures your pick attack,
-// picking speed, noise floor and note range for the pick detector, the gate
-// and the pitch tracker.
+// LEARN: Learn Playing measures your pick attack, picking speed, noise floor
+// and note range (for the pick detector, the gate and the pitch tracker) and
+// your guitar's tone. Tone Match then EQs that tone toward the Target: one
+// you captured with Learn Target, or a preset (axe_targets.h).
 //
 //   tone   1 TIGHT          3-band compressor: palm mutes stay tight, the lows don't flub
 //          2 SUB            octave down: Poly (filter-bank divider, holds chords) or Mono (WSOLA)
@@ -34,6 +34,7 @@
 #include "axe_base.h"
 #include "axe_tone.h"
 #include "axe_fx.h"
+#include "axe_targets.h"
 
 namespace axe {
 
@@ -46,7 +47,7 @@ inline bool needsPitch(const Params& p) {
     return (p.mode == kLaser && p.lTrack) || p.mode == kChip || (p.mode == kRing && p.rTrack) || p.mode == kFeedback;
 }
 
-enum LearnWhat : int { kLearnNone = 0, kLearnTarget, kLearnMatch, kLearnPlaying };
+enum LearnWhat : int { kLearnNone = 0, kLearnTarget, kLearnPlaying };
 
 // ---------------------------------------------------------------------------
 // Voice: one complete mode chain at one instrument setting. The Processor
@@ -164,6 +165,8 @@ public:
         voices[active].setTargets(params);
         if (fade > 0) voices[1 - active].setTargets(params);
         matchAmt.target = clampf(p.matchAmount, 0.f, 1.f);
+        const int tgt = p.target < 0 ? 0 : (p.target > kNumTargetPresets ? kNumTargetPresets : p.target);
+        if (tgt != targetSel) { targetSel = tgt; if (haveParams) rematch(); }   // (the first params set it quietly)
         for (int b = 0; b < kMatchBands; b++) matchG[b].target = clampf(p.match[b], -12.f, 12.f);
         if (pitchInst != params.instrument || std::fabs(pitchLo - p.lowNote) > 0.f || std::fabs(pitchHi - p.highNote) > 0.f) {
             pitch.setInstrument(params.instrument, p.lowNote, p.highNote);
@@ -233,15 +236,20 @@ public:
 
     // --- Learn ---------------------------------------------------------------
     void learnTarget() { learnWhat = kLearnTarget; toneLearner.start(); }
-    void matchNow() { if (haveTarget) { learnWhat = kLearnMatch; toneLearner.start(); } }
-    void learnPlaying() { learnWhat = kLearnPlaying; playLearner.start(); }
+    void learnPlaying() { learnWhat = kLearnPlaying; playLearner.start(); toneLearner.start(); }   // also hears your tone
     void cancelLearn() { learnWhat = kLearnNone; toneLearner.cancel(); playLearner.cancel(); }
     void setLearnSeconds(float tone, float playing) { toneLearner.setSeconds(tone); playLearner.setSeconds(playing); }
     int learning() const { return learnWhat; }
     float learnProgress() const { return learnWhat == kLearnPlaying ? playLearner.progress() : toneLearner.progress(); }
     bool hasTarget() const { return haveTarget; }
     const float* targetProfile() const { return target; }
-    void setTargetProfile(const float* t) { for (int i = 0; i < kMatchBands; i++) target[i] = t[i]; haveTarget = true; }
+    // match = false when restoring a saved session: keep the bands it saved
+    void setTargetProfile(const float* t, bool match = true) { for (int i = 0; i < kMatchBands; i++) target[i] = t[i]; haveTarget = true; if (match && targetSel == 0) rematch(); }
+    void syncTarget(int t) { targetSel = t < 0 ? 0 : (t > kNumTargetPresets ? kNumTargetPresets : t); }   // select without re-matching
+    // Your guitar's tone, from Learn Playing (saved with the session)
+    bool hasMyTone() const { return haveMine; }
+    const float* myTone() const { return mine; }
+    void setMyTone(const float* t, bool match = true) { for (int i = 0; i < kMatchBands; i++) mine[i] = t[i]; haveMine = true; if (match) rematch(); }
     // Each returns true once, when its learning finished.
     bool learnedMatch(float* gains) {
         if (!matchReady) return false;
@@ -257,18 +265,24 @@ public:
 
 private:
     void learnFeed(float xi) {
+        float prof[kMatchBands];
         if (learnWhat == kLearnPlaying) {
+            toneLearner.feed(xi, prof);
             if (playLearner.feed(xi, pitch.pitchHz(), pitch.confidence())) {
                 playLearner.result(playingOut); playingReady = true; learnWhat = kLearnNone;
+                toneLearner.result(prof); toneLearner.cancel();   // whatever it heard while you played
+                if (toneLearner.heardSeconds() > 1.f) setMyTone(prof);
             }
             return;
         }
-        float prof[kMatchBands];
-        if (toneLearner.feed(xi, prof)) {
-            if (learnWhat == kLearnTarget) { setTargetProfile(prof); }
-            else { matchGains(target, prof, matchOut); matchReady = true; }
-            learnWhat = kLearnNone;
-        }
+        if (toneLearner.feed(xi, prof)) { learnWhat = kLearnNone; setTargetProfile(prof); }
+    }
+    // Tone Match bands = Target minus your tone, whenever either changes.
+    void rematch() {
+        const float* t = targetSel > 0 ? kTargetPresets[targetSel - 1] : (haveTarget ? target : nullptr);
+        if (!t || !haveMine) return;
+        matchGains(t, mine, matchOut);
+        matchReady = true;
     }
     void applyNow() {
         voices[active].configure(params.mode, params.instrument, params);
@@ -362,8 +376,9 @@ private:
     Learner toneLearner;
     PlayingLearner playLearner;
     int learnWhat = kLearnNone;
-    float target[kMatchBands] = {}, matchOut[kMatchBands] = {};
-    bool haveTarget = false, matchReady = false, playingReady = false;
+    float target[kMatchBands] = {}, mine[kMatchBands] = {}, matchOut[kMatchBands] = {};
+    bool haveTarget = false, haveMine = false, matchReady = false, playingReady = false;
+    int targetSel = 0;
     PlayingProfile playingOut;
     // host transport
     float hostBpm = 0.f;

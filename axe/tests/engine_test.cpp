@@ -12,9 +12,11 @@
 //   fx              each fx mode does what it says (glitch repeats, laser fires,
 //                   dive drops, chip follows pitch, gate chops, shifter shifts,
 //                   freeze sustains, feedback sings, swarm scatters, radio band-limits)
-//   learn           Tone Match pulls a guitar onto a target; Learn My Playing
-//                   measures floor, pick attack and speed, note range; auto gate
+//   learn           Tone Match pulls a guitar onto a target (learned or preset);
+//                   Learn My Playing measures floor, pick attack and speed, note
+//                   range and tone; auto gate; the preset table is current
 #include "../host/common.h"
+#include "../host/target_models.h"
 #include <cmath>
 #include <functional>
 #include <string>
@@ -543,7 +545,8 @@ static void testFx() {
 static void testLearn() {
     const float sr = 48000.f;
     // TONE MATCH: target = pinkish noise bursts; current guitar = a different
-    // sequence through a high cut. Match Now should pull it onto the target.
+    // sequence through a high cut, heard by Learn Playing. The match should
+    // pull it onto the target.
     {
         Lcg r; Sig target((size_t)(12.f * sr)), dull(target.size());
         axe::Biquad pink, pink2, cut1, cut2;
@@ -552,14 +555,16 @@ static void testLearn() {
         for (size_t i = 0; i < target.size(); i++) target[i] = pink.process(r.next()) * (std::fmod((float)i / sr, 0.5f) < 0.4f ? 0.2f : 0.f);
         Lcg r2; r2.s = 99;
         for (size_t i = 0; i < dull.size(); i++) dull[i] = cut2.process(cut1.process(pink2.process(r2.next()) * (std::fmod((float)i / sr, 0.6f) < 0.45f ? 0.25f : 0.f)));
-        auto& p = procA(); p.init(sr); p.setLearnSeconds(8.f, 8.f);
+        auto& p = procA(); p.init(sr); p.setLearnSeconds(8.f, 11.f);
         axe::Params prm = modeParams(axe::kTight); prm.tight = 0.f;
         p.setParams(prm); p.reset();
         p.learnTarget(); run(p, target);
         CHECK(p.hasTarget(), "Learn Target did not finish");
-        p.matchNow(); run(p, dull);
         float g[axe::kMatchBands] = {};
-        CHECK(p.learnedMatch(g), "Match Now did not produce a match");
+        CHECK(p.learnedMatch(g) == false, "a match before your tone is known");
+        p.learnPlaying(); run(p, dull);
+        CHECK(p.hasMyTone(), "Learn Playing did not learn your tone");
+        CHECK(p.learnedMatch(g), "no match after Learn Playing");
         std::printf("  tone match (dB):");
         for (int b = 0; b < axe::kMatchBands; b++) std::printf(" %g:%+.1f", axe::kMatchHz[b], g[b]);
         std::printf("\n");
@@ -572,6 +577,38 @@ static void testLearn() {
         for (int b = 3; b < axe::kMatchBands; b++) { before = std::max(before, (double)std::fabs(pd[b] - pf[b])); after = std::max(after, (double)std::fabs(px[b] - pf[b])); }
         std::printf("  tone match: worst band error above 1.6 kHz %.1f dB -> %.1f dB\n", before, after);
         CHECK(after < 1.5 && after < before * 0.3, "Tone Match leaves %.1f dB (was %.1f)", after, before);
+    }
+    // PRESET TARGETS: the table in axe_targets.h is what make_targets gives today
+    {
+        double worst = 0;
+        for (int i = 0; i < targets::kNum; i++) {
+            float pr[axe::kMatchBands];
+            targets::profile(targets::render(targets::kModels[i]), strings::kSR, pr);
+            for (int b = 0; b < axe::kMatchBands; b++) worst = std::max(worst, (double)std::fabs(pr[b] - axe::kTargetPresets[i][b]));
+        }
+        CHECK(worst < 0.05, "dsp/axe_targets.h is stale (%.2f dB off): run ./make_targets > dsp/axe_targets.h", worst);
+    }
+    // ... and picking one re-matches at once: a vintage-humbucker DI (the
+    // synth_di default) towards Hot Humbucker loses top, towards Single Coil gains it
+    {
+        targets::Model mine{"mine", false, 0.6f, 3400.f, 2.0f};
+        Sig di = targets::render(mine);
+        auto& p = procA(); p.init(sr); p.setLearnSeconds(8.f, 10.f);
+        axe::Params prm = modeParams(axe::kTight); prm.tight = 0.f;
+        p.setParams(prm); p.reset();
+        p.learnPlaying(); run(p, di);
+        float g[axe::kMatchBands];
+        p.learnedMatch(g);   // (no target yet: nothing)
+        auto pick = [&](const char* name) {
+            for (int i = 0; i < axe::kNumTargetPresets; i++) if (!std::strcmp(axe::kTargetPresetNames[i], name)) prm.target = i + 1;
+            p.setParams(prm);
+            float out[axe::kMatchBands] = {};
+            CHECK(p.learnedMatch(out), "choosing %s did not re-match", name);
+            return out[6];   // 6.3 kHz
+        };
+        const float hot = pick("Hot Humbucker"), single = pick("Single Coil"), same = pick("Vintage Humbucker");
+        std::printf("  preset targets at 6.3 kHz: Hot Humbucker %+.1f dB, Single Coil %+.1f dB, Vintage Humbucker (same as the DI) %+.1f dB\n", hot, single, same);
+        CHECK(hot < -4.f && single > 4.f && std::fabs(same) < 1.5f, "preset matches (hot %+.1f, single %+.1f, same %+.1f)", hot, single, same);
     }
     // LEARN MY PLAYING: phrases of plucked notes from E2 to A3, a pick every
     // 250 ms, pauses between phrases, over hiss at about -66 dBFS

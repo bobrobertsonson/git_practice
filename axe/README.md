@@ -81,7 +81,7 @@ reports **zero latency**: no lookahead, no block processing.
 | Radio | Band-limiting white noise | Station 23 dB above two octaves off |
 | Sub | Chords (E5, A5, open E, open G, drop-C, drop-A, low E-G#-B) | Every note's sub within ~2 dB |
 | Pitch tracker | Guitar 55 Hz–1 kHz, bass 31–220 Hz | Within 1% |
-| All floors | Bypass, reset sync, block size, 44.1–192 kHz, click checks | 1176 checks pass |
+| All floors | Bypass, reset sync, block size, 44.1–192 kHz, click checks | 1183 checks pass |
 
 Per-floor cost on one desktop x86 core at 48 kHz: 0.3–2.5% (Buzzsaw 4.5%).
 
@@ -120,8 +120,9 @@ REQUIREMENTS.md, CAVEATS.md, LV2-FEATURES.md and TIME.md:
 - **Control ports only**, with real ranges and units, and choices as
   enumerations. 108 parameters in **18 pages of exactly 6**: Global, Trigger,
   one page per floor, then Learn, Tone Match and Tone Match 2.
-- **Learn on the Anagram**: Learn Playing, Learn Target and Match Now are
-  toggle ports; switching one on starts it. The wrapper can't move its own
+- **Learn on the Anagram**: Learn Playing and Learn Target are toggle
+  ports (switching one on starts it); Target is a menu port, so Anagram
+  presets recall it. The wrapper can't move its own
   ports, so learned values apply inside the plugin and the knobs keep showing
   the old ones until you turn one (turning a knob hands control back to it).
 - **Trigger** is a toggle port: bind it to a footswitch. Whether a footswitch
@@ -157,21 +158,32 @@ It measures your rig and sets five controls, which you can also set by hand:
 | Noise Floor | The quietest 5% of the pauses | Auto Gate: the gate opens 8 dB above it (+ Gate) |
 | Low Note / High Note | The notes you played, ±2 semitones (0 Hz = the instrument's full range) | The note tracker: Laser, Chiptune, Ring, Feedback stop jumping to octaves you never play |
 
-**Tone Match** (an EQ before every floor, 8 bands, 250 Hz–10 kHz, ±12 dB):
+**Tone Match** (an EQ before every floor, 8 bands, 250 Hz–10 kHz, ±12 dB)
+EQs your tone toward a **Target**. Learn My Playing also learns your
+guitar's tone, so the match updates the moment you pick a Target:
 
-1. **Learn Target**: play a reference for 12 s (a DI or guitar whose tone
-   you like). Its tone is stored with the session.
-2. **Match Now**: play your own guitar for 12 s. The Match bands move your
-   tone towards the target; **Match** sets how far (0–100%).
+- **My Target**: press **Learn Target** and play a reference for 12 s (a DI
+  or guitar whose tone you like). It's saved with the session.
+- **Presets**: five for guitar (Single Coil, Vintage Humbucker, Hot
+  Humbucker, Active Pickups, Warm Neck), three for bass (Active Bass, Passive
+  Bass, Flatwound Bass). They're **modelled, not measured**: a magnetic
+  pickup is mostly a resonant lowpass, so each preset is a string model
+  through a pickup resonance (`host/target_models.h`), measured by Tone
+  Match's own analyser into `dsp/axe_targets.h` (`./make_targets`;
+  `engine_test` checks the table is current). Measured presets from real DIs
+  can join them: `./learn_target di.wav` prints a row.
 
-Only playing counts towards the 12 s: pauses don't.
+**Match** sets how far (0–100%). Re-run Learn My Playing when you change
+guitars. Your learned values and bands are saved; reloading a session keeps
+any band you set by hand.
 
 | Check (`engine_test`, `plugin_test`, `lv2_host`) | Result |
 |---|---|
-| Tone Match, worst band error above 1.6 kHz | 10.7 dB → 1.3 dB |
+| Tone Match, worst band error above 1.6 kHz | 11.4 dB → 0.7 dB |
+| Preset Target on a modelled vintage-humbucker DI, 6.3 kHz band | Hot Humbucker −5.0 dB, Single Coil +9.4 dB, Vintage Humbucker 0.0 dB |
 | Learn My Playing on a synthetic DI (notes 82–220 Hz, a pick every 250 ms, pauses, hiss at −66 dBFS) | Floor −68 dBFS, pick hold 125 ms, range 73–247 Hz |
 | Auto Gate | Hiss in the pauses 21 dB down, notes unchanged |
-| Tone Match through LV2 ports only | Dull input's high-to-low ratio ×2.35 |
+| Tone Match through LV2 ports only | Learned target: DI's high-to-low ratio ×3.3; Single Coil vs Hot Humbucker Target: 9 dB more above 4 kHz |
 
 ## Adding a floor
 

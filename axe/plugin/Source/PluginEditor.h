@@ -62,7 +62,8 @@ private:
     juce::TextButton floors[axe::kNumModes];
     juce::TextButton guitarBtn{"GUITAR"}, bassBtn{"BASS"}, bypassBtn{"BYPASS"}, setupBtn{"SETUP"};
     // SETUP page: Learn My Playing and Tone Match
-    juce::TextButton learnPlayingBtn{"LEARN MY PLAYING"}, learnTargetBtn{"LEARN TARGET"}, matchNowBtn{"MATCH NOW"};
+    juce::TextButton learnPlayingBtn{"LEARN MY PLAYING"}, learnTargetBtn{"LEARN TARGET"};
+    ParamControl* targetMenu = nullptr;   // in setupControls
     std::vector<std::unique_ptr<ParamControl>> setupControls;
     bool setupShown = false;
     juce::Rectangle<int> statusArea;
